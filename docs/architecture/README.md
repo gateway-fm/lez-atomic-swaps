@@ -3,6 +3,21 @@
 ADRs are append-only. Superseded decisions remain here and link to their
 replacement.
 
+```mermaid
+flowchart TB
+    Scope["0001 Scope"] --> Ports["0002 Ports/adapters"]
+    Ports --> Persistence["0003 Persistence"]
+    Ports --> Zcash["0004 Zcash stack"]
+    Ports --> Docker["0005 Isolated E2E"]
+    Scope --> LEZ["0006 LEZ semantics"]
+    Ports --> RPC["0007 Maker RPC"]
+    Scope --> Direction["0008 Bidirectional ordering"]
+    Direction --> Bitcoin["0009 Bitcoin refund"]
+    Direction --> Deadlines["0010 Typed deadlines"]
+    LEZ --> Deadlines
+    Persistence --> RPC
+```
+
 | ADR | Decision | Status |
 |---|---|---|
 | [0001](0001-authoritative-scope.md) | Live RFP plus accepted issue #112 define BTC/XMR/ZEC scope | Accepted |

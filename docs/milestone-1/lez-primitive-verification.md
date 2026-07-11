@@ -3,6 +3,21 @@
 Status: source trace complete; pinned executable reproducers in progress —
 2026-07-11
 
+```mermaid
+flowchart TB
+    Pin["Pin LEZ dev commit"] --> Trace["Source-trace RPC, mempool, builder, state"]
+    Trace --> Unit["Run upstream BIP-340 + validity unit vectors"]
+    Unit --> Sequencer["Custom standalone-sequencer reproducers"]
+    Sequencer --> Admission["Admission before/inside/at exclusive bound"]
+    Sequencer --> Bytes["Submitted vs included signature bytes"]
+    Sequencer --> Canonical["Reject non-canonical scalar without rewrite"]
+    Admission --> Answer["Public protocol semantics"]
+    Bytes --> Answer
+    Canonical --> Answer
+    Answer --> Required["Pinned required CI"]
+    Answer --> Current["Scheduled current-dev compatibility lane"]
+```
+
 ## Pinned source
 
 Repository: `logos-blockchain/logos-execution-zone`

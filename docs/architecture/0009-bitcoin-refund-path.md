@@ -2,6 +2,19 @@
 
 Status: Accepted; Bitcoin Core validation pending — 2026-07-11
 
+```mermaid
+flowchart TB
+    Funding["P2TR funding output"] --> KeyPath{"Cooperative claim available?"}
+    KeyPath -->|"yes"| Adaptor["Complete BIP-340 adaptor signature"]
+    Adaptor --> Claim["Taproot key-path spend"]
+    KeyPath -->|"no / timeout"| Delay["Wait relative CSV delay"]
+    Delay --> Tapleaf["CSV + funder refund key tapleaf"]
+    Tapleaf --> Refund["Taproot script-path refund"]
+    Refund --> Fee["Current-fee RBF/CPFP policy"]
+    Claim --> Privacy["Ordinary key-path appearance"]
+    Refund --> Visible["Refund branch intentionally visible"]
+```
+
 ## Context
 
 RFP Reliability 7 requires choosing between a pre-signed timelocked key-path

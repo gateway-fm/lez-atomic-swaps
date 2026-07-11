@@ -24,6 +24,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-targets
       - run: ./scripts/check-requirements-traceability.sh
+      - run: ./scripts/check-architecture-diagrams.sh
 
   dependencies:
     runs-on: ubuntu-latest

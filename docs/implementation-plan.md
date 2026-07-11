@@ -88,6 +88,7 @@ with dependency license/advisory checks in CI.
 | Bidirectional role ordering | 2026-07-11 reverse-direction test could not resolve direction or role-neutral transitions; CLI rejected `--direction` | Both directions preserve taker-first and maker-before-taker refunds for BTC/XMR/ZEC; actual CLI/daemon persists reverse direction and typed schedules across kill/restart | Run every real-chain role matrix in both directions |
 | Taker-lock reorg/replacement | 2026-07-11 missing durable reorg phase/removal event; property oracle assumed confirmations only rise | Pre-maker regression/removal revokes permission and permits explicit replacement; post-maker removal pins the committed ID, suspends claims, and preserves refunds; generated model covers events | Add pair-specific reorg depth policies and real-node replacement cases |
 | Typed refund clocks | 2026-07-11 tests could not resolve chain/basis/safety schedule types | Coordinator, persistence, RPC, and CLI use typed block-height/timestamp positions; wrong domains and insufficient conservative margins are rejected | Calibrate and review named per-network confirmation/margin parameters |
+| Architecture diagrams | 2026-07-11 completeness guard failed on the first ADR without Mermaid | All ADRs and M1 design artifacts contain current component/flow diagrams; CI and contribution policy enforce coverage | Render-validation can be added when a lightweight pinned renderer is approved |
 
 ## Milestone 1 plan: three weeks
 

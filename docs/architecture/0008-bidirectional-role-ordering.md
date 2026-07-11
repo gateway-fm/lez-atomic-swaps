@@ -2,6 +2,25 @@
 
 Status: Accepted — 2026-07-11
 
+```mermaid
+sequenceDiagram
+    participant T as Taker (first funder)
+    participant TC as Taker-leg chain
+    participant M as Maker (second funder)
+    participant MC as Maker-leg chain
+    T->>TC: lock with longer refund schedule
+    TC-->>M: canonical confirmations reach policy
+    M->>MC: lock with shorter refund schedule
+    alt cooperative completion
+        M->>TC: claim and reveal pair evidence
+        TC-->>T: adaptor witness / preimage becomes observable
+        T->>MC: claim maker-funded leg
+    else timeout
+        M->>MC: refund at earlier maker deadline
+        T->>TC: refund at later taker deadline
+    end
+```
+
 ## Context
 
 The live RFP requires swaps “between LEZ and” BTC, XMR, and transparent ZEC and

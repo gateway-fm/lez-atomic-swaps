@@ -2,6 +2,21 @@
 
 Status: draft for Logos review — 2026-07-11
 
+```mermaid
+flowchart TB
+    Discovery["OfferDiscovery"] --> Terms["Immutable signed SwapTerms"]
+    Negotiation["NegotiationChannel"] --> Terms
+    Terms --> Common["SwapProtocol lifecycle contract"]
+    Common --> BTC["BtcLezProtocol typed evidence/errors"]
+    Common --> XMR["XmrLezProtocol typed evidence/errors"]
+    Common --> ZEC["ZecLezProtocol typed evidence/errors"]
+    BTC --> Ports["Node + LEZ + persistence ports"]
+    XMR --> Ports
+    ZEC --> Ports
+    Ports --> Coordinator["Durable coordinator"]
+    Coordinator --> Recovery["Post-lock chain-only claim/refund"]
+```
+
 ## Design rules
 
 - One lifecycle vocabulary; pair-specific evidence and errors remain typed.

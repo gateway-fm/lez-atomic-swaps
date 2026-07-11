@@ -2,6 +2,22 @@
 
 Status: Accepted; parameter calibration pending — 2026-07-11
 
+```mermaid
+flowchart LR
+    Terms["Pair + direction + network parameters"] --> Map["Map maker/taker roles to chains"]
+    Map --> Maker["Maker ChainPosition: chain + basis + value"]
+    Map --> Taker["Taker ChainPosition: chain + basis + value"]
+    Bounds["Maker-latest / taker-earliest / required margin"] --> Check{"Conservative safety inequality"}
+    Maker --> Check
+    Taker --> Check
+    Check -->|"safe"| Schedule["Persist typed RefundSchedule"]
+    Check -->|"unsafe"| Reject["Reject negotiated terms"]
+    Observation["Runtime chain position"] --> Domain{"Same chain and clock basis?"}
+    Schedule --> Domain
+    Domain -->|"yes"| Compare["Compare within one consensus domain"]
+    Domain -->|"no"| ClockError["WrongDeadlineClock"]
+```
+
 ## Context
 
 The prototype compared two normalized `u64` values even though LEZ may use block

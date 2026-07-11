@@ -2,6 +2,19 @@
 
 Status: Accepted; crash-test validation pending — 2026-07-11
 
+```mermaid
+flowchart LR
+    Event["Validated chain/operator event"] --> Actor["Single writer actor"]
+    Actor --> Tx["SQLite transaction"]
+    Tx --> Aggregate["Versioned swap aggregate"]
+    Tx --> Outbox["Durable outbox / audit record"]
+    Aggregate --> WAL["WAL + FULL synchronous"]
+    Outbox --> WAL
+    Crash["Process crash"] --> Reopen["Reopen + migrate + replay"]
+    WAL --> Reopen
+    Reopen --> Actor
+```
+
 ## Context
 
 The proposal requires choosing `sled` or an alternative. Swap transitions must
@@ -28,4 +41,3 @@ Crash after every durable transition, truncate/kill at commit boundaries, reopen
 under concurrent reads, run migrations forward from every released schema, and
 prove idempotent replay. Revisit only if measured write latency violates daemon
 requirements.
-

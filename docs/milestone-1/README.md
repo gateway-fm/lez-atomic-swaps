@@ -14,3 +14,16 @@ An artefact marked draft does not satisfy its milestone exit gate. Decisions
 that have been accepted are recorded separately in the
 [ADR log](../architecture/README.md).
 
+```mermaid
+flowchart LR
+    Sources["RFP + proposal + upstream code"] --> Protocol["Per-leg protocol + atomicity"]
+    Sources --> Primitives["LEZ primitive reproducers"]
+    Protocol --> Escrow["Escrow + SPEL IDL"]
+    Protocol --> SDK["Common SDK + pair evidence"]
+    Protocol --> Threats["Threat model + parameters"]
+    Primitives --> Review["Milestone 1 review packet"]
+    Escrow --> Review
+    SDK --> Review
+    Threats --> Review
+    Review --> Gates["M2/M3/M4/M5 entry gates"]
+```

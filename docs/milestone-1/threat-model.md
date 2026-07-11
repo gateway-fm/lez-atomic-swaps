@@ -2,6 +2,24 @@
 
 Status: draft — 2026-07-11
 
+```mermaid
+flowchart LR
+    Counterparty["Untrusted maker/taker peer"] --> Discovery["Delivery + Chat boundary"]
+    Discovery --> Daemon["Authenticated maker/taker process"]
+    Local["Unprivileged local user"] --> RPC["Local RPC boundary"]
+    RPC --> Daemon
+    Feed["External price module"] --> Daemon
+    Daemon --> State["Encrypted durable recovery state"]
+    Daemon --> SDK["Pair SDK validation boundary"]
+    SDK --> LEZ["LEZ sequencer / consensus"]
+    SDK --> Foreign["BTC / XMR / ZEC nodes"]
+    Supply["Dependency attacker"] --> Build["Locked + license/advisory checked build"]
+    Build --> Daemon
+    LEZ --> Evidence["Canonical chain evidence"]
+    Foreign --> Evidence
+    Evidence --> SDK
+```
+
 ## Assets and actors
 
 Assets are maker/taker funds on LEZ and the foreign chain, adaptor secrets or

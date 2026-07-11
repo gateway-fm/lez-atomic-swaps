@@ -2,6 +2,21 @@
 
 Status: draft; current SPEL/LEZ compatibility verification is open — 2026-07-11
 
+```mermaid
+stateDiagram-v2
+    [*] --> Empty
+    Empty --> Funded: initialize + exact asset transfer
+    Funded --> Claimed: claim_hashlock(ZEC preimage)
+    Funded --> Claimed: claim_adaptor(BTC/XMR witness)
+    Funded --> Refunded: refund after typed LEZ deadline
+    Claimed --> [*]
+    Refunded --> [*]
+    note right of Funded
+      pair + direction + asset + amount
+      authorities + commitment + deadline
+    end note
+```
+
 ## Account model
 
 One escrow PDA is derived from the program ID and a collision-resistant swap ID.

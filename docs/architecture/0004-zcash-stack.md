@@ -2,6 +2,18 @@
 
 Status: Accepted — 2026-07-11
 
+```mermaid
+flowchart LR
+    SDK["LEZ-ZEC SDK"] --> Builder["Canonical librustzcash transaction builder"]
+    Builder --> HTLC["Transparent BIP-199 HTLC transaction"]
+    HTLC --> Zebra["Zebra JSON-RPC broadcast/observe"]
+    Zebra --> Testnet["Zcash testnet"]
+    Zallet["Zallet"] --> WalletOnly["Supported wallet operations only"]
+    WalletOnly --> SDK
+    HTLC --> Visibility["Public amounts, scripts, addresses"]
+    Visibility --> Shield["Documented shield-after-swap journey"]
+```
+
 ## Decision
 
 Use `zebrad` as the supported full node. Construct and sign transparent HTLC
@@ -22,4 +34,3 @@ version-pinned tests while avoiding an obsolete node wallet interface.
 M2 must include a UTXO/key-management design, canonical transaction vectors,
 Zebra testnet/regtest integration, and clear transparent-pool visibility plus
 shield-after-swap guidance.
-

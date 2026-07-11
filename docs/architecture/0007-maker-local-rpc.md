@@ -3,6 +3,19 @@
 Status: Accepted for the operator vertical slice; production transport pending —
 2026-07-11
 
+```mermaid
+flowchart LR
+    CLI["Maker CLI"] -->|"Bearer capability"| Transport["Loopback JSON-RPC now / owner UDS gate"]
+    MiniApp["Maker mini-app via Logos Core"] --> CoreAdapter["Core lifecycle adapter"]
+    CoreAdapter --> Transport
+    Systemd["Hardened systemd supervisor"] --> Daemon["Maker daemon"]
+    Transport --> Daemon
+    Daemon --> Coordinator["Coordinator + chain adapters"]
+    Daemon --> Writer["Single SQLite writer"]
+    Credential["Owner credential file / protected handle"] --> Transport
+    Ready["Readiness URL only"] --> Systemd
+```
+
 ## Context
 
 The RFP requires a headless maker that can run standalone or under Logos Core.

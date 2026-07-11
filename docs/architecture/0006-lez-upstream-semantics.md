@@ -2,6 +2,27 @@
 
 Status: Accepted — 2026-07-11
 
+```mermaid
+sequenceDiagram
+    participant Client
+    participant RPC as Sequencer RPC
+    participant Pool as Mempool
+    participant Builder as Block builder
+    participant State as LEZ state machine
+    Client->>RPC: submit signed transaction bytes
+    RPC->>Pool: authenticate and enqueue
+    Note over RPC,Pool: validity window not evaluated here
+    Builder->>Pool: select candidate
+    Builder->>State: validate at new height/timestamp
+    State->>State: require from <= value < to
+    State->>State: verify exact 64-byte BIP-340 signature
+    alt valid
+        State-->>Builder: include unchanged accepted bytes
+    else invalid/expired
+        State-->>Builder: reject from block
+    end
+```
+
 ## Evidence
 
 Source trace used `logos-blockchain/logos-execution-zone` `dev` commit
@@ -27,4 +48,3 @@ Source inspection alone is insufficient for Milestone 1 exit.
 Upstream tests run against a pinned commit and a scheduled current-`dev`
 compatibility lane. File paths are diagnostic, not the contract: semantic tests
 must fail clearly when upstream reorganizes code or behavior.
-
