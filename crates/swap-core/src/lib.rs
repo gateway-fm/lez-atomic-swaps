@@ -408,6 +408,8 @@ pub enum Phase {
     BothLegsLocked,
     /// The taker's funding transaction regressed below confirmation policy after maker lock.
     TakerLockReorged,
+    /// The maker's committed funding transaction left the canonical chain.
+    MakerLockReorged,
     /// The construction-specific first claimant published evidence for the counterparty.
     ClaimEvidenceAvailable,
     /// Both parties claimed their proceeds.
@@ -483,6 +485,9 @@ pub enum Error {
     /// The maker attempted to lock before the taker's lock reached confirmation policy.
     #[error("taker lock is not confirmed")]
     TakerLockNotConfirmed,
+    /// The maker's committed funding transaction is not currently canonical.
+    #[error("maker lock is not confirmed")]
+    MakerLockNotConfirmed,
     /// A different transaction was presented while confirmations were being accumulated.
     #[error("conflicting taker lock transaction")]
     ConflictingTakerLock,
@@ -775,6 +780,56 @@ impl SwapCoordinator {
         self.direction
     }
 
+    /// Chain funded by one participant under the negotiated product direction.
+    #[must_use]
+    pub const fn funded_chain(&self, participant: Participant) -> Chain {
+        let foreign = match self.pair {
+            Pair::Bitcoin => Chain::Bitcoin,
+            Pair::Monero => Chain::Monero,
+            Pair::Zcash => Chain::Zcash,
+        };
+        match (self.direction, participant) {
+            (SwapDirection::TakerSellsForeign, Participant::Taker)
+            | (SwapDirection::TakerSellsLez, Participant::Maker) => foreign,
+            (SwapDirection::TakerSellsForeign, Participant::Maker)
+            | (SwapDirection::TakerSellsLez, Participant::Taker) => Chain::Lez,
+        }
+    }
+
+    /// Observes participant-relative funding without assuming which chain they fund.
+    ///
+    /// # Errors
+    ///
+    /// Delegates to the same ordering, confirmation, conflict, and phase checks as
+    /// [`Self::observe_taker_lock`] or [`Self::observe_maker_lock`].
+    pub fn observe_funding(
+        &mut self,
+        participant: Participant,
+        proof: ChainProof,
+    ) -> Result<(), Error> {
+        match participant {
+            Participant::Maker => self.observe_maker_lock(proof),
+            Participant::Taker => self.observe_taker_lock(proof),
+        }
+    }
+
+    /// Applies an affirmative canonical removal to the participant who funded that leg.
+    ///
+    /// # Errors
+    ///
+    /// Returns the role-specific conflict error when the transaction does not match
+    /// the committed funding ID.
+    pub fn observe_funding_removed(
+        &mut self,
+        participant: Participant,
+        transaction_id: &str,
+    ) -> Result<(), Error> {
+        match participant {
+            Participant::Maker => self.observe_maker_lock_removed(transaction_id),
+            Participant::Taker => self.observe_taker_lock_removed(transaction_id),
+        }
+    }
+
     /// Participant whose claim must publish the adaptor witness or HTLC preimage first.
     ///
     /// ZEC follows the RFP's chain-relative order: the LEZ recipient claims first and the ZEC
@@ -835,6 +890,28 @@ impl SwapCoordinator {
         self.observe_maker_lock_impl(proof)
     }
 
+    /// Records that the committed maker-funded transaction left the canonical chain.
+    ///
+    /// The transaction ID remains pinned. Claims are suspended until the exact
+    /// transaction reappears, while independent refunds remain available.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ConflictingMakerLock`] when the removed transaction does not
+    /// match the committed maker funding ID.
+    pub fn observe_maker_lock_removed(&mut self, transaction_id: &str) -> Result<(), Error> {
+        if self.maker_lock_transaction_id.as_deref() != Some(transaction_id) {
+            return Err(Error::ConflictingMakerLock);
+        }
+        if matches!(
+            self.phase,
+            Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable
+        ) {
+            self.phase = Phase::MakerLockReorged;
+        }
+        Ok(())
+    }
+
     /// Returns the recovered adaptor secret or HTLC preimage, when observed.
     #[must_use]
     pub const fn claim_evidence(&self) -> Option<&ClaimEvidence> {
@@ -887,6 +964,20 @@ impl SwapCoordinator {
     ///
     /// Returns [`Error::TakerLockNotConfirmed`] until confirmation policy is satisfied.
     fn observe_maker_lock_impl(&mut self, proof: ChainProof) -> Result<(), Error> {
+        if self.phase == Phase::MakerLockReorged {
+            return match self.maker_lock_transaction_id.as_deref() {
+                Some(known) if known == proof.transaction_id() => {
+                    self.phase = if self.claim_evidence.is_some() {
+                        Phase::ClaimEvidenceAvailable
+                    } else {
+                        Phase::BothLegsLocked
+                    };
+                    Ok(())
+                }
+                Some(_) => Err(Error::ConflictingMakerLock),
+                None => Err(Error::MakerLockNotConfirmed),
+            };
+        }
         if self.phase != Phase::TakerLockConfirmed {
             return match self.maker_lock_transaction_id.as_deref() {
                 Some(known) if known == proof.transaction_id() => Ok(()),
@@ -919,6 +1010,9 @@ impl SwapCoordinator {
         }
         if self.phase == Phase::TakerLockReorged {
             return Err(Error::TakerLockNotConfirmed);
+        }
+        if self.phase == Phase::MakerLockReorged {
+            return Err(Error::MakerLockNotConfirmed);
         }
         if self.phase != Phase::BothLegsLocked {
             return match (
@@ -963,6 +1057,9 @@ impl SwapCoordinator {
         if self.phase == Phase::TakerLockReorged {
             return Err(Error::TakerLockNotConfirmed);
         }
+        if self.phase == Phase::MakerLockReorged {
+            return Err(Error::MakerLockNotConfirmed);
+        }
         if self.phase != Phase::ClaimEvidenceAvailable {
             return match self.followup_claim_transaction_id.as_deref() {
                 Some(known) if known == proof.transaction_id() => Ok(()),
@@ -986,7 +1083,10 @@ impl SwapCoordinator {
     pub fn refund_maker_leg(&mut self, observed: ChainPosition) -> Result<(), Error> {
         if !matches!(
             self.phase,
-            Phase::BothLegsLocked | Phase::TakerLockReorged | Phase::TakerLegRefunded
+            Phase::BothLegsLocked
+                | Phase::TakerLockReorged
+                | Phase::MakerLockReorged
+                | Phase::TakerLegRefunded
         ) {
             return Err(Error::InvalidPhase {
                 expected: Phase::BothLegsLocked,
@@ -1100,6 +1200,7 @@ impl SwapCoordinator {
                 | Phase::TakerLockConfirmed
                 | Phase::BothLegsLocked
                 | Phase::TakerLockReorged
+                | Phase::MakerLockReorged
                 | Phase::MakerLegRefunded
         ) {
             return Err(Error::InvalidPhase {

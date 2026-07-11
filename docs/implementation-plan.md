@@ -318,9 +318,12 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   exact replay after an unknown successful commit, role isolation, and restart
   loading with record revalidation. Replay is predecessor-revision scoped, so a
   later identical canonical reappearance remains a new event.
-- [ ] Add funded-role-aware core removal/reappearance projection for both ZEC
-  directions; the existing taker-only removal API must not be used for a
-  maker-funded reverse-direction ZEC leg.
+- [x] Add participant-aware core funding/removal semantics for both ZEC
+  directions. Reverse ZEC maps ZEC to the maker-funded leg; its distinct reorg
+  phase pins the exact transaction, suspends both claims, rejects conflicting
+  replacement, restores on exact reappearance, and preserves both refunds.
+- [ ] Wire committed journal events to the correct participant-relative core
+  transition and prove close/reopen/requery with actual two-Zebra replacement.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
   nodes. The LEZ
   Unix-millisecond/core Unix-second boundary is typed, checked, conservatively

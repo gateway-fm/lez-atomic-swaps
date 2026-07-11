@@ -4,7 +4,8 @@
 
 Accepted in part. Stable canonical/removal validation, the two-phase tracker,
 the version-1 primitive event record, and the atomic SQLite event journal are
-implemented; direction-aware core projection remains M2 work.
+implemented. Participant-aware core reorg semantics are also implemented;
+runtime journal-to-core projection remains M2 work.
 
 ## Context
 
@@ -93,7 +94,9 @@ sequenceDiagram
 - Journal replay identity includes the predecessor revision; identical evidence
   after an intervening removal/update is retained as a new transition.
 - Stale removal evidence and unproved replacements fail closed.
-- Reverse-direction ZEC needs maker-funded removal semantics in core; mapping
-  every ZEC removal to the existing taker-lock API is explicitly forbidden.
-- Direction-aware core reorg projection and actual two-Zebra store/restart
-  evidence remain required before this ADR is fully proven.
+- Reverse-direction ZEC maps ZEC to the maker-funded leg. The core now exposes
+  participant-relative funding/removal APIs and a separate maker-lock reorg
+  phase; claims suspend, exact reappearance restores, conflicts fail, and
+  refunds remain available for either funded leg.
+- Runtime journal-to-core wiring and actual two-Zebra store/restart evidence
+  remain required before this ADR is fully proven.

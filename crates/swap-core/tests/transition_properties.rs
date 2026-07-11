@@ -133,23 +133,46 @@ proptest! {
                         ));
                     }
                     Phase::BothLegsLocked => {
-                        prop_assert!(matches!(before, Phase::TakerLockConfirmed | Phase::TakerLockReorged));
+                        prop_assert!(matches!(
+                            before,
+                            Phase::TakerLockConfirmed
+                                | Phase::TakerLockReorged
+                                | Phase::MakerLockReorged
+                        ));
                     }
                     Phase::TakerLockReorged => {
                         prop_assert!(matches!(before, Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable));
                     }
+                    Phase::MakerLockReorged => {
+                        prop_assert!(matches!(before, Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable));
+                    }
                     Phase::ClaimEvidenceAvailable => {
-                        prop_assert!(matches!(before, Phase::BothLegsLocked | Phase::TakerLockReorged));
+                        prop_assert!(matches!(
+                            before,
+                            Phase::BothLegsLocked
+                                | Phase::TakerLockReorged
+                                | Phase::MakerLockReorged
+                        ));
                     }
                     Phase::Completed => {
                         prop_assert_eq!(before, Phase::ClaimEvidenceAvailable);
                         prop_assert!(swap.claim_evidence().is_some());
                     }
                     Phase::MakerLegRefunded => {
-                        prop_assert!(matches!(before, Phase::BothLegsLocked | Phase::TakerLockReorged));
+                        prop_assert!(matches!(
+                            before,
+                            Phase::BothLegsLocked
+                                | Phase::TakerLockReorged
+                                | Phase::MakerLockReorged
+                        ));
                     }
                     Phase::TakerLegRefunded => {
-                        prop_assert!(matches!(before, Phase::BothLegsLocked | Phase::TakerLockReorged));
+                        prop_assert!(matches!(
+                            before,
+                            Phase::BothLegsLocked
+                                | Phase::TakerLockReorged
+                                | Phase::MakerLockReorged
+                        ));
                     }
                     Phase::MakerRecoveryAvailable => {
                         prop_assert!(false, "generated BTC model has no event-gated recovery action");

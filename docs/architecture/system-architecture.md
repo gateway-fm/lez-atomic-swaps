@@ -288,7 +288,9 @@ flowchart LR
     Validator --> Watcher["Stable-tip two-phase watcher"]
     Watcher --> Record["Validated primitive event record v1"]
     Record --> Journal["Versioned SQLite ZEC event journal"]
-    Journal -.-> Projection["Direction-aware core projection"]
+    Journal -.-> Projection["Runtime event → participant projection"]
+    Terms --> CoreFunding["Participant-aware core funding/reorg API"]
+    Projection -.-> CoreFunding
     Validator --> Observe["Bound canonical/removal evidence"]
     LezDeadline --> Schedule
     ZecDeadline --> Schedule
@@ -305,7 +307,10 @@ re-decodes canonical bytes and checks the complete network, branch, block,
 outpoint, value, exact script, and derived-depth binding before producing a
 lossy coordinator proof. Public-testnet values are acceptance targets, not
 mainnet recommendations or proof of worst-case cadence. Durable production
-role-aware core projection and the composed corridor remain dashed M2 work. RPC
+participant-aware core semantics are implemented for taker- and maker-funded
+legs: removal pins the exact ID, suspends claims, exact reappearance restores
+authority, conflicting replacement fails, and refunds remain available. Runtime
+event-to-participant wiring and the composed corridor remain dashed M2 work. RPC
 errors or absence never imply removal: a detach event
 requires a stable replacement tip and a changed canonical hash at the prior
 inclusion height.

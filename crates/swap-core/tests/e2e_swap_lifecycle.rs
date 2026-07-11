@@ -307,3 +307,59 @@ fn removed_uncommitted_taker_lock_can_be_replaced_but_committed_lock_cannot() {
         Err(Error::ConflictingTakerLock)
     );
 }
+
+#[test]
+fn reverse_zec_maker_funding_reorg_suspends_claims_and_preserves_refunds() {
+    let direction = SwapDirection::TakerSellsLez;
+    let mut swap = SwapCoordinator::new_with_direction(
+        SwapId::new("reverse-zec-reorg").unwrap(),
+        Pair::Zcash,
+        direction,
+        ConfirmationPolicy::new(2).unwrap(),
+        schedule(Pair::Zcash, direction),
+    );
+    assert_eq!(swap.funded_chain(Participant::Taker), Chain::Lez);
+    assert_eq!(swap.funded_chain(Participant::Maker), Chain::Zcash);
+    swap.observe_funding(
+        Participant::Taker,
+        ChainProof::new("lez-taker-lock", 2).unwrap(),
+    )
+    .unwrap();
+    swap.observe_funding(
+        Participant::Maker,
+        ChainProof::new("zec-maker-lock", 1).unwrap(),
+    )
+    .unwrap();
+    swap.observe_funding_removed(Participant::Maker, "zec-maker-lock")
+        .unwrap();
+    assert_eq!(swap.phase(), Phase::MakerLockReorged);
+    assert_eq!(
+        swap.observe_revealing_claim(
+            swap.first_claimant(),
+            ChainProof::new("revealing-claim", 1).unwrap(),
+            ClaimEvidence::new([9; 32]),
+        ),
+        Err(Error::MakerLockNotConfirmed)
+    );
+    assert_eq!(
+        swap.observe_funding(
+            Participant::Maker,
+            ChainProof::new("different-zec-lock", 1).unwrap(),
+        ),
+        Err(Error::ConflictingMakerLock)
+    );
+    swap.observe_funding(
+        Participant::Maker,
+        ChainProof::new("zec-maker-lock", 1).unwrap(),
+    )
+    .expect("the exact canonical reappearance restores claim authority");
+    assert_eq!(swap.phase(), Phase::BothLegsLocked);
+
+    swap.observe_funding_removed(Participant::Maker, "zec-maker-lock")
+        .unwrap();
+    swap.refund_maker_leg(ChainPosition::block_height(Chain::Zcash, 100))
+        .unwrap();
+    swap.refund_taker_leg(ChainPosition::block_height(Chain::Lez, 120))
+        .unwrap();
+    assert_eq!(swap.phase(), Phase::Refunded);
+}
