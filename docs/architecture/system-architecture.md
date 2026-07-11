@@ -41,7 +41,7 @@ flowchart TB
     end
 
     subgraph Nodes["Actor-selected node boundary"]
-        LEZ["LEZ sequencer<br/>v0.1.2 standalone proof / v0.2 testnet target"]
+        LEZ["LEZ sequencer<br/>v0.1.2 guest deployment proven / v0.2 testnet target"]
         BTC["Bitcoin Core"]
         XMR["monerod + wallet RPC"]
         ZEC["Minimal Zebra 5.2.0 + local Zcash construction"]
@@ -108,9 +108,12 @@ Zebra 5.2.0 Regtest acceptance/rejection/confirmation, concurrent swaps,
 confirmation regression, exact rebroadcast, and block reconsideration now exist
 as a chain-adapter proof. Source-correct authenticated-transfer/ATA custody and
 generated owner-role clients now exist as locally composed upstream-program
-evidence. Guest deployment, standalone-sequencer/public-testnet evidence,
-composed both-direction maker/taker processes, encrypted state/outbox, and
-mini-apps remain milestone work and cannot yet be represented as production E2E.
+evidence. The checked Risc0 guest now builds reproducibly and its deployment is
+admitted through public RPC and persisted by an isolated v0.1.2 standalone
+sequencer after a mandatory-clock readiness block. Instruction lifecycle and
+cost evidence, public-testnet evidence, composed both-direction maker/taker
+processes, encrypted state/outbox, and mini-apps remain milestone work and
+cannot yet be represented as production E2E.
 
 ## LEZ escrow custody components and actor flows
 
@@ -177,6 +180,37 @@ sequenceDiagram
         ATA->>Token: Transfer with custody-ATA PDA seed
     end
 ```
+
+## Deployable guest and standalone block flow
+
+```mermaid
+flowchart LR
+    Source["SPEL escrow source"] --> Guest["Risc0 3.0.5 guest wrapper"]
+    Builder["Pinned guest-builder image digest"] --> ELF["Checked ELF<br/>SHA-256 + ImageID"]
+    Guest --> Builder
+    Manifest["Tracked artifact manifest"] --> ELF
+    R0VM["Exact r0vm 3.0.5"] --> Clock["Mandatory clock execution"]
+    Clock --> Ready["Persisted readiness block"]
+    ELF --> RPC["sendTransaction ProgramDeployment"]
+    RPC --> Mempool["Standalone mempool"]
+    Ready --> Mempool
+    Mempool --> Validate["Block-time deployment validation"]
+    R0VM --> Validate
+    Validate --> Block["Canonical persisted block"]
+    Block --> Query["getTransaction + getLastBlockId"]
+    Lifecycle["Actor initialise / fund / claim / refund + costs"] -.-> RPC
+    Testnet["Rebuilt v0.2 guest + public testnet"] -.-> RPC
+
+    classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
+    class Lifecycle,Testnet planned;
+```
+
+The deployment proof uses port `0`, a temporary sequencer home, deterministic
+genesis inputs, an exact `r0vm` path, and no shared Docker project or chain
+state. Deployment admission alone is deliberately insufficient: the readiness
+block proves the mandatory clock/executor/store loop first, and transaction
+lookup proves the deployment reached the block store rather than only the
+mempool. The dashed lifecycle and v0.2 testnet edges remain M2 exit work.
 
 ## Happy-path user flow
 

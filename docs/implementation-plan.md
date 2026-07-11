@@ -97,7 +97,8 @@ with dependency license/advisory checks in CI.
 | Whole-system architecture and actor flows | 2026-07-11 ADR-local diagrams passed the old gate but did not provide one composed system, actor, trust-boundary, or lifecycle view | Canonical living architecture diagrams independent maker/taker actors, runtime components, node boundaries, happy/refund/restart flows, and current-versus-planned status; CI requires these views | Keep the status and flows synchronized whenever a slice crosses a new real process or chain boundary |
 | Exact BIP-199 contract envelope | 2026-07-11 redeem API was absent; subsequent REDs exposed missing P2SH/scriptSig, refund policy, fetched-prevout validation, V5 epochs, UTXO ownership, dust/change, and Zebra acceptance | Exact script and V5 bytes/txids pass; deterministic selection and actor-only change use canonical builders; pinned Zebra confirms funding/claim/refund and rejects mutated funding/claim signatures plus pre-CLTV refund | Add replacement/reorg/refund-margin stress and composed LEZ↔ZEC roles |
 | Arbitrary P2SH transaction signing | Stable source review shows ordinary and PCZT signers/finalizers recognize P2PKH/P2PK/multisig but not BIP-199; transparent builder also defaults every input to final sequence | GREEN uses canonical `TxOut`, `Bundle`, ZIP-244, deterministic secp256k1, and `TransactionData`; exact HTLC scriptSig is the only adapter-owned encoding, interpreter mutation tests pass, and Zebra is the final authority | Retain vectors and extend the node lane to replacement/reorg cases |
-| Pinned SPEL/LEZ compatibility | Initial RED had no real fixture; generated client exposed missing signers; a later 11-test custody slice appeared green, but direct v0.1.2 source review invalidated its escrow-owned native users and direct token-holding PDA as real-user/RFP evidence | Exact pins, generated IDL/client, signer roles, replay/preimage/version/window checks, and upstream call execution remain useful; a new RED-GREEN cycle now targets canonical `authenticated_transfer` plus official ATA derivation/ownership/nested calls | Replace both invalid custody paths, then run standalone sequencer/compute/testnet evidence and re-audit the deployed graph before the M2 tag |
+| Pinned SPEL/LEZ compatibility | Initial RED had no real fixture; generated client exposed missing signers; a later 11-test custody slice appeared green, but direct v0.1.2 source review invalidated its escrow-owned native users and direct token-holding PDA as real-user/RFP evidence | Native custody now composes canonical `authenticated_transfer`; custom custody is official `ATA(metadata, definition)` for two definitions; generated clients use real owner signers; exact Risc0 3.0.5 builds the checked guest and v0.1.2 standalone RPC includes its deployment in a persisted block after a mandatory-clock readiness block | Execute initialise/fund/claim/refund as actor transactions through standalone, record recursive cycles/segments, port the full lane to v0.2, then run testnet role evidence |
+| Deployable LEZ guest supply chain | Host-only fixture could not produce an ELF; first real build selected Rust-1.89-only enum crates in the Rust-1.88 builder; first runtime RED admitted deployment but stopped at genesis because `RISC0_DEV_MODE` does not provide `r0vm`; audit then rejected vulnerable `ruint 1.17.0` | Exact `cargo-risczero`/`r0vm 3.0.5`, pinned builder digest, enum 4.3.0 compatibility pin, fixed `ruint 1.17.1`, checked ELF SHA-256/ImageID, port-zero/temp-state service, clock readiness block, RPC deployment, canonical block inclusion, and three locked-graph dependency audits are reproducible in CI | Extend the deployment harness to actor-signed lifecycle calls and cost evidence; keep the artifact identity and advisory non-exposure checks fail-closed |
 | Isolated Zebra consensus E2E | First runner RED found RPC cookie assumptions; the initial capability hardening found an unwritable cache; strict Trivy then rejected both official 5.1.1 and 5.2.0 runtimes with 40 HIGH/2 CRITICAL findings | The official 5.2.0 binary now runs in an immutable distroless nonroot image that scans at 0 HIGH/CRITICAL; read-only/capability-free NU6.2 Regtest on an ephemeral port proves funding, claim, refund, rejection, and confirmation; exact project cleanup leaves unrelated Docker workloads untouched | Add reorg/replacement/concurrency and public-testnet smoke; repeat final-image scan immediately before evidence/tag |
 
 ## Milestone 1 plan: three weeks
@@ -220,12 +221,18 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   direct token holdings at an escrow custody PDA do not satisfy RFP F7. Generated
   clients sign with owner accounts, never ATAs; refund and ATA creation are
   permissionless with immutable destinations.
-- [ ] Add the canonical SPEL/Risc0 guest build and checked ELF/program-ID
-  evidence; the current host fixture and IDL printer are not deployable.
+- [x] Add the canonical SPEL/Risc0 guest build and checked ELF/program-ID
+  evidence. Exact Risc0 3.0.5 builds ELF SHA-256
+  `a324355c6417f6ac7265ab8ba880287d0976e8c27a672917d293bddd80be7006`
+  with ImageID
+  `c14c978abbaedeffb54c71aa6a96275d1fdb66fcf79f7343bf6bf7aee04f4483`.
 - [ ] Run standalone-sequencer actor tests and record compute units for every
   instruction against exact v0.1.2 using an in-process ephemeral-port/temp-state
   service. Record recursive Risc0 cycles/segments because v0.1.2 RPC/blocks do
-  not expose compute units.
+  not expose compute units. The deployment prerequisite is green: the harness
+  first proves mandatory-clock execution in an empty block, submits the guest
+  through public RPC, and observes its canonical inclusion in the next block;
+  initialise/fund/claim/refund actor calls and costs remain.
 - [ ] Port and rebuild SPEL, guest, generated client, and PDA derivations for LEZ
   v0.2.0 before live-testnet evidence. v0.1.2 `/NSSA/` and v0.2.0 `/LEE/` PDA
   domains are incompatible; upstream PR #238 remains provisional/unmerged.

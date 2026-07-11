@@ -25,8 +25,8 @@ flowchart LR
     Escrow --> TokenCustody["ATA(metadata, definition) via ATA -> token nested call"]
     NativeCustody --> LocalProof["GREEN composed upstream-program tests"]
     TokenCustody --> LocalProof
-    LocalProof -.-> Guest["Canonical Risc0 guest ELF + program ID"]
-    Guest -.-> LocalSeq["Ephemeral v0.1.2 standalone sequencer"]
+    LocalProof --> Guest["Checked Risc0 3.0.5 guest ELF + ImageID"]
+    Guest --> LocalSeq["RPC deployment in ephemeral v0.1.2 standalone block"]
     Port["Rebuild SPEL/guest/client for LEZ v0.2 PDA + ABI"] -.-> LezTest["LEZ testnet 0.2"]
     Native["Reviewed SPEL/LEZ v0.2 compatibility pin"] -.-> Port
     Drift["LEZ dev + current Zebra scheduled drift lanes"] -.-> Tests
@@ -60,6 +60,8 @@ immutable source or image identity.
 | SPEL | stable `v0.5.0`, commit `73fc462eb8f0a4d00f1a846437c627ec2e523f83` | Repository carries MIT and Apache-2.0 files but omits Cargo license fields; fixture policy hash-locks both texts for all three used crates; use its macros, IDL, and client generator instead of recreating them |
 | LEZ compatibility | tag `v0.1.2`, commit `cf3639d8252040d13b3d4e933feb19b42c76e14a` | This is the exact LEZ dependency locked by SPEL v0.5.0; SPEL records it as equivalent to the earlier v0.2.0-rc3 compatibility point |
 | LEZ semantic drift | `dev` evidence pin `cac4921581b37e85ae25e940f3a62412cd22308e`, plus scheduled current `dev` | Keeps M1 validity/signature assumptions checked without pretending the newer development tree is SPEL-compatible |
+| Risc0 guest/runtime | `cargo-risczero` and `r0vm` 3.0.5; builder `r0.1.88.0@sha256:3e12f71bacd27527a61dea96fa0e53e468c99aa261d3a1019b593f6dbd943eb3` | Exact tool/runtime identity; `RISC0_DEV_MODE=1` is not treated as an executor substitute; CI builds in the pinned tool-managed image and executes with the exact isolated `r0vm` |
+| Guest artifact | ELF SHA-256 `a324355c6417f6ac7265ab8ba880287d0976e8c27a672917d293bddd80be7006`; ImageID `c14c978abbaedeffb54c71aa6a96275d1fdb66fcf79f7343bf6bf7aee04f4483` | Artifact bytes are generated, not committed; the tracked manifest and runner fail on byte or program-identity drift |
 | BIP-199 script | `zcash_script = 0.4.3`, Apache-2.0 | Reuse its typed opcodes, push encodings, CLTV, branch, parser, and P2SH helpers; compose BIP-199's exact common `OP_EQUALVERIFY OP_CHECKSIG` tail |
 | Script bound type | transitive `bounded-vec = 0.9.0`, CC0-1.0 | Permissive public-domain dedication, scoped to this exact crate/version in `deny.toml`; CC0 is not added to the global license allowlist |
 | Script signature validation | `zcash_script`'s `signature-validation` feature with `secp256k1 = 0.29.1` and `secp256k1-sys = 0.10.1`, both CC0-1.0 | Use the maintained Rust Bitcoin/libsecp256k1 DER/pubkey/signature path; both licenses are exact-package exceptions; real signatures and sighashes remain canonical transaction-adapter work |
@@ -116,10 +118,16 @@ v0.1.2 derives public PDAs under `/NSSA/v0.2/AccountId/PDA/`, while v0.2.0
 validates `/LEE/v0.2/AccountId/PDA/`. The guest, generated client, account
 derivations, and actor tests must be rebuilt together.
 
-The planned local actor-real lane uses the exact v0.1.2 `sequencer_service`
+The local compatibility lane now uses the exact v0.1.2 `sequencer_service`
 standalone path in-process with port `0`, temporary state, and deterministic
-genesis keys. The repository still needs a canonical Risc0 guest ELF build: the current
-fixture is a host library/IDL printer and cannot yet be deployed as a program.
+genesis keys. Exact Risc0 3.0.5 builds a canonical guest whose ELF SHA-256 and
+ImageID are checked before every run. The harness first waits for an empty
+mandatory-clock block, then submits `ProgramDeployment` through public RPC and
+proves the exact transaction is stored in the following canonical block. The
+initial RED established that `RISC0_DEV_MODE=1` does not supply an executor:
+without exact `r0vm` the deployment is admitted to the mempool but clock
+execution aborts block creation at genesis. This is deployment evidence, not
+yet initialise/fund/claim/refund actor evidence.
 Instruction cost evidence records deterministic Risc0 user cycles/segments and
 recursively includes chained calls because v0.1.2 does not expose compute units
 through RPC or blocks. The
@@ -127,8 +135,12 @@ accepted LEZ pin forces `rsa 0.9.10` and `tracing-subscriber 0.2.25`; no safe
 compatible pin exists today. The fixture-local policy is permitted only because
 CI proves rzup `publish`/`install` and tracing `fmt`/`ansi` features are absent,
 so the advisory capabilities are not compiled. Stale ignores are errors. The
-root workspace has no such advisory exceptions, and the deployed guest graph
-must be re-audited before testnet evidence or an M2 tag.
+root workspace has no such advisory exceptions. The deployable guest audit also
+found `RUSTSEC-2025-0137` in directly pinned `ruint 1.17.0`; it was upgraded to
+fixed `1.17.1` rather than ignored, and the rebuilt ELF/ImageID were re-recorded.
+Guest, methods-wrapper, and standalone lock graphs now have explicit CI
+advisory/license/ban/source checks and must be re-audited before testnet evidence
+or an M2 tag.
 
 The deterministic Zebra lane mines NU6.2 Regtest coinbases to a key held by the
 funding actor, fetches actual outputs through RPC, and submits locally signed

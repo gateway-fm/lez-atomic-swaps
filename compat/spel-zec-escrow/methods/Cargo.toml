@@ -1,0 +1,17 @@
+[workspace]
+
+[package]
+name = "lez-zec-escrow-methods"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[build-dependencies]
+risc0-build = "=3.0.5"
+
+[dependencies]
+risc0-zkvm = { version = "=3.0.5", features = ["std"] }
+
+[package.metadata.risc0]
+methods = ["guest"]

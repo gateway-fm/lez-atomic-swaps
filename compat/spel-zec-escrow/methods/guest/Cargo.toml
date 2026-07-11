@@ -1,0 +1,23 @@
+[workspace]
+
+[package]
+name = "lez-zec-escrow-guest"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "zec_escrow"
+path = "src/bin/zec_escrow.rs"
+
+[dependencies]
+ata_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2" }
+borsh = { version = "1.5", features = ["derive"] }
+nssa_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2" }
+risc0-zkvm = { version = "=3.0.5", features = ["std"] }
+ruint = "=1.17.1"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+spel-framework = { version = "=0.5.0", git = "https://github.com/logos-co/spel.git", rev = "73fc462eb8f0a4d00f1a846437c627ec2e523f83" }
+token_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2" }

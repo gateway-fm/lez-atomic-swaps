@@ -55,6 +55,27 @@ jobs:
           command: check
           arguments: --all-features
           command-arguments: --config compat/spel-zec-escrow/deny.toml advisories bans licenses sources
+      - name: Audit deployable Risc0 guest graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/spel-zec-escrow/methods/guest/Cargo.toml
+          command: check
+          command-arguments: --config compat/spel-zec-escrow/deny.toml advisories bans licenses sources
+      - name: Audit Risc0 methods wrapper graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/spel-zec-escrow/methods/Cargo.toml
+          command: check
+          command-arguments: --config compat/spel-zec-escrow/deny.toml advisories bans licenses sources
+      - name: Audit standalone sequencer E2E graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-standalone-e2e/Cargo.toml
+          command: check
+          command-arguments: --config compat/lez-standalone-e2e/deny.toml advisories bans licenses sources
 
   spel-compatibility:
     name: pinned SPEL and LEZ compatibility
@@ -68,6 +89,22 @@ jobs:
         with:
           toolchain: 1.96.0
       - run: ./scripts/verify-spel-compatibility.sh
+
+  lez-standalone:
+    name: deployable guest on isolated LEZ standalone
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUN_ID: github-${{ github.run_id }}-${{ github.run_attempt }}
+      LEZ_E2E_TOOL_DIR: ${{ runner.temp }}/lez-risc0-3.0.5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+          components: clippy, rustfmt
+      - run: ./scripts/run-lez-standalone-e2e.sh
 
   zebra-regtest:
     name: isolated Zebra actor consensus E2E
