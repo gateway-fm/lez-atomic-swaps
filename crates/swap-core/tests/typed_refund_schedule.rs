@@ -65,10 +65,10 @@ fn schedule_rejects_wrong_role_chain_and_insufficient_cross_chain_margin() {
 #[test]
 fn block_height_and_timestamp_are_never_compared_as_raw_numbers() {
     let schedule = RefundSchedule::new(
-        Pair::Monero,
+        Pair::Bitcoin,
         SwapDirection::TakerSellsForeign,
         ChainPosition::timestamp(Chain::Lez, 1_800_000_000),
-        ChainPosition::block_height(Chain::Monero, 3_500_000),
+        ChainPosition::block_height(Chain::Bitcoin, 850_000),
         TimelockSafety::new(1_800_000_000, 1_800_003_600, 1_800).unwrap(),
     )
     .unwrap();
@@ -80,6 +80,23 @@ fn block_height_and_timestamp_are_never_compared_as_raw_numbers() {
             expected_basis: ClockBasis::Timestamp,
             actual_chain: Chain::Lez,
             actual_basis: ClockBasis::BlockHeight,
+        })
+    );
+}
+
+#[test]
+fn monero_first_is_rejected_until_a_reviewed_construction_exists() {
+    assert_eq!(
+        RefundSchedule::new(
+            Pair::Monero,
+            SwapDirection::TakerSellsForeign,
+            ChainPosition::block_height(Chain::Lez, 500),
+            ChainPosition::block_height(Chain::Monero, 700),
+            TimelockSafety::new(1_000, 1_400, 300).unwrap(),
+        ),
+        Err(Error::UnsupportedDirection {
+            pair: Pair::Monero,
+            direction: SwapDirection::TakerSellsForeign,
         })
     );
 }

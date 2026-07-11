@@ -89,6 +89,7 @@ with dependency license/advisory checks in CI.
 | Taker-lock reorg/replacement | 2026-07-11 missing durable reorg phase/removal event; property oracle assumed confirmations only rise | Pre-maker regression/removal revokes permission and permits explicit replacement; post-maker removal pins the committed ID, suspends claims, and preserves refunds; generated model covers events | Add pair-specific reorg depth policies and real-node replacement cases |
 | Typed refund clocks | 2026-07-11 tests could not resolve chain/basis/safety schedule types | Coordinator, persistence, RPC, and CLI use typed block-height/timestamp positions; wrong domains and insufficient conservative margins are rejected | Calibrate and review named per-network confirmation/margin parameters |
 | Architecture diagrams | 2026-07-11 completeness guard failed on the first ADR without Mermaid | All ADRs and M1 design artifacts contain current component/flow diagrams; CI and contribution policy enforce coverage | Render-validation can be added when a lightweight pinned renderer is approved |
+| XMR funding-direction capability | 2026-07-11 source review found COMIT ships scriptable-chain-first only; test lacked `UnsupportedDirection` | Core schedule and actual CLI/daemon reject XMR-first; LEZ-first XMR remains supported and documented in the per-leg flow | Validate exact DLEQ/key-share recovery transcript against vectors and third-party review in M4 |
 
 ## Milestone 1 plan: three weeks
 
@@ -112,7 +113,8 @@ with dependency license/advisory checks in CI.
 
 ### Week 2 — protocol and threat design
 
-- [ ] Publish per-leg message/state diagrams and atomicity arguments.
+- [x] Publish per-leg message/state diagrams and atomicity arguments, including
+  the COMIT-derived LEZ-first-only XMR capability.
 - [ ] Specify the LEZ escrow account model, native/custom token flows, claim and
   refund instructions, and SPEL IDL.
 - [ ] Complete threat model: adaptor extraction, signature byte stability,
@@ -182,4 +184,5 @@ CI and local scripts fail if the project name is empty or does not start with
 | Final E2E must represent actual users | Operator process harness exists; taker and chain lifecycles still call protocol core directly | Extend the role harness through taker CLI and real chain adapters before labeling tests as full E2E |
 | Prototype local RPC still uses loopback HTTP and an environment capability | Tower rejects a Bearer header before JSON parsing and non-loopback binds are refused | Move to an owner-restricted Unix socket and credential file before M5 freeze |
 | Daemon prototype serializes SQLite with a mutex on blocking workers | Safe for the two-method operator slice, not chain watcher concurrency | Introduce the ADR-0003 single writer actor and atomic outbox before mutations expand |
-| Trade direction was unstated in both contractual sources | No one-way limitation exists; ordinary “between” swaps imply either asset can be sold | ADR 0008 supports both directions and makes direction immutable negotiated state |
+| Trade direction was unstated in both contractual sources | Product direction alone does not prove a safe pair construction | ADR 0008 makes direction immutable and gates each pair to reviewed capabilities; BTC/ZEC allow both, XMR is LEZ-first only |
+| Primary COMIT implementation does not support XMR-first | Pinned commit `dc6ba84…` explicitly ships scriptable-chain-first only | Reject `TakerSellsForeign` for XMR in core and actual CLI; require a new reviewed construction to supersede ADR 0008 |

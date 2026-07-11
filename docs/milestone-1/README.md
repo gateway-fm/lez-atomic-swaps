@@ -6,6 +6,7 @@ Status: in progress. The authoritative checklist and dates live in
 This directory holds the reviewable design artefacts:
 
 - [threat model](threat-model.md);
+- [per-leg protocol and atomicity design](protocol-design.md);
 - [SDK trait surface](sdk-trait-surface.md);
 - [LEZ escrow and SPEL IDL sketch](lez-escrow-design.md); and
 - [LEZ primitive verification](lez-primitive-verification.md).

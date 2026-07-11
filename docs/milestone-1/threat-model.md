@@ -84,6 +84,8 @@ and a supply-chain attacker.
   canonical wallet/node observations before transitions.
 - Counterparty disappears after witness exposure: recovery instructions must be
   derivable from persisted state without Chat.
+- Unsupported XMR-first funding: the pinned COMIT construction requires the
+  scriptable leg first, so core term validation and CLI/daemon reject XMR-first.
 
 ## Zcash-specific threats
 

@@ -26,7 +26,8 @@ flowchart TB
 - Public types are serializable and versioned; secrets are redacted from `Debug`
   and never serialized into logs.
 - `SwapDirection` is immutable negotiated data; pair adapters map the taker and
-  maker roles to LEZ/foreign legs without changing taker-first ordering.
+  maker roles to LEZ/foreign legs without changing taker-first ordering and
+  reject directions without a reviewed construction (currently XMR-first).
 
 ## Common lifecycle sketch
 

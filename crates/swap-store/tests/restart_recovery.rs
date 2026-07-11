@@ -6,15 +6,26 @@ use lez_swap_store::SqliteSwapStore;
 use tempfile::tempdir;
 
 fn swap(id: &str, pair: Pair) -> SwapCoordinator {
-    SwapCoordinator::new(
+    let direction = if pair == Pair::Monero {
+        SwapDirection::TakerSellsLez
+    } else {
+        SwapDirection::TakerSellsForeign
+    };
+    let foreign = Chain::from(pair);
+    let role_chains = match direction {
+        SwapDirection::TakerSellsForeign => [Chain::Lez, foreign],
+        SwapDirection::TakerSellsLez => [foreign, Chain::Lez],
+    };
+    SwapCoordinator::new_with_direction(
         SwapId::new(id).unwrap(),
         pair,
+        direction,
         ConfirmationPolicy::new(2).unwrap(),
         RefundSchedule::new(
             pair,
-            SwapDirection::TakerSellsForeign,
-            ChainPosition::block_height(Chain::Lez, 100),
-            ChainPosition::block_height(Chain::from(pair), 120),
+            direction,
+            ChainPosition::block_height(role_chains[0], 100),
+            ChainPosition::block_height(role_chains[1], 120),
             TimelockSafety::new(1_000, 1_200, 100).unwrap(),
         )
         .unwrap(),

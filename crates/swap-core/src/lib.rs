@@ -168,6 +168,9 @@ impl RefundSchedule {
         taker_refund: ChainPosition,
         safety: TimelockSafety,
     ) -> Result<Self, Error> {
+        if pair == Pair::Monero && direction == SwapDirection::TakerSellsForeign {
+            return Err(Error::UnsupportedDirection { pair, direction });
+        }
         let foreign = Chain::from(pair);
         let expected_chains = match direction {
             SwapDirection::TakerSellsForeign => [Chain::Lez, foreign],
@@ -278,6 +281,12 @@ pub enum Error {
         expected_basis: ClockBasis,
         actual_chain: Chain,
         actual_basis: ClockBasis,
+    },
+    /// The selected pair has no reviewed construction for this funding direction.
+    #[error("{pair:?} does not support direction {direction:?}")]
+    UnsupportedDirection {
+        pair: Pair,
+        direction: SwapDirection,
     },
     /// The maker attempted to lock before the taker's lock reached confirmation policy.
     #[error("taker lock is not confirmed")]

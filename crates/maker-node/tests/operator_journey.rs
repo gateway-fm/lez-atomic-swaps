@@ -28,60 +28,33 @@ fn maker_cli_controls_authenticated_daemon_and_survives_restart() {
     let database = run.path().join("maker.sqlite3");
 
     let (first_daemon, first_endpoint) = start_daemon(run.path(), &database, "first.ready");
-    let created = maker_cli(
-        &first_endpoint,
-        TOKEN,
-        &[
-            "create-swap",
-            "--id",
-            "operator-swap-1",
-            "--pair",
-            "bitcoin",
-            "--confirmations",
-            "2",
-            "--maker-refund-at",
-            "100",
-            "--taker-refund-at",
-            "120",
-            "--maker-refund-latest",
-            "1000",
-            "--taker-refund-earliest",
-            "1200",
-            "--required-margin",
-            "100",
-        ],
-    );
+    let created = create_swap(&first_endpoint, "operator-swap-1", "bitcoin", None);
     assert_success(&created);
     assert_swap_view(&created.stdout, "operator-swap-1", "Bitcoin", "Offered");
 
-    let reverse = maker_cli(
+    let reverse = create_swap(
         &first_endpoint,
-        TOKEN,
-        &[
-            "create-swap",
-            "--id",
-            "operator-swap-reverse",
-            "--pair",
-            "zcash",
-            "--direction",
-            "taker-sells-lez",
-            "--confirmations",
-            "2",
-            "--maker-refund-at",
-            "100",
-            "--taker-refund-at",
-            "120",
-            "--maker-refund-latest",
-            "1000",
-            "--taker-refund-earliest",
-            "1200",
-            "--required-margin",
-            "100",
-        ],
+        "operator-swap-reverse",
+        "zcash",
+        Some("taker-sells-lez"),
     );
     assert_success(&reverse);
     let reverse_view: Value = serde_json::from_slice(&reverse.stdout).expect("CLI emits JSON");
     assert_eq!(reverse_view["direction"], "TakerSellsLez");
+
+    let unsupported_xmr_first = create_swap(
+        &first_endpoint,
+        "unsafe-xmr-first",
+        "monero",
+        Some("taker-sells-foreign"),
+    );
+    assert!(!unsupported_xmr_first.status.success());
+    assert!(
+        String::from_utf8_lossy(&unsupported_xmr_first.stderr)
+            .contains("does not support direction"),
+        "unexpected XMR direction error: {}",
+        String::from_utf8_lossy(&unsupported_xmr_first.stderr)
+    );
 
     let denied = maker_cli(
         &first_endpoint,
@@ -118,6 +91,32 @@ fn maker_cli_controls_authenticated_daemon_and_survives_restart() {
     let reverse_view: Value =
         serde_json::from_slice(&reverse_recovered.stdout).expect("CLI emits JSON");
     assert_eq!(reverse_view["direction"], "TakerSellsLez");
+}
+
+fn create_swap(endpoint: &str, id: &str, pair: &str, direction: Option<&str>) -> Output {
+    let mut arguments = vec![
+        "create-swap",
+        "--id",
+        id,
+        "--pair",
+        pair,
+        "--confirmations",
+        "2",
+        "--maker-refund-at",
+        "100",
+        "--taker-refund-at",
+        "120",
+        "--maker-refund-latest",
+        "1000",
+        "--taker-refund-earliest",
+        "1200",
+        "--required-margin",
+        "100",
+    ];
+    if let Some(direction) = direction {
+        arguments.extend(["--direction", direction]);
+    }
+    maker_cli(endpoint, TOKEN, &arguments)
 }
 
 fn start_daemon(run: &Path, database: &Path, ready_name: &str) -> (Daemon, String) {

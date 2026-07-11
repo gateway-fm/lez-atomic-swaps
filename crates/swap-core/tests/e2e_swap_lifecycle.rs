@@ -4,12 +4,22 @@ use lez_swap_core::{
 };
 
 fn coordinator(pair: Pair) -> SwapCoordinator {
-    SwapCoordinator::new(
+    let direction = supported_direction(pair);
+    SwapCoordinator::new_with_direction(
         SwapId::new("swap-001").expect("valid swap id"),
         pair,
+        direction,
         ConfirmationPolicy::new(2).expect("non-zero confirmation policy"),
-        schedule(pair, SwapDirection::TakerSellsForeign),
+        schedule(pair, direction),
     )
+}
+
+fn supported_direction(pair: Pair) -> SwapDirection {
+    if pair == Pair::Monero {
+        SwapDirection::TakerSellsLez
+    } else {
+        SwapDirection::TakerSellsForeign
+    }
 }
 
 fn schedule(pair: Pair, direction: SwapDirection) -> RefundSchedule {
