@@ -84,7 +84,7 @@ with dependency license/advisory checks in CI.
 | Maker abandonment/refund observation order | 2026-07-11 missing `TakerLegRefunded` and no direct taker recovery | 2026-07-11 taker-only refund and foreign-first observation pass | Add model tests over all legal event orderings and chain reorgs |
 | At-least-once chain observation replay | 2026-07-11 repeated confirmed lock failed with `InvalidPhase` | 2026-07-11 identical lock/claim events are idempotent; conflicting IDs/evidence are rejected | Extend to persisted outbox/event sequence numbers and refund transaction proofs |
 | Generated transition sequences | 2026-07-11 property oracle exposed confirmation-growth case and was corrected | 512 arbitrary event sequences preserve legal transitions and absorbing terminal states | Add a reference model for reorg/replacement and typed per-chain deadlines |
-| Maker operator process boundary | 2026-07-11 acceptance test could not resolve daemon/CLI executables | Actual CLI authenticates to actual daemon, creates a swap, daemon is killed/restarted on a new ephemeral port, persisted status remains visible | Move capability to transport metadata and Unix socket; add durable request IDs/audit outbox and price configuration |
+| Maker operator process boundary | 2026-07-11 acceptance test could not resolve daemon/CLI executables | Actual CLI authenticates through HTTP metadata to actual daemon, creates a swap, daemon is killed/restarted on a new ephemeral port, persisted status remains visible | Move to owner-restricted Unix socket/credential file; add durable request IDs/audit outbox and price configuration |
 
 ## Milestone 1 plan: three weeks
 
@@ -174,5 +174,5 @@ CI and local scripts fail if the project name is empty or does not start with
 | Upstream LEZ validity tests require RISC Zero Rust | Source guards and BIP-340 vectors pass; guest tests fail without `rzup install rust` | Provide an isolated pinned toolchain lane and keep full reproducer gate open |
 | Timelocks currently share a normalized `u64` in the skeleton | Not sufficient for mixed height/timestamp chains | Introduce typed pair-specific deadlines before M2 implementation |
 | Final E2E must represent actual users | Current tests call protocol core directly | Build CLI/daemon role harness before labeling tests as full E2E |
-| Prototype local RPC sends its capability in the JSON body | Black-box suite proves auth; request types redact debug output, but body-level credentials are easier to log | Move authentication to transport metadata over an owner-restricted Unix socket before M5 freeze |
+| Prototype local RPC still uses loopback HTTP and an environment capability | Tower rejects a Bearer header before JSON parsing and non-loopback binds are refused | Move to an owner-restricted Unix socket and credential file before M5 freeze |
 | Daemon prototype serializes SQLite with a mutex on blocking workers | Safe for the two-method operator slice, not chain watcher concurrency | Introduce the ADR-0003 single writer actor and atomic outbox before mutations expand |

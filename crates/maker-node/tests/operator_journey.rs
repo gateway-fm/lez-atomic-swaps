@@ -58,7 +58,7 @@ fn maker_cli_controls_authenticated_daemon_and_survives_restart() {
         "unauthorized CLI unexpectedly succeeded"
     );
     assert!(
-        String::from_utf8_lossy(&denied.stderr).contains("unauthorized"),
+        String::from_utf8_lossy(&denied.stderr).contains("401"),
         "unexpected denial: {}",
         String::from_utf8_lossy(&denied.stderr)
     );

@@ -1,10 +1,10 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use jsonrpsee::{core::client::ClientT, rpc_params};
-use jsonrpsee_http_client::HttpClientBuilder;
+use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClientBuilder};
 use lez_maker_node::{CreateSwapRequest, StatusRequest, SwapView};
 use lez_swap_core::Pair;
 
-#[derive(Debug, Parser)]
+#[derive(Parser)]
 #[command(about = "Operator CLI for the LEZ atomic-swap maker daemon")]
 struct Arguments {
     #[arg(long, default_value = "http://127.0.0.1:9944")]
@@ -55,7 +55,13 @@ impl From<PairArgument> for Pair {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
-    let client = HttpClientBuilder::default().build(&arguments.rpc_url)?;
+    let mut headers = HeaderMap::new();
+    let mut authorization = HeaderValue::from_str(&format!("Bearer {}", arguments.rpc_token))?;
+    authorization.set_sensitive(true);
+    headers.insert("authorization", authorization);
+    let client = HttpClientBuilder::default()
+        .set_headers(headers)
+        .build(&arguments.rpc_url)?;
     let view: SwapView = match arguments.command {
         Command::CreateSwap {
             id,
@@ -65,7 +71,6 @@ async fn main() -> anyhow::Result<()> {
             foreign_refund_at,
         } => {
             let request = CreateSwapRequest {
-                capability: arguments.rpc_token.into(),
                 id: id.into(),
                 pair: pair.into(),
                 confirmations,
@@ -75,10 +80,7 @@ async fn main() -> anyhow::Result<()> {
             client.request("swap_create", rpc_params![request]).await?
         }
         Command::Status { id } => {
-            let request = StatusRequest {
-                capability: arguments.rpc_token.into(),
-                id: id.into(),
-            };
+            let request = StatusRequest { id: id.into() };
             client.request("swap_status", rpc_params![request]).await?
         }
     };

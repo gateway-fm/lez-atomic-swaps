@@ -19,10 +19,13 @@ database writers.
 
 The current executable slice uses HTTP on an ephemeral or configured loopback
 address and refuses non-loopback binds. Every request carries an owner capability
-of at least 24 bytes, supplied to both processes through the environment rather
-than command-line arguments; comparisons use `subtle`'s constant-time primitive.
-RPC request and context `Debug` implementations redact the capability. This is an
-integration adapter, not the production transport approval.
+of at least 24 bytes in the HTTP `Authorization: Bearer` header, supplied to both
+processes through the environment rather than command-line arguments. Tower HTTP
+rejects invalid credentials before JSON-RPC parsing, so parameters, errors, and
+request `Debug` output never contain the capability. The client marks the header
+value sensitive and argument structures containing the token do not implement
+`Debug`. This deliberately small scheme is an integration adapter, not the
+production transport approval.
 
 Before M5 production freeze:
 
@@ -30,8 +33,8 @@ Before M5 production freeze:
   the socket is mode 0600 and owned by the maker account. Other platforms need an
   equivalent owner-restricted local transport.
 - Generate a random 256-bit capability into an owner-readable credential file.
-  Authenticate in transport metadata, not JSON parameters, and redact it from
-  traces, errors, audit records, crash reports, and process arguments.
+  Keep authentication in transport metadata and redact it from traces, errors,
+  audit records, crash reports, and process arguments.
 - Version the RPC surface and classify methods as read-only, idempotent mutation,
   or fund-moving mutation. Mutations receive request IDs and durable audit/outbox
   records so retries cannot duplicate effects.
