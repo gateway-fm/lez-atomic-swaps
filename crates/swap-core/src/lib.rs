@@ -58,6 +58,15 @@ pub enum Error {
     /// A different transaction was presented while confirmations were being accumulated.
     #[error("conflicting taker lock transaction")]
     ConflictingTakerLock,
+    /// A different LEZ lock was presented for the same swap.
+    #[error("conflicting maker LEZ lock transaction")]
+    ConflictingMakerLock,
+    /// Different claim evidence was presented for the same swap.
+    #[error("conflicting claim evidence")]
+    ConflictingClaimEvidence,
+    /// A different LEZ claim was presented for the same swap.
+    #[error("conflicting taker LEZ claim transaction")]
+    ConflictingTakerClaim,
     /// The requested transition is not valid in the current phase.
     #[error("expected phase {expected:?}, found {actual:?}")]
     InvalidPhase { expected: Phase, actual: Phase },
@@ -220,8 +229,14 @@ pub struct SwapCoordinator {
     confirmation_policy: ConfirmationPolicy,
     timelocks: Timelocks,
     phase: Phase,
+    #[serde(default)]
     taker_lock_transaction_id: Option<Box<str>>,
+    #[serde(default)]
+    maker_lez_lock_transaction_id: Option<Box<str>>,
+    #[serde(default)]
     claim_evidence: Option<ClaimEvidence>,
+    #[serde(default)]
+    taker_lez_claim_transaction_id: Option<Box<str>>,
 }
 
 impl SwapCoordinator {
@@ -240,7 +255,9 @@ impl SwapCoordinator {
             timelocks,
             phase: Phase::Offered,
             taker_lock_transaction_id: None,
+            maker_lez_lock_transaction_id: None,
             claim_evidence: None,
+            taker_lez_claim_transaction_id: None,
         }
     }
 
@@ -279,10 +296,11 @@ impl SwapCoordinator {
             self.phase,
             Phase::Offered | Phase::AwaitingTakerConfirmations
         ) {
-            return Err(Error::InvalidPhase {
-                expected: Phase::AwaitingTakerConfirmations,
-                actual: self.phase,
-            });
+            return if self.taker_lock_transaction_id.as_deref() == Some(proof.transaction_id()) {
+                Ok(())
+            } else {
+                Err(Error::ConflictingTakerLock)
+            };
         }
         if self
             .taker_lock_transaction_id
@@ -305,10 +323,15 @@ impl SwapCoordinator {
     /// # Errors
     ///
     /// Returns [`Error::TakerLockNotConfirmed`] until confirmation policy is satisfied.
-    pub fn observe_maker_lez_lock(&mut self, _proof: ChainProof) -> Result<(), Error> {
+    pub fn observe_maker_lez_lock(&mut self, proof: ChainProof) -> Result<(), Error> {
         if self.phase != Phase::TakerLockConfirmed {
-            return Err(Error::TakerLockNotConfirmed);
+            return match self.maker_lez_lock_transaction_id.as_deref() {
+                Some(known) if known == proof.transaction_id() => Ok(()),
+                Some(_) => Err(Error::ConflictingMakerLock),
+                None => Err(Error::TakerLockNotConfirmed),
+            };
         }
+        self.maker_lez_lock_transaction_id = Some(proof.transaction_id);
         self.phase = Phase::BothLegsLocked;
         Ok(())
     }
@@ -319,7 +342,16 @@ impl SwapCoordinator {
     ///
     /// Returns [`Error::InvalidPhase`] unless both legs are locked.
     pub fn observe_maker_claim(&mut self, evidence: ClaimEvidence) -> Result<(), Error> {
-        self.require_phase(Phase::BothLegsLocked)?;
+        if self.phase != Phase::BothLegsLocked {
+            return match self.claim_evidence.as_ref() {
+                Some(known) if known == &evidence => Ok(()),
+                Some(_) => Err(Error::ConflictingClaimEvidence),
+                None => Err(Error::InvalidPhase {
+                    expected: Phase::BothLegsLocked,
+                    actual: self.phase,
+                }),
+            };
+        }
         self.claim_evidence = Some(evidence);
         self.phase = Phase::ClaimEvidenceAvailable;
         Ok(())
@@ -330,8 +362,18 @@ impl SwapCoordinator {
     /// # Errors
     ///
     /// Returns [`Error::InvalidPhase`] until maker claim evidence is available.
-    pub fn observe_taker_lez_claim(&mut self, _proof: ChainProof) -> Result<(), Error> {
-        self.require_phase(Phase::ClaimEvidenceAvailable)?;
+    pub fn observe_taker_lez_claim(&mut self, proof: ChainProof) -> Result<(), Error> {
+        if self.phase != Phase::ClaimEvidenceAvailable {
+            return match self.taker_lez_claim_transaction_id.as_deref() {
+                Some(known) if known == proof.transaction_id() => Ok(()),
+                Some(_) => Err(Error::ConflictingTakerClaim),
+                None => Err(Error::InvalidPhase {
+                    expected: Phase::ClaimEvidenceAvailable,
+                    actual: self.phase,
+                }),
+            };
+        }
+        self.taker_lez_claim_transaction_id = Some(proof.transaction_id);
         self.phase = Phase::Completed;
         Ok(())
     }
@@ -390,16 +432,6 @@ impl SwapCoordinator {
         } else {
             Phase::TakerLegRefunded
         };
-        Ok(())
-    }
-
-    fn require_phase(&self, expected: Phase) -> Result<(), Error> {
-        if self.phase != expected {
-            return Err(Error::InvalidPhase {
-                expected,
-                actual: self.phase,
-            });
-        }
         Ok(())
     }
 }

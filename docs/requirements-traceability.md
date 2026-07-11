@@ -17,7 +17,7 @@ before Milestone 1 exit.
 | R1 taker-first | `e2e_swap_lifecycle::happy_path…` | Passing core acceptance |
 | R2 on-chain-only after lock | Core completion/refund, including absent maker; UJ-006 transport-stop remains | Partial |
 | R3 graceful degradation | UJ-005 dependency matrix | Planned M5 |
-| R4 persistence | Close/reopen after locks and witness reveal passes; encryption/process-kill matrix remains | Partial |
+| R4 persistence | Restart plus idempotent lock/claim replay passes; encryption/process-kill matrix remains | Partial |
 | R5 concurrency isolation | Two persisted swaps remain independent; full UJ-004 remains | Partial |
 | R6 timelock rationale | Pair parameter ADRs and boundary tests | In progress |
 | R7 Delivery/Chat outage | UJ-006 | Planned M5 |

@@ -110,6 +110,50 @@ fn delayed_observation_of_lez_refund_does_not_block_foreign_refund() {
 }
 
 #[test]
+fn replayed_chain_observations_are_idempotent() {
+    let mut swap = coordinator(Pair::Monero);
+    let foreign_lock = ChainProof::new("xmr-lock", 2).unwrap();
+    let lez_lock = ChainProof::new("lez-lock", 1).unwrap();
+    let claim_evidence = ClaimEvidence::new([11; 32]);
+    let lez_claim = ChainProof::new("lez-claim", 1).unwrap();
+
+    swap.observe_taker_foreign_lock(foreign_lock.clone())
+        .unwrap();
+    swap.observe_taker_foreign_lock(foreign_lock)
+        .expect("replayed foreign lock is harmless");
+
+    swap.observe_maker_lez_lock(lez_lock.clone()).unwrap();
+    swap.observe_maker_lez_lock(lez_lock)
+        .expect("replayed LEZ lock is harmless");
+
+    swap.observe_maker_claim(claim_evidence.clone()).unwrap();
+    swap.observe_maker_claim(claim_evidence)
+        .expect("replayed claim evidence is harmless");
+
+    swap.observe_taker_lez_claim(lez_claim.clone()).unwrap();
+    swap.observe_taker_lez_claim(lez_claim)
+        .expect("replayed LEZ claim is harmless");
+    assert_eq!(swap.phase(), Phase::Completed);
+
+    assert_eq!(
+        swap.observe_taker_foreign_lock(ChainProof::new("other-xmr-lock", 2).unwrap()),
+        Err(Error::ConflictingTakerLock)
+    );
+    assert_eq!(
+        swap.observe_maker_lez_lock(ChainProof::new("other-lez-lock", 1).unwrap()),
+        Err(Error::ConflictingMakerLock)
+    );
+    assert_eq!(
+        swap.observe_maker_claim(ClaimEvidence::new([12; 32])),
+        Err(Error::ConflictingClaimEvidence)
+    );
+    assert_eq!(
+        swap.observe_taker_lez_claim(ChainProof::new("other-lez-claim", 1).unwrap()),
+        Err(Error::ConflictingTakerClaim)
+    );
+}
+
+#[test]
 fn timelocks_reject_unsafe_ordering() {
     assert_eq!(
         Timelocks::new(100, 100),

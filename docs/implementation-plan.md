@@ -82,6 +82,7 @@ with dependency license/advisory checks in CI.
 | On-chain-only completion | Core API accepts only `ChainProof`/`ClaimEvidence` after lock | Happy path reaches `Completed` without a peer/transport handle | Prove through CLI/daemon black-box test with Delivery/Chat stopped |
 | Restart recovery and user isolation | 2026-07-11 unresolved `SqliteSwapStore` and later missing `claim_evidence` | 2026-07-11 close/reopen after locks and witness reveal, plus two independent swaps, 2 passed | Encrypt secrets at rest; add process-kill/WAL matrix, migrations, and atomic outbox |
 | Maker abandonment/refund observation order | 2026-07-11 missing `TakerLegRefunded` and no direct taker recovery | 2026-07-11 taker-only refund and foreign-first observation pass | Add model tests over all legal event orderings and chain reorgs |
+| At-least-once chain observation replay | 2026-07-11 repeated confirmed lock failed with `InvalidPhase` | 2026-07-11 identical lock/claim events are idempotent; conflicting IDs/evidence are rejected | Extend to persisted outbox/event sequence numbers and refund transaction proofs |
 
 ## Milestone 1 plan: three weeks
 
@@ -97,6 +98,8 @@ with dependency license/advisory checks in CI.
 - [x] Complete first protocol RED-GREEN cycle for taker-first and refund ordering.
 - [x] Complete second RED-GREEN cycle for basic SQLite restart recovery and
   concurrent swap isolation.
+- [x] Make lock and claim observations idempotent under at-least-once delivery
+  while rejecting conflicting chain evidence.
 - [ ] Add pinned upstream LEZ reproducer tests, including mempool-vs-block timing
   and signature-byte preservation.
 - [ ] Complete the hard-requirement traceability matrix.
