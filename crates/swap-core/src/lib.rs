@@ -27,6 +27,204 @@ pub enum SwapDirection {
     TakerSellsLez,
 }
 
+/// Chain whose consensus clock governs an observation or deadline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Chain {
+    /// Logos Execution Zone.
+    Lez,
+    /// Bitcoin.
+    Bitcoin,
+    /// Monero.
+    Monero,
+    /// Zcash.
+    Zcash,
+}
+
+impl From<Pair> for Chain {
+    fn from(pair: Pair) -> Self {
+        match pair {
+            Pair::Bitcoin => Self::Bitcoin,
+            Pair::Monero => Self::Monero,
+            Pair::Zcash => Self::Zcash,
+        }
+    }
+}
+
+/// Consensus clock domain. Values from different domains are never numerically compared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClockBasis {
+    /// Canonical block height.
+    BlockHeight,
+    /// Consensus-visible Unix timestamp in seconds.
+    Timestamp,
+}
+
+/// Typed position in one chain's consensus clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChainPosition {
+    chain: Chain,
+    basis: ClockBasis,
+    value: u64,
+}
+
+impl ChainPosition {
+    /// Creates a block-height position.
+    #[must_use]
+    pub const fn block_height(chain: Chain, height: u64) -> Self {
+        Self {
+            chain,
+            basis: ClockBasis::BlockHeight,
+            value: height,
+        }
+    }
+
+    /// Creates a consensus timestamp position.
+    #[must_use]
+    pub const fn timestamp(chain: Chain, unix_seconds: u64) -> Self {
+        Self {
+            chain,
+            basis: ClockBasis::Timestamp,
+            value: unix_seconds,
+        }
+    }
+
+    /// Position chain.
+    #[must_use]
+    pub const fn chain(self) -> Chain {
+        self.chain
+    }
+
+    /// Position clock basis.
+    #[must_use]
+    pub const fn basis(self) -> ClockBasis {
+        self.basis
+    }
+
+    /// Height or timestamp value within its typed domain.
+    #[must_use]
+    pub const fn value(self) -> u64 {
+        self.value
+    }
+}
+
+/// Conservative wall-clock bounds used only to validate cross-chain safety margin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimelockSafety {
+    maker_refund_latest: u64,
+    taker_refund_earliest: u64,
+    required_margin: u64,
+}
+
+impl TimelockSafety {
+    /// Creates bounds proving that the taker deadline cannot precede the maker's recovery window.
+    ///
+    /// `maker_refund_latest` includes worst-case maker-chain inclusion/reorg delay;
+    /// `taker_refund_earliest` uses the fastest plausible taker-chain clock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InsufficientTimelockMargin`] when the conservative interval is too small
+    /// or arithmetic would overflow.
+    pub const fn new(
+        maker_refund_latest_unix_seconds: u64,
+        taker_refund_earliest_unix_seconds: u64,
+        required_margin_seconds: u64,
+    ) -> Result<Self, Error> {
+        let Some(required_taker_time) =
+            maker_refund_latest_unix_seconds.checked_add(required_margin_seconds)
+        else {
+            return Err(Error::InsufficientTimelockMargin);
+        };
+        if required_margin_seconds == 0 || taker_refund_earliest_unix_seconds < required_taker_time
+        {
+            return Err(Error::InsufficientTimelockMargin);
+        }
+        Ok(Self {
+            maker_refund_latest: maker_refund_latest_unix_seconds,
+            taker_refund_earliest: taker_refund_earliest_unix_seconds,
+            required_margin: required_margin_seconds,
+        })
+    }
+}
+
+/// Typed pair/direction-aware refund schedule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefundSchedule {
+    maker_refund: ChainPosition,
+    taker_refund: ChainPosition,
+    safety: TimelockSafety,
+}
+
+impl RefundSchedule {
+    /// Creates a schedule and verifies that role deadlines belong to the expected chains.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::WrongRefundChain`] when direction and deadline chains disagree.
+    pub fn new(
+        pair: Pair,
+        direction: SwapDirection,
+        maker_refund: ChainPosition,
+        taker_refund: ChainPosition,
+        safety: TimelockSafety,
+    ) -> Result<Self, Error> {
+        let foreign = Chain::from(pair);
+        let expected_chains = match direction {
+            SwapDirection::TakerSellsForeign => [Chain::Lez, foreign],
+            SwapDirection::TakerSellsLez => [foreign, Chain::Lez],
+        };
+        if maker_refund.chain != expected_chains[0] {
+            return Err(Error::WrongRefundChain {
+                role: "maker",
+                expected: expected_chains[0],
+                actual: maker_refund.chain,
+            });
+        }
+        if taker_refund.chain != expected_chains[1] {
+            return Err(Error::WrongRefundChain {
+                role: "taker",
+                expected: expected_chains[1],
+                actual: taker_refund.chain,
+            });
+        }
+        Ok(Self {
+            maker_refund,
+            taker_refund,
+            safety,
+        })
+    }
+
+    /// Tests the maker deadline against a position in exactly the same chain clock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::WrongDeadlineClock`] instead of comparing unrelated raw numbers.
+    pub fn maker_refund_reached(self, observed: ChainPosition) -> Result<bool, Error> {
+        deadline_reached(self.maker_refund, observed)
+    }
+
+    /// Tests the taker deadline against a position in exactly the same chain clock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::WrongDeadlineClock`] instead of comparing unrelated raw numbers.
+    pub fn taker_refund_reached(self, observed: ChainPosition) -> Result<bool, Error> {
+        deadline_reached(self.taker_refund, observed)
+    }
+}
+
+fn deadline_reached(deadline: ChainPosition, observed: ChainPosition) -> Result<bool, Error> {
+    if deadline.chain != observed.chain || deadline.basis != observed.basis {
+        return Err(Error::WrongDeadlineClock {
+            expected_chain: deadline.chain,
+            expected_basis: deadline.basis,
+            actual_chain: observed.chain,
+            actual_basis: observed.basis,
+        });
+    }
+    Ok(observed.value >= deadline.value)
+}
+
 /// Durable phase of one swap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Phase {
@@ -64,6 +262,26 @@ pub enum Error {
     /// Taker-funded leg refund must be strictly later than the maker-funded leg refund.
     #[error("taker refund deadline must be later than maker refund deadline")]
     TakerTimelockMustFollowMaker,
+    /// Conservative cross-chain bounds do not leave the required recovery margin.
+    #[error("refund deadlines do not provide the required cross-chain safety margin")]
+    InsufficientTimelockMargin,
+    /// A role-relative refund deadline was assigned to the wrong chain.
+    #[error("{role} refund uses {actual:?}; expected {expected:?}")]
+    WrongRefundChain {
+        role: &'static str,
+        expected: Chain,
+        actual: Chain,
+    },
+    /// An observation used a different chain or clock basis than its deadline.
+    #[error(
+        "deadline expects {expected_chain:?}/{expected_basis:?}; observed {actual_chain:?}/{actual_basis:?}"
+    )]
+    WrongDeadlineClock {
+        expected_chain: Chain,
+        expected_basis: ClockBasis,
+        actual_chain: Chain,
+        actual_basis: ClockBasis,
+    },
     /// The maker attempted to lock before the taker's lock reached confirmation policy.
     #[error("taker lock is not confirmed")]
     TakerLockNotConfirmed,

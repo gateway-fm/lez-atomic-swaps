@@ -35,7 +35,7 @@ and a supply-chain attacker.
 | Maker locks on zero/insufficient confirmations | Taker reorgs or abandons lock | State transition rejects maker lock; adapters prove canonical confirmations |
 | Delivery/Chat outage or malicious messages | Locked funds become unavailable | Persist negotiated transcript before lock; post-lock API has no transport dependency |
 | Rollback/reorg after observation | Coordinator acts on non-canonical evidence | Regression/removal before maker lock revokes permission and permits explicit replacement; after maker lock the exact txid stays pinned, claims suspend, and refunds remain; pair finality/chain tests remain |
-| Deadline off-by-one | Refund unavailable at documented boundary | LEZ `[from,to)` semantics tested; each pair has exact boundary vectors |
+| Deadline off-by-one or mixed clocks | Refund unavailable at documented boundary | Typed chain/basis positions reject cross-domain comparison; conservative cross-chain bounds validate margin; LEZ `[from,to)` and pair boundaries remain executable gates |
 | Missing/corrupt local state | Claim/refund material lost | SQLite FULL durability, encrypted secret handling, backups, restart/process-kill matrix |
 | Replay/duplicate chain event | Double transition or wrong swap mutation | Idempotency keys include pair, chain ID, txid, output index, and swap ID |
 | Concurrent swap cross-talk | Wrong secret/account/UTXO used | Typed swap IDs, per-swap aggregates, DB primary keys, concurrent model/E2E tests |

@@ -14,3 +14,4 @@ replacement.
 | [0007](0007-maker-local-rpc.md) | Authenticated local JSON-RPC with a transport-hardening gate | Accepted, production transport pending |
 | [0008](0008-bidirectional-role-ordering.md) | Support both trade directions with role-relative lock/refund ordering | Accepted |
 | [0009](0009-bitcoin-refund-path.md) | Taproot key-path cooperative claim with script-path CSV refund | Accepted, M3 validation pending |
+| [0010](0010-typed-cross-chain-deadlines.md) | Typed consensus clocks plus conservative cross-chain safety bounds | Accepted, coordinator integration pending |
