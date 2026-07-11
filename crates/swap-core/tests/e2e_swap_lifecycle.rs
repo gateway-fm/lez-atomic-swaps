@@ -77,6 +77,39 @@ fn timeout_path_refunds_both_legs_without_off_chain_coordination() {
 }
 
 #[test]
+fn taker_recovers_when_maker_never_locks() {
+    let mut swap = coordinator(Pair::Bitcoin);
+    swap.observe_taker_foreign_lock(ChainProof::new("btc-lock", 2).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        swap.refund_taker_foreign_leg(119),
+        Err(Error::TimelockNotExpired)
+    );
+    swap.refund_taker_foreign_leg(120)
+        .expect("taker can recover without waiting for an absent maker");
+    assert_eq!(swap.phase(), Phase::Refunded);
+}
+
+#[test]
+fn delayed_observation_of_lez_refund_does_not_block_foreign_refund() {
+    let mut swap = coordinator(Pair::Zcash);
+    swap.observe_taker_foreign_lock(ChainProof::new("zec-lock", 2).unwrap())
+        .unwrap();
+    swap.observe_maker_lez_lock(ChainProof::new("lez-lock", 1).unwrap())
+        .unwrap();
+
+    // Both deadlines have passed, but the taker observes its own refund first.
+    swap.refund_taker_foreign_leg(120)
+        .expect("refund safety must not depend on observation order");
+    assert_eq!(swap.phase(), Phase::TakerLegRefunded);
+
+    swap.refund_maker_lez_leg(120)
+        .expect("maker refund completes the independently observed recovery");
+    assert_eq!(swap.phase(), Phase::Refunded);
+}
+
+#[test]
 fn timelocks_reject_unsafe_ordering() {
     assert_eq!(
         Timelocks::new(100, 100),

@@ -34,6 +34,8 @@ pub enum Phase {
     Completed,
     /// The maker recovered the LEZ leg; the longer foreign timelock is still pending.
     MakerLegRefunded,
+    /// The taker recovered the foreign leg; the maker's LEZ refund has not been observed.
+    TakerLegRefunded,
     /// Both parties recovered their original funds.
     Refunded,
 }
@@ -341,11 +343,20 @@ impl SwapCoordinator {
     /// Returns [`Error::InvalidPhase`] unless both legs are locked, or
     /// [`Error::TimelockNotExpired`] before the LEZ deadline.
     pub fn refund_maker_lez_leg(&mut self, now: u64) -> Result<(), Error> {
-        self.require_phase(Phase::BothLegsLocked)?;
+        if !matches!(self.phase, Phase::BothLegsLocked | Phase::TakerLegRefunded) {
+            return Err(Error::InvalidPhase {
+                expected: Phase::BothLegsLocked,
+                actual: self.phase,
+            });
+        }
         if now < self.timelocks.lez_refund_at() {
             return Err(Error::TimelockNotExpired);
         }
-        self.phase = Phase::MakerLegRefunded;
+        self.phase = if self.phase == Phase::TakerLegRefunded {
+            Phase::Refunded
+        } else {
+            Phase::MakerLegRefunded
+        };
         Ok(())
     }
 
@@ -353,14 +364,32 @@ impl SwapCoordinator {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidPhase`] until the LEZ leg is refunded, or
+    /// Returns [`Error::InvalidPhase`] unless the taker has locked its leg, or
     /// [`Error::TimelockNotExpired`] before the foreign deadline.
     pub fn refund_taker_foreign_leg(&mut self, now: u64) -> Result<(), Error> {
-        self.require_phase(Phase::MakerLegRefunded)?;
+        if !matches!(
+            self.phase,
+            Phase::AwaitingTakerConfirmations
+                | Phase::TakerLockConfirmed
+                | Phase::BothLegsLocked
+                | Phase::MakerLegRefunded
+        ) {
+            return Err(Error::InvalidPhase {
+                expected: Phase::TakerLockConfirmed,
+                actual: self.phase,
+            });
+        }
         if now < self.timelocks.foreign_refund_at() {
             return Err(Error::TimelockNotExpired);
         }
-        self.phase = Phase::Refunded;
+        self.phase = if matches!(
+            self.phase,
+            Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed | Phase::MakerLegRefunded
+        ) {
+            Phase::Refunded
+        } else {
+            Phase::TakerLegRefunded
+        };
         Ok(())
     }
 

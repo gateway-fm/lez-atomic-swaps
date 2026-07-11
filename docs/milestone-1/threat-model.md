@@ -25,6 +25,8 @@ and a supply-chain attacker.
 5. Every swap has independent IDs, secrets, keys, transactions, deadlines, and
    database writes.
 6. A crash may delay progress but cannot erase the data required to recover.
+7. Refund safety depends on chain state and deadlines, never on which party's
+   refund observation reaches the coordinator first.
 
 ## Cross-cutting threats and required evidence
 
@@ -84,4 +86,3 @@ and a supply-chain attacker.
 - Exact Bitcoin refund construction following measured failure injection.
 - SPEL/current-LEZ compatibility and the precise witness authorization encoding.
 - Logos Core daemon-mode authentication and lifecycle contract.
-
