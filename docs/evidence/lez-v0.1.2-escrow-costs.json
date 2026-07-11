@@ -1,0 +1,413 @@
+{
+  "schema_version": 1,
+  "measured_on": "2026-07-11",
+  "execution": {
+    "lez": "v0.1.2/cf3639d8252040d13b3d4e933feb19b42c76e14a",
+    "risc0": "3.0.5",
+    "elf_sha256": "a324355c6417f6ac7265ab8ba880287d0976e8c27a672917d293bddd80be7006",
+    "image_id": "c14c978abbaedeffb54c71aa6a96275d1fdb66fcf79f7343bf6bf7aee04f4483",
+    "model": "production V03State transition; mandatory Clock excluded; authenticated-transfer and ATA/Token recursion included"
+  },
+  "operations": [
+    {
+      "name": "initialize_native_claim",
+      "sessions": [
+        {
+          "position": 1,
+          "role": "escrow_root",
+          "segments": 1,
+          "total_cycles": 524288,
+          "user_cycles": 312844,
+          "paging_cycles": 63092,
+          "reserved_cycles": 148352
+        },
+        {
+          "position": 2,
+          "role": "authenticated_transfer_child",
+          "segments": 1,
+          "total_cycles": 131072,
+          "user_cycles": 46790,
+          "paging_cycles": 30942,
+          "reserved_cycles": 53340
+        }
+      ],
+      "recursive_total_cycles": 655360,
+      "recursive_user_cycles": 359634,
+      "recursive_user_cycle_budget": 375000
+    },
+    {
+      "name": "fund_native_claim",
+      "sessions": [
+        {
+          "position": 1,
+          "role": "escrow_root",
+          "segments": 1,
+          "total_cycles": 524288,
+          "user_cycles": 361385,
+          "paging_cycles": 67486,
+          "reserved_cycles": 95417
+        },
+        {
+          "position": 2,
+          "role": "authenticated_transfer_child",
+          "segments": 1,
+          "total_cycles": 131072,
+          "user_cycles": 80019,
+          "paging_cycles": 31586,
+          "reserved_cycles": 19467
+        }
+      ],
+      "recursive_total_cycles": 655360,
+      "recursive_user_cycles": 441404,
+      "recursive_user_cycle_budget": 460000
+    },
+    {
+      "name": "claim_native",
+      "sessions": [
+        {
+          "position": 1,
+          "role": "escrow_root",
+          "segments": 1,
+          "total_cycles": 524288,
+          "user_cycles": 394240,
+          "paging_cycles": 69444,
+          "reserved_cycles": 60604
+        },
+        {
+          "position": 2,
+          "role": "authenticated_transfer_child",
+          "segments": 1,
+          "total_cycles": 131072,
+          "user_cycles": 80037,
+          "paging_cycles": 31586,
+          "reserved_cycles": 19449
+        }
+      ],
+      "recursive_total_cycles": 655360,
+      "recursive_user_cycles": 474277,
+      "recursive_user_cycle_budget": 490000
+    },
+    {
+      "name": "initialize_native_refund",
+      "sessions": [
+        {
+          "position": 1,
+          "role": "escrow_root",
+          "segments": 1,
+          "total_cycles": 524288,
+          "user_cycles": 312799,
+          "paging_cycles": 63092,
+          "reserved_cycles": 148397
+        },
+        {
+          "position": 2,
+          "role": "authenticated_transfer_child",
+          "segments": 1,
+          "total_cycles": 131072,
+          "user_cycles": 46715,
+          "paging_cycles": 30942,
+          "reserved_cycles": 53415
+        }
+      ],
+      "recursive_total_cycles": 655360,
+      "recursive_user_cycles": 359514,
+      "recursive_user_cycle_budget": 375000
+    },
+    {
+      "name": "fund_native_refund",
+      "sessions": [
+        {
+          "position": 1,
+          "role": "escrow_root",
+          "segments": 1,
+          "total_cycles": 524288,
+          "user_cycles": 361340,
+          "paging_cycles": 67486,
+          "reserved_cycles": 95462
+        },
+        {
+          "position": 2,
+          "role": "authenticated_transfer_child",
+          "segments": 1,
+          "total_cycles": 131072,
+          "user_cycles": 79944,
+          "paging_cycles": 31586,
+          "reserved_cycles": 19542
+        }
+      ],
+      "recursive_total_cycles": 655360,
+      "recursive_user_cycles": 441284,
+      "recursive_user_cycle_budget": 460000
+    },
+    {
+      "name": "refund_native",
+      "sessions": [
+        {
+          "position": 1,
+          "role": "escrow_root",
+          "segments": 1,
+          "total_cycles": 524288,
+          "user_cycles": 376055,
+          "paging_cycles": 69122,
+          "reserved_cycles": 79111
+        },
+        {
+          "position": 2,
+          "role": "authenticated_transfer_child",
+          "segments": 1,
+          "total_cycles": 131072,
+          "user_cycles": 79944,
+          "paging_cycles": 31586,
+          "reserved_cycles": 19542
+        }
+      ],
+      "recursive_total_cycles": 655360,
+      "recursive_user_cycles": 455999,
+      "recursive_user_cycle_budget": 475000
+    },
+    {
+      "name": "initialize_token_claim",
+      "sessions": [
+        {
+          "position": 1,
+          "role": "escrow_root",
+          "segments": 1,
+          "total_cycles": 524288,
+          "user_cycles": 290798,
+          "paging_cycles": 59846,
+          "reserved_cycles": 173644
+        }
+      ],
+      "recursive_total_cycles": 524288,
+      "recursive_user_cycles": 290798,
+      "recursive_user_cycle_budget": 305000
+    },
+    {
+      "name": "create_token_custody_claim",
+      "sessions": [
+        {
+          "position": 1,
+          "role": "escrow_root",
+          "segments": 1,
+          "total_cycles": 524288,
+          "user_cycles": 449249,
+          "paging_cycles": 65759,
+          "reserved_cycles": 9280
+        },
+        {
+          "position": 2,
+          "role": "ata_child",
+          "segments": 1,
+          "total_cycles": 524288,
+          "user_cycles": 355546,
+          "paging_cycles": 44072,
+          "reserved_cycles": 124670
+        },
+        {
+          "position": 3,
+          "role": "token_grandchild",
+          "segments": 1,
+          "total_cycles": 262144,
+          "user_cycles": 106547,
+          "paging_cycles": 40774,
+          "reserved_cycles": 114823
+        }
+      ],
+      "recursive_total_cycles": 1310720,
+      "recursive_user_cycles": 911342,
+      "recursive_user_cycle_budget": 950000
+    },
+    {
+      "name": "fund_token_claim",
+      "sessions": [
+        {
+          "position": 1,
+          "role": "escrow_root",
+          "segments": 1,
+          "total_cycles": 1048576,
+          "user_cycles": 467645,
+          "paging_cycles": 66172,
+          "reserved_cycles": 514759
+        },
+        {
+          "position": 2,
+          "role": "ata_child",
+          "segments": 1,
+          "total_cycles": 524288,
+          "user_cycles": 223355,
+          "paging_cycles": 42719,
+          "reserved_cycles": 258214
+        },
+        {
+          "position": 3,
+          "role": "token_grandchild",
+          "segments": 1,
+          "total_cycles": 262144,
+          "user_cycles": 130562,
+          "paging_cycles": 40787,
+          "reserved_cycles": 90795
+        }
+      ],
+      "recursive_total_cycles": 1835008,
+      "recursive_user_cycles": 821562,
+      "recursive_user_cycle_budget": 860000
+    },
+    {
+      "name": "claim_token",
+      "sessions": [
+        {
+          "position": 1,
+          "role": "escrow_root",
+          "segments": 1,
+          "total_cycles": 1048576,
+          "user_cycles": 549162,
+          "paging_cycles": 74056,
+          "reserved_cycles": 425358
+        },
+        {
+          "position": 2,
+          "role": "ata_child",
+          "segments": 1,
+          "total_cycles": 524288,
+          "user_cycles": 395771,
+          "paging_cycles": 45399,
+          "reserved_cycles": 83118
+        },
+        {
+          "position": 3,
+          "role": "token_grandchild",
+          "segments": 1,
+          "total_cycles": 262144,
+          "user_cycles": 130382,
+          "paging_cycles": 40787,
+          "reserved_cycles": 90975
+        }
+      ],
+      "recursive_total_cycles": 1835008,
+      "recursive_user_cycles": 1075315,
+      "recursive_user_cycle_budget": 1120000
+    },
+    {
+      "name": "initialize_token_refund",
+      "sessions": [
+        {
+          "position": 1,
+          "role": "escrow_root",
+          "segments": 1,
+          "total_cycles": 524288,
+          "user_cycles": 290678,
+          "paging_cycles": 59846,
+          "reserved_cycles": 173764
+        }
+      ],
+      "recursive_total_cycles": 524288,
+      "recursive_user_cycles": 290678,
+      "recursive_user_cycle_budget": 305000
+    },
+    {
+      "name": "create_token_custody_refund",
+      "sessions": [
+        {
+          "position": 1,
+          "role": "escrow_root",
+          "segments": 1,
+          "total_cycles": 524288,
+          "user_cycles": 448744,
+          "paging_cycles": 66429,
+          "reserved_cycles": 9115
+        },
+        {
+          "position": 2,
+          "role": "ata_child",
+          "segments": 1,
+          "total_cycles": 524288,
+          "user_cycles": 355067,
+          "paging_cycles": 44742,
+          "reserved_cycles": 124479
+        },
+        {
+          "position": 3,
+          "role": "token_grandchild",
+          "segments": 1,
+          "total_cycles": 262144,
+          "user_cycles": 106287,
+          "paging_cycles": 41444,
+          "reserved_cycles": 114413
+        }
+      ],
+      "recursive_total_cycles": 1310720,
+      "recursive_user_cycles": 910098,
+      "recursive_user_cycle_budget": 950000
+    },
+    {
+      "name": "fund_token_refund",
+      "sessions": [
+        {
+          "position": 1,
+          "role": "escrow_root",
+          "segments": 1,
+          "total_cycles": 1048576,
+          "user_cycles": 467556,
+          "paging_cycles": 66842,
+          "reserved_cycles": 514178
+        },
+        {
+          "position": 2,
+          "role": "ata_child",
+          "segments": 1,
+          "total_cycles": 524288,
+          "user_cycles": 223296,
+          "paging_cycles": 43389,
+          "reserved_cycles": 257603
+        },
+        {
+          "position": 3,
+          "role": "token_grandchild",
+          "segments": 1,
+          "total_cycles": 262144,
+          "user_cycles": 130501,
+          "paging_cycles": 41457,
+          "reserved_cycles": 90186
+        }
+      ],
+      "recursive_total_cycles": 1835008,
+      "recursive_user_cycles": 821353,
+      "recursive_user_cycle_budget": 860000
+    },
+    {
+      "name": "refund_token",
+      "sessions": [
+        {
+          "position": 1,
+          "role": "escrow_root",
+          "segments": 1,
+          "total_cycles": 1048576,
+          "user_cycles": 494694,
+          "paging_cycles": 66803,
+          "reserved_cycles": 487079
+        },
+        {
+          "position": 2,
+          "role": "ata_child",
+          "segments": 1,
+          "total_cycles": 524288,
+          "user_cycles": 396046,
+          "paging_cycles": 46069,
+          "reserved_cycles": 82173
+        },
+        {
+          "position": 3,
+          "role": "token_grandchild",
+          "segments": 1,
+          "total_cycles": 262144,
+          "user_cycles": 130497,
+          "paging_cycles": 41457,
+          "reserved_cycles": 90190
+        }
+      ],
+      "recursive_total_cycles": 1835008,
+      "recursive_user_cycles": 1021237,
+      "recursive_user_cycle_budget": 1065000
+    }
+  ]
+}

@@ -115,10 +115,11 @@ sequencer. Wrong-preimage, wrong-role, and early-refund transactions are
 excluded from canonical blocks without mutating nonce or custody. Native
 recursive cost evidence is machine-checked from production state transitions
 without Clock noise. The official ATA lifecycle also passes for two independent
-definitions with real owner roles and permissionless fixed refunds. Token
-recursive costs, public-testnet evidence, composed both-direction maker/taker
-processes, encrypted state/outbox, and mini-apps remain milestone work and
-cannot yet be represented as production E2E.
+definitions with real owner roles and permissionless fixed refunds. Their
+escrow/ATA/Token recursion is also included in the machine-checked cost record.
+Public-testnet evidence, composed both-direction maker/taker processes,
+encrypted state/outbox, and mini-apps remain milestone work and cannot yet be
+represented as production E2E.
 
 ## LEZ escrow custody components and actor flows
 
@@ -212,11 +213,12 @@ flowchart LR
     TokenActors["Two definitions + owner keys + actor ATAs"] --> TokenLifecycle["Initialize / custody / fund / claim / refund"]
     TokenLifecycle --> RPC
     Block --> TokenState["Definition-bound holdings + exact supply conservation"]
-    TokenCosts["Escrow + ATA + nested Token recursive costs"] -.-> TokenState
+    TokenState --> TokenCostReplay["Deterministic token replay<br/>Clock/setup excluded"]
+    TokenCostReplay --> TokenCostEvidence["Escrow + ATA + Token sessions<br/>invariants + budgets + JSON"]
     Testnet["Rebuilt v0.2 guest + public testnet"] -.-> RPC
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class TokenCosts,Testnet planned;
+    class Testnet planned;
 ```
 
 The deployment proof uses port `0`, a temporary sequencer home, deterministic
@@ -228,8 +230,9 @@ mempool. The solid native lifecycle uses the actual funded genesis roles,
 validates signer-bound claim and permissionless-refund boundaries against
 canonical block time, and asserts exact balances. The solid token lifecycle
 uses two definitions, owner-signed ATA funding/claim, permissionless custody and
-refund, and cross-definition substitution negatives. The dashed token-cost and
-v0.2 testnet edges remain M2 exit work. Native cost replay executes the same
+refund, and cross-definition substitution negatives. Token replay attributes
+the escrow/ATA/nested-Token recursion while excluding setup and Clock noise. The
+dashed v0.2 testnet edge remains M2 exit work. Cost replay executes the same
 guest instructions through LEZ production state transitions, counts the escrow
 root and authenticated-transfer child, and compares generated JSON with the
 checked evidence artifact.

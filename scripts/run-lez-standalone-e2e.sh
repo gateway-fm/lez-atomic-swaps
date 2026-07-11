@@ -21,7 +21,7 @@ guest_manifest="compat/spel-zec-escrow/methods/guest/Cargo.toml"
 methods_manifest="compat/spel-zec-escrow/methods/Cargo.toml"
 standalone_manifest="compat/lez-standalone-e2e/Cargo.toml"
 artifact_manifest="compat/spel-zec-escrow/methods/guest/artifact-manifest.toml"
-cost_evidence="docs/evidence/lez-v0.1.2-native-costs.json"
+cost_evidence="docs/evidence/lez-v0.1.2-escrow-costs.json"
 guest_elf="compat/spel-zec-escrow/methods/guest/target/riscv32im-risc0-zkvm-elf/docker/zec_escrow.bin"
 guest_elf_absolute="${repo_root}/${guest_elf}"
 
@@ -134,4 +134,4 @@ diff -u "$cost_evidence" "$cost_json"
 
 printf 'LEZ standalone guest native/token lifecycle proof passed: elf_sha256=%s image_id=%s\n' \
   "$actual_elf_sha256" "$actual_image_id"
-printf 'LEZ native recursive cost evidence passed: %s\n' "$cost_json"
+printf 'LEZ native/token recursive cost evidence passed: %s\n' "$cost_json"

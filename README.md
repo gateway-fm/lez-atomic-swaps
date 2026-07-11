@@ -26,7 +26,8 @@ current executable slices enforce:
   permissionless-refund execution in an isolated standalone sequencer; and
 - two-definition official-ATA claim/refund lifecycles with real owner keys,
   immutable destinations, and cross-definition substitution rejection; and
-- machine-checked recursive native Risc0 session costs with Clock noise excluded.
+- machine-checked recursive native/authenticated-transfer and token/ATA/Token
+  Risc0 session costs with setup and Clock noise excluded.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),

@@ -243,9 +243,11 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   exact ATA of metadata and definition. Claim/refund plus wrong-preimage,
   wrong-role, cross-definition destination, and early-deadline negatives pass
   through canonical standalone blocks with exact holding/supply conservation.
-- [ ] Record recursive costs for every token instruction. v0.1.2 RPC/blocks do
-  not expose compute units, so retain the deterministic direct-state attribution
-  model and include the escrow, ATA, and nested Token sessions.
+- [x] Record recursive costs for every token instruction. The deterministic
+  direct-state evidence attributes one escrow session for initialization and the
+  escrow, ATA, and nested Token sessions for custody/fund/claim/refund. CI checks
+  their order, segments, cycle classification, allocated totals, user budgets,
+  and the complete generated escrow evidence JSON.
 - [ ] Port and rebuild SPEL, guest, generated client, and PDA derivations for LEZ
   v0.2.0 before live-testnet evidence. v0.1.2 `/NSSA/` and v0.2.0 `/LEE/` PDA
   domains are incompatible; upstream PR #238 remains provisional/unmerged.
