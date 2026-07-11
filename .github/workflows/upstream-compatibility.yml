@@ -10,7 +10,22 @@ permissions: read-all
 jobs:
   pinned-lez-semantics:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: pinned
+            lez_ref: cac4921581b37e85ae25e940f3a62412cd22308e
+            sequencer: "1"
+          - lane: current-dev
+            lez_ref: dev
+            sequencer: "0"
+    name: LEZ semantics (${{ matrix.lane }})
+    env:
+      CARGO_BUILD_JOBS: "2"
+      LEZ_REF: ${{ matrix.lez_ref }}
+      LEZ_VERIFY_SEQUENCER: ${{ matrix.sequencer }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88

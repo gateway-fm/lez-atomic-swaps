@@ -45,6 +45,7 @@ Adaptor extraction may rely on accepted signature bytes only after a pinned
 sequencer-level reproducer proves submission-to-inclusion byte preservation.
 Source inspection alone is insufficient for Milestone 1 exit.
 
-Upstream tests run against a pinned commit and a scheduled current-`dev`
-compatibility lane. File paths are diagnostic, not the contract: semantic tests
-must fail clearly when upstream reorganizes code or behavior.
+The scheduled/manual upstream workflow runs an isolated pinned lane, including
+the native sequencer equality test at two Cargo build jobs, and a lightweight
+current-`dev` drift lane. File paths are diagnostic, not the contract: semantic
+tests must fail clearly when upstream reorganizes code or behavior.
