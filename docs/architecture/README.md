@@ -1,11 +1,19 @@
-# Architecture decision log
+# Architecture
+
+The canonical composed view is [System architecture and actor
+flows](system-architecture.md). It defines the independent actors, runtime and
+trust boundaries, and the happy, recovery, and restart lifecycles used to judge
+whether a test is genuinely end to end. The ADRs below are append-only records
+of the decisions behind that system.
 
 ADRs are append-only. Superseded decisions remain here and link to their
 replacement.
 
 ```mermaid
 flowchart TB
-    Scope["0001 Scope"] --> Ports["0002 Ports/adapters"]
+    System["System architecture + actor flows"] --> Scope["0001 Scope"]
+    System --> Ports["0002 Ports/adapters"]
+    Scope --> Ports
     Ports --> Persistence["0003 Persistence"]
     Ports --> Zcash["0004 Zcash stack"]
     Ports --> Docker["0005 Isolated E2E"]

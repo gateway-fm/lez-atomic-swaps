@@ -14,12 +14,14 @@ The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 Development has started with protocol acceptance tests. The first executable
 slice enforces:
 
-- the taker lock is confirmed before the maker can lock LEZ funds;
+- the taker-funded lock is confirmed before the maker can lock the second leg;
 - claim completion after the first lock needs only on-chain evidence; and
-- the LEZ refund deadline precedes the foreign-chain refund deadline.
+- pair-specific claim and recovery ordering, including LEZ-before-ZEC claim and
+  refund in both ZEC trade directions.
 
 See the living [implementation plan](docs/implementation-plan.md), the
-[architecture decision log](docs/architecture/README.md), and the first
+[whole-system actor and flow architecture](docs/architecture/system-architecture.md),
+the [architecture decision log](docs/architecture/README.md), and the first
 [acceptance tests](crates/swap-core/tests/e2e_swap_lifecycle.rs).
 
 ## Development
@@ -27,9 +29,10 @@ See the living [implementation plan](docs/implementation-plan.md), the
 Prerequisites: Rust 1.96.0. No Docker services are needed for the current
 in-process protocol slice.
 
-    cargo test --workspace --all-targets
+    cargo test --locked --workspace --all-targets
     cargo fmt --all --check
-    cargo clippy --workspace --all-targets --all-features -- -D warnings
+    cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+    cargo deny check advisories bans licenses sources
 
 Docker-based suites will use an isolated Compose project, private networks,
 named volumes prefixed with `lez-atomic-swaps-`, and ephemeral host ports. The
