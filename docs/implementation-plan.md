@@ -93,6 +93,7 @@ with dependency license/advisory checks in CI.
 | XMR event-gated recovery | 2026-07-11 acceptance test could not resolve `RecoverySchedule`, event evidence, or recovery phases; prototype accepted a fake Monero deadline | Core/RPC/CLI use tagged deadline vs canonical-event terms; wrong-chain/low-confirmation evidence is rejected, confirmation regression revokes availability, restart preserves each phase, and real operator CLI creates LEZ-first XMR without maker-deadline flags | Replace the generic 32-byte recovery proof with exact COMIT DLEQ/key-share and Monero transaction evidence in M4 |
 | Pinned LEZ execution semantics | Source inspection alone could not prove the mempool/block split or accepted transaction-byte preservation; an initial filtered native command falsely ran zero tests | A clean pinned checkout passes 14 validity cases, the full BIP-340 vector test, and exactly one run each of the repository-owned admission/block reproducer and upstream transaction-equality test | Keep the pinned lane required and use the scheduled current-`dev` lane only as forward-compatibility drift detection |
 | RFP F4 ZEC chain ordering | 2026-07-11 M2 source reconciliation found M1's generic role-relative claim/refund prose allowed ZEC-before-LEZ in `TakerSellsLez` | RED required typed participants and chain-ordered bounds; GREEN adds 2 regressions and 23-test workspace pass: LEZ always reveals/refunds before later ZEC in both directions | Reprove all M1 gates, tag corrective commit `m1-complete.1`, then keep these vectors as M2 entry tests |
+| CI security and quality gates | 2026-07-11 workflow audit found the advisory scope implicit and a malformed `rzup` install command in the scheduled LEZ lane | CI names and hard-fails advisories, bans, licenses, and sources; Rust format/clippy/test/docs, ShellCheck, traceability, and Mermaid coverage are required; the pinned `rzup` command is valid multiline shell | Run the exact local equivalents, then require both GitHub jobs before every milestone tag |
 
 ## Milestone 1 plan: three weeks
 
@@ -156,8 +157,9 @@ aspirational states. A later fix does not move an existing tag; it receives a
 new normal commit and, if the milestone evidence was invalidated, a documented
 corrective tag such as `m1-complete.1` only after the full gate is rerun.
 
-Tags are created locally after verification. Publishing tags/remotes remains an
-explicit repository-owner action unless separately authorized.
+Tags are created only after verification. The repository owner authorized
+frequent pushes on 2026-07-11; proven commits and milestone tags are published
+without weakening the tag evidence rule.
 
 ## Milestone sequence and entry gates
 
@@ -204,3 +206,4 @@ CI and local scripts fail if the project name is empty or does not start with
 | Daemon prototype serializes SQLite with a mutex on blocking workers | Safe for the two-method operator slice, not chain watcher concurrency | Introduce the ADR-0003 single writer actor and atomic outbox before mutations expand |
 | Trade direction was unstated in both contractual sources | ADR 0008 now separates taker-first funding from construction-specific claimant order; ZEC's chain order comes directly from RFP F4 | Keep direction immutable; BTC/ZEC allow both only through their reviewed actor/chain flows, while XMR remains LEZ-first only |
 | Primary COMIT implementation does not support XMR-first | Pinned commit `dc6ba84…` explicitly ships scriptable-chain-first only | Reject `TakerSellsForeign` for XMR in core and actual CLI; require a new reviewed construction to supersede ADR 0008 |
+| Dependency advisories can appear without a source change | The required `cargo-deny` job runs on every push and pull request and explicitly includes `advisories` | Keep advisories hard-failing; investigate and remediate rather than adding broad ignores |
