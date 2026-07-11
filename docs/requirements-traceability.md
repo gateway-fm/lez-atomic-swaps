@@ -49,7 +49,7 @@ requires a corresponding test—not merely a row—for every F, U, R, and P item
 | R4 | Persisted state survives crash/restart without fund loss | SQLite reopen tests plus actual daemon kill/restart pass; kill-at-every-transition, corruption, migration, encryption, and outbox matrix remain | Partial |
 | R5 | Concurrent swaps have independent state, escrow, and deadlines | Two-store isolation test passes; multi-user multi-pair process/chain concurrency and fault injection remain | Partial |
 | R6 | Timelocks cover variance, congestion, and clock drift per chain | Parameter ADR plus boundary/property tests against pair-specific height/time domains and named network assumptions | In progress M1 |
-| R7 | Bitcoin refund construction is chosen and justified with failure analysis | ADR selects script-path or pre-signed path; Bitcoin Core tests cover every enumerated failure and fee/rebroadcast case | Planned M1/M3 |
+| R7 | Bitcoin refund construction is chosen and justified with failure analysis | ADR 0009 selects script-path CSV; Bitcoin Core tests cover exact boundary, key, reorg, current fees, and RBF/CPFP | Design accepted; executable evidence M3 |
 | R8 | Delivery/Chat outage is retried/buffered/degraded and documented | Pre-lock outage/recovery matrix plus post-lock UJ-006 proves on-chain independence and user-visible degraded state | Planned M5 |
 
 ## Performance

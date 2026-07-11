@@ -119,6 +119,8 @@ with dependency license/advisory checks in CI.
 - [x] Add generated property tests for transition legality, conflicts, and
   absorbing terminal states.
 - [ ] Extend the model with reorg/replacement events and typed per-chain deadlines.
+- [x] Select and justify the Bitcoin refund construction (Taproot script-path CSV)
+  with its M3 failure/fee/reorg validation matrix.
 
 ### Week 3 — integration contracts and review packet
 

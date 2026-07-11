@@ -13,3 +13,4 @@ replacement.
 | [0006](0006-lez-upstream-semantics.md) | Pin LEZ behavior and verify source assumptions executablely | Accepted |
 | [0007](0007-maker-local-rpc.md) | Authenticated local JSON-RPC with a transport-hardening gate | Accepted, production transport pending |
 | [0008](0008-bidirectional-role-ordering.md) | Support both trade directions with role-relative lock/refund ordering | Accepted |
+| [0009](0009-bitcoin-refund-path.md) | Taproot key-path cooperative claim with script-path CSV refund | Accepted, M3 validation pending |

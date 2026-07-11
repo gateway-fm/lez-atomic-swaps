@@ -48,9 +48,9 @@ and a supply-chain attacker.
 - Adaptor pre-signature forgery or failed witness extraction: use a reviewed
   construction and DLC vectors; prove aEUF-CMA, witness extractability, and
   pre-signature adaptability assumptions.
-- Refund fragility: default to a Taproot script-path CSV refund unless measurement
-  justifies a pre-signed key-path refund. The latter requires durable transaction
-  backup, fee-bump strategy, timelock validation, and explicit failure tests.
+- Refund fragility: ADR 0009 selects a consensus-enforced Taproot script-path CSV
+  refund. Validate exact boundary, key backup, current-fee construction, RBF/CPFP,
+  and reorg behavior against Bitcoin Core.
 - Signature byte mutation: extraction depends on the accepted BIP-340 scalar.
   The sequencer-level LEZ byte-preservation reproducer is a release gate.
 - UTXO replacement/fee starvation: bind exact outpoint/script/value and maintain a
@@ -83,5 +83,4 @@ and a supply-chain attacker.
 
 - Quantified per-pair confirmation and timelock margins.
 - Secret-at-rest encryption and operator backup/recovery policy.
-- Exact Bitcoin refund construction following measured failure injection.
 - SPEL/current-LEZ compatibility and the precise witness authorization encoding.
