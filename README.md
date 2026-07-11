@@ -21,7 +21,9 @@ current executable slices enforce:
 - exact BIP-199 P2SH plus canonical Zcash V5 funding, claim, and refund
   transactions; and
 - actor-keyed funding/claim/refund acceptance and rejection through pinned
-  Zebra NU6.2 Regtest consensus.
+  Zebra NU6.2 Regtest consensus; and
+- checked-guest deployment plus real-key native LEZ initialize/fund/claim and
+  permissionless-refund execution in an isolated standalone sequencer.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),

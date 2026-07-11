@@ -27,6 +27,10 @@ flowchart LR
     TokenCustody --> LocalProof
     LocalProof --> Guest["Checked Risc0 3.0.5 guest ELF + ImageID"]
     Guest --> LocalSeq["RPC deployment in ephemeral v0.1.2 standalone block"]
+    Actors["Funded genesis depositor + claimant"] --> NativeFlow["Native initialize / fund / claim / refund"]
+    LocalSeq --> NativeFlow
+    NativeFlow --> NativeEvidence["Canonical state, balances, role/deadline negatives"]
+    TokenFlow["Two-definition standalone ATA lifecycle + costs"] -.-> LocalSeq
     Port["Rebuild SPEL/guest/client for LEZ v0.2 PDA + ABI"] -.-> LezTest["LEZ testnet 0.2"]
     Native["Reviewed SPEL/LEZ v0.2 compatibility pin"] -.-> Port
     Drift["LEZ dev + current Zebra scheduled drift lanes"] -.-> Tests
@@ -126,10 +130,19 @@ mandatory-clock block, then submits `ProgramDeployment` through public RPC and
 proves the exact transaction is stored in the following canonical block. The
 initial RED established that `RISC0_DEV_MODE=1` does not supply an executor:
 without exact `r0vm` the deployment is admitted to the mempool but clock
-execution aborts block creation at genesis. This is deployment evidence, not
-yet initialise/fund/claim/refund actor evidence.
-Instruction cost evidence records deterministic Risc0 user cycles/segments and
-recursively includes chained calls because v0.1.2 does not expose compute units
+execution aborts block creation at genesis.
+
+The native lifecycle is now executable evidence, not a source-only claim. The
+two v0.1.2 genesis accounts are already authenticated-transfer-owned and funded;
+the initial plan to re-register them was rejected after inspecting actual state
+construction. Their real keys sign initialize/fund and claimant claim, while
+refund remains unsigned and fixed-destination. Canonical blocks reject wrong
+preimage, a valid depositor attempting the claimant role, and early refund
+without consuming the signer nonce or moving custody. After canonical block
+time reaches the deadline, any relayer can return the exact amount only to the
+stored depositor. Token standalone lifecycle and cost evidence remain open.
+Cost evidence will record deterministic Risc0 user cycles/segments and
+recursively include chained calls because v0.1.2 does not expose compute units
 through RPC or blocks. The
 accepted LEZ pin forces `rsa 0.9.10` and `tracing-subscriber 0.2.25`; no safe
 compatible pin exists today. The fixture-local policy is permitted only because

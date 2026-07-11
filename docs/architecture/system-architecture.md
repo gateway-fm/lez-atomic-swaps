@@ -108,12 +108,14 @@ Zebra 5.2.0 Regtest acceptance/rejection/confirmation, concurrent swaps,
 confirmation regression, exact rebroadcast, and block reconsideration now exist
 as a chain-adapter proof. Source-correct authenticated-transfer/ATA custody and
 generated owner-role clients now exist as locally composed upstream-program
-evidence. The checked Risc0 guest now builds reproducibly and its deployment is
-admitted through public RPC and persisted by an isolated v0.1.2 standalone
-sequencer after a mandatory-clock readiness block. Instruction lifecycle and
-cost evidence, public-testnet evidence, composed both-direction maker/taker
-processes, encrypted state/outbox, and mini-apps remain milestone work and
-cannot yet be represented as production E2E.
+evidence. The checked Risc0 guest now builds reproducibly, deploys through
+public RPC, and executes the complete native initialize/fund/claim/refund
+lifecycle with real funded actor keys in an isolated v0.1.2 standalone
+sequencer. Wrong-preimage, wrong-role, and early-refund transactions are
+excluded from canonical blocks without mutating nonce or custody. Token
+lifecycle and recursive cost evidence, public-testnet evidence, composed
+both-direction maker/taker processes, encrypted state/outbox, and mini-apps
+remain milestone work and cannot yet be represented as production E2E.
 
 ## LEZ escrow custody components and actor flows
 
@@ -198,11 +200,15 @@ flowchart LR
     R0VM --> Validate
     Validate --> Block["Canonical persisted block"]
     Block --> Query["getTransaction + getLastBlockId"]
-    Lifecycle["Actor initialise / fund / claim / refund + costs"] -.-> RPC
+    Actors["Funded depositor + claimant keys"] --> NativeLifecycle["Signed native initialise / fund / claim"]
+    Relayer["Permissionless refund relayer"] --> NativeLifecycle
+    NativeLifecycle --> RPC
+    Block --> NativeState["Metadata status + exact custody/actor balances"]
+    TokenCosts["Two-definition ATA lifecycle + recursive costs"] -.-> RPC
     Testnet["Rebuilt v0.2 guest + public testnet"] -.-> RPC
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Lifecycle,Testnet planned;
+    class TokenCosts,Testnet planned;
 ```
 
 The deployment proof uses port `0`, a temporary sequencer home, deterministic
@@ -210,7 +216,10 @@ genesis inputs, an exact `r0vm` path, and no shared Docker project or chain
 state. Deployment admission alone is deliberately insufficient: the readiness
 block proves the mandatory clock/executor/store loop first, and transaction
 lookup proves the deployment reached the block store rather than only the
-mempool. The dashed lifecycle and v0.2 testnet edges remain M2 exit work.
+mempool. The solid native lifecycle uses the actual funded genesis roles,
+validates signer-bound claim and permissionless-refund boundaries against
+canonical block time, and asserts exact balances. The dashed token/cost and
+v0.2 testnet edges remain M2 exit work.
 
 ## Happy-path user flow
 

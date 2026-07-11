@@ -9,12 +9,17 @@ license = "MIT OR Apache-2.0"
 
 [dev-dependencies]
 anyhow = "1"
+borsh = "1"
 bytesize = "2"
 common = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2" }
 env_logger = "0.11"
+lez-zec-escrow-compat = { version = "=0.0.0", path = "../spel-zec-escrow" }
 nssa = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2" }
 sequencer_service = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2", features = ["standalone"] }
 sequencer_service_rpc = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2", features = ["client"] }
+serde = "1"
+sha2 = "0.10"
+spel-framework-core = { version = "=0.5.0", git = "https://github.com/logos-co/spel.git", rev = "73fc462eb8f0a4d00f1a846437c627ec2e523f83" }
 tempfile = "3"
 testnet_initial_state = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

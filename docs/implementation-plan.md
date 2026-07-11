@@ -226,13 +226,17 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   `a324355c6417f6ac7265ab8ba880287d0976e8c27a672917d293bddd80be7006`
   with ImageID
   `c14c978abbaedeffb54c71aa6a96275d1fdb66fcf79f7343bf6bf7aee04f4483`.
-- [ ] Run standalone-sequencer actor tests and record compute units for every
-  instruction against exact v0.1.2 using an in-process ephemeral-port/temp-state
-  service. Record recursive Risc0 cycles/segments because v0.1.2 RPC/blocks do
-  not expose compute units. The deployment prerequisite is green: the harness
-  first proves mandatory-clock execution in an empty block, submits the guest
-  through public RPC, and observes its canonical inclusion in the next block;
-  initialise/fund/claim/refund actor calls and costs remain.
+- [x] Run standalone-sequencer native actor tests against exact v0.1.2 using an
+  in-process ephemeral-port/temp-state service. The harness proves the mandatory
+  clock, deploys the checked guest through public RPC, uses the two genuinely
+  funded genesis actors, and observes canonical initialize/fund/claim/refund
+  state and balances. RED cases prove wrong preimage, valid-signer wrong role,
+  and permissionless early refund rejection without nonce or custody mutation;
+  canonical block time then enables the fixed-destination refund.
+- [ ] Run the equivalent official-ATA actor lifecycle for two independent token
+  definitions and record costs for every native/token instruction. Record
+  recursive Risc0 cycles/segments because v0.1.2 RPC/blocks do not expose compute
+  units; use deterministic direct-state replay to exclude mandatory-clock noise.
 - [ ] Port and rebuild SPEL, guest, generated client, and PDA derivations for LEZ
   v0.2.0 before live-testnet evidence. v0.1.2 `/NSSA/` and v0.2.0 `/LEE/` PDA
   domains are incompatible; upstream PR #238 remains provisional/unmerged.

@@ -118,5 +118,5 @@ CARGO_TARGET_DIR="$standalone_target" \
 RISC0_DEV_MODE=1 LEZ_ESCROW_GUEST_ELF="$guest_elf_absolute" CARGO_TARGET_DIR="$standalone_target" \
   cargo test --locked --manifest-path "$standalone_manifest" --test deploy -- --ignored --nocapture
 
-printf 'LEZ standalone guest deployment proof passed: elf_sha256=%s image_id=%s\n' \
+printf 'LEZ standalone guest deployment and native lifecycle proof passed: elf_sha256=%s image_id=%s\n' \
   "$actual_elf_sha256" "$actual_image_id"
