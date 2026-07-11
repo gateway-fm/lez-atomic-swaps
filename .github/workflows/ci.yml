@@ -46,3 +46,24 @@ jobs:
           rust-version: "1.96.0"
           command: check advisories bans licenses sources
           arguments: --all-features
+      - name: Audit pinned SPEL/LEZ compatibility graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/spel-zec-escrow/Cargo.toml
+          command: check
+          arguments: --all-features
+          command-arguments: --config compat/spel-zec-escrow/deny.toml advisories bans licenses sources
+
+  spel-compatibility:
+    name: pinned SPEL and LEZ compatibility
+    runs-on: ubuntu-latest
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUN_ID: github-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+      - run: ./scripts/verify-spel-compatibility.sh

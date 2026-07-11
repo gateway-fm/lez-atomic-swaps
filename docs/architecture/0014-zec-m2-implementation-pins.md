@@ -7,13 +7,16 @@ flowchart LR
     Contract["RFP-003 F4 + accepted issue #112"] --> Tests["Role and contract acceptance tests"]
     BIP["BIP-199 SHA256 + CLTV P2SH"] --> Script["Exact common-tail layout from zcash_script 0.4.3 primitives"]
     Script --> Tx["zcash_transparent 0.8 + zcash_primitives 0.28"]
-    Tx --> Raw["Locally signed transparent transactions"]
+    Tx --> TxVectors["Fixed V5 bytes/txids + real signature interpreter"]
+    TxVectors --> Raw["Locally signed transparent transactions"]
     Raw --> RPC["sendrawtransaction / getrawtransaction"]
     RPC --> Zebra["Zebra 5.1.1 consensus authority"]
     Zebra --> ZTest["Zcash testnet"]
     SPEL["SPEL v0.5.0"] --> Compat["LEZ v0.1.2 compatibility lane"]
-    Compat --> Escrow["Generated IDL/client + LEZ escrow"]
-    Escrow --> LezTest["LEZ testnet 0.2"]
+    Compat --> CompatAudit["Exact pins + feature-locked security audit"]
+    CompatAudit --> IDL["Generated IDL compatibility fixture"]
+    IDL -.-> Escrow["Generated client + custody escrow"]
+    Escrow -.-> LezTest["LEZ testnet 0.2"]
     Drift["LEZ dev + current Zebra scheduled drift lanes"] -.-> Tests
     Tests --> Roles["Independent maker/taker happy, refund, concurrency E2E"]
     Escrow --> Roles
@@ -40,7 +43,7 @@ immutable source or image identity.
 
 | Layer | M2 pin | License/policy reason |
 |---|---|---|
-| SPEL | stable `v0.5.0`, commit `73fc462eb8f0a4d00f1a846437c627ec2e523f83` | Repository carries MIT and Apache-2.0; use its macros, IDL, and client generator instead of recreating them |
+| SPEL | stable `v0.5.0`, commit `73fc462eb8f0a4d00f1a846437c627ec2e523f83` | Repository carries MIT and Apache-2.0 files but omits Cargo license fields; fixture policy hash-locks both texts for all three used crates; use its macros, IDL, and client generator instead of recreating them |
 | LEZ compatibility | tag `v0.1.2`, commit `cf3639d8252040d13b3d4e933feb19b42c76e14a` | This is the exact LEZ dependency locked by SPEL v0.5.0; SPEL records it as equivalent to the earlier v0.2.0-rc3 compatibility point |
 | LEZ semantic drift | `dev` evidence pin `cac4921581b37e85ae25e940f3a62412cd22308e`, plus scheduled current `dev` | Keeps M1 validity/signature assumptions checked without pretending the newer development tree is SPEL-compatible |
 | BIP-199 script | `zcash_script = 0.4.3`, Apache-2.0 | Reuse its typed opcodes, push encodings, CLTV, branch, parser, and P2SH helpers; compose BIP-199's exact common `OP_EQUALVERIFY OP_CHECKSIG` tail |
@@ -66,6 +69,23 @@ non-final input sequence, and the height/time threshold boundary.
 Refund transaction construction takes its `nLockTime` directly from the
 contract and uses input sequence `0xfffffffe`. A final `0xffffffff` input is
 never exposed by the refund API because it disables CLTV enforcement.
+
+The signed-spend foundation accepts the fetched funding `TxOut`, validates its
+scriptPubKey against the exact contract, derives the input value from it, and
+rejects consensus branches in which V5 is invalid. Claim and refund tests pin
+the complete serialized bytes and txids. Both generated signatures execute via
+the upstream `zcash_script` callback checker, which independently recomputes
+ZIP-244 from the real prevout context; signature-bit mutations fail.
+
+The current SPEL fixture proves macro expansion and generated IDL compatibility,
+not escrow custody. It intentionally remains a small three-instruction metadata
+surface until native/custom-token custody tests drive the real program. Its
+accepted LEZ pin forces `rsa 0.9.10` and `tracing-subscriber 0.2.25`; no safe
+compatible pin exists today. The fixture-local policy is permitted only because
+CI proves rzup `publish`/`install` and tracing `fmt`/`ansi` features are absent,
+so the advisory capabilities are not compiled. Stale ignores are errors. The
+root workspace has no such advisory exceptions, and the deployed guest graph
+must be re-audited before testnet evidence or an M2 tag.
 
 Use Zebra as the acceptance authority. Local parsing or interpreter success is
 useful unit evidence but never proves a transaction is consensus-valid or
@@ -97,10 +117,11 @@ until a reviewed pin update makes them required.
   P2SH multisig helper is not misrepresented as a generic HTLC signer.
 - Source inspection proves both `TransparentBuilder::apply_signatures` and the
   PCZT signer/spend finalizer support only standard P2PKH/P2PK/multisig shapes,
-  not BIP-199. The adapter uses `TransparentBuilder` for validated input/output
-  accounting, its authorization context for ZIP-244, upstream secp256k1 for the
-  signature, and canonical `Bundle<Authorized>`/`TransactionData` serialization;
-  only the already-vector-tested HTLC scriptSig assembly is adapter-owned.
+  not BIP-199. The adapter validates a canonical fetched `TxOut`, constructs
+  canonical transparent bundles, uses the upstream authorization context and
+  ZIP-244 implementation, signs with upstream secp256k1, and freezes through
+  canonical `Bundle<Authorized>`/`TransactionData`; only the already-vector-tested
+  HTLC scriptSig assembly is adapter-owned.
 - `TransparentBuilder` initially assigns final sequence `0xffffffff`. Refund
   construction must replace that input with `0xfffffffe` before computing the
   transaction digest and signature; mutation after signing is forbidden.
@@ -109,7 +130,9 @@ until a reviewed pin update makes them required.
 - The LEZ compatibility lane and newer semantic drift lane stay separate until
   a minimal generated SPEL program proves a newer common version.
 - Advisory, license, ban, and source checks remain hard CI gates for every added
-  crate and explicitly allowed immutable Git dependency.
+  crate and explicitly allowed immutable Git dependency. Compatibility-only
+  advisory exceptions are isolated from the root policy, exact-ID reasoned,
+  feature-asserted, and fail when stale.
 - Non-default licenses require narrow package exceptions: CC0-1.0 is accepted
   only for reviewed exact packages (`bounded-vec 0.9.0`, `secp256k1 0.29.1`,
   and `secp256k1-sys 0.10.1`), not globally.

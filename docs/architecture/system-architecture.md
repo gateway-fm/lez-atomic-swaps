@@ -26,6 +26,7 @@ flowchart TB
         CO["Durable swap coordinator"]
         DB[("Encrypted SQLite state + outbox")]
         PS["BTC / XMR / ZEC pair SDKs"]
+        ZTX["ZEC BIP-199 V5 transaction SDK"]
         CA["Validated chain adapters"]
     end
 
@@ -62,7 +63,9 @@ flowchart TB
     MD --> CO
     CO --> DB
     CO --> PS
+    PS --> ZTX
     PS --> CA
+    ZTX --> CA
 
     T --> TC
     T --> TM
@@ -97,9 +100,12 @@ LEZ sequencer, Bitcoin Core, `monerod`, or Zebra; peer messages never advance an
 on-chain state by themselves.
 
 The dashed state reflects delivery honestly. The deterministic core, SQLite
-repository, maker daemon, authenticated maker CLI flow, and LEZ semantic
-verification exist. Pair adapters, encrypted state/outbox, taker processes, and
-mini-apps remain milestone work and cannot yet be represented as production E2E.
+repository, maker daemon, authenticated maker CLI flow, LEZ semantic
+verification, pinned SPEL/LEZ generated-IDL fixture, and ZEC exact-script plus
+signed V5 spend foundation exist. ZEC funding/selection and Zebra acceptance,
+the real LEZ custody program/client, complete pair adapters, encrypted
+state/outbox, taker processes, and mini-apps remain milestone work and cannot
+yet be represented as production E2E.
 
 ## Happy-path user flow
 

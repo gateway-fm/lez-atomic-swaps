@@ -1,5 +1,12 @@
 //! Transparent Zcash protocol adapter for LEZ atomic swaps.
 
+mod transaction;
+
+pub use transaction::{
+    TransactionBuildError, TransparentSpendRequest, build_claim_transaction,
+    build_refund_transaction,
+};
+
 use zcash_script::{
     Opcode, op,
     opcode::PushValue,
@@ -31,6 +38,9 @@ pub const REFUND_INPUT_SEQUENCE: u32 = u32::MAX - 1;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Bip199Contract {
     refund_lock_time: u32,
+    refund_pubkey_hash: [u8; 20],
+    secret_digest: [u8; 32],
+    claimant_pubkey_hash: [u8; 20],
     redeem_script: Vec<u8>,
     p2sh_script_pubkey: Vec<u8>,
 }
@@ -40,7 +50,9 @@ impl Bip199Contract {
     ///
     /// `refund_lock_time` is the absolute Zcash `nLockTime` threshold. The
     /// spending transaction must also use a non-final input sequence for CLTV
-    /// to take effect.
+    /// to take effect. Public-key hashes must commit to compressed secp256k1
+    /// public-key encodings; the transaction adapter deliberately emits only
+    /// canonical compressed public keys.
     #[must_use]
     pub fn new(
         refund_lock_time: u32,
@@ -75,6 +87,9 @@ impl Bip199Contract {
 
         Self {
             refund_lock_time,
+            refund_pubkey_hash,
+            secret_digest,
+            claimant_pubkey_hash,
             redeem_script: redeem_script.to_bytes(),
             p2sh_script_pubkey,
         }
@@ -102,6 +117,18 @@ impl Bip199Contract {
     #[must_use]
     pub const fn refund_input_sequence(&self) -> u32 {
         REFUND_INPUT_SEQUENCE
+    }
+
+    pub(crate) const fn refund_pubkey_hash(&self) -> [u8; 20] {
+        self.refund_pubkey_hash
+    }
+
+    pub(crate) const fn secret_digest(&self) -> [u8; 32] {
+        self.secret_digest
+    }
+
+    pub(crate) const fn claimant_pubkey_hash(&self) -> [u8; 20] {
+        self.claimant_pubkey_hash
     }
 
     /// Encodes `[signature, claimant_pubkey, preimage, true, redeem_script]`.
