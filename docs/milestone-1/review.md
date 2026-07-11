@@ -1,11 +1,15 @@
 # Milestone 1 review and entry gates
 
-Status: accepted; all Milestone 1 exit gates pass — 2026-07-11
+Status: accepted with RFP F4 chain-order correction; all corrective repository
+gates pass — 2026-07-11
 
 ```mermaid
 flowchart TB
     Truth["Live RFP + accepted issue #112 + pinned source"] --> Protocol["Per-leg protocol + atomicity"]
     Truth --> LEZ["LEZ semantic reproducers"]
+    Truth --> F4["F4: LEZ refund before later ZEC refund"]
+    F4 --> Protocol
+    F4 --> ZecTests["Both-direction claimant + chain-order regressions"]
     Protocol --> Escrow["Escrow + SPEL IDL design"]
     Protocol --> SDK["Per-pair SDK contract"]
     Protocol --> Threat["Threat + storage model"]
@@ -15,6 +19,7 @@ flowchart TB
     Threat --> Review
     Params --> Review
     LEZ --> Review
+    ZecTests --> Review
     Review -->|accepted HTLC gates| M2["M2 ZEC"]
     Review -->|accepted adaptor/CSV gates| M3["M3 BTC"]
     Review -->|accepted COMIT/DLEQ gates| M4["M4 XMR"]
@@ -37,7 +42,7 @@ treated as platform truth.
 
 | M1 deliverable | Review result | Remaining implementation evidence |
 |---|---|---|
-| Per-leg protocol and atomicity | Accepted design covers both BTC/ZEC directions, LEZ-first XMR, claim/recovery partitions, and named assumptions | Pair vectors and real-chain E2E in M2–M4 |
+| Per-leg protocol and atomicity | Accepted design covers both BTC/ZEC directions, LEZ-first XMR, pair-specific claimants, and construction-relative recovery partitions; ZEC always reveals/refunds on LEZ before later ZEC | Pair vectors and real-chain E2E in M2–M4 |
 | LEZ escrow + SPEL IDL | Source-backed metadata PDA plus native vault/required ATA custody; direction-specific claim and permissionless fixed refund | Minimal SPEL compatibility build, generated client golden, standalone execution and CU measurement in M2 |
 | Threat model | Covers witness extraction, byte stability, reorg/deadline races, XMR recovery, ZEC visibility, local RPC, encrypted persistence, concurrency, supply chain | Fault/fee/reorg matrices in M2–M5; formal review/remediation M7 |
 | LEZ open questions | `[from,to)` boundaries and BIP-340 vectors pass; repository-owned mempool/block test and upstream transaction-equality test pass in a clean pinned checkout | Current-`dev` scheduled drift monitoring continues after M1 |
@@ -49,11 +54,13 @@ treated as platform truth.
 
 The repository gates currently provide:
 
-- 21 Rust behavior/property/process tests across core, restart persistence, and
+- 23 Rust behavior/property/process tests across core, restart persistence, and
   the actual authenticated maker CLI/daemon boundary;
 - 512 generated event sequences plus a permanent minimized reorg regression;
 - explicit XMR wrong-direction, no-Monero-deadline, wrong-chain, confirmation
   regression, restart, and actual operator-command cases;
+- explicit both-direction ZEC claimant tests plus rejection of a role-valid but
+  RFP-reversed ZEC-before-LEZ safety profile;
 - formatting and strict all-target/all-feature Clippy;
 - `cargo-deny` advisory, ban, license, and source checks (warnings are limited to
   permitted duplicate dependency versions and currently unused license allows);
@@ -67,8 +74,13 @@ reproducer then passed exactly once, and upstream's transaction-equality test
 passed exactly once. The run was limited to two Cargo jobs and a unique
 temporary checkout. It did not start Docker or bind a port.
 
-The exact commit containing this accepted review receives the annotated
-`m1-complete` tag only after the complete repository gate set passes against it.
+The original `m1-complete` tag remains immutable as historical evidence. M2
+source reconciliation exposed that its role-relative prose inverted the RFP's
+fixed ZEC-after-LEZ deadline in one direction. The pinned native LEZ evidence is
+unchanged and remains valid. The exact corrective commit containing this review
+receives `m1-complete.1` only after its 23 tests, strict lint, policy,
+traceability, diagram, format, and patch gates pass; the original tag is not
+moved.
 
 ## Entry gates after M1
 

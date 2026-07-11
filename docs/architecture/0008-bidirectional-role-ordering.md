@@ -1,25 +1,24 @@
 # ADR 0008: Product direction is constrained by reviewed pair capability
 
-Status: Accepted — 2026-07-11
+Status: Accepted; corrected from role-relative to construction-relative claim
+ordering — 2026-07-11
 
 ```mermaid
-sequenceDiagram
-    participant T as Taker (first funder)
-    participant TC as Taker-leg chain
-    participant M as Maker (second funder)
-    participant MC as Maker-leg chain
-    Note over T,M: BTC/ZEC support either asset first; XMR requires LEZ first
-    T->>TC: lock with longer refund schedule
-    TC-->>M: canonical confirmations reach policy
-    M->>MC: lock with shorter refund schedule
-    alt cooperative completion
-        M->>TC: claim and reveal pair evidence
-        TC-->>T: adaptor witness / preimage becomes observable
-        T->>MC: claim maker-funded leg
-    else timeout
-        M->>MC: refund at earlier maker deadline
-        T->>TC: refund at later taker deadline
-    end
+flowchart TB
+    Terms["Signed pair + direction + roles"] --> FirstLock["Taker funds first"]
+    FirstLock --> Confirm["Canonical confirmation policy"]
+    Confirm --> SecondLock["Maker funds second"]
+    SecondLock --> Pair{"Reviewed pair construction"}
+    Pair -->|BTC| BTC1["Taker claims maker-funded leg and reveals adaptor witness"]
+    BTC1 --> BTC2["Maker claims taker-funded leg"]
+    Pair -->|ZEC| ZEC1["LEZ recipient claims LEZ and reveals preimage"]
+    ZEC1 --> ZEC2["ZEC recipient claims transparent HTLC"]
+    Pair -->|XMR LEZ-first| XMR1["Maker claims LEZ and reveals recovery share"]
+    XMR1 --> XMR2["Taker spends Monero output"]
+    Pair --> Refund{"Timeout"}
+    Refund -->|BTC| BR["Maker-funded refund first; taker-funded refund later"]
+    Refund -->|ZEC| ZR["LEZ refund first; ZEC refund later"]
+    Refund -->|XMR| XR["Taker refunds LEZ; maker recovers XMR from event/share"]
 ```
 
 ## Context
@@ -42,25 +41,30 @@ data and is durably stored before any lock. BTC and ZEC currently permit both.
 XMR permits only `TakerSellsLez` (LEZ, the scriptable leg, funds first); XMR-first
 is rejected in core term validation and at the actual CLI/daemon boundary.
 
-Generic coordination remains role-relative:
+Funding coordination remains role-relative:
 
 1. the taker-funded leg is submitted and reaches its confirmation policy;
-2. the maker-funded leg is submitted;
-3. the maker claims the taker-funded leg and exposes pair-specific claim evidence;
-4. the taker uses that evidence to claim the maker-funded leg.
+2. the maker-funded leg is submitted.
 
-The second-locking maker's refund matures first. The first-locking taker's refund
-matures later by the pair-specific safety margin. Pair adapters map these roles
-to LEZ or the foreign chain using direction; the core does not infer safety from
-chain names.
+Claim and refund ordering is construction-relative, not generically tied to
+maker/taker roles. BTC follows the standard first-funded-longer flow: the taker
+claims the maker-funded leg first and the maker follows with the exposed adaptor
+witness. XMR retains the reviewed COMIT flow in which the maker claims LEZ
+first. For ZEC, the live RFP fixes chain order in both directions: the LEZ claim
+publishes the preimage first and the ZEC claim follows; the LEZ refund is earlier
+and the ZEC refund is later by the documented margin. Direction determines which
+participant is the LEZ recipient and therefore the first claimant.
 
 ## Evidence and consequences
 
 `bidirectional_lifecycle` exercises the LEZ-first direction for all three pairs
-and verifies persisted direction. `typed_refund_schedule` rejects XMR-first;
+and verifies persisted direction. `zec_contract_ordering` proves both ZEC
+directions use LEZ-first disclosure and rejects a role-valid but chain-reversed
+schedule. `typed_refund_schedule` rejects XMR-first;
 `operator_journey` proves the actual CLI/daemon rejects it while persisting a
 supported reverse-direction swap across process kill/restart.
 
 Final BTC/ZEC happy/refund/concurrency matrices run in both directions. XMR runs
 LEZ-first unless a separately reviewed XMR-first construction supersedes this
-ADR. Typed chain deadlines are implemented; calibrated pair margins remain open.
+ADR. Typed chain deadlines and construction-relative claimants are implemented;
+calibrated pair margins remain open.

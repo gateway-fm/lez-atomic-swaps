@@ -27,6 +27,26 @@ pub enum SwapDirection {
     TakerSellsLez,
 }
 
+/// A protocol participant, independent of which chain holds their funded leg.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Participant {
+    /// The offer maker, who funds second.
+    Maker,
+    /// The offer taker, who funds first.
+    Taker,
+}
+
+impl Participant {
+    /// Returns the counterparty.
+    #[must_use]
+    pub const fn other(self) -> Self {
+        match self {
+            Self::Maker => Self::Taker,
+            Self::Taker => Self::Maker,
+        }
+    }
+}
+
 /// Chain whose consensus clock governs an observation or deadline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Chain {
@@ -110,38 +130,46 @@ impl ChainPosition {
 /// Conservative wall-clock bounds used only to validate cross-chain safety margin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimelockSafety {
-    maker_refund_latest: u64,
-    taker_refund_earliest: u64,
+    earlier_chain: Chain,
+    later_chain: Chain,
+    earlier_refund_latest: u64,
+    later_refund_earliest: u64,
     required_margin: u64,
 }
 
 impl TimelockSafety {
-    /// Creates bounds proving that the taker deadline cannot precede the maker's recovery window.
+    /// Creates bounds proving that one chain's later refund cannot precede the earlier refund.
     ///
-    /// `maker_refund_latest` includes worst-case maker-chain inclusion/reorg delay;
-    /// `taker_refund_earliest` uses the fastest plausible taker-chain clock.
+    /// `earlier_refund_latest` includes worst-case inclusion/reorg delay on the first-refund
+    /// chain; `later_refund_earliest` uses the fastest plausible later-chain clock.
     ///
     /// # Errors
     ///
     /// Returns [`Error::InsufficientTimelockMargin`] when the conservative interval is too small
     /// or arithmetic would overflow.
-    pub const fn new(
-        maker_refund_latest_unix_seconds: u64,
-        taker_refund_earliest_unix_seconds: u64,
+    pub fn between(
+        earlier_chain: Chain,
+        later_chain: Chain,
+        earlier_refund_latest_unix_seconds: u64,
+        later_refund_earliest_unix_seconds: u64,
         required_margin_seconds: u64,
     ) -> Result<Self, Error> {
-        let Some(required_taker_time) =
-            maker_refund_latest_unix_seconds.checked_add(required_margin_seconds)
+        let Some(required_later_time) =
+            earlier_refund_latest_unix_seconds.checked_add(required_margin_seconds)
         else {
             return Err(Error::InsufficientTimelockMargin);
         };
-        if required_margin_seconds == 0 || taker_refund_earliest_unix_seconds < required_taker_time
+        if earlier_chain == later_chain
+            || required_margin_seconds == 0
+            || later_refund_earliest_unix_seconds < required_later_time
         {
             return Err(Error::InsufficientTimelockMargin);
         }
         Ok(Self {
-            maker_refund_latest: maker_refund_latest_unix_seconds,
-            taker_refund_earliest: taker_refund_earliest_unix_seconds,
+            earlier_chain,
+            later_chain,
+            earlier_refund_latest: earlier_refund_latest_unix_seconds,
+            later_refund_earliest: later_refund_earliest_unix_seconds,
             required_margin: required_margin_seconds,
         })
     }
@@ -206,6 +234,18 @@ impl RecoverySchedule {
                 role: "taker",
                 expected: expected_chains[1],
                 actual: taker_refund.chain,
+            });
+        }
+        let expected_safety_order = match pair {
+            Pair::Bitcoin => [maker_refund.chain, taker_refund.chain],
+            Pair::Zcash => [Chain::Lez, Chain::Zcash],
+            Pair::Monero => unreachable!("Monero returned before deadline validation"),
+        };
+        if [safety.earlier_chain, safety.later_chain] != expected_safety_order {
+            return Err(Error::WrongTimelockOrder {
+                pair,
+                earlier: expected_safety_order[0],
+                later: expected_safety_order[1],
             });
         }
         Ok(Self {
@@ -300,13 +340,13 @@ pub enum Phase {
     BothLegsLocked,
     /// The taker's funding transaction regressed below confirmation policy after maker lock.
     TakerLockReorged,
-    /// The maker claimed the foreign leg, revealing claim evidence for the taker.
+    /// The construction-specific first claimant published evidence for the counterparty.
     ClaimEvidenceAvailable,
     /// Both parties claimed their proceeds.
     Completed,
-    /// The maker recovered the LEZ leg; the longer foreign timelock is still pending.
+    /// The maker recovered its funded leg; the taker's funded leg remains unresolved.
     MakerLegRefunded,
-    /// The taker recovered the foreign leg; the maker's LEZ refund has not been observed.
+    /// The taker recovered its funded leg; the maker's funded leg remains unresolved.
     TakerLegRefunded,
     /// Both parties recovered their original funds.
     Refunded,
@@ -343,11 +383,31 @@ pub enum Error {
         actual_chain: Chain,
         actual_basis: ClockBasis,
     },
+    /// A deadline profile assigned the cross-chain safety margin in the wrong order.
+    #[error(
+        "{pair:?} requires the {earlier:?} refund before the {later:?} refund by the safety margin"
+    )]
+    WrongTimelockOrder {
+        /// Pair whose construction fixes the ordering.
+        pair: Pair,
+        /// Chain whose refund must be conservatively earlier.
+        earlier: Chain,
+        /// Chain whose refund must be conservatively later.
+        later: Chain,
+    },
     /// The selected pair has no reviewed construction for this funding direction.
     #[error("{pair:?} does not support direction {direction:?}")]
     UnsupportedDirection {
         pair: Pair,
         direction: SwapDirection,
+    },
+    /// A claim was attributed to the wrong participant for this pair and direction.
+    #[error("claim expected {expected:?}, observed {actual:?}")]
+    UnexpectedClaimant {
+        /// Participant required by the reviewed construction.
+        expected: Participant,
+        /// Participant supplied by the observation.
+        actual: Participant,
     },
     /// The maker attempted to lock before the taker's lock reached confirmation policy.
     #[error("taker lock is not confirmed")]
@@ -355,14 +415,14 @@ pub enum Error {
     /// A different transaction was presented while confirmations were being accumulated.
     #[error("conflicting taker lock transaction")]
     ConflictingTakerLock,
-    /// A different LEZ lock was presented for the same swap.
-    #[error("conflicting maker LEZ lock transaction")]
+    /// A different maker-funded lock was presented for the same swap.
+    #[error("conflicting maker lock transaction")]
     ConflictingMakerLock,
     /// Different claim evidence was presented for the same swap.
     #[error("conflicting claim evidence")]
     ConflictingClaimEvidence,
-    /// A different LEZ claim was presented for the same swap.
-    #[error("conflicting taker LEZ claim transaction")]
+    /// A different follow-up claim was presented for the same swap.
+    #[error("conflicting follow-up claim transaction")]
     ConflictingTakerClaim,
     /// The requested transition is not valid in the current phase.
     #[error("expected phase {expected:?}, found {actual:?}")]
@@ -554,11 +614,14 @@ pub struct SwapCoordinator {
     #[serde(default)]
     taker_lock_transaction_id: Option<Box<str>>,
     #[serde(default)]
-    maker_lez_lock_transaction_id: Option<Box<str>>,
+    #[serde(alias = "maker_lez_lock_transaction_id")]
+    maker_lock_transaction_id: Option<Box<str>>,
     #[serde(default)]
     claim_evidence: Option<ClaimEvidence>,
     #[serde(default)]
-    taker_lez_claim_transaction_id: Option<Box<str>>,
+    revealing_claim_transaction_id: Option<Box<str>>,
+    #[serde(default, alias = "taker_lez_claim_transaction_id")]
+    followup_claim_transaction_id: Option<Box<str>>,
     #[serde(default)]
     taker_refund_event_transaction_id: Option<Box<str>>,
     #[serde(default)]
@@ -582,9 +645,10 @@ impl SwapCoordinator {
             recovery_schedule,
             phase: Phase::Offered,
             taker_lock_transaction_id: None,
-            maker_lez_lock_transaction_id: None,
+            maker_lock_transaction_id: None,
             claim_evidence: None,
-            taker_lez_claim_transaction_id: None,
+            revealing_claim_transaction_id: None,
+            followup_claim_transaction_id: None,
             taker_refund_event_transaction_id: None,
             maker_recovery_transaction_id: None,
         }
@@ -607,9 +671,10 @@ impl SwapCoordinator {
             recovery_schedule,
             phase: Phase::Offered,
             taker_lock_transaction_id: None,
-            maker_lez_lock_transaction_id: None,
+            maker_lock_transaction_id: None,
             claim_evidence: None,
-            taker_lez_claim_transaction_id: None,
+            revealing_claim_transaction_id: None,
+            followup_claim_transaction_id: None,
             taker_refund_event_transaction_id: None,
             maker_recovery_transaction_id: None,
         }
@@ -639,13 +704,28 @@ impl SwapCoordinator {
         self.direction
     }
 
+    /// Participant whose claim must publish the adaptor witness or HTLC preimage first.
+    ///
+    /// ZEC follows the RFP's chain-relative order: the LEZ recipient claims first and the ZEC
+    /// recipient follows. BTC's first-funding taker claims the maker-funded leg first. XMR keeps
+    /// the reviewed LEZ-first COMIT order in which the maker claims first.
+    #[must_use]
+    pub const fn first_claimant(&self) -> Participant {
+        match (self.pair, self.direction) {
+            (Pair::Bitcoin, _) | (Pair::Zcash, SwapDirection::TakerSellsForeign) => {
+                Participant::Taker
+            }
+            (Pair::Monero, _) | (Pair::Zcash, SwapDirection::TakerSellsLez) => Participant::Maker,
+        }
+    }
+
     /// Tracks the taker's first lock on whichever chain the direction assigns to the taker.
     ///
     /// # Errors
     ///
     /// Returns [`Error::ConflictingTakerLock`] for changed evidence or an invalid-phase error.
     pub fn observe_taker_lock(&mut self, proof: ChainProof) -> Result<(), Error> {
-        self.observe_taker_foreign_lock(proof)
+        self.observe_taker_lock_impl(proof)
     }
 
     /// Records that the previously observed taker funding transaction left the canonical chain.
@@ -681,7 +761,7 @@ impl SwapCoordinator {
     ///
     /// Returns [`Error::TakerLockNotConfirmed`] until confirmation policy is satisfied.
     pub fn observe_maker_lock(&mut self, proof: ChainProof) -> Result<(), Error> {
-        self.observe_maker_lez_lock(proof)
+        self.observe_maker_lock_impl(proof)
     }
 
     /// Returns the recovered adaptor secret or HTLC preimage, when observed.
@@ -696,7 +776,7 @@ impl SwapCoordinator {
     ///
     /// Returns [`Error::ConflictingTakerLock`] for a changed transaction ID, or
     /// [`Error::InvalidPhase`] after the taker lock has already been confirmed.
-    pub fn observe_taker_foreign_lock(&mut self, proof: ChainProof) -> Result<(), Error> {
+    fn observe_taker_lock_impl(&mut self, proof: ChainProof) -> Result<(), Error> {
         if self
             .taker_lock_transaction_id
             .as_deref()
@@ -730,59 +810,90 @@ impl SwapCoordinator {
         Ok(())
     }
 
-    /// Records the maker's LEZ lock, enforcing taker-first ordering.
+    /// Records the maker's funded lock, enforcing taker-first ordering.
     ///
     /// # Errors
     ///
     /// Returns [`Error::TakerLockNotConfirmed`] until confirmation policy is satisfied.
-    pub fn observe_maker_lez_lock(&mut self, proof: ChainProof) -> Result<(), Error> {
+    fn observe_maker_lock_impl(&mut self, proof: ChainProof) -> Result<(), Error> {
         if self.phase != Phase::TakerLockConfirmed {
-            return match self.maker_lez_lock_transaction_id.as_deref() {
+            return match self.maker_lock_transaction_id.as_deref() {
                 Some(known) if known == proof.transaction_id() => Ok(()),
                 Some(_) => Err(Error::ConflictingMakerLock),
                 None => Err(Error::TakerLockNotConfirmed),
             };
         }
-        self.maker_lez_lock_transaction_id = Some(proof.transaction_id);
+        self.maker_lock_transaction_id = Some(proof.transaction_id);
         self.phase = Phase::BothLegsLocked;
         Ok(())
     }
 
-    /// Records a foreign-leg claim and its extracted witness.
+    /// Records the construction-specific first claim and its extracted public evidence.
     ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidPhase`] unless both legs are locked.
-    pub fn observe_maker_claim(&mut self, evidence: ClaimEvidence) -> Result<(), Error> {
+    pub fn observe_revealing_claim(
+        &mut self,
+        claimant: Participant,
+        proof: ChainProof,
+        evidence: ClaimEvidence,
+    ) -> Result<(), Error> {
+        let expected_claimant = self.first_claimant();
+        if claimant != expected_claimant {
+            return Err(Error::UnexpectedClaimant {
+                expected: expected_claimant,
+                actual: claimant,
+            });
+        }
         if self.phase == Phase::TakerLockReorged {
             return Err(Error::TakerLockNotConfirmed);
         }
         if self.phase != Phase::BothLegsLocked {
-            return match self.claim_evidence.as_ref() {
-                Some(known) if known == &evidence => Ok(()),
-                Some(_) => Err(Error::ConflictingClaimEvidence),
-                None => Err(Error::InvalidPhase {
+            return match (
+                self.revealing_claim_transaction_id.as_deref(),
+                self.claim_evidence.as_ref(),
+            ) {
+                (Some(known_id), Some(known_evidence))
+                    if known_id == proof.transaction_id() && known_evidence == &evidence =>
+                {
+                    Ok(())
+                }
+                (Some(_), Some(_)) => Err(Error::ConflictingClaimEvidence),
+                _ => Err(Error::InvalidPhase {
                     expected: Phase::BothLegsLocked,
                     actual: self.phase,
                 }),
             };
         }
+        self.revealing_claim_transaction_id = Some(proof.transaction_id);
         self.claim_evidence = Some(evidence);
         self.phase = Phase::ClaimEvidenceAvailable;
         Ok(())
     }
 
-    /// Records the taker's LEZ claim and completes the swap.
+    /// Records the counterparty's follow-up claim and completes the swap.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidPhase`] until maker claim evidence is available.
-    pub fn observe_taker_lez_claim(&mut self, proof: ChainProof) -> Result<(), Error> {
+    /// Returns [`Error::InvalidPhase`] until revealing claim evidence is available.
+    pub fn observe_followup_claim(
+        &mut self,
+        claimant: Participant,
+        proof: ChainProof,
+    ) -> Result<(), Error> {
+        let expected_claimant = self.first_claimant().other();
+        if claimant != expected_claimant {
+            return Err(Error::UnexpectedClaimant {
+                expected: expected_claimant,
+                actual: claimant,
+            });
+        }
         if self.phase == Phase::TakerLockReorged {
             return Err(Error::TakerLockNotConfirmed);
         }
         if self.phase != Phase::ClaimEvidenceAvailable {
-            return match self.taker_lez_claim_transaction_id.as_deref() {
+            return match self.followup_claim_transaction_id.as_deref() {
                 Some(known) if known == proof.transaction_id() => Ok(()),
                 Some(_) => Err(Error::ConflictingTakerClaim),
                 None => Err(Error::InvalidPhase {
@@ -791,21 +902,12 @@ impl SwapCoordinator {
                 }),
             };
         }
-        self.taker_lez_claim_transaction_id = Some(proof.transaction_id);
+        self.followup_claim_transaction_id = Some(proof.transaction_id);
         self.phase = Phase::Completed;
         Ok(())
     }
 
-    /// Records the taker's claim of the maker-funded leg.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::InvalidPhase`] until maker claim evidence is available.
-    pub fn observe_taker_claim(&mut self, proof: ChainProof) -> Result<(), Error> {
-        self.observe_taker_lez_claim(proof)
-    }
-
-    /// Refunds the maker-funded, shorter-timelock leg at its typed chain position.
+    /// Refunds the maker-funded leg at its typed chain position.
     ///
     /// # Errors
     ///
@@ -915,7 +1017,7 @@ impl SwapCoordinator {
         Ok(())
     }
 
-    /// Refunds the taker-funded leg after its longer typed deadline.
+    /// Refunds the taker-funded leg at its typed deadline.
     ///
     /// # Errors
     ///

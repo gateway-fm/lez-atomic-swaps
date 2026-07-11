@@ -1,6 +1,6 @@
 use lez_swap_core::{
-    Chain, ChainPosition, ChainProof, ClaimEvidence, ConfirmationPolicy, Error, Pair, Phase,
-    RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
+    Chain, ChainPosition, ChainProof, ClaimEvidence, ConfirmationPolicy, Error, Pair, Participant,
+    Phase, RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 
 fn coordinator(pair: Pair) -> SwapCoordinator {
@@ -32,12 +32,17 @@ fn schedule(pair: Pair, direction: SwapDirection) -> RecoverySchedule {
         SwapDirection::TakerSellsForeign => (Chain::Lez, foreign),
         SwapDirection::TakerSellsLez => (foreign, Chain::Lez),
     };
+    let safety_chains = if pair == Pair::Zcash {
+        [Chain::Lez, Chain::Zcash]
+    } else {
+        [maker_chain, taker_chain]
+    };
     RecoverySchedule::new(
         pair,
         direction,
         ChainPosition::block_height(maker_chain, 100),
         ChainPosition::block_height(taker_chain, 120),
-        TimelockSafety::new(1_000, 1_200, 100).unwrap(),
+        TimelockSafety::between(safety_chains[0], safety_chains[1], 1_000, 1_200, 100).unwrap(),
     )
     .unwrap()
 }
@@ -54,37 +59,53 @@ fn taker_height(pair: Pair, value: u64) -> ChainPosition {
 fn happy_path_enforces_taker_first_then_completes_from_on_chain_evidence() {
     for pair in [Pair::Bitcoin, Pair::Monero, Pair::Zcash] {
         let mut swap = coordinator(pair);
+        assert_eq!(
+            swap.first_claimant(),
+            if pair == Pair::Monero {
+                Participant::Maker
+            } else {
+                Participant::Taker
+            }
+        );
 
         let err = swap
-            .observe_maker_lez_lock(ChainProof::new("lez-lock", 1).unwrap())
+            .observe_maker_lock(ChainProof::new("lez-lock", 1).unwrap())
             .expect_err("maker must not lock before the taker's lock is confirmed");
         assert_eq!(err, Error::TakerLockNotConfirmed);
 
-        swap.observe_taker_foreign_lock(ChainProof::new("foreign-lock", 1).unwrap())
+        swap.observe_taker_lock(ChainProof::new("foreign-lock", 1).unwrap())
             .expect("unconfirmed lock is tracked");
         assert_eq!(swap.phase(), Phase::AwaitingTakerConfirmations);
 
         let err = swap
-            .observe_maker_lez_lock(ChainProof::new("lez-lock", 1).unwrap())
+            .observe_maker_lock(ChainProof::new("lez-lock", 1).unwrap())
             .expect_err("one confirmation is below policy");
         assert_eq!(err, Error::TakerLockNotConfirmed);
 
-        swap.observe_taker_foreign_lock(ChainProof::new("foreign-lock", 2).unwrap())
+        swap.observe_taker_lock(ChainProof::new("foreign-lock", 2).unwrap())
             .expect("the same lock can gain confirmations");
         assert_eq!(swap.phase(), Phase::TakerLockConfirmed);
 
-        swap.observe_maker_lez_lock(ChainProof::new("lez-lock", 1).unwrap())
+        swap.observe_maker_lock(ChainProof::new("lez-lock", 1).unwrap())
             .expect("maker may lock only after taker confirmation");
         assert_eq!(swap.phase(), Phase::BothLegsLocked);
 
         // From the first lock onward every input is durable on-chain evidence. No Delivery,
         // Chat, daemon, or peer handle is needed to reach a terminal state.
-        swap.observe_maker_claim(ClaimEvidence::new([7; 32]))
-            .expect("maker claim reveals the adaptor secret or HTLC preimage");
+        let first_claimant = swap.first_claimant();
+        swap.observe_revealing_claim(
+            first_claimant,
+            ChainProof::new("revealing-claim", 1).unwrap(),
+            ClaimEvidence::new([7; 32]),
+        )
+        .expect("the construction-specific first claim reveals public evidence");
         assert_eq!(swap.phase(), Phase::ClaimEvidenceAvailable);
 
-        swap.observe_taker_lez_claim(ChainProof::new("lez-claim", 1).unwrap())
-            .expect("taker uses the revealed witness to claim LEZ funds");
+        swap.observe_followup_claim(
+            first_claimant.other(),
+            ChainProof::new("followup-claim", 1).unwrap(),
+        )
+        .expect("the counterparty uses the revealed evidence to claim");
         assert_eq!(swap.phase(), Phase::Completed);
     }
 }
@@ -92,9 +113,9 @@ fn happy_path_enforces_taker_first_then_completes_from_on_chain_evidence() {
 #[test]
 fn timeout_path_refunds_both_legs_without_off_chain_coordination() {
     let mut swap = coordinator(Pair::Zcash);
-    swap.observe_taker_foreign_lock(ChainProof::new("zec-lock", 2).unwrap())
+    swap.observe_taker_lock(ChainProof::new("zec-lock", 2).unwrap())
         .unwrap();
-    swap.observe_maker_lez_lock(ChainProof::new("lez-lock", 1).unwrap())
+    swap.observe_maker_lock(ChainProof::new("lez-lock", 1).unwrap())
         .unwrap();
 
     assert_eq!(
@@ -117,7 +138,7 @@ fn timeout_path_refunds_both_legs_without_off_chain_coordination() {
 #[test]
 fn taker_recovers_when_maker_never_locks() {
     let mut swap = coordinator(Pair::Bitcoin);
-    swap.observe_taker_foreign_lock(ChainProof::new("btc-lock", 2).unwrap())
+    swap.observe_taker_lock(ChainProof::new("btc-lock", 2).unwrap())
         .unwrap();
 
     assert_eq!(
@@ -132,9 +153,9 @@ fn taker_recovers_when_maker_never_locks() {
 #[test]
 fn delayed_observation_of_lez_refund_does_not_block_foreign_refund() {
     let mut swap = coordinator(Pair::Zcash);
-    swap.observe_taker_foreign_lock(ChainProof::new("zec-lock", 2).unwrap())
+    swap.observe_taker_lock(ChainProof::new("zec-lock", 2).unwrap())
         .unwrap();
-    swap.observe_maker_lez_lock(ChainProof::new("lez-lock", 1).unwrap())
+    swap.observe_maker_lock(ChainProof::new("lez-lock", 1).unwrap())
         .unwrap();
 
     // Both deadlines have passed, but the taker observes its own refund first.
@@ -153,40 +174,54 @@ fn replayed_chain_observations_are_idempotent() {
     let foreign_lock = ChainProof::new("xmr-lock", 2).unwrap();
     let lez_lock = ChainProof::new("lez-lock", 1).unwrap();
     let claim_evidence = ClaimEvidence::new([11; 32]);
-    let lez_claim = ChainProof::new("lez-claim", 1).unwrap();
+    let revealing_claim = ChainProof::new("revealing-claim", 1).unwrap();
+    let followup_claim = ChainProof::new("followup-claim", 1).unwrap();
+    let first_claimant = swap.first_claimant();
 
-    swap.observe_taker_foreign_lock(foreign_lock.clone())
-        .unwrap();
-    swap.observe_taker_foreign_lock(foreign_lock)
+    swap.observe_taker_lock(foreign_lock.clone()).unwrap();
+    swap.observe_taker_lock(foreign_lock)
         .expect("replayed foreign lock is harmless");
 
-    swap.observe_maker_lez_lock(lez_lock.clone()).unwrap();
-    swap.observe_maker_lez_lock(lez_lock)
+    swap.observe_maker_lock(lez_lock.clone()).unwrap();
+    swap.observe_maker_lock(lez_lock)
         .expect("replayed LEZ lock is harmless");
 
-    swap.observe_maker_claim(claim_evidence.clone()).unwrap();
-    swap.observe_maker_claim(claim_evidence)
+    swap.observe_revealing_claim(
+        first_claimant,
+        revealing_claim.clone(),
+        claim_evidence.clone(),
+    )
+    .unwrap();
+    swap.observe_revealing_claim(first_claimant, revealing_claim, claim_evidence)
         .expect("replayed claim evidence is harmless");
 
-    swap.observe_taker_lez_claim(lez_claim.clone()).unwrap();
-    swap.observe_taker_lez_claim(lez_claim)
+    swap.observe_followup_claim(first_claimant.other(), followup_claim.clone())
+        .unwrap();
+    swap.observe_followup_claim(first_claimant.other(), followup_claim)
         .expect("replayed LEZ claim is harmless");
     assert_eq!(swap.phase(), Phase::Completed);
 
     assert_eq!(
-        swap.observe_taker_foreign_lock(ChainProof::new("other-xmr-lock", 2).unwrap()),
+        swap.observe_taker_lock(ChainProof::new("other-xmr-lock", 2).unwrap()),
         Err(Error::ConflictingTakerLock)
     );
     assert_eq!(
-        swap.observe_maker_lez_lock(ChainProof::new("other-lez-lock", 1).unwrap()),
+        swap.observe_maker_lock(ChainProof::new("other-lez-lock", 1).unwrap()),
         Err(Error::ConflictingMakerLock)
     );
     assert_eq!(
-        swap.observe_maker_claim(ClaimEvidence::new([12; 32])),
+        swap.observe_revealing_claim(
+            first_claimant,
+            ChainProof::new("other-revealing-claim", 1).unwrap(),
+            ClaimEvidence::new([12; 32]),
+        ),
         Err(Error::ConflictingClaimEvidence)
     );
     assert_eq!(
-        swap.observe_taker_lez_claim(ChainProof::new("other-lez-claim", 1).unwrap()),
+        swap.observe_followup_claim(
+            first_claimant.other(),
+            ChainProof::new("other-followup-claim", 1).unwrap(),
+        ),
         Err(Error::ConflictingTakerClaim)
     );
 }
@@ -194,7 +229,7 @@ fn replayed_chain_observations_are_idempotent() {
 #[test]
 fn timelocks_reject_unsafe_ordering() {
     assert_eq!(
-        TimelockSafety::new(1_000, 1_099, 100),
+        TimelockSafety::between(Chain::Lez, Chain::Bitcoin, 1_000, 1_099, 100),
         Err(Error::InsufficientTimelockMargin)
     );
 }
@@ -227,7 +262,11 @@ fn taker_lock_reorg_revokes_claim_authority_but_preserves_refunds() {
         .expect("a canonicality regression is a durable observation");
     assert_eq!(after_maker.phase(), Phase::TakerLockReorged);
     assert_eq!(
-        after_maker.observe_maker_claim(ClaimEvidence::new([9; 32])),
+        after_maker.observe_revealing_claim(
+            after_maker.first_claimant(),
+            ChainProof::new("revealing-claim", 1).unwrap(),
+            ClaimEvidence::new([9; 32]),
+        ),
         Err(Error::TakerLockNotConfirmed)
     );
 

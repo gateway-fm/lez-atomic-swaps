@@ -35,9 +35,9 @@ enum Command {
         #[arg(long)]
         taker_refund_at: u64,
         #[arg(long)]
-        maker_refund_latest: Option<u64>,
+        earlier_refund_latest: Option<u64>,
         #[arg(long)]
-        taker_refund_earliest: Option<u64>,
+        later_refund_earliest: Option<u64>,
         #[arg(long)]
         required_margin: Option<u64>,
         #[arg(long)]
@@ -118,8 +118,8 @@ async fn main() -> anyhow::Result<()> {
             maker_refund_at,
             taker_refund_basis,
             taker_refund_at,
-            maker_refund_latest,
-            taker_refund_earliest,
+            earlier_refund_latest,
+            later_refund_earliest,
             required_margin,
             xmr_refund_event_confirmations,
         } => {
@@ -133,8 +133,8 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::ensure!(
                     maker_refund_basis.is_none()
                         && maker_refund_at.is_none()
-                        && maker_refund_latest.is_none()
-                        && taker_refund_earliest.is_none()
+                        && earlier_refund_latest.is_none()
+                        && later_refund_earliest.is_none()
                         && required_margin.is_none(),
                     "Monero recovery is event-gated and does not accept maker deadline fields"
                 );
@@ -156,10 +156,10 @@ async fn main() -> anyhow::Result<()> {
                         .ok_or_else(|| anyhow::anyhow!("--maker-refund-at is required"))?,
                     taker_refund_basis: taker_refund_basis.into(),
                     taker_refund_at,
-                    maker_refund_latest: maker_refund_latest
-                        .ok_or_else(|| anyhow::anyhow!("--maker-refund-latest is required"))?,
-                    taker_refund_earliest: taker_refund_earliest
-                        .ok_or_else(|| anyhow::anyhow!("--taker-refund-earliest is required"))?,
+                    earlier_refund_latest: earlier_refund_latest
+                        .ok_or_else(|| anyhow::anyhow!("--earlier-refund-latest is required"))?,
+                    later_refund_earliest: later_refund_earliest
+                        .ok_or_else(|| anyhow::anyhow!("--later-refund-earliest is required"))?,
                     required_margin: required_margin
                         .ok_or_else(|| anyhow::anyhow!("--required-margin is required"))?,
                 }

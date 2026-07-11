@@ -101,16 +101,16 @@ pub enum RecoveryRequest {
     Deadlines {
         /// Maker-leg refund clock basis.
         maker_refund_basis: ClockBasis,
-        /// Earlier maker-leg refund position.
+        /// Maker-leg refund position.
         maker_refund_at: u64,
         /// Taker-leg refund clock basis.
         taker_refund_basis: ClockBasis,
-        /// Later taker-leg refund position.
+        /// Taker-leg refund position.
         taker_refund_at: u64,
-        /// Conservative latest Unix time when the maker refund becomes usable.
-        maker_refund_latest: u64,
-        /// Conservative earliest Unix time when the taker refund becomes usable.
-        taker_refund_earliest: u64,
+        /// Conservative latest Unix time for the construction's earlier refund.
+        earlier_refund_latest: u64,
+        /// Conservative earliest Unix time for the construction's later refund.
+        later_refund_earliest: u64,
         /// Required user/chain reaction margin in seconds.
         required_margin: u64,
     },
@@ -214,8 +214,8 @@ fn recovery_schedule(request: &CreateSwapRequest) -> Result<RecoverySchedule, Er
                 maker_refund_at,
                 taker_refund_basis,
                 taker_refund_at,
-                maker_refund_latest,
-                taker_refund_earliest,
+                earlier_refund_latest,
+                later_refund_earliest,
                 required_margin,
             },
             pair,
@@ -226,14 +226,21 @@ fn recovery_schedule(request: &CreateSwapRequest) -> Result<RecoverySchedule, Er
                 SwapDirection::TakerSellsForeign => [Chain::Lez, foreign],
                 SwapDirection::TakerSellsLez => [foreign, Chain::Lez],
             };
+            let safety_chains = match pair {
+                Pair::Bitcoin => role_chains,
+                Pair::Zcash => [Chain::Lez, Chain::Zcash],
+                Pair::Monero => unreachable!("Monero uses event-gated recovery"),
+            };
             RecoverySchedule::new(
                 pair,
                 direction,
                 position(role_chains[0], *maker_refund_basis, *maker_refund_at),
                 position(role_chains[1], *taker_refund_basis, *taker_refund_at),
-                TimelockSafety::new(
-                    *maker_refund_latest,
-                    *taker_refund_earliest,
+                TimelockSafety::between(
+                    safety_chains[0],
+                    safety_chains[1],
+                    *earlier_refund_latest,
+                    *later_refund_earliest,
                     *required_margin,
                 )?,
             )

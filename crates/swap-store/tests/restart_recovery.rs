@@ -19,12 +19,17 @@ fn swap(id: &str, pair: Pair) -> SwapCoordinator {
     let schedule = if pair == Pair::Monero {
         RecoverySchedule::xmr_lez_first(ChainPosition::block_height(Chain::Lez, 120), 2).unwrap()
     } else {
+        let safety_chains = if pair == Pair::Zcash {
+            [Chain::Lez, Chain::Zcash]
+        } else {
+            role_chains
+        };
         RecoverySchedule::new(
             pair,
             direction,
             ChainPosition::block_height(role_chains[0], 100),
             ChainPosition::block_height(role_chains[1], 120),
-            TimelockSafety::new(1_000, 1_200, 100).unwrap(),
+            TimelockSafety::between(safety_chains[0], safety_chains[1], 1_000, 1_200, 100).unwrap(),
         )
         .unwrap()
     };
@@ -97,7 +102,7 @@ fn maker_daemon_restarts_after_each_durable_step_and_taker_can_complete() {
     assert_eq!(recovered, expected);
 
     recovered
-        .observe_taker_foreign_lock(ChainProof::new("btc-lock", 2).unwrap())
+        .observe_taker_lock(ChainProof::new("btc-lock", 2).unwrap())
         .unwrap();
     expected = recovered.clone();
     {
@@ -112,7 +117,7 @@ fn maker_daemon_restarts_after_each_durable_step_and_taker_can_complete() {
         .expect("confirmed taker lock survives restart");
     assert_eq!(recovered, expected);
     recovered
-        .observe_maker_lez_lock(ChainProof::new("lez-lock", 1).unwrap())
+        .observe_maker_lock(ChainProof::new("lez-lock", 1).unwrap())
         .unwrap();
 
     {
@@ -126,8 +131,13 @@ fn maker_daemon_restarts_after_each_durable_step_and_taker_can_complete() {
         .expect("both locks survive restart");
 
     let claim_evidence = ClaimEvidence::new([9; 32]);
+    let first_claimant = recovered.first_claimant();
     recovered
-        .observe_maker_claim(claim_evidence.clone())
+        .observe_revealing_claim(
+            first_claimant,
+            ChainProof::new("btc-claim", 1).unwrap(),
+            claim_evidence.clone(),
+        )
         .unwrap();
     {
         let store = SqliteSwapStore::open(&database).unwrap();
@@ -141,7 +151,10 @@ fn maker_daemon_restarts_after_each_durable_step_and_taker_can_complete() {
         .expect("claim witness survives restart");
     assert_eq!(recovered.claim_evidence(), Some(&claim_evidence));
     recovered
-        .observe_taker_lez_claim(ChainProof::new("lez-claim", 1).unwrap())
+        .observe_followup_claim(
+            first_claimant.other(),
+            ChainProof::new("lez-claim", 1).unwrap(),
+        )
         .unwrap();
     assert_eq!(recovered.phase(), Phase::Completed);
 }
@@ -154,7 +167,7 @@ fn concurrent_maker_users_are_persisted_as_isolated_swaps() {
     let monero = swap("bob-xmr", Pair::Monero);
 
     bitcoin
-        .observe_taker_foreign_lock(ChainProof::new("alice-lock", 2).unwrap())
+        .observe_taker_lock(ChainProof::new("alice-lock", 2).unwrap())
         .unwrap();
     store.save(&bitcoin).unwrap();
     store.save(&monero).unwrap();

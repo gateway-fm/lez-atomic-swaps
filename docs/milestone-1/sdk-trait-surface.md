@@ -53,8 +53,8 @@ pub trait SwapProtocol {
     type FirstLockTemplate;
     type FirstLockEvidence;
     type SecondLockTemplate;
-    type MakerClaimEvidence;
-    type TakerClaimTemplate;
+    type RevealingClaimEvidence;
+    type FollowupClaimTemplate;
     type RecoveryAction;
     type Error: ProtocolError;
 
@@ -70,12 +70,14 @@ pub trait SwapProtocol {
     fn build_second_lock(&self, prepared: &Self::Prepared,
         first: &ConfirmedFirstLock)
         -> Result<Self::SecondLockTemplate, Self::Error>;
-    fn validate_maker_claim(&self, prepared: &Self::Prepared,
-        evidence: &Self::MakerClaimEvidence)
+    fn claim_order(&self, prepared: &Self::Prepared)
+        -> ClaimOrder;
+    fn validate_revealing_claim(&self, prepared: &Self::Prepared,
+        evidence: &Self::RevealingClaimEvidence)
         -> Result<RecoveredClaimMaterial, Self::Error>;
-    fn build_taker_claim(&self, prepared: &Self::Prepared,
+    fn build_followup_claim(&self, prepared: &Self::Prepared,
         material: &RecoveredClaimMaterial)
-        -> Result<Self::TakerClaimTemplate, Self::Error>;
+        -> Result<Self::FollowupClaimTemplate, Self::Error>;
     fn recovery_action(&self, prepared: &Self::Prepared,
         state: &CanonicalChainState)
         -> Result<Self::RecoveryAction, Self::Error>;
@@ -111,12 +113,17 @@ sequenceDiagram
     SDK->>Chains: validate canonical confirmation policy
     Maker->>Chains: submit second lock
     Note over D,C: may disappear permanently now
-    alt maker claims
-        SDK->>Chains: validate claim and recover evidence
-        Taker->>Chains: submit second claim
+    alt BTC
+        Taker->>Chains: claim maker-funded leg and reveal witness
+        Maker->>Chains: claim taker-funded leg
+    else ZEC
+        SDK->>Chains: LEZ recipient claims and reveals preimage
+        SDK->>Chains: ZEC recipient claims transparent HTLC
+    else XMR LEZ-first
+        Maker->>Chains: claim LEZ and reveal recovery share
+        Taker->>Chains: spend Monero output
     else timeout/recovery
-        SDK->>Chains: maker recovery action
-        SDK->>Chains: taker recovery action
+        SDK->>Chains: execute construction-ordered recovery actions
     end
 ```
 
@@ -126,11 +133,13 @@ sequenceDiagram
 |---|---|---|---|
 | BTC–LEZ | exact P2TR outpoint/value/internal key/tapleaf/control block or LEZ escrow PDA/terms hash | adaptor pre-signature plus canonical completed BIP-340 signature, or scalar checked against adaptor point | Taproot CSV script-path refund on a BTC-funded leg; LEZ timestamp refund on a LEZ-funded leg |
 | XMR–LEZ | LEZ-first escrow, DLEQ transcript, Monero address/amount/tx proof and 10-confirmation observation | canonical LEZ witnessed signature and typed Monero spend-key share | taker refunds LEZ; maker recovery of XMR is key-share/event-gated, not a Monero timelock |
-| transparent ZEC–LEZ | exact transparent outpoint/value/BIP-199 redeem script/branch ID/expiry plus LEZ escrow | 32-byte SHA-256 preimage and canonical revealing transaction | CLTV refund on a ZEC-funded leg; LEZ timestamp refund on a LEZ-funded leg |
+| transparent ZEC–LEZ | exact transparent outpoint/value/BIP-199 redeem script/branch ID/expiry plus LEZ escrow | 32-byte SHA-256 preimage from the canonical LEZ claim, followed by the ZEC claim | LEZ timestamp refund first; ZEC CLTV refund later by the RFP-required margin |
 
 XMR rejects `TakerSellsForeign` at term validation. BTC and ZEC support both
-directions. Direction never changes taker-first ordering; it only maps actor
-roles onto chain legs.
+directions. Direction never changes taker-first funding. It can change which
+participant is the LEZ recipient and therefore the first ZEC claimant; the
+pair-specific `ClaimOrder` remains explicit rather than inferred from
+maker/taker names.
 
 ## Ports and durability contract
 

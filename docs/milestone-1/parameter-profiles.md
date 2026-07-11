@@ -12,10 +12,11 @@ flowchart LR
     L2 --> Maker["Maker may fund second leg"]
     B3 --> Maker
     Z10 --> Maker
-    Maker --> Short["Maker recovery horizon"]
-    Short --> Margin["Observation + reorg + inclusion + reaction budget"]
-    Margin --> Long["Taker recovery horizon"]
-    Long --> Runtime["Runtime conservative wall-clock bounds"]
+    Maker --> Order{"Reviewed pair recovery order"}
+    Order --> Early["Earlier chain recovery horizon"]
+    Early --> Margin["Observation + reorg + inclusion + reaction budget"]
+    Margin --> Late["Later chain recovery horizon"]
+    Late --> Runtime["Runtime conservative wall-clock bounds"]
 ```
 
 ## Scope and safety statement
@@ -44,7 +45,8 @@ window.
 
 The relevant row is selected by the chain holding that leg, not by pair name.
 For example, a BTC–LEZ swap whose taker funds LEZ waits two LEZ blocks before
-the maker creates BTC, then waits three BTC blocks before the maker claims LEZ.
+the maker creates BTC, then waits three BTC blocks before the taker claims BTC
+and the maker follows on LEZ.
 XMR-first is unsupported, so Monero is never the taker's first lock.
 
 Every observation binds chain/network ID, block hash/height, transaction ID,
@@ -61,13 +63,13 @@ uses a BIP-199 CLTV height derived from the funding height. The runtime also
 stores conservative Unix-time projections; raw cross-chain heights are never
 compared.
 
-| Pair/direction | Maker-funded leg recovery | Taker-funded leg recovery | Minimum target gap |
+| Pair/direction | Earlier recovery | Later recovery | Minimum target gap |
 |---|---|---|---:|
 | BTC, taker sells BTC | LEZ refund at +6 hours | BTC CSV at +72 blocks (~12 target hours) | 6 hours |
 | BTC, taker sells LEZ | BTC CSV at +36 blocks (~6 target hours) | LEZ refund at +12 hours | 6 hours |
 | ZEC, taker sells ZEC | LEZ refund at +2 hours | ZEC CLTV at +192 blocks (~4 target hours) | 2 hours |
-| ZEC, taker sells LEZ | ZEC CLTV at +96 blocks (~2 target hours) | LEZ refund at +4 hours | 2 hours |
-| XMR, taker sells LEZ | No Monero timelock: recover after the canonical LEZ refund reveals/completes the recovery share | LEZ refund at +12 hours | Event-gated; 2 LEZ confirmations after refund before Monero recovery |
+| ZEC, taker sells LEZ | LEZ refund at +2 hours | ZEC CLTV at +192 blocks (~4 target hours) | 2 hours |
+| XMR, taker sells LEZ | Taker LEZ refund at +12 hours | No Monero timelock: maker recovery follows the canonical refund event/share | Event-gated; 2 LEZ confirmations after refund before Monero recovery |
 
 The XMR row intentionally does not instantiate a fictional Monero deadline.
 Its state model is `LEZ lock -> XMR fund -> LEZ claim/XMR spend` or `LEZ refund
@@ -89,14 +91,19 @@ that Monero itself enforces a timeout. Stagenet tests may use an accelerated
 profile only when block production is controlled and the transcript names that
 profile.
 
+For ZEC, LEZ is always the earlier-refund chain and Zcash is always the
+later-refund chain, exactly matching RFP F4. Direction changes which participant
+funded each chain, not this consensus ordering. The LEZ recipient publishes the
+preimage first; the later ZEC window gives the follow-up claimant reaction time.
+
 Runtime validates:
 
-`taker_refund_earliest >= maker_recovery_latest + required_gap`
+`later_refund_earliest >= earlier_refund_latest + required_gap`
 
-using a fastest-plausible clock for the taker leg and slowest-plausible clock
-for the maker leg. Failure aborts before either lock. A profile is invalid when
-its chain ID, basis, confirmation depth, fee policy, or projection epoch differs
-from the signed terms.
+using a fastest-plausible clock for the later chain and slowest-plausible clock
+for the earlier chain. Failure aborts before either lock. A profile is invalid
+when its chain order, ID, basis, confirmation depth, fee policy, or projection
+epoch differs from the signed terms.
 
 ## Zcash expiry and fee policy
 
@@ -123,9 +130,11 @@ principal outputs never absorb an unnegotiated fee.
 - `mainnet`: absent by design until calibration and formal review are complete.
 
 The code representation must use named immutable profiles rather than scattered
-numeric defaults. RED tests first cover direction-to-chain mapping, XMR's
-event-gated recovery, every exact boundary, mixed-clock rejection, profile/network
-mismatch, latency-budget exhaustion, and profile persistence across restart.
+numeric defaults. RED tests first cover direction-to-chain mapping, the
+RFP-fixed ZEC-after-LEZ order, construction-specific claimant order, XMR's
+event-gated recovery, every exact boundary, mixed-clock rejection,
+profile/network mismatch, latency-budget exhaustion, and profile persistence
+across restart.
 
 ## Primary evidence
 

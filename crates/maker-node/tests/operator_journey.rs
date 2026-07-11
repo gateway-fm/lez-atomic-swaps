@@ -125,9 +125,9 @@ fn create_swap(endpoint: &str, id: &str, pair: &str, direction: Option<&str>) ->
         arguments.extend([
             "--maker-refund-at",
             "100",
-            "--maker-refund-latest",
+            "--earlier-refund-latest",
             "1000",
-            "--taker-refund-earliest",
+            "--later-refund-earliest",
             "1200",
             "--required-margin",
             "100",

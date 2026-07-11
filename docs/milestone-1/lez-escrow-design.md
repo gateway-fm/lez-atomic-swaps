@@ -81,10 +81,10 @@ destination.
 
 | Pair/direction | LEZ claim condition | Evidence made available to the other leg |
 |---|---|---|
-| BTC, taker sells BTC | `claim_adaptor_secret(t)` and `xonly(tG) == adaptor_point` using the reviewed secp256k1 library | Maker's BTC key-path signature reveals `t`; taker supplies it to LEZ |
-| BTC, taker sells LEZ | `claim_witnessed`, authorized by an isolated per-swap maker claim account | The accepted 64-byte LEZ BIP-340 authorization signature lets the taker extract `t` and claim BTC |
+| BTC, taker sells BTC | `claim_witnessed`, authorized by an isolated per-swap taker claim account | The taker's accepted LEZ BIP-340 authorization signature lets the maker extract `t` and claim BTC |
+| BTC, taker sells LEZ | `claim_adaptor_secret(t)` and `xonly(tG) == adaptor_point` using the reviewed secp256k1 library | The taker's BTC key-path signature reveals `t`; maker supplies it to LEZ |
 | XMR, taker sells LEZ only | `claim_witnessed`, authorized by an isolated per-swap maker claim account bound to the reviewed DLEQ transcript | The accepted LEZ signature reveals the share bound to the Monero spend-key recovery path |
-| ZEC, either direction | `claim_hashlock(preimage)` and `SHA256(preimage) == digest` | The same preimage claims the other HTLC |
+| ZEC, either direction | `claim_hashlock(preimage)` and `SHA256(preimage) == digest`; the fixed LEZ recipient is the revealing claimant | The canonical LEZ claim reveals the preimage used by the ZEC recipient |
 
 For witnessed claims, setup freezes the exact public transaction message and
 account nonce before either lock, and the authority is never reused. The guest

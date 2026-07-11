@@ -9,7 +9,7 @@ fn reverse_direction_maps_role_deadlines_to_the_correct_chains() {
         SwapDirection::TakerSellsLez,
         ChainPosition::block_height(Chain::Bitcoin, 500),
         ChainPosition::block_height(Chain::Lez, 700),
-        TimelockSafety::new(1_000, 1_400, 300).unwrap(),
+        TimelockSafety::between(Chain::Bitcoin, Chain::Lez, 1_000, 1_400, 300).unwrap(),
     )
     .unwrap();
 
@@ -41,7 +41,7 @@ fn reverse_direction_maps_role_deadlines_to_the_correct_chains() {
 
 #[test]
 fn schedule_rejects_wrong_role_chain_and_insufficient_cross_chain_margin() {
-    let safe = TimelockSafety::new(1_000, 1_400, 300).unwrap();
+    let safe = TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_400, 300).unwrap();
     assert_eq!(
         RecoverySchedule::new(
             Pair::Zcash,
@@ -57,7 +57,7 @@ fn schedule_rejects_wrong_role_chain_and_insufficient_cross_chain_margin() {
         })
     );
     assert_eq!(
-        TimelockSafety::new(1_000, 1_250, 300),
+        TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_250, 300),
         Err(Error::InsufficientTimelockMargin)
     );
 }
@@ -69,7 +69,14 @@ fn block_height_and_timestamp_are_never_compared_as_raw_numbers() {
         SwapDirection::TakerSellsForeign,
         ChainPosition::timestamp(Chain::Lez, 1_800_000_000),
         ChainPosition::block_height(Chain::Bitcoin, 850_000),
-        TimelockSafety::new(1_800_000_000, 1_800_003_600, 1_800).unwrap(),
+        TimelockSafety::between(
+            Chain::Lez,
+            Chain::Bitcoin,
+            1_800_000_000,
+            1_800_003_600,
+            1_800,
+        )
+        .unwrap(),
     )
     .unwrap();
 
@@ -92,7 +99,7 @@ fn monero_first_is_rejected_until_a_reviewed_construction_exists() {
             SwapDirection::TakerSellsForeign,
             ChainPosition::block_height(Chain::Lez, 500),
             ChainPosition::block_height(Chain::Monero, 700),
-            TimelockSafety::new(1_000, 1_400, 300).unwrap(),
+            TimelockSafety::between(Chain::Lez, Chain::Monero, 1_000, 1_400, 300).unwrap(),
         ),
         Err(Error::UnsupportedDirection {
             pair: Pair::Monero,

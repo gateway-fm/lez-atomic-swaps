@@ -43,7 +43,7 @@ fn coordinator() -> SwapCoordinator {
             SwapDirection::TakerSellsForeign,
             ChainPosition::block_height(Chain::Lez, 100),
             ChainPosition::block_height(Chain::Bitcoin, 120),
-            TimelockSafety::new(1_000, 1_200, 100).unwrap(),
+            TimelockSafety::between(Chain::Lez, Chain::Bitcoin, 1_000, 1_200, 100).unwrap(),
         )
         .unwrap(),
     )
@@ -73,7 +73,7 @@ proptest! {
                 Action::TakerLock {
                     confirmations,
                     alternate,
-                } => swap.observe_taker_foreign_lock(
+                } => swap.observe_taker_lock(
                     ChainProof::new(
                         transaction_id("foreign-lock", "other-foreign-lock", alternate),
                         confirmations,
@@ -83,7 +83,7 @@ proptest! {
                 Action::RemoveTakerLock { alternate } => swap.observe_taker_lock_removed(
                     transaction_id("foreign-lock", "other-foreign-lock", alternate),
                 ),
-                Action::MakerLock { alternate } => swap.observe_maker_lez_lock(
+                Action::MakerLock { alternate } => swap.observe_maker_lock(
                     ChainProof::new(
                         transaction_id("lez-lock", "other-lez-lock", alternate),
                         1,
@@ -91,11 +91,16 @@ proptest! {
                     .unwrap(),
                 ),
                 Action::MakerClaim { secret_byte } => {
-                    swap.observe_maker_claim(ClaimEvidence::new([secret_byte; 32]))
+                    swap.observe_revealing_claim(
+                        swap.first_claimant(),
+                        ChainProof::new("revealing-claim", 1).unwrap(),
+                        ClaimEvidence::new([secret_byte; 32]),
+                    )
                 }
-                Action::TakerClaim { alternate } => swap.observe_taker_lez_claim(
+                Action::TakerClaim { alternate } => swap.observe_followup_claim(
+                    swap.first_claimant().other(),
                     ChainProof::new(
-                        transaction_id("lez-claim", "other-lez-claim", alternate),
+                        transaction_id("followup-claim", "other-followup-claim", alternate),
                         1,
                     )
                     .unwrap(),
