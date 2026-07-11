@@ -104,7 +104,7 @@ with dependency license/advisory checks in CI.
   while rejecting conflicting chain evidence.
 - [ ] Add pinned upstream LEZ reproducer tests, including mempool-vs-block timing
   and signature-byte preservation.
-- [ ] Complete the hard-requirement traceability matrix.
+- [x] Complete the hard-requirement traceability matrix and enforce ID coverage in CI.
 
 ### Week 2 — protocol and threat design
 
