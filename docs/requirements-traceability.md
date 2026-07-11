@@ -10,7 +10,7 @@ before Milestone 1 exit.
 | F3 LEZ-XMR | XMR happy/refund/concurrency suites plus COMIT DLEQ vectors | Planned M4 |
 | F4 LEZ-ZEC transparent | ZEC happy/refund/concurrency suite plus BIP-199 vectors | Planned M2 |
 | F5 LEZ escrow claim/refund | Escrow instruction tests and standalone sequencer E2E | Planned |
-| F6 atomicity | Happy, two-leg refund, absent-maker refund, and reverse observation order | Partial; model exploration remains |
+| F6 atomicity | Scenario tests plus 512 generated transition sequences per run | Partial; chain-specific/reorg model remains |
 | F7 native/custom LEZ tokens | Parameterized escrow E2E for native token and ATA | Planned |
 | F8 price modes | Local-config and Logos-module C API contract tests | Planned M5 |
 | F9 headless maker | UJ-007 maker CLI-to-daemon black-box suite | Planned M5 |

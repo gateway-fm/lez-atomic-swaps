@@ -83,6 +83,7 @@ with dependency license/advisory checks in CI.
 | Restart recovery and user isolation | 2026-07-11 unresolved `SqliteSwapStore` and later missing `claim_evidence` | 2026-07-11 close/reopen after locks and witness reveal, plus two independent swaps, 2 passed | Encrypt secrets at rest; add process-kill/WAL matrix, migrations, and atomic outbox |
 | Maker abandonment/refund observation order | 2026-07-11 missing `TakerLegRefunded` and no direct taker recovery | 2026-07-11 taker-only refund and foreign-first observation pass | Add model tests over all legal event orderings and chain reorgs |
 | At-least-once chain observation replay | 2026-07-11 repeated confirmed lock failed with `InvalidPhase` | 2026-07-11 identical lock/claim events are idempotent; conflicting IDs/evidence are rejected | Extend to persisted outbox/event sequence numbers and refund transaction proofs |
+| Generated transition sequences | 2026-07-11 property oracle exposed confirmation-growth case and was corrected | 512 arbitrary event sequences preserve legal transitions and absorbing terminal states | Add a reference model for reorg/replacement and typed per-chain deadlines |
 
 ## Milestone 1 plan: three weeks
 
@@ -113,7 +114,9 @@ with dependency license/advisory checks in CI.
   timelocks/reorgs, XMR key-share recovery, ZEC transparent visibility, local RPC,
   persistence, and concurrency.
 - [ ] Publish common SDK lifecycle traits plus typed pair-specific evidence/errors.
-- [ ] Add model/property tests for all permitted and forbidden transitions.
+- [x] Add generated property tests for transition legality, conflicts, and
+  absorbing terminal states.
+- [ ] Extend the model with reorg/replacement events and typed per-chain deadlines.
 
 ### Week 3 — integration contracts and review packet
 
