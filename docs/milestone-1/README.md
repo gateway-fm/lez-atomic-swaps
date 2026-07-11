@@ -1,6 +1,6 @@
 # Milestone 1 review packet
 
-Status: in progress. The authoritative checklist and dates live in
+Status: review complete. The authoritative checklist and dates live in
 [the implementation plan](../implementation-plan.md).
 
 This directory holds the reviewable design artefacts:
@@ -9,7 +9,8 @@ This directory holds the reviewable design artefacts:
 - [per-leg protocol and atomicity design](protocol-design.md);
 - [SDK trait surface](sdk-trait-surface.md);
 - [LEZ escrow and SPEL IDL sketch](lez-escrow-design.md); and
-- [confirmation and recovery parameter profiles](parameter-profiles.md); and
+- [confirmation and recovery parameter profiles](parameter-profiles.md);
+- [Milestone 1 review and downstream entry gates](review.md); and
 - [LEZ primitive verification](lez-primitive-verification.md).
 
 An artefact marked draft does not satisfy its milestone exit gate. Decisions
@@ -28,5 +29,6 @@ flowchart LR
     Escrow --> Review
     SDK --> Review
     Threats --> Review
+    ReviewDoc["Review + M2/M3/M4/M5 entry gates"] --> Review
     Review --> Gates["M2/M3/M4/M5 entry gates"]
 ```

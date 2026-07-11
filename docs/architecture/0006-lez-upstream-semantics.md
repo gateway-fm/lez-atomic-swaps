@@ -41,11 +41,19 @@ Source trace used `logos-blockchain/logos-execution-zone` `dev` commit
 ## Decision
 
 Timelocks include sequencer-inclusion slack and treat upper bounds as exclusive.
-Adaptor extraction may rely on accepted signature bytes only after a pinned
-sequencer-level reproducer proves submission-to-inclusion byte preservation.
-Source inspection alone is insufficient for Milestone 1 exit.
+Adaptor extraction may rely on accepted signature bytes because the pinned
+sequencer-level equality reproducer now proves submission-to-inclusion byte
+preservation. A repository-owned pinned test also proves that a stateless-valid,
+balance-invalid transaction enters the mempool and is rejected at block
+construction. Source inspection alone remains insufficient evidence.
 
 The scheduled/manual upstream workflow runs an isolated pinned lane, including
 the native sequencer equality test at two Cargo build jobs, and a lightweight
 current-`dev` drift lane. File paths are diagnostic, not the contract: semantic
 tests must fail clearly when upstream reorganizes code or behavior.
+
+The clean pinned run on 2026-07-11 passed 14 guest-free validity cases, the
+complete embedded BIP-340 vector test, and exactly one run of each required
+native sequencer test under upstream's `mock` feature. The verifier checks the
+test listing before exact execution, preventing a filtered zero-test false
+green.

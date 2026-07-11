@@ -1,7 +1,6 @@
 # LEZ primitive verification
 
-Status: source trace and lightweight executable vectors complete; pinned native
-sequencer lane in review —
+Status: complete; pinned lightweight and native sequencer lanes pass —
 2026-07-11
 
 ```mermaid
@@ -9,7 +8,7 @@ flowchart TB
     Pin["Pin LEZ dev commit"] --> Trace["Source-trace RPC, mempool, builder, state"]
     Trace --> Unit["Run upstream BIP-340 + validity unit vectors"]
     Unit --> Sequencer["Pinned native sequencer test, 2 build jobs"]
-    Sequencer --> Admission["RPC enqueue then block-time state validation"]
+    Sequencer --> Admission["Custom mempool-admit / block-reject reproducer"]
     Sequencer --> Bytes["Transaction equality from mempool to block"]
     Unit --> Canonical["BIP-340 invalid/non-canonical vectors"]
     Admission --> Answer["Public protocol semantics"]
@@ -62,6 +61,11 @@ Branch/commit inspected: `dev` /
   asserts that the block contains exactly one transaction equal to the original,
   plus the clock transaction. This proves block-time rejection and accepted-byte
   preservation on the real builder path.
+- a repository-owned patch adds a pinned sequencer test that enqueues a
+  stateless-valid but balance-invalid signed transfer, observes successful
+  mempool admission, produces a block, and asserts that only the clock
+  transaction is included. This executes the admission/validation split rather
+  than trusting the source-path string checks.
 - the embedded official BIP-340 verification vectors include invalid field
   elements and an `s` scalar equal to the curve order; the pinned verifier rejects
   them rather than accepting or rewriting them.
@@ -71,13 +75,29 @@ native sequencer test with at most two Cargo build jobs; current `dev` runs the
 lightweight semantic and source-drift checks. The verifier clones into a unique
 temporary directory and never starts Docker or binds a port.
 
+The pinned native lane builds `rzup` from immutable RISC Zero commit
+`8eb06ab020a92dc5b63ba6dd0836d432aba6d890` with its lockfile, then installs
+`r0vm` 3.0.5, matching the pinned LEZ `risc0-zkvm` dependency, and executes in
+upstream's `RISC0_DEV_MODE=1`. The lightweight lane does not install RISC Zero.
+
 The executable runner is `scripts/verify-lez-primitives.sh`. Source checks are
 early drift diagnostics; the tests, not those string matches, are the behavioral
-evidence.
+evidence. The native lane enables upstream's `mock` feature, asserts both exact
+test names occur in Cargo's test listing, and then runs each with `--exact`; a
+zero-test filtered command cannot report a false green.
 
-Observed locally at the pinned commit: the guest-free validity boundary suite
-and BIP-340 verification vectors pass with `RISC0_SKIP_BUILD=1`. The native
-sequencer build was deliberately stopped when unrelated host compilation was
-detected; CI is its isolated executable gate. Guest-backed validity tests require
-the separate RISC Zero Rust toolchain; run them with `LEZ_VERIFY_GUESTS=1` after
-`rzup install rust`. The project does not silently install that prerequisite.
+Observed from a clean, unique checkout at the pinned commit on 2026-07-11:
+
+- all 14 guest-free validity-window cases passed;
+- the complete embedded BIP-340 verification-vector test passed;
+- Cargo listed both required native sequencer tests under the `mock` feature;
+- the repository-owned mempool-admit/block-reject reproducer ran exactly once
+  and passed; and
+- upstream's transaction replay/equality test ran exactly once and passed.
+
+The native run used `r0vm` 3.0.5, `RISC0_DEV_MODE=1`,
+`RISC0_SKIP_BUILD=1`, and at most two Cargo build jobs. Guest-backed validity
+tests require the separate RISC Zero Rust toolchain; run them with
+`LEZ_VERIFY_GUESTS=1` after `rzup install rust`. They are additional upstream
+coverage, not an M1 exit dependency, and the project does not silently install
+that prerequisite.

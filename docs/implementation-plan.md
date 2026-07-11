@@ -91,6 +91,7 @@ with dependency license/advisory checks in CI.
 | Architecture diagrams | 2026-07-11 completeness guard failed on the first ADR without Mermaid | All ADRs and M1 design artifacts contain current component/flow diagrams; CI and contribution policy enforce coverage | Render-validation can be added when a lightweight pinned renderer is approved |
 | XMR funding-direction capability | 2026-07-11 source review found COMIT ships scriptable-chain-first only; test lacked `UnsupportedDirection` | Core schedule and actual CLI/daemon reject XMR-first; LEZ-first XMR remains supported and documented in the per-leg flow | Validate exact DLEQ/key-share recovery transcript against vectors and third-party review in M4 |
 | XMR event-gated recovery | 2026-07-11 acceptance test could not resolve `RecoverySchedule`, event evidence, or recovery phases; prototype accepted a fake Monero deadline | Core/RPC/CLI use tagged deadline vs canonical-event terms; wrong-chain/low-confirmation evidence is rejected, confirmation regression revokes availability, restart preserves each phase, and real operator CLI creates LEZ-first XMR without maker-deadline flags | Replace the generic 32-byte recovery proof with exact COMIT DLEQ/key-share and Monero transaction evidence in M4 |
+| Pinned LEZ execution semantics | Source inspection alone could not prove the mempool/block split or accepted transaction-byte preservation; an initial filtered native command falsely ran zero tests | A clean pinned checkout passes 14 validity cases, the full BIP-340 vector test, and exactly one run each of the repository-owned admission/block reproducer and upstream transaction-equality test | Keep the pinned lane required and use the scheduled current-`dev` lane only as forward-compatibility drift detection |
 
 ## Milestone 1 plan: three weeks
 
@@ -108,7 +109,7 @@ with dependency license/advisory checks in CI.
   concurrent swap isolation.
 - [x] Make lock and claim observations idempotent under at-least-once delivery
   while rejecting conflicting chain evidence.
-- [ ] Add pinned upstream LEZ reproducer tests, including mempool-vs-block timing
+- [x] Add pinned upstream LEZ reproducer tests, including mempool-vs-block timing
   and signature-byte preservation.
 - [x] Complete the hard-requirement traceability matrix and enforce ID coverage in CI.
 
@@ -138,10 +139,22 @@ with dependency license/advisory checks in CI.
   Logos Core daemon-mode adapter contract.
 - [x] Fix public-testnet per-pair confirmation/recovery profiles with reorg,
   latency, and reaction margins; keep mainnet disabled pending calibration/audit.
-- [ ] Review all ADRs, test evidence, open questions, and Milestone 2 entry gates.
+- [x] Review all ADRs, test evidence, open questions, and Milestone 2 entry gates.
 
-Milestone 1 exits only when every unchecked deliverable above is completed and
-reviewable. The first code slice does not by itself complete Milestone 1.
+Milestone 1 exit evidence is complete and reviewable. The exact evidence commit
+is tagged `m1-complete` only after the final full gate run succeeds.
+
+## Milestone completion tags
+
+Each milestone is marked by one annotated Git tag, `m1-complete` through
+`m7-complete`, on the exact commit whose living plan, review packet, and required
+test evidence prove every exit gate. Tags are never created for partial or
+aspirational states. A later fix does not move an existing tag; it receives a
+new normal commit and, if the milestone evidence was invalidated, a documented
+corrective tag such as `m1-complete.1` only after the full gate is rerun.
+
+Tags are created locally after verification. Publishing tags/remotes remains an
+explicit repository-owner action unless separately authorized.
 
 ## Milestone sequence and entry gates
 
@@ -176,12 +189,12 @@ CI and local scripts fail if the project name is empty or does not start with
 
 | Risk/question | Current evidence | Owner action |
 |---|---|---|
-| LEZ proposal file paths drifted (`nssa` became `lee/state_machine`) | Source at pinned `dev` commit | Pin and automate semantic reproducers, not path assertions alone |
-| Signature-byte stability is load-bearing for adaptor extraction | `Signature.value` is stored and `k256` verifies it directly; no normalizer found | Add a byte-preservation test through sequencer block inclusion |
-| Validity windows are checked at block construction, not RPC admission | RPC pushes to mempool; state validation uses new block height/time | Add sequencer-level boundary reproducer and allocate inclusion slack |
+| LEZ proposal file paths drifted (`nssa` became `lee/state_machine`) | Pinned lightweight and native semantic reproducers pass | Retain path checks only as early diagnostics and keep behavior tests authoritative |
+| Signature-byte stability is load-bearing for adaptor extraction | Pinned native transaction-equality test preserves the complete signed transaction through block inclusion | Keep the exact equality reproducer required and rerun on deliberate LEZ pin changes |
+| Validity windows are checked at block construction, not RPC admission | Repository-owned native test proves a balance-invalid transaction is admitted then excluded during block construction | Allocate inclusion slack and retain the native admission/block reproducer |
 | Zcash node migration is active | `zcashd` halts before NU6.3; Zallet omits raw-tx builder RPCs | Use Zebra plus local canonical Rust transaction construction |
 | SPEL documentation targets older `nssa` paths | SPEL v0.5 docs and current LEZ `dev` disagree | Build a minimal generated program against one pinned compatibility set before escrow implementation |
-| Upstream LEZ native sequencer tests compile RocksDB and can contend with host work | Guest-free validity and BIP-340 vectors pass locally; the heavy lane is isolated in scheduled CI | Cap Cargo at two jobs, use a unique temporary checkout, and never run the heavy lane alongside detected host compilation |
+| Upstream LEZ native sequencer tests compile RocksDB and can contend with host work | Clean native lane passes with two jobs in a unique checkout and no Docker/ports | Keep the two-job cap and do not run the heavy lane alongside detected host compilation |
 | Mainnet deadlines remain uncalibrated | `public-testnet-v1` fixes testnet depths/horizons and conservative bounds; mainnet is deliberately absent | Gather chain telemetry and fee/reorg stress evidence, then require formal review before enabling a mainnet profile |
 | Final E2E must represent actual users | Operator process harness exists; taker and chain lifecycles still call protocol core directly | Extend the role harness through taker CLI and real chain adapters before labeling tests as full E2E |
 | Prototype local RPC still uses loopback HTTP and an environment capability | Tower rejects a Bearer header before JSON parsing and non-loopback binds are refused | Move to an owner-restricted Unix socket and credential file before M5 freeze |

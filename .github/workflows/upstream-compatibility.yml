@@ -31,4 +31,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: 1.96.0
+      - name: Install pinned RISC Zero runtime for native sequencer lane
+        if: matrix.sequencer == '1'
+        run: |
+          cargo install --locked --git https://github.com/risc0/risc0 +            --rev 8eb06ab020a92dc5b63ba6dd0836d432aba6d890 +            rzup --no-default-features --features cli,install
+          rzup install r0vm 3.0.5
       - run: ./scripts/verify-lez-primitives.sh

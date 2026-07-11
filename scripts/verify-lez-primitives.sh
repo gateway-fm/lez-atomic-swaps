@@ -4,6 +4,7 @@ set -euo pipefail
 readonly LEZ_REPOSITORY="https://github.com/logos-blockchain/logos-execution-zone.git"
 readonly LEZ_COMMIT="cac4921581b37e85ae25e940f3a62412cd22308e"
 readonly LEZ_REF="${LEZ_REF:-${LEZ_COMMIT}}"
+readonly REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 workdir="$(mktemp -d -t lez-atomic-swaps-lez-verify.XXXXXX)"
 cleanup() {
@@ -54,6 +55,14 @@ else
 fi
 
 if [[ "${LEZ_VERIFY_SEQUENCER:-0}" = "1" ]]; then
+  if ! command -v r0vm >/dev/null 2>&1; then
+    echo "sequencer verification requires r0vm 3.0.5; install it with 'rzup install r0vm 3.0.5'" >&2
+    exit 1
+  fi
+
+  git apply --check "${REPOSITORY_ROOT}/tests/upstream/lez-sequencer-reproducers.patch"
+  git apply "${REPOSITORY_ROOT}/tests/upstream/lez-sequencer-reproducers.patch"
+
   if ! command -v unzip >/dev/null 2>&1; then
     busybox_path="$(command -v busybox || true)"
     if [[ -z "${busybox_path}" ]]; then
@@ -72,9 +81,27 @@ if [[ "${LEZ_VERIFY_SEQUENCER:-0}" = "1" ]]; then
     fi
   fi
 
+  sequencer_tests="$(
+    CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" \
+      RISC0_DEV_MODE=1 \
+      RISC0_SKIP_BUILD=1 \
+      cargo test -p sequencer_core --features mock -- --list
+  )"
+  rg -F 'tests::atomic_swap_reproducer_mempool_admits_then_block_rejects: test' \
+    <<<"${sequencer_tests}"
+  rg -F 'tests::replay_transactions_are_rejected_in_the_same_block: test' \
+    <<<"${sequencer_tests}"
+
   CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" \
+    RISC0_DEV_MODE=1 \
     RISC0_SKIP_BUILD=1 \
-    cargo test -p sequencer_core replay_transactions_are_rejected_in_the_same_block
+    cargo test -p sequencer_core --features mock \
+      tests::atomic_swap_reproducer_mempool_admits_then_block_rejects -- --exact
+  CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" \
+    RISC0_DEV_MODE=1 \
+    RISC0_SKIP_BUILD=1 \
+    cargo test -p sequencer_core --features mock \
+      tests::replay_transactions_are_rejected_in_the_same_block -- --exact
 else
   echo "Skipping native sequencer test; set LEZ_VERIFY_SEQUENCER=1 for the isolated heavy lane." >&2
 fi
