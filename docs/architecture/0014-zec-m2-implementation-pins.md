@@ -11,6 +11,11 @@ flowchart LR
     TxVectors --> Raw["Locally signed transparent transactions"]
     Raw --> RPC["sendrawtransaction / getrawtransaction"]
     RPC --> Zebra["Zebra 5.2.0 consensus authority"]
+    Zebra --> OldBranch["Actor claim + refund<br/>3-block branch"]
+    RPC --> ForkZebra["Disconnected Zebra 5.2.0 fork authority"]
+    ForkZebra --> NewBranch["Conflicting actor refund<br/>4-block branch"]
+    NewBranch -->|"raw getblock / submitblock"| Zebra
+    Zebra --> ForkEvidence["Canonical hash replacement at 3 detached heights"]
     Official["Official Zebra 5.2.0 image digest"] --> Binary["Copy exact zebrad binary"]
     Distroless["Pinned distroless cc-debian13 nonroot"] --> Runtime["Minimal read-only E2E image"]
     Binary --> Runtime
@@ -179,12 +184,18 @@ or an M2 tag.
 
 The deterministic Zebra lane mines NU6.2 Regtest coinbases to a key held by the
 funding actor, fetches actual outputs through RPC, and submits locally signed
-funding, claim, and refund transactions. It also runs two independent swaps
-concurrently, invalidates their terminal block, has each actor rebroadcast the
-exact transaction after confirmation regression, rejects a conflicting
-same-output replacement, and reconsiders the exact block. This is
-consensus-adapter evidence, not the still-pending composed maker/taker
-cross-chain E2E.
+funding, claim, and refund transactions. Its first regression scenario runs two
+independent swaps concurrently, invalidates their terminal block, has each
+actor rebroadcast the exact transaction, rejects a conflicting same-output
+replacement, and reconsiders the exact block. Its accepted-fork scenario runs
+two disconnected pinned nodes from an identical RPC-relayed prefix. The
+primary confirms the claimant claim on a three-block branch; the fork confirms
+the conflicting funder refund on a four-block branch. Raw fork blocks submitted
+to the primary replace all three old canonical hashes, and the primary reports
+the conflicting refund as active with four confirmations. Zebra 5.2.0 evicts
+the detached non-finalized headers, so the proof asserts canonical replacement
+rather than assuming side-chain RPC retention. This is consensus-node evidence,
+not the still-pending composed maker/taker cross-chain E2E.
 
 Use Zebra as the acceptance authority. Local parsing or interpreter success is
 useful unit evidence but never proves a transaction is consensus-valid or
@@ -194,8 +205,9 @@ confirmed state through the selected Zebra RPC.
 
 ## Isolation and upgrade policy
 
-The derived image is built only from its two immutable inputs and used inside a unique Compose project named
-`lez-atomic-swaps-${RUN_ID}` with project-scoped data and ephemeral host ports.
+The derived image is built only from its two immutable inputs and used twice
+inside a unique Compose project named `lez-atomic-swaps-${RUN_ID}` with
+project-scoped data and separate ephemeral host ports.
 No fixed container name, shared network, shared volume, or global Docker cleanup
 is permitted. The container is non-root, read-only, capability-free, and
 shell-free; readiness is checked from the host so the runtime does not carry

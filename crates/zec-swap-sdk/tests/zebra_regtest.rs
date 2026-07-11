@@ -76,13 +76,21 @@ fn mutate_first_signature(transaction: &Transaction) -> String {
     hex::encode(bytes)
 }
 
-fn client() -> HttpClient {
-    let endpoint = std::env::var("ZEBRA_RPC_URL")
-        .expect("ZEBRA_RPC_URL is supplied by scripts/run-zebra-e2e.sh");
+fn client_from_env(variable: &str) -> HttpClient {
+    let endpoint = std::env::var(variable)
+        .unwrap_or_else(|_| panic!("{variable} is supplied by scripts/run-zebra-e2e.sh"));
     HttpClientBuilder::default()
         .request_timeout(Duration::from_mins(2))
         .build(endpoint)
         .expect("isolated Zebra RPC URL is valid")
+}
+
+fn client() -> HttpClient {
+    client_from_env("ZEBRA_RPC_URL")
+}
+
+fn fork_client() -> HttpClient {
+    client_from_env("ZEBRA_FORK_RPC_URL")
 }
 
 async fn block_count(client: &HttpClient) -> u32 {
@@ -103,6 +111,36 @@ async fn generate_to(client: &HttpClient, target: u32) {
             .request("generate", rpc_params![batch])
             .await
             .expect("Regtest block generation succeeds");
+    }
+}
+
+async fn block_hash(client: &HttpClient, height: u32) -> String {
+    client
+        .request("getblockhash", rpc_params![height])
+        .await
+        .expect("Zebra returns the canonical block hash")
+}
+
+async fn relay_canonical_blocks(
+    source: &HttpClient,
+    destination: &HttpClient,
+    first_height: u32,
+    last_height: u32,
+) {
+    for height in first_height..=last_height {
+        let hash = block_hash(source, height).await;
+        let raw: String = source
+            .request("getblock", rpc_params![&hash, 0])
+            .await
+            .expect("source Zebra returns canonical raw block bytes");
+        let response: Value = destination
+            .request("submitblock", rpc_params![raw])
+            .await
+            .expect("destination Zebra accepts the relayed consensus-valid block");
+        assert!(
+            response.is_null(),
+            "submitblock succeeds with a null result"
+        );
     }
 }
 
@@ -177,38 +215,6 @@ async fn assert_confirmed(client: &HttpClient, txid: &str, transaction: &Transac
     );
 }
 
-async fn raw_mempool(client: &HttpClient) -> Vec<String> {
-    client
-        .request("getrawmempool", rpc_params![false])
-        .await
-        .expect("Zebra returns its raw mempool transaction ids")
-}
-
-async fn wait_for_mempool(client: &HttpClient, expected_txids: &[&str]) {
-    for _ in 0..50 {
-        let observed = raw_mempool(client).await;
-        if expected_txids
-            .iter()
-            .all(|expected| observed.iter().any(|txid| txid == expected))
-        {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("actor transactions did not enter Zebra's mempool");
-}
-
-async fn rebroadcast_or_observe(client: &HttpClient, transaction: &Transaction) {
-    let expected_txid = transaction.txid().to_string();
-    let result = client
-        .request::<String, _>("sendrawtransaction", rpc_params![tx_hex(transaction)])
-        .await;
-    if let Ok(observed_txid) = result {
-        assert_eq!(observed_txid, expected_txid);
-    }
-    wait_for_mempool(client, &[&expected_txid]).await;
-}
-
 fn funding_transaction(
     contract: &Bip199Contract,
     candidate: TransparentUtxo,
@@ -249,8 +255,9 @@ fn hex_summary(transaction: &Transaction) -> String {
     summary
 }
 
-async fn prove_tip_reorg_and_actor_rebroadcast(
+async fn prove_accepted_competing_fork(
     client: &HttpClient,
+    fork_client: &HttpClient,
     claim: &Transaction,
     refund: &Transaction,
     claim_contract: &Bip199Contract,
@@ -259,53 +266,100 @@ async fn prove_tip_reorg_and_actor_rebroadcast(
 ) {
     let claim_txid = claim.txid().to_string();
     let refund_txid = refund.txid().to_string();
-    let terminal_height = block_count(client).await;
-    let terminal_hash: String = client
-        .request("getblockhash", rpc_params![terminal_height])
-        .await
-        .expect("Zebra returns the concurrent terminal block hash");
-    let _: () = client
-        .request("invalidateblock", rpc_params![&terminal_hash])
-        .await
-        .expect("Zebra invalidates the non-finalized terminal block");
-    assert_eq!(block_count(client).await, terminal_height - 1);
-    tokio::join!(
-        rebroadcast_or_observe(client, claim),
-        rebroadcast_or_observe(client, refund)
-    );
-    wait_for_mempool(client, &[&claim_txid, &refund_txid]).await;
-
     let conflicting_refund = build_refund_transaction(claim_contract, claim_request, funder_key)
-        .expect("alternative refund for the claimed contract is constructible after timeout");
-    assert_rejected(
-        client,
-        tx_hex(&conflicting_refund),
-        "same-output replacement while the actor claim is in the mempool",
-    )
-    .await;
+        .expect("the timed-out funder can construct a conflicting valid refund");
+    let conflicting_refund_txid = conflicting_refund.txid().to_string();
 
-    let reconsidered: Value = client
-        .request("reconsiderblock", rpc_params![&terminal_hash])
-        .await
-        .expect("Zebra reconsiders the exact invalidated block");
-    assert!(
-        !reconsidered
-            .as_array()
-            .expect("reconsiderblock returns a list of hash byte sequences")
-            .is_empty()
+    let common_height = block_count(client).await;
+    let fork_height = block_count(fork_client).await;
+    assert!(fork_height <= common_height);
+    if fork_height < common_height {
+        relay_canonical_blocks(client, fork_client, fork_height + 1, common_height).await;
+    }
+    assert_eq!(block_count(fork_client).await, common_height);
+    assert_eq!(
+        block_hash(client, common_height).await,
+        block_hash(fork_client, common_height).await,
+        "both isolated nodes begin from the exact same canonical prefix"
     );
-    assert_eq!(block_count(client).await, terminal_height);
-    let restored_hash: String = client
-        .request("getblockhash", rpc_params![terminal_height])
-        .await
-        .expect("Zebra returns the restored terminal block hash");
-    assert_eq!(restored_hash, terminal_hash);
+
+    let (claim_rpc_txid, refund_rpc_txid) =
+        tokio::join!(broadcast(client, claim), broadcast(client, refund));
+    assert_eq!(claim_rpc_txid, claim_txid);
+    assert_eq!(refund_rpc_txid, refund_txid);
+    generate_to(client, common_height + 3).await;
+    let mut old_branch_hashes = Vec::with_capacity(3);
+    for height in common_height + 1..=common_height + 3 {
+        old_branch_hashes.push(block_hash(client, height).await);
+    }
+    let old_first_hash = &old_branch_hashes[0];
+    let old_tip_hash = block_hash(client, common_height + 3).await;
     assert_confirmed(client, &claim_txid, claim).await;
+    assert_confirmed(client, &refund_txid, refund).await;
+
+    let (replacement_rpc_txid, shared_refund_rpc_txid) = tokio::join!(
+        broadcast(fork_client, &conflicting_refund),
+        broadcast(fork_client, refund)
+    );
+    assert_eq!(replacement_rpc_txid, conflicting_refund_txid);
+    assert_eq!(shared_refund_rpc_txid, refund_txid);
+    generate_to(fork_client, common_height + 4).await;
+    let replacement_first_hash = block_hash(fork_client, common_height + 1).await;
+    let replacement_tip_hash = block_hash(fork_client, common_height + 4).await;
+    assert_ne!(
+        replacement_first_hash, *old_first_hash,
+        "the nodes mined distinct competing branches"
+    );
+    assert_confirmed(fork_client, &conflicting_refund_txid, &conflicting_refund).await;
+    assert_confirmed(fork_client, &refund_txid, refund).await;
+
+    relay_canonical_blocks(fork_client, client, common_height + 1, common_height + 4).await;
+    assert_eq!(block_count(client).await, common_height + 4);
+    assert_eq!(
+        block_hash(client, common_height + 4).await,
+        replacement_tip_hash,
+        "primary Zebra accepts the higher-work competing branch"
+    );
+    for (offset, old_hash) in old_branch_hashes.iter().enumerate() {
+        let height = common_height + 1 + u32::try_from(offset).expect("three offsets fit u32");
+        let canonical_hash = block_hash(client, height).await;
+        assert_ne!(canonical_hash, *old_hash, "the old branch is detached");
+        assert_eq!(
+            canonical_hash,
+            block_hash(fork_client, height).await,
+            "the replacement branch is canonical at every detached height"
+        );
+    }
+
+    let detached_header = client
+        .request::<Value, _>("getblockheader", rpc_params![&old_tip_hash, true])
+        .await;
+    assert!(
+        detached_header.is_err(),
+        "Zebra 5.2.0 must not report the evicted old tip as canonical"
+    );
+
+    let canonical_replacement: Value = client
+        .request(
+            "getrawtransaction",
+            rpc_params![&conflicting_refund_txid, 1],
+        )
+        .await
+        .expect("the conflicting actor refund is canonical after replacement");
+    assert_eq!(canonical_replacement["hex"], tx_hex(&conflicting_refund));
+    assert_eq!(canonical_replacement["in_active_chain"], true);
+    assert!(
+        canonical_replacement["confirmations"]
+            .as_u64()
+            .expect("canonical replacement has confirmations")
+            >= 4
+    );
     assert_confirmed(client, &refund_txid, refund).await;
 }
 
 async fn prove_concurrent_claim_refund_and_tip_reorg(
     client: &HttpClient,
+    fork_client: &HttpClient,
     funder_key: &SecretKey,
     claim_candidate: TransparentUtxo,
     refund_candidate: TransparentUtxo,
@@ -371,13 +425,9 @@ async fn prove_concurrent_claim_refund_and_tip_reorg(
         .expect("concurrent funder constructs its refund");
 
     generate_to(client, refund_at).await;
-    let (claim_txid, refund_txid) =
-        tokio::join!(broadcast(client, &claim), broadcast(client, &refund));
-    generate_to(client, block_count(client).await + 1).await;
-    assert_confirmed(client, &claim_txid, &claim).await;
-    assert_confirmed(client, &refund_txid, &refund).await;
-    prove_tip_reorg_and_actor_rebroadcast(
+    prove_accepted_competing_fork(
         client,
+        fork_client,
         &claim,
         &refund,
         &claim_contract,
@@ -391,6 +441,7 @@ async fn prove_concurrent_claim_refund_and_tip_reorg(
 #[ignore = "requires scripts/run-zebra-e2e.sh and pinned Docker Zebra"]
 async fn real_actor_keys_fund_claim_and_refund_through_zebra_consensus() {
     let client = client();
+    let fork_client = fork_client();
     let funder_key = key(4);
     let claimant_key = key(2);
     let claim_destination = TransparentAddress::from_pubkey(&public_key(&key(3)));
@@ -483,7 +534,8 @@ async fn real_actor_keys_fund_claim_and_refund_through_zebra_consensus() {
     generate_to(&client, block_count(&client).await + 1).await;
     assert_confirmed(&client, &refund_txid, &refund).await;
 
-    prove_concurrent_claim_refund_and_tip_reorg(&client, &funder_key, third, fourth).await;
+    prove_concurrent_claim_refund_and_tip_reorg(&client, &fork_client, &funder_key, third, fourth)
+        .await;
 
     eprintln!(
         "Zebra accepted actor claim {} and refund {}",

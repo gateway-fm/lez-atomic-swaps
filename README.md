@@ -21,7 +21,8 @@ current executable slices enforce:
 - exact BIP-199 P2SH plus canonical Zcash V5 funding, claim, and refund
   transactions; and
 - actor-keyed funding/claim/refund acceptance and rejection through pinned
-  Zebra NU6.2 Regtest consensus; and
+  Zebra NU6.2 Regtest consensus, including a two-node conflicting
+  four-over-three-block canonical fork replacement; and
 - checked-guest deployment plus real-key native LEZ initialize/fund/claim and
   permissionless-refund execution in an isolated standalone sequencer; and
 - two-definition official-ATA claim/refund lifecycles with real owner keys,
@@ -47,10 +48,11 @@ consensus suite.
 
 The Zebra suite uses a unique `lez-atomic-swaps-${RUN_ID}` Compose project. It
 copies the binary from the digest-pinned official Zebra 5.2.0 image into a
-digest-pinned distroless nonroot runtime, then uses a project-only network,
-read-only filesystem, tmpfs state, resource caps, no Linux capabilities, and an
-ephemeral localhost RPC port. Cleanup addresses that exact project and never
-prunes or stops resources it did not create.
+digest-pinned distroless nonroot runtime, then runs two disconnected nodes on a
+project-only network with read-only filesystems, independent tmpfs state,
+resource caps, no Linux capabilities, and separate ephemeral localhost RPC
+ports. Cleanup addresses that exact project and never prunes or stops resources
+it did not create.
 
 ## Licensing
 

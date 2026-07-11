@@ -21,3 +21,26 @@ services:
     cpus: 2.0
     mem_limit: 2g
     stop_grace_period: 15s
+
+  zebra_fork:
+    image: "${ZEBRA_IMAGE:?ZEBRA_IMAGE is required}"
+    command: ["--config", "/etc/zebra/zebrad.toml", "start"]
+    environment:
+      ZEBRA_RPC__COOKIE_DIR: /tmp/zebra-cache
+      ZEBRA_STATE__CACHE_DIR: /tmp/zebra-cache
+    labels:
+      org.logos-co.atomic-swaps.run: "${RUN_ID:?RUN_ID is required}"
+      org.logos-co.atomic-swaps.scope: zebra-regtest-e2e
+    ports:
+      - "127.0.0.1::18232"
+    volumes:
+      - ./zebrad.toml:/etc/zebra/zebrad.toml:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1g,mode=1777
+    user: "65532:65532"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    cpus: 2.0
+    mem_limit: 2g
+    stop_grace_period: 15s

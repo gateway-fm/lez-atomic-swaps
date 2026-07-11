@@ -36,7 +36,7 @@ fi
 cleanup() {
   status=$?
   if (( status != 0 )); then
-    "${compose[@]}" logs --no-color zebra || true
+    "${compose[@]}" logs --no-color zebra zebra_fork || true
   fi
   "${compose[@]}" down --volumes --remove-orphans || true
   if (( owns_image == 1 )); then
@@ -55,29 +55,49 @@ if (( owns_image == 1 )); then
 fi
 
 export RUN_ID="$run_id"
-"${compose[@]}" up --detach --no-build zebra
+"${compose[@]}" up --detach --no-build zebra zebra_fork
 
 published_endpoint="$("${compose[@]}" port zebra 18232 | tail -n 1)"
 rpc_port="${published_endpoint##*:}"
 rpc_url="http://127.0.0.1:${rpc_port}"
-printf 'ZEBRA_RPC_URL=%s\n' "$rpc_url" >>"$manifest"
+fork_published_endpoint="$("${compose[@]}" port zebra_fork 18232 | tail -n 1)"
+fork_rpc_port="${fork_published_endpoint##*:}"
+fork_rpc_url="http://127.0.0.1:${fork_rpc_port}"
+export ZEBRA_RPC_URL="$rpc_url"
+export ZEBRA_FORK_RPC_URL="$fork_rpc_url"
+printf 'ZEBRA_RPC_URL=%s\nZEBRA_FORK_RPC_URL=%s\n' \
+  "$ZEBRA_RPC_URL" "$ZEBRA_FORK_RPC_URL" >>"$manifest"
 
 ready=0
+fork_ready=0
 for _ in {1..30}; do
-  if curl -sf --max-time 2 \
+  if (( ready == 0 )) && curl -sf --max-time 2 \
     -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' \
     "$rpc_url" >/dev/null; then
     ready=1
+  fi
+  if (( fork_ready == 0 )) && curl -sf --max-time 2 \
+    -H 'content-type: application/json' \
+    --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' \
+    "$fork_rpc_url" >/dev/null; then
+    fork_ready=1
+  fi
+  if (( ready == 1 && fork_ready == 1 )); then
     break
   fi
   sleep 2
 done
 
 if (( ready == 0 )); then
-  echo "Zebra RPC did not become ready within 60 seconds" >&2
+  echo "Primary Zebra RPC did not become ready within 60 seconds" >&2
+fi
+if (( fork_ready == 0 )); then
+  echo "Fork Zebra RPC did not become ready within 60 seconds" >&2
+fi
+if (( ready == 0 || fork_ready == 0 )); then
   exit 1
 fi
 
-ZEBRA_RPC_URL="$rpc_url" CARGO_BUILD_JOBS=2 cargo test --locked \
+CARGO_BUILD_JOBS=2 cargo test --locked \
   -p lez-zec-swap-sdk --test zebra_regtest -- --ignored --nocapture

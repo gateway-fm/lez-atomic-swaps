@@ -105,8 +105,9 @@ verification, pinned SPEL/LEZ generated-IDL/client fixture, and ZEC exact-script
 plus signed V5 spend foundation
 exist. Deterministic actor-owned funding/change and pinned, vulnerability-clean
 Zebra 5.2.0 Regtest acceptance/rejection/confirmation, concurrent swaps,
-confirmation regression, exact rebroadcast, and block reconsideration now exist
-as a chain-adapter proof. Source-correct authenticated-transfer/ATA custody and
+confirmation regression, exact rebroadcast, block reconsideration, and a
+two-node conflicting four-over-three-block fork replacement now exist as
+consensus-node proof. Source-correct authenticated-transfer/ATA custody and
 generated owner-role clients now exist as locally composed upstream-program
 evidence. The checked Risc0 guest now builds reproducibly, deploys through
 public RPC, and executes the complete native initialize/fund/claim/refund
@@ -117,9 +118,10 @@ recursive cost evidence is machine-checked from production state transitions
 without Clock noise. The official ATA lifecycle also passes for two independent
 definitions with real owner roles and permissionless fixed refunds. Their
 escrow/ATA/Token recursion is also included in the machine-checked cost record.
-Public-testnet evidence, composed both-direction maker/taker processes,
-encrypted state/outbox, and mini-apps remain milestone work and cannot yet be
-represented as production E2E.
+Public-testnet evidence, composed both-direction maker/taker processes, typed
+adapter-grade ZEC observations, cross-chain deadline composition, encrypted
+state/outbox, and mini-apps remain milestone work and cannot yet be represented
+as production E2E.
 
 ## LEZ escrow custody components and actor flows
 
@@ -236,6 +238,35 @@ dashed v0.2 testnet edge remains M2 exit work. Cost replay executes the same
 guest instructions through LEZ production state transitions, counts the escrow
 root and authenticated-transfer child, and compares generated JSON with the
 checked evidence artifact.
+
+## Zcash competing-fork consensus flow
+
+```mermaid
+sequenceDiagram
+    actor Claimant
+    actor Funder
+    participant Primary as Primary Zebra 5.2.0
+    participant Fork as Disconnected fork Zebra 5.2.0
+
+    Primary->>Fork: Relay identical canonical prefix (getblock + submitblock)
+    Claimant->>Primary: Signed BIP-199 claim
+    Funder->>Primary: Independent signed BIP-199 refund
+    Primary-->>Primary: Mine claim/refund branch to depth 3
+    Funder->>Fork: Conflicting signed refund of claimant output
+    Funder->>Fork: Same independent signed refund
+    Fork-->>Fork: Mine conflicting branch to depth 4
+    Fork->>Primary: Relay four raw consensus blocks via submitblock
+    Primary-->>Primary: Accept higher-work branch; detach three blocks
+    Primary-->>Claimant: Old claim no longer canonical
+    Primary-->>Funder: Conflicting refund active with four confirmations
+```
+
+Both nodes use separate ephemeral loopback RPC ports, immutable tmpfs state,
+non-root read-only images, and one uniquely named Compose project. This flow
+proves Zebra consensus validation and best-chain replacement with actual actor
+keys. It deliberately does not claim cross-chain refund-margin proof: that
+requires typed ZEC observation commitments, checked LEZ millisecond/core-second
+conversion, a named profile, and a composed standalone-LEZ plus Zebra run.
 
 ## Happy-path user flow
 

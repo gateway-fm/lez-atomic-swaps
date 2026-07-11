@@ -99,7 +99,7 @@ with dependency license/advisory checks in CI.
 | Arbitrary P2SH transaction signing | Stable source review shows ordinary and PCZT signers/finalizers recognize P2PKH/P2PK/multisig but not BIP-199; transparent builder also defaults every input to final sequence | GREEN uses canonical `TxOut`, `Bundle`, ZIP-244, deterministic secp256k1, and `TransactionData`; exact HTLC scriptSig is the only adapter-owned encoding, interpreter mutation tests pass, and Zebra is the final authority | Retain vectors and extend the node lane to replacement/reorg cases |
 | Pinned SPEL/LEZ compatibility | Initial RED had no real fixture; generated client exposed missing signers; a later 11-test custody slice appeared green, but direct v0.1.2 source review invalidated its escrow-owned native users and direct token-holding PDA as real-user/RFP evidence | Native custody now composes canonical `authenticated_transfer`; custom custody is official `ATA(metadata, definition)` for two definitions; generated clients use real owner signers; exact Risc0 3.0.5 builds the checked guest and v0.1.2 standalone RPC includes its deployment in a persisted block after a mandatory-clock readiness block | Execute initialise/fund/claim/refund as actor transactions through standalone, record recursive cycles/segments, port the full lane to v0.2, then run testnet role evidence |
 | Deployable LEZ guest supply chain | Host-only fixture could not produce an ELF; first real build selected Rust-1.89-only enum crates in the Rust-1.88 builder; first runtime RED admitted deployment but stopped at genesis because `RISC0_DEV_MODE` does not provide `r0vm`; audit then rejected vulnerable `ruint 1.17.0` | Exact `cargo-risczero`/`r0vm 3.0.5`, pinned builder digest, enum 4.3.0 compatibility pin, fixed `ruint 1.17.1`, checked ELF SHA-256/ImageID, port-zero/temp-state service, clock readiness block, RPC deployment, canonical block inclusion, and three locked-graph dependency audits are reproducible in CI | Extend the deployment harness to actor-signed lifecycle calls and cost evidence; keep the artifact identity and advisory non-exposure checks fail-closed |
-| Isolated Zebra consensus E2E | First runner RED found RPC cookie assumptions; the initial capability hardening found an unwritable cache; strict Trivy then rejected both official 5.1.1 and 5.2.0 runtimes with 40 HIGH/2 CRITICAL findings | The official 5.2.0 binary now runs in an immutable distroless nonroot image that scans at 0 HIGH/CRITICAL; read-only/capability-free NU6.2 Regtest on an ephemeral port proves funding, claim, refund, rejection, and confirmation; exact project cleanup leaves unrelated Docker workloads untouched | Add reorg/replacement/concurrency and public-testnet smoke; repeat final-image scan immediately before evidence/tag |
+| Isolated Zebra consensus E2E | First runner RED found RPC cookie assumptions; the initial capability hardening found an unwritable cache; strict Trivy then rejected both official 5.1.1 and 5.2.0 runtimes with 40 HIGH/2 CRITICAL findings | Two disconnected copies of the official 5.2.0 binary now run in immutable distroless nonroot images that scan at 0 HIGH/CRITICAL; read-only/capability-free NU6.2 Regtest on separate ephemeral ports proves funding, claim, refund, rejection, concurrency, and a three-block detach onto a conflicting four-block branch; exact project cleanup leaves unrelated Docker workloads untouched | Add typed chain evidence, composed refund-margin enforcement, and public-testnet smoke; repeat final-image scan immediately before evidence/tag |
 
 ## Milestone 1 plan: three weeks
 
@@ -271,8 +271,17 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   Zebra, invalidate their shared non-finalized terminal block, detect
   confirmation regression, rebroadcast exact actor transactions, reject a
   conflicting same-output replacement, and reconsider the exact block.
-- [ ] Exercise an accepted competing-fork replacement, deeper reorg, and
-  cross-chain refund-margin cases through actual nodes.
+- [x] Exercise an accepted competing-fork replacement and deeper reorg through
+  actual nodes. Two disconnected pinned Zebras share an RPC-relayed prefix,
+  then mine a claimant-claim three-block branch and a conflicting funder-refund
+  four-block branch. Submitting the latter through `submitblock` makes it
+  canonical at every detached height and exposes the replacement transaction
+  through the primary node.
+- [ ] Bind named ZEC profiles and production-grade chain observations before
+  composing cross-chain refund-margin cases through actual LEZ and Zebra nodes.
+  The adapter evidence must include network/branch, block identity/height,
+  outpoint/value/script commitment, and depth; conversion between LEZ Unix
+  milliseconds and core Unix seconds must be checked and conservatively rounded.
 - [ ] Re-audit the stable Zebra/security pin immediately before public-testnet
   evidence because the current release horizon ends ahead of NU7.
 - [ ] Re-audit the deployed SPEL/LEZ guest graph before testnet evidence and the
@@ -320,6 +329,8 @@ CI and local scripts fail if the project name is empty or does not start with
 | Pinned SPEL guest cannot run on current LEZ testnet | v0.1.2 uses NSSA ABI and `/NSSA/` PDA domain; v0.2.0 uses LEE ABI and `/LEE/`; upstream issues #234/#237 record live signature rejection | Prove locally on exact v0.1.2 standalone, then rebuild the full guest/client/PDA lane on a reviewed v0.2 SPEL release or exact approved successor to PR #238 |
 | Upstream LEZ native sequencer tests compile RocksDB and can contend with host work | Clean native lane passes with two jobs in a unique checkout and no Docker/ports | Keep the two-job cap and do not run the heavy lane alongside detected host compilation |
 | Mainnet deadlines remain uncalibrated | `public-testnet-v1` fixes testnet depths/horizons and conservative bounds; mainnet is deliberately absent | Gather chain telemetry and fee/reorg stress evidence, then require formal review before enabling a mainnet profile |
+| Chain proof is not yet adapter-grade | Core `ChainProof` carries only transaction ID and confirmations, while real-node evidence also needs network, branch, block, outpoint, value, and script commitment | Add a validated typed ZEC observation before feeding node results into the coordinator |
+| LEZ and core timestamp units differ | v0.1.2 LEZ blocks/escrow use Unix milliseconds while core timestamp positions are Unix seconds | Add checked conversion with conservative rounding and boundary/overflow tests before composed refund-margin E2E |
 | Final E2E must represent actual users | Operator process harness exists; taker and chain lifecycles still call protocol core directly | Extend the role harness through taker CLI and real chain adapters before labeling tests as full E2E |
 | Prototype local RPC still uses loopback HTTP and an environment capability | Tower rejects a Bearer header before JSON parsing and non-loopback binds are refused | Move to an owner-restricted Unix socket and credential file before M5 freeze |
 | Daemon prototype serializes SQLite with a mutex on blocking workers | Safe for the two-method operator slice, not chain watcher concurrency | Introduce the ADR-0003 single writer actor and atomic outbox before mutations expand |
