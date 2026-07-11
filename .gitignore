@@ -1,0 +1,15 @@
+/target/
+/.env
+/.direnv/
+/.idea/
+/.vscode/
+*.swp
+*.tmp
+*.log
+.DS_Store
+
+# Local chain data and generated test artefacts
+/.e2e/
+/artifacts/
+/coverage/
+

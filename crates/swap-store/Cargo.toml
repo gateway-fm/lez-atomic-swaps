@@ -1,0 +1,20 @@
+[package]
+name = "lez-swap-store"
+version = "0.1.0"
+description = "Crash-safe SQLite persistence for LEZ atomic swaps"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+lez-swap-core = { version = "0.1.0", path = "../swap-core" }
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+serde_json = "1.0.150"
+thiserror = "2.0.18"
+
+[dev-dependencies]
+tempfile = "3.27.0"

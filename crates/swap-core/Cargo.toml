@@ -1,0 +1,15 @@
+[package]
+name = "lez-swap-core"
+version = "0.1.0"
+description = "Chain-independent protocol state machine for LEZ atomic swaps"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { version = "1.0.219", features = ["derive"] }
+thiserror = "2.0.12"

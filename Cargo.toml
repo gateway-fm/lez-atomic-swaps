@@ -1,0 +1,17 @@
+[workspace]
+members = ["crates/swap-core", "crates/swap-store"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/gateway-fm/lez-atomic-swaps"
+rust-version = "1.96"
+
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
