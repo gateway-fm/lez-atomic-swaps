@@ -39,14 +39,37 @@ fn maker_cli_controls_authenticated_daemon_and_survives_restart() {
             "bitcoin",
             "--confirmations",
             "2",
-            "--lez-refund-at",
+            "--maker-refund-at",
             "100",
-            "--foreign-refund-at",
+            "--taker-refund-at",
             "120",
         ],
     );
     assert_success(&created);
     assert_swap_view(&created.stdout, "operator-swap-1", "Bitcoin", "Offered");
+
+    let reverse = maker_cli(
+        &first_endpoint,
+        TOKEN,
+        &[
+            "create-swap",
+            "--id",
+            "operator-swap-reverse",
+            "--pair",
+            "zcash",
+            "--direction",
+            "taker-sells-lez",
+            "--confirmations",
+            "2",
+            "--maker-refund-at",
+            "100",
+            "--taker-refund-at",
+            "120",
+        ],
+    );
+    assert_success(&reverse);
+    let reverse_view: Value = serde_json::from_slice(&reverse.stdout).expect("CLI emits JSON");
+    assert_eq!(reverse_view["direction"], "TakerSellsLez");
 
     let denied = maker_cli(
         &first_endpoint,
@@ -73,6 +96,16 @@ fn maker_cli_controls_authenticated_daemon_and_survives_restart() {
     );
     assert_success(&recovered);
     assert_swap_view(&recovered.stdout, "operator-swap-1", "Bitcoin", "Offered");
+
+    let reverse_recovered = maker_cli(
+        &second_endpoint,
+        TOKEN,
+        &["status", "--id", "operator-swap-reverse"],
+    );
+    assert_success(&reverse_recovered);
+    let reverse_view: Value =
+        serde_json::from_slice(&reverse_recovered.stdout).expect("CLI emits JSON");
+    assert_eq!(reverse_view["direction"], "TakerSellsLez");
 }
 
 fn start_daemon(run: &Path, database: &Path, ready_name: &str) -> (Daemon, String) {

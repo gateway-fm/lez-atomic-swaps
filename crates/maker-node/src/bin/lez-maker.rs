@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use jsonrpsee::{core::client::ClientT, rpc_params};
 use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClientBuilder};
 use lez_maker_node::{CreateSwapRequest, StatusRequest, SwapView};
-use lez_swap_core::Pair;
+use lez_swap_core::{Pair, SwapDirection};
 
 #[derive(Parser)]
 #[command(about = "Operator CLI for the LEZ atomic-swap maker daemon")]
@@ -22,12 +22,14 @@ enum Command {
         id: String,
         #[arg(long)]
         pair: PairArgument,
+        #[arg(long, value_enum, default_value_t = DirectionArgument::TakerSellsForeign)]
+        direction: DirectionArgument,
         #[arg(long)]
         confirmations: u32,
         #[arg(long)]
-        lez_refund_at: u64,
+        maker_refund_at: u64,
         #[arg(long)]
-        foreign_refund_at: u64,
+        taker_refund_at: u64,
     },
     Status {
         #[arg(long)]
@@ -40,6 +42,22 @@ enum PairArgument {
     Bitcoin,
     Monero,
     Zcash,
+}
+
+#[derive(Debug, Default, Clone, Copy, ValueEnum)]
+enum DirectionArgument {
+    #[default]
+    TakerSellsForeign,
+    TakerSellsLez,
+}
+
+impl From<DirectionArgument> for SwapDirection {
+    fn from(direction: DirectionArgument) -> Self {
+        match direction {
+            DirectionArgument::TakerSellsForeign => Self::TakerSellsForeign,
+            DirectionArgument::TakerSellsLez => Self::TakerSellsLez,
+        }
+    }
 }
 
 impl From<PairArgument> for Pair {
@@ -66,16 +84,18 @@ async fn main() -> anyhow::Result<()> {
         Command::CreateSwap {
             id,
             pair,
+            direction,
             confirmations,
-            lez_refund_at,
-            foreign_refund_at,
+            maker_refund_at,
+            taker_refund_at,
         } => {
             let request = CreateSwapRequest {
                 id: id.into(),
                 pair: pair.into(),
+                direction: direction.into(),
                 confirmations,
-                lez_refund_at,
-                foreign_refund_at,
+                maker_refund_at,
+                taker_refund_at,
             };
             client.request("swap_create", rpc_params![request]).await?
         }

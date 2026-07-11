@@ -15,9 +15,9 @@ requires a corresponding test—not merely a row—for every F, U, R, and P item
 | ID | Contract | Acceptance evidence | Status / milestone |
 |---|---|---|---|
 | F1 | No central server; Delivery advertisements and Chat coordination | Role E2E discovers and negotiates through real Delivery/Chat adapters; central services absent; UJ-006 repeats with both stopped after lock | Planned M5 |
-| F2 | LEZ–BTC via BIP-340 adaptor signatures and Taproot key-path cooperative claim | DLC vector suite; Bitcoin Core testnet/regtest happy/refund/concurrency role E2E; cooperative claim decoded as key-path spend | Planned M3 |
-| F3 | LEZ–XMR via Ed25519 adaptor signatures, cross-curve DLEQ, and spend-key share | COMIT/DLEQ vectors; `monerod`/wallet RPC stagenet happy/refund/concurrency role E2E; spend-key recovery fault case | Planned M4 |
-| F4 | LEZ–transparent-ZEC via BIP-199 HTLC, with foreign refund strictly safer than LEZ refund | BIP-199 script vectors; Zebra testnet/regtest happy/refund/concurrency role E2E; deadline-margin boundaries | Planned M2 |
+| F2 | LEZ–BTC via BIP-340 adaptor signatures and Taproot key-path cooperative claim | DLC vector suite; both-direction Bitcoin Core testnet/regtest happy/refund/concurrency role E2E; cooperative claim decoded as key-path spend | Planned M3 |
+| F3 | LEZ–XMR via Ed25519 adaptor signatures, cross-curve DLEQ, and spend-key share | COMIT/DLEQ vectors; both-direction `monerod`/wallet RPC stagenet happy/refund/concurrency role E2E; spend-key recovery fault case | Planned M4 |
+| F4 | LEZ–transparent-ZEC via BIP-199 HTLC, with the first-funded leg safely outliving the second | BIP-199 script vectors; both-direction Zebra testnet/regtest happy/refund/concurrency role E2E; deadline-margin boundaries | Planned M2 |
 | F5 | Risc0 LEZ escrow validates pair proof and supports claim/refund | Per-pair guest instruction tests plus standalone-sequencer initialise/claim/refund E2E | Design in M1; implementation M2–M4 |
 | F6 | Atomic outcome: both claim or both refund | Six scenario tests and 512 generated transition sequences; pair-specific model/reorg tests and real-chain abandonment matrix remain | Partial |
 | F7 | Native and custom LEZ tokens through ATAs | Parameterized guest and sequencer E2E for native token plus two independent token mints/accounts | Planned M2–M4 |

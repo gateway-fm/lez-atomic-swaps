@@ -39,7 +39,7 @@ and a supply-chain attacker.
 | Missing/corrupt local state | Claim/refund material lost | SQLite FULL durability, encrypted secret handling, backups, restart/process-kill matrix |
 | Replay/duplicate chain event | Double transition or wrong swap mutation | Idempotency keys include pair, chain ID, txid, output index, and swap ID |
 | Concurrent swap cross-talk | Wrong secret/account/UTXO used | Typed swap IDs, per-swap aggregates, DB primary keys, concurrent model/E2E tests |
-| Local RPC takeover | Attacker changes price or triggers action | Unix peer permissions, authentication capability, least-privilege systemd unit, audit log |
+| Local RPC takeover | Attacker changes price or triggers action | Current loopback adapter refuses remote bind and uses Bearer capability; production gate adds Unix peer permissions, credential file, least-privilege systemd unit, and audit log |
 | Price-feed compromise | Economically harmful but valid swap | Bounds/staleness policy, operator limits, explicit source health; never weakens atomicity |
 | Dependency compromise/license issue | Backdoor or redistribution failure | Lockfile, cargo-deny advisories/licenses/sources, minimal features, reviewed updates |
 
@@ -85,4 +85,3 @@ and a supply-chain attacker.
 - Secret-at-rest encryption and operator backup/recovery policy.
 - Exact Bitcoin refund construction following measured failure injection.
 - SPEL/current-LEZ compatibility and the precise witness authorization encoding.
-- Logos Core daemon-mode authentication and lifecycle contract.

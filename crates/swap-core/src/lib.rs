@@ -17,6 +17,16 @@ pub enum Pair {
     Zcash,
 }
 
+/// Which asset the taker contributes in the first on-chain action.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SwapDirection {
+    /// Taker locks the foreign asset; maker subsequently locks LEZ.
+    #[default]
+    TakerSellsForeign,
+    /// Taker locks LEZ; maker subsequently locks the foreign asset.
+    TakerSellsLez,
+}
+
 /// Durable phase of one swap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Phase {
@@ -49,9 +59,9 @@ pub enum Error {
     /// A confirmation policy must require at least one confirmation.
     #[error("confirmation policy must be non-zero")]
     InvalidConfirmationPolicy,
-    /// Foreign-chain refund must be strictly later than the LEZ refund.
-    #[error("foreign refund deadline must be later than LEZ deadline")]
-    ForeignTimelockMustFollowLez,
+    /// Taker-funded leg refund must be strictly later than the maker-funded leg refund.
+    #[error("taker refund deadline must be later than maker refund deadline")]
+    TakerTimelockMustFollowMaker,
     /// The maker attempted to lock before the taker's lock reached confirmation policy.
     #[error("taker lock is not confirmed")]
     TakerLockNotConfirmed,
@@ -161,39 +171,41 @@ impl ConfirmationPolicy {
     }
 }
 
-/// Absolute refund deadlines in the coordinator's normalized time domain.
+/// Role-relative refund deadlines in the coordinator's normalized prototype time domain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Timelocks {
-    lez_refund_at: u64,
-    foreign_refund_at: u64,
+    #[serde(alias = "lez_refund_at")]
+    maker_refund_at: u64,
+    #[serde(alias = "foreign_refund_at")]
+    taker_refund_at: u64,
 }
 
 impl Timelocks {
-    /// Creates safe refund ordering: LEZ first, foreign chain strictly later.
+    /// Creates safe refund ordering: second-locking maker first, first-locking taker later.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::ForeignTimelockMustFollowLez`] unless the foreign deadline is later.
-    pub const fn new(lez_refund_at: u64, foreign_refund_at: u64) -> Result<Self, Error> {
-        if foreign_refund_at <= lez_refund_at {
-            return Err(Error::ForeignTimelockMustFollowLez);
+    /// Returns [`Error::TakerTimelockMustFollowMaker`] unless the taker deadline is later.
+    pub const fn new(maker_refund_at: u64, taker_refund_at: u64) -> Result<Self, Error> {
+        if taker_refund_at <= maker_refund_at {
+            return Err(Error::TakerTimelockMustFollowMaker);
         }
         Ok(Self {
-            lez_refund_at,
-            foreign_refund_at,
+            maker_refund_at,
+            taker_refund_at,
         })
     }
 
-    /// LEZ-side deadline.
+    /// Earlier deadline for the maker-funded, second lock.
     #[must_use]
-    pub const fn lez_refund_at(self) -> u64 {
-        self.lez_refund_at
+    pub const fn maker_refund_at(self) -> u64 {
+        self.maker_refund_at
     }
 
-    /// Foreign-chain deadline.
+    /// Later deadline for the taker-funded, first lock.
     #[must_use]
-    pub const fn foreign_refund_at(self) -> u64 {
-        self.foreign_refund_at
+    pub const fn taker_refund_at(self) -> u64 {
+        self.taker_refund_at
     }
 }
 
@@ -226,6 +238,8 @@ impl ClaimEvidence {
 pub struct SwapCoordinator {
     id: SwapId,
     pair: Pair,
+    #[serde(default)]
+    direction: SwapDirection,
     confirmation_policy: ConfirmationPolicy,
     timelocks: Timelocks,
     phase: Phase,
@@ -251,6 +265,30 @@ impl SwapCoordinator {
         Self {
             id,
             pair,
+            direction: SwapDirection::TakerSellsForeign,
+            confirmation_policy,
+            timelocks,
+            phase: Phase::Offered,
+            taker_lock_transaction_id: None,
+            maker_lez_lock_transaction_id: None,
+            claim_evidence: None,
+            taker_lez_claim_transaction_id: None,
+        }
+    }
+
+    /// Creates a coordinator for an explicit negotiated trade direction.
+    #[must_use]
+    pub const fn new_with_direction(
+        id: SwapId,
+        pair: Pair,
+        direction: SwapDirection,
+        confirmation_policy: ConfirmationPolicy,
+        timelocks: Timelocks,
+    ) -> Self {
+        Self {
+            id,
+            pair,
+            direction,
             confirmation_policy,
             timelocks,
             phase: Phase::Offered,
@@ -277,6 +315,30 @@ impl SwapCoordinator {
     #[must_use]
     pub const fn pair(&self) -> Pair {
         self.pair
+    }
+
+    /// Negotiated direction. It determines which chain each role-specific leg uses.
+    #[must_use]
+    pub const fn direction(&self) -> SwapDirection {
+        self.direction
+    }
+
+    /// Tracks the taker's first lock on whichever chain the direction assigns to the taker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ConflictingTakerLock`] for changed evidence or an invalid-phase error.
+    pub fn observe_taker_lock(&mut self, proof: ChainProof) -> Result<(), Error> {
+        self.observe_taker_foreign_lock(proof)
+    }
+
+    /// Records the maker's second lock, enforcing confirmed taker-first ordering.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::TakerLockNotConfirmed`] until confirmation policy is satisfied.
+    pub fn observe_maker_lock(&mut self, proof: ChainProof) -> Result<(), Error> {
+        self.observe_maker_lez_lock(proof)
     }
 
     /// Returns the recovered adaptor secret or HTLC preimage, when observed.
@@ -378,6 +440,15 @@ impl SwapCoordinator {
         Ok(())
     }
 
+    /// Records the taker's claim of the maker-funded leg.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidPhase`] until maker claim evidence is available.
+    pub fn observe_taker_claim(&mut self, proof: ChainProof) -> Result<(), Error> {
+        self.observe_taker_lez_claim(proof)
+    }
+
     /// Refunds the shorter LEZ leg at or after its deadline.
     ///
     /// # Errors
@@ -391,7 +462,7 @@ impl SwapCoordinator {
                 actual: self.phase,
             });
         }
-        if now < self.timelocks.lez_refund_at() {
+        if now < self.timelocks.maker_refund_at() {
             return Err(Error::TimelockNotExpired);
         }
         self.phase = if self.phase == Phase::TakerLegRefunded {
@@ -400,6 +471,15 @@ impl SwapCoordinator {
             Phase::MakerLegRefunded
         };
         Ok(())
+    }
+
+    /// Refunds the maker-funded, shorter-timelock leg.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-phase or unexpired-timelock error when refund is unavailable.
+    pub fn refund_maker_leg(&mut self, now: u64) -> Result<(), Error> {
+        self.refund_maker_lez_leg(now)
     }
 
     /// Refunds the taker's foreign leg after the longer deadline.
@@ -421,7 +501,7 @@ impl SwapCoordinator {
                 actual: self.phase,
             });
         }
-        if now < self.timelocks.foreign_refund_at() {
+        if now < self.timelocks.taker_refund_at() {
             return Err(Error::TimelockNotExpired);
         }
         self.phase = if matches!(
@@ -433,5 +513,14 @@ impl SwapCoordinator {
             Phase::TakerLegRefunded
         };
         Ok(())
+    }
+
+    /// Refunds the taker-funded, longer-timelock leg.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-phase or unexpired-timelock error when refund is unavailable.
+    pub fn refund_taker_leg(&mut self, now: u64) -> Result<(), Error> {
+        self.refund_taker_foreign_leg(now)
     }
 }

@@ -3,7 +3,9 @@
 use std::sync::Mutex;
 
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObjectOwned};
-use lez_swap_core::{ConfirmationPolicy, Pair, Phase, SwapCoordinator, SwapId, Timelocks};
+use lez_swap_core::{
+    ConfirmationPolicy, Pair, Phase, SwapCoordinator, SwapDirection, SwapId, Timelocks,
+};
 use lez_swap_store::SqliteSwapStore;
 use serde::{Deserialize, Serialize};
 
@@ -58,6 +60,8 @@ pub struct SwapView {
     pub id: Box<str>,
     /// Foreign-chain pair.
     pub pair: Pair,
+    /// Which asset is funded first by the taker.
+    pub direction: SwapDirection,
     /// Current durable phase.
     pub phase: Phase,
 }
@@ -67,6 +71,7 @@ impl From<&SwapCoordinator> for SwapView {
         Self {
             id: swap.id().as_str().into(),
             pair: swap.pair(),
+            direction: swap.direction(),
             phase: swap.phase(),
         }
     }
@@ -79,12 +84,14 @@ pub struct CreateSwapRequest {
     pub id: Box<str>,
     /// Foreign-chain pair.
     pub pair: Pair,
+    /// Which asset the taker contributes.
+    pub direction: SwapDirection,
     /// Confirmations required before maker lock.
     pub confirmations: u32,
-    /// LEZ refund deadline in the current normalized prototype domain.
-    pub lez_refund_at: u64,
-    /// Foreign-chain refund deadline in the current normalized prototype domain.
-    pub foreign_refund_at: u64,
+    /// Earlier maker-leg refund deadline in the current normalized prototype domain.
+    pub maker_refund_at: u64,
+    /// Later taker-leg refund deadline in the current normalized prototype domain.
+    pub taker_refund_at: u64,
 }
 
 /// Parameters for reading one swap.
@@ -109,9 +116,15 @@ pub fn rpc_module(context: MakerRpc) -> anyhow::Result<RpcModule<MakerRpc>> {
             let id = SwapId::new(request.id).map_err(invalid_request)?;
             let confirmations =
                 ConfirmationPolicy::new(request.confirmations).map_err(invalid_request)?;
-            let timelocks = Timelocks::new(request.lez_refund_at, request.foreign_refund_at)
+            let timelocks = Timelocks::new(request.maker_refund_at, request.taker_refund_at)
                 .map_err(invalid_request)?;
-            let swap = SwapCoordinator::new(id, request.pair, confirmations, timelocks);
+            let swap = SwapCoordinator::new_with_direction(
+                id,
+                request.pair,
+                request.direction,
+                confirmations,
+                timelocks,
+            );
             let store = context
                 .store
                 .lock()

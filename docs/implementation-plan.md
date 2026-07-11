@@ -85,6 +85,7 @@ with dependency license/advisory checks in CI.
 | At-least-once chain observation replay | 2026-07-11 repeated confirmed lock failed with `InvalidPhase` | 2026-07-11 identical lock/claim events are idempotent; conflicting IDs/evidence are rejected | Extend to persisted outbox/event sequence numbers and refund transaction proofs |
 | Generated transition sequences | 2026-07-11 property oracle exposed confirmation-growth case and was corrected | 512 arbitrary event sequences preserve legal transitions and absorbing terminal states | Add a reference model for reorg/replacement and typed per-chain deadlines |
 | Maker operator process boundary | 2026-07-11 acceptance test could not resolve daemon/CLI executables | Actual CLI authenticates through HTTP metadata to actual daemon, creates a swap, daemon is killed/restarted on a new ephemeral port, persisted status remains visible | Move to owner-restricted Unix socket/credential file; add durable request IDs/audit outbox and price configuration |
+| Bidirectional role ordering | 2026-07-11 reverse-direction test could not resolve direction or role-neutral transitions; CLI rejected `--direction` | Both directions preserve taker-first and maker-before-taker refunds for BTC/XMR/ZEC; actual CLI/daemon persists reverse direction across kill/restart | Replace normalized time with typed chain deadlines and run every real-chain role matrix in both directions |
 
 ## Milestone 1 plan: three weeks
 
@@ -125,7 +126,7 @@ with dependency license/advisory checks in CI.
   port and a single writer actor; validate with crash tests before freezing.
 - [x] Decide Zcash direction: `zebrad` node, local `librustzcash` transaction
   construction, Zallet only where wallet RPC capabilities fit.
-- [ ] Specify maker daemon local JSON-RPC, authentication, systemd fallback, and
+- [x] Specify maker daemon local JSON-RPC, authentication, systemd fallback, and
   Logos Core daemon-mode adapter contract.
 - [ ] Fix per-pair confirmation/timelock parameters with reorg and latency margins.
 - [ ] Review all ADRs, test evidence, open questions, and Milestone 2 entry gates.
@@ -173,6 +174,7 @@ CI and local scripts fail if the project name is empty or does not start with
 | SPEL documentation targets older `nssa` paths | SPEL v0.5 docs and current LEZ `dev` disagree | Build a minimal generated program against one pinned compatibility set before escrow implementation |
 | Upstream LEZ validity tests require RISC Zero Rust | Source guards and BIP-340 vectors pass; guest tests fail without `rzup install rust` | Provide an isolated pinned toolchain lane and keep full reproducer gate open |
 | Timelocks currently share a normalized `u64` in the skeleton | Not sufficient for mixed height/timestamp chains | Introduce typed pair-specific deadlines before M2 implementation |
-| Final E2E must represent actual users | Current tests call protocol core directly | Build CLI/daemon role harness before labeling tests as full E2E |
+| Final E2E must represent actual users | Operator process harness exists; taker and chain lifecycles still call protocol core directly | Extend the role harness through taker CLI and real chain adapters before labeling tests as full E2E |
 | Prototype local RPC still uses loopback HTTP and an environment capability | Tower rejects a Bearer header before JSON parsing and non-loopback binds are refused | Move to an owner-restricted Unix socket and credential file before M5 freeze |
 | Daemon prototype serializes SQLite with a mutex on blocking workers | Safe for the two-method operator slice, not chain watcher concurrency | Introduce the ADR-0003 single writer actor and atomic outbox before mutations expand |
+| Trade direction was unstated in both contractual sources | No one-way limitation exists; ordinary “between” swaps imply either asset can be sold | ADR 0008 supports both directions and makes direction immutable negotiated state |

@@ -10,6 +10,8 @@ Status: draft for Logos review — 2026-07-11
 - No method advances durable state until its required chain evidence validates.
 - Public types are serializable and versioned; secrets are redacted from `Debug`
   and never serialized into logs.
+- `SwapDirection` is immutable negotiated data; pair adapters map the taker and
+  maker roles to LEZ/foreign legs without changing taker-first ordering.
 
 ## Common lifecycle sketch
 
@@ -74,4 +76,3 @@ String-only errors are not part of the SDK boundary.
 2. Which stable Logos Delivery/Chat C APIs must appear in SDK examples?
 3. Does Logos prefer one workspace release version or independent per-pair
    semantic versions?
-

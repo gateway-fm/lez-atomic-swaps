@@ -157,10 +157,10 @@ fn replayed_chain_observations_are_idempotent() {
 fn timelocks_reject_unsafe_ordering() {
     assert_eq!(
         Timelocks::new(100, 100),
-        Err(Error::ForeignTimelockMustFollowLez)
+        Err(Error::TakerTimelockMustFollowMaker)
     );
     assert_eq!(
         Timelocks::new(101, 100),
-        Err(Error::ForeignTimelockMustFollowLez)
+        Err(Error::TakerTimelockMustFollowMaker)
     );
 }

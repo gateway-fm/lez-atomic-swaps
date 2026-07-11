@@ -5,7 +5,7 @@ Status: draft; current SPEL/LEZ compatibility verification is open — 2026-07-1
 ## Account model
 
 One escrow PDA is derived from the program ID and a collision-resistant swap ID.
-It stores protocol version, pair, asset definition/native marker, amount, maker
+It stores protocol version, pair, direction, asset definition/native marker, amount, maker
 refund authority, taker claim authority/commitment, claim mode, creation point,
 LEZ refund deadline, foreign-chain commitment digest, and terminal status.
 
@@ -56,4 +56,3 @@ SPEL v0.5 documentation still shows older `nssa` paths while current LEZ `dev`
 uses `lee/state_machine`. No implementation dependency is pinned until a minimal
 generated program builds and runs against the same LEZ commit used by the
 standalone-sequencer tests.
-
