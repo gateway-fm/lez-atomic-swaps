@@ -1,7 +1,6 @@
 # ADR 0010: Typed consensus clocks and cross-chain safety bounds
 
-Status: Accepted; coordinator integration and parameter calibration pending —
-2026-07-11
+Status: Accepted; parameter calibration pending — 2026-07-11
 
 ## Context
 
@@ -35,7 +34,7 @@ block-time conversions. Parameters name their network/release and are covered by
 boundary tests; unsafe arithmetic, zero margin, wrong role chain, or wrong clock
 domain is rejected.
 
-The standalone typed schedule and three acceptance tests are implemented. The
-legacy coordinator `Timelocks` and CLI inputs must be migrated before this M1
-gate is complete; no later milestone may add chain adapters to the normalized
-API.
+The coordinator, persisted aggregate, RPC requests, CLI clock-basis inputs, and
+refund transitions use the typed schedule. Three focused schedule tests plus the
+scenario/property/restart/operator suites cover the integration. Named network
+parameter calibration remains an M1 gate.

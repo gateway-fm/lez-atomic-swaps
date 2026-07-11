@@ -1,5 +1,6 @@
 use lez_swap_core::{
-    ChainProof, ClaimEvidence, ConfirmationPolicy, Pair, Phase, SwapCoordinator, SwapId, Timelocks,
+    Chain, ChainPosition, ChainProof, ClaimEvidence, ConfirmationPolicy, Pair, Phase,
+    RefundSchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 use proptest::prelude::*;
 
@@ -37,7 +38,14 @@ fn coordinator() -> SwapCoordinator {
         SwapId::new("property-swap").unwrap(),
         Pair::Bitcoin,
         ConfirmationPolicy::new(2).unwrap(),
-        Timelocks::new(100, 120).unwrap(),
+        RefundSchedule::new(
+            Pair::Bitcoin,
+            SwapDirection::TakerSellsForeign,
+            ChainPosition::block_height(Chain::Lez, 100),
+            ChainPosition::block_height(Chain::Bitcoin, 120),
+            TimelockSafety::new(1_000, 1_200, 100).unwrap(),
+        )
+        .unwrap(),
     )
 }
 
@@ -92,8 +100,12 @@ proptest! {
                     )
                     .unwrap(),
                 ),
-                Action::RefundMaker { now } => swap.refund_maker_lez_leg(now),
-                Action::RefundTaker { now } => swap.refund_taker_foreign_leg(now),
+                Action::RefundMaker { now } => {
+                    swap.refund_maker_leg(ChainPosition::block_height(Chain::Lez, now))
+                }
+                Action::RefundTaker { now } => {
+                    swap.refund_taker_leg(ChainPosition::block_height(Chain::Bitcoin, now))
+                }
             };
             let after = swap.phase();
 

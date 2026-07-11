@@ -1,6 +1,6 @@
 use lez_swap_core::{
-    ChainProof, ClaimEvidence, ConfirmationPolicy, Error, Pair, Phase, SwapCoordinator,
-    SwapDirection, SwapId, Timelocks,
+    Chain, ChainPosition, ChainProof, ClaimEvidence, ConfirmationPolicy, Error, Pair, Phase,
+    RefundSchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 
 #[test]
@@ -33,9 +33,13 @@ fn taker_selling_lez_preserves_taker_first_claim_and_refund_safety() {
         refund
             .observe_maker_lock(ChainProof::new("foreign-maker-lock", 1).unwrap())
             .unwrap();
-        refund.refund_maker_leg(100).unwrap();
+        refund
+            .refund_maker_leg(ChainPosition::block_height(Chain::from(pair), 100))
+            .unwrap();
         assert_eq!(refund.phase(), Phase::MakerLegRefunded);
-        refund.refund_taker_leg(120).unwrap();
+        refund
+            .refund_taker_leg(ChainPosition::block_height(Chain::Lez, 120))
+            .unwrap();
         assert_eq!(refund.phase(), Phase::Refunded);
     }
 }
@@ -46,7 +50,14 @@ fn coordinator(pair: Pair, id: &str) -> SwapCoordinator {
         pair,
         SwapDirection::TakerSellsLez,
         ConfirmationPolicy::new(2).unwrap(),
-        Timelocks::new(100, 120).unwrap(),
+        RefundSchedule::new(
+            pair,
+            SwapDirection::TakerSellsLez,
+            ChainPosition::block_height(Chain::from(pair), 100),
+            ChainPosition::block_height(Chain::Lez, 120),
+            TimelockSafety::new(1_000, 1_200, 100).unwrap(),
+        )
+        .unwrap(),
     )
 }
 
@@ -56,16 +67,17 @@ fn pre_direction_state_defaults_to_the_original_trade_direction() {
         SwapId::new("legacy-state").unwrap(),
         Pair::Bitcoin,
         ConfirmationPolicy::new(2).unwrap(),
-        Timelocks::new(100, 120).unwrap(),
+        RefundSchedule::new(
+            Pair::Bitcoin,
+            SwapDirection::TakerSellsForeign,
+            ChainPosition::block_height(Chain::Lez, 100),
+            ChainPosition::block_height(Chain::Bitcoin, 120),
+            TimelockSafety::new(1_000, 1_200, 100).unwrap(),
+        )
+        .unwrap(),
     );
     let mut encoded = serde_json::to_value(original).unwrap();
     encoded.as_object_mut().unwrap().remove("direction");
-    let timelocks = encoded["timelocks"].as_object_mut().unwrap();
-    let maker = timelocks.remove("maker_refund_at").unwrap();
-    let taker = timelocks.remove("taker_refund_at").unwrap();
-    timelocks.insert("lez_refund_at".into(), maker);
-    timelocks.insert("foreign_refund_at".into(), taker);
-
     let recovered: SwapCoordinator = serde_json::from_value(encoded).unwrap();
     assert_eq!(recovered.direction(), SwapDirection::TakerSellsForeign);
 }

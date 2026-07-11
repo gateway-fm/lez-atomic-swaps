@@ -4,7 +4,8 @@ use std::sync::Mutex;
 
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObjectOwned};
 use lez_swap_core::{
-    ConfirmationPolicy, Pair, Phase, SwapCoordinator, SwapDirection, SwapId, Timelocks,
+    Chain, ChainPosition, ClockBasis, ConfirmationPolicy, Pair, Phase, RefundSchedule,
+    SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::SqliteSwapStore;
 use serde::{Deserialize, Serialize};
@@ -88,10 +89,20 @@ pub struct CreateSwapRequest {
     pub direction: SwapDirection,
     /// Confirmations required before maker lock.
     pub confirmations: u32,
-    /// Earlier maker-leg refund deadline in the current normalized prototype domain.
+    /// Maker-leg refund clock basis.
+    pub maker_refund_basis: ClockBasis,
+    /// Earlier maker-leg refund position.
     pub maker_refund_at: u64,
-    /// Later taker-leg refund deadline in the current normalized prototype domain.
+    /// Taker-leg refund clock basis.
+    pub taker_refund_basis: ClockBasis,
+    /// Later taker-leg refund position.
     pub taker_refund_at: u64,
+    /// Conservative latest Unix time when the maker refund becomes usable.
+    pub maker_refund_latest: u64,
+    /// Conservative earliest Unix time when the taker refund becomes usable.
+    pub taker_refund_earliest: u64,
+    /// Required user/chain reaction margin in seconds.
+    pub required_margin: u64,
 }
 
 /// Parameters for reading one swap.
@@ -116,14 +127,39 @@ pub fn rpc_module(context: MakerRpc) -> anyhow::Result<RpcModule<MakerRpc>> {
             let id = SwapId::new(request.id).map_err(invalid_request)?;
             let confirmations =
                 ConfirmationPolicy::new(request.confirmations).map_err(invalid_request)?;
-            let timelocks = Timelocks::new(request.maker_refund_at, request.taker_refund_at)
-                .map_err(invalid_request)?;
+            let foreign = Chain::from(request.pair);
+            let role_chains = match request.direction {
+                SwapDirection::TakerSellsForeign => [Chain::Lez, foreign],
+                SwapDirection::TakerSellsLez => [foreign, Chain::Lez],
+            };
+            let safety = TimelockSafety::new(
+                request.maker_refund_latest,
+                request.taker_refund_earliest,
+                request.required_margin,
+            )
+            .map_err(invalid_request)?;
+            let schedule = RefundSchedule::new(
+                request.pair,
+                request.direction,
+                position(
+                    role_chains[0],
+                    request.maker_refund_basis,
+                    request.maker_refund_at,
+                ),
+                position(
+                    role_chains[1],
+                    request.taker_refund_basis,
+                    request.taker_refund_at,
+                ),
+                safety,
+            )
+            .map_err(invalid_request)?;
             let swap = SwapCoordinator::new_with_direction(
                 id,
                 request.pair,
                 request.direction,
                 confirmations,
-                timelocks,
+                schedule,
             );
             let store = context
                 .store
@@ -157,6 +193,13 @@ pub fn rpc_module(context: MakerRpc) -> anyhow::Result<RpcModule<MakerRpc>> {
         },
     )?;
     Ok(module)
+}
+
+fn position(chain: Chain, basis: ClockBasis, value: u64) -> ChainPosition {
+    match basis {
+        ClockBasis::BlockHeight => ChainPosition::block_height(chain, value),
+        ClockBasis::Timestamp => ChainPosition::timestamp(chain, value),
+    }
 }
 
 fn invalid_request(error: impl std::fmt::Display) -> ErrorObjectOwned {

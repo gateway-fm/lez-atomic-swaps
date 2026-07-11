@@ -1,5 +1,6 @@
 use lez_swap_core::{
-    ChainProof, ClaimEvidence, ConfirmationPolicy, Pair, Phase, SwapCoordinator, SwapId, Timelocks,
+    Chain, ChainPosition, ChainProof, ClaimEvidence, ConfirmationPolicy, Pair, Phase,
+    RefundSchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::SqliteSwapStore;
 use tempfile::tempdir;
@@ -9,7 +10,14 @@ fn swap(id: &str, pair: Pair) -> SwapCoordinator {
         SwapId::new(id).unwrap(),
         pair,
         ConfirmationPolicy::new(2).unwrap(),
-        Timelocks::new(100, 120).unwrap(),
+        RefundSchedule::new(
+            pair,
+            SwapDirection::TakerSellsForeign,
+            ChainPosition::block_height(Chain::Lez, 100),
+            ChainPosition::block_height(Chain::from(pair), 120),
+            TimelockSafety::new(1_000, 1_200, 100).unwrap(),
+        )
+        .unwrap(),
     )
 }
 

@@ -259,9 +259,6 @@ pub enum Error {
     /// A confirmation policy must require at least one confirmation.
     #[error("confirmation policy must be non-zero")]
     InvalidConfirmationPolicy,
-    /// Taker-funded leg refund must be strictly later than the maker-funded leg refund.
-    #[error("taker refund deadline must be later than maker refund deadline")]
-    TakerTimelockMustFollowMaker,
     /// Conservative cross-chain bounds do not leave the required recovery margin.
     #[error("refund deadlines do not provide the required cross-chain safety margin")]
     InsufficientTimelockMargin,
@@ -391,44 +388,6 @@ impl ConfirmationPolicy {
     }
 }
 
-/// Role-relative refund deadlines in the coordinator's normalized prototype time domain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Timelocks {
-    #[serde(alias = "lez_refund_at")]
-    maker_refund_at: u64,
-    #[serde(alias = "foreign_refund_at")]
-    taker_refund_at: u64,
-}
-
-impl Timelocks {
-    /// Creates safe refund ordering: second-locking maker first, first-locking taker later.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::TakerTimelockMustFollowMaker`] unless the taker deadline is later.
-    pub const fn new(maker_refund_at: u64, taker_refund_at: u64) -> Result<Self, Error> {
-        if taker_refund_at <= maker_refund_at {
-            return Err(Error::TakerTimelockMustFollowMaker);
-        }
-        Ok(Self {
-            maker_refund_at,
-            taker_refund_at,
-        })
-    }
-
-    /// Earlier deadline for the maker-funded, second lock.
-    #[must_use]
-    pub const fn maker_refund_at(self) -> u64 {
-        self.maker_refund_at
-    }
-
-    /// Later deadline for the taker-funded, first lock.
-    #[must_use]
-    pub const fn taker_refund_at(self) -> u64 {
-        self.taker_refund_at
-    }
-}
-
 /// Witness made public by the maker's claim.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimEvidence([u8; 32]);
@@ -461,7 +420,7 @@ pub struct SwapCoordinator {
     #[serde(default)]
     direction: SwapDirection,
     confirmation_policy: ConfirmationPolicy,
-    timelocks: Timelocks,
+    refund_schedule: RefundSchedule,
     phase: Phase,
     #[serde(default)]
     taker_lock_transaction_id: Option<Box<str>>,
@@ -480,14 +439,14 @@ impl SwapCoordinator {
         id: SwapId,
         pair: Pair,
         confirmation_policy: ConfirmationPolicy,
-        timelocks: Timelocks,
+        refund_schedule: RefundSchedule,
     ) -> Self {
         Self {
             id,
             pair,
             direction: SwapDirection::TakerSellsForeign,
             confirmation_policy,
-            timelocks,
+            refund_schedule,
             phase: Phase::Offered,
             taker_lock_transaction_id: None,
             maker_lez_lock_transaction_id: None,
@@ -503,14 +462,14 @@ impl SwapCoordinator {
         pair: Pair,
         direction: SwapDirection,
         confirmation_policy: ConfirmationPolicy,
-        timelocks: Timelocks,
+        refund_schedule: RefundSchedule,
     ) -> Self {
         Self {
             id,
             pair,
             direction,
             confirmation_policy,
-            timelocks,
+            refund_schedule,
             phase: Phase::Offered,
             taker_lock_transaction_id: None,
             maker_lez_lock_transaction_id: None,
@@ -709,13 +668,12 @@ impl SwapCoordinator {
         self.observe_taker_lez_claim(proof)
     }
 
-    /// Refunds the shorter LEZ leg at or after its deadline.
+    /// Refunds the maker-funded, shorter-timelock leg at its typed chain position.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidPhase`] unless both legs are locked, or
-    /// [`Error::TimelockNotExpired`] before the LEZ deadline.
-    pub fn refund_maker_lez_leg(&mut self, now: u64) -> Result<(), Error> {
+    /// Returns an invalid-phase, wrong-clock, or unexpired-timelock error when unavailable.
+    pub fn refund_maker_leg(&mut self, observed: ChainPosition) -> Result<(), Error> {
         if !matches!(
             self.phase,
             Phase::BothLegsLocked | Phase::TakerLockReorged | Phase::TakerLegRefunded
@@ -725,7 +683,7 @@ impl SwapCoordinator {
                 actual: self.phase,
             });
         }
-        if now < self.timelocks.maker_refund_at() {
+        if !self.refund_schedule.maker_refund_reached(observed)? {
             return Err(Error::TimelockNotExpired);
         }
         self.phase = if self.phase == Phase::TakerLegRefunded {
@@ -736,22 +694,12 @@ impl SwapCoordinator {
         Ok(())
     }
 
-    /// Refunds the maker-funded, shorter-timelock leg.
+    /// Refunds the taker-funded leg after its longer typed deadline.
     ///
     /// # Errors
     ///
-    /// Returns an invalid-phase or unexpired-timelock error when refund is unavailable.
-    pub fn refund_maker_leg(&mut self, now: u64) -> Result<(), Error> {
-        self.refund_maker_lez_leg(now)
-    }
-
-    /// Refunds the taker's foreign leg after the longer deadline.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::InvalidPhase`] unless the taker has locked its leg, or
-    /// [`Error::TimelockNotExpired`] before the foreign deadline.
-    pub fn refund_taker_foreign_leg(&mut self, now: u64) -> Result<(), Error> {
+    /// Returns an invalid-phase, wrong-clock, or unexpired-timelock error when unavailable.
+    pub fn refund_taker_leg(&mut self, observed: ChainPosition) -> Result<(), Error> {
         if !matches!(
             self.phase,
             Phase::AwaitingTakerConfirmations
@@ -765,7 +713,7 @@ impl SwapCoordinator {
                 actual: self.phase,
             });
         }
-        if now < self.timelocks.taker_refund_at() {
+        if !self.refund_schedule.taker_refund_reached(observed)? {
             return Err(Error::TimelockNotExpired);
         }
         self.phase = if matches!(
@@ -777,14 +725,5 @@ impl SwapCoordinator {
             Phase::TakerLegRefunded
         };
         Ok(())
-    }
-
-    /// Refunds the taker-funded, longer-timelock leg.
-    ///
-    /// # Errors
-    ///
-    /// Returns an invalid-phase or unexpired-timelock error when refund is unavailable.
-    pub fn refund_taker_leg(&mut self, now: u64) -> Result<(), Error> {
-        self.refund_taker_foreign_leg(now)
     }
 }

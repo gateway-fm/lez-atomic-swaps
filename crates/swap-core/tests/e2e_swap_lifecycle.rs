@@ -1,6 +1,6 @@
 use lez_swap_core::{
-    ChainProof, ClaimEvidence, ConfirmationPolicy, Error, Pair, Phase, SwapCoordinator, SwapId,
-    Timelocks,
+    Chain, ChainPosition, ChainProof, ClaimEvidence, ConfirmationPolicy, Error, Pair, Phase,
+    RefundSchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 
 fn coordinator(pair: Pair) -> SwapCoordinator {
@@ -8,8 +8,32 @@ fn coordinator(pair: Pair) -> SwapCoordinator {
         SwapId::new("swap-001").expect("valid swap id"),
         pair,
         ConfirmationPolicy::new(2).expect("non-zero confirmation policy"),
-        Timelocks::new(100, 120).expect("foreign refund follows LEZ refund"),
+        schedule(pair, SwapDirection::TakerSellsForeign),
     )
+}
+
+fn schedule(pair: Pair, direction: SwapDirection) -> RefundSchedule {
+    let foreign = Chain::from(pair);
+    let (maker_chain, taker_chain) = match direction {
+        SwapDirection::TakerSellsForeign => (Chain::Lez, foreign),
+        SwapDirection::TakerSellsLez => (foreign, Chain::Lez),
+    };
+    RefundSchedule::new(
+        pair,
+        direction,
+        ChainPosition::block_height(maker_chain, 100),
+        ChainPosition::block_height(taker_chain, 120),
+        TimelockSafety::new(1_000, 1_200, 100).unwrap(),
+    )
+    .unwrap()
+}
+
+fn maker_height(value: u64) -> ChainPosition {
+    ChainPosition::block_height(Chain::Lez, value)
+}
+
+fn taker_height(pair: Pair, value: u64) -> ChainPosition {
+    ChainPosition::block_height(Chain::from(pair), value)
 }
 
 #[test]
@@ -60,18 +84,18 @@ fn timeout_path_refunds_both_legs_without_off_chain_coordination() {
         .unwrap();
 
     assert_eq!(
-        swap.refund_maker_lez_leg(99),
+        swap.refund_maker_leg(maker_height(99)),
         Err(Error::TimelockNotExpired)
     );
-    swap.refund_maker_lez_leg(100)
+    swap.refund_maker_leg(maker_height(100))
         .expect("LEZ refund is available at its deadline");
     assert_eq!(swap.phase(), Phase::MakerLegRefunded);
 
     assert_eq!(
-        swap.refund_taker_foreign_leg(119),
+        swap.refund_taker_leg(taker_height(Pair::Zcash, 119)),
         Err(Error::TimelockNotExpired)
     );
-    swap.refund_taker_foreign_leg(120)
+    swap.refund_taker_leg(taker_height(Pair::Zcash, 120))
         .expect("foreign refund follows the shorter LEZ deadline");
     assert_eq!(swap.phase(), Phase::Refunded);
 }
@@ -83,10 +107,10 @@ fn taker_recovers_when_maker_never_locks() {
         .unwrap();
 
     assert_eq!(
-        swap.refund_taker_foreign_leg(119),
+        swap.refund_taker_leg(taker_height(Pair::Bitcoin, 119)),
         Err(Error::TimelockNotExpired)
     );
-    swap.refund_taker_foreign_leg(120)
+    swap.refund_taker_leg(taker_height(Pair::Bitcoin, 120))
         .expect("taker can recover without waiting for an absent maker");
     assert_eq!(swap.phase(), Phase::Refunded);
 }
@@ -100,11 +124,11 @@ fn delayed_observation_of_lez_refund_does_not_block_foreign_refund() {
         .unwrap();
 
     // Both deadlines have passed, but the taker observes its own refund first.
-    swap.refund_taker_foreign_leg(120)
+    swap.refund_taker_leg(taker_height(Pair::Zcash, 120))
         .expect("refund safety must not depend on observation order");
     assert_eq!(swap.phase(), Phase::TakerLegRefunded);
 
-    swap.refund_maker_lez_leg(120)
+    swap.refund_maker_leg(maker_height(120))
         .expect("maker refund completes the independently observed recovery");
     assert_eq!(swap.phase(), Phase::Refunded);
 }
@@ -156,12 +180,8 @@ fn replayed_chain_observations_are_idempotent() {
 #[test]
 fn timelocks_reject_unsafe_ordering() {
     assert_eq!(
-        Timelocks::new(100, 100),
-        Err(Error::TakerTimelockMustFollowMaker)
-    );
-    assert_eq!(
-        Timelocks::new(101, 100),
-        Err(Error::TakerTimelockMustFollowMaker)
+        TimelockSafety::new(1_000, 1_099, 100),
+        Err(Error::InsufficientTimelockMargin)
     );
 }
 
@@ -197,8 +217,10 @@ fn taker_lock_reorg_revokes_claim_authority_but_preserves_refunds() {
         Err(Error::TakerLockNotConfirmed)
     );
 
-    after_maker.refund_maker_leg(100).unwrap();
-    after_maker.refund_taker_leg(120).unwrap();
+    after_maker.refund_maker_leg(maker_height(100)).unwrap();
+    after_maker
+        .refund_taker_leg(taker_height(Pair::Bitcoin, 120))
+        .unwrap();
     assert_eq!(after_maker.phase(), Phase::Refunded);
 }
 

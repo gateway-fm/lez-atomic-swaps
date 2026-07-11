@@ -85,9 +85,9 @@ with dependency license/advisory checks in CI.
 | At-least-once chain observation replay | 2026-07-11 repeated confirmed lock failed with `InvalidPhase` | 2026-07-11 identical lock/claim events are idempotent; conflicting IDs/evidence are rejected | Extend to persisted outbox/event sequence numbers and refund transaction proofs |
 | Generated transition sequences | 2026-07-11 property oracles exposed both confirmation growth and regression cases and were corrected | 512 arbitrary sequences include confirmation regression and explicit removal/replacement; retained minimized reorg seed preserves the discovered case | Add typed per-chain deadlines and compare against pair reference models |
 | Maker operator process boundary | 2026-07-11 acceptance test could not resolve daemon/CLI executables | Actual CLI authenticates through HTTP metadata to actual daemon, creates a swap, daemon is killed/restarted on a new ephemeral port, persisted status remains visible | Move to owner-restricted Unix socket/credential file; add durable request IDs/audit outbox and price configuration |
-| Bidirectional role ordering | 2026-07-11 reverse-direction test could not resolve direction or role-neutral transitions; CLI rejected `--direction` | Both directions preserve taker-first and maker-before-taker refunds for BTC/XMR/ZEC; actual CLI/daemon persists reverse direction across kill/restart | Replace normalized time with typed chain deadlines and run every real-chain role matrix in both directions |
+| Bidirectional role ordering | 2026-07-11 reverse-direction test could not resolve direction or role-neutral transitions; CLI rejected `--direction` | Both directions preserve taker-first and maker-before-taker refunds for BTC/XMR/ZEC; actual CLI/daemon persists reverse direction and typed schedules across kill/restart | Run every real-chain role matrix in both directions |
 | Taker-lock reorg/replacement | 2026-07-11 missing durable reorg phase/removal event; property oracle assumed confirmations only rise | Pre-maker regression/removal revokes permission and permits explicit replacement; post-maker removal pins the committed ID, suspends claims, and preserves refunds; generated model covers events | Add pair-specific reorg depth policies and real-node replacement cases |
-| Typed refund clocks | 2026-07-11 tests could not resolve chain/basis/safety schedule types | Typed block-height/timestamp positions reject cross-domain comparison; role-chain mapping and conservative wall-clock margin pass in both directions | Replace coordinator/CLI normalized `Timelocks`, then calibrate named per-network parameters |
+| Typed refund clocks | 2026-07-11 tests could not resolve chain/basis/safety schedule types | Coordinator, persistence, RPC, and CLI use typed block-height/timestamp positions; wrong domains and insufficient conservative margins are rejected | Calibrate and review named per-network confirmation/margin parameters |
 
 ## Milestone 1 plan: three weeks
 
@@ -120,7 +120,7 @@ with dependency license/advisory checks in CI.
 - [ ] Publish common SDK lifecycle traits plus typed pair-specific evidence/errors.
 - [x] Add generated property tests for transition legality, conflicts, and
   absorbing terminal states.
-- [ ] Extend the model with reorg/replacement events and typed per-chain deadlines.
+- [x] Extend the model with reorg/replacement events and typed per-chain deadlines.
 - [x] Select and justify the Bitcoin refund construction (Taproot script-path CSV)
   with its M3 failure/fee/reorg validation matrix.
 
@@ -177,7 +177,7 @@ CI and local scripts fail if the project name is empty or does not start with
 | Zcash node migration is active | `zcashd` halts before NU6.3; Zallet omits raw-tx builder RPCs | Use Zebra plus local canonical Rust transaction construction |
 | SPEL documentation targets older `nssa` paths | SPEL v0.5 docs and current LEZ `dev` disagree | Build a minimal generated program against one pinned compatibility set before escrow implementation |
 | Upstream LEZ validity tests require RISC Zero Rust | Source guards and BIP-340 vectors pass; guest tests fail without `rzup install rust` | Provide an isolated pinned toolchain lane and keep full reproducer gate open |
-| Timelocks currently share a normalized `u64` in the skeleton | Not sufficient for mixed height/timestamp chains | Introduce typed pair-specific deadlines before M2 implementation |
+| Typed deadlines still need calibrated network parameters | Clock domains and conservative bounds are enforced, but current test values are illustrative | Publish named network/release assumptions, confirmation depths, drift/reorg/inclusion budgets, and boundary vectors |
 | Final E2E must represent actual users | Operator process harness exists; taker and chain lifecycles still call protocol core directly | Extend the role harness through taker CLI and real chain adapters before labeling tests as full E2E |
 | Prototype local RPC still uses loopback HTTP and an environment capability | Tower rejects a Bearer header before JSON parsing and non-loopback binds are refused | Move to an owner-restricted Unix socket and credential file before M5 freeze |
 | Daemon prototype serializes SQLite with a mutex on blocking workers | Safe for the two-method operator slice, not chain watcher concurrency | Introduce the ADR-0003 single writer actor and atomic outbox before mutations expand |

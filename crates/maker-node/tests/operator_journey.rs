@@ -43,6 +43,12 @@ fn maker_cli_controls_authenticated_daemon_and_survives_restart() {
             "100",
             "--taker-refund-at",
             "120",
+            "--maker-refund-latest",
+            "1000",
+            "--taker-refund-earliest",
+            "1200",
+            "--required-margin",
+            "100",
         ],
     );
     assert_success(&created);
@@ -65,6 +71,12 @@ fn maker_cli_controls_authenticated_daemon_and_survives_restart() {
             "100",
             "--taker-refund-at",
             "120",
+            "--maker-refund-latest",
+            "1000",
+            "--taker-refund-earliest",
+            "1200",
+            "--required-margin",
+            "100",
         ],
     );
     assert_success(&reverse);

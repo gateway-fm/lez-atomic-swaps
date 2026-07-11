@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use jsonrpsee::{core::client::ClientT, rpc_params};
 use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClientBuilder};
 use lez_maker_node::{CreateSwapRequest, StatusRequest, SwapView};
-use lez_swap_core::{Pair, SwapDirection};
+use lez_swap_core::{ClockBasis, Pair, SwapDirection};
 
 #[derive(Parser)]
 #[command(about = "Operator CLI for the LEZ atomic-swap maker daemon")]
@@ -26,10 +26,20 @@ enum Command {
         direction: DirectionArgument,
         #[arg(long)]
         confirmations: u32,
+        #[arg(long, value_enum, default_value_t = ClockArgument::BlockHeight)]
+        maker_refund_basis: ClockArgument,
         #[arg(long)]
         maker_refund_at: u64,
+        #[arg(long, value_enum, default_value_t = ClockArgument::BlockHeight)]
+        taker_refund_basis: ClockArgument,
         #[arg(long)]
         taker_refund_at: u64,
+        #[arg(long)]
+        maker_refund_latest: u64,
+        #[arg(long)]
+        taker_refund_earliest: u64,
+        #[arg(long)]
+        required_margin: u64,
     },
     Status {
         #[arg(long)]
@@ -49,6 +59,22 @@ enum DirectionArgument {
     #[default]
     TakerSellsForeign,
     TakerSellsLez,
+}
+
+#[derive(Debug, Default, Clone, Copy, ValueEnum)]
+enum ClockArgument {
+    #[default]
+    BlockHeight,
+    Timestamp,
+}
+
+impl From<ClockArgument> for ClockBasis {
+    fn from(basis: ClockArgument) -> Self {
+        match basis {
+            ClockArgument::BlockHeight => Self::BlockHeight,
+            ClockArgument::Timestamp => Self::Timestamp,
+        }
+    }
 }
 
 impl From<DirectionArgument> for SwapDirection {
@@ -86,16 +112,26 @@ async fn main() -> anyhow::Result<()> {
             pair,
             direction,
             confirmations,
+            maker_refund_basis,
             maker_refund_at,
+            taker_refund_basis,
             taker_refund_at,
+            maker_refund_latest,
+            taker_refund_earliest,
+            required_margin,
         } => {
             let request = CreateSwapRequest {
                 id: id.into(),
                 pair: pair.into(),
                 direction: direction.into(),
                 confirmations,
+                maker_refund_basis: maker_refund_basis.into(),
                 maker_refund_at,
+                taker_refund_basis: taker_refund_basis.into(),
                 taker_refund_at,
+                maker_refund_latest,
+                taker_refund_earliest,
+                required_margin,
             };
             client.request("swap_create", rpc_params![request]).await?
         }
