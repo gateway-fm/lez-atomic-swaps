@@ -291,12 +291,17 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   ZEC-height, reaction-margin, branch, and expiry constants pass; wrong
   network/branch, timestamp/height overflow, absent calibration, and a
   one-second-short margin fail closed. Both directions retain LEZ-before-ZEC.
-- [ ] Bind production-grade chain observations and compose cross-chain
-  refund-margin cases through actual LEZ and Zebra nodes. Adapter evidence must
-  include network/branch, block identity/height, outpoint/value/script
-  commitment, and depth. The LEZ Unix-millisecond/core Unix-second boundary is
-  typed, checked, conservatively rounded, and covered at `N-1`, `N`, partial
-  seconds, and overflow; observation binding and the composed flow remain.
+- [x] Add the production-grade ZEC observation validator. It re-decodes one
+  canonical transaction with no trailing bytes, recomputes txid/depth/outpoint,
+  and binds network/branch, stable canonical block hash/height, exact value,
+  redeem/P2SH bytes, explicit output index, and active-chain status before a
+  lossy `ChainProof` projection. Malformed, inconsistent, side-chain,
+  mismatched, out-of-range, and overflow snapshots fail closed.
+- [ ] Populate and retain that typed observation through stable actual Zebra RPC
+  snapshots, then compose cross-chain refund-margin cases through actual LEZ and
+  Zebra nodes. The LEZ Unix-millisecond/core Unix-second boundary is typed,
+  checked, conservatively rounded, and covered at `N-1`, `N`, partial seconds,
+  and overflow; actual watcher persistence and the composed flow remain.
 - [ ] Re-audit the stable Zebra/security pin immediately before public-testnet
   evidence because the current release horizon ends ahead of NU7.
 - [ ] Re-audit the deployed SPEL/LEZ guest graph before testnet evidence and the

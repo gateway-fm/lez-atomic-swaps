@@ -1,12 +1,17 @@
 //! Transparent Zcash protocol adapter for LEZ atomic swaps.
 
 mod funding;
+mod observation;
 mod profile;
 mod transaction;
 
 pub use funding::{
     FundingBuildError, FundingSelection, TransparentFundingRequest, TransparentUtxo,
     build_funding_transaction, select_funding_utxos,
+};
+
+pub use observation::{
+    CanonicalZcashOutputObservation, ExpectedBip199Output, ObservationError, ZcashNodeSnapshot,
 };
 
 pub use profile::{ProfileError, ZecProfileId, ZecRefundProfile};

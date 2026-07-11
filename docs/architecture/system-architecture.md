@@ -283,21 +283,25 @@ flowchart LR
     Select --> Safety
     Safety -->|"missing/short"| Reject
     Safety --> Schedule["Direction-mapped RecoverySchedule<br/>LEZ always earlier than ZEC"]
-    Depths --> Observe["Typed canonical chain observations"]
+    Depths --> Validator["Typed observation validator"]
+    ZebraRPC["Stable actual Zebra RPC snapshot"] -.-> Validator
+    Validator --> Observe["Bound canonical observation"]
     LezDeadline --> Schedule
     ZecDeadline --> Schedule
     Observe -.-> Composed["Composed standalone LEZ + Zebra corridor E2E"]
     Schedule -.-> Composed
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Observe,Composed planned;
+    class ZebraRPC,Observe,Composed planned;
 ```
 
-The solid profile path is implemented. Public-testnet values are acceptance
-targets, not mainnet recommendations or proof of worst-case cadence. The dashed
-observation/corridor path remains M2 work and must retain the complete canonical
-network, branch, block, outpoint, value, and script commitment before reducing
-evidence to coordinator state.
+The solid profile and pure validation paths are implemented. The validator
+re-decodes canonical bytes and checks the complete network, branch, block,
+outpoint, value, exact script, and derived-depth binding before producing a
+lossy coordinator proof. Public-testnet values are acceptance targets, not
+mainnet recommendations or proof of worst-case cadence. Stable population and
+persistence from actual Zebra RPC plus the composed corridor remain dashed M2
+work.
 
 ## Happy-path user flow
 

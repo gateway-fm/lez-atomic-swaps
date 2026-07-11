@@ -13,6 +13,9 @@ flowchart LR
     Calibration["Measured or harness safety bounds"] --> Profile
     Raw --> RPC["sendrawtransaction / getrawtransaction"]
     RPC --> Zebra["Zebra 5.2.0 consensus authority"]
+    Zebra --> Snapshot["Stable network/branch/block/raw-tx snapshot"]
+    Snapshot --> Observe["Re-decode + bind outpoint/value/BIP-199/depth"]
+    Observe --> CoreProof["Lossy ChainProof projection<br/>full source evidence retained"]
     Zebra --> OldBranch["Actor claim + refund<br/>3-block branch"]
     RPC --> ForkZebra["Disconnected Zebra 5.2.0 fork authority"]
     ForkZebra --> NewBranch["Conflicting actor refund<br/>4-block branch"]
