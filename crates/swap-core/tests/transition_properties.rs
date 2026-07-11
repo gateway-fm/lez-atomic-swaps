@@ -102,7 +102,7 @@ proptest! {
             if result.is_ok() && before != after {
                 match after {
                     Phase::AwaitingTakerConfirmations => {
-                        prop_assert_eq!(before, Phase::Offered);
+                        prop_assert!(matches!(before, Phase::Offered | Phase::TakerLockConfirmed));
                     }
                     Phase::TakerLockConfirmed => {
                         prop_assert!(matches!(
@@ -111,20 +111,23 @@ proptest! {
                         ));
                     }
                     Phase::BothLegsLocked => {
-                        prop_assert_eq!(before, Phase::TakerLockConfirmed);
+                        prop_assert!(matches!(before, Phase::TakerLockConfirmed | Phase::TakerLockReorged));
+                    }
+                    Phase::TakerLockReorged => {
+                        prop_assert!(matches!(before, Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable));
                     }
                     Phase::ClaimEvidenceAvailable => {
-                        prop_assert_eq!(before, Phase::BothLegsLocked);
+                        prop_assert!(matches!(before, Phase::BothLegsLocked | Phase::TakerLockReorged));
                     }
                     Phase::Completed => {
                         prop_assert_eq!(before, Phase::ClaimEvidenceAvailable);
                         prop_assert!(swap.claim_evidence().is_some());
                     }
                     Phase::MakerLegRefunded => {
-                        prop_assert_eq!(before, Phase::BothLegsLocked);
+                        prop_assert!(matches!(before, Phase::BothLegsLocked | Phase::TakerLockReorged));
                     }
                     Phase::TakerLegRefunded => {
-                        prop_assert_eq!(before, Phase::BothLegsLocked);
+                        prop_assert!(matches!(before, Phase::BothLegsLocked | Phase::TakerLockReorged));
                     }
                     Phase::Refunded => {
                         prop_assert!(matches!(

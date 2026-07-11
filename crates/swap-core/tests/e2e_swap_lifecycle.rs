@@ -164,3 +164,40 @@ fn timelocks_reject_unsafe_ordering() {
         Err(Error::TakerTimelockMustFollowMaker)
     );
 }
+
+#[test]
+fn taker_lock_reorg_revokes_claim_authority_but_preserves_refunds() {
+    let mut before_maker = coordinator(Pair::Bitcoin);
+    before_maker
+        .observe_taker_lock(ChainProof::new("btc-lock", 2).unwrap())
+        .unwrap();
+    assert_eq!(before_maker.phase(), Phase::TakerLockConfirmed);
+    before_maker
+        .observe_taker_lock(ChainProof::new("btc-lock", 1).unwrap())
+        .unwrap();
+    assert_eq!(before_maker.phase(), Phase::AwaitingTakerConfirmations);
+    assert_eq!(
+        before_maker.observe_maker_lock(ChainProof::new("lez-lock", 1).unwrap()),
+        Err(Error::TakerLockNotConfirmed)
+    );
+
+    let mut after_maker = coordinator(Pair::Bitcoin);
+    after_maker
+        .observe_taker_lock(ChainProof::new("btc-lock", 2).unwrap())
+        .unwrap();
+    after_maker
+        .observe_maker_lock(ChainProof::new("lez-lock", 1).unwrap())
+        .unwrap();
+    after_maker
+        .observe_taker_lock(ChainProof::new("btc-lock", 1).unwrap())
+        .expect("a canonicality regression is a durable observation");
+    assert_eq!(after_maker.phase(), Phase::TakerLockReorged);
+    assert_eq!(
+        after_maker.observe_maker_claim(ClaimEvidence::new([9; 32])),
+        Err(Error::TakerLockNotConfirmed)
+    );
+
+    after_maker.refund_maker_leg(100).unwrap();
+    after_maker.refund_taker_leg(120).unwrap();
+    assert_eq!(after_maker.phase(), Phase::Refunded);
+}

@@ -38,6 +38,8 @@ pub enum Phase {
     TakerLockConfirmed,
     /// Both legs are locked.
     BothLegsLocked,
+    /// The taker's funding transaction regressed below confirmation policy after maker lock.
+    TakerLockReorged,
     /// The maker claimed the foreign leg, revealing claim evidence for the taker.
     ClaimEvidenceAvailable,
     /// Both parties claimed their proceeds.
@@ -354,16 +356,6 @@ impl SwapCoordinator {
     /// Returns [`Error::ConflictingTakerLock`] for a changed transaction ID, or
     /// [`Error::InvalidPhase`] after the taker lock has already been confirmed.
     pub fn observe_taker_foreign_lock(&mut self, proof: ChainProof) -> Result<(), Error> {
-        if !matches!(
-            self.phase,
-            Phase::Offered | Phase::AwaitingTakerConfirmations
-        ) {
-            return if self.taker_lock_transaction_id.as_deref() == Some(proof.transaction_id()) {
-                Ok(())
-            } else {
-                Err(Error::ConflictingTakerLock)
-            };
-        }
         if self
             .taker_lock_transaction_id
             .as_deref()
@@ -371,11 +363,28 @@ impl SwapCoordinator {
         {
             return Err(Error::ConflictingTakerLock);
         }
+        if matches!(self.phase, Phase::Completed | Phase::Refunded) {
+            return Ok(());
+        }
         self.taker_lock_transaction_id = Some(proof.transaction_id);
-        self.phase = if proof.confirmations >= self.confirmation_policy.required() {
-            Phase::TakerLockConfirmed
-        } else {
-            Phase::AwaitingTakerConfirmations
+        let confirmed = proof.confirmations >= self.confirmation_policy.required();
+        self.phase = match (self.phase, confirmed) {
+            (
+                Phase::Offered | Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed,
+                true,
+            ) => Phase::TakerLockConfirmed,
+            (
+                Phase::Offered | Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed,
+                false,
+            ) => Phase::AwaitingTakerConfirmations,
+            (Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable, false) => {
+                Phase::TakerLockReorged
+            }
+            (Phase::TakerLockReorged, true) if self.claim_evidence.is_some() => {
+                Phase::ClaimEvidenceAvailable
+            }
+            (Phase::TakerLockReorged, true) => Phase::BothLegsLocked,
+            (phase, _) => phase,
         };
         Ok(())
     }
@@ -404,6 +413,9 @@ impl SwapCoordinator {
     ///
     /// Returns [`Error::InvalidPhase`] unless both legs are locked.
     pub fn observe_maker_claim(&mut self, evidence: ClaimEvidence) -> Result<(), Error> {
+        if self.phase == Phase::TakerLockReorged {
+            return Err(Error::TakerLockNotConfirmed);
+        }
         if self.phase != Phase::BothLegsLocked {
             return match self.claim_evidence.as_ref() {
                 Some(known) if known == &evidence => Ok(()),
@@ -425,6 +437,9 @@ impl SwapCoordinator {
     ///
     /// Returns [`Error::InvalidPhase`] until maker claim evidence is available.
     pub fn observe_taker_lez_claim(&mut self, proof: ChainProof) -> Result<(), Error> {
+        if self.phase == Phase::TakerLockReorged {
+            return Err(Error::TakerLockNotConfirmed);
+        }
         if self.phase != Phase::ClaimEvidenceAvailable {
             return match self.taker_lez_claim_transaction_id.as_deref() {
                 Some(known) if known == proof.transaction_id() => Ok(()),
@@ -456,7 +471,10 @@ impl SwapCoordinator {
     /// Returns [`Error::InvalidPhase`] unless both legs are locked, or
     /// [`Error::TimelockNotExpired`] before the LEZ deadline.
     pub fn refund_maker_lez_leg(&mut self, now: u64) -> Result<(), Error> {
-        if !matches!(self.phase, Phase::BothLegsLocked | Phase::TakerLegRefunded) {
+        if !matches!(
+            self.phase,
+            Phase::BothLegsLocked | Phase::TakerLockReorged | Phase::TakerLegRefunded
+        ) {
             return Err(Error::InvalidPhase {
                 expected: Phase::BothLegsLocked,
                 actual: self.phase,
@@ -494,6 +512,7 @@ impl SwapCoordinator {
             Phase::AwaitingTakerConfirmations
                 | Phase::TakerLockConfirmed
                 | Phase::BothLegsLocked
+                | Phase::TakerLockReorged
                 | Phase::MakerLegRefunded
         ) {
             return Err(Error::InvalidPhase {

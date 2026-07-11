@@ -43,7 +43,7 @@ requires a corresponding test—not merely a row—for every F, U, R, and P item
 
 | ID | Contract | Acceptance evidence | Status / milestone |
 |---|---|---|---|
-| R1 | Taker locks first; maker waits for required confirmations | Core acceptance rejects early maker lock for all pairs; real chain adapters repeat around confirmation/reorg boundaries | Passing core; adapter evidence M2–M4 |
+| R1 | Taker locks first; maker waits for required confirmations | Core rejects early lock and revokes permission on confirmation regression for all pairs; real chain adapters repeat around reorg boundaries | Passing core; adapter evidence M2–M4 |
 | R2 | After first submission, only local state and chain nodes are required | Core happy/refund paths have no peer handle; UJ-006 kills Delivery/Chat and counterparty after each durable transition | Partial |
 | R3 | Missing chain dependency does not disable other pairs | Dependency matrix starts daemon with each node absent/unhealthy and completes unaffected-pair swaps with clear CLI/GUI status | Planned M5 |
 | R4 | Persisted state survives crash/restart without fund loss | SQLite reopen tests plus actual daemon kill/restart pass; kill-at-every-transition, corruption, migration, encryption, and outbox matrix remain | Partial |
