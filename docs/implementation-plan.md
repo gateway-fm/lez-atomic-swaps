@@ -73,6 +73,13 @@ Tests map to hard requirement IDs in `docs/requirements-traceability.md`. Custom
 cryptography is prohibited: canonical libraries and published vectors are used,
 with dependency license/advisory checks in CI.
 
+The living [manual reproduction guide](manual-user-flows.md) records exact
+fresh-checkout prerequisites, isolated commands, actor boundaries, expected
+evidence, and cleanup for every currently proven operator/chain flow. It must be
+updated with the implementation whenever one of those surfaces changes and
+must continue to distinguish local fixtures from composed actor and public
+testnet evidence.
+
 ## Current vertical slice
 
 | Slice | RED evidence | GREEN evidence | Next refactor/gate |
@@ -277,13 +284,17 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   four-block branch. Submitting the latter through `submitblock` makes it
   canonical at every detached height and exposes the replacement transaction
   through the primary node.
-- [ ] Bind named ZEC profiles and production-grade chain observations before
-  composing cross-chain refund-margin cases through actual LEZ and Zebra nodes.
-  The adapter evidence must include network/branch, block identity/height,
-  outpoint/value/script commitment, and depth. The LEZ Unix-millisecond/core
-  Unix-second boundary is now typed, checked, conservatively rounded, and
-  covered at `N-1`, `N`, partial seconds, and overflow; named profile binding
-  and the composed actual-node flow remain.
+- [x] Implement immutable network-bound `deterministic-local-v1` and
+  `public-testnet-v1` ZEC profiles. Exact reviewed confirmation, LEZ-delay,
+  ZEC-height, reaction-margin, branch, and expiry constants pass; wrong
+  network/branch, timestamp/height overflow, absent calibration, and a
+  one-second-short margin fail closed. Both directions retain LEZ-before-ZEC.
+- [ ] Bind production-grade chain observations and compose cross-chain
+  refund-margin cases through actual LEZ and Zebra nodes. Adapter evidence must
+  include network/branch, block identity/height, outpoint/value/script
+  commitment, and depth. The LEZ Unix-millisecond/core Unix-second boundary is
+  typed, checked, conservatively rounded, and covered at `N-1`, `N`, partial
+  seconds, and overflow; observation binding and the composed flow remain.
 - [ ] Re-audit the stable Zebra/security pin immediately before public-testnet
   evidence because the current release horizon ends ahead of NU7.
 - [ ] Re-audit the deployed SPEL/LEZ guest graph before testnet evidence and the
@@ -292,6 +303,10 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
 
 ### Actor-real delivery and M2 exit
 
+- [x] Publish a living manual reproduction guide for the currently proven maker
+  operator, Zebra actor/fork, and LEZ native/token/cost fixtures, with exact
+  no-clash and cleanup rules. This does not satisfy the independent composed
+  maker/taker or public-testnet items below.
 - [ ] Run independent maker and taker processes with direction-correct keys,
   transparent funds, LEZ funds, selected node routes, and durable recovery state
   for both supported ZEC directions.

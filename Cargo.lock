@@ -1315,6 +1315,7 @@ dependencies = [
  "hex",
  "jsonrpsee",
  "jsonrpsee-http-client",
+ "lez-swap-core",
  "orchard",
  "sapling-crypto",
  "secp256k1",

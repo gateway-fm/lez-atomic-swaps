@@ -18,6 +18,8 @@ current executable slices enforce:
 - claim completion after the first lock needs only on-chain evidence; and
 - pair-specific claim and recovery ordering, including LEZ-before-ZEC claim and
   refund in both ZEC trade directions;
+- immutable local/public-testnet ZEC profiles with network/branch binding,
+  checked deadlines, required calibration, and exact margin enforcement;
 - exact BIP-199 P2SH plus canonical Zcash V5 funding, claim, and refund
   transactions; and
 - actor-keyed funding/claim/refund acceptance and rejection through pinned
@@ -32,13 +34,17 @@ current executable slices enforce:
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),
-the [architecture decision log](docs/architecture/README.md), and the first
+the [architecture decision log](docs/architecture/README.md), the living
+[manual reproduction guide](docs/manual-user-flows.md), and the first
 [acceptance tests](crates/swap-core/tests/e2e_swap_lifecycle.rs).
 
 ## Development
 
-Prerequisites: Rust 1.96.0. Docker Compose is needed only for the isolated Zebra
-consensus suite.
+Prerequisites: Rust 1.96.0. Docker is needed for the isolated Zebra consensus
+suite and the pinned Risc0 guest builder; Docker Compose v2 is used by Zebra.
+The [manual reproduction guide](docs/manual-user-flows.md) lists the complete
+per-run prerequisites, isolation rules, commands, expected evidence, and
+cleanup behavior.
 
     cargo test --locked --workspace --all-targets
     cargo fmt --all --check

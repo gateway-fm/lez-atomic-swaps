@@ -268,6 +268,37 @@ keys. It deliberately does not claim cross-chain refund-margin proof: that
 requires typed ZEC observation commitments, checked LEZ millisecond/core-second
 conversion, a named profile, and a composed standalone-LEZ plus Zebra run.
 
+## Zcash profile and deadline flow
+
+```mermaid
+flowchart LR
+    Terms["Signed profile ID + direction"] --> Select{"Named profile"}
+    Node["Zebra network + consensus branch"] --> Validate{"Exact profile match?"}
+    Select --> Validate
+    Validate -->|"no"| Reject["Reject before funding"]
+    Validate -->|"yes"| Depths["LEZ/ZEC confirmation depths"]
+    Select --> LezDeadline["Checked LEZ seconds → guest milliseconds"]
+    Select --> ZecDeadline["Checked funding height + CLTV blocks"]
+    Telemetry["Measured bounds or controlled harness"] --> Safety["LEZ-latest + required margin ≤ ZEC-earliest"]
+    Select --> Safety
+    Safety -->|"missing/short"| Reject
+    Safety --> Schedule["Direction-mapped RecoverySchedule<br/>LEZ always earlier than ZEC"]
+    Depths --> Observe["Typed canonical chain observations"]
+    LezDeadline --> Schedule
+    ZecDeadline --> Schedule
+    Observe -.-> Composed["Composed standalone LEZ + Zebra corridor E2E"]
+    Schedule -.-> Composed
+
+    classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
+    class Observe,Composed planned;
+```
+
+The solid profile path is implemented. Public-testnet values are acceptance
+targets, not mainnet recommendations or proof of worst-case cadence. The dashed
+observation/corridor path remains M2 work and must retain the complete canonical
+network, branch, block, outpoint, value, and script commitment before reducing
+evidence to coordinator state.
+
 ## Happy-path user flow
 
 ```mermaid

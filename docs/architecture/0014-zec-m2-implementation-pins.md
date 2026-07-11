@@ -9,6 +9,8 @@ flowchart LR
     Script --> Tx["zcash_transparent 0.8 + zcash_primitives 0.28"]
     Tx --> TxVectors["Fixed V5 bytes/txids + real signature interpreter"]
     TxVectors --> Raw["Locally signed transparent transactions"]
+    Profile["Named ZEC profile<br/>network + NU6.2 + depths + horizons"] --> Raw
+    Calibration["Measured or harness safety bounds"] --> Profile
     Raw --> RPC["sendrawtransaction / getrawtransaction"]
     RPC --> Zebra["Zebra 5.2.0 consensus authority"]
     Zebra --> OldBranch["Actor claim + refund<br/>3-block branch"]
@@ -202,6 +204,15 @@ useful unit evidence but never proves a transaction is consensus-valid or
 standard enough for the node mempool. M2 E2E therefore constructs/signs locally,
 submits with `sendrawtransaction`, observes with `getrawtransaction`, and checks
 confirmed state through the selected Zebra RPC.
+
+The adapter owns immutable `deterministic-local-v1` and `public-testnet-v1`
+profiles. Each binds the exact Zcash network and NU6.2 signing branch plus LEZ
+and Zcash confirmation depths, LEZ delay, Zcash CLTV delta, required margin,
+and ZIP-203 expiry delta. Deadline arithmetic is checked. The public profile
+refuses to build a recovery schedule without calibrated conservative wall-clock
+bounds; it never treats the nominal 75-second block target as a fastest-chain
+guarantee. The deterministic profile accepts bounds only from the controlled
+harness and is invalid on public network IDs.
 
 ## Isolation and upgrade policy
 

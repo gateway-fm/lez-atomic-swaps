@@ -136,8 +136,13 @@ principal outputs never absorb an unnegotiated fee.
   suites and recorded demos.
 - `mainnet`: absent by design until calibration and formal review are complete.
 
-The code representation must use named immutable profiles rather than scattered
-numeric defaults. RED tests first cover direction-to-chain mapping, the
+The ZEC adapter now exposes both named immutable profiles rather than scattered
+numeric defaults. Tests cover exact IDs/constants, network and NU6.2 branch
+binding, checked LEZ timestamp and ZEC-height construction, absent calibration,
+exact/short margin boundaries, and direction-to-chain mapping. Public-testnet
+wall-clock bounds remain required calibrated inputs: the adapter deliberately
+does not turn the nominal 75-second Zcash target into a fastest-plausible bound.
+The wider suite continues to cover the
 RFP-fixed ZEC-after-LEZ order, construction-specific claimant order, XMR's
 event-gated recovery, every exact boundary, mixed-clock rejection,
 profile/network mismatch, latency-budget exhaustion, and profile persistence
