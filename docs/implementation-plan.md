@@ -184,8 +184,9 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
 - [x] Reconcile RFP-003 F4 and accepted issue #112 against the actual upstream
   implementations; retain fixed LEZ-before-ZEC claim/refund ordering in both
   product directions.
-- [x] Select the exact BIP-199 P2PKH shape: `sha256_htlc_p2pkh` from
-  `zcash_script 0.4.3`, not its direct-public-key cousin.
+- [x] Select the exact BIP-199 P2PKH shape from `zcash_script 0.4.3` primitives;
+  reject its semantically equivalent ready-made helper because that helper
+  duplicates the signature tail and is not byte-identical to BIP-199.
 - [x] Pin SPEL v0.5.0 with its exact LEZ v0.1.2 compatibility commit and keep
   newer LEZ semantics in a separate drift lane.
 - [x] Reject superseded Zebra 4.5.1 after a fresh security review; pin current
