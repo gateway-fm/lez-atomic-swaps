@@ -32,7 +32,9 @@ flowchart LR
     NativeFlow --> NativeEvidence["Canonical state, balances, role/deadline negatives"]
     NativeEvidence --> CostReplay["Production V03State replay without Clock noise"]
     CostReplay --> CostJson["Attributed sessions + budgets + checked JSON"]
-    TokenFlow["Two-definition standalone ATA lifecycle + costs"] -.-> LocalSeq
+    LocalSeq --> TokenFlow["Two-definition standalone ATA lifecycle"]
+    TokenFlow --> TokenEvidence["Owner roles + holding/supply conservation + negatives"]
+    TokenCost["Escrow + ATA + Token recursive costs"] -.-> TokenEvidence
     Port["Rebuild SPEL/guest/client for LEZ v0.2 PDA + ABI"] -.-> LezTest["LEZ testnet 0.2"]
     Native["Reviewed SPEL/LEZ v0.2 compatibility pin"] -.-> Port
     Drift["LEZ dev + current Zebra scheduled drift lanes"] -.-> Tests
@@ -149,8 +151,16 @@ expose compute units through RPC or blocks. It replays the production
 `V03State` transition with Clock excluded, requires two ordered one-segment
 sessions per operation, verifies `total = user + paging + reserved`, enforces
 versioned user-cycle budgets, and reproduces
-`docs/evidence/lez-v0.1.2-native-costs.json`. Token standalone lifecycle and
-its ATA/token recursion costs remain open. The
+`docs/evidence/lez-v0.1.2-native-costs.json`.
+
+The standalone token lifecycle now uses two independently key-created fungible
+definitions and supply accounts, plus actor ATAs created by their real owner
+keys. Definition A reaches claim and definition B reaches permissionless refund.
+Canonical negatives reject wrong preimage, a valid depositor in the claimant
+role, claimant ATA substitution across definitions, early refund, and
+cross-definition refund destination without nonce/holding mutation. Final
+holdings retain the exact definition IDs and conserve each independent total
+supply. Escrow/ATA/nested-Token recursive cost evidence remains open. The
 accepted LEZ pin forces `rsa 0.9.10` and `tracing-subscriber 0.2.25`; no safe
 compatible pin exists today. The fixture-local policy is permitted only because
 CI proves rzup `publish`/`install` and tracing `fmt`/`ansi` features are absent,

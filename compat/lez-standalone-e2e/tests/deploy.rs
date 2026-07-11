@@ -6,7 +6,7 @@ use bytesize::ByteSize;
 use common::{HashType, transaction::NSSATransaction};
 use lez_zec_escrow_compat::{EscrowMetadata, EscrowStatus, Instruction as EscrowInstruction};
 use nssa::{
-    AccountId, PrivateKey, ProgramDeploymentTransaction, PublicTransaction,
+    AccountId, PrivateKey, ProgramDeploymentTransaction, PublicKey, PublicTransaction,
     program::Program,
     public_transaction::{Message, WitnessSet},
 };
@@ -15,6 +15,7 @@ use sequencer_service_rpc::{RpcClient as _, SequencerClient, SequencerClientBuil
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use spel_framework_core::pda::{compute_pda, seed_from_str};
+use token_core::{TokenDefinition, TokenHolding};
 
 const LEZ_PIN: &str = "v0.1.2/cf3639d8252040d13b3d4e933feb19b42c76e14a";
 const TX_TIMEOUT: Duration = Duration::from_secs(60);
@@ -165,6 +166,160 @@ async fn escrow_state(client: &SequencerClient, metadata: AccountId) -> Result<E
     EscrowMetadata::try_from_slice(account.data.as_ref()).context("decode escrow metadata")
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TokenFixture {
+    definition: AccountId,
+    supply: AccountId,
+    depositor_ata: AccountId,
+    claimant_ata: AccountId,
+    amount: u128,
+    total_supply: u128,
+}
+
+fn keyed_account(byte: u8) -> Result<(AccountId, PrivateKey)> {
+    let key = PrivateKey::try_new([byte; 32]).context("construct deterministic token key")?;
+    let id = AccountId::from(&PublicKey::new_from_private_key(&key));
+    Ok((id, key))
+}
+
+fn associated_token_account(
+    ata_program: [u32; 8],
+    owner: AccountId,
+    definition: AccountId,
+) -> AccountId {
+    ata_core::get_associated_token_account_id(
+        &ata_program,
+        &ata_core::compute_ata_seed(owner, definition),
+    )
+}
+
+async fn fungible_holding(
+    client: &SequencerClient,
+    token_program: [u32; 8],
+    holding: AccountId,
+) -> Result<(AccountId, u128)> {
+    let account = client
+        .get_account(holding)
+        .await
+        .context("fetch fungible token holding")?;
+    ensure!(
+        account.program_owner == token_program,
+        "token holding must be token-program owned"
+    );
+    match TokenHolding::try_from(&account.data).context("decode fungible token holding")? {
+        TokenHolding::Fungible {
+            definition_id,
+            balance,
+        } => Ok((definition_id, balance)),
+        _ => anyhow::bail!("expected fungible token holding"),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn setup_token_fixture(
+    client: &SequencerClient,
+    handle: &sequencer_service::SequencerHandle,
+    token_program: [u32; 8],
+    ata_program: [u32; 8],
+    depositor: AccountId,
+    depositor_key: &PrivateKey,
+    claimant: AccountId,
+    claimant_key: &PrivateKey,
+    definition_key_byte: u8,
+    supply_key_byte: u8,
+    name: &str,
+    amount: u128,
+) -> Result<TokenFixture> {
+    let (definition, definition_key) = keyed_account(definition_key_byte)?;
+    let (supply, supply_key) = keyed_account(supply_key_byte)?;
+    let total_supply = 10_000_u128;
+
+    submit_and_include(
+        client,
+        handle,
+        token_program,
+        vec![definition, supply],
+        &[(definition, &definition_key), (supply, &supply_key)],
+        token_core::Instruction::NewFungibleDefinition {
+            name: name.to_owned(),
+            total_supply,
+        },
+    )
+    .await
+    .context("create official fungible definition and supply")?;
+    let definition_account = client
+        .get_account(definition)
+        .await
+        .context("fetch token definition")?;
+    ensure!(
+        definition_account.program_owner == token_program,
+        "definition must be token-program owned"
+    );
+    ensure!(
+        matches!(
+            TokenDefinition::try_from(&definition_account.data),
+            Ok(TokenDefinition::Fungible {
+                total_supply: actual,
+                ..
+            }) if actual == total_supply
+        ),
+        "definition must decode as the exact fungible supply"
+    );
+
+    let depositor_ata = associated_token_account(ata_program, depositor, definition);
+    let claimant_ata = associated_token_account(ata_program, claimant, definition);
+    for (owner, key, ata) in [
+        (depositor, depositor_key, depositor_ata),
+        (claimant, claimant_key, claimant_ata),
+    ] {
+        submit_and_include(
+            client,
+            handle,
+            ata_program,
+            vec![owner, definition, ata],
+            &[(owner, key)],
+            ata_core::Instruction::Create {
+                ata_program_id: ata_program,
+            },
+        )
+        .await
+        .context("create official actor ATA")?;
+        ensure!(
+            fungible_holding(client, token_program, ata).await? == (definition, 0),
+            "new actor ATA must hold zero of the exact definition"
+        );
+    }
+
+    submit_and_include(
+        client,
+        handle,
+        token_program,
+        vec![supply, depositor_ata],
+        &[(supply, &supply_key)],
+        token_core::Instruction::Transfer {
+            amount_to_transfer: amount,
+        },
+    )
+    .await
+    .context("fund depositor ATA from actor-keyed supply")?;
+    ensure!(
+        fungible_holding(client, token_program, supply).await?
+            == (definition, total_supply - amount)
+            && fungible_holding(client, token_program, depositor_ata).await?
+                == (definition, amount),
+        "fixture funding must conserve the exact token supply"
+    );
+
+    Ok(TokenFixture {
+        definition,
+        supply,
+        depositor_ata,
+        claimant_ata,
+        amount,
+        total_supply,
+    })
+}
+
 fn isolated_config(home: PathBuf) -> SequencerConfig {
     SequencerConfig {
         home,
@@ -190,7 +345,7 @@ fn isolated_config(home: PathBuf) -> SequencerConfig {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires the separately built Risc0 guest ELF"]
-async fn deploys_guest_and_executes_real_native_actor_lifecycle() -> Result<()> {
+async fn deploys_guest_and_executes_real_actor_lifecycles() -> Result<()> {
     let _ = env_logger::builder().is_test(true).try_init();
     let elf_path = std::env::var_os("LEZ_ESCROW_GUEST_ELF")
         .map(PathBuf::from)
@@ -489,8 +644,418 @@ async fn deploys_guest_and_executes_real_native_actor_lifecycle() -> Result<()> 
         "permissionless refund must return the exact amount only to the bound depositor"
     );
 
+    let token_program = Program::token().id();
+    let ata_program = Program::ata().id();
+    let claim_token_fixture = setup_token_fixture(
+        &client,
+        &handle,
+        token_program,
+        ata_program,
+        depositor.account_id,
+        &depositor.pub_sign_key,
+        claimant.account_id,
+        &claimant.pub_sign_key,
+        21,
+        22,
+        "ZEC swap token A",
+        1_200,
+    )
+    .await
+    .context("set up claim token definition and actor ATAs")?;
+    let refund_token_fixture = setup_token_fixture(
+        &client,
+        &handle,
+        token_program,
+        ata_program,
+        depositor.account_id,
+        &depositor.pub_sign_key,
+        claimant.account_id,
+        &claimant.pub_sign_key,
+        23,
+        24,
+        "ZEC swap token B",
+        1_400,
+    )
+    .await
+    .context("set up refund token definition and actor ATAs")?;
+    ensure!(
+        claim_token_fixture.definition != refund_token_fixture.definition
+            && claim_token_fixture.depositor_ata != refund_token_fixture.depositor_ata
+            && claim_token_fixture.claimant_ata != refund_token_fixture.claimant_ata,
+        "independent definitions must derive independent actor ATAs"
+    );
+
+    let token_claim_swap_id = [91; 32];
+    let token_claim_refund_at = latest_timestamp(&client).await? + 600_000;
+    let token_claim_metadata = compute_pda(&program.id(), &[&token_claim_swap_id]);
+    let token_claim_custody = associated_token_account(
+        ata_program,
+        token_claim_metadata,
+        claim_token_fixture.definition,
+    );
+    submit_and_include(
+        &client,
+        &handle,
+        program.id(),
+        vec![
+            token_claim_metadata,
+            depositor.account_id,
+            claimant.account_id,
+            claim_token_fixture.definition,
+        ],
+        &[(depositor.account_id, &depositor.pub_sign_key)],
+        EscrowInstruction::InitializeToken {
+            swap_id: token_claim_swap_id,
+            terms_hash: [101; 32],
+            secret_digest,
+            amount: claim_token_fixture.amount,
+            refund_at: token_claim_refund_at,
+            ata_program,
+        },
+    )
+    .await
+    .context("initialize token claim swap as depositor owner")?;
+    let token_claim_initialized = escrow_state(&client, token_claim_metadata).await?;
+    ensure!(
+        token_claim_initialized.status == EscrowStatus::Empty
+            && token_claim_initialized.asset_program == token_program
+            && token_claim_initialized.custody_program == ata_program
+            && token_claim_initialized.asset_definition
+                == claim_token_fixture.definition.into_value()
+            && token_claim_initialized.custody == token_claim_custody,
+        "token metadata must bind the exact definition, programs, and custody ATA"
+    );
+
+    submit_and_include(
+        &client,
+        &handle,
+        program.id(),
+        vec![
+            token_claim_metadata,
+            claim_token_fixture.definition,
+            token_claim_custody,
+        ],
+        &[],
+        EscrowInstruction::CreateTokenCustody {
+            swap_id: token_claim_swap_id,
+        },
+    )
+    .await
+    .context("permissionlessly create token claim custody ATA")?;
+    ensure!(
+        fungible_holding(&client, token_program, token_claim_custody).await?
+            == (claim_token_fixture.definition, 0),
+        "created custody must be the zero-balance official metadata ATA"
+    );
+
+    submit_and_include(
+        &client,
+        &handle,
+        program.id(),
+        vec![
+            token_claim_metadata,
+            depositor.account_id,
+            claim_token_fixture.depositor_ata,
+            token_claim_custody,
+        ],
+        &[(depositor.account_id, &depositor.pub_sign_key)],
+        EscrowInstruction::FundToken {
+            swap_id: token_claim_swap_id,
+        },
+    )
+    .await
+    .context("fund token claim swap as depositor owner")?;
+    ensure!(
+        escrow_state(&client, token_claim_metadata).await?.status == EscrowStatus::Funded
+            && fungible_holding(&client, token_program, claim_token_fixture.depositor_ata).await?
+                == (claim_token_fixture.definition, 0)
+            && fungible_holding(&client, token_program, token_claim_custody).await?
+                == (claim_token_fixture.definition, claim_token_fixture.amount,),
+        "ATA funding must move only the exact amount into metadata custody"
+    );
+
+    let claimant_nonce_before_wrong_token_preimage =
+        client.get_account(claimant.account_id).await?.nonce;
+    submit_and_reject(
+        &client,
+        &handle,
+        program.id(),
+        vec![
+            token_claim_metadata,
+            token_claim_custody,
+            claimant.account_id,
+            claim_token_fixture.claimant_ata,
+        ],
+        &[(claimant.account_id, &claimant.pub_sign_key)],
+        EscrowInstruction::ClaimToken {
+            swap_id: token_claim_swap_id,
+            preimage: [102; 32],
+        },
+    )
+    .await
+    .context("reject token claimant's wrong preimage")?;
+    ensure!(
+        client.get_account(claimant.account_id).await?.nonce
+            == claimant_nonce_before_wrong_token_preimage
+            && escrow_state(&client, token_claim_metadata).await?.status == EscrowStatus::Funded
+            && fungible_holding(&client, token_program, token_claim_custody).await?
+                == (claim_token_fixture.definition, claim_token_fixture.amount,),
+        "wrong token preimage must preserve claimant nonce and custody"
+    );
+
+    let depositor_nonce_before_wrong_token_role =
+        client.get_account(depositor.account_id).await?.nonce;
+    submit_and_reject(
+        &client,
+        &handle,
+        program.id(),
+        vec![
+            token_claim_metadata,
+            token_claim_custody,
+            depositor.account_id,
+            claim_token_fixture.claimant_ata,
+        ],
+        &[(depositor.account_id, &depositor.pub_sign_key)],
+        EscrowInstruction::ClaimToken {
+            swap_id: token_claim_swap_id,
+            preimage,
+        },
+    )
+    .await
+    .context("reject depositor attempting token claimant role")?;
+    ensure!(
+        client.get_account(depositor.account_id).await?.nonce
+            == depositor_nonce_before_wrong_token_role
+            && escrow_state(&client, token_claim_metadata).await?.status == EscrowStatus::Funded,
+        "wrong token role must preserve depositor nonce and escrow state"
+    );
+
+    let claimant_nonce_before_definition_substitution =
+        client.get_account(claimant.account_id).await?.nonce;
+    submit_and_reject(
+        &client,
+        &handle,
+        program.id(),
+        vec![
+            token_claim_metadata,
+            token_claim_custody,
+            claimant.account_id,
+            refund_token_fixture.claimant_ata,
+        ],
+        &[(claimant.account_id, &claimant.pub_sign_key)],
+        EscrowInstruction::ClaimToken {
+            swap_id: token_claim_swap_id,
+            preimage,
+        },
+    )
+    .await
+    .context("reject claimant ATA from the other definition")?;
+    ensure!(
+        client.get_account(claimant.account_id).await?.nonce
+            == claimant_nonce_before_definition_substitution
+            && fungible_holding(&client, token_program, refund_token_fixture.claimant_ata).await?
+                == (refund_token_fixture.definition, 0)
+            && fungible_holding(&client, token_program, token_claim_custody).await?
+                == (claim_token_fixture.definition, claim_token_fixture.amount,),
+        "cross-definition ATA substitution must preserve nonce and both holdings"
+    );
+
+    submit_and_include(
+        &client,
+        &handle,
+        program.id(),
+        vec![
+            token_claim_metadata,
+            token_claim_custody,
+            claimant.account_id,
+            claim_token_fixture.claimant_ata,
+        ],
+        &[(claimant.account_id, &claimant.pub_sign_key)],
+        EscrowInstruction::ClaimToken {
+            swap_id: token_claim_swap_id,
+            preimage,
+        },
+    )
+    .await
+    .context("claim token swap as bound claimant owner")?;
+    ensure!(
+        escrow_state(&client, token_claim_metadata).await?.status == EscrowStatus::Claimed
+            && fungible_holding(&client, token_program, token_claim_custody).await?
+                == (claim_token_fixture.definition, 0)
+            && fungible_holding(&client, token_program, claim_token_fixture.claimant_ata).await?
+                == (claim_token_fixture.definition, claim_token_fixture.amount,)
+            && fungible_holding(&client, token_program, claim_token_fixture.supply).await?
+                == (
+                    claim_token_fixture.definition,
+                    claim_token_fixture.total_supply - claim_token_fixture.amount,
+                ),
+        "token claim must move exact custody to the correct definition-bound claimant ATA"
+    );
+
+    let token_refund_swap_id = [92; 32];
+    let token_refund_at = latest_timestamp(&client).await? + 60_000;
+    let token_refund_metadata = compute_pda(&program.id(), &[&token_refund_swap_id]);
+    let token_refund_custody = associated_token_account(
+        ata_program,
+        token_refund_metadata,
+        refund_token_fixture.definition,
+    );
+    submit_and_include(
+        &client,
+        &handle,
+        program.id(),
+        vec![
+            token_refund_metadata,
+            depositor.account_id,
+            claimant.account_id,
+            refund_token_fixture.definition,
+        ],
+        &[(depositor.account_id, &depositor.pub_sign_key)],
+        EscrowInstruction::InitializeToken {
+            swap_id: token_refund_swap_id,
+            terms_hash: [103; 32],
+            secret_digest,
+            amount: refund_token_fixture.amount,
+            refund_at: token_refund_at,
+            ata_program,
+        },
+    )
+    .await
+    .context("initialize token refund swap as depositor owner")?;
+    submit_and_include(
+        &client,
+        &handle,
+        program.id(),
+        vec![
+            token_refund_metadata,
+            refund_token_fixture.definition,
+            token_refund_custody,
+        ],
+        &[],
+        EscrowInstruction::CreateTokenCustody {
+            swap_id: token_refund_swap_id,
+        },
+    )
+    .await
+    .context("permissionlessly create token refund custody ATA")?;
+    submit_and_include(
+        &client,
+        &handle,
+        program.id(),
+        vec![
+            token_refund_metadata,
+            depositor.account_id,
+            refund_token_fixture.depositor_ata,
+            token_refund_custody,
+        ],
+        &[(depositor.account_id, &depositor.pub_sign_key)],
+        EscrowInstruction::FundToken {
+            swap_id: token_refund_swap_id,
+        },
+    )
+    .await
+    .context("fund token refund swap as depositor owner")?;
+    ensure!(
+        escrow_state(&client, token_refund_metadata).await?.status == EscrowStatus::Funded
+            && fungible_holding(&client, token_program, token_refund_custody).await?
+                == (refund_token_fixture.definition, refund_token_fixture.amount,),
+        "token refund scenario must be funded in its independent custody ATA"
+    );
+
+    submit_and_reject(
+        &client,
+        &handle,
+        program.id(),
+        vec![
+            token_refund_metadata,
+            token_refund_custody,
+            refund_token_fixture.depositor_ata,
+        ],
+        &[],
+        EscrowInstruction::RefundToken {
+            swap_id: token_refund_swap_id,
+        },
+    )
+    .await
+    .context("reject permissionless token refund before chain deadline")?;
+    ensure!(
+        latest_timestamp(&client).await? < token_refund_at
+            && escrow_state(&client, token_refund_metadata).await?.status == EscrowStatus::Funded
+            && fungible_holding(&client, token_program, token_refund_custody).await?
+                == (refund_token_fixture.definition, refund_token_fixture.amount,),
+        "early token refund must preserve the independent funded custody"
+    );
+
+    tokio::time::timeout(Duration::from_secs(90), async {
+        loop {
+            if latest_timestamp(&client).await? >= token_refund_at {
+                break Ok::<_, anyhow::Error>(());
+            }
+            ensure!(
+                handle.is_healthy(),
+                "standalone sequencer stopped before token refund deadline"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .context("canonical clock did not reach token refund deadline")??;
+    submit_and_reject(
+        &client,
+        &handle,
+        program.id(),
+        vec![
+            token_refund_metadata,
+            token_refund_custody,
+            claim_token_fixture.depositor_ata,
+        ],
+        &[],
+        EscrowInstruction::RefundToken {
+            swap_id: token_refund_swap_id,
+        },
+    )
+    .await
+    .context("reject token refund destination from the other definition")?;
+    ensure!(
+        fungible_holding(&client, token_program, claim_token_fixture.depositor_ata).await?
+            == (claim_token_fixture.definition, 0)
+            && fungible_holding(&client, token_program, token_refund_custody).await?
+                == (refund_token_fixture.definition, refund_token_fixture.amount,),
+        "wrong refund ATA must preserve both definition-bound holdings"
+    );
+
+    submit_and_include(
+        &client,
+        &handle,
+        program.id(),
+        vec![
+            token_refund_metadata,
+            token_refund_custody,
+            refund_token_fixture.depositor_ata,
+        ],
+        &[],
+        EscrowInstruction::RefundToken {
+            swap_id: token_refund_swap_id,
+        },
+    )
+    .await
+    .context("permissionlessly refund to the bound depositor ATA")?;
+    ensure!(
+        escrow_state(&client, token_refund_metadata).await?.status == EscrowStatus::Refunded
+            && fungible_holding(&client, token_program, token_refund_custody).await?
+                == (refund_token_fixture.definition, 0)
+            && fungible_holding(&client, token_program, refund_token_fixture.depositor_ata).await?
+                == (refund_token_fixture.definition, refund_token_fixture.amount,)
+            && fungible_holding(&client, token_program, refund_token_fixture.supply).await?
+                == (
+                    refund_token_fixture.definition,
+                    refund_token_fixture.total_supply - refund_token_fixture.amount,
+                ),
+        "permissionless token refund must restore only the exact bound depositor ATA"
+    );
+
     println!(
-        "proved LEZ {LEZ_PIN} deployment and native actor lifecycle: program_id={:?} tx={} block={after:?}",
+        "proved LEZ {LEZ_PIN} deployment plus native and two-definition token actor lifecycles: program_id={:?} tx={} block={after:?}",
         program.id(),
         expected_hash
     );

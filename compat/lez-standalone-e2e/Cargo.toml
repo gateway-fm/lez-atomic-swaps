@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 
 [dev-dependencies]
 anyhow = "1"
+ata_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2" }
 borsh = "1"
 bytesize = "2"
 common = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2" }
@@ -23,3 +24,4 @@ spel-framework-core = { version = "=0.5.0", git = "https://github.com/logos-co/s
 tempfile = "3"
 testnet_initial_state = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+token_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2" }

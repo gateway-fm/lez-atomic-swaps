@@ -24,6 +24,8 @@ current executable slices enforce:
   Zebra NU6.2 Regtest consensus; and
 - checked-guest deployment plus real-key native LEZ initialize/fund/claim and
   permissionless-refund execution in an isolated standalone sequencer; and
+- two-definition official-ATA claim/refund lifecycles with real owner keys,
+  immutable destinations, and cross-definition substitution rejection; and
 - machine-checked recursive native Risc0 session costs with Clock noise excluded.
 
 See the living [implementation plan](docs/implementation-plan.md), the

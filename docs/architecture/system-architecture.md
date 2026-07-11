@@ -114,9 +114,11 @@ lifecycle with real funded actor keys in an isolated v0.1.2 standalone
 sequencer. Wrong-preimage, wrong-role, and early-refund transactions are
 excluded from canonical blocks without mutating nonce or custody. Native
 recursive cost evidence is machine-checked from production state transitions
-without Clock noise. Token lifecycle/costs, public-testnet evidence, composed
-both-direction maker/taker processes, encrypted state/outbox, and mini-apps
-remain milestone work and cannot yet be represented as production E2E.
+without Clock noise. The official ATA lifecycle also passes for two independent
+definitions with real owner roles and permissionless fixed refunds. Token
+recursive costs, public-testnet evidence, composed both-direction maker/taker
+processes, encrypted state/outbox, and mini-apps remain milestone work and
+cannot yet be represented as production E2E.
 
 ## LEZ escrow custody components and actor flows
 
@@ -207,7 +209,10 @@ flowchart LR
     Block --> NativeState["Metadata status + exact custody/actor balances"]
     NativeState --> CostReplay["Deterministic production-state replay<br/>Clock excluded"]
     CostReplay --> CostEvidence["12 attributed Risc0 sessions<br/>cycle invariants + budgets + JSON"]
-    TokenCosts["Two-definition ATA lifecycle + recursive costs"] -.-> RPC
+    TokenActors["Two definitions + owner keys + actor ATAs"] --> TokenLifecycle["Initialize / custody / fund / claim / refund"]
+    TokenLifecycle --> RPC
+    Block --> TokenState["Definition-bound holdings + exact supply conservation"]
+    TokenCosts["Escrow + ATA + nested Token recursive costs"] -.-> TokenState
     Testnet["Rebuilt v0.2 guest + public testnet"] -.-> RPC
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
@@ -221,7 +226,9 @@ block proves the mandatory clock/executor/store loop first, and transaction
 lookup proves the deployment reached the block store rather than only the
 mempool. The solid native lifecycle uses the actual funded genesis roles,
 validates signer-bound claim and permissionless-refund boundaries against
-canonical block time, and asserts exact balances. The dashed token/cost and
+canonical block time, and asserts exact balances. The solid token lifecycle
+uses two definitions, owner-signed ATA funding/claim, permissionless custody and
+refund, and cross-definition substitution negatives. The dashed token-cost and
 v0.2 testnet edges remain M2 exit work. Native cost replay executes the same
 guest instructions through LEZ production state transitions, counts the escrow
 root and authenticated-transfer child, and compares generated JSON with the

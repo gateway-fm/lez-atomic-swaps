@@ -238,9 +238,14 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   mandatory-clock noise, attributes the escrow root plus authenticated-transfer
   child for each instruction, checks cycle classification/count/budgets, and
   reproduces the checked machine-readable evidence artifact.
-- [ ] Run the equivalent official-ATA actor lifecycle for two independent token
-  definitions and record its recursive costs. v0.1.2 RPC/blocks do not expose
-  compute units, so retain the same deterministic direct-state attribution model.
+- [x] Run the equivalent official-ATA actor lifecycle for two independent token
+  definitions. Real owner keys create/fund actor ATAs; metadata custody is the
+  exact ATA of metadata and definition. Claim/refund plus wrong-preimage,
+  wrong-role, cross-definition destination, and early-deadline negatives pass
+  through canonical standalone blocks with exact holding/supply conservation.
+- [ ] Record recursive costs for every token instruction. v0.1.2 RPC/blocks do
+  not expose compute units, so retain the deterministic direct-state attribution
+  model and include the escrow, ATA, and nested Token sessions.
 - [ ] Port and rebuild SPEL, guest, generated client, and PDA derivations for LEZ
   v0.2.0 before live-testnet evidence. v0.1.2 `/NSSA/` and v0.2.0 `/LEE/` PDA
   domains are incompatible; upstream PR #238 remains provisional/unmerged.

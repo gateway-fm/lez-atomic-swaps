@@ -132,6 +132,6 @@ RISC0_DEV_MODE=1 RISC0_INFO=1 \
 awk -f scripts/parse-lez-costs.awk "$cost_log" > "$cost_json"
 diff -u "$cost_evidence" "$cost_json"
 
-printf 'LEZ standalone guest deployment and native lifecycle proof passed: elf_sha256=%s image_id=%s\n' \
+printf 'LEZ standalone guest native/token lifecycle proof passed: elf_sha256=%s image_id=%s\n' \
   "$actual_elf_sha256" "$actual_image_id"
 printf 'LEZ native recursive cost evidence passed: %s\n' "$cost_json"
