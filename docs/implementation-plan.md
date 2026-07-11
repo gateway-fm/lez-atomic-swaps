@@ -78,7 +78,9 @@ fresh-checkout prerequisites, isolated commands, actor boundaries, expected
 evidence, and cleanup for every currently proven operator/chain flow. It must be
 updated with the implementation whenever one of those surfaces changes and
 must continue to distinguish local fixtures from composed actor and public
-testnet evidence.
+testnet evidence. It and the global README also maintain the external-resource
+inventory: public/local RPCs, faucets, registries, release assets, mutable
+security databases, pins/checksums, availability risks, and fallback policy.
 
 ## Current vertical slice
 

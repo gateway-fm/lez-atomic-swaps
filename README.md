@@ -46,6 +46,24 @@ The [manual reproduction guide](docs/manual-user-flows.md) lists the complete
 per-run prerequisites, isolation rules, commands, expected evidence, and
 cleanup behavior.
 
+### External dependencies and flakiness
+
+The current operator, Zebra, and LEZ flows use no public blockchain RPC or
+faucet. All chain endpoints are ephemeral loopback services, and test funds are
+deterministic local genesis/Regtest outputs. Cold builds still depend on
+rustup/crates.io, locked GitHub sources, digest-pinned Docker Hub/GCR images,
+the checksum-pinned Logos circuits release, and `rzup`'s pinned Risc0 tools.
+Availability, DNS, proxy, registry throttling, or GitHub/CDN outages can block
+an uncached run, but cannot relax the lockfile, digest, checksum, ELF, ImageID,
+or consensus checks. Warm verified caches reduce this availability risk.
+
+CI also refreshes RustSec and Trivy vulnerability data. A database outage may
+block scanning; a newly published advisory may deliberately turn a prior pass
+red. Do not bypass that failure as “flaky.” Public-testnet RPCs/faucets have not
+yet been selected; their provider limits, health checks, fallback/self-hosted
+routes, and funding assumptions are an explicit M2 documentation gate. See the
+[full resource/flakiness table](docs/manual-user-flows.md#external-resources-and-flakiness).
+
     cargo test --locked --workspace --all-targets
     cargo fmt --all --check
     cargo clippy --locked --workspace --all-targets --all-features -- -D warnings

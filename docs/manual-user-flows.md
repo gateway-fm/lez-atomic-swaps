@@ -94,6 +94,41 @@ cargo deny check advisories bans licenses sources
 The lockfiles are part of the evidence. Do not omit `--locked` to work around a
 dependency change.
 
+## External resources and flakiness
+
+No currently documented user flow calls a public blockchain RPC or faucet.
+The maker RPC is a locally created loopback endpoint, both Zebra RPCs are local
+ephemeral containers, and the LEZ RPC is an in-process standalone node on an
+ephemeral loopback port. Actor funds come from deterministic local genesis or
+Regtest coinbase outputs. Therefore a public RPC outage, rate limit, faucet
+balance, or testnet reorg cannot affect the flows in this guide today.
+
+Cold setup and CI do use external software-distribution services:
+
+| Resource | Used by | Pin/integrity control | Availability/flakiness risk |
+|---|---|---|---|
+| Rust toolchain distribution selected by `rustup` | Fresh toolchain install and CI | Exact Rust `1.96.0`; CI toolchain action is commit-pinned | DNS/CDN/proxy outage can block cold setup; warm installed toolchains avoid it |
+| crates.io index and crate downloads | Workspace build, `cargo install rzup`, cargo-deny installation | Cargo lockfiles, exact `rzup 0.5.1`, and crate checksums | Registry/CDN/rate-limit outage can block an uncached build; cached sources avoid most requests |
+| GitHub Git endpoints for Logos LEZ, SPEL, Overwatch, Jellyfish, and other locked Git dependencies | First LEZ compatibility build | Cargo lockfiles resolve exact commits; source policy allowlists exact repositories | GitHub/DNS/proxy outage can block an uncached checkout; it cannot silently substitute another locked commit |
+| Docker Hub `zfnd/zebra` and `risczero/risc0-guest-builder` | Cold Zebra image build and Risc0 guest build | Zebra `5.2.0` source image and guest builder are digest-pinned | Registry outage, throttling, or authentication policy can block a cold pull; local images reduce but do not guarantee offline BuildKit resolution |
+| Google Container Registry distroless image | Cold minimal Zebra image build | Exact `cc-debian13:nonroot` digest | Registry/DNS outage can block a cold pull; no moving tag is accepted |
+| GitHub release asset for `logos-blockchain-circuits v0.4.2` | First LEZ run | Exact release URL plus required SHA-256 before extraction | Release/CDN outage can fail after retries; a verified run-specific cache avoids redownload |
+| `rzup`-managed Risc0 release endpoint | First install of `r0vm`/`cargo-risczero` 3.0.5 | Runner checks exact tool versions and the final ELF digest/ImageID | Upstream release availability can block cold setup; keep the verified `LEZ_E2E_TOOL_DIR` cache |
+| RustSec advisory database and Trivy vulnerability database | cargo-deny locally/CI; Trivy in CI | Scanner actions are commit-pinned; databases intentionally update | Network outage can prevent refresh, and a new advisory/CVE can make a previously green commit fail; this is a security signal, not a flaky test to bypass |
+
+The local tests can still time out under severe CPU, memory, disk, or Docker
+contention; this is why the heavy suites are serialized and resource-capped.
+Retry only with a fresh run ID after checking the scoped logs. Do not weaken a
+digest, checksum, vulnerability result, or consensus assertion to classify an
+external outage as success.
+
+Public-testnet corridor work will necessarily add selected LEZ/Zcash RPC
+routes and funded transparent accounts or faucets. Before that flow is called
+available, this table and the global README must name each endpoint/faucet,
+authentication and rate limits, expected funding/confirmation latency,
+fallback/self-hosted route, health check, and evidence-retention policy. None
+has been selected or is required by the current local suites.
+
 ## Isolation and no-clash rules
 
 Choose a new lowercase run ID for every attempt, for example
