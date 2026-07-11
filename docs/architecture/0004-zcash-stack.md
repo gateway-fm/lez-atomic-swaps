@@ -1,6 +1,6 @@
 # ADR 0004: Zcash node and wallet stack
 
-Status: Accepted — 2026-07-11
+Status: Accepted; implementation pins refined by ADR 0014 — 2026-07-11
 
 ```mermaid
 flowchart LR
@@ -33,4 +33,5 @@ version-pinned tests while avoiding an obsolete node wallet interface.
 
 M2 must include a UTXO/key-management design, canonical transaction vectors,
 Zebra testnet/regtest integration, and clear transparent-pool visibility plus
-shield-after-swap guidance.
+shield-after-swap guidance. Exact M2 compatibility and security pins are fixed
+in [ADR 0014](0014-zec-m2-implementation-pins.md).

@@ -177,6 +177,61 @@ without weakening the tag evidence rule.
 M2 and M3 may overlap after M1. M4 follows M3 for cryptography-lead capacity.
 M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
 
+## Milestone 2 plan: transparent ZEC end to end
+
+### Contract and compatibility baseline
+
+- [x] Reconcile RFP-003 F4 and accepted issue #112 against the actual upstream
+  implementations; retain fixed LEZ-before-ZEC claim/refund ordering in both
+  product directions.
+- [x] Select the exact BIP-199 P2PKH shape: `sha256_htlc_p2pkh` from
+  `zcash_script 0.4.3`, not its direct-public-key cousin.
+- [x] Pin SPEL v0.5.0 with its exact LEZ v0.1.2 compatibility commit and keep
+  newer LEZ semantics in a separate drift lane.
+- [x] Reject superseded Zebra 4.5.1 after a fresh security review; pin current
+  stable Zebra 5.1.1 source and official multi-platform image digest.
+- [ ] Add RED exact-script/branch/CLTV/P2SH vectors before the ZEC adapter code.
+
+### LEZ escrow and generated client
+
+- [ ] RED minimal SPEL program, generated IDL, and client golden against the
+  pinned compatibility set; then make the fixture compile without hand-written
+  IDL/client duplication.
+- [ ] RED/GREEN initialise, claim, and refund for native LEZ plus two independent
+  custom token accounts, including ownership, substitution, replay, wrong
+  preimage, and validity-window boundaries.
+- [ ] Run standalone-sequencer actor tests and record compute units for every
+  instruction against the named LEZ version.
+- [ ] Deploy the evidenced escrow to LEZ testnet 0.2 and retain an immutable
+  deployment manifest plus public smoke transaction evidence.
+
+### Transparent Zcash adapter
+
+- [ ] Implement typed transparent UTXO selection, fee/change policy, key
+  ownership, BIP-199 P2SH funding, claim, and refund construction with canonical
+  librustzcash types and no custom cryptography or transaction codec.
+- [ ] Prove exact script and transaction vectors locally, then prove
+  acceptance/rejection and confirmation through pinned Zebra RPC.
+- [ ] Exercise wrong preimage/signature, non-final sequence, CLTV edge,
+  fee/dust, replacement, reorg, and refund-margin cases.
+- [ ] Re-audit the stable Zebra/security pin immediately before public-testnet
+  evidence because the current release horizon ends ahead of NU7.
+
+### Actor-real delivery and M2 exit
+
+- [ ] Run independent maker and taker processes with direction-correct keys,
+  transparent funds, LEZ funds, selected node routes, and durable recovery state
+  for both supported ZEC directions.
+- [ ] Pass happy, abandonment/refund, Delivery/Chat-loss, restart, and concurrent
+  swap suites through actual CLI/daemon/RPC/chain boundaries.
+- [ ] Publish self-hosted and public Zebra connection/funding guides, transparent
+  privacy warnings, and the shield-after-swap journey.
+- [ ] Generate happy/refund/concurrency recordings only from passing actor suites.
+- [ ] Re-run formatting, strict Clippy, all tests/docs, ShellCheck, traceability,
+  Mermaid, advisories, bans, licenses, sources, isolated E2E, and testnet smoke.
+- [ ] Mark `m2-complete` only on the exact pushed commit whose evidence proves
+  every item above; M2 remains incomplete until then.
+
 ## Docker isolation policy
 
 Docker suites must:
@@ -198,7 +253,7 @@ CI and local scripts fail if the project name is empty or does not start with
 | LEZ proposal file paths drifted (`nssa` became `lee/state_machine`) | Pinned lightweight and native semantic reproducers pass | Retain path checks only as early diagnostics and keep behavior tests authoritative |
 | Signature-byte stability is load-bearing for adaptor extraction | Pinned native transaction-equality test preserves the complete signed transaction through block inclusion | Keep the exact equality reproducer required and rerun on deliberate LEZ pin changes |
 | Validity windows are checked at block construction, not RPC admission | Repository-owned native test proves a balance-invalid transaction is admitted then excluded during block construction | Allocate inclusion slack and retain the native admission/block reproducer |
-| Zcash node migration is active | `zcashd` halts before NU6.3; Zallet omits raw-tx builder RPCs | Use Zebra plus local canonical Rust transaction construction |
+| Zcash node migration is active | `zcashd` halts before NU6.3; Zallet omits raw-tx builder RPCs; Zebra 5.1.1 shortens support ahead of NU7 | Use pinned current-stable Zebra plus local canonical Rust construction and re-audit releases before public-testnet evidence |
 | SPEL documentation targets older `nssa` paths | SPEL v0.5 docs and current LEZ `dev` disagree | Build a minimal generated program against one pinned compatibility set before escrow implementation |
 | Upstream LEZ native sequencer tests compile RocksDB and can contend with host work | Clean native lane passes with two jobs in a unique checkout and no Docker/ports | Keep the two-job cap and do not run the heavy lane alongside detected host compilation |
 | Mainnet deadlines remain uncalibrated | `public-testnet-v1` fixes testnet depths/horizons and conservative bounds; mainnet is deliberately absent | Gather chain telemetry and fee/reorg stress evidence, then require formal review before enabling a mainnet profile |

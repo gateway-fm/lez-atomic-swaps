@@ -26,6 +26,9 @@ flowchart TB
     Deadlines --> Recovery["0011 Recovery triggers"]
     LEZ --> Custody["0012 Escrow custody"]
     Ports --> SDK["0013 SDK layering"]
+    Zcash --> ZecPins["0014 M2 ZEC pins"]
+    Custody --> ZecPins
+    SDK --> ZecPins
     Persistence --> SDK
     Persistence --> RPC
 ```
@@ -45,3 +48,4 @@ flowchart TB
 | [0011](0011-event-gated-recovery.md) | Recovery uses typed deadlines or canonical events; XMR has no native timelock | Accepted and represented in core/RPC/CLI |
 | [0012](0012-lez-escrow-custody.md) | Split metadata PDA from native vault or required custom-token ATA | Accepted, M2 validation pending |
 | [0013](0013-sdk-layering.md) | Deterministic common core plus complete per-pair async facades | Accepted for Logos review |
+| [0014](0014-zec-m2-implementation-pins.md) | SPEL/LEZ, canonical Zcash crates, and current secure Zebra pins for M2 | Accepted for M2 implementation |
