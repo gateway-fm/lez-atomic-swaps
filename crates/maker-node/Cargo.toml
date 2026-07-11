@@ -1,0 +1,26 @@
+[package]
+name = "lez-maker-node"
+version = "0.1.0"
+description = "Headless maker daemon and operator CLI for LEZ atomic swaps"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1.0.102"
+clap = { version = "4.6.0", features = ["derive", "env"] }
+jsonrpsee = { version = "0.26.0", features = ["client-core", "server"] }
+jsonrpsee-http-client = { version = "0.26.0", default-features = false }
+lez-swap-core = { version = "0.1.0", path = "../swap-core" }
+lez-swap-store = { version = "0.1.0", path = "../swap-store" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+subtle = "2.6.1"
+tokio = { version = "1.52.0", features = ["macros", "rt-multi-thread", "signal"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

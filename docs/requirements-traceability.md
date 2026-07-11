@@ -13,11 +13,11 @@ before Milestone 1 exit.
 | F6 atomicity | Scenario tests plus 512 generated transition sequences per run | Partial; chain-specific/reorg model remains |
 | F7 native/custom LEZ tokens | Parameterized escrow E2E for native token and ATA | Planned |
 | F8 price modes | Local-config and Logos-module C API contract tests | Planned M5 |
-| F9 headless maker | UJ-007 maker CLI-to-daemon black-box suite | Planned M5 |
+| F9 headless maker | UJ-007 maker CLI-to-daemon black-box suite | Partial: authenticated create/status and process-kill recovery pass; pricing/actions remain |
 | R1 taker-first | `e2e_swap_lifecycle::happy_path…` | Passing core acceptance |
 | R2 on-chain-only after lock | Core completion/refund, including absent maker; UJ-006 transport-stop remains | Partial |
 | R3 graceful degradation | UJ-005 dependency matrix | Planned M5 |
-| R4 persistence | Restart plus idempotent lock/claim replay passes; encryption/process-kill matrix remains | Partial |
+| R4 persistence | Restart plus idempotent lock/claim replay and actual daemon process-kill/restart pass; encryption/full kill matrix remains | Partial |
 | R5 concurrency isolation | Two persisted swaps remain independent; full UJ-004 remains | Partial |
 | R6 timelock rationale | Pair parameter ADRs and boundary tests | In progress |
 | R7 Delivery/Chat outage | UJ-006 | Planned M5 |
