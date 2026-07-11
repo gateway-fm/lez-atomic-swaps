@@ -1,0 +1,14 @@
+[package]
+name = "lez-zec-swap-sdk"
+version = "0.1.0"
+description = "Transparent Zcash protocol adapter for LEZ atomic swaps"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+zcash_script = { version = "=0.4.3", default-features = false }

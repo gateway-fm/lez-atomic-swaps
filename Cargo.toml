@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/maker-node", "crates/swap-core", "crates/swap-store"]
+members = [
+    "crates/maker-node",
+    "crates/swap-core",
+    "crates/swap-store",
+    "crates/zec-swap-sdk",
+]
 resolver = "2"
 
 [workspace.package]
