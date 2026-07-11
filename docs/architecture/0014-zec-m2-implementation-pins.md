@@ -63,6 +63,10 @@ false branch. Tests must pin exact redeem-script and P2SH bytes, branch stack
 shape, wrong-preimage rejection, signature ownership, transaction lock time and
 non-final input sequence, and the height/time threshold boundary.
 
+Refund transaction construction takes its `nLockTime` directly from the
+contract and uses input sequence `0xfffffffe`. A final `0xffffffff` input is
+never exposed by the refund API because it disables CLTV enforcement.
+
 Use Zebra as the acceptance authority. Local parsing or interpreter success is
 useful unit evidence but never proves a transaction is consensus-valid or
 standard enough for the node mempool. M2 E2E therefore constructs/signs locally,

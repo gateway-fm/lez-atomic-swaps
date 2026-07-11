@@ -64,3 +64,12 @@ fn script_sig_builder_rejects_oversized_stack_items() {
             .is_err()
     );
 }
+
+#[test]
+fn refund_transaction_policy_pins_cltv_and_a_non_final_input() {
+    let contract = Bip199Contract::new(500_000, [0x22; 20], [0x11; 32], [0x33; 20]);
+
+    assert_eq!(contract.refund_lock_time(), 500_000);
+    assert_eq!(contract.refund_input_sequence(), u32::MAX - 1);
+    assert_ne!(contract.refund_input_sequence(), u32::MAX);
+}

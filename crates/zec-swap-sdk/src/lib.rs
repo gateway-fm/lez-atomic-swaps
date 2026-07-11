@@ -20,6 +20,9 @@ pub enum ScriptBuildError {
     },
 }
 
+/// Non-final sequence used by BIP-199 refund inputs so CLTV is effective.
+pub const REFUND_INPUT_SEQUENCE: u32 = u32::MAX - 1;
+
 /// The exact SHA-256/CLTV P2PKH redeem script specified by BIP-199.
 ///
 /// The contract stores script-level public-key hashes. Key derivation and
@@ -27,6 +30,7 @@ pub enum ScriptBuildError {
 /// librustzcash types.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Bip199Contract {
+    refund_lock_time: u32,
     redeem_script: Vec<u8>,
     p2sh_script_pubkey: Vec<u8>,
 }
@@ -70,6 +74,7 @@ impl Bip199Contract {
         let p2sh_script_pubkey = Component(pattern::pay_to_script_hash(&redeem_script)).to_bytes();
 
         Self {
+            refund_lock_time,
             redeem_script: redeem_script.to_bytes(),
             p2sh_script_pubkey,
         }
@@ -85,6 +90,18 @@ impl Bip199Contract {
     #[must_use]
     pub fn p2sh_script_pubkey(&self) -> &[u8] {
         &self.p2sh_script_pubkey
+    }
+
+    /// Returns the exact absolute lock time required by the refund branch.
+    #[must_use]
+    pub const fn refund_lock_time(&self) -> u32 {
+        self.refund_lock_time
+    }
+
+    /// Returns the non-final sequence every refund transaction input must use.
+    #[must_use]
+    pub const fn refund_input_sequence(&self) -> u32 {
+        REFUND_INPUT_SEQUENCE
     }
 
     /// Encodes `[signature, claimant_pubkey, preimage, true, redeem_script]`.
