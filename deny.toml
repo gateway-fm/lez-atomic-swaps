@@ -17,6 +17,8 @@ allow = [
 confidence-threshold = 0.93
 exceptions = [
     { crate = "bounded-vec@0.9.0", allow = ["CC0-1.0"] },
+    { crate = "secp256k1@0.29.1", allow = ["CC0-1.0"] },
+    { crate = "secp256k1-sys@0.10.1", allow = ["CC0-1.0"] },
 ]
 
 [bans]

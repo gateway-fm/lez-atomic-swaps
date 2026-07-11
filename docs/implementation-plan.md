@@ -95,7 +95,7 @@ with dependency license/advisory checks in CI.
 | RFP F4 ZEC chain ordering | 2026-07-11 M2 source reconciliation found M1's generic role-relative claim/refund prose allowed ZEC-before-LEZ in `TakerSellsLez` | RED required typed participants and chain-ordered bounds; GREEN adds 2 regressions and 23-test workspace pass: LEZ always reveals/refunds before later ZEC in both directions | Reprove all M1 gates, tag corrective commit `m1-complete.1`, then keep these vectors as M2 entry tests |
 | CI security and quality gates | 2026-07-11 workflow audit found the advisory scope implicit and a malformed `rzup` install command in the scheduled LEZ lane | CI names and hard-fails advisories, bans, licenses, and sources; Rust format/clippy/test/docs, ShellCheck, traceability, and Mermaid coverage are required; the pinned `rzup` command is valid multiline shell | Run the exact local equivalents, then require both GitHub jobs before every milestone tag |
 | Whole-system architecture and actor flows | 2026-07-11 ADR-local diagrams passed the old gate but did not provide one composed system, actor, trust-boundary, or lifecycle view | Canonical living architecture diagrams independent maker/taker actors, runtime components, node boundaries, happy/refund/restart flows, and current-versus-planned status; CI requires these views | Keep the status and flows synchronized whenever a slice crosses a new real process or chain boundary |
-| Exact BIP-199 redeem script | 2026-07-11 contract test failed because `Bip199Contract` did not exist | Independent 92-byte vector passes using `zcash_script 0.4.3` primitives; SHA256 claim, minimal `500000` CLTV refund, P2PKH branches, and one common signature tail are byte-pinned | RED claim/refund stack and P2SH vectors, then interpreter and Zebra consensus boundaries |
+| Exact BIP-199 contract envelope | 2026-07-11 redeem API was absent; next RED produced missing P2SH/scriptSig methods; upstream interpreter then returned false with signature validation disabled | Independent 92-byte redeem and P2SH vectors pass; claim/refund stacks are minimally push-encoded; upstream interpreter accepts correct preimage and exact non-final CLTV threshold while rejecting wrong/early/final cases | Build canonical transaction/sighash adapter, then require Zebra consensus acceptance/rejection |
 
 ## Milestone 1 plan: three weeks
 
@@ -194,8 +194,9 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   stable Zebra 5.1.1 source and official multi-platform image digest.
 - [x] Add RED/GREEN exact redeem-script vector before adapter code, including
   BIP-199's common tail and minimal CLTV encoding.
-- [ ] Add RED claim/refund stack, P2SH, wrong-preimage, and exact CLTV boundary
-  vectors before transaction orchestration.
+- [x] Add RED/GREEN claim/refund stack, P2SH, wrong-preimage, and exact CLTV
+  boundary vectors through the upstream interpreter before transaction
+  orchestration.
 
 ### LEZ escrow and generated client
 

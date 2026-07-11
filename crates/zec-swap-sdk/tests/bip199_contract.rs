@@ -16,3 +16,51 @@ fn redeem_script_is_the_exact_bip199_sha256_cltv_p2pkh_template() {
     assert_eq!(contract.redeem_script(), expected);
     assert_eq!(contract.redeem_script().len(), 92);
 }
+
+#[test]
+fn p2sh_and_claim_refund_stacks_are_consensus_encoded_in_role_order() {
+    let contract = Bip199Contract::new(500_000, [0x22; 20], [0x11; 32], [0x33; 20]);
+    let signature = [0x30, 0x01];
+    let public_key = [0x02; 33];
+
+    assert_eq!(
+        contract.p2sh_script_pubkey(),
+        [
+            0xa9, 0x14, 0xdf, 0x74, 0x64, 0xdd, 0xb0, 0x06, 0x0c, 0xac, 0x87, 0xc7, 0xbf, 0xe5,
+            0xf5, 0x8f, 0x01, 0x54, 0xfe, 0x62, 0xd0, 0x78, 0x87,
+        ],
+    );
+
+    let mut expected_claim = vec![0x02, 0x30, 0x01, 0x21];
+    expected_claim.extend(public_key);
+    expected_claim.push(0x20);
+    expected_claim.extend([0x44; 32]);
+    expected_claim.extend([0x51, 0x4c, 0x5c]); // TRUE, PUSHDATA1, redeem length
+    expected_claim.extend(contract.redeem_script());
+    assert_eq!(
+        contract
+            .claim_script_sig(&signature, &public_key, &[0x44; 32])
+            .unwrap(),
+        expected_claim,
+    );
+
+    let mut expected_refund = vec![0x02, 0x30, 0x01, 0x21];
+    expected_refund.extend(public_key);
+    expected_refund.extend([0x00, 0x4c, 0x5c]); // FALSE, PUSHDATA1, redeem length
+    expected_refund.extend(contract.redeem_script());
+    assert_eq!(
+        contract.refund_script_sig(&signature, &public_key).unwrap(),
+        expected_refund,
+    );
+}
+
+#[test]
+fn script_sig_builder_rejects_oversized_stack_items() {
+    let contract = Bip199Contract::new(500_000, [0x22; 20], [0x11; 32], [0x33; 20]);
+
+    assert!(
+        contract
+            .claim_script_sig(&[0x30, 0x01], &[0x02; 33], &[0x44; 521])
+            .is_err()
+    );
+}

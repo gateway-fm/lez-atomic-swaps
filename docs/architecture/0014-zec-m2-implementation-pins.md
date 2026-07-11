@@ -45,6 +45,7 @@ immutable source or image identity.
 | LEZ semantic drift | `dev` evidence pin `cac4921581b37e85ae25e940f3a62412cd22308e`, plus scheduled current `dev` | Keeps M1 validity/signature assumptions checked without pretending the newer development tree is SPEL-compatible |
 | BIP-199 script | `zcash_script = 0.4.3`, Apache-2.0 | Reuse its typed opcodes, push encodings, CLTV, branch, parser, and P2SH helpers; compose BIP-199's exact common `OP_EQUALVERIFY OP_CHECKSIG` tail |
 | Script bound type | transitive `bounded-vec = 0.9.0`, CC0-1.0 | Permissive public-domain dedication, scoped to this exact crate/version in `deny.toml`; CC0 is not added to the global license allowlist |
+| Script signature validation | `zcash_script`'s `signature-validation` feature with `secp256k1 = 0.29.1` and `secp256k1-sys = 0.10.1`, both CC0-1.0 | Use the maintained Rust Bitcoin/libsecp256k1 DER/pubkey/signature path; both licenses are exact-package exceptions; real signatures and sighashes remain canonical transaction-adapter work |
 | Zcash transaction stack | `zcash_transparent = 0.8.0`, `zcash_primitives = 0.28.0`, `zcash_protocol = 0.9.0`; audited together at librustzcash commit `8766e0532a793516c27ad2f838bccfbb24d47285` | Canonical MIT/Apache Rust types and consensus encodings; no custom signature, sighash, address, or transaction codec |
 | Consensus node | Zebra `v5.1.1`, commit `5126cfae4f57c799dbf0811d207d4f931a00c6b1` | Current stable Zcash Foundation node; MIT/Apache; supports raw transaction submission and lookup |
 | Isolated node image | `docker.io/zfnd/zebra:5.1.1@sha256:5870614fdb7c089f281ca33ef8f1ff7998f59fa60fecae19462a4c8e9a37fc6e` | Pins the official multi-platform index; Linux/amd64 resolves to `sha256:f9bdbe407bb0216132ee2b969516c59fda296645062629eb139e53979be149cc` |
@@ -97,7 +98,8 @@ until a reviewed pin update makes them required.
 - Advisory, license, ban, and source checks remain hard CI gates for every added
   crate and explicitly allowed immutable Git dependency.
 - Non-default licenses require narrow package exceptions: CC0-1.0 is accepted
-  only for `bounded-vec 0.9.0`, not globally.
+  only for reviewed exact packages (`bounded-vec 0.9.0`, `secp256k1 0.29.1`,
+  and `secp256k1-sys 0.10.1`), not globally.
 
 ## Primary sources checked
 

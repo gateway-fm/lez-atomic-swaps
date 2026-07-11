@@ -11,4 +11,5 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-zcash_script = { version = "=0.4.3", default-features = false }
+thiserror = "2.0.12"
+zcash_script = { version = "=0.4.3", default-features = false, features = ["signature-validation"] }
