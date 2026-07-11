@@ -297,11 +297,16 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   redeem/P2SH bytes, explicit output index, and active-chain status before a
   lossy `ChainProof` projection. Malformed, inconsistent, side-chain,
   mismatched, out-of-range, and overflow snapshots fail closed.
-- [ ] Populate and retain that typed observation through stable actual Zebra RPC
-  snapshots, then compose cross-chain refund-margin cases through actual LEZ and
-  Zebra nodes. The LEZ Unix-millisecond/core Unix-second boundary is typed,
-  checked, conservatively rounded, and covered at `N-1`, `N`, partial seconds,
-  and overflow; actual watcher persistence and the composed flow remain.
+- [x] Populate the typed funding observation through a stable actual Zebra RPC
+  snapshot. The E2E binds Regtest by exact genesis hash because Zebra reports
+  its BIP70 family as `test`, verifies NU6.2, holds the tip stable across raw
+  transaction/canonical-height queries, and revalidates the exact
+  100,000,000-zatoshi BIP-199 outpoint before core projection.
+- [ ] Persist observations/removals through a production watcher, then compose
+  cross-chain refund-margin cases through actual LEZ and Zebra nodes. The LEZ
+  Unix-millisecond/core Unix-second boundary is typed, checked, conservatively
+  rounded, and boundary-tested; durable watcher events and the composed flow
+  remain.
 - [ ] Re-audit the stable Zebra/security pin immediately before public-testnet
   evidence because the current release horizon ends ahead of NU7.
 - [ ] Re-audit the deployed SPEL/LEZ guest graph before testnet evidence and the

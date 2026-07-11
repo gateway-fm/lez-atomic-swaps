@@ -284,7 +284,9 @@ their RPC URLs only to the ignored Rust fixture. The fixture then:
 1. matures four transparent actor UTXOs and validates the fetched prevouts;
 2. rejects a funding transaction whose actor signature was mutated;
 3. funds and claims one exact BIP-199 P2SH output with the claimant key and
-   preimage, while rejecting a mutated claimant signature;
+   preimage, while rejecting a mutated claimant signature; before spending,
+   stable RPC queries bind Regtest genesis, NU6.2, raw bytes, canonical block,
+   exact outpoint/value/scripts, and derived depth into typed source evidence;
 4. funds a second output, rejects its refund before CLTV, then confirms the
    funder's refund at the required height;
 5. funds two more outputs for concurrent claim/refund lifecycles; and

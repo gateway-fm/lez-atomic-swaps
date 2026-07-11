@@ -22,7 +22,8 @@ current executable slices enforce:
   checked deadlines, required calibration, and exact margin enforcement;
 - typed ZEC observations that re-decode canonical transaction bytes and bind
   network, branch, block, outpoint, value, exact BIP-199 scripts, and depth
-  before projecting evidence into the chain-independent coordinator;
+  before projecting evidence into the chain-independent coordinator, populated
+  from stable actual Zebra RPC queries in the actor E2E;
 - exact BIP-199 P2SH plus canonical Zcash V5 funding, claim, and refund
   transactions; and
 - actor-keyed funding/claim/refund acceptance and rejection through pinned

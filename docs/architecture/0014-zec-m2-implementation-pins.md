@@ -217,6 +217,16 @@ bounds; it never treats the nominal 75-second block target as a fastest-chain
 guarantee. The deterministic profile accepts bounds only from the controlled
 harness and is invalid on public network IDs.
 
+The actual Regtest lane now constructs the complete typed funding observation
+from stable Zebra RPC queries. It re-decodes raw bytes, uses upstream
+`ReverseHex`, compares the transaction block with `getblockhash(height)`, holds
+the best tip stable across the query, derives confirmation depth, and validates
+the exact 100,000,000-zatoshi output/redeem/P2SH commitment. Zebra reports the
+Regtest BIP70 family name as `test`, so the lane binds Regtest with its exact
+genesis hash plus NU6.2 rather than misclassifying the chain-name string. The
+production watcher must retain this source evidence and explicit removal events;
+that durable adapter remains M2 work.
+
 ## Isolation and upgrade policy
 
 The derived image is built only from its two immutable inputs and used twice

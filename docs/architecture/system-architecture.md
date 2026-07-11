@@ -284,7 +284,8 @@ flowchart LR
     Safety -->|"missing/short"| Reject
     Safety --> Schedule["Direction-mapped RecoverySchedule<br/>LEZ always earlier than ZEC"]
     Depths --> Validator["Typed observation validator"]
-    ZebraRPC["Stable actual Zebra RPC snapshot"] -.-> Validator
+    ZebraE2E["Stable actual Zebra E2E RPC snapshot"] --> Validator
+    Watcher["Durable production watcher + removals"] -.-> Validator
     Validator --> Observe["Bound canonical observation"]
     LezDeadline --> Schedule
     ZecDeadline --> Schedule
@@ -292,15 +293,16 @@ flowchart LR
     Schedule -.-> Composed
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class ZebraRPC,Observe,Composed planned;
+    class Watcher,Composed planned;
 ```
 
-The solid profile and pure validation paths are implemented. The validator
+The solid profile, validator, and actual Zebra E2E snapshot paths are
+implemented. The validator
 re-decodes canonical bytes and checks the complete network, branch, block,
 outpoint, value, exact script, and derived-depth binding before producing a
 lossy coordinator proof. Public-testnet values are acceptance targets, not
-mainnet recommendations or proof of worst-case cadence. Stable population and
-persistence from actual Zebra RPC plus the composed corridor remain dashed M2
+mainnet recommendations or proof of worst-case cadence. Durable production
+watcher persistence/removal events plus the composed corridor remain dashed M2
 work.
 
 ## Happy-path user flow

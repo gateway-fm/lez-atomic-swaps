@@ -5,15 +5,18 @@ use std::{fmt::Write as _, time::Duration};
 use jsonrpsee::{core::client::ClientT, rpc_params};
 use jsonrpsee_http_client::{HttpClient, HttpClientBuilder};
 use lez_zec_swap_sdk::{
-    Bip199Contract, TransparentFundingRequest, TransparentSpendRequest, TransparentUtxo,
-    build_claim_transaction, build_funding_transaction, build_refund_transaction,
+    Bip199Contract, CanonicalZcashOutputObservation, ExpectedBip199Output,
+    TransparentFundingRequest, TransparentSpendRequest, TransparentUtxo, ZcashNodeSnapshot,
+    ZecProfileId, ZecRefundProfile, build_claim_transaction, build_funding_transaction,
+    build_refund_transaction,
 };
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use zcash_primitives::transaction::Transaction;
+use zcash_encoding::ReverseHex;
+use zcash_primitives::{block::BlockHash, transaction::Transaction};
 use zcash_protocol::{
-    consensus::{BlockHeight, BranchId},
+    consensus::{BlockHeight, BranchId, NetworkType},
     value::Zatoshis,
 };
 use zcash_transparent::{
@@ -213,6 +216,126 @@ async fn assert_confirmed(client: &HttpClient, txid: &str, transaction: &Transac
             .expect("verbose transaction has confirmations")
             >= 1
     );
+}
+
+async fn canonical_funding_observation(
+    client: &HttpClient,
+    transaction: &Transaction,
+    contract: &Bip199Contract,
+) -> CanonicalZcashOutputObservation {
+    let transaction_id = transaction.txid().to_string();
+    let observed: Value = client
+        .request("getrawtransaction", rpc_params![&transaction_id, 1])
+        .await
+        .expect("Zebra returns the canonical funding transaction context");
+    let before: Value = client
+        .request("getblockchaininfo", rpc_params![])
+        .await
+        .expect("Zebra returns its network, branch, and canonical tip");
+    assert_eq!(before["chain"], "test");
+    assert_eq!(before["consensus"]["chaintip"], "5437f330");
+    let genesis_hash: String = client
+        .request("getblockhash", rpc_params![0])
+        .await
+        .expect("Zebra returns the configured network genesis hash");
+    assert_eq!(
+        genesis_hash, "029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327",
+        "Regtest is bound by genesis because its BIP70 chain name is test"
+    );
+
+    let block_height = u32::try_from(
+        observed["height"]
+            .as_i64()
+            .expect("canonical transaction has a nonnegative block height"),
+    )
+    .expect("Regtest height fits u32");
+    let transaction_block_hash = observed["blockhash"]
+        .as_str()
+        .expect("canonical transaction has a block hash");
+    let canonical_block_hash: String = client
+        .request("getblockhash", rpc_params![block_height])
+        .await
+        .expect("height lookup returns the transaction's canonical block");
+    let after: Value = client
+        .request("getblockchaininfo", rpc_params![])
+        .await
+        .expect("Zebra returns a stable tip after the observation query");
+    assert_eq!(after["blocks"], before["blocks"]);
+    assert_eq!(after["bestblockhash"], before["bestblockhash"]);
+
+    let snapshot = ZcashNodeSnapshot::new(
+        NetworkType::Regtest,
+        BranchId::Nu6_2,
+        observed["in_active_chain"]
+            .as_bool()
+            .expect("verbose transaction reports active-chain membership"),
+        BlockHash(
+            ReverseHex::decode(transaction_block_hash)
+                .expect("transaction block hash is canonical reverse hex"),
+        ),
+        BlockHash(
+            ReverseHex::decode(&canonical_block_hash)
+                .expect("canonical height hash is canonical reverse hex"),
+        ),
+        BlockHeight::from_u32(block_height),
+        BlockHeight::from_u32(
+            u32::try_from(before["blocks"].as_u64().expect("tip height is numeric"))
+                .expect("Regtest tip fits u32"),
+        ),
+        transaction.txid(),
+        hex::decode(
+            observed["hex"]
+                .as_str()
+                .expect("verbose transaction has hex"),
+        )
+        .expect("transaction hex decodes"),
+        0,
+        u32::try_from(
+            observed["confirmations"]
+                .as_u64()
+                .expect("canonical transaction has confirmations"),
+        )
+        .expect("confirmation depth fits u32"),
+    );
+    let profile = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalV1);
+    profile
+        .validate_consensus(NetworkType::Regtest, BranchId::Nu6_2)
+        .expect("actual node context matches deterministic-local-v1");
+    CanonicalZcashOutputObservation::validate(
+        &ExpectedBip199Output::new(
+            NetworkType::Regtest,
+            BranchId::Nu6_2,
+            zatoshis(100_000_000),
+            contract.clone(),
+        ),
+        &snapshot,
+    )
+    .expect("actual Zebra funding output binds complete canonical evidence")
+}
+
+async fn assert_canonical_funding_observation(
+    client: &HttpClient,
+    transaction: &Transaction,
+    contract: &Bip199Contract,
+    expected_transaction_id: &str,
+) {
+    let observation = canonical_funding_observation(client, transaction, contract).await;
+    assert_eq!(observation.outpoint().n(), 0);
+    assert_eq!(
+        observation.chain_proof().unwrap().transaction_id(),
+        expected_transaction_id
+    );
+}
+
+async fn confirm_funding(
+    client: &HttpClient,
+    transaction: &Transaction,
+    contract: &Bip199Contract,
+) {
+    let transaction_id = broadcast(client, transaction).await;
+    generate_to(client, block_count(client).await + 1).await;
+    assert_confirmed(client, &transaction_id, transaction).await;
+    assert_canonical_funding_observation(client, transaction, contract, &transaction_id).await;
 }
 
 fn funding_transaction(
@@ -473,9 +596,7 @@ async fn real_actor_keys_fund_claim_and_refund_through_zebra_consensus() {
         "funding transaction with a mutated actor signature",
     )
     .await;
-    let claim_funding_txid = broadcast(&client, &claim_funding).await;
-    generate_to(&client, block_count(&client).await + 1).await;
-    assert_confirmed(&client, &claim_funding_txid, &claim_funding).await;
+    confirm_funding(&client, &claim_funding, &claim_contract).await;
 
     let claim_request = TransparentSpendRequest::new(
         &claim_contract,
