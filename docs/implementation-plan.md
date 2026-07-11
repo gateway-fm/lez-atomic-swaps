@@ -97,7 +97,7 @@ with dependency license/advisory checks in CI.
 | Whole-system architecture and actor flows | 2026-07-11 ADR-local diagrams passed the old gate but did not provide one composed system, actor, trust-boundary, or lifecycle view | Canonical living architecture diagrams independent maker/taker actors, runtime components, node boundaries, happy/refund/restart flows, and current-versus-planned status; CI requires these views | Keep the status and flows synchronized whenever a slice crosses a new real process or chain boundary |
 | Exact BIP-199 contract envelope | 2026-07-11 redeem API was absent; subsequent REDs exposed missing P2SH/scriptSig, refund policy, fetched-prevout validation, V5 epochs, UTXO ownership, dust/change, and Zebra acceptance | Exact script and V5 bytes/txids pass; deterministic selection and actor-only change use canonical builders; pinned Zebra confirms funding/claim/refund and rejects mutated funding/claim signatures plus pre-CLTV refund | Add replacement/reorg/refund-margin stress and composed LEZ↔ZEC roles |
 | Arbitrary P2SH transaction signing | Stable source review shows ordinary and PCZT signers/finalizers recognize P2PKH/P2PK/multisig but not BIP-199; transparent builder also defaults every input to final sequence | GREEN uses canonical `TxOut`, `Bundle`, ZIP-244, deterministic secp256k1, and `TransactionData`; exact HTLC scriptSig is the only adapter-owned encoding, interpreter mutation tests pass, and Zebra is the final authority | Retain vectors and extend the node lane to replacement/reorg cases |
-| Pinned SPEL/LEZ compatibility | Initial RED had no real fixture; macro expansion exposed direct dependencies; cargo-deny exposed two forced advisories; the first generated client revealed missing claim/refund signers; custody RED produced 21 compile failures before the ABI/state existed | Exact pins compile generated IDL/client; 11 custody tests bind actors/assets/state, reject replay/substitution/preimage/version faults, and execute two custom-token definitions through official `token_program` plus `validate_execution`; program-owned native compatibility passes exact time boundaries | Resolve actual-user native LEZ transfer support, then run standalone sequencer/compute/testnet evidence and re-audit the deployed graph before the M2 tag |
+| Pinned SPEL/LEZ compatibility | Initial RED had no real fixture; generated client exposed missing signers; a later 11-test custody slice appeared green, but direct v0.1.2 source review invalidated its escrow-owned native users and direct token-holding PDA as real-user/RFP evidence | Exact pins, generated IDL/client, signer roles, replay/preimage/version/window checks, and upstream call execution remain useful; a new RED-GREEN cycle now targets canonical `authenticated_transfer` plus official ATA derivation/ownership/nested calls | Replace both invalid custody paths, then run standalone sequencer/compute/testnet evidence and re-audit the deployed graph before the M2 tag |
 | Isolated Zebra consensus E2E | First runner RED found RPC cookie assumptions; the initial capability hardening found an unwritable cache; strict Trivy then rejected both official 5.1.1 and 5.2.0 runtimes with 40 HIGH/2 CRITICAL findings | The official 5.2.0 binary now runs in an immutable distroless nonroot image that scans at 0 HIGH/CRITICAL; read-only/capability-free NU6.2 Regtest on an ephemeral port proves funding, claim, refund, rejection, and confirmation; exact project cleanup leaves unrelated Docker workloads untouched | Add reorg/replacement/concurrency and public-testnet smoke; repeat final-image scan immediately before evidence/tag |
 
 ## Milestone 1 plan: three weeks
@@ -210,13 +210,13 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   license, ban, source, exact-commit, and non-exposure checks in CI.
 - [x] RED/GREEN a generated client golden from the evidenced IDL; do not hand
   duplicate the client surface.
-- [x] RED/GREEN initialise, claim, and refund for two independent custom-token
-  definitions through pinned `token_program`, including ownership, substitution,
-  replay, wrong preimage, metadata version, and validity-window boundaries.
-- [ ] Complete actual-user native LEZ custody. The v0.1.2 compatibility API has
-  no native/system transfer program and permits balance decreases only from
-  accounts owned by the executing escrow; current tests therefore prove only
-  program-owned native-account compatibility, not user onboarding.
+- [ ] RED/GREEN actual-user native LEZ through v0.1.2's canonical
+  `authenticated_transfer`: initialize the escrow PDA custody account under that
+  program, fund from a signed user, and release with escrow-PDA delegation.
+- [ ] RED/GREEN two independent custom-token definitions through official
+  `ata_core`/ATA-program derivation and nested token calls. The custody address
+  is `ATA(metadata, definition)` and its account owner is the token program;
+  direct token holdings at an escrow custody PDA do not satisfy RFP F7.
 - [ ] Run standalone-sequencer actor tests and record compute units for every
   instruction against the named LEZ version.
 - [ ] Deploy the evidenced escrow to LEZ testnet 0.2 and retain an immutable
@@ -235,8 +235,12 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   rejection, and confirmation through pinned Zebra RPC.
 - [x] Exercise wrong preimage/signature, non-final sequence, CLTV edge, and
   fee/dust cases across local and Zebra-authoritative layers.
-- [ ] Exercise replacement, reorg, concurrency, and cross-chain refund-margin
-  cases through actual nodes.
+- [x] Exercise two independent funding/spend lifecycles concurrently through
+  Zebra, invalidate their shared non-finalized terminal block, detect
+  confirmation regression, rebroadcast exact actor transactions, reject a
+  conflicting same-output replacement, and reconsider the exact block.
+- [ ] Exercise an accepted competing-fork replacement, deeper reorg, and
+  cross-chain refund-margin cases through actual nodes.
 - [ ] Re-audit the stable Zebra/security pin immediately before public-testnet
   evidence because the current release horizon ends ahead of NU7.
 - [ ] Re-audit the deployed SPEL/LEZ guest graph before testnet evidence and the

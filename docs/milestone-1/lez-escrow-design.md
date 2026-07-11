@@ -8,7 +8,7 @@ flowchart TB
     Terms["Signed terms + per-swap claim key"] --> Meta["Escrow metadata public PDA<br/>owned by swap program"]
     Meta --> Native{"LEZ asset kind"}
     Native -->|native| Vault["Native vault public PDA<br/>owned by authenticated_transfer"]
-    Native -->|custom fungible| ATA["ATA(metadata PDA, token definition)<br/>owned by ATA program"]
+    Native -->|custom fungible| ATA["ATA(metadata PDA, token definition) address<br/>owned by token program"]
     Funder["Authorized depositor"] -->|exact amount| Vault
     Funder -->|exact amount| ATA
     Vault --> Terminal{"claim or refund"}
@@ -40,12 +40,14 @@ Custody is separate because LEZ debits are controlled by the account's owning
 program:
 
 - native LEZ uses a public PDA derived under the escrow program but claimed by
-  `authenticated_transfer`, following the pinned `vault` program's chained-call
-  pattern; and
+  `authenticated_transfer`, with the escrow PDA seed delegated on chained
+  release calls; and
 - a custom fungible token uses the required associated token account derived as
-  `ATA(metadata_pda, token_definition)`. The metadata PDA is the ATA owner, so
-  the escrow program can authorize it for a chained ATA transfer. The definition
-  and decoded `TokenHolding::Fungible` ID must match the signed terms.
+  `ATA(metadata_pda, token_definition)`. The metadata PDA is the logical owner
+  bound into ATA derivation and supplies delegated owner authorization, while the
+  holding account's `program_owner` is the token program. The ATA program then
+  delegates the ATA PDA spend to the token program. The definition and decoded
+  `TokenHolding::Fungible` ID must match the signed terms.
 
 Metadata never substitutes for the custody account, and one custody account can
 never serve two swaps. NFTs, private custody accounts, arbitrary recipient

@@ -101,14 +101,15 @@ on-chain state by themselves.
 
 The dashed state reflects delivery honestly. The deterministic core, SQLite
 repository, maker daemon, authenticated maker CLI flow, LEZ semantic
-verification, pinned SPEL/LEZ generated-IDL/client fixture, custom-token custody
-instruction semantics, and ZEC exact-script plus signed V5 spend foundation
+verification, pinned SPEL/LEZ generated-IDL/client fixture, and ZEC exact-script
+plus signed V5 spend foundation
 exist. Deterministic actor-owned funding/change and pinned, vulnerability-clean
-Zebra 5.2.0 Regtest acceptance/rejection/confirmation now exist as a
-chain-adapter proof. Actual-user native LEZ transfer, standalone
-sequencer/public-testnet evidence, composed both-direction maker/taker processes,
-encrypted state/outbox, and mini-apps remain milestone work and cannot yet be
-represented as production E2E.
+Zebra 5.2.0 Regtest acceptance/rejection/confirmation, concurrent swaps,
+confirmation regression, exact rebroadcast, and block reconsideration now exist
+as a chain-adapter proof. Source-correct authenticated-transfer/ATA custody,
+standalone sequencer/public-testnet evidence, composed both-direction maker/taker
+processes, encrypted state/outbox, and mini-apps remain milestone work and cannot
+yet be represented as production E2E.
 
 ## Happy-path user flow
 

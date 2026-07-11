@@ -10,6 +10,7 @@ use lez_zec_swap_sdk::{
 };
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use zcash_primitives::transaction::Transaction;
 use zcash_protocol::{
     consensus::{BlockHeight, BranchId},
@@ -176,6 +177,38 @@ async fn assert_confirmed(client: &HttpClient, txid: &str, transaction: &Transac
     );
 }
 
+async fn raw_mempool(client: &HttpClient) -> Vec<String> {
+    client
+        .request("getrawmempool", rpc_params![false])
+        .await
+        .expect("Zebra returns its raw mempool transaction ids")
+}
+
+async fn wait_for_mempool(client: &HttpClient, expected_txids: &[&str]) {
+    for _ in 0..50 {
+        let observed = raw_mempool(client).await;
+        if expected_txids
+            .iter()
+            .all(|expected| observed.iter().any(|txid| txid == expected))
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("actor transactions did not enter Zebra's mempool");
+}
+
+async fn rebroadcast_or_observe(client: &HttpClient, transaction: &Transaction) {
+    let expected_txid = transaction.txid().to_string();
+    let result = client
+        .request::<String, _>("sendrawtransaction", rpc_params![tx_hex(transaction)])
+        .await;
+    if let Ok(observed_txid) = result {
+        assert_eq!(observed_txid, expected_txid);
+    }
+    wait_for_mempool(client, &[&expected_txid]).await;
+}
+
 fn funding_transaction(
     contract: &Bip199Contract,
     candidate: TransparentUtxo,
@@ -216,6 +249,144 @@ fn hex_summary(transaction: &Transaction) -> String {
     summary
 }
 
+async fn prove_tip_reorg_and_actor_rebroadcast(
+    client: &HttpClient,
+    claim: &Transaction,
+    refund: &Transaction,
+    claim_contract: &Bip199Contract,
+    claim_request: &TransparentSpendRequest,
+    funder_key: &SecretKey,
+) {
+    let claim_txid = claim.txid().to_string();
+    let refund_txid = refund.txid().to_string();
+    let terminal_height = block_count(client).await;
+    let terminal_hash: String = client
+        .request("getblockhash", rpc_params![terminal_height])
+        .await
+        .expect("Zebra returns the concurrent terminal block hash");
+    let _: () = client
+        .request("invalidateblock", rpc_params![&terminal_hash])
+        .await
+        .expect("Zebra invalidates the non-finalized terminal block");
+    assert_eq!(block_count(client).await, terminal_height - 1);
+    tokio::join!(
+        rebroadcast_or_observe(client, claim),
+        rebroadcast_or_observe(client, refund)
+    );
+    wait_for_mempool(client, &[&claim_txid, &refund_txid]).await;
+
+    let conflicting_refund = build_refund_transaction(claim_contract, claim_request, funder_key)
+        .expect("alternative refund for the claimed contract is constructible after timeout");
+    assert_rejected(
+        client,
+        tx_hex(&conflicting_refund),
+        "same-output replacement while the actor claim is in the mempool",
+    )
+    .await;
+
+    let reconsidered: Value = client
+        .request("reconsiderblock", rpc_params![&terminal_hash])
+        .await
+        .expect("Zebra reconsiders the exact invalidated block");
+    assert!(
+        !reconsidered
+            .as_array()
+            .expect("reconsiderblock returns a list of hash byte sequences")
+            .is_empty()
+    );
+    assert_eq!(block_count(client).await, terminal_height);
+    let restored_hash: String = client
+        .request("getblockhash", rpc_params![terminal_height])
+        .await
+        .expect("Zebra returns the restored terminal block hash");
+    assert_eq!(restored_hash, terminal_hash);
+    assert_confirmed(client, &claim_txid, claim).await;
+    assert_confirmed(client, &refund_txid, refund).await;
+}
+
+async fn prove_concurrent_claim_refund_and_tip_reorg(
+    client: &HttpClient,
+    funder_key: &SecretKey,
+    claim_candidate: TransparentUtxo,
+    refund_candidate: TransparentUtxo,
+) {
+    const CONCURRENT_CLAIM_PREIMAGE: [u8; 32] = [0x55; 32];
+    const CONCURRENT_REFUND_PREIMAGE: [u8; 32] = [0x66; 32];
+
+    let claim_key = key(6);
+    let refund_claimant_key = key(7);
+    let refund_at = block_count(client).await + 4;
+    let claim_contract = Bip199Contract::new(
+        refund_at,
+        pubkey_hash(funder_key),
+        Sha256::digest(CONCURRENT_CLAIM_PREIMAGE).into(),
+        pubkey_hash(&claim_key),
+    );
+    let refund_contract = Bip199Contract::new(
+        refund_at,
+        pubkey_hash(funder_key),
+        Sha256::digest(CONCURRENT_REFUND_PREIMAGE).into(),
+        pubkey_hash(&refund_claimant_key),
+    );
+    let tip = block_count(client).await;
+    let claim_funding = funding_transaction(&claim_contract, claim_candidate, funder_key, tip);
+    let refund_funding = funding_transaction(&refund_contract, refund_candidate, funder_key, tip);
+
+    let (claim_funding_txid, refund_funding_txid) = tokio::join!(
+        broadcast(client, &claim_funding),
+        broadcast(client, &refund_funding)
+    );
+    generate_to(client, block_count(client).await + 1).await;
+    assert_confirmed(client, &claim_funding_txid, &claim_funding).await;
+    assert_confirmed(client, &refund_funding_txid, &refund_funding).await;
+
+    let claim_request = TransparentSpendRequest::new(
+        &claim_contract,
+        OutPoint::new(*claim_funding.txid().as_ref(), 0),
+        contract_output(&claim_funding),
+        TransparentAddress::from_pubkey(&public_key(&key(8))),
+        zatoshis(10_000),
+        BlockHeight::from_u32(refund_at + 40),
+        BranchId::Nu6_2,
+    )
+    .expect("concurrent claim output is spendable");
+    let claim = build_claim_transaction(
+        &claim_contract,
+        &claim_request,
+        &claim_key,
+        &CONCURRENT_CLAIM_PREIMAGE,
+    )
+    .expect("concurrent claimant constructs its spend");
+    let refund_request = TransparentSpendRequest::new(
+        &refund_contract,
+        OutPoint::new(*refund_funding.txid().as_ref(), 0),
+        contract_output(&refund_funding),
+        TransparentAddress::from_pubkey(&public_key(&key(9))),
+        zatoshis(10_000),
+        BlockHeight::from_u32(refund_at + 40),
+        BranchId::Nu6_2,
+    )
+    .expect("concurrent refund output is spendable");
+    let refund = build_refund_transaction(&refund_contract, &refund_request, funder_key)
+        .expect("concurrent funder constructs its refund");
+
+    generate_to(client, refund_at).await;
+    let (claim_txid, refund_txid) =
+        tokio::join!(broadcast(client, &claim), broadcast(client, &refund));
+    generate_to(client, block_count(client).await + 1).await;
+    assert_confirmed(client, &claim_txid, &claim).await;
+    assert_confirmed(client, &refund_txid, &refund).await;
+    prove_tip_reorg_and_actor_rebroadcast(
+        client,
+        &claim,
+        &refund,
+        &claim_contract,
+        &claim_request,
+        funder_key,
+    )
+    .await;
+}
+
 #[tokio::test]
 #[ignore = "requires scripts/run-zebra-e2e.sh and pinned Docker Zebra"]
 async fn real_actor_keys_fund_claim_and_refund_through_zebra_consensus() {
@@ -225,11 +396,13 @@ async fn real_actor_keys_fund_claim_and_refund_through_zebra_consensus() {
     let claim_destination = TransparentAddress::from_pubkey(&public_key(&key(3)));
     let refund_destination = TransparentAddress::from_pubkey(&public_key(&key(5)));
 
-    generate_to(&client, 102).await;
+    generate_to(&client, 104).await;
     let candidates = actor_utxos(&client).await;
-    assert!(candidates.len() >= 2, "actor needs two independent UTXOs");
+    assert!(candidates.len() >= 4, "actor needs four independent UTXOs");
     let first = fetched_utxo(&client, &candidates[0]).await;
     let second = fetched_utxo(&client, &candidates[1]).await;
+    let third = fetched_utxo(&client, &candidates[2]).await;
+    let fourth = fetched_utxo(&client, &candidates[3]).await;
 
     let claim_contract = Bip199Contract::new(
         block_count(&client).await + 20,
@@ -309,6 +482,8 @@ async fn real_actor_keys_fund_claim_and_refund_through_zebra_consensus() {
     let refund_txid = broadcast(&client, &refund).await;
     generate_to(&client, block_count(&client).await + 1).await;
     assert_confirmed(&client, &refund_txid, &refund).await;
+
+    prove_concurrent_claim_refund_and_tip_reorg(&client, &funder_key, third, fourth).await;
 
     eprintln!(
         "Zebra accepted actor claim {} and refund {}",

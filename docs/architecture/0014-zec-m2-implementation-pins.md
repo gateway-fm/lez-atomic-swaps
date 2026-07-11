@@ -20,8 +20,8 @@ flowchart LR
     SPEL["SPEL v0.5.0"] --> Compat["LEZ v0.1.2 compatibility lane"]
     Compat --> CompatAudit["Exact pins + feature-locked security audit"]
     CompatAudit --> IDL["Generated IDL + client"]
-    IDL --> Escrow["Custom-token custody + program-owned native compatibility"]
-    Native["Actual-user native transfer pending"] -.-> Escrow
+    IDL --> Escrow["Authenticated-transfer + official ATA custody TDD"]
+    Native["Live testnet needs reviewed SPEL/LEZ v0.2 compatibility pin"] -.-> Escrow
     Escrow -.-> LezTest["LEZ testnet 0.2"]
     Drift["LEZ dev + current Zebra scheduled drift lanes"] -.-> Tests
     Tests --> Roles["Independent maker/taker happy, refund, concurrency E2E"]
@@ -87,20 +87,20 @@ the complete serialized bytes and txids. Both generated signatures execute via
 the upstream `zcash_script` callback checker, which independently recomputes
 ZIP-244 from the real prevout context; signature-bit mutations fail.
 
-The current SPEL fixture proves macro expansion, generated IDL, the official
-generated-client golden, and custody state transitions. Client tests require
-claimant and depositor signatures on claim and refund. Eleven custody tests bind
-version, swap, actors, custody PDA, asset program/definition, amount, refund
-time, and terminal status; reject substitution, wrong preimage, and replay; and
-keep claim/refund windows disjoint. Calls for two custom-token definitions
-execute through the exact pinned `token_program` and their post-states pass LEZ
-`validate_execution`.
+The current SPEL fixture proves macro expansion, generated IDL/client signer
+roles, metadata binding, replay/preimage/version rejection, and disjoint
+validity windows. A direct v0.1.2 source audit invalidated its first custody
+implementation: native user accounts were incorrectly swap-program-owned and
+custom custody was a direct token holding rather than an ATA. Exact v0.1.2 does
+ship canonical `authenticated_transfer`, PDA delegation, `ata_core`, the ATA
+program, wallet flows, and standalone tests. A replacement RED-GREEN cycle uses
+those upstream primitives rather than preserving the false green.
 
-The v0.1.2 compatibility surface exposes no native/system transfer program, and
-its validator permits a native balance decrease only from an account owned by
-the executing program. Native tests therefore prove program-owned-account
-compatibility only, not actual-user native onboarding or custody. That boundary
-remains an explicit M2 blocker rather than being simulated in adapter code. The
+Local v0.1.2 compatibility is sufficient for source-correct custody semantics,
+but it is not sufficient for live-testnet completion: upstream SPEL issues #234
+and #237 record v0.5.0 public-signature rejection against the newer testnet. The
+v0.2.0 compatibility upgrade remains an exact-pinned, provisional lane until
+upstream PR #238 is reviewed and merged. The
 accepted LEZ pin forces `rsa 0.9.10` and `tracing-subscriber 0.2.25`; no safe
 compatible pin exists today. The fixture-local policy is permitted only because
 CI proves rzup `publish`/`install` and tracing `fmt`/`ansi` features are absent,
@@ -109,11 +109,13 @@ root workspace has no such advisory exceptions, and the deployed guest graph
 must be re-audited before testnet evidence or an M2 tag.
 
 The deterministic Zebra lane mines NU6.2 Regtest coinbases to a key held by the
-funding actor, fetches the actual outputs through RPC, and submits locally signed
-funding, claim, and refund transactions. Zebra rejects bit-mutated funding and
-claim signatures and a refund before its CLTV height; valid transactions are
-mined and re-read with confirmations. This is consensus-adapter evidence, not
-the still-pending composed maker/taker cross-chain E2E.
+funding actor, fetches actual outputs through RPC, and submits locally signed
+funding, claim, and refund transactions. It also runs two independent swaps
+concurrently, invalidates their terminal block, has each actor rebroadcast the
+exact transaction after confirmation regression, rejects a conflicting
+same-output replacement, and reconsiders the exact block. This is
+consensus-adapter evidence, not the still-pending composed maker/taker
+cross-chain E2E.
 
 Use Zebra as the acceptance authority. Local parsing or interpreter success is
 useful unit evidence but never proves a transaction is consensus-valid or
