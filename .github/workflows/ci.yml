@@ -35,6 +35,7 @@ jobs:
         run: cargo doc --locked --workspace --all-features --no-deps
       - run: ./scripts/check-requirements-traceability.sh
       - run: ./scripts/check-architecture-diagrams.sh
+      - run: ./scripts/check-docker-isolation.sh
 
   dependencies:
     name: dependency vulnerabilities, licenses, bans, and sources
@@ -67,3 +68,29 @@ jobs:
         with:
           toolchain: 1.96.0
       - run: ./scripts/verify-spel-compatibility.sh
+
+  zebra-regtest:
+    name: isolated Zebra actor consensus E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUN_ID: github-${{ github.run_id }}-${{ github.run_attempt }}
+      ZEBRA_IMAGE: lez-atomic-swaps-zebra:github-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+      - name: Build provenance-pinned minimal Zebra image
+        run: docker build --file tests/e2e/zebra/Dockerfile --tag "$ZEBRA_IMAGE" tests/e2e/zebra
+      - name: Scan minimal Zebra image for high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.ZEBRA_IMAGE }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - run: ./scripts/run-zebra-e2e.sh

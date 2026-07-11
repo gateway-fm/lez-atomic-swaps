@@ -93,11 +93,12 @@ with dependency license/advisory checks in CI.
 | XMR event-gated recovery | 2026-07-11 acceptance test could not resolve `RecoverySchedule`, event evidence, or recovery phases; prototype accepted a fake Monero deadline | Core/RPC/CLI use tagged deadline vs canonical-event terms; wrong-chain/low-confirmation evidence is rejected, confirmation regression revokes availability, restart preserves each phase, and real operator CLI creates LEZ-first XMR without maker-deadline flags | Replace the generic 32-byte recovery proof with exact COMIT DLEQ/key-share and Monero transaction evidence in M4 |
 | Pinned LEZ execution semantics | Source inspection alone could not prove the mempool/block split or accepted transaction-byte preservation; an initial filtered native command falsely ran zero tests | A clean pinned checkout passes 14 validity cases, the full BIP-340 vector test, and exactly one run each of the repository-owned admission/block reproducer and upstream transaction-equality test | Keep the pinned lane required and use the scheduled current-`dev` lane only as forward-compatibility drift detection |
 | RFP F4 ZEC chain ordering | 2026-07-11 M2 source reconciliation found M1's generic role-relative claim/refund prose allowed ZEC-before-LEZ in `TakerSellsLez` | RED required typed participants and chain-ordered bounds; GREEN adds 2 regressions and 23-test workspace pass: LEZ always reveals/refunds before later ZEC in both directions | Reprove all M1 gates, tag corrective commit `m1-complete.1`, then keep these vectors as M2 entry tests |
-| CI security and quality gates | 2026-07-11 workflow audit found the advisory scope implicit and a malformed `rzup` install command in the scheduled LEZ lane | CI names and hard-fails advisories, bans, licenses, and sources; Rust format/clippy/test/docs, ShellCheck, traceability, and Mermaid coverage are required; the pinned `rzup` command is valid multiline shell | Run the exact local equivalents, then require both GitHub jobs before every milestone tag |
+| CI security and quality gates | 2026-07-11 workflow audit found the advisory scope implicit and a malformed `rzup` install command in the scheduled LEZ lane | CI hard-fails advisories, bans, licenses, sources, Rust format/clippy/test/docs, ShellCheck, traceability, Mermaid, Docker isolation, and SHA-pinned Trivy high/critical scanning of the Zebra image | Run the exact local equivalents, then require every GitHub job before each milestone tag |
 | Whole-system architecture and actor flows | 2026-07-11 ADR-local diagrams passed the old gate but did not provide one composed system, actor, trust-boundary, or lifecycle view | Canonical living architecture diagrams independent maker/taker actors, runtime components, node boundaries, happy/refund/restart flows, and current-versus-planned status; CI requires these views | Keep the status and flows synchronized whenever a slice crosses a new real process or chain boundary |
-| Exact BIP-199 contract envelope | 2026-07-11 redeem API was absent; subsequent REDs exposed missing P2SH/scriptSig, refund transaction policy, fetched-prevout validation, and V5-epoch checks | Independent 92-byte redeem/P2SH vectors pass; claim/refund stacks are minimally push-encoded; upstream interpreter enforces preimage/CLTV and real ZIP-244 signatures; exact V5 bytes/txids, `nLockTime`, `0xfffffffe`, fee conservation, actual `TxOut`, and branch rejection are pinned | Add funding/change selection, then require Zebra consensus acceptance/rejection |
-| Arbitrary P2SH transaction signing | Stable source review shows ordinary and PCZT signers/finalizers recognize P2PKH/P2PK/multisig but not BIP-199; transparent builder also defaults every input to final sequence | GREEN uses canonical `TxOut`, `Bundle`, ZIP-244, deterministic secp256k1, and `TransactionData` serialization; adapter-owned code is limited to exact HTLC scriptSig insertion, and both branches pass the upstream signature-validating interpreter plus mutation negatives | Prove mempool/block behavior through pinned Zebra and retain the fixed vectors |
-| Pinned SPEL/LEZ compatibility | Initial RED had no real fixture; macro expansion then exposed required direct `borsh`, `serde`, and `nssa_core` dependencies; cargo-deny exposed two forced RISC Zero/arkworks advisories | Exact SPEL/LEZ commits compile a generated three-instruction IDL. Root audit remains unignored; a fixture-local policy allows only the two reviewed IDs while CI proves vulnerable rzup `publish`/`install` and tracing `fmt`/`ansi` features are absent | Add generated client golden and real custody behavior; re-audit the deployed guest graph and remove/rejustify exceptions before testnet or M2 tag |
+| Exact BIP-199 contract envelope | 2026-07-11 redeem API was absent; subsequent REDs exposed missing P2SH/scriptSig, refund policy, fetched-prevout validation, V5 epochs, UTXO ownership, dust/change, and Zebra acceptance | Exact script and V5 bytes/txids pass; deterministic selection and actor-only change use canonical builders; pinned Zebra confirms funding/claim/refund and rejects mutated funding/claim signatures plus pre-CLTV refund | Add replacement/reorg/refund-margin stress and composed LEZ↔ZEC roles |
+| Arbitrary P2SH transaction signing | Stable source review shows ordinary and PCZT signers/finalizers recognize P2PKH/P2PK/multisig but not BIP-199; transparent builder also defaults every input to final sequence | GREEN uses canonical `TxOut`, `Bundle`, ZIP-244, deterministic secp256k1, and `TransactionData`; exact HTLC scriptSig is the only adapter-owned encoding, interpreter mutation tests pass, and Zebra is the final authority | Retain vectors and extend the node lane to replacement/reorg cases |
+| Pinned SPEL/LEZ compatibility | Initial RED had no real fixture; macro expansion exposed direct dependencies; cargo-deny exposed two forced advisories; the first generated client revealed missing claim/refund signers; custody RED produced 21 compile failures before the ABI/state existed | Exact pins compile generated IDL/client; 11 custody tests bind actors/assets/state, reject replay/substitution/preimage/version faults, and execute two custom-token definitions through official `token_program` plus `validate_execution`; program-owned native compatibility passes exact time boundaries | Resolve actual-user native LEZ transfer support, then run standalone sequencer/compute/testnet evidence and re-audit the deployed graph before the M2 tag |
+| Isolated Zebra consensus E2E | First runner RED found RPC cookie assumptions; the initial capability hardening found an unwritable cache; strict Trivy then rejected both official 5.1.1 and 5.2.0 runtimes with 40 HIGH/2 CRITICAL findings | The official 5.2.0 binary now runs in an immutable distroless nonroot image that scans at 0 HIGH/CRITICAL; read-only/capability-free NU6.2 Regtest on an ephemeral port proves funding, claim, refund, rejection, and confirmation; exact project cleanup leaves unrelated Docker workloads untouched | Add reorg/replacement/concurrency and public-testnet smoke; repeat final-image scan immediately before evidence/tag |
 
 ## Milestone 1 plan: three weeks
 
@@ -192,8 +193,9 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   duplicates the signature tail and is not byte-identical to BIP-199.
 - [x] Pin SPEL v0.5.0 with its exact LEZ v0.1.2 compatibility commit and keep
   newer LEZ semantics in a separate drift lane.
-- [x] Reject superseded Zebra 4.5.1 after a fresh security review; pin current
-  stable Zebra 5.1.1 source and official multi-platform image digest.
+- [x] Reject superseded Zebra 4.5.1 and vulnerable 5.1.1/5.2.0 full runtimes;
+  pin signed stable Zebra 5.2.0 and copy its exact official-image binary into a
+  pinned distroless nonroot runtime that passes the strict vulnerability gate.
 - [x] Add RED/GREEN exact redeem-script vector before adapter code, including
   BIP-199's common tail and minimal CLTV encoding.
 - [x] Add RED/GREEN claim/refund stack, P2SH, wrong-preimage, and exact CLTV
@@ -206,11 +208,15 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   pinned compatibility set without hand-written IDL duplication.
 - [x] Require the standalone compatibility build and its dedicated advisory,
   license, ban, source, exact-commit, and non-exposure checks in CI.
-- [ ] RED/GREEN a generated client golden from the evidenced IDL; do not hand
+- [x] RED/GREEN a generated client golden from the evidenced IDL; do not hand
   duplicate the client surface.
-- [ ] RED/GREEN initialise, claim, and refund for native LEZ plus two independent
-  custom token accounts, including ownership, substitution, replay, wrong
-  preimage, and validity-window boundaries.
+- [x] RED/GREEN initialise, claim, and refund for two independent custom-token
+  definitions through pinned `token_program`, including ownership, substitution,
+  replay, wrong preimage, metadata version, and validity-window boundaries.
+- [ ] Complete actual-user native LEZ custody. The v0.1.2 compatibility API has
+  no native/system transfer program and permits balance decreases only from
+  accounts owned by the executing escrow; current tests therefore prove only
+  program-owned native-account compatibility, not user onboarding.
 - [ ] Run standalone-sequencer actor tests and record compute units for every
   instruction against the named LEZ version.
 - [ ] Deploy the evidenced escrow to LEZ testnet 0.2 and retain an immutable
@@ -221,13 +227,16 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
 - [x] Implement a typed one-input spend foundation with actual funding `TxOut`
   validation, fee conservation, key ownership, exact claim/refund scriptSigs,
   ZIP-244, secp256k1, and canonical V5 serialization.
-- [ ] Implement transparent UTXO selection plus dust-aware P2SH funding,
-  fee/change, and replacement policy around that spend foundation.
+- [x] Implement transparent UTXO selection plus dust-aware P2SH funding,
+  fee/change policy around that spend foundation.
 - [x] Prove exact redeem/P2SH and signed claim/refund bytes/txids locally, with
   real upstream interpreter signature checks and mutation negatives.
-- [ ] Prove acceptance/rejection and confirmation through pinned Zebra RPC.
-- [ ] Exercise wrong preimage/signature, non-final sequence, CLTV edge,
-  fee/dust, replacement, reorg, and refund-margin cases.
+- [x] Prove funding/claim/refund acceptance, mutated-signature and pre-CLTV
+  rejection, and confirmation through pinned Zebra RPC.
+- [x] Exercise wrong preimage/signature, non-final sequence, CLTV edge, and
+  fee/dust cases across local and Zebra-authoritative layers.
+- [ ] Exercise replacement, reorg, concurrency, and cross-chain refund-margin
+  cases through actual nodes.
 - [ ] Re-audit the stable Zebra/security pin immediately before public-testnet
   evidence because the current release horizon ends ahead of NU7.
 - [ ] Re-audit the deployed SPEL/LEZ guest graph before testnet evidence and the
@@ -270,7 +279,7 @@ CI and local scripts fail if the project name is empty or does not start with
 | LEZ proposal file paths drifted (`nssa` became `lee/state_machine`) | Pinned lightweight and native semantic reproducers pass | Retain path checks only as early diagnostics and keep behavior tests authoritative |
 | Signature-byte stability is load-bearing for adaptor extraction | Pinned native transaction-equality test preserves the complete signed transaction through block inclusion | Keep the exact equality reproducer required and rerun on deliberate LEZ pin changes |
 | Validity windows are checked at block construction, not RPC admission | Repository-owned native test proves a balance-invalid transaction is admitted then excluded during block construction | Allocate inclusion slack and retain the native admission/block reproducer |
-| Zcash node migration is active | `zcashd` halts before NU6.3; Zallet omits raw-tx builder RPCs; Zebra 5.1.1 shortens support ahead of NU7 | Use pinned current-stable Zebra plus local canonical Rust construction and re-audit releases before public-testnet evidence |
+| Zcash node migration is active | `zcashd` halts before NU6.3; Zallet omits raw-tx builder RPCs; Zebra's 5.x support horizon ends ahead of NU7 | Use pinned 5.2.0 consensus plus local canonical Rust construction in the vulnerability-clean minimal runtime; re-audit releases and final image before public-testnet evidence |
 | SPEL documentation targets older `nssa` paths | SPEL v0.5 docs and current LEZ `dev` disagree | Build a minimal generated program against one pinned compatibility set before escrow implementation |
 | Upstream LEZ native sequencer tests compile RocksDB and can contend with host work | Clean native lane passes with two jobs in a unique checkout and no Docker/ports | Keep the two-job cap and do not run the heavy lane alongside detected host compilation |
 | Mainnet deadlines remain uncalibrated | `public-testnet-v1` fixes testnet depths/horizons and conservative bounds; mainnet is deliberately absent | Gather chain telemetry and fee/reorg stress evidence, then require formal review before enabling a mainnet profile |

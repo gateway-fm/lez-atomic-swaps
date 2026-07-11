@@ -1312,11 +1312,16 @@ dependencies = [
 name = "lez-zec-swap-sdk"
 version = "0.1.0"
 dependencies = [
+ "hex",
+ "jsonrpsee",
+ "jsonrpsee-http-client",
  "orchard",
  "sapling-crypto",
  "secp256k1",
+ "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.18",
+ "tokio",
  "zcash_primitives",
  "zcash_protocol",
  "zcash_script",

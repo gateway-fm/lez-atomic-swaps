@@ -11,13 +11,17 @@ The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 
 ## Current status
 
-Development has started with protocol acceptance tests. The first executable
-slice enforces:
+Development has started with protocol and real-node acceptance tests. The
+current executable slices enforce:
 
 - the taker-funded lock is confirmed before the maker can lock the second leg;
 - claim completion after the first lock needs only on-chain evidence; and
 - pair-specific claim and recovery ordering, including LEZ-before-ZEC claim and
-  refund in both ZEC trade directions.
+  refund in both ZEC trade directions;
+- exact BIP-199 P2SH plus canonical Zcash V5 funding, claim, and refund
+  transactions; and
+- actor-keyed funding/claim/refund acceptance and rejection through pinned
+  Zebra NU6.2 Regtest consensus.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),
@@ -26,17 +30,21 @@ the [architecture decision log](docs/architecture/README.md), and the first
 
 ## Development
 
-Prerequisites: Rust 1.96.0. No Docker services are needed for the current
-in-process protocol slice.
+Prerequisites: Rust 1.96.0. Docker Compose is needed only for the isolated Zebra
+consensus suite.
 
     cargo test --locked --workspace --all-targets
     cargo fmt --all --check
     cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
     cargo deny check advisories bans licenses sources
+    RUN_ID=local-zebra-1 ./scripts/run-zebra-e2e.sh
 
-Docker-based suites will use an isolated Compose project, private networks,
-named volumes prefixed with `lez-atomic-swaps-`, and ephemeral host ports. The
-project never prunes or stops resources it did not create.
+The Zebra suite uses a unique `lez-atomic-swaps-${RUN_ID}` Compose project. It
+copies the binary from the digest-pinned official Zebra 5.2.0 image into a
+digest-pinned distroless nonroot runtime, then uses a project-only network,
+read-only filesystem, tmpfs state, resource caps, no Linux capabilities, and an
+ephemeral localhost RPC port. Cleanup addresses that exact project and never
+prunes or stops resources it did not create.
 
 ## Licensing
 

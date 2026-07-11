@@ -44,7 +44,7 @@ flowchart TB
         LEZ["LEZ sequencer"]
         BTC["Bitcoin Core"]
         XMR["monerod + wallet RPC"]
-        ZEC["Zebra + local Zcash construction"]
+        ZEC["Minimal Zebra 5.2.0 + local Zcash construction"]
     end
 
     subgraph Networks["Consensus networks"]
@@ -101,11 +101,14 @@ on-chain state by themselves.
 
 The dashed state reflects delivery honestly. The deterministic core, SQLite
 repository, maker daemon, authenticated maker CLI flow, LEZ semantic
-verification, pinned SPEL/LEZ generated-IDL fixture, and ZEC exact-script plus
-signed V5 spend foundation exist. ZEC funding/selection and Zebra acceptance,
-the real LEZ custody program/client, complete pair adapters, encrypted
-state/outbox, taker processes, and mini-apps remain milestone work and cannot
-yet be represented as production E2E.
+verification, pinned SPEL/LEZ generated-IDL/client fixture, custom-token custody
+instruction semantics, and ZEC exact-script plus signed V5 spend foundation
+exist. Deterministic actor-owned funding/change and pinned, vulnerability-clean
+Zebra 5.2.0 Regtest acceptance/rejection/confirmation now exist as a
+chain-adapter proof. Actual-user native LEZ transfer, standalone
+sequencer/public-testnet evidence, composed both-direction maker/taker processes,
+encrypted state/outbox, and mini-apps remain milestone work and cannot yet be
+represented as production E2E.
 
 ## Happy-path user flow
 

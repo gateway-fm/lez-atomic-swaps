@@ -20,3 +20,10 @@ zcash_primitives = { version = "=0.28.0", default-features = false, features = [
 zcash_protocol = { version = "=0.9.0", default-features = false }
 zcash_script = { version = "=0.4.3", default-features = false, features = ["signature-validation"] }
 zcash_transparent = { version = "=0.8.0", default-features = false, features = ["transparent-inputs"] }
+
+[dev-dependencies]
+hex = "0.4.3"
+jsonrpsee = { version = "0.26.0", features = ["client-core"] }
+jsonrpsee-http-client = { version = "0.26.0", default-features = false }
+serde_json = "1.0.150"
+tokio = { version = "1.52.0", features = ["macros", "rt-multi-thread"] }
