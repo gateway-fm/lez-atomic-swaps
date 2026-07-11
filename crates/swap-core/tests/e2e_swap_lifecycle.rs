@@ -201,3 +201,34 @@ fn taker_lock_reorg_revokes_claim_authority_but_preserves_refunds() {
     after_maker.refund_taker_leg(120).unwrap();
     assert_eq!(after_maker.phase(), Phase::Refunded);
 }
+
+#[test]
+fn removed_uncommitted_taker_lock_can_be_replaced_but_committed_lock_cannot() {
+    let mut before_maker = coordinator(Pair::Zcash);
+    before_maker
+        .observe_taker_lock(ChainProof::new("zec-lock-a", 1).unwrap())
+        .unwrap();
+    before_maker
+        .observe_taker_lock_removed("zec-lock-a")
+        .unwrap();
+    assert_eq!(before_maker.phase(), Phase::Offered);
+    before_maker
+        .observe_taker_lock(ChainProof::new("zec-lock-b", 2).unwrap())
+        .expect("a removed pre-maker transaction may be replaced explicitly");
+
+    let mut after_maker = coordinator(Pair::Zcash);
+    after_maker
+        .observe_taker_lock(ChainProof::new("zec-lock-a", 2).unwrap())
+        .unwrap();
+    after_maker
+        .observe_maker_lock(ChainProof::new("lez-lock", 1).unwrap())
+        .unwrap();
+    after_maker
+        .observe_taker_lock_removed("zec-lock-a")
+        .unwrap();
+    assert_eq!(after_maker.phase(), Phase::TakerLockReorged);
+    assert_eq!(
+        after_maker.observe_taker_lock(ChainProof::new("zec-lock-b", 2).unwrap()),
+        Err(Error::ConflictingTakerLock)
+    );
+}

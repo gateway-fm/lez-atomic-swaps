@@ -334,6 +334,33 @@ impl SwapCoordinator {
         self.observe_taker_foreign_lock(proof)
     }
 
+    /// Records that the previously observed taker funding transaction left the canonical chain.
+    ///
+    /// Before maker funding, this clears the observation so an explicit replacement can be
+    /// accepted. After maker funding, the committed transaction ID is retained and claims are
+    /// suspended; a different transaction can never be substituted silently.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ConflictingTakerLock`] when the removed transaction is not the committed
+    /// taker transaction.
+    pub fn observe_taker_lock_removed(&mut self, transaction_id: &str) -> Result<(), Error> {
+        if self.taker_lock_transaction_id.as_deref() != Some(transaction_id) {
+            return Err(Error::ConflictingTakerLock);
+        }
+        match self.phase {
+            Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed => {
+                self.taker_lock_transaction_id = None;
+                self.phase = Phase::Offered;
+            }
+            Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable => {
+                self.phase = Phase::TakerLockReorged;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// Records the maker's second lock, enforcing confirmed taker-first ordering.
     ///
     /// # Errors

@@ -6,6 +6,7 @@ use proptest::prelude::*;
 #[derive(Clone, Debug)]
 enum Action {
     TakerLock { confirmations: u32, alternate: bool },
+    RemoveTakerLock { alternate: bool },
     MakerLock { alternate: bool },
     MakerClaim { secret_byte: u8 },
     TakerClaim { alternate: bool },
@@ -20,6 +21,7 @@ fn actions() -> impl Strategy<Value = Vec<Action>> {
                 confirmations,
                 alternate,
             }),
+            any::<bool>().prop_map(|alternate| Action::RemoveTakerLock { alternate }),
             any::<bool>().prop_map(|alternate| Action::MakerLock { alternate }),
             any::<u8>().prop_map(|secret_byte| Action::MakerClaim { secret_byte }),
             any::<bool>().prop_map(|alternate| Action::TakerClaim { alternate }),
@@ -69,6 +71,9 @@ proptest! {
                         confirmations,
                     )
                     .unwrap(),
+                ),
+                Action::RemoveTakerLock { alternate } => swap.observe_taker_lock_removed(
+                    transaction_id("foreign-lock", "other-foreign-lock", alternate),
                 ),
                 Action::MakerLock { alternate } => swap.observe_maker_lez_lock(
                     ChainProof::new(
@@ -138,7 +143,10 @@ proptest! {
                                 | Phase::TakerLegRefunded
                         ));
                     }
-                    Phase::Offered => prop_assert!(false, "no transition returns to Offered"),
+                    Phase::Offered => prop_assert!(matches!(
+                        before,
+                        Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed
+                    )),
                 }
             }
 
