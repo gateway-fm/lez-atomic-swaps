@@ -103,6 +103,25 @@ ephemeral loopback port. Actor funds come from deterministic local genesis or
 Regtest coinbase outputs. Therefore a public RPC outage, rate limit, faucet
 balance, or testnet reorg cannot affect the flows in this guide today.
 
+Loopback is an isolation property, not a correctness claim. The chain evidence
+comes from running the real pinned implementations and crossing their actual
+transaction, validation, execution, and canonical-block boundaries:
+
+- Zebra 5.2.0 validates canonical signed V5/BIP-199 bytes through its real
+  mempool and consensus services, mines them into blocks, and selects a
+  higher-work conflicting branch. Regtest controls mining and network
+  activation; it does not simulate public peer propagation or fee pressure.
+- The LEZ v0.1.2 standalone sequencer accepts the checked Risc0 guest and actor
+  transactions through public RPC, executes production `V03State` transitions,
+  persists canonical blocks, and exposes resulting nonce/custody/balance state.
+  Standalone does not prove LEZ testnet 0.2 compatibility or public sequencing.
+
+The required evidence ladder is exact local vectors, actual isolated consensus
+nodes, a composed independent maker/taker local corridor, and then self-hosted
+plus public-route testnet corridors with real funded accounts. Local on-chain
+evidence cannot replace the latter two levels. Mainnet remains separately
+disabled pending calibration and formal review.
+
 Cold setup and CI do use external software-distribution services:
 
 | Resource | Used by | Pin/integrity control | Availability/flakiness risk |

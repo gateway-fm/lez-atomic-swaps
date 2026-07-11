@@ -57,6 +57,15 @@ Availability, DNS, proxy, registry throttling, or GitHub/CDN outages can block
 an uncached run, but cannot relax the lockfile, digest, checksum, ELF, ImageID,
 or consensus checks. Warm verified caches reduce this availability risk.
 
+Loopback provides isolation, not chain fidelity. The local suites still cross
+real on-chain boundaries: pinned Zebra validates/mempools/mines signed Zcash
+transactions and chooses a higher-work fork; the pinned LEZ sequencer deploys
+the checked guest, executes production state transitions, and persists
+canonical actor/custody state. Regtest/standalone do not prove public peer
+propagation, fee markets, organic timing/reorg behavior, provider quirks, or LEZ
+testnet 0.2 compatibility. A composed local corridor and self-hosted/public
+testnet corridor with real funded accounts remain mandatory M2 evidence.
+
 CI also refreshes RustSec and Trivy vulnerability data. A database outage may
 block scanning; a newly published advisory may deliberately turn a prior pass
 red. Do not bypass that failure as “flaky.” Public-testnet RPCs/faucets have not
