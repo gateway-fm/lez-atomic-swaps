@@ -9,6 +9,7 @@ This directory holds the reviewable design artefacts:
 - [per-leg protocol and atomicity design](protocol-design.md);
 - [SDK trait surface](sdk-trait-surface.md);
 - [LEZ escrow and SPEL IDL sketch](lez-escrow-design.md); and
+- [confirmation and recovery parameter profiles](parameter-profiles.md); and
 - [LEZ primitive verification](lez-primitive-verification.md).
 
 An artefact marked draft does not satisfy its milestone exit gate. Decisions
@@ -21,7 +22,8 @@ flowchart LR
     Sources --> Primitives["LEZ primitive reproducers"]
     Protocol --> Escrow["Escrow + SPEL IDL"]
     Protocol --> SDK["Common SDK + pair evidence"]
-    Protocol --> Threats["Threat model + parameters"]
+    Protocol --> Parameters["Confirmation + recovery profiles"]
+    Parameters --> Threats["Threat model"]
     Primitives --> Review["Milestone 1 review packet"]
     Escrow --> Review
     SDK --> Review

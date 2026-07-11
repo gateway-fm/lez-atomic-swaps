@@ -15,6 +15,10 @@ flowchart TB
     Direction --> Bitcoin["0009 Bitcoin refund"]
     Direction --> Deadlines["0010 Typed deadlines"]
     LEZ --> Deadlines
+    Deadlines --> Recovery["0011 Recovery triggers"]
+    LEZ --> Custody["0012 Escrow custody"]
+    Ports --> SDK["0013 SDK layering"]
+    Persistence --> SDK
     Persistence --> RPC
 ```
 
@@ -29,4 +33,7 @@ flowchart TB
 | [0007](0007-maker-local-rpc.md) | Authenticated local JSON-RPC with a transport-hardening gate | Accepted, production transport pending |
 | [0008](0008-bidirectional-role-ordering.md) | Separate product direction from reviewed pair funding capability | Accepted; XMR is LEZ-first only |
 | [0009](0009-bitcoin-refund-path.md) | Taproot key-path cooperative claim with script-path CSV refund | Accepted, M3 validation pending |
-| [0010](0010-typed-cross-chain-deadlines.md) | Typed consensus clocks plus conservative cross-chain safety bounds | Accepted, coordinator integration pending |
+| [0010](0010-typed-cross-chain-deadlines.md) | Typed consensus clocks plus conservative cross-chain safety bounds | Accepted for deadline legs; XMR superseded by 0011 |
+| [0011](0011-event-gated-recovery.md) | Recovery uses typed deadlines or canonical events; XMR has no native timelock | Accepted, core refactor pending |
+| [0012](0012-lez-escrow-custody.md) | Split metadata PDA from native vault or required custom-token ATA | Accepted, M2 validation pending |
+| [0013](0013-sdk-layering.md) | Deterministic common core plus complete per-pair async facades | Accepted for Logos review |

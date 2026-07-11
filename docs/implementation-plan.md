@@ -83,11 +83,11 @@ with dependency license/advisory checks in CI.
 | Restart recovery and user isolation | 2026-07-11 unresolved `SqliteSwapStore` and later missing `claim_evidence` | 2026-07-11 close/reopen after locks and witness reveal, plus two independent swaps, 2 passed | Encrypt secrets at rest; add process-kill/WAL matrix, migrations, and atomic outbox |
 | Maker abandonment/refund observation order | 2026-07-11 missing `TakerLegRefunded` and no direct taker recovery | 2026-07-11 taker-only refund and foreign-first observation pass | Add model tests over all legal event orderings and chain reorgs |
 | At-least-once chain observation replay | 2026-07-11 repeated confirmed lock failed with `InvalidPhase` | 2026-07-11 identical lock/claim events are idempotent; conflicting IDs/evidence are rejected | Extend to persisted outbox/event sequence numbers and refund transaction proofs |
-| Generated transition sequences | 2026-07-11 property oracles exposed both confirmation growth and regression cases and were corrected | 512 arbitrary sequences include confirmation regression and explicit removal/replacement; retained minimized reorg seed preserves the discovered case | Add typed per-chain deadlines and compare against pair reference models |
+| Generated transition sequences | 2026-07-11 property oracles exposed both confirmation growth and regression cases and were corrected | 512 arbitrary sequences include confirmation regression and explicit removal/replacement; retained minimized reorg seed preserves the discovered case | Add pair-specific recovery triggers and compare against pair reference models |
 | Maker operator process boundary | 2026-07-11 acceptance test could not resolve daemon/CLI executables | Actual CLI authenticates through HTTP metadata to actual daemon, creates a swap, daemon is killed/restarted on a new ephemeral port, persisted status remains visible | Move to owner-restricted Unix socket/credential file; add durable request IDs/audit outbox and price configuration |
-| Bidirectional role ordering | 2026-07-11 reverse-direction test could not resolve direction or role-neutral transitions; CLI rejected `--direction` | Both directions preserve taker-first and maker-before-taker refunds for BTC/XMR/ZEC; actual CLI/daemon persists reverse direction and typed schedules across kill/restart | Run every real-chain role matrix in both directions |
+| Bidirectional role ordering | 2026-07-11 reverse-direction test could not resolve direction or role-neutral transitions; CLI rejected `--direction` | BTC/ZEC both directions and XMR's LEZ-first direction preserve taker-first ordering; actual CLI/daemon persists direction and typed schedules across kill/restart | Run every supported real-chain role matrix and retain explicit XMR-first rejection |
 | Taker-lock reorg/replacement | 2026-07-11 missing durable reorg phase/removal event; property oracle assumed confirmations only rise | Pre-maker regression/removal revokes permission and permits explicit replacement; post-maker removal pins the committed ID, suspends claims, and preserves refunds; generated model covers events | Add pair-specific reorg depth policies and real-node replacement cases |
-| Typed refund clocks | 2026-07-11 tests could not resolve chain/basis/safety schedule types | Coordinator, persistence, RPC, and CLI use typed block-height/timestamp positions; wrong domains and insufficient conservative margins are rejected | Calibrate and review named per-network confirmation/margin parameters |
+| Typed recovery conditions | 2026-07-11 tests could not resolve chain/basis/safety schedule types | BTC/ZEC coordinator, persistence, RPC, and CLI use typed positions; wrong domains and insufficient conservative margins are rejected | Replace the prototype XMR deadline with the accepted canonical-LEZ-refund event trigger |
 | Architecture diagrams | 2026-07-11 completeness guard failed on the first ADR without Mermaid | All ADRs and M1 design artifacts contain current component/flow diagrams; CI and contribution policy enforce coverage | Render-validation can be added when a lightweight pinned renderer is approved |
 | XMR funding-direction capability | 2026-07-11 source review found COMIT ships scriptable-chain-first only; test lacked `UnsupportedDirection` | Core schedule and actual CLI/daemon reject XMR-first; LEZ-first XMR remains supported and documented in the per-leg flow | Validate exact DLEQ/key-share recovery transcript against vectors and third-party review in M4 |
 
@@ -115,12 +115,12 @@ with dependency license/advisory checks in CI.
 
 - [x] Publish per-leg message/state diagrams and atomicity arguments, including
   the COMIT-derived LEZ-first-only XMR capability.
-- [ ] Specify the LEZ escrow account model, native/custom token flows, claim and
+- [x] Specify the LEZ escrow account model, native/custom token flows, claim and
   refund instructions, and SPEL IDL.
-- [ ] Complete threat model: adaptor extraction, signature byte stability,
+- [x] Complete threat model: adaptor extraction, signature byte stability,
   timelocks/reorgs, XMR key-share recovery, ZEC transparent visibility, local RPC,
   persistence, and concurrency.
-- [ ] Publish common SDK lifecycle traits plus typed pair-specific evidence/errors.
+- [x] Publish common SDK lifecycle traits plus typed pair-specific evidence/errors.
 - [x] Add generated property tests for transition legality, conflicts, and
   absorbing terminal states.
 - [x] Extend the model with reorg/replacement events and typed per-chain deadlines.
@@ -135,7 +135,8 @@ with dependency license/advisory checks in CI.
   construction, Zallet only where wallet RPC capabilities fit.
 - [x] Specify maker daemon local JSON-RPC, authentication, systemd fallback, and
   Logos Core daemon-mode adapter contract.
-- [ ] Fix per-pair confirmation/timelock parameters with reorg and latency margins.
+- [x] Fix public-testnet per-pair confirmation/recovery profiles with reorg,
+  latency, and reaction margins; keep mainnet disabled pending calibration/audit.
 - [ ] Review all ADRs, test evidence, open questions, and Milestone 2 entry gates.
 
 Milestone 1 exits only when every unchecked deliverable above is completed and
@@ -180,7 +181,7 @@ CI and local scripts fail if the project name is empty or does not start with
 | Zcash node migration is active | `zcashd` halts before NU6.3; Zallet omits raw-tx builder RPCs | Use Zebra plus local canonical Rust transaction construction |
 | SPEL documentation targets older `nssa` paths | SPEL v0.5 docs and current LEZ `dev` disagree | Build a minimal generated program against one pinned compatibility set before escrow implementation |
 | Upstream LEZ native sequencer tests compile RocksDB and can contend with host work | Guest-free validity and BIP-340 vectors pass locally; the heavy lane is isolated in scheduled CI | Cap Cargo at two jobs, use a unique temporary checkout, and never run the heavy lane alongside detected host compilation |
-| Typed deadlines still need calibrated network parameters | Clock domains and conservative bounds are enforced, but current test values are illustrative | Publish named network/release assumptions, confirmation depths, drift/reorg/inclusion budgets, and boundary vectors |
+| Mainnet deadlines remain uncalibrated | `public-testnet-v1` fixes testnet depths/horizons and conservative bounds; mainnet is deliberately absent | Gather chain telemetry and fee/reorg stress evidence, then require formal review before enabling a mainnet profile |
 | Final E2E must represent actual users | Operator process harness exists; taker and chain lifecycles still call protocol core directly | Extend the role harness through taker CLI and real chain adapters before labeling tests as full E2E |
 | Prototype local RPC still uses loopback HTTP and an environment capability | Tower rejects a Bearer header before JSON parsing and non-loopback binds are refused | Move to an owner-restricted Unix socket and credential file before M5 freeze |
 | Daemon prototype serializes SQLite with a mutex on blocking workers | Safe for the two-method operator slice, not chain watcher concurrency | Introduce the ADR-0003 single writer actor and atomic outbox before mutations expand |

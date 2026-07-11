@@ -1,10 +1,11 @@
 # ADR 0010: Typed consensus clocks and cross-chain safety bounds
 
-Status: Accepted; parameter calibration pending — 2026-07-11
+Status: Accepted for deadline-bearing legs; XMR recovery superseded by ADR 0011
+— 2026-07-11
 
 ```mermaid
 flowchart LR
-    Terms["Pair + direction + network parameters"] --> Map["Map maker/taker roles to chains"]
+    Terms["BTC/ZEC pair + direction + network parameters"] --> Map["Map maker/taker roles to chains"]
     Map --> Maker["Maker ChainPosition: chain + basis + value"]
     Map --> Taker["Taker ChainPosition: chain + basis + value"]
     Bounds["Maker-latest / taker-earliest / required margin"] --> Check{"Conservative safety inequality"}
@@ -27,10 +28,14 @@ also requires variance, congestion, reorgs, and drift to be explicit.
 
 ## Decision
 
-Every refund point is a `ChainPosition { chain, basis, value }`, where basis is
+Every consensus-deadline refund point is a `ChainPosition { chain, basis, value }`, where basis is
 block height or consensus timestamp. Deadline checks reject a different chain or
 basis instead of comparing raw values. `RefundSchedule` maps maker/taker roles to
 LEZ/foreign chains using immutable `SwapDirection`.
+
+This does not apply to a maker-funded Monero output: Monero has no native refund
+timelock. ADR 0011 replaces that prototype representation with a canonical LEZ
+refund event plus key-share recovery trigger.
 
 Cross-chain ordering is validated separately with conservative Unix-time bounds:
 
@@ -50,7 +55,8 @@ block-time conversions. Parameters name their network/release and are covered by
 boundary tests; unsafe arithmetic, zero margin, wrong role chain, or wrong clock
 domain is rejected.
 
-The coordinator, persisted aggregate, RPC requests, CLI clock-basis inputs, and
+The prototype coordinator, persisted aggregate, RPC requests, CLI clock-basis inputs, and
 refund transitions use the typed schedule. Three focused schedule tests plus the
 scenario/property/restart/operator suites cover the integration. Named network
-parameter calibration remains an M1 gate.
+parameters for public testnets are fixed in the M1 profile; mainnet remains
+disabled pending telemetry and formal review.

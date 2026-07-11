@@ -104,21 +104,24 @@ atomicity property.
 ## Atomicity argument and failure partition
 
 Assume canonical chain validation, unforgeable signatures/hashes, sound DLEQ,
-durably available recovery material, and a safety margin large enough for the
-taker to observe the maker claim and submit before the maker refund.
+durably available recovery material, and—on deadline-bearing paths—a safety
+margin large enough for the taker to observe the maker claim and submit before
+the maker refund.
 
 1. Before the taker lock, neither party has funds at risk.
 2. With only the taker lock, the maker cannot receive value without funding; the
-   taker eventually uses the longer refund.
+   taker eventually uses its negotiated refund path.
 3. With both locks, the maker receives the taker asset only by publishing the
    pair claim evidence. Witness extractability/hash preimage disclosure then
    gives the taker the exclusive missing input for the maker-funded claim.
-4. If the maker does not claim, its shorter refund matures first; the taker's
-   longer refund follows after the reaction margin.
+4. For BTC/ZEC, if the maker does not claim, its shorter refund matures first;
+   the taker's longer refund follows after the reaction margin. For XMR, the
+   taker refunds LEZ; that canonical event completes the maker's persisted
+   key-share recovery path for the maker-funded Monero output.
 5. A confirmation regression suspends claims and pins the committed transaction;
    refunds remain available. A pre-maker removed lock may be explicitly replaced.
 
-Thus every permitted terminal path is both claimed or both refunded. The period
+Thus every permitted terminal path is both claimed or both recovered. The period
 after maker claim but before taker claim is safe only under the stated evidence
 extraction, chain-observation, persistence, and calibrated-margin assumptions;
 those are named test and audit gates rather than hidden guarantees.
