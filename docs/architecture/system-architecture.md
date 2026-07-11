@@ -112,8 +112,9 @@ evidence. The checked Risc0 guest now builds reproducibly, deploys through
 public RPC, and executes the complete native initialize/fund/claim/refund
 lifecycle with real funded actor keys in an isolated v0.1.2 standalone
 sequencer. Wrong-preimage, wrong-role, and early-refund transactions are
-excluded from canonical blocks without mutating nonce or custody. Token
-lifecycle and recursive cost evidence, public-testnet evidence, composed
+excluded from canonical blocks without mutating nonce or custody. Native
+recursive cost evidence is machine-checked from production state transitions
+without Clock noise. Token lifecycle/costs, public-testnet evidence, composed
 both-direction maker/taker processes, encrypted state/outbox, and mini-apps
 remain milestone work and cannot yet be represented as production E2E.
 
@@ -204,6 +205,8 @@ flowchart LR
     Relayer["Permissionless refund relayer"] --> NativeLifecycle
     NativeLifecycle --> RPC
     Block --> NativeState["Metadata status + exact custody/actor balances"]
+    NativeState --> CostReplay["Deterministic production-state replay<br/>Clock excluded"]
+    CostReplay --> CostEvidence["12 attributed Risc0 sessions<br/>cycle invariants + budgets + JSON"]
     TokenCosts["Two-definition ATA lifecycle + recursive costs"] -.-> RPC
     Testnet["Rebuilt v0.2 guest + public testnet"] -.-> RPC
 
@@ -219,7 +222,10 @@ lookup proves the deployment reached the block store rather than only the
 mempool. The solid native lifecycle uses the actual funded genesis roles,
 validates signer-bound claim and permissionless-refund boundaries against
 canonical block time, and asserts exact balances. The dashed token/cost and
-v0.2 testnet edges remain M2 exit work.
+v0.2 testnet edges remain M2 exit work. Native cost replay executes the same
+guest instructions through LEZ production state transitions, counts the escrow
+root and authenticated-transfer child, and compares generated JSON with the
+checked evidence artifact.
 
 ## Happy-path user flow
 

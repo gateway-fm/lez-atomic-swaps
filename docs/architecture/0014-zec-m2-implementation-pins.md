@@ -30,6 +30,8 @@ flowchart LR
     Actors["Funded genesis depositor + claimant"] --> NativeFlow["Native initialize / fund / claim / refund"]
     LocalSeq --> NativeFlow
     NativeFlow --> NativeEvidence["Canonical state, balances, role/deadline negatives"]
+    NativeEvidence --> CostReplay["Production V03State replay without Clock noise"]
+    CostReplay --> CostJson["Attributed sessions + budgets + checked JSON"]
     TokenFlow["Two-definition standalone ATA lifecycle + costs"] -.-> LocalSeq
     Port["Rebuild SPEL/guest/client for LEZ v0.2 PDA + ABI"] -.-> LezTest["LEZ testnet 0.2"]
     Native["Reviewed SPEL/LEZ v0.2 compatibility pin"] -.-> Port
@@ -140,10 +142,15 @@ refund remains unsigned and fixed-destination. Canonical blocks reject wrong
 preimage, a valid depositor attempting the claimant role, and early refund
 without consuming the signer nonce or moving custody. After canonical block
 time reaches the deadline, any relayer can return the exact amount only to the
-stored depositor. Token standalone lifecycle and cost evidence remain open.
-Cost evidence will record deterministic Risc0 user cycles/segments and
-recursively include chained calls because v0.1.2 does not expose compute units
-through RPC or blocks. The
+stored depositor. Native cost evidence now records deterministic Risc0
+user cycles/segments and
+recursively includes the authenticated-transfer child because v0.1.2 does not
+expose compute units through RPC or blocks. It replays the production
+`V03State` transition with Clock excluded, requires two ordered one-segment
+sessions per operation, verifies `total = user + paging + reserved`, enforces
+versioned user-cycle budgets, and reproduces
+`docs/evidence/lez-v0.1.2-native-costs.json`. Token standalone lifecycle and
+its ATA/token recursion costs remain open. The
 accepted LEZ pin forces `rsa 0.9.10` and `tracing-subscriber 0.2.25`; no safe
 compatible pin exists today. The fixture-local policy is permitted only because
 CI proves rzup `publish`/`install` and tracing `fmt`/`ansi` features are absent,

@@ -233,10 +233,14 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   state and balances. RED cases prove wrong preimage, valid-signer wrong role,
   and permissionless early refund rejection without nonce or custody mutation;
   canonical block time then enables the fixed-destination refund.
+- [x] Record native recursive Risc0 costs with the exact guest and production
+  v0.1.2 state transition. A single-threaded direct-state replay excludes
+  mandatory-clock noise, attributes the escrow root plus authenticated-transfer
+  child for each instruction, checks cycle classification/count/budgets, and
+  reproduces the checked machine-readable evidence artifact.
 - [ ] Run the equivalent official-ATA actor lifecycle for two independent token
-  definitions and record costs for every native/token instruction. Record
-  recursive Risc0 cycles/segments because v0.1.2 RPC/blocks do not expose compute
-  units; use deterministic direct-state replay to exclude mandatory-clock noise.
+  definitions and record its recursive costs. v0.1.2 RPC/blocks do not expose
+  compute units, so retain the same deterministic direct-state attribution model.
 - [ ] Port and rebuild SPEL, guest, generated client, and PDA derivations for LEZ
   v0.2.0 before live-testnet evidence. v0.1.2 `/NSSA/` and v0.2.0 `/LEE/` PDA
   domains are incompatible; upstream PR #238 remains provisional/unmerged.

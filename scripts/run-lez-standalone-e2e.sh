@@ -21,6 +21,7 @@ guest_manifest="compat/spel-zec-escrow/methods/guest/Cargo.toml"
 methods_manifest="compat/spel-zec-escrow/methods/Cargo.toml"
 standalone_manifest="compat/lez-standalone-e2e/Cargo.toml"
 artifact_manifest="compat/spel-zec-escrow/methods/guest/artifact-manifest.toml"
+cost_evidence="docs/evidence/lez-v0.1.2-native-costs.json"
 guest_elf="compat/spel-zec-escrow/methods/guest/target/riscv32im-risc0-zkvm-elf/docker/zec_escrow.bin"
 guest_elf_absolute="${repo_root}/${guest_elf}"
 
@@ -118,5 +119,19 @@ CARGO_TARGET_DIR="$standalone_target" \
 RISC0_DEV_MODE=1 LEZ_ESCROW_GUEST_ELF="$guest_elf_absolute" CARGO_TARGET_DIR="$standalone_target" \
   cargo test --locked --manifest-path "$standalone_manifest" --test deploy -- --ignored --nocapture
 
+cost_output_dir="${LEZ_COST_OUTPUT_DIR:-${TMPDIR:-/tmp}/lez-costs-${run_id}}"
+cost_log="${cost_output_dir}/cost.log"
+cost_json="${cost_output_dir}/generated.json"
+mkdir -p "$cost_output_dir"
+RISC0_DEV_MODE=1 RISC0_INFO=1 \
+  RUST_LOG=risc0_zkvm::host::server::session=info \
+  LEZ_ESCROW_GUEST_ELF="$guest_elf_absolute" \
+  CARGO_TARGET_DIR="$standalone_target" \
+  cargo test --locked --manifest-path "$standalone_manifest" --test costs \
+    -- --ignored --nocapture --test-threads=1 2>&1 | tee "$cost_log"
+awk -f scripts/parse-lez-costs.awk "$cost_log" > "$cost_json"
+diff -u "$cost_evidence" "$cost_json"
+
 printf 'LEZ standalone guest deployment and native lifecycle proof passed: elf_sha256=%s image_id=%s\n' \
   "$actual_elf_sha256" "$actual_image_id"
+printf 'LEZ native recursive cost evidence passed: %s\n' "$cost_json"

@@ -56,14 +56,14 @@ requires a corresponding test—not merely a row—for every F, U, R, and P item
 
 | ID | Contract | Acceptance evidence | Status / milestone |
 |---|---|---|---|
-| P1 | Compute units documented for initialise, claim, and refund against a named LEZ testnet version | Reproducible benchmark records each operation/pair and fails CI thresholds for the pinned release | Planned M2–M4 |
+| P1 | Compute units documented for initialise, claim, and refund against a named LEZ testnet version | Reproducible benchmark records each operation/pair and fails CI thresholds for the pinned release | Partial: exact v0.1.2 native root/chained cycles, segments, invariants, and CI budgets are recorded; token operations and named public-testnet rerun remain M2 |
 
 ## Supportability
 
 | ID | Contract | Acceptance evidence | Status / milestone |
 |---|---|---|---|
 | S1 | LEZ escrow deployed/tested on testnet 0.2 | Version-pinned deployment manifest and public smoke-test transaction evidence | Planned M2–M4 |
-| S2 | Standalone LEZ sequencer E2E is included in CI | Isolated CI job boots sequencer on ephemeral resources and runs guest lifecycle suites | Partial: isolated CI builds/checks/deploys the guest and runs native real-role happy/refund/negative lifecycle through canonical blocks; token lifecycle and costs remain M2 |
+| S2 | Standalone LEZ sequencer E2E is included in CI | Isolated CI job boots sequencer on ephemeral resources and runs guest lifecycle suites | Partial: isolated CI builds/checks/deploys the guest, runs native real-role happy/refund/negative lifecycle through canonical blocks, and gates deterministic recursive native costs; token lifecycle/costs remain M2 |
 | S3 | Default-branch CI is green | Required checks run format, strict Clippy, workspace tests/docs, traceability, dependencies, strict final-image vulnerability scanning, and isolated E2E | Local workflow/gates green; remote branch pending |
 | S4 | Every F/U/R/P hard requirement has a corresponding test | Traceability completeness guard plus test-report manifest rejects missing or skipped requirement IDs | Matrix guard passing; acceptance tests incomplete |
 | S5 | Complete reference integration for every chain | UJ-001/UJ-002/UJ-004 role E2E and runnable reference package for BTC, XMR, and ZEC | Planned M2–M5 |

@@ -23,7 +23,8 @@ current executable slices enforce:
 - actor-keyed funding/claim/refund acceptance and rejection through pinned
   Zebra NU6.2 Regtest consensus; and
 - checked-guest deployment plus real-key native LEZ initialize/fund/claim and
-  permissionless-refund execution in an isolated standalone sequencer.
+  permissionless-refund execution in an isolated standalone sequencer; and
+- machine-checked recursive native Risc0 session costs with Clock noise excluded.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),
