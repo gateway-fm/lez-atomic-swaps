@@ -95,6 +95,15 @@ until a reviewed pin update makes them required.
 - Arbitrary P2SH HTLC signing is an explicit adapter responsibility built from
   canonical librustzcash sighash/signature types; the transparent builder's
   P2SH multisig helper is not misrepresented as a generic HTLC signer.
+- Source inspection proves both `TransparentBuilder::apply_signatures` and the
+  PCZT signer/spend finalizer support only standard P2PKH/P2PK/multisig shapes,
+  not BIP-199. The adapter uses `TransparentBuilder` for validated input/output
+  accounting, its authorization context for ZIP-244, upstream secp256k1 for the
+  signature, and canonical `Bundle<Authorized>`/`TransactionData` serialization;
+  only the already-vector-tested HTLC scriptSig assembly is adapter-owned.
+- `TransparentBuilder` initially assigns final sequence `0xffffffff`. Refund
+  construction must replace that input with `0xfffffffe` before computing the
+  transaction digest and signature; mutation after signing is forbidden.
 - The generic `sha256_htlc_p2pkh` helper is not used as a byte-level substitute
   for BIP-199; exact-vector tests protect the contractual common-tail layout.
 - The LEZ compatibility lane and newer semantic drift lane stay separate until
