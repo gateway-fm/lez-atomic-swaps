@@ -105,6 +105,13 @@ for the earlier chain. Failure aborts before either lock. A profile is invalid
 when its chain order, ID, basis, confirmation depth, fee policy, or projection
 epoch differs from the signed terms.
 
+Profile LEZ deadlines are negotiated as typed whole Unix seconds and converted
+to the guest's exact Unix-millisecond clock with checked multiplication. Actual
+LEZ millisecond observations floor when compared with a deadline; conservative
+earlier-refund-latest projections ceil. Tests cover `N-1`/`N`, partial-second
+floor/ceil behavior, and multiplication overflow. Raw `u64` conversion or an
+implicit generic time conversion is not permitted at the adapter boundary.
+
 ## Zcash expiry and fee policy
 
 `nExpiryHeight` is transaction liveness, not the HTLC refund condition. Per

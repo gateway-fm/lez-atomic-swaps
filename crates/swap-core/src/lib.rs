@@ -79,6 +79,68 @@ pub enum ClockBasis {
     Timestamp,
 }
 
+/// Unix time in whole seconds used by negotiated terms and safety projections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnixSeconds(u64);
+
+impl UnixSeconds {
+    /// Creates a typed Unix-second value.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Returns the whole Unix seconds.
+    #[must_use]
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+
+    /// Converts negotiated whole-second terms to the exact LEZ millisecond clock value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::TimestampConversionOverflow`] instead of wrapping a deadline.
+    pub const fn checked_to_lez_milliseconds(self) -> Result<LezUnixMilliseconds, Error> {
+        match self.0.checked_mul(1_000) {
+            Some(value) => Ok(LezUnixMilliseconds(value)),
+            None => Err(Error::TimestampConversionOverflow),
+        }
+    }
+}
+
+/// Consensus-visible LEZ Unix timestamp in milliseconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LezUnixMilliseconds(u64);
+
+impl LezUnixMilliseconds {
+    /// Creates a typed LEZ millisecond clock value.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Returns the exact LEZ Unix milliseconds.
+    #[must_use]
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+
+    /// Floors an observed LEZ timestamp for conservative deadline comparison.
+    #[must_use]
+    pub const fn to_unix_seconds_floor(self) -> UnixSeconds {
+        UnixSeconds(self.0 / 1_000)
+    }
+
+    /// Ceils a LEZ timestamp used as an earlier-refund-latest safety bound.
+    #[must_use]
+    pub const fn to_unix_seconds_ceil(self) -> UnixSeconds {
+        let seconds = self.0 / 1_000;
+        let partial = if self.0.is_multiple_of(1_000) { 0 } else { 1 };
+        UnixSeconds(seconds + partial)
+    }
+}
+
 /// Typed position in one chain's consensus clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChainPosition {
@@ -106,6 +168,12 @@ impl ChainPosition {
             basis: ClockBasis::Timestamp,
             value: unix_seconds,
         }
+    }
+
+    /// Converts an actual LEZ millisecond observation to conservative whole seconds.
+    #[must_use]
+    pub const fn lez_timestamp_from_milliseconds_floor(timestamp: LezUnixMilliseconds) -> Self {
+        Self::timestamp(Chain::Lez, timestamp.to_unix_seconds_floor().value())
     }
 
     /// Position chain.
@@ -363,6 +431,9 @@ pub enum Error {
     /// A confirmation policy must require at least one confirmation.
     #[error("confirmation policy must be non-zero")]
     InvalidConfirmationPolicy,
+    /// A checked conversion between negotiated seconds and the LEZ millisecond clock overflowed.
+    #[error("timestamp conversion overflowed")]
+    TimestampConversionOverflow,
     /// Conservative cross-chain bounds do not leave the required recovery margin.
     #[error("refund deadlines do not provide the required cross-chain safety margin")]
     InsufficientTimelockMargin,

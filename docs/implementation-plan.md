@@ -280,8 +280,10 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
 - [ ] Bind named ZEC profiles and production-grade chain observations before
   composing cross-chain refund-margin cases through actual LEZ and Zebra nodes.
   The adapter evidence must include network/branch, block identity/height,
-  outpoint/value/script commitment, and depth; conversion between LEZ Unix
-  milliseconds and core Unix seconds must be checked and conservatively rounded.
+  outpoint/value/script commitment, and depth. The LEZ Unix-millisecond/core
+  Unix-second boundary is now typed, checked, conservatively rounded, and
+  covered at `N-1`, `N`, partial seconds, and overflow; named profile binding
+  and the composed actual-node flow remain.
 - [ ] Re-audit the stable Zebra/security pin immediately before public-testnet
   evidence because the current release horizon ends ahead of NU7.
 - [ ] Re-audit the deployed SPEL/LEZ guest graph before testnet evidence and the
@@ -330,7 +332,7 @@ CI and local scripts fail if the project name is empty or does not start with
 | Upstream LEZ native sequencer tests compile RocksDB and can contend with host work | Clean native lane passes with two jobs in a unique checkout and no Docker/ports | Keep the two-job cap and do not run the heavy lane alongside detected host compilation |
 | Mainnet deadlines remain uncalibrated | `public-testnet-v1` fixes testnet depths/horizons and conservative bounds; mainnet is deliberately absent | Gather chain telemetry and fee/reorg stress evidence, then require formal review before enabling a mainnet profile |
 | Chain proof is not yet adapter-grade | Core `ChainProof` carries only transaction ID and confirmations, while real-node evidence also needs network, branch, block, outpoint, value, and script commitment | Add a validated typed ZEC observation before feeding node results into the coordinator |
-| LEZ and core timestamp units differ | v0.1.2 LEZ blocks/escrow use Unix milliseconds while core timestamp positions are Unix seconds | Add checked conversion with conservative rounding and boundary/overflow tests before composed refund-margin E2E |
+| LEZ and core timestamp units differ | Typed `UnixSeconds`/`LezUnixMilliseconds` conversion now checks guest multiplication, floors observations, ceils earlier-latest bounds, and passes boundary/overflow tests | Require named profiles to be the only construction path used by composed refund-margin E2E |
 | Final E2E must represent actual users | Operator process harness exists; taker and chain lifecycles still call protocol core directly | Extend the role harness through taker CLI and real chain adapters before labeling tests as full E2E |
 | Prototype local RPC still uses loopback HTTP and an environment capability | Tower rejects a Bearer header before JSON parsing and non-loopback binds are refused | Move to an owner-restricted Unix socket and credential file before M5 freeze |
 | Daemon prototype serializes SQLite with a mutex on blocking workers | Safe for the two-method operator slice, not chain watcher concurrency | Introduce the ADR-0003 single writer actor and atomic outbox before mutations expand |

@@ -18,6 +18,10 @@ flowchart LR
     Schedule --> Domain
     Domain -->|"yes"| Compare["Compare within one consensus domain"]
     Domain -->|"no"| ClockError["WrongDeadlineClock"]
+    Seconds["Negotiated UnixSeconds"] -->|"checked × 1000"| GuestMs["Exact LEZ guest deadline ms"]
+    LezMs["Observed LEZ Unix ms"] -->|"floor"| Observation
+    LezMs -->|"ceil earlier-latest"| Bounds
+    Seconds -->|"overflow"| Reject["TimestampConversionOverflow"]
 ```
 
 ## Context
@@ -53,6 +57,16 @@ earlier and Zcash as later, exactly matching RFP F4 even when trade direction
 swaps participant roles. These values validate negotiated terms; runtime expiry
 still uses only the relevant chain's typed consensus position.
 
+LEZ v0.1.2 exposes Unix milliseconds while negotiated terms and conservative
+cross-chain projections use whole Unix seconds. The core therefore uses
+`UnixSeconds` and `LezUnixMilliseconds` wrappers with no implicit conversion.
+Profile-generated guest deadlines use checked `seconds × 1000`, actual LEZ
+observations floor to whole seconds, and an earlier-refund-latest bound ceils to
+whole seconds. Profile deadlines are whole seconds, so the guest rejects at
+`deadline_ms - 1` and admits at exactly `deadline_ms`; overflow aborts term
+construction rather than wrapping. Explicit floor/ceil APIs prevent callers
+from silently choosing a less-conservative projection.
+
 ## Consequences
 
 Pair adapters own conversion from current tips/timestamps and reviewed network
@@ -62,7 +76,8 @@ boundary tests; unsafe arithmetic, zero margin, wrong role chain, wrong
 construction order, or wrong clock domain is rejected.
 
 The prototype coordinator, persisted aggregate, RPC requests, CLI clock-basis inputs, and
-refund transitions use the typed schedule. Four focused schedule tests, two ZEC
+refund transitions use the typed schedule. Four focused schedule tests, three
+LEZ timestamp conversion/boundary tests, two ZEC
 contract-order regressions, and the scenario/property/restart/operator suites
 cover the integration. Named network parameters for public testnets are fixed in
 the M1 profile; mainnet remains disabled pending telemetry and formal review.
