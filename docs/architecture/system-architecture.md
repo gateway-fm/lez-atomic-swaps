@@ -287,7 +287,7 @@ flowchart LR
     ZebraE2E["Stable actual Zebra E2E RPC snapshot"] --> Validator
     Validator --> Watcher["Stable-tip two-phase watcher"]
     Watcher --> Record["Validated primitive event record v1"]
-    Record -.-> Journal["Versioned SQLite ZEC event journal"]
+    Record --> Journal["Versioned SQLite ZEC event journal"]
     Journal -.-> Projection["Direction-aware core projection"]
     Validator --> Observe["Bound canonical/removal evidence"]
     LezDeadline --> Schedule
@@ -296,7 +296,7 @@ flowchart LR
     Schedule -.-> Composed
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Journal,Projection,Composed planned;
+    class Projection,Composed planned;
 ```
 
 The solid profile, validator, stable-tip watcher, and actual Zebra E2E snapshot
@@ -305,8 +305,8 @@ re-decodes canonical bytes and checks the complete network, branch, block,
 outpoint, value, exact script, and derived-depth binding before producing a
 lossy coordinator proof. Public-testnet values are acceptance targets, not
 mainnet recommendations or proof of worst-case cadence. Durable production
-event persistence, role-aware core projection, and composed corridor remain
-dashed M2 work. RPC errors or absence never imply removal: a detach event
+role-aware core projection and the composed corridor remain dashed M2 work. RPC
+errors or absence never imply removal: a detach event
 requires a stable replacement tip and a changed canonical hash at the prior
 inclusion height.
 

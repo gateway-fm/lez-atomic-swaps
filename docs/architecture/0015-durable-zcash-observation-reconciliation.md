@@ -3,8 +3,8 @@
 ## Status
 
 Accepted in part. Stable canonical/removal validation, the two-phase tracker,
-and the version-1 primitive event record are implemented; the SQLite event
-journal and direction-aware core projection remain M2 work.
+the version-1 primitive event record, and the atomic SQLite event journal are
+implemented; direction-aware core projection remains M2 work.
 
 ## Context
 
@@ -90,8 +90,10 @@ sequenceDiagram
 
 - A transient RPC failure cannot manufacture a removal.
 - Confirmation-only changes are durable events; identical polls are suppressed.
+- Journal replay identity includes the predecessor revision; identical evidence
+  after an intervening removal/update is retained as a new transition.
 - Stale removal evidence and unproved replacements fail closed.
 - Reverse-direction ZEC needs maker-funded removal semantics in core; mapping
   every ZEC removal to the existing taker-lock API is explicitly forbidden.
-- SQLite schema migration, atomic commit/revision tests, and actual
-  two-Zebra restart evidence remain required before this ADR is fully proven.
+- Direction-aware core reorg projection and actual two-Zebra store/restart
+  evidence remain required before this ADR is fully proven.

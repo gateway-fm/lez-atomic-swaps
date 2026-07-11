@@ -312,10 +312,15 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   known branch, height-derived nonzero depth, raw transaction/txid, outpoint,
   value, and script bindings; loaded records remain historical until fresh RPC
   reconciliation.
-- [ ] Persist the versioned event record and swap transition atomically in
-  SQLite, including migration, revision, commit-failure, replay, and restart
-  tests. Then add funded-role-aware core removal projection for both ZEC
-  directions.
+- [x] Persist each versioned ZEC event and its swap aggregate revision in one
+  immediate SQLite transaction. Schema-v2 tests prove legacy migration, future
+  database/payload rejection, forced update-failure rollback, stale revisions,
+  exact replay after an unknown successful commit, role isolation, and restart
+  loading with record revalidation. Replay is predecessor-revision scoped, so a
+  later identical canonical reappearance remains a new event.
+- [ ] Add funded-role-aware core removal/reappearance projection for both ZEC
+  directions; the existing taker-only removal API must not be used for a
+  maker-funded reverse-direction ZEC leg.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
   nodes. The LEZ
   Unix-millisecond/core Unix-second boundary is typed, checked, conservatively
