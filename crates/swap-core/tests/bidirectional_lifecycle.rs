@@ -1,6 +1,6 @@
 use lez_swap_core::{
-    Chain, ChainPosition, ChainProof, ClaimEvidence, ConfirmationPolicy, Error, Pair, Phase,
-    RefundSchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
+    Chain, ChainEventProof, ChainPosition, ChainProof, ClaimEvidence, ConfirmationPolicy, Error,
+    Pair, Phase, RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 
 #[test]
@@ -33,31 +33,50 @@ fn taker_selling_lez_preserves_taker_first_claim_and_refund_safety() {
         refund
             .observe_maker_lock(ChainProof::new("foreign-maker-lock", 1).unwrap())
             .unwrap();
-        refund
-            .refund_maker_leg(ChainPosition::block_height(Chain::from(pair), 100))
-            .unwrap();
-        assert_eq!(refund.phase(), Phase::MakerLegRefunded);
-        refund
-            .refund_taker_leg(ChainPosition::block_height(Chain::Lez, 120))
-            .unwrap();
+        if pair == Pair::Monero {
+            refund
+                .refund_taker_leg(ChainPosition::block_height(Chain::Lez, 120))
+                .unwrap();
+            refund
+                .observe_taker_refund_for_maker_recovery(
+                    ChainEventProof::new(Chain::Lez, "lez-refund", 2).unwrap(),
+                )
+                .unwrap();
+            refund
+                .observe_maker_recovery(ChainProof::new("xmr-recovery", 10).unwrap())
+                .unwrap();
+        } else {
+            refund
+                .refund_maker_leg(ChainPosition::block_height(Chain::from(pair), 100))
+                .unwrap();
+            assert_eq!(refund.phase(), Phase::MakerLegRefunded);
+            refund
+                .refund_taker_leg(ChainPosition::block_height(Chain::Lez, 120))
+                .unwrap();
+        }
         assert_eq!(refund.phase(), Phase::Refunded);
     }
 }
 
 fn coordinator(pair: Pair, id: &str) -> SwapCoordinator {
-    SwapCoordinator::new_with_direction(
-        SwapId::new(id).unwrap(),
-        pair,
-        SwapDirection::TakerSellsLez,
-        ConfirmationPolicy::new(2).unwrap(),
-        RefundSchedule::new(
+    let schedule = if pair == Pair::Monero {
+        RecoverySchedule::xmr_lez_first(ChainPosition::block_height(Chain::Lez, 120), 2).unwrap()
+    } else {
+        RecoverySchedule::new(
             pair,
             SwapDirection::TakerSellsLez,
             ChainPosition::block_height(Chain::from(pair), 100),
             ChainPosition::block_height(Chain::Lez, 120),
             TimelockSafety::new(1_000, 1_200, 100).unwrap(),
         )
-        .unwrap(),
+        .unwrap()
+    };
+    SwapCoordinator::new_with_direction(
+        SwapId::new(id).unwrap(),
+        pair,
+        SwapDirection::TakerSellsLez,
+        ConfirmationPolicy::new(2).unwrap(),
+        schedule,
     )
 }
 
@@ -67,7 +86,7 @@ fn pre_direction_state_defaults_to_the_original_trade_direction() {
         SwapId::new("legacy-state").unwrap(),
         Pair::Bitcoin,
         ConfirmationPolicy::new(2).unwrap(),
-        RefundSchedule::new(
+        RecoverySchedule::new(
             Pair::Bitcoin,
             SwapDirection::TakerSellsForeign,
             ChainPosition::block_height(Chain::Lez, 100),
@@ -77,7 +96,10 @@ fn pre_direction_state_defaults_to_the_original_trade_direction() {
         .unwrap(),
     );
     let mut encoded = serde_json::to_value(original).unwrap();
-    encoded.as_object_mut().unwrap().remove("direction");
+    let object = encoded.as_object_mut().unwrap();
+    object.remove("direction");
+    let schedule = object.remove("recovery_schedule").unwrap();
+    object.insert("refund_schedule".to_owned(), schedule);
     let recovered: SwapCoordinator = serde_json::from_value(encoded).unwrap();
     assert_eq!(recovered.direction(), SwapDirection::TakerSellsForeign);
 }

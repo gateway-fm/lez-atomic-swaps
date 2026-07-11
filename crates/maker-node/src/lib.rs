@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObjectOwned};
 use lez_swap_core::{
-    Chain, ChainPosition, ClockBasis, ConfirmationPolicy, Pair, Phase, RefundSchedule,
+    Chain, ChainPosition, ClockBasis, ConfirmationPolicy, Error, Pair, Phase, RecoverySchedule,
     SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::SqliteSwapStore;
@@ -89,20 +89,40 @@ pub struct CreateSwapRequest {
     pub direction: SwapDirection,
     /// Confirmations required before maker lock.
     pub confirmations: u32,
-    /// Maker-leg refund clock basis.
-    pub maker_refund_basis: ClockBasis,
-    /// Earlier maker-leg refund position.
-    pub maker_refund_at: u64,
-    /// Taker-leg refund clock basis.
-    pub taker_refund_basis: ClockBasis,
-    /// Later taker-leg refund position.
-    pub taker_refund_at: u64,
-    /// Conservative latest Unix time when the maker refund becomes usable.
-    pub maker_refund_latest: u64,
-    /// Conservative earliest Unix time when the taker refund becomes usable.
-    pub taker_refund_earliest: u64,
-    /// Required user/chain reaction margin in seconds.
-    pub required_margin: u64,
+    /// Pair-appropriate deadline or event-gated recovery terms.
+    pub recovery: RecoveryRequest,
+}
+
+/// Operator-facing recovery terms. XMR cannot carry a fake Monero deadline.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RecoveryRequest {
+    /// Deadline-bearing BTC/ZEC recovery terms.
+    Deadlines {
+        /// Maker-leg refund clock basis.
+        maker_refund_basis: ClockBasis,
+        /// Earlier maker-leg refund position.
+        maker_refund_at: u64,
+        /// Taker-leg refund clock basis.
+        taker_refund_basis: ClockBasis,
+        /// Later taker-leg refund position.
+        taker_refund_at: u64,
+        /// Conservative latest Unix time when the maker refund becomes usable.
+        maker_refund_latest: u64,
+        /// Conservative earliest Unix time when the taker refund becomes usable.
+        taker_refund_earliest: u64,
+        /// Required user/chain reaction margin in seconds.
+        required_margin: u64,
+    },
+    /// LEZ-first XMR terms whose maker recovery follows a canonical LEZ refund.
+    XmrLezFirst {
+        /// Taker's LEZ refund clock basis.
+        taker_refund_basis: ClockBasis,
+        /// Taker's LEZ refund position.
+        taker_refund_at: u64,
+        /// LEZ refund confirmations before Monero key-share recovery.
+        refund_event_confirmations: u32,
+    },
 }
 
 /// Parameters for reading one swap.
@@ -124,36 +144,10 @@ pub fn rpc_module(context: MakerRpc) -> anyhow::Result<RpcModule<MakerRpc>> {
         |params, context, _| {
             let request: CreateSwapRequest = params.one()?;
 
+            let schedule = recovery_schedule(&request).map_err(invalid_request)?;
             let id = SwapId::new(request.id).map_err(invalid_request)?;
             let confirmations =
                 ConfirmationPolicy::new(request.confirmations).map_err(invalid_request)?;
-            let foreign = Chain::from(request.pair);
-            let role_chains = match request.direction {
-                SwapDirection::TakerSellsForeign => [Chain::Lez, foreign],
-                SwapDirection::TakerSellsLez => [foreign, Chain::Lez],
-            };
-            let safety = TimelockSafety::new(
-                request.maker_refund_latest,
-                request.taker_refund_earliest,
-                request.required_margin,
-            )
-            .map_err(invalid_request)?;
-            let schedule = RefundSchedule::new(
-                request.pair,
-                request.direction,
-                position(
-                    role_chains[0],
-                    request.maker_refund_basis,
-                    request.maker_refund_at,
-                ),
-                position(
-                    role_chains[1],
-                    request.taker_refund_basis,
-                    request.taker_refund_at,
-                ),
-                safety,
-            )
-            .map_err(invalid_request)?;
             let swap = SwapCoordinator::new_with_direction(
                 id,
                 request.pair,
@@ -193,6 +187,58 @@ pub fn rpc_module(context: MakerRpc) -> anyhow::Result<RpcModule<MakerRpc>> {
         },
     )?;
     Ok(module)
+}
+
+fn recovery_schedule(request: &CreateSwapRequest) -> Result<RecoverySchedule, Error> {
+    match (&request.recovery, request.pair, request.direction) {
+        (_, Pair::Monero, SwapDirection::TakerSellsForeign) => Err(Error::UnsupportedDirection {
+            pair: request.pair,
+            direction: request.direction,
+        }),
+        (
+            RecoveryRequest::XmrLezFirst {
+                taker_refund_basis,
+                taker_refund_at,
+                refund_event_confirmations,
+            },
+            Pair::Monero,
+            SwapDirection::TakerSellsLez,
+        ) => RecoverySchedule::xmr_lez_first(
+            position(Chain::Lez, *taker_refund_basis, *taker_refund_at),
+            *refund_event_confirmations,
+        ),
+        (RecoveryRequest::XmrLezFirst { .. }, _, _) => Err(Error::RecoveryRequiresTakerRefundEvent),
+        (
+            RecoveryRequest::Deadlines {
+                maker_refund_basis,
+                maker_refund_at,
+                taker_refund_basis,
+                taker_refund_at,
+                maker_refund_latest,
+                taker_refund_earliest,
+                required_margin,
+            },
+            pair,
+            direction,
+        ) => {
+            let foreign = Chain::from(pair);
+            let role_chains = match direction {
+                SwapDirection::TakerSellsForeign => [Chain::Lez, foreign],
+                SwapDirection::TakerSellsLez => [foreign, Chain::Lez],
+            };
+            RecoverySchedule::new(
+                pair,
+                direction,
+                position(role_chains[0], *maker_refund_basis, *maker_refund_at),
+                position(role_chains[1], *taker_refund_basis, *taker_refund_at),
+                TimelockSafety::new(
+                    *maker_refund_latest,
+                    *taker_refund_earliest,
+                    *required_margin,
+                )?,
+            )
+        }
+    }
 }
 
 fn position(chain: Chain, basis: ClockBasis, value: u64) -> ChainPosition {

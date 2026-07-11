@@ -1,6 +1,6 @@
 use lez_swap_core::{
     Chain, ChainPosition, ChainProof, ClaimEvidence, ConfirmationPolicy, Error, Pair, Phase,
-    RefundSchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
+    RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 
 fn coordinator(pair: Pair) -> SwapCoordinator {
@@ -22,13 +22,17 @@ fn supported_direction(pair: Pair) -> SwapDirection {
     }
 }
 
-fn schedule(pair: Pair, direction: SwapDirection) -> RefundSchedule {
+fn schedule(pair: Pair, direction: SwapDirection) -> RecoverySchedule {
+    if pair == Pair::Monero {
+        return RecoverySchedule::xmr_lez_first(ChainPosition::block_height(Chain::Lez, 120), 2)
+            .unwrap();
+    }
     let foreign = Chain::from(pair);
     let (maker_chain, taker_chain) = match direction {
         SwapDirection::TakerSellsForeign => (Chain::Lez, foreign),
         SwapDirection::TakerSellsLez => (foreign, Chain::Lez),
     };
-    RefundSchedule::new(
+    RecoverySchedule::new(
         pair,
         direction,
         ChainPosition::block_height(maker_chain, 100),

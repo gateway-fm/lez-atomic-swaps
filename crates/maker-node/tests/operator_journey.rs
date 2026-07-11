@@ -42,6 +42,20 @@ fn maker_cli_controls_authenticated_daemon_and_survives_restart() {
     let reverse_view: Value = serde_json::from_slice(&reverse.stdout).expect("CLI emits JSON");
     assert_eq!(reverse_view["direction"], "TakerSellsLez");
 
+    let xmr = create_swap(
+        &first_endpoint,
+        "operator-xmr-event-recovery",
+        "monero",
+        Some("taker-sells-lez"),
+    );
+    assert_success(&xmr);
+    assert_swap_view(
+        &xmr.stdout,
+        "operator-xmr-event-recovery",
+        "Monero",
+        "Offered",
+    );
+
     let unsupported_xmr_first = create_swap(
         &first_endpoint,
         "unsafe-xmr-first",
@@ -102,17 +116,23 @@ fn create_swap(endpoint: &str, id: &str, pair: &str, direction: Option<&str>) ->
         pair,
         "--confirmations",
         "2",
-        "--maker-refund-at",
-        "100",
         "--taker-refund-at",
         "120",
-        "--maker-refund-latest",
-        "1000",
-        "--taker-refund-earliest",
-        "1200",
-        "--required-margin",
-        "100",
     ];
+    if pair == "monero" {
+        arguments.extend(["--xmr-refund-event-confirmations", "2"]);
+    } else {
+        arguments.extend([
+            "--maker-refund-at",
+            "100",
+            "--maker-refund-latest",
+            "1000",
+            "--taker-refund-earliest",
+            "1200",
+            "--required-margin",
+            "100",
+        ]);
+    }
     if let Some(direction) = direction {
         arguments.extend(["--direction", direction]);
     }

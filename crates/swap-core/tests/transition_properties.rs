@@ -1,6 +1,6 @@
 use lez_swap_core::{
     Chain, ChainPosition, ChainProof, ClaimEvidence, ConfirmationPolicy, Pair, Phase,
-    RefundSchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
+    RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 use proptest::prelude::*;
 
@@ -38,7 +38,7 @@ fn coordinator() -> SwapCoordinator {
         SwapId::new("property-swap").unwrap(),
         Pair::Bitcoin,
         ConfirmationPolicy::new(2).unwrap(),
-        RefundSchedule::new(
+        RecoverySchedule::new(
             Pair::Bitcoin,
             SwapDirection::TakerSellsForeign,
             ChainPosition::block_height(Chain::Lez, 100),
@@ -145,6 +145,9 @@ proptest! {
                     }
                     Phase::TakerLegRefunded => {
                         prop_assert!(matches!(before, Phase::BothLegsLocked | Phase::TakerLockReorged));
+                    }
+                    Phase::MakerRecoveryAvailable => {
+                        prop_assert!(false, "generated BTC model has no event-gated recovery action");
                     }
                     Phase::Refunded => {
                         prop_assert!(matches!(

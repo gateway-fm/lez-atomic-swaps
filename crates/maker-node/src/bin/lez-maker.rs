@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use jsonrpsee::{core::client::ClientT, rpc_params};
 use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClientBuilder};
-use lez_maker_node::{CreateSwapRequest, StatusRequest, SwapView};
+use lez_maker_node::{CreateSwapRequest, RecoveryRequest, StatusRequest, SwapView};
 use lez_swap_core::{ClockBasis, Pair, SwapDirection};
 
 #[derive(Parser)]
@@ -26,20 +26,22 @@ enum Command {
         direction: DirectionArgument,
         #[arg(long)]
         confirmations: u32,
-        #[arg(long, value_enum, default_value_t = ClockArgument::BlockHeight)]
-        maker_refund_basis: ClockArgument,
+        #[arg(long, value_enum)]
+        maker_refund_basis: Option<ClockArgument>,
         #[arg(long)]
-        maker_refund_at: u64,
+        maker_refund_at: Option<u64>,
         #[arg(long, value_enum, default_value_t = ClockArgument::BlockHeight)]
         taker_refund_basis: ClockArgument,
         #[arg(long)]
         taker_refund_at: u64,
         #[arg(long)]
-        maker_refund_latest: u64,
+        maker_refund_latest: Option<u64>,
         #[arg(long)]
-        taker_refund_earliest: u64,
+        taker_refund_earliest: Option<u64>,
         #[arg(long)]
-        required_margin: u64,
+        required_margin: Option<u64>,
+        #[arg(long)]
+        xmr_refund_event_confirmations: Option<u32>,
     },
     Status {
         #[arg(long)]
@@ -119,19 +121,55 @@ async fn main() -> anyhow::Result<()> {
             maker_refund_latest,
             taker_refund_earliest,
             required_margin,
+            xmr_refund_event_confirmations,
         } => {
+            let pair: Pair = pair.into();
+            let direction: SwapDirection = direction.into();
+            let recovery = if pair == Pair::Monero {
+                anyhow::ensure!(
+                    direction == SwapDirection::TakerSellsLez,
+                    "Monero does not support direction {direction:?}"
+                );
+                anyhow::ensure!(
+                    maker_refund_basis.is_none()
+                        && maker_refund_at.is_none()
+                        && maker_refund_latest.is_none()
+                        && taker_refund_earliest.is_none()
+                        && required_margin.is_none(),
+                    "Monero recovery is event-gated and does not accept maker deadline fields"
+                );
+                RecoveryRequest::XmrLezFirst {
+                    taker_refund_basis: taker_refund_basis.into(),
+                    taker_refund_at,
+                    refund_event_confirmations: xmr_refund_event_confirmations.unwrap_or(2),
+                }
+            } else {
+                anyhow::ensure!(
+                    xmr_refund_event_confirmations.is_none(),
+                    "XMR refund-event confirmations apply only to Monero"
+                );
+                RecoveryRequest::Deadlines {
+                    maker_refund_basis: maker_refund_basis
+                        .unwrap_or(ClockArgument::BlockHeight)
+                        .into(),
+                    maker_refund_at: maker_refund_at
+                        .ok_or_else(|| anyhow::anyhow!("--maker-refund-at is required"))?,
+                    taker_refund_basis: taker_refund_basis.into(),
+                    taker_refund_at,
+                    maker_refund_latest: maker_refund_latest
+                        .ok_or_else(|| anyhow::anyhow!("--maker-refund-latest is required"))?,
+                    taker_refund_earliest: taker_refund_earliest
+                        .ok_or_else(|| anyhow::anyhow!("--taker-refund-earliest is required"))?,
+                    required_margin: required_margin
+                        .ok_or_else(|| anyhow::anyhow!("--required-margin is required"))?,
+                }
+            };
             let request = CreateSwapRequest {
                 id: id.into(),
-                pair: pair.into(),
-                direction: direction.into(),
+                pair,
+                direction,
                 confirmations,
-                maker_refund_basis: maker_refund_basis.into(),
-                maker_refund_at,
-                taker_refund_basis: taker_refund_basis.into(),
-                taker_refund_at,
-                maker_refund_latest,
-                taker_refund_earliest,
-                required_margin,
+                recovery,
             };
             client.request("swap_create", rpc_params![request]).await?
         }

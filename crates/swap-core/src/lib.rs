@@ -147,16 +147,30 @@ impl TimelockSafety {
     }
 }
 
-/// Typed pair/direction-aware refund schedule.
+/// Condition that makes recovery of the maker-funded leg available.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RefundSchedule {
-    maker_refund: ChainPosition,
-    taker_refund: ChainPosition,
-    safety: TimelockSafety,
+pub enum MakerRecoveryTrigger {
+    /// A consensus deadline on the maker-funded leg.
+    Deadline(ChainPosition),
+    /// The XMR maker recovery becomes available after the taker's LEZ refund is canonical.
+    CanonicalTakerRefund {
+        /// Chain on which the taker refund must be observed.
+        chain: Chain,
+        /// Confirmations required before using the recovered Monero key share.
+        required_confirmations: u32,
+    },
 }
 
-impl RefundSchedule {
-    /// Creates a schedule and verifies that role deadlines belong to the expected chains.
+/// Typed pair/direction-aware recovery schedule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoverySchedule {
+    maker_trigger: MakerRecoveryTrigger,
+    taker_refund: ChainPosition,
+    safety: Option<TimelockSafety>,
+}
+
+impl RecoverySchedule {
+    /// Creates a deadline-based schedule for BTC or ZEC and verifies role chains.
     ///
     /// # Errors
     ///
@@ -168,8 +182,12 @@ impl RefundSchedule {
         taker_refund: ChainPosition,
         safety: TimelockSafety,
     ) -> Result<Self, Error> {
-        if pair == Pair::Monero && direction == SwapDirection::TakerSellsForeign {
-            return Err(Error::UnsupportedDirection { pair, direction });
+        if pair == Pair::Monero {
+            return if direction == SwapDirection::TakerSellsForeign {
+                Err(Error::UnsupportedDirection { pair, direction })
+            } else {
+                Err(Error::RecoveryRequiresTakerRefundEvent)
+            };
         }
         let foreign = Chain::from(pair);
         let expected_chains = match direction {
@@ -191,19 +209,60 @@ impl RefundSchedule {
             });
         }
         Ok(Self {
-            maker_refund,
+            maker_trigger: MakerRecoveryTrigger::Deadline(maker_refund),
             taker_refund,
-            safety,
+            safety: Some(safety),
         })
     }
 
-    /// Tests the maker deadline against a position in exactly the same chain clock.
+    /// Creates the reviewed LEZ-first XMR recovery schedule.
+    ///
+    /// # Errors
+    ///
+    /// Returns a wrong-chain or invalid-confirmation error when the taker's refund is not a
+    /// non-zero-confirmation LEZ event.
+    pub fn xmr_lez_first(
+        taker_refund: ChainPosition,
+        required_event_confirmations: u32,
+    ) -> Result<Self, Error> {
+        if taker_refund.chain != Chain::Lez {
+            return Err(Error::WrongRefundChain {
+                role: "taker",
+                expected: Chain::Lez,
+                actual: taker_refund.chain,
+            });
+        }
+        if required_event_confirmations == 0 {
+            return Err(Error::InvalidConfirmationPolicy);
+        }
+        Ok(Self {
+            maker_trigger: MakerRecoveryTrigger::CanonicalTakerRefund {
+                chain: Chain::Lez,
+                required_confirmations: required_event_confirmations,
+            },
+            taker_refund,
+            safety: None,
+        })
+    }
+
+    /// Returns the maker-funded leg's recovery trigger.
+    #[must_use]
+    pub const fn maker_trigger(self) -> MakerRecoveryTrigger {
+        self.maker_trigger
+    }
+
+    /// Tests a deadline-based maker recovery against the same chain clock.
     ///
     /// # Errors
     ///
     /// Returns [`Error::WrongDeadlineClock`] instead of comparing unrelated raw numbers.
-    pub fn maker_refund_reached(self, observed: ChainPosition) -> Result<bool, Error> {
-        deadline_reached(self.maker_refund, observed)
+    pub fn maker_deadline_reached(self, observed: ChainPosition) -> Result<bool, Error> {
+        match self.maker_trigger {
+            MakerRecoveryTrigger::Deadline(deadline) => deadline_reached(deadline, observed),
+            MakerRecoveryTrigger::CanonicalTakerRefund { .. } => {
+                Err(Error::RecoveryRequiresTakerRefundEvent)
+            }
+        }
     }
 
     /// Tests the taker deadline against a position in exactly the same chain clock.
@@ -251,6 +310,8 @@ pub enum Phase {
     TakerLegRefunded,
     /// Both parties recovered their original funds.
     Refunded,
+    /// A canonical taker refund exposed the material needed for maker recovery.
+    MakerRecoveryAvailable,
 }
 
 /// Protocol validation or transition error.
@@ -309,6 +370,21 @@ pub enum Error {
     /// A refund was attempted before its deadline.
     #[error("refund timelock has not expired")]
     TimelockNotExpired,
+    /// The maker-funded leg is recovered from a canonical taker-refund event, not a deadline.
+    #[error("maker recovery requires a canonical taker refund event")]
+    RecoveryRequiresTakerRefundEvent,
+    /// A recovery event was observed on the wrong chain.
+    #[error("recovery event uses {actual:?}; expected {expected:?}")]
+    WrongRecoveryEventChain { expected: Chain, actual: Chain },
+    /// A recovery event has not reached its configured canonicality policy.
+    #[error("recovery event has {actual} confirmations; requires {required}")]
+    InsufficientRecoveryEventConfirmations { required: u32, actual: u32 },
+    /// A different taker refund event was presented for the same swap.
+    #[error("conflicting taker refund event")]
+    ConflictingTakerRefundEvent,
+    /// A different maker recovery transaction was presented for the same swap.
+    #[error("conflicting maker recovery transaction")]
+    ConflictingMakerRecovery,
 }
 
 /// Stable application-level swap identifier.
@@ -341,6 +417,49 @@ impl SwapId {
 pub struct ChainProof {
     transaction_id: Box<str>,
     confirmations: u32,
+}
+
+/// Chain-typed event evidence used by event-gated recovery.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChainEventProof {
+    chain: Chain,
+    proof: ChainProof,
+}
+
+impl ChainEventProof {
+    /// Creates chain-typed transaction evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidIdentifier`] when the transaction ID is invalid.
+    pub fn new(
+        chain: Chain,
+        transaction_id: impl Into<Box<str>>,
+        confirmations: u32,
+    ) -> Result<Self, Error> {
+        Ok(Self {
+            chain,
+            proof: ChainProof::new(transaction_id, confirmations)?,
+        })
+    }
+
+    /// Chain on which the event occurred.
+    #[must_use]
+    pub const fn chain(&self) -> Chain {
+        self.chain
+    }
+
+    /// Event transaction identifier.
+    #[must_use]
+    pub fn transaction_id(&self) -> &str {
+        self.proof.transaction_id()
+    }
+
+    /// Canonical confirmation count.
+    #[must_use]
+    pub const fn confirmations(&self) -> u32 {
+        self.proof.confirmations()
+    }
 }
 
 impl ChainProof {
@@ -429,7 +548,8 @@ pub struct SwapCoordinator {
     #[serde(default)]
     direction: SwapDirection,
     confirmation_policy: ConfirmationPolicy,
-    refund_schedule: RefundSchedule,
+    #[serde(alias = "refund_schedule")]
+    recovery_schedule: RecoverySchedule,
     phase: Phase,
     #[serde(default)]
     taker_lock_transaction_id: Option<Box<str>>,
@@ -439,6 +559,10 @@ pub struct SwapCoordinator {
     claim_evidence: Option<ClaimEvidence>,
     #[serde(default)]
     taker_lez_claim_transaction_id: Option<Box<str>>,
+    #[serde(default)]
+    taker_refund_event_transaction_id: Option<Box<str>>,
+    #[serde(default)]
+    maker_recovery_transaction_id: Option<Box<str>>,
 }
 
 impl SwapCoordinator {
@@ -448,19 +572,21 @@ impl SwapCoordinator {
         id: SwapId,
         pair: Pair,
         confirmation_policy: ConfirmationPolicy,
-        refund_schedule: RefundSchedule,
+        recovery_schedule: RecoverySchedule,
     ) -> Self {
         Self {
             id,
             pair,
             direction: SwapDirection::TakerSellsForeign,
             confirmation_policy,
-            refund_schedule,
+            recovery_schedule,
             phase: Phase::Offered,
             taker_lock_transaction_id: None,
             maker_lez_lock_transaction_id: None,
             claim_evidence: None,
             taker_lez_claim_transaction_id: None,
+            taker_refund_event_transaction_id: None,
+            maker_recovery_transaction_id: None,
         }
     }
 
@@ -471,19 +597,21 @@ impl SwapCoordinator {
         pair: Pair,
         direction: SwapDirection,
         confirmation_policy: ConfirmationPolicy,
-        refund_schedule: RefundSchedule,
+        recovery_schedule: RecoverySchedule,
     ) -> Self {
         Self {
             id,
             pair,
             direction,
             confirmation_policy,
-            refund_schedule,
+            recovery_schedule,
             phase: Phase::Offered,
             taker_lock_transaction_id: None,
             maker_lez_lock_transaction_id: None,
             claim_evidence: None,
             taker_lez_claim_transaction_id: None,
+            taker_refund_event_transaction_id: None,
+            maker_recovery_transaction_id: None,
         }
     }
 
@@ -692,7 +820,7 @@ impl SwapCoordinator {
                 actual: self.phase,
             });
         }
-        if !self.refund_schedule.maker_refund_reached(observed)? {
+        if !self.recovery_schedule.maker_deadline_reached(observed)? {
             return Err(Error::TimelockNotExpired);
         }
         self.phase = if self.phase == Phase::TakerLegRefunded {
@@ -700,6 +828,90 @@ impl SwapCoordinator {
         } else {
             Phase::MakerLegRefunded
         };
+        Ok(())
+    }
+
+    /// Records the canonical taker refund that unlocks event-gated maker recovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns a wrong-chain, insufficient-confirmation, conflicting-evidence, or invalid-phase
+    /// error when the evidence does not satisfy the immutable recovery trigger.
+    pub fn observe_taker_refund_for_maker_recovery(
+        &mut self,
+        evidence: ChainEventProof,
+    ) -> Result<(), Error> {
+        let MakerRecoveryTrigger::CanonicalTakerRefund {
+            chain,
+            required_confirmations,
+        } = self.recovery_schedule.maker_trigger()
+        else {
+            return Err(Error::InvalidPhase {
+                expected: Phase::TakerLegRefunded,
+                actual: self.phase,
+            });
+        };
+        if evidence.chain() != chain {
+            return Err(Error::WrongRecoveryEventChain {
+                expected: chain,
+                actual: evidence.chain(),
+            });
+        }
+        if self
+            .taker_refund_event_transaction_id
+            .as_deref()
+            .is_some_and(|known| known != evidence.transaction_id())
+        {
+            return Err(Error::ConflictingTakerRefundEvent);
+        }
+        if evidence.confirmations() < required_confirmations {
+            if self.phase == Phase::MakerRecoveryAvailable {
+                self.phase = Phase::TakerLegRefunded;
+                return Ok(());
+            }
+            return Err(Error::InsufficientRecoveryEventConfirmations {
+                required: required_confirmations,
+                actual: evidence.confirmations(),
+            });
+        }
+        if self.phase == Phase::MakerRecoveryAvailable || self.phase == Phase::Refunded {
+            return Ok(());
+        }
+        if self.phase != Phase::TakerLegRefunded {
+            return Err(Error::InvalidPhase {
+                expected: Phase::TakerLegRefunded,
+                actual: self.phase,
+            });
+        }
+        self.taker_refund_event_transaction_id = Some(evidence.proof.transaction_id);
+        self.phase = Phase::MakerRecoveryAvailable;
+        Ok(())
+    }
+
+    /// Records the maker's completed recovery transaction after an event-gated refund.
+    ///
+    /// # Errors
+    ///
+    /// Returns a conflicting-evidence or invalid-phase error until maker recovery is available.
+    pub fn observe_maker_recovery(&mut self, proof: ChainProof) -> Result<(), Error> {
+        if self
+            .maker_recovery_transaction_id
+            .as_deref()
+            .is_some_and(|known| known != proof.transaction_id())
+        {
+            return Err(Error::ConflictingMakerRecovery);
+        }
+        if self.phase == Phase::Refunded && self.maker_recovery_transaction_id.is_some() {
+            return Ok(());
+        }
+        if self.phase != Phase::MakerRecoveryAvailable {
+            return Err(Error::InvalidPhase {
+                expected: Phase::MakerRecoveryAvailable,
+                actual: self.phase,
+            });
+        }
+        self.maker_recovery_transaction_id = Some(proof.transaction_id);
+        self.phase = Phase::Refunded;
         Ok(())
     }
 
@@ -722,7 +934,7 @@ impl SwapCoordinator {
                 actual: self.phase,
             });
         }
-        if !self.refund_schedule.taker_refund_reached(observed)? {
+        if !self.recovery_schedule.taker_refund_reached(observed)? {
             return Err(Error::TimelockNotExpired);
         }
         self.phase = if matches!(

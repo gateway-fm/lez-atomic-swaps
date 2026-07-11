@@ -11,7 +11,7 @@ flowchart LR
     Bounds["Maker-latest / taker-earliest / required margin"] --> Check{"Conservative safety inequality"}
     Maker --> Check
     Taker --> Check
-    Check -->|"safe"| Schedule["Persist typed RefundSchedule"]
+    Check -->|"safe"| Schedule["Persist typed RecoverySchedule"]
     Check -->|"unsafe"| Reject["Reject negotiated terms"]
     Observation["Runtime chain position"] --> Domain{"Same chain and clock basis?"}
     Schedule --> Domain
@@ -30,7 +30,7 @@ also requires variance, congestion, reorgs, and drift to be explicit.
 
 Every consensus-deadline refund point is a `ChainPosition { chain, basis, value }`, where basis is
 block height or consensus timestamp. Deadline checks reject a different chain or
-basis instead of comparing raw values. `RefundSchedule` maps maker/taker roles to
+basis instead of comparing raw values. `RecoverySchedule` maps maker/taker roles to
 LEZ/foreign chains using immutable `SwapDirection`.
 
 This does not apply to a maker-funded Monero output: Monero has no native refund

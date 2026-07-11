@@ -1,6 +1,6 @@
 # ADR 0011: Deadline and event-gated recovery profiles
 
-Status: Accepted; core representation refactor pending — 2026-07-11
+Status: Accepted and represented in core — 2026-07-11
 
 ```mermaid
 flowchart TB
@@ -36,8 +36,9 @@ telemetry, fee/reorg stress tests, value policy, and formal review are complete.
 
 ## Consequences
 
-The current generic `RefundSchedule` remains useful for BTC/ZEC tests but must be
-refactored to `RecoverySchedule` before XMR implementation. RED tests first
-assert that XMR has no Monero deadline, cannot recover before canonical LEZ
-refund evidence, can recover after restart, and rejects XMR-first terms. No API,
-CLI, or serialized state may expose a fake Monero deadline after that migration.
+`RecoverySchedule` represents both variants without accepting a Monero deadline.
+RED tests assert that XMR cannot recover before canonical LEZ refund evidence,
+revokes availability if confirmations regress before maker recovery, can recover
+after restart, and rejects XMR-first terms. The maker RPC uses tagged
+deadline/XMR-event requests, so the actual CLI does not expose a required fake
+Monero deadline.
