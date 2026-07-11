@@ -20,12 +20,18 @@ flowchart LR
     SPEL["SPEL v0.5.0"] --> Compat["LEZ v0.1.2 compatibility lane"]
     Compat --> CompatAudit["Exact pins + feature-locked security audit"]
     CompatAudit --> IDL["Generated IDL + client"]
-    IDL --> Escrow["Authenticated-transfer + official ATA custody TDD"]
-    Native["Live testnet needs reviewed SPEL/LEZ v0.2 compatibility pin"] -.-> Escrow
-    Escrow -.-> LezTest["LEZ testnet 0.2"]
+    IDL --> Escrow["SPEL escrow metadata + owner-role client"]
+    Escrow --> NativeCustody["Native custody PDA via authenticated transfer"]
+    Escrow --> TokenCustody["ATA(metadata, definition) via ATA -> token nested call"]
+    NativeCustody --> LocalProof["GREEN composed upstream-program tests"]
+    TokenCustody --> LocalProof
+    LocalProof -.-> Guest["Canonical Risc0 guest ELF + program ID"]
+    Guest -.-> LocalSeq["Ephemeral v0.1.2 standalone sequencer"]
+    Port["Rebuild SPEL/guest/client for LEZ v0.2 PDA + ABI"] -.-> LezTest["LEZ testnet 0.2"]
+    Native["Reviewed SPEL/LEZ v0.2 compatibility pin"] -.-> Port
     Drift["LEZ dev + current Zebra scheduled drift lanes"] -.-> Tests
     Tests --> Roles["Independent maker/taker happy, refund, concurrency E2E"]
-    Escrow --> Roles
+    LocalSeq -.-> Roles
     Zebra --> Roles
 ```
 
@@ -94,13 +100,29 @@ implementation: native user accounts were incorrectly swap-program-owned and
 custom custody was a direct token holding rather than an ATA. Exact v0.1.2 does
 ship canonical `authenticated_transfer`, PDA delegation, `ata_core`, the ATA
 program, wallet flows, and standalone tests. A replacement RED-GREEN cycle uses
-those upstream primitives rather than preserving the false green.
+those upstream primitives rather than preserving the false green. The
+replacement is now green locally: native funding/release composes canonical
+authenticated transfer; custom custody is the exact `ATA(metadata, definition)`;
+tests execute the official ATA outer call and its nested token call for two
+independent definitions; generated clients sign with actor owner accounts and
+never attempt to sign with an ATA. Fixed-destination refunds are permissionless.
 
 Local v0.1.2 compatibility is sufficient for source-correct custody semantics,
 but it is not sufficient for live-testnet completion: upstream SPEL issues #234
 and #237 record v0.5.0 public-signature rejection against the newer testnet. The
 v0.2.0 compatibility upgrade remains an exact-pinned, provisional lane until
-upstream PR #238 is reviewed and merged. The
+upstream PR #238 is reviewed and merged. This is not a runtime-only pin change:
+v0.1.2 derives public PDAs under `/NSSA/v0.2/AccountId/PDA/`, while v0.2.0
+validates `/LEE/v0.2/AccountId/PDA/`. The guest, generated client, account
+derivations, and actor tests must be rebuilt together.
+
+The planned local actor-real lane uses the exact v0.1.2 `sequencer_service`
+standalone path in-process with port `0`, temporary state, and deterministic
+genesis keys. The repository still needs a canonical Risc0 guest ELF build: the current
+fixture is a host library/IDL printer and cannot yet be deployed as a program.
+Instruction cost evidence records deterministic Risc0 user cycles/segments and
+recursively includes chained calls because v0.1.2 does not expose compute units
+through RPC or blocks. The
 accepted LEZ pin forces `rsa 0.9.10` and `tracing-subscriber 0.2.25`; no safe
 compatible pin exists today. The fixture-local policy is permitted only because
 CI proves rzup `publish`/`install` and tracing `fmt`/`ansi` features are absent,

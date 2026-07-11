@@ -210,15 +210,25 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   license, ban, source, exact-commit, and non-exposure checks in CI.
 - [x] RED/GREEN a generated client golden from the evidenced IDL; do not hand
   duplicate the client surface.
-- [ ] RED/GREEN actual-user native LEZ through v0.1.2's canonical
+- [x] RED/GREEN actual-user native LEZ through v0.1.2's canonical
   `authenticated_transfer`: initialize the escrow PDA custody account under that
-  program, fund from a signed user, and release with escrow-PDA delegation.
-- [ ] RED/GREEN two independent custom-token definitions through official
+  program, fund from a signed user, release with escrow-PDA delegation, and keep
+  the immutable-destination refund permissionless.
+- [x] RED/GREEN two independent custom-token definitions through official
   `ata_core`/ATA-program derivation and nested token calls. The custody address
   is `ATA(metadata, definition)` and its account owner is the token program;
-  direct token holdings at an escrow custody PDA do not satisfy RFP F7.
+  direct token holdings at an escrow custody PDA do not satisfy RFP F7. Generated
+  clients sign with owner accounts, never ATAs; refund and ATA creation are
+  permissionless with immutable destinations.
+- [ ] Add the canonical SPEL/Risc0 guest build and checked ELF/program-ID
+  evidence; the current host fixture and IDL printer are not deployable.
 - [ ] Run standalone-sequencer actor tests and record compute units for every
-  instruction against the named LEZ version.
+  instruction against exact v0.1.2 using an in-process ephemeral-port/temp-state
+  service. Record recursive Risc0 cycles/segments because v0.1.2 RPC/blocks do
+  not expose compute units.
+- [ ] Port and rebuild SPEL, guest, generated client, and PDA derivations for LEZ
+  v0.2.0 before live-testnet evidence. v0.1.2 `/NSSA/` and v0.2.0 `/LEE/` PDA
+  domains are incompatible; upstream PR #238 remains provisional/unmerged.
 - [ ] Deploy the evidenced escrow to LEZ testnet 0.2 and retain an immutable
   deployment manifest plus public smoke transaction evidence.
 
@@ -285,6 +295,7 @@ CI and local scripts fail if the project name is empty or does not start with
 | Validity windows are checked at block construction, not RPC admission | Repository-owned native test proves a balance-invalid transaction is admitted then excluded during block construction | Allocate inclusion slack and retain the native admission/block reproducer |
 | Zcash node migration is active | `zcashd` halts before NU6.3; Zallet omits raw-tx builder RPCs; Zebra's 5.x support horizon ends ahead of NU7 | Use pinned 5.2.0 consensus plus local canonical Rust construction in the vulnerability-clean minimal runtime; re-audit releases and final image before public-testnet evidence |
 | SPEL documentation targets older `nssa` paths | SPEL v0.5 docs and current LEZ `dev` disagree | Build a minimal generated program against one pinned compatibility set before escrow implementation |
+| Pinned SPEL guest cannot run on current LEZ testnet | v0.1.2 uses NSSA ABI and `/NSSA/` PDA domain; v0.2.0 uses LEE ABI and `/LEE/`; upstream issues #234/#237 record live signature rejection | Prove locally on exact v0.1.2 standalone, then rebuild the full guest/client/PDA lane on a reviewed v0.2 SPEL release or exact approved successor to PR #238 |
 | Upstream LEZ native sequencer tests compile RocksDB and can contend with host work | Clean native lane passes with two jobs in a unique checkout and no Docker/ports | Keep the two-job cap and do not run the heavy lane alongside detected host compilation |
 | Mainnet deadlines remain uncalibrated | `public-testnet-v1` fixes testnet depths/horizons and conservative bounds; mainnet is deliberately absent | Gather chain telemetry and fee/reorg stress evidence, then require formal review before enabling a mainnet profile |
 | Final E2E must represent actual users | Operator process harness exists; taker and chain lifecycles still call protocol core directly | Extend the role harness through taker CLI and real chain adapters before labeling tests as full E2E |

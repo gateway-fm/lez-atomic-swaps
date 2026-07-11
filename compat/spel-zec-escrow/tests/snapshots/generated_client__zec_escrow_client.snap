@@ -1,6 +1,5 @@
 ---
 source: tests/generated_client.rs
-assertion_line: 5
 expression: generated_client()
 ---
 //! Auto-generated client for the zec_escrow program.
@@ -48,41 +47,103 @@ pub fn compute_custody_pda(program_id: &ProgramId, swap_id: &[u8; 32]) -> Accoun
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ZecEscrowInstruction {
-    Initialize {
+    InitializeNative {
         swap_id: [u8; 32],
         terms_hash: [u8; 32],
         secret_digest: [u8; 32],
         amount: u128,
         refund_at: u64,
-        asset_program: [u32; 8],
-        asset_definition: [u8; 32],
+        authenticated_transfer_program: [u32; 8],
     },
-    ClaimHashlock {
+    FundNative {
+        swap_id: [u8; 32],
+    },
+    ClaimNative {
         swap_id: [u8; 32],
         preimage: [u8; 32],
     },
-    Refund {
+    RefundNative {
+        swap_id: [u8; 32],
+    },
+    InitializeToken {
+        swap_id: [u8; 32],
+        terms_hash: [u8; 32],
+        secret_digest: [u8; 32],
+        amount: u128,
+        refund_at: u64,
+        ata_program: [u32; 8],
+    },
+    CreateTokenCustody {
+        swap_id: [u8; 32],
+    },
+    FundToken {
+        swap_id: [u8; 32],
+    },
+    ClaimToken {
+        swap_id: [u8; 32],
+        preimage: [u8; 32],
+    },
+    RefundToken {
         swap_id: [u8; 32],
     },
 }
 
-pub struct InitializeAccounts {
+pub struct InitializeNativeAccounts {
     pub metadata: AccountId,
+    pub custody: AccountId,
     pub depositor: AccountId,
+    pub claimant: AccountId,
+}
+
+pub struct FundNativeAccounts {
+    pub metadata: AccountId,
+    pub custody: AccountId,
+    pub depositor: AccountId,
+}
+
+pub struct ClaimNativeAccounts {
+    pub metadata: AccountId,
     pub custody: AccountId,
     pub claimant: AccountId,
 }
 
-pub struct ClaimHashlockAccounts {
-    pub metadata: AccountId,
-    pub custody: AccountId,
-    pub claimant: AccountId,
-}
-
-pub struct RefundAccounts {
+pub struct RefundNativeAccounts {
     pub metadata: AccountId,
     pub custody: AccountId,
     pub depositor: AccountId,
+}
+
+pub struct InitializeTokenAccounts {
+    pub metadata: AccountId,
+    pub depositor_owner: AccountId,
+    pub claimant_owner: AccountId,
+    pub token_definition: AccountId,
+}
+
+pub struct CreateTokenCustodyAccounts {
+    pub metadata: AccountId,
+    pub token_definition: AccountId,
+    pub custody: AccountId,
+}
+
+pub struct FundTokenAccounts {
+    pub metadata: AccountId,
+    pub depositor_owner: AccountId,
+    pub depositor_asset: AccountId,
+    pub custody: AccountId,
+}
+
+pub struct ClaimTokenAccounts {
+    pub metadata: AccountId,
+    pub custody: AccountId,
+    pub claimant_owner: AccountId,
+    pub claimant_asset: AccountId,
+}
+
+pub struct RefundTokenAccounts {
+    pub metadata: AccountId,
+    pub custody: AccountId,
+    pub depositor_asset: AccountId,
 }
 
 pub struct ZecEscrowClient<'w> {
@@ -95,30 +156,28 @@ impl<'w> ZecEscrowClient<'w> {
         Self { wallet, program_id }
     }
 
-    pub async fn initialize(
+    pub async fn initialize_native(
         &self,
-        accounts: InitializeAccounts,
+        accounts: InitializeNativeAccounts,
         swap_id: [u8; 32],
         terms_hash: [u8; 32],
         secret_digest: [u8; 32],
         amount: u128,
         refund_at: u64,
-        asset_program: [u32; 8],
-        asset_definition: [u8; 32],
+        authenticated_transfer_program: [u32; 8],
     ) -> Result<String, String> {
-        let instruction = ZecEscrowInstruction::Initialize {
+        let instruction = ZecEscrowInstruction::InitializeNative {
             swap_id,
             terms_hash,
             secret_digest,
             amount,
             refund_at,
-            asset_program,
-            asset_definition,
+            authenticated_transfer_program,
         };
         let mut account_ids: Vec<AccountId> = vec![
             accounts.metadata,
-            accounts.depositor,
             accounts.custody,
+            accounts.depositor,
             accounts.claimant,
         ];
         let signer_ids: Vec<AccountId> = vec![
@@ -142,13 +201,47 @@ impl<'w> ZecEscrowClient<'w> {
         Ok(hex::encode(response.0))
     }
 
-    pub async fn claim_hashlock(
+    pub async fn fund_native(
         &self,
-        accounts: ClaimHashlockAccounts,
+        accounts: FundNativeAccounts,
+        swap_id: [u8; 32],
+    ) -> Result<String, String> {
+        let instruction = ZecEscrowInstruction::FundNative {
+            swap_id,
+        };
+        let mut account_ids: Vec<AccountId> = vec![
+            accounts.metadata,
+            accounts.custody,
+            accounts.depositor,
+        ];
+        let signer_ids: Vec<AccountId> = vec![
+            accounts.depositor,
+        ];
+        let nonces = self.wallet.get_accounts_nonces(signer_ids.clone()).await
+            .map_err(|e| format!("nonces: {}", e))?;
+        let mut signing_keys = Vec::new();
+        for sid in &signer_ids {
+            let key = self.wallet.storage().user_data
+                .get_pub_account_signing_key(*sid)
+                .ok_or_else(|| format!("signing key not found for {}", sid))?;
+            signing_keys.push(key);
+        }
+        let message = Message::try_new(self.program_id, account_ids, nonces, instruction)
+            .map_err(|e| format!("message: {:?}", e))?;
+        let witness_set = WitnessSet::for_message(&message, &signing_keys);
+        let tx = PublicTransaction::new(message, witness_set);
+        let response = self.wallet.sequencer_client.send_transaction(common::transaction::NSSATransaction::Public(tx)).await
+            .map_err(|e| format!("submit: {}", e))?;
+        Ok(hex::encode(response.0))
+    }
+
+    pub async fn claim_native(
+        &self,
+        accounts: ClaimNativeAccounts,
         swap_id: [u8; 32],
         preimage: [u8; 32],
     ) -> Result<String, String> {
-        let instruction = ZecEscrowInstruction::ClaimHashlock {
+        let instruction = ZecEscrowInstruction::ClaimNative {
             swap_id,
             preimage,
         };
@@ -178,12 +271,12 @@ impl<'w> ZecEscrowClient<'w> {
         Ok(hex::encode(response.0))
     }
 
-    pub async fn refund(
+    pub async fn refund_native(
         &self,
-        accounts: RefundAccounts,
+        accounts: RefundNativeAccounts,
         swap_id: [u8; 32],
     ) -> Result<String, String> {
-        let instruction = ZecEscrowInstruction::Refund {
+        let instruction = ZecEscrowInstruction::RefundNative {
             swap_id,
         };
         let mut account_ids: Vec<AccountId> = vec![
@@ -192,7 +285,189 @@ impl<'w> ZecEscrowClient<'w> {
             accounts.depositor,
         ];
         let signer_ids: Vec<AccountId> = vec![
-            accounts.depositor,
+        ];
+        let nonces = self.wallet.get_accounts_nonces(signer_ids.clone()).await
+            .map_err(|e| format!("nonces: {}", e))?;
+        let mut signing_keys = Vec::new();
+        for sid in &signer_ids {
+            let key = self.wallet.storage().user_data
+                .get_pub_account_signing_key(*sid)
+                .ok_or_else(|| format!("signing key not found for {}", sid))?;
+            signing_keys.push(key);
+        }
+        let message = Message::try_new(self.program_id, account_ids, nonces, instruction)
+            .map_err(|e| format!("message: {:?}", e))?;
+        let witness_set = WitnessSet::for_message(&message, &signing_keys);
+        let tx = PublicTransaction::new(message, witness_set);
+        let response = self.wallet.sequencer_client.send_transaction(common::transaction::NSSATransaction::Public(tx)).await
+            .map_err(|e| format!("submit: {}", e))?;
+        Ok(hex::encode(response.0))
+    }
+
+    pub async fn initialize_token(
+        &self,
+        accounts: InitializeTokenAccounts,
+        swap_id: [u8; 32],
+        terms_hash: [u8; 32],
+        secret_digest: [u8; 32],
+        amount: u128,
+        refund_at: u64,
+        ata_program: [u32; 8],
+    ) -> Result<String, String> {
+        let instruction = ZecEscrowInstruction::InitializeToken {
+            swap_id,
+            terms_hash,
+            secret_digest,
+            amount,
+            refund_at,
+            ata_program,
+        };
+        let mut account_ids: Vec<AccountId> = vec![
+            accounts.metadata,
+            accounts.depositor_owner,
+            accounts.claimant_owner,
+            accounts.token_definition,
+        ];
+        let signer_ids: Vec<AccountId> = vec![
+            accounts.depositor_owner,
+        ];
+        let nonces = self.wallet.get_accounts_nonces(signer_ids.clone()).await
+            .map_err(|e| format!("nonces: {}", e))?;
+        let mut signing_keys = Vec::new();
+        for sid in &signer_ids {
+            let key = self.wallet.storage().user_data
+                .get_pub_account_signing_key(*sid)
+                .ok_or_else(|| format!("signing key not found for {}", sid))?;
+            signing_keys.push(key);
+        }
+        let message = Message::try_new(self.program_id, account_ids, nonces, instruction)
+            .map_err(|e| format!("message: {:?}", e))?;
+        let witness_set = WitnessSet::for_message(&message, &signing_keys);
+        let tx = PublicTransaction::new(message, witness_set);
+        let response = self.wallet.sequencer_client.send_transaction(common::transaction::NSSATransaction::Public(tx)).await
+            .map_err(|e| format!("submit: {}", e))?;
+        Ok(hex::encode(response.0))
+    }
+
+    pub async fn create_token_custody(
+        &self,
+        accounts: CreateTokenCustodyAccounts,
+        swap_id: [u8; 32],
+    ) -> Result<String, String> {
+        let instruction = ZecEscrowInstruction::CreateTokenCustody {
+            swap_id,
+        };
+        let mut account_ids: Vec<AccountId> = vec![
+            accounts.metadata,
+            accounts.token_definition,
+            accounts.custody,
+        ];
+        let signer_ids: Vec<AccountId> = vec![
+        ];
+        let nonces = self.wallet.get_accounts_nonces(signer_ids.clone()).await
+            .map_err(|e| format!("nonces: {}", e))?;
+        let mut signing_keys = Vec::new();
+        for sid in &signer_ids {
+            let key = self.wallet.storage().user_data
+                .get_pub_account_signing_key(*sid)
+                .ok_or_else(|| format!("signing key not found for {}", sid))?;
+            signing_keys.push(key);
+        }
+        let message = Message::try_new(self.program_id, account_ids, nonces, instruction)
+            .map_err(|e| format!("message: {:?}", e))?;
+        let witness_set = WitnessSet::for_message(&message, &signing_keys);
+        let tx = PublicTransaction::new(message, witness_set);
+        let response = self.wallet.sequencer_client.send_transaction(common::transaction::NSSATransaction::Public(tx)).await
+            .map_err(|e| format!("submit: {}", e))?;
+        Ok(hex::encode(response.0))
+    }
+
+    pub async fn fund_token(
+        &self,
+        accounts: FundTokenAccounts,
+        swap_id: [u8; 32],
+    ) -> Result<String, String> {
+        let instruction = ZecEscrowInstruction::FundToken {
+            swap_id,
+        };
+        let mut account_ids: Vec<AccountId> = vec![
+            accounts.metadata,
+            accounts.depositor_owner,
+            accounts.depositor_asset,
+            accounts.custody,
+        ];
+        let signer_ids: Vec<AccountId> = vec![
+            accounts.depositor_owner,
+        ];
+        let nonces = self.wallet.get_accounts_nonces(signer_ids.clone()).await
+            .map_err(|e| format!("nonces: {}", e))?;
+        let mut signing_keys = Vec::new();
+        for sid in &signer_ids {
+            let key = self.wallet.storage().user_data
+                .get_pub_account_signing_key(*sid)
+                .ok_or_else(|| format!("signing key not found for {}", sid))?;
+            signing_keys.push(key);
+        }
+        let message = Message::try_new(self.program_id, account_ids, nonces, instruction)
+            .map_err(|e| format!("message: {:?}", e))?;
+        let witness_set = WitnessSet::for_message(&message, &signing_keys);
+        let tx = PublicTransaction::new(message, witness_set);
+        let response = self.wallet.sequencer_client.send_transaction(common::transaction::NSSATransaction::Public(tx)).await
+            .map_err(|e| format!("submit: {}", e))?;
+        Ok(hex::encode(response.0))
+    }
+
+    pub async fn claim_token(
+        &self,
+        accounts: ClaimTokenAccounts,
+        swap_id: [u8; 32],
+        preimage: [u8; 32],
+    ) -> Result<String, String> {
+        let instruction = ZecEscrowInstruction::ClaimToken {
+            swap_id,
+            preimage,
+        };
+        let mut account_ids: Vec<AccountId> = vec![
+            accounts.metadata,
+            accounts.custody,
+            accounts.claimant_owner,
+            accounts.claimant_asset,
+        ];
+        let signer_ids: Vec<AccountId> = vec![
+            accounts.claimant_owner,
+        ];
+        let nonces = self.wallet.get_accounts_nonces(signer_ids.clone()).await
+            .map_err(|e| format!("nonces: {}", e))?;
+        let mut signing_keys = Vec::new();
+        for sid in &signer_ids {
+            let key = self.wallet.storage().user_data
+                .get_pub_account_signing_key(*sid)
+                .ok_or_else(|| format!("signing key not found for {}", sid))?;
+            signing_keys.push(key);
+        }
+        let message = Message::try_new(self.program_id, account_ids, nonces, instruction)
+            .map_err(|e| format!("message: {:?}", e))?;
+        let witness_set = WitnessSet::for_message(&message, &signing_keys);
+        let tx = PublicTransaction::new(message, witness_set);
+        let response = self.wallet.sequencer_client.send_transaction(common::transaction::NSSATransaction::Public(tx)).await
+            .map_err(|e| format!("submit: {}", e))?;
+        Ok(hex::encode(response.0))
+    }
+
+    pub async fn refund_token(
+        &self,
+        accounts: RefundTokenAccounts,
+        swap_id: [u8; 32],
+    ) -> Result<String, String> {
+        let instruction = ZecEscrowInstruction::RefundToken {
+            swap_id,
+        };
+        let mut account_ids: Vec<AccountId> = vec![
+            accounts.metadata,
+            accounts.custody,
+            accounts.depositor_asset,
+        ];
+        let signer_ids: Vec<AccountId> = vec![
         ];
         let nonces = self.wallet.get_accounts_nonces(signer_ids.clone()).await
             .map_err(|e| format!("nonces: {}", e))?;

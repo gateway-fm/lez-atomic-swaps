@@ -41,7 +41,7 @@ flowchart TB
     end
 
     subgraph Nodes["Actor-selected node boundary"]
-        LEZ["LEZ sequencer"]
+        LEZ["LEZ sequencer<br/>v0.1.2 standalone proof / v0.2 testnet target"]
         BTC["Bitcoin Core"]
         XMR["monerod + wallet RPC"]
         ZEC["Minimal Zebra 5.2.0 + local Zcash construction"]
@@ -106,10 +106,77 @@ plus signed V5 spend foundation
 exist. Deterministic actor-owned funding/change and pinned, vulnerability-clean
 Zebra 5.2.0 Regtest acceptance/rejection/confirmation, concurrent swaps,
 confirmation regression, exact rebroadcast, and block reconsideration now exist
-as a chain-adapter proof. Source-correct authenticated-transfer/ATA custody,
-standalone sequencer/public-testnet evidence, composed both-direction maker/taker
-processes, encrypted state/outbox, and mini-apps remain milestone work and cannot
-yet be represented as production E2E.
+as a chain-adapter proof. Source-correct authenticated-transfer/ATA custody and
+generated owner-role clients now exist as locally composed upstream-program
+evidence. Guest deployment, standalone-sequencer/public-testnet evidence,
+composed both-direction maker/taker processes, encrypted state/outbox, and
+mini-apps remain milestone work and cannot yet be represented as production E2E.
+
+## LEZ escrow custody components and actor flows
+
+```mermaid
+flowchart LR
+    Depositor["Depositor owner account<br/>real signer on funding"]
+    Claimant["Claimant owner account<br/>real signer on claim"]
+    Relayer["Any relayer<br/>refund / ATA creation"]
+
+    subgraph EscrowProgram["SPEL ZEC escrow"]
+        Metadata["Metadata PDA<br/>terms, actors, digest, deadline, status"]
+        NativeCustody["Native custody PDA"]
+        TokenCustody["ATA(metadata, token definition)"]
+    end
+
+    Auth["Canonical authenticated-transfer program"]
+    ATA["Official associated-token-account program"]
+    Token["Official token program"]
+    DepositorATA["ATA(depositor, definition)"]
+    ClaimantATA["ATA(claimant, definition)"]
+
+    Depositor -->|"signed native funding"| Auth
+    Auth --> NativeCustody
+    Metadata -->|"escrow PDA delegation on claim/refund"| Auth
+    NativeCustody --> Auth
+
+    Relayer -->|"permissionless create"| ATA
+    Metadata --> ATA
+    ATA -->|"nested initialize"| Token
+    Token --> TokenCustody
+    Depositor -->|"signed owner"| ATA
+    DepositorATA --> ATA
+    ATA -->|"nested token transfer"| TokenCustody
+    Metadata -->|"PDA delegation on claim/refund"| ATA
+    TokenCustody --> ATA
+    ATA -->|"fixed destination"| DepositorATA
+    ATA -->|"fixed destination"| ClaimantATA
+```
+
+```mermaid
+sequenceDiagram
+    actor Depositor
+    actor Claimant
+    actor Relayer
+    participant Escrow as SPEL escrow
+    participant ATA as ATA program
+    participant Token as Token program
+
+    Depositor->>Escrow: initialize_token(signed owner, claimant, definition, terms)
+    Escrow-->>Escrow: bind exact actor ATAs and ATA(metadata, definition)
+    Relayer->>Escrow: create_token_custody()
+    Escrow->>ATA: Create(metadata, definition, custody ATA)
+    ATA->>Token: InitializeAccount(custody ATA) with ATA PDA seed
+    Depositor->>Escrow: fund_token(signed owner, depositor ATA, custody ATA)
+    Escrow->>ATA: Transfer(owner, depositor ATA, custody ATA)
+    ATA->>Token: Transfer with depositor-ATA PDA seed
+    alt claim before deadline
+        Claimant->>Escrow: claim_token(signed owner, preimage)
+        Escrow->>ATA: Transfer(metadata PDA, custody ATA, claimant ATA)
+        ATA->>Token: Transfer with custody-ATA PDA seed
+    else refund at or after deadline
+        Relayer->>Escrow: refund_token(custody ATA, fixed depositor ATA)
+        Escrow->>ATA: Transfer(metadata PDA, custody ATA, depositor ATA)
+        ATA->>Token: Transfer with custody-ATA PDA seed
+    end
+```
 
 ## Happy-path user flow
 

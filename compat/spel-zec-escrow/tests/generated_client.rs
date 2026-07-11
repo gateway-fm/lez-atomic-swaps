@@ -6,27 +6,38 @@ fn official_spel_client_matches_checked_in_golden() {
 }
 
 #[test]
-fn generated_claim_hashlock_requires_claimant_signature() {
+fn generated_token_methods_sign_with_owners_never_atas() {
     let generated = generated_client();
-    let claim = generated_method(&generated, "claim_hashlock", Some("refund"));
+    let funding = generated_method(&generated, "fund_token", Some("claim_token"));
+    assert!(
+        funding.contains(
+            "let signer_ids: Vec<AccountId> = vec![\n            accounts.depositor_owner,\n        ];"
+        ),
+        "token funding must be signed by the depositor owner"
+    );
+    assert!(!funding.contains("accounts.depositor_asset,\n        ];\n        let nonces"));
+
+    let claim = generated_method(&generated, "claim_token", Some("refund_token"));
     assert!(
         claim.contains(
-            "let signer_ids: Vec<AccountId> = vec![\n            accounts.claimant,\n        ];"
+            "let signer_ids: Vec<AccountId> = vec![\n            accounts.claimant_owner,\n        ];"
         ),
-        "claim_hashlock must be signed by the claimant actor"
+        "token claim must be signed by the claimant owner"
     );
+    assert!(!claim.contains("accounts.claimant_asset,\n        ];\n        let nonces"));
 }
 
 #[test]
-fn generated_refund_requires_depositor_signature() {
+fn generated_refunds_and_custody_creation_are_permissionless() {
     let generated = generated_client();
-    let refund = generated_method(&generated, "refund", None);
-    assert!(
-        refund.contains(
-            "let signer_ids: Vec<AccountId> = vec![\n            accounts.depositor,\n        ];"
-        ),
-        "refund must be signed by the original depositor actor"
-    );
+    let empty_signers = "let signer_ids: Vec<AccountId> = vec![\n        ];";
+    let create = generated_method(&generated, "create_token_custody", Some("fund_token"));
+    let native_refund = generated_method(&generated, "refund_native", Some("initialize_token"));
+    let token_refund = generated_method(&generated, "refund_token", None);
+
+    assert!(create.contains(empty_signers));
+    assert!(native_refund.contains(empty_signers));
+    assert!(token_refund.contains(empty_signers));
 }
 
 fn generated_client() -> String {

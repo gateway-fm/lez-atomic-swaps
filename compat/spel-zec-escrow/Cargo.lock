@@ -271,6 +271,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
+name = "ata_core"
+version = "0.1.0"
+source = "git+https://github.com/logos-blockchain/logos-execution-zone.git?tag=v0.1.2#cf3639d8252040d13b3d4e933feb19b42c76e14a"
+dependencies = [
+ "nssa_core",
+ "risc0-zkvm",
+ "serde",
+]
+
+[[package]]
+name = "ata_program"
+version = "0.1.0"
+source = "git+https://github.com/logos-blockchain/logos-execution-zone.git?tag=v0.1.2#cf3639d8252040d13b3d4e933feb19b42c76e14a"
+dependencies = [
+ "ata_core",
+ "nssa_core",
+ "token_core",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -549,6 +569,15 @@ dependencies = [
  "block-buffer 0.12.1",
  "crypto-common 0.2.2",
  "inout",
+]
+
+[[package]]
+name = "clock_core"
+version = "0.1.0"
+source = "git+https://github.com/logos-blockchain/logos-execution-zone.git?tag=v0.1.2#cf3639d8252040d13b3d4e933feb19b42c76e14a"
+dependencies = [
+ "borsh",
+ "nssa_core",
 ]
 
 [[package]]
@@ -1625,8 +1654,11 @@ dependencies = [
 name = "lez-zec-escrow-compat"
 version = "0.0.0"
 dependencies = [
+ "ata_core",
+ "ata_program",
  "borsh",
  "insta",
+ "nssa",
  "nssa_core",
  "serde",
  "serde_json",
@@ -1751,6 +1783,28 @@ name = "no_std_strings"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a5b0c77c1b780822bc749a33e39aeb2c07584ab93332303babeabb645298a76e"
+
+[[package]]
+name = "nssa"
+version = "0.1.0"
+source = "git+https://github.com/logos-blockchain/logos-execution-zone.git?tag=v0.1.2#cf3639d8252040d13b3d4e933feb19b42c76e14a"
+dependencies = [
+ "anyhow",
+ "borsh",
+ "clock_core",
+ "hex",
+ "k256",
+ "log",
+ "nssa_core",
+ "rand 0.8.7",
+ "risc0-binfmt",
+ "risc0-build",
+ "risc0-zkvm",
+ "serde",
+ "serde_with",
+ "sha2",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "nssa_core"
@@ -2106,6 +2160,7 @@ version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22f6172bdec972074665ed81ed53b71da00bfc44b65a753cfde883ec4c702a1a"
 dependencies = [
+ "libc",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
 ]
