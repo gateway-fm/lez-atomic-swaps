@@ -285,25 +285,29 @@ flowchart LR
     Safety --> Schedule["Direction-mapped RecoverySchedule<br/>LEZ always earlier than ZEC"]
     Depths --> Validator["Typed observation validator"]
     ZebraE2E["Stable actual Zebra E2E RPC snapshot"] --> Validator
-    Watcher["Durable production watcher + removals"] -.-> Validator
-    Validator --> Observe["Bound canonical observation"]
+    Validator --> Watcher["Stable-tip two-phase watcher"]
+    Watcher -.-> Journal["Versioned SQLite ZEC event journal"]
+    Journal -.-> Projection["Direction-aware core projection"]
+    Validator --> Observe["Bound canonical/removal evidence"]
     LezDeadline --> Schedule
     ZecDeadline --> Schedule
     Observe -.-> Composed["Composed standalone LEZ + Zebra corridor E2E"]
     Schedule -.-> Composed
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Watcher,Composed planned;
+    class Journal,Projection,Composed planned;
 ```
 
-The solid profile, validator, and actual Zebra E2E snapshot paths are
-implemented. The validator
+The solid profile, validator, stable-tip watcher, and actual Zebra E2E snapshot
+paths are implemented. The validator
 re-decodes canonical bytes and checks the complete network, branch, block,
 outpoint, value, exact script, and derived-depth binding before producing a
 lossy coordinator proof. Public-testnet values are acceptance targets, not
 mainnet recommendations or proof of worst-case cadence. Durable production
-watcher persistence/removal events plus the composed corridor remain dashed M2
-work.
+event persistence, role-aware core projection, and composed corridor remain
+dashed M2 work. RPC errors or absence never imply removal: a detach event
+requires a stable replacement tip and a changed canonical hash at the prior
+inclusion height.
 
 ## Happy-path user flow
 

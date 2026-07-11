@@ -218,14 +218,16 @@ guarantee. The deterministic profile accepts bounds only from the controlled
 harness and is invalid on public network IDs.
 
 The actual Regtest lane now constructs the complete typed funding observation
-from stable Zebra RPC queries. It re-decodes raw bytes, uses upstream
+from stable Zebra RPC queries. It re-decodes and retains raw bytes, uses upstream
 `ReverseHex`, compares the transaction block with `getblockhash(height)`, holds
 the best tip stable across the query, derives confirmation depth, and validates
 the exact 100,000,000-zatoshi output/redeem/P2SH commitment. Zebra reports the
 Regtest BIP70 family name as `test`, so the lane binds Regtest with its exact
 genesis hash plus NU6.2 rather than misclassifying the chain-name string. The
-production watcher must retain this source evidence and explicit removal events;
-that durable adapter remains M2 work.
+two-phase watcher retains the stable tip and can propose confirmation, validated
+detach, or atomic replacement events without advancing its head before commit.
+Absence and RPC errors are never removals. The versioned SQLite event journal
+and direction-aware core projection remain M2 work; see ADR 0015.
 
 ## Isolation and upgrade policy
 

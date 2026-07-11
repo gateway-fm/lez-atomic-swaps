@@ -1,0 +1,96 @@
+# ADR 0015: Durable Zcash observation reconciliation
+
+## Status
+
+Accepted in part. Stable canonical/removal validation and the two-phase tracker
+are implemented; the versioned SQLite event journal and direction-aware core
+projection remain M2 work.
+
+## Context
+
+A successful RPC call is not durable chain truth. In particular, transaction
+absence can also mean an unavailable node, a partial multi-query snapshot, or a
+tip that changed during observation. Treating any of those as a reorg could
+revoke a valid funding leg. Likewise, advancing an in-memory watcher before its
+event commits to SQLite could permanently suppress that event after a database
+failure.
+
+The generic core `ChainProof` deliberately omits Zcash network, consensus
+branch, inclusion block, outpoint, value, scripts, raw bytes, and observed tip.
+It therefore cannot be the source record for watcher recovery.
+
+## Decision
+
+Only a stable positive snapshot may produce canonical evidence. The node tip
+hash and height are sampled before and after the raw-transaction and canonical
+height queries; any difference rejects the entire attempt. The validated
+observation retains both the exact raw transaction and the stable tip used to
+derive depth.
+
+Removal also requires affirmative evidence. It binds the exact prior validated
+observation, network and branch, a stable replacement tip, and a different
+canonical block hash at the prior inclusion height. RPC errors, not-found
+responses, and incomplete snapshots produce no reconciliation input.
+
+The tracker is two phase: `propose` is pure and repeatable, an adapter atomically
+commits the complete event and aggregate transition, and only then does
+`apply_committed` advance the in-memory head. Replacement is one event carrying
+both the validated detach proof and new canonical observation.
+
+```mermaid
+flowchart LR
+    Zebra["Selected Zebra RPC"] --> Before["Sample tip before"]
+    Before --> Queries["Raw tx + inclusion height + canonical hash"]
+    Queries --> After["Sample tip after"]
+    After --> Stable{"Same tip hash + height?"}
+    Stable -->|"no"| Retry["No event; retry"]
+    Stable -->|"yes, canonical"| Positive["Validate complete canonical observation"]
+    Stable -->|"yes, detached"| Negative["Validate prior height now has different hash"]
+    Positive --> Propose["Pure tracker proposal"]
+    Negative --> Propose
+    Propose --> Commit["Atomic event + aggregate commit"]
+    Commit -->|"failed"| Retry
+    Commit -->|"committed"| Apply["Advance in-memory head"]
+    Apply --> Core["Direction-aware core projection"]
+
+    classDef pending stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
+    class Commit,Core pending;
+```
+
+On restart, stored records are historical evidence rather than fresh
+canonicality. The watcher must re-query Zebra before causing a chain effect.
+Trusted canonical types will not be publicly deserializable from database JSON;
+storage uses a versioned primitive DTO and validates it before comparison with
+fresh node evidence.
+
+```mermaid
+sequenceDiagram
+    participant Watcher
+    participant Store as SQLite event journal
+    participant Zebra
+    participant Core as Swap coordinator
+
+    Watcher->>Store: Load last committed historical head
+    Watcher->>Zebra: Build stable positive or detach snapshot
+    Zebra-->>Watcher: Validated reconciliation input
+    Watcher->>Watcher: propose(input)
+    Watcher->>Store: Commit event + aggregate atomically
+    alt commit fails or process crashes
+        Watcher--xWatcher: Do not advance head
+        Watcher->>Watcher: Same poll proposes same event again
+    else commit succeeds
+        Store-->>Watcher: Committed revision
+        Watcher->>Watcher: apply_committed(event)
+        Watcher->>Core: Project for the correct funded role
+    end
+```
+
+## Consequences
+
+- A transient RPC failure cannot manufacture a removal.
+- Confirmation-only changes are durable events; identical polls are suppressed.
+- Stale removal evidence and unproved replacements fail closed.
+- Reverse-direction ZEC needs maker-funded removal semantics in core; mapping
+  every ZEC removal to the existing taker-lock API is explicitly forbidden.
+- SQLite schema migration, event DTOs, atomic commit/revision tests, and actual
+  two-Zebra restart evidence remain required before this ADR is fully proven.

@@ -58,7 +58,7 @@ pub struct ZcashNodeSnapshot {
     transaction_block_hash: BlockHash,
     canonical_block_hash: BlockHash,
     block_height: BlockHeight,
-    tip_height: BlockHeight,
+    tip: ZcashStableTip,
     reported_transaction_id: TxId,
     raw_transaction: Vec<u8>,
     output_index: u32,
@@ -76,7 +76,7 @@ impl ZcashNodeSnapshot {
         transaction_block_hash: BlockHash,
         canonical_block_hash: BlockHash,
         block_height: BlockHeight,
-        tip_height: BlockHeight,
+        tip: ZcashStableTip,
         reported_transaction_id: TxId,
         raw_transaction: Vec<u8>,
         output_index: u32,
@@ -89,7 +89,7 @@ impl ZcashNodeSnapshot {
             transaction_block_hash,
             canonical_block_hash,
             block_height,
-            tip_height,
+            tip,
             reported_transaction_id,
             raw_transaction,
             output_index,
@@ -117,9 +117,16 @@ impl ZcashNodeSnapshot {
         self.canonical_block_hash = value;
     }
 
-    /// Replaces the untrusted tip during snapshot assembly/testing.
+    /// Replaces both untrusted tip heights during snapshot assembly/testing.
     pub const fn set_tip_height(&mut self, value: BlockHeight) {
-        self.tip_height = value;
+        self.tip.before_height = value;
+        self.tip.after_height = value;
+    }
+
+    /// Replaces the second untrusted tip sample during snapshot assembly/testing.
+    pub const fn set_tip_after(&mut self, hash: BlockHash, height: BlockHeight) {
+        self.tip.after_hash = hash;
+        self.tip.after_height = height;
     }
 
     /// Replaces the untrusted inclusion height during snapshot assembly/testing.
@@ -143,9 +150,73 @@ impl ZcashNodeSnapshot {
     }
 }
 
+/// Best-chain tip sampled before and after a multi-query observation attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ZcashStableTip {
+    before_hash: BlockHash,
+    before_height: BlockHeight,
+    after_hash: BlockHash,
+    after_height: BlockHeight,
+}
+
+impl ZcashStableTip {
+    /// Creates an untrusted pair of tip samples.
+    #[must_use]
+    pub const fn new(
+        before_hash: BlockHash,
+        before_height: BlockHeight,
+        after_hash: BlockHash,
+        after_height: BlockHeight,
+    ) -> Self {
+        Self {
+            before_hash,
+            before_height,
+            after_hash,
+            after_height,
+        }
+    }
+
+    fn validated(self) -> Result<(BlockHash, BlockHeight), ObservationError> {
+        if self.before_hash != self.after_hash || self.before_height != self.after_height {
+            return Err(ObservationError::UnstableTip);
+        }
+        Ok((self.after_hash, self.after_height))
+    }
+}
+
+/// Node evidence that a previously canonical output's inclusion block was detached.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ZcashNodeRemovalSnapshot {
+    network: NetworkType,
+    consensus_branch_id: BranchId,
+    canonical_block_hash_at_removed_height: BlockHash,
+    tip: ZcashStableTip,
+}
+
+impl ZcashNodeRemovalSnapshot {
+    /// Creates untrusted affirmative removal evidence from stable node queries.
+    #[must_use]
+    pub const fn new(
+        network: NetworkType,
+        consensus_branch_id: BranchId,
+        canonical_block_hash_at_removed_height: BlockHash,
+        tip: ZcashStableTip,
+    ) -> Self {
+        Self {
+            network,
+            consensus_branch_id,
+            canonical_block_hash_at_removed_height,
+            tip,
+        }
+    }
+}
+
 /// A rejected node snapshot or expected output binding.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ObservationError {
+    /// The best-chain tip changed while the adapter assembled its multi-query snapshot.
+    #[error("best-chain tip changed during Zcash observation")]
+    UnstableTip,
     /// The transaction is not in the node's active best chain.
     #[error("transaction is not in the active chain")]
     InactiveChain,
@@ -185,6 +256,9 @@ pub enum ObservationError {
     /// RPC confirmation depth differs from the block/tip-derived depth.
     #[error("reported confirmations differ from canonical block depth")]
     ConfirmationMismatch,
+    /// The alleged removal still has the same canonical block at its inclusion height.
+    #[error("canonical block at the observed height has not changed")]
+    InclusionStillCanonical,
 }
 
 /// Complete canonical Zcash output evidence retained before core projection.
@@ -194,12 +268,246 @@ pub struct CanonicalZcashOutputObservation {
     consensus_branch_id: BranchId,
     block_hash: BlockHash,
     block_height: BlockHeight,
+    tip_block_hash: BlockHash,
+    tip_height: BlockHeight,
     transaction_id: TxId,
     outpoint: OutPoint,
     output: TxOut,
     redeem_script: Box<[u8]>,
     p2sh_script_pubkey: Box<[u8]>,
     confirmations: NonZeroU32,
+    raw_transaction: Box<[u8]>,
+}
+
+/// Affirmative, validated evidence that one canonical output was detached.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalZcashOutputRemoval {
+    previous: CanonicalZcashOutputObservation,
+    canonical_block_hash_at_removed_height: BlockHash,
+    tip_block_hash: BlockHash,
+    tip_height: BlockHeight,
+}
+
+impl CanonicalZcashOutputRemoval {
+    /// Validates network, branch, stable-tip, height, and changed-block bindings.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed observation error when the removal uses a different
+    /// network/branch, an unstable or too-short tip, or an unchanged inclusion block.
+    pub fn validate(
+        previous: &CanonicalZcashOutputObservation,
+        snapshot: &ZcashNodeRemovalSnapshot,
+    ) -> Result<Self, ObservationError> {
+        if snapshot.network != previous.network {
+            return Err(ObservationError::NetworkMismatch);
+        }
+        if snapshot.consensus_branch_id != previous.consensus_branch_id {
+            return Err(ObservationError::ConsensusBranchMismatch);
+        }
+        let (tip_block_hash, tip_height) = snapshot.tip.validated()?;
+        if tip_height < previous.block_height {
+            return Err(ObservationError::BlockAboveTip);
+        }
+        if snapshot.canonical_block_hash_at_removed_height == previous.block_hash {
+            return Err(ObservationError::InclusionStillCanonical);
+        }
+        Ok(Self {
+            previous: previous.clone(),
+            canonical_block_hash_at_removed_height: snapshot.canonical_block_hash_at_removed_height,
+            tip_block_hash,
+            tip_height,
+        })
+    }
+
+    /// The exact validated observation that left the active chain.
+    #[must_use]
+    pub const fn previous(&self) -> &CanonicalZcashOutputObservation {
+        &self.previous
+    }
+
+    /// Canonical replacement block at the detached observation's former height.
+    #[must_use]
+    pub const fn canonical_block_hash_at_removed_height(&self) -> BlockHash {
+        self.canonical_block_hash_at_removed_height
+    }
+
+    /// Stable replacement best-chain tip hash.
+    #[must_use]
+    pub const fn tip_block_hash(&self) -> BlockHash {
+        self.tip_block_hash
+    }
+
+    /// Stable replacement best-chain tip height.
+    #[must_use]
+    pub const fn tip_height(&self) -> BlockHeight {
+        self.tip_height
+    }
+}
+
+/// A canonicality change emitted by a Zcash output watcher.
+///
+/// Events retain the complete validated observation instead of the lossy generic
+/// coordinator projection. A replacement is one atomic transition so durable
+/// consumers cannot observe the old output as removed without also seeing the new
+/// canonical evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ZcashObservationEvent {
+    /// An output became canonical or its canonical confirmation depth changed.
+    Canonical(CanonicalZcashOutputObservation),
+    /// A previously canonical output is no longer in the active chain.
+    Removed(CanonicalZcashOutputRemoval),
+    /// Canonical evidence changed without an intervening absent observation.
+    Replaced {
+        /// Evidence that left the active chain.
+        removed: Box<CanonicalZcashOutputRemoval>,
+        /// Replacement evidence now in the active chain.
+        canonical: Box<CanonicalZcashOutputObservation>,
+    },
+}
+
+/// One validated input to canonicality reconciliation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ZcashObservationReconciliation {
+    /// A validated output is currently canonical.
+    Canonical(CanonicalZcashOutputObservation),
+    /// Affirmative evidence removed the current observation.
+    Removed(CanonicalZcashOutputRemoval),
+    /// One stable poll proved removal and its replacement atomically.
+    Replaced {
+        /// Affirmative evidence for the detached observation.
+        removed: Box<CanonicalZcashOutputRemoval>,
+        /// Newly canonical output evidence.
+        canonical: Box<CanonicalZcashOutputObservation>,
+    },
+}
+
+/// A stale or incomplete tracker transition.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum ObservationTrackerError {
+    /// Different canonical evidence requires affirmative removal proof.
+    #[error("different canonical evidence requires explicit replacement proof")]
+    ReplacementProofRequired,
+    /// Removal or commit evidence does not match the durable tracker head.
+    #[error("observation event does not match the durable tracker head")]
+    StaleEvidence,
+}
+
+/// Stateful canonicality reconciler for one expected Zcash output.
+///
+/// The tracker is deliberately independent of RPC transport. Production polling
+/// assembles and validates a stable [`ZcashNodeSnapshot`], then persists each event
+/// before projecting it into coordinator state. Restoring [`Self::current`] on restart
+/// makes at-least-once polling idempotent.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ZcashObservationTracker {
+    current: Option<CanonicalZcashOutputObservation>,
+}
+
+impl ZcashObservationTracker {
+    /// Restores a tracker from its last durable canonical observation.
+    #[must_use]
+    pub const fn from_current(current: Option<CanonicalZcashOutputObservation>) -> Self {
+        Self { current }
+    }
+
+    /// Returns the most recent canonical observation, if any.
+    #[must_use]
+    pub const fn current(&self) -> Option<&CanonicalZcashOutputObservation> {
+        self.current.as_ref()
+    }
+
+    /// Proposes a meaningful event without advancing the durable tracker head.
+    ///
+    /// The caller must commit the event atomically before calling [`Self::apply_committed`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObservationTrackerError`] for stale removal evidence or a changed
+    /// canonical inclusion that lacks explicit replacement proof.
+    pub fn propose(
+        &self,
+        input: &ZcashObservationReconciliation,
+    ) -> Result<Option<ZcashObservationEvent>, ObservationTrackerError> {
+        match input {
+            ZcashObservationReconciliation::Canonical(canonical) => match &self.current {
+                None => Ok(Some(ZcashObservationEvent::Canonical(canonical.clone()))),
+                Some(current) if current == canonical => Ok(None),
+                Some(current) if same_canonical_inclusion(current, canonical) => {
+                    Ok(Some(ZcashObservationEvent::Canonical(canonical.clone())))
+                }
+                Some(_) => Err(ObservationTrackerError::ReplacementProofRequired),
+            },
+            ZcashObservationReconciliation::Removed(removed) => match &self.current {
+                None => Ok(None),
+                Some(current) if current == removed.previous() => {
+                    Ok(Some(ZcashObservationEvent::Removed(removed.clone())))
+                }
+                Some(_) => Err(ObservationTrackerError::StaleEvidence),
+            },
+            ZcashObservationReconciliation::Replaced { removed, canonical } => {
+                match &self.current {
+                    Some(current) if current == canonical.as_ref() => Ok(None),
+                    Some(current) if current == removed.previous() => {
+                        Ok(Some(ZcashObservationEvent::Replaced {
+                            removed: removed.clone(),
+                            canonical: canonical.clone(),
+                        }))
+                    }
+                    _ => Err(ObservationTrackerError::StaleEvidence),
+                }
+            }
+        }
+    }
+
+    /// Advances the tracker only after the exact proposed event is durably committed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObservationTrackerError`] if the event is stale or does not match
+    /// the proposal implied by the current durable head.
+    pub fn apply_committed(
+        &mut self,
+        event: &ZcashObservationEvent,
+    ) -> Result<(), ObservationTrackerError> {
+        let input = match event {
+            ZcashObservationEvent::Canonical(canonical) => {
+                ZcashObservationReconciliation::Canonical(canonical.clone())
+            }
+            ZcashObservationEvent::Removed(removed) => {
+                ZcashObservationReconciliation::Removed(removed.clone())
+            }
+            ZcashObservationEvent::Replaced { removed, canonical } => {
+                ZcashObservationReconciliation::Replaced {
+                    removed: removed.clone(),
+                    canonical: canonical.clone(),
+                }
+            }
+        };
+        if self.propose(&input)? != Some(event.clone()) {
+            return Err(ObservationTrackerError::StaleEvidence);
+        }
+        self.current = match event {
+            ZcashObservationEvent::Canonical(canonical) => Some(canonical.clone()),
+            ZcashObservationEvent::Replaced { canonical, .. } => Some(canonical.as_ref().clone()),
+            ZcashObservationEvent::Removed(_) => None,
+        };
+        Ok(())
+    }
+}
+
+fn same_canonical_inclusion(
+    left: &CanonicalZcashOutputObservation,
+    right: &CanonicalZcashOutputObservation,
+) -> bool {
+    left.network == right.network
+        && left.consensus_branch_id == right.consensus_branch_id
+        && left.block_hash == right.block_hash
+        && left.block_height == right.block_height
+        && left.outpoint == right.outpoint
+        && left.output == right.output
+        && left.redeem_script == right.redeem_script
+        && left.p2sh_script_pubkey == right.p2sh_script_pubkey
 }
 
 impl CanonicalZcashOutputObservation {
@@ -225,7 +533,8 @@ impl CanonicalZcashOutputObservation {
         if snapshot.transaction_block_hash != snapshot.canonical_block_hash {
             return Err(ObservationError::BlockHashMismatch);
         }
-        let depth = u32::from(snapshot.tip_height)
+        let (tip_block_hash, tip_height) = snapshot.tip.validated()?;
+        let depth = u32::from(tip_height)
             .checked_sub(u32::from(snapshot.block_height))
             .ok_or(ObservationError::BlockAboveTip)?
             .checked_add(1)
@@ -268,12 +577,15 @@ impl CanonicalZcashOutputObservation {
             consensus_branch_id: snapshot.consensus_branch_id,
             block_hash: snapshot.transaction_block_hash,
             block_height: snapshot.block_height,
+            tip_block_hash,
+            tip_height,
             transaction_id,
             outpoint,
             output,
             redeem_script: expected.contract.redeem_script().into(),
             p2sh_script_pubkey: expected.contract.p2sh_script_pubkey().into(),
             confirmations,
+            raw_transaction: snapshot.raw_transaction.clone().into(),
         })
     }
 
@@ -299,6 +611,18 @@ impl CanonicalZcashOutputObservation {
     #[must_use]
     pub const fn block_height(&self) -> BlockHeight {
         self.block_height
+    }
+
+    /// Stable best-chain tip hash used to derive confirmation depth.
+    #[must_use]
+    pub const fn tip_block_hash(&self) -> BlockHash {
+        self.tip_block_hash
+    }
+
+    /// Stable best-chain tip height used to derive confirmation depth.
+    #[must_use]
+    pub const fn tip_height(&self) -> BlockHeight {
+        self.tip_height
     }
 
     /// Canonically decoded transaction identifier.
@@ -335,6 +659,12 @@ impl CanonicalZcashOutputObservation {
     #[must_use]
     pub const fn confirmations(&self) -> NonZeroU32 {
         self.confirmations
+    }
+
+    /// Canonical transaction bytes that were independently decoded and identified.
+    #[must_use]
+    pub fn raw_transaction(&self) -> &[u8] {
+        &self.raw_transaction
     }
 
     /// Projects validated chain-specific evidence into the generic coordinator input.

@@ -302,11 +302,19 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   its BIP70 family as `test`, verifies NU6.2, holds the tip stable across raw
   transaction/canonical-height queries, and revalidates the exact
   100,000,000-zatoshi BIP-199 outpoint before core projection.
-- [ ] Persist observations/removals through a production watcher, then compose
-  cross-chain refund-margin cases through actual LEZ and Zebra nodes. The LEZ
+- [x] Add stable-tip canonicality reconciliation. Positive observations retain
+  raw bytes and the exact tip used for depth; removals require a changed
+  canonical hash at the prior height and a stable replacement tip. The tracker
+  proposes without mutation, suppresses exact replay, and advances only after
+  the caller confirms a durable commit. RPC absence/errors emit nothing.
+- [ ] Persist the versioned primitive observation/removal event records and swap
+  transition atomically in SQLite, including migration, revision, commit-failure,
+  replay, and restart tests. Then add funded-role-aware core removal projection
+  for both ZEC directions.
+- [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
+  nodes. The LEZ
   Unix-millisecond/core Unix-second boundary is typed, checked, conservatively
-  rounded, and boundary-tested; durable watcher events and the composed flow
-  remain.
+  rounded, and boundary-tested; the composed flow remains.
 - [ ] Re-audit the stable Zebra/security pin immediately before public-testnet
   evidence because the current release horizon ends ahead of NU7.
 - [ ] Re-audit the deployed SPEL/LEZ guest graph before testnet evidence and the

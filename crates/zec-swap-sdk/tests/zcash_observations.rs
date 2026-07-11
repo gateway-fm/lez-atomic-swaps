@@ -1,6 +1,7 @@
 use lez_zec_swap_sdk::{
     Bip199Contract, CanonicalZcashOutputObservation, ExpectedBip199Output, ObservationError,
-    TransparentFundingRequest, TransparentUtxo, ZcashNodeSnapshot, build_funding_transaction,
+    TransparentFundingRequest, TransparentUtxo, ZcashNodeSnapshot, ZcashStableTip,
+    build_funding_transaction,
 };
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use zcash_primitives::{block::BlockHash, transaction::Transaction};
@@ -50,7 +51,12 @@ fn snapshot(transaction: &Transaction, raw: Vec<u8>) -> ZcashNodeSnapshot {
         BlockHash([0x44; 32]),
         BlockHash([0x44; 32]),
         BlockHeight::from_u32(100),
-        BlockHeight::from_u32(102),
+        ZcashStableTip::new(
+            BlockHash([0xaa; 32]),
+            BlockHeight::from_u32(102),
+            BlockHash([0xaa; 32]),
+            BlockHeight::from_u32(102),
+        ),
         transaction.txid(),
         raw,
         0,
@@ -68,12 +74,15 @@ fn canonical_observation_binds_complete_output_and_derives_core_evidence() {
         contract.clone(),
     );
     let observation =
-        CanonicalZcashOutputObservation::validate(&expected, &snapshot(&transaction, raw)).unwrap();
+        CanonicalZcashOutputObservation::validate(&expected, &snapshot(&transaction, raw.clone()))
+            .unwrap();
 
     assert_eq!(observation.network(), NetworkType::Regtest);
     assert_eq!(observation.consensus_branch_id(), BranchId::Nu6_2);
     assert_eq!(observation.block_hash(), BlockHash([0x44; 32]));
     assert_eq!(observation.block_height(), BlockHeight::from_u32(100));
+    assert_eq!(observation.tip_block_hash(), BlockHash([0xaa; 32]));
+    assert_eq!(observation.tip_height(), BlockHeight::from_u32(102));
     assert_eq!(observation.transaction_id(), transaction.txid());
     assert_eq!(observation.outpoint().n(), 0);
     assert_eq!(observation.output().value(), zatoshis(100_000));
@@ -83,6 +92,7 @@ fn canonical_observation_binds_complete_output_and_derives_core_evidence() {
         contract.p2sh_script_pubkey()
     );
     assert_eq!(observation.confirmations().get(), 3);
+    assert_eq!(observation.raw_transaction(), raw);
     let proof = observation.chain_proof().unwrap();
     assert_eq!(proof.transaction_id(), transaction.txid().to_string());
     assert_eq!(proof.confirmations(), 3);
@@ -200,5 +210,23 @@ fn observation_rejects_unbound_or_noncanonical_node_data() {
     assert_eq!(
         CanonicalZcashOutputObservation::validate(&expected, &overflowing_depth),
         Err(ObservationError::ConfirmationOverflow)
+    );
+}
+
+#[test]
+fn observation_rejects_a_tip_change_during_multi_query_snapshot() {
+    let (contract, transaction, raw) = transaction_fixture();
+    let expected = ExpectedBip199Output::new(
+        NetworkType::Regtest,
+        BranchId::Nu6_2,
+        zatoshis(100_000),
+        contract,
+    );
+    let mut unstable_tip = snapshot(&transaction, raw);
+    unstable_tip.set_tip_after(BlockHash([0xbb; 32]), BlockHeight::from_u32(103));
+
+    assert_eq!(
+        CanonicalZcashOutputObservation::validate(&expected, &unstable_tip),
+        Err(ObservationError::UnstableTip)
     );
 }

@@ -7,8 +7,8 @@ use jsonrpsee_http_client::{HttpClient, HttpClientBuilder};
 use lez_zec_swap_sdk::{
     Bip199Contract, CanonicalZcashOutputObservation, ExpectedBip199Output,
     TransparentFundingRequest, TransparentSpendRequest, TransparentUtxo, ZcashNodeSnapshot,
-    ZecProfileId, ZecRefundProfile, build_claim_transaction, build_funding_transaction,
-    build_refund_transaction,
+    ZcashStableTip, ZecProfileId, ZecRefundProfile, build_claim_transaction,
+    build_funding_transaction, build_refund_transaction,
 };
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde_json::{Value, json};
@@ -260,8 +260,7 @@ async fn canonical_funding_observation(
         .request("getblockchaininfo", rpc_params![])
         .await
         .expect("Zebra returns a stable tip after the observation query");
-    assert_eq!(after["blocks"], before["blocks"]);
-    assert_eq!(after["bestblockhash"], before["bestblockhash"]);
+    let stable_tip = zcash_stable_tip(&before, &after);
 
     let snapshot = ZcashNodeSnapshot::new(
         NetworkType::Regtest,
@@ -278,10 +277,7 @@ async fn canonical_funding_observation(
                 .expect("canonical height hash is canonical reverse hex"),
         ),
         BlockHeight::from_u32(block_height),
-        BlockHeight::from_u32(
-            u32::try_from(before["blocks"].as_u64().expect("tip height is numeric"))
-                .expect("Regtest tip fits u32"),
-        ),
+        stable_tip,
         transaction.txid(),
         hex::decode(
             observed["hex"]
@@ -311,6 +307,37 @@ async fn canonical_funding_observation(
         &snapshot,
     )
     .expect("actual Zebra funding output binds complete canonical evidence")
+}
+
+fn zcash_stable_tip(before: &Value, after: &Value) -> ZcashStableTip {
+    assert_eq!(after["blocks"], before["blocks"]);
+    assert_eq!(after["bestblockhash"], before["bestblockhash"]);
+    let tip_hash = |sample: &Value, label: &str| {
+        BlockHash(
+            ReverseHex::decode(
+                sample["bestblockhash"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{label} tip hash is textual")),
+            )
+            .unwrap_or_else(|| panic!("{label} tip hash is canonical reverse hex")),
+        )
+    };
+    let tip_height = |sample: &Value, label: &str| {
+        BlockHeight::from_u32(
+            u32::try_from(
+                sample["blocks"]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("{label} tip height is numeric")),
+            )
+            .unwrap_or_else(|_| panic!("{label} Regtest tip fits u32")),
+        )
+    };
+    ZcashStableTip::new(
+        tip_hash(before, "starting"),
+        tip_height(before, "starting"),
+        tip_hash(after, "ending"),
+        tip_height(after, "ending"),
+    )
 }
 
 async fn assert_canonical_funding_observation(

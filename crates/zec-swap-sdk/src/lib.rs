@@ -11,7 +11,9 @@ pub use funding::{
 };
 
 pub use observation::{
-    CanonicalZcashOutputObservation, ExpectedBip199Output, ObservationError, ZcashNodeSnapshot,
+    CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval, ExpectedBip199Output,
+    ObservationError, ObservationTrackerError, ZcashNodeRemovalSnapshot, ZcashNodeSnapshot,
+    ZcashObservationEvent, ZcashObservationReconciliation, ZcashObservationTracker, ZcashStableTip,
 };
 
 pub use profile::{ProfileError, ZecProfileId, ZecRefundProfile};
