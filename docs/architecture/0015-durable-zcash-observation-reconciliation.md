@@ -2,9 +2,9 @@
 
 ## Status
 
-Accepted in part. Stable canonical/removal validation and the two-phase tracker
-are implemented; the versioned SQLite event journal and direction-aware core
-projection remain M2 work.
+Accepted in part. Stable canonical/removal validation, the two-phase tracker,
+and the version-1 primitive event record are implemented; the SQLite event
+journal and direction-aware core projection remain M2 work.
 
 ## Context
 
@@ -59,9 +59,10 @@ flowchart LR
 
 On restart, stored records are historical evidence rather than fresh
 canonicality. The watcher must re-query Zebra before causing a chain effect.
-Trusted canonical types will not be publicly deserializable from database JSON;
-storage uses a versioned primitive DTO and validates it before comparison with
-fresh node evidence.
+Trusted canonical types are not publicly deserializable from database JSON.
+The implemented version-1 primitive DTO retains all observation/removal fields,
+re-decodes the raw transaction, and rechecks branch, depth, txid, outpoint,
+value, and scripts before comparison with fresh node evidence.
 
 ```mermaid
 sequenceDiagram
@@ -92,5 +93,5 @@ sequenceDiagram
 - Stale removal evidence and unproved replacements fail closed.
 - Reverse-direction ZEC needs maker-funded removal semantics in core; mapping
   every ZEC removal to the existing taker-lock API is explicitly forbidden.
-- SQLite schema migration, event DTOs, atomic commit/revision tests, and actual
+- SQLite schema migration, atomic commit/revision tests, and actual
   two-Zebra restart evidence remain required before this ADR is fully proven.

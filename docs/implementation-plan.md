@@ -307,10 +307,15 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   canonical hash at the prior height and a stable replacement tip. The tracker
   proposes without mutation, suppresses exact replay, and advances only after
   the caller confirms a durable commit. RPC absence/errors emit nothing.
-- [ ] Persist the versioned primitive observation/removal event records and swap
-  transition atomically in SQLite, including migration, revision, commit-failure,
-  replay, and restart tests. Then add funded-role-aware core removal projection
-  for both ZEC directions.
+- [x] Encode watcher events as a version-1 primitive persistence DTO rather than
+  deserializing trusted canonical types. Round-trip and corruption tests recheck
+  known branch, height-derived nonzero depth, raw transaction/txid, outpoint,
+  value, and script bindings; loaded records remain historical until fresh RPC
+  reconciliation.
+- [ ] Persist the versioned event record and swap transition atomically in
+  SQLite, including migration, revision, commit-failure, replay, and restart
+  tests. Then add funded-role-aware core removal projection for both ZEC
+  directions.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
   nodes. The LEZ
   Unix-millisecond/core Unix-second boundary is typed, checked, conservatively

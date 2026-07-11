@@ -226,8 +226,10 @@ Regtest BIP70 family name as `test`, so the lane binds Regtest with its exact
 genesis hash plus NU6.2 rather than misclassifying the chain-name string. The
 two-phase watcher retains the stable tip and can propose confirmation, validated
 detach, or atomic replacement events without advancing its head before commit.
-Absence and RPC errors are never removals. The versioned SQLite event journal
-and direction-aware core projection remain M2 work; see ADR 0015.
+Absence and RPC errors are never removals. Its version-1 primitive record
+round-trips historical evidence without deserializing a trusted canonical type
+and revalidates raw transaction bindings. The SQLite event journal and
+direction-aware core projection remain M2 work; see ADR 0015.
 
 ## Isolation and upgrade policy
 

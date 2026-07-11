@@ -286,7 +286,8 @@ flowchart LR
     Depths --> Validator["Typed observation validator"]
     ZebraE2E["Stable actual Zebra E2E RPC snapshot"] --> Validator
     Validator --> Watcher["Stable-tip two-phase watcher"]
-    Watcher -.-> Journal["Versioned SQLite ZEC event journal"]
+    Watcher --> Record["Validated primitive event record v1"]
+    Record -.-> Journal["Versioned SQLite ZEC event journal"]
     Journal -.-> Projection["Direction-aware core projection"]
     Validator --> Observe["Bound canonical/removal evidence"]
     LezDeadline --> Schedule

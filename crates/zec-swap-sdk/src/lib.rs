@@ -2,6 +2,7 @@
 
 mod funding;
 mod observation;
+mod observation_record;
 mod profile;
 mod transaction;
 
@@ -14,6 +15,10 @@ pub use observation::{
     CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval, ExpectedBip199Output,
     ObservationError, ObservationTrackerError, ZcashNodeRemovalSnapshot, ZcashNodeSnapshot,
     ZcashObservationEvent, ZcashObservationReconciliation, ZcashObservationTracker, ZcashStableTip,
+};
+pub use observation_record::{
+    ObservationRecordError, ZcashNetworkRecordV1, ZcashObservationEventRecordV1,
+    ZcashOutputObservationRecordV1, ZcashOutputRemovalRecordV1,
 };
 
 pub use profile::{ProfileError, ZecProfileId, ZecRefundProfile};
