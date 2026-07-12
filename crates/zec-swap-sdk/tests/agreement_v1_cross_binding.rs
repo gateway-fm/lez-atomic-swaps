@@ -3,13 +3,13 @@ use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1,
     LezEnvironmentV1, MAX_ZEC_AGREEMENT_RECORD_BYTES, MAX_ZEC_APPLICATION_SWAP_ID_BYTES,
     MAX_ZEC_FUNDING_INPUTS, MAX_ZEC_FUNDING_SCRIPT_BYTES, NegotiationTranscriptV1, TransparentUtxo,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZcashFundingInputSetV1, ZcashFundingInputV1,
-    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementExecutionError,
-    ZecAgreementRecordV1, ZecAgreementV1, ZecAgreementV1Error, ZecLezTermsV1,
-    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
-    ZecRolePayoutV1, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
-    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
-    derive_lez_token_account_v1,
+    ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFundingInputSetV1,
+    ZcashFundingInputV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
+    ZecAgreementExecutionError, ZecAgreementRecordV1, ZecAgreementV1, ZecAgreementV1Error,
+    ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1,
+    ZecRefundPlanV1, ZecRolePayoutV1, ZecSwapBinding, ZecSwapBindingRecordV1,
+    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
+    derive_lez_swap_id_v1, derive_lez_token_account_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use zcash_protocol::{
@@ -31,6 +31,7 @@ struct Fixture {
     body_profile: ZecProfileId,
     binding_profile: ZecProfileId,
     environment: LezEnvironmentV1,
+    channel_id: [u8; 32],
     genesis: [u8; 32],
     escrow_program: [u32; 8],
     asset: LezAssetV1,
@@ -92,6 +93,7 @@ impl Fixture {
             body_profile: ZecProfileId::DeterministicLocalV1,
             binding_profile: ZecProfileId::DeterministicLocalV1,
             environment: LezEnvironmentV1::DeterministicLocalV0_2,
+            channel_id: [8; 32],
             genesis: [7; 32],
             escrow_program,
             asset: LezAssetV1::Native {
@@ -126,7 +128,7 @@ impl Fixture {
             session_id: [5; 32],
             offer_commitment: [6; 32],
             expires_at: 1_000,
-            schema: ZEC_CONCRETE_AGREEMENT_SCHEMA_V1,
+            schema: ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
             commitment_override: None,
             maker_signer,
             taker_signer,
@@ -206,7 +208,7 @@ impl Fixture {
             ),
             self.body_digest,
             ZecLezTermsV1::new(
-                LezChainIdentityV1::new(self.environment, self.genesis),
+                LezChainIdentityV1::new(self.environment, self.channel_id, self.genesis),
                 self.escrow_program,
                 self.asset.clone(),
                 self.lez_amount,
@@ -265,6 +267,19 @@ fn bounded_wire_rejects_malformed_trailing_oversized_and_declared_id() {
     let decoded =
         ZecAgreementV1::from_wire_at(&wire, UnixSeconds::new(NOW)).expect("exact wire validates");
     assert_eq!(decoded.record(), agreement.record());
+
+    let mut legacy_v1 = wire.clone();
+    legacy_v1[..2].copy_from_slice(&ZEC_CONCRETE_AGREEMENT_SCHEMA_V1.to_le_bytes());
+    let application_id_len = "agreement-v1".len();
+    let channel_offset = 2 + 4 + application_id_len + 1 + 1 + (32 + 33) * 2 + 32 + 1;
+    legacy_v1.drain(channel_offset..channel_offset + 32);
+    assert_eq!(
+        ZecAgreementV1::from_wire_at(&legacy_v1, UnixSeconds::new(NOW)),
+        Err(ZecAgreementV1Error::UnsupportedSchema(
+            ZEC_CONCRETE_AGREEMENT_SCHEMA_V1
+        )),
+        "a signed schema-v1 agreement cannot acquire an unsigned channel during migration"
+    );
 
     let mut trailing = wire.clone();
     trailing.push(0);
@@ -753,10 +768,19 @@ fn canonical_body_commitment_binds_representative_executable_fields() {
 #[test]
 fn rejects_schema_commitment_and_dual_signature_failures() {
     let mut fixture = Fixture::new(SwapDirection::TakerSellsForeign);
+    fixture.schema = ZEC_CONCRETE_AGREEMENT_SCHEMA_V1;
+    assert_eq!(
+        fixture.validate(),
+        Err(ZecAgreementV1Error::UnsupportedSchema(
+            ZEC_CONCRETE_AGREEMENT_SCHEMA_V1
+        ))
+    );
+
+    fixture = Fixture::new(SwapDirection::TakerSellsForeign);
     fixture.schema += 1;
     assert_eq!(
         fixture.validate(),
-        Err(ZecAgreementV1Error::UnsupportedSchema(2))
+        Err(ZecAgreementV1Error::UnsupportedSchema(3))
     );
 
     fixture = Fixture::new(SwapDirection::TakerSellsForeign);
@@ -907,6 +931,13 @@ fn rejects_identity_profile_amount_and_transcript_failures() {
 #[test]
 fn rejects_unsafe_or_aliased_lez_program_and_refund_terms() {
     let mut fixture = Fixture::new(SwapDirection::TakerSellsForeign);
+    fixture.channel_id = [0; 32];
+    assert_eq!(
+        fixture.validate(),
+        Err(ZecAgreementV1Error::EmptyLezChannel)
+    );
+
+    fixture = Fixture::new(SwapDirection::TakerSellsForeign);
     fixture.genesis = [0; 32];
     assert_eq!(
         fixture.validate(),

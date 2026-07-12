@@ -5,6 +5,7 @@ use lez_swap_core::{
     Chain, ConfirmationPolicy, Participant, SwapCoordinator, SwapDirection, SwapId, UnixSeconds,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, ecdsa::Signature};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use zcash_protocol::{consensus::BlockHeight, value::Zatoshis};
@@ -23,8 +24,10 @@ use crate::{
 /// Domain separating version-1 agreement commitments from every other signature protocol.
 pub const ZEC_AGREEMENT_V1_DOMAIN: &[u8] = b"logos.gateway.lez-zec.agreement.v1\0";
 
-/// Exact schema number encoded by [`ZecAgreementRecordV1`].
+/// Legacy pre-channel schema recognized only for bounded typed rejection.
 pub const ZEC_CONCRETE_AGREEMENT_SCHEMA_V1: u16 = 1;
+/// Current schema binding the LEZ v0.2 execution channel.
+pub const ZEC_CONCRETE_AGREEMENT_SCHEMA_V2: u16 = 2;
 
 /// Maximum accepted canonical agreement record size.
 pub const MAX_ZEC_AGREEMENT_RECORD_BYTES: usize = 16 * 1024;
@@ -68,7 +71,9 @@ impl From<SwapDirectionRecordV1> for SwapDirection {
 }
 
 /// LEZ deployment family committed by the named ZEC profile.
-#[derive(BorshDeserialize, BorshSerialize, Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(
+    BorshDeserialize, BorshSerialize, Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize,
+)]
 pub enum LezEnvironmentV1 {
     /// An isolated deterministic LEZ v0.2 chain.
     DeterministicLocalV0_2,
@@ -80,15 +85,21 @@ pub enum LezEnvironmentV1 {
 #[derive(BorshDeserialize, BorshSerialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LezChainIdentityV1 {
     environment: LezEnvironmentV1,
+    channel_id: [u8; 32],
     genesis_block_hash: [u8; 32],
 }
 
 impl LezChainIdentityV1 {
     /// Creates an exact environment/genesis identity.
     #[must_use]
-    pub const fn new(environment: LezEnvironmentV1, genesis_block_hash: [u8; 32]) -> Self {
+    pub const fn new(
+        environment: LezEnvironmentV1,
+        channel_id: [u8; 32],
+        genesis_block_hash: [u8; 32],
+    ) -> Self {
         Self {
             environment,
+            channel_id,
             genesis_block_hash,
         }
     }
@@ -97,6 +108,12 @@ impl LezChainIdentityV1 {
     #[must_use]
     pub const fn environment(&self) -> LezEnvironmentV1 {
         self.environment
+    }
+
+    /// Exact v0.2 execution channel returned by the sequencer RPC.
+    #[must_use]
+    pub const fn channel_id(&self) -> &[u8; 32] {
+        &self.channel_id
     }
 
     /// Exact genesis block hash that a chain adapter must re-query.
@@ -1373,7 +1390,7 @@ impl<'a> BoundedWireReader<'a> {
 fn decode_bounded_record(bytes: &[u8]) -> Result<ZecAgreementRecordV1, ZecAgreementV1Error> {
     let mut reader = BoundedWireReader::new(bytes);
     let schema_version = reader.u16()?;
-    let body = decode_bounded_body(&mut reader)?;
+    let body = decode_bounded_body(&mut reader, schema_version)?;
     let agreement_commitment = reader.fixed()?;
     let maker_signature = reader.fixed()?;
     let taker_signature = reader.fixed()?;
@@ -1389,6 +1406,7 @@ fn decode_bounded_record(bytes: &[u8]) -> Result<ZecAgreementRecordV1, ZecAgreem
 
 fn decode_bounded_body(
     reader: &mut BoundedWireReader<'_>,
+    schema_version: u16,
 ) -> Result<ZecAgreementBodyV1, ZecAgreementV1Error> {
     let application_swap_id = reader.bounded_string(MAX_ZEC_APPLICATION_SWAP_ID_BYTES)?;
     let direction = match reader.u8()? {
@@ -1402,7 +1420,7 @@ fn decode_bounded_body(
         ZecParticipantIdentityV1::new(reader.fixed()?, reader.fixed()?),
     );
     let secret_digest = reader.fixed()?;
-    let lez = decode_lez_terms(reader)?;
+    let lez = decode_lez_terms(reader, schema_version)?;
     let zcash = decode_zcash_binding(reader)?;
     let transaction_policy = ZecTransactionPolicyV1::new(
         reader.fixed()?,
@@ -1434,13 +1452,19 @@ fn decode_bounded_body(
 
 fn decode_lez_terms(
     reader: &mut BoundedWireReader<'_>,
+    schema_version: u16,
 ) -> Result<ZecLezTermsV1, ZecAgreementV1Error> {
     let environment = match reader.u8()? {
         0 => LezEnvironmentV1::DeterministicLocalV0_2,
         1 => LezEnvironmentV1::PublicTestnetV0_2,
         _ => return Err(ZecAgreementV1Error::MalformedWireRecord),
     };
-    let chain = LezChainIdentityV1::new(environment, reader.fixed()?);
+    let channel_id = if schema_version == ZEC_CONCRETE_AGREEMENT_SCHEMA_V1 {
+        [0; 32]
+    } else {
+        reader.fixed()?
+    };
+    let chain = LezChainIdentityV1::new(environment, channel_id, reader.fixed()?);
     let escrow_program_id = reader.program_id()?;
     let asset = match reader.u8()? {
         0 => LezAssetV1::Native {
@@ -1538,6 +1562,9 @@ pub enum ZecAgreementV1Error {
     /// LEZ genesis identity is empty.
     #[error("LEZ genesis identity is empty")]
     EmptyLezGenesis,
+    /// LEZ v0.2 execution channel identity is empty.
+    #[error("LEZ execution channel identity is empty")]
+    EmptyLezChannel,
     /// Named profile and LEZ deployment family disagree.
     #[error("LEZ environment does not match the named profile")]
     LezEnvironmentMismatch,
@@ -1634,7 +1661,7 @@ fn validate_envelope(
     record: &ZecAgreementRecordV1,
     now: UnixSeconds,
 ) -> Result<ValidatedEnvelope, ZecAgreementV1Error> {
-    if record.schema_version != ZEC_CONCRETE_AGREEMENT_SCHEMA_V1 {
+    if record.schema_version != ZEC_CONCRETE_AGREEMENT_SCHEMA_V2 {
         return Err(ZecAgreementV1Error::UnsupportedSchema(
             record.schema_version,
         ));
@@ -1855,6 +1882,9 @@ fn validate_participants(participants: &ZecParticipantsV1) -> Result<(), ZecAgre
 
 fn validate_lez_terms(body: &ZecAgreementBodyV1) -> Result<(), ZecAgreementV1Error> {
     let terms = &body.lez;
+    if terms.chain.channel_id == [0; 32] {
+        return Err(ZecAgreementV1Error::EmptyLezChannel);
+    }
     if terms.chain.genesis_block_hash == [0; 32] {
         return Err(ZecAgreementV1Error::EmptyLezGenesis);
     }

@@ -571,24 +571,10 @@ where
                 .map_err(|error| ZecSdkError::LezTakerFirstLockObservation(Box::new(error)))?,
             crate::FirstLockStepV1::LezInitialize => unreachable!("not a final lock step"),
         };
-        let evidence = match observation {
-            TakerFirstLockObservationV1::Confirmed(evidence) => evidence,
-            TakerFirstLockObservationV1::CanonicalZcash(canonical) => {
-                crate::ObservedTakerFirstLockEvidenceV1::from_canonical_zcash(*canonical)
-            }
-            TakerFirstLockObservationV1::ZcashRemoved(removed) => {
-                crate::ObservedTakerFirstLockEvidenceV1::from_canonical_zcash_removal(*removed)
-            }
-            TakerFirstLockObservationV1::ZcashReplaced { removed, canonical } => {
-                crate::ObservedTakerFirstLockEvidenceV1::from_canonical_zcash_replacement(
-                    *removed, *canonical,
-                )
-            }
-            TakerFirstLockObservationV1::Absent | TakerFirstLockObservationV1::Unstable => {
-                return Ok(ObserveTakerFirstLockOutcome::AwaitingStableObservation(
-                    step,
-                ));
-            }
+        let Some(evidence) = observed_taker_lock_evidence(observation) else {
+            return Ok(ObserveTakerFirstLockOutcome::AwaitingStableObservation(
+                step,
+            ));
         };
         let transition = ObservedTakerFirstLockTransitionV1::from_active(
             self.agreement(),
@@ -650,9 +636,9 @@ where
     ///
     /// # Errors
     ///
-    /// Rejects the taker role, reverse LEZ direction until canonical LEZ
-    /// evidence exists, invalid chain history, and structured port/store
-    /// failures.
+    /// Rejects the taker role, reverse LEZ direction until its exact-head
+    /// tracker and eligibility policy exist, invalid chain history, and
+    /// structured port/store failures.
     pub async fn refresh_maker_funding_eligibility(
         &mut self,
     ) -> Result<MakerFundingEligibilityOutcome, ZecSdkError> {
@@ -677,6 +663,29 @@ where
                 MakerFundingEligibilityOutcome::CanonicalStateChanged(commit),
             ),
         }
+    }
+}
+
+fn observed_taker_lock_evidence(
+    observation: TakerFirstLockObservationV1,
+) -> Option<crate::ObservedTakerFirstLockEvidenceV1> {
+    match observation {
+        TakerFirstLockObservationV1::Confirmed(evidence) => Some(evidence),
+        TakerFirstLockObservationV1::CanonicalLez(canonical) => Some(
+            crate::ObservedTakerFirstLockEvidenceV1::from_canonical_lez(*canonical),
+        ),
+        TakerFirstLockObservationV1::CanonicalZcash(canonical) => {
+            Some(crate::ObservedTakerFirstLockEvidenceV1::from_canonical_zcash(*canonical))
+        }
+        TakerFirstLockObservationV1::ZcashRemoved(removed) => {
+            Some(crate::ObservedTakerFirstLockEvidenceV1::from_canonical_zcash_removal(*removed))
+        }
+        TakerFirstLockObservationV1::ZcashReplaced { removed, canonical } => Some(
+            crate::ObservedTakerFirstLockEvidenceV1::from_canonical_zcash_replacement(
+                *removed, *canonical,
+            ),
+        ),
+        TakerFirstLockObservationV1::Absent | TakerFirstLockObservationV1::Unstable => None,
     }
 }
 

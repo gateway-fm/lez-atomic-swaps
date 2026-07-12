@@ -7,24 +7,27 @@ use async_trait::async_trait;
 use lez_swap_core::{Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract,
-    CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval, ClaimPreimage,
-    CreateAgreementOutcome, CreateFirstLockOutcome, ExpectedBip199Output,
+    CanonicalLezEscrowObservationV1, CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval,
+    ClaimPreimage, CreateAgreementOutcome, CreateFirstLockOutcome, ExpectedBip199Output,
     FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentRecordV1,
     FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1, FirstLockProjectionCommit,
     FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1, FirstLockTransitionV1,
-    LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, LezFirstLockPort,
-    LezTakerFirstLockObservationPort, MAX_FIRST_LOCK_SUBMISSION_BYTES,
-    MAX_ZEC_AGREEMENT_RECORD_BYTES, MakerFundingEligibilityOutcome, NegotiationChannel,
-    NegotiationTranscriptV1, ObserveTakerFirstLockOutcome, ObservedTakerFirstLockEvidenceV1,
-    ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
-    RecoveryStore, TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZcashFirstLockPort, ZcashNodeRemovalSnapshot,
-    ZcashNodeSnapshot, ZcashStableTip, ZcashTakerFirstLockObservationPort,
-    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1Error,
-    ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1,
-    ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding,
-    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_funding_transaction,
-    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    LezAssetV1, LezChainIdentityV1, LezCustodySnapshotV1, LezEnvironmentV1,
+    LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort, LezFundTransactionSnapshotV1,
+    LezInclusionStatusV1, LezNodeSnapshotV1, LezStableTipV1, LezTakerFirstLockObservationPort,
+    MAX_FIRST_LOCK_SUBMISSION_BYTES, MAX_ZEC_AGREEMENT_RECORD_BYTES,
+    MakerFundingEligibilityOutcome, NegotiationChannel, NegotiationTranscriptV1,
+    ObserveTakerFirstLockOutcome, ObservedTakerFirstLockEvidenceV1,
+    ObservedTakerFirstLockTransitionRecordV1, ObservedTakerFirstLockTransitionV1, OfferDiscovery,
+    PreparedFirstLockSubmissionV1, RecoveryStore, TakerFirstLockObservationV1,
+    TransparentFundingRequest, TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
+    ZcashFirstLockPort, ZcashNodeRemovalSnapshot, ZcashNodeSnapshot, ZcashStableTip,
+    ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
+    ZecAgreementRecordV1, ZecAgreementV1Error, ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk,
+    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
+    ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
+    build_funding_transaction, derive_lez_metadata_account_v1,
+    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use zcash_primitives::block::BlockHash;
@@ -1257,11 +1260,6 @@ async fn reverse_maker_observes_lez_while_taker_cannot_use_maker_observation() {
     let reverse_store = MemoryStore::default();
     let reverse_lez = MemoryLezTakerLockObservation::default();
     let reverse_zcash = MemoryZcashTakerLockObservation::default();
-    reverse_lez.0.respond(Ok(confirmed_observed_taker_lock(
-        FirstLockStepV1::LezFund,
-        "confirmed-lez-lock",
-        100,
-    )));
     let reverse_sdk = ZecPairSdk::new(
         Participant::Maker,
         MemoryDiscovery::default(),
@@ -1274,27 +1272,53 @@ async fn reverse_maker_observes_lez_while_taker_cannot_use_maker_observation() {
         },
         reverse_lez.clone(),
         reverse_zcash.clone(),
-        reverse_store,
+        reverse_store.clone(),
     );
     let reverse_accepted = reverse_sdk
         .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
         .await
         .expect("reverse agreement");
     let mut reverse_maker = reverse_sdk
-        .activate(reverse_accepted)
+        .activate(reverse_accepted.clone())
         .await
         .expect("reverse maker activation");
+    reverse_lez.0.respond(Ok(confirmed_observed_taker_lock(
+        FirstLockStepV1::LezFund,
+        "primitive-lez-lock",
+        100,
+    )));
+    assert!(matches!(
+        reverse_maker.observe_taker_first_lock().await,
+        Err(ZecSdkError::InvalidObservedTakerFirstLockTransition(_))
+    ));
+    assert_eq!(reverse_maker.revision(), 0);
+    reverse_lez
+        .0
+        .respond(Ok(TakerFirstLockObservationV1::CanonicalLez(Box::new(
+            canonical_lez_taker_lock(reverse_maker.agreement()),
+        ))));
     assert!(matches!(
         reverse_maker.observe_taker_first_lock().await,
         Ok(ObserveTakerFirstLockOutcome::Projected(_))
     ));
-    assert_eq!(reverse_lez.0.calls(), 1);
+    assert_eq!(reverse_lez.0.calls(), 2);
     assert_eq!(reverse_zcash.0.calls(), 0);
     assert_eq!(reverse_maker.status(), Phase::TakerLockConfirmed);
+    let durable_transition = reverse_store
+        .observed_taker_first_lock_transitions
+        .lock()
+        .expect("reverse observation journal")
+        .get(&("sdk-maker-observes-lez".to_owned(), 0))
+        .expect("canonical LEZ transition committed")
+        .clone();
+    let record = ObservedTakerFirstLockTransitionRecordV1::from(&durable_transition);
+    record
+        .revalidate(&reverse_accepted, 0)
+        .expect("canonical LEZ primitive record survives restart revalidation");
     assert_eq!(
         reverse_maker.next_action(),
         ZecLifecycleAction::Wait,
-        "provisional LEZ evidence must never authorize Zcash funding"
+        "canonical LEZ evidence must not bypass the distinct fresh-funding check"
     );
     assert!(matches!(
         reverse_maker.refresh_maker_funding_eligibility().await,
@@ -1331,6 +1355,224 @@ async fn reverse_maker_observes_lez_while_taker_cannot_use_maker_observation() {
             actual: Participant::Taker
         })
     ));
+}
+
+fn canonical_lez_taker_lock(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+) -> CanonicalLezEscrowObservationV1 {
+    CanonicalLezEscrowObservationV1::validate(
+        agreement,
+        &canonical_lez_snapshot(agreement, LezSnapshotMutation::None),
+    )
+    .expect("agreement-bound canonical LEZ observation")
+}
+
+#[derive(Clone, Copy)]
+enum LezSnapshotMutation {
+    None,
+    Environment,
+    Channel,
+    Genesis,
+    TipDrift,
+    InclusionBlock,
+    InclusionAboveTip,
+    Program,
+    Signer,
+    Accounts,
+    SwapId,
+    NonPublic,
+    InvalidSignature,
+    MetadataOwner,
+    MetadataAccount,
+    MetadataAmount,
+    CustodyAccount,
+    CustodyAmount,
+}
+
+// Keeping every one-field deviation in one factory makes the negative matrix
+// auditable against the valid fixture.
+#[allow(clippy::too_many_lines)]
+fn canonical_lez_snapshot(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    mutation: LezSnapshotMutation,
+) -> LezNodeSnapshotV1 {
+    let terms = agreement.lez_terms();
+    let LezAssetV1::Native {
+        authenticated_transfer_program_id,
+    } = terms.asset()
+    else {
+        panic!("lifecycle fixture uses native LEZ")
+    };
+    let depositor = *agreement.lez_account(agreement.lez_depositor());
+    let claimant = *agreement.lez_account(agreement.lez_claimant());
+    let environment = if matches!(mutation, LezSnapshotMutation::Environment) {
+        LezEnvironmentV1::PublicTestnetV0_2
+    } else {
+        terms.chain().environment()
+    };
+    let genesis = if matches!(mutation, LezSnapshotMutation::Genesis) {
+        [0x99; 32]
+    } else {
+        *terms.chain().genesis_block_hash()
+    };
+    let channel_id = if matches!(mutation, LezSnapshotMutation::Channel) {
+        [0x98; 32]
+    } else {
+        *terms.chain().channel_id()
+    };
+    let metadata_amount = if matches!(mutation, LezSnapshotMutation::MetadataAmount) {
+        terms.amount() + 1
+    } else {
+        terms.amount()
+    };
+    let metadata = LezEscrowMetadataSnapshotV1::new(
+        1,
+        *agreement.onchain_swap_id(),
+        *agreement.agreement_commitment(),
+        *agreement.secret_digest(),
+        depositor,
+        depositor,
+        claimant,
+        claimant,
+        *terms.custody_account(),
+        *authenticated_transfer_program_id,
+        *authenticated_transfer_program_id,
+        [0; 32],
+        metadata_amount,
+        agreement.lez_refund_at_ms(),
+        LezEscrowStatusV1::Funded,
+    );
+    let program_id = if matches!(mutation, LezSnapshotMutation::Program) {
+        [0x77; 8]
+    } else {
+        *terms.escrow_program_id()
+    };
+    let signer = if matches!(mutation, LezSnapshotMutation::Signer) {
+        claimant
+    } else {
+        depositor
+    };
+    let accounts = if matches!(mutation, LezSnapshotMutation::Accounts) {
+        vec![
+            *terms.custody_account(),
+            *terms.metadata_account(),
+            depositor,
+        ]
+    } else {
+        vec![
+            *terms.metadata_account(),
+            *terms.custody_account(),
+            depositor,
+        ]
+    };
+    let swap_id = if matches!(mutation, LezSnapshotMutation::SwapId) {
+        [0x88; 32]
+    } else {
+        *agreement.onchain_swap_id()
+    };
+    let inclusion_height = if matches!(mutation, LezSnapshotMutation::InclusionAboveTip) {
+        103
+    } else {
+        100
+    };
+    let canonical_block_hash = if matches!(mutation, LezSnapshotMutation::InclusionBlock) {
+        [0x43; 32]
+    } else {
+        [0x41; 32]
+    };
+    let transaction = LezFundTransactionSnapshotV1::new(
+        [0x31; 32],
+        program_id,
+        signer,
+        accounts,
+        swap_id,
+        !matches!(mutation, LezSnapshotMutation::NonPublic),
+        !matches!(mutation, LezSnapshotMutation::InvalidSignature),
+        inclusion_height,
+        [0x41; 32],
+        canonical_block_hash,
+        LezInclusionStatusV1::Finalized,
+    );
+    let tip = if matches!(mutation, LezSnapshotMutation::TipDrift) {
+        LezStableTipV1::new([0x42; 32], 102, [0x43; 32], 103)
+    } else {
+        LezStableTipV1::new([0x42; 32], 102, [0x42; 32], 102)
+    };
+    let metadata_program_owner = if matches!(mutation, LezSnapshotMutation::MetadataOwner) {
+        [0x66; 8]
+    } else {
+        *terms.escrow_program_id()
+    };
+    let metadata_account = if matches!(mutation, LezSnapshotMutation::MetadataAccount) {
+        [0x55; 32]
+    } else {
+        *terms.metadata_account()
+    };
+    let custody_amount = if matches!(mutation, LezSnapshotMutation::CustodyAmount) {
+        terms.amount() + 1
+    } else {
+        terms.amount()
+    };
+    let custody_account = if matches!(mutation, LezSnapshotMutation::CustodyAccount) {
+        [0x54; 32]
+    } else {
+        *terms.custody_account()
+    };
+    LezNodeSnapshotV1::new(
+        environment,
+        channel_id,
+        genesis,
+        tip,
+        transaction,
+        metadata_program_owner,
+        metadata_account,
+        metadata,
+        custody_account,
+        LezCustodySnapshotV1::Native {
+            program_owner: *authenticated_transfer_program_id,
+            balance: custody_amount,
+        },
+    )
+}
+
+#[test]
+fn canonical_lez_observation_rejects_each_changed_chain_transaction_and_account_binding() {
+    let agreement = lez_zec_swap_sdk::ZecAgreementV1::from_wire_at(
+        &agreement_wire(
+            "canonical-lez-negative-matrix",
+            SwapDirection::TakerSellsLez,
+            FixtureVariant::Local,
+        ),
+        ACCEPTED_AT,
+    )
+    .expect("valid reverse agreement");
+    for mutation in [
+        LezSnapshotMutation::Environment,
+        LezSnapshotMutation::Channel,
+        LezSnapshotMutation::Genesis,
+        LezSnapshotMutation::TipDrift,
+        LezSnapshotMutation::InclusionBlock,
+        LezSnapshotMutation::InclusionAboveTip,
+        LezSnapshotMutation::Program,
+        LezSnapshotMutation::Signer,
+        LezSnapshotMutation::Accounts,
+        LezSnapshotMutation::SwapId,
+        LezSnapshotMutation::NonPublic,
+        LezSnapshotMutation::InvalidSignature,
+        LezSnapshotMutation::MetadataOwner,
+        LezSnapshotMutation::MetadataAccount,
+        LezSnapshotMutation::MetadataAmount,
+        LezSnapshotMutation::CustodyAccount,
+        LezSnapshotMutation::CustodyAmount,
+    ] {
+        assert!(
+            CanonicalLezEscrowObservationV1::validate(
+                &agreement,
+                &canonical_lez_snapshot(&agreement, mutation)
+            )
+            .is_err()
+        );
+    }
 }
 
 fn confirmed_observed_taker_lock(
@@ -2041,7 +2283,7 @@ fn agreement_wire(id: &str, direction: SwapDirection, variant: FixtureVariant) -
         ),
         digest,
         ZecLezTermsV1::new(
-            LezChainIdentityV1::new(environment, [7; 32]),
+            LezChainIdentityV1::new(environment, [8; 32], [7; 32]),
             escrow_program,
             LezAssetV1::Native {
                 authenticated_transfer_program_id: [2; 8],
@@ -2075,7 +2317,7 @@ fn agreement_wire(id: &str, direction: SwapDirection, variant: FixtureVariant) -
     );
     let commitment = body.commitment();
     let record = ZecAgreementRecordV1::from_parts(
-        ZEC_CONCRETE_AGREEMENT_SCHEMA_V1,
+        ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
         body,
         if matches!(variant, FixtureVariant::CorruptCommitment) {
             [0x44; 32]

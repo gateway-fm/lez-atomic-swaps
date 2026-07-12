@@ -97,8 +97,13 @@ atomic same-tip replacement, and affirmative exact-head removal through
 nothing and changed inclusion without replacement fails; exact row-range
 validation, poison-append rejection, rollback, restart, and stale-instance
 catch-up are tested. The SDK returns Wait afterward, including on
-restart. The production Zcash port must still assemble fresh canonical
-snapshots and LEZ needs an equivalent escrow snapshot validator. The distinct
+restart. Reverse LEZ likewise rejects primitive ID/depth assertions. Its stable
+snapshot validator binds signed channel/genesis, public fund program, signer,
+generated account order, canonical inclusion/tip, complete funded metadata,
+exact custody amount/asset, depth, and public finality policy. The primitive
+snapshot is persisted and revalidated after restart. The production Zcash port
+must still assemble fresh canonical snapshots; the official-wire LEZ port and
+LEZ exact-head removal/replacement tracker remain open. The distinct
 fresh eligibility call replays and re-queries, but deliberately caches no
 authority and leaves `next_action` at `Wait`; the future maker second-lock
 method must consume the result internally in the same operation.

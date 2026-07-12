@@ -61,8 +61,12 @@ current executable slices enforce:
   call replays the durable head, re-queries the exact canonical tracker head,
   writes nothing when unchanged, and returns a non-cached revision-bound
   result; `next_action` remains `Wait` because no maker effect exists to
-  consume it in the same operation. Production RPC adapters, canonical LEZ
-  evidence, later effects, and the
+  consume it in the same operation. Reverse LEZ now requires a stable canonical
+  escrow snapshot bound to the signed execution channel/genesis, public fund
+  transaction, generated account order, full metadata, exact custody, depth,
+  and finality policy; that primitive snapshot is revalidated after SQLite
+  close/reopen. The official-wire LEZ RPC adapter, LEZ
+  depth/removal/replacement tracker, later effects, and the
   completed corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the

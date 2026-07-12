@@ -1,7 +1,8 @@
 # ADR 0017: Durable intent before first-lock effects
 
 Status: taker intent/projection and maker-independent SQLite observation/replay
-proven; canonical LEZ observation, reorg reconciliation, and production chain
+proven; canonical LEZ native observation and restart replay are proven, while
+official-wire LEZ decoding, exact-head reorg reconciliation, and production chain
 adapters pending — 2026-07-12
 
 ```mermaid
@@ -116,7 +117,7 @@ after restart, so observation history cannot authorize the maker lock. The
 forward maker actor now commits and replays canonical evidence, an atomic
 different-transaction replacement, a same-inclusion depth change, and
 affirmative removal across revisions 1 through 4. The package currently passes
-82 ordinary tests plus one doctest, with the real-Zebra Docker case
+83 ordinary tests plus one doctest, with the real-Zebra Docker case
 intentionally delegated to its isolated runner.
 
 Nine production-store cases instantiate the SDK with a cloneable role-fixed

@@ -5,6 +5,7 @@ mod first_lock;
 mod first_lock_record;
 mod funding;
 mod lez_derivation;
+mod lez_observation;
 mod lifecycle;
 mod observation;
 mod observation_record;
@@ -21,10 +22,10 @@ pub use agreement_v1::{
     LezChainIdentityV1, LezEnvironmentV1, MAX_ZEC_AGREEMENT_RECORD_BYTES,
     MAX_ZEC_APPLICATION_SWAP_ID_BYTES, MAX_ZEC_FUNDING_INPUTS, MAX_ZEC_FUNDING_SCRIPT_BYTES,
     NegotiationTranscriptV1, SwapDirectionRecordV1, ZEC_AGREEMENT_V1_DOMAIN,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZcashFundingInputSetV1, ZcashFundingInputV1,
-    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementExecutionError,
-    ZecAgreementRecordV1, ZecAgreementV1, ZecAgreementV1Error, ZecLezTermsV1,
-    ZecParticipantIdentityV1, ZecParticipantsV1, ZecRefundPlanV1, ZecRolePayoutV1,
+    ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFundingInputSetV1,
+    ZcashFundingInputV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
+    ZecAgreementExecutionError, ZecAgreementRecordV1, ZecAgreementV1, ZecAgreementV1Error,
+    ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecRefundPlanV1, ZecRolePayoutV1,
     ZecTransactionPolicyV1,
 };
 
@@ -45,6 +46,11 @@ pub use funding::{
 pub use lez_derivation::{
     derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_public_pda_v1,
     derive_lez_swap_id_v1, derive_lez_token_account_v1,
+};
+pub use lez_observation::{
+    CanonicalLezEscrowObservationV1, LezCustodySnapshotV1, LezEscrowMetadataSnapshotV1,
+    LezEscrowStatusV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezNodeSnapshotV1,
+    LezObservationError, LezStableTipV1,
 };
 pub use lifecycle::{BoxPortError, ClaimPreimage, ZecLifecycleAction, ZecSdkError};
 

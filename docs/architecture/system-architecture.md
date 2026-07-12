@@ -128,9 +128,13 @@ changed inclusion without replacement fails. Schema v6 rejects orphan, holey,
 or history-incompatible rows and catches stale instances up before returning.
 The distinct fresh pre-second-lock call now replays and re-queries the exact
 head without caching authority, writing a duplicate, or changing
-`next_action`. The production node port and maker effect that consumes this
-result internally remain; reverse LEZ still needs an equivalent escrow snapshot
-validator, and the SDK returns Wait.
+`next_action`. Reverse LEZ now rejects primitive ID/depth assertions and
+persists a stable primitive snapshot bound to the signed channel/genesis,
+public fund transaction, canonical block/tip, complete SPEL metadata, exact
+custody, depth, and finality policy. SDK and SQLite replay rerun the same
+validator. The official-wire LEZ node port, exact-head
+depth/removal/replacement tracker, reverse fresh eligibility, and maker effect
+that consumes eligibility internally remain; the SDK returns Wait.
 
 The dashed state reflects delivery honestly. The deterministic core, SQLite
 repository, maker daemon, authenticated maker CLI flow, LEZ semantic

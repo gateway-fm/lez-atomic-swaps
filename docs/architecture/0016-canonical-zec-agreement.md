@@ -7,7 +7,7 @@ effect adapters pending — 2026-07-12
 flowchart LR
     Maker["Maker transparent signing key"] --> Body["Canonical agreement body"]
     Taker["Taker transparent signing key"] --> Body
-    Body --> Wire["Bounded Borsh v1 wire record"]
+    Body --> Wire["Bounded Borsh schema-2 wire record"]
     Wire --> Limits["16 KiB record and 128-byte ID preflight"]
     Limits --> Hash["Domain-separated SHA-256 commitment"]
     Hash --> Signatures["Dual compact low-S signatures"]
@@ -36,7 +36,7 @@ top of that generic record would make the agreement non-authoritative.
 
 ## Decision
 
-Use one canonical version-1 record for the LEZ/ZEC corridor. Its body binds the
+Use one canonical record family for the LEZ/ZEC corridor. Its body binds the
 application swap ID and direction; named profile; maker/taker LEZ accounts and
 compressed transparent keys; common SHA-256 digest; exact LEZ environment,
 genesis, programs, asset, amount, metadata and custody accounts; validated
@@ -44,7 +44,12 @@ BIP-199 output; canonical funding-input-set commitment; funding, claim, and
 refund destinations and fees; transaction expiry; refund anchors and
 conservative bounds; and authenticated negotiation transcript.
 
-The record is canonical Borsh encoded under schema 1. Network entry is only
+The current record is canonical Borsh encoded under schema 2. Schema 1 lacked
+the signed LEZ v0.2 execution channel and is deliberately unsupported. The
+bounded decoder still recognizes its shorter layout and returns a typed
+`UnsupportedSchema(1)` error; neither SQLite nor network entry attempts to
+inject an unsigned channel into an already signed agreement. Actors must
+renegotiate and re-sign under schema 2. Network entry is only
 through an exact-consumption decoder capped at 16 KiB. The variable-length
 application ID is preflighted at 128 bytes before allocation. The body is hashed
 under `logos.gateway.lez-zec.agreement.v1\0`, and maker and taker must supply

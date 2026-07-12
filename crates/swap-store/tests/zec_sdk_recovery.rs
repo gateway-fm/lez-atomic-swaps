@@ -2,14 +2,16 @@ use async_trait::async_trait;
 use lez_swap_core::{Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_swap_store::SqliteZecRecoveryStore;
 use lez_zec_swap_sdk::{
-    AcceptedZecAgreementV1, Bip199Contract, CanonicalZcashOutputObservation,
-    CanonicalZcashOutputRemoval, CreateFirstLockOutcome, ExpectedBip199Output,
-    FirstLockConfirmedEvidenceV1, FirstLockPlanV1, FirstLockProjectionCommit, FirstLockStepV1,
-    LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, LezTakerFirstLockObservationPort,
+    AcceptedZecAgreementV1, Bip199Contract, CanonicalLezEscrowObservationV1,
+    CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval, CreateFirstLockOutcome,
+    ExpectedBip199Output, FirstLockConfirmedEvidenceV1, FirstLockPlanV1, FirstLockProjectionCommit,
+    FirstLockStepV1, LezAssetV1, LezChainIdentityV1, LezCustodySnapshotV1, LezEnvironmentV1,
+    LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFundTransactionSnapshotV1,
+    LezInclusionStatusV1, LezNodeSnapshotV1, LezStableTipV1, LezTakerFirstLockObservationPort,
     MakerFundingEligibilityOutcome, NegotiationChannel, NegotiationTranscriptV1,
     ObserveTakerFirstLockOutcome, ObservedTakerFirstLockTransitionRecordV1, OfferDiscovery,
     PreparedFirstLockSubmissionV1, RecoveryStore, TakerFirstLockObservationV1,
-    TransparentFundingRequest, TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V1,
+    TransparentFundingRequest, TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
     ZcashNodeRemovalSnapshot, ZcashNodeSnapshot, ZcashObservationEventRecordV1, ZcashStableTip,
     ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
     ZecAgreementRecordV1, ZecLezTermsV1, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1,
@@ -585,6 +587,57 @@ async fn maker_observation_is_role_local_and_survives_sqlite_reopen() {
     assert_orphan_future_maker_transition_fails_closed(&path, id).await;
 }
 
+#[tokio::test]
+async fn canonical_lez_maker_observation_survives_sqlite_close_and_reopen() {
+    let data = TempDir::new().expect("reverse maker observation store");
+    let path = data.path().join("reverse-maker-observation.sqlite3");
+    let id = "sqlite-maker-observes-lez";
+    let accepted = accept(
+        &agreement_wire_direction(id, FixtureVariant::Local, SwapDirection::TakerSellsLez),
+        Participant::Maker,
+    );
+    let canonical = canonical_lez_taker_lock(accepted.agreement());
+    let observation = MakerObservation(TakerFirstLockObservationV1::CanonicalLez(Box::new(
+        canonical,
+    )));
+    let store =
+        SqliteZecRecoveryStore::open(&path, Participant::Maker).expect("open reverse maker store");
+    let mut active = ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        observation.clone(),
+        MakerObservation(TakerFirstLockObservationV1::Absent),
+        store,
+    )
+    .activate(accepted)
+    .await
+    .expect("activate reverse maker");
+    assert!(matches!(
+        active.observe_taker_first_lock().await,
+        Ok(ObserveTakerFirstLockOutcome::Projected(_))
+    ));
+    assert_eq!(active.status(), Phase::TakerLockConfirmed);
+    drop(active);
+
+    let reopened = SqliteZecRecoveryStore::open(&path, Participant::Maker)
+        .expect("reopen reverse maker store");
+    let resumed = ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        MakerObservation(TakerFirstLockObservationV1::Absent),
+        MakerObservation(TakerFirstLockObservationV1::Absent),
+        reopened,
+    )
+    .resume(&SwapId::new(id).expect("swap ID"))
+    .await
+    .expect("resume reverse maker")
+    .expect("durable reverse agreement");
+    assert_eq!(resumed.status(), Phase::TakerLockConfirmed);
+    assert_eq!(resumed.revision(), 1);
+}
+
 async fn assert_fresh_eligibility_after_reopen(
     path: &std::path::Path,
     id: &str,
@@ -1151,6 +1204,73 @@ fn confirmed(
     .expect("stable confirmed first lock")
 }
 
+fn canonical_lez_taker_lock(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+) -> CanonicalLezEscrowObservationV1 {
+    let terms = agreement.lez_terms();
+    let LezAssetV1::Native {
+        authenticated_transfer_program_id,
+    } = terms.asset()
+    else {
+        panic!("SQLite fixture uses native LEZ")
+    };
+    let depositor = *agreement.lez_account(agreement.lez_depositor());
+    let claimant = *agreement.lez_account(agreement.lez_claimant());
+    let metadata = LezEscrowMetadataSnapshotV1::new(
+        1,
+        *agreement.onchain_swap_id(),
+        *agreement.agreement_commitment(),
+        *agreement.secret_digest(),
+        depositor,
+        depositor,
+        claimant,
+        claimant,
+        *terms.custody_account(),
+        *authenticated_transfer_program_id,
+        *authenticated_transfer_program_id,
+        [0; 32],
+        terms.amount(),
+        agreement.lez_refund_at_ms(),
+        LezEscrowStatusV1::Funded,
+    );
+    let transaction = LezFundTransactionSnapshotV1::new(
+        [0x31; 32],
+        *terms.escrow_program_id(),
+        depositor,
+        vec![
+            *terms.metadata_account(),
+            *terms.custody_account(),
+            depositor,
+        ],
+        *agreement.onchain_swap_id(),
+        true,
+        true,
+        100,
+        [0x41; 32],
+        [0x41; 32],
+        LezInclusionStatusV1::Finalized,
+    );
+    CanonicalLezEscrowObservationV1::validate(
+        agreement,
+        &LezNodeSnapshotV1::new(
+            terms.chain().environment(),
+            *terms.chain().channel_id(),
+            *terms.chain().genesis_block_hash(),
+            LezStableTipV1::new([0x42; 32], 102, [0x42; 32], 102),
+            transaction,
+            *terms.escrow_program_id(),
+            *terms.metadata_account(),
+            metadata,
+            *terms.custody_account(),
+            LezCustodySnapshotV1::Native {
+                program_owner: *authenticated_transfer_program_id,
+                balance: terms.amount(),
+            },
+        ),
+    )
+    .expect("agreement-bound canonical LEZ observation")
+}
+
 #[derive(Clone, Copy)]
 enum FixtureVariant {
     Local,
@@ -1158,13 +1278,25 @@ enum FixtureVariant {
 }
 
 fn agreement_wire(id: &str, variant: FixtureVariant) -> Vec<u8> {
+    agreement_wire_direction(id, variant, SwapDirection::TakerSellsForeign)
+}
+
+fn agreement_wire_direction(
+    id: &str,
+    variant: FixtureVariant,
+    direction: SwapDirection,
+) -> Vec<u8> {
     let maker_secret = SecretKey::from_slice(&[1; 32]).expect("maker key");
     let taker_secret = SecretKey::from_slice(&[2; 32]).expect("taker key");
     let secp = Secp256k1::new();
     let maker_key = PublicKey::from_secret_key(&secp, &maker_secret).serialize();
     let taker_key = PublicKey::from_secret_key(&secp, &taker_secret).serialize();
-    let refund_hash = pubkey_hash(&taker_key);
-    let claimant_hash = pubkey_hash(&maker_key);
+    let (refund_key, claimant_key) = match direction {
+        SwapDirection::TakerSellsForeign => (taker_key, maker_key),
+        SwapDirection::TakerSellsLez => (maker_key, taker_key),
+    };
+    let refund_hash = pubkey_hash(&refund_key);
+    let claimant_hash = pubkey_hash(&claimant_key);
     let escrow_program = [1; 8];
     let onchain_swap_id = derive_lez_swap_id_v1(id.as_bytes());
     let metadata_account = derive_lez_metadata_account_v1(&escrow_program, &onchain_swap_id);
@@ -1182,7 +1314,7 @@ fn agreement_wire(id: &str, variant: FixtureVariant) -> Vec<u8> {
     .expect("binding");
     let body = ZecAgreementBodyV1::new(
         id.to_owned(),
-        SwapDirection::TakerSellsForeign,
+        direction,
         ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
         ZecParticipantsV1::new(
             ZecParticipantIdentityV1::new([3; 32], maker_key),
@@ -1190,7 +1322,7 @@ fn agreement_wire(id: &str, variant: FixtureVariant) -> Vec<u8> {
         ),
         digest,
         ZecLezTermsV1::new(
-            LezChainIdentityV1::new(LezEnvironmentV1::DeterministicLocalV0_2, [7; 32]),
+            LezChainIdentityV1::new(LezEnvironmentV1::DeterministicLocalV0_2, [8; 32], [7; 32]),
             escrow_program,
             LezAssetV1::Native {
                 authenticated_transfer_program_id: [2; 8],
@@ -1223,7 +1355,7 @@ fn agreement_wire(id: &str, variant: FixtureVariant) -> Vec<u8> {
     );
     let commitment = body.commitment();
     ZecAgreementRecordV1::from_parts(
-        ZEC_CONCRETE_AGREEMENT_SCHEMA_V1,
+        ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
         body,
         commitment,
         secp.sign_ecdsa(&Message::from_digest(commitment), &maker_secret)
