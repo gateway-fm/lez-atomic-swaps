@@ -63,6 +63,9 @@ impl<LezTerms> ZecAgreement<LezTerms> {
         if coordinator.pair() != Pair::Zcash {
             return Err(ZecAgreementError::WrongPair(coordinator.pair()));
         }
+        if coordinator.phase() != Phase::Offered {
+            return Err(ZecAgreementError::NonInitialPhase(coordinator.phase()));
+        }
         if transcript_commitment == [0; 32] {
             return Err(ZecAgreementError::EmptyTranscriptCommitment);
         }
@@ -131,6 +134,9 @@ pub enum ZecAgreementError {
     /// A pair-specific facade never accepts foreign pair terms.
     #[error("LEZ/ZEC agreement uses wrong pair {0:?}")]
     WrongPair(Pair),
+    /// Negotiation may only activate a fresh, effect-free aggregate.
+    #[error("LEZ/ZEC agreement coordinator is already in phase {0:?}")]
+    NonInitialPhase(Phase),
     /// An all-zero value cannot bind a countersigned transcript.
     #[error("LEZ/ZEC agreement transcript commitment is empty")]
     EmptyTranscriptCommitment,

@@ -5,13 +5,13 @@ use std::{
 
 use async_trait::async_trait;
 use lez_swap_core::{
-    Chain, ChainPosition, ConfirmationPolicy, Pair, Participant, Phase, RecoverySchedule,
-    SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
+    Chain, ChainPosition, ChainProof, ConfirmationPolicy, Pair, Participant, Phase,
+    RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 use lez_zec_swap_sdk::{
     ActiveZecSwap, Bip199Contract, ClaimPreimage, ExpectedBip199Output, NegotiationChannel,
-    OfferDiscovery, RecoveryStore, ZEC_AGREEMENT_SCHEMA_V1, ZecAgreement, ZecPairSdk, ZecProfileId,
-    ZecRefundProfile, ZecSdkError, ZecSwapBinding,
+    OfferDiscovery, RecoveryStore, ZEC_AGREEMENT_SCHEMA_V1, ZecAgreement, ZecLifecycleAction,
+    ZecPairSdk, ZecProfileId, ZecRefundProfile, ZecSdkError, ZecSwapBinding,
 };
 use zcash_protocol::{
     consensus::{BranchId, NetworkType},
@@ -185,6 +185,8 @@ async fn independent_roles_negotiate_and_activate_without_transport_handles() {
     assert_eq!(taker_active.local_participant(), Participant::Taker);
     assert_eq!(maker_active.status(), Phase::Offered);
     assert_eq!(taker_active.status(), Phase::Offered);
+    assert_eq!(maker_active.next_action(), ZecLifecycleAction::Wait);
+    assert_eq!(taker_active.next_action(), ZecLifecycleAction::FundZcash);
     assert_eq!(maker_active.agreement().transcript_commitment(), &[7; 32]);
     assert_eq!(taker_active.agreement().transcript_commitment(), &[7; 32]);
     assert_eq!(maker_store.agreements.lock().expect("maker store").len(), 1);
@@ -197,6 +199,23 @@ async fn independent_roles_negotiate_and_activate_without_transport_handles() {
         .expect("maker agreement exists");
     assert_eq!(resumed.local_participant(), Participant::Maker);
     assert_eq!(resumed.status(), Phase::Offered);
+}
+
+#[tokio::test]
+async fn reverse_direction_assigns_the_takers_first_action_to_lez() {
+    let agreement = agreement("sdk-reverse", SwapDirection::TakerSellsLez);
+    let sdk = ZecPairSdk::new(
+        Participant::Taker,
+        MemoryDiscovery::default(),
+        MemoryNegotiation {
+            agreement: agreement.clone(),
+        },
+        NoopLez,
+        NoopZcash,
+        MemoryStore::default(),
+    );
+    let active = sdk.activate(agreement).await.expect("activation succeeds");
+    assert_eq!(active.next_action(), ZecLifecycleAction::CreateAndFundLez);
 }
 
 #[test]
@@ -224,6 +243,51 @@ fn agreement_rejects_wrong_pair_and_confirmation_policy() {
         schedule(SwapDirection::TakerSellsForeign),
     );
     assert!(ZecAgreement::new(1, wrong_policy, binding(), String::new(), [7; 32]).is_err());
+}
+
+#[test]
+fn agreement_rejects_unknown_schema_empty_transcript_and_advanced_state() {
+    let offered = agreement("agreement-invariants", SwapDirection::TakerSellsForeign)
+        .coordinator()
+        .clone();
+    assert!(
+        ZecAgreement::new(
+            ZEC_AGREEMENT_SCHEMA_V1 + 1,
+            offered.clone(),
+            binding(),
+            String::new(),
+            [7; 32]
+        )
+        .is_err()
+    );
+    assert!(
+        ZecAgreement::new(
+            ZEC_AGREEMENT_SCHEMA_V1,
+            offered.clone(),
+            binding(),
+            String::new(),
+            [0; 32]
+        )
+        .is_err()
+    );
+
+    let mut advanced = offered;
+    advanced
+        .observe_funding(
+            Participant::Taker,
+            ChainProof::new("already-funded", 1).expect("proof"),
+        )
+        .expect("valid core transition");
+    assert!(
+        ZecAgreement::new(
+            ZEC_AGREEMENT_SCHEMA_V1,
+            advanced,
+            binding(),
+            String::new(),
+            [7; 32]
+        )
+        .is_err()
+    );
 }
 
 #[test]
