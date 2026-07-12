@@ -62,3 +62,5 @@ for document in "${documents[@]}"; do
     exit 1
   fi
 done
+
+./scripts/render-mermaid-diagrams.sh

@@ -22,6 +22,12 @@ jobs:
         with:
           toolchain: 1.96.0
           components: rustfmt, clippy
+      - name: Install pinned Mermaid renderer
+        run: npm ci
+      - name: Audit Mermaid renderer dependencies
+        run: npm audit --audit-level=moderate
+      - name: Audit Mermaid renderer licenses
+        run: npm run audit:licenses
       - name: Lint shell scripts
         run: |
           bash -n scripts/*.sh

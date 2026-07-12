@@ -1,0 +1,152 @@
+# Deployment components, RPCs, and local nodes
+
+Status: Living executable inventory — 2026-07-12
+
+This document is the concrete deployment companion to the
+[system architecture](system-architecture.md). It distinguishes processes that
+actually run today from target components that do not yet have an implementation,
+port, credential scheme, or selected provider. A dashed component or edge is
+planned. No port is invented for an unimplemented integration.
+
+## Current executable local topology
+
+```mermaid
+flowchart TB
+    Operator["Maker operator"]
+
+    subgraph MakerHost["Maker host"]
+        CLI["lez-maker CLI"]
+        Daemon["lez-maker-daemon"]
+        Store[("SQLite schema v4")]
+        RuntimeTest["maker runtime reconciliation test"]
+    end
+
+    subgraph ZebraProject["Isolated Docker Compose project per RUN_ID"]
+        ZebraPrimary["Primary Zebra 5.2.0 Regtest"]
+        ZebraFork["Fork Zebra 5.2.0 Regtest"]
+    end
+
+    ZebraTest["Zebra actor acceptance fixture"]
+
+    subgraph LezProcess["Pinned LEZ v0.1.2 test process"]
+        LezTest["LEZ actor acceptance fixture"]
+        LezNode["Standalone sequencer"]
+    end
+
+    Operator --> CLI
+    CLI -->|"HTTP JSON-RPC plus Bearer token; swap_create and swap_status"| Daemon
+    Daemon -->|"rusqlite; caller-selected local file; Mutex-serialized"| Store
+    RuntimeTest -->|"Direct maker runtime API; no network RPC"| Store
+    ZebraTest -->|"Unauthenticated JSON-RPC on ephemeral host-loopback port"| ZebraPrimary
+    ZebraTest -->|"Unauthenticated JSON-RPC on different ephemeral host-loopback port"| ZebraFork
+    ZebraFork -->|"submitblock relay performed by fixture"| ZebraPrimary
+    LezTest -->|"Unauthenticated HTTP JSON-RPC through 127.0.0.1 client URL"| LezNode
+```
+
+The maker daemon hard-refuses a non-loopback bind and defaults to
+`127.0.0.1:0`. Its ready file contains only the selected URL; the Bearer token
+comes from `LEZ_MAKER_RPC_TOKEN` and is never written there. The CLI default is
+`http://127.0.0.1:9944`, so an ephemeral daemon must be called with the ready URL.
+The only registered methods today are `swap_create` and `swap_status`. There is
+no daemon-integrated chain watcher, chain-key owner, health method, or production
+ZEC ingestion RPC yet.
+
+Each Zebra container listens on `0.0.0.0:18232` inside its isolated project
+network. Compose publishes it as a different ephemeral `127.0.0.1` host port.
+Cookie authentication is disabled for this Regtest-only fixture. The nodes have
+separate tmpfs state, no initial peers, and no fixed host ports; the fixture
+relays blocks explicitly. Both containers are non-root, read-only,
+capability-free, resource-capped, and removed only through their exact Compose
+project name.
+
+The pinned LEZ standalone server is short-lived, uses port zero and temporary
+state, and the test client connects through `127.0.0.1`. However, the exact
+upstream v0.1.2 server binds `0.0.0.0` on that ephemeral port. It is collision
+isolated but not loopback/network-namespace isolated. This must remain visible
+until upstream accepts a bind address or the lane is placed in an isolated
+network namespace/container.
+
+## M2 ZEC corridor target topology
+
+```mermaid
+flowchart LR
+    Maker["Maker operator"]
+    Taker["Taker user"]
+
+    subgraph MakerBoundary["Maker-owned boundary"]
+        MakerCLI["Maker CLI"]
+        Core["Optional Logos Core lifecycle adapter"]
+        MakerDaemon["Maker daemon plus ZEC watcher"]
+        MakerStore[("SQLite aggregate, journal, binding, alert outbox")]
+        MakerZebra["Selected maker Zebra route"]
+        MakerLez["Selected maker LEZ route"]
+    end
+
+    subgraph TakerBoundary["Taker-owned boundary"]
+        TakerCLI["Taker CLI or SDK"]
+        TakerState[("Taker recovery state")]
+        TakerZebra["Selected taker Zebra route"]
+        TakerLez["Selected taker LEZ route"]
+    end
+
+    Delivery["Offer discovery"]
+    Chat["Signed negotiation channel"]
+
+    Maker --> MakerCLI
+    MakerCLI -.->|"Owner-local authenticated control RPC"| MakerDaemon
+    Core -.->|"start, endpoint, health, stop"| MakerDaemon
+    MakerDaemon --> MakerStore
+    MakerDaemon -.->|"Zebra JSON-RPC; broadcast and stable canonical observations"| MakerZebra
+    MakerDaemon -.->|"LEZ JSON-RPC; escrow submit and observation"| MakerLez
+    Taker --> TakerCLI
+    TakerCLI --> TakerState
+    TakerCLI -.->|"Zebra JSON-RPC"| TakerZebra
+    TakerCLI -.->|"LEZ JSON-RPC"| TakerLez
+    MakerDaemon -.->|"Authenticated expiring offers only"| Delivery
+    TakerCLI -.->|"Offer queries only"| Delivery
+    MakerDaemon -.->|"Both-role signed terms before first lock"| Chat
+    TakerCLI -.->|"Both-role signed terms before first lock"| Chat
+
+    classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
+    class MakerCLI,Core,MakerDaemon,MakerZebra,MakerLez,TakerCLI,TakerState,TakerZebra,TakerLez,Delivery,Chat planned;
+```
+
+Delivery and Chat are negotiation transports, never sources of chain truth or
+secrets. After the first lock, each actor must recover using only its own durable
+state and selected chain nodes. Logos Core is optional lifecycle/presentation;
+it never opens SQLite or becomes protocol authority.
+
+## RPC and local-resource inventory
+
+| Component | Status | Transport and bind | Authentication / authority | Methods exercised or required | Lifecycle and isolation |
+|---|---|---|---|---|---|
+| `lez-maker-daemon` | Running prototype | HTTP JSON-RPC; default `127.0.0.1:0`; non-loopback rejected | Bearer token from hidden environment; minimum 24 bytes; header checked before JSON parsing | Actual: `swap_create`, `swap_status` | Operator/test-owned process; caller-selected SQLite path; Ctrl-C shutdown |
+| `lez-maker` | Running prototype | HTTP client; default `127.0.0.1:9944`; explicit ready URL for ephemeral daemon | Authorization header marked sensitive | Actual CLI create/status mapping to the two daemon methods | Independent operator process |
+| SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority | Aggregate, revision, ZEC journal, immutable binding, operator-alert list/ack APIs | WAL, `FULL` synchronous, schema v4, one process mutex today |
+| Primary Zebra | Running in ignored E2E | Container `0.0.0.0:18232`; ephemeral host `127.0.0.1` mapping | Regtest fixture has no cookie auth; signed transactions and consensus remain authoritative | `getblockcount`, `generate`, `getblockhash`, `getblock`, `getblockheader`, `submitblock`, `getaddressutxos`, `getrawtransaction`, `sendrawtransaction`, `getblockchaininfo` | Unique Compose project and tmpfs state per `RUN_ID` |
+| Fork Zebra | Running in ignored E2E | Same container port; distinct ephemeral host-loopback mapping | Same Regtest-only policy | Same RPC set; produces independent higher-work branch | Separate tmpfs state; no initial peer; fixture-controlled block relay |
+| LEZ standalone v0.1.2 | Running in ignored E2E | Upstream server `0.0.0.0:0`; client uses `127.0.0.1:<assigned>` | No transport credential; actor signatures authorize transactions | `checkHealth`, `sendTransaction`, `getLastBlockId`, `getTransaction`, `getAccountsNonces`, `getAccount`, `getBlock` | In-process handle, tempfile state, deterministic genesis actors; not public v0.2 |
+| Logos Core adapter | Planned | No transport/port selected beyond the daemon control endpoint | Protected OS credential handle | `start`, `endpoint`, `health`, `stop` | Optional supervisor of the same daemon binary |
+| Delivery / Chat | Planned | No protocol, endpoint, or port selected | Authenticated offers and both-role signed transcript | `OfferDiscovery`; `NegotiationChannel` | Untrusted/removable after first lock |
+| Production Zebra watcher route | Planned | Self-hosted and public-testnet routes unselected | Provider credentials/rate limits unselected | Stable-tip observation, broadcast, reorg reconciliation | Actor-selected node; fallback and health policy required |
+| Production LEZ route | Planned | Public v0.2 route unselected | Provider credentials/rate limits unselected | Escrow submit, canonical observation, health | Must use v0.2-compatible guest/client/PDA domain |
+| Bitcoin Core | M3 planned | No port/image/provider selected | Actor-owned node and wallet credentials | Typed `BitcoinChain` port | Do not infer conventional ports before selection |
+| `monerod` plus wallet RPC | M4 planned | No ports/images/providers selected | Actor-owned daemon/wallet credentials | Typed `MoneroChain` port | Wallet/key state remains actor-owned |
+
+## Local test concurrency
+
+```mermaid
+flowchart LR
+    Start["Choose unique RUN_ID"] --> Check{"Heavy suite already active?"}
+    Check -->|"yes"| Wait["Wait or use isolated checkout and resources"]
+    Check -->|"no"| Choose{"Select one heavy lane"}
+    Choose --> Zebra["Two-node Zebra Compose project"]
+    Choose --> Lez["LEZ standalone and Risc0 lane"]
+    Zebra --> ScopedCleanup["Clean exact Compose project only"]
+    Lez --> ScopedCleanup
+```
+
+Never run the Zebra and LEZ heavy lanes concurrently on the same host. Never use
+global Docker prune/stop commands. Every Zebra run owns a unique Compose project,
+ephemeral host ports, and run manifest. LEZ runs require unique tool, target,
+standalone, and evidence directories when another checkout might be active.

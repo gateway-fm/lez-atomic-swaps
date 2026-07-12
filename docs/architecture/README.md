@@ -1,7 +1,8 @@
 # Architecture
 
 The canonical composed view is [System architecture and actor
-flows](system-architecture.md). It defines the independent actors, runtime and
+flows](system-architecture.md), with the concrete process/node/RPC inventory in
+[Deployment components, RPCs, and local nodes](deployment-components-and-rpcs.md). It defines the independent actors, runtime and
 trust boundaries, and the happy, recovery, and restart lifecycles used to judge
 whether a test is genuinely end to end. The ADRs below are append-only records
 of the decisions behind that system.
@@ -12,6 +13,7 @@ replacement.
 ```mermaid
 flowchart TB
     System["System architecture + actor flows"] --> Scope["0001 Scope"]
+    System --> Deployment["Deployment components + RPCs"]
     System --> Ports["0002 Ports/adapters"]
     Scope --> Ports
     Ports --> Persistence["0003 Persistence"]
@@ -39,7 +41,7 @@ flowchart TB
 |---|---|---|
 | [0001](0001-authoritative-scope.md) | Live RFP plus accepted issue #112 define BTC/XMR/ZEC scope | Accepted |
 | [0002](0002-ports-and-adapters.md) | Explicit protocol core with ports/adapters around external systems | Accepted |
-| [0003](0003-sqlite-persistence.md) | SQLite/`rusqlite` persistence behind a repository port | Accepted, crash validation pending |
+| [0003](0003-sqlite-persistence.md) | SQLite/`rusqlite` persistence behind a repository port | Schema-v4 ZEC journal/binding/alert proven; general effects/encryption pending |
 | [0004](0004-zcash-stack.md) | Zebra plus local canonical transaction construction; selective Zallet use | Accepted |
 | [0005](0005-docker-isolation.md) | Per-run Compose project, networks, volumes, and ephemeral ports | Accepted |
 | [0006](0006-lez-upstream-semantics.md) | Pin LEZ behavior and verify source assumptions executablely | Accepted |
@@ -51,4 +53,4 @@ flowchart TB
 | [0012](0012-lez-escrow-custody.md) | Split metadata PDA from authenticated-transfer custody or required custom-token ATA | Source-correct native/ATA TDD in progress |
 | [0013](0013-sdk-layering.md) | Deterministic common core plus complete per-pair async facades | Accepted for Logos review |
 | [0014](0014-zec-m2-implementation-pins.md) | SPEL/LEZ, canonical Zcash crates, and vulnerability-clean minimal Zebra runtime pins for M2 | Accepted for M2 implementation |
-| [0015](0015-durable-zcash-observation-reconciliation.md) | Stable affirmative Zcash canonical/removal evidence plus two-phase durable reconciliation | Accepted in part; SQLite journal and role projection pending |
+| [0015](0015-durable-zcash-observation-reconciliation.md) | Stable affirmative Zcash canonical/removal evidence plus two-phase durable reconciliation | Binding, journal, role projection, conflicts, terminal alerts proven; actual-node restart pending |

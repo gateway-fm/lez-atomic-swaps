@@ -99,11 +99,12 @@ dependency change.
 ## External resources and flakiness
 
 No currently documented user flow calls a public blockchain RPC or faucet.
-The maker RPC is a locally created loopback endpoint, both Zebra RPCs are local
-ephemeral containers, and the LEZ RPC is an in-process standalone node on an
-ephemeral loopback port. Actor funds come from deterministic local genesis or
-Regtest coinbase outputs. Therefore a public RPC outage, rate limit, faucet
-balance, or testnet reorg cannot affect the flows in this guide today.
+The maker RPC is a locally created loopback endpoint and both Zebra RPCs use
+ephemeral host-loopback mappings. The LEZ test client uses loopback, but pinned
+upstream v0.1.2 binds its short-lived server to the host wildcard address on an
+ephemeral port. Actor funds come from deterministic local genesis or Regtest
+coinbase outputs. Therefore a public RPC outage, rate limit, faucet balance, or
+testnet reorg cannot affect the flows in this guide today.
 
 Loopback is an isolation property, not a correctness claim. The chain evidence
 comes from running the real pinned implementations and crossing their actual

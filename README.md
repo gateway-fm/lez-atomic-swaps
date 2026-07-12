@@ -38,6 +38,7 @@ current executable slices enforce:
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),
+the [deployment component and RPC inventory](docs/architecture/deployment-components-and-rpcs.md),
 the [architecture decision log](docs/architecture/README.md), the living
 [manual reproduction guide](docs/manual-user-flows.md), and the first
 [acceptance tests](crates/swap-core/tests/e2e_swap_lifecycle.rs).
@@ -53,7 +54,10 @@ cleanup behavior.
 ### External dependencies and flakiness
 
 The current operator, Zebra, and LEZ flows use no public blockchain RPC or
-faucet. All chain endpoints are ephemeral loopback services, and test funds are
+faucet. Maker and Zebra host endpoints are ephemeral loopback services. The LEZ
+test client uses loopback, but pinned upstream v0.1.2 binds its ephemeral server
+to the host wildcard address; it is short-lived and collision-isolated, not
+loopback/network-namespace isolated. Test funds are
 deterministic local genesis/Regtest outputs. Cold builds still depend on
 rustup/crates.io, locked GitHub sources, digest-pinned Docker Hub/GCR images,
 the checksum-pinned Logos circuits release, and `rzup`'s pinned Risc0 tools.
@@ -83,6 +87,10 @@ routes, and funding assumptions are an explicit M2 documentation gate. See the
     cargo fmt --all --check
     cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
     cargo deny check advisories bans licenses sources
+    npm ci
+    npm audit --audit-level=moderate
+    npm run audit:licenses
+    npm run test:mermaid
     RUN_ID=local-zebra-1 ./scripts/run-zebra-e2e.sh
 
 The Zebra suite uses a unique `lez-atomic-swaps-${RUN_ID}` Compose project. It

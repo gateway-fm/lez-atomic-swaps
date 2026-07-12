@@ -251,12 +251,12 @@ sequenceDiagram
     Primary->>Fork: Relay identical canonical prefix (getblock + submitblock)
     Claimant->>Primary: Signed BIP-199 claim
     Funder->>Primary: Independent signed BIP-199 refund
-    Primary-->>Primary: Mine claim/refund branch to depth 3
+    Primary->>Primary: Mine claim/refund branch to depth 3
     Funder->>Fork: Conflicting signed refund of claimant output
     Funder->>Fork: Same independent signed refund
-    Fork-->>Fork: Mine conflicting branch to depth 4
+    Fork->>Fork: Mine conflicting branch to depth 4
     Fork->>Primary: Relay four raw consensus blocks via submitblock
-    Primary-->>Primary: Accept higher-work branch; detach three blocks
+    Primary->>Primary: Accept higher-work branch and detach three blocks
     Primary-->>Claimant: Old claim no longer canonical
     Primary-->>Funder: Conflicting refund active with four confirmations
 ```
@@ -409,7 +409,7 @@ sequenceDiagram
     actor LezFunder as Direction-specific LEZ funder
     actor ZecFunder as Direction-specific ZEC funder
 
-    Note over Chat: Offline; neither recovery path calls it
+    Note over Chat: Offline and neither recovery path calls it
     alt Maker never submits the second lock
         Taker->>Store: Load first-lock recovery data
         Taker->>TakerLeg: Wait for its typed recovery condition
