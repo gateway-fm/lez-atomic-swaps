@@ -65,8 +65,12 @@ current executable slices enforce:
   escrow snapshot bound to the signed execution channel/genesis, public fund
   transaction, generated account order, full metadata, exact custody, depth,
   and finality policy; that primitive snapshot is revalidated after SQLite
-  close/reopen. The official-wire LEZ RPC adapter, LEZ
-  depth/removal/replacement tracker, later effects, and the
+  close/reopen. A dependency-free two-phase LEZ tracker now proves duplicate
+  suppression, monotonic Pending/Safe/Finalized updates, affirmative same-tip
+  replacement, stale/tip-regressing evidence rejection, and fatal
+  finalized-history changes.
+  The official-wire LEZ RPC adapter, tracker integration with the ordered
+  SDK/SQLite journal, later effects, and the
   completed corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the

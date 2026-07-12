@@ -7,17 +7,19 @@ use async_trait::async_trait;
 use lez_swap_core::{Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract,
-    CanonicalLezEscrowObservationV1, CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval,
-    ClaimPreimage, CreateAgreementOutcome, CreateFirstLockOutcome, ExpectedBip199Output,
-    FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentRecordV1,
-    FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1, FirstLockProjectionCommit,
-    FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1, FirstLockTransitionV1,
-    LezAssetV1, LezChainIdentityV1, LezCustodySnapshotV1, LezEnvironmentV1,
-    LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort, LezFundTransactionSnapshotV1,
-    LezInclusionStatusV1, LezNodeSnapshotV1, LezStableTipV1, LezTakerFirstLockObservationPort,
-    MAX_FIRST_LOCK_SUBMISSION_BYTES, MAX_ZEC_AGREEMENT_RECORD_BYTES,
-    MakerFundingEligibilityOutcome, NegotiationChannel, NegotiationTranscriptV1,
-    ObserveTakerFirstLockOutcome, ObservedTakerFirstLockEvidenceV1,
+    CanonicalLezEscrowObservationV1, CanonicalLezEscrowRemovalV1, CanonicalZcashOutputObservation,
+    CanonicalZcashOutputRemoval, ClaimPreimage, CreateAgreementOutcome, CreateFirstLockOutcome,
+    ExpectedBip199Output, FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome,
+    FirstLockIntentRecordV1, FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1,
+    FirstLockProjectionCommit, FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1,
+    FirstLockTransitionV1, LezAssetV1, LezChainIdentityV1, LezCustodySnapshotV1, LezEnvironmentV1,
+    LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort, LezFundInstructionV1,
+    LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezNodeRemovalSnapshotV1,
+    LezNodeSnapshotV1, LezObservationEventV1, LezObservationReconciliationV1,
+    LezObservationTrackerError, LezObservationTrackerV1, LezStableTipV1,
+    LezTakerFirstLockObservationPort, MAX_FIRST_LOCK_SUBMISSION_BYTES,
+    MAX_ZEC_AGREEMENT_RECORD_BYTES, MakerFundingEligibilityOutcome, NegotiationChannel,
+    NegotiationTranscriptV1, ObserveTakerFirstLockOutcome, ObservedTakerFirstLockEvidenceV1,
     ObservedTakerFirstLockTransitionRecordV1, ObservedTakerFirstLockTransitionV1, OfferDiscovery,
     PreparedFirstLockSubmissionV1, RecoveryStore, TakerFirstLockObservationV1,
     TransparentFundingRequest, TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
@@ -1377,6 +1379,7 @@ enum LezSnapshotMutation {
     InclusionBlock,
     InclusionAboveTip,
     Program,
+    Instruction,
     Signer,
     Accounts,
     SwapId,
@@ -1387,6 +1390,11 @@ enum LezSnapshotMutation {
     MetadataAmount,
     CustodyAccount,
     CustodyAmount,
+    Pending,
+    DeeperSafe,
+    DeeperFinalized,
+    ReplacementSafe,
+    TipRegressionSafe,
 }
 
 // Keeping every one-field deviation in one factory makes the negative matrix
@@ -1470,33 +1478,63 @@ fn canonical_lez_snapshot(
     } else {
         *agreement.onchain_swap_id()
     };
-    let inclusion_height = if matches!(mutation, LezSnapshotMutation::InclusionAboveTip) {
-        103
-    } else {
-        100
+    let inclusion_height = match mutation {
+        LezSnapshotMutation::InclusionAboveTip => 103,
+        LezSnapshotMutation::ReplacementSafe => 101,
+        _ => 100,
     };
     let canonical_block_hash = if matches!(mutation, LezSnapshotMutation::InclusionBlock) {
         [0x43; 32]
     } else {
         [0x41; 32]
     };
+    let transaction_id = if matches!(mutation, LezSnapshotMutation::ReplacementSafe) {
+        [0x32; 32]
+    } else {
+        [0x31; 32]
+    };
+    let inclusion_block_hash = if matches!(mutation, LezSnapshotMutation::ReplacementSafe) {
+        [0x51; 32]
+    } else {
+        [0x41; 32]
+    };
+    let instruction = if matches!(mutation, LezSnapshotMutation::Instruction) {
+        LezFundInstructionV1::Token { swap_id }
+    } else {
+        LezFundInstructionV1::Native { swap_id }
+    };
     let transaction = LezFundTransactionSnapshotV1::new(
-        [0x31; 32],
+        transaction_id,
         program_id,
         signer,
         accounts,
-        swap_id,
+        instruction,
         !matches!(mutation, LezSnapshotMutation::NonPublic),
         !matches!(mutation, LezSnapshotMutation::InvalidSignature),
         inclusion_height,
-        [0x41; 32],
-        canonical_block_hash,
-        LezInclusionStatusV1::Finalized,
+        inclusion_block_hash,
+        if matches!(mutation, LezSnapshotMutation::ReplacementSafe) {
+            inclusion_block_hash
+        } else {
+            canonical_block_hash
+        },
+        match mutation {
+            LezSnapshotMutation::Pending => LezInclusionStatusV1::Pending,
+            LezSnapshotMutation::DeeperSafe
+            | LezSnapshotMutation::ReplacementSafe
+            | LezSnapshotMutation::TipRegressionSafe => LezInclusionStatusV1::Safe,
+            _ => LezInclusionStatusV1::Finalized,
+        },
     );
-    let tip = if matches!(mutation, LezSnapshotMutation::TipDrift) {
-        LezStableTipV1::new([0x42; 32], 102, [0x43; 32], 103)
-    } else {
-        LezStableTipV1::new([0x42; 32], 102, [0x42; 32], 102)
+    let tip = match mutation {
+        LezSnapshotMutation::TipDrift => LezStableTipV1::new([0x42; 32], 102, [0x43; 32], 103),
+        LezSnapshotMutation::DeeperSafe | LezSnapshotMutation::DeeperFinalized => {
+            LezStableTipV1::new([0x44; 32], 103, [0x44; 32], 103)
+        }
+        LezSnapshotMutation::ReplacementSafe => {
+            LezStableTipV1::new([0xbb; 32], 104, [0xbb; 32], 104)
+        }
+        _ => LezStableTipV1::new([0x42; 32], 102, [0x42; 32], 102),
     };
     let metadata_program_owner = if matches!(mutation, LezSnapshotMutation::MetadataOwner) {
         [0x66; 8]
@@ -1554,6 +1592,7 @@ fn canonical_lez_observation_rejects_each_changed_chain_transaction_and_account_
         LezSnapshotMutation::InclusionBlock,
         LezSnapshotMutation::InclusionAboveTip,
         LezSnapshotMutation::Program,
+        LezSnapshotMutation::Instruction,
         LezSnapshotMutation::Signer,
         LezSnapshotMutation::Accounts,
         LezSnapshotMutation::SwapId,
@@ -1573,6 +1612,166 @@ fn canonical_lez_observation_rejects_each_changed_chain_transaction_and_account_
             .is_err()
         );
     }
+}
+
+#[test]
+// One linear scenario keeps proposal/commit, finality, replacement, and stale
+// evidence assertions visibly tied to the same durable tracker head.
+#[allow(clippy::too_many_lines)]
+fn lez_tracker_requires_durable_exact_head_events_and_preserves_finality() {
+    let agreement = lez_zec_swap_sdk::ZecAgreementV1::from_wire_at(
+        &agreement_wire(
+            "canonical-lez-tracker",
+            SwapDirection::TakerSellsLez,
+            FixtureVariant::Local,
+        ),
+        ACCEPTED_AT,
+    )
+    .expect("valid reverse agreement");
+    let canonical = |mutation| {
+        CanonicalLezEscrowObservationV1::validate(
+            &agreement,
+            &canonical_lez_snapshot(&agreement, mutation),
+        )
+        .expect("valid tracker observation")
+    };
+    let first = canonical(LezSnapshotMutation::Pending);
+    let deeper_safe = canonical(LezSnapshotMutation::DeeperSafe);
+    let deeper_finalized = canonical(LezSnapshotMutation::DeeperFinalized);
+    let replacement = canonical(LezSnapshotMutation::ReplacementSafe);
+    let regressed_safe = canonical(LezSnapshotMutation::TipRegressionSafe);
+    let mut tracker = LezObservationTrackerV1::default();
+
+    let first_event = LezObservationEventV1::Canonical(first.clone());
+    assert_eq!(
+        tracker
+            .propose(&LezObservationReconciliationV1::Canonical(first.clone()))
+            .expect("first proposal"),
+        Some(first_event.clone())
+    );
+    assert_eq!(tracker.current(), None, "proposal is not a durable commit");
+    tracker
+        .apply_committed(&first_event)
+        .expect("first durable commit");
+    assert_eq!(
+        tracker
+            .propose(&LezObservationReconciliationV1::Canonical(first.clone()))
+            .expect("duplicate poll"),
+        None
+    );
+
+    let safe_event = tracker
+        .propose(&LezObservationReconciliationV1::Canonical(
+            deeper_safe.clone(),
+        ))
+        .expect("same-inclusion safe promotion")
+        .expect("safe promotion journals");
+    tracker
+        .apply_committed(&safe_event)
+        .expect("safe promotion commit");
+    assert_eq!(
+        tracker.propose(&LezObservationReconciliationV1::Canonical(
+            regressed_safe
+        )),
+        Err(LezObservationTrackerError::TipRegression)
+    );
+    let finalized_event = tracker
+        .propose(&LezObservationReconciliationV1::Canonical(
+            deeper_finalized.clone(),
+        ))
+        .expect("same-inclusion depth/finality promotion")
+        .expect("promotion journals");
+    tracker
+        .apply_committed(&finalized_event)
+        .expect("finality promotion commit");
+    assert_eq!(
+        tracker.propose(&LezObservationReconciliationV1::Canonical(first.clone())),
+        Err(LezObservationTrackerError::FinalityRegression)
+    );
+    assert_eq!(
+        CanonicalLezEscrowRemovalV1::validate(
+            &deeper_finalized,
+            &LezNodeRemovalSnapshotV1::new(
+                agreement.lez_terms().chain().environment(),
+                *agreement.lez_terms().chain().channel_id(),
+                *agreement.lez_terms().chain().genesis_block_hash(),
+                [0x61; 32],
+                LezStableTipV1::new([0xbb; 32], 104, [0xbb; 32], 104),
+            ),
+        ),
+        Err(lez_zec_swap_sdk::LezObservationError::FinalizedHistoryViolation)
+    );
+
+    let mut replaceable = LezObservationTrackerV1::from_current(Some(deeper_safe.clone()));
+    assert_eq!(
+        replaceable.propose(&LezObservationReconciliationV1::Canonical(
+            replacement.clone()
+        )),
+        Err(LezObservationTrackerError::ReplacementProofRequired)
+    );
+    assert_eq!(
+        CanonicalLezEscrowRemovalV1::validate(
+            &deeper_safe,
+            &LezNodeRemovalSnapshotV1::new(
+                agreement.lez_terms().chain().environment(),
+                *agreement.lez_terms().chain().channel_id(),
+                *agreement.lez_terms().chain().genesis_block_hash(),
+                [0x61; 32],
+                LezStableTipV1::new([0xba; 32], 102, [0xba; 32], 102),
+            ),
+        ),
+        Err(lez_zec_swap_sdk::LezObservationError::TipRegression)
+    );
+    let mismatched_tip_removal = CanonicalLezEscrowRemovalV1::validate(
+        &deeper_safe,
+        &LezNodeRemovalSnapshotV1::new(
+            agreement.lez_terms().chain().environment(),
+            *agreement.lez_terms().chain().channel_id(),
+            *agreement.lez_terms().chain().genesis_block_hash(),
+            [0x61; 32],
+            LezStableTipV1::new([0xbc; 32], 105, [0xbc; 32], 105),
+        ),
+    )
+    .expect("valid removal from a different stable tip");
+    assert_eq!(
+        replaceable.propose(&LezObservationReconciliationV1::Replaced {
+            removed: Box::new(mismatched_tip_removal),
+            canonical: Box::new(replacement.clone()),
+        }),
+        Err(LezObservationTrackerError::ReplacementTipMismatch)
+    );
+    let removed = CanonicalLezEscrowRemovalV1::validate(
+        &deeper_safe,
+        &LezNodeRemovalSnapshotV1::new(
+            agreement.lez_terms().chain().environment(),
+            *agreement.lez_terms().chain().channel_id(),
+            *agreement.lez_terms().chain().genesis_block_hash(),
+            [0x61; 32],
+            LezStableTipV1::new([0xbb; 32], 104, [0xbb; 32], 104),
+        ),
+    )
+    .expect("affirmative nonfinal removal");
+    let replacement_event = LezObservationEventV1::Replaced {
+        removed: Box::new(removed.clone()),
+        canonical: Box::new(replacement.clone()),
+    };
+    assert_eq!(
+        replaceable
+            .propose(&LezObservationReconciliationV1::Replaced {
+                removed: Box::new(removed.clone()),
+                canonical: Box::new(replacement.clone()),
+            })
+            .expect("atomic replacement"),
+        Some(replacement_event.clone())
+    );
+    replaceable
+        .apply_committed(&replacement_event)
+        .expect("replacement commit");
+    assert_eq!(replaceable.current(), Some(&replacement));
+    assert_eq!(
+        replaceable.propose(&LezObservationReconciliationV1::Removed(removed)),
+        Err(LezObservationTrackerError::StaleEvidence)
+    );
 }
 
 fn confirmed_observed_taker_lock(

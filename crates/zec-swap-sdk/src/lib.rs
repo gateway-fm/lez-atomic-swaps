@@ -48,9 +48,11 @@ pub use lez_derivation::{
     derive_lez_swap_id_v1, derive_lez_token_account_v1,
 };
 pub use lez_observation::{
-    CanonicalLezEscrowObservationV1, LezCustodySnapshotV1, LezEscrowMetadataSnapshotV1,
-    LezEscrowStatusV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezNodeSnapshotV1,
-    LezObservationError, LezStableTipV1,
+    CanonicalLezEscrowObservationV1, CanonicalLezEscrowRemovalV1, LezCustodySnapshotV1,
+    LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFundInstructionV1,
+    LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezNodeRemovalSnapshotV1,
+    LezNodeSnapshotV1, LezObservationError, LezObservationEventV1, LezObservationReconciliationV1,
+    LezObservationTrackerError, LezObservationTrackerV1, LezStableTipV1,
 };
 pub use lifecycle::{BoxPortError, ClaimPreimage, ZecLifecycleAction, ZecSdkError};
 

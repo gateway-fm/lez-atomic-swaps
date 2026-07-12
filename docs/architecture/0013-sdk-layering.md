@@ -102,8 +102,10 @@ snapshot validator binds signed channel/genesis, public fund program, signer,
 generated account order, canonical inclusion/tip, complete funded metadata,
 exact custody amount/asset, depth, and public finality policy. The primitive
 snapshot is persisted and revalidated after restart. The production Zcash port
-must still assemble fresh canonical snapshots; the official-wire LEZ port and
-LEZ exact-head removal/replacement tracker remain open. The distinct
+must still assemble fresh canonical snapshots. The dependency-free LEZ
+two-phase tracker now proves duplicate suppression, monotonic finality,
+affirmative removal/replacement, and finalized-history rejection; integration
+with the ordered SDK/SQLite journal and the official-wire LEZ port remain open. The distinct
 fresh eligibility call replays and re-queries, but deliberately caches no
 authority and leaves `next_action` at `Wait`; the future maker second-lock
 method must consume the result internally in the same operation.

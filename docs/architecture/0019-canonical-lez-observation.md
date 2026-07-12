@@ -53,15 +53,16 @@ accepts only the reverse direction and checks:
 
 - exact channel/genesis and a stable bracketing tip;
 - a public, validly signed fund transaction under the escrow program, signed by
-  the taker/depositor, using the on-chain swap ID and generated-client account
-  order;
+  the taker/depositor, using the exact generated FundNative or FundToken kind,
+  on-chain swap ID, and generated-client account order;
 - canonical inclusion at or below the stable tip and recomputed nonzero depth;
 - metadata ownership plus exact version, roles, terms hash, digest, custody,
   programs, definition, amount, deadline, and Funded status;
 - exact queried custody account address plus native or token owner, definition,
   and balance exactly equal to the signed account and amount; and
-- the signed confirmation threshold, with Bedrock Finalized additionally
-  required for a future enabled public-v0.2 profile.
+- exact upstream Pending, Safe, or Finalized status. Structural validation
+  accepts every nonzero stable depth; the later funding-eligibility boundary
+  applies the signed threshold and requires Finalized on public v0.2.
 
 The ordered maker journal stores the complete untrusted snapshot. Replay calls
 the same agreement validator and then checks byte-for-byte record
@@ -78,9 +79,17 @@ Primitive reverse-LEZ ID/depth assertions fail closed. SDK and SQLite
 close/reopen preserve and revalidate canonical funded evidence. Channel or
 genesis changes are identity failures, never reorg replacements.
 
+The dependency-free two-phase `LezObservationTrackerV1` now suppresses exact
+duplicates, journals same-inclusion depth and monotonic
+Pending-to-Safe-to-Finalized updates, requires affirmative same-tip atomic
+replacement evidence for changed inclusion, rejects stale evidence, stable-tip
+regression, and finality regression, and treats any finalized removal as an
+operator-fatal violation. Proposal never mutates the head; only an exact
+committed event does.
+
 The next slice must use official LEZ wire types to decode and hash the public
-transaction, implement a LEZ exact-head tracker for depth/finality updates and
-affirmative removal/replacement, distinguish a still-canonical fund whose
+transaction, integrate the tracker into the ordered SDK/SQLite journal,
+distinguish a still-canonical fund whose
 escrow has become Claimed or Refunded, and add native plus token standalone
 actor evidence. A finalized block changing is an operator-fatal finality
 violation, not a routine reorg.

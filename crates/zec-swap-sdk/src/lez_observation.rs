@@ -10,10 +10,37 @@ use crate::{LezAssetV1, LezEnvironmentV1, ZecAgreementV1};
 /// Bedrock inclusion status returned for the observed transaction.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum LezInclusionStatusV1 {
+    /// Included by the sequencer but not yet safe.
+    Pending,
     /// Included on the stable canonical sequencer chain.
     Safe,
     /// Included and finalized by Bedrock.
     Finalized,
+}
+
+impl LezInclusionStatusV1 {
+    const fn rank(self) -> u8 {
+        match self {
+            Self::Pending => 0,
+            Self::Safe => 1,
+            Self::Finalized => 2,
+        }
+    }
+}
+
+/// Exact generated escrow funding instruction decoded from the public transaction.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum LezFundInstructionV1 {
+    /// Native authenticated-transfer funding.
+    Native {
+        /// Exact on-chain swap identifier.
+        swap_id: [u8; 32],
+    },
+    /// Fungible-token ATA funding.
+    Token {
+        /// Exact on-chain swap identifier.
+        swap_id: [u8; 32],
+    },
 }
 
 /// Two tip reads bracketing all transaction, block, metadata, and custody RPCs.
@@ -52,7 +79,7 @@ pub struct LezFundTransactionSnapshotV1 {
     program_id: [u32; 8],
     signer: [u8; 32],
     accounts: Vec<[u8; 32]>,
-    swap_id: [u8; 32],
+    instruction: LezFundInstructionV1,
     is_public: bool,
     signature_valid: bool,
     inclusion_height: u64,
@@ -70,7 +97,7 @@ impl LezFundTransactionSnapshotV1 {
         program_id: [u32; 8],
         signer: [u8; 32],
         accounts: Vec<[u8; 32]>,
-        swap_id: [u8; 32],
+        instruction: LezFundInstructionV1,
         is_public: bool,
         signature_valid: bool,
         inclusion_height: u64,
@@ -83,7 +110,7 @@ impl LezFundTransactionSnapshotV1 {
             program_id,
             signer,
             accounts,
-            swap_id,
+            instruction,
             is_public,
             signature_valid,
             inclusion_height,
@@ -255,8 +282,9 @@ impl CanonicalLezEscrowObservationV1 {
     /// # Errors
     ///
     /// Rejects the wrong direction, chain, unstable or noncanonical inclusion,
-    /// malformed transaction, wrong program/accounts/actor, mismatched metadata
-    /// or custody state, insufficient depth, or nonfinal public-testnet evidence.
+    /// malformed transaction, wrong program/instruction/accounts/actor, or
+    /// mismatched metadata and custody state. Depth/finality policy is applied
+    /// later by the funding-eligibility boundary.
     pub fn validate(
         agreement: &ZecAgreementV1,
         snapshot: &LezNodeSnapshotV1,
@@ -291,6 +319,12 @@ impl CanonicalLezEscrowObservationV1 {
     #[must_use]
     pub const fn confirmations(&self) -> NonZeroU32 {
         self.confirmations
+    }
+
+    /// Exact upstream inclusion status.
+    #[must_use]
+    pub const fn inclusion_status(&self) -> LezInclusionStatusV1 {
+        self.snapshot.transaction.inclusion_status
     }
 
     /// Canonical inclusion height.
@@ -408,20 +442,6 @@ fn validate_chain_position(
         .and_then(|depth| u32::try_from(depth).ok())
         .and_then(NonZeroU32::new)
         .ok_or(LezObservationError::InvalidConfirmationDepth)?;
-    let required = agreement
-        .coordinator()
-        .required_confirmations(Participant::Taker);
-    if confirmations.get() < required {
-        return Err(LezObservationError::InsufficientConfirmations {
-            required,
-            actual: confirmations.get(),
-        });
-    }
-    if terms.chain().environment() == LezEnvironmentV1::PublicTestnetV0_2
-        && transaction.inclusion_status != LezInclusionStatusV1::Finalized
-    {
-        return Err(LezObservationError::PublicFinalityRequired);
-    }
     Ok(confirmations)
 }
 
@@ -435,7 +455,16 @@ fn validate_fund_transaction(
         || !transaction.signature_valid
         || transaction.program_id != *agreement.lez_terms().escrow_program_id()
         || transaction.signer != *agreement.lez_account(Participant::Taker)
-        || transaction.swap_id != *agreement.onchain_swap_id()
+        || !matches!(
+            (agreement.lez_terms().asset(), transaction.instruction),
+            (
+                LezAssetV1::Native { .. },
+                LezFundInstructionV1::Native { swap_id }
+            ) | (
+                LezAssetV1::FungibleToken { .. },
+                LezFundInstructionV1::Token { swap_id }
+            ) if swap_id == *agreement.onchain_swap_id()
+        )
     {
         return Err(LezObservationError::TransactionBindingMismatch);
     }
@@ -510,6 +539,282 @@ fn validate_escrow_accounts(
     }
 }
 
+/// Primitive stable proof that a prior LEZ inclusion block is no longer canonical.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LezNodeRemovalSnapshotV1 {
+    environment: LezEnvironmentV1,
+    channel_id: [u8; 32],
+    genesis_block_hash: [u8; 32],
+    canonical_block_hash_at_removed_height: [u8; 32],
+    tip: LezStableTipV1,
+}
+
+impl LezNodeRemovalSnapshotV1 {
+    /// Creates primitive removal-query results.
+    #[must_use]
+    pub const fn new(
+        environment: LezEnvironmentV1,
+        channel_id: [u8; 32],
+        genesis_block_hash: [u8; 32],
+        canonical_block_hash_at_removed_height: [u8; 32],
+        tip: LezStableTipV1,
+    ) -> Self {
+        Self {
+            environment,
+            channel_id,
+            genesis_block_hash,
+            canonical_block_hash_at_removed_height,
+            tip,
+        }
+    }
+}
+
+/// Affirmative stable evidence that a prior nonfinal LEZ inclusion was removed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalLezEscrowRemovalV1 {
+    previous: CanonicalLezEscrowObservationV1,
+    canonical_block_hash_at_removed_height: [u8; 32],
+    tip_block_hash: [u8; 32],
+    tip_height: u64,
+}
+
+impl CanonicalLezEscrowRemovalV1 {
+    /// Validates a changed canonical block at the prior inclusion height.
+    ///
+    /// # Errors
+    ///
+    /// Rejects chain mismatch, tip drift/regression, unchanged inclusion, and
+    /// removal of finalized history.
+    pub fn validate(
+        previous: &CanonicalLezEscrowObservationV1,
+        snapshot: &LezNodeRemovalSnapshotV1,
+    ) -> Result<Self, LezObservationError> {
+        let prior = previous.snapshot();
+        if snapshot.environment != prior.environment
+            || snapshot.channel_id != prior.channel_id
+            || snapshot.genesis_block_hash != prior.genesis_block_hash
+        {
+            return Err(LezObservationError::ChainIdentityMismatch);
+        }
+        let tip = snapshot.tip;
+        if tip.before_hash != tip.after_hash || tip.before_height != tip.after_height {
+            return Err(LezObservationError::UnstableTip);
+        }
+        if tip.after_height < previous.tip_height {
+            return Err(LezObservationError::TipRegression);
+        }
+        if snapshot.canonical_block_hash_at_removed_height == previous.inclusion_block_hash {
+            return Err(LezObservationError::InclusionStillCanonical);
+        }
+        if previous.inclusion_status() == LezInclusionStatusV1::Finalized {
+            return Err(LezObservationError::FinalizedHistoryViolation);
+        }
+        Ok(Self {
+            previous: previous.clone(),
+            canonical_block_hash_at_removed_height: snapshot.canonical_block_hash_at_removed_height,
+            tip_block_hash: tip.after_hash,
+            tip_height: tip.after_height,
+        })
+    }
+
+    /// Exact prior durable canonical head.
+    #[must_use]
+    pub const fn previous(&self) -> &CanonicalLezEscrowObservationV1 {
+        &self.previous
+    }
+
+    /// Canonical block now occupying the prior inclusion height.
+    #[must_use]
+    pub const fn canonical_block_hash_at_removed_height(&self) -> &[u8; 32] {
+        &self.canonical_block_hash_at_removed_height
+    }
+
+    /// Stable tip hash proving the removal.
+    #[must_use]
+    pub const fn tip_block_hash(&self) -> &[u8; 32] {
+        &self.tip_block_hash
+    }
+
+    /// Stable tip height proving the removal.
+    #[must_use]
+    pub const fn tip_height(&self) -> u64 {
+        self.tip_height
+    }
+}
+
+/// Meaningful canonical LEZ event proposed for durable commit.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LezObservationEventV1 {
+    /// Initial evidence or a same-inclusion depth/finality update.
+    Canonical(CanonicalLezEscrowObservationV1),
+    /// Affirmative removal of the durable head.
+    Removed(CanonicalLezEscrowRemovalV1),
+    /// One stable poll atomically removed and replaced the durable head.
+    Replaced {
+        /// Removal half.
+        removed: Box<CanonicalLezEscrowRemovalV1>,
+        /// Replacement half.
+        canonical: Box<CanonicalLezEscrowObservationV1>,
+    },
+}
+
+/// Fresh LEZ input reconciled against the durable exact head.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LezObservationReconciliationV1 {
+    /// Canonical funded escrow.
+    Canonical(CanonicalLezEscrowObservationV1),
+    /// Affirmative removal.
+    Removed(CanonicalLezEscrowRemovalV1),
+    /// Atomic removal and replacement from one stable tip.
+    Replaced {
+        /// Removal half.
+        removed: Box<CanonicalLezEscrowRemovalV1>,
+        /// Replacement half.
+        canonical: Box<CanonicalLezEscrowObservationV1>,
+    },
+}
+
+/// Failure reconciling LEZ evidence with the durable tracker head.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum LezObservationTrackerError {
+    /// Changed inclusion requires affirmative replacement evidence.
+    #[error("different canonical LEZ evidence requires explicit replacement proof")]
+    ReplacementProofRequired,
+    /// Removal, replacement, or commit does not match the durable head.
+    #[error("LEZ observation event does not match the durable tracker head")]
+    StaleEvidence,
+    /// Same-inclusion evidence regressed its Bedrock status.
+    #[error("LEZ inclusion finality regressed")]
+    FinalityRegression,
+    /// Stable input tip is older than the durable exact head.
+    #[error("LEZ stable tip regressed")]
+    TipRegression,
+    /// Atomic replacement halves use different stable tips.
+    #[error("LEZ replacement halves use different stable tips")]
+    ReplacementTipMismatch,
+}
+
+/// Two-phase exact-head reconciler for canonical LEZ funded evidence.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LezObservationTrackerV1 {
+    current: Option<CanonicalLezEscrowObservationV1>,
+}
+
+impl LezObservationTrackerV1 {
+    /// Restores the last durable funded head.
+    #[must_use]
+    pub const fn from_current(current: Option<CanonicalLezEscrowObservationV1>) -> Self {
+        Self { current }
+    }
+
+    /// Most recent durable funded head.
+    #[must_use]
+    pub const fn current(&self) -> Option<&CanonicalLezEscrowObservationV1> {
+        self.current.as_ref()
+    }
+
+    /// Proposes an event without mutating the durable head.
+    ///
+    /// # Errors
+    ///
+    /// Rejects changed inclusion without proof, stale evidence, finality
+    /// regression, or replacement halves from different stable tips.
+    pub fn propose(
+        &self,
+        input: &LezObservationReconciliationV1,
+    ) -> Result<Option<LezObservationEventV1>, LezObservationTrackerError> {
+        match input {
+            LezObservationReconciliationV1::Canonical(canonical) => match &self.current {
+                None => Ok(Some(LezObservationEventV1::Canonical(canonical.clone()))),
+                Some(current) if current == canonical => Ok(None),
+                Some(current) if same_lez_inclusion(current, canonical) => {
+                    if canonical.inclusion_status().rank() < current.inclusion_status().rank() {
+                        Err(LezObservationTrackerError::FinalityRegression)
+                    } else if canonical.tip_height() < current.tip_height() {
+                        Err(LezObservationTrackerError::TipRegression)
+                    } else {
+                        Ok(Some(LezObservationEventV1::Canonical(canonical.clone())))
+                    }
+                }
+                Some(_) => Err(LezObservationTrackerError::ReplacementProofRequired),
+            },
+            LezObservationReconciliationV1::Removed(removed) => match &self.current {
+                None => Ok(None),
+                Some(current) if current == removed.previous() => {
+                    Ok(Some(LezObservationEventV1::Removed(removed.clone())))
+                }
+                Some(_) => Err(LezObservationTrackerError::StaleEvidence),
+            },
+            LezObservationReconciliationV1::Replaced { removed, canonical } => {
+                match &self.current {
+                    Some(current) if current == canonical.as_ref() => Ok(None),
+                    Some(current) if current == removed.previous() => {
+                        if removed.tip_block_hash() != canonical.tip_block_hash()
+                            || removed.tip_height() != canonical.tip_height()
+                        {
+                            return Err(LezObservationTrackerError::ReplacementTipMismatch);
+                        }
+                        Ok(Some(LezObservationEventV1::Replaced {
+                            removed: removed.clone(),
+                            canonical: canonical.clone(),
+                        }))
+                    }
+                    _ => Err(LezObservationTrackerError::StaleEvidence),
+                }
+            }
+        }
+    }
+
+    /// Applies only the exact event implied by the current durable head.
+    ///
+    /// # Errors
+    ///
+    /// Rejects stale or unproposed events.
+    pub fn apply_committed(
+        &mut self,
+        event: &LezObservationEventV1,
+    ) -> Result<(), LezObservationTrackerError> {
+        let input = match event {
+            LezObservationEventV1::Canonical(canonical) => {
+                LezObservationReconciliationV1::Canonical(canonical.clone())
+            }
+            LezObservationEventV1::Removed(removed) => {
+                LezObservationReconciliationV1::Removed(removed.clone())
+            }
+            LezObservationEventV1::Replaced { removed, canonical } => {
+                LezObservationReconciliationV1::Replaced {
+                    removed: removed.clone(),
+                    canonical: canonical.clone(),
+                }
+            }
+        };
+        if self.propose(&input)? != Some(event.clone()) {
+            return Err(LezObservationTrackerError::StaleEvidence);
+        }
+        self.current = match event {
+            LezObservationEventV1::Canonical(canonical) => Some(canonical.clone()),
+            LezObservationEventV1::Replaced { canonical, .. } => Some(canonical.as_ref().clone()),
+            LezObservationEventV1::Removed(_) => None,
+        };
+        Ok(())
+    }
+}
+
+fn same_lez_inclusion(
+    left: &CanonicalLezEscrowObservationV1,
+    right: &CanonicalLezEscrowObservationV1,
+) -> bool {
+    let left_snapshot = left.snapshot();
+    let right_snapshot = right.snapshot();
+    left.transaction_id == right.transaction_id
+        && left.inclusion_height == right.inclusion_height
+        && left.inclusion_block_hash == right.inclusion_block_hash
+        && left_snapshot.environment == right_snapshot.environment
+        && left_snapshot.channel_id == right_snapshot.channel_id
+        && left_snapshot.genesis_block_hash == right_snapshot.genesis_block_hash
+}
+
 /// Failure validating canonical LEZ escrow evidence.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum LezObservationError {
@@ -528,17 +833,6 @@ pub enum LezObservationError {
     /// Tip/inclusion heights cannot produce a supported nonzero depth.
     #[error("LEZ confirmation depth is invalid")]
     InvalidConfirmationDepth,
-    /// Evidence is below the signed policy.
-    #[error("LEZ fund has {actual} confirmations; {required} required")]
-    InsufficientConfirmations {
-        /// Agreement threshold.
-        required: u32,
-        /// Canonical depth.
-        actual: u32,
-    },
-    /// Public v0.2 evidence lacks Bedrock finality.
-    #[error("public LEZ evidence must be finalized by Bedrock")]
-    PublicFinalityRequired,
     /// Transaction kind, signature, program, signer, or swap ID differs.
     #[error("LEZ fund transaction does not match the signed agreement")]
     TransactionBindingMismatch,
@@ -551,4 +845,13 @@ pub enum LezObservationError {
     /// Custody owner, definition, or exact amount differs.
     #[error("LEZ escrow custody does not match the signed agreement")]
     CustodyBindingMismatch,
+    /// Prior inclusion block remains canonical.
+    #[error("LEZ inclusion block remains canonical")]
+    InclusionStillCanonical,
+    /// Finalized LEZ history cannot be removed or replaced.
+    #[error("finalized LEZ inclusion changed")]
+    FinalizedHistoryViolation,
+    /// Stable removal tip is older than the durable observation tip.
+    #[error("LEZ stable tip regressed")]
+    TipRegression,
 }
