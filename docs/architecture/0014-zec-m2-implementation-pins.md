@@ -47,8 +47,13 @@ flowchart LR
     TokenEvidence --> TokenCostReplay["Production token replay without setup/Clock noise"]
     TokenCostReplay --> TokenCostJson["Escrow + ATA + Token sessions + checked JSON"]
     Provisional["SPEL PR #238 exact head<br/>open + unreviewed"] --> V02Compat["Separate provisional v0.2<br/>compile/config/PDA lane"]
-    V02Compat -.-> Port["Rebuild SPEL/guest/client for LEZ v0.2 PDA + ABI"]
-    Port -.-> LezTest["LEZ testnet 0.2"]
+    V02Compat -.-> Port["Rebuild SPEL guest for LEZ v0.2 PDA + ABI"]
+    Port -.-> StateProof["Advisory-free V03State lifecycle + cost proof"]
+    OfficialTypes["Official LEZ v0.2 transaction and RPC types"] -.-> ThinClient["Thin deployment/query client"]
+    Exclude["Exclude Logos node auth + libp2p + Hickory"] -.-> ThinClient
+    ThinClient -.-> LezTest["LEZ testnet 0.2"]
+    StateProof -.-> LezTest
+    LezTest -.-> Manifest["Channel + ELF + ImageID + ProgramId<br/>transaction + canonical block"]
     Native["Reviewed SPEL/LEZ v0.2 compatibility pin"] -.-> Port
     Drift["LEZ dev + current Zebra scheduled drift lanes"] -.-> Tests
     Tests --> Roles["Independent maker/taker happy, refund, concurrency E2E"]
@@ -151,6 +156,43 @@ both conditions and fails on any test-byte change. This graph is prohibited for
 runtime and testnet use. Expanding the port therefore requires a safe upstream
 graph or a separate explicit security review as well as the SPEL review/release
 decision.
+
+A fresh 2026-07-12 runtime audit narrows the safe implementation route. Official
+LEZ v0.2.0 is pinned at commit
+`a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a`; its live endpoint answered
+non-mutating health, last-block, and built-in-program queries. The release's
+wallet deployment command uses official `ProgramDeploymentTransaction` and
+`sendTransaction` types but discards the returned transaction hash. The project
+client must retain that hash and prove exact `getTransaction` plus canonical
+`getBlock` inclusion.
+
+Neither released LEZ nor current Logos Blockchain provides a vulnerability-clean
+full runtime graph: both retain the Hickory 0.25 line and explicitly ignore
+`RUSTSEC-2026-0118` and `RUSTSEC-2026-0119`; the compatible Hickory 0.26.1
+migration exists only on unreleased rust-libp2p master. M2 will therefore not
+run or deploy through the full standalone/node graph. The smallest reviewed
+route is to port the guest with package aliases, prove lifecycle and costs
+through the advisory-free `V03State` layer, and feature-gate the sole LEZ
+`common::config` conversion that pulls Logos node authentication into the graph.
+A thin `jsonrpsee` client then uses official LEZ transaction/RPC types while CI
+proves libp2p, Hickory, and pending LGPL exceptions are absent. This is an
+implementation constraint, not permission to hand-roll LEZ wire formats.
+
+Public evidence must bind the LEZ/SPEL/Risc0 commits, ELF SHA-256, ImageID and
+derived ProgramId, endpoint, `getChannelId`, pre/post block IDs, returned
+transaction hash, exact deployment bytes, and containing canonical block. The
+network has announced another upgrade/reset, so evidence is invalid across a
+channel change and must be regenerated. Public-profile enablement and the M2
+tag remain fail-closed until SPEL PR #238 receives maintainer review/merge or an
+explicit project security/governance acceptance records its immutable head and
+the narrow client fork.
+
+Primary audit inputs are the official [LEZ v0.2.0
+release](https://github.com/logos-blockchain/logos-execution-zone/releases/tag/v0.2.0),
+[deployment tutorial](https://github.com/logos-blockchain/logos-execution-zone/blob/v0.2.0/examples/program_deployment/README.md),
+[SPEL PR #238](https://github.com/logos-co/spel/pull/238), and
+[RUSTSEC-2026-0118](https://rustsec.org/advisories/RUSTSEC-2026-0118.html) plus
+[RUSTSEC-2026-0119](https://rustsec.org/advisories/RUSTSEC-2026-0119.html).
 
 The local compatibility lane now uses the exact v0.1.2 `sequencer_service`
 standalone path in-process with port `0`, temporary state, and deterministic
