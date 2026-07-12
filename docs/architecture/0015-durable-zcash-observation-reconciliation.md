@@ -113,6 +113,7 @@ An initial concrete maker-runtime composition now derives the ZEC funder from
 immutable direction, probes unknown-outcome replay before core mutation, maps
 canonical/removal evidence, commits event plus aggregate atomically, and reloads
 across restart in both directions. It is not yet the production watcher: journal
-history-to-tracker replay, durable profile/expected-output binding, atomic
-conflicting-replacement outcomes, terminal-reorg alerts, and actual two-Zebra
-store/restart evidence remain required.
+history is now revalidated and replayed into the exact tracker head, and an
+identical fresh requery is suppressed. Durable profile/expected-output binding,
+atomic conflicting-replacement outcomes, terminal-reorg alerts, and actual
+two-Zebra store/restart evidence remain required.

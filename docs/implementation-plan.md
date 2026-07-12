@@ -330,9 +330,14 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   removal events. Both directions prove atomic aggregate/event commit, close and
   reopen, exact canonical reappearance, and predecessor-slot replay before core
   mutation after an unknown successful commit.
+- [x] Revalidate and replay ordered journal records into the historical tracker
+  head on restart. Missing predecessors and changed inclusions without explicit
+  replacement fail closed; close/open restores removed and reappeared heads, and
+  an identical fresh requery is suppressed without treating history as current
+  canonicality.
 - [ ] Complete production runtime wiring: persist immutable profile and expected
-  output bindings; replay validated journal history into the tracker; journal
-  conflicting replacements while retaining the committed-ID reorg phase;
+  output bindings; journal conflicting replacements while retaining the
+  committed-ID reorg phase;
   durably surface terminal reorg alerts; and prove close/reopen/requery through
   actual two-Zebra replacement.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra

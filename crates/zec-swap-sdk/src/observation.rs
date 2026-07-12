@@ -264,28 +264,28 @@ pub enum ObservationError {
 /// Complete canonical Zcash output evidence retained before core projection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CanonicalZcashOutputObservation {
-    network: NetworkType,
-    consensus_branch_id: BranchId,
-    block_hash: BlockHash,
-    block_height: BlockHeight,
-    tip_block_hash: BlockHash,
-    tip_height: BlockHeight,
-    transaction_id: TxId,
-    outpoint: OutPoint,
-    output: TxOut,
-    redeem_script: Box<[u8]>,
-    p2sh_script_pubkey: Box<[u8]>,
-    confirmations: NonZeroU32,
-    raw_transaction: Box<[u8]>,
+    pub(crate) network: NetworkType,
+    pub(crate) consensus_branch_id: BranchId,
+    pub(crate) block_hash: BlockHash,
+    pub(crate) block_height: BlockHeight,
+    pub(crate) tip_block_hash: BlockHash,
+    pub(crate) tip_height: BlockHeight,
+    pub(crate) transaction_id: TxId,
+    pub(crate) outpoint: OutPoint,
+    pub(crate) output: TxOut,
+    pub(crate) redeem_script: Box<[u8]>,
+    pub(crate) p2sh_script_pubkey: Box<[u8]>,
+    pub(crate) confirmations: NonZeroU32,
+    pub(crate) raw_transaction: Box<[u8]>,
 }
 
 /// Affirmative, validated evidence that one canonical output was detached.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CanonicalZcashOutputRemoval {
-    previous: CanonicalZcashOutputObservation,
-    canonical_block_hash_at_removed_height: BlockHash,
-    tip_block_hash: BlockHash,
-    tip_height: BlockHeight,
+    pub(crate) previous: CanonicalZcashOutputObservation,
+    pub(crate) canonical_block_hash_at_removed_height: BlockHash,
+    pub(crate) tip_block_hash: BlockHash,
+    pub(crate) tip_height: BlockHeight,
 }
 
 impl CanonicalZcashOutputRemoval {

@@ -8,7 +8,10 @@ use lez_swap_core::{
     RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::{EventCommit, SqliteSwapStore, StoreError};
-use lez_zec_swap_sdk::{ZcashObservationEvent, ZcashObservationEventRecordV1};
+use lez_zec_swap_sdk::{
+    HistoricalReplayError, ZcashObservationEvent, ZcashObservationEventRecordV1,
+    ZcashObservationTracker, replay_zcash_observation_history,
+};
 use serde::{Deserialize, Serialize};
 
 const NOT_FOUND: i32 = -32_004;
@@ -75,6 +78,28 @@ pub enum ZcashFundingApplyError {
     /// The selected swap is not a Zcash swap.
     #[error("Zcash funding event was routed to a non-Zcash swap")]
     WrongPair,
+    /// Historical event records are corrupt or out of order.
+    #[error("Zcash observation history cannot be replayed")]
+    HistoricalReplay(#[from] HistoricalReplayError),
+}
+
+/// Restores the historical watcher head for the direction-derived ZEC-funded role.
+///
+/// The returned tracker is not fresh canonical evidence. Reconcile it with a new
+/// stable Zebra snapshot before enabling any external effect.
+///
+/// # Errors
+///
+/// Returns [`ZcashFundingApplyError`] for missing storage, a non-Zcash swap,
+/// corrupt records, or impossible event order.
+pub fn load_zcash_observation_tracker(
+    store: &SqliteSwapStore,
+    id: &SwapId,
+) -> Result<ZcashObservationTracker, ZcashFundingApplyError> {
+    let swap = store.load(id)?.ok_or(StoreError::MissingSwap)?;
+    let funded_by = zcash_funder(&swap)?;
+    let records = store.load_zcash_events(id, funded_by)?;
+    replay_zcash_observation_history(&records).map_err(ZcashFundingApplyError::from)
 }
 
 /// Projects one validated Zcash watcher event and commits it with the aggregate.
@@ -95,14 +120,7 @@ pub fn apply_zcash_funding_event(
 ) -> Result<AppliedZcashFundingEvent, ZcashFundingApplyError> {
     let record = ZcashObservationEventRecordV1::from_event(event);
     let mut swap = store.load(id)?.ok_or(StoreError::MissingSwap)?;
-    if swap.pair() != Pair::Zcash {
-        return Err(ZcashFundingApplyError::WrongPair);
-    }
-    let funded_by = if swap.funded_chain(Participant::Taker) == Chain::Zcash {
-        Participant::Taker
-    } else {
-        Participant::Maker
-    };
+    let funded_by = zcash_funder(&swap)?;
     if let Some(commit) =
         store.committed_zcash_event(predecessor_revision, id, funded_by, &record)?
     {
@@ -113,6 +131,17 @@ pub fn apply_zcash_funding_event(
     project_zcash_funding_event(&mut swap, funded_by, event)?;
     let commit = store.commit_zcash_event(predecessor_revision, &swap, funded_by, &record)?;
     Ok(AppliedZcashFundingEvent { swap, commit })
+}
+
+fn zcash_funder(swap: &SwapCoordinator) -> Result<Participant, ZcashFundingApplyError> {
+    if swap.pair() != Pair::Zcash {
+        return Err(ZcashFundingApplyError::WrongPair);
+    }
+    Ok(if swap.funded_chain(Participant::Taker) == Chain::Zcash {
+        Participant::Taker
+    } else {
+        Participant::Maker
+    })
 }
 
 fn project_zcash_funding_event(

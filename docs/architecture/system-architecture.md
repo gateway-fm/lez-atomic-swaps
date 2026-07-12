@@ -321,8 +321,10 @@ inclusion height.
 The dashed runtime path has a passing reference slice for direction-derived
 canonical/removal projection, atomic commit, restart reload, and exact
 unknown-outcome replay in both ZEC directions. It remains dashed until persisted
-profile bindings, historical tracker replay, replacement-conflict and terminal
-alert outcomes, and actual-node restart evidence pass.
+profile bindings, replacement-conflict and terminal alert outcomes, and
+actual-node restart evidence pass. Restart now revalidates primitive records,
+rejects impossible sequence history, restores the exact historical tracker head,
+and still requires a fresh stable Zebra reconciliation before effects.
 
 ## Happy-path user flow
 

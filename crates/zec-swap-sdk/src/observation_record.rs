@@ -1,15 +1,20 @@
 //! Versioned primitive persistence records for validated Zcash observations.
 
-use std::io::Cursor;
+use std::{io::Cursor, num::NonZeroU32};
 
 use serde::{Deserialize, Serialize};
-use zcash_primitives::transaction::Transaction;
+use zcash_primitives::{block::BlockHash, transaction::Transaction};
 use zcash_protocol::{
-    consensus::{BranchId, NetworkType},
+    TxId,
+    consensus::{BlockHeight, BranchId, NetworkType},
     value::Zatoshis,
 };
+use zcash_transparent::bundle::OutPoint;
 
-use crate::{CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval, ZcashObservationEvent};
+use crate::{
+    CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval, ObservationTrackerError,
+    ZcashObservationEvent, ZcashObservationTracker,
+};
 
 /// Stable primitive spelling of a Zcash network for persistence version 1.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -29,6 +34,16 @@ impl From<NetworkType> for ZcashNetworkRecordV1 {
             NetworkType::Main => Self::Main,
             NetworkType::Test => Self::Test,
             NetworkType::Regtest => Self::Regtest,
+        }
+    }
+}
+
+impl From<ZcashNetworkRecordV1> for NetworkType {
+    fn from(value: ZcashNetworkRecordV1) -> Self {
+        match value {
+            ZcashNetworkRecordV1::Main => Self::Main,
+            ZcashNetworkRecordV1::Test => Self::Test,
+            ZcashNetworkRecordV1::Regtest => Self::Regtest,
         }
     }
 }
@@ -129,6 +144,43 @@ impl ZcashOutputObservationRecordV1 {
     fn matches_canonical(&self, value: &CanonicalZcashOutputObservation) -> bool {
         self == &Self::from(value)
     }
+
+    fn revalidate_historical(
+        &self,
+    ) -> Result<CanonicalZcashOutputObservation, ObservationRecordError> {
+        self.validate()?;
+        let branch = BranchId::try_from(self.consensus_branch_id)
+            .map_err(|_| ObservationRecordError::UnknownBranch)?;
+        let mut cursor = Cursor::new(self.raw_transaction.as_slice());
+        let transaction = Transaction::read(&mut cursor, branch)
+            .map_err(|_| ObservationRecordError::MalformedTransaction)?;
+        let output = transaction
+            .transparent_bundle()
+            .and_then(|bundle| {
+                usize::try_from(self.output_index)
+                    .ok()
+                    .and_then(|index| bundle.vout.get(index))
+            })
+            .cloned()
+            .ok_or(ObservationRecordError::OutputMismatch)?;
+        let transaction_id = TxId::from_bytes(self.transaction_id);
+        Ok(CanonicalZcashOutputObservation {
+            network: self.network.into(),
+            consensus_branch_id: branch,
+            block_hash: BlockHash(self.block_hash),
+            block_height: BlockHeight::from_u32(self.block_height),
+            tip_block_hash: BlockHash(self.tip_block_hash),
+            tip_height: BlockHeight::from_u32(self.tip_height),
+            transaction_id,
+            outpoint: OutPoint::new(*transaction_id.as_ref(), self.output_index),
+            output,
+            redeem_script: self.redeem_script.clone().into(),
+            p2sh_script_pubkey: self.p2sh_script_pubkey.clone().into(),
+            confirmations: NonZeroU32::new(self.confirmations)
+                .ok_or(ObservationRecordError::InvalidDepth)?,
+            raw_transaction: self.raw_transaction.clone().into(),
+        })
+    }
 }
 
 /// Historical primitive record of affirmative detach evidence.
@@ -162,6 +214,18 @@ impl ZcashOutputRemovalRecordV1 {
             return Err(ObservationRecordError::InvalidRemoval);
         }
         Ok(())
+    }
+
+    fn revalidate_historical(&self) -> Result<CanonicalZcashOutputRemoval, ObservationRecordError> {
+        self.validate()?;
+        Ok(CanonicalZcashOutputRemoval {
+            previous: self.previous.revalidate_historical()?,
+            canonical_block_hash_at_removed_height: BlockHash(
+                self.canonical_block_hash_at_removed_height,
+            ),
+            tip_block_hash: BlockHash(self.tip_block_hash),
+            tip_height: BlockHeight::from_u32(self.tip_height),
+        })
     }
 }
 
@@ -260,4 +324,61 @@ pub enum ObservationRecordError {
     /// Detach evidence retained an unchanged block or an insufficient tip.
     #[error("persisted Zcash removal evidence is inconsistent")]
     InvalidRemoval,
+}
+
+/// Corrupt or out-of-order historical observation journal.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum HistoricalReplayError {
+    /// A primitive record failed internal revalidation.
+    #[error("historical Zcash observation record is invalid")]
+    Record(#[from] ObservationRecordError),
+    /// The ordered record sequence cannot follow from its prior committed head.
+    #[error("historical Zcash observation sequence is inconsistent")]
+    Sequence(#[from] ObservationTrackerError),
+}
+
+/// Revalidates one primitive record into historical typed evidence.
+///
+/// This proves only internal consistency at the time it was recorded. It does not
+/// assert that the evidence remains canonical now.
+///
+/// # Errors
+///
+/// Returns [`ObservationRecordError`] when any primitive binding is corrupt.
+pub fn revalidate_historical_event(
+    record: &ZcashObservationEventRecordV1,
+) -> Result<ZcashObservationEvent, ObservationRecordError> {
+    match record {
+        ZcashObservationEventRecordV1::Canonical { canonical } => Ok(
+            ZcashObservationEvent::Canonical(canonical.revalidate_historical()?),
+        ),
+        ZcashObservationEventRecordV1::Removed { removal } => Ok(ZcashObservationEvent::Removed(
+            removal.revalidate_historical()?,
+        )),
+        ZcashObservationEventRecordV1::Replaced { removed, canonical } => {
+            Ok(ZcashObservationEvent::Replaced {
+                removed: Box::new(removed.revalidate_historical()?),
+                canonical: Box::new(canonical.revalidate_historical()?),
+            })
+        }
+    }
+}
+
+/// Replays ordered committed records into a historical tracker head.
+///
+/// The returned head must still be reconciled against a fresh stable node snapshot
+/// before enabling any external effect.
+///
+/// # Errors
+///
+/// Returns [`HistoricalReplayError`] for corrupt records or impossible event order.
+pub fn replay_zcash_observation_history(
+    records: &[ZcashObservationEventRecordV1],
+) -> Result<ZcashObservationTracker, HistoricalReplayError> {
+    let mut tracker = ZcashObservationTracker::default();
+    for record in records {
+        let event = revalidate_historical_event(record)?;
+        tracker.apply_committed(&event)?;
+    }
+    Ok(tracker)
 }

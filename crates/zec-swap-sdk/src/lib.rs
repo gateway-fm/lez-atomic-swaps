@@ -17,8 +17,9 @@ pub use observation::{
     ZcashObservationEvent, ZcashObservationReconciliation, ZcashObservationTracker, ZcashStableTip,
 };
 pub use observation_record::{
-    ObservationRecordError, ZcashNetworkRecordV1, ZcashObservationEventRecordV1,
-    ZcashOutputObservationRecordV1, ZcashOutputRemovalRecordV1,
+    HistoricalReplayError, ObservationRecordError, ZcashNetworkRecordV1,
+    ZcashObservationEventRecordV1, ZcashOutputObservationRecordV1, ZcashOutputRemovalRecordV1,
+    replay_zcash_observation_history, revalidate_historical_event,
 };
 
 pub use profile::{ProfileError, ZecProfileId, ZecRefundProfile};

@@ -1,4 +1,4 @@
-use lez_maker_node::apply_zcash_funding_event;
+use lez_maker_node::{apply_zcash_funding_event, load_zcash_observation_tracker};
 use lez_swap_core::{
     Chain, ChainPosition, ChainProof, ConfirmationPolicy, Pair, Participant, Phase,
     RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
@@ -7,7 +7,8 @@ use lez_swap_store::SqliteSwapStore;
 use lez_zec_swap_sdk::{
     Bip199Contract, CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval,
     ExpectedBip199Output, TransparentFundingRequest, TransparentUtxo, ZcashNodeRemovalSnapshot,
-    ZcashNodeSnapshot, ZcashObservationEvent, ZcashStableTip, build_funding_transaction,
+    ZcashNodeSnapshot, ZcashObservationEvent, ZcashObservationReconciliation, ZcashStableTip,
+    build_funding_transaction,
 };
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use tempfile::tempdir;
@@ -138,6 +139,12 @@ fn forward_zec_runtime_commits_canonical_and_pre_maker_removal_across_restart() 
         store.load(swap.id()).unwrap().unwrap().phase(),
         Phase::Offered
     );
+    assert_eq!(
+        load_zcash_observation_tracker(&store, swap.id())
+            .unwrap()
+            .current(),
+        None
+    );
 }
 
 #[test]
@@ -161,4 +168,14 @@ fn reverse_zec_runtime_replays_removal_before_core_and_restores_exact_reappearan
     assert!(replay.commit().was_replay());
     let restored = apply_zcash_funding_event(&mut store, 2, swap.id(), &canonical_event).unwrap();
     assert_eq!(restored.swap().phase(), Phase::BothLegsLocked);
+    drop(restored);
+    let tracker = load_zcash_observation_tracker(&store, swap.id()).unwrap();
+    assert_eq!(tracker.current(), Some(&canonical));
+    assert_eq!(
+        tracker
+            .propose(&ZcashObservationReconciliation::Canonical(canonical))
+            .unwrap(),
+        None,
+        "fresh exact requery is known after historical replay"
+    );
 }
