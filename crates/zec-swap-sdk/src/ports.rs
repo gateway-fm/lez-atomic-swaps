@@ -6,11 +6,75 @@ use async_trait::async_trait;
 use lez_swap_core::{Participant, SwapId};
 
 use crate::{
-    AcceptedZecAgreementEnvelopeV1, ClaimPreimage, CreateFirstLockOutcome, FirstLockIntentV1,
-    FirstLockObservation, FirstLockProjectionCommit, FirstLockTransitionV1, MakerLockIntentV1,
-    MakerLockObservationV1, MakerLockTransitionV1, ObservedMakerLockTransitionV1,
-    ObservedTakerFirstLockTransitionV1, PreparedFirstLockSubmissionV1, TakerFirstLockObservationV1,
+    AcceptedZecAgreementEnvelopeV1, ClaimIntentV1, ClaimPreimage, CreateFirstLockOutcome,
+    FirstLockIntentV1, FirstLockObservation, FirstLockProjectionCommit, FirstLockTransitionV1,
+    FollowupClaimObservationV1, FollowupClaimTransitionV1, MakerLockIntentV1,
+    MakerLockObservationV1, MakerLockTransitionV1, ObservedFollowupClaimTransitionV1,
+    ObservedMakerLockTransitionV1, ObservedRevealingClaimTransitionV1,
+    ObservedTakerFirstLockTransitionV1, PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1,
+    ProtectedClaimPayloadEnvelope, RevealingClaimObservationV1, RevealingClaimTransitionV1,
+    TakerFirstLockObservationV1, ZecAgreementV1,
 };
+
+/// Narrow LEZ boundary for the preimage-revealing first claim.
+#[async_trait]
+pub trait LezClaimPort: Send + Sync {
+    /// Structured adapter, RPC, or signing error retained by the SDK.
+    type Error: Error + Send + Sync + 'static;
+    /// Derives and signs exact agreement-bound LEZ claim bytes.
+    async fn prepare_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        preimage: &ClaimPreimage,
+    ) -> Result<PreparedClaimSubmissionV1, Self::Error>;
+    /// Observes the exact durable LEZ claim identity before any rebroadcast.
+    async fn observe_prepared_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error>;
+    /// Observes the counterparty's agreement-bound LEZ reveal without a local plan.
+    async fn observe_counterparty_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error>;
+    /// Submits exact bytes reopened from protected durable storage.
+    async fn submit_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<(), Self::Error>;
+}
+
+/// Narrow Zcash boundary for the preimage-consuming follow-up claim.
+#[async_trait]
+pub trait ZcashClaimPort: Send + Sync {
+    /// Structured adapter, RPC, or signing error retained by the SDK.
+    type Error: Error + Send + Sync + 'static;
+    /// Derives and signs exact agreement-bound Zcash claim bytes.
+    async fn prepare_followup_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        preimage: &ClaimPreimage,
+    ) -> Result<PreparedClaimSubmissionV1, Self::Error>;
+    /// Observes the exact durable Zcash claim identity before any rebroadcast.
+    async fn observe_prepared_followup_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<FollowupClaimObservationV1, Self::Error>;
+    /// Observes the counterparty's agreement-bound Zcash follow-up without a local plan.
+    async fn observe_counterparty_followup_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+    ) -> Result<FollowupClaimObservationV1, Self::Error>;
+    /// Submits exact bytes reopened from protected durable storage.
+    async fn submit_followup_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<(), Self::Error>;
+}
 
 /// Authenticated, expiring offer discovery supplied by a Delivery adapter.
 ///
@@ -309,4 +373,88 @@ pub trait ClaimRecoveryStore: RecoveryStore {
         &self,
         swap_id: &SwapId,
     ) -> Result<Option<ClaimPreimage>, Self::Error>;
+
+    /// Encrypts exact claim bytes with fresh nonce and canonical context.
+    async fn protect_claim_submission(
+        &self,
+        agreement: &ZecAgreementV1,
+        local_participant: Participant,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<ProtectedClaimPayloadEnvelope, Self::Error>;
+
+    /// Authenticates and decrypts the envelope bound by a durable intent.
+    async fn open_claim_submission(
+        &self,
+        agreement: &ZecAgreementV1,
+        intent: &ClaimIntentV1,
+        protected: &ProtectedClaimPayloadEnvelope,
+    ) -> Result<PreparedClaimSubmissionV1, Self::Error>;
+
+    /// Atomically creates one claim intent and protected exact submission.
+    async fn create_claim_intent(
+        &self,
+        intent: &ClaimIntentV1,
+        protected: &ProtectedClaimPayloadEnvelope,
+    ) -> Result<CreateFirstLockOutcome, Self::Error>;
+
+    /// Loads the pending intent and its protected exact submission.
+    async fn load_claim_intent(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<(ClaimIntentV1, ProtectedClaimPayloadEnvelope)>, Self::Error>;
+
+    /// Commits revealing evidence, closes its intent, and atomically protects
+    /// an observed preimage when local material does not yet exist.
+    async fn commit_revealing_claim_transition(
+        &self,
+        transition: &RevealingClaimTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error>;
+
+    /// Loads the exact revealing predecessor slot for restart replay.
+    async fn load_revealing_claim_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<RevealingClaimTransitionV1>, Self::Error>;
+
+    /// Atomically commits an independently observed LEZ reveal together with
+    /// protected extracted material before advancing the role-local revision.
+    async fn commit_observed_revealing_claim_transition(
+        &self,
+        transition: &ObservedRevealingClaimTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error>;
+
+    /// Loads the exact independently observed LEZ reveal predecessor slot.
+    async fn load_observed_revealing_claim_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<ObservedRevealingClaimTransitionV1>, Self::Error>;
+
+    /// Atomically commits follow-up evidence and closes its intent.
+    async fn commit_followup_claim_transition(
+        &self,
+        transition: &FollowupClaimTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error>;
+
+    /// Loads the exact follow-up predecessor slot for restart replay.
+    async fn load_followup_claim_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<FollowupClaimTransitionV1>, Self::Error>;
+
+    /// Atomically commits the first claimant's independent observation of the
+    /// counterparty Zcash follow-up and advances its role-local revision.
+    async fn commit_observed_followup_claim_transition(
+        &self,
+        transition: &ObservedFollowupClaimTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error>;
+
+    /// Loads the exact independently observed Zcash follow-up predecessor slot.
+    async fn load_observed_followup_claim_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<ObservedFollowupClaimTransitionV1>, Self::Error>;
 }
