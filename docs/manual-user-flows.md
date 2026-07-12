@@ -353,7 +353,7 @@ exact wire decoding, both low-S signatures, every signed-field mutation, both
 directions, deterministic-local execution terms, fail-closed public deployment,
 actual LEZ/ZEC deadlines, role/digest binding, agreement-derived
 fees/destinations/expiry/funding requests, exact native/token PDA/ATA accounts,
-accepted-at resume, and redacted diagnostics. The second runs 22 integrated
+accepted-at resume, and redacted diagnostics. The second runs 23 integrated
 cases in which independent maker and taker SDK instances with fixed roles
 receive untrusted bytes, validate the concrete record, persist separate accepted
 envelopes before activation, and resume the original wire after transcript
@@ -387,6 +387,7 @@ durable before submission, confirmed Maker evidence advances to
 instance catches up from the durable transition without another submission.
 Projection fault injection leaves the maker intent open and in-memory phase
 unchanged; an unknown successful commit is adopted only after exact probe.
+Stable absence in either direction creates no maker intent and submits nothing.
 The store command runs
 12 production-adapter cases over a real temporary
 schema-v7 database: exact replay/conflict, same-ID role isolation, retained
@@ -405,8 +406,10 @@ are not, and local Pending is depth-eligible. The public Pending/Safe typed
 awaiting-finality policy is unit-tested only because public agreement activation
 remains fail-closed pending reviewed deployment. Stable absence and unstable polls return no
 eligibility, write nothing, and preserve the revision. Its new schema-v7 case
-inspects maker staged/closed and transition predecessor/committed revisions for
-both directions, then closes and reopens at `BothLegsLocked`. Production chain
+proves both directions stage at revision 1, commit an intervening canonical
+depth/finality update at revision 2 without another maker submission, then
+close the intent and maker transition at revision 3 before reopen at
+`BothLegsLocked`. Production chain
 RPC adapters, maker submission/reorg/corruption hardening, claims/refunds, and
 independent actor processes are remaining work.
 

@@ -79,7 +79,9 @@ confirmed maker projection, and restart at `BothLegsLocked`. The LEZ direction
 proves initialize then fund ordering; the Zcash direction proves a single
 funding step. A second maker instance held stale at `TakerLockConfirmed` replays
 the committed maker transition to `BothLegsLocked` before any fresh query and
-adds no submission. The full SDK suite, strict Clippy, and strict Rustdoc pass.
+adds no submission. Stable absence in either direction returns a typed wait,
+creates no intent, and calls no maker submission port. The full SDK suite,
+strict Clippy, and strict Rustdoc pass.
 
 The production role-fixed SQLite test repeats both directions, inspects the
 staged, predecessor, committed, and closed revisions, closes the database, and
@@ -87,6 +89,12 @@ reopens without chain or negotiation evidence at `BothLegsLocked`. The complete
 swap-store suite repeats stale-instance zero-resubmission in both directions and
 passes schema-v7 migration, existing rollback/corruption/replay cases, and the
 new union-journal path.
+
+The same SQLite case stages the maker intent at revision 1, then commits a
+same-inclusion Zcash depth update or LEZ finality update at revision 2 without
+another maker submission. Confirmed maker funding closes that retained intent
+at revision 3 against transition predecessor 2, and close/reopen replays the
+mixed journal exactly.
 
 Projection fault injection proves a store failure leaves phase and revision at
 `TakerLockConfirmed` with the intent still open. An unknown successful commit is

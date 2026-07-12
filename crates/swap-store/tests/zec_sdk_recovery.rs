@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use lez_swap_core::{Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_swap_store::SqliteZecRecoveryStore;
 use lez_zec_swap_sdk::{
-    AcceptedZecAgreementV1, Bip199Contract, CanonicalLezEscrowObservationV1,
+    AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract, CanonicalLezEscrowObservationV1,
     CanonicalLezEscrowRemovalV1, CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval,
     CreateFirstLockOutcome, ExpectedBip199Output, FirstLockConfirmedEvidenceV1,
     FirstLockDriveOutcome, FirstLockObservation, FirstLockPlanV1, FirstLockProjectionCommit,
@@ -108,14 +108,14 @@ impl ZcashTakerFirstLockObservationPort for MakerObservation {
 
 #[derive(Clone, Debug)]
 struct MakerHappyPort {
-    taker_observation: TakerFirstLockObservationV1,
+    taker_observation: std::sync::Arc<std::sync::Mutex<TakerFirstLockObservationV1>>,
     submitted: std::sync::Arc<std::sync::Mutex<Vec<FirstLockStepV1>>>,
 }
 
 impl MakerHappyPort {
     fn new(taker_observation: TakerFirstLockObservationV1) -> Self {
         Self {
-            taker_observation,
+            taker_observation: std::sync::Arc::new(std::sync::Mutex::new(taker_observation)),
             submitted: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
@@ -134,6 +134,13 @@ impl MakerHappyPort {
         } else {
             FirstLockObservation::Absent
         }
+    }
+
+    fn respond(&self, observation: TakerFirstLockObservationV1) {
+        *self
+            .taker_observation
+            .lock()
+            .expect("taker-observation lock") = observation;
     }
 
     fn record_submission(&self, submission: &PreparedFirstLockSubmissionV1) {
@@ -157,7 +164,11 @@ impl LezTakerFirstLockObservationPort for MakerHappyPort {
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         _previous: Option<&CanonicalLezEscrowObservationV1>,
     ) -> Result<TakerFirstLockObservationV1, Self::Error> {
-        Ok(self.taker_observation.clone())
+        Ok(self
+            .taker_observation
+            .lock()
+            .expect("taker-observation lock")
+            .clone())
     }
 }
 
@@ -169,7 +180,11 @@ impl ZcashTakerFirstLockObservationPort for MakerHappyPort {
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
     ) -> Result<TakerFirstLockObservationV1, Self::Error> {
-        Ok(self.taker_observation.clone())
+        Ok(self
+            .taker_observation
+            .lock()
+            .expect("taker-observation lock")
+            .clone())
     }
 }
 
@@ -770,8 +785,10 @@ async fn assert_sqlite_maker_lock_happy_path(
     .expect("stale maker resume")
     .expect("stale maker agreement");
     let (plan, expected_drives, evidence) = maker_lock_fixture(direction);
-    let mut actual_drives = Vec::new();
-    for _ in 0..expected_drives.len() {
+    let mut actual_drives =
+        vec![drive_once_across_intervening_update(&mut active, &chain, direction, &plan).await];
+
+    for _ in 1..expected_drives.len() {
         let MakerLockDriveOutcome::Lock(outcome) = active
             .drive_maker_lock(plan.clone())
             .await
@@ -788,7 +805,7 @@ async fn assert_sqlite_maker_lock_happy_path(
         .expect("commit confirmed maker lock");
     assert_eq!(
         (active.status(), active.revision()),
-        (Phase::BothLegsLocked, 2)
+        (Phase::BothLegsLocked, 3)
     );
     let submitted = chain.submitted_steps();
     assert_eq!(
@@ -796,16 +813,66 @@ async fn assert_sqlite_maker_lock_happy_path(
             .drive_maker_lock(plan)
             .await
             .expect("stale maker replays committed funding"),
-        MakerLockDriveOutcome::AlreadyLocked { revision: 2 }
+        MakerLockDriveOutcome::AlreadyLocked { revision: 3 }
     );
     assert_eq!(
         (stale.status(), stale.revision()),
-        (Phase::BothLegsLocked, 2)
+        (Phase::BothLegsLocked, 3)
     );
     assert_eq!(chain.submitted_steps(), submitted);
     drop(active);
     assert_closed_maker_lock_rows(path, id);
     assert_maker_lock_reopens(path, id).await;
+}
+
+async fn drive_once_across_intervening_update(
+    active: &mut ActiveZecSwap<MakerHappyPort, MakerHappyPort, SqliteZecRecoveryStore>,
+    chain: &MakerHappyPort,
+    direction: SwapDirection,
+    plan: &FirstLockPlanV1,
+) -> FirstLockDriveOutcome {
+    let MakerLockDriveOutcome::Lock(first_drive) = active
+        .drive_maker_lock(plan.clone())
+        .await
+        .expect("first fresh eligible maker drive")
+    else {
+        panic!("canonical taker lock must be maker-eligible")
+    };
+    let submitted_before_update = chain.submitted_steps();
+    chain.respond(deeper_taker_lock(active.agreement(), direction));
+    assert_eq!(
+        active
+            .drive_maker_lock(plan.clone())
+            .await
+            .expect("canonical update commits before another maker step"),
+        MakerLockDriveOutcome::AwaitingEligibility(
+            MakerFundingEligibilityOutcome::CanonicalStateChanged(FirstLockProjectionCommit::new(
+                2, false
+            ))
+        )
+    );
+    assert_eq!(active.revision(), 2);
+    assert_eq!(chain.submitted_steps(), submitted_before_update);
+    first_drive
+}
+
+fn deeper_taker_lock(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    direction: SwapDirection,
+) -> TakerFirstLockObservationV1 {
+    match direction {
+        SwapDirection::TakerSellsForeign => TakerFirstLockObservationV1::CanonicalZcash(Box::new(
+            canonical_zcash_taker_lock_at_depth(agreement, [9; 32], 4),
+        )),
+        SwapDirection::TakerSellsLez => {
+            TakerFirstLockObservationV1::CanonicalLez(Box::new(canonical_lez_taker_lock_at(
+                agreement,
+                LezInclusionStatusV1::Finalized,
+                [0x44; 32],
+                103,
+            )))
+        }
+    }
 }
 
 fn maker_lock_fixture(
@@ -869,7 +936,7 @@ fn assert_closed_maker_lock_rows(path: &std::path::Path, id: &str) {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .expect("closed maker-lock journal");
-    assert_eq!(row, (1, 2, 1, 2));
+    assert_eq!(row, (1, 3, 2, 3));
 }
 
 async fn assert_maker_lock_reopens(path: &std::path::Path, id: &str) {
@@ -890,7 +957,7 @@ async fn assert_maker_lock_reopens(path: &std::path::Path, id: &str) {
     .expect("durable agreement");
     assert_eq!(
         (resumed.status(), resumed.revision()),
-        (Phase::BothLegsLocked, 2)
+        (Phase::BothLegsLocked, 3)
     );
 }
 

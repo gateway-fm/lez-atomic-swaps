@@ -1375,6 +1375,66 @@ async fn maker_projection_failure_preserves_intent_and_unknown_commit_is_probed(
     );
 }
 
+#[tokio::test]
+async fn noneligible_maker_never_stages_or_submits_in_either_direction() {
+    for (id, direction) in [
+        ("sdk-noneligible-forward", SwapDirection::TakerSellsForeign),
+        ("sdk-noneligible-reverse", SwapDirection::TakerSellsLez),
+    ] {
+        let store = MemoryStore::default();
+        let lez = MemoryLezTakerLockObservation::default();
+        let zcash = MemoryZcashTakerLockObservation::default();
+        let sdk = maker_lock_sdk(
+            agreement_wire(id, direction, FixtureVariant::Local),
+            lez.clone(),
+            zcash.clone(),
+            store.clone(),
+        );
+        let accepted = sdk
+            .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+            .await
+            .expect("maker agreement");
+        let mut active = sdk.activate(accepted).await.expect("maker activation");
+        let (plan, expected_step) = match direction {
+            SwapDirection::TakerSellsForeign => (
+                FirstLockPlanV1::lez(
+                    PreparedFirstLockSubmissionV1::new(
+                        FirstLockStepV1::LezInitialize,
+                        [0xc1; 32],
+                        vec![0xf1],
+                    )
+                    .expect("initialize"),
+                    PreparedFirstLockSubmissionV1::new(
+                        FirstLockStepV1::LezFund,
+                        [0xc2; 32],
+                        vec![0xf2],
+                    )
+                    .expect("fund"),
+                )
+                .expect("forward maker plan"),
+                FirstLockStepV1::ZcashFund,
+            ),
+            SwapDirection::TakerSellsLez => (
+                zcash_first_lock_plan([0xc3; 32], vec![0xf3]),
+                FirstLockStepV1::LezFund,
+            ),
+        };
+        assert_eq!(
+            active
+                .drive_maker_lock(plan)
+                .await
+                .expect("noneligible is a typed wait"),
+            MakerLockDriveOutcome::AwaitingEligibility(
+                MakerFundingEligibilityOutcome::AwaitingStableObservation(expected_step)
+            )
+        );
+        assert_eq!((active.status(), active.revision()), (Phase::Offered, 0));
+        assert!(store.maker_locks.lock().expect("maker intents").is_empty());
+        assert!(lez.2.submissions().is_empty());
+        assert!(zcash.1.submissions().is_empty());
+    }
+}
+
 async fn assert_maker_happy_path_zcash_to_lez() {
     let forward_id = "sdk-maker-happy-zcash-to-lez";
     let forward_wire = agreement_wire(
