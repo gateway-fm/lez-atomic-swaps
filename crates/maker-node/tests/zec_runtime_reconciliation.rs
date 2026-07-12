@@ -29,13 +29,23 @@ fn zatoshis(value: u64) -> Zatoshis {
 }
 
 fn canonical_observation() -> CanonicalZcashOutputObservation {
-    let key = SecretKey::from_slice(&[7; 32]).unwrap();
+    canonical_observation_for(7, [0x44; 32], 100, [0xaa; 32], 102)
+}
+
+fn canonical_observation_for(
+    seed: u8,
+    inclusion_hash: [u8; 32],
+    inclusion_height: u32,
+    tip_hash: [u8; 32],
+    tip_height: u32,
+) -> CanonicalZcashOutputObservation {
+    let key = SecretKey::from_slice(&[seed; 32]).unwrap();
     let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &key);
     let owner_script: Script = TransparentAddress::from_pubkey(&public_key).script().into();
     let contract = Bip199Contract::new(500_000, [0x11; 20], [0x22; 32], [0x33; 20]);
     let request = TransparentFundingRequest::new(
         vec![TransparentUtxo::new(
-            OutPoint::new([9; 32], 0),
+            OutPoint::new([seed.wrapping_add(2); 32], 0),
             TxOut::new(zatoshis(120_000), owner_script),
         )],
         public_key,
@@ -60,22 +70,26 @@ fn canonical_observation() -> CanonicalZcashOutputObservation {
             NetworkType::Regtest,
             BranchId::Nu6_2,
             true,
-            BlockHash([0x44; 32]),
-            BlockHash([0x44; 32]),
-            BlockHeight::from_u32(100),
+            BlockHash(inclusion_hash),
+            BlockHash(inclusion_hash),
+            BlockHeight::from_u32(inclusion_height),
             ZcashStableTip::new(
-                BlockHash([0xaa; 32]),
-                BlockHeight::from_u32(102),
-                BlockHash([0xaa; 32]),
-                BlockHeight::from_u32(102),
+                BlockHash(tip_hash),
+                BlockHeight::from_u32(tip_height),
+                BlockHash(tip_hash),
+                BlockHeight::from_u32(tip_height),
             ),
             transaction.txid(),
             raw,
             0,
-            3,
+            tip_height - inclusion_height + 1,
         ),
     )
     .unwrap()
+}
+
+fn replacement_observation() -> CanonicalZcashOutputObservation {
+    canonical_observation_for(8, [0x66; 32], 101, [0xcc; 32], 104)
 }
 
 fn removal(previous: &CanonicalZcashOutputObservation) -> CanonicalZcashOutputRemoval {
@@ -183,81 +197,305 @@ fn reverse_zec_runtime_replays_removal_before_core_and_restores_exact_reappearan
 }
 
 #[test]
-fn terminal_removal_is_journaled_and_reported_without_erasing_the_outcome() {
+fn terminal_reorg_is_journaled_and_reported_without_erasing_the_outcome() {
     for terminal in [Phase::Completed, Phase::Refunded] {
-        let data = tempdir().unwrap();
-        let mut store = SqliteSwapStore::open(data.path().join("terminal.sqlite3")).unwrap();
-        let mut swap = swap("terminal-runtime", SwapDirection::TakerSellsForeign);
-        store.save(&swap).unwrap();
-        let canonical = canonical_observation();
-        let canonical_event = ZcashObservationEvent::Canonical(canonical.clone());
-        apply_zcash_funding_event(&mut store, 0, swap.id(), &canonical_event).unwrap();
-        swap = store.load(swap.id()).unwrap().unwrap();
-        swap.observe_funding(
+        for is_replacement in [false, true] {
+            let data = tempdir().unwrap();
+            let mut store = SqliteSwapStore::open(data.path().join("terminal.sqlite3")).unwrap();
+            let mut swap = swap("terminal-runtime", SwapDirection::TakerSellsForeign);
+            store.save(&swap).unwrap();
+            let canonical = canonical_observation();
+            let canonical_event = ZcashObservationEvent::Canonical(canonical.clone());
+            apply_zcash_funding_event(&mut store, 0, swap.id(), &canonical_event).unwrap();
+            swap = store.load(swap.id()).unwrap().unwrap();
+            swap.observe_funding(
+                Participant::Maker,
+                ChainProof::new("lez-maker-lock", 1).unwrap(),
+            )
+            .unwrap();
+            match terminal {
+                Phase::Completed => {
+                    let first = swap.first_claimant();
+                    swap.observe_revealing_claim(
+                        first,
+                        ChainProof::new("revealing-claim", 1).unwrap(),
+                        ClaimEvidence::new([9; 32]),
+                    )
+                    .unwrap();
+                    swap.observe_followup_claim(
+                        first.other(),
+                        ChainProof::new("followup-claim", 1).unwrap(),
+                    )
+                    .unwrap();
+                }
+                Phase::Refunded => {
+                    swap.refund_maker_leg(ChainPosition::block_height(Chain::Lez, 100))
+                        .unwrap();
+                    swap.refund_taker_leg(ChainPosition::block_height(Chain::Zcash, 120))
+                        .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            store.save(&swap).unwrap();
+
+            let replacement = replacement_observation();
+            let reorg_event = if is_replacement {
+                ZcashObservationEvent::Replaced {
+                    removed: Box::new(removal(&canonical)),
+                    canonical: Box::new(replacement.clone()),
+                }
+            } else {
+                ZcashObservationEvent::Removed(removal(&canonical))
+            };
+            let applied =
+                apply_zcash_funding_event(&mut store, 1, swap.id(), &reorg_event).unwrap();
+            assert_eq!(applied.swap().phase(), terminal);
+            assert_eq!(
+                applied.outcome(),
+                ZcashFundingProjectionOutcome::TerminalReorgDetected {
+                    terminal_phase: terminal,
+                    funded_by: Participant::Taker,
+                }
+            );
+            assert_eq!(applied.commit().revision(), 2);
+            assert_eq!(
+                load_zcash_observation_tracker(&store, swap.id())
+                    .unwrap()
+                    .current(),
+                is_replacement.then_some(&replacement)
+            );
+            assert_eq!(
+                store
+                    .load_zcash_events(swap.id(), Participant::Taker)
+                    .unwrap()
+                    .len(),
+                2
+            );
+
+            let replay = apply_zcash_funding_event(&mut store, 1, swap.id(), &reorg_event).unwrap();
+            assert!(replay.commit().was_replay());
+            assert_eq!(replay.swap().phase(), terminal);
+            assert_eq!(
+                replay.outcome(),
+                ZcashFundingProjectionOutcome::TerminalReorgDetected {
+                    terminal_phase: terminal,
+                    funded_by: Participant::Taker,
+                }
+            );
+            assert_eq!(
+                store
+                    .load_zcash_events(swap.id(), Participant::Taker)
+                    .unwrap()
+                    .len(),
+                2
+            );
+        }
+    }
+}
+
+#[test]
+fn post_dependent_replacement_conflict_is_atomic_and_replayable_for_both_roles() {
+    for (direction, funded_by, reorg_phase) in [
+        (
+            SwapDirection::TakerSellsForeign,
+            Participant::Taker,
+            Phase::TakerLockReorged,
+        ),
+        (
+            SwapDirection::TakerSellsLez,
             Participant::Maker,
-            ChainProof::new("lez-maker-lock", 1).unwrap(),
-        )
-        .unwrap();
-        match terminal {
-            Phase::Completed => {
-                let first = swap.first_claimant();
-                swap.observe_revealing_claim(
-                    first,
-                    ChainProof::new("revealing-claim", 1).unwrap(),
-                    ClaimEvidence::new([9; 32]),
-                )
-                .unwrap();
-                swap.observe_followup_claim(
-                    first.other(),
-                    ChainProof::new("followup-claim", 1).unwrap(),
-                )
-                .unwrap();
-            }
-            Phase::Refunded => {
-                swap.refund_maker_leg(ChainPosition::block_height(Chain::Lez, 100))
-                    .unwrap();
-                swap.refund_taker_leg(ChainPosition::block_height(Chain::Zcash, 120))
-                    .unwrap();
-            }
-            _ => unreachable!(),
+            Phase::MakerLockReorged,
+        ),
+    ] {
+        let data = tempdir().unwrap();
+        let mut store = SqliteSwapStore::open(data.path().join("conflict.sqlite3")).unwrap();
+        let mut swap = swap("replacement-conflict", direction);
+        if funded_by == Participant::Maker {
+            swap.observe_funding(
+                Participant::Taker,
+                ChainProof::new("lez-taker-lock", 1).unwrap(),
+            )
+            .unwrap();
         }
         store.save(&swap).unwrap();
+        let original = canonical_observation();
+        apply_zcash_funding_event(
+            &mut store,
+            0,
+            swap.id(),
+            &ZcashObservationEvent::Canonical(original.clone()),
+        )
+        .unwrap();
+        if funded_by == Participant::Taker {
+            swap = store.load(swap.id()).unwrap().unwrap();
+            swap.observe_funding(
+                Participant::Maker,
+                ChainProof::new("lez-maker-lock", 1).unwrap(),
+            )
+            .unwrap();
+            store.save(&swap).unwrap();
+        }
 
-        let removed_event = ZcashObservationEvent::Removed(removal(&canonical));
-        let applied = apply_zcash_funding_event(&mut store, 1, swap.id(), &removed_event).unwrap();
-        assert_eq!(applied.swap().phase(), terminal);
+        let replacement = replacement_observation();
+        let event = ZcashObservationEvent::Replaced {
+            removed: Box::new(removal(&original)),
+            canonical: Box::new(replacement.clone()),
+        };
+        let applied = apply_zcash_funding_event(&mut store, 1, swap.id(), &event).unwrap();
+        assert_eq!(applied.swap().phase(), reorg_phase);
         assert_eq!(
             applied.outcome(),
-            ZcashFundingProjectionOutcome::TerminalReorgDetected {
-                terminal_phase: terminal,
-                funded_by: Participant::Taker,
-            }
+            ZcashFundingProjectionOutcome::ReplacementConflict { funded_by }
         );
         assert_eq!(applied.commit().revision(), 2);
         assert_eq!(
-            store
-                .load_zcash_events(swap.id(), Participant::Taker)
-                .unwrap()
-                .len(),
+            store.load_zcash_events(swap.id(), funded_by).unwrap().len(),
             2
         );
+        assert_eq!(
+            load_zcash_observation_tracker(&store, swap.id())
+                .unwrap()
+                .current(),
+            Some(&replacement),
+            "tracker follows chain truth while the core keeps the committed ID pinned"
+        );
 
-        let replay = apply_zcash_funding_event(&mut store, 1, swap.id(), &removed_event).unwrap();
+        let replay = apply_zcash_funding_event(&mut store, 1, swap.id(), &event).unwrap();
         assert!(replay.commit().was_replay());
-        assert_eq!(replay.swap().phase(), terminal);
+        assert_eq!(replay.swap().phase(), reorg_phase);
         assert_eq!(
             replay.outcome(),
-            ZcashFundingProjectionOutcome::TerminalReorgDetected {
-                terminal_phase: terminal,
-                funded_by: Participant::Taker,
-            }
+            ZcashFundingProjectionOutcome::ReplacementConflict { funded_by }
         );
         assert_eq!(
-            store
-                .load_zcash_events(swap.id(), Participant::Taker)
-                .unwrap()
-                .len(),
+            store.load_zcash_events(swap.id(), funded_by).unwrap().len(),
             2
         );
     }
+}
+
+#[test]
+fn pre_dependent_taker_replacement_commits_the_new_chain_transaction() {
+    let data = tempdir().unwrap();
+    let mut store = SqliteSwapStore::open(data.path().join("pre-dependent.sqlite3")).unwrap();
+    let swap = swap("pre-dependent", SwapDirection::TakerSellsForeign);
+    store.save(&swap).unwrap();
+    let original = canonical_observation();
+    apply_zcash_funding_event(
+        &mut store,
+        0,
+        swap.id(),
+        &ZcashObservationEvent::Canonical(original.clone()),
+    )
+    .unwrap();
+
+    let replacement = replacement_observation();
+    let event = ZcashObservationEvent::Replaced {
+        removed: Box::new(removal(&original)),
+        canonical: Box::new(replacement.clone()),
+    };
+    let applied = apply_zcash_funding_event(&mut store, 1, swap.id(), &event).unwrap();
+    assert_eq!(applied.outcome(), ZcashFundingProjectionOutcome::Applied);
+    assert_eq!(applied.swap().phase(), Phase::TakerLockConfirmed);
+    assert_eq!(
+        applied.swap().funding_transaction_id(Participant::Taker),
+        Some(replacement.transaction_id().to_string().as_str())
+    );
+    assert_eq!(
+        load_zcash_observation_tracker(&store, swap.id())
+            .unwrap()
+            .current(),
+        Some(&replacement)
+    );
+    let replay = apply_zcash_funding_event(&mut store, 1, swap.id(), &event).unwrap();
+    assert!(replay.commit().was_replay());
+    assert_eq!(replay.outcome(), ZcashFundingProjectionOutcome::Applied);
+}
+
+#[test]
+fn same_transaction_remined_restores_both_funded_roles() {
+    for (direction, funded_by) in [
+        (SwapDirection::TakerSellsForeign, Participant::Taker),
+        (SwapDirection::TakerSellsLez, Participant::Maker),
+    ] {
+        let data = tempdir().unwrap();
+        let mut store = SqliteSwapStore::open(data.path().join("remined.sqlite3")).unwrap();
+        let mut swap = swap("same-transaction-remined", direction);
+        if funded_by == Participant::Maker {
+            swap.observe_funding(
+                Participant::Taker,
+                ChainProof::new("lez-taker-lock", 1).unwrap(),
+            )
+            .unwrap();
+        }
+        store.save(&swap).unwrap();
+        let original = canonical_observation();
+        apply_zcash_funding_event(
+            &mut store,
+            0,
+            swap.id(),
+            &ZcashObservationEvent::Canonical(original.clone()),
+        )
+        .unwrap();
+        if funded_by == Participant::Taker {
+            swap = store.load(swap.id()).unwrap().unwrap();
+            swap.observe_funding(
+                Participant::Maker,
+                ChainProof::new("lez-maker-lock", 1).unwrap(),
+            )
+            .unwrap();
+            store.save(&swap).unwrap();
+        }
+
+        let remined = canonical_observation_for(7, [0x77; 32], 101, [0xdd; 32], 104);
+        assert_eq!(remined.transaction_id(), original.transaction_id());
+        let event = ZcashObservationEvent::Replaced {
+            removed: Box::new(removal(&original)),
+            canonical: Box::new(remined.clone()),
+        };
+        let applied = apply_zcash_funding_event(&mut store, 1, swap.id(), &event).unwrap();
+        assert_eq!(applied.outcome(), ZcashFundingProjectionOutcome::Applied);
+        assert_eq!(applied.swap().phase(), Phase::BothLegsLocked);
+        assert_eq!(
+            load_zcash_observation_tracker(&store, swap.id())
+                .unwrap()
+                .current(),
+            Some(&remined)
+        );
+    }
+}
+
+#[test]
+fn replacement_must_match_the_exact_durable_tracker_head_before_projection() {
+    let data = tempdir().unwrap();
+    let mut store = SqliteSwapStore::open(data.path().join("stale-head.sqlite3")).unwrap();
+    let swap = swap("stale-head", SwapDirection::TakerSellsForeign);
+    store.save(&swap).unwrap();
+    let original = canonical_observation();
+    apply_zcash_funding_event(
+        &mut store,
+        0,
+        swap.id(),
+        &ZcashObservationEvent::Canonical(original),
+    )
+    .unwrap();
+
+    let stale_same_transaction = canonical_observation_for(7, [0x99; 32], 99, [0xee; 32], 102);
+    let event = ZcashObservationEvent::Replaced {
+        removed: Box::new(removal(&stale_same_transaction)),
+        canonical: Box::new(replacement_observation()),
+    };
+    assert!(apply_zcash_funding_event(&mut store, 1, swap.id(), &event).is_err());
+    assert_eq!(store.revision(swap.id()).unwrap(), Some(1));
+    assert_eq!(
+        store
+            .load_zcash_events(swap.id(), Participant::Taker)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        store.load(swap.id()).unwrap().unwrap().phase(),
+        Phase::TakerLockConfirmed
+    );
 }

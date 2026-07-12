@@ -834,6 +834,15 @@ impl SwapCoordinator {
         }
     }
 
+    /// Transaction ID pinned to one participant's funded leg, when observed.
+    #[must_use]
+    pub fn funding_transaction_id(&self, participant: Participant) -> Option<&str> {
+        match participant {
+            Participant::Maker => self.maker_lock_transaction_id.as_deref(),
+            Participant::Taker => self.taker_lock_transaction_id.as_deref(),
+        }
+    }
+
     /// Observes participant-relative funding without assuming which chain they fund.
     ///
     /// # Errors

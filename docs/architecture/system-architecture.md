@@ -292,7 +292,9 @@ flowchart LR
     Journal -.-> Projection["Runtime event → participant projection"]
     Terms --> CoreFunding["Participant-aware core funding/reorg API"]
     Projection -.-> CoreFunding
+    Projection --> ConflictOutcome["ReplacementConflict classification"]
     Projection --> TerminalOutcome["TerminalReorgDetected classification"]
+    ConflictOutcome -.-> AlertOutbox
     TerminalOutcome -.-> AlertOutbox["Durable operator/security alert outbox"]
     Validator --> Observe["Bound canonical/removal evidence"]
     LezDeadline --> Schedule
@@ -323,13 +325,17 @@ inclusion height.
 The dashed runtime path has a passing reference slice for direction-derived
 canonical/removal projection, atomic commit, restart reload, and exact
 unknown-outcome replay in both ZEC directions. It remains dashed until persisted
-profile bindings, replacement-conflict outcomes, durable terminal alert
-delivery, and actual-node restart evidence pass. Restart now revalidates primitive records,
+profile bindings, durable conflict/terminal alert delivery, and actual-node
+restart evidence pass. Restart now revalidates primitive records,
 rejects impossible sequence history, restores the exact historical tracker head,
 and still requires a fresh stable Zebra reconciliation before effects.
 Completed/refunded removal or replacement is now journaled without erasing the
 lifecycle result and is classified as `TerminalReorgDetected`; delivery through
 the durable alert outbox remains dashed.
+Post-dependent replacement now commits chain truth atomically, retains the
+protocol-committed transaction ID in the participant-specific reorg phase, and
+returns `ReplacementConflict`; pre-dependent replacement and same-transaction
+re-mining remain normal applied outcomes.
 
 ## Happy-path user flow
 

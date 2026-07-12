@@ -58,6 +58,11 @@ pub struct AppliedZcashFundingEvent {
 pub enum ZcashFundingProjectionOutcome {
     /// The event changed or refreshed non-terminal protocol state.
     Applied,
+    /// Chain truth replaced a transaction ID already committed to the protocol.
+    ReplacementConflict {
+        /// Direction-derived participant whose transaction remains pinned.
+        funded_by: Participant,
+    },
     /// A removal/replacement affected an absorbing lifecycle outcome.
     TerminalReorgDetected {
         /// Completed or refunded lifecycle result retained for audit.
@@ -147,6 +152,7 @@ pub fn apply_zcash_funding_event(
     {
         swap = store.load(id)?.ok_or(StoreError::MissingSwap)?;
         let outcome = terminal_reorg_outcome(&swap, funded_by, event)
+            .or_else(|| replacement_conflict_outcome(&swap, funded_by, event))
             .unwrap_or(ZcashFundingProjectionOutcome::Applied);
         return Ok(AppliedZcashFundingEvent {
             swap,
@@ -155,11 +161,16 @@ pub fn apply_zcash_funding_event(
         });
     }
 
+    let records = store.load_zcash_events(id, funded_by)?;
+    let mut historical_tracker = replay_zcash_observation_history(&records)?;
+    historical_tracker
+        .apply_committed(event)
+        .map_err(HistoricalReplayError::from)?;
+
     let outcome = if let Some(outcome) = terminal_reorg_outcome(&swap, funded_by, event) {
         outcome
     } else {
-        project_zcash_funding_event(&mut swap, funded_by, event)?;
-        ZcashFundingProjectionOutcome::Applied
+        project_zcash_funding_event(&mut swap, funded_by, event)?
     };
     let commit = store.commit_zcash_event(predecessor_revision, &swap, funded_by, &record)?;
     Ok(AppliedZcashFundingEvent {
@@ -167,6 +178,27 @@ pub fn apply_zcash_funding_event(
         commit,
         outcome,
     })
+}
+
+fn replacement_conflict_outcome(
+    swap: &SwapCoordinator,
+    funded_by: Participant,
+    event: &ZcashObservationEvent,
+) -> Option<ZcashFundingProjectionOutcome> {
+    let ZcashObservationEvent::Replaced { canonical, .. } = event else {
+        return None;
+    };
+    let role_is_reorged = matches!(
+        (funded_by, swap.phase()),
+        (Participant::Taker, Phase::TakerLockReorged)
+            | (Participant::Maker, Phase::MakerLockReorged)
+    );
+    let replacement_id = canonical.transaction_id().to_string();
+    (role_is_reorged
+        && swap
+            .funding_transaction_id(funded_by)
+            .is_some_and(|pinned| pinned != replacement_id))
+    .then_some(ZcashFundingProjectionOutcome::ReplacementConflict { funded_by })
 }
 
 fn terminal_reorg_outcome(
@@ -200,19 +232,34 @@ fn project_zcash_funding_event(
     swap: &mut SwapCoordinator,
     funded_by: Participant,
     event: &ZcashObservationEvent,
-) -> Result<(), Error> {
+) -> Result<ZcashFundingProjectionOutcome, Error> {
     match event {
         ZcashObservationEvent::Canonical(canonical) => {
-            swap.observe_funding(funded_by, canonical.chain_proof()?)
+            swap.observe_funding(funded_by, canonical.chain_proof()?)?;
+            Ok(ZcashFundingProjectionOutcome::Applied)
         }
-        ZcashObservationEvent::Removed(removed) => swap
-            .observe_funding_removed(funded_by, &removed.previous().transaction_id().to_string()),
+        ZcashObservationEvent::Removed(removed) => {
+            swap.observe_funding_removed(
+                funded_by,
+                &removed.previous().transaction_id().to_string(),
+            )?;
+            Ok(ZcashFundingProjectionOutcome::Applied)
+        }
         ZcashObservationEvent::Replaced { removed, canonical } => {
             swap.observe_funding_removed(
                 funded_by,
                 &removed.previous().transaction_id().to_string(),
             )?;
-            swap.observe_funding(funded_by, canonical.chain_proof()?)
+            match swap.observe_funding(funded_by, canonical.chain_proof()?) {
+                Ok(()) => Ok(ZcashFundingProjectionOutcome::Applied),
+                Err(Error::ConflictingTakerLock) if funded_by == Participant::Taker => {
+                    Ok(ZcashFundingProjectionOutcome::ReplacementConflict { funded_by })
+                }
+                Err(Error::ConflictingMakerLock) if funded_by == Participant::Maker => {
+                    Ok(ZcashFundingProjectionOutcome::ReplacementConflict { funded_by })
+                }
+                Err(error) => Err(error),
+            }
         }
     }
 }

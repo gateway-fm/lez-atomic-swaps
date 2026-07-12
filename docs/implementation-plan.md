@@ -339,11 +339,17 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   mutating the absorbing lifecycle result, and return
   `TerminalReorgDetected` rather than a normal applied outcome, including on
   exact replay. Durable operator/security alert delivery remains open.
+- [x] Commit a post-dependent different-ID replacement as one atomic journal
+  revision while retaining the committed participant transaction ID and
+  role-specific reorg phase. Both ZEC-funded roles return an explicit
+  `ReplacementConflict`; pre-dependent replacement and exact-ID re-mining pass.
+- [x] Replay and validate the exact durable watcher head before projecting a new
+  event. Same-transaction but stale-inclusion replacement evidence fails before
+  aggregate or journal mutation.
 - [ ] Complete production runtime wiring: persist immutable profile and expected
-  output bindings; journal conflicting replacements while retaining the
-  committed-ID reorg phase;
-  deliver terminal reorg outcomes through a durable alert outbox; and prove
-  close/reopen/requery through actual two-Zebra replacement.
+  output bindings; deliver conflict and terminal reorg outcomes through a
+  durable alert outbox; and prove close/reopen/requery through actual two-Zebra
+  replacement.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
   nodes. The LEZ
   Unix-millisecond/core Unix-second boundary is typed, checked, conservatively

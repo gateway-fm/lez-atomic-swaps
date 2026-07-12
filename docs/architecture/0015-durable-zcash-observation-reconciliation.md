@@ -110,6 +110,15 @@ sequenceDiagram
   absorbing lifecycle result is retained and classified as
   `TerminalReorgDetected`; it is never reported as a normal applied event, even
   when the exact durable event is retried after an unknown commit outcome.
+- A post-dependent replacement with a different transaction ID commits one
+  atomic `Replaced` journal revision, retains the original participant funding
+  ID in its role-specific reorg phase, and returns `ReplacementConflict`.
+  Pre-dependent replacement adopts the new ID; exact-transaction re-mining
+  restores the dependent swap normally.
+- Before any new event reaches the core, runtime replays the role journal and
+  requires the event to advance that exact durable tracker head. A structurally
+  valid replacement for a stale inclusion therefore changes neither aggregate,
+  revision, nor journal.
 - Runtime journal-to-core wiring and actual two-Zebra store/restart evidence
   remain required before this ADR is fully proven.
 
@@ -119,6 +128,5 @@ canonical/removal evidence, commits event plus aggregate atomically, and reloads
 across restart in both directions. It is not yet the production watcher: journal
 history is now revalidated and replayed into the exact tracker head, and an
 identical fresh requery is suppressed. Durable profile/expected-output binding,
-atomic conflicting-replacement outcomes, a separately persisted
-operator/security alert outbox for terminal reorgs, and actual two-Zebra
-store/restart evidence remain required.
+a separately persisted operator/security alert outbox for terminal reorgs, and
+actual two-Zebra store/restart evidence remain required.
