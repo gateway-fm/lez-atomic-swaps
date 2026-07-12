@@ -2,10 +2,15 @@
 
 use std::{path::Path, time::Duration};
 
+mod zec_recovery;
+
+pub use zec_recovery::SqliteZecRecoveryStore;
+
 use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId};
 use lez_zec_swap_sdk::{
-    ObservationRecordError, ZcashObservationEventRecordV1, ZecBindingRecordError, ZecSwapBinding,
-    ZecSwapBindingRecordV1, revalidate_historical_event,
+    FirstLockRecordError, ObservationRecordError, ZcashObservationEventRecordV1,
+    ZecAgreementV1Error, ZecBindingRecordError, ZecSwapBinding, ZecSwapBindingRecordV1,
+    revalidate_historical_event,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -255,6 +260,12 @@ pub enum StoreError {
     /// Persisted immutable ZEC binding is internally inconsistent.
     #[error("persisted ZEC swap binding is invalid")]
     ZcashBindingRecord(#[from] ZecBindingRecordError),
+    /// A durable concrete LEZ/ZEC agreement failed full revalidation.
+    #[error("persisted concrete ZEC agreement is invalid")]
+    ZecAgreement(#[from] ZecAgreementV1Error),
+    /// A primitive SDK first-lock record failed full context revalidation.
+    #[error("persisted SDK first-lock record is invalid")]
+    FirstLockRecord(#[from] FirstLockRecordError),
     /// The database was created by a newer unsupported application version.
     #[error("unsupported SQLite schema version {0}")]
     UnsupportedDatabaseVersion(i64),
@@ -292,6 +303,24 @@ pub enum StoreError {
     /// A durable revision cannot be represented safely.
     #[error("aggregate revision overflowed")]
     RevisionOverflow,
+    /// A role-fixed SDK recovery adapter received a different local role.
+    #[error("SDK recovery record local role does not match the store")]
+    ZecRecoveryRoleMismatch,
+    /// An SDK recovery operation requires an agreement row that does not exist.
+    #[error("SDK recovery agreement does not exist")]
+    MissingZecRecoveryAgreement,
+    /// A first-lock transition has no matching retained intent.
+    #[error("SDK first-lock intent does not exist")]
+    MissingZecFirstLockIntent,
+    /// An exact predecessor transition slot contains different evidence.
+    #[error("SDK first-lock transition conflicts with durable evidence")]
+    ConflictingZecFirstLockTransition,
+    /// SDK recovery rows disagree about revisions or intent closure.
+    #[error("SDK recovery rows are internally inconsistent")]
+    InvalidZecRecoveryState,
+    /// The cloneable SDK recovery connection mutex was poisoned.
+    #[error("SDK recovery store lock was poisoned")]
+    ZecRecoveryLockPoisoned,
 }
 
 /// Result of one atomic Zcash event and aggregate commit.
@@ -349,12 +378,7 @@ impl SqliteSwapStore {
     ///
     /// Returns [`StoreError`] when `SQLite` cannot open, configure, or migrate the database.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        let mut connection = Connection::open(path)?;
-        connection.busy_timeout(Duration::from_secs(5))?;
-        connection.pragma_update(None, "journal_mode", "WAL")?;
-        connection.pragma_update(None, "synchronous", "FULL")?;
-        connection.pragma_update(None, "foreign_keys", "ON")?;
-        migrate(&mut connection)?;
+        let connection = open_configured_connection(path)?;
         Ok(Self { connection })
     }
 
@@ -792,6 +816,16 @@ impl SqliteSwapStore {
         }
         Ok(())
     }
+}
+
+fn open_configured_connection(path: impl AsRef<Path>) -> Result<Connection, StoreError> {
+    let mut connection = Connection::open(path)?;
+    connection.busy_timeout(Duration::from_secs(5))?;
+    connection.pragma_update(None, "journal_mode", "WAL")?;
+    connection.pragma_update(None, "synchronous", "FULL")?;
+    connection.pragma_update(None, "foreign_keys", "ON")?;
+    migrate(&mut connection)?;
+    Ok(connection)
 }
 
 struct AlertEventIds {

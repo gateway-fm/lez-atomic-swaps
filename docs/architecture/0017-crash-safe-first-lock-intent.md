@@ -1,8 +1,7 @@
 # ADR 0017: Durable intent before first-lock effects
 
-Status: in-memory SDK intent, primitive recovery records, atomic projection,
-and replay contract proven; production SQLite and chain adapters pending —
-2026-07-12
+Status: SDK intent, primitive recovery records, and production SQLite atomic
+projection/replay proven; production chain adapters pending — 2026-07-12
 
 ```mermaid
 flowchart TB
@@ -11,7 +10,8 @@ flowchart TB
     Stage --> Durable["Role-local RecoveryStore"]
     Stage --> Encode["Versioned primitive intent record"]
     Encode --> Durable
-    Durable -.-> SQLite["Production SQLite adapter"]
+    Durable --> SQLite["Production SQLite adapter"]
+    SQLite --> Tables["Agreement + open or closed intent + transition"]
     Durable --> Restart["Resume without Delivery or Chat"]
     Restart --> Decode["Deserialize only primitive untrusted fields"]
     Decode --> Revalidate["Revalidate agreement, role, revision, direction, and bytes"]
@@ -29,7 +29,7 @@ flowchart TB
     Projection --> Core["Advance in-memory coordinator after durable proof"]
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class SQLite planned;
+    class Observe,Submit,Fund planned;
 ```
 
 ## Context
@@ -75,7 +75,7 @@ decode and recompute chain policy.
 
 ## Executable evidence
 
-Six RED–GREEN lifecycle cases prove maker rejection, signed-direction plan
+Six SDK RED–GREEN lifecycle cases prove maker rejection, signed-direction plan
 selection, durable-before-effect staging, exact replay, changed-byte conflict,
 unstable-query non-submission, observe-before-rebroadcast restart, and ordered
 LEZ initialize/fund behavior. They also prove that invalid evidence and a failed
@@ -88,13 +88,23 @@ and a corrupt retained closed intent. The full package currently passes 79
 tests, with the real-Zebra Docker case intentionally delegated to its isolated
 runner.
 
+Six production-store cases instantiate the SDK with a cloneable role-fixed
+`SqliteZecRecoveryStore`. They prove exact agreement replay and changed same-key
+conflict; maker/taker isolation for the same application ID; an open intent
+durable before effects; one immediate transaction that inserts the transition,
+advances active revision, and closes but retains the intent; exact replay; and
+close/reopen resume to `TakerLockConfirmed`. An external SQLite trigger forces
+the middle update to fail and proves all three writes roll back. Future payloads,
+malformed primitive JSON, an active revision missing its transition, and a
+closed intent missing its transition fail closed rather than reconstructing
+trusted state.
+
 ## Consequences and remaining boundary
 
-This is an SDK contract, primitive persistence boundary, and in-memory test
-adapter, not production durability or a completed corridor swap. `RecoveryStore`
-now requires atomic transition, aggregate-revision, and intent-close semantics
-plus exact predecessor-slot probing, but no SQLite implementation exists yet.
-Confirmed evidence is a typed
+The first-lock recovery boundary is now production SQLite durability, but it is
+not a completed corridor swap. The adapter uses WAL, `FULL` synchronous mode,
+foreign keys, immediate transactions, role-composite keys, primitive payloads,
+and full revalidation on every load. Confirmed evidence is still a typed
 adapter assertion; actual LEZ and Zebra adapters must produce it from fresh
 stable canonical evidence at the signed threshold. The maker still needs to
 persist its own independent observation of the taker lock before staging the

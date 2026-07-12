@@ -1340,6 +1340,7 @@ dependencies = [
 name = "lez-swap-store"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "lez-swap-core",
  "lez-zec-swap-sdk",
  "rusqlite",
@@ -1348,6 +1349,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
  "zcash_primitives",
  "zcash_protocol",
  "zcash_transparent",

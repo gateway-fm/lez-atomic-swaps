@@ -1,7 +1,8 @@
 # ADR 0013: Deterministic SDK core with optional async orchestration
 
 Status: concrete ZEC negotiation, activation, resume, first-lock intent, and
-atomic projection/replay contract implemented; production adapters in progress — 2026-07-12
+production SQLite atomic projection/replay implemented; chain and transport
+adapters in progress — 2026-07-12
 
 ```mermaid
 flowchart TB
@@ -12,6 +13,7 @@ flowchart TB
     Negotiation --> Validator["Bounded concrete agreement validator"]
     Validator --> Accepted["Role-fixed accepted envelope"]
     Accepted --> Store["RecoveryStore contract"]
+    Store --> SQLite["Role-fixed schema-v5 SQLite adapter"]
     Store --> Active["ActiveZecSwap without transport or raw adapter handles"]
     Active --> Intent["Durable exact first-lock intent"]
     Intent --> Observe["Observe before byte-identical submission"]
@@ -19,7 +21,7 @@ flowchart TB
     Projection --> Active
     Active -.-> Runtime["Reference async coordinator"]
     Runtime -.-> Nodes["Typed chain ports"]
-    Store -.-> Encrypted["Encrypted production adapter"]
+    SQLite -.-> Encrypted["Encrypted later-effect secret storage"]
     Core --> Runtime
     Core --> Tests["Model/vector/replay tests"]
 
@@ -57,9 +59,9 @@ dual-signed agreement, reject wrong role, revision, profile, wire, and swap ID,
 persist to separate stores before activation, and resume the original accepted
 wire even after transcript expiry. Exact replay is idempotent and a changed
 same-key record conflicts. The claim preimage wrapper and active diagnostics are
-redacted; secret storage zeroizes on drop. These in-memory adapters prove the
-API/type boundary only; they are not Logos Delivery/Chat, encrypted production
-storage, typed chain actions, or actor E2E.
+redacted; secret storage zeroizes on drop. The discovery, negotiation, and chain
+adapters prove the API/type boundary only; they are not Logos Delivery/Chat,
+production chain actions, or actor E2E.
 
 The next slice adds a bounded first-lock action/observation contract without
 exposing raw adapters: exact Zcash funding bytes, or separate exact LEZ
@@ -68,7 +70,11 @@ the intent and observes before byte-identical submission. Confirmed final-step
 evidence is projected only after the store atomically commits the exact
 transition, next revision, and intent closure; an unknown result is probed before
 in-memory apply, and resume replays the committed transition. The executable
-adapter remains an in-memory contract double rather than production SQLite.
+store adapter is now cloneable role-fixed SQLite: it retains the closed intent,
+atomically commits transition/revision/closure, isolates maker and taker rows,
+revalidates primitive payloads, survives close/reopen, and rejects injected
+rollback and mirrored torn-state corruption. Encryption and the general
+later-effect outbox remain M5 work.
 
 ## Consequences
 

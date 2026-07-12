@@ -41,8 +41,10 @@ current executable slices enforce:
   plus exact first-lock intent staged before node effects, observe-before-exact
   rebroadcast after restart, and separately recoverable LEZ initialize/fund
   steps; confirmed evidence is applied only after an atomic store commit or an
-  exact unknown-outcome probe, and is replayed on resume. This is an in-memory
-  SDK/store contract, not a completed chain corridor.
+  exact unknown-outcome probe, and is replayed on resume. A role-fixed
+  schema-v5 SQLite adapter now proves exact replay, role isolation, retained
+  closed-intent validation, atomic rollback, corruption rejection, and
+  close/reopen recovery. Chain adapters and the completed corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),
