@@ -59,7 +59,7 @@ pub use observation_record::{
     replay_zcash_observation_history, revalidate_historical_event,
 };
 pub use observed_taker_lock::{
-    ObserveTakerFirstLockOutcome, ObservedTakerFirstLockEvidenceV1,
+    MakerFundingEligibilityOutcome, ObserveTakerFirstLockOutcome, ObservedTakerFirstLockEvidenceV1,
     ObservedTakerFirstLockTransitionError, ObservedTakerFirstLockTransitionRecordV1,
     ObservedTakerFirstLockTransitionV1, TakerFirstLockObservationV1,
 };

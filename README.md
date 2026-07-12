@@ -57,9 +57,12 @@ current executable slices enforce:
   transaction/block/tip/output record against the signed agreement's exact
   HTLC output binding. Role-local input/change/fee/expiry policy constrains this
   SDK's own builder and is not a remote-wallet acceptance condition. These
-  first-lock observations remain non-authorizing: next action is `Wait` until
-  the separately tested fresh pre-second-lock eligibility boundary exists.
-  Production RPC adapters, canonical LEZ evidence, later effects, and the
+  first-lock observations remain non-authorizing. A distinct fresh eligibility
+  call replays the durable head, re-queries the exact canonical tracker head,
+  writes nothing when unchanged, and returns a non-cached revision-bound
+  result; `next_action` remains `Wait` because no maker effect exists to
+  consume it in the same operation. Production RPC adapters, canonical LEZ
+  evidence, later effects, and the
   completed corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the

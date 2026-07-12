@@ -63,6 +63,9 @@ pub enum ZecSdkError {
     /// Canonical Zcash observation history is stale, duplicated, or missing replacement proof.
     #[error(transparent)]
     InvalidZcashObservationHistory(#[from] ObservationTrackerError),
+    /// This direction lacks a canonical maker eligibility adapter.
+    #[error("fresh maker-funding eligibility is unavailable for this swap direction")]
+    MakerFundingEligibilityUnavailable,
     /// A new activation must begin at durable revision zero.
     #[error("new LEZ/ZEC agreement has invalid initial revision {0}")]
     InvalidActivationRevision(u64),

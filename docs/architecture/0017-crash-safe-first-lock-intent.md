@@ -42,10 +42,11 @@ flowchart TB
     Removed --> MakerCore
     MakerCore -->|"poll again after restart"| MakerObserve
     MakerCore --> Gate["SDK next action remains Wait"]
-    Gate -.-> Fresh["Canonical reorg-safe check before maker second lock"]
+    Gate --> Fresh["Fresh non-cached exact-head eligibility requery"]
+    Fresh -.-> MakerEffect["Maker second-lock effect consumes eligibility internally"]
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Observe,Submit,Fund,Fresh planned;
+    class Observe,Submit,Fund,MakerEffect planned;
 ```
 
 ## Context
@@ -115,7 +116,7 @@ after restart, so observation history cannot authorize the maker lock. The
 forward maker actor now commits and replays canonical evidence, an atomic
 different-transaction replacement, a same-inclusion depth change, and
 affirmative removal across revisions 1 through 4. The package currently passes
-81 ordinary tests plus one doctest, with the real-Zebra Docker case
+82 ordinary tests plus one doctest, with the real-Zebra Docker case
 intentionally delegated to its isolated runner.
 
 Nine production-store cases instantiate the SDK with a cloneable role-fixed
@@ -152,7 +153,10 @@ before mutation. Reverse LEZ remains a contract double until a validator binds
 channel/chain, deployment, derived
 accounts, terms, funded state, transaction, block, and finality. The SDK
 therefore exposes no maker second-lock submit method and returns Wait after
-maker projection. The distinct fresh pre-effect eligibility check remains
-required before adding that effect. Claim/refund
+maker projection. The distinct fresh pre-effect eligibility call now replays
+the durable head and re-queries the exact tracker head. It returns a
+revision-bound result without caching authority, adding a journal row, or
+changing `next_action`; a future maker effect must consume it internally in
+the same operation. Claim/refund
 effects, production adapters, and real independent actors remain M2 work;
 Logos-owned live-release dependencies are tracked separately under ADR 0018.

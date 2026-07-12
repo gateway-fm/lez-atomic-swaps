@@ -126,9 +126,11 @@ same-tip replacement, and affirmative exact-head removal events. The SDK and
 store fold `ZcashObservationTracker`, so duplicate polls write nothing and
 changed inclusion without replacement fails. Schema v6 rejects orphan, holey,
 or history-incompatible rows and catches stale instances up before returning.
-The production node port and a distinct fresh pre-second-lock eligibility check
-remain; reverse LEZ still needs an equivalent escrow snapshot validator, and
-the SDK returns Wait.
+The distinct fresh pre-second-lock call now replays and re-queries the exact
+head without caching authority, writing a duplicate, or changing
+`next_action`. The production node port and maker effect that consumes this
+result internally remain; reverse LEZ still needs an equivalent escrow snapshot
+validator, and the SDK returns Wait.
 
 The dashed state reflects delivery honestly. The deterministic core, SQLite
 repository, maker daemon, authenticated maker CLI flow, LEZ semantic

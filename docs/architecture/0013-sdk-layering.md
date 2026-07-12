@@ -24,7 +24,8 @@ flowchart TB
     MakerProjection --> Journal["Contiguous schema v6 observation journal"]
     Journal --> Reconcile["Exact tracker fold: canonical, depth, same-tip replacement, or removal"]
     Reconcile --> Active
-    Reconcile -.-> Fresh["Fresh pre-second-lock eligibility check"]
+    Reconcile --> Fresh["Fresh non-cached exact-head eligibility requery"]
+    Fresh -.-> MakerEffect["Maker second-lock effect consumes result internally"]
     Active -.-> Runtime["Reference async coordinator"]
     Runtime -.-> Nodes["Typed chain ports"]
     SQLite -.-> Encrypted["Encrypted later-effect secret storage"]
@@ -32,7 +33,7 @@ flowchart TB
     Core --> Tests["Model/vector/replay tests"]
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Runtime,Nodes,Encrypted,Fresh planned;
+    class Runtime,Nodes,Encrypted,MakerEffect planned;
 ```
 
 ## Context
@@ -97,9 +98,10 @@ nothing and changed inclusion without replacement fails; exact row-range
 validation, poison-append rejection, rollback, restart, and stale-instance
 catch-up are tested. The SDK returns Wait afterward, including on
 restart. The production Zcash port must still assemble fresh canonical
-snapshots and LEZ needs an equivalent escrow snapshot validator; a distinct
-fresh eligibility check must exist before a maker second-lock submission
-method is added.
+snapshots and LEZ needs an equivalent escrow snapshot validator. The distinct
+fresh eligibility call replays and re-queries, but deliberately caches no
+authority and leaves `next_action` at `Wait`; the future maker second-lock
+method must consume the result internally in the same operation.
 
 ## Consequences
 

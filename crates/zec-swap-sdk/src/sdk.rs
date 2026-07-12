@@ -6,12 +6,12 @@ use crate::{
     AcceptedZecAgreementV1, CreateAgreementOutcome, CreateFirstLockOutcome,
     FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentV1, FirstLockObservation,
     FirstLockPlanV1, FirstLockProjectionCommit, FirstLockTransitionV1, LezFirstLockPort,
-    LezTakerFirstLockObservationPort, NegotiationChannel, ObserveTakerFirstLockOutcome,
-    ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
-    RecoveryStore, TakerFirstLockObservationV1, ZcashFirstLockPort, ZcashObservationEvent,
-    ZcashObservationReconciliation, ZcashObservationTracker, ZcashTakerFirstLockObservationPort,
-    ZecAgreementV1, ZecLifecycleAction, ZecSdkError, lifecycle::next_action,
-    observed_taker_lock::taker_first_lock_step,
+    LezTakerFirstLockObservationPort, MakerFundingEligibilityOutcome, NegotiationChannel,
+    ObserveTakerFirstLockOutcome, ObservedTakerFirstLockTransitionV1, OfferDiscovery,
+    PreparedFirstLockSubmissionV1, RecoveryStore, TakerFirstLockObservationV1, ZcashFirstLockPort,
+    ZcashObservationEvent, ZcashObservationReconciliation, ZcashObservationTracker,
+    ZcashTakerFirstLockObservationPort, ZecAgreementV1, ZecLifecycleAction, ZecSdkError,
+    lifecycle::next_action, observed_taker_lock::taker_first_lock_step,
 };
 
 /// Complete pre-lock facade composed from application-supplied ports.
@@ -638,6 +638,57 @@ where
         self.replay_observed_taker_first_lock_transition().await?;
         Ok(ObserveTakerFirstLockOutcome::Projected(commit))
     }
+
+    /// Performs the distinct fresh canonical check required immediately before
+    /// a future maker second-lock effect.
+    ///
+    /// Eligibility is deliberately not cached and does not change
+    /// `next_action`. A maker effect must invoke this boundary itself and consume
+    /// an Eligible result in the same operation. Any newly observed
+    /// depth/reorg state is durably projected first and requires a subsequent
+    /// fresh poll.
+    ///
+    /// # Errors
+    ///
+    /// Rejects the taker role, reverse LEZ direction until canonical LEZ
+    /// evidence exists, invalid chain history, and structured port/store
+    /// failures.
+    pub async fn refresh_maker_funding_eligibility(
+        &mut self,
+    ) -> Result<MakerFundingEligibilityOutcome, ZecSdkError> {
+        if self.local_participant() != Participant::Maker {
+            return Err(ZecSdkError::WrongRole {
+                expected: Participant::Maker,
+                actual: self.local_participant(),
+            });
+        }
+        if self.agreement().direction() != lez_swap_core::SwapDirection::TakerSellsForeign {
+            return Err(ZecSdkError::MakerFundingEligibilityUnavailable);
+        }
+        match self.observe_taker_first_lock().await? {
+            ObserveTakerFirstLockOutcome::Unchanged(_) => Ok(classify_unchanged_maker_eligibility(
+                self.status(),
+                self.revision,
+            )),
+            ObserveTakerFirstLockOutcome::AwaitingStableObservation(step) => Ok(
+                MakerFundingEligibilityOutcome::AwaitingStableObservation(step),
+            ),
+            ObserveTakerFirstLockOutcome::Projected(commit) => Ok(
+                MakerFundingEligibilityOutcome::CanonicalStateChanged(commit),
+            ),
+        }
+    }
+}
+
+fn classify_unchanged_maker_eligibility(
+    status: Phase,
+    revision: u64,
+) -> MakerFundingEligibilityOutcome {
+    if status == Phase::TakerLockConfirmed {
+        MakerFundingEligibilityOutcome::Eligible { revision }
+    } else {
+        MakerFundingEligibilityOutcome::AwaitingConfirmations
+    }
 }
 
 impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
@@ -739,5 +790,22 @@ where
             .submit_first_lock(self.agreement(), submission)
             .await
             .map_err(|error| ZecSdkError::LezFirstLock(Box::new(error)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unchanged_evidence_requires_confirmed_phase_for_maker_eligibility() {
+        assert_eq!(
+            classify_unchanged_maker_eligibility(Phase::AwaitingTakerConfirmations, 7),
+            MakerFundingEligibilityOutcome::AwaitingConfirmations
+        );
+        assert_eq!(
+            classify_unchanged_maker_eligibility(Phase::TakerLockConfirmed, 7),
+            MakerFundingEligibilityOutcome::Eligible { revision: 7 }
+        );
     }
 }

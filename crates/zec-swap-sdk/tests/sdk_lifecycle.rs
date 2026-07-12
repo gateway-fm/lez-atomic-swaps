@@ -14,8 +14,8 @@ use lez_zec_swap_sdk::{
     FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1, FirstLockTransitionV1,
     LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, LezFirstLockPort,
     LezTakerFirstLockObservationPort, MAX_FIRST_LOCK_SUBMISSION_BYTES,
-    MAX_ZEC_AGREEMENT_RECORD_BYTES, NegotiationChannel, NegotiationTranscriptV1,
-    ObserveTakerFirstLockOutcome, ObservedTakerFirstLockEvidenceV1,
+    MAX_ZEC_AGREEMENT_RECORD_BYTES, MakerFundingEligibilityOutcome, NegotiationChannel,
+    NegotiationTranscriptV1, ObserveTakerFirstLockOutcome, ObservedTakerFirstLockEvidenceV1,
     ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
     RecoveryStore, TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
     ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZcashFirstLockPort, ZcashNodeRemovalSnapshot,
@@ -1005,6 +1005,8 @@ async fn maker_independently_observes_and_durably_projects_taker_first_locks_in_
         ObserveTakerFirstLockOutcome::Unchanged(FirstLockStepV1::ZcashFund)
     );
     assert_eq!(maker.revision(), 1);
+    assert_fresh_forward_eligibility(&mut maker, 1).await;
+    assert_noneligible_fresh_polls(&mut maker, &forward_zcash, &forward_store, &canonical).await;
 
     assert_forward_canonical_history_survives_restart(
         forward_id,
@@ -1045,6 +1047,7 @@ async fn assert_forward_canonical_history_survives_restart(
         ZecLifecycleAction::Wait,
         "replayed observation requires a fresh canonical eligibility check"
     );
+    assert_fresh_forward_eligibility(&mut restarted, 1).await;
     let removed = canonical_zcash_removal(&canonical);
     let mismatched_replacement =
         canonical_zcash_taker_lock_with_input(restarted.agreement(), [8; 32]);
@@ -1077,16 +1080,28 @@ async fn assert_forward_canonical_history_survives_restart(
     assert_eq!(restarted.status(), Phase::TakerLockConfirmed);
     assert_eq!(restarted.revision(), 2);
 
+    reorg_zcash
+        .0
+        .respond(Ok(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
+            replacement,
+        ))));
+    assert_fresh_forward_eligibility(&mut restarted, 2).await;
+
     let deeper = canonical_zcash_replacement_depth_update(restarted.agreement());
     reorg_zcash
         .0
         .respond(Ok(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
             deeper.clone(),
         ))));
-    restarted
-        .observe_taker_first_lock()
-        .await
-        .expect("same-inclusion depth increase commits");
+    assert_eq!(
+        restarted
+            .refresh_maker_funding_eligibility()
+            .await
+            .expect("changed depth commits before eligibility"),
+        MakerFundingEligibilityOutcome::CanonicalStateChanged(FirstLockProjectionCommit::new(
+            3, true
+        ))
+    );
     assert_eq!(restarted.status(), Phase::TakerLockConfirmed);
     assert_eq!(restarted.revision(), 3);
 
@@ -1106,6 +1121,74 @@ async fn assert_forward_canonical_history_survives_restart(
     assert_eq!(restarted.status(), Phase::Offered);
     assert_eq!(restarted.revision(), 4);
     assert_eq!(restarted.next_action(), ZecLifecycleAction::Wait);
+}
+
+async fn assert_fresh_forward_eligibility(
+    maker: &mut ActiveZecSwap<
+        MemoryLezTakerLockObservation,
+        MemoryZcashTakerLockObservation,
+        MemoryStore,
+    >,
+    revision: u64,
+) {
+    assert_eq!(
+        maker
+            .refresh_maker_funding_eligibility()
+            .await
+            .expect("fresh exact canonical head is eligible"),
+        MakerFundingEligibilityOutcome::Eligible { revision }
+    );
+    assert_eq!(
+        maker.next_action(),
+        ZecLifecycleAction::Wait,
+        "eligibility is ephemeral and cannot authorize a missing maker effect"
+    );
+}
+
+async fn assert_noneligible_fresh_polls(
+    maker: &mut ActiveZecSwap<
+        MemoryLezTakerLockObservation,
+        MemoryZcashTakerLockObservation,
+        MemoryStore,
+    >,
+    zcash: &MemoryZcashTakerLockObservation,
+    store: &MemoryStore,
+    canonical: &CanonicalZcashOutputObservation,
+) {
+    let transition_count = store
+        .observed_taker_first_lock_transitions
+        .lock()
+        .expect("transition lock")
+        .len();
+    for observation in [
+        TakerFirstLockObservationV1::Absent,
+        TakerFirstLockObservationV1::Unstable,
+    ] {
+        zcash.0.respond(Ok(observation));
+        assert_eq!(
+            maker
+                .refresh_maker_funding_eligibility()
+                .await
+                .expect("noneligible poll is not an error"),
+            MakerFundingEligibilityOutcome::AwaitingStableObservation(FirstLockStepV1::ZcashFund)
+        );
+        assert_eq!(maker.status(), Phase::TakerLockConfirmed);
+        assert_eq!(maker.revision(), 1);
+        assert_eq!(maker.next_action(), ZecLifecycleAction::Wait);
+        assert_eq!(
+            store
+                .observed_taker_first_lock_transitions
+                .lock()
+                .expect("transition lock")
+                .len(),
+            transition_count
+        );
+    }
+    zcash
+        .0
+        .respond(Ok(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
+            canonical.clone(),
+        ))));
 }
 
 async fn assert_forward_observation_does_not_advance(
@@ -1213,6 +1296,10 @@ async fn reverse_maker_observes_lez_while_taker_cannot_use_maker_observation() {
         ZecLifecycleAction::Wait,
         "provisional LEZ evidence must never authorize Zcash funding"
     );
+    assert!(matches!(
+        reverse_maker.refresh_maker_funding_eligibility().await,
+        Err(ZecSdkError::MakerFundingEligibilityUnavailable)
+    ));
 
     let taker_store = MemoryStore::default();
     let taker_sdk = ZecPairSdk::new(

@@ -403,6 +403,22 @@ pub enum ObserveTakerFirstLockOutcome {
     Projected(FirstLockProjectionCommit),
 }
 
+/// Result of a distinct fresh canonical check immediately before maker funding.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MakerFundingEligibilityOutcome {
+    /// The exact current canonical tracker head was freshly observed.
+    Eligible {
+        /// Durable role-local revision bound to this ephemeral eligibility.
+        revision: u64,
+    },
+    /// No eligible exact-head observation was available; no state changed.
+    AwaitingStableObservation(FirstLockStepV1),
+    /// Fresh chain truth changed and was durably projected; poll again.
+    CanonicalStateChanged(FirstLockProjectionCommit),
+    /// Canonical evidence exists but remains below the signed threshold.
+    AwaitingConfirmations,
+}
+
 /// Failure to validate or apply maker-local taker-lock evidence.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ObservedTakerFirstLockTransitionError {

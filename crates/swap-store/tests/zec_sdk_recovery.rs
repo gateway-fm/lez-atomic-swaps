@@ -6,16 +6,16 @@ use lez_zec_swap_sdk::{
     CanonicalZcashOutputRemoval, CreateFirstLockOutcome, ExpectedBip199Output,
     FirstLockConfirmedEvidenceV1, FirstLockPlanV1, FirstLockProjectionCommit, FirstLockStepV1,
     LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, LezTakerFirstLockObservationPort,
-    NegotiationChannel, NegotiationTranscriptV1, ObserveTakerFirstLockOutcome,
-    ObservedTakerFirstLockTransitionRecordV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
-    RecoveryStore, TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZcashNodeRemovalSnapshot, ZcashNodeSnapshot,
-    ZcashObservationEventRecordV1, ZcashStableTip, ZcashTakerFirstLockObservationPort,
-    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecLezTermsV1,
-    ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1,
-    ZecRefundPlanV1, ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
-    build_funding_transaction, derive_lez_metadata_account_v1,
-    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    MakerFundingEligibilityOutcome, NegotiationChannel, NegotiationTranscriptV1,
+    ObserveTakerFirstLockOutcome, ObservedTakerFirstLockTransitionRecordV1, OfferDiscovery,
+    PreparedFirstLockSubmissionV1, RecoveryStore, TakerFirstLockObservationV1,
+    TransparentFundingRequest, TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V1,
+    ZcashNodeRemovalSnapshot, ZcashNodeSnapshot, ZcashObservationEventRecordV1, ZcashStableTip,
+    ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
+    ZecAgreementRecordV1, ZecLezTermsV1, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1,
+    ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding,
+    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_funding_transaction,
+    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
@@ -533,6 +533,7 @@ async fn maker_observation_is_role_local_and_survives_sqlite_reopen() {
     assert_eq!(resumed.revision(), 1);
 
     drop(resumed);
+    assert_fresh_eligibility_after_reopen(&path, id, canonical.clone()).await;
     let removed = canonical_zcash_removal(&canonical);
     let replacement = canonical_zcash_replacement(accepted.agreement(), &removed);
     commit_maker_observation_after_reopen(
@@ -582,6 +583,52 @@ async fn maker_observation_is_role_local_and_survives_sqlite_reopen() {
     assert_eq!(removed.revision(), 4);
     drop(removed);
     assert_orphan_future_maker_transition_fails_closed(&path, id).await;
+}
+
+async fn assert_fresh_eligibility_after_reopen(
+    path: &std::path::Path,
+    id: &str,
+    canonical: CanonicalZcashOutputObservation,
+) {
+    let store =
+        SqliteZecRecoveryStore::open(path, Participant::Maker).expect("reopen eligibility store");
+    let observation = MakerObservation(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
+        canonical,
+    )));
+    let mut active = ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        observation.clone(),
+        observation,
+        store,
+    )
+    .resume(&SwapId::new(id).expect("swap ID"))
+    .await
+    .expect("resume eligibility state")
+    .expect("maker agreement");
+    assert_eq!(
+        active
+            .refresh_maker_funding_eligibility()
+            .await
+            .expect("fresh exact-head eligibility"),
+        MakerFundingEligibilityOutcome::Eligible { revision: 1 }
+    );
+    assert_eq!(active.revision(), 1);
+    assert_eq!(
+        active.next_action(),
+        lez_zec_swap_sdk::ZecLifecycleAction::Wait
+    );
+    let raw = Connection::open(path).expect("inspect eligibility no-write");
+    let rows: i64 = raw
+        .query_row(
+            "SELECT COUNT(*) FROM zec_sdk_first_lock_transitions
+             WHERE local_role = 'maker' AND swap_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .expect("maker journal count");
+    assert_eq!(rows, 1);
 }
 
 #[tokio::test]
