@@ -353,7 +353,7 @@ exact wire decoding, both low-S signatures, every signed-field mutation, both
 directions, deterministic-local execution terms, fail-closed public deployment,
 actual LEZ/ZEC deadlines, role/digest binding, agreement-derived
 fees/destinations/expiry/funding requests, exact native/token PDA/ATA accounts,
-accepted-at resume, and redacted diagnostics. The second runs 27 integrated
+accepted-at resume, and redacted diagnostics. The second runs 29 integrated
 cases in which independent maker and taker SDK instances with fixed roles
 receive untrusted bytes, validate the concrete record, persist separate accepted
 envelopes before activation, and resume the original wire after transcript
@@ -367,8 +367,10 @@ attempt to obtain raw LEZ, Zcash, or recovery-store handles from an active swap.
 The chain adapters are deterministic contract doubles; these commands require no RPC, node,
 Docker, faucet, or external resource. They do not prove real Logos Delivery/Chat,
 LEZ/Zebra lifecycle effects, or a process-level maker/taker E2E. The tested
-XChaCha20-Poly1305/HKDF boundary protects claim material, but it is not yet wired
-into SQLite claim intents or claim transitions. The SDK first-lock cases additionally prove exact
+XChaCha20-Poly1305/HKDF boundary protects both preimages and bounded exact claim
+submissions. The claim-capable activation fixture atomically binds the direction-derived
+first claimant agreement to encrypted material before returning Active, but this is not
+yet wired into SQLite claim intents or claim transitions. The SDK first-lock cases additionally prove exact
 role/direction-bound bytes are staged before a node call, changed replay
 conflicts, unstable observations submit nothing, restart observes before exact
 rebroadcast, and LEZ initialization must be confirmed before its separately

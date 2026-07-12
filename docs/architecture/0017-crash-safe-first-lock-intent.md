@@ -118,7 +118,7 @@ after restart, so observation history cannot authorize the maker lock. The
 forward maker actor now commits and replays canonical evidence, an atomic
 different-transaction replacement, a same-inclusion depth change, and
 affirmative removal across revisions 1 through 4. The package currently passes
-104 ordinary tests plus one doctest, with the real-Zebra Docker case
+117 ordinary tests plus one doctest, with the real-Zebra Docker case
 intentionally delegated to its isolated runner.
 
 Fifteen production-store cases instantiate the SDK with a cloneable role-fixed

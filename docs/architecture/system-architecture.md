@@ -44,7 +44,7 @@ flowchart TB
     end
 
     subgraph SharedSecurity["Shared SDK security boundary"]
-        PCM["Protected claim material<br/>XChaCha20-Poly1305 + HKDF<br/>claim-store wiring pending"]
+        PCM["Protected preimage + exact claim payload<br/>XChaCha20-Poly1305 + HKDF<br/>SQLite claim wiring pending"]
     end
 
     subgraph OffChain["Untrusted, removable after lock"]
@@ -172,7 +172,7 @@ LEZ node port, reviewed public deployment, actual-node maker fault evidence,
 claims/refunds, canonical production maker-lock adapters, and independent actor processes remain.
 
 The protected-claim module derives per-context keys with HKDF-SHA256 and encrypts
-preimages with XChaCha20-Poly1305 while binding schema, swap, pair, direction,
+preimages and bounded exact claim-submission bytes with XChaCha20-Poly1305 while binding schema, swap, pair, direction,
 agreement, role, purpose, and key ID. Its SQLite claim-intent/transition wiring is
 not implemented, so the diagram marks those persistence edges as pending and no
 claim-restart guarantee is asserted yet.
