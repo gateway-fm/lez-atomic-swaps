@@ -353,10 +353,13 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   insert commits atomically; exact repeats are idempotent, changed terms fail
   without overwrite, restart revalidates, and legacy databases migrate unbound
   rather than inferring signed terms.
-- [ ] Complete production runtime wiring: require the immutable binding during
-  ZEC swap creation and before tracker/event processing; deliver conflict and
-  terminal reorg outcomes through a durable alert outbox; and prove
-  close/reopen/requery through actual two-Zebra replacement.
+- [x] Enforce immutable bindings before tracker restoration, replay detection,
+  projection, and lower store commit/probe boundaries. Missing legacy bindings,
+  profile/coordinator confirmation-policy mismatch, and event-envelope mismatch
+  fail before revision, journal, or aggregate mutation.
+- [ ] Complete production runtime wiring: deliver conflict and terminal reorg
+  outcomes through a durable alert outbox, and prove close/reopen/requery through
+  actual two-Zebra replacement.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
   nodes. The LEZ
   Unix-millisecond/core Unix-second boundary is typed, checked, conservatively

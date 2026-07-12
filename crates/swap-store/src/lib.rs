@@ -5,7 +5,7 @@ use std::{path::Path, time::Duration};
 use lez_swap_core::{Participant, SwapCoordinator, SwapId};
 use lez_zec_swap_sdk::{
     ObservationRecordError, ZcashObservationEventRecordV1, ZecBindingRecordError, ZecSwapBinding,
-    ZecSwapBindingRecordV1,
+    ZecSwapBindingRecordV1, revalidate_historical_event,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use thiserror::Error;
@@ -44,6 +44,9 @@ pub enum StoreError {
     /// The requested swap does not exist.
     #[error("swap does not exist")]
     MissingSwap,
+    /// A ZEC event cannot be accepted without immutable negotiated terms.
+    #[error("Zcash swap has no immutable profile/output binding")]
+    MissingZcashBinding,
     /// An existing immutable ZEC binding differs from newly supplied terms.
     #[error("immutable ZEC swap binding does not match durable terms")]
     ImmutableZcashBindingMismatch,
@@ -190,26 +193,7 @@ impl SqliteSwapStore {
     /// Returns [`StoreError`] for `SQLite`, unsupported payload version, malformed
     /// JSON, or inconsistent profile/output terms.
     pub fn load_zcash_binding(&self, id: &SwapId) -> Result<Option<ZecSwapBinding>, StoreError> {
-        let encoded = self
-            .connection
-            .query_row(
-                "SELECT payload_version, payload_json FROM zcash_swap_bindings WHERE swap_id = ?1",
-                params![id.as_str()],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-            )
-            .optional()?;
-        encoded
-            .map(|(version, json)| {
-                if version != ZCASH_BINDING_PAYLOAD_VERSION {
-                    return Err(StoreError::UnsupportedPayloadVersion {
-                        kind: "ZEC swap binding",
-                        version,
-                    });
-                }
-                let record: ZecSwapBindingRecordV1 = serde_json::from_str(&json)?;
-                record.validate().map_err(StoreError::from)
-            })
-            .transpose()
+        load_zcash_binding_from(&self.connection, id)
     }
 
     /// Loads a swap by stable ID.
@@ -279,6 +263,7 @@ impl SqliteSwapStore {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_bound_zcash_event(&transaction, swap.id(), event)?;
         let actual = transaction
             .query_row(
                 "SELECT revision FROM swaps WHERE id = ?1",
@@ -386,6 +371,7 @@ impl SqliteSwapStore {
         event: &ZcashObservationEventRecordV1,
     ) -> Result<Option<EventCommit>, StoreError> {
         event.validate()?;
+        validate_bound_zcash_event(&self.connection, id, event)?;
         let event_json = serde_json::to_string(event)?;
         let revision = predecessor_revision
             .checked_add(1)
@@ -455,6 +441,43 @@ impl SqliteSwapStore {
         }
         Ok(events)
     }
+}
+
+fn load_zcash_binding_from(
+    connection: &Connection,
+    id: &SwapId,
+) -> Result<Option<ZecSwapBinding>, StoreError> {
+    let encoded = connection
+        .query_row(
+            "SELECT payload_version, payload_json FROM zcash_swap_bindings WHERE swap_id = ?1",
+            params![id.as_str()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    encoded
+        .map(|(version, json)| {
+            if version != ZCASH_BINDING_PAYLOAD_VERSION {
+                return Err(StoreError::UnsupportedPayloadVersion {
+                    kind: "ZEC swap binding",
+                    version,
+                });
+            }
+            let record: ZecSwapBindingRecordV1 = serde_json::from_str(&json)?;
+            record.validate().map_err(StoreError::from)
+        })
+        .transpose()
+}
+
+fn validate_bound_zcash_event(
+    connection: &Connection,
+    id: &SwapId,
+    event: &ZcashObservationEventRecordV1,
+) -> Result<(), StoreError> {
+    let binding =
+        load_zcash_binding_from(connection, id)?.ok_or(StoreError::MissingZcashBinding)?;
+    let event = revalidate_historical_event(event)?;
+    binding.validate_event(&event)?;
+    Ok(())
 }
 
 fn participant_name(participant: Participant) -> &'static str {

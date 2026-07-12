@@ -326,9 +326,9 @@ inclusion height.
 
 The dashed runtime path has a passing reference slice for direction-derived
 canonical/removal projection, atomic commit, restart reload, and exact
-unknown-outcome replay in both ZEC directions. It remains dashed until persisted
-profile bindings, durable conflict/terminal alert delivery, and actual-node
-restart evidence pass. Restart now revalidates primitive records,
+unknown-outcome replay in both ZEC directions. It remains dashed until durable
+conflict/terminal alert delivery and actual-node restart evidence pass. Restart
+now revalidates primitive records and immutable binding terms,
 rejects impossible sequence history, restores the exact historical tracker head,
 and still requires a fresh stable Zebra reconciliation before effects.
 Completed/refunded removal or replacement is now journaled without erasing the
@@ -340,7 +340,9 @@ returns `ReplacementConflict`; pre-dependent replacement and same-transaction
 re-mining remain normal applied outcomes.
 The SDK binding record now revalidates primitive profile and BIP-199 terms,
 including both derived scripts. Schema v3 persists it atomically with the swap
-and rejects immutable rebinding; runtime enforcement before every event remains.
+and rejects immutable rebinding. Runtime requires it before tracker restoration,
+replay detection, or projection; both coordinator leg policies and every event
+side must match the named profile and expected-output envelope.
 
 ## Happy-path user flow
 

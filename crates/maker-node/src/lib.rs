@@ -10,7 +10,8 @@ use lez_swap_core::{
 use lez_swap_store::{EventCommit, SqliteSwapStore, StoreError};
 use lez_zec_swap_sdk::{
     HistoricalReplayError, ZcashObservationEvent, ZcashObservationEventRecordV1,
-    ZcashObservationTracker, replay_zcash_observation_history,
+    ZcashObservationTracker, ZecBindingRecordError, ZecRefundProfile, ZecSwapBinding,
+    replay_zcash_observation_history,
 };
 use serde::{Deserialize, Serialize};
 
@@ -104,6 +105,15 @@ pub enum ZcashFundingApplyError {
     /// The selected swap is not a Zcash swap.
     #[error("Zcash funding event was routed to a non-Zcash swap")]
     WrongPair,
+    /// Legacy or corrupt storage omitted immutable ZEC profile/output terms.
+    #[error("Zcash swap has no immutable profile/output binding")]
+    MissingZcashBinding,
+    /// Chain evidence differs from the swap's immutable profile/output terms.
+    #[error("Zcash funding event does not match immutable swap binding")]
+    Binding(#[from] ZecBindingRecordError),
+    /// Coordinator leg policies disagree with the immutable named profile.
+    #[error("Zcash swap confirmation policies do not match immutable profile")]
+    BindingPolicyMismatch,
     /// Historical event records are corrupt or out of order.
     #[error("Zcash observation history cannot be replayed")]
     HistoricalReplay(#[from] HistoricalReplayError),
@@ -124,6 +134,10 @@ pub fn load_zcash_observation_tracker(
 ) -> Result<ZcashObservationTracker, ZcashFundingApplyError> {
     let swap = store.load(id)?.ok_or(StoreError::MissingSwap)?;
     let funded_by = zcash_funder(&swap)?;
+    let binding = store
+        .load_zcash_binding(id)?
+        .ok_or(ZcashFundingApplyError::MissingZcashBinding)?;
+    validate_binding_policies(&swap, &binding)?;
     let records = store.load_zcash_events(id, funded_by)?;
     replay_zcash_observation_history(&records).map_err(ZcashFundingApplyError::from)
 }
@@ -147,6 +161,11 @@ pub fn apply_zcash_funding_event(
     let record = ZcashObservationEventRecordV1::from_event(event);
     let mut swap = store.load(id)?.ok_or(StoreError::MissingSwap)?;
     let funded_by = zcash_funder(&swap)?;
+    let binding = store
+        .load_zcash_binding(id)?
+        .ok_or(ZcashFundingApplyError::MissingZcashBinding)?;
+    validate_binding_policies(&swap, &binding)?;
+    binding.validate_event(event)?;
     if let Some(commit) =
         store.committed_zcash_event(predecessor_revision, id, funded_by, &record)?
     {
@@ -178,6 +197,24 @@ pub fn apply_zcash_funding_event(
         commit,
         outcome,
     })
+}
+
+fn validate_binding_policies(
+    swap: &SwapCoordinator,
+    binding: &ZecSwapBinding,
+) -> Result<(), ZcashFundingApplyError> {
+    let profile = ZecRefundProfile::for_id(binding.profile_id());
+    for participant in [Participant::Maker, Participant::Taker] {
+        let expected = if swap.funded_chain(participant) == Chain::Zcash {
+            profile.zcash_confirmations()
+        } else {
+            profile.lez_confirmations()
+        };
+        if swap.required_confirmations(participant) != expected {
+            return Err(ZcashFundingApplyError::BindingPolicyMismatch);
+        }
+    }
+    Ok(())
 }
 
 fn replacement_conflict_outcome(

@@ -127,14 +127,16 @@ immutable direction, probes unknown-outcome replay before core mutation, maps
 canonical/removal evidence, commits event plus aggregate atomically, and reloads
 across restart in both directions. It is not yet the production watcher: journal
 history is now revalidated and replayed into the exact tracker head, and an
-identical fresh requery is suppressed. Durable profile/expected-output binding,
-a separately persisted operator/security alert outbox for terminal reorgs, and
-actual two-Zebra store/restart evidence remain required.
+identical fresh requery is suppressed. A separately persisted operator/security
+alert outbox for conflict/terminal reorgs and actual two-Zebra store/restart
+evidence remain required.
 
 The SDK now defines a version-1 primitive binding record for the reviewed
 profile, network, branch, value, BIP-199 source terms, and both derived scripts.
 Loading rebuilds the contract and validates profile consensus before returning
 a trusted binding. Schema v3 now stores that record with the swap atomically,
 makes exact rebinding idempotent, rejects changed terms without overwrite, and
-migrates legacy swaps without inventing a binding. Runtime event matching remains
-the next production slice.
+migrates legacy swaps without inventing a binding. Runtime and store boundaries
+now reject missing bindings, require both coordinator leg policies to match the
+named profile, and match canonical, removal-previous, and both replacement sides
+before replay detection or projection.

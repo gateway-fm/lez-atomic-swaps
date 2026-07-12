@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use zcash_protocol::{consensus::BranchId, value::Zatoshis};
 
 use crate::{
-    Bip199Contract, ExpectedBip199Output, ProfileError, ZcashNetworkRecordV1, ZecProfileId,
-    ZecRefundProfile,
+    Bip199Contract, CanonicalZcashOutputObservation, ExpectedBip199Output, ProfileError,
+    ZcashNetworkRecordV1, ZcashObservationEvent, ZecProfileId, ZecRefundProfile,
 };
 
 /// Stable primitive spelling of a reviewed ZEC profile.
@@ -74,6 +74,49 @@ impl ZecSwapBinding {
     #[must_use]
     pub const fn expected_output(&self) -> &ExpectedBip199Output {
         &self.expected_output
+    }
+
+    /// Checks every canonical side of an event against negotiated output terms.
+    ///
+    /// Removal validates its previous observation; replacement validates both the
+    /// removed previous observation and the new canonical output envelope. The
+    /// outpoint is deliberately not part of this binding so conflicting chain
+    /// replacements can still be journaled and classified safely.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ZecBindingRecordError::EventMismatch`] when network, branch,
+    /// value, redeem script, or P2SH output differs from negotiated terms.
+    pub fn validate_event(
+        &self,
+        event: &ZcashObservationEvent,
+    ) -> Result<(), ZecBindingRecordError> {
+        match event {
+            ZcashObservationEvent::Canonical(canonical) => self.validate_canonical(canonical),
+            ZcashObservationEvent::Removed(removed) => self.validate_canonical(removed.previous()),
+            ZcashObservationEvent::Replaced { removed, canonical } => {
+                self.validate_canonical(removed.previous())?;
+                self.validate_canonical(canonical)
+            }
+        }
+    }
+
+    fn validate_canonical(
+        &self,
+        observation: &CanonicalZcashOutputObservation,
+    ) -> Result<(), ZecBindingRecordError> {
+        let expected = self.expected_output();
+        let contract = expected.contract();
+        if observation.network() != expected.network()
+            || observation.consensus_branch_id() != expected.consensus_branch_id()
+            || observation.output().value() != expected.value()
+            || observation.output().script_pubkey().0.0 != contract.p2sh_script_pubkey()
+            || observation.redeem_script() != contract.redeem_script()
+            || observation.p2sh_script_pubkey() != contract.p2sh_script_pubkey()
+        {
+            return Err(ZecBindingRecordError::EventMismatch);
+        }
+        Ok(())
     }
 }
 
@@ -160,6 +203,9 @@ pub enum ZecBindingRecordError {
     /// Persisted derived scripts disagree with the BIP-199 source terms.
     #[error("persisted ZEC binding scripts are inconsistent")]
     DerivedScriptMismatch,
+    /// Observation event differs from the immutable expected-output envelope.
+    #[error("Zcash observation does not match the immutable swap binding")]
+    EventMismatch,
     /// Selected profile disagrees with the expected network or branch.
     #[error("persisted ZEC binding does not match its profile")]
     Profile(#[from] ProfileError),

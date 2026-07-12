@@ -165,13 +165,45 @@ fn failed_binding_insert_rolls_back_the_new_swap() {
 }
 
 #[test]
+fn journal_commit_and_replay_probe_require_a_matching_binding() {
+    let data = tempdir().unwrap();
+    let unbound_swap = swap();
+    let event = record(102);
+    let mut unbound = SqliteSwapStore::open(data.path().join("unbound-journal.sqlite3")).unwrap();
+    unbound.save(&unbound_swap).unwrap();
+    assert!(matches!(
+        unbound.commit_zcash_event(0, &unbound_swap, Participant::Taker, &event),
+        Err(StoreError::MissingZcashBinding)
+    ));
+    assert!(matches!(
+        unbound.committed_zcash_event(0, unbound_swap.id(), Participant::Taker, &event),
+        Err(StoreError::MissingZcashBinding)
+    ));
+    assert_eq!(unbound.revision(unbound_swap.id()).unwrap(), Some(0));
+
+    let mismatched_swap = swap();
+    let mut mismatched =
+        SqliteSwapStore::open(data.path().join("mismatched-journal.sqlite3")).unwrap();
+    mismatched
+        .save_with_zcash_binding(&mismatched_swap, &binding(99_000))
+        .unwrap();
+    assert!(matches!(
+        mismatched.commit_zcash_event(0, &mismatched_swap, Participant::Taker, &event),
+        Err(StoreError::ZcashBindingRecord(_))
+    ));
+    assert_eq!(mismatched.revision(mismatched_swap.id()).unwrap(), Some(0));
+}
+
+#[test]
 fn event_and_aggregate_revision_commit_atomically_and_replay_idempotently() {
     let data = tempdir().unwrap();
     let path = data.path().join("journal.sqlite3");
     let swap = swap();
     let event = record(102);
     let mut store = SqliteSwapStore::open(&path).unwrap();
-    store.save(&swap).unwrap();
+    store
+        .save_with_zcash_binding(&swap, &binding(100_000))
+        .unwrap();
 
     let commit = store
         .commit_zcash_event(0, &swap, Participant::Taker, &event)
@@ -208,7 +240,9 @@ fn role_journals_are_isolated_and_future_event_payloads_fail_explicitly() {
     let swap = swap();
     let event = record(102);
     let mut store = SqliteSwapStore::open(&path).unwrap();
-    store.save(&swap).unwrap();
+    store
+        .save_with_zcash_binding(&swap, &binding(100_000))
+        .unwrap();
     store
         .commit_zcash_event(0, &swap, Participant::Taker, &event)
         .unwrap();
@@ -252,7 +286,9 @@ fn stale_revision_rejects_event_without_advancing_aggregate_or_journal() {
     let data = tempdir().unwrap();
     let mut store = SqliteSwapStore::open(data.path().join("stale.sqlite3")).unwrap();
     let swap = swap();
-    store.save(&swap).unwrap();
+    store
+        .save_with_zcash_binding(&swap, &binding(100_000))
+        .unwrap();
     store
         .commit_zcash_event(0, &swap, Participant::Taker, &record(102))
         .unwrap();
@@ -281,7 +317,9 @@ fn identical_payload_after_an_intervening_event_is_a_new_transition() {
     let swap = swap();
     let shallow = record(102);
     let deeper = record(103);
-    store.save(&swap).unwrap();
+    store
+        .save_with_zcash_binding(&swap, &binding(100_000))
+        .unwrap();
     store
         .commit_zcash_event(0, &swap, Participant::Taker, &shallow)
         .unwrap();
@@ -357,7 +395,9 @@ fn failed_aggregate_update_rolls_back_the_event_insert() {
     let path = data.path().join("rollback.sqlite3");
     let swap = swap();
     let mut store = SqliteSwapStore::open(&path).unwrap();
-    store.save(&swap).unwrap();
+    store
+        .save_with_zcash_binding(&swap, &binding(100_000))
+        .unwrap();
     let connection = Connection::open(&path).unwrap();
     connection
         .execute_batch(

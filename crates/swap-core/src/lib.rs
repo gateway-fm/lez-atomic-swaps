@@ -843,6 +843,15 @@ impl SwapCoordinator {
         }
     }
 
+    /// Confirmation policy fixed for one participant's funded leg.
+    #[must_use]
+    pub const fn required_confirmations(&self, participant: Participant) -> u32 {
+        match participant {
+            Participant::Maker => self.maker_confirmation_policy.required(),
+            Participant::Taker => self.confirmation_policy.required(),
+        }
+    }
+
     /// Observes participant-relative funding without assuming which chain they fund.
     ///
     /// # Errors
