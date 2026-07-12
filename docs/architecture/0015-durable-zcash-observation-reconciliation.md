@@ -171,7 +171,7 @@ across restart in both directions. It is not yet the production watcher: journal
 history is now revalidated and replayed into the exact tracker head, and an
 identical fresh requery is suppressed. Authenticated owner status/list/ack alert
 surfaces pass across daemon restart. The isolated actual-node fixture now proves
-the same runtime boundary against two Zebra consensus processes and schema-v7
+the same runtime boundary against two Zebra consensus processes and schema-v8
 SQLite. The remaining gap is daemon-integrated polling and the composed actor
 corridor, not store/reconciliation semantics.
 

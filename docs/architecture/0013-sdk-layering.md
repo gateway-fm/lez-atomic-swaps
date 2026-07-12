@@ -1,6 +1,6 @@
 # ADR 0013: Deterministic SDK core with optional async orchestration
 
-Status: concrete ZEC negotiation, activation, both lock effects, and schema-v7
+Status: concrete ZEC negotiation, activation, both lock effects, and schema-v8
 observation/transition replay implemented; chain and transport adapters in
 progress -- 2026-07-12
 
@@ -13,7 +13,7 @@ flowchart TB
     Negotiation --> Validator["Bounded concrete agreement validator"]
     Validator --> Accepted["Role-fixed accepted envelope"]
     Accepted --> Store["RecoveryStore contract"]
-    Store --> SQLite["Role-fixed schema-v7 SQLite adapter"]
+    Store --> SQLite["Role-fixed schema-v8 SQLite adapter"]
     Store --> Active["ActiveZecSwap without transport or raw adapter handles"]
     Active --> Intent["Durable exact first-lock intent"]
     Intent --> Observe["Observe before byte-identical submission"]
@@ -21,7 +21,7 @@ flowchart TB
     Projection --> Active
     Active --> MakerObserve["Maker-only observation of taker lock"]
     MakerObserve --> MakerProjection["Role-local atomic observation projection"]
-    MakerProjection --> Journal["Contiguous schema v7 observation journal"]
+    MakerProjection --> Journal["Contiguous schema v8 observation journal"]
     Journal --> Reconcile["Exact tracker fold: canonical, depth, same-tip replacement, or removal"]
     Reconcile --> Active
     Reconcile --> Fresh["Fresh non-cached exact-head eligibility requery"]
@@ -116,7 +116,7 @@ Pending/Safe from Finalized, but public activation remains fail-closed. It leave
 `next_action` at `Wait` because permission is never cached. The implemented
 maker method consumes the fresh result internally, persists the exact
 opposite-chain plan, and atomically projects confirmed funding. Both directions
-replay from schema-v7 SQLite at `BothLegsLocked`; production node ports and
+replay from schema-v8 SQLite at `BothLegsLocked`; production node ports and
 actual-node transport/reorg repetition remain.
 
 ## Consequences

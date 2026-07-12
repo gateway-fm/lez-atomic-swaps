@@ -24,7 +24,7 @@ flowchart TB
         LC["Logos Core lifecycle adapter"]
         MD["Maker daemon"]
         CO["Durable swap coordinator"]
-        DB[("SQLite schema v7 SDK recovery + runtime journal<br/>encryption and outbox planned")]
+        DB[("Maker SQLite schema v8 SDK recovery + runtime journal<br/>claim-envelope wiring pending")]
         PS["BTC / XMR / ZEC pair SDKs"]
         ZA["Canonical dual-signed LEZ/ZEC agreement validator"]
         ZTX["ZEC BIP-199 V5 transaction SDK"]
@@ -39,6 +39,12 @@ flowchart TB
         TM["Taker mini-app"]
         TS["Taker pair SDK + durable recovery state"]
         TA["Taker-side concrete agreement validator"]
+        TMO["Taker-only maker-lock observation"]
+        TDB[("Taker SQLite schema v8<br/>role-local recovery")]
+    end
+
+    subgraph SharedSecurity["Shared SDK security boundary"]
+        PCM["Protected claim material<br/>XChaCha20-Poly1305 + HKDF<br/>claim-store wiring pending"]
     end
 
     subgraph OffChain["Untrusted, removable after lock"]
@@ -79,6 +85,15 @@ flowchart TB
     T --> TM
     TC --> TS
     TS --> TA
+    TS --> TMO
+    TS --> TDB
+    TMO --> TDB
+    TMO -->|"signed direction selects one node"| LEZ
+    TMO -->|"signed direction selects one node"| ZEC
+    PS --> PCM
+    TS --> PCM
+    PCM -.->|"encrypted envelope pending"| DB
+    PCM -.->|"encrypted envelope pending"| TDB
     TM -.-> TS
 
     MD <-->|"discovery + negotiation only"| DC
@@ -122,15 +137,16 @@ role-fixed SDK instances validate and persist an accepted envelope before
 activation, then revalidate its exact durable wire on resume without retaining
 transport or raw adapter handles. The current executable SDK store is a
 role-fixed production SQLite adapter for accepted agreement, both lock intents,
-taker projection, maker-independent observation replay, and confirmed maker
-funding. The remaining M2 work is claims/refunds, production adapters, and actor
+taker projection, maker-independent observation replay, confirmed maker funding,
+and the taker-local observed-maker transition. Separate role stores now converge
+at `BothLegsLocked` and replay there in both directions. The remaining M2 work is claims/refunds, production adapters, and actor
 integration; chain adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
 observation alone is non-authorizing: forward Zcash persists and revalidates
 the complete canonical output type plus ordered canonical, depth, atomic
 same-tip replacement, and affirmative exact-head removal events. The SDK and
 store fold `ZcashObservationTracker`, so duplicate polls write nothing and
-changed inclusion without replacement fails. Schema v7 rejects orphan, holey,
+changed inclusion without replacement fails. Schema v8 rejects orphan, holey,
 or history-incompatible rows and catches stale instances up before returning.
 The maker effect invokes the distinct fresh pre-second-lock call internally,
 then persists the exact direction-fixed opposite-chain plan before submission.
@@ -141,7 +157,7 @@ persists a stable primitive snapshot bound to the signed channel/genesis,
 public fund transaction, canonical block/tip, complete SPEL metadata, exact
 custody, depth, and finality policy. SDK and SQLite replay rerun the same
 validator. The dependency-free exact-head tracker is now folded by the active
-SDK and the schema-v7 journal. Exact duplicates write no row, while a
+SDK and the schema-v8 journal. Exact duplicates write no row, while a
 same-inclusion Pending-to-Finalized update advances one contiguous revision and
 survives close/reopen. The pure tracker also proves affirmative same-tip
 replacement, stale-evidence rejection, and fatal finalized-history changes.
@@ -153,7 +169,13 @@ remains eligible when depth is sufficient, and no result is cached as
 authority. The public Finalized/typed-finality policy is unit-tested but remains
 unreachable while public agreement activation is fail-closed. The official-wire
 LEZ node port, reviewed public deployment, actual-node maker fault evidence,
-claims/refunds, and independent actor composition remain.
+claims/refunds, canonical production maker-lock adapters, and independent actor processes remain.
+
+The protected-claim module derives per-context keys with HKDF-SHA256 and encrypts
+preimages with XChaCha20-Poly1305 while binding schema, swap, pair, direction,
+agreement, role, purpose, and key ID. Its SQLite claim-intent/transition wiring is
+not implemented, so the diagram marks those persistence edges as pending and no
+claim-restart guarantee is asserted yet.
 
 The dashed state reflects delivery honestly. The deterministic core, SQLite
 repository, maker daemon, authenticated maker CLI flow, LEZ semantic
@@ -377,7 +399,7 @@ legs: removal pins the exact ID, suspends claims, exact reappearance restores
 authority, conflicting replacement fails, and refunds remain available.
 Independent leg policies also make maker-depth regression suspend and depth
 recovery restore claims. The runtime event-to-participant path is now solid: the
-isolated two-Zebra fixture drives real canonical and removal evidence through schema-v7 SQLite
+isolated two-Zebra fixture drives real canonical and removal evidence through schema-v8 SQLite
 close/reopen and exact replay. The composed LEZ/ZEC actor corridor remains
 dashed M2 work. RPC errors or absence never imply removal: a detach event
 requires a stable replacement tip and a changed canonical hash at the prior

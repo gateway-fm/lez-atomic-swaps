@@ -1,8 +1,7 @@
 # ADR 0017: Durable intent before first-lock effects
 
 Status: taker and maker lock intents/projections plus canonical observation and
-schema-v7 restart replay proven; production chain adapters and maker-effect
-fault hardening pending -- 2026-07-12
+schema-v8 restart replay proven; production chain adapters and later claim/refund effects pending -- 2026-07-12
 
 ```mermaid
 flowchart TB
@@ -32,7 +31,7 @@ flowchart TB
     Maker["Independent maker SDK + store"] --> MakerObserve["Observe through agreement-selected node"]
     MakerObserve -->|"absent, unstable, or RPC error"| MakerWait["Remain Offered; write nothing"]
     MakerObserve -->|"canonical Zcash or LEZ assertion"| MakerProjection["Atomic maker-role transition + revision"]
-    MakerProjection --> Journal["Schema v7 contiguous role-local journal"]
+    MakerProjection --> Journal["Schema v8 contiguous role-local journal"]
     Journal --> Tracker["Agreement-selected Zcash or LEZ exact tracker fold"]
     Tracker --> Canonical["Canonical or same-inclusion depth event"]
     Tracker --> Replaced["Atomic same-tip removal plus replacement event"]
@@ -44,7 +43,7 @@ flowchart TB
     MakerCore --> Gate["SDK next action remains Wait"]
     Gate --> Fresh["Fresh non-cached exact-head eligibility requery"]
     Fresh --> MakerEffect["Durable maker second-lock effect"]
-    MakerEffect --> MakerIntent["Separate schema-v7 maker intent"]
+    MakerEffect --> MakerIntent["Separate schema-v8 maker intent"]
     MakerIntent --> MakerTransition["Atomic Maker evidence transition"]
     MakerTransition --> MakerBoth["BothLegsLocked and restart replay"]
 
@@ -119,10 +118,10 @@ after restart, so observation history cannot authorize the maker lock. The
 forward maker actor now commits and replays canonical evidence, an atomic
 different-transaction replacement, a same-inclusion depth change, and
 affirmative removal across revisions 1 through 4. The package currently passes
-93 ordinary tests plus one doctest, with the real-Zebra Docker case
+104 ordinary tests plus one doctest, with the real-Zebra Docker case
 intentionally delegated to its isolated runner.
 
-Twelve production-store cases instantiate the SDK with a cloneable role-fixed
+Fifteen production-store cases instantiate the SDK with a cloneable role-fixed
 `SqliteZecRecoveryStore`. They prove exact agreement replay and changed same-key
 conflict; maker/taker isolation for the same application ID; an open intent
 durable before effects; one immediate transaction that inserts the transition,
@@ -146,7 +145,7 @@ and full revalidation on every load. Forward Zcash now requires the existing
 complete canonical output type and persists its primitive event record; a
 production Zebra port must still assemble it from fresh stable RPC snapshots.
 The ordered SDK removal/replacement journal is implemented for maker-observed
-forward Zcash. Before every append/load, schema v7 proves the exact contiguous
+forward Zcash. Before every append/load, schema v8 proves the exact contiguous
 row range and folds all prior records through the agreement-selected exact
 tracker and the coordinator. Zcash replacement halves must share the same stable tip;
 duplicate canonical polls write nothing; changed inclusion requires explicit
@@ -160,7 +159,7 @@ Complete primitive LEZ removal/replacement records now survive restart, consume
 one predecessor slot, suppress exact duplicate replacement, and reject stale
 old-head removal without mutation. The official-wire node adapter remains. The
 maker second-lock method now replays and re-queries the exact tracker head
-internally, persists a separate schema-v7 intent whose staging revision may
+internally, persists a separate schema-v8 intent whose staging revision may
 precede its transition predecessor, and reaches `BothLegsLocked` in both
 directions after atomic commit. Union journal replay reconstructs that phase
 after close/reopen without caching authority in `next_action`. Maker

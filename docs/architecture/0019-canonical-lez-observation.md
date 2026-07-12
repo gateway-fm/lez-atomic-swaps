@@ -11,7 +11,7 @@ flowchart LR
     Block["Canonical inclusion block<br/>height, hash, finality"]
     Accounts["Metadata and custody accounts<br/>owner, decoded state, exact balance"]
     Validator["Canonical LEZ validator"]
-    Journal["Maker schema-v7 ordered journal<br/>primitive snapshot"]
+    Journal["Maker schema-v8 ordered journal<br/>primitive snapshot"]
     Replay["Restart revalidation"]
 
     Agreement --> Validator
@@ -87,7 +87,7 @@ regression, and finality regression, and treats any finalized removal as an
 operator-fatal violation. Proposal never mutates the head; only an exact
 committed event does.
 
-The active SDK and schema-v7 SQLite journal now fold canonical and
+The active SDK and schema-v8 SQLite journal now fold canonical and
 same-inclusion LEZ tracker events. Exact duplicates write no row, and restart
 restores the exact updated head. Historical payload-v1 snapshots that stored
 `swap_id` before the generated instruction kind was bound are decoded

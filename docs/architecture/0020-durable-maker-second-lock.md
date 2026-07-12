@@ -1,6 +1,6 @@
 # ADR 0020: Fresh-gated durable maker second lock
 
-Status: Accepted; both deterministic-local directions and schema-v7 restart
+Status: Accepted; both deterministic-local directions and schema-v8 restart
 replay implemented, production node adapters and actor processes pending --
 2026-07-12
 
@@ -13,7 +13,7 @@ flowchart TB
     Plan -->|"Taker sold LEZ"| Zec["Exact Zcash funding plan"]
     Lez --> Intent["Immutable maker intent"]
     Zec --> Intent
-    Intent --> Store[("SQLite schema v7 maker intent")]
+    Intent --> Store[("SQLite schema v8 maker intent")]
     Store --> Observe["Observe expected identity before submission"]
     Observe -->|"stable absence"| Submit["Submit byte-identical durable bytes"]
     Observe -->|"confirmed final step"| Project["Validate maker evidence"]
@@ -22,6 +22,9 @@ flowchart TB
     Atomic --> Journal["Union maker journal replay"]
     Journal --> Both["BothLegsLocked"]
     Both --> Restart["Close and reopen without negotiation"]
+    Both --> Remote["Taker observes agreement-selected maker lock"]
+    Remote --> TakerJournal[("Taker schema v8 transition")]
+    TakerJournal --> TakerBoth["Taker reaches BothLegsLocked"]
     Restart --> Journal
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
@@ -55,7 +58,7 @@ submission bytes before any submission port call. Exact retry is idempotent;
 changed material conflicts. Each chain step is observed before submission, and
 the LEZ initialize and fund steps remain independently recoverable.
 
-Schema v7 uses dedicated maker-intent and maker-transition tables. The intent
+Schema v8 uses dedicated maker-intent and maker-transition tables. The intent
 records `staged_revision`; the transition separately records its current
 `predecessor_revision` and exact `intent_staged_revision`. The database permits
 `closed_revision > staged_revision` while requiring
@@ -87,7 +90,7 @@ The production role-fixed SQLite test repeats both directions, inspects the
 staged, predecessor, committed, and closed revisions, closes the database, and
 reopens without chain or negotiation evidence at `BothLegsLocked`. The complete
 swap-store suite repeats stale-instance zero-resubmission in both directions and
-passes schema-v7 migration, existing rollback/corruption/replay cases, and the
+passes schema-v8 migration, existing rollback/corruption/replay cases, and the
 new union-journal path.
 
 The same SQLite case stages the maker intent at revision 1, then commits a
@@ -103,12 +106,19 @@ failure rolls back the transition insert, agreement revision CAS, and intent
 closure; removing the trigger permits an exact retry.
 
 Accept-then-transport-failure tests cover both LEZ steps and Zcash funding. Each
-restart uses the same schema-v7 intent, observes the accepted identity, and
+restart uses the same schema-v8 intent, observes the accepted identity, and
 never rebroadcasts. If the taker Zcash lock is removed after LEZ initialization,
 fresh eligibility returns to `Offered` and LEZ fund is withheld through stable
 absence; only a validated canonical replacement permits the exact fund step.
 Malformed retained maker intent JSON and a future transition schema both fail
 closed during reopen.
+
+The counterparty side now has a distinct taker-local schema-v8 observation
+transition. In both directions, separate maker and taker stores bind the remote
+maker evidence, advance independently to `BothLegsLocked`, and replay there.
+The deterministic adapter still asserts the remote expected-submission ID;
+production adapters must derive and validate that identity from canonical node
+evidence.
 
 ## Consequences
 
