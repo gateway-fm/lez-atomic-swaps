@@ -61,7 +61,12 @@ current executable slices enforce:
   call replays the durable head, re-queries the exact canonical tracker head,
   writes nothing when unchanged, and returns a non-cached revision-bound
   result; `next_action` remains `Wait` because no maker effect exists to
-  consume it in the same operation. Reverse LEZ now requires a stable canonical
+  consume it in the same operation. Both directions support this boundary.
+  Reverse deterministic-local LEZ accepts a depth-sufficient exact head.
+  The public-v0.2 policy seam additionally defines and unit-tests typed
+  awaiting-finality outcomes until Bedrock reports Finalized, but public
+  agreement activation remains fail-closed pending a reviewed deployment.
+  Reverse LEZ requires a stable canonical
   escrow snapshot bound to the signed execution channel/genesis, public fund
   transaction, generated account order, full metadata, exact custody, depth,
   and finality policy; that primitive snapshot is revalidated after SQLite

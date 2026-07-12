@@ -379,7 +379,7 @@ forward Zcash assertion is rejected, complete canonical output evidence survives
 record revalidation against the HTLC output binding, non-confirmed
 outcomes write nothing, the maker never owns a taker intent, persisted adapter
 assertions remain non-authorizing, and restart uses the maker-only store. The
-store command runs nine production-adapter cases over a real temporary
+store command runs ten production-adapter cases over a real temporary
 schema-v6 database: exact replay/conflict, same-ID role isolation, retained
 closed intent, taker and maker trigger-injected rollback,
 future/malformed/torn/orphan/holey-state rejection, poison-append rejection,
@@ -389,8 +389,13 @@ close/reopen resume. The maker actor flow is canonical observation at revision
 and affirmative removal at revision 4. Replacement halves share one stable
 tip; unchanged polls write nothing; changed inclusion without replacement and
 stale removal of an old inclusion fail before append. A fresh eligibility call
-after close/reopen replays and re-queries the exact head, writes no duplicate,
-returns revision 1, and leaves `next_action` at `Wait`; stable absence and unstable polls return no eligibility, write nothing, and preserve the confirmed revision. Production chain RPC
+after close/reopen replays and re-queries the exact Zcash or LEZ head, writes
+no duplicate, returns the durable revision, and leaves `next_action` at
+`Wait`; reverse replacement heads are eligible after restart, removed heads
+are not, and local Pending is depth-eligible. The public Pending/Safe typed
+awaiting-finality policy is unit-tested only because public agreement activation
+remains fail-closed pending reviewed deployment. Stable absence and unstable polls return no
+eligibility, write nothing, and preserve the revision. Production chain RPC
 adapters, the maker effect that consumes eligibility, and later effects are
 remaining work.
 

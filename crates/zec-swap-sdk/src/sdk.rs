@@ -680,9 +680,8 @@ where
     ///
     /// # Errors
     ///
-    /// Rejects the taker role, reverse LEZ direction until its exact-head
-    /// tracker and eligibility policy exist, invalid chain history, and
-    /// structured port/store failures.
+    /// Rejects the taker role, invalid exact-head history or policy evidence,
+    /// and structured port/store failures.
     pub async fn refresh_maker_funding_eligibility(
         &mut self,
     ) -> Result<MakerFundingEligibilityOutcome, ZecSdkError> {
@@ -692,14 +691,24 @@ where
                 actual: self.local_participant(),
             });
         }
-        if self.agreement().direction() != lez_swap_core::SwapDirection::TakerSellsForeign {
-            return Err(ZecSdkError::MakerFundingEligibilityUnavailable);
-        }
+        let direction = self.agreement().direction();
         match self.observe_taker_first_lock().await? {
-            ObserveTakerFirstLockOutcome::Unchanged(_) => Ok(classify_unchanged_maker_eligibility(
-                self.status(),
-                self.revision,
-            )),
+            ObserveTakerFirstLockOutcome::Unchanged(_) => Ok(match direction {
+                lez_swap_core::SwapDirection::TakerSellsForeign => {
+                    classify_unchanged_maker_eligibility(self.status(), self.revision)
+                }
+                lez_swap_core::SwapDirection::TakerSellsLez => {
+                    classify_unchanged_lez_maker_eligibility(
+                        self.status(),
+                        self.revision,
+                        self.coordinator.required_confirmations(Participant::Taker),
+                        self.agreement().lez_terms().chain().environment(),
+                        self.lez_taker_lock_tracker.current().map(|current| {
+                            (current.confirmations().get(), current.inclusion_status())
+                        }),
+                    )
+                }
+            }),
             ObserveTakerFirstLockOutcome::AwaitingStableObservation(step) => Ok(
                 MakerFundingEligibilityOutcome::AwaitingStableObservation(step),
             ),
@@ -750,6 +759,29 @@ fn classify_unchanged_maker_eligibility(
     } else {
         MakerFundingEligibilityOutcome::AwaitingConfirmations
     }
+}
+
+fn classify_unchanged_lez_maker_eligibility(
+    status: Phase,
+    revision: u64,
+    required_confirmations: u32,
+    environment: crate::LezEnvironmentV1,
+    current: Option<(u32, crate::LezInclusionStatusV1)>,
+) -> MakerFundingEligibilityOutcome {
+    let Some((confirmations, inclusion_status)) = current else {
+        return MakerFundingEligibilityOutcome::AwaitingStableObservation(
+            crate::FirstLockStepV1::LezFund,
+        );
+    };
+    if status != Phase::TakerLockConfirmed || confirmations < required_confirmations {
+        return MakerFundingEligibilityOutcome::AwaitingConfirmations;
+    }
+    if environment == crate::LezEnvironmentV1::PublicTestnetV0_2
+        && inclusion_status != crate::LezInclusionStatusV1::Finalized
+    {
+        return MakerFundingEligibilityOutcome::AwaitingLezFinality(inclusion_status);
+    }
+    MakerFundingEligibilityOutcome::Eligible { revision }
 }
 
 impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
@@ -867,6 +899,62 @@ mod tests {
         assert_eq!(
             classify_unchanged_maker_eligibility(Phase::TakerLockConfirmed, 7),
             MakerFundingEligibilityOutcome::Eligible { revision: 7 }
+        );
+    }
+
+    #[test]
+    fn reverse_lez_eligibility_separates_depth_from_public_finality() {
+        let classify = |environment, current| {
+            classify_unchanged_lez_maker_eligibility(
+                Phase::TakerLockConfirmed,
+                9,
+                3,
+                environment,
+                current,
+            )
+        };
+        assert_eq!(
+            classify(
+                crate::LezEnvironmentV1::DeterministicLocalV0_2,
+                Some((3, crate::LezInclusionStatusV1::Pending))
+            ),
+            MakerFundingEligibilityOutcome::Eligible { revision: 9 }
+        );
+        assert_eq!(
+            classify(
+                crate::LezEnvironmentV1::PublicTestnetV0_2,
+                Some((3, crate::LezInclusionStatusV1::Pending))
+            ),
+            MakerFundingEligibilityOutcome::AwaitingLezFinality(
+                crate::LezInclusionStatusV1::Pending
+            )
+        );
+        assert_eq!(
+            classify(
+                crate::LezEnvironmentV1::PublicTestnetV0_2,
+                Some((3, crate::LezInclusionStatusV1::Safe))
+            ),
+            MakerFundingEligibilityOutcome::AwaitingLezFinality(crate::LezInclusionStatusV1::Safe)
+        );
+        assert_eq!(
+            classify(
+                crate::LezEnvironmentV1::PublicTestnetV0_2,
+                Some((3, crate::LezInclusionStatusV1::Finalized))
+            ),
+            MakerFundingEligibilityOutcome::Eligible { revision: 9 }
+        );
+        assert_eq!(
+            classify(
+                crate::LezEnvironmentV1::PublicTestnetV0_2,
+                Some((2, crate::LezInclusionStatusV1::Finalized))
+            ),
+            MakerFundingEligibilityOutcome::AwaitingConfirmations
+        );
+        assert_eq!(
+            classify(crate::LezEnvironmentV1::PublicTestnetV0_2, None),
+            MakerFundingEligibilityOutcome::AwaitingStableObservation(
+                crate::FirstLockStepV1::LezFund
+            )
         );
     }
 }

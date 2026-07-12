@@ -1402,13 +1402,7 @@ async fn reverse_maker_observes_lez_while_taker_cannot_use_maker_observation() {
         .respond(Ok(TakerFirstLockObservationV1::CanonicalLez(Box::new(
             initial_lez,
         ))));
-    assert_eq!(
-        reverse_maker
-            .observe_taker_first_lock()
-            .await
-            .expect("duplicate canonical LEZ poll"),
-        ObserveTakerFirstLockOutcome::Unchanged(FirstLockStepV1::LezFund)
-    );
+    assert_fresh_reverse_eligibility(&mut reverse_maker, &reverse_lez, 1, 3).await;
     let deeper_finalized = deeper_finalized_lez(reverse_maker.agreement());
     reverse_lez
         .0
@@ -1430,12 +1424,54 @@ async fn reverse_maker_observes_lez_while_taker_cannot_use_maker_observation() {
         ZecLifecycleAction::Wait,
         "canonical LEZ evidence must not bypass the distinct fresh-funding check"
     );
-    assert!(matches!(
-        reverse_maker.refresh_maker_funding_eligibility().await,
-        Err(ZecSdkError::MakerFundingEligibilityUnavailable)
-    ));
+    assert_fresh_reverse_eligibility(&mut reverse_maker, &reverse_lez, 2, 5).await;
+    assert_unstable_reverse_is_not_eligible(&mut reverse_maker, &reverse_lez, 2, 6).await;
 
     assert_taker_cannot_observe_for_maker().await;
+}
+
+async fn assert_fresh_reverse_eligibility(
+    maker: &mut ActiveZecSwap<
+        MemoryLezTakerLockObservation,
+        MemoryZcashTakerLockObservation,
+        MemoryStore,
+    >,
+    lez: &MemoryLezTakerLockObservation,
+    revision: u64,
+    expected_calls: usize,
+) {
+    assert_eq!(
+        maker
+            .refresh_maker_funding_eligibility()
+            .await
+            .expect("fresh exact LEZ head is eligible"),
+        MakerFundingEligibilityOutcome::Eligible { revision }
+    );
+    assert_eq!(lez.0.calls(), expected_calls);
+    assert_eq!(maker.next_action(), ZecLifecycleAction::Wait);
+}
+
+async fn assert_unstable_reverse_is_not_eligible(
+    maker: &mut ActiveZecSwap<
+        MemoryLezTakerLockObservation,
+        MemoryZcashTakerLockObservation,
+        MemoryStore,
+    >,
+    lez: &MemoryLezTakerLockObservation,
+    revision: u64,
+    expected_calls: usize,
+) {
+    lez.0.respond(Ok(TakerFirstLockObservationV1::Unstable));
+    assert_eq!(
+        maker
+            .refresh_maker_funding_eligibility()
+            .await
+            .expect("unstable poll cannot reuse earlier eligibility"),
+        MakerFundingEligibilityOutcome::AwaitingStableObservation(FirstLockStepV1::LezFund)
+    );
+    assert_eq!(maker.revision(), revision);
+    assert_eq!(lez.0.calls(), expected_calls);
+    assert_eq!(maker.next_action(), ZecLifecycleAction::Wait);
 }
 
 async fn assert_taker_cannot_observe_for_maker() {

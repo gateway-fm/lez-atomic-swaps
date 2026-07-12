@@ -139,9 +139,13 @@ survives close/reopen. The pure tracker also proves affirmative same-tip
 replacement, stale-evidence rejection, and fatal finalized-history changes.
 Complete primitive removal/replacement records now carry nonfinal reorgs
 through the active SDK and SQLite, while stale old-head evidence fails without
-a row or revision change. The official-wire LEZ node port, reverse fresh
-eligibility, and maker effect that consumes eligibility internally remain; the
-SDK returns Wait.
+a row or revision change. Deterministic-local reverse fresh eligibility now
+replays and re-queries the exact head and checks signed depth; local Pending
+remains eligible when depth is sufficient, and no result is cached as
+authority. The public Finalized/typed-finality policy is unit-tested but remains
+unreachable while public agreement activation is fail-closed. The official-wire
+LEZ node port, reviewed public deployment, and maker effect that
+consumes eligibility internally remain; the SDK returns Wait.
 
 The dashed state reflects delivery honestly. The deterministic core, SQLite
 repository, maker daemon, authenticated maker CLI flow, LEZ semantic

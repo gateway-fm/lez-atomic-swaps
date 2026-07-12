@@ -104,6 +104,13 @@ tracker before the coordinator; duplicate replacement writes nothing, stale
 old-head removal fails without mutation, and current-head removal replays to
 `Offered`.
 
+The fresh maker eligibility boundary also supports reverse deterministic-local
+LEZ. It replays then re-queries the exact head, checks signed depth, and accepts
+Pending/Safe/Finalized. A public-policy unit seam returns typed
+awaiting-finality for Pending/Safe until Bedrock reports Finalized, but public
+agreement activation remains fail-closed pending a reviewed deployment. The
+boundary never changes `next_action` or caches authority.
+
 The next slice must use official LEZ wire types to decode and hash the public
 transaction and distinguish a still-canonical fund whose
 escrow has become Claimed or Refunded, and add native plus token standalone

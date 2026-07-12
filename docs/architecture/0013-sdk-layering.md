@@ -108,7 +108,10 @@ affirmative removal/replacement, and finalized-history rejection. Complete
 primitive removal/replacement records are integrated with the ordered
 SDK/SQLite journal; the official-wire LEZ port remains open. The distinct
 fresh eligibility call replays and re-queries, but deliberately caches no
-authority and leaves `next_action` at `Wait`; the future maker second-lock
+authority. It now applies to both deterministic-local directions and checks
+signed depth explicitly. The public-policy unit seam distinguishes LEZ
+Pending/Safe from Finalized, but public activation remains fail-closed. It leaves
+`next_action` at `Wait`; the future maker second-lock
 method must consume the result internally in the same operation.
 
 ## Consequences

@@ -634,6 +634,18 @@ async fn canonical_lez_maker_observation_survives_sqlite_close_and_reopen() {
         (Phase::TakerLockConfirmed, 1),
         "current payload preserves a valid LEZ amount above u64"
     );
+    let (eligible, phase, revision) = refresh_reverse_maker_after_reopen(
+        &path,
+        id,
+        TakerFirstLockObservationV1::CanonicalLez(Box::new(canonical.clone())),
+    )
+    .await;
+    assert_eq!(
+        eligible,
+        MakerFundingEligibilityOutcome::Eligible { revision: 1 }
+    );
+    assert_eq!((phase, revision), (Phase::TakerLockConfirmed, 1));
+    assert_eq!(maker_transition_count(&path, id), 1);
     rewrite_lez_row_as_legacy_payload_v1(&path, id, *accepted.agreement().onchain_swap_id());
     let (duplicate, phase, revision) = poll_reverse_maker_after_reopen(&path, id, canonical).await;
     assert_eq!(
@@ -685,10 +697,10 @@ async fn assert_lez_replacement_and_removal(
     ));
     assert_eq!((phase, revision), (Phase::TakerLockConfirmed, 3));
     let (duplicate, phase, revision) =
-        poll_reverse_maker_observation_after_reopen(path, id, replacement_observation).await;
+        refresh_reverse_maker_after_reopen(path, id, replacement_observation).await;
     assert_eq!(
         duplicate,
-        ObserveTakerFirstLockOutcome::Unchanged(FirstLockStepV1::LezFund)
+        MakerFundingEligibilityOutcome::Eligible { revision: 3 }
     );
     assert_eq!((phase, revision), (Phase::TakerLockConfirmed, 3));
     assert_eq!(maker_transition_count(path, id), 3);
@@ -708,12 +720,9 @@ async fn assert_lez_replacement_and_removal(
     assert_eq!(maker_transition_count(path, id), 3);
 
     let removal = canonical_lez_removal_at(agreement, &replacement, [0x57; 32], [0x58; 32], 105);
-    let (removed, phase, revision) = poll_reverse_maker_observation_after_reopen(
-        path,
-        id,
-        TakerFirstLockObservationV1::LezRemoved(Box::new(removal)),
-    )
-    .await;
+    let removal_observation = TakerFirstLockObservationV1::LezRemoved(Box::new(removal));
+    let (removed, phase, revision) =
+        poll_reverse_maker_observation_after_reopen(path, id, removal_observation.clone()).await;
     assert!(matches!(
         removed,
         ObserveTakerFirstLockOutcome::Projected(_)
@@ -723,6 +732,14 @@ async fn assert_lez_replacement_and_removal(
         reverse_maker_state_after_reopen(path, id).await,
         (Phase::Offered, 4)
     );
+    let (no_head, phase, revision) =
+        refresh_reverse_maker_after_reopen(path, id, removal_observation).await;
+    assert_eq!(
+        no_head,
+        MakerFundingEligibilityOutcome::AwaitingStableObservation(FirstLockStepV1::LezFund)
+    );
+    assert_eq!((phase, revision), (Phase::Offered, 4));
+    assert_eq!(maker_transition_count(path, id), 4);
 }
 
 async fn reverse_maker_state_after_reopen(path: &std::path::Path, id: &str) -> (Phase, u64) {
@@ -790,6 +807,32 @@ async fn try_poll_reverse_maker_observation_after_reopen(
     .expect("resume reverse maker poll")
     .expect("durable reverse agreement");
     let outcome = active.observe_taker_first_lock().await;
+    (outcome, active.status(), active.revision())
+}
+
+async fn refresh_reverse_maker_after_reopen(
+    path: &std::path::Path,
+    id: &str,
+    observation: TakerFirstLockObservationV1,
+) -> (MakerFundingEligibilityOutcome, Phase, u64) {
+    let store =
+        SqliteZecRecoveryStore::open(path, Participant::Maker).expect("reopen reverse eligibility");
+    let mut active = ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        MakerObservation(observation),
+        MakerObservation(TakerFirstLockObservationV1::Absent),
+        store,
+    )
+    .resume(&SwapId::new(id).expect("swap ID"))
+    .await
+    .expect("resume reverse eligibility")
+    .expect("durable reverse agreement");
+    let outcome = active
+        .refresh_maker_funding_eligibility()
+        .await
+        .expect("refresh reverse eligibility");
     (outcome, active.status(), active.revision())
 }
 

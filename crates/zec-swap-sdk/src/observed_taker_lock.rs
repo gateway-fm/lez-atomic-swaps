@@ -580,6 +580,8 @@ pub enum MakerFundingEligibilityOutcome {
     CanonicalStateChanged(FirstLockProjectionCommit),
     /// Canonical evidence exists but remains below the signed threshold.
     AwaitingConfirmations,
+    /// Public LEZ depth is sufficient but Bedrock finality is not yet final.
+    AwaitingLezFinality(crate::LezInclusionStatusV1),
 }
 
 /// Failure to validate or apply maker-local taker-lock evidence.
