@@ -87,13 +87,19 @@ flowchart LR
     MakerState[("Maker-only recovery state")]
     TakerState[("Taker-only recovery state")]
     Mailbox["Test-only pre-lock agreement mailbox"]
+    MakerValidator["Maker concrete agreement validator"]
+    TakerValidator["Taker concrete agreement validator"]
     Zebra["Selected Zebra route"]
     Lez["Selected LEZ route"]
 
-    Maker --> MakerState
-    Taker --> TakerState
+    Maker --> MakerValidator
+    Taker --> TakerValidator
+    MakerValidator -.->|"Persist accepted time, role, record, commitment, revision"| MakerState
+    TakerValidator -.->|"Persist accepted time, role, record, commitment, revision"| TakerState
     Maker -.->|"Publish and countersign before first lock"| Mailbox
     Taker -.->|"Discover and countersign before first lock"| Mailbox
+    Mailbox -->|"Bounded dual-signed Borsh v1 record"| MakerValidator
+    Mailbox -->|"Bounded dual-signed Borsh v1 record"| TakerValidator
     Maker -.->|"Typed funding, observation, claim, refund"| Zebra
     Taker -.->|"Typed funding, observation, claim, refund"| Zebra
     Maker -.->|"Generated escrow client actions"| Lez
@@ -168,13 +174,14 @@ it never opens SQLite or becomes protocol authority.
 | `lez-maker-daemon` | Running prototype | HTTP JSON-RPC; default `127.0.0.1:0`; non-loopback rejected | Bearer token from hidden environment; minimum 24 bytes; header checked before JSON parsing | Actual: `swap_create`, `swap_status`, `swap_alerts`, `swap_alert_acknowledge` | Operator/test-owned process; caller-selected SQLite path; Ctrl-C shutdown |
 | `lez-maker` | Running prototype | HTTP client; default `127.0.0.1:9944`; explicit ready URL for ephemeral daemon | Authorization header marked sensitive | Actual CLI: `create-swap`, `status`, `alerts`, `acknowledge-alert` | Independent operator process |
 | SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority | Aggregate, revision, ZEC journal, immutable binding, operator-alert list/ack APIs | WAL, `FULL` synchronous, schema v4; actual two-Zebra test closes/reopens twice; one process mutex today |
+| Concrete LEZ/ZEC agreement validator | Running library boundary | No socket or RPC; bounded Borsh v1 bytes enter from an untrusted negotiation adapter | Maker and taker transparent keys provide dual low-S signatures; chain adapters remain authoritative for chain-derived facts | Exact decode, cross-binding, deterministic coordinator/deadline and payout derivation | 16 KiB record cap, 128-byte ID preflight; activation/store integration pending |
 | Primary Zebra | Running in ignored E2E | Container `0.0.0.0:18232`; ephemeral host `127.0.0.1` mapping | Regtest fixture has no cookie auth; signed transactions and consensus remain authoritative | `getblockcount`, `generate`, `getblockhash`, `getblock`, `getblockheader`, `submitblock`, `getaddressutxos`, `getrawtransaction`, `sendrawtransaction`, `getblockchaininfo` | Unique Compose project and tmpfs state per `RUN_ID` |
 | Fork Zebra | Running in ignored E2E | Same container port; distinct ephemeral host-loopback mapping | Same Regtest-only policy | Same RPC set; produces independent higher-work branch | Separate tmpfs state; no initial peer; fixture-controlled block relay |
 | LEZ standalone v0.1.2 | Running in ignored E2E | Upstream server `0.0.0.0:0`; client uses `127.0.0.1:<assigned>` | No transport credential; actor signatures authorize transactions | `checkHealth`, `sendTransaction`, `getLastBlockId`, `getTransaction`, `getAccountsNonces`, `getAccount`, `getBlock` | In-process handle, tempfile state, deterministic genesis actors; not public v0.2 |
 | Logos Core adapter | Planned | No transport/port selected beyond the daemon control endpoint | Protected OS credential handle | `start`, `endpoint`, `health`, `stop` | Optional supervisor of the same daemon binary |
 | Delivery / Chat | Planned | No protocol, endpoint, or port selected | Authenticated offers and both-role signed transcript | `OfferDiscovery`; `NegotiationChannel` | Untrusted/removable after first lock |
 | Production Zebra watcher route | Planned | Self-hosted and public-testnet routes unselected | Provider credentials/rate limits unselected | Stable-tip observation, broadcast, reorg reconciliation | Actor-selected node; fallback and health policy required |
-| Official node live; adapter/deployment planned | HTTPS JSON-RPC `https://testnet.lez.logos.co` | Public reads; actor wallet/signature authorizes transactions; rate limits unspecified | Verified `checkHealth`, `getLastBlockId`, `getProgramIds`; escrow submit/observation still pending | Official LEZ v0.2.0; must use v0.2-compatible guest/client and `/LEE/` PDA domain |
+| Official LEZ testnet v0.2 node | Live node; adapter/deployment planned | HTTPS JSON-RPC `https://testnet.lez.logos.co` | Public reads; actor wallet/signature authorizes transactions; rate limits unspecified | Verified `checkHealth`, `getLastBlockId`, `getProgramIds`; escrow submit/observation still pending | Official LEZ v0.2.0; must use v0.2-compatible guest/client and `/LEE/` PDA domain |
 | Bitcoin Core | M3 planned | No port/image/provider selected | Actor-owned node and wallet credentials | Typed `BitcoinChain` port | Do not infer conventional ports before selection |
 | `monerod` plus wallet RPC | M4 planned | No ports/images/providers selected | Actor-owned daemon/wallet credentials | Typed `MoneroChain` port | Wallet/key state remains actor-owned |
 

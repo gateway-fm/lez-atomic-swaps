@@ -26,6 +26,7 @@ flowchart TB
         CO["Durable swap coordinator"]
         DB[("Encrypted SQLite state + outbox")]
         PS["BTC / XMR / ZEC pair SDKs"]
+        ZA["Canonical dual-signed LEZ/ZEC agreement validator"]
         ZTX["ZEC BIP-199 V5 transaction SDK"]
         CA["Validated chain adapters"]
     end
@@ -34,6 +35,7 @@ flowchart TB
         TC["Taker CLI"]
         TM["Taker mini-app"]
         TS["Taker pair SDK + durable recovery state"]
+        TA["Taker-side concrete agreement validator"]
     end
 
     subgraph OffChain["Untrusted, removable after lock"]
@@ -63,6 +65,7 @@ flowchart TB
     MD --> CO
     CO --> DB
     CO --> PS
+    PS --> ZA
     PS --> ZTX
     PS --> CA
     ZTX --> CA
@@ -70,6 +73,7 @@ flowchart TB
     T --> TC
     T --> TM
     TC --> TS
+    TS --> TA
     TM -.-> TS
 
     MD <-->|"discovery + negotiation only"| DC
@@ -98,6 +102,13 @@ Delivery / Chat is not trusted with secrets or chain truth and may disappear
 after the first lock. Chain adapters accept consensus evidence from the selected
 LEZ sequencer, Bitcoin Core, `monerod`, or Zebra; peer messages never advance an
 on-chain state by themselves.
+
+The concrete LEZ/ZEC agreement validator is implemented on both actor sides as
+one bounded canonical wire contract. It authenticates public executable terms
+with both actors' transparent keys and derives a fresh coordinator, but it is
+not yet connected to the active SDK/store path. The dashed M2 topology in the
+deployment inventory records that integration boundary; typed chain adapters
+must independently recompute every chain-derived account, input, and deadline.
 
 The dashed state reflects delivery honestly. The deterministic core, SQLite
 repository, maker daemon, authenticated maker CLI flow, LEZ semantic
@@ -345,6 +356,10 @@ including both derived scripts. Schema v4 persists it atomically with the swap
 and rejects immutable rebinding. Runtime requires it before tracker restoration,
 replay detection, or projection; both coordinator leg policies and every event
 side must match the named profile and expected-output envelope.
+The separate concrete agreement record now additionally binds both actor
+signatures, exact LEZ chain/custody terms, Zcash transaction policy, refund
+calibration, and the authenticated transcript. It remains pre-integration
+evidence until activation and resume persist and revalidate that exact record.
 
 ## Happy-path user flow
 

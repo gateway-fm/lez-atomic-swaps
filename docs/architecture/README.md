@@ -44,6 +44,9 @@ flowchart TB
     Custody --> ZecPins
     SDK --> ZecPins
     ZecPins --> ZecReconcile["0015 ZEC reconciliation"]
+    SDK --> Agreement["0016 Concrete ZEC agreement"]
+    ZecPins --> Agreement
+    Agreement -.-> ZecReconcile
     Persistence --> ZecReconcile
     Persistence --> SDK
     Persistence --> RPC
@@ -66,3 +69,4 @@ flowchart TB
 | [0013](0013-sdk-layering.md) | Deterministic common core plus complete per-pair async facades | Accepted for Logos review |
 | [0014](0014-zec-m2-implementation-pins.md) | SPEL/LEZ, canonical Zcash crates, and vulnerability-clean minimal Zebra runtime pins for M2 | Accepted for M2 implementation |
 | [0015](0015-durable-zcash-observation-reconciliation.md) | Stable affirmative Zcash canonical/removal evidence plus two-phase durable reconciliation | Binding, journal, role projection, conflicts, terminal alerts, and actual two-Zebra restart/requery proven; production poller pending |
+| [0016](0016-canonical-zec-agreement.md) | Canonical bounded dual-signed LEZ/ZEC terms bind actors, chains, custody, deadlines, and transaction policy | Validator and wire contract proven; SDK activation, adapters, and active persistence pending |

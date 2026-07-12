@@ -130,6 +130,21 @@ GitHub controls that renderer, so the repository deliberately retains a
 conservative syntax subset and requires a visual check after documentation is
 pushed.
 
+On a hardened Linux host where Chromium cannot create its own user namespace,
+keep the browser download isolated and opt into the repository's no-sandbox
+Puppeteer profile only inside an already isolated test account/container:
+
+```sh
+PUPPETEER_CACHE_DIR=/tmp/lez-mermaid-browser \
+  npx puppeteer browsers install chrome-headless-shell
+PUPPETEER_CACHE_DIR=/tmp/lez-mermaid-browser \
+  MERMAID_ALLOW_NO_SANDBOX=1 npm run test:mermaid
+```
+
+Do not set `MERMAID_ALLOW_NO_SANDBOX=1` for general web browsing or an
+untrusted checkout. CI uses its own ephemeral runner and the default command
+whenever the runner's Chromium sandbox is available.
+
 The Zebra suite uses a unique `lez-atomic-swaps-${RUN_ID}` Compose project. It
 copies the binary from the digest-pinned official Zebra 5.2.0 image into a
 digest-pinned distroless nonroot runtime, then runs two disconnected nodes on a

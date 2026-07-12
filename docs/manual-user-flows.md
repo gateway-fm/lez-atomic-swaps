@@ -10,7 +10,7 @@ actor boundary, expected result, or cleanup rule changes.
 
 | Flow | Boundary exercised | Current limitation |
 |---|---|---|
-| ZEC SDK agreement/activation | Independent role-fixed maker/taker SDK instances, adapter-authenticated agreement contract, separate recovery stores, transport-free active type, wrong-role/pair/profile/schema/pre-advanced-state negatives, and zeroizing preimage | Uses in-memory discovery/negotiation/store adapters; it is not Delivery/Chat, encrypted storage, or chain lifecycle evidence |
+| ZEC SDK agreement/activation | Canonical bounded dual-signed record proves chain/profile/role/custody/deadline/transaction-policy cross-binding; independent role-fixed SDK instances separately prove persistence and transport-free activation | The concrete record is not yet integrated into the generic in-memory activation seam; neither command proves Delivery/Chat, encrypted storage, or chain lifecycle effects |
 | Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
 | Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v4 SQLite journal/alerts, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The production daemon does not yet own a polling loop, and maker/taker actors are not yet independent |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
@@ -330,14 +330,24 @@ and the evidence is no longer needed.
 First reproduce the public pre-lock/post-lock SDK boundary:
 
 ```sh
+cargo test --locked -p lez-zec-swap-sdk --test agreement_v1_cross_binding -- --nocapture
 cargo test --locked -p lez-zec-swap-sdk --test sdk_lifecycle -- --nocapture
 ```
 
-The test creates independent maker and taker SDK instances with fixed roles and
-separate stores. It proves publish/discover/negotiate, immutable agreement
-validation, persist-before-activation, transport-free active types, and resume.
-Its adapters are in-memory contract doubles; this command does not prove Logos
-Delivery/Chat, encrypted production storage, or LEZ/Zebra lifecycle actions.
+The first command runs 17 cases over the canonical version-1 agreement: bounded
+exact wire decoding, both low-S signatures, every signed-field mutation, both
+directions, deterministic-local execution terms, fail-closed public deployment,
+actual LEZ/ZEC deadlines, role/digest binding, agreement-derived
+fees/destinations/expiry/funding requests, exact native/token PDA/ATA accounts,
+accepted-at resume, and redacted diagnostics. The second creates independent
+maker and taker SDK instances with fixed roles and
+separate stores and proves publish/discover/negotiate,
+persist-before-activation, transport-free active types, and resume.
+
+These are adjacent boundaries, not yet one integrated user journey: activation
+still uses the earlier generic agreement type. Both adapters are in-memory
+contract doubles; neither command proves Logos Delivery/Chat, encrypted
+production storage, or LEZ/Zebra lifecycle actions.
 
 First reproduce the lightweight runtime/store user-role semantics without
 Docker:

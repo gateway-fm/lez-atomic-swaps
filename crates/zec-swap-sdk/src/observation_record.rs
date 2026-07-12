@@ -2,6 +2,7 @@
 
 use std::{io::Cursor, num::NonZeroU32};
 
+use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use zcash_primitives::{block::BlockHash, transaction::Transaction};
 use zcash_protocol::{
@@ -17,7 +18,9 @@ use crate::{
 };
 
 /// Stable primitive spelling of a Zcash network for persistence version 1.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(
+    BorshDeserialize, BorshSerialize, Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ZcashNetworkRecordV1 {
     /// Zcash mainnet.

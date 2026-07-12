@@ -1,7 +1,7 @@
 # LEZ escrow and SPEL IDL design
 
-Status: review candidate; implementation and measured compute units are Milestone
-2–4 gates — 2026-07-11
+Status: source-correct local implementation and measured recursive costs proven;
+LEZ v0.2 deployment remains a Milestone 2 gate — 2026-07-12
 
 ```mermaid
 flowchart TB
@@ -23,9 +23,15 @@ The design targets `logos-blockchain/logos-execution-zone` commit
 `cac4921581b37e85ae25e940f3a62412cd22308e`, not the older `nssa` paths in
 current SPEL documentation.
 
-Each swap has a public metadata PDA derived from
-`SHA256("/LEZ/SwapEscrow/v1" || swap_id || terms_hash)`. The escrow program owns
-this account and stores:
+Each swap has a public metadata PDA derived by the generated SPEL client from
+the escrow program ID and the exact 32-byte `swap_id`. The checked guest declares
+this as `pda = arg("swap_id")`; it stores `terms_hash` inside the metadata and
+validates it on later instructions, but does not include `terms_hash` in the PDA
+seed. This avoids a circular dependency when the canonical agreement itself
+commits to the metadata account. The exact outer PDA domain is versioned by LEZ:
+the proven v0.1.2 lane uses `/NSSA/`, while the required v0.2 port must derive
+the same program/seed account under `/LEE/`. The escrow program owns this
+account and stores:
 
 - schema/protocol version, swap ID and immutable signed-terms hash;
 - pair, direction, LEZ asset kind, exact `u128` amount and network IDs;
@@ -39,7 +45,8 @@ this account and stores:
 Custody is separate because LEZ debits are controlled by the account's owning
 program:
 
-- native LEZ uses a public PDA derived under the escrow program but claimed by
+- native LEZ uses the separate public `pda = ["custody", swap_id]` account
+  derived under the escrow program and then claimed by
   `authenticated_transfer`, with the escrow PDA seed delegated on chained
   release calls; and
 - a custom fungible token uses the required associated token account derived as

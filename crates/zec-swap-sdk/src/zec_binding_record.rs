@@ -1,5 +1,6 @@
 //! Versioned immutable ZEC profile and expected-output bindings.
 
+use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use zcash_protocol::{consensus::BranchId, value::Zatoshis};
 
@@ -9,7 +10,9 @@ use crate::{
 };
 
 /// Stable primitive spelling of a reviewed ZEC profile.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(
+    BorshDeserialize, BorshSerialize, Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ZecProfileRecordV1 {
     /// Controlled standalone/Regtest profile.
@@ -121,7 +124,7 @@ impl ZecSwapBinding {
 }
 
 /// Primitive expected-output payload retained in binding record version 1.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(BorshSerialize, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct ExpectedBip199OutputRecordV1 {
     network: ZcashNetworkRecordV1,
     consensus_branch_id: u32,
@@ -135,7 +138,7 @@ struct ExpectedBip199OutputRecordV1 {
 }
 
 /// Version-1 persistent ZEC profile and expected-output binding.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(BorshSerialize, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ZecSwapBindingRecordV1 {
     profile_id: ZecProfileRecordV1,
     expected_output: ExpectedBip199OutputRecordV1,
@@ -159,6 +162,35 @@ impl ZecSwapBindingRecordV1 {
                 claimant_pubkey_hash: contract.claimant_pubkey_hash(),
                 redeem_script: contract.redeem_script().to_vec(),
                 p2sh_script_pubkey: contract.p2sh_script_pubkey().to_vec(),
+            },
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_bounded_wire_parts(
+        profile_id: ZecProfileRecordV1,
+        network: ZcashNetworkRecordV1,
+        consensus_branch_id: u32,
+        value_zatoshis: u64,
+        refund_lock_time: u32,
+        refund_pubkey_hash: [u8; 20],
+        secret_digest: [u8; 32],
+        claimant_pubkey_hash: [u8; 20],
+        redeem_script: Vec<u8>,
+        p2sh_script_pubkey: Vec<u8>,
+    ) -> Self {
+        Self {
+            profile_id,
+            expected_output: ExpectedBip199OutputRecordV1 {
+                network,
+                consensus_branch_id,
+                value_zatoshis,
+                refund_lock_time,
+                refund_pubkey_hash,
+                secret_digest,
+                claimant_pubkey_hash,
+                redeem_script,
+                p2sh_script_pubkey,
             },
         }
     }
