@@ -45,8 +45,10 @@ flowchart TB
     SDK --> ZecPins
     ZecPins --> ZecReconcile["0015 ZEC reconciliation"]
     SDK --> Agreement["0016 Concrete ZEC agreement"]
+    Agreement --> FirstLock["0017 Durable first-lock intent"]
     ZecPins --> Agreement
     Agreement -.-> ZecReconcile
+    FirstLock -.-> ZecReconcile
     Persistence --> ZecReconcile
     Persistence --> SDK
     Persistence --> RPC
@@ -66,7 +68,8 @@ flowchart TB
 | [0010](0010-typed-cross-chain-deadlines.md) | Typed consensus clocks plus conservative cross-chain safety bounds | Accepted for deadline legs; XMR superseded by 0011 |
 | [0011](0011-event-gated-recovery.md) | Recovery uses typed deadlines or canonical events; XMR has no native timelock | Accepted and represented in core/RPC/CLI |
 | [0012](0012-lez-escrow-custody.md) | Split metadata PDA from authenticated-transfer custody or required custom-token ATA | Source-correct native/ATA TDD in progress |
-| [0013](0013-sdk-layering.md) | Deterministic common core plus complete per-pair async facades | Concrete ZEC negotiation/activation/resume contract proven; effects pending |
+| [0013](0013-sdk-layering.md) | Deterministic common core plus complete per-pair async facades | Concrete ZEC negotiation/activation/resume and first-lock intent contract proven; remaining effects pending |
 | [0014](0014-zec-m2-implementation-pins.md) | SPEL/LEZ, canonical Zcash crates, and vulnerability-clean minimal Zebra runtime pins for M2 | Accepted for M2 implementation |
 | [0015](0015-durable-zcash-observation-reconciliation.md) | Stable affirmative Zcash canonical/removal evidence plus two-phase durable reconciliation | Binding, journal, role projection, conflicts, terminal alerts, and actual two-Zebra restart/requery proven; production poller pending |
 | [0016](0016-canonical-zec-agreement.md) | Canonical bounded dual-signed LEZ/ZEC terms bind actors, chains, custody, deadlines, and transaction policy | Validator plus activation/resume contract proven; production adapters and effects pending |
+| [0017](0017-crash-safe-first-lock-intent.md) | Exact role-fixed first-lock bytes are durable and observed before byte-identical submission | In-memory SDK contract proven; production persistence and evidence projection pending |

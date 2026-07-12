@@ -5,7 +5,7 @@ use std::error::Error;
 use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::ZecAgreementV1Error;
+use crate::{FirstLockIntentError, ZecAgreementV1Error};
 
 /// A SHA-256 claim preimage that is redacted, zeroized, and not serializable.
 #[derive(Zeroize, ZeroizeOnDrop)]
@@ -48,6 +48,9 @@ pub enum ZecSdkError {
     /// Negotiated or durable terms violated an immutable agreement invariant.
     #[error(transparent)]
     InvalidAgreement(#[from] ZecAgreementV1Error),
+    /// Prepared first-lock material violates role, direction, shape, or size invariants.
+    #[error(transparent)]
+    InvalidFirstLock(#[from] FirstLockIntentError),
     /// A new activation must begin at durable revision zero.
     #[error("new LEZ/ZEC agreement has invalid initial revision {0}")]
     InvalidActivationRevision(u64),
@@ -70,6 +73,12 @@ pub enum ZecSdkError {
     /// A different immutable agreement already occupies this role-local key.
     #[error("a conflicting immutable LEZ/ZEC agreement is already durable")]
     AgreementConflict,
+    /// A different exact first-lock plan already occupies this role-local swap key.
+    #[error("a conflicting immutable first-lock plan is already durable")]
+    FirstLockConflict,
+    /// No durable first-lock plan exists for the active agreement.
+    #[error("no durable first-lock plan exists for the active agreement")]
+    MissingFirstLockIntent,
     /// Offer discovery/publishing failed in its adapter.
     #[error("offer discovery failed")]
     Discovery(#[source] BoxPortError),
@@ -79,6 +88,12 @@ pub enum ZecSdkError {
     /// Agreement persistence failed before activation.
     #[error("recovery persistence failed")]
     Persistence(#[source] BoxPortError),
+    /// LEZ first-lock observation or submission failed.
+    #[error("LEZ first-lock adapter failed")]
+    LezFirstLock(#[source] BoxPortError),
+    /// Zcash first-lock observation or submission failed.
+    #[error("Zcash first-lock adapter failed")]
+    ZcashFirstLock(#[source] BoxPortError),
 }
 
 /// Next high-level role action derived without accepting peer messages.

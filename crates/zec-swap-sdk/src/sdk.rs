@@ -3,8 +3,10 @@
 use lez_swap_core::{Participant, Phase, SwapId, UnixSeconds};
 
 use crate::{
-    AcceptedZecAgreementV1, CreateAgreementOutcome, NegotiationChannel, OfferDiscovery,
-    RecoveryStore, ZecAgreementV1, ZecLifecycleAction, ZecSdkError, lifecycle::next_action,
+    AcceptedZecAgreementV1, CreateAgreementOutcome, CreateFirstLockOutcome, FirstLockDriveOutcome,
+    FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1, LezFirstLockPort, NegotiationChannel,
+    OfferDiscovery, PreparedFirstLockSubmissionV1, RecoveryStore, ZcashFirstLockPort,
+    ZecAgreementV1, ZecLifecycleAction, ZecSdkError, lifecycle::next_action,
 };
 
 /// Complete pre-lock facade composed from application-supplied ports.
@@ -199,9 +201,9 @@ where
     fn active(&self, accepted: AcceptedZecAgreementV1) -> ActiveZecSwap<Lez, Zcash, Store> {
         ActiveZecSwap {
             accepted,
-            _lez: self.lez.clone(),
-            _zcash: self.zcash.clone(),
-            _store: self.store.clone(),
+            lez: self.lez.clone(),
+            zcash: self.zcash.clone(),
+            store: self.store.clone(),
         }
     }
 
@@ -245,9 +247,9 @@ where
 /// ```
 pub struct ActiveZecSwap<Lez, Zcash, Store> {
     accepted: AcceptedZecAgreementV1,
-    _lez: Lez,
-    _zcash: Zcash,
-    _store: Store,
+    lez: Lez,
+    zcash: Zcash,
+    store: Store,
 }
 
 impl<Lez, Zcash, Store> std::fmt::Debug for ActiveZecSwap<Lez, Zcash, Store> {
@@ -297,5 +299,150 @@ impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store> {
     #[must_use]
     pub fn next_action(&self) -> ZecLifecycleAction {
         next_action(self.agreement().coordinator(), self.local_participant())
+    }
+}
+
+impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
+where
+    Store: RecoveryStore,
+{
+    /// Stages exact role-local first-lock recovery material before any node call.
+    ///
+    /// This method performs no chain effect and never advances the coordinator.
+    /// Exact retry is idempotent; changed material under the same swap key
+    /// conflicts. The signed direction selects Zcash funding or the ordered LEZ
+    /// initialize/fund pair, so callers cannot choose the first-lock chain.
+    ///
+    /// # Errors
+    ///
+    /// Rejects the maker role, a direction/plan mismatch, malformed material,
+    /// a durable conflict, or a structured store error.
+    pub async fn stage_first_lock(
+        &self,
+        plan: FirstLockPlanV1,
+    ) -> Result<CreateFirstLockOutcome, ZecSdkError> {
+        if self.local_participant() != Participant::Taker {
+            return Err(ZecSdkError::WrongRole {
+                expected: Participant::Taker,
+                actual: self.local_participant(),
+            });
+        }
+        let intent = FirstLockIntentV1::from_active(
+            self.agreement(),
+            self.local_participant(),
+            self.revision(),
+            plan,
+        )?;
+        let outcome = self
+            .store
+            .create_first_lock_intent(&intent)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
+        match outcome {
+            CreateFirstLockOutcome::Created | CreateFirstLockOutcome::ExistingSame => Ok(outcome),
+            CreateFirstLockOutcome::Conflict => Err(ZecSdkError::FirstLockConflict),
+        }
+    }
+}
+
+impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
+where
+    Lez: LezFirstLockPort,
+    Zcash: ZcashFirstLockPort,
+    Store: RecoveryStore,
+{
+    /// Observes a durable first-lock plan before any byte-identical rebroadcast.
+    ///
+    /// LEZ initialization must be confirmed before its funding transaction can
+    /// be observed or submitted. A node acceptance or confirmed observation
+    /// does not advance the coordinator here; atomic durable evidence projection
+    /// remains a separate required boundary.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a missing/substituted durable intent and preserves structured
+    /// store, LEZ, or Zcash adapter errors.
+    pub async fn drive_first_lock(&self) -> Result<FirstLockDriveOutcome, ZecSdkError> {
+        let swap_id = self.agreement().coordinator().id();
+        let Some(intent) = self
+            .store
+            .load_first_lock_intent(swap_id)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Err(ZecSdkError::MissingFirstLockIntent);
+        };
+        intent.validate_for_active(self.agreement(), self.local_participant(), self.revision())?;
+
+        match intent.plan() {
+            FirstLockPlanV1::Zcash { funding } => self.drive_zcash_step(funding).await,
+            FirstLockPlanV1::Lez { initialize, fund } => {
+                match self.observe_lez_step(initialize).await? {
+                    FirstLockObservation::Absent => {
+                        self.submit_lez_step(initialize).await?;
+                        Ok(FirstLockDriveOutcome::Submitted(initialize.step()))
+                    }
+                    FirstLockObservation::Unstable => Ok(
+                        FirstLockDriveOutcome::AwaitingStableObservation(initialize.step()),
+                    ),
+                    FirstLockObservation::Confirmed => match self.observe_lez_step(fund).await? {
+                        FirstLockObservation::Absent => {
+                            self.submit_lez_step(fund).await?;
+                            Ok(FirstLockDriveOutcome::Submitted(fund.step()))
+                        }
+                        FirstLockObservation::Unstable => Ok(
+                            FirstLockDriveOutcome::AwaitingStableObservation(fund.step()),
+                        ),
+                        FirstLockObservation::Confirmed => {
+                            Ok(FirstLockDriveOutcome::ReadyForFundingProjection)
+                        }
+                    },
+                }
+            }
+        }
+    }
+
+    async fn drive_zcash_step(
+        &self,
+        funding: &PreparedFirstLockSubmissionV1,
+    ) -> Result<FirstLockDriveOutcome, ZecSdkError> {
+        match self
+            .zcash
+            .observe_first_lock(self.agreement(), funding)
+            .await
+            .map_err(|error| ZecSdkError::ZcashFirstLock(Box::new(error)))?
+        {
+            FirstLockObservation::Absent => {
+                self.zcash
+                    .submit_first_lock(self.agreement(), funding)
+                    .await
+                    .map_err(|error| ZecSdkError::ZcashFirstLock(Box::new(error)))?;
+                Ok(FirstLockDriveOutcome::Submitted(funding.step()))
+            }
+            FirstLockObservation::Unstable => Ok(FirstLockDriveOutcome::AwaitingStableObservation(
+                funding.step(),
+            )),
+            FirstLockObservation::Confirmed => Ok(FirstLockDriveOutcome::ReadyForFundingProjection),
+        }
+    }
+
+    async fn observe_lez_step(
+        &self,
+        submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<FirstLockObservation, ZecSdkError> {
+        self.lez
+            .observe_first_lock(self.agreement(), submission)
+            .await
+            .map_err(|error| ZecSdkError::LezFirstLock(Box::new(error)))
+    }
+
+    async fn submit_lez_step(
+        &self,
+        submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<(), ZecSdkError> {
+        self.lez
+            .submit_first_lock(self.agreement(), submission)
+            .await
+            .map_err(|error| ZecSdkError::LezFirstLock(Box::new(error)))
     }
 }

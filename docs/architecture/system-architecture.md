@@ -506,7 +506,8 @@ evidence, not present claims.
 | Crash-safe coordinator | Kill/restart/outbox/reorg matrix | M5 |
 | Maker CLI and Logos Core lifecycle | Authenticated operator journeys | M5 |
 | Maker/taker mini-apps | Same role suites through UI process boundaries | M6 |
-| Public testnets and review | Happy/refund/concurrency recordings and remediation packet | M7 |
+| ZEC public testnet and ZEC recordings | M2 happy/refund/concurrency evidence, then final regeneration | M2, M7 |
+| Other public testnets and final review | BTC/XMR evidence plus remediation packet | M3–M4, M7 |
 
 No milestone is complete merely because an internal API test passes. Its tag
 must point to the commit whose role-real evidence crosses every applicable

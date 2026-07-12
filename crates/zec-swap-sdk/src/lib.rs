@@ -1,6 +1,7 @@
 //! Transparent Zcash protocol adapter for LEZ atomic swaps.
 
 mod agreement_v1;
+mod first_lock;
 mod funding;
 mod lez_derivation;
 mod lifecycle;
@@ -25,6 +26,11 @@ pub use agreement_v1::{
     ZecTransactionPolicyV1,
 };
 
+pub use first_lock::{
+    CreateFirstLockOutcome, FirstLockDriveOutcome, FirstLockIntentError, FirstLockIntentV1,
+    FirstLockObservation, FirstLockPlanV1, FirstLockStepV1, MAX_FIRST_LOCK_SUBMISSION_BYTES,
+    PreparedFirstLockSubmissionV1,
+};
 pub use funding::{
     FundingBuildError, FundingSelection, TransparentFundingRequest, TransparentUtxo,
     build_funding_transaction, select_funding_utxos,
@@ -46,7 +52,10 @@ pub use observation_record::{
     replay_zcash_observation_history, revalidate_historical_event,
 };
 
-pub use ports::{CreateAgreementOutcome, NegotiationChannel, OfferDiscovery, RecoveryStore};
+pub use ports::{
+    CreateAgreementOutcome, LezFirstLockPort, NegotiationChannel, OfferDiscovery, RecoveryStore,
+    ZcashFirstLockPort,
+};
 pub use profile::{ProfileError, ZecProfileId, ZecRefundProfile};
 pub use sdk::{ActiveZecSwap, ZecPairSdk};
 pub use spend_observation::{

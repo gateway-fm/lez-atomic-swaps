@@ -1,11 +1,14 @@
-//! Async application ports for the complete LEZ/ZEC lifecycle.
+//! Async application ports for the evolving LEZ/ZEC SDK lifecycle.
 
 use std::error::Error;
 
 use async_trait::async_trait;
 use lez_swap_core::{Participant, SwapId};
 
-use crate::AcceptedZecAgreementEnvelopeV1;
+use crate::{
+    AcceptedZecAgreementEnvelopeV1, CreateFirstLockOutcome, FirstLockIntentV1,
+    FirstLockObservation, PreparedFirstLockSubmissionV1,
+};
 
 /// Authenticated, expiring offer discovery supplied by a Delivery adapter.
 ///
@@ -51,6 +54,56 @@ pub trait NegotiationChannel: Send + Sync {
     ) -> Result<Vec<u8>, Self::Error>;
 }
 
+/// Typed LEZ first-lock action and observation boundary.
+///
+/// Implementors must decode the exact submission, recompute deployment and
+/// account identities from the selected chain, and report `Confirmed` only for
+/// stable canonical inclusion at the agreement-required depth.
+#[async_trait]
+pub trait LezFirstLockPort: Send + Sync {
+    /// Structured adapter/RPC error retained by the SDK.
+    type Error: Error + Send + Sync + 'static;
+
+    /// Observes the exact expected identity before any possible rebroadcast.
+    async fn observe_first_lock(
+        &self,
+        agreement: &crate::ZecAgreementV1,
+        submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<FirstLockObservation, Self::Error>;
+
+    /// Submits byte-identical durable material after a stable absence.
+    async fn submit_first_lock(
+        &self,
+        agreement: &crate::ZecAgreementV1,
+        submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<(), Self::Error>;
+}
+
+/// Typed Zcash first-lock action and observation boundary.
+///
+/// Implementors must decode the exact V5 transaction, recompute its txid and
+/// agreement policy, and report `Confirmed` only for stable canonical inclusion
+/// at the agreement-required depth.
+#[async_trait]
+pub trait ZcashFirstLockPort: Send + Sync {
+    /// Structured adapter/RPC error retained by the SDK.
+    type Error: Error + Send + Sync + 'static;
+
+    /// Observes the exact expected txid before any possible rebroadcast.
+    async fn observe_first_lock(
+        &self,
+        agreement: &crate::ZecAgreementV1,
+        submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<FirstLockObservation, Self::Error>;
+
+    /// Submits byte-identical durable transaction bytes after a stable absence.
+    async fn submit_first_lock(
+        &self,
+        agreement: &crate::ZecAgreementV1,
+        submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<(), Self::Error>;
+}
+
 /// Atomic result of creating one immutable role-local agreement record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CreateAgreementOutcome {
@@ -84,4 +137,16 @@ pub trait RecoveryStore: Clone + Send + Sync {
         &self,
         swap_id: &SwapId,
     ) -> Result<Option<AcceptedZecAgreementEnvelopeV1>, Self::Error>;
+
+    /// Atomically creates the exact role-local first-lock plan before any node call.
+    async fn create_first_lock_intent(
+        &self,
+        intent: &FirstLockIntentV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error>;
+
+    /// Loads the exact pending first-lock recovery plan after restart.
+    async fn load_first_lock_intent(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<FirstLockIntentV1>, Self::Error>;
 }

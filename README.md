@@ -37,7 +37,10 @@ current executable slices enforce:
   Risc0 session costs with setup and Clock noise excluded; and
 - a bounded dual-signed LEZ/ZEC agreement integrated through role-fixed
   negotiation, persistence-before-activation, and adversarial resume, without
-  exposing transport, raw chain, or recovery-store handles after activation.
+  exposing transport, raw chain, or recovery-store handles after activation;
+  plus exact first-lock intent staged before node effects, observe-before-exact
+  rebroadcast after restart, and separately recoverable LEZ initialize/fund
+  steps. This is an in-memory SDK contract, not a completed chain corridor.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),

@@ -1,7 +1,7 @@
 # ADR 0013: Deterministic SDK core with optional async orchestration
 
-Status: concrete ZEC negotiation, activation, and resume boundary implemented;
-chain effects in progress — 2026-07-12
+Status: concrete ZEC negotiation, activation, resume, and first-lock intent
+boundary implemented; durable evidence projection in progress — 2026-07-12
 
 ```mermaid
 flowchart TB
@@ -13,6 +13,8 @@ flowchart TB
     Validator --> Accepted["Role-fixed accepted envelope"]
     Accepted --> Store["RecoveryStore contract"]
     Store --> Active["ActiveZecSwap without transport or raw adapter handles"]
+    Active --> Intent["Durable exact first-lock intent"]
+    Intent --> Observe["Observe before byte-identical submission"]
     Active -.-> Runtime["Reference async coordinator"]
     Runtime -.-> Nodes["Typed chain ports"]
     Store -.-> Encrypted["Encrypted production adapter"]
@@ -56,6 +58,12 @@ same-key record conflicts. The claim preimage wrapper and active diagnostics are
 redacted; secret storage zeroizes on drop. These in-memory adapters prove the
 API/type boundary only; they are not Logos Delivery/Chat, encrypted production
 storage, typed chain actions, or actor E2E.
+
+The next slice adds a bounded first-lock action/observation contract without
+exposing raw adapters: exact Zcash funding bytes, or separate exact LEZ
+initialize and fund bytes, are staged before any node call. Restart revalidates
+the intent and observes before byte-identical submission. This does not yet
+atomically persist confirmed evidence or advance the coordinator.
 
 ## Consequences
 
