@@ -353,7 +353,7 @@ exact wire decoding, both low-S signatures, every signed-field mutation, both
 directions, deterministic-local execution terms, fail-closed public deployment,
 actual LEZ/ZEC deadlines, role/digest binding, agreement-derived
 fees/destinations/expiry/funding requests, exact native/token PDA/ATA accounts,
-accepted-at resume, and redacted diagnostics. The second runs 20 integrated
+accepted-at resume, and redacted diagnostics. The second runs 21 integrated
 cases in which independent maker and taker SDK instances with fixed roles
 receive untrusted bytes, validate the concrete record, persist separate accepted
 envelopes before activation, and resume the original wire after transcript
@@ -383,7 +383,9 @@ same SDK suite then drives the maker happy path in both signed directions:
 Zcash taker funding selects LEZ initialize/fund, while LEZ taker funding selects
 Zcash fund. Every drive performs a fresh eligibility poll, the exact plan is
 durable before submission, confirmed Maker evidence advances to
-`BothLegsLocked`, and restart reconstructs that phase. The store command runs
+`BothLegsLocked`, and restart reconstructs that phase. A stale second maker
+instance catches up from the durable transition without another submission.
+The store command runs
 11 production-adapter cases over a real temporary
 schema-v7 database: exact replay/conflict, same-ID role isolation, retained
 closed intent, taker and maker trigger-injected rollback,

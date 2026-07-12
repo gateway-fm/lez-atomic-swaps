@@ -77,13 +77,16 @@ The public SDK lifecycle test drives both signed directions through canonical
 taker observation, fresh eligibility, durable opposite-chain submission,
 confirmed maker projection, and restart at `BothLegsLocked`. The LEZ direction
 proves initialize then fund ordering; the Zcash direction proves a single
-funding step. The full SDK suite, strict Clippy, and strict Rustdoc pass.
+funding step. A second maker instance held stale at `TakerLockConfirmed` replays
+the committed maker transition to `BothLegsLocked` before any fresh query and
+adds no submission. The full SDK suite, strict Clippy, and strict Rustdoc pass.
 
 The production role-fixed SQLite test repeats both directions, inspects the
 staged, predecessor, committed, and closed revisions, closes the database, and
 reopens without chain or negotiation evidence at `BothLegsLocked`. The complete
-swap-store suite passes schema-v7 migration, existing rollback/corruption/replay
-cases, and the new union-journal path.
+swap-store suite repeats stale-instance zero-resubmission in both directions and
+passes schema-v7 migration, existing rollback/corruption/replay cases, and the
+new union-journal path.
 
 ## Consequences
 

@@ -1003,6 +1003,12 @@ where
                 actual: self.local_participant(),
             });
         }
+        self.replay_first_lock_transition().await?;
+        if self.status() == Phase::BothLegsLocked {
+            return Ok(MakerLockDriveOutcome::AlreadyLocked {
+                revision: self.revision,
+            });
+        }
         let eligibility = self.refresh_maker_funding_eligibility().await?;
         if !matches!(eligibility, MakerFundingEligibilityOutcome::Eligible { .. }) {
             return Ok(MakerLockDriveOutcome::AwaitingEligibility(eligibility));

@@ -142,6 +142,10 @@ impl MakerHappyPort {
             submitted.push(submission.step());
         }
     }
+
+    fn submitted_steps(&self) -> Vec<FirstLockStepV1> {
+        self.submitted.lock().expect("submitted-step lock").clone()
+    }
 }
 
 #[async_trait]
@@ -739,8 +743,8 @@ async fn assert_sqlite_maker_lock_happy_path(
         NoDiscovery,
         FixedNegotiation,
         chain.clone(),
-        chain,
-        store,
+        chain.clone(),
+        store.clone(),
     )
     .activate(accepted)
     .await
@@ -753,6 +757,18 @@ async fn assert_sqlite_maker_lock_happy_path(
         (active.status(), active.revision()),
         (Phase::TakerLockConfirmed, 1)
     );
+    let mut stale = ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        chain.clone(),
+        chain.clone(),
+        store,
+    )
+    .resume(&SwapId::new(id).expect("swap ID"))
+    .await
+    .expect("stale maker resume")
+    .expect("stale maker agreement");
     let (plan, expected_drives, evidence) = maker_lock_fixture(direction);
     let mut actual_drives = Vec::new();
     for _ in 0..expected_drives.len() {
@@ -774,6 +790,19 @@ async fn assert_sqlite_maker_lock_happy_path(
         (active.status(), active.revision()),
         (Phase::BothLegsLocked, 2)
     );
+    let submitted = chain.submitted_steps();
+    assert_eq!(
+        stale
+            .drive_maker_lock(plan)
+            .await
+            .expect("stale maker replays committed funding"),
+        MakerLockDriveOutcome::AlreadyLocked { revision: 2 }
+    );
+    assert_eq!(
+        (stale.status(), stale.revision()),
+        (Phase::BothLegsLocked, 2)
+    );
+    assert_eq!(chain.submitted_steps(), submitted);
     drop(active);
     assert_closed_maker_lock_rows(path, id);
     assert_maker_lock_reopens(path, id).await;

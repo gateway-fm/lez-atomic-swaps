@@ -10,6 +10,11 @@ use crate::{
 /// One outcome from a maker-lock attempt that always performs a fresh eligibility check.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MakerLockDriveOutcome {
+    /// Another instance already committed maker funding; replay caught this instance up.
+    AlreadyLocked {
+        /// Durable aggregate revision reconstructed without a node effect.
+        revision: u64,
+    },
     /// No maker effect was staged or submitted because the fresh check was not eligible.
     AwaitingEligibility(MakerFundingEligibilityOutcome),
     /// The exact durable opposite-chain plan was safely driven.

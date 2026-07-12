@@ -1179,6 +1179,101 @@ async fn maker_happy_path_locks_the_opposite_chain_and_restarts_in_both_legs_loc
     assert_maker_happy_path_lez_to_zcash().await;
 }
 
+#[tokio::test]
+async fn stale_maker_replays_committed_second_lock_without_resubmission() {
+    let id = "sdk-stale-maker-second-lock";
+    let wire = agreement_wire(id, SwapDirection::TakerSellsForeign, FixtureVariant::Local);
+    let store = MemoryStore::default();
+    let lez = MemoryLezTakerLockObservation::default();
+    let zcash = MemoryZcashTakerLockObservation::default();
+    let first_sdk = maker_lock_sdk(wire.clone(), lez.clone(), zcash.clone(), store.clone());
+    let accepted = first_sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("maker agreement");
+    let mut first = first_sdk.activate(accepted).await.expect("first maker");
+    zcash
+        .0
+        .respond(Ok(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
+            canonical_zcash_taker_lock(first.agreement()),
+        ))));
+    first
+        .observe_taker_first_lock()
+        .await
+        .expect("canonical taker lock");
+
+    let stale_sdk = maker_lock_sdk(wire, lez.clone(), zcash, store.clone());
+    let mut stale = stale_sdk
+        .resume(&SwapId::new(id).expect("swap ID"))
+        .await
+        .expect("stale resume")
+        .expect("stale active maker");
+    assert_eq!(
+        (stale.status(), stale.revision()),
+        (Phase::TakerLockConfirmed, 1)
+    );
+
+    let plan = FirstLockPlanV1::lez(
+        PreparedFirstLockSubmissionV1::new(FirstLockStepV1::LezInitialize, [0x91; 32], vec![0xc1])
+            .expect("initialize"),
+        PreparedFirstLockSubmissionV1::new(FirstLockStepV1::LezFund, [0x92; 32], vec![0xc2])
+            .expect("fund"),
+    )
+    .expect("maker plan");
+    first
+        .drive_maker_lock(plan.clone())
+        .await
+        .expect("submit initialize");
+    lez.2.observe_as(
+        FirstLockStepV1::LezInitialize,
+        FirstLockObservation::Confirmed,
+    );
+    first
+        .drive_maker_lock(plan.clone())
+        .await
+        .expect("submit fund");
+    lez.2
+        .observe_as(FirstLockStepV1::LezFund, FirstLockObservation::Confirmed);
+    first
+        .project_maker_lock(
+            FirstLockConfirmedEvidenceV1::new(
+                FirstLockStepV1::LezFund,
+                [0x92; 32],
+                "stale-maker-lez-fund",
+                100,
+            )
+            .expect("maker evidence"),
+        )
+        .await
+        .expect("first maker commits");
+    let submissions = lez.2.submissions();
+
+    assert_eq!(
+        stale
+            .drive_maker_lock(plan)
+            .await
+            .expect("stale maker catches up"),
+        MakerLockDriveOutcome::AlreadyLocked { revision: 2 }
+    );
+    assert_eq!(
+        (stale.status(), stale.revision()),
+        (Phase::BothLegsLocked, 2)
+    );
+    assert_eq!(
+        lez.2.submissions(),
+        submissions,
+        "stale retry must not submit"
+    );
+    assert_eq!(
+        store
+            .maker_lock_transitions
+            .lock()
+            .expect("maker transitions")
+            .len(),
+        1
+    );
+}
+
 async fn assert_maker_happy_path_zcash_to_lez() {
     let forward_id = "sdk-maker-happy-zcash-to-lez";
     let forward_wire = agreement_wire(
