@@ -2,7 +2,13 @@ use std::{path::PathBuf, time::Duration};
 
 use bytesize::ByteSize;
 use common::transaction::LeeTransaction;
+#[path = "../../../crates/zec-swap-sdk/src/lez_derivation.rs"]
+mod sdk_lez_derivation;
 use nssa_core::program::{PdaSeed, ProgramId};
+use sdk_lez_derivation::{
+    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_public_pda_v1,
+    derive_lez_swap_id_v1, derive_lez_token_account_v1,
+};
 use sequencer_service::{BedrockConfig, SequencerConfig};
 use spel_framework_core::pda::{compute_pda, seed_from_str};
 
@@ -64,5 +70,41 @@ fn exact_pr_head_compiles_with_v0_2_standalone_config_and_lee_pdas() {
     assert_eq!(
         through_spel.to_string(),
         "Hc6erQu6uNFNvniSH1Gk8NCJFPtspi5VCQkEDbY3hLgo"
+    );
+}
+
+#[test]
+fn sdk_pda_helpers_match_exact_upstream_v0_2_types() {
+    let escrow_program: ProgramId = [1; 8];
+    let ata_program: ProgramId = [3; 8];
+    let swap_id = derive_lez_swap_id_v1(b"agreement-v1");
+
+    let upstream_metadata =
+        nssa_core::account::AccountId::for_public_pda(&escrow_program, &PdaSeed::new(swap_id));
+    assert_eq!(
+        derive_lez_public_pda_v1(&escrow_program, &swap_id),
+        upstream_metadata.into_value()
+    );
+    assert_eq!(
+        derive_lez_metadata_account_v1(&escrow_program, &swap_id),
+        compute_pda(&escrow_program, &[&swap_id]).into_value()
+    );
+
+    let custody_label = seed_from_str("custody");
+    assert_eq!(
+        derive_lez_native_custody_account_v1(&escrow_program, &swap_id),
+        compute_pda(&escrow_program, &[&custody_label, &swap_id]).into_value()
+    );
+
+    let owner = nssa_core::account::AccountId::new([3; 32]);
+    let definition = nssa_core::account::AccountId::new([8; 32]);
+    let upstream_ata_seed = associated_token_account_core::compute_ata_seed(owner, definition);
+    let upstream_ata = associated_token_account_core::get_associated_token_account_id(
+        &ata_program,
+        &upstream_ata_seed,
+    );
+    assert_eq!(
+        derive_lez_token_account_v1(&ata_program, owner.value(), definition.value()),
+        upstream_ata.into_value()
     );
 }

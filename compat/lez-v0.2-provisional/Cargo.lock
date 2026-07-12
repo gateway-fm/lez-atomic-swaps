@@ -422,6 +422,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4858a9d740c5007a9069007c3b4e91152d0506f13c1b31dd49051fd537656156"
 
 [[package]]
+name = "associated_token_account_core"
+version = "0.1.0"
+source = "git+https://github.com/logos-blockchain/logos-execution-zone.git?tag=v0.2.0#a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
+dependencies = [
+ "lee_core",
+ "risc0-zkvm",
+ "serde",
+]
+
+[[package]]
 name = "astro-float"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3128,11 +3138,13 @@ dependencies = [
 name = "lez-v0-2-provisional-compat"
 version = "0.0.0"
 dependencies = [
+ "associated_token_account_core",
  "bytesize",
  "common",
  "lee_core",
  "sequencer_service",
  "serde_json",
+ "sha2",
  "spel-framework-core",
  "tempfile",
 ]

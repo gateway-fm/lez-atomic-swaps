@@ -5,7 +5,7 @@ use std::error::Error;
 use async_trait::async_trait;
 use lez_swap_core::{Participant, SwapId};
 
-use crate::ZecAgreement;
+use crate::AcceptedZecAgreementEnvelopeV1;
 
 /// Authenticated, expiring offer discovery supplied by a Delivery adapter.
 ///
@@ -31,48 +31,57 @@ pub trait OfferDiscovery: Send + Sync {
 
 /// Mutually authenticated pre-lock negotiation supplied by a Chat adapter.
 ///
-/// Implementors return only a countersigned immutable agreement. Raw peer
-/// messages never enter the deterministic coordinator.
+/// Implementors return untrusted bounded-wire candidates. The SDK, rather than
+/// the transport adapter, validates every byte at a trusted local timestamp.
 #[async_trait]
 pub trait NegotiationChannel: Send + Sync {
     /// Adapter error with its structured source retained by the SDK.
     type Error: Error + Send + Sync + 'static;
-    /// Typed LEZ terms produced by the generated escrow client.
-    type LezTerms: Clone + std::fmt::Debug + Eq + Send + Sync + 'static;
     /// Role-local negotiation proposal.
     type LocalProposal: Send + Sync;
     /// Offer reference accepted by this channel.
     type OfferRef: Clone + Send + Sync;
 
-    /// Produces the same countersigned agreement for both independent roles.
+    /// Produces the same untrusted countersigned wire record for both roles.
     async fn negotiate(
         &self,
         local_participant: Participant,
         offer: &Self::OfferRef,
         proposal: Self::LocalProposal,
-    ) -> Result<ZecAgreement<Self::LezTerms>, Self::Error>;
+    ) -> Result<Vec<u8>, Self::Error>;
+}
+
+/// Atomic result of creating one immutable role-local agreement record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CreateAgreementOutcome {
+    /// No record existed and the exact envelope was durably created.
+    Created,
+    /// The exact same envelope was already durable; retry is idempotent.
+    ExistingSame,
+    /// The same role-local swap key contains different immutable bytes.
+    Conflict,
 }
 
 /// Durable role-local agreement storage used before any external lock.
 #[async_trait]
-pub trait RecoveryStore<LezTerms>: Clone + Send + Sync
-where
-    LezTerms: Clone + std::fmt::Debug + Eq + Send + Sync + 'static,
-{
+pub trait RecoveryStore: Clone + Send + Sync {
     /// Store error with its structured source retained by the SDK.
     type Error: Error + Send + Sync + 'static;
 
-    /// Atomically creates the immutable agreement and returns its revision.
+    /// Atomically creates the exact immutable envelope.
+    ///
+    /// `ExistingSame` is permitted only for an exact replay of every field.
+    /// Changed wire, acceptance time, local role, or revision is Conflict.
     async fn create_agreement(
         &self,
-        local_participant: Participant,
-        agreement: &ZecAgreement<LezTerms>,
-    ) -> Result<u64, Self::Error>;
+        envelope: &AcceptedZecAgreementEnvelopeV1,
+    ) -> Result<CreateAgreementOutcome, Self::Error>;
 
-    /// Loads one independently persisted role-local agreement.
+    /// Loads one untrusted durable envelope for the requested application ID.
+    ///
+    /// The SDK revalidates wire, role, revision, and requested ID.
     async fn load_agreement(
         &self,
-        local_participant: Participant,
         swap_id: &SwapId,
-    ) -> Result<Option<(u64, ZecAgreement<LezTerms>)>, Self::Error>;
+    ) -> Result<Option<AcceptedZecAgreementEnvelopeV1>, Self::Error>;
 }

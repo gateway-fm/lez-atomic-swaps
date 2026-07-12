@@ -2,6 +2,7 @@
 
 mod agreement_v1;
 mod funding;
+mod lez_derivation;
 mod lifecycle;
 mod observation;
 mod observation_record;
@@ -21,18 +22,18 @@ pub use agreement_v1::{
     ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementExecutionError,
     ZecAgreementRecordV1, ZecAgreementV1, ZecAgreementV1Error, ZecLezTermsV1,
     ZecParticipantIdentityV1, ZecParticipantsV1, ZecRefundPlanV1, ZecRolePayoutV1,
-    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
-    derive_lez_public_pda_v1, derive_lez_swap_id_v1, derive_lez_token_account_v1,
+    ZecTransactionPolicyV1,
 };
 
 pub use funding::{
     FundingBuildError, FundingSelection, TransparentFundingRequest, TransparentUtxo,
     build_funding_transaction, select_funding_utxos,
 };
-pub use lifecycle::{
-    BoxPortError, ClaimPreimage, ZEC_AGREEMENT_SCHEMA_V1, ZecAgreement, ZecAgreementError,
-    ZecLifecycleAction, ZecSdkError,
+pub use lez_derivation::{
+    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_public_pda_v1,
+    derive_lez_swap_id_v1, derive_lez_token_account_v1,
 };
+pub use lifecycle::{BoxPortError, ClaimPreimage, ZecLifecycleAction, ZecSdkError};
 
 pub use observation::{
     CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval, ExpectedBip199Output,
@@ -45,7 +46,7 @@ pub use observation_record::{
     replay_zcash_observation_history, revalidate_historical_event,
 };
 
-pub use ports::{NegotiationChannel, OfferDiscovery, RecoveryStore};
+pub use ports::{CreateAgreementOutcome, NegotiationChannel, OfferDiscovery, RecoveryStore};
 pub use profile::{ProfileError, ZecProfileId, ZecRefundProfile};
 pub use sdk::{ActiveZecSwap, ZecPairSdk};
 pub use spend_observation::{

@@ -34,7 +34,10 @@ current executable slices enforce:
 - two-definition official-ATA claim/refund lifecycles with real owner keys,
   immutable destinations, and cross-definition substitution rejection; and
 - machine-checked recursive native/authenticated-transfer and token/ATA/Token
-  Risc0 session costs with setup and Clock noise excluded.
+  Risc0 session costs with setup and Clock noise excluded; and
+- a bounded dual-signed LEZ/ZEC agreement integrated through role-fixed
+  negotiation, persistence-before-activation, and adversarial resume, without
+  exposing transport, raw chain, or recovery-store handles after activation.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),
@@ -56,7 +59,8 @@ cleanup behavior.
 The current executable operator, Zebra, and LEZ flows use no public blockchain
 RPC or faucet. The official LEZ v0.2 endpoint
 `https://testnet.lez.logos.co` is selected and its health/block/program methods
-were checked on 2026-07-12, but no repository user flow submits to it yet. Maker and Zebra host endpoints are ephemeral loopback services. The LEZ
+were checked on 2026-07-12, but no repository user flow submits to it yet. Maker
+and Zebra host endpoints are ephemeral loopback services. The LEZ
 test client uses loopback, but pinned upstream v0.1.2 binds its ephemeral server
 to the host wildcard address; it is short-lived and collision-isolated, not
 loopback/network-namespace isolated. Test funds are
@@ -107,10 +111,13 @@ another heavy build on the same host.
 
 That seam proves the v0.2 standalone config and `LeeTransaction` API compile,
 one tag-based `lee_core` identity is locked to the exact LEZ commit, and SPEL's
-public PDA matches LEZ's fixed `/LEE/` vector. It does not build or deploy the
-escrow guest/client, execute actor lifecycles, measure costs, or contact the
-public testnet. PR #238 remains unmerged and unreviewed, so a pass is explicitly
-not M2 completion or final release approval.
+public PDA matches LEZ's fixed `/LEE/` vector. A second test compiles the SDK's
+dependency-light derivation source directly in this pinned fixture and proves
+its swap metadata, native multi-seed custody, and associated-token-account bytes
+match exact upstream `lee_core`, SPEL, and ATA-core types. It does not build or
+deploy the escrow guest/client, execute actor lifecycles, measure costs, or
+contact the public testnet. PR #238 remains unmerged and unreviewed, so a pass
+is explicitly not M2 completion or final release approval.
 
 Cargo-deny also reports that exact LEZ graph as forcing vulnerable Hickory DNS
 `0.25.0-alpha.5` (`RUSTSEC-2026-0118` and `RUSTSEC-2026-0119`). The provisional

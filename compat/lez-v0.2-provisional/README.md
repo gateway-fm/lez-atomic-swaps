@@ -22,9 +22,12 @@ flowchart LR
     Fixture --> Config["Standalone v0.2 config compiles"]
     Fixture --> Tx["LeeTransaction envelope compiles"]
     Fixture --> PDA["SPEL PDA = LEZ /LEE/ PDA<br/>fixed vector"]
+    SDK["Dependency-light SDK derivation source"] --> Cross["Metadata + native custody + ATA<br/>match upstream types"]
+    Fixture --> Cross
     Config --> Next["Next: escrow guest + generated client port"]
     Tx --> Next
     PDA --> Next
+    Cross --> Next
     Next -.-> Testnet["Public testnet deployment and actor E2E"]
 ```
 
@@ -33,6 +36,11 @@ proves the standalone entry point and configuration API without binding a port,
 starting tasks, or writing sequencer state. Its temporary home is unique to the
 test. The fixed PDA vector proves that SPEL and LEZ resolve the same `/LEE/`
 derivation and prevents silently mixing tag and revision package identities.
+The second test compiles the exact SDK derivation source without importing the
+full SDK dependency graph, then compares metadata, SPEL `custody`/swap
+multi-seed, and official owner/definition ATA results with the pinned upstream
+types. This is compatibility evidence for local derivation; a chain adapter
+must still re-query deployed program and account identities.
 
 Run the complete lint/test/pin check with:
 

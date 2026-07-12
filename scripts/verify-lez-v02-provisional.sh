@@ -6,7 +6,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 fixture="compat/lez-v0.2-provisional/Cargo.toml"
 spel_commit="df17acd98436be4f09c55877dae1fe2e73cbcdca"
 lez_commit="a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
-compat_test_sha256="51533c89142a4bad6d71a7bf4370e4f5812a7351b5f176b9397b536a595a221e"
+compat_test_sha256="b40a5701a00937a405f134a6018becc9cd41f8e36edfe87d2a687eff44bff72c"
 run_id="${RUN_ID:-local-$$}"
 if [[ ! "$run_id" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
   echo "RUN_ID must contain only lowercase letters, numbers, underscores, or hyphens" >&2

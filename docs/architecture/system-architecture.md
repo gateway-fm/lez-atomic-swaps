@@ -103,12 +103,14 @@ after the first lock. Chain adapters accept consensus evidence from the selected
 LEZ sequencer, Bitcoin Core, `monerod`, or Zebra; peer messages never advance an
 on-chain state by themselves.
 
-The concrete LEZ/ZEC agreement validator is implemented on both actor sides as
-one bounded canonical wire contract. It authenticates public executable terms
-with both actors' transparent keys and derives a fresh coordinator, but it is
-not yet connected to the active SDK/store path. The dashed M2 topology in the
-deployment inventory records that integration boundary; typed chain adapters
-must independently recompute every chain-derived account, input, and deadline.
+The concrete LEZ/ZEC agreement validator is integrated on both actor sides as
+one bounded canonical wire contract. Negotiation yields untrusted bytes;
+role-fixed SDK instances validate and persist an accepted envelope before
+activation, then revalidate its exact durable wire on resume without retaining
+transport or raw adapter handles. The current executable store is an in-memory
+contract double. The dashed M2 topology records the remaining production store,
+typed effect, and actor integration boundary; chain adapters must independently
+recompute every chain-derived account, input, and deadline.
 
 The dashed state reflects delivery honestly. The deterministic core, SQLite
 repository, maker daemon, authenticated maker CLI flow, LEZ semantic

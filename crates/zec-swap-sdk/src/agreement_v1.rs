@@ -16,7 +16,8 @@ use zcash_transparent::{
 use crate::{
     FundingBuildError, TransactionBuildError, TransparentFundingRequest, TransparentSpendRequest,
     TransparentUtxo, ZcashNetworkRecordV1, ZecBindingRecordError, ZecProfileId, ZecProfileRecordV1,
-    ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1,
+    ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1, derive_lez_metadata_account_v1,
+    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1, derive_lez_token_account_v1,
 };
 
 /// Domain separating version-1 agreement commitments from every other signature protocol.
@@ -38,7 +39,6 @@ pub const MAX_ZEC_FUNDING_INPUTS: usize = 64;
 pub const MAX_ZEC_FUNDING_SCRIPT_BYTES: usize = 520;
 
 const ZEC_FUNDING_INPUT_SET_V1_DOMAIN: &[u8] = b"logos.gateway.zec-funding-input-set.v1\0";
-const LEZ_SWAP_ID_V1_DOMAIN: &[u8] = b"logos.gateway.lez-swap-id.v1\0";
 
 /// Stable primitive spelling of a supported trade direction.
 #[derive(BorshDeserialize, BorshSerialize, Clone, Copy, Debug, Eq, PartialEq)]
@@ -1145,6 +1145,27 @@ impl std::fmt::Debug for AcceptedZecAgreementEnvelopeV1 {
     }
 }
 
+impl AcceptedZecAgreementEnvelopeV1 {
+    /// Reconstitutes untrusted primitive fields loaded atomically from durable storage.
+    ///
+    /// This constructor deliberately performs no validation. Call
+    /// [`AcceptedZecAgreementV1::resume`] before using any field as protocol state.
+    #[must_use]
+    pub fn from_durable_parts(
+        agreement_wire: Vec<u8>,
+        accepted_at: UnixSeconds,
+        local_participant: Participant,
+        revision: u64,
+    ) -> Self {
+        Self {
+            agreement_wire,
+            accepted_at,
+            local_participant,
+            revision,
+        }
+    }
+}
+
 /// Validated agreement plus durable local acceptance context.
 #[derive(Clone, Eq, PartialEq)]
 pub struct AcceptedZecAgreementV1 {
@@ -1166,6 +1187,9 @@ impl AcceptedZecAgreementV1 {
         local_participant: Participant,
         revision: u64,
     ) -> Result<Self, ZecAgreementV1Error> {
+        if revision > i64::MAX as u64 {
+            return Err(ZecAgreementV1Error::InvalidDurableRevision(revision));
+        }
         Ok(Self {
             agreement: ZecAgreementV1::from_wire_at(wire, accepted_at)?,
             accepted_at,
@@ -1493,6 +1517,9 @@ pub enum ZecAgreementV1Error {
     /// Canonical in-memory wire encoding failed.
     #[error("agreement wire record could not be encoded")]
     WireEncoding,
+    /// Durable revisions must fit the non-negative signed range used by `SQLite`.
+    #[error("durable agreement revision {0} exceeds the supported range")]
+    InvalidDurableRevision(u64),
     /// The agreement does not bind a real SHA-256 digest.
     #[error("agreement secret digest is empty")]
     EmptySecretDigest,
@@ -1949,64 +1976,6 @@ fn pubkey_hash(public_key: &PublicKey) -> [u8; 20] {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("public keys always yield P2PKH"),
     }
-}
-
-#[must_use]
-pub fn derive_lez_swap_id_v1(application_swap_id: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(LEZ_SWAP_ID_V1_DOMAIN);
-    hasher.update(application_swap_id);
-    hasher.finalize().into()
-}
-
-/// Derives a public LEZ v0.2 PDA byte-for-byte like pinned `lee_core` v0.2.0.
-#[must_use]
-pub fn derive_lez_public_pda_v1(program_id: &[u32; 8], seed: &[u8; 32]) -> [u8; 32] {
-    const PREFIX: &[u8; 32] = b"/LEE/v0.2/AccountId/PDA/\0\0\0\0\0\0\0\0";
-    let mut preimage = [0_u8; 96];
-    preimage[..32].copy_from_slice(PREFIX);
-    for (index, word) in program_id.iter().enumerate() {
-        let offset = 32 + index * 4;
-        preimage[offset..offset + 4].copy_from_slice(&word.to_le_bytes());
-    }
-    preimage[64..].copy_from_slice(seed);
-    Sha256::digest(preimage).into()
-}
-
-/// Derives the v1 escrow metadata PDA from the exact escrow program and on-chain swap ID.
-#[must_use]
-pub fn derive_lez_metadata_account_v1(
-    escrow_program_id: &[u32; 8],
-    onchain_swap_id: &[u8; 32],
-) -> [u8; 32] {
-    derive_lez_public_pda_v1(escrow_program_id, onchain_swap_id)
-}
-
-/// Derives the native escrow custody PDA using pinned SPEL `custody`/swap multi-seed semantics.
-#[must_use]
-pub fn derive_lez_native_custody_account_v1(
-    escrow_program_id: &[u32; 8],
-    onchain_swap_id: &[u8; 32],
-) -> [u8; 32] {
-    let mut custody_label = [0_u8; 32];
-    custody_label[..7].copy_from_slice(b"custody");
-    let mut combined = Sha256::new();
-    combined.update(custody_label);
-    combined.update(onchain_swap_id);
-    derive_lez_public_pda_v1(escrow_program_id, &combined.finalize().into())
-}
-
-/// Derives an exact LEZ v0.2 associated-token account from ATA program, owner, and definition.
-#[must_use]
-pub fn derive_lez_token_account_v1(
-    ata_program_id: &[u32; 8],
-    owner: &[u8; 32],
-    definition: &[u8; 32],
-) -> [u8; 32] {
-    let mut seed = Sha256::new();
-    seed.update(owner);
-    seed.update(definition);
-    derive_lez_public_pda_v1(ata_program_id, &seed.finalize().into())
 }
 
 const fn role_mapping(

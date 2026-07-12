@@ -4,19 +4,26 @@ use std::{
 };
 
 use async_trait::async_trait;
-use lez_swap_core::{
-    Chain, ChainPosition, ChainProof, ConfirmationPolicy, Pair, Participant, Phase,
-    RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
-};
+use lez_swap_core::{Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{
-    ActiveZecSwap, Bip199Contract, ClaimPreimage, ExpectedBip199Output, NegotiationChannel,
-    OfferDiscovery, RecoveryStore, ZEC_AGREEMENT_SCHEMA_V1, ZecAgreement, ZecLifecycleAction,
-    ZecPairSdk, ZecProfileId, ZecRefundProfile, ZecSdkError, ZecSwapBinding,
+    AcceptedZecAgreementEnvelopeV1, ActiveZecSwap, Bip199Contract, ClaimPreimage,
+    CreateAgreementOutcome, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
+    MAX_ZEC_AGREEMENT_RECORD_BYTES, NegotiationChannel, NegotiationTranscriptV1, OfferDiscovery,
+    RecoveryStore, ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZcashTransparentDestinationV1,
+    ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1Error, ZecLezTermsV1,
+    ZecLifecycleAction, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
+    ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1,
+    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
+    derive_lez_swap_id_v1,
 };
+use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use zcash_protocol::{
     consensus::{BranchId, NetworkType},
     value::Zatoshis,
 };
+use zcash_transparent::address::TransparentAddress;
+
+const ACCEPTED_AT: UnixSeconds = UnixSeconds::new(10);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Offer(u64);
@@ -46,15 +53,23 @@ impl OfferDiscovery for MemoryDiscovery {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct MemoryNegotiation {
-    agreement: ZecAgreement<String>,
+    wire: Vec<u8>,
+}
+
+impl std::fmt::Debug for MemoryNegotiation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MemoryNegotiation")
+            .field("wire", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[async_trait]
 impl NegotiationChannel for MemoryNegotiation {
     type Error = TestPortError;
-    type LezTerms = String;
     type LocalProposal = Proposal;
     type OfferRef = Offer;
 
@@ -63,51 +78,66 @@ impl NegotiationChannel for MemoryNegotiation {
         _local_participant: Participant,
         _offer: &Self::OfferRef,
         _proposal: Self::LocalProposal,
-    ) -> Result<ZecAgreement<Self::LezTerms>, Self::Error> {
-        Ok(self.agreement.clone())
+    ) -> Result<Vec<u8>, Self::Error> {
+        Ok(self.wire.clone())
     }
 }
 
-type AgreementMap = HashMap<String, (u64, ZecAgreement<String>)>;
+type AgreementMap = HashMap<String, AcceptedZecAgreementEnvelopeV1>;
 
 #[derive(Clone, Debug, Default)]
 struct MemoryStore {
     agreements: Arc<Mutex<AgreementMap>>,
+    fail_create: bool,
+}
+
+impl MemoryStore {
+    fn with_record(key: &SwapId, envelope: AcceptedZecAgreementEnvelopeV1) -> Self {
+        let mut agreements = HashMap::new();
+        agreements.insert(key.as_str().to_owned(), envelope);
+        Self {
+            agreements: Arc::new(Mutex::new(agreements)),
+            fail_create: false,
+        }
+    }
 }
 
 #[async_trait]
-impl RecoveryStore<String> for MemoryStore {
+impl RecoveryStore for MemoryStore {
     type Error = TestPortError;
 
     async fn create_agreement(
         &self,
-        local_participant: Participant,
-        agreement: &ZecAgreement<String>,
-    ) -> Result<u64, Self::Error> {
-        let key = store_key(local_participant, agreement.coordinator().id());
-        let mut records = self.agreements.lock().expect("agreements lock");
-        if records.insert(key, (0, agreement.clone())).is_some() {
-            return Err(TestPortError("agreement already exists".to_owned()));
+        envelope: &AcceptedZecAgreementEnvelopeV1,
+    ) -> Result<CreateAgreementOutcome, Self::Error> {
+        if self.fail_create {
+            return Err(TestPortError("forced create failure".to_owned()));
         }
-        Ok(0)
+        let accepted = lez_zec_swap_sdk::AcceptedZecAgreementV1::resume(envelope)
+            .map_err(|error| TestPortError(error.to_string()))?;
+        let key = accepted.agreement().coordinator().id().as_str().to_owned();
+        let mut records = self.agreements.lock().expect("agreements lock");
+        match records.get(&key) {
+            None => {
+                records.insert(key, envelope.clone());
+                Ok(CreateAgreementOutcome::Created)
+            }
+            Some(existing) if existing == envelope => Ok(CreateAgreementOutcome::ExistingSame),
+            Some(_) => Ok(CreateAgreementOutcome::Conflict),
+        }
     }
 
     async fn load_agreement(
         &self,
-        local_participant: Participant,
         swap_id: &SwapId,
-    ) -> Result<Option<(u64, ZecAgreement<String>)>, Self::Error> {
+    ) -> Result<Option<AcceptedZecAgreementEnvelopeV1>, Self::Error> {
         Ok(self
             .agreements
             .lock()
             .expect("agreements lock")
-            .get(&store_key(local_participant, swap_id))
+            .get(swap_id.as_str())
             .cloned())
     }
-}
-
-fn store_key(participant: Participant, swap_id: &SwapId) -> String {
-    format!("{participant:?}:{}", swap_id.as_str())
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -121,12 +151,14 @@ struct NoopZcash;
 struct TestPortError(String);
 
 #[tokio::test]
-async fn independent_roles_negotiate_and_activate_without_transport_handles() {
-    let agreement = agreement("sdk-forward", SwapDirection::TakerSellsForeign);
+async fn independent_roles_validate_the_same_wire_and_persist_before_activation() {
+    let wire = agreement_wire(
+        "sdk-forward",
+        SwapDirection::TakerSellsForeign,
+        FixtureVariant::Local,
+    );
     let discovery = MemoryDiscovery::default();
-    let negotiation = MemoryNegotiation {
-        agreement: agreement.clone(),
-    };
+    let negotiation = MemoryNegotiation { wire };
     let maker_store = MemoryStore::default();
     let taker_store = MemoryStore::default();
     let maker = ZecPairSdk::new(
@@ -163,20 +195,25 @@ async fn independent_roles_negotiate_and_activate_without_transport_handles() {
     ));
 
     let maker_terms = maker
-        .negotiate(&published, Proposal)
+        .negotiate_at(&published, Proposal, ACCEPTED_AT)
         .await
-        .expect("maker obtains countersigned terms");
+        .expect("maker validates countersigned wire");
     let taker_terms = taker
-        .negotiate(&published, Proposal)
+        .negotiate_at(&published, Proposal, ACCEPTED_AT)
         .await
-        .expect("taker obtains countersigned terms");
-    assert_eq!(maker_terms, taker_terms);
+        .expect("taker validates countersigned wire");
+    assert_eq!(
+        maker_terms.agreement().agreement_commitment(),
+        taker_terms.agreement().agreement_commitment()
+    );
+    assert_eq!(maker_terms.local_participant(), Participant::Maker);
+    assert_eq!(taker_terms.local_participant(), Participant::Taker);
 
-    let maker_active: ActiveZecSwap<String, NoopLez, NoopZcash, MemoryStore> = maker
+    let maker_active: ActiveZecSwap<NoopLez, NoopZcash, MemoryStore> = maker
         .activate(maker_terms)
         .await
         .expect("maker persists before activation");
-    let taker_active: ActiveZecSwap<String, NoopLez, NoopZcash, MemoryStore> = taker
+    let taker_active: ActiveZecSwap<NoopLez, NoopZcash, MemoryStore> = taker
         .activate(taker_terms)
         .await
         .expect("taker persists before activation");
@@ -187,107 +224,262 @@ async fn independent_roles_negotiate_and_activate_without_transport_handles() {
     assert_eq!(taker_active.status(), Phase::Offered);
     assert_eq!(maker_active.next_action(), ZecLifecycleAction::Wait);
     assert_eq!(taker_active.next_action(), ZecLifecycleAction::FundZcash);
-    assert_eq!(maker_active.agreement().transcript_commitment(), &[7; 32]);
-    assert_eq!(taker_active.agreement().transcript_commitment(), &[7; 32]);
     assert_eq!(maker_store.agreements.lock().expect("maker store").len(), 1);
     assert_eq!(taker_store.agreements.lock().expect("taker store").len(), 1);
 
+    let swap_id = SwapId::new("sdk-forward").expect("id");
     let resumed = maker
-        .resume(agreement.coordinator().id())
+        .resume(&swap_id)
         .await
         .expect("load succeeds")
-        .expect("maker agreement exists");
+        .expect("maker agreement exists after transcript expiry");
     assert_eq!(resumed.local_participant(), Participant::Maker);
     assert_eq!(resumed.status(), Phase::Offered);
+    assert_eq!(resumed.revision(), 0);
+
+    let sdk_debug = format!("{maker:?}");
+    let active_debug = format!("{maker_active:?}");
+    for diagnostic in [&sdk_debug, &active_debug] {
+        assert!(!diagnostic.contains("sdk-forward"));
+        assert!(!diagnostic.contains("MemoryNegotiation"));
+        assert!(!diagnostic.contains("NoopLez"));
+        assert!(!diagnostic.contains("NoopZcash"));
+        assert!(!diagnostic.contains("MemoryStore"));
+    }
 }
 
 #[tokio::test]
-async fn reverse_direction_assigns_the_takers_first_action_to_lez() {
-    let agreement = agreement("sdk-reverse", SwapDirection::TakerSellsLez);
-    let sdk = ZecPairSdk::new(
-        Participant::Taker,
-        MemoryDiscovery::default(),
-        MemoryNegotiation {
-            agreement: agreement.clone(),
-        },
-        NoopLez,
-        NoopZcash,
-        MemoryStore::default(),
+async fn reverse_direction_preserves_the_role_fixed_first_action() {
+    let wire = agreement_wire(
+        "sdk-reverse",
+        SwapDirection::TakerSellsLez,
+        FixtureVariant::Local,
     );
-    let active = sdk.activate(agreement).await.expect("activation succeeds");
+    let sdk = sdk(Participant::Taker, wire, MemoryStore::default());
+    let accepted = sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("agreement");
+    let active = sdk.activate(accepted).await.expect("activation succeeds");
     assert_eq!(active.next_action(), ZecLifecycleAction::CreateAndFundLez);
 }
 
-#[test]
-fn agreement_rejects_wrong_pair_and_confirmation_policy() {
-    let valid = agreement("sdk-valid", SwapDirection::TakerSellsForeign);
-    assert_eq!(valid.schema_version(), ZEC_AGREEMENT_SCHEMA_V1);
-
-    let profile = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalV1);
-    let wrong_pair = SwapCoordinator::new_with_confirmation_policies(
-        SwapId::new("wrong-pair").expect("id"),
-        Pair::Bitcoin,
-        SwapDirection::TakerSellsForeign,
-        ConfirmationPolicy::new(1).expect("policy"),
-        ConfirmationPolicy::new(1).expect("policy"),
-        schedule(SwapDirection::TakerSellsForeign),
+#[tokio::test]
+async fn activation_is_idempotent_for_exact_replay_and_conflicts_on_changed_same_key() {
+    let store = MemoryStore::default();
+    let first = sdk(
+        Participant::Maker,
+        agreement_wire(
+            "sdk-idempotent",
+            SwapDirection::TakerSellsForeign,
+            FixtureVariant::Local,
+        ),
+        store.clone(),
     );
-    assert!(ZecAgreement::new(1, wrong_pair, binding(), String::new(), [7; 32]).is_err());
+    let accepted = first
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("agreement");
+    first
+        .activate(accepted.clone())
+        .await
+        .expect("first create");
+    first.activate(accepted).await.expect("exact replay");
 
-    let wrong_policy = SwapCoordinator::new_with_confirmation_policies(
-        SwapId::new("wrong-policy").expect("id"),
-        Pair::Zcash,
-        SwapDirection::TakerSellsForeign,
-        ConfirmationPolicy::new(profile.zcash_confirmations() + 1).expect("policy"),
-        ConfirmationPolicy::new(profile.lez_confirmations()).expect("policy"),
-        schedule(SwapDirection::TakerSellsForeign),
+    let changed = sdk(
+        Participant::Maker,
+        agreement_wire(
+            "sdk-idempotent",
+            SwapDirection::TakerSellsForeign,
+            FixtureVariant::ChangedTranscript,
+        ),
+        store,
     );
-    assert!(ZecAgreement::new(1, wrong_policy, binding(), String::new(), [7; 32]).is_err());
+    let changed_terms = changed
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("changed record remains internally valid");
+    assert!(matches!(
+        changed.activate(changed_terms).await,
+        Err(ZecSdkError::AgreementConflict)
+    ));
 }
 
-#[test]
-fn agreement_rejects_unknown_schema_empty_transcript_and_advanced_state() {
-    let offered = agreement("agreement-invariants", SwapDirection::TakerSellsForeign)
-        .coordinator()
-        .clone();
-    assert!(
-        ZecAgreement::new(
-            ZEC_AGREEMENT_SCHEMA_V1 + 1,
-            offered.clone(),
-            binding(),
-            String::new(),
-            [7; 32]
-        )
-        .is_err()
+#[tokio::test]
+async fn persistence_failure_prevents_activation() {
+    let store = MemoryStore {
+        fail_create: true,
+        ..MemoryStore::default()
+    };
+    let sdk = sdk(
+        Participant::Maker,
+        agreement_wire(
+            "sdk-persist-first",
+            SwapDirection::TakerSellsForeign,
+            FixtureVariant::Local,
+        ),
+        store,
     );
-    assert!(
-        ZecAgreement::new(
-            ZEC_AGREEMENT_SCHEMA_V1,
-            offered.clone(),
-            binding(),
-            String::new(),
-            [0; 32]
-        )
-        .is_err()
+    let accepted = sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("agreement");
+    assert!(matches!(
+        sdk.activate(accepted).await,
+        Err(ZecSdkError::Persistence(_))
+    ));
+}
+
+#[tokio::test]
+async fn activation_rejects_substituted_role_and_revision_before_store() {
+    let wire = agreement_wire(
+        "sdk-activation-context",
+        SwapDirection::TakerSellsForeign,
+        FixtureVariant::Local,
+    );
+    let store = MemoryStore::default();
+    let sdk = sdk(Participant::Maker, wire.clone(), store.clone());
+    let wrong_role = lez_zec_swap_sdk::AcceptedZecAgreementV1::accept_wire_at(
+        &wire,
+        ACCEPTED_AT,
+        Participant::Taker,
+        0,
+    )
+    .expect("valid agreement with substituted local context");
+    assert!(matches!(
+        sdk.activate(wrong_role).await,
+        Err(ZecSdkError::LocalRoleMismatch {
+            expected: Participant::Maker,
+            actual: Participant::Taker
+        })
+    ));
+
+    let wrong_revision = lez_zec_swap_sdk::AcceptedZecAgreementV1::accept_wire_at(
+        &wire,
+        ACCEPTED_AT,
+        Participant::Maker,
+        1,
+    )
+    .expect("valid agreement with substituted initial revision");
+    assert!(matches!(
+        sdk.activate(wrong_revision).await,
+        Err(ZecSdkError::InvalidActivationRevision(1))
+    ));
+    assert!(store.agreements.lock().expect("store").is_empty());
+}
+
+#[tokio::test]
+async fn untrusted_negotiation_wire_is_bounded_and_public_profile_fails_closed() {
+    let oversized = sdk(
+        Participant::Maker,
+        vec![0; MAX_ZEC_AGREEMENT_RECORD_BYTES + 1],
+        MemoryStore::default(),
+    );
+    assert!(matches!(
+        oversized
+            .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+            .await,
+        Err(ZecSdkError::InvalidAgreement(
+            ZecAgreementV1Error::OversizedWireRecord { .. }
+        ))
+    ));
+
+    let public = sdk(
+        Participant::Maker,
+        agreement_wire(
+            "sdk-public",
+            SwapDirection::TakerSellsForeign,
+            FixtureVariant::Public,
+        ),
+        MemoryStore::default(),
+    );
+    assert!(matches!(
+        public.negotiate_at(&Offer(1), Proposal, ACCEPTED_AT).await,
+        Err(ZecSdkError::InvalidAgreement(
+            ZecAgreementV1Error::PublicTestnetDeploymentUnavailable
+        ))
+    ));
+}
+
+#[tokio::test]
+async fn resume_revalidates_requested_id_role_commitment_and_revision() {
+    let requested = SwapId::new("sdk-requested").expect("id");
+    let valid_wire = agreement_wire(
+        requested.as_str(),
+        SwapDirection::TakerSellsForeign,
+        FixtureVariant::Local,
     );
 
-    let mut advanced = offered;
-    advanced
-        .observe_funding(
-            Participant::Taker,
-            ChainProof::new("already-funded", 1).expect("proof"),
-        )
-        .expect("valid core transition");
-    assert!(
-        ZecAgreement::new(
-            ZEC_AGREEMENT_SCHEMA_V1,
-            advanced,
-            binding(),
-            String::new(),
-            [7; 32]
-        )
-        .is_err()
+    let wrong_id = envelope(
+        agreement_wire(
+            "sdk-other",
+            SwapDirection::TakerSellsForeign,
+            FixtureVariant::Local,
+        ),
+        Participant::Maker,
+        0,
     );
+    assert!(matches!(
+        sdk(
+            Participant::Maker,
+            valid_wire.clone(),
+            MemoryStore::with_record(&requested, wrong_id)
+        )
+        .resume(&requested)
+        .await,
+        Err(ZecSdkError::AgreementIdentityMismatch { .. })
+    ));
+
+    let wrong_role = envelope(valid_wire.clone(), Participant::Taker, 0);
+    assert!(matches!(
+        sdk(
+            Participant::Maker,
+            valid_wire.clone(),
+            MemoryStore::with_record(&requested, wrong_role)
+        )
+        .resume(&requested)
+        .await,
+        Err(ZecSdkError::LocalRoleMismatch {
+            expected: Participant::Maker,
+            actual: Participant::Taker
+        })
+    ));
+
+    let corrupt_commitment = envelope(
+        agreement_wire(
+            requested.as_str(),
+            SwapDirection::TakerSellsForeign,
+            FixtureVariant::CorruptCommitment,
+        ),
+        Participant::Maker,
+        0,
+    );
+    assert!(matches!(
+        sdk(
+            Participant::Maker,
+            valid_wire.clone(),
+            MemoryStore::with_record(&requested, corrupt_commitment)
+        )
+        .resume(&requested)
+        .await,
+        Err(ZecSdkError::InvalidAgreement(
+            ZecAgreementV1Error::CommitmentMismatch
+        ))
+    ));
+
+    let invalid_revision = envelope(valid_wire.clone(), Participant::Maker, u64::MAX);
+    assert!(matches!(
+        sdk(
+            Participant::Maker,
+            valid_wire,
+            MemoryStore::with_record(&requested, invalid_revision)
+        )
+        .resume(&requested)
+        .await,
+        Err(ZecSdkError::InvalidAgreement(
+            ZecAgreementV1Error::InvalidDurableRevision(value)
+        )) if value == u64::MAX
+    ));
 }
 
 #[test]
@@ -297,57 +489,187 @@ fn claim_preimage_is_redacted_and_not_a_wire_record() {
     assert_eq!(format!("{preimage:?}"), "ClaimPreimage([REDACTED])");
 }
 
-fn agreement(id: &str, direction: SwapDirection) -> ZecAgreement<String> {
-    let profile = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalV1);
-    let coordinator = SwapCoordinator::new_with_confirmation_policies(
-        SwapId::new(id).expect("id"),
-        Pair::Zcash,
-        direction,
-        ConfirmationPolicy::new(match direction {
-            SwapDirection::TakerSellsForeign => profile.zcash_confirmations(),
-            SwapDirection::TakerSellsLez => profile.lez_confirmations(),
-        })
-        .expect("taker policy"),
-        ConfirmationPolicy::new(match direction {
-            SwapDirection::TakerSellsForeign => profile.lez_confirmations(),
-            SwapDirection::TakerSellsLez => profile.zcash_confirmations(),
-        })
-        .expect("maker policy"),
-        schedule(direction),
-    );
-    ZecAgreement::new(
-        ZEC_AGREEMENT_SCHEMA_V1,
-        coordinator,
-        binding(),
-        "typed LEZ terms supplied by the generated client".to_owned(),
-        [7; 32],
+fn sdk(
+    participant: Participant,
+    wire: Vec<u8>,
+    store: MemoryStore,
+) -> ZecPairSdk<MemoryDiscovery, MemoryNegotiation, NoopLez, NoopZcash, MemoryStore> {
+    ZecPairSdk::new(
+        participant,
+        MemoryDiscovery::default(),
+        MemoryNegotiation { wire },
+        NoopLez,
+        NoopZcash,
+        store,
     )
-    .expect("valid agreement")
 }
 
-fn binding() -> ZecSwapBinding {
-    let contract = Bip199Contract::new(120, [1; 20], [2; 32], [3; 20]);
-    let output = ExpectedBip199Output::new(
-        NetworkType::Regtest,
-        BranchId::Nu6_2,
-        Zatoshis::from_u64(100_000_000).expect("value"),
-        contract,
-    );
-    ZecSwapBinding::new(ZecProfileId::DeterministicLocalV1, output).expect("binding")
+fn envelope(
+    wire: Vec<u8>,
+    participant: Participant,
+    revision: u64,
+) -> AcceptedZecAgreementEnvelopeV1 {
+    AcceptedZecAgreementEnvelopeV1::from_durable_parts(wire, ACCEPTED_AT, participant, revision)
 }
 
-fn schedule(direction: SwapDirection) -> RecoverySchedule {
-    let safety =
-        TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_200, 100).expect("margin");
-    let (maker, taker) = match direction {
-        SwapDirection::TakerSellsForeign => (
-            ChainPosition::timestamp(Chain::Lez, 1_000),
-            ChainPosition::block_height(Chain::Zcash, 120),
-        ),
-        SwapDirection::TakerSellsLez => (
-            ChainPosition::block_height(Chain::Zcash, 120),
-            ChainPosition::timestamp(Chain::Lez, 1_000),
-        ),
+#[derive(Clone, Copy)]
+enum FixtureVariant {
+    Local,
+    ChangedTranscript,
+    Public,
+    CorruptCommitment,
+}
+
+fn agreement_wire(id: &str, direction: SwapDirection, variant: FixtureVariant) -> Vec<u8> {
+    let maker_secret = SecretKey::from_slice(&[1; 32]).expect("maker key");
+    let taker_secret = SecretKey::from_slice(&[2; 32]).expect("taker key");
+    let secp = Secp256k1::new();
+    let maker_key = PublicKey::from_secret_key(&secp, &maker_secret).serialize();
+    let taker_key = PublicKey::from_secret_key(&secp, &taker_secret).serialize();
+    let (refund_key, claimant_key) = match direction {
+        SwapDirection::TakerSellsForeign => (taker_key, maker_key),
+        SwapDirection::TakerSellsLez => (maker_key, taker_key),
     };
-    RecoverySchedule::new(Pair::Zcash, direction, maker, taker, safety).expect("schedule")
+    let refund_hash = pubkey_hash(&refund_key);
+    let claimant_hash = pubkey_hash(&claimant_key);
+    let FixtureDeployment {
+        profile,
+        environment,
+        network,
+        zcash_anchor,
+        zcash_refund_lock,
+        earlier_latest_ms,
+        later_earliest,
+    } = fixture_deployment(matches!(variant, FixtureVariant::Public));
+    let escrow_program = [1; 8];
+    let onchain_swap_id = derive_lez_swap_id_v1(id.as_bytes());
+    let metadata_account = derive_lez_metadata_account_v1(&escrow_program, &onchain_swap_id);
+    let custody_account = derive_lez_native_custody_account_v1(&escrow_program, &onchain_swap_id);
+    let digest = [9; 32];
+    let binding = fixture_binding(
+        profile,
+        network,
+        zcash_refund_lock,
+        refund_hash,
+        claimant_hash,
+        digest,
+    );
+    let body = ZecAgreementBodyV1::new(
+        id.to_owned(),
+        direction,
+        ZecProfileRecordV1::from(profile),
+        ZecParticipantsV1::new(
+            ZecParticipantIdentityV1::new([3; 32], maker_key),
+            ZecParticipantIdentityV1::new([4; 32], taker_key),
+        ),
+        digest,
+        ZecLezTermsV1::new(
+            LezChainIdentityV1::new(environment, [7; 32]),
+            escrow_program,
+            LezAssetV1::Native {
+                authenticated_transfer_program_id: [2; 8],
+            },
+            42,
+            metadata_account,
+            custody_account,
+        ),
+        ZecSwapBindingRecordV1::from_binding(&binding),
+        ZecTransactionPolicyV1::new(
+            [12; 32],
+            ZcashTransparentDestinationV1::p2pkh(refund_hash),
+            10_000,
+            1_000,
+            ZcashTransparentDestinationV1::p2pkh(claimant_hash),
+            10_000,
+            ZcashTransparentDestinationV1::p2pkh(refund_hash),
+            10_000,
+            40,
+        ),
+        ZecRefundPlanV1::new(100, zcash_anchor, earlier_latest_ms, later_earliest),
+        NegotiationTranscriptV1::new(
+            [5; 32],
+            if matches!(variant, FixtureVariant::ChangedTranscript) {
+                [0x66; 32]
+            } else {
+                [6; 32]
+            },
+            1_000,
+        ),
+    );
+    let commitment = body.commitment();
+    let record = ZecAgreementRecordV1::from_parts(
+        ZEC_CONCRETE_AGREEMENT_SCHEMA_V1,
+        body,
+        if matches!(variant, FixtureVariant::CorruptCommitment) {
+            [0x44; 32]
+        } else {
+            commitment
+        },
+        secp.sign_ecdsa(&Message::from_digest(commitment), &maker_secret)
+            .serialize_compact(),
+        secp.sign_ecdsa(&Message::from_digest(commitment), &taker_secret)
+            .serialize_compact(),
+    );
+    record.encode_wire().expect("bounded fixture wire")
+}
+
+struct FixtureDeployment {
+    profile: ZecProfileId,
+    environment: LezEnvironmentV1,
+    network: NetworkType,
+    zcash_anchor: u32,
+    zcash_refund_lock: u32,
+    earlier_latest_ms: u64,
+    later_earliest: u64,
+}
+
+fn fixture_deployment(is_public: bool) -> FixtureDeployment {
+    if is_public {
+        FixtureDeployment {
+            profile: ZecProfileId::PublicTestnetV1,
+            environment: LezEnvironmentV1::PublicTestnetV0_2,
+            network: NetworkType::Test,
+            zcash_anchor: 100,
+            zcash_refund_lock: 292,
+            earlier_latest_ms: 7_300_000,
+            later_earliest: 14_500,
+        }
+    } else {
+        FixtureDeployment {
+            profile: ZecProfileId::DeterministicLocalV1,
+            environment: LezEnvironmentV1::DeterministicLocalV0_2,
+            network: NetworkType::Regtest,
+            zcash_anchor: 116,
+            zcash_refund_lock: 120,
+            earlier_latest_ms: 160_000,
+            later_earliest: 200,
+        }
+    }
+}
+
+fn fixture_binding(
+    profile: ZecProfileId,
+    network: NetworkType,
+    refund_lock: u32,
+    refund_hash: [u8; 20],
+    claimant_hash: [u8; 20],
+    digest: [u8; 32],
+) -> ZecSwapBinding {
+    ZecSwapBinding::new(
+        profile,
+        ExpectedBip199Output::new(
+            network,
+            BranchId::Nu6_2,
+            Zatoshis::from_u64(100_000_000).expect("value"),
+            Bip199Contract::new(refund_lock, refund_hash, digest, claimant_hash),
+        ),
+    )
+    .expect("binding")
+}
+
+fn pubkey_hash(bytes: &[u8; 33]) -> [u8; 20] {
+    match TransparentAddress::from_pubkey(&PublicKey::from_slice(bytes).expect("fixture pubkey")) {
+        TransparentAddress::PublicKeyHash(hash) => hash,
+        TransparentAddress::ScriptHash(_) => unreachable!("public keys produce P2PKH"),
+    }
 }

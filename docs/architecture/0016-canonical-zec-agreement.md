@@ -1,6 +1,7 @@
 # ADR 0016: Canonical dual-signed LEZ/ZEC agreement
 
-Status: validator and wire contract implemented; active lifecycle integration pending — 2026-07-12
+Status: validator, wire contract, and active lifecycle integration implemented;
+effect adapters pending — 2026-07-12
 
 ```mermaid
 flowchart LR
@@ -12,13 +13,16 @@ flowchart LR
     Hash --> Signatures["Dual compact low-S signatures"]
     Signatures --> CrossBind["Profile, roles, deadlines, assets, destinations, fees, and transcript"]
     CrossBind --> Trusted["Validated ZecAgreementV1"]
-    Trusted --> Coordinator["Fresh deterministic coordinator"]
+    Trusted --> Accepted["Accepted time, fixed role, commitment, and revision"]
+    Accepted --> Store["RecoveryStore contract"]
+    Store --> Active["Revalidated transport-free active swap"]
+    Active --> Coordinator["Fresh deterministic coordinator"]
     Trusted -.-> LezAdapter["LEZ adapter recomputes program, metadata, custody, and ATAs"]
     Trusted -.-> ZecAdapter["Zebra adapter recomputes input set and exact transaction policy"]
-    Trusted -.-> ActiveStore["Versioned role-local active store"]
+    Store -.-> ProductionStore["Encrypted production adapter"]
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class LezAdapter,ZecAdapter,ActiveStore planned;
+    class LezAdapter,ZecAdapter,ProductionStore planned;
 ```
 
 ## Context
@@ -76,13 +80,18 @@ The record contains public protocol terms, public keys, signatures, and a secret
 digest; it never contains a preimage or private key. Borsh 1.7 is MIT or
 Apache-2.0, and `subtle` 2.6.1 is BSD-3-Clause.
 
-The current generic `ZecAgreement<LezTerms>` activation path is not yet replaced
-by this record, and raw active effect-port access remains prohibited. The next
-slice must make negotiation return untrusted wire bytes, persist the validated
-record with accepted time, role, commitment, and revision, revalidate on resume,
-and remove generic/raw adapter escape hatches before chain effects are added.
+The generic activation seam has been replaced. Negotiation returns untrusted
+wire bytes; the SDK validates them at a trusted local time, fixes the local role,
+and persists the accepted time, exact wire, commitment, and revision before an
+active value exists. Resume checks the requested swap ID, role, signed body,
+signatures, commitment, wire, and supported revision before rebuilding the
+coordinator. Exact retry is idempotent while a changed same-key record conflicts.
+The active API exposes no raw chain or storage handles. Production encrypted
+storage, typed effect adapters, and real actor orchestration remain pending.
 Public-testnet agreement validation deliberately fails until a reviewed escrow
 deployment fixes its genesis and program identities. The lightweight `/LEE/`
-PDA implementation has pinned golden vectors; the provisional compatibility
-fixture must still cross-check those vectors through exact upstream v0.2 types
-before an adapter may rely on it.
+PDA implementation has pinned golden vectors, and the provisional compatibility
+fixture compiles the exact same dependency-light source against upstream v0.2
+`lee_core`, SPEL multi-seed, and ATA-core types. This avoids pulling the full
+Risc0/LEZ runtime into the production SDK; adapters must still recompute the
+identities selected by an actual deployment.

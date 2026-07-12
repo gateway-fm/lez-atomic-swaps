@@ -15,10 +15,12 @@ lez_tag = "v0.2.0"
 lez_commit = "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
 
 [dev-dependencies]
+associated_token_account_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
 bytesize = "=2.3.1"
 common = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
 nssa_core = { package = "lee_core", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["host"] }
 sequencer_service = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["standalone"] }
 serde_json = "=1.0.149"
+sha2 = "=0.10.9"
 spel-framework-core = { version = "=0.5.0", git = "https://github.com/logos-co/spel.git", rev = "df17acd98436be4f09c55877dae1fe2e73cbcdca" }
 tempfile = "=3.26.0"

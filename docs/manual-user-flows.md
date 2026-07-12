@@ -10,7 +10,7 @@ actor boundary, expected result, or cleanup rule changes.
 
 | Flow | Boundary exercised | Current limitation |
 |---|---|---|
-| ZEC SDK agreement/activation | Canonical bounded dual-signed record proves chain/profile/role/custody/deadline/transaction-policy cross-binding; independent role-fixed SDK instances separately prove persistence and transport-free activation | The concrete record is not yet integrated into the generic in-memory activation seam; neither command proves Delivery/Chat, encrypted storage, or chain lifecycle effects |
+| ZEC SDK agreement/activation | Canonical bounded dual-signed record is integrated through untrusted negotiation, role-fixed persistence-before-activation, and adversarial resume | The recovery adapter is an in-memory contract double; these commands do not prove Delivery/Chat, encrypted storage, chain lifecycle effects, or actor E2E |
 | Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
 | Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v4 SQLite journal/alerts, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The production daemon does not yet own a polling loop, and maker/taker actors are not yet independent |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
@@ -129,7 +129,10 @@ A pass proves all of the following and nothing broader:
 - the v0.2 `SequencerConfig` and standalone entry point compile, without polling
   the future or starting the sequencer;
 - the renamed `LeeTransaction` envelope compiles; and
-- SPEL and LEZ derive the same fixed public `/LEE/` PDA vector.
+- SPEL and LEZ derive the same fixed public `/LEE/` PDA vector; and
+- the exact dependency-light SDK source produces the same metadata PDA, native
+  `custody`/swap multi-seed PDA, and owner/definition ATA as pinned upstream
+  `lee_core`, SPEL, and ATA-core types.
 
 It does **not** rebuild the escrow guest, generated IDL/client, or checked ELF;
 does not run maker/taker roles, custody, deadlines, costs, RPC, deployment, or
@@ -339,15 +342,18 @@ exact wire decoding, both low-S signatures, every signed-field mutation, both
 directions, deterministic-local execution terms, fail-closed public deployment,
 actual LEZ/ZEC deadlines, role/digest binding, agreement-derived
 fees/destinations/expiry/funding requests, exact native/token PDA/ATA accounts,
-accepted-at resume, and redacted diagnostics. The second creates independent
-maker and taker SDK instances with fixed roles and
-separate stores and proves publish/discover/negotiate,
-persist-before-activation, transport-free active types, and resume.
+accepted-at resume, and redacted diagnostics. The second runs eight integrated
+cases in which independent maker and taker SDK instances with fixed roles
+receive untrusted bytes, validate the concrete record, persist separate accepted
+envelopes before activation, and resume the original wire after transcript
+expiry. It also proves exact retry idempotence, changed same-key conflict,
+wrong-role/revision/wire/swap-ID rejection, redacted active diagnostics, and
+transport-free active types. Package rustdoc additionally compile-fails any
+attempt to obtain raw LEZ, Zcash, or recovery-store handles from an active swap.
 
-These are adjacent boundaries, not yet one integrated user journey: activation
-still uses the earlier generic agreement type. Both adapters are in-memory
-contract doubles; neither command proves Logos Delivery/Chat, encrypted
-production storage, or LEZ/Zebra lifecycle actions.
+Both adapters are in-memory contract doubles; neither command proves real Logos
+Delivery/Chat, encrypted production storage, LEZ/Zebra lifecycle effects, or a
+real maker/taker actor E2E.
 
 Before starting Zebra, reproduce spend recognition independently from SDK
 construction policy:
