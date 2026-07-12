@@ -424,6 +424,14 @@ impl FirstLockTransitionV1 {
         self.predecessor_revision
     }
 
+    pub(crate) const fn agreement_commitment(&self) -> &[u8; 32] {
+        &self.agreement_commitment
+    }
+
+    pub(crate) const fn local_participant(&self) -> Participant {
+        self.local_participant
+    }
+
     /// Exact final-step evidence.
     #[must_use]
     pub const fn evidence(&self) -> &FirstLockConfirmedEvidenceV1 {

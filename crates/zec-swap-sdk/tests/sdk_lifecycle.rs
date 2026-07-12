@@ -6,18 +6,20 @@ use std::{
 use async_trait::async_trait;
 use lez_swap_core::{Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{
-    AcceptedZecAgreementEnvelopeV1, ActiveZecSwap, Bip199Contract, ClaimPreimage,
-    CreateAgreementOutcome, CreateFirstLockOutcome, ExpectedBip199Output,
-    FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentV1, FirstLockObservation,
-    FirstLockPlanV1, FirstLockProjectionCommit, FirstLockStepV1, FirstLockTransitionV1, LezAssetV1,
-    LezChainIdentityV1, LezEnvironmentV1, LezFirstLockPort, MAX_ZEC_AGREEMENT_RECORD_BYTES,
-    NegotiationChannel, NegotiationTranscriptV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
-    RecoveryStore, ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZcashFirstLockPort,
-    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1Error,
-    ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1,
-    ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding,
-    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
-    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract,
+    ClaimPreimage, CreateAgreementOutcome, CreateFirstLockOutcome, ExpectedBip199Output,
+    FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentRecordV1,
+    FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1, FirstLockProjectionCommit,
+    FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1, FirstLockTransitionV1,
+    LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, LezFirstLockPort,
+    MAX_FIRST_LOCK_SUBMISSION_BYTES, MAX_ZEC_AGREEMENT_RECORD_BYTES, NegotiationChannel,
+    NegotiationTranscriptV1, OfferDiscovery, PreparedFirstLockSubmissionV1, RecoveryStore,
+    ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZcashFirstLockPort, ZcashTransparentDestinationV1,
+    ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1Error, ZecLezTermsV1,
+    ZecLifecycleAction, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
+    ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1,
+    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
+    derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use zcash_protocol::{
@@ -795,6 +797,231 @@ async fn projection_failure_never_mutates_core_and_unknown_success_is_probed() {
     assert_eq!(commit, FirstLockProjectionCommit::new(1, true));
     assert_eq!(active.revision(), 1);
     assert_eq!(active.status(), Phase::TakerLockConfirmed);
+}
+
+#[tokio::test]
+async fn durable_first_lock_records_revalidate_primitive_payloads_and_closed_intent() {
+    let swap_id = "sdk-first-lock-records";
+    let store = MemoryStore::default();
+    let sdk = first_lock_sdk(
+        Participant::Taker,
+        agreement_wire(
+            swap_id,
+            SwapDirection::TakerSellsForeign,
+            FixtureVariant::Local,
+        ),
+        MemoryLezPort::default(),
+        MemoryZcashPort::default(),
+        store.clone(),
+    );
+    let accepted = sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("agreement");
+    let mut active = sdk.activate(accepted.clone()).await.expect("activation");
+    active
+        .stage_first_lock(zcash_first_lock_plan([0x41; 32], vec![0x51, 0x52]))
+        .await
+        .expect("intent");
+    let trusted_intent = store
+        .first_locks
+        .lock()
+        .expect("intent lock")
+        .get(swap_id)
+        .cloned()
+        .expect("retained intent");
+    let intent_record = FirstLockIntentRecordV1::from(&trusted_intent);
+    assert_eq!(
+        FirstLockIntentRecordV1::from(
+            &intent_record
+                .revalidate(&accepted, 0)
+                .expect("intent revalidates")
+        ),
+        intent_record
+    );
+
+    assert_invalid_intent_records(&accepted, &intent_record);
+
+    active
+        .project_first_lock(confirmed_zcash_first_lock([0x41; 32], "record-first-lock"))
+        .await
+        .expect("transition");
+    let trusted_transition = store
+        .first_lock_transitions
+        .lock()
+        .expect("transition lock")
+        .get(&(swap_id.to_owned(), 0))
+        .cloned()
+        .expect("retained transition");
+    let transition_record = FirstLockTransitionRecordV1::from(&trusted_transition);
+    assert_eq!(
+        FirstLockTransitionRecordV1::from(
+            &transition_record
+                .revalidate(&accepted, &intent_record, 0)
+                .expect("transition and closed intent revalidate")
+        ),
+        transition_record
+    );
+
+    assert_invalid_transition_contexts(&accepted, &intent_record, &transition_record);
+    assert_invalid_transition_evidence(&accepted, &intent_record, &transition_record);
+}
+
+fn assert_invalid_intent_records(
+    accepted: &AcceptedZecAgreementV1,
+    intent_record: &FirstLockIntentRecordV1,
+) {
+    let mutate = |field: &str, value: serde_json::Value| {
+        let mut json = serde_json::to_value(intent_record).expect("intent JSON");
+        json[field] = value;
+        serde_json::from_value::<FirstLockIntentRecordV1>(json).expect("mutated intent record")
+    };
+    let future = mutate("schema_version", serde_json::json!(2));
+    assert!(matches!(
+        future.revalidate(accepted, 0),
+        Err(FirstLockRecordError::UnsupportedSchema { actual: 2, .. })
+    ));
+    let wrong_role = mutate("local_participant", serde_json::json!("maker"));
+    assert!(matches!(
+        wrong_role.revalidate(accepted, 0),
+        Err(FirstLockRecordError::RoleMismatch)
+    ));
+    let wrong_swap = mutate("swap_id", serde_json::json!("wrong-swap"));
+    assert!(matches!(
+        wrong_swap.revalidate(accepted, 0),
+        Err(FirstLockRecordError::SwapIdMismatch)
+    ));
+    let wrong_revision = mutate("predecessor_revision", serde_json::json!(1));
+    assert!(matches!(
+        wrong_revision.revalidate(accepted, 0),
+        Err(FirstLockRecordError::RevisionMismatch)
+    ));
+
+    let mut wrong_commitment = serde_json::to_value(intent_record).expect("intent JSON");
+    wrong_commitment["agreement_commitment"][0] = serde_json::json!(0xff);
+    let wrong_commitment = serde_json::from_value::<FirstLockIntentRecordV1>(wrong_commitment)
+        .expect("wrong commitment record");
+    assert!(matches!(
+        wrong_commitment.revalidate(accepted, 0),
+        Err(FirstLockRecordError::AgreementCommitmentMismatch)
+    ));
+
+    let mut oversized = serde_json::to_value(intent_record).expect("intent JSON");
+    oversized["plan"]["funding"]["exact_submission"] =
+        serde_json::to_value(vec![0_u8; MAX_FIRST_LOCK_SUBMISSION_BYTES + 1])
+            .expect("oversized primitive bytes");
+    let oversized = serde_json::from_value::<FirstLockIntentRecordV1>(oversized)
+        .expect("oversized primitive record");
+    assert!(matches!(
+        oversized.revalidate(accepted, 0),
+        Err(FirstLockRecordError::Intent(_))
+    ));
+
+    let mut wrong_plan = serde_json::to_value(intent_record).expect("intent JSON");
+    let initialize = wrong_plan["plan"]["funding"].take();
+    let mut fund = initialize.clone();
+    fund["step"] = serde_json::json!("lez_fund");
+    fund["expected_submission_id"][0] = serde_json::json!(0xfc);
+    let mut initialize = initialize;
+    initialize["step"] = serde_json::json!("lez_initialize");
+    wrong_plan["plan"] = serde_json::json!({
+        "plan": "lez",
+        "initialize": initialize,
+        "fund": fund
+    });
+    let wrong_plan =
+        serde_json::from_value::<FirstLockIntentRecordV1>(wrong_plan).expect("wrong plan record");
+    assert!(matches!(
+        wrong_plan.revalidate(accepted, 0),
+        Err(FirstLockRecordError::Intent(
+            lez_zec_swap_sdk::FirstLockIntentError::WrongPlanForDirection(_)
+        ))
+    ));
+}
+
+fn assert_invalid_transition_contexts(
+    accepted: &AcceptedZecAgreementV1,
+    intent_record: &FirstLockIntentRecordV1,
+    transition_record: &FirstLockTransitionRecordV1,
+) {
+    let mutate = |field: &str, value: serde_json::Value| {
+        let mut json = serde_json::to_value(transition_record).expect("transition JSON");
+        json[field] = value;
+        serde_json::from_value::<FirstLockTransitionRecordV1>(json)
+            .expect("mutated transition record")
+    };
+    let future = mutate("schema_version", serde_json::json!(2));
+    assert!(matches!(
+        future.revalidate(accepted, intent_record, 0),
+        Err(FirstLockRecordError::UnsupportedSchema { actual: 2, .. })
+    ));
+    let wrong_role = mutate("local_participant", serde_json::json!("maker"));
+    assert!(matches!(
+        wrong_role.revalidate(accepted, intent_record, 0),
+        Err(FirstLockRecordError::RoleMismatch)
+    ));
+    let wrong_swap = mutate("swap_id", serde_json::json!("wrong-swap"));
+    assert!(matches!(
+        wrong_swap.revalidate(accepted, intent_record, 0),
+        Err(FirstLockRecordError::SwapIdMismatch)
+    ));
+    let wrong_revision = mutate("predecessor_revision", serde_json::json!(1));
+    assert!(matches!(
+        wrong_revision.revalidate(accepted, intent_record, 0),
+        Err(FirstLockRecordError::RevisionMismatch)
+    ));
+    let mut wrong_commitment = serde_json::to_value(transition_record).expect("transition JSON");
+    wrong_commitment["agreement_commitment"][0] = serde_json::json!(0xfb);
+    let wrong_commitment = serde_json::from_value::<FirstLockTransitionRecordV1>(wrong_commitment)
+        .expect("wrong-commitment transition record");
+    assert!(matches!(
+        wrong_commitment.revalidate(accepted, intent_record, 0),
+        Err(FirstLockRecordError::AgreementCommitmentMismatch)
+    ));
+}
+
+fn assert_invalid_transition_evidence(
+    accepted: &AcceptedZecAgreementV1,
+    intent_record: &FirstLockIntentRecordV1,
+    transition_record: &FirstLockTransitionRecordV1,
+) {
+    let mut wrong_step = serde_json::to_value(transition_record).expect("transition JSON");
+    wrong_step["evidence"]["step"] = serde_json::json!("lez_fund");
+    let wrong_step = serde_json::from_value::<FirstLockTransitionRecordV1>(wrong_step)
+        .expect("wrong-step transition record");
+    assert!(matches!(
+        wrong_step.revalidate(accepted, intent_record, 0),
+        Err(FirstLockRecordError::Transition(_))
+    ));
+
+    let mut wrong_identity = serde_json::to_value(transition_record).expect("transition JSON");
+    wrong_identity["evidence"]["expected_submission_id"][0] = serde_json::json!(0xfe);
+    let wrong_identity = serde_json::from_value::<FirstLockTransitionRecordV1>(wrong_identity)
+        .expect("wrong-identity transition record");
+    assert!(matches!(
+        wrong_identity.revalidate(accepted, intent_record, 0),
+        Err(FirstLockRecordError::Transition(_))
+    ));
+
+    let mut insufficient = serde_json::to_value(transition_record).expect("transition JSON");
+    insufficient["evidence"]["confirmations"] = serde_json::json!(0);
+    let insufficient = serde_json::from_value::<FirstLockTransitionRecordV1>(insufficient)
+        .expect("zero-confirmation transition record");
+    assert!(matches!(
+        insufficient.revalidate(accepted, intent_record, 0),
+        Err(FirstLockRecordError::Transition(
+            lez_zec_swap_sdk::FirstLockTransitionError::ZeroConfirmations
+        ))
+    ));
+
+    let mut corrupt_closed = serde_json::to_value(intent_record).expect("intent JSON");
+    corrupt_closed["agreement_commitment"][0] = serde_json::json!(0xfd);
+    let corrupt_closed = serde_json::from_value::<FirstLockIntentRecordV1>(corrupt_closed)
+        .expect("corrupt closed intent record");
+    assert!(matches!(
+        transition_record.revalidate(accepted, &corrupt_closed, 0),
+        Err(FirstLockRecordError::ClosedIntent(_))
+    ));
 }
 
 #[tokio::test]

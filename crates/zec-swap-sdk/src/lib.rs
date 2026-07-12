@@ -2,6 +2,7 @@
 
 mod agreement_v1;
 mod first_lock;
+mod first_lock_record;
 mod funding;
 mod lez_derivation;
 mod lifecycle;
@@ -31,6 +32,10 @@ pub use first_lock::{
     FirstLockIntentError, FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1,
     FirstLockProjectionCommit, FirstLockStepV1, FirstLockTransitionError, FirstLockTransitionV1,
     MAX_FIRST_LOCK_SUBMISSION_BYTES, PreparedFirstLockSubmissionV1,
+};
+pub use first_lock_record::{
+    FIRST_LOCK_RECORD_SCHEMA_V1, FirstLockIntentRecordV1, FirstLockRecordError,
+    FirstLockTransitionRecordV1,
 };
 pub use funding::{
     FundingBuildError, FundingSelection, TransparentFundingRequest, TransparentUtxo,
