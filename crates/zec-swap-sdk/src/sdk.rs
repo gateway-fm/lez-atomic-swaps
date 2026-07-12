@@ -606,7 +606,7 @@ where
                 .map_err(|error| ZecSdkError::ZcashTakerFirstLockObservation(Box::new(error)))?,
             crate::FirstLockStepV1::LezFund => self
                 .lez
-                .observe_taker_first_lock(self.agreement())
+                .observe_taker_first_lock(self.agreement(), self.lez_taker_lock_tracker.current())
                 .await
                 .map_err(|error| ZecSdkError::LezTakerFirstLockObservation(Box::new(error)))?,
             crate::FirstLockStepV1::LezInitialize => unreachable!("not a final lock step"),
@@ -717,6 +717,14 @@ fn observed_taker_lock_evidence(
         TakerFirstLockObservationV1::Confirmed(evidence) => Some(evidence),
         TakerFirstLockObservationV1::CanonicalLez(canonical) => Some(
             crate::ObservedTakerFirstLockEvidenceV1::from_canonical_lez(*canonical),
+        ),
+        TakerFirstLockObservationV1::LezRemoved(removed) => {
+            Some(crate::ObservedTakerFirstLockEvidenceV1::from_canonical_lez_removal(*removed))
+        }
+        TakerFirstLockObservationV1::LezReplaced { removed, canonical } => Some(
+            crate::ObservedTakerFirstLockEvidenceV1::from_canonical_lez_replacement(
+                *removed, *canonical,
+            ),
         ),
         TakerFirstLockObservationV1::CanonicalZcash(canonical) => {
             Some(crate::ObservedTakerFirstLockEvidenceV1::from_canonical_zcash(*canonical))

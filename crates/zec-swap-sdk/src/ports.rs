@@ -119,6 +119,7 @@ pub trait LezTakerFirstLockObservationPort: Send + Sync {
     async fn observe_taker_first_lock(
         &self,
         agreement: &crate::ZecAgreementV1,
+        previous: Option<&crate::CanonicalLezEscrowObservationV1>,
     ) -> Result<TakerFirstLockObservationV1, Self::Error>;
 }
 

@@ -25,6 +25,15 @@ pub enum TakerFirstLockObservationV1 {
     Confirmed(ObservedTakerFirstLockEvidenceV1),
     /// Complete canonical LEZ escrow evidence validated from one stable RPC snapshot.
     CanonicalLez(Box<crate::CanonicalLezEscrowObservationV1>),
+    /// Affirmative stable evidence that the prior canonical LEZ escrow was removed.
+    LezRemoved(Box<crate::CanonicalLezEscrowRemovalV1>),
+    /// One stable poll atomically removed prior LEZ evidence and found its replacement.
+    LezReplaced {
+        /// Affirmative evidence for the detached escrow.
+        removed: Box<crate::CanonicalLezEscrowRemovalV1>,
+        /// Complete canonical replacement evidence.
+        canonical: Box<crate::CanonicalLezEscrowObservationV1>,
+    },
     /// Complete canonical Zcash evidence validated from a stable node snapshot.
     CanonicalZcash(Box<CanonicalZcashOutputObservation>),
     /// Affirmative stable evidence that the prior canonical Zcash output was removed.
@@ -42,6 +51,11 @@ pub enum TakerFirstLockObservationV1 {
 enum ObservedTakerFirstLockEvidenceSourceV1 {
     AdapterAssertion,
     CanonicalLez(Box<crate::CanonicalLezEscrowObservationV1>),
+    CanonicalLezRemoval(Box<crate::CanonicalLezEscrowRemovalV1>),
+    CanonicalLezReplacement {
+        removed: Box<crate::CanonicalLezEscrowRemovalV1>,
+        canonical: Box<crate::CanonicalLezEscrowObservationV1>,
+    },
     CanonicalZcash(Box<CanonicalZcashOutputObservation>),
     CanonicalZcashRemoval(Box<crate::CanonicalZcashOutputRemoval>),
     CanonicalZcashReplacement {
@@ -105,17 +119,38 @@ impl ObservedTakerFirstLockEvidenceV1 {
     }
 
     pub(crate) fn from_canonical_lez(value: crate::CanonicalLezEscrowObservationV1) -> Self {
-        let mut transaction_id = String::with_capacity(64);
-        for byte in value.transaction_id() {
-            use std::fmt::Write as _;
-            write!(&mut transaction_id, "{byte:02x}").expect("writing to String cannot fail");
-        }
         Self {
             schema_version: OBSERVED_TAKER_FIRST_LOCK_SCHEMA_V1,
             step: FirstLockStepV1::LezFund,
-            transaction_id: transaction_id.into(),
+            transaction_id: lez_transaction_id(value.transaction_id()).into(),
             confirmations: value.confirmations().get(),
             source: ObservedTakerFirstLockEvidenceSourceV1::CanonicalLez(Box::new(value)),
+        }
+    }
+
+    pub(crate) fn from_canonical_lez_removal(value: crate::CanonicalLezEscrowRemovalV1) -> Self {
+        Self {
+            schema_version: OBSERVED_TAKER_FIRST_LOCK_SCHEMA_V1,
+            step: FirstLockStepV1::LezFund,
+            transaction_id: lez_transaction_id(value.previous().transaction_id()).into(),
+            confirmations: value.previous().confirmations().get(),
+            source: ObservedTakerFirstLockEvidenceSourceV1::CanonicalLezRemoval(Box::new(value)),
+        }
+    }
+
+    pub(crate) fn from_canonical_lez_replacement(
+        removed: crate::CanonicalLezEscrowRemovalV1,
+        canonical: crate::CanonicalLezEscrowObservationV1,
+    ) -> Self {
+        Self {
+            schema_version: OBSERVED_TAKER_FIRST_LOCK_SCHEMA_V1,
+            step: FirstLockStepV1::LezFund,
+            transaction_id: lez_transaction_id(canonical.transaction_id()).into(),
+            confirmations: canonical.confirmations().get(),
+            source: ObservedTakerFirstLockEvidenceSourceV1::CanonicalLezReplacement {
+                removed: Box::new(removed),
+                canonical: Box::new(canonical),
+            },
         }
     }
 
@@ -200,58 +235,7 @@ impl ObservedTakerFirstLockTransitionV1 {
                 actual: evidence.step,
             });
         }
-        match (expected_step, &evidence.source) {
-            (
-                FirstLockStepV1::ZcashFund,
-                ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcash(canonical),
-            ) => validate_canonical_zcash_binding(agreement, canonical.as_ref())?,
-            (
-                FirstLockStepV1::ZcashFund,
-                ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashRemoval(removed),
-            ) => validate_canonical_zcash_binding(agreement, removed.previous())?,
-            (
-                FirstLockStepV1::ZcashFund,
-                ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashReplacement {
-                    removed,
-                    canonical,
-                },
-            ) => {
-                validate_canonical_zcash_binding(agreement, removed.previous())?;
-                validate_canonical_zcash_binding(agreement, canonical.as_ref())?;
-                if removed.tip_block_hash() != canonical.tip_block_hash()
-                    || removed.tip_height() != canonical.tip_height()
-                {
-                    return Err(
-                        ObservedTakerFirstLockTransitionError::CanonicalZcashReplacementTipMismatch,
-                    );
-                }
-            }
-            (
-                FirstLockStepV1::ZcashFund,
-                ObservedTakerFirstLockEvidenceSourceV1::AdapterAssertion,
-            ) => return Err(ObservedTakerFirstLockTransitionError::CanonicalZcashRequired),
-            (
-                FirstLockStepV1::ZcashFund,
-                ObservedTakerFirstLockEvidenceSourceV1::CanonicalLez(_),
-            ) => return Err(ObservedTakerFirstLockTransitionError::UnexpectedCanonicalLez),
-            (FirstLockStepV1::LezFund, ObservedTakerFirstLockEvidenceSourceV1::CanonicalLez(_)) => {
-            }
-            (
-                FirstLockStepV1::LezFund,
-                ObservedTakerFirstLockEvidenceSourceV1::AdapterAssertion,
-            ) => return Err(ObservedTakerFirstLockTransitionError::CanonicalLezRequired),
-            (
-                FirstLockStepV1::LezFund,
-                ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcash(_)
-                | ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashRemoval(_)
-                | ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashReplacement { .. },
-            ) => return Err(ObservedTakerFirstLockTransitionError::UnexpectedCanonicalZcash),
-            (FirstLockStepV1::LezInitialize, _) => {
-                return Err(ObservedTakerFirstLockTransitionError::NonFinalStep(
-                    expected_step,
-                ));
-            }
-        }
+        validate_observed_source(agreement, expected_step, &evidence.source)?;
         let required = agreement
             .coordinator()
             .required_confirmations(Participant::Taker);
@@ -320,7 +304,9 @@ impl ObservedTakerFirstLockTransitionV1 {
     pub fn zcash_observation_event(&self) -> Option<ZcashObservationEvent> {
         match &self.evidence.source {
             ObservedTakerFirstLockEvidenceSourceV1::AdapterAssertion
-            | ObservedTakerFirstLockEvidenceSourceV1::CanonicalLez(_) => None,
+            | ObservedTakerFirstLockEvidenceSourceV1::CanonicalLez(_)
+            | ObservedTakerFirstLockEvidenceSourceV1::CanonicalLezRemoval(_)
+            | ObservedTakerFirstLockEvidenceSourceV1::CanonicalLezReplacement { .. } => None,
             ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcash(canonical) => {
                 Some(ZcashObservationEvent::Canonical(canonical.as_ref().clone()))
             }
@@ -344,6 +330,16 @@ impl ObservedTakerFirstLockTransitionV1 {
             ObservedTakerFirstLockEvidenceSourceV1::CanonicalLez(canonical) => Some(
                 crate::LezObservationEventV1::Canonical(canonical.as_ref().clone()),
             ),
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalLezRemoval(removed) => Some(
+                crate::LezObservationEventV1::Removed(removed.as_ref().clone()),
+            ),
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalLezReplacement {
+                removed,
+                canonical,
+            } => Some(crate::LezObservationEventV1::Replaced {
+                removed: removed.clone(),
+                canonical: canonical.clone(),
+            }),
             _ => None,
         }
     }
@@ -388,6 +384,31 @@ impl ObservedTakerFirstLockTransitionV1 {
         }
         let mut next = coordinator.clone();
         match &self.evidence.source {
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalLezRemoval(removed) => next
+                .observe_funding_removed(
+                    Participant::Taker,
+                    &lez_transaction_id(removed.previous().transaction_id()),
+                )
+                .map_err(ObservedTakerFirstLockTransitionError::Core)?,
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalLezReplacement {
+                removed,
+                canonical,
+            } => {
+                next.observe_funding_removed(
+                    Participant::Taker,
+                    &lez_transaction_id(removed.previous().transaction_id()),
+                )
+                .map_err(ObservedTakerFirstLockTransitionError::Core)?;
+                next.observe_funding(
+                    Participant::Taker,
+                    ChainProof::new(
+                        lez_transaction_id(canonical.transaction_id()),
+                        canonical.confirmations().get(),
+                    )
+                    .map_err(ObservedTakerFirstLockTransitionError::Core)?,
+                )
+                .map_err(ObservedTakerFirstLockTransitionError::Core)?;
+            }
             ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashRemoval(removed) => next
                 .observe_funding_removed(
                     Participant::Taker,
@@ -425,6 +446,112 @@ impl ObservedTakerFirstLockTransitionV1 {
                 .map_err(ObservedTakerFirstLockTransitionError::Core)?,
         }
         Ok(next)
+    }
+}
+
+fn validate_observed_source(
+    agreement: &ZecAgreementV1,
+    expected_step: FirstLockStepV1,
+    source: &ObservedTakerFirstLockEvidenceSourceV1,
+) -> Result<(), ObservedTakerFirstLockTransitionError> {
+    match (expected_step, source) {
+        (
+            FirstLockStepV1::ZcashFund,
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcash(canonical),
+        ) => validate_canonical_zcash_binding(agreement, canonical),
+        (
+            FirstLockStepV1::ZcashFund,
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashRemoval(removed),
+        ) => validate_canonical_zcash_binding(agreement, removed.previous()),
+        (
+            FirstLockStepV1::ZcashFund,
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashReplacement {
+                removed,
+                canonical,
+            },
+        ) => {
+            validate_canonical_zcash_binding(agreement, removed.previous())?;
+            validate_canonical_zcash_binding(agreement, canonical)?;
+            if removed.tip_block_hash() != canonical.tip_block_hash()
+                || removed.tip_height() != canonical.tip_height()
+            {
+                Err(ObservedTakerFirstLockTransitionError::CanonicalZcashReplacementTipMismatch)
+            } else {
+                Ok(())
+            }
+        }
+        (FirstLockStepV1::ZcashFund, ObservedTakerFirstLockEvidenceSourceV1::AdapterAssertion) => {
+            Err(ObservedTakerFirstLockTransitionError::CanonicalZcashRequired)
+        }
+        (
+            FirstLockStepV1::ZcashFund,
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalLez(_)
+            | ObservedTakerFirstLockEvidenceSourceV1::CanonicalLezRemoval(_)
+            | ObservedTakerFirstLockEvidenceSourceV1::CanonicalLezReplacement { .. },
+        ) => Err(ObservedTakerFirstLockTransitionError::UnexpectedCanonicalLez),
+        (
+            FirstLockStepV1::LezFund,
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalLez(canonical),
+        ) => validate_canonical_lez_binding(agreement, canonical),
+        (
+            FirstLockStepV1::LezFund,
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalLezRemoval(removed),
+        ) => validate_canonical_lez_removal_binding(agreement, removed),
+        (
+            FirstLockStepV1::LezFund,
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalLezReplacement { removed, canonical },
+        ) => {
+            validate_canonical_lez_removal_binding(agreement, removed)?;
+            validate_canonical_lez_binding(agreement, canonical)?;
+            if removed.tip_block_hash() != canonical.tip_block_hash()
+                || removed.tip_height() != canonical.tip_height()
+            {
+                Err(ObservedTakerFirstLockTransitionError::CanonicalLezReplacementTipMismatch)
+            } else {
+                Ok(())
+            }
+        }
+        (FirstLockStepV1::LezFund, ObservedTakerFirstLockEvidenceSourceV1::AdapterAssertion) => {
+            Err(ObservedTakerFirstLockTransitionError::CanonicalLezRequired)
+        }
+        (
+            FirstLockStepV1::LezFund,
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcash(_)
+            | ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashRemoval(_)
+            | ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashReplacement { .. },
+        ) => Err(ObservedTakerFirstLockTransitionError::UnexpectedCanonicalZcash),
+        (FirstLockStepV1::LezInitialize, _) => Err(
+            ObservedTakerFirstLockTransitionError::NonFinalStep(expected_step),
+        ),
+    }
+}
+
+fn validate_canonical_lez_binding(
+    agreement: &ZecAgreementV1,
+    canonical: &crate::CanonicalLezEscrowObservationV1,
+) -> Result<(), ObservedTakerFirstLockTransitionError> {
+    let rebound = crate::CanonicalLezEscrowObservationV1::validate(agreement, canonical.snapshot())
+        .map_err(|_| ObservedTakerFirstLockTransitionError::CanonicalLezBindingMismatch)?;
+    if &rebound == canonical {
+        Ok(())
+    } else {
+        Err(ObservedTakerFirstLockTransitionError::CanonicalLezBindingMismatch)
+    }
+}
+
+fn validate_canonical_lez_removal_binding(
+    agreement: &ZecAgreementV1,
+    removed: &crate::CanonicalLezEscrowRemovalV1,
+) -> Result<(), ObservedTakerFirstLockTransitionError> {
+    let previous =
+        crate::CanonicalLezEscrowObservationV1::validate(agreement, removed.previous().snapshot())
+            .map_err(|_| ObservedTakerFirstLockTransitionError::CanonicalLezBindingMismatch)?;
+    let rebound = crate::CanonicalLezEscrowRemovalV1::validate(&previous, removed.snapshot())
+        .map_err(|_| ObservedTakerFirstLockTransitionError::CanonicalLezBindingMismatch)?;
+    if &rebound == removed {
+        Ok(())
+    } else {
+        Err(ObservedTakerFirstLockTransitionError::CanonicalLezBindingMismatch)
     }
 }
 
@@ -485,6 +612,9 @@ pub enum ObservedTakerFirstLockTransitionError {
     /// Atomic replacement halves were not derived from one stable node tip.
     #[error("canonical Zcash replacement halves use different stable tips")]
     CanonicalZcashReplacementTipMismatch,
+    /// Atomic LEZ replacement halves were not derived from one stable node tip.
+    #[error("canonical LEZ replacement halves use different stable tips")]
+    CanonicalLezReplacementTipMismatch,
     /// Only the maker owns this observation transition.
     #[error("observed taker-lock transition requires maker; actual role is {0:?}")]
     WrongRole(Participant),
@@ -512,6 +642,20 @@ pub enum ObservedTakerFirstLockTransitionError {
     Core(lez_swap_core::Error),
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+enum LezObservationChangeRecordV1 {
+    Removed {
+        previous: Box<crate::LezNodeSnapshotV1>,
+        removal: crate::LezNodeRemovalSnapshotV1,
+    },
+    Replaced {
+        previous: Box<crate::LezNodeSnapshotV1>,
+        removal: crate::LezNodeRemovalSnapshotV1,
+        canonical: Box<crate::LezNodeSnapshotV1>,
+    },
+}
+
 /// Primitive untrusted persistence record for a maker observation transition.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -528,6 +672,8 @@ pub struct ObservedTakerFirstLockTransitionRecordV1 {
     confirmations: u32,
     #[serde(default)]
     lez_canonical: Option<crate::LezNodeSnapshotV1>,
+    #[serde(default)]
+    lez_change: Option<LezObservationChangeRecordV1>,
     zcash_canonical: Option<ZcashObservationEventRecordV1>,
 }
 
@@ -550,9 +696,28 @@ impl From<&ObservedTakerFirstLockTransitionV1> for ObservedTakerFirstLockTransit
                 }
                 _ => None,
             },
+            lez_change: match &value.evidence.source {
+                ObservedTakerFirstLockEvidenceSourceV1::CanonicalLezRemoval(removed) => {
+                    Some(LezObservationChangeRecordV1::Removed {
+                        previous: Box::new(removed.previous().snapshot().clone()),
+                        removal: *removed.snapshot(),
+                    })
+                }
+                ObservedTakerFirstLockEvidenceSourceV1::CanonicalLezReplacement {
+                    removed,
+                    canonical,
+                } => Some(LezObservationChangeRecordV1::Replaced {
+                    previous: Box::new(removed.previous().snapshot().clone()),
+                    removal: *removed.snapshot(),
+                    canonical: Box::new(canonical.snapshot().clone()),
+                }),
+                _ => None,
+            },
             zcash_canonical: match &value.evidence.source {
                 ObservedTakerFirstLockEvidenceSourceV1::AdapterAssertion
-                | ObservedTakerFirstLockEvidenceSourceV1::CanonicalLez(_) => None,
+                | ObservedTakerFirstLockEvidenceSourceV1::CanonicalLez(_)
+                | ObservedTakerFirstLockEvidenceSourceV1::CanonicalLezRemoval(_)
+                | ObservedTakerFirstLockEvidenceSourceV1::CanonicalLezReplacement { .. } => None,
                 ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcash(canonical) => Some(
                     ZcashObservationEventRecordV1::from_canonical(canonical.as_ref()),
                 ),
@@ -604,13 +769,13 @@ impl ObservedTakerFirstLockTransitionRecordV1 {
         {
             return Err(ObservedTakerFirstLockTransitionError::ContextMismatch);
         }
-        let evidence = match (&self.lez_canonical, &self.zcash_canonical) {
-            (None, None) => ObservedTakerFirstLockEvidenceV1::new(
+        let evidence = match (&self.lez_canonical, &self.lez_change, &self.zcash_canonical) {
+            (None, None, None) => ObservedTakerFirstLockEvidenceV1::new(
                 parse_step(&self.step)?,
                 self.transaction_id.clone(),
                 self.confirmations,
             )?,
-            (Some(snapshot), None) => {
+            (Some(snapshot), None, None) => {
                 let canonical = crate::CanonicalLezEscrowObservationV1::validate(
                     accepted.agreement(),
                     snapshot,
@@ -618,7 +783,8 @@ impl ObservedTakerFirstLockTransitionRecordV1 {
                 .map_err(|_| ObservedTakerFirstLockTransitionError::CanonicalLezBindingMismatch)?;
                 ObservedTakerFirstLockEvidenceV1::from_canonical_lez(canonical)
             }
-            (None, Some(record)) => {
+            (None, Some(change), None) => revalidate_lez_change(accepted.agreement(), change)?,
+            (None, None, Some(record)) => {
                 match revalidate_historical_event(record).map_err(|_| {
                     ObservedTakerFirstLockTransitionError::CanonicalZcashBindingMismatch
                 })? {
@@ -635,7 +801,7 @@ impl ObservedTakerFirstLockTransitionRecordV1 {
                     }
                 }
             }
-            (Some(_), Some(_)) => {
+            _ => {
                 return Err(ObservedTakerFirstLockTransitionError::ContextMismatch);
             }
         };
@@ -650,6 +816,47 @@ impl ObservedTakerFirstLockTransitionRecordV1 {
         }
         Ok(trusted)
     }
+}
+
+fn revalidate_lez_change(
+    agreement: &ZecAgreementV1,
+    change: &LezObservationChangeRecordV1,
+) -> Result<ObservedTakerFirstLockEvidenceV1, ObservedTakerFirstLockTransitionError> {
+    match change {
+        LezObservationChangeRecordV1::Removed { previous, removal } => {
+            let previous = crate::CanonicalLezEscrowObservationV1::validate(agreement, previous)
+                .map_err(|_| ObservedTakerFirstLockTransitionError::CanonicalLezBindingMismatch)?;
+            let removed = crate::CanonicalLezEscrowRemovalV1::validate(&previous, removal)
+                .map_err(|_| ObservedTakerFirstLockTransitionError::CanonicalLezBindingMismatch)?;
+            Ok(ObservedTakerFirstLockEvidenceV1::from_canonical_lez_removal(removed))
+        }
+        LezObservationChangeRecordV1::Replaced {
+            previous,
+            removal,
+            canonical,
+        } => {
+            let previous = crate::CanonicalLezEscrowObservationV1::validate(agreement, previous)
+                .map_err(|_| ObservedTakerFirstLockTransitionError::CanonicalLezBindingMismatch)?;
+            let removed = crate::CanonicalLezEscrowRemovalV1::validate(&previous, removal)
+                .map_err(|_| ObservedTakerFirstLockTransitionError::CanonicalLezBindingMismatch)?;
+            let canonical = crate::CanonicalLezEscrowObservationV1::validate(agreement, canonical)
+                .map_err(|_| ObservedTakerFirstLockTransitionError::CanonicalLezBindingMismatch)?;
+            Ok(
+                ObservedTakerFirstLockEvidenceV1::from_canonical_lez_replacement(
+                    removed, canonical,
+                ),
+            )
+        }
+    }
+}
+
+fn lez_transaction_id(transaction_id: &[u8; 32]) -> String {
+    let mut encoded = String::with_capacity(64);
+    for byte in transaction_id {
+        use std::fmt::Write as _;
+        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    encoded
 }
 
 fn validate_canonical_zcash_binding(

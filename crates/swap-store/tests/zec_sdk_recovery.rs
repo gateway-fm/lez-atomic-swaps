@@ -3,11 +3,12 @@ use lez_swap_core::{Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_swap_store::SqliteZecRecoveryStore;
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, Bip199Contract, CanonicalLezEscrowObservationV1,
-    CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval, CreateFirstLockOutcome,
-    ExpectedBip199Output, FirstLockConfirmedEvidenceV1, FirstLockPlanV1, FirstLockProjectionCommit,
-    FirstLockStepV1, LezAssetV1, LezChainIdentityV1, LezCustodySnapshotV1, LezEnvironmentV1,
-    LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFundInstructionV1,
-    LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezNodeSnapshotV1, LezStableTipV1,
+    CanonicalLezEscrowRemovalV1, CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval,
+    CreateFirstLockOutcome, ExpectedBip199Output, FirstLockConfirmedEvidenceV1, FirstLockPlanV1,
+    FirstLockProjectionCommit, FirstLockStepV1, LezAssetV1, LezChainIdentityV1,
+    LezCustodySnapshotV1, LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1,
+    LezFundInstructionV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1,
+    LezNodeRemovalSnapshotV1, LezNodeSnapshotV1, LezObservationTrackerError, LezStableTipV1,
     LezTakerFirstLockObservationPort, MakerFundingEligibilityOutcome, NegotiationChannel,
     NegotiationTranscriptV1, ObserveTakerFirstLockOutcome,
     ObservedTakerFirstLockTransitionRecordV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
@@ -86,6 +87,7 @@ impl LezTakerFirstLockObservationPort for MakerObservation {
     async fn observe_taker_first_lock(
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        _previous: Option<&CanonicalLezEscrowObservationV1>,
     ) -> Result<TakerFirstLockObservationV1, Self::Error> {
         Ok(self.0.clone())
     }
@@ -643,16 +645,83 @@ async fn canonical_lez_maker_observation_survives_sqlite_close_and_reopen() {
 
     let deeper = canonical_lez_taker_lock_at(
         accepted.agreement(),
-        LezInclusionStatusV1::Finalized,
+        LezInclusionStatusV1::Safe,
         [0x44; 32],
         103,
     );
-    let (update, phase, revision) = poll_reverse_maker_after_reopen(&path, id, deeper).await;
+    let (update, phase, revision) =
+        poll_reverse_maker_after_reopen(&path, id, deeper.clone()).await;
     assert!(matches!(update, ObserveTakerFirstLockOutcome::Projected(_)));
     assert_eq!((phase, revision), (Phase::TakerLockConfirmed, 2));
+    assert_lez_replacement_and_removal(&path, id, accepted.agreement(), &deeper).await;
+}
+
+async fn assert_lez_replacement_and_removal(
+    path: &std::path::Path,
+    id: &str,
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    previous: &CanonicalLezEscrowObservationV1,
+) {
+    let removal = canonical_lez_removal_at(agreement, previous, [0x55; 32], [0x56; 32], 104);
+    let replacement = canonical_lez_taker_lock_with_inclusion(
+        agreement,
+        LezInclusionStatusV1::Safe,
+        [0x56; 32],
+        104,
+        [0x32; 32],
+        101,
+        [0x51; 32],
+    );
+    let replacement_observation = TakerFirstLockObservationV1::LezReplaced {
+        removed: Box::new(removal.clone()),
+        canonical: Box::new(replacement.clone()),
+    };
+    let (replaced, phase, revision) =
+        poll_reverse_maker_observation_after_reopen(path, id, replacement_observation.clone())
+            .await;
+    assert!(matches!(
+        replaced,
+        ObserveTakerFirstLockOutcome::Projected(_)
+    ));
+    assert_eq!((phase, revision), (Phase::TakerLockConfirmed, 3));
+    let (duplicate, phase, revision) =
+        poll_reverse_maker_observation_after_reopen(path, id, replacement_observation).await;
     assert_eq!(
-        reverse_maker_state_after_reopen(&path, id).await,
-        (Phase::TakerLockConfirmed, 2)
+        duplicate,
+        ObserveTakerFirstLockOutcome::Unchanged(FirstLockStepV1::LezFund)
+    );
+    assert_eq!((phase, revision), (Phase::TakerLockConfirmed, 3));
+    assert_eq!(maker_transition_count(path, id), 3);
+    let (stale, phase, revision) = try_poll_reverse_maker_observation_after_reopen(
+        path,
+        id,
+        TakerFirstLockObservationV1::LezRemoved(Box::new(removal)),
+    )
+    .await;
+    assert!(matches!(
+        stale,
+        Err(ZecSdkError::InvalidLezObservationHistory(
+            LezObservationTrackerError::StaleEvidence
+        ))
+    ));
+    assert_eq!((phase, revision), (Phase::TakerLockConfirmed, 3));
+    assert_eq!(maker_transition_count(path, id), 3);
+
+    let removal = canonical_lez_removal_at(agreement, &replacement, [0x57; 32], [0x58; 32], 105);
+    let (removed, phase, revision) = poll_reverse_maker_observation_after_reopen(
+        path,
+        id,
+        TakerFirstLockObservationV1::LezRemoved(Box::new(removal)),
+    )
+    .await;
+    assert!(matches!(
+        removed,
+        ObserveTakerFirstLockOutcome::Projected(_)
+    ));
+    assert_eq!((phase, revision), (Phase::Offered, 4));
+    assert_eq!(
+        reverse_maker_state_after_reopen(path, id).await,
+        (Phase::Offered, 4)
     );
 }
 
@@ -679,15 +748,40 @@ async fn poll_reverse_maker_after_reopen(
     id: &str,
     canonical: CanonicalLezEscrowObservationV1,
 ) -> (ObserveTakerFirstLockOutcome, Phase, u64) {
+    poll_reverse_maker_observation_after_reopen(
+        path,
+        id,
+        TakerFirstLockObservationV1::CanonicalLez(Box::new(canonical)),
+    )
+    .await
+}
+
+async fn poll_reverse_maker_observation_after_reopen(
+    path: &std::path::Path,
+    id: &str,
+    observation: TakerFirstLockObservationV1,
+) -> (ObserveTakerFirstLockOutcome, Phase, u64) {
+    let (outcome, phase, revision) =
+        try_poll_reverse_maker_observation_after_reopen(path, id, observation).await;
+    (outcome.expect("reverse maker poll"), phase, revision)
+}
+
+async fn try_poll_reverse_maker_observation_after_reopen(
+    path: &std::path::Path,
+    id: &str,
+    observation: TakerFirstLockObservationV1,
+) -> (
+    Result<ObserveTakerFirstLockOutcome, ZecSdkError>,
+    Phase,
+    u64,
+) {
     let store =
         SqliteZecRecoveryStore::open(path, Participant::Maker).expect("reopen reverse maker poll");
     let mut active = ZecPairSdk::new(
         Participant::Maker,
         NoDiscovery,
         FixedNegotiation,
-        MakerObservation(TakerFirstLockObservationV1::CanonicalLez(Box::new(
-            canonical,
-        ))),
+        MakerObservation(observation),
         MakerObservation(TakerFirstLockObservationV1::Absent),
         store,
     )
@@ -695,10 +789,7 @@ async fn poll_reverse_maker_after_reopen(
     .await
     .expect("resume reverse maker poll")
     .expect("durable reverse agreement");
-    let outcome = active
-        .observe_taker_first_lock()
-        .await
-        .expect("reverse maker poll");
+    let outcome = active.observe_taker_first_lock().await;
     (outcome, active.status(), active.revision())
 }
 
@@ -721,11 +812,13 @@ fn rewrite_lez_row_as_legacy_payload_v1(
     })
     .expect("instruction JSON");
     let swap_id = serde_json::to_string(&onchain_swap_id).expect("swap ID JSON");
-    let legacy = current.replacen(
-        &format!("\"instruction\":{instruction}"),
-        &format!("\"swap_id\":{swap_id}"),
-        1,
-    );
+    let legacy = current
+        .replacen(
+            &format!("\"instruction\":{instruction}"),
+            &format!("\"swap_id\":{swap_id}"),
+            1,
+        )
+        .replacen(",\"lez_change\":null", "", 1);
     assert_ne!(legacy, current, "historical instruction shape installed");
     connection
         .execute(
@@ -746,6 +839,27 @@ fn maker_transition_count(path: &std::path::Path, id: &str) -> i64 {
             |row| row.get(0),
         )
         .expect("maker journal count")
+}
+
+fn canonical_lez_removal_at(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    previous: &CanonicalLezEscrowObservationV1,
+    canonical_block_hash_at_removed_height: [u8; 32],
+    tip_hash: [u8; 32],
+    tip_height: u64,
+) -> CanonicalLezEscrowRemovalV1 {
+    let chain = agreement.lez_terms().chain();
+    CanonicalLezEscrowRemovalV1::validate(
+        previous,
+        &LezNodeRemovalSnapshotV1::new(
+            chain.environment(),
+            *chain.channel_id(),
+            *chain.genesis_block_hash(),
+            canonical_block_hash_at_removed_height,
+            LezStableTipV1::new(tip_hash, tip_height, tip_hash, tip_height),
+        ),
+    )
+    .expect("stable affirmative LEZ removal")
 }
 
 async fn assert_fresh_eligibility_after_reopen(
@@ -1326,6 +1440,26 @@ fn canonical_lez_taker_lock_at(
     tip_hash: [u8; 32],
     tip_height: u64,
 ) -> CanonicalLezEscrowObservationV1 {
+    canonical_lez_taker_lock_with_inclusion(
+        agreement,
+        inclusion_status,
+        tip_hash,
+        tip_height,
+        [0x31; 32],
+        100,
+        [0x41; 32],
+    )
+}
+
+fn canonical_lez_taker_lock_with_inclusion(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    inclusion_status: LezInclusionStatusV1,
+    tip_hash: [u8; 32],
+    tip_height: u64,
+    transaction_id: [u8; 32],
+    inclusion_height: u64,
+    inclusion_block_hash: [u8; 32],
+) -> CanonicalLezEscrowObservationV1 {
     let terms = agreement.lez_terms();
     let LezAssetV1::Native {
         authenticated_transfer_program_id,
@@ -1353,7 +1487,7 @@ fn canonical_lez_taker_lock_at(
         LezEscrowStatusV1::Funded,
     );
     let transaction = LezFundTransactionSnapshotV1::new(
-        [0x31; 32],
+        transaction_id,
         *terms.escrow_program_id(),
         depositor,
         vec![
@@ -1366,9 +1500,9 @@ fn canonical_lez_taker_lock_at(
         },
         true,
         true,
-        100,
-        [0x41; 32],
-        [0x41; 32],
+        inclusion_height,
+        inclusion_block_hash,
+        inclusion_block_hash,
         inclusion_status,
     );
     CanonicalLezEscrowObservationV1::validate(

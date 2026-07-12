@@ -802,8 +802,12 @@ fn decode_observed_taker_lock_record(
         payload_version,
         i64::from(FIRST_LOCK_RECORD_SCHEMA_V1),
     )?;
-    if let Ok(current) = serde_json::from_str(payload_json) {
-        return Ok(current);
+    let current_error = match serde_json::from_str(payload_json) {
+        Ok(current) => return Ok(current),
+        Err(error) => error,
+    };
+    if payload_json.contains("\"lez_change\"") {
+        return Err(StoreError::from(current_error));
     }
     let mut value: serde_json::Value = serde_json::from_str(payload_json)?;
     if let Some(transaction) = value

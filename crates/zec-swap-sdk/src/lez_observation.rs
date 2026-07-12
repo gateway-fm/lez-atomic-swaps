@@ -577,6 +577,7 @@ pub struct CanonicalLezEscrowRemovalV1 {
     canonical_block_hash_at_removed_height: [u8; 32],
     tip_block_hash: [u8; 32],
     tip_height: u64,
+    snapshot: Box<LezNodeRemovalSnapshotV1>,
 }
 
 impl CanonicalLezEscrowRemovalV1 {
@@ -615,6 +616,7 @@ impl CanonicalLezEscrowRemovalV1 {
             canonical_block_hash_at_removed_height: snapshot.canonical_block_hash_at_removed_height,
             tip_block_hash: tip.after_hash,
             tip_height: tip.after_height,
+            snapshot: Box::new(*snapshot),
         })
     }
 
@@ -640,6 +642,10 @@ impl CanonicalLezEscrowRemovalV1 {
     #[must_use]
     pub const fn tip_height(&self) -> u64 {
         self.tip_height
+    }
+
+    pub(crate) const fn snapshot(&self) -> &LezNodeRemovalSnapshotV1 {
+        &self.snapshot
     }
 }
 

@@ -137,9 +137,11 @@ SDK and the schema-v6 journal. Exact duplicates write no row, while a
 same-inclusion Pending-to-Finalized update advances one contiguous revision and
 survives close/reopen. The pure tracker also proves affirmative same-tip
 replacement, stale-evidence rejection, and fatal finalized-history changes.
-The official-wire LEZ node port, durable removal/replacement record forms,
-reverse fresh eligibility, and maker effect that consumes eligibility
-internally remain; the SDK returns Wait.
+Complete primitive removal/replacement records now carry nonfinal reorgs
+through the active SDK and SQLite, while stale old-head evidence fails without
+a row or revision change. The official-wire LEZ node port, reverse fresh
+eligibility, and maker effect that consumes eligibility internally remain; the
+SDK returns Wait.
 
 The dashed state reflects delivery honestly. The deterministic core, SQLite
 repository, maker daemon, authenticated maker CLI flow, LEZ semantic

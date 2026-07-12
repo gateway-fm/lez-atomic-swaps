@@ -71,8 +71,10 @@ current executable slices enforce:
   finalized-history changes.
   The active SDK and schema-v6 SQLite journal now fold the agreement-selected
   LEZ tracker: exact duplicates write no row and same-inclusion finality/depth
-  updates survive close/reopen. The official-wire LEZ RPC adapter, durable LEZ
-  removal/replacement record forms, later effects, and the
+  updates survive close/reopen. Affirmative nonfinal removal and atomic same-tip
+  replacement now use complete primitive records, reject stale old-head
+  evidence, consume one revision, and replay through SQLite. The official-wire
+  LEZ RPC adapter, later effects, and the
   completed corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the

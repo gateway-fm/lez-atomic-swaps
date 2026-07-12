@@ -117,7 +117,7 @@ after restart, so observation history cannot authorize the maker lock. The
 forward maker actor now commits and replays canonical evidence, an atomic
 different-transaction replacement, a same-inclusion depth change, and
 affirmative removal across revisions 1 through 4. The package currently passes
-84 ordinary tests plus one doctest, with the real-Zebra Docker case
+85 ordinary tests plus one doctest, with the real-Zebra Docker case
 intentionally delegated to its isolated runner.
 
 Ten production-store cases instantiate the SDK with a cloneable role-fixed
@@ -154,8 +154,9 @@ before mutation. Reverse LEZ canonical and same-inclusion finality/depth updates
 now fold through `LezObservationTrackerV1` in both the active SDK and SQLite;
 exact duplicates write no row, and a historical payload-v1 `swap_id` record
 is upgraded according to the signed native/token asset before revalidation.
-Durable LEZ removal/replacement record forms and the official-wire node adapter
-remain. The SDK
+Complete primitive LEZ removal/replacement records now survive restart, consume
+one predecessor slot, suppress exact duplicate replacement, and reject stale
+old-head removal without mutation. The official-wire node adapter remains. The SDK
 therefore exposes no maker second-lock submit method and returns Wait after
 maker projection. The distinct fresh pre-effect eligibility call now replays
 the durable head and re-queries the exact tracker head. It returns a
