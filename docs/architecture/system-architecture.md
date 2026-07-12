@@ -117,8 +117,9 @@ role-fixed production SQLite adapter for accepted agreement, first-lock intent,
 taker projection, and maker-independent observation replay. The remaining M2
 work is typed later effects and actor integration; chain adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
-observation is non-authorizing today: forward Zcash can reuse the canonical
-output validator, reverse LEZ still needs an equivalent escrow snapshot
+observation is non-authorizing today: forward Zcash now persists and revalidates
+the complete canonical output type but still needs its production node port and
+ordered reorg journal; reverse LEZ still needs an equivalent escrow snapshot
 validator, and the SDK returns Wait until a fresh reorg-safe eligibility check
 exists.
 

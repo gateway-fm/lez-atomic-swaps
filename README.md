@@ -46,7 +46,11 @@ current executable slices enforce:
   closed-intent validation, atomic rollback, corruption rejection, and
   close/reopen recovery. The maker independently observes only the
   agreement-selected taker-lock chain and replays that role-local projection
-  without taker intent or negotiation state. It remains non-authorizing:
+  without taker intent or negotiation state. Forward Zcash rejects a weak
+  transaction-ID/depth assertion and durably revalidates the complete canonical
+  transaction/block/tip/output record against the signed agreement's exact
+  HTLC output binding. Role-local input/change/fee/expiry policy constrains this
+  SDK's own builder and is not a remote-wallet acceptance condition. It remains non-authorizing:
   next action is `Wait` until canonical evidence and a fresh reorg-safe
   eligibility check exist. Production adapters, later effects, and the
   completed corridor remain.

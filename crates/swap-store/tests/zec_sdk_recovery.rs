@@ -2,26 +2,31 @@ use async_trait::async_trait;
 use lez_swap_core::{Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_swap_store::SqliteZecRecoveryStore;
 use lez_zec_swap_sdk::{
-    AcceptedZecAgreementV1, Bip199Contract, CreateFirstLockOutcome, ExpectedBip199Output,
-    FirstLockConfirmedEvidenceV1, FirstLockPlanV1, FirstLockProjectionCommit, FirstLockStepV1,
-    LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, LezTakerFirstLockObservationPort,
-    NegotiationChannel, NegotiationTranscriptV1, ObserveTakerFirstLockOutcome,
-    ObservedTakerFirstLockEvidenceV1, OfferDiscovery, PreparedFirstLockSubmissionV1, RecoveryStore,
-    TakerFirstLockObservationV1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V1,
+    AcceptedZecAgreementV1, Bip199Contract, CanonicalZcashOutputObservation,
+    CreateFirstLockOutcome, ExpectedBip199Output, FirstLockConfirmedEvidenceV1, FirstLockPlanV1,
+    FirstLockProjectionCommit, FirstLockStepV1, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
+    LezTakerFirstLockObservationPort, NegotiationChannel, NegotiationTranscriptV1,
+    ObserveTakerFirstLockOutcome, OfferDiscovery, PreparedFirstLockSubmissionV1, RecoveryStore,
+    TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
+    ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZcashNodeSnapshot, ZcashStableTip,
     ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
     ZecAgreementRecordV1, ZecLezTermsV1, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1,
     ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding,
-    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
-    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_funding_transaction,
+    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use tempfile::TempDir;
+use zcash_primitives::block::BlockHash;
 use zcash_protocol::{
-    consensus::{BranchId, NetworkType},
+    consensus::{BlockHeight, BranchId, NetworkType},
     value::Zatoshis,
 };
-use zcash_transparent::address::TransparentAddress;
+use zcash_transparent::{
+    address::{Script, TransparentAddress},
+    bundle::{OutPoint, TxOut},
+};
 
 const ACCEPTED_AT: UnixSeconds = UnixSeconds::new(10);
 
@@ -467,14 +472,13 @@ async fn maker_observation_is_role_local_and_survives_sqlite_reopen() {
     let data = TempDir::new().expect("maker observation store");
     let path = data.path().join("maker-observation.sqlite3");
     let id = "sqlite-maker-observes-taker";
-    let observation = MakerObservation(TakerFirstLockObservationV1::Confirmed(
-        ObservedTakerFirstLockEvidenceV1::new(
-            FirstLockStepV1::ZcashFund,
-            "maker-canonical-taker-lock",
-            100,
-        )
-        .expect("confirmed maker-local evidence"),
-    ));
+    let accepted = accept(
+        &agreement_wire(id, FixtureVariant::Local),
+        Participant::Maker,
+    );
+    let observation = MakerObservation(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
+        canonical_zcash_taker_lock(accepted.agreement()),
+    )));
     let store = SqliteZecRecoveryStore::open(&path, Participant::Maker).expect("open maker store");
     let pair_sdk = ZecPairSdk::new(
         Participant::Maker,
@@ -484,13 +488,7 @@ async fn maker_observation_is_role_local_and_survives_sqlite_reopen() {
         observation,
         store.clone(),
     );
-    let mut active = pair_sdk
-        .activate(accept(
-            &agreement_wire(id, FixtureVariant::Local),
-            Participant::Maker,
-        ))
-        .await
-        .expect("activate maker");
+    let mut active = pair_sdk.activate(accepted).await.expect("activate maker");
     assert_eq!(
         active
             .observe_taker_first_lock()
@@ -551,6 +549,62 @@ async fn maker_observation_is_role_local_and_survives_sqlite_reopen() {
 
     drop(resumed);
     assert_orphan_future_maker_transition_fails_closed(&path, id).await;
+}
+
+fn canonical_zcash_taker_lock(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+) -> CanonicalZcashOutputObservation {
+    let expected = agreement.binding().expected_output();
+    let key = SecretKey::from_slice(&[7; 32]).expect("canonical observation owner key");
+    let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &key);
+    let owner_script: Script = TransparentAddress::from_pubkey(&public_key).script().into();
+    let request = TransparentFundingRequest::new(
+        vec![TransparentUtxo::new(
+            OutPoint::new([9; 32], 0),
+            TxOut::new(
+                Zatoshis::from_u64(
+                    u64::from(expected.value())
+                        .checked_add(20_000)
+                        .expect("fixture input value"),
+                )
+                .expect("fixture input"),
+                owner_script,
+            ),
+        )],
+        public_key,
+        expected.value(),
+        Zatoshis::from_u64(1_000).expect("fee"),
+        Zatoshis::from_u64(1_000).expect("change floor"),
+        BlockHeight::from_u32(4_100_000),
+        expected.consensus_branch_id(),
+    )
+    .expect("canonical funding request");
+    let transaction = build_funding_transaction(expected.contract(), &request, &key)
+        .expect("funding transaction");
+    let mut raw = Vec::new();
+    transaction.write(&mut raw).expect("canonical bytes");
+    CanonicalZcashOutputObservation::validate(
+        expected,
+        &ZcashNodeSnapshot::new(
+            expected.network(),
+            expected.consensus_branch_id(),
+            true,
+            BlockHash([0x44; 32]),
+            BlockHash([0x44; 32]),
+            BlockHeight::from_u32(100),
+            ZcashStableTip::new(
+                BlockHash([0xaa; 32]),
+                BlockHeight::from_u32(102),
+                BlockHash([0xaa; 32]),
+                BlockHeight::from_u32(102),
+            ),
+            transaction.txid(),
+            raw,
+            0,
+            3,
+        ),
+    )
+    .expect("agreement-bound canonical observation")
 }
 
 async fn assert_orphan_future_maker_transition_fails_closed(path: &std::path::Path, id: &str) {

@@ -7,29 +7,34 @@ use async_trait::async_trait;
 use lez_swap_core::{Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract,
-    ClaimPreimage, CreateAgreementOutcome, CreateFirstLockOutcome, ExpectedBip199Output,
-    FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentRecordV1,
-    FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1, FirstLockProjectionCommit,
-    FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1, FirstLockTransitionV1,
-    LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, LezFirstLockPort,
+    CanonicalZcashOutputObservation, ClaimPreimage, CreateAgreementOutcome, CreateFirstLockOutcome,
+    ExpectedBip199Output, FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome,
+    FirstLockIntentRecordV1, FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1,
+    FirstLockProjectionCommit, FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1,
+    FirstLockTransitionV1, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, LezFirstLockPort,
     LezTakerFirstLockObservationPort, MAX_FIRST_LOCK_SUBMISSION_BYTES,
     MAX_ZEC_AGREEMENT_RECORD_BYTES, NegotiationChannel, NegotiationTranscriptV1,
     ObserveTakerFirstLockOutcome, ObservedTakerFirstLockEvidenceV1,
     ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
-    RecoveryStore, TakerFirstLockObservationV1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V1,
-    ZcashFirstLockPort, ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1,
-    ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1Error, ZecLezTermsV1,
-    ZecLifecycleAction, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
-    ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1,
-    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
-    derive_lez_swap_id_v1,
+    RecoveryStore, TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
+    ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZcashFirstLockPort, ZcashNodeSnapshot, ZcashStableTip,
+    ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
+    ZecAgreementRecordV1, ZecAgreementV1Error, ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk,
+    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
+    ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
+    build_funding_transaction, derive_lez_metadata_account_v1,
+    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
+use zcash_primitives::block::BlockHash;
 use zcash_protocol::{
-    consensus::{BranchId, NetworkType},
+    consensus::{BlockHeight, BranchId, NetworkType},
     value::Zatoshis,
 };
-use zcash_transparent::address::TransparentAddress;
+use zcash_transparent::{
+    address::{Script, TransparentAddress},
+    bundle::{OutPoint, TxOut},
+};
 
 const ACCEPTED_AT: UnixSeconds = UnixSeconds::new(10);
 
@@ -957,9 +962,19 @@ async fn maker_independently_observes_and_durably_projects_taker_first_locks_in_
 
     forward_zcash.0.respond(Ok(confirmed_observed_taker_lock(
         FirstLockStepV1::ZcashFund,
-        "confirmed-zcash-lock",
+        "primitive-zcash-assertion",
         100,
     )));
+    assert!(matches!(
+        maker.observe_taker_first_lock().await,
+        Err(ZecSdkError::InvalidObservedTakerFirstLockTransition(_))
+    ));
+    assert_eq!(maker.status(), Phase::Offered);
+    forward_zcash
+        .0
+        .respond(Ok(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
+            canonical_zcash_taker_lock(maker.agreement()),
+        ))));
     forward_store.set_transition_mode(TransitionCommitMode::FailBeforeCommit);
     assert!(maker.observe_taker_first_lock().await.is_err());
     assert_eq!(maker.status(), Phase::Offered);
@@ -1149,6 +1164,60 @@ fn confirmed_observed_taker_lock(
         ObservedTakerFirstLockEvidenceV1::new(step, transaction_id, confirmations)
             .expect("well-formed primitive evidence"),
     )
+}
+
+fn canonical_zcash_taker_lock(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+) -> CanonicalZcashOutputObservation {
+    let expected = agreement.binding().expected_output();
+    let key = SecretKey::from_slice(&[7; 32]).expect("canonical observation owner key");
+    let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &key);
+    let owner_script: Script = TransparentAddress::from_pubkey(&public_key).script().into();
+    let input_value = u64::from(expected.value())
+        .checked_add(20_000)
+        .expect("fixture input value");
+    let request = TransparentFundingRequest::new(
+        vec![TransparentUtxo::new(
+            OutPoint::new([9; 32], 0),
+            TxOut::new(
+                Zatoshis::from_u64(input_value).expect("fixture input"),
+                owner_script,
+            ),
+        )],
+        public_key,
+        expected.value(),
+        Zatoshis::from_u64(1_000).expect("fee"),
+        Zatoshis::from_u64(1_000).expect("change floor"),
+        BlockHeight::from_u32(4_100_000),
+        expected.consensus_branch_id(),
+    )
+    .expect("canonical funding request");
+    let transaction = build_funding_transaction(expected.contract(), &request, &key)
+        .expect("funding transaction");
+    let mut raw = Vec::new();
+    transaction.write(&mut raw).expect("canonical bytes");
+    CanonicalZcashOutputObservation::validate(
+        expected,
+        &ZcashNodeSnapshot::new(
+            expected.network(),
+            expected.consensus_branch_id(),
+            true,
+            BlockHash([0x44; 32]),
+            BlockHash([0x44; 32]),
+            BlockHeight::from_u32(100),
+            ZcashStableTip::new(
+                BlockHash([0xaa; 32]),
+                BlockHeight::from_u32(102),
+                BlockHash([0xaa; 32]),
+                BlockHeight::from_u32(102),
+            ),
+            transaction.txid(),
+            raw,
+            0,
+            3,
+        ),
+    )
+    .expect("agreement-bound canonical observation")
 }
 
 #[tokio::test]

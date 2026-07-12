@@ -82,11 +82,14 @@ later-effect outbox remain M5 work.
 
 The maker now has a separate observation-only route. Signed direction chooses
 LEZ or Zcash, the other port is not queried, and absence, unstable state, or an
-RPC error cannot advance or persist protocol state. A stable adapter assertion
-commits to the maker-role predecessor slot before memory changes and replays
+RPC error cannot advance or persist protocol state. Forward Zcash accepts only
+the complete canonical output observation and revalidates its transaction,
+block, tip, outpoint, value, scripts, depth, and agreement HTLC-output binding after
+restart; the primitive transaction-ID/depth assertion is rejected. Validated evidence commits
+to the maker-role predecessor slot before memory changes and replays
 from the maker's own SQLite store without taker intent or negotiation state.
-The SDK returns Wait afterward, including on restart. Zcash must still be wired
-to the canonical validator and LEZ needs an equivalent escrow snapshot
+The SDK returns Wait afterward, including on restart. The production Zcash port
+must still assemble fresh canonical snapshots and LEZ needs an equivalent escrow snapshot
 validator; removal/replacement reconciliation and a fresh eligibility check
 must exist before a maker second-lock submission method is added.
 

@@ -15,7 +15,7 @@ project-owned transparent signer and actor adapter.
 
 | Flow | Boundary exercised | Current limitation |
 |---|---|---|
-| ZEC SDK agreement/activation/first lock | Canonical bounded dual-signed record is integrated through untrusted negotiation, role-fixed persistence-before-activation, adversarial resume, exact taker first-lock intent, primitive-record revalidation, observe-before-rebroadcast, maker-independent direction-selected observation, production SQLite atomic projection, unknown-commit probe, and separate-role close/reopen replay | Chain adapters remain contract doubles; maker observation is deliberately non-authorizing, reverse LEZ is not canonical, and these commands do not prove later effects or actor E2E |
+| ZEC SDK agreement/activation/first lock | Canonical bounded dual-signed record is integrated through untrusted negotiation, role-fixed persistence-before-activation, adversarial resume, exact taker first-lock intent, primitive-record revalidation, observe-before-rebroadcast, complete canonical forward-Zcash maker evidence, production SQLite atomic projection, unknown-commit probe, and separate-role close/reopen replay | Node ports remain contract doubles; maker observation is deliberately non-authorizing, reverse LEZ is not canonical, and these commands do not prove the ordered reorg journal, later effects, or actor E2E |
 | Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
 | Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v5 SQLite journal/alerts plus the production role-fixed SDK first-lock recovery adapter, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The daemon polling loop, later SDK effects, and independent maker/taker actors remain pending |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
@@ -374,7 +374,9 @@ durable fund transaction is submitted. Two projection cases prove invalid
 evidence and a failed commit leave the coordinator `Offered`, an unknown
 successful commit is accepted only after an exact predecessor-slot probe, and
 restart replays the durable transition to `TakerLockConfirmed`. Maker-specific
-cases prove that only the agreement-derived node port is queried, non-confirmed
+cases prove that only the agreement-derived node port is queried, a primitive
+forward Zcash assertion is rejected, complete canonical output evidence survives
+record revalidation against the HTLC output binding, non-confirmed
 outcomes write nothing, the maker never owns a taker intent, persisted adapter
 assertions remain non-authorizing, and restart uses the maker-only store. The
 store command runs seven production-adapter cases over a real temporary schema-v5

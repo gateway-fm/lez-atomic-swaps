@@ -518,10 +518,16 @@ where
                 .map_err(|error| ZecSdkError::LezTakerFirstLockObservation(Box::new(error)))?,
             crate::FirstLockStepV1::LezInitialize => unreachable!("not a final lock step"),
         };
-        let TakerFirstLockObservationV1::Confirmed(evidence) = observation else {
-            return Ok(ObserveTakerFirstLockOutcome::AwaitingStableObservation(
-                step,
-            ));
+        let evidence = match observation {
+            TakerFirstLockObservationV1::Confirmed(evidence) => evidence,
+            TakerFirstLockObservationV1::CanonicalZcash(canonical) => {
+                crate::ObservedTakerFirstLockEvidenceV1::from_canonical_zcash(*canonical)
+            }
+            TakerFirstLockObservationV1::Absent | TakerFirstLockObservationV1::Unstable => {
+                return Ok(ObserveTakerFirstLockOutcome::AwaitingStableObservation(
+                    step,
+                ));
+            }
         };
         let transition = ObservedTakerFirstLockTransitionV1::from_active(
             self.agreement(),

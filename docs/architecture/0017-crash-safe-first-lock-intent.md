@@ -31,7 +31,7 @@ flowchart TB
 
     Maker["Independent maker SDK + store"] --> MakerObserve["Observe through agreement-selected node"]
     MakerObserve -->|"absent, unstable, or RPC error"| MakerWait["Remain Offered; write nothing"]
-    MakerObserve -->|"stable adapter assertion"| MakerProjection["Atomic maker-role transition + revision"]
+    MakerObserve -->|"canonical Zcash or LEZ assertion"| MakerProjection["Atomic maker-role transition + revision"]
     MakerProjection --> MakerCore["Persist observed TakerLockConfirmed"]
     MakerCore --> Gate["SDK next action remains Wait"]
     Gate -.-> Fresh["Canonical reorg-safe check before maker second lock"]
@@ -96,7 +96,13 @@ and a corrupt retained closed intent. Two additional cases prove that a maker
 queries only its agreement-derived node route, writes no taker intent, does not
 advance on absence, instability, RPC failure, wrong-chain evidence, or a failed
 commit, adopts an unknown successful commit only by exact probe, and replays its
-own role-local observation after restart. The public next-action projection
+own role-local observation after restart. Forward Zcash rejects the primitive
+transaction-ID/depth assertion: it retains the complete canonical transaction,
+block, tip, outpoint, output, script, and depth record, revalidates it against
+the signed agreement's HTLC output binding after SQLite restart, and only then
+projects. Input candidates, change, fee target, and expiry remain the funder's
+role-local construction policy rather than a disclosure requirement imposed on
+the remote wallet. The public next-action projection
 remains Wait, including after restart, so this adapter assertion cannot
 authorize the maker lock. The full package currently passes 81
 tests, with the real-Zebra Docker case intentionally delegated to its isolated
@@ -120,10 +126,10 @@ orphan future maker-transition row.
 The first-lock recovery boundary is now production SQLite durability, but it is
 not a completed corridor swap. The adapter uses WAL, `FULL` synchronous mode,
 foreign keys, immediate transactions, role-composite keys, primitive payloads,
-and full revalidation on every load. Confirmed evidence is still a typed adapter
-assertion; actual LEZ and Zebra adapters must produce it from fresh stable
-canonical evidence at the signed threshold. Forward Zcash can reuse the
-canonical output validator and removal/replacement journal. Reverse LEZ remains
+and full revalidation on every load. Forward Zcash now requires the existing
+complete canonical output type and persists its primitive event record; a
+production Zebra port must still assemble it from fresh stable RPC snapshots.
+The ordered SDK removal/replacement journal is the next slice. Reverse LEZ remains
 a contract double until a validator binds channel/chain, deployment, derived
 accounts, terms, funded state, transaction, block, and finality. The SDK
 therefore exposes no maker second-lock submit method and returns Wait after

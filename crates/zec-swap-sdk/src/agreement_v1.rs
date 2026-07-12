@@ -811,7 +811,13 @@ impl ZecAgreementV1 {
         &self.onchain_swap_id
     }
 
-    /// Exact executable Zcash transaction policy.
+    /// Exact role-local Zcash transaction construction policy.
+    ///
+    /// These fields constrain bytes built by the local funder. A remote
+    /// counterparty accepts funding from canonical consensus evidence for the
+    /// exact agreement-bound HTLC output; it does not require disclosure of
+    /// unspent wallet candidates or reject a consensus-valid alternative
+    /// input/change choice that locks the same principal.
     #[must_use]
     pub const fn transaction_policy(&self) -> &ZecTransactionPolicyV1 {
         &self.record.body.transaction_policy
