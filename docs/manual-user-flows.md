@@ -1,6 +1,6 @@
 # Manual reproduction guide
 
-Last verified: 2026-07-11
+Last verified: 2026-07-12
 
 This is the living operator guide for the user-visible flows that the repository
 currently proves. Update it in the same change whenever a runner, prerequisite,
@@ -11,11 +11,13 @@ actor boundary, expected result, or cleanup rule changes.
 | Flow | Boundary exercised | Current limitation |
 |---|---|---|
 | Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
+| Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v3 SQLite journal, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay | Uses validated deterministic observations in-process; actual two-Zebra store/restart/requery is still pending |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
 | LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an in-process, ephemeral-port LEZ v0.1.2 standalone sequencer | This is a local compatibility proof, not the incompatible LEZ 0.2 public testnet |
 | LEZ recursive execution costs | Exact checked guest replayed through production `V03State` transitions with nested authenticated-transfer and ATA/Token sessions | This measures deterministic local execution, not public-testnet fees or latency |
 
-The following are **not complete yet**: one composed LEZ↔ZEC run with
+The following are **not complete yet**: actual two-Zebra watcher/store restart
+and requery evidence, one composed LEZ↔ZEC run with
 independent maker and taker processes, both ZEC trade directions through all
 CLI/daemon/chain boundaries, Delivery/Chat-loss and restart at those boundaries,
 recordings generated from that suite, and public-testnet deployment. Do not use
@@ -268,7 +270,25 @@ endpoint. The database and readiness file are the run-specific manual-flow
 artifacts; remove that specific `$RUN_DIR` only after the daemon has stopped
 and the evidence is no longer needed.
 
-## Flow 2: Zcash actor claim, refund, concurrency, and accepted fork
+## Flow 2: Zcash reconciliation, then actor claim/refund/fork
+
+First reproduce the lightweight runtime/store user-role semantics without
+Docker:
+
+```sh
+cargo test --locked -p lez-maker-node --test zec_runtime_reconciliation -- --nocapture
+cargo test --locked -p lez-swap-store --test zec_event_journal -- --nocapture
+```
+
+The first suite must pass both ZEC-funded roles, restart replay, exact-head
+validation, pre-dependent replacement, same-transaction re-mining,
+post-dependent `ReplacementConflict`, and completed/refunded
+`TerminalReorgDetected`. It also proves that missing legacy bindings, mismatched
+profile confirmation policies, and a mismatched output envelope fail before any
+revision or journal mutation. The second suite proves schema-v3 migration,
+atomic swap+binding and event+aggregate rollback, immutable rebinding, lower
+commit/probe enforcement, and restart-safe loading. These runtime/store tests do
+not substitute for the actual-node command below.
 
 Use a fresh run ID and let the repository runner own the complete Docker
 lifecycle:
