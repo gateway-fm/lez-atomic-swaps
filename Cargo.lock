@@ -1279,12 +1279,18 @@ dependencies = [
  "jsonrpsee-http-client",
  "lez-swap-core",
  "lez-swap-store",
+ "lez-zec-swap-sdk",
+ "secp256k1",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tower",
  "tower-http",
+ "zcash_primitives",
+ "zcash_protocol",
+ "zcash_transparent",
 ]
 
 [[package]]

@@ -270,6 +270,52 @@ impl SqliteSwapStore {
         })
     }
 
+    /// Finds the exact event committed for one predecessor revision and role.
+    ///
+    /// This probe lets a runtime detect an unknown successful commit outcome before
+    /// reapplying a potentially non-idempotent removal to the aggregate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for invalid evidence, revision overflow, or `SQLite`
+    /// query failure.
+    pub fn committed_zcash_event(
+        &self,
+        predecessor_revision: u64,
+        id: &SwapId,
+        funded_by: Participant,
+        event: &ZcashObservationEventRecordV1,
+    ) -> Result<Option<EventCommit>, StoreError> {
+        event.validate()?;
+        let event_json = serde_json::to_string(event)?;
+        let revision = predecessor_revision
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        let sql_revision = i64::try_from(revision).map_err(|_| StoreError::RevisionOverflow)?;
+        let committed = self.connection.query_row(
+            "
+            SELECT EXISTS(
+                SELECT 1 FROM chain_events
+                WHERE swap_id = ?1 AND funded_by = ?2
+                  AND aggregate_revision = ?3
+                  AND payload_version = ?4 AND payload_json = ?5
+            )
+            ",
+            params![
+                id.as_str(),
+                participant_name(funded_by),
+                sql_revision,
+                ZCASH_EVENT_PAYLOAD_VERSION,
+                event_json
+            ],
+            |row| row.get::<_, bool>(0),
+        )?;
+        Ok(committed.then_some(EventCommit {
+            revision,
+            was_replay: true,
+        }))
+    }
+
     /// Loads ordered, internally revalidated historical Zcash events for one role.
     ///
     /// Loaded records are not fresh canonical evidence and must be reconciled with

@@ -46,6 +46,11 @@ Tests force the aggregate update to abort through a SQLite trigger and prove the
 earlier event insert rolls back. Role-keyed event queries remain isolated across
 maker and taker.
 
+The runtime can probe an exact `(swap, funded role, predecessor revision,
+payload)` slot before mutating core state. A removal retry after an unknown
+successful commit therefore reloads the durable aggregate instead of reapplying
+a removal that may already have cleared a pre-maker funding ID.
+
 Secret fields are versioned per-swap envelopes using maintained RustCrypto
 XChaCha20Poly1305 and HKDF-SHA256 crates, `secrecy`, and `zeroize`. The random
 master credential comes from `systemd-creds` or an owner-only file outside the

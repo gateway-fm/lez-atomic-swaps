@@ -108,3 +108,11 @@ sequenceDiagram
   without falsely claiming the transaction was removed.
 - Runtime journal-to-core wiring and actual two-Zebra store/restart evidence
   remain required before this ADR is fully proven.
+
+An initial concrete maker-runtime composition now derives the ZEC funder from
+immutable direction, probes unknown-outcome replay before core mutation, maps
+canonical/removal evidence, commits event plus aggregate atomically, and reloads
+across restart in both directions. It is not yet the production watcher: journal
+history-to-tracker replay, durable profile/expected-output binding, atomic
+conflicting-replacement outcomes, terminal-reorg alerts, and actual two-Zebra
+store/restart evidence remain required.

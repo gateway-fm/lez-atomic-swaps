@@ -310,13 +310,19 @@ lossy coordinator proof. Public-testnet values are acceptance targets, not
 mainnet recommendations or proof of worst-case cadence. Durable production
 participant-aware core semantics are implemented for taker- and maker-funded
 legs: removal pins the exact ID, suspends claims, exact reappearance restores
-authority, conflicting replacement fails, and refunds remain available. Runtime
+authority, conflicting replacement fails, and refunds remain available.
 Independent leg policies also make maker-depth regression suspend and depth
 recovery restore claims. Runtime event-to-participant wiring and the composed
 corridor remain dashed M2 work. RPC
 errors or absence never imply removal: a detach event
 requires a stable replacement tip and a changed canonical hash at the prior
 inclusion height.
+
+The dashed runtime path has a passing reference slice for direction-derived
+canonical/removal projection, atomic commit, restart reload, and exact
+unknown-outcome replay in both ZEC directions. It remains dashed until persisted
+profile bindings, historical tracker replay, replacement-conflict and terminal
+alert outcomes, and actual-node restart evidence pass.
 
 ## Happy-path user flow
 

@@ -4,10 +4,11 @@ use std::sync::Mutex;
 
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObjectOwned};
 use lez_swap_core::{
-    Chain, ChainPosition, ClockBasis, ConfirmationPolicy, Error, Pair, Phase, RecoverySchedule,
-    SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
+    Chain, ChainPosition, ClockBasis, ConfirmationPolicy, Error, Pair, Participant, Phase,
+    RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
-use lez_swap_store::SqliteSwapStore;
+use lez_swap_store::{EventCommit, SqliteSwapStore, StoreError};
+use lez_zec_swap_sdk::{ZcashObservationEvent, ZcashObservationEventRecordV1};
 use serde::{Deserialize, Serialize};
 
 const NOT_FOUND: i32 = -32_004;
@@ -37,6 +38,100 @@ impl MakerRpc {
     pub fn new(store: SqliteSwapStore) -> Self {
         Self {
             store: Mutex::new(store),
+        }
+    }
+}
+
+/// Result of one committed Zcash funding reconciliation.
+#[derive(Debug)]
+pub struct AppliedZcashFundingEvent {
+    swap: SwapCoordinator,
+    commit: EventCommit,
+}
+
+impl AppliedZcashFundingEvent {
+    /// Durable aggregate after the event or replay reload.
+    #[must_use]
+    pub const fn swap(&self) -> &SwapCoordinator {
+        &self.swap
+    }
+
+    /// Durable commit metadata.
+    #[must_use]
+    pub const fn commit(&self) -> EventCommit {
+        self.commit
+    }
+}
+
+/// Failure while projecting and atomically committing a Zcash funding event.
+#[derive(Debug, thiserror::Error)]
+pub enum ZcashFundingApplyError {
+    /// Persistence or optimistic concurrency failed.
+    #[error("Zcash funding persistence failed")]
+    Store(#[from] StoreError),
+    /// Valid chain evidence conflicts with the current protocol aggregate.
+    #[error("Zcash funding evidence conflicts with swap state")]
+    Core(#[from] Error),
+    /// The selected swap is not a Zcash swap.
+    #[error("Zcash funding event was routed to a non-Zcash swap")]
+    WrongPair,
+}
+
+/// Projects one validated Zcash watcher event and commits it with the aggregate.
+///
+/// The ZEC funder is derived from immutable swap direction rather than caller input.
+/// An exact predecessor-slot replay reloads durable state before any core mutation,
+/// which makes retries safe after an unknown successful commit outcome.
+///
+/// # Errors
+///
+/// Returns [`ZcashFundingApplyError`] for missing/stale storage, a non-Zcash swap,
+/// invalid core transition, record/proof conversion, or transaction failure.
+pub fn apply_zcash_funding_event(
+    store: &mut SqliteSwapStore,
+    predecessor_revision: u64,
+    id: &SwapId,
+    event: &ZcashObservationEvent,
+) -> Result<AppliedZcashFundingEvent, ZcashFundingApplyError> {
+    let record = ZcashObservationEventRecordV1::from_event(event);
+    let mut swap = store.load(id)?.ok_or(StoreError::MissingSwap)?;
+    if swap.pair() != Pair::Zcash {
+        return Err(ZcashFundingApplyError::WrongPair);
+    }
+    let funded_by = if swap.funded_chain(Participant::Taker) == Chain::Zcash {
+        Participant::Taker
+    } else {
+        Participant::Maker
+    };
+    if let Some(commit) =
+        store.committed_zcash_event(predecessor_revision, id, funded_by, &record)?
+    {
+        swap = store.load(id)?.ok_or(StoreError::MissingSwap)?;
+        return Ok(AppliedZcashFundingEvent { swap, commit });
+    }
+
+    project_zcash_funding_event(&mut swap, funded_by, event)?;
+    let commit = store.commit_zcash_event(predecessor_revision, &swap, funded_by, &record)?;
+    Ok(AppliedZcashFundingEvent { swap, commit })
+}
+
+fn project_zcash_funding_event(
+    swap: &mut SwapCoordinator,
+    funded_by: Participant,
+    event: &ZcashObservationEvent,
+) -> Result<(), Error> {
+    match event {
+        ZcashObservationEvent::Canonical(canonical) => {
+            swap.observe_funding(funded_by, canonical.chain_proof()?)
+        }
+        ZcashObservationEvent::Removed(removed) => swap
+            .observe_funding_removed(funded_by, &removed.previous().transaction_id().to_string()),
+        ZcashObservationEvent::Replaced { removed, canonical } => {
+            swap.observe_funding_removed(
+                funded_by,
+                &removed.previous().transaction_id().to_string(),
+            )?;
+            swap.observe_funding(funded_by, canonical.chain_proof()?)
         }
     }
 }

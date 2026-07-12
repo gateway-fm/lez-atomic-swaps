@@ -107,6 +107,12 @@ fn event_and_aggregate_revision_commit_atomically_and_replay_idempotently() {
         .unwrap();
     assert_eq!(commit.revision(), 1);
     assert!(!commit.was_replay());
+    let probed = store
+        .committed_zcash_event(0, swap.id(), Participant::Taker, &event)
+        .unwrap()
+        .expect("the exact predecessor slot is durable");
+    assert_eq!(probed.revision(), commit.revision());
+    assert!(probed.was_replay());
     let replay = store
         .commit_zcash_event(0, &swap, Participant::Taker, &event)
         .unwrap();

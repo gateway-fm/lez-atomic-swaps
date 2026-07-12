@@ -326,8 +326,15 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   prove below-threshold accumulation, threshold promotion, canonical depth
   regression into claim suspension, and exact depth recovery; a 10→9 public
   profile regression can no longer remain `BothLegsLocked`.
-- [ ] Wire committed journal events to the correct participant-relative core
-  transition and prove close/reopen/requery with actual two-Zebra replacement.
+- [x] Add the initial direction-derived runtime composition for canonical and
+  removal events. Both directions prove atomic aggregate/event commit, close and
+  reopen, exact canonical reappearance, and predecessor-slot replay before core
+  mutation after an unknown successful commit.
+- [ ] Complete production runtime wiring: persist immutable profile and expected
+  output bindings; replay validated journal history into the tracker; journal
+  conflicting replacements while retaining the committed-ID reorg phase;
+  durably surface terminal reorg alerts; and prove close/reopen/requery through
+  actual two-Zebra replacement.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
   nodes. The LEZ
   Unix-millisecond/core Unix-second boundary is typed, checked, conservatively
