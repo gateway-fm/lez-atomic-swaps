@@ -14,23 +14,25 @@ use lez_zec_swap_sdk::{
     FirstLockProjectionCommit, FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1,
     FirstLockTransitionV1, LezAssetV1, LezChainIdentityV1, LezCustodySnapshotV1, LezEnvironmentV1,
     LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort, LezFundInstructionV1,
-    LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezNodeRemovalSnapshotV1,
-    LezNodeSnapshotV1, LezObservationEventV1, LezObservationReconciliationV1,
-    LezObservationTrackerError, LezObservationTrackerV1, LezStableTipV1,
-    LezTakerFirstLockObservationPort, MAX_FIRST_LOCK_SUBMISSION_BYTES,
+    LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezMakerLockObservationPort,
+    LezNodeRemovalSnapshotV1, LezNodeSnapshotV1, LezObservationEventV1,
+    LezObservationReconciliationV1, LezObservationTrackerError, LezObservationTrackerV1,
+    LezStableTipV1, LezTakerFirstLockObservationPort, MAX_FIRST_LOCK_SUBMISSION_BYTES,
     MAX_ZEC_AGREEMENT_RECORD_BYTES, MakerFundingEligibilityOutcome, MakerLockDriveOutcome,
-    MakerLockIntentV1, MakerLockTransitionV1, NegotiationChannel, NegotiationTranscriptV1,
-    ObserveTakerFirstLockOutcome, ObservedTakerFirstLockEvidenceV1,
+    MakerLockIntentV1, MakerLockObservationV1, MakerLockTransitionV1, NegotiationChannel,
+    NegotiationTranscriptV1, ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome,
+    ObservedMakerLockTransitionV1, ObservedTakerFirstLockEvidenceV1,
     ObservedTakerFirstLockTransitionError, ObservedTakerFirstLockTransitionRecordV1,
     ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
     RecoveryStore, TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFirstLockPort, ZcashNodeRemovalSnapshot,
-    ZcashNodeSnapshot, ZcashStableTip, ZcashTakerFirstLockObservationPort,
-    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1Error,
-    ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1,
-    ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding,
-    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_funding_transaction,
-    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFirstLockPort, ZcashMakerLockObservationPort,
+    ZcashNodeRemovalSnapshot, ZcashNodeSnapshot, ZcashStableTip,
+    ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
+    ZecAgreementRecordV1, ZecAgreementV1Error, ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk,
+    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
+    ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
+    build_funding_transaction, derive_lez_metadata_account_v1,
+    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use zcash_primitives::block::BlockHash;
@@ -112,6 +114,8 @@ struct MemoryStore {
     first_lock_transitions: Arc<Mutex<HashMap<(String, u64), FirstLockTransitionV1>>>,
     observed_taker_first_lock_transitions:
         Arc<Mutex<HashMap<(String, u64), ObservedTakerFirstLockTransitionV1>>>,
+    observed_maker_lock_transitions:
+        Arc<Mutex<HashMap<(String, u64), ObservedMakerLockTransitionV1>>>,
     maker_locks: Arc<Mutex<HashMap<String, MakerLockIntentV1>>>,
     maker_lock_transitions: Arc<Mutex<HashMap<(String, u64), MakerLockTransitionV1>>>,
     transition_mode: Arc<Mutex<TransitionCommitMode>>,
@@ -305,6 +309,60 @@ impl RecoveryStore for MemoryStore {
             .cloned())
     }
 
+    async fn commit_observed_maker_lock_transition(
+        &self,
+        transition: &ObservedMakerLockTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error> {
+        let mode = *self.transition_mode.lock().expect("transition mode lock");
+        if mode == TransitionCommitMode::FailBeforeCommit {
+            return Err(TestPortError(
+                "forced observed maker transition failure".to_owned(),
+            ));
+        }
+        let key = (
+            transition.swap_id().as_str().to_owned(),
+            transition.predecessor_revision(),
+        );
+        let mut transitions = self
+            .observed_maker_lock_transitions
+            .lock()
+            .expect("observed maker transition lock");
+        let was_replay = match transitions.get(&key) {
+            None => {
+                transitions.insert(key, transition.clone());
+                false
+            }
+            Some(existing) if existing == transition => true,
+            Some(_) => {
+                return Err(TestPortError(
+                    "conflicting observed maker transition".to_owned(),
+                ));
+            }
+        };
+        if mode == TransitionCommitMode::CommitThenReportFailure {
+            return Err(TestPortError(
+                "unknown successful observed maker commit".to_owned(),
+            ));
+        }
+        Ok(FirstLockProjectionCommit::new(
+            transition.predecessor_revision() + 1,
+            was_replay,
+        ))
+    }
+
+    async fn load_observed_maker_lock_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<ObservedMakerLockTransitionV1>, Self::Error> {
+        Ok(self
+            .observed_maker_lock_transitions
+            .lock()
+            .expect("observed maker transition lock")
+            .get(&(swap_id.as_str().to_owned(), predecessor_revision))
+            .cloned())
+    }
+
     async fn create_maker_lock_intent(
         &self,
         intent: &MakerLockIntentV1,
@@ -415,11 +473,36 @@ impl MemoryTakerLockObservation {
     }
 }
 
+#[derive(Clone, Debug)]
+struct MemoryMakerLockObservation {
+    response: Arc<Mutex<Result<MakerLockObservationV1, TestPortError>>>,
+    calls: Arc<Mutex<usize>>,
+}
+
+impl Default for MemoryMakerLockObservation {
+    fn default() -> Self {
+        Self {
+            response: Arc::new(Mutex::new(Ok(MakerLockObservationV1::Absent))),
+            calls: Arc::new(Mutex::new(0)),
+        }
+    }
+}
+
+impl MemoryMakerLockObservation {
+    fn respond(&self, response: Result<MakerLockObservationV1, TestPortError>) {
+        *self
+            .response
+            .lock()
+            .expect("maker observation response lock") = response;
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct MemoryLezTakerLockObservation(
     MemoryTakerLockObservation,
     Arc<Mutex<Vec<Option<[u8; 32]>>>>,
     MemoryFirstLockPort,
+    MemoryMakerLockObservation,
 );
 
 #[async_trait]
@@ -472,8 +555,29 @@ impl LezFirstLockPort for MemoryLezTakerLockObservation {
     }
 }
 
+#[async_trait]
+impl LezMakerLockObservationPort for MemoryLezTakerLockObservation {
+    type Error = TestPortError;
+
+    async fn observe_maker_lock(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<MakerLockObservationV1, Self::Error> {
+        *self.3.calls.lock().expect("maker observation calls lock") += 1;
+        self.3
+            .response
+            .lock()
+            .expect("maker observation response lock")
+            .clone()
+    }
+}
+
 #[derive(Clone, Debug, Default)]
-struct MemoryZcashTakerLockObservation(MemoryTakerLockObservation, MemoryFirstLockPort);
+struct MemoryZcashTakerLockObservation(
+    MemoryTakerLockObservation,
+    MemoryFirstLockPort,
+    MemoryMakerLockObservation,
+);
 
 #[async_trait]
 impl ZcashTakerFirstLockObservationPort for MemoryZcashTakerLockObservation {
@@ -517,6 +621,23 @@ impl ZcashFirstLockPort for MemoryZcashTakerLockObservation {
         submission: &PreparedFirstLockSubmissionV1,
     ) -> Result<(), Self::Error> {
         self.1.submit(submission)
+    }
+}
+
+#[async_trait]
+impl ZcashMakerLockObservationPort for MemoryZcashTakerLockObservation {
+    type Error = TestPortError;
+
+    async fn observe_maker_lock(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<MakerLockObservationV1, Self::Error> {
+        *self.2.calls.lock().expect("maker observation calls lock") += 1;
+        self.2
+            .response
+            .lock()
+            .expect("maker observation response lock")
+            .clone()
     }
 }
 
@@ -3361,11 +3482,325 @@ async fn resume_revalidates_requested_id_role_commitment_and_revision() {
     ));
 }
 
+#[tokio::test]
+async fn independent_actors_reach_both_legs_locked_from_chain_evidence_in_both_directions() {
+    assert_independent_actors_reach_both_legs_locked(
+        "sdk-actors-forward-both-locked",
+        SwapDirection::TakerSellsForeign,
+    )
+    .await;
+    assert_independent_actors_reach_both_legs_locked(
+        "sdk-actors-reverse-both-locked",
+        SwapDirection::TakerSellsLez,
+    )
+    .await;
+}
+
+type ActorActive =
+    ActiveZecSwap<MemoryLezTakerLockObservation, MemoryZcashTakerLockObservation, MemoryStore>;
+
+async fn assert_independent_actors_reach_both_legs_locked(id: &str, direction: SwapDirection) {
+    let wire = agreement_wire(id, direction, FixtureVariant::Local);
+    let lez = MemoryLezTakerLockObservation::default();
+    let zcash = MemoryZcashTakerLockObservation::default();
+    let maker_store = MemoryStore::default();
+    let taker_store = MemoryStore::default();
+    let maker_sdk = actor_sdk(
+        Participant::Maker,
+        wire.clone(),
+        lez.clone(),
+        zcash.clone(),
+        maker_store.clone(),
+    );
+    let taker_sdk = actor_sdk(
+        Participant::Taker,
+        wire.clone(),
+        lez.clone(),
+        zcash.clone(),
+        taker_store.clone(),
+    );
+    let maker_terms = maker_sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("maker agreement");
+    let taker_terms = taker_sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("taker agreement");
+    let mut maker = maker_sdk
+        .activate(maker_terms)
+        .await
+        .expect("maker activation");
+    let mut taker = taker_sdk
+        .activate(taker_terms)
+        .await
+        .expect("taker activation");
+
+    project_actor_taker_first_lock(direction, &mut taker, &lez, &zcash).await;
+    expose_taker_lock_to_maker(direction, &maker, &lez, &zcash);
+    maker
+        .observe_taker_first_lock()
+        .await
+        .expect("maker independently observes taker lock");
+    let maker_evidence = project_actor_maker_second_lock(direction, &mut maker, &lez, &zcash).await;
+    expose_maker_lock_to_taker(direction, maker_evidence, &lez, &zcash);
+    taker_store.set_transition_mode(TransitionCommitMode::CommitThenReportFailure);
+    let ObserveMakerLockOutcome::Projected(commit) = taker
+        .observe_maker_lock()
+        .await
+        .expect("exact-slot probe accepts the unknown successful commit")
+    else {
+        panic!("confirmed maker evidence must project");
+    };
+    assert!(commit.was_replay());
+    taker_store.set_transition_mode(TransitionCommitMode::Normal);
+
+    assert_eq!(
+        (maker.status(), maker.revision()),
+        (Phase::BothLegsLocked, 2)
+    );
+    assert_eq!(
+        (taker.status(), taker.revision()),
+        (Phase::BothLegsLocked, 2)
+    );
+    assert_actor_stores_are_isolated(&maker_store, &taker_store);
+    assert_actor_restarts_at_both_locked(id, wire, lez, zcash, maker_store, taker_store).await;
+}
+
+fn assert_actor_stores_are_isolated(maker_store: &MemoryStore, taker_store: &MemoryStore) {
+    assert_eq!(
+        maker_store
+            .observed_maker_lock_transitions
+            .lock()
+            .expect("maker store")
+            .len(),
+        0,
+        "maker store must not receive the taker-local observation"
+    );
+    assert_eq!(
+        taker_store
+            .observed_maker_lock_transitions
+            .lock()
+            .expect("taker store")
+            .len(),
+        1
+    );
+}
+
+async fn assert_actor_restarts_at_both_locked(
+    id: &str,
+    wire: Vec<u8>,
+    lez: MemoryLezTakerLockObservation,
+    zcash: MemoryZcashTakerLockObservation,
+    maker_store: MemoryStore,
+    taker_store: MemoryStore,
+) {
+    let swap_id = SwapId::new(id).expect("swap ID");
+    let maker_replay = actor_sdk(
+        Participant::Maker,
+        wire.clone(),
+        lez.clone(),
+        zcash.clone(),
+        maker_store,
+    )
+    .resume(&swap_id)
+    .await
+    .expect("maker restart")
+    .expect("durable maker swap");
+    let taker_recovery = actor_sdk(Participant::Taker, wire, lez, zcash, taker_store)
+        .resume(&swap_id)
+        .await
+        .expect("taker restart")
+        .expect("durable taker swap");
+    assert_eq!(
+        (maker_replay.status(), maker_replay.revision()),
+        (Phase::BothLegsLocked, 2)
+    );
+    assert_eq!(
+        (taker_recovery.status(), taker_recovery.revision()),
+        (Phase::BothLegsLocked, 2)
+    );
+}
+
+async fn project_actor_taker_first_lock(
+    direction: SwapDirection,
+    taker: &mut ActorActive,
+    lez: &MemoryLezTakerLockObservation,
+    zcash: &MemoryZcashTakerLockObservation,
+) {
+    let (plan, evidence) = match direction {
+        SwapDirection::TakerSellsForeign => {
+            let plan = zcash_first_lock_plan([0x31; 32], vec![0x51]);
+            taker
+                .stage_first_lock(plan.clone())
+                .await
+                .expect("stage Zcash");
+            taker.drive_first_lock().await.expect("submit Zcash");
+            zcash
+                .1
+                .observe_as(FirstLockStepV1::ZcashFund, FirstLockObservation::Confirmed);
+            (
+                plan,
+                confirmed_zcash_first_lock([0x31; 32], "actor-taker-zcash"),
+            )
+        }
+        SwapDirection::TakerSellsLez => {
+            let plan = lez_first_lock_plan([0x41; 32], vec![0x61], [0x42; 32], vec![0x62]);
+            taker
+                .stage_first_lock(plan.clone())
+                .await
+                .expect("stage LEZ");
+            taker
+                .drive_first_lock()
+                .await
+                .expect("submit LEZ initialize");
+            lez.2.observe_as(
+                FirstLockStepV1::LezInitialize,
+                FirstLockObservation::Confirmed,
+            );
+            taker.drive_first_lock().await.expect("submit LEZ fund");
+            lez.2
+                .observe_as(FirstLockStepV1::LezFund, FirstLockObservation::Confirmed);
+            (
+                plan,
+                FirstLockConfirmedEvidenceV1::new(
+                    FirstLockStepV1::LezFund,
+                    [0x42; 32],
+                    "actor-taker-lez",
+                    100,
+                )
+                .expect("taker LEZ evidence"),
+            )
+        }
+    };
+    assert_eq!(
+        taker.drive_first_lock().await.expect("observe exact plan"),
+        FirstLockDriveOutcome::ReadyForFundingProjection
+    );
+    taker
+        .project_first_lock(evidence)
+        .await
+        .expect("project taker lock");
+    drop(plan);
+}
+
+fn expose_taker_lock_to_maker(
+    direction: SwapDirection,
+    maker: &ActorActive,
+    lez: &MemoryLezTakerLockObservation,
+    zcash: &MemoryZcashTakerLockObservation,
+) {
+    match direction {
+        SwapDirection::TakerSellsForeign => {
+            zcash
+                .0
+                .respond(Ok(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
+                    canonical_zcash_taker_lock(maker.agreement()),
+                ))));
+        }
+        SwapDirection::TakerSellsLez => {
+            lez.0
+                .respond(Ok(TakerFirstLockObservationV1::CanonicalLez(Box::new(
+                    canonical_lez_taker_lock(maker.agreement()),
+                ))));
+        }
+    }
+}
+
+async fn project_actor_maker_second_lock(
+    direction: SwapDirection,
+    maker: &mut ActorActive,
+    lez: &MemoryLezTakerLockObservation,
+    zcash: &MemoryZcashTakerLockObservation,
+) -> FirstLockConfirmedEvidenceV1 {
+    let evidence = match direction {
+        SwapDirection::TakerSellsForeign => {
+            let plan = lez_first_lock_plan([0x71; 32], vec![0xa1], [0x72; 32], vec![0xa2]);
+            maker
+                .drive_maker_lock(plan.clone())
+                .await
+                .expect("submit maker initialize");
+            lez.2.observe_as(
+                FirstLockStepV1::LezInitialize,
+                FirstLockObservation::Confirmed,
+            );
+            maker
+                .drive_maker_lock(plan)
+                .await
+                .expect("submit maker LEZ fund");
+            lez.2
+                .observe_as(FirstLockStepV1::LezFund, FirstLockObservation::Confirmed);
+            FirstLockConfirmedEvidenceV1::new(
+                FirstLockStepV1::LezFund,
+                [0x72; 32],
+                "actor-maker-lez",
+                100,
+            )
+            .expect("maker LEZ evidence")
+        }
+        SwapDirection::TakerSellsLez => {
+            let plan = zcash_first_lock_plan([0x81; 32], vec![0xb1]);
+            maker
+                .drive_maker_lock(plan)
+                .await
+                .expect("submit maker Zcash");
+            zcash
+                .1
+                .observe_as(FirstLockStepV1::ZcashFund, FirstLockObservation::Confirmed);
+            confirmed_zcash_first_lock([0x81; 32], "actor-maker-zcash")
+        }
+    };
+    maker
+        .project_maker_lock(evidence.clone())
+        .await
+        .expect("project maker lock");
+    evidence
+}
+
+fn expose_maker_lock_to_taker(
+    direction: SwapDirection,
+    evidence: FirstLockConfirmedEvidenceV1,
+    lez: &MemoryLezTakerLockObservation,
+    zcash: &MemoryZcashTakerLockObservation,
+) {
+    match direction {
+        SwapDirection::TakerSellsForeign => lez
+            .3
+            .respond(Ok(MakerLockObservationV1::Confirmed(evidence))),
+        SwapDirection::TakerSellsLez => zcash
+            .2
+            .respond(Ok(MakerLockObservationV1::Confirmed(evidence))),
+    }
+}
+
 #[test]
 fn claim_preimage_is_redacted_and_not_a_wire_record() {
     let preimage = ClaimPreimage::new([0x42; 32]);
     assert_eq!(preimage.expose_secret(), &[0x42; 32]);
     assert_eq!(format!("{preimage:?}"), "ClaimPreimage([REDACTED])");
+}
+
+fn actor_sdk(
+    participant: Participant,
+    wire: Vec<u8>,
+    lez: MemoryLezTakerLockObservation,
+    zcash: MemoryZcashTakerLockObservation,
+    store: MemoryStore,
+) -> ZecPairSdk<
+    MemoryDiscovery,
+    MemoryNegotiation,
+    MemoryLezTakerLockObservation,
+    MemoryZcashTakerLockObservation,
+    MemoryStore,
+> {
+    ZecPairSdk::new(
+        participant,
+        MemoryDiscovery::default(),
+        MemoryNegotiation { wire },
+        lez,
+        zcash,
+        store,
+    )
 }
 
 fn sdk(

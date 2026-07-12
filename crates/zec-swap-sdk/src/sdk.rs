@@ -6,14 +6,16 @@ use crate::{
     AcceptedZecAgreementV1, CreateAgreementOutcome, CreateFirstLockOutcome,
     FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentV1, FirstLockObservation,
     FirstLockPlanV1, FirstLockProjectionCommit, FirstLockTransitionV1, LezFirstLockPort,
-    LezObservationEventV1, LezObservationReconciliationV1, LezObservationTrackerV1,
-    LezTakerFirstLockObservationPort, MakerFundingEligibilityOutcome, MakerLockDriveOutcome,
-    MakerLockIntentV1, MakerLockTransitionV1, NegotiationChannel, ObserveTakerFirstLockOutcome,
-    ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
-    RecoveryStore, TakerFirstLockObservationV1, ZcashFirstLockPort, ZcashObservationEvent,
-    ZcashObservationReconciliation, ZcashObservationTracker, ZcashTakerFirstLockObservationPort,
-    ZecAgreementV1, ZecLifecycleAction, ZecSdkError, lifecycle::next_action,
-    observed_taker_lock::taker_first_lock_step,
+    LezMakerLockObservationPort, LezObservationEventV1, LezObservationReconciliationV1,
+    LezObservationTrackerV1, LezTakerFirstLockObservationPort, MakerFundingEligibilityOutcome,
+    MakerLockDriveOutcome, MakerLockIntentV1, MakerLockObservationV1, MakerLockTransitionV1,
+    NegotiationChannel, ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome,
+    ObservedMakerLockTransitionV1, ObservedTakerFirstLockTransitionV1, OfferDiscovery,
+    PreparedFirstLockSubmissionV1, RecoveryStore, TakerFirstLockObservationV1, ZcashFirstLockPort,
+    ZcashMakerLockObservationPort, ZcashObservationEvent, ZcashObservationReconciliation,
+    ZcashObservationTracker, ZcashTakerFirstLockObservationPort, ZecAgreementV1,
+    ZecLifecycleAction, ZecSdkError, lifecycle::next_action,
+    observed_maker_lock::maker_final_lock_step, observed_taker_lock::taker_first_lock_step,
 };
 
 /// Complete pre-lock facade composed from application-supplied ports.
@@ -400,9 +402,29 @@ where
             self.replay_observed_taker_first_lock_transition().await?;
             return self.replay_maker_lock_transition().await;
         }
-        let Some(transition) = self
+        if let Some(transition) = self
             .store
             .load_first_lock_transition(self.coordinator.id(), self.revision)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        {
+            let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+            self.revision =
+                self.revision
+                    .checked_add(1)
+                    .ok_or(ZecSdkError::InvalidProjectionRevision {
+                        expected: u64::MAX,
+                        actual: u64::MAX,
+                    })?;
+            self.coordinator = next;
+        }
+        self.replay_observed_maker_lock_transition().await
+    }
+
+    async fn replay_maker_lock_transition(&mut self) -> Result<(), ZecSdkError> {
+        let Some(transition) = self
+            .store
+            .load_maker_lock_transition(self.coordinator.id(), self.revision)
             .await
             .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
         else {
@@ -420,10 +442,10 @@ where
         Ok(())
     }
 
-    async fn replay_maker_lock_transition(&mut self) -> Result<(), ZecSdkError> {
+    async fn replay_observed_maker_lock_transition(&mut self) -> Result<(), ZecSdkError> {
         let Some(transition) = self
             .store
-            .load_maker_lock_transition(self.coordinator.id(), self.revision)
+            .load_observed_maker_lock_transition(self.coordinator.id(), self.revision)
             .await
             .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
         else {
@@ -643,6 +665,103 @@ where
             CreateFirstLockOutcome::Created | CreateFirstLockOutcome::ExistingSame => Ok(outcome),
             CreateFirstLockOutcome::Conflict => Err(ZecSdkError::FirstLockConflict),
         }
+    }
+}
+
+impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
+where
+    Lez: LezMakerLockObservationPort,
+    Zcash: ZcashMakerLockObservationPort,
+    Store: RecoveryStore,
+{
+    /// Observes and durably projects the maker's second lock from the taker's node.
+    ///
+    /// The selected chain and final step come from the accepted agreement. The
+    /// adapter-asserted expected submission identity and canonical transaction
+    /// identity are bound into the exact durable predecessor slot before apply.
+    ///
+    /// # Errors
+    ///
+    /// Rejects the maker role, a non-confirmed taker lock, wrong-chain or
+    /// insufficient evidence, invalid replay, and structured chain/store errors.
+    pub async fn observe_maker_lock(&mut self) -> Result<ObserveMakerLockOutcome, ZecSdkError> {
+        if self.local_participant() != Participant::Taker {
+            return Err(ZecSdkError::WrongRole {
+                expected: Participant::Taker,
+                actual: self.local_participant(),
+            });
+        }
+        self.replay_first_lock_transition().await?;
+        if self.status() == Phase::BothLegsLocked {
+            return Ok(ObserveMakerLockOutcome::AlreadyObserved {
+                revision: self.revision,
+            });
+        }
+        if self.status() != Phase::TakerLockConfirmed {
+            return Err(ZecSdkError::MakerLockObservationNotReady(self.status()));
+        }
+        let step = maker_final_lock_step(self.agreement().direction());
+        let observation = match step {
+            crate::FirstLockStepV1::LezFund => self
+                .lez
+                .observe_maker_lock(self.agreement())
+                .await
+                .map_err(|error| ZecSdkError::LezMakerLockObservation(Box::new(error)))?,
+            crate::FirstLockStepV1::ZcashFund => self
+                .zcash
+                .observe_maker_lock(self.agreement())
+                .await
+                .map_err(|error| ZecSdkError::ZcashMakerLockObservation(Box::new(error)))?,
+            crate::FirstLockStepV1::LezInitialize => unreachable!("not a final lock step"),
+        };
+        let evidence = match observation {
+            MakerLockObservationV1::Confirmed(evidence) => evidence,
+            MakerLockObservationV1::Absent | MakerLockObservationV1::Unstable => {
+                return Ok(ObserveMakerLockOutcome::AwaitingStableObservation(step));
+            }
+        };
+        let transition = ObservedMakerLockTransitionV1::from_active(
+            self.agreement(),
+            self.local_participant(),
+            self.revision,
+            evidence,
+        )?;
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        let expected_revision =
+            self.revision
+                .checked_add(1)
+                .ok_or(ZecSdkError::InvalidProjectionRevision {
+                    expected: u64::MAX,
+                    actual: u64::MAX,
+                })?;
+        let commit = match self
+            .store
+            .commit_observed_maker_lock_transition(&transition)
+            .await
+        {
+            Ok(commit) => commit,
+            Err(error) => {
+                let probe = self
+                    .store
+                    .load_observed_maker_lock_transition(self.coordinator.id(), self.revision)
+                    .await
+                    .map_err(|probe_error| ZecSdkError::Persistence(Box::new(probe_error)))?;
+                if probe.as_ref() == Some(&transition) {
+                    FirstLockProjectionCommit::new(expected_revision, true)
+                } else {
+                    return Err(ZecSdkError::Persistence(Box::new(error)));
+                }
+            }
+        };
+        if commit.revision() != expected_revision {
+            return Err(ZecSdkError::InvalidProjectionRevision {
+                expected: expected_revision,
+                actual: commit.revision(),
+            });
+        }
+        self.coordinator = next;
+        self.revision = commit.revision();
+        Ok(ObserveMakerLockOutcome::Projected(commit))
     }
 }
 

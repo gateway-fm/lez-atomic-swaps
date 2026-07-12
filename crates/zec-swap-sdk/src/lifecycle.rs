@@ -7,7 +7,8 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
     FirstLockIntentError, FirstLockTransitionError, LezObservationTrackerError, MakerLockError,
-    ObservationTrackerError, ObservedTakerFirstLockTransitionError, ZecAgreementV1Error,
+    ObservationTrackerError, ObservedMakerLockError, ObservedTakerFirstLockTransitionError,
+    ZecAgreementV1Error,
 };
 
 /// A SHA-256 claim preimage that is redacted, zeroized, and not serializable.
@@ -60,6 +61,9 @@ pub enum ZecSdkError {
     /// Maker-local taker-lock evidence or durable projection is invalid.
     #[error(transparent)]
     InvalidObservedTakerFirstLockTransition(#[from] ObservedTakerFirstLockTransitionError),
+    /// Taker-local maker-lock evidence or durable projection is invalid.
+    #[error(transparent)]
+    InvalidObservedMakerLockTransition(#[from] ObservedMakerLockError),
     /// Maker second-lock recovery material or confirmed transition is invalid.
     #[error(transparent)]
     InvalidMakerLock(#[from] MakerLockError),
@@ -106,6 +110,9 @@ pub enum ZecSdkError {
     /// First-lock intent may only be staged from the fresh offered phase.
     #[error("first-lock intent requires Offered; active phase is {0:?}")]
     FirstLockNotOffered(Phase),
+    /// Taker can observe maker funding only after its own first lock is confirmed.
+    #[error("maker-lock observation requires TakerLockConfirmed; active phase is {0:?}")]
+    MakerLockObservationNotReady(Phase),
     /// Store reported a revision inconsistent with the exact committed transition.
     #[error("first-lock projection committed revision {actual}; expected {expected}")]
     InvalidProjectionRevision {
@@ -135,6 +142,12 @@ pub enum ZecSdkError {
     /// Maker observation of the taker's Zcash first lock failed.
     #[error("Zcash taker-first-lock observation adapter failed")]
     ZcashTakerFirstLockObservation(#[source] BoxPortError),
+    /// Taker observation of the maker's LEZ second lock failed.
+    #[error("LEZ maker-lock observation adapter failed")]
+    LezMakerLockObservation(#[source] BoxPortError),
+    /// Taker observation of the maker's Zcash second lock failed.
+    #[error("Zcash maker-lock observation adapter failed")]
+    ZcashMakerLockObservation(#[source] BoxPortError),
 }
 
 /// Next high-level role action derived without accepting peer messages.

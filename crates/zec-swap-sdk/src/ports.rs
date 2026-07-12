@@ -8,8 +8,8 @@ use lez_swap_core::{Participant, SwapId};
 use crate::{
     AcceptedZecAgreementEnvelopeV1, CreateFirstLockOutcome, FirstLockIntentV1,
     FirstLockObservation, FirstLockProjectionCommit, FirstLockTransitionV1, MakerLockIntentV1,
-    MakerLockTransitionV1, ObservedTakerFirstLockTransitionV1, PreparedFirstLockSubmissionV1,
-    TakerFirstLockObservationV1,
+    MakerLockObservationV1, MakerLockTransitionV1, ObservedMakerLockTransitionV1,
+    ObservedTakerFirstLockTransitionV1, PreparedFirstLockSubmissionV1, TakerFirstLockObservationV1,
 };
 
 /// Authenticated, expiring offer discovery supplied by a Delivery adapter.
@@ -141,6 +141,39 @@ pub trait ZcashTakerFirstLockObservationPort: Send + Sync {
     ) -> Result<TakerFirstLockObservationV1, Self::Error>;
 }
 
+/// Observation-only LEZ boundary used by the taker for the maker's second lock.
+///
+/// The adapter must validate stable canonical inclusion against the accepted
+/// agreement. Its expected submission identity is adapter-asserted because the
+/// taker has neither the maker's exact plan nor its role-local durable intent.
+#[async_trait]
+pub trait LezMakerLockObservationPort: Send + Sync {
+    /// Structured adapter/RPC error retained by the SDK.
+    type Error: Error + Send + Sync + 'static;
+
+    /// Observes the agreement-directed maker LEZ funding transaction.
+    async fn observe_maker_lock(
+        &self,
+        agreement: &crate::ZecAgreementV1,
+    ) -> Result<MakerLockObservationV1, Self::Error>;
+}
+
+/// Observation-only Zcash boundary used by the taker for the maker's second lock.
+///
+/// The adapter validates the stable canonical output and asserts its expected
+/// identity. The taker binds that assertion durably before applying it.
+#[async_trait]
+pub trait ZcashMakerLockObservationPort: Send + Sync {
+    /// Structured adapter/RPC error retained by the SDK.
+    type Error: Error + Send + Sync + 'static;
+
+    /// Observes the agreement-directed maker Zcash funding transaction.
+    async fn observe_maker_lock(
+        &self,
+        agreement: &crate::ZecAgreementV1,
+    ) -> Result<MakerLockObservationV1, Self::Error>;
+}
+
 /// Atomic result of creating one immutable role-local agreement record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CreateAgreementOutcome {
@@ -214,6 +247,19 @@ pub trait RecoveryStore: Clone + Send + Sync {
         swap_id: &SwapId,
         predecessor_revision: u64,
     ) -> Result<Option<ObservedTakerFirstLockTransitionV1>, Self::Error>;
+
+    /// Atomically commits the taker's independent maker-lock observation.
+    async fn commit_observed_maker_lock_transition(
+        &self,
+        transition: &ObservedMakerLockTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error>;
+
+    /// Loads one exact taker observation predecessor slot for probe/restart.
+    async fn load_observed_maker_lock_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<ObservedMakerLockTransitionV1>, Self::Error>;
 
     /// Atomically creates the maker's exact opposite-chain plan before any node call.
     async fn create_maker_lock_intent(

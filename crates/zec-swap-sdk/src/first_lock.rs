@@ -438,7 +438,15 @@ impl FirstLockTransitionV1 {
         &self.evidence
     }
 
-    pub(crate) fn apply_to(
+    /// Revalidates and applies this primitive transition to an exact aggregate head.
+    ///
+    /// Persistence adapters use this during full-history replay before trusting
+    /// the stored active revision.
+    ///
+    /// # Errors
+    ///
+    /// Rejects any agreement, role, revision, confirmation, or core-phase mismatch.
+    pub fn apply_to(
         &self,
         agreement: &ZecAgreementV1,
         coordinator: &SwapCoordinator,

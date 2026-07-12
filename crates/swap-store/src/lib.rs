@@ -9,14 +9,15 @@ pub use zec_recovery::SqliteZecRecoveryStore;
 use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId};
 use lez_zec_swap_sdk::{
     FirstLockRecordError, MakerLockError, MakerLockRecordError, ObservationRecordError,
-    ObservedTakerFirstLockTransitionError, ZcashObservationEventRecordV1, ZecAgreementV1Error,
-    ZecBindingRecordError, ZecSwapBinding, ZecSwapBindingRecordV1, revalidate_historical_event,
+    ObservedMakerLockError, ObservedTakerFirstLockTransitionError, ZcashObservationEventRecordV1,
+    ZecAgreementV1Error, ZecBindingRecordError, ZecSwapBinding, ZecSwapBindingRecordV1,
+    revalidate_historical_event,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 7;
+const DATABASE_SCHEMA_VERSION: i64 = 8;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_BINDING_PAYLOAD_VERSION: i64 = 1;
@@ -275,6 +276,9 @@ pub enum StoreError {
     /// A maker-local taker-lock observation record failed revalidation.
     #[error("persisted maker taker-lock observation is invalid")]
     ObservedTakerFirstLock(#[from] ObservedTakerFirstLockTransitionError),
+    /// A taker-local maker-lock observation record failed revalidation.
+    #[error("persisted taker maker-lock observation is invalid")]
+    ObservedMakerLock(#[from] ObservedMakerLockError),
     /// The database was created by a newer unsupported application version.
     #[error("unsupported SQLite schema version {0}")]
     UnsupportedDatabaseVersion(i64),
@@ -1186,6 +1190,20 @@ fn migrate_zec_sdk_recovery(transaction: &rusqlite::Transaction<'_>) -> Result<(
                 REFERENCES zec_sdk_maker_lock_intents(
                     local_role, swap_id, staged_revision
                 ) ON DELETE CASCADE
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS zec_sdk_observed_maker_lock_transitions (
+            local_role          TEXT NOT NULL CHECK (local_role = 'taker'),
+            swap_id             TEXT NOT NULL,
+            predecessor_revision INTEGER NOT NULL CHECK (predecessor_revision >= 0),
+            committed_revision  INTEGER NOT NULL CHECK (
+                committed_revision = predecessor_revision + 1
+            ),
+            payload_version     INTEGER NOT NULL CHECK (payload_version > 0),
+            payload_json        TEXT NOT NULL,
+            PRIMARY KEY (local_role, swap_id, predecessor_revision),
+            UNIQUE (local_role, swap_id, committed_revision),
+            FOREIGN KEY (local_role, swap_id)
+                REFERENCES zec_sdk_agreements(local_role, swap_id) ON DELETE CASCADE
         ) STRICT;
         ",
     )?;

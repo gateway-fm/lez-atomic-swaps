@@ -1,6 +1,7 @@
 //! Transparent Zcash protocol adapter for LEZ atomic swaps.
 
 mod agreement_v1;
+mod claim_material;
 mod first_lock;
 mod first_lock_record;
 mod funding;
@@ -11,6 +12,8 @@ mod maker_lock;
 mod maker_lock_record;
 mod observation;
 mod observation_record;
+mod observed_maker_lock;
+mod observed_maker_lock_record;
 mod observed_taker_lock;
 mod ports;
 mod profile;
@@ -29,6 +32,10 @@ pub use agreement_v1::{
     ZecAgreementExecutionError, ZecAgreementRecordV1, ZecAgreementV1, ZecAgreementV1Error,
     ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecRefundPlanV1, ZecRolePayoutV1,
     ZecTransactionPolicyV1,
+};
+pub use claim_material::{
+    ClaimMaterialContext, ClaimMaterialPurpose, PROTECTED_CLAIM_SCHEMA_V1, ProtectedClaimEnvelope,
+    ProtectedClaimError, ProtectedClaimKey,
 };
 
 pub use first_lock::{
@@ -75,6 +82,11 @@ pub use observation_record::{
     ZcashObservationEventRecordV1, ZcashOutputObservationRecordV1, ZcashOutputRemovalRecordV1,
     replay_zcash_observation_history, revalidate_historical_event,
 };
+pub use observed_maker_lock::{
+    MakerLockObservationV1, OBSERVED_MAKER_LOCK_SCHEMA_V1, ObserveMakerLockOutcome,
+    ObservedMakerLockError, ObservedMakerLockTransitionV1,
+};
+pub use observed_maker_lock_record::ObservedMakerLockTransitionRecordV1;
 pub use observed_taker_lock::{
     MakerFundingEligibilityOutcome, ObserveTakerFirstLockOutcome, ObservedTakerFirstLockEvidenceV1,
     ObservedTakerFirstLockTransitionError, ObservedTakerFirstLockTransitionRecordV1,
@@ -82,8 +94,9 @@ pub use observed_taker_lock::{
 };
 
 pub use ports::{
-    CreateAgreementOutcome, LezFirstLockPort, LezTakerFirstLockObservationPort, NegotiationChannel,
-    OfferDiscovery, RecoveryStore, ZcashFirstLockPort, ZcashTakerFirstLockObservationPort,
+    CreateAgreementOutcome, LezFirstLockPort, LezMakerLockObservationPort,
+    LezTakerFirstLockObservationPort, NegotiationChannel, OfferDiscovery, RecoveryStore,
+    ZcashFirstLockPort, ZcashMakerLockObservationPort, ZcashTakerFirstLockObservationPort,
 };
 pub use profile::{ProfileError, ZecProfileId, ZecRefundProfile};
 pub use sdk::{ActiveZecSwap, ZecPairSdk};
