@@ -349,10 +349,14 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
 - [x] Define a version-1 primitive ZEC binding record for immutable profile,
   expected network/branch/value, BIP-199 source terms, and derived redeem/P2SH
   bytes. Loading reconstructs the contract and rejects profile or script drift.
-- [ ] Complete production runtime wiring: persist immutable profile and expected
-  output bindings; deliver conflict and terminal reorg outcomes through a
-  durable alert outbox; and prove close/reopen/requery through actual two-Zebra
-  replacement.
+- [x] Add schema-v3 immutable ZEC binding persistence. Swap plus first binding
+  insert commits atomically; exact repeats are idempotent, changed terms fail
+  without overwrite, restart revalidates, and legacy databases migrate unbound
+  rather than inferring signed terms.
+- [ ] Complete production runtime wiring: require the immutable binding during
+  ZEC swap creation and before tracker/event processing; deliver conflict and
+  terminal reorg outcomes through a durable alert outbox; and prove
+  close/reopen/requery through actual two-Zebra replacement.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
   nodes. The LEZ
   Unix-millisecond/core Unix-second boundary is typed, checked, conservatively

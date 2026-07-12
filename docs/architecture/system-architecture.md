@@ -282,7 +282,7 @@ flowchart LR
     Telemetry["Measured bounds or controlled harness"] --> Safety["LEZ-latest + required margin ≤ ZEC-earliest"]
     Select --> Safety
     Terms --> Binding["Validated ZEC binding record v1"]
-    Binding -.-> Journal
+    Binding --> Journal
     Safety -->|"missing/short"| Reject
     Safety --> Schedule["Direction-mapped RecoverySchedule<br/>LEZ always earlier than ZEC"]
     Depths --> Validator["Typed observation validator"]
@@ -339,8 +339,8 @@ protocol-committed transaction ID in the participant-specific reorg phase, and
 returns `ReplacementConflict`; pre-dependent replacement and same-transaction
 re-mining remain normal applied outcomes.
 The SDK binding record now revalidates primitive profile and BIP-199 terms,
-including both derived scripts; schema-v3 persistence and runtime enforcement
-remain part of the dashed binding-to-journal edge.
+including both derived scripts. Schema v3 persists it atomically with the swap
+and rejects immutable rebinding; runtime enforcement before every event remains.
 
 ## Happy-path user flow
 

@@ -3,13 +3,17 @@
 use std::{path::Path, time::Duration};
 
 use lez_swap_core::{Participant, SwapCoordinator, SwapId};
-use lez_zec_swap_sdk::{ObservationRecordError, ZcashObservationEventRecordV1};
+use lez_zec_swap_sdk::{
+    ObservationRecordError, ZcashObservationEventRecordV1, ZecBindingRecordError, ZecSwapBinding,
+    ZecSwapBindingRecordV1,
+};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 2;
+const DATABASE_SCHEMA_VERSION: i64 = 3;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;
+const ZCASH_BINDING_PAYLOAD_VERSION: i64 = 1;
 
 /// Persistent-store failure.
 #[derive(Debug, Error)]
@@ -23,6 +27,9 @@ pub enum StoreError {
     /// Persisted Zcash evidence is internally inconsistent.
     #[error("persisted Zcash observation record is invalid")]
     ObservationRecord(#[from] ObservationRecordError),
+    /// Persisted immutable ZEC binding is internally inconsistent.
+    #[error("persisted ZEC swap binding is invalid")]
+    ZcashBindingRecord(#[from] ZecBindingRecordError),
     /// The database was created by a newer unsupported application version.
     #[error("unsupported SQLite schema version {0}")]
     UnsupportedDatabaseVersion(i64),
@@ -37,6 +44,9 @@ pub enum StoreError {
     /// The requested swap does not exist.
     #[error("swap does not exist")]
     MissingSwap,
+    /// An existing immutable ZEC binding differs from newly supplied terms.
+    #[error("immutable ZEC swap binding does not match durable terms")]
+    ImmutableZcashBindingMismatch,
     /// Optimistic aggregate revision did not match durable state.
     #[error("stale aggregate revision: expected {expected}, actual {actual}")]
     StaleRevision {
@@ -111,6 +121,95 @@ impl SqliteSwapStore {
             params![swap.id().as_str(), SWAP_PAYLOAD_VERSION, state_json],
         )?;
         Ok(())
+    }
+
+    /// Atomically saves a swap and its insert-once immutable ZEC binding.
+    ///
+    /// Repeating the exact binding is idempotent. A changed profile or expected
+    /// output fails without overwriting either durable row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for serialization, invalid binding, immutable
+    /// mismatch, or an `SQLite` transaction failure.
+    pub fn save_with_zcash_binding(
+        &mut self,
+        swap: &SwapCoordinator,
+        binding: &ZecSwapBinding,
+    ) -> Result<(), StoreError> {
+        let state_json = serde_json::to_string(swap)?;
+        let binding_record = ZecSwapBindingRecordV1::from_binding(binding);
+        binding_record.validate()?;
+        let binding_json = serde_json::to_string(&binding_record)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute(
+            "
+            INSERT INTO swaps (id, schema_version, state_json)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(id) DO UPDATE SET
+                schema_version = excluded.schema_version,
+                state_json = excluded.state_json
+            ",
+            params![swap.id().as_str(), SWAP_PAYLOAD_VERSION, state_json],
+        )?;
+        let existing = transaction
+            .query_row(
+                "SELECT payload_version, payload_json FROM zcash_swap_bindings WHERE swap_id = ?1",
+                params![swap.id().as_str()],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        match existing {
+            None => {
+                transaction.execute(
+                    "
+                    INSERT INTO zcash_swap_bindings (swap_id, payload_version, payload_json)
+                    VALUES (?1, ?2, ?3)
+                    ",
+                    params![
+                        swap.id().as_str(),
+                        ZCASH_BINDING_PAYLOAD_VERSION,
+                        binding_json
+                    ],
+                )?;
+            }
+            Some((version, json))
+                if version == ZCASH_BINDING_PAYLOAD_VERSION && json == binding_json => {}
+            Some(_) => return Err(StoreError::ImmutableZcashBindingMismatch),
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Loads and fully revalidates one immutable ZEC binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for `SQLite`, unsupported payload version, malformed
+    /// JSON, or inconsistent profile/output terms.
+    pub fn load_zcash_binding(&self, id: &SwapId) -> Result<Option<ZecSwapBinding>, StoreError> {
+        let encoded = self
+            .connection
+            .query_row(
+                "SELECT payload_version, payload_json FROM zcash_swap_bindings WHERE swap_id = ?1",
+                params![id.as_str()],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        encoded
+            .map(|(version, json)| {
+                if version != ZCASH_BINDING_PAYLOAD_VERSION {
+                    return Err(StoreError::UnsupportedPayloadVersion {
+                        kind: "ZEC swap binding",
+                        version,
+                    });
+                }
+                let record: ZecSwapBindingRecordV1 = serde_json::from_str(&json)?;
+                record.validate().map_err(StoreError::from)
+            })
+            .transpose()
     }
 
     /// Loads a swap by stable ID.
@@ -411,7 +510,12 @@ fn migrate(connection: &mut Connection) -> Result<(), StoreError> {
         ) STRICT;
         CREATE INDEX IF NOT EXISTS chain_events_swap_role_sequence
             ON chain_events (swap_id, funded_by, sequence);
-        PRAGMA user_version = 2;
+        CREATE TABLE IF NOT EXISTS zcash_swap_bindings (
+            swap_id         TEXT PRIMARY KEY NOT NULL REFERENCES swaps(id) ON DELETE CASCADE,
+            payload_version INTEGER NOT NULL,
+            payload_json    TEXT NOT NULL
+        ) STRICT;
+        PRAGMA user_version = 3;
         ",
     )?;
     transaction.commit()?;

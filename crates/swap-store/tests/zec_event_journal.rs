@@ -6,7 +6,7 @@ use lez_swap_store::{SqliteSwapStore, StoreError};
 use lez_zec_swap_sdk::{
     Bip199Contract, CanonicalZcashOutputObservation, ExpectedBip199Output,
     TransparentFundingRequest, TransparentUtxo, ZcashNodeSnapshot, ZcashObservationEventRecordV1,
-    ZcashStableTip, build_funding_transaction,
+    ZcashStableTip, ZecProfileId, ZecSwapBinding, build_funding_transaction,
 };
 use rusqlite::{Connection, params};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
@@ -91,6 +91,77 @@ fn record(tip_height: u32) -> ZcashObservationEventRecordV1 {
     )
     .unwrap();
     ZcashObservationEventRecordV1::from_canonical(&observation)
+}
+
+fn binding(value: u64) -> ZecSwapBinding {
+    ZecSwapBinding::new(
+        ZecProfileId::DeterministicLocalV1,
+        ExpectedBip199Output::new(
+            NetworkType::Regtest,
+            BranchId::Nu6_2,
+            zatoshis(value),
+            Bip199Contract::new(500_000, [0x11; 20], [0x22; 32], [0x33; 20]),
+        ),
+    )
+    .unwrap()
+}
+
+#[test]
+fn zcash_binding_is_restart_safe_idempotent_and_immutable() {
+    let data = tempdir().unwrap();
+    let path = data.path().join("binding.sqlite3");
+    let swap = swap();
+    let original = binding(100_000);
+    let changed = binding(99_000);
+    let mut store = SqliteSwapStore::open(&path).unwrap();
+
+    store.save_with_zcash_binding(&swap, &original).unwrap();
+    assert_eq!(
+        store.load_zcash_binding(swap.id()).unwrap(),
+        Some(original.clone())
+    );
+    store.save_with_zcash_binding(&swap, &original).unwrap();
+    assert!(matches!(
+        store.save_with_zcash_binding(&swap, &changed),
+        Err(StoreError::ImmutableZcashBindingMismatch)
+    ));
+    assert_eq!(
+        store.load_zcash_binding(swap.id()).unwrap(),
+        Some(original.clone())
+    );
+    drop(store);
+
+    let store = SqliteSwapStore::open(path).unwrap();
+    assert_eq!(store.load_zcash_binding(swap.id()).unwrap(), Some(original));
+    assert_eq!(store.load(swap.id()).unwrap(), Some(swap));
+}
+
+#[test]
+fn failed_binding_insert_rolls_back_the_new_swap() {
+    let data = tempdir().unwrap();
+    let path = data.path().join("binding-rollback.sqlite3");
+    let swap = swap();
+    let mut store = SqliteSwapStore::open(&path).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "
+            CREATE TRIGGER reject_binding_insert
+            BEFORE INSERT ON zcash_swap_bindings
+            BEGIN
+                SELECT RAISE(ABORT, 'forced binding failure');
+            END;
+            ",
+        )
+        .unwrap();
+    drop(connection);
+
+    assert!(matches!(
+        store.save_with_zcash_binding(&swap, &binding(100_000)),
+        Err(StoreError::Sqlite(_))
+    ));
+    assert_eq!(store.load(swap.id()).unwrap(), None);
+    assert_eq!(store.load_zcash_binding(swap.id()).unwrap(), None);
 }
 
 #[test]
@@ -258,7 +329,17 @@ fn legacy_v1_table_migrates_and_future_versions_fail_explicitly() {
 
     let store = SqliteSwapStore::open(&legacy_path).unwrap();
     assert_eq!(store.revision(swap.id()).unwrap(), Some(0));
+    assert_eq!(store.load_zcash_binding(swap.id()).unwrap(), None);
     assert_eq!(store.load(swap.id()).unwrap(), Some(swap));
+    drop(store);
+    let connection = Connection::open(&legacy_path).unwrap();
+    assert_eq!(
+        connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .unwrap(),
+        3
+    );
+    drop(connection);
 
     let future_path = data.path().join("future.sqlite3");
     let connection = Connection::open(&future_path).unwrap();

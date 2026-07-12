@@ -134,5 +134,7 @@ actual two-Zebra store/restart evidence remain required.
 The SDK now defines a version-1 primitive binding record for the reviewed
 profile, network, branch, value, BIP-199 source terms, and both derived scripts.
 Loading rebuilds the contract and validates profile consensus before returning
-a trusted binding. Schema storage, immutable insert semantics, and runtime event
-matching remain the next production slice.
+a trusted binding. Schema v3 now stores that record with the swap atomically,
+makes exact rebinding idempotent, rejects changed terms without overwrite, and
+migrates legacy swaps without inventing a binding. Runtime event matching remains
+the next production slice.
