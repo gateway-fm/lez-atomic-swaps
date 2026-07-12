@@ -7,7 +7,7 @@ use lez_swap_core::{
     Chain, ChainPosition, ClockBasis, ConfirmationPolicy, Error, Pair, Participant, Phase,
     RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
-use lez_swap_store::{EventCommit, SqliteSwapStore, StoreError};
+use lez_swap_store::{EventCommit, OperatorAlertRecordV1, SqliteSwapStore, StoreError};
 use lez_zec_swap_sdk::{
     HistoricalReplayError, ZcashObservationEvent, ZcashObservationEventRecordV1,
     ZcashObservationTracker, ZecBindingRecordError, ZecRefundProfile, ZecSwapBinding,
@@ -52,6 +52,7 @@ pub struct AppliedZcashFundingEvent {
     swap: SwapCoordinator,
     commit: EventCommit,
     outcome: ZcashFundingProjectionOutcome,
+    alert_sequence: Option<u64>,
 }
 
 /// Durable runtime classification of one Zcash funding event.
@@ -90,6 +91,12 @@ impl AppliedZcashFundingEvent {
     #[must_use]
     pub const fn outcome(&self) -> ZcashFundingProjectionOutcome {
         self.outcome
+    }
+
+    /// Durable operator-alert cursor for attention-requiring outcomes.
+    #[must_use]
+    pub const fn alert_sequence(&self) -> Option<u64> {
+        self.alert_sequence
     }
 }
 
@@ -166,17 +173,27 @@ pub fn apply_zcash_funding_event(
         .ok_or(ZcashFundingApplyError::MissingZcashBinding)?;
     validate_binding_policies(&swap, &binding)?;
     binding.validate_event(event)?;
-    if let Some(commit) =
-        store.committed_zcash_event(predecessor_revision, id, funded_by, &record)?
+    if store
+        .committed_zcash_event(predecessor_revision, id, funded_by, &record)?
+        .is_some()
     {
         swap = store.load(id)?.ok_or(StoreError::MissingSwap)?;
         let outcome = terminal_reorg_outcome(&swap, funded_by, event)
             .or_else(|| replacement_conflict_outcome(&swap, funded_by, event))
             .unwrap_or(ZcashFundingProjectionOutcome::Applied);
+        let alert = operator_alert(outcome, event)?;
+        let transition = store.commit_zcash_transition(
+            predecessor_revision,
+            &swap,
+            funded_by,
+            &record,
+            alert.as_ref(),
+        )?;
         return Ok(AppliedZcashFundingEvent {
             swap,
-            commit,
+            commit: transition.event(),
             outcome,
+            alert_sequence: transition.alert_sequence(),
         });
     }
 
@@ -191,12 +208,40 @@ pub fn apply_zcash_funding_event(
     } else {
         project_zcash_funding_event(&mut swap, funded_by, event)?
     };
-    let commit = store.commit_zcash_event(predecessor_revision, &swap, funded_by, &record)?;
+    let alert = operator_alert(outcome, event)?;
+    let transition = store.commit_zcash_transition(
+        predecessor_revision,
+        &swap,
+        funded_by,
+        &record,
+        alert.as_ref(),
+    )?;
     Ok(AppliedZcashFundingEvent {
         swap,
-        commit,
+        commit: transition.event(),
         outcome,
+        alert_sequence: transition.alert_sequence(),
     })
+}
+
+fn operator_alert(
+    outcome: ZcashFundingProjectionOutcome,
+    event: &ZcashObservationEvent,
+) -> Result<Option<OperatorAlertRecordV1>, ZcashFundingApplyError> {
+    match outcome {
+        ZcashFundingProjectionOutcome::Applied => Ok(None),
+        ZcashFundingProjectionOutcome::ReplacementConflict { funded_by } => {
+            OperatorAlertRecordV1::replacement_conflict(funded_by, event)
+                .map(Some)
+                .map_err(ZcashFundingApplyError::from)
+        }
+        ZcashFundingProjectionOutcome::TerminalReorgDetected {
+            terminal_phase,
+            funded_by,
+        } => OperatorAlertRecordV1::terminal_reorg(terminal_phase, funded_by, event)
+            .map(Some)
+            .map_err(ZcashFundingApplyError::from),
+    }
 }
 
 fn validate_binding_policies(

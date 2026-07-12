@@ -357,9 +357,12 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   projection, and lower store commit/probe boundaries. Missing legacy bindings,
   profile/coordinator confirmation-policy mismatch, and event-envelope mismatch
   fail before revision, journal, or aggregate mutation.
-- [ ] Complete production runtime wiring: deliver conflict and terminal reorg
-  outcomes through a durable alert outbox, and prove close/reopen/requery through
-  actual two-Zebra replacement.
+- [x] Add schema-v4 operator/security alert outbox. Conflict warnings and
+  terminal critical alerts commit with event+aggregate; Applied emits none;
+  forced insertion failure rolls back; replay/restart preserve one cursor and
+  acknowledgment without changing protocol state.
+- [ ] Complete production runtime wiring: expose authenticated status/list/ack
+  alert flows, and prove close/reopen/requery through actual two-Zebra replacement.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
   nodes. The LEZ
   Unix-millisecond/core Unix-second boundary is typed, checked, conservatively

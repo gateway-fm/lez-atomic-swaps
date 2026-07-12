@@ -305,7 +305,7 @@ flowchart LR
     Schedule -.-> Composed
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Projection,AlertOutbox,Composed planned;
+    class Projection,Composed planned;
 ```
 
 The solid profile, validator, stable-tip watcher, and actual Zebra E2E snapshot
@@ -326,14 +326,14 @@ inclusion height.
 
 The dashed runtime path has a passing reference slice for direction-derived
 canonical/removal projection, atomic commit, restart reload, and exact
-unknown-outcome replay in both ZEC directions. It remains dashed until durable
-conflict/terminal alert delivery and actual-node restart evidence pass. Restart
+unknown-outcome replay in both ZEC directions. It remains dashed until
+authenticated operator alert surfaces and actual-node restart evidence pass. Restart
 now revalidates primitive records and immutable binding terms,
 rejects impossible sequence history, restores the exact historical tracker head,
 and still requires a fresh stable Zebra reconciliation before effects.
 Completed/refunded removal or replacement is now journaled without erasing the
-lifecycle result and is classified as `TerminalReorgDetected`; delivery through
-the durable alert outbox remains dashed.
+lifecycle result and is classified as `TerminalReorgDetected`; its critical
+alert now commits atomically and survives replay/restart.
 Post-dependent replacement now commits chain truth atomically, retains the
 protocol-committed transaction ID in the participant-specific reorg phase, and
 returns `ReplacementConflict`; pre-dependent replacement and same-transaction

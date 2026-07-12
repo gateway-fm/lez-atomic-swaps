@@ -5,14 +5,16 @@ use lez_swap_core::{
     Chain, ChainPosition, ChainProof, ClaimEvidence, ConfirmationPolicy, Pair, Participant, Phase,
     RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
-use lez_swap_store::SqliteSwapStore;
+use lez_swap_store::{OperatorAlertKind, OperatorAlertSeverity, SqliteSwapStore, StoreError};
 use lez_zec_swap_sdk::{
     Bip199Contract, CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval,
     ExpectedBip199Output, TransparentFundingRequest, TransparentUtxo, ZcashNodeRemovalSnapshot,
     ZcashNodeSnapshot, ZcashObservationEvent, ZcashObservationReconciliation, ZcashStableTip,
     ZecProfileId, ZecSwapBinding, build_funding_transaction,
 };
+use rusqlite::Connection;
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use std::path::Path;
 use tempfile::tempdir;
 use zcash_primitives::block::BlockHash;
 use zcash_protocol::{
@@ -109,6 +111,46 @@ fn binding_with_value(value: u64) -> ZecSwapBinding {
     .unwrap()
 }
 
+fn assert_single_alert(
+    store: &SqliteSwapStore,
+    id: &SwapId,
+    revision: u64,
+    kind: OperatorAlertKind,
+    severity: OperatorAlertSeverity,
+    funded_by: Participant,
+) -> u64 {
+    let alerts = store.list_operator_alerts(id, 0, true).unwrap();
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].aggregate_revision(), revision);
+    assert_eq!(alerts[0].record().kind(), kind);
+    assert_eq!(alerts[0].record().severity(), severity);
+    assert_eq!(alerts[0].record().funded_by(), funded_by);
+    assert!(!alerts[0].acknowledged());
+    alerts[0].sequence()
+}
+
+fn assert_alert_state(store: &SqliteSwapStore, id: &SwapId, sequence: u64, acknowledged: bool) {
+    let alerts = store.list_operator_alerts(id, 0, true).unwrap();
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].sequence(), sequence);
+    assert_eq!(alerts[0].acknowledged(), acknowledged);
+}
+
+fn assert_ack_is_swap_scoped_and_survives_restart(
+    store: SqliteSwapStore,
+    path: &Path,
+    id: &SwapId,
+    sequence: u64,
+) {
+    assert!(matches!(
+        store.acknowledge_operator_alert(&SwapId::new("different-swap").unwrap(), sequence),
+        Err(StoreError::MissingOperatorAlert)
+    ));
+    drop(store);
+    let reopened = SqliteSwapStore::open(path).unwrap();
+    assert_alert_state(&reopened, id, sequence, true);
+}
+
 fn removal(previous: &CanonicalZcashOutputObservation) -> CanonicalZcashOutputRemoval {
     CanonicalZcashOutputRemoval::validate(
         previous,
@@ -161,6 +203,13 @@ fn forward_zec_runtime_commits_canonical_and_pre_maker_removal_across_restart() 
     let applied = apply_zcash_funding_event(&mut store, 0, swap.id(), &canonical_event).unwrap();
     assert_eq!(applied.swap().phase(), Phase::TakerLockConfirmed);
     assert_eq!(applied.commit().revision(), 1);
+    assert_eq!(applied.alert_sequence(), None);
+    assert!(
+        store
+            .list_operator_alerts(swap.id(), 0, true)
+            .unwrap()
+            .is_empty()
+    );
     let replay = apply_zcash_funding_event(&mut store, 0, swap.id(), &canonical_event).unwrap();
     assert!(replay.commit().was_replay());
 
@@ -274,7 +323,15 @@ fn terminal_reorg_is_journaled_and_reported_without_erasing_the_outcome() {
                     funded_by: Participant::Taker,
                 }
             );
-            assert_eq!(applied.commit().revision(), 2);
+            let alert_sequence = assert_single_alert(
+                &store,
+                swap.id(),
+                2,
+                OperatorAlertKind::ZcashTerminalReorg,
+                OperatorAlertSeverity::Critical,
+                Participant::Taker,
+            );
+            assert_eq!(applied.alert_sequence(), Some(alert_sequence));
             assert_eq!(
                 load_zcash_observation_tracker(&store, swap.id())
                     .unwrap()
@@ -306,6 +363,7 @@ fn terminal_reorg_is_journaled_and_reported_without_erasing_the_outcome() {
                     .len(),
                 2
             );
+            assert_alert_state(&store, swap.id(), alert_sequence, false);
         }
     }
 }
@@ -325,7 +383,8 @@ fn post_dependent_replacement_conflict_is_atomic_and_replayable_for_both_roles()
         ),
     ] {
         let data = tempdir().unwrap();
-        let mut store = SqliteSwapStore::open(data.path().join("conflict.sqlite3")).unwrap();
+        let path = data.path().join("conflict.sqlite3");
+        let mut store = SqliteSwapStore::open(&path).unwrap();
         let mut swap = swap("replacement-conflict", direction);
         if funded_by == Participant::Maker {
             swap.observe_funding(
@@ -365,6 +424,23 @@ fn post_dependent_replacement_conflict_is_atomic_and_replayable_for_both_roles()
             ZcashFundingProjectionOutcome::ReplacementConflict { funded_by }
         );
         assert_eq!(applied.commit().revision(), 2);
+        let alert_sequence = assert_single_alert(
+            &store,
+            swap.id(),
+            2,
+            OperatorAlertKind::ZcashReplacementConflict,
+            OperatorAlertSeverity::Warning,
+            funded_by,
+        );
+        store
+            .acknowledge_operator_alert(swap.id(), alert_sequence)
+            .unwrap();
+        assert!(
+            store
+                .list_operator_alerts(swap.id(), 0, false)
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             store.load_zcash_events(swap.id(), funded_by).unwrap().len(),
             2
@@ -388,6 +464,9 @@ fn post_dependent_replacement_conflict_is_atomic_and_replayable_for_both_roles()
             store.load_zcash_events(swap.id(), funded_by).unwrap().len(),
             2
         );
+        assert_alert_state(&store, swap.id(), alert_sequence, true);
+        drop(replay);
+        assert_ack_is_swap_scoped_and_survives_restart(store, &path, swap.id(), alert_sequence);
     }
 }
 
@@ -596,4 +675,65 @@ fn durable_profile_confirmations_must_match_both_coordinator_leg_policies() {
         .is_err()
     );
     assert_eq!(store.revision(swap.id()).unwrap(), Some(0));
+}
+
+#[test]
+fn alert_insert_failure_rolls_back_event_revision_and_reorg_projection() {
+    let data = tempdir().unwrap();
+    let path = data.path().join("alert-rollback.sqlite3");
+    let mut store = SqliteSwapStore::open(&path).unwrap();
+    let mut swap = swap("alert-rollback", SwapDirection::TakerSellsForeign);
+    store.save_with_zcash_binding(&swap, &binding()).unwrap();
+    let original = canonical_observation();
+    apply_zcash_funding_event(
+        &mut store,
+        0,
+        swap.id(),
+        &ZcashObservationEvent::Canonical(original.clone()),
+    )
+    .unwrap();
+    swap = store.load(swap.id()).unwrap().unwrap();
+    swap.observe_funding(
+        Participant::Maker,
+        ChainProof::new("lez-maker-lock", 1).unwrap(),
+    )
+    .unwrap();
+    store.save_with_zcash_binding(&swap, &binding()).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "
+            CREATE TRIGGER reject_operator_alert
+            BEFORE INSERT ON operator_alert_outbox
+            BEGIN
+                SELECT RAISE(ABORT, 'forced alert failure');
+            END;
+            ",
+        )
+        .unwrap();
+    drop(connection);
+
+    let replacement = ZcashObservationEvent::Replaced {
+        removed: Box::new(removal(&original)),
+        canonical: Box::new(replacement_observation()),
+    };
+    assert!(apply_zcash_funding_event(&mut store, 1, swap.id(), &replacement).is_err());
+    assert_eq!(store.revision(swap.id()).unwrap(), Some(1));
+    assert_eq!(
+        store.load(swap.id()).unwrap().unwrap().phase(),
+        Phase::BothLegsLocked
+    );
+    assert_eq!(
+        store
+            .load_zcash_events(swap.id(), Participant::Taker)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        store
+            .list_operator_alerts(swap.id(), 0, true)
+            .unwrap()
+            .is_empty()
+    );
 }

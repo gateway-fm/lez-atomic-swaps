@@ -1,6 +1,7 @@
 # ADR 0003: SQLite persistence through rusqlite
 
-Status: Accepted; schema-v2 ZEC journal proven, full outbox/crash matrix pending — 2026-07-11
+Status: Accepted; schema-v4 ZEC journal/binding/operator-alert outbox proven,
+general effect outbox/crash matrix pending — 2026-07-12
 
 ```mermaid
 flowchart LR
@@ -8,11 +9,13 @@ flowchart LR
     Actor --> Tx["SQLite transaction"]
     Tx --> Aggregate["Versioned swap aggregate + revision"]
     Tx --> Events["Versioned ZEC chain_events journal"]
-    Tx -.-> Outbox["General effect outbox"]
+    Tx --> Alerts["Operator/security alert outbox"]
+    Tx -.-> Outbox["General external-effect outbox"]
     Credential["systemd credential / owner-only key file"] --> Envelope["HKDF per-swap key + XChaCha20Poly1305 envelope"]
     Envelope --> Aggregate
     Aggregate --> WAL["WAL + FULL synchronous"]
     Events --> WAL
+    Alerts --> WAL
     Outbox -.-> WAL
     Crash["Process crash"] --> Reopen["Reopen + migrate + replay"]
     WAL --> Reopen
@@ -35,7 +38,7 @@ reproducible deployment. A repository port hides it from `swap-core`. The daemon
 uses a single persistence actor and explicit transactions; WAL, full synchronous
 durability, foreign keys, and busy timeouts are configured deliberately.
 
-Schema v2 separates the database version from swap/event payload versions,
+Schema v4 separates database version from swap/event/binding/alert payload versions,
 migrates the legacy v1 `swaps` table with revision zero, and rejects future
 database or row payload versions explicitly. A `chain_events` row and its swap
 aggregate revision commit in one immediate transaction. Exact replay is scoped
@@ -50,6 +53,13 @@ The runtime can probe an exact `(swap, funded role, predecessor revision,
 payload)` slot before mutating core state. A removal retry after an unknown
 successful commit therefore reloads the durable aggregate instead of reapplying
 a removal that may already have cleared a pre-maker funding ID.
+
+Attention-requiring ZEC outcomes insert a versioned operator alert in the same
+immediate transaction as chain event and aggregate revision. Applied events
+insert none; replacement conflicts are warning alerts and terminal reorgs are
+critical. Exact replay preserves alert cursor and acknowledgment, and forced
+alert-insert failure rolls the event and aggregate back. Acknowledgment is
+swap-scoped owner metadata: it never deletes evidence or changes protocol state.
 
 Secret fields are versioned per-swap envelopes using maintained RustCrypto
 XChaCha20Poly1305 and HKDF-SHA256 crates, `secrecy`, and `zeroize`. The random
@@ -69,7 +79,7 @@ occupying async runtime workers.
 
 Crash after every durable effect transition, truncate/kill at commit boundaries,
 reopen under concurrent reads, and add the general outbox and encrypted secret
-envelopes. The ZEC journal already proves v1-to-v2 migration, future-version
-rejection, atomic rollback, restart loading, role isolation, stale revision
-rejection, and idempotent replay. Revisit only if measured write latency violates
-daemon requirements.
+envelopes. The ZEC journal/binding/alert path proves migration through schema v4,
+future-version rejection, atomic rollback, restart loading, role isolation,
+stale revision rejection, idempotent replay, and durable acknowledgment. Revisit
+only if measured write latency violates daemon requirements.

@@ -2,18 +2,219 @@
 
 use std::{path::Path, time::Duration};
 
-use lez_swap_core::{Participant, SwapCoordinator, SwapId};
+use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId};
 use lez_zec_swap_sdk::{
     ObservationRecordError, ZcashObservationEventRecordV1, ZecBindingRecordError, ZecSwapBinding,
     ZecSwapBindingRecordV1, revalidate_historical_event,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 3;
+const DATABASE_SCHEMA_VERSION: i64 = 4;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_BINDING_PAYLOAD_VERSION: i64 = 1;
+const OPERATOR_ALERT_PAYLOAD_VERSION: i64 = 1;
+
+/// Stable operator/security alert kind.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperatorAlertKind {
+    /// Canonical chain truth replaced a protocol-committed ZEC transaction ID.
+    ZcashReplacementConflict,
+    /// ZEC chain truth changed after an absorbing lifecycle outcome.
+    ZcashTerminalReorg,
+}
+
+/// Stable operator alert severity.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperatorAlertSeverity {
+    /// Funds remain recoverable but automatic dependent effects are suspended.
+    Warning,
+    /// An absorbing protocol outcome conflicts with later canonical chain truth.
+    Critical,
+}
+
+/// Chain event shape that caused an operator alert.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AlertObservedEvent {
+    /// Previously canonical funding evidence was removed.
+    Removed,
+    /// Removed evidence and a new canonical output arrived atomically.
+    Replaced,
+}
+
+/// Version-1 durable semantic snapshot for an operator/security alert.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OperatorAlertRecordV1 {
+    kind: OperatorAlertKind,
+    severity: OperatorAlertSeverity,
+    funded_by: Participant,
+    observed_event: AlertObservedEvent,
+    previous_transaction_id: Box<str>,
+    canonical_transaction_id: Option<Box<str>>,
+    terminal_phase: Option<Phase>,
+}
+
+impl OperatorAlertRecordV1 {
+    /// Constructs a warning for a different-ID post-dependent replacement.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] unless `event` is an atomic replacement.
+    pub fn replacement_conflict(
+        funded_by: Participant,
+        event: &lez_zec_swap_sdk::ZcashObservationEvent,
+    ) -> Result<Self, StoreError> {
+        let ids = alert_event_ids(event)?;
+        if ids.observed_event != AlertObservedEvent::Replaced {
+            return Err(StoreError::InvalidOperatorAlert);
+        }
+        Ok(Self {
+            kind: OperatorAlertKind::ZcashReplacementConflict,
+            severity: OperatorAlertSeverity::Warning,
+            funded_by,
+            observed_event: ids.observed_event,
+            previous_transaction_id: ids.previous,
+            canonical_transaction_id: ids.canonical,
+            terminal_phase: None,
+        })
+    }
+
+    /// Constructs a critical alert for removal/replacement after a terminal phase.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a non-terminal phase or unsupported event.
+    pub fn terminal_reorg(
+        terminal_phase: Phase,
+        funded_by: Participant,
+        event: &lez_zec_swap_sdk::ZcashObservationEvent,
+    ) -> Result<Self, StoreError> {
+        if !matches!(terminal_phase, Phase::Completed | Phase::Refunded) {
+            return Err(StoreError::InvalidOperatorAlert);
+        }
+        let ids = alert_event_ids(event)?;
+        Ok(Self {
+            kind: OperatorAlertKind::ZcashTerminalReorg,
+            severity: OperatorAlertSeverity::Critical,
+            funded_by,
+            observed_event: ids.observed_event,
+            previous_transaction_id: ids.previous,
+            canonical_transaction_id: ids.canonical,
+            terminal_phase: Some(terminal_phase),
+        })
+    }
+
+    /// Stable alert kind.
+    #[must_use]
+    pub const fn kind(&self) -> OperatorAlertKind {
+        self.kind
+    }
+
+    /// Stable alert severity.
+    #[must_use]
+    pub const fn severity(&self) -> OperatorAlertSeverity {
+        self.severity
+    }
+
+    /// Participant whose ZEC funding evidence changed.
+    #[must_use]
+    pub const fn funded_by(&self) -> Participant {
+        self.funded_by
+    }
+
+    fn validate(&self) -> Result<(), StoreError> {
+        let valid = match self.kind {
+            OperatorAlertKind::ZcashReplacementConflict => {
+                self.severity == OperatorAlertSeverity::Warning
+                    && self.observed_event == AlertObservedEvent::Replaced
+                    && self.canonical_transaction_id.is_some()
+                    && self.terminal_phase.is_none()
+            }
+            OperatorAlertKind::ZcashTerminalReorg => {
+                self.severity == OperatorAlertSeverity::Critical
+                    && matches!(
+                        self.terminal_phase,
+                        Some(Phase::Completed | Phase::Refunded)
+                    )
+                    && (self.observed_event == AlertObservedEvent::Removed
+                        || self.canonical_transaction_id.is_some())
+            }
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(StoreError::InvalidOperatorAlert)
+        }
+    }
+
+    fn validate_against(
+        &self,
+        funded_by: Participant,
+        event: &lez_zec_swap_sdk::ZcashObservationEvent,
+    ) -> Result<(), StoreError> {
+        self.validate()?;
+        let ids = alert_event_ids(event)?;
+        if self.funded_by != funded_by
+            || self.observed_event != ids.observed_event
+            || self.previous_transaction_id != ids.previous
+            || self.canonical_transaction_id != ids.canonical
+        {
+            return Err(StoreError::InvalidOperatorAlert);
+        }
+        Ok(())
+    }
+
+    const fn kind_name(&self) -> &'static str {
+        match self.kind {
+            OperatorAlertKind::ZcashReplacementConflict => "zcash_replacement_conflict",
+            OperatorAlertKind::ZcashTerminalReorg => "zcash_terminal_reorg",
+        }
+    }
+
+    const fn severity_name(&self) -> &'static str {
+        match self.severity {
+            OperatorAlertSeverity::Warning => "warning",
+            OperatorAlertSeverity::Critical => "critical",
+        }
+    }
+}
+
+/// One durable operator alert row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OperatorAlert {
+    sequence: u64,
+    aggregate_revision: u64,
+    acknowledged: bool,
+    record: OperatorAlertRecordV1,
+}
+
+impl OperatorAlert {
+    /// Stable local alert cursor.
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+    /// Aggregate/event revision that created this alert.
+    #[must_use]
+    pub const fn aggregate_revision(&self) -> u64 {
+        self.aggregate_revision
+    }
+    /// Whether the owner acknowledged seeing this alert.
+    #[must_use]
+    pub const fn acknowledged(&self) -> bool {
+        self.acknowledged
+    }
+    /// Validated versioned semantic record.
+    #[must_use]
+    pub const fn record(&self) -> &OperatorAlertRecordV1 {
+        &self.record
+    }
+}
 
 /// Persistent-store failure.
 #[derive(Debug, Error)]
@@ -47,6 +248,12 @@ pub enum StoreError {
     /// A ZEC event cannot be accepted without immutable negotiated terms.
     #[error("Zcash swap has no immutable profile/output binding")]
     MissingZcashBinding,
+    /// Operator alert fields disagree with their event or semantic kind.
+    #[error("operator alert is inconsistent with its Zcash event")]
+    InvalidOperatorAlert,
+    /// Alert cursor does not belong to the requested swap.
+    #[error("operator alert does not exist for this swap")]
+    MissingOperatorAlert,
     /// An existing immutable ZEC binding differs from newly supplied terms.
     #[error("immutable ZEC swap binding does not match durable terms")]
     ImmutableZcashBindingMismatch,
@@ -68,6 +275,27 @@ pub enum StoreError {
 pub struct EventCommit {
     revision: u64,
     was_replay: bool,
+}
+
+/// Result of one atomic Zcash event, aggregate, and optional alert commit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ZcashTransitionCommit {
+    event: EventCommit,
+    alert_sequence: Option<u64>,
+}
+
+impl ZcashTransitionCommit {
+    /// Event/aggregate commit metadata.
+    #[must_use]
+    pub const fn event(self) -> EventCommit {
+        self.event
+    }
+
+    /// Durable alert cursor, when the transition required operator attention.
+    #[must_use]
+    pub const fn alert_sequence(self) -> Option<u64> {
+        self.alert_sequence
+    }
 }
 
 impl EventCommit {
@@ -256,7 +484,32 @@ impl SqliteSwapStore {
         funded_by: Participant,
         event: &ZcashObservationEventRecordV1,
     ) -> Result<EventCommit, StoreError> {
+        self.commit_zcash_transition(expected_revision, swap, funded_by, event, None)
+            .map(ZcashTransitionCommit::event)
+    }
+
+    /// Atomically commits a Zcash event, aggregate revision, and optional alert.
+    ///
+    /// Exact replay returns the original alert cursor and never resets its
+    /// acknowledgment state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for invalid evidence/alert consistency, missing or
+    /// stale state, serialization, overflow, or any `SQLite` transaction failure.
+    pub fn commit_zcash_transition(
+        &mut self,
+        expected_revision: u64,
+        swap: &SwapCoordinator,
+        funded_by: Participant,
+        event: &ZcashObservationEventRecordV1,
+        alert: Option<&OperatorAlertRecordV1>,
+    ) -> Result<ZcashTransitionCommit, StoreError> {
         event.validate()?;
+        let trusted_event = revalidate_historical_event(event)?;
+        if let Some(alert) = alert {
+            alert.validate_against(funded_by, &trusted_event)?;
+        }
         let event_json = serde_json::to_string(event)?;
         let state_json = serde_json::to_string(swap)?;
         let role = participant_name(funded_by);
@@ -264,43 +517,32 @@ impl SqliteSwapStore {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         validate_bound_zcash_event(&transaction, swap.id(), event)?;
-        let actual = transaction
-            .query_row(
-                "SELECT revision FROM swaps WHERE id = ?1",
-                params![swap.id().as_str()],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()?
-            .ok_or(StoreError::MissingSwap)
-            .and_then(revision_from_sql)?;
+        if let Some(alert) = alert {
+            alert.validate_against(funded_by, &trusted_event)?;
+        }
+        let actual = current_swap_revision(&transaction, swap.id())?;
         let proposed_revision = expected_revision
             .checked_add(1)
             .ok_or(StoreError::RevisionOverflow)?;
         let proposed_sql_revision =
             i64::try_from(proposed_revision).map_err(|_| StoreError::RevisionOverflow)?;
-        let replay = transaction.query_row(
-            "
-            SELECT EXISTS(
-                SELECT 1 FROM chain_events
-                WHERE swap_id = ?1 AND funded_by = ?2
-                  AND aggregate_revision = ?3
-                  AND payload_version = ?4 AND payload_json = ?5
-            )
-            ",
-            params![
-                swap.id().as_str(),
-                role,
-                proposed_sql_revision,
-                ZCASH_EVENT_PAYLOAD_VERSION,
-                event_json
-            ],
-            |row| row.get::<_, bool>(0),
+        let replay = exact_zcash_event_exists(
+            &transaction,
+            swap.id(),
+            role,
+            proposed_sql_revision,
+            &event_json,
         )?;
         if replay {
+            let alert_sequence =
+                persist_operator_alert(&transaction, swap.id(), proposed_sql_revision, alert)?;
             transaction.commit()?;
-            return Ok(EventCommit {
-                revision: actual,
-                was_replay: true,
+            return Ok(ZcashTransitionCommit {
+                event: EventCommit {
+                    revision: proposed_revision,
+                    was_replay: true,
+                },
+                alert_sequence,
             });
         }
         if actual != expected_revision {
@@ -347,10 +589,14 @@ impl SqliteSwapStore {
                 actual,
             });
         }
+        let alert_sequence = persist_operator_alert(&transaction, swap.id(), sql_revision, alert)?;
         transaction.commit()?;
-        Ok(EventCommit {
-            revision,
-            was_replay: false,
+        Ok(ZcashTransitionCommit {
+            event: EventCommit {
+                revision,
+                was_replay: false,
+            },
+            alert_sequence,
         })
     }
 
@@ -441,6 +687,232 @@ impl SqliteSwapStore {
         }
         Ok(events)
     }
+
+    /// Lists validated operator alerts for one swap after a stable cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for `SQLite`, payload-version, JSON, or alert
+    /// validation failures.
+    pub fn list_operator_alerts(
+        &self,
+        id: &SwapId,
+        after_sequence: u64,
+        include_acknowledged: bool,
+    ) -> Result<Vec<OperatorAlert>, StoreError> {
+        let after = i64::try_from(after_sequence).map_err(|_| StoreError::RevisionOverflow)?;
+        let mut statement = self.connection.prepare(
+            "
+            SELECT alert_sequence, aggregate_revision, payload_version,
+                   payload_json, acknowledged
+            FROM operator_alert_outbox
+            WHERE swap_id = ?1 AND alert_sequence > ?2
+              AND (?3 OR acknowledged = 0)
+            ORDER BY alert_sequence
+            ",
+        )?;
+        let rows =
+            statement.query_map(params![id.as_str(), after, include_acknowledged], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, bool>(4)?,
+                ))
+            })?;
+        let mut alerts = Vec::new();
+        for row in rows {
+            let (sequence, revision, version, json, acknowledged) = row?;
+            if version != OPERATOR_ALERT_PAYLOAD_VERSION {
+                return Err(StoreError::UnsupportedPayloadVersion {
+                    kind: "operator alert",
+                    version,
+                });
+            }
+            let record: OperatorAlertRecordV1 = serde_json::from_str(&json)?;
+            record.validate()?;
+            alerts.push(OperatorAlert {
+                sequence: revision_from_sql(sequence)?,
+                aggregate_revision: revision_from_sql(revision)?,
+                acknowledged,
+                record,
+            });
+        }
+        Ok(alerts)
+    }
+
+    /// Marks one owner-visible alert as acknowledged without changing protocol state.
+    ///
+    /// Acknowledgment is idempotent and never deletes or rewrites alert evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::MissingOperatorAlert`] when the cursor is absent or
+    /// belongs to another swap, or [`StoreError::Sqlite`] on write failure.
+    pub fn acknowledge_operator_alert(
+        &self,
+        id: &SwapId,
+        alert_sequence: u64,
+    ) -> Result<(), StoreError> {
+        let sequence = i64::try_from(alert_sequence).map_err(|_| StoreError::RevisionOverflow)?;
+        let updated = self.connection.execute(
+            "
+            UPDATE operator_alert_outbox SET acknowledged = 1
+            WHERE swap_id = ?1 AND alert_sequence = ?2
+            ",
+            params![id.as_str(), sequence],
+        )?;
+        if updated == 0 {
+            return Err(StoreError::MissingOperatorAlert);
+        }
+        Ok(())
+    }
+}
+
+struct AlertEventIds {
+    observed_event: AlertObservedEvent,
+    previous: Box<str>,
+    canonical: Option<Box<str>>,
+}
+
+fn alert_event_ids(
+    event: &lez_zec_swap_sdk::ZcashObservationEvent,
+) -> Result<AlertEventIds, StoreError> {
+    match event {
+        lez_zec_swap_sdk::ZcashObservationEvent::Removed(removed) => Ok(AlertEventIds {
+            observed_event: AlertObservedEvent::Removed,
+            previous: removed
+                .previous()
+                .transaction_id()
+                .to_string()
+                .into_boxed_str(),
+            canonical: None,
+        }),
+        lez_zec_swap_sdk::ZcashObservationEvent::Replaced { removed, canonical } => {
+            Ok(AlertEventIds {
+                observed_event: AlertObservedEvent::Replaced,
+                previous: removed
+                    .previous()
+                    .transaction_id()
+                    .to_string()
+                    .into_boxed_str(),
+                canonical: Some(canonical.transaction_id().to_string().into_boxed_str()),
+            })
+        }
+        lez_zec_swap_sdk::ZcashObservationEvent::Canonical(_) => {
+            Err(StoreError::InvalidOperatorAlert)
+        }
+    }
+}
+
+fn persist_operator_alert(
+    transaction: &rusqlite::Transaction<'_>,
+    id: &SwapId,
+    aggregate_revision: i64,
+    alert: Option<&OperatorAlertRecordV1>,
+) -> Result<Option<u64>, StoreError> {
+    let Some(alert) = alert else {
+        return transaction
+            .query_row(
+                "
+                SELECT alert_sequence FROM operator_alert_outbox
+                WHERE swap_id = ?1 AND aggregate_revision = ?2
+                ORDER BY alert_sequence LIMIT 1
+                ",
+                params![id.as_str(), aggregate_revision],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .map(revision_from_sql)
+            .transpose();
+    };
+    alert.validate()?;
+    let json = serde_json::to_string(alert)?;
+    let existing = transaction
+        .query_row(
+            "
+            SELECT alert_sequence, payload_version, payload_json
+            FROM operator_alert_outbox
+            WHERE swap_id = ?1 AND aggregate_revision = ?2 AND alert_kind = ?3
+            ",
+            params![id.as_str(), aggregate_revision, alert.kind_name()],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((sequence, version, existing_json)) = existing {
+        if version != OPERATOR_ALERT_PAYLOAD_VERSION || existing_json != json {
+            return Err(StoreError::InvalidOperatorAlert);
+        }
+        return revision_from_sql(sequence).map(Some);
+    }
+    transaction.execute(
+        "
+        INSERT INTO operator_alert_outbox (
+            swap_id, aggregate_revision, alert_kind, severity,
+            payload_version, payload_json
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        ",
+        params![
+            id.as_str(),
+            aggregate_revision,
+            alert.kind_name(),
+            alert.severity_name(),
+            OPERATOR_ALERT_PAYLOAD_VERSION,
+            json
+        ],
+    )?;
+    revision_from_sql(transaction.last_insert_rowid()).map(Some)
+}
+
+fn current_swap_revision(
+    transaction: &rusqlite::Transaction<'_>,
+    id: &SwapId,
+) -> Result<u64, StoreError> {
+    transaction
+        .query_row(
+            "SELECT revision FROM swaps WHERE id = ?1",
+            params![id.as_str()],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+        .ok_or(StoreError::MissingSwap)
+        .and_then(revision_from_sql)
+}
+
+fn exact_zcash_event_exists(
+    transaction: &rusqlite::Transaction<'_>,
+    id: &SwapId,
+    role: &str,
+    aggregate_revision: i64,
+    event_json: &str,
+) -> Result<bool, StoreError> {
+    transaction
+        .query_row(
+            "
+            SELECT EXISTS(
+                SELECT 1 FROM chain_events
+                WHERE swap_id = ?1 AND funded_by = ?2
+                  AND aggregate_revision = ?3
+                  AND payload_version = ?4 AND payload_json = ?5
+            )
+            ",
+            params![
+                id.as_str(),
+                role,
+                aggregate_revision,
+                ZCASH_EVENT_PAYLOAD_VERSION,
+                event_json
+            ],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(StoreError::from)
 }
 
 fn load_zcash_binding_from(
@@ -538,7 +1010,26 @@ fn migrate(connection: &mut Connection) -> Result<(), StoreError> {
             payload_version INTEGER NOT NULL,
             payload_json    TEXT NOT NULL
         ) STRICT;
-        PRAGMA user_version = 3;
+        CREATE TABLE IF NOT EXISTS operator_alert_outbox (
+            alert_sequence     INTEGER PRIMARY KEY AUTOINCREMENT,
+            swap_id            TEXT NOT NULL,
+            aggregate_revision INTEGER NOT NULL CHECK (aggregate_revision > 0),
+            alert_kind         TEXT NOT NULL CHECK (
+                alert_kind IN ('zcash_replacement_conflict', 'zcash_terminal_reorg')
+            ),
+            severity           TEXT NOT NULL CHECK (severity IN ('warning', 'critical')),
+            payload_version    INTEGER NOT NULL,
+            payload_json       TEXT NOT NULL,
+            acknowledged       INTEGER NOT NULL DEFAULT 0 CHECK (acknowledged IN (0, 1)),
+            UNIQUE (swap_id, aggregate_revision, alert_kind),
+            FOREIGN KEY (swap_id, aggregate_revision)
+                REFERENCES chain_events(swap_id, aggregate_revision) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS operator_alert_swap_pending_sequence
+            ON operator_alert_outbox (swap_id, acknowledged, alert_sequence);
+        CREATE INDEX IF NOT EXISTS operator_alert_pending_severity_sequence
+            ON operator_alert_outbox (acknowledged, severity, alert_sequence);
+        PRAGMA user_version = 4;
         ",
     )?;
     transaction.commit()?;

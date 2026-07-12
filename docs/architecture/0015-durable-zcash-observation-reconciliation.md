@@ -119,6 +119,10 @@ sequenceDiagram
   requires the event to advance that exact durable tracker head. A structurally
   valid replacement for a stale inclusion therefore changes neither aggregate,
   revision, nor journal.
+- `ReplacementConflict` and `TerminalReorgDetected` create versioned warning and
+  critical operator alerts in the same transaction as event and aggregate.
+  Exact replay preserves one alert cursor and acknowledgment; Applied creates no
+  alert, and alert insertion failure rolls the entire transition back.
 - Runtime journal-to-core wiring and actual two-Zebra store/restart evidence
   remain required before this ADR is fully proven.
 
@@ -127,9 +131,8 @@ immutable direction, probes unknown-outcome replay before core mutation, maps
 canonical/removal evidence, commits event plus aggregate atomically, and reloads
 across restart in both directions. It is not yet the production watcher: journal
 history is now revalidated and replayed into the exact tracker head, and an
-identical fresh requery is suppressed. A separately persisted operator/security
-alert outbox for conflict/terminal reorgs and actual two-Zebra store/restart
-evidence remain required.
+identical fresh requery is suppressed. Authenticated operator alert surfaces and
+actual two-Zebra store/restart evidence remain required.
 
 The SDK now defines a version-1 primitive binding record for the reviewed
 profile, network, branch, value, BIP-199 source terms, and both derived scripts.
