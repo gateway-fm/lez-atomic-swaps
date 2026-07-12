@@ -7,6 +7,12 @@ the version-1 primitive event record, and the atomic SQLite event journal are
 implemented. Participant-aware core reorg semantics are also implemented;
 runtime journal-to-core projection remains M2 work.
 
+Taker- and maker-funded legs have independent immutable confirmation policies.
+This is required for reverse public-testnet ZEC, where maker-funded ZEC uses a
+deeper threshold than taker-funded LEZ. A maker observation below threshold
+remains awaiting confirmations; regression after acceptance enters
+`MakerLockReorged`, suspends claims, and exact depth recovery restores them.
+
 ## Context
 
 A successful RPC call is not durable chain truth. In particular, transaction
@@ -98,5 +104,7 @@ sequenceDiagram
   participant-relative funding/removal APIs and a separate maker-lock reorg
   phase; claims suspend, exact reappearance restores, conflicts fail, and
   refunds remain available for either funded leg.
+- Confirmation-only canonical updates can suspend and restore maker funding
+  without falsely claiming the transaction was removed.
 - Runtime journal-to-core wiring and actual two-Zebra store/restart evidence
   remain required before this ADR is fully proven.

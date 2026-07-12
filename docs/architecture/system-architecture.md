@@ -284,6 +284,7 @@ flowchart LR
     Safety -->|"missing/short"| Reject
     Safety --> Schedule["Direction-mapped RecoverySchedule<br/>LEZ always earlier than ZEC"]
     Depths --> Validator["Typed observation validator"]
+    Depths --> CoreFunding
     ZebraE2E["Stable actual Zebra E2E RPC snapshot"] --> Validator
     Validator --> Watcher["Stable-tip two-phase watcher"]
     Watcher --> Record["Validated primitive event record v1"]
@@ -310,7 +311,9 @@ mainnet recommendations or proof of worst-case cadence. Durable production
 participant-aware core semantics are implemented for taker- and maker-funded
 legs: removal pins the exact ID, suspends claims, exact reappearance restores
 authority, conflicting replacement fails, and refunds remain available. Runtime
-event-to-participant wiring and the composed corridor remain dashed M2 work. RPC
+Independent leg policies also make maker-depth regression suspend and depth
+recovery restore claims. Runtime event-to-participant wiring and the composed
+corridor remain dashed M2 work. RPC
 errors or absence never imply removal: a detach event
 requires a stable replacement tip and a changed canonical hash at the prior
 inclusion height.

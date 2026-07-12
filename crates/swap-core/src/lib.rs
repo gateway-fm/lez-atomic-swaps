@@ -404,6 +404,8 @@ pub enum Phase {
     AwaitingTakerConfirmations,
     /// The taker's lock satisfies confirmation policy; the maker may now lock LEZ funds.
     TakerLockConfirmed,
+    /// The maker's lock exists but lacks its independent required confirmations.
+    AwaitingMakerConfirmations,
     /// Both legs are locked.
     BothLegsLocked,
     /// The taker's funding transaction regressed below confirmation policy after maker lock.
@@ -652,6 +654,10 @@ impl ConfirmationPolicy {
     }
 }
 
+const fn default_maker_confirmation_policy() -> ConfirmationPolicy {
+    ConfirmationPolicy(1)
+}
+
 /// Witness made public by the maker's claim.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimEvidence([u8; 32]);
@@ -684,6 +690,8 @@ pub struct SwapCoordinator {
     #[serde(default)]
     direction: SwapDirection,
     confirmation_policy: ConfirmationPolicy,
+    #[serde(default = "default_maker_confirmation_policy")]
+    maker_confirmation_policy: ConfirmationPolicy,
     #[serde(alias = "refund_schedule")]
     recovery_schedule: RecoverySchedule,
     phase: Phase,
@@ -718,6 +726,7 @@ impl SwapCoordinator {
             pair,
             direction: SwapDirection::TakerSellsForeign,
             confirmation_policy,
+            maker_confirmation_policy: default_maker_confirmation_policy(),
             recovery_schedule,
             phase: Phase::Offered,
             taker_lock_transaction_id: None,
@@ -744,6 +753,35 @@ impl SwapCoordinator {
             pair,
             direction,
             confirmation_policy,
+            maker_confirmation_policy: default_maker_confirmation_policy(),
+            recovery_schedule,
+            phase: Phase::Offered,
+            taker_lock_transaction_id: None,
+            maker_lock_transaction_id: None,
+            claim_evidence: None,
+            revealing_claim_transaction_id: None,
+            followup_claim_transaction_id: None,
+            taker_refund_event_transaction_id: None,
+            maker_recovery_transaction_id: None,
+        }
+    }
+
+    /// Creates a coordinator with independent taker- and maker-leg confirmation policies.
+    #[must_use]
+    pub const fn new_with_confirmation_policies(
+        id: SwapId,
+        pair: Pair,
+        direction: SwapDirection,
+        taker_confirmation_policy: ConfirmationPolicy,
+        maker_confirmation_policy: ConfirmationPolicy,
+        recovery_schedule: RecoverySchedule,
+    ) -> Self {
+        Self {
+            id,
+            pair,
+            direction,
+            confirmation_policy: taker_confirmation_policy,
+            maker_confirmation_policy,
             recovery_schedule,
             phase: Phase::Offered,
             taker_lock_transaction_id: None,
@@ -873,7 +911,9 @@ impl SwapCoordinator {
                 self.taker_lock_transaction_id = None;
                 self.phase = Phase::Offered;
             }
-            Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable => {
+            Phase::AwaitingMakerConfirmations
+            | Phase::BothLegsLocked
+            | Phase::ClaimEvidenceAvailable => {
                 self.phase = Phase::TakerLockReorged;
             }
             _ => {}
@@ -903,11 +943,15 @@ impl SwapCoordinator {
         if self.maker_lock_transaction_id.as_deref() != Some(transaction_id) {
             return Err(Error::ConflictingMakerLock);
         }
-        if matches!(
-            self.phase,
-            Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable
-        ) {
-            self.phase = Phase::MakerLockReorged;
+        match self.phase {
+            Phase::AwaitingMakerConfirmations => {
+                self.maker_lock_transaction_id = None;
+                self.phase = Phase::TakerLockConfirmed;
+            }
+            Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable => {
+                self.phase = Phase::MakerLockReorged;
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -964,19 +1008,31 @@ impl SwapCoordinator {
     ///
     /// Returns [`Error::TakerLockNotConfirmed`] until confirmation policy is satisfied.
     fn observe_maker_lock_impl(&mut self, proof: ChainProof) -> Result<(), Error> {
-        if self.phase == Phase::MakerLockReorged {
-            return match self.maker_lock_transaction_id.as_deref() {
-                Some(known) if known == proof.transaction_id() => {
-                    self.phase = if self.claim_evidence.is_some() {
-                        Phase::ClaimEvidenceAvailable
-                    } else {
-                        Phase::BothLegsLocked
-                    };
-                    Ok(())
+        let confirmed = proof.confirmations >= self.maker_confirmation_policy.required();
+        if matches!(
+            self.phase,
+            Phase::AwaitingMakerConfirmations
+                | Phase::BothLegsLocked
+                | Phase::MakerLockReorged
+                | Phase::ClaimEvidenceAvailable
+        ) {
+            if self.maker_lock_transaction_id.as_deref() != Some(proof.transaction_id()) {
+                return Err(Error::ConflictingMakerLock);
+            }
+            self.phase = match (self.phase, confirmed) {
+                (Phase::AwaitingMakerConfirmations, false) => Phase::AwaitingMakerConfirmations,
+                (Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable, false) => {
+                    Phase::MakerLockReorged
                 }
-                Some(_) => Err(Error::ConflictingMakerLock),
-                None => Err(Error::MakerLockNotConfirmed),
+                (Phase::MakerLockReorged, true) if self.claim_evidence.is_some() => {
+                    Phase::ClaimEvidenceAvailable
+                }
+                (Phase::AwaitingMakerConfirmations | Phase::MakerLockReorged, true) => {
+                    Phase::BothLegsLocked
+                }
+                (phase, _) => phase,
             };
+            return Ok(());
         }
         if self.phase != Phase::TakerLockConfirmed {
             return match self.maker_lock_transaction_id.as_deref() {
@@ -986,7 +1042,11 @@ impl SwapCoordinator {
             };
         }
         self.maker_lock_transaction_id = Some(proof.transaction_id);
-        self.phase = Phase::BothLegsLocked;
+        self.phase = if confirmed {
+            Phase::BothLegsLocked
+        } else {
+            Phase::AwaitingMakerConfirmations
+        };
         Ok(())
     }
 
@@ -1084,6 +1144,7 @@ impl SwapCoordinator {
         if !matches!(
             self.phase,
             Phase::BothLegsLocked
+                | Phase::AwaitingMakerConfirmations
                 | Phase::TakerLockReorged
                 | Phase::MakerLockReorged
                 | Phase::TakerLegRefunded
@@ -1198,6 +1259,7 @@ impl SwapCoordinator {
             self.phase,
             Phase::AwaitingTakerConfirmations
                 | Phase::TakerLockConfirmed
+                | Phase::AwaitingMakerConfirmations
                 | Phase::BothLegsLocked
                 | Phase::TakerLockReorged
                 | Phase::MakerLockReorged

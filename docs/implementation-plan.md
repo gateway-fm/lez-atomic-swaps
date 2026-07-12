@@ -322,6 +322,10 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   directions. Reverse ZEC maps ZEC to the maker-funded leg; its distinct reorg
   phase pins the exact transaction, suspends both claims, rejects conflicting
   replacement, restores on exact reappearance, and preserves both refunds.
+- [x] Add independent immutable maker-leg confirmation policy. Reverse-ZEC tests
+  prove below-threshold accumulation, threshold promotion, canonical depth
+  regression into claim suspension, and exact depth recovery; a 10→9 public
+  profile regression can no longer remain `BothLegsLocked`.
 - [ ] Wire committed journal events to the correct participant-relative core
   transition and prove close/reopen/requery with actual two-Zebra replacement.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra

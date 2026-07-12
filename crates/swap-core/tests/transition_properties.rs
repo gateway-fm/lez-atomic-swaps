@@ -132,6 +132,12 @@ proptest! {
                             Phase::Offered | Phase::AwaitingTakerConfirmations
                         ));
                     }
+                    Phase::AwaitingMakerConfirmations => {
+                        prop_assert!(matches!(
+                            before,
+                            Phase::TakerLockConfirmed | Phase::AwaitingMakerConfirmations
+                        ));
+                    }
                     Phase::BothLegsLocked => {
                         prop_assert!(matches!(
                             before,

@@ -363,3 +363,54 @@ fn reverse_zec_maker_funding_reorg_suspends_claims_and_preserves_refunds() {
         .unwrap();
     assert_eq!(swap.phase(), Phase::Refunded);
 }
+
+#[test]
+fn reverse_zec_maker_confirmation_regression_suspends_and_restores_claims() {
+    let direction = SwapDirection::TakerSellsLez;
+    let mut swap = SwapCoordinator::new_with_confirmation_policies(
+        SwapId::new("reverse-zec-depth").unwrap(),
+        Pair::Zcash,
+        direction,
+        ConfirmationPolicy::new(1).unwrap(),
+        ConfirmationPolicy::new(3).unwrap(),
+        schedule(Pair::Zcash, direction),
+    );
+    swap.observe_funding(
+        Participant::Taker,
+        ChainProof::new("lez-taker-lock", 1).unwrap(),
+    )
+    .unwrap();
+    swap.observe_funding(
+        Participant::Maker,
+        ChainProof::new("zec-maker-lock", 2).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(swap.phase(), Phase::AwaitingMakerConfirmations);
+    swap.observe_funding(
+        Participant::Maker,
+        ChainProof::new("zec-maker-lock", 3).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(swap.phase(), Phase::BothLegsLocked);
+
+    swap.observe_funding(
+        Participant::Maker,
+        ChainProof::new("zec-maker-lock", 2).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(swap.phase(), Phase::MakerLockReorged);
+    assert_eq!(
+        swap.observe_revealing_claim(
+            swap.first_claimant(),
+            ChainProof::new("revealing-claim", 1).unwrap(),
+            ClaimEvidence::new([9; 32]),
+        ),
+        Err(Error::MakerLockNotConfirmed)
+    );
+    swap.observe_funding(
+        Participant::Maker,
+        ChainProof::new("zec-maker-lock", 3).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(swap.phase(), Phase::BothLegsLocked);
+}
