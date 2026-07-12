@@ -6,9 +6,9 @@ use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
-    FirstLockIntentError, FirstLockTransitionError, LezObservationTrackerError, MakerLockError,
-    ObservationTrackerError, ObservedMakerLockError, ObservedTakerFirstLockTransitionError,
-    ZecAgreementV1Error,
+    ClaimError, FirstLockIntentError, FirstLockTransitionError, LezObservationTrackerError,
+    MakerLockError, ObservationTrackerError, ObservedMakerLockError,
+    ObservedTakerFirstLockTransitionError, ZecAgreementV1Error,
 };
 
 /// A SHA-256 claim preimage that is redacted, zeroized, and not serializable.
@@ -67,6 +67,9 @@ pub enum ZecSdkError {
     /// Maker second-lock recovery material or confirmed transition is invalid.
     #[error(transparent)]
     InvalidMakerLock(#[from] MakerLockError),
+    /// Claim material or a claim transition violates the accepted agreement.
+    #[error(transparent)]
+    InvalidClaim(#[from] ClaimError),
     /// Canonical Zcash observation history is stale, duplicated, or missing replacement proof.
     #[error(transparent)]
     InvalidZcashObservationHistory(#[from] ObservationTrackerError),

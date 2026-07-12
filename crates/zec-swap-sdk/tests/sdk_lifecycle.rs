@@ -4,11 +4,12 @@ use std::{
 };
 
 use async_trait::async_trait;
-use lez_swap_core::{Participant, Phase, SwapDirection, SwapId, UnixSeconds};
+use lez_swap_core::{Pair, Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract,
     CanonicalLezEscrowObservationV1, CanonicalLezEscrowRemovalV1, CanonicalZcashOutputObservation,
-    CanonicalZcashOutputRemoval, ClaimPreimage, CreateAgreementOutcome, CreateFirstLockOutcome,
+    CanonicalZcashOutputRemoval, ClaimError, ClaimMaterialContext, ClaimMaterialPurpose,
+    ClaimPreimage, ClaimRecoveryStore, CreateAgreementOutcome, CreateFirstLockOutcome,
     ExpectedBip199Output, FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome,
     FirstLockIntentRecordV1, FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1,
     FirstLockProjectionCommit, FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1,
@@ -23,8 +24,9 @@ use lez_zec_swap_sdk::{
     NegotiationTranscriptV1, ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome,
     ObservedMakerLockTransitionV1, ObservedTakerFirstLockEvidenceV1,
     ObservedTakerFirstLockTransitionError, ObservedTakerFirstLockTransitionRecordV1,
-    ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
-    RecoveryStore, TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
+    ObservedTakerFirstLockTransitionV1, OfferDiscovery, PROTECTED_CLAIM_SCHEMA_V1,
+    PreparedFirstLockSubmissionV1, ProtectedClaimEnvelope, ProtectedClaimKey, RecoveryStore,
+    TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
     ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFirstLockPort, ZcashMakerLockObservationPort,
     ZcashNodeRemovalSnapshot, ZcashNodeSnapshot, ZcashStableTip,
     ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
@@ -35,6 +37,7 @@ use lez_zec_swap_sdk::{
     derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
+use sha2::{Digest as _, Sha256};
 use zcash_primitives::block::BlockHash;
 use zcash_protocol::{
     consensus::{BlockHeight, BranchId, NetworkType},
@@ -106,10 +109,12 @@ impl NegotiationChannel for MemoryNegotiation {
 }
 
 type AgreementMap = HashMap<String, AcceptedZecAgreementEnvelopeV1>;
+type ClaimMaterialMap = HashMap<String, ProtectedClaimEnvelope>;
 
 #[derive(Clone, Debug, Default)]
 struct MemoryStore {
     agreements: Arc<Mutex<AgreementMap>>,
+    claim_materials: Arc<Mutex<ClaimMaterialMap>>,
     first_locks: Arc<Mutex<HashMap<String, FirstLockIntentV1>>>,
     first_lock_transitions: Arc<Mutex<HashMap<(String, u64), FirstLockTransitionV1>>>,
     observed_taker_first_lock_transitions:
@@ -143,6 +148,64 @@ impl MemoryStore {
     fn set_transition_mode(&self, mode: TransitionCommitMode) {
         *self.transition_mode.lock().expect("transition mode lock") = mode;
     }
+}
+
+fn assert_store_has_no_activation_effects(store: &MemoryStore) {
+    assert!(store.agreements.lock().expect("agreements lock").is_empty());
+    assert!(
+        store
+            .claim_materials
+            .lock()
+            .expect("claim materials lock")
+            .is_empty()
+    );
+    assert!(
+        store
+            .first_locks
+            .lock()
+            .expect("first-lock intents lock")
+            .is_empty()
+    );
+    assert!(
+        store
+            .maker_locks
+            .lock()
+            .expect("maker-lock intents lock")
+            .is_empty()
+    );
+}
+
+fn memory_claim_key() -> ProtectedClaimKey {
+    ProtectedClaimKey::new("sdk-lifecycle-memory-key-v1", [0x7a; 32])
+        .expect("valid deterministic test key")
+}
+
+fn claim_material_context(accepted: &AcceptedZecAgreementV1) -> ClaimMaterialContext<'_> {
+    let agreement = accepted.agreement();
+    ClaimMaterialContext::new(
+        PROTECTED_CLAIM_SCHEMA_V1,
+        agreement.coordinator().id(),
+        Pair::Zcash,
+        agreement.direction(),
+        agreement.agreement_commitment(),
+        accepted.local_participant(),
+        ClaimMaterialPurpose::LocalFirstClaim,
+    )
+}
+
+fn deterministic_claim_nonce(accepted: &AcceptedZecAgreementV1) -> [u8; 24] {
+    let mut digest = Sha256::new();
+    digest.update(b"lez-zec-sdk-test/claim-nonce/v1");
+    digest.update(accepted.agreement().coordinator().id().as_str().as_bytes());
+    digest.update(accepted.agreement().agreement_commitment());
+    digest.update([match accepted.local_participant() {
+        Participant::Maker => 0,
+        Participant::Taker => 1,
+    }]);
+    let digest = digest.finalize();
+    let mut nonce = [0_u8; 24];
+    nonce.copy_from_slice(&digest[..24]);
+    nonce
 }
 
 #[async_trait]
@@ -439,6 +502,86 @@ impl RecoveryStore for MemoryStore {
             .expect("maker-lock transition lock")
             .get(&(swap_id.as_str().to_owned(), predecessor_revision))
             .cloned())
+    }
+}
+
+#[async_trait]
+impl ClaimRecoveryStore for MemoryStore {
+    async fn create_agreement_with_local_claim_material(
+        &self,
+        envelope: &AcceptedZecAgreementEnvelopeV1,
+        preimage: &ClaimPreimage,
+    ) -> Result<CreateAgreementOutcome, Self::Error> {
+        if self.fail_create {
+            return Err(TestPortError("forced create failure".to_owned()));
+        }
+        let accepted = AcceptedZecAgreementV1::resume(envelope)
+            .map_err(|error| TestPortError(error.to_string()))?;
+        let swap_key = accepted.agreement().coordinator().id().as_str().to_owned();
+        let key = memory_claim_key();
+
+        let mut agreements = self.agreements.lock().expect("agreements lock");
+        let mut materials = self.claim_materials.lock().expect("claim materials lock");
+        match (agreements.get(&swap_key), materials.get(&swap_key)) {
+            (Some(existing_envelope), Some(existing_material)) if existing_envelope == envelope => {
+                let existing_preimage = existing_material
+                    .decrypt(&key, claim_material_context(&accepted))
+                    .map_err(|error| TestPortError(error.to_string()))?;
+                if existing_preimage.expose_secret() == preimage.expose_secret() {
+                    Ok(CreateAgreementOutcome::ExistingSame)
+                } else {
+                    Ok(CreateAgreementOutcome::Conflict)
+                }
+            }
+            (Some(existing_envelope), None) if existing_envelope == envelope => {
+                let protected = ProtectedClaimEnvelope::encrypt(
+                    preimage,
+                    &key,
+                    deterministic_claim_nonce(&accepted),
+                    claim_material_context(&accepted),
+                )
+                .map_err(|error| TestPortError(error.to_string()))?;
+                materials.insert(swap_key, protected);
+                Ok(CreateAgreementOutcome::Created)
+            }
+            (None, None) => {
+                let protected = ProtectedClaimEnvelope::encrypt(
+                    preimage,
+                    &key,
+                    deterministic_claim_nonce(&accepted),
+                    claim_material_context(&accepted),
+                )
+                .map_err(|error| TestPortError(error.to_string()))?;
+                agreements.insert(swap_key.clone(), envelope.clone());
+                materials.insert(swap_key, protected);
+                Ok(CreateAgreementOutcome::Created)
+            }
+            _ => Ok(CreateAgreementOutcome::Conflict),
+        }
+    }
+
+    async fn load_claim_material(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<ClaimPreimage>, Self::Error> {
+        let agreements = self.agreements.lock().expect("agreements lock");
+        let materials = self.claim_materials.lock().expect("claim materials lock");
+        let envelope = agreements.get(swap_id.as_str());
+        let protected = materials.get(swap_id.as_str());
+        match (envelope, protected) {
+            (None, None) => Ok(None),
+            (Some(envelope), Some(protected)) => {
+                let accepted = AcceptedZecAgreementV1::resume(envelope)
+                    .map_err(|error| TestPortError(error.to_string()))?;
+                protected
+                    .decrypt(&memory_claim_key(), claim_material_context(&accepted))
+                    .map(Some)
+                    .map_err(|error| TestPortError(error.to_string()))
+            }
+            _ => Err(TestPortError(
+                "agreement and protected claim material are not atomic".to_owned(),
+            )),
+        }
     }
 }
 
@@ -850,6 +993,117 @@ async fn independent_roles_validate_the_same_wire_and_persist_before_activation(
         assert!(!diagnostic.contains("NoopLez"));
         assert!(!diagnostic.contains("NoopZcash"));
         assert!(!diagnostic.contains("MemoryStore"));
+    }
+}
+
+#[tokio::test]
+async fn first_claimant_activation_persists_agreement_and_claim_preimage_in_both_directions() {
+    for (id, direction, first_claimant, secret) in [
+        (
+            "sdk-claim-activation-forward",
+            SwapDirection::TakerSellsForeign,
+            Participant::Taker,
+            [0x41; 32],
+        ),
+        (
+            "sdk-claim-activation-reverse",
+            SwapDirection::TakerSellsLez,
+            Participant::Maker,
+            [0x42; 32],
+        ),
+    ] {
+        let digest = Sha256::digest(secret).into();
+        let store = MemoryStore::default();
+        let sdk = sdk(
+            first_claimant,
+            agreement_wire_with_digest(id, direction, FixtureVariant::Local, digest),
+            store.clone(),
+        );
+        let accepted = sdk
+            .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+            .await
+            .expect("agreement");
+
+        let active = sdk
+            .activate_with_claim_preimage(accepted.clone(), ClaimPreimage::new(secret))
+            .await
+            .expect("agreement and protected preimage are atomically durable");
+        sdk.activate_with_claim_preimage(accepted, ClaimPreimage::new(secret))
+            .await
+            .expect("exact agreement and preimage retry is idempotent");
+
+        assert_eq!(active.local_participant(), first_claimant);
+        assert_eq!(active.status(), Phase::Offered);
+        assert_eq!(store.agreements.lock().expect("agreements lock").len(), 1);
+        let protected = store
+            .claim_materials
+            .lock()
+            .expect("claim materials lock")
+            .get(id)
+            .cloned()
+            .expect("only protected material is retained");
+        assert_eq!(protected.ciphertext().len(), 48);
+        assert!(!format!("{protected:?}").contains(&format!("{secret:?}")));
+        let loaded = store
+            .load_claim_material(&SwapId::new(id).expect("swap ID"))
+            .await
+            .expect("protected material authenticates")
+            .expect("claim material exists");
+        assert_eq!(loaded.expose_secret(), &secret);
+    }
+}
+
+#[tokio::test]
+async fn claim_activation_rejects_wrong_role_or_digest_before_activation_or_effect() {
+    for (id, direction, first_claimant, other_participant, secret) in [
+        (
+            "sdk-claim-reject-forward",
+            SwapDirection::TakerSellsForeign,
+            Participant::Taker,
+            Participant::Maker,
+            [0x51; 32],
+        ),
+        (
+            "sdk-claim-reject-reverse",
+            SwapDirection::TakerSellsLez,
+            Participant::Maker,
+            Participant::Taker,
+            [0x52; 32],
+        ),
+    ] {
+        let digest = Sha256::digest(secret).into();
+        let wire = agreement_wire_with_digest(id, direction, FixtureVariant::Local, digest);
+
+        let wrong_role_store = MemoryStore::default();
+        let wrong_role_sdk = sdk(other_participant, wire.clone(), wrong_role_store.clone());
+        let wrong_role_terms = wrong_role_sdk
+            .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+            .await
+            .expect("agreement");
+        assert!(matches!(
+            wrong_role_sdk
+                .activate_with_claim_preimage(wrong_role_terms, ClaimPreimage::new(secret))
+                .await,
+            Err(ZecSdkError::WrongRole {
+                expected,
+                actual
+            }) if expected == first_claimant && actual == other_participant
+        ));
+        assert_store_has_no_activation_effects(&wrong_role_store);
+
+        let wrong_digest_store = MemoryStore::default();
+        let wrong_digest_sdk = sdk(first_claimant, wire, wrong_digest_store.clone());
+        let wrong_digest_terms = wrong_digest_sdk
+            .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+            .await
+            .expect("agreement");
+        assert!(matches!(
+            wrong_digest_sdk
+                .activate_with_claim_preimage(wrong_digest_terms, ClaimPreimage::new([0xff; 32]),)
+                .await,
+            Err(ZecSdkError::InvalidClaim(ClaimError::SecretDigestMismatch))
+        ));
+        assert_store_has_no_activation_effects(&wrong_digest_store);
     }
 }
 
@@ -3921,6 +4175,15 @@ enum FixtureVariant {
 }
 
 fn agreement_wire(id: &str, direction: SwapDirection, variant: FixtureVariant) -> Vec<u8> {
+    agreement_wire_with_digest(id, direction, variant, [9; 32])
+}
+
+fn agreement_wire_with_digest(
+    id: &str,
+    direction: SwapDirection,
+    variant: FixtureVariant,
+    digest: [u8; 32],
+) -> Vec<u8> {
     let maker_secret = SecretKey::from_slice(&[1; 32]).expect("maker key");
     let taker_secret = SecretKey::from_slice(&[2; 32]).expect("taker key");
     let secp = Secp256k1::new();
@@ -3945,7 +4208,6 @@ fn agreement_wire(id: &str, direction: SwapDirection, variant: FixtureVariant) -
     let onchain_swap_id = derive_lez_swap_id_v1(id.as_bytes());
     let metadata_account = derive_lez_metadata_account_v1(&escrow_program, &onchain_swap_id);
     let custody_account = derive_lez_native_custody_account_v1(&escrow_program, &onchain_swap_id);
-    let digest = [9; 32];
     let binding = fixture_binding(
         profile,
         network,

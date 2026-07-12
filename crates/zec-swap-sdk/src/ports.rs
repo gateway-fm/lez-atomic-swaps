@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use lez_swap_core::{Participant, SwapId};
 
 use crate::{
-    AcceptedZecAgreementEnvelopeV1, CreateFirstLockOutcome, FirstLockIntentV1,
+    AcceptedZecAgreementEnvelopeV1, ClaimPreimage, CreateFirstLockOutcome, FirstLockIntentV1,
     FirstLockObservation, FirstLockProjectionCommit, FirstLockTransitionV1, MakerLockIntentV1,
     MakerLockObservationV1, MakerLockTransitionV1, ObservedMakerLockTransitionV1,
     ObservedTakerFirstLockTransitionV1, PreparedFirstLockSubmissionV1, TakerFirstLockObservationV1,
@@ -285,4 +285,28 @@ pub trait RecoveryStore: Clone + Send + Sync {
         swap_id: &SwapId,
         predecessor_revision: u64,
     ) -> Result<Option<MakerLockTransitionV1>, Self::Error>;
+}
+
+/// Recovery storage that can atomically bind an agreement to local claim material.
+///
+/// Implementors must protect the plaintext preimage before durable storage.
+/// Returning `Created` or `ExistingSame` guarantees that the exact agreement and
+/// its matching protected material are both recoverable.
+#[async_trait]
+pub trait ClaimRecoveryStore: RecoveryStore {
+    /// Atomically creates the immutable agreement and protected local preimage.
+    ///
+    /// Exact retry is idempotent. A changed agreement or changed claim
+    /// material under the same role-local swap key is a conflict.
+    async fn create_agreement_with_local_claim_material(
+        &self,
+        envelope: &AcceptedZecAgreementEnvelopeV1,
+        preimage: &ClaimPreimage,
+    ) -> Result<CreateAgreementOutcome, Self::Error>;
+
+    /// Loads and authenticates local claim material for a durable agreement.
+    async fn load_claim_material(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<ClaimPreimage>, Self::Error>;
 }

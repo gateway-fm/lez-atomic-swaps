@@ -1,7 +1,9 @@
 //! Transparent Zcash protocol adapter for LEZ atomic swaps.
 
 mod agreement_v1;
+mod claim;
 mod claim_material;
+mod claim_record;
 mod first_lock;
 mod first_lock_record;
 mod funding;
@@ -33,9 +35,19 @@ pub use agreement_v1::{
     ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecRefundPlanV1, ZecRolePayoutV1,
     ZecTransactionPolicyV1,
 };
+pub use claim::{
+    ClaimError, ClaimIntentV1, ClaimStepV1, FollowupClaimEvidenceV1, FollowupClaimTransitionV1,
+    MAX_CLAIM_SUBMISSION_BYTES, PreparedClaimSubmissionV1, RevealingClaimEvidenceV1,
+    RevealingClaimTransitionV1,
+};
 pub use claim_material::{
-    ClaimMaterialContext, ClaimMaterialPurpose, PROTECTED_CLAIM_SCHEMA_V1, ProtectedClaimEnvelope,
-    ProtectedClaimError, ProtectedClaimKey,
+    ClaimMaterialContext, ClaimMaterialPurpose, MAX_PROTECTED_CLAIM_PAYLOAD_BYTES,
+    PROTECTED_CLAIM_SCHEMA_V1, ProtectedClaimEnvelope, ProtectedClaimError, ProtectedClaimKey,
+    ProtectedClaimPayloadEnvelope,
+};
+pub use claim_record::{
+    CLAIM_RECORD_SCHEMA_V1, ClaimIntentRecordV1, ClaimRecordError, FollowupClaimTransitionRecordV1,
+    RevealingClaimTransitionRecordV1,
 };
 
 pub use first_lock::{
@@ -94,7 +106,7 @@ pub use observed_taker_lock::{
 };
 
 pub use ports::{
-    CreateAgreementOutcome, LezFirstLockPort, LezMakerLockObservationPort,
+    ClaimRecoveryStore, CreateAgreementOutcome, LezFirstLockPort, LezMakerLockObservationPort,
     LezTakerFirstLockObservationPort, NegotiationChannel, OfferDiscovery, RecoveryStore,
     ZcashFirstLockPort, ZcashMakerLockObservationPort, ZcashTakerFirstLockObservationPort,
 };

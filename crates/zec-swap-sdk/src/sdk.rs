@@ -3,19 +3,20 @@
 use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId, UnixSeconds};
 
 use crate::{
-    AcceptedZecAgreementV1, CreateAgreementOutcome, CreateFirstLockOutcome,
-    FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentV1, FirstLockObservation,
-    FirstLockPlanV1, FirstLockProjectionCommit, FirstLockTransitionV1, LezFirstLockPort,
-    LezMakerLockObservationPort, LezObservationEventV1, LezObservationReconciliationV1,
-    LezObservationTrackerV1, LezTakerFirstLockObservationPort, MakerFundingEligibilityOutcome,
-    MakerLockDriveOutcome, MakerLockIntentV1, MakerLockObservationV1, MakerLockTransitionV1,
-    NegotiationChannel, ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome,
-    ObservedMakerLockTransitionV1, ObservedTakerFirstLockTransitionV1, OfferDiscovery,
-    PreparedFirstLockSubmissionV1, RecoveryStore, TakerFirstLockObservationV1, ZcashFirstLockPort,
-    ZcashMakerLockObservationPort, ZcashObservationEvent, ZcashObservationReconciliation,
-    ZcashObservationTracker, ZcashTakerFirstLockObservationPort, ZecAgreementV1,
-    ZecLifecycleAction, ZecSdkError, lifecycle::next_action,
-    observed_maker_lock::maker_final_lock_step, observed_taker_lock::taker_first_lock_step,
+    AcceptedZecAgreementV1, ClaimPreimage, ClaimRecoveryStore, CreateAgreementOutcome,
+    CreateFirstLockOutcome, FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentV1,
+    FirstLockObservation, FirstLockPlanV1, FirstLockProjectionCommit, FirstLockTransitionV1,
+    LezFirstLockPort, LezMakerLockObservationPort, LezObservationEventV1,
+    LezObservationReconciliationV1, LezObservationTrackerV1, LezTakerFirstLockObservationPort,
+    MakerFundingEligibilityOutcome, MakerLockDriveOutcome, MakerLockIntentV1,
+    MakerLockObservationV1, MakerLockTransitionV1, NegotiationChannel, ObserveMakerLockOutcome,
+    ObserveTakerFirstLockOutcome, ObservedMakerLockTransitionV1,
+    ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
+    RecoveryStore, TakerFirstLockObservationV1, ZcashFirstLockPort, ZcashMakerLockObservationPort,
+    ZcashObservationEvent, ZcashObservationReconciliation, ZcashObservationTracker,
+    ZcashTakerFirstLockObservationPort, ZecAgreementV1, ZecLifecycleAction, ZecSdkError,
+    claim::validate_preimage, lifecycle::next_action, observed_maker_lock::maker_final_lock_step,
+    observed_taker_lock::taker_first_lock_step,
 };
 
 /// Complete pre-lock facade composed from application-supplied ports.
@@ -162,6 +163,49 @@ where
         let outcome = self
             .store
             .create_agreement(&envelope)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
+        match outcome {
+            CreateAgreementOutcome::Created | CreateAgreementOutcome::ExistingSame => {
+                Ok(self.active(accepted))
+            }
+            CreateAgreementOutcome::Conflict => Err(ZecSdkError::AgreementConflict),
+        }
+    }
+
+    /// Atomically persists first-claimant recovery material before activation.
+    ///
+    /// This is the claim-capable activation path. The local role must be the
+    /// agreement-derived first claimant and the supplied preimage must satisfy
+    /// the agreement's SHA-256 digest.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a substituted role, wrong first-claimant role, nonzero initial
+    /// revision, or mismatched preimage before the store is called. Persistence
+    /// returns an active capability only after both agreement and protected
+    /// material are durable.
+    pub async fn activate_with_claim_preimage(
+        &self,
+        accepted: AcceptedZecAgreementV1,
+        preimage: ClaimPreimage,
+    ) -> Result<ActiveZecSwap<Lez, Zcash, Store>, ZecSdkError>
+    where
+        Store: ClaimRecoveryStore,
+    {
+        self.validate_local_role(&accepted)?;
+        if accepted.revision() != 0 {
+            return Err(ZecSdkError::InvalidActivationRevision(accepted.revision()));
+        }
+        let first_claimant = accepted.agreement().coordinator().first_claimant();
+        debug_assert_eq!(first_claimant, accepted.agreement().lez_claimant());
+        self.require_role(first_claimant)?;
+        validate_preimage(accepted.agreement(), &preimage)?;
+
+        let envelope = accepted.durable_envelope()?;
+        let outcome = self
+            .store
+            .create_agreement_with_local_claim_material(&envelope, &preimage)
             .await
             .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
         match outcome {

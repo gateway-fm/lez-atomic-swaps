@@ -32,6 +32,15 @@ const AEAD_TAG_BYTES: usize = 16;
 const PROTECTED_CLAIM_BYTES: usize = CLAIM_PREIMAGE_BYTES + AEAD_TAG_BYTES;
 const MAX_KEY_ID_BYTES: usize = 128;
 
+/// Largest secret-bearing claim submission accepted by the durable envelope.
+///
+/// This bound applies to plaintext submission bytes. The serialized ciphertext
+/// additionally contains the fixed-size Poly1305 authentication tag.
+pub const MAX_PROTECTED_CLAIM_PAYLOAD_BYTES: usize = crate::claim::MAX_CLAIM_SUBMISSION_BYTES;
+const MAX_PROTECTED_CLAIM_PAYLOAD_CIPHERTEXT_BYTES: usize =
+    MAX_PROTECTED_CLAIM_PAYLOAD_BYTES + AEAD_TAG_BYTES;
+const MIN_PROTECTED_CLAIM_PAYLOAD_CIPHERTEXT_BYTES: usize = AEAD_TAG_BYTES + 1;
+
 /// Why this process is retaining a claim preimage.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClaimMaterialPurpose {
@@ -39,6 +48,10 @@ pub enum ClaimMaterialPurpose {
     LocalFirstClaim,
     /// Canonically observed material used by the follow-up claimant.
     ObservedFollowUpClaim,
+    /// Exact secret-bearing LEZ claim submission bytes.
+    LezClaimSubmission,
+    /// Exact secret-bearing Zcash claim submission bytes.
+    ZcashClaimSubmission,
 }
 
 impl ClaimMaterialPurpose {
@@ -46,6 +59,8 @@ impl ClaimMaterialPurpose {
         match self {
             Self::LocalFirstClaim => 0,
             Self::ObservedFollowUpClaim => 1,
+            Self::LezClaimSubmission => 2,
+            Self::ZcashClaimSubmission => 3,
         }
     }
 }
@@ -407,6 +422,287 @@ impl fmt::Debug for ProtectedClaimEnvelope {
     }
 }
 
+#[derive(Clone, Eq, PartialEq)]
+struct ProtectedClaimPayloadCiphertext(Vec<u8>);
+
+impl Serialize for ProtectedClaimPayloadCiphertext {
+    fn serialize<SerializerT>(
+        &self,
+        serializer: SerializerT,
+    ) -> Result<SerializerT::Ok, SerializerT::Error>
+    where
+        SerializerT: Serializer,
+    {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for ProtectedClaimPayloadCiphertext {
+    fn deserialize<DeserializerT>(deserializer: DeserializerT) -> Result<Self, DeserializerT::Error>
+    where
+        DeserializerT: Deserializer<'de>,
+    {
+        struct CiphertextVisitor;
+
+        impl<'de> Visitor<'de> for CiphertextVisitor {
+            type Value = ProtectedClaimPayloadCiphertext;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(
+                    formatter,
+                    "between {MIN_PROTECTED_CLAIM_PAYLOAD_CIPHERTEXT_BYTES} and \
+                     {MAX_PROTECTED_CLAIM_PAYLOAD_CIPHERTEXT_BYTES} ciphertext bytes"
+                )
+            }
+
+            fn visit_bytes<ErrorT>(self, value: &[u8]) -> Result<Self::Value, ErrorT>
+            where
+                ErrorT: serde::de::Error,
+            {
+                validate_payload_ciphertext_length(value.len())
+                    .map_err(|_| ErrorT::invalid_length(value.len(), &self))?;
+                Ok(ProtectedClaimPayloadCiphertext(value.to_vec()))
+            }
+
+            fn visit_byte_buf<ErrorT>(self, value: Vec<u8>) -> Result<Self::Value, ErrorT>
+            where
+                ErrorT: serde::de::Error,
+            {
+                validate_payload_ciphertext_length(value.len())
+                    .map_err(|_| ErrorT::invalid_length(value.len(), &self))?;
+                Ok(ProtectedClaimPayloadCiphertext(value))
+            }
+
+            fn visit_seq<AccessT>(
+                self,
+                mut sequence: AccessT,
+            ) -> Result<Self::Value, AccessT::Error>
+            where
+                AccessT: SeqAccess<'de>,
+            {
+                if sequence
+                    .size_hint()
+                    .is_some_and(|size| size > MAX_PROTECTED_CLAIM_PAYLOAD_CIPHERTEXT_BYTES)
+                {
+                    return Err(AccessT::Error::invalid_length(
+                        MAX_PROTECTED_CLAIM_PAYLOAD_CIPHERTEXT_BYTES + 1,
+                        &self,
+                    ));
+                }
+
+                let capacity = sequence
+                    .size_hint()
+                    .unwrap_or(0)
+                    .min(MAX_PROTECTED_CLAIM_PAYLOAD_CIPHERTEXT_BYTES);
+                let mut bytes = Vec::with_capacity(capacity);
+                while bytes.len() < MAX_PROTECTED_CLAIM_PAYLOAD_CIPHERTEXT_BYTES {
+                    if let Some(byte) = sequence.next_element()? {
+                        bytes.push(byte);
+                    } else {
+                        validate_payload_ciphertext_length(bytes.len())
+                            .map_err(|_| AccessT::Error::invalid_length(bytes.len(), &self))?;
+                        return Ok(ProtectedClaimPayloadCiphertext(bytes));
+                    }
+                }
+                if sequence.next_element::<IgnoredAny>()?.is_some() {
+                    return Err(AccessT::Error::invalid_length(
+                        MAX_PROTECTED_CLAIM_PAYLOAD_CIPHERTEXT_BYTES + 1,
+                        &self,
+                    ));
+                }
+                Ok(ProtectedClaimPayloadCiphertext(bytes))
+            }
+        }
+
+        deserializer.deserialize_bytes(CiphertextVisitor)
+    }
+}
+
+/// Record-safe encrypted exact claim-submission bytes.
+///
+/// The payload is variable-length but strictly bounded during construction and
+/// deserialization. Plaintext is never serialized and decryption returns
+/// zeroizing storage.
+#[derive(Clone, Eq, PartialEq, Serialize)]
+pub struct ProtectedClaimPayloadEnvelope {
+    ciphertext: ProtectedClaimPayloadCiphertext,
+    nonce: [u8; 24],
+    key_id: Box<str>,
+    fingerprint: [u8; 32],
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProtectedClaimPayloadEnvelopeRecord {
+    ciphertext: ProtectedClaimPayloadCiphertext,
+    nonce: [u8; 24],
+    key_id: Box<str>,
+    fingerprint: [u8; 32],
+}
+
+impl<'de> Deserialize<'de> for ProtectedClaimPayloadEnvelope {
+    fn deserialize<DeserializerT>(deserializer: DeserializerT) -> Result<Self, DeserializerT::Error>
+    where
+        DeserializerT: Deserializer<'de>,
+    {
+        let record = ProtectedClaimPayloadEnvelopeRecord::deserialize(deserializer)?;
+        Self::from_record_fields(
+            record.ciphertext.0,
+            record.nonce,
+            record.key_id,
+            record.fingerprint,
+        )
+        .map_err(DeserializerT::Error::custom)
+    }
+}
+
+impl ProtectedClaimPayloadEnvelope {
+    /// Encrypts non-empty exact claim-submission bytes under a context-derived key.
+    ///
+    /// A zeroizing vector can be passed as `payload.as_slice()` so the caller
+    /// retains control of the plaintext allocation. The caller must not reuse
+    /// nonce with the same key and context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an empty or oversized payload, or when encryption
+    /// or key derivation fails.
+    pub fn encrypt(
+        payload: &[u8],
+        key: &ProtectedClaimKey,
+        nonce: [u8; 24],
+        context: ClaimMaterialContext<'_>,
+    ) -> Result<Self, ProtectedClaimError> {
+        validate_payload_plaintext_length(payload.len())?;
+        let aad = context.encode(key.key_id());
+        let derived_key = derive_key(key, &aad)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(derived_key.as_ref())
+            .map_err(|_| ProtectedClaimError::KeyDerivation)?;
+        let ciphertext = ProtectedClaimPayloadCiphertext(
+            cipher
+                .encrypt(
+                    XNonce::from_slice(&nonce),
+                    Payload {
+                        msg: payload,
+                        aad: &aad,
+                    },
+                )
+                .map_err(|_| ProtectedClaimError::Encryption)?,
+        );
+        validate_payload_ciphertext_length(ciphertext.0.len())?;
+        let fingerprint = fingerprint(key.key_id(), &nonce, &ciphertext.0);
+
+        Ok(Self {
+            ciphertext,
+            nonce,
+            key_id: key.key_id.clone(),
+            fingerprint,
+        })
+    }
+
+    /// Restores an envelope from its four record-safe fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid bounds, key identifiers, or fingerprints.
+    pub fn from_record_fields(
+        ciphertext: Vec<u8>,
+        nonce: [u8; 24],
+        key_id: impl Into<Box<str>>,
+        fingerprint: [u8; 32],
+    ) -> Result<Self, ProtectedClaimError> {
+        validate_payload_ciphertext_length(ciphertext.len())?;
+        let key_id = key_id.into();
+        validate_key_id(&key_id)?;
+        if fingerprint != self::fingerprint(&key_id, &nonce, &ciphertext) {
+            return Err(ProtectedClaimError::FingerprintMismatch);
+        }
+        Ok(Self {
+            ciphertext: ProtectedClaimPayloadCiphertext(ciphertext),
+            nonce,
+            key_id,
+            fingerprint,
+        })
+    }
+
+    /// Authenticates and decrypts exact claim-submission bytes.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed for corrupt record fields, the wrong key or key ID, a
+    /// changed authenticated context, or an invalid plaintext length.
+    pub fn decrypt(
+        &self,
+        key: &ProtectedClaimKey,
+        context: ClaimMaterialContext<'_>,
+    ) -> Result<Zeroizing<Vec<u8>>, ProtectedClaimError> {
+        if self.key_id.as_ref() != key.key_id() {
+            return Err(ProtectedClaimError::KeyIdMismatch);
+        }
+        validate_payload_ciphertext_length(self.ciphertext.0.len())?;
+        if self.fingerprint != fingerprint(&self.key_id, &self.nonce, &self.ciphertext.0) {
+            return Err(ProtectedClaimError::FingerprintMismatch);
+        }
+
+        let aad = context.encode(&self.key_id);
+        let derived_key = derive_key(key, &aad)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(derived_key.as_ref())
+            .map_err(|_| ProtectedClaimError::KeyDerivation)?;
+        let plaintext = Zeroizing::new(
+            cipher
+                .decrypt(
+                    XNonce::from_slice(&self.nonce),
+                    Payload {
+                        msg: &self.ciphertext.0,
+                        aad: &aad,
+                    },
+                )
+                .map_err(|_| ProtectedClaimError::Authentication)?,
+        );
+        validate_payload_plaintext_length(plaintext.len())?;
+        Ok(plaintext)
+    }
+
+    /// Authenticated ciphertext and tag.
+    #[must_use]
+    pub fn ciphertext(&self) -> &[u8] {
+        &self.ciphertext.0
+    }
+
+    /// Caller-generated `XChaCha20` nonce.
+    #[must_use]
+    pub const fn nonce(&self) -> &[u8; 24] {
+        &self.nonce
+    }
+
+    /// Non-secret key-rotation identifier.
+    #[must_use]
+    pub fn key_id(&self) -> &str {
+        &self.key_id
+    }
+
+    /// SHA-256 fingerprint over the record-safe envelope fields.
+    #[must_use]
+    pub const fn fingerprint(&self) -> &[u8; 32] {
+        &self.fingerprint
+    }
+}
+
+impl fmt::Debug for ProtectedClaimPayloadEnvelope {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProtectedClaimPayloadEnvelope")
+            .field(
+                "ciphertext",
+                &format_args!("[REDACTED; {} bytes]", self.ciphertext.0.len()),
+            )
+            .field("nonce", &"[REDACTED]")
+            .field("key_id", &self.key_id)
+            .field("fingerprint", &"[REDACTED]")
+            .finish()
+    }
+}
+
 /// Protected claim-material validation or cryptographic failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ProtectedClaimError {
@@ -434,6 +730,9 @@ pub enum ProtectedClaimError {
     /// Authenticated plaintext did not have the expected fixed size.
     #[error("protected-claim plaintext has an invalid length")]
     InvalidPlaintextLength,
+    /// A claim submission payload must be non-empty and no larger than 2 MB.
+    #[error("protected-claim payload must contain 1 through 2000000 bytes")]
+    InvalidPayloadLength,
 }
 
 fn derive_key(
@@ -466,6 +765,24 @@ fn validate_key_id(key_id: &str) -> Result<(), ProtectedClaimError> {
         Err(ProtectedClaimError::InvalidKeyId)
     } else {
         Ok(())
+    }
+}
+
+fn validate_payload_plaintext_length(length: usize) -> Result<(), ProtectedClaimError> {
+    if length == 0 || length > MAX_PROTECTED_CLAIM_PAYLOAD_BYTES {
+        Err(ProtectedClaimError::InvalidPayloadLength)
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_payload_ciphertext_length(length: usize) -> Result<(), ProtectedClaimError> {
+    if (MIN_PROTECTED_CLAIM_PAYLOAD_CIPHERTEXT_BYTES..=MAX_PROTECTED_CLAIM_PAYLOAD_CIPHERTEXT_BYTES)
+        .contains(&length)
+    {
+        Ok(())
+    } else {
+        Err(ProtectedClaimError::InvalidPayloadLength)
     }
 }
 
@@ -701,6 +1018,193 @@ mod tests {
             .expect("ciphertext is an array")
             .push(serde_json::json!(0));
         assert!(serde_json::from_value::<ProtectedClaimEnvelope>(oversized).is_err());
+    }
+
+    fn payload_context(
+        swap_id: &SwapId,
+        purpose: ClaimMaterialPurpose,
+    ) -> ClaimMaterialContext<'_> {
+        ClaimMaterialContext::new(
+            PROTECTED_CLAIM_SCHEMA_V1,
+            swap_id,
+            Pair::Zcash,
+            SwapDirection::TakerSellsForeign,
+            &COMMITMENT,
+            Participant::Taker,
+            purpose,
+        )
+    }
+
+    #[test]
+    fn protected_claim_payload_round_trips_zeroizing_exact_submission_bytes() {
+        let swap_id = swap_id();
+        let key = key(0x51);
+        let payload = Zeroizing::new(vec![0x91, 0x92, 0x93, 0x94]);
+        let envelope = ProtectedClaimPayloadEnvelope::encrypt(
+            payload.as_slice(),
+            &key,
+            NONCE,
+            payload_context(&swap_id, ClaimMaterialPurpose::LezClaimSubmission),
+        )
+        .expect("payload encryption succeeds");
+
+        assert_ne!(envelope.ciphertext(), payload.as_slice());
+        let encoded = serde_json::to_vec(&envelope).expect("record-safe envelope serializes");
+        assert!(
+            !encoded
+                .windows(payload.len())
+                .any(|window| window == payload.as_slice())
+        );
+        let restored: ProtectedClaimPayloadEnvelope =
+            serde_json::from_slice(&encoded).expect("bounded envelope deserializes");
+        let decrypted = restored
+            .decrypt(
+                &key,
+                payload_context(&swap_id, ClaimMaterialPurpose::LezClaimSubmission),
+            )
+            .expect("canonical context authenticates");
+
+        assert_eq!(decrypted.as_slice(), payload.as_slice());
+    }
+
+    #[test]
+    fn protected_claim_payload_rejects_empty_and_oversized_and_accepts_boundary() {
+        let swap_id = swap_id();
+        let key = key(0x52);
+        let context = payload_context(&swap_id, ClaimMaterialPurpose::ZcashClaimSubmission);
+
+        assert_eq!(
+            ProtectedClaimPayloadEnvelope::encrypt(&[], &key, NONCE, context),
+            Err(ProtectedClaimError::InvalidPayloadLength)
+        );
+
+        let oversized = Zeroizing::new(vec![0x55; MAX_PROTECTED_CLAIM_PAYLOAD_BYTES + 1]);
+        assert_eq!(
+            ProtectedClaimPayloadEnvelope::encrypt(oversized.as_slice(), &key, NONCE, context,),
+            Err(ProtectedClaimError::InvalidPayloadLength)
+        );
+
+        let boundary = Zeroizing::new(vec![0xa5; MAX_PROTECTED_CLAIM_PAYLOAD_BYTES]);
+        let envelope =
+            ProtectedClaimPayloadEnvelope::encrypt(boundary.as_slice(), &key, NONCE, context)
+                .expect("maximum-size payload encrypts");
+        assert_eq!(
+            envelope.ciphertext().len(),
+            MAX_PROTECTED_CLAIM_PAYLOAD_CIPHERTEXT_BYTES
+        );
+        assert_eq!(
+            envelope
+                .decrypt(&key, context)
+                .expect("maximum-size payload decrypts")
+                .as_slice(),
+            boundary.as_slice()
+        );
+
+        assert_eq!(
+            ProtectedClaimPayloadEnvelope::from_record_fields(
+                vec![0; AEAD_TAG_BYTES],
+                NONCE,
+                key.key_id(),
+                [0; 32],
+            ),
+            Err(ProtectedClaimError::InvalidPayloadLength)
+        );
+        assert_eq!(
+            ProtectedClaimPayloadEnvelope::from_record_fields(
+                vec![0; MAX_PROTECTED_CLAIM_PAYLOAD_CIPHERTEXT_BYTES + 1],
+                NONCE,
+                key.key_id(),
+                [0; 32],
+            ),
+            Err(ProtectedClaimError::InvalidPayloadLength)
+        );
+    }
+
+    #[test]
+    fn protected_claim_payload_aad_and_purpose_tampering_fails_closed() {
+        let swap_id = swap_id();
+        let key = key(0x53);
+        let envelope = ProtectedClaimPayloadEnvelope::encrypt(
+            &[1, 2, 3],
+            &key,
+            NONCE,
+            payload_context(&swap_id, ClaimMaterialPurpose::LezClaimSubmission),
+        )
+        .expect("payload encryption succeeds");
+
+        assert_eq!(
+            envelope.decrypt(
+                &key,
+                payload_context(&swap_id, ClaimMaterialPurpose::ZcashClaimSubmission),
+            ),
+            Err(ProtectedClaimError::Authentication)
+        );
+
+        let changed_role = ClaimMaterialContext::new(
+            PROTECTED_CLAIM_SCHEMA_V1,
+            &swap_id,
+            Pair::Zcash,
+            SwapDirection::TakerSellsForeign,
+            &COMMITMENT,
+            Participant::Maker,
+            ClaimMaterialPurpose::LezClaimSubmission,
+        );
+        assert_eq!(
+            envelope.decrypt(&key, changed_role),
+            Err(ProtectedClaimError::Authentication)
+        );
+    }
+
+    #[test]
+    fn protected_claim_payload_record_tampering_fails_closed() {
+        let swap_id = swap_id();
+        let key = key(0x54);
+        let envelope = ProtectedClaimPayloadEnvelope::encrypt(
+            &[4, 5, 6],
+            &key,
+            NONCE,
+            payload_context(&swap_id, ClaimMaterialPurpose::ZcashClaimSubmission),
+        )
+        .expect("payload encryption succeeds");
+
+        let mut ciphertext = envelope.ciphertext().to_vec();
+        ciphertext[0] ^= 1;
+        assert_eq!(
+            ProtectedClaimPayloadEnvelope::from_record_fields(
+                ciphertext,
+                *envelope.nonce(),
+                envelope.key_id(),
+                *envelope.fingerprint(),
+            ),
+            Err(ProtectedClaimError::FingerprintMismatch)
+        );
+
+        let mut encoded = serde_json::to_value(&envelope).expect("envelope serializes");
+        encoded["ciphertext"] =
+            serde_json::to_value(vec![0_u8; MAX_PROTECTED_CLAIM_PAYLOAD_CIPHERTEXT_BYTES + 1])
+                .expect("oversized ciphertext serializes");
+        assert!(serde_json::from_value::<ProtectedClaimPayloadEnvelope>(encoded).is_err());
+    }
+
+    #[test]
+    fn protected_claim_payload_debug_redacts_record_secrets() {
+        let swap_id = swap_id();
+        let key = key(0x55);
+        let payload = [0xde, 0xad, 0xbe, 0xef];
+        let envelope = ProtectedClaimPayloadEnvelope::encrypt(
+            &payload,
+            &key,
+            NONCE,
+            payload_context(&swap_id, ClaimMaterialPurpose::LezClaimSubmission),
+        )
+        .expect("payload encryption succeeds");
+        let debug = format!("{envelope:?}");
+
+        assert!(debug.contains("[REDACTED; 20 bytes]"));
+        assert!(!debug.contains(&hex::encode(payload)));
+        assert!(!debug.contains(&hex::encode(envelope.ciphertext())));
+        assert!(!debug.contains(&hex::encode(NONCE)));
+        assert!(!debug.contains(&hex::encode(envelope.fingerprint())));
     }
 
     #[test]
