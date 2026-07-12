@@ -19,6 +19,41 @@ pub enum ClaimStepV1 {
     FollowupZcash,
 }
 
+/// One bounded result from advancing the agreement-directed claim lifecycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClaimDriveOutcome {
+    /// Exact protected bytes were submitted to the step chain adapter.
+    Submitted(ClaimStepV1),
+    /// The expected transaction is absent or not yet stable enough to project.
+    AwaitingStableObservation(ClaimStepV1),
+    /// Stable canonical evidence was durably projected.
+    Projected { step: ClaimStepV1, revision: u64 },
+    /// Both claims were already durably replayed or projected.
+    Completed { revision: u64 },
+}
+
+/// Canonical LEZ revealing-claim observation.
+#[derive(Debug)]
+pub enum RevealingClaimObservationV1 {
+    /// The agreement-derived transaction identity is stably absent.
+    Absent,
+    /// A candidate exists but is not stable enough to project.
+    Unstable,
+    /// Stable evidence includes the transient revealed preimage.
+    Confirmed(RevealingClaimEvidenceV1),
+}
+
+/// Canonical Zcash follow-up-claim observation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FollowupClaimObservationV1 {
+    /// The agreement-derived transaction identity is stably absent.
+    Absent,
+    /// A candidate exists but is not stable enough to project.
+    Unstable,
+    /// Stable evidence for the exact follow-up transaction.
+    Confirmed(FollowupClaimEvidenceV1),
+}
+
 impl ClaimStepV1 {
     /// Derives the only claim step owned by a fixed agreement role.
     #[must_use]
@@ -283,7 +318,7 @@ impl ClaimIntentV1 {
 
 /// Canonical revealing-claim evidence carrying transient secret material.
 pub struct RevealingClaimEvidenceV1 {
-    expected_submission_id: [u8; 32],
+    observed_submission_id: [u8; 32],
     transaction_id: Box<str>,
     confirmations: u32,
     preimage: ClaimPreimage,
@@ -297,12 +332,12 @@ impl RevealingClaimEvidenceV1 {
     /// Rejects malformed identities, insufficient depth, or a wrong preimage.
     pub fn new(
         agreement: &ZecAgreementV1,
-        expected_submission_id: [u8; 32],
+        observed_submission_id: [u8; 32],
         transaction_id: impl Into<Box<str>>,
         confirmations: u32,
         preimage: ClaimPreimage,
     ) -> Result<Self, ClaimError> {
-        if expected_submission_id == [0; 32] {
+        if observed_submission_id == [0; 32] {
             return Err(ClaimError::EmptyExpectedIdentity(ClaimStepV1::RevealingLez));
         }
         let transaction_id = transaction_id.into();
@@ -310,17 +345,17 @@ impl RevealingClaimEvidenceV1 {
         validate_preimage(agreement, &preimage)?;
         require_confirmations(agreement, ClaimStepV1::RevealingLez, confirmations)?;
         Ok(Self {
-            expected_submission_id,
+            observed_submission_id,
             transaction_id,
             confirmations,
             preimage,
         })
     }
 
-    /// Expected chain-derived transaction identity.
+    /// Canonical adapter-derived identity of the observed transaction.
     #[must_use]
-    pub const fn expected_submission_id(&self) -> &[u8; 32] {
-        &self.expected_submission_id
+    pub const fn observed_submission_id(&self) -> &[u8; 32] {
+        &self.observed_submission_id
     }
 
     /// Canonical chain transaction identifier.
@@ -346,7 +381,7 @@ impl std::fmt::Debug for RevealingClaimEvidenceV1 {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("RevealingClaimEvidenceV1")
-            .field("expected_submission_id", &"[REDACTED]")
+            .field("observed_submission_id", &"[REDACTED]")
             .field("transaction_id", &self.transaction_id)
             .field("confirmations", &self.confirmations)
             .field("preimage", &"[REDACTED]")
@@ -357,7 +392,7 @@ impl std::fmt::Debug for RevealingClaimEvidenceV1 {
 /// Canonical Zcash follow-up claim evidence.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FollowupClaimEvidenceV1 {
-    expected_submission_id: [u8; 32],
+    observed_submission_id: [u8; 32],
     transaction_id: Box<str>,
     confirmations: u32,
 }
@@ -370,11 +405,11 @@ impl FollowupClaimEvidenceV1 {
     /// Rejects malformed identities or insufficient confirmation depth.
     pub fn new(
         agreement: &ZecAgreementV1,
-        expected_submission_id: [u8; 32],
+        observed_submission_id: [u8; 32],
         transaction_id: impl Into<Box<str>>,
         confirmations: u32,
     ) -> Result<Self, ClaimError> {
-        if expected_submission_id == [0; 32] {
+        if observed_submission_id == [0; 32] {
             return Err(ClaimError::EmptyExpectedIdentity(
                 ClaimStepV1::FollowupZcash,
             ));
@@ -383,16 +418,16 @@ impl FollowupClaimEvidenceV1 {
         ChainProof::new(transaction_id.clone(), confirmations).map_err(ClaimError::Core)?;
         require_confirmations(agreement, ClaimStepV1::FollowupZcash, confirmations)?;
         Ok(Self {
-            expected_submission_id,
+            observed_submission_id,
             transaction_id,
             confirmations,
         })
     }
 
-    /// Expected chain-derived transaction identity.
+    /// Canonical adapter-derived identity of the observed transaction.
     #[must_use]
-    pub const fn expected_submission_id(&self) -> &[u8; 32] {
-        &self.expected_submission_id
+    pub const fn observed_submission_id(&self) -> &[u8; 32] {
+        &self.observed_submission_id
     }
 
     /// Canonical Zcash transaction identifier.
@@ -433,7 +468,7 @@ impl RevealingClaimTransitionV1 {
             intent,
             predecessor_revision,
             ClaimStepV1::RevealingLez,
-            evidence.expected_submission_id(),
+            evidence.observed_submission_id(),
         )?;
         Ok(Self {
             schema_version: 1,
@@ -545,6 +580,124 @@ impl std::fmt::Debug for RevealingClaimTransitionV1 {
     }
 }
 
+/// Counterparty-local observation of the canonical LEZ revealing claim.
+///
+/// This transition has no local submission intent. Its opaque observed identity and canonical
+/// transaction ID are both supplied by the chain adapter; unlike the owner path, the domain has
+/// no exact local transaction plan against which it can independently compare that identity.
+pub struct ObservedRevealingClaimTransitionV1 {
+    schema_version: u16,
+    swap_id: SwapId,
+    agreement_commitment: [u8; 32],
+    local_participant: Participant,
+    predecessor_revision: u64,
+    evidence: RevealingClaimEvidenceV1,
+}
+
+impl ObservedRevealingClaimTransitionV1 {
+    pub(crate) fn from_active(
+        agreement: &ZecAgreementV1,
+        coordinator: &SwapCoordinator,
+        local_participant: Participant,
+        predecessor_revision: u64,
+        evidence: RevealingClaimEvidenceV1,
+    ) -> Result<Self, ClaimError> {
+        validate_observer_context(
+            agreement,
+            coordinator,
+            local_participant,
+            ClaimStepV1::RevealingLez,
+        )?;
+        Ok(Self {
+            schema_version: 1,
+            swap_id: agreement.coordinator().id().clone(),
+            agreement_commitment: *agreement.agreement_commitment(),
+            local_participant,
+            predecessor_revision,
+            evidence,
+        })
+    }
+
+    /// Transition payload schema.
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
+    /// Agreement-derived swap identity.
+    #[must_use]
+    pub const fn swap_id(&self) -> &SwapId {
+        &self.swap_id
+    }
+
+    /// Exact local predecessor revision.
+    #[must_use]
+    pub const fn predecessor_revision(&self) -> u64 {
+        self.predecessor_revision
+    }
+
+    /// Canonical evidence including transient extracted material.
+    #[must_use]
+    pub const fn evidence(&self) -> &RevealingClaimEvidenceV1 {
+        &self.evidence
+    }
+
+    pub(crate) const fn agreement_commitment(&self) -> &[u8; 32] {
+        &self.agreement_commitment
+    }
+
+    pub(crate) const fn local_participant(&self) -> Participant {
+        self.local_participant
+    }
+
+    /// Revalidates and applies the observed LEZ effect using its fixed on-chain claimant.
+    ///
+    /// # Errors
+    ///
+    /// Rejects owner-local, substituted, stale, shallow, wrong-secret, or wrong-phase evidence.
+    pub fn apply_to(
+        &self,
+        agreement: &ZecAgreementV1,
+        coordinator: &SwapCoordinator,
+        revision: u64,
+    ) -> Result<SwapCoordinator, ClaimError> {
+        validate_observer_header(
+            &ObserverHeader {
+                schema_version: self.schema_version,
+                swap_id: &self.swap_id,
+                agreement_commitment: &self.agreement_commitment,
+                local: self.local_participant,
+                predecessor_revision: self.predecessor_revision,
+            },
+            agreement,
+            coordinator,
+            revision,
+            ClaimStepV1::RevealingLez,
+        )?;
+        validate_preimage(agreement, self.evidence.preimage())?;
+        require_confirmations(
+            agreement,
+            ClaimStepV1::RevealingLez,
+            self.evidence.confirmations(),
+        )?;
+        apply_revealing_claim(agreement, coordinator, &self.evidence)
+    }
+}
+
+impl std::fmt::Debug for ObservedRevealingClaimTransitionV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ObservedRevealingClaimTransitionV1")
+            .field("schema_version", &self.schema_version)
+            .field("swap_id", &self.swap_id)
+            .field("agreement_commitment", &"[REDACTED]")
+            .field("local_participant", &self.local_participant)
+            .field("predecessor_revision", &self.predecessor_revision)
+            .field("evidence", &self.evidence)
+            .finish()
+    }
+}
+
 /// Follow-up Zcash claim committed at an exact aggregate revision.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FollowupClaimTransitionV1 {
@@ -571,7 +724,7 @@ impl FollowupClaimTransitionV1 {
             intent,
             predecessor_revision,
             ClaimStepV1::FollowupZcash,
-            evidence.expected_submission_id(),
+            evidence.observed_submission_id(),
         )?;
         Ok(Self {
             schema_version: 1,
@@ -663,6 +816,106 @@ impl FollowupClaimTransitionV1 {
         )
         .map_err(ClaimError::Core)?;
         Ok(next)
+    }
+}
+
+/// Counterparty-local observation of the canonical Zcash follow-up claim.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObservedFollowupClaimTransitionV1 {
+    schema_version: u16,
+    swap_id: SwapId,
+    agreement_commitment: [u8; 32],
+    local_participant: Participant,
+    predecessor_revision: u64,
+    evidence: FollowupClaimEvidenceV1,
+}
+
+impl ObservedFollowupClaimTransitionV1 {
+    pub(crate) fn from_active(
+        agreement: &ZecAgreementV1,
+        coordinator: &SwapCoordinator,
+        local_participant: Participant,
+        predecessor_revision: u64,
+        evidence: FollowupClaimEvidenceV1,
+    ) -> Result<Self, ClaimError> {
+        validate_observer_context(
+            agreement,
+            coordinator,
+            local_participant,
+            ClaimStepV1::FollowupZcash,
+        )?;
+        Ok(Self {
+            schema_version: 1,
+            swap_id: agreement.coordinator().id().clone(),
+            agreement_commitment: *agreement.agreement_commitment(),
+            local_participant,
+            predecessor_revision,
+            evidence,
+        })
+    }
+
+    /// Transition payload schema.
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
+    /// Agreement-derived swap identity.
+    #[must_use]
+    pub const fn swap_id(&self) -> &SwapId {
+        &self.swap_id
+    }
+
+    /// Exact local predecessor revision.
+    #[must_use]
+    pub const fn predecessor_revision(&self) -> u64 {
+        self.predecessor_revision
+    }
+
+    /// Canonical Zcash evidence.
+    #[must_use]
+    pub const fn evidence(&self) -> &FollowupClaimEvidenceV1 {
+        &self.evidence
+    }
+
+    pub(crate) const fn agreement_commitment(&self) -> &[u8; 32] {
+        &self.agreement_commitment
+    }
+
+    pub(crate) const fn local_participant(&self) -> Participant {
+        self.local_participant
+    }
+
+    /// Revalidates and applies the observed Zcash effect using its fixed on-chain claimant.
+    ///
+    /// # Errors
+    ///
+    /// Rejects owner-local, substituted, stale, shallow, or wrong-phase evidence.
+    pub fn apply_to(
+        &self,
+        agreement: &ZecAgreementV1,
+        coordinator: &SwapCoordinator,
+        revision: u64,
+    ) -> Result<SwapCoordinator, ClaimError> {
+        validate_observer_header(
+            &ObserverHeader {
+                schema_version: self.schema_version,
+                swap_id: &self.swap_id,
+                agreement_commitment: &self.agreement_commitment,
+                local: self.local_participant,
+                predecessor_revision: self.predecessor_revision,
+            },
+            agreement,
+            coordinator,
+            revision,
+            ClaimStepV1::FollowupZcash,
+        )?;
+        require_confirmations(
+            agreement,
+            ClaimStepV1::FollowupZcash,
+            self.evidence.confirmations(),
+        )?;
+        apply_followup_claim(agreement, coordinator, &self.evidence)
     }
 }
 
@@ -822,6 +1075,97 @@ fn validate_transition_header(
         });
     }
     Ok(())
+}
+
+struct ObserverHeader<'a> {
+    schema_version: u16,
+    swap_id: &'a SwapId,
+    agreement_commitment: &'a [u8; 32],
+    local: Participant,
+    predecessor_revision: u64,
+}
+
+fn validate_observer_context(
+    agreement: &ZecAgreementV1,
+    coordinator: &SwapCoordinator,
+    local: Participant,
+    step: ClaimStepV1,
+) -> Result<(), ClaimError> {
+    if coordinator.id() != agreement.coordinator().id() {
+        return Err(ClaimError::ContextMismatch);
+    }
+    let expected = step.claimant(agreement).other();
+    if local != expected {
+        return Err(ClaimError::WrongRole {
+            step,
+            expected,
+            actual: local,
+        });
+    }
+    if coordinator.phase() != step.expected_phase() {
+        return Err(ClaimError::WrongPhase {
+            step,
+            expected: step.expected_phase(),
+            actual: coordinator.phase(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_observer_header(
+    header: &ObserverHeader<'_>,
+    agreement: &ZecAgreementV1,
+    coordinator: &SwapCoordinator,
+    revision: u64,
+    step: ClaimStepV1,
+) -> Result<(), ClaimError> {
+    validate_observer_context(agreement, coordinator, header.local, step)?;
+    if header.schema_version != 1
+        || header.swap_id != agreement.coordinator().id()
+        || header.agreement_commitment != agreement.agreement_commitment()
+        || header.predecessor_revision != revision
+        || coordinator.id() != header.swap_id
+    {
+        return Err(ClaimError::ContextMismatch);
+    }
+    Ok(())
+}
+
+fn apply_revealing_claim(
+    agreement: &ZecAgreementV1,
+    coordinator: &SwapCoordinator,
+    evidence: &RevealingClaimEvidenceV1,
+) -> Result<SwapCoordinator, ClaimError> {
+    let mut next = coordinator.clone();
+    next.observe_revealing_claim(
+        agreement.lez_claimant(),
+        ChainProof::new(
+            evidence.transaction_id().to_owned(),
+            evidence.confirmations(),
+        )
+        .map_err(ClaimError::Core)?,
+        ClaimEvidence::new(*evidence.preimage().expose_secret()),
+    )
+    .map_err(ClaimError::Core)?;
+    Ok(next)
+}
+
+fn apply_followup_claim(
+    agreement: &ZecAgreementV1,
+    coordinator: &SwapCoordinator,
+    evidence: &FollowupClaimEvidenceV1,
+) -> Result<SwapCoordinator, ClaimError> {
+    let mut next = coordinator.clone();
+    next.observe_followup_claim(
+        agreement.lez_claimant().other(),
+        ChainProof::new(
+            evidence.transaction_id().to_owned(),
+            evidence.confirmations(),
+        )
+        .map_err(ClaimError::Core)?,
+    )
+    .map_err(ClaimError::Core)?;
+    Ok(next)
 }
 
 pub(crate) fn validate_preimage(

@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AcceptedZecAgreementV1, ClaimError, ClaimIntentV1, ClaimPreimage, ClaimStepV1,
-    FollowupClaimEvidenceV1, FollowupClaimTransitionV1, RevealingClaimEvidenceV1,
-    RevealingClaimTransitionV1,
+    FollowupClaimEvidenceV1, FollowupClaimTransitionV1, ObservedFollowupClaimTransitionV1,
+    ObservedRevealingClaimTransitionV1, RevealingClaimEvidenceV1, RevealingClaimTransitionV1,
     first_lock_record::{parse_participant, participant_name},
 };
 
@@ -103,7 +103,7 @@ pub struct RevealingClaimTransitionRecordV1 {
     local_participant: Box<str>,
     predecessor_revision: u64,
     intent_staged_revision: u64,
-    expected_submission_id: [u8; 32],
+    observed_submission_id: [u8; 32],
     transaction_id: Box<str>,
     confirmations: u32,
 }
@@ -118,7 +118,7 @@ impl From<&RevealingClaimTransitionV1> for RevealingClaimTransitionRecordV1 {
             local_participant: participant_name(value.local_participant()).into(),
             predecessor_revision: value.predecessor_revision(),
             intent_staged_revision: value.intent_staged_revision(),
-            expected_submission_id: *value.evidence().expected_submission_id(),
+            observed_submission_id: *value.evidence().observed_submission_id(),
             transaction_id: value.evidence().transaction_id().into(),
             confirmations: value.evidence().confirmations(),
         }
@@ -167,7 +167,7 @@ impl RevealingClaimTransitionRecordV1 {
         }
         let evidence = RevealingClaimEvidenceV1::new(
             accepted.agreement(),
-            self.expected_submission_id,
+            self.observed_submission_id,
             self.transaction_id.clone(),
             self.confirmations,
             preimage,
@@ -176,6 +176,93 @@ impl RevealingClaimTransitionRecordV1 {
             accepted.agreement(),
             coordinator,
             &intent,
+            predecessor_revision,
+            evidence,
+        )?;
+        if Self::from(&trusted) != *self {
+            return Err(ClaimRecordError::TransitionMismatch);
+        }
+        Ok(trusted)
+    }
+}
+
+/// Secret-free observer-store payload for a canonical LEZ revealing claim.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ObservedRevealingClaimTransitionRecordV1 {
+    schema_version: u16,
+    transition_kind: Box<str>,
+    swap_id: Box<str>,
+    agreement_commitment: [u8; 32],
+    local_participant: Box<str>,
+    predecessor_revision: u64,
+    observed_submission_id: [u8; 32],
+    transaction_id: Box<str>,
+    confirmations: u32,
+}
+
+impl From<&ObservedRevealingClaimTransitionV1> for ObservedRevealingClaimTransitionRecordV1 {
+    fn from(value: &ObservedRevealingClaimTransitionV1) -> Self {
+        Self {
+            schema_version: value.schema_version(),
+            transition_kind: "observed_revealing_lez".into(),
+            swap_id: value.swap_id().as_str().into(),
+            agreement_commitment: *value.agreement_commitment(),
+            local_participant: participant_name(value.local_participant()).into(),
+            predecessor_revision: value.predecessor_revision(),
+            observed_submission_id: *value.evidence().observed_submission_id(),
+            transaction_id: value.evidence().transaction_id().into(),
+            confirmations: value.evidence().confirmations(),
+        }
+    }
+}
+
+impl ObservedRevealingClaimTransitionRecordV1 {
+    /// Primitive payload schema.
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
+    /// Rebuilds observer-local LEZ evidence using separately decrypted extracted material.
+    ///
+    /// The canonical adapter owns the relationship between its opaque observed identity and
+    /// transaction ID because an observer has no local exact-submission plan to compare.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unknown schemas, owner-local or substituted context, stale revisions,
+    /// insufficient depth, or a preimage that does not satisfy the agreement digest.
+    pub fn revalidate(
+        &self,
+        accepted: &AcceptedZecAgreementV1,
+        coordinator: &SwapCoordinator,
+        predecessor_revision: u64,
+        preimage: ClaimPreimage,
+    ) -> Result<ObservedRevealingClaimTransitionV1, ClaimRecordError> {
+        require_schema("observed revealing claim transition", self.schema_version)?;
+        if self.transition_kind.as_ref() != "observed_revealing_lez"
+            || self.predecessor_revision != predecessor_revision
+        {
+            return Err(ClaimRecordError::RevisionMismatch);
+        }
+        validate_common_context(
+            &self.swap_id,
+            &self.agreement_commitment,
+            &self.local_participant,
+            accepted,
+        )?;
+        let evidence = RevealingClaimEvidenceV1::new(
+            accepted.agreement(),
+            self.observed_submission_id,
+            self.transaction_id.clone(),
+            self.confirmations,
+            preimage,
+        )?;
+        let trusted = ObservedRevealingClaimTransitionV1::from_active(
+            accepted.agreement(),
+            coordinator,
+            accepted.local_participant(),
             predecessor_revision,
             evidence,
         )?;
@@ -197,7 +284,7 @@ pub struct FollowupClaimTransitionRecordV1 {
     local_participant: Box<str>,
     predecessor_revision: u64,
     intent_staged_revision: u64,
-    expected_submission_id: [u8; 32],
+    observed_submission_id: [u8; 32],
     transaction_id: Box<str>,
     confirmations: u32,
 }
@@ -212,7 +299,7 @@ impl From<&FollowupClaimTransitionV1> for FollowupClaimTransitionRecordV1 {
             local_participant: participant_name(value.local_participant()).into(),
             predecessor_revision: value.predecessor_revision(),
             intent_staged_revision: value.intent_staged_revision(),
-            expected_submission_id: *value.evidence().expected_submission_id(),
+            observed_submission_id: *value.evidence().observed_submission_id(),
             transaction_id: value.evidence().transaction_id().into(),
             confirmations: value.evidence().confirmations(),
         }
@@ -260,7 +347,7 @@ impl FollowupClaimTransitionRecordV1 {
         }
         let evidence = FollowupClaimEvidenceV1::new(
             accepted.agreement(),
-            self.expected_submission_id,
+            self.observed_submission_id,
             self.transaction_id.clone(),
             self.confirmations,
         )?;
@@ -268,6 +355,88 @@ impl FollowupClaimTransitionRecordV1 {
             accepted.agreement(),
             coordinator,
             &intent,
+            predecessor_revision,
+            evidence,
+        )?;
+        if Self::from(&trusted) != *self {
+            return Err(ClaimRecordError::TransitionMismatch);
+        }
+        Ok(trusted)
+    }
+}
+
+/// Observer-store payload for a canonical Zcash follow-up claim.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ObservedFollowupClaimTransitionRecordV1 {
+    schema_version: u16,
+    transition_kind: Box<str>,
+    swap_id: Box<str>,
+    agreement_commitment: [u8; 32],
+    local_participant: Box<str>,
+    predecessor_revision: u64,
+    observed_submission_id: [u8; 32],
+    transaction_id: Box<str>,
+    confirmations: u32,
+}
+
+impl From<&ObservedFollowupClaimTransitionV1> for ObservedFollowupClaimTransitionRecordV1 {
+    fn from(value: &ObservedFollowupClaimTransitionV1) -> Self {
+        Self {
+            schema_version: value.schema_version(),
+            transition_kind: "observed_followup_zcash".into(),
+            swap_id: value.swap_id().as_str().into(),
+            agreement_commitment: *value.agreement_commitment(),
+            local_participant: participant_name(value.local_participant()).into(),
+            predecessor_revision: value.predecessor_revision(),
+            observed_submission_id: *value.evidence().observed_submission_id(),
+            transaction_id: value.evidence().transaction_id().into(),
+            confirmations: value.evidence().confirmations(),
+        }
+    }
+}
+
+impl ObservedFollowupClaimTransitionRecordV1 {
+    /// Primitive payload schema.
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
+    /// Rebuilds observer-local canonical Zcash follow-up evidence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unknown schemas, owner-local or substituted context, stale revisions,
+    /// malformed canonical identity, or insufficient Zcash confirmation depth.
+    pub fn revalidate(
+        &self,
+        accepted: &AcceptedZecAgreementV1,
+        coordinator: &SwapCoordinator,
+        predecessor_revision: u64,
+    ) -> Result<ObservedFollowupClaimTransitionV1, ClaimRecordError> {
+        require_schema("observed follow-up claim transition", self.schema_version)?;
+        if self.transition_kind.as_ref() != "observed_followup_zcash"
+            || self.predecessor_revision != predecessor_revision
+        {
+            return Err(ClaimRecordError::RevisionMismatch);
+        }
+        validate_common_context(
+            &self.swap_id,
+            &self.agreement_commitment,
+            &self.local_participant,
+            accepted,
+        )?;
+        let evidence = FollowupClaimEvidenceV1::new(
+            accepted.agreement(),
+            self.observed_submission_id,
+            self.transaction_id.clone(),
+            self.confirmations,
+        )?;
+        let trusted = ObservedFollowupClaimTransitionV1::from_active(
+            accepted.agreement(),
+            coordinator,
+            accepted.local_participant(),
             predecessor_revision,
             evidence,
         )?;
@@ -399,12 +568,62 @@ mod tests {
             local_participant: "maker".into(),
             predecessor_revision: 5,
             intent_staged_revision: 4,
-            expected_submission_id: [5; 32],
+            observed_submission_id: [5; 32],
             transaction_id: "lez-claim-id".into(),
             confirmations: 2,
         };
         let json = serde_json::to_string(&record).expect("record serializes");
         assert!(!json.contains("preimage"));
         assert!(!json.contains("exact_submission"));
+    }
+
+    #[test]
+    fn owner_and_observer_records_are_distinct_for_both_claim_steps() {
+        let observed_revealing = ObservedRevealingClaimTransitionRecordV1 {
+            schema_version: CLAIM_RECORD_SCHEMA_V1,
+            transition_kind: "observed_revealing_lez".into(),
+            swap_id: "swap-1".into(),
+            agreement_commitment: [3; 32],
+            local_participant: "taker".into(),
+            predecessor_revision: 5,
+            observed_submission_id: [5; 32],
+            transaction_id: "lez-claim-id".into(),
+            confirmations: 2,
+        };
+        let owned_followup = FollowupClaimTransitionRecordV1 {
+            schema_version: CLAIM_RECORD_SCHEMA_V1,
+            transition_kind: "followup_zcash".into(),
+            swap_id: "swap-1".into(),
+            agreement_commitment: [3; 32],
+            local_participant: "taker".into(),
+            predecessor_revision: 6,
+            intent_staged_revision: 6,
+            observed_submission_id: [8; 32],
+            transaction_id: "zcash-claim-id".into(),
+            confirmations: 3,
+        };
+        let observed_followup = ObservedFollowupClaimTransitionRecordV1 {
+            schema_version: CLAIM_RECORD_SCHEMA_V1,
+            transition_kind: "observed_followup_zcash".into(),
+            swap_id: "swap-1".into(),
+            agreement_commitment: [3; 32],
+            local_participant: "maker".into(),
+            predecessor_revision: 6,
+            observed_submission_id: [8; 32],
+            transaction_id: "zcash-claim-id".into(),
+            confirmations: 3,
+        };
+
+        let revealing_json = serde_json::to_string(&observed_revealing).expect("serializes");
+        let owned_followup_json = serde_json::to_string(&owned_followup).expect("serializes");
+        let observed_followup_json = serde_json::to_string(&observed_followup).expect("serializes");
+
+        assert!(!revealing_json.contains("intent_staged_revision"));
+        assert!(owned_followup_json.contains("intent_staged_revision"));
+        assert!(!observed_followup_json.contains("intent_staged_revision"));
+        for json in [revealing_json, owned_followup_json, observed_followup_json] {
+            assert!(!json.contains("preimage"));
+            assert!(!json.contains("exact_submission"));
+        }
     }
 }

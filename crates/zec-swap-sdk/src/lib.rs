@@ -36,8 +36,10 @@ pub use agreement_v1::{
     ZecTransactionPolicyV1,
 };
 pub use claim::{
-    ClaimError, ClaimIntentV1, ClaimStepV1, FollowupClaimEvidenceV1, FollowupClaimTransitionV1,
-    MAX_CLAIM_SUBMISSION_BYTES, PreparedClaimSubmissionV1, RevealingClaimEvidenceV1,
+    ClaimDriveOutcome, ClaimError, ClaimIntentV1, ClaimStepV1, FollowupClaimEvidenceV1,
+    FollowupClaimObservationV1, FollowupClaimTransitionV1, MAX_CLAIM_SUBMISSION_BYTES,
+    ObservedFollowupClaimTransitionV1, ObservedRevealingClaimTransitionV1,
+    PreparedClaimSubmissionV1, RevealingClaimEvidenceV1, RevealingClaimObservationV1,
     RevealingClaimTransitionV1,
 };
 pub use claim_material::{
@@ -47,6 +49,7 @@ pub use claim_material::{
 };
 pub use claim_record::{
     CLAIM_RECORD_SCHEMA_V1, ClaimIntentRecordV1, ClaimRecordError, FollowupClaimTransitionRecordV1,
+    ObservedFollowupClaimTransitionRecordV1, ObservedRevealingClaimTransitionRecordV1,
     RevealingClaimTransitionRecordV1,
 };
 
@@ -106,9 +109,10 @@ pub use observed_taker_lock::{
 };
 
 pub use ports::{
-    ClaimRecoveryStore, CreateAgreementOutcome, LezFirstLockPort, LezMakerLockObservationPort,
-    LezTakerFirstLockObservationPort, NegotiationChannel, OfferDiscovery, RecoveryStore,
-    ZcashFirstLockPort, ZcashMakerLockObservationPort, ZcashTakerFirstLockObservationPort,
+    ClaimRecoveryStore, CreateAgreementOutcome, LezClaimPort, LezFirstLockPort,
+    LezMakerLockObservationPort, LezTakerFirstLockObservationPort, NegotiationChannel,
+    OfferDiscovery, RecoveryStore, ZcashClaimPort, ZcashFirstLockPort,
+    ZcashMakerLockObservationPort, ZcashTakerFirstLockObservationPort,
 };
 pub use profile::{ProfileError, ZecProfileId, ZecRefundProfile};
 pub use sdk::{ActiveZecSwap, ZecPairSdk};
