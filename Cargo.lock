@@ -1275,6 +1275,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "hex",
  "jsonrpsee",
  "jsonrpsee-http-client",
  "lez-swap-core",
@@ -1289,6 +1290,7 @@ dependencies = [
  "tokio",
  "tower",
  "tower-http",
+ "zcash_encoding",
  "zcash_primitives",
  "zcash_protocol",
  "zcash_transparent",

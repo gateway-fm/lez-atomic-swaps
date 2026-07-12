@@ -11,13 +11,12 @@ actor boundary, expected result, or cleanup rule changes.
 | Flow | Boundary exercised | Current limitation |
 |---|---|---|
 | Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
-| Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v3 SQLite journal, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay | Uses validated deterministic observations in-process; actual two-Zebra store/restart/requery is still pending |
+| Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v4 SQLite journal/alerts, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The production daemon does not yet own a polling loop, and maker/taker actors are not yet independent |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
 | LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an in-process, ephemeral-port LEZ v0.1.2 standalone sequencer | This is a local compatibility proof, not the incompatible LEZ 0.2 public testnet |
 | LEZ recursive execution costs | Exact checked guest replayed through production `V03State` transitions with nested authenticated-transfer and ATA/Token sessions | This measures deterministic local execution, not public-testnet fees or latency |
 
-The following are **not complete yet**: actual two-Zebra watcher/store restart
-and requery evidence, one composed LEZ↔ZEC run with
+The following are **not complete yet**: one composed LEZ↔ZEC run with
 independent maker and taker processes, both ZEC trade directions through all
 CLI/daemon/chain boundaries, Delivery/Chat-loss and restart at those boundaries,
 recordings generated from that suite, and public-testnet deployment. Do not use
@@ -331,7 +330,20 @@ RUN_ID=manual-zebra-20260711-a ./scripts/run-zebra-e2e.sh
 
 The runner builds a unique digest-pinned Zebra image, starts two disconnected
 NU6.2 Regtest nodes with independent ephemeral state and host ports, and exports
-their RPC URLs only to the ignored Rust fixture. The fixture then:
+their RPC URLs plus an absolute run-scoped maker database only to the ignored
+Rust fixtures. It refuses a pre-existing manifest, database, WAL, or SHM before
+Compose starts. The maker runtime fixture runs first and:
+
+1. constructs and broadcasts canonical BIP-199 funding to the primary node;
+2. commits its immutable binding, event, and aggregate revision to schema-v4
+   SQLite, closes the store, reopens it, replays the journal, and proves an
+   unchanged fresh RPC requery creates no duplicate;
+3. mines a longer independent fork without the funding transaction, relays it
+   to the primary, and validates affirmative changed-height removal evidence;
+4. commits the removal back to `Offered`, closes/reopens again, and proves an
+   exact unknown-outcome retry keeps one binding and exactly two journal rows.
+
+The existing actor/consensus fixture then:
 
 1. matures four transparent actor UTXOs and validates the fetched prevouts;
 2. rejects a funding transaction whose actor signature was mutated;
@@ -347,17 +359,19 @@ their RPC URLs only to the ignored Rust fixture. The fixture then:
    the higher-work branch, and verifies the old branch is detached and the
    replacement refund is canonical with at least four confirmations.
 
-Success includes this test result and an actor evidence line containing the
+Success includes both test results and an actor evidence line containing the
 actual transaction IDs and serialized-hex sizes:
 
 ```text
+test canonical_funding_is_requeried_across_store_restart_and_real_removal ... ok
 test real_actor_keys_fund_claim_and_refund_through_zebra_consensus ... ok
 Zebra accepted actor claim ... and refund ...
 ```
 
 The EXIT trap stops only `lez-atomic-swaps-${RUN_ID}`, removes its volumes and
-the image created by that run, and leaves `.e2e/${RUN_ID}/run.env` as the small
-endpoint/project manifest. It never prunes unrelated resources.
+the image created by that run, and leaves `.e2e/${RUN_ID}/run.env` as the
+endpoint/project/database manifest and the SQLite evidence beside it. Reusing
+that run ID is deliberately rejected. It never prunes unrelated resources.
 
 ## Flow 3: LEZ guest deployment and native/token actor lifecycles
 

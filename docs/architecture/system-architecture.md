@@ -291,13 +291,13 @@ flowchart LR
     Validator --> Watcher["Stable-tip two-phase watcher"]
     Watcher --> Record["Validated primitive event record v1"]
     Record --> Journal["Versioned SQLite ZEC event journal"]
-    Journal -.-> Projection["Runtime event → participant projection"]
+    Journal --> Projection["Runtime event → participant projection"]
     Terms --> CoreFunding["Participant-aware core funding/reorg API"]
-    Projection -.-> CoreFunding
+    Projection --> CoreFunding
     Projection --> ConflictOutcome["ReplacementConflict classification"]
     Projection --> TerminalOutcome["TerminalReorgDetected classification"]
-    ConflictOutcome -.-> AlertOutbox
-    TerminalOutcome -.-> AlertOutbox["Durable operator/security alert outbox"]
+    ConflictOutcome --> AlertOutbox
+    TerminalOutcome --> AlertOutbox["Durable operator/security alert outbox"]
     Validator --> Observe["Bound canonical/removal evidence"]
     LezDeadline --> Schedule
     ZecDeadline --> Schedule
@@ -305,7 +305,7 @@ flowchart LR
     Schedule -.-> Composed
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Projection,Composed planned;
+    class Composed planned;
 ```
 
 The solid profile, validator, stable-tip watcher, and actual Zebra E2E snapshot
@@ -318,17 +318,17 @@ participant-aware core semantics are implemented for taker- and maker-funded
 legs: removal pins the exact ID, suspends claims, exact reappearance restores
 authority, conflicting replacement fails, and refunds remain available.
 Independent leg policies also make maker-depth regression suspend and depth
-recovery restore claims. Runtime event-to-participant wiring and the composed
-corridor remain dashed M2 work. RPC
-errors or absence never imply removal: a detach event
+recovery restore claims. The runtime event-to-participant path is now solid: the
+isolated two-Zebra fixture drives real canonical and removal evidence through schema-v4 SQLite
+close/reopen and exact replay. The composed LEZ/ZEC actor corridor remains
+dashed M2 work. RPC errors or absence never imply removal: a detach event
 requires a stable replacement tip and a changed canonical hash at the prior
 inclusion height.
 
-The dashed runtime path has a passing reference slice for direction-derived
-canonical/removal projection, atomic commit, restart reload, and exact
-unknown-outcome replay in both ZEC directions. It remains dashed until
-authenticated operator alert surfaces and actual-node restart evidence pass. Restart
-now revalidates primitive records and immutable binding terms,
+The runtime path passes direction-derived canonical/removal projection, atomic
+commit, restart reload, exact unknown-outcome replay in both ZEC directions,
+authenticated operator alert operations, and actual-node close/reopen/requery.
+Restart revalidates primitive records and immutable binding terms,
 rejects impossible sequence history, restores the exact historical tracker head,
 and still requires a fresh stable Zebra reconciliation before effects.
 Completed/refunded removal or replacement is now journaled without erasing the
@@ -341,7 +341,7 @@ protocol-committed transaction ID in the participant-specific reorg phase, and
 returns `ReplacementConflict`; pre-dependent replacement and same-transaction
 re-mining remain normal applied outcomes.
 The SDK binding record now revalidates primitive profile and BIP-199 terms,
-including both derived scripts. Schema v3 persists it atomically with the swap
+including both derived scripts. Schema v4 persists it atomically with the swap
 and rejects immutable rebinding. Runtime requires it before tracker restoration,
 replay detection, or projection; both coordinator leg policies and every event
 side must match the named profile and expected-output envelope.

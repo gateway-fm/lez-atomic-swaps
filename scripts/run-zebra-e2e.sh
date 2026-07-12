@@ -12,8 +12,9 @@ fi
 project="lez-atomic-swaps-${run_id}"
 compose_file="tests/e2e/zebra/compose.yml"
 dockerfile="tests/e2e/zebra/Dockerfile"
-run_dir=".e2e/${run_id}"
+run_dir="$(pwd)/.e2e/${run_id}"
 manifest="${run_dir}/run.env"
+maker_database="${run_dir}/maker-zebra.sqlite3"
 
 owns_image=0
 if [[ -z "${ZEBRA_IMAGE:-}" ]]; then
@@ -23,8 +24,20 @@ fi
 export ZEBRA_IMAGE
 
 mkdir -p "$run_dir"
-printf 'RUN_ID=%s\nCOMPOSE_PROJECT_NAME=%s\nZEBRA_IMAGE=%s\n' \
-  "$run_id" "$project" "$ZEBRA_IMAGE" >"$manifest"
+chmod 700 "$run_dir"
+if [[ -e "$manifest" ]]; then
+  echo "refusing to overwrite Zebra E2E run manifest: ${manifest}" >&2
+  exit 1
+fi
+for database_file in "$maker_database" "${maker_database}-wal" "${maker_database}-shm"; do
+  if [[ -e "$database_file" ]]; then
+    echo "refusing to reuse maker E2E database state: ${database_file}" >&2
+    exit 1
+  fi
+done
+export ZEBRA_E2E_DB="$maker_database"
+printf 'RUN_ID=%s\nCOMPOSE_PROJECT_NAME=%s\nZEBRA_IMAGE=%s\nZEBRA_E2E_DB=%s\n' \
+  "$run_id" "$project" "$ZEBRA_IMAGE" "$ZEBRA_E2E_DB" >"$manifest"
 
 compose=(docker compose --project-name "$project" --file "$compose_file")
 
@@ -98,6 +111,9 @@ fi
 if (( ready == 0 || fork_ready == 0 )); then
   exit 1
 fi
+
+CARGO_BUILD_JOBS=2 cargo test --locked \
+  -p lez-maker-node --test zebra_runtime_restart -- --ignored --nocapture
 
 CARGO_BUILD_JOBS=2 cargo test --locked \
   -p lez-zec-swap-sdk --test zebra_regtest -- --ignored --nocapture

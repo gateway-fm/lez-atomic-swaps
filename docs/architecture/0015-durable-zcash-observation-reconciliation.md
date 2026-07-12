@@ -2,10 +2,12 @@
 
 ## Status
 
-Accepted in part. Stable canonical/removal validation, the two-phase tracker,
-the version-1 primitive event record, and the atomic SQLite event journal are
-implemented. Participant-aware core reorg semantics are also implemented;
-runtime journal-to-core projection remains M2 work.
+Accepted at the tested runtime boundary. Stable canonical/removal validation,
+the two-phase tracker, the version-1 primitive event/binding records, atomic
+SQLite journal/alert commit, participant-aware projection, authenticated alert
+operations, and actual two-Zebra close/reopen/requery/removal/replay are
+implemented. A daemon-integrated production polling loop and the composed
+LEZ/ZEC actor corridor remain M2 work.
 
 Taker- and maker-funded legs have independent immutable confirmation policies.
 This is required for reverse public-testnet ZEC, where maker-funded ZEC uses a
@@ -60,8 +62,6 @@ flowchart LR
     Commit -->|"committed"| Apply["Advance in-memory head"]
     Apply --> Core["Direction-aware core projection"]
 
-    classDef pending stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Commit,Core pending;
 ```
 
 On restart, stored records are historical evidence rather than fresh
@@ -123,17 +123,21 @@ sequenceDiagram
   critical operator alerts in the same transaction as event and aggregate.
   Exact replay preserves one alert cursor and acknowledgment; Applied creates no
   alert, and alert insertion failure rolls the entire transition back.
-- Runtime journal-to-core wiring and actual two-Zebra store/restart evidence
-  remain required before this ADR is fully proven.
+- The actual two-Zebra fixture proves canonical funding, immutable binding, atomic
+  projection, close/reopen, unchanged fresh-query suppression, affirmative
+  deeper-fork removal, second close/reopen, and exact retry without duplication.
+  The production daemon polling loop remains separate work.
 
-An initial concrete maker-runtime composition now derives the ZEC funder from
+The concrete maker-runtime composition derives the ZEC funder from
 immutable direction, probes unknown-outcome replay before core mutation, maps
 canonical/removal evidence, commits event plus aggregate atomically, and reloads
 across restart in both directions. It is not yet the production watcher: journal
 history is now revalidated and replayed into the exact tracker head, and an
 identical fresh requery is suppressed. Authenticated owner status/list/ack alert
-surfaces now pass across daemon restart. Actual two-Zebra store/restart evidence
-remains required.
+surfaces pass across daemon restart. The isolated actual-node fixture now proves
+the same runtime boundary against two Zebra consensus processes and schema-v4
+SQLite. The remaining gap is daemon-integrated polling and the composed actor
+corridor, not store/reconciliation semantics.
 
 The SDK now defines a version-1 primitive binding record for the reviewed
 profile, network, branch, value, BIP-199 source terms, and both derived scripts.

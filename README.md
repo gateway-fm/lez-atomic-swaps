@@ -98,8 +98,12 @@ copies the binary from the digest-pinned official Zebra 5.2.0 image into a
 digest-pinned distroless nonroot runtime, then runs two disconnected nodes on a
 project-only network with read-only filesystems, independent tmpfs state,
 resource caps, no Linux capabilities, and separate ephemeral localhost RPC
-ports. Cleanup addresses that exact project and never prunes or stops resources
-it did not create.
+ports. Before Compose starts it allocates an absolute run-scoped maker SQLite
+database and refuses any pre-existing manifest, database, WAL, or SHM. The suite
+first proves real canonical funding, close/reopen/requery, deeper-fork removal,
+second restart, and exact replay through the maker runtime; it then runs the
+actor fund/claim/refund/concurrent-fork consensus fixture. Cleanup addresses that
+exact project and never prunes or stops resources it did not create.
 
 ## Licensing
 

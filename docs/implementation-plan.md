@@ -193,6 +193,39 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
 
 ## Milestone 2 plan: transparent ZEC end to end
 
+### Accepted proposal authority and delivery boundary
+
+The contractual authority is accepted Gateway proposal
+[issue #112](https://github.com/logos-co/rfp/issues/112), not superseded
+issue #61. The authority was re-fetched on 2026-07-12: issue body SHA-256
+`49356263a762307abc0f8dd2863ac5af8fe13d9b17b674f242d025de655f1c87`;
+canonical comments JSON SHA-256
+`3c596392f7356a29a2d512ffa92ebb9153cab7b97e38848b61e79e4764240980`. The
+local `proposal.gateway.md` snapshot is archive-only because it excludes ZEC and
+calls ETH M2.
+
+The six accepted M2 outputs are the payment/tag boundary:
+
+- [ ] Deploy LEZ escrow v1 on testnet 0.2 with the ZEC SHA-256 HTLC and
+  validity-window refund.
+- [ ] Run BIP-199 transparent transaction construction integration tests against
+  Zcash testnet in CI, with credentials, rate limits, retries, and external
+  flakiness made explicit.
+- [ ] Publish a documented LEZ/ZEC SDK lifecycle covering offer discovery,
+  negotiation, escrow creation, claim, and refund. Transaction construction and
+  observation primitives alone do not satisfy this item.
+- [ ] Publish step-by-step self-hosted and public Zcash-node routes, including
+  configuration, transparent wallet creation, and obtaining testnet funds.
+- [ ] Document transparent-pool visibility and the shield-after-swap user journey.
+- [ ] Record happy, refund/timeout, and concurrent-swap demos from passing
+  testnet actor suites.
+
+The additional two-direction, daemon/CLI, Delivery/Chat-loss, deep-reorg,
+immutable-binding, and alert-outbox gates below are project-strengthened safety
+evidence. Accepted issue #112 assigns the complete daemon/CLI/coordinator product
+to M5; those stronger checks do not replace or silently redefine the six M2
+outputs above.
+
 ### Contract and compatibility baseline
 
 - [x] Reconcile RFP-003 F4 and accepted issue #112 against the actual upstream
@@ -262,6 +295,9 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   domains are incompatible; upstream PR #238 remains provisional/unmerged.
 - [ ] Deploy the evidenced escrow to LEZ testnet 0.2 and retain an immutable
   deployment manifest plus public smoke transaction evidence.
+- [ ] Re-measure initialize, claim, and refund compute units on the exact deployed
+  LEZ testnet 0.2 runtime; the checked v0.1.2 standalone evidence is not a
+  substitute for the RFP P1 named-testnet-version report.
 
 ### Transparent Zcash adapter
 
@@ -364,12 +400,17 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
 - [x] Expose owner-authenticated alert status/list/ack through actual daemon and
   CLI processes. Wrong credentials fail before RPC parsing; restart preserves
   attention; acknowledgment retains evidence and reorg/terminal protocol phase.
-- [ ] Complete production runtime wiring: prove close/reopen/requery through
-  actual two-Zebra replacement.
+- [x] Prove the actual-node persistence boundary: canonical funding, immutable
+  binding, close/reopen, unchanged fresh-query suppression, affirmative
+  two-Zebra fork removal, second close/reopen, and exact retry pass through the
+  maker runtime on schema v4. Daemon-integrated polling remains open.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
   nodes. The LEZ
   Unix-millisecond/core Unix-second boundary is typed, checked, conservatively
   rounded, and boundary-tested; the composed flow remains.
+- [ ] Calibrate and publish the public-testnet ZEC refund margin against a stated
+  worst-case confirmation-latency and operator-reaction envelope. Nominal block
+  cadence or local Regtest timing alone does not satisfy RFP F4.
 - [ ] Re-audit the stable Zebra/security pin immediately before public-testnet
   evidence because the current release horizon ends ahead of NU7.
 - [ ] Re-audit the deployed SPEL/LEZ guest graph before testnet evidence and the

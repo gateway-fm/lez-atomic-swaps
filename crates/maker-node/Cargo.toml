@@ -26,9 +26,11 @@ tower-http = { version = "0.7.0", features = ["auth"] }
 thiserror = "2.0.18"
 
 [dev-dependencies]
+hex = "0.4.3"
 tempfile = "3.27.0"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
+zcash_encoding = "=0.4.0"
 zcash_primitives = { version = "=0.28.0", default-features = false, features = ["std"] }
 zcash_protocol = { version = "=0.9.0", default-features = false }
 zcash_transparent = { version = "=0.8.0", default-features = false, features = ["transparent-inputs"] }

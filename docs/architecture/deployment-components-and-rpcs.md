@@ -18,7 +18,7 @@ flowchart TB
         CLI["lez-maker CLI"]
         Daemon["lez-maker-daemon"]
         Store[("SQLite schema v4")]
-        RuntimeTest["maker runtime reconciliation test"]
+        RuntimeTest["maker runtime restart fixture"]
     end
 
     subgraph ZebraProject["Isolated Docker Compose project per RUN_ID"]
@@ -36,7 +36,9 @@ flowchart TB
     Operator --> CLI
     CLI -->|"Bearer HTTP JSON-RPC; create, status, alert list, alert acknowledge"| Daemon
     Daemon -->|"rusqlite; caller-selected local file; Mutex-serialized"| Store
-    RuntimeTest -->|"Direct maker runtime API; no network RPC"| Store
+    RuntimeTest -->|"Direct maker runtime API"| Store
+    RuntimeTest -->|"Stable JSON-RPC query and block relay"| ZebraPrimary
+    RuntimeTest -->|"Independent fork mining JSON-RPC"| ZebraFork
     ZebraTest -->|"Unauthenticated JSON-RPC on ephemeral host-loopback port"| ZebraPrimary
     ZebraTest -->|"Unauthenticated JSON-RPC on different ephemeral host-loopback port"| ZebraFork
     ZebraFork -->|"submitblock relay performed by fixture"| ZebraPrimary
@@ -59,7 +61,12 @@ Cookie authentication is disabled for this Regtest-only fixture. The nodes have
 separate tmpfs state, no initial peers, and no fixed host ports; the fixture
 relays blocks explicitly. Both containers are non-root, read-only,
 capability-free, resource-capped, and removed only through their exact Compose
-project name.
+project name. The runner creates an absolute, run-scoped SQLite path, refuses a
+pre-existing manifest, database, WAL, or SHM before Compose starts, and records
+the selected database and both ephemeral RPC URLs in `run.env`. The maker
+runtime fixture commits real canonical funding, closes/reopens SQLite, suppresses
+an unchanged fresh RPC requery, applies an affirmative deeper-fork removal,
+closes/reopens again, and proves exact retry without a third journal row.
 
 The pinned LEZ standalone server is short-lived, uses port zero and temporary
 state, and the test client connects through `127.0.0.1`. However, the exact
@@ -124,7 +131,7 @@ it never opens SQLite or becomes protocol authority.
 |---|---|---|---|---|---|
 | `lez-maker-daemon` | Running prototype | HTTP JSON-RPC; default `127.0.0.1:0`; non-loopback rejected | Bearer token from hidden environment; minimum 24 bytes; header checked before JSON parsing | Actual: `swap_create`, `swap_status`, `swap_alerts`, `swap_alert_acknowledge` | Operator/test-owned process; caller-selected SQLite path; Ctrl-C shutdown |
 | `lez-maker` | Running prototype | HTTP client; default `127.0.0.1:9944`; explicit ready URL for ephemeral daemon | Authorization header marked sensitive | Actual CLI: `create-swap`, `status`, `alerts`, `acknowledge-alert` | Independent operator process |
-| SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority | Aggregate, revision, ZEC journal, immutable binding, operator-alert list/ack APIs | WAL, `FULL` synchronous, schema v4, one process mutex today |
+| SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority | Aggregate, revision, ZEC journal, immutable binding, operator-alert list/ack APIs | WAL, `FULL` synchronous, schema v4; actual two-Zebra test closes/reopens twice; one process mutex today |
 | Primary Zebra | Running in ignored E2E | Container `0.0.0.0:18232`; ephemeral host `127.0.0.1` mapping | Regtest fixture has no cookie auth; signed transactions and consensus remain authoritative | `getblockcount`, `generate`, `getblockhash`, `getblock`, `getblockheader`, `submitblock`, `getaddressutxos`, `getrawtransaction`, `sendrawtransaction`, `getblockchaininfo` | Unique Compose project and tmpfs state per `RUN_ID` |
 | Fork Zebra | Running in ignored E2E | Same container port; distinct ephemeral host-loopback mapping | Same Regtest-only policy | Same RPC set; produces independent higher-work branch | Separate tmpfs state; no initial peer; fixture-controlled block relay |
 | LEZ standalone v0.1.2 | Running in ignored E2E | Upstream server `0.0.0.0:0`; client uses `127.0.0.1:<assigned>` | No transport credential; actor signatures authorize transactions | `checkHealth`, `sendTransaction`, `getLastBlockId`, `getTransaction`, `getAccountsNonces`, `getAccount`, `getBlock` | In-process handle, tempfile state, deterministic genesis actors; not public v0.2 |
@@ -150,5 +157,6 @@ flowchart LR
 
 Never run the Zebra and LEZ heavy lanes concurrently on the same host. Never use
 global Docker prune/stop commands. Every Zebra run owns a unique Compose project,
-ephemeral host ports, and run manifest. LEZ runs require unique tool, target,
-standalone, and evidence directories when another checkout might be active.
+ephemeral host ports, run manifest, and absolute maker database. Reusing a run
+manifest or database is rejected before Compose starts. LEZ runs require unique
+tool, target, standalone, and evidence directories when another checkout might be active.
