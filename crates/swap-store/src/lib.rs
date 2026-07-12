@@ -11,7 +11,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 4;
+const DATABASE_SCHEMA_VERSION: i64 = 5;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_BINDING_PAYLOAD_VERSION: i64 = 1;
@@ -1053,9 +1053,59 @@ fn migrate(connection: &mut Connection) -> Result<(), StoreError> {
             ON operator_alert_outbox (swap_id, acknowledged, alert_sequence);
         CREATE INDEX IF NOT EXISTS operator_alert_pending_severity_sequence
             ON operator_alert_outbox (acknowledged, severity, alert_sequence);
-        PRAGMA user_version = 4;
         ",
     )?;
+    migrate_zec_sdk_recovery(&transaction)?;
+    transaction.pragma_update(None, "user_version", DATABASE_SCHEMA_VERSION)?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_zec_sdk_recovery(transaction: &rusqlite::Transaction<'_>) -> Result<(), StoreError> {
+    transaction.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS zec_sdk_agreements (
+            local_role          TEXT NOT NULL CHECK (local_role IN ('maker', 'taker')),
+            swap_id             TEXT NOT NULL,
+            payload_version     INTEGER NOT NULL CHECK (payload_version > 0),
+            agreement_wire      BLOB NOT NULL,
+            accepted_at         INTEGER NOT NULL CHECK (accepted_at >= 0),
+            accepted_revision   INTEGER NOT NULL CHECK (accepted_revision >= 0),
+            active_revision     INTEGER NOT NULL DEFAULT 0 CHECK (active_revision >= 0),
+            PRIMARY KEY (local_role, swap_id),
+            CHECK (active_revision >= accepted_revision)
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS zec_sdk_first_lock_intents (
+            local_role          TEXT NOT NULL,
+            swap_id             TEXT NOT NULL,
+            predecessor_revision INTEGER NOT NULL CHECK (predecessor_revision >= 0),
+            payload_version     INTEGER NOT NULL CHECK (payload_version > 0),
+            payload_json        TEXT NOT NULL,
+            closed_revision     INTEGER CHECK (
+                closed_revision IS NULL OR closed_revision = predecessor_revision + 1
+            ),
+            PRIMARY KEY (local_role, swap_id),
+            FOREIGN KEY (local_role, swap_id)
+                REFERENCES zec_sdk_agreements(local_role, swap_id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS zec_sdk_open_first_lock_intents
+            ON zec_sdk_first_lock_intents (local_role, swap_id)
+            WHERE closed_revision IS NULL;
+        CREATE TABLE IF NOT EXISTS zec_sdk_first_lock_transitions (
+            local_role          TEXT NOT NULL,
+            swap_id             TEXT NOT NULL,
+            predecessor_revision INTEGER NOT NULL CHECK (predecessor_revision >= 0),
+            committed_revision  INTEGER NOT NULL CHECK (
+                committed_revision = predecessor_revision + 1
+            ),
+            payload_version     INTEGER NOT NULL CHECK (payload_version > 0),
+            payload_json        TEXT NOT NULL,
+            PRIMARY KEY (local_role, swap_id, predecessor_revision),
+            UNIQUE (local_role, swap_id, committed_revision),
+            FOREIGN KEY (local_role, swap_id)
+                REFERENCES zec_sdk_agreements(local_role, swap_id) ON DELETE CASCADE
+        ) STRICT;
+        ",
+    )?;
     Ok(())
 }

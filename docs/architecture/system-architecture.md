@@ -334,7 +334,7 @@ legs: removal pins the exact ID, suspends claims, exact reappearance restores
 authority, conflicting replacement fails, and refunds remain available.
 Independent leg policies also make maker-depth regression suspend and depth
 recovery restore claims. The runtime event-to-participant path is now solid: the
-isolated two-Zebra fixture drives real canonical and removal evidence through schema-v4 SQLite
+isolated two-Zebra fixture drives real canonical and removal evidence through schema-v5 SQLite
 close/reopen and exact replay. The composed LEZ/ZEC actor corridor remains
 dashed M2 work. RPC errors or absence never imply removal: a detach event
 requires a stable replacement tip and a changed canonical hash at the prior

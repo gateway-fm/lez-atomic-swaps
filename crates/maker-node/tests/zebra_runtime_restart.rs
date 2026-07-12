@@ -406,7 +406,7 @@ fn commit_canonical_and_restart(
 ) -> (SqliteSwapStore, SwapId, ZcashObservationTracker) {
     let swap = swap(funding.refund_height);
     let swap_id = swap.id().clone();
-    let mut store = SqliteSwapStore::open(database).expect("open schema-v4 maker store");
+    let mut store = SqliteSwapStore::open(database).expect("open schema-v5 maker store");
     store
         .save_with_zcash_binding(&swap, &funding.binding)
         .expect("swap and immutable ZEC binding commit atomically");
@@ -437,7 +437,7 @@ fn commit_canonical_and_restart(
         Some(funding.binding.clone())
     );
     let tracker = load_zcash_observation_tracker(&store, &swap_id)
-        .expect("replay schema-v4 journal after restart");
+        .expect("replay schema-v5 journal after restart");
     assert_eq!(tracker.current(), Some(&funding.canonical));
     (store, swap_id, tracker)
 }
@@ -514,7 +514,7 @@ fn assert_removal_survives_restart(
     let journal_rows: i64 = connection
         .query_row("SELECT COUNT(*) FROM chain_events", [], |row| row.get(0))
         .expect("count journal rows");
-    assert_eq!(schema_version, 4, "update this audit for every migration");
+    assert_eq!(schema_version, 5, "update this audit for every migration");
     assert_eq!(binding_rows, 1);
     assert_eq!(journal_rows, 2);
 }

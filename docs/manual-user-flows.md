@@ -12,7 +12,7 @@ actor boundary, expected result, or cleanup rule changes.
 |---|---|---|
 | ZEC SDK agreement/activation/first lock | Canonical bounded dual-signed record is integrated through untrusted negotiation, role-fixed persistence-before-activation, adversarial resume, exact first-lock intent, observe-before-rebroadcast, atomic projection, unknown-commit probe, and replay | Recovery and chain adapters are in-memory contract doubles; these commands do not prove production SQLite/RPCs, maker-independent observation, claims/refunds, or actor E2E |
 | Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
-| Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v4 SQLite journal/alerts, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The production daemon does not yet own a polling loop, and maker/taker actors are not yet independent |
+| Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v5 SQLite retaining the proven journal/alerts plus constrained SDK-recovery table foundations, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The production SDK recovery adapter and daemon polling loop remain pending, and maker/taker actors are not yet independent |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
 | LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an in-process, ephemeral-port LEZ v0.1.2 standalone sequencer | This is a local compatibility proof, not the incompatible LEZ 0.2 public testnet |
 | LEZ recursive execution costs | Exact checked guest replayed through production `V03State` transitions with nested authenticated-transfer and ATA/Token sessions | This measures deterministic local execution, not public-testnet fees or latency |
@@ -443,7 +443,7 @@ Rust fixtures. It refuses a pre-existing manifest, database, WAL, or SHM before
 Compose starts. The maker runtime fixture runs first and:
 
 1. constructs and broadcasts canonical BIP-199 funding to the primary node;
-2. commits its immutable binding, event, and aggregate revision to schema-v4
+2. commits its immutable binding, event, and aggregate revision to schema-v5
    SQLite, closes the store, reopens it, replays the journal, and proves an
    unchanged fresh RPC requery creates no duplicate;
 3. mines a longer independent fork without the funding transaction, relays it

@@ -17,7 +17,7 @@ flowchart TB
     subgraph MakerHost["Maker host"]
         CLI["lez-maker CLI"]
         Daemon["lez-maker-daemon"]
-        Store[("SQLite schema v4")]
+        Store[("SQLite schema v5")]
         RuntimeTest["maker runtime restart fixture"]
     end
 
@@ -173,7 +173,7 @@ it never opens SQLite or becomes protocol authority.
 |---|---|---|---|---|---|
 | `lez-maker-daemon` | Running prototype | HTTP JSON-RPC; default `127.0.0.1:0`; non-loopback rejected | Bearer token from hidden environment; minimum 24 bytes; header checked before JSON parsing | Actual: `swap_create`, `swap_status`, `swap_alerts`, `swap_alert_acknowledge` | Operator/test-owned process; caller-selected SQLite path; Ctrl-C shutdown |
 | `lez-maker` | Running prototype | HTTP client; default `127.0.0.1:9944`; explicit ready URL for ephemeral daemon | Authorization header marked sensitive | Actual CLI: `create-swap`, `status`, `alerts`, `acknowledge-alert` | Independent operator process |
-| SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority | Aggregate, revision, ZEC journal, immutable binding, operator-alert list/ack APIs | WAL, `FULL` synchronous, schema v4; actual two-Zebra test closes/reopens twice; one process mutex today |
+| SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority | Aggregate, revision, ZEC journal, immutable binding, operator-alert list/ack APIs; schema-v5 role-local SDK agreement/intent/transition tables reserved for the pending adapter | WAL, `FULL` synchronous, schema v5; actual two-Zebra test closes/reopens twice; SDK recovery adapter and one process mutex remain |
 | Concrete LEZ/ZEC agreement and lifecycle boundary | Running library boundary | No socket or RPC; bounded Borsh v1 bytes enter from an untrusted negotiation adapter; typed first-lock ports have no selected production endpoint | Maker and taker transparent keys provide dual low-S signatures; each SDK fixes its local role; chain adapters receive the agreement and exact durable bytes and remain authoritative for chain-derived facts | Exact decode, cross-binding, persistence-before-activation, adversarial resume, durable exact first-lock intent, observe-before-rebroadcast, ordered LEZ initialize/fund, atomic projection/unknown-commit probe/replay contract | 16 KiB agreement and 2,000,000-byte per-submission caps; in-memory contract passes, while production SQLite/RPC adapters and maker-independent observation remain pending |
 | Primary Zebra | Running in ignored E2E | Container `0.0.0.0:18232`; ephemeral host `127.0.0.1` mapping | Regtest fixture has no cookie auth; signed transactions and consensus remain authoritative | `getblockcount`, `generate`, `getblockhash`, `getblock`, `getblockheader`, `submitblock`, `getaddressutxos`, `getrawtransaction`, `sendrawtransaction`, `getblockchaininfo` | Unique Compose project and tmpfs state per `RUN_ID` |
 | Fork Zebra | Running in ignored E2E | Same container port; distinct ephemeral host-loopback mapping | Same Regtest-only policy | Same RPC set; produces independent higher-work branch | Separate tmpfs state; no initial peer; fixture-controlled block relay |

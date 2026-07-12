@@ -381,8 +381,22 @@ fn legacy_v1_table_migrates_and_future_versions_fail_explicitly() {
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        4
+        5
     );
+    for table in [
+        "zec_sdk_agreements",
+        "zec_sdk_first_lock_intents",
+        "zec_sdk_first_lock_transitions",
+    ] {
+        let present: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+                params![table],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(present, "schema-v5 table {table} must exist");
+    }
     drop(connection);
 
     let future_path = data.path().join("future.sqlite3");
@@ -393,6 +407,102 @@ fn legacy_v1_table_migrates_and_future_versions_fail_explicitly() {
         SqliteSwapStore::open(future_path),
         Err(StoreError::UnsupportedDatabaseVersion(99))
     ));
+}
+
+#[test]
+fn schema_v5_sdk_recovery_tables_are_role_local_revisioned_and_referential() {
+    let data = tempdir().unwrap();
+    let path = data.path().join("sdk-recovery-schema.sqlite3");
+    drop(SqliteSwapStore::open(&path).unwrap());
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .unwrap();
+
+    for role in ["maker", "taker"] {
+        connection
+            .execute(
+                "
+                INSERT INTO zec_sdk_agreements (
+                    local_role, swap_id, payload_version, agreement_wire,
+                    accepted_at, accepted_revision, active_revision
+                ) VALUES (?1, 'same-swap', 1, X'0102', 10, 0, 0)
+                ",
+                params![role],
+            )
+            .unwrap();
+    }
+    let role_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM zec_sdk_agreements WHERE swap_id = 'same-swap'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(role_rows, 2, "maker and taker records are independent");
+
+    assert!(
+        connection
+            .execute(
+                "
+                INSERT INTO zec_sdk_agreements (
+                    local_role, swap_id, payload_version, agreement_wire,
+                    accepted_at, accepted_revision, active_revision
+                ) VALUES ('peer', 'bad-role', 1, X'01', 10, 0, 0)
+                ",
+                [],
+            )
+            .is_err()
+    );
+    connection
+        .execute(
+            "
+            INSERT INTO zec_sdk_first_lock_intents (
+                local_role, swap_id, predecessor_revision, payload_version, payload_json
+            ) VALUES ('taker', 'same-swap', 0, 1, '{}')
+            ",
+            [],
+        )
+        .unwrap();
+    assert!(
+        connection
+            .execute(
+                "
+                INSERT INTO zec_sdk_first_lock_transitions (
+                    local_role, swap_id, predecessor_revision, committed_revision,
+                    payload_version, payload_json
+                ) VALUES ('maker', 'missing-parent', 0, 1, 1, '{}')
+                ",
+                [],
+            )
+            .is_err()
+    );
+    assert!(
+        connection
+            .execute(
+                "
+                UPDATE zec_sdk_first_lock_intents
+                SET closed_revision = 2
+                WHERE local_role = 'taker' AND swap_id = 'same-swap'
+                ",
+                [],
+            )
+            .is_err()
+    );
+    connection
+        .execute(
+            "DELETE FROM zec_sdk_agreements WHERE local_role = 'taker' AND swap_id = 'same-swap'",
+            [],
+        )
+        .unwrap();
+    let intents: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM zec_sdk_first_lock_intents",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(intents, 0, "role-local recovery rows cascade together");
 }
 
 #[test]

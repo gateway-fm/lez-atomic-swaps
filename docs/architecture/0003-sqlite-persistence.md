@@ -1,6 +1,7 @@
 # ADR 0003: SQLite persistence through rusqlite
 
-Status: Accepted; schema-v4 ZEC journal/binding/operator-alert outbox proven,
+Status: Accepted; schema-v5 retains the proven ZEC journal/binding/operator-alert
+outbox and adds constrained SDK recovery tables; adapter pending,
 general effect outbox/crash matrix pending — 2026-07-12
 
 ```mermaid
@@ -79,7 +80,9 @@ occupying async runtime workers.
 
 Crash after every durable effect transition, truncate/kill at commit boundaries,
 reopen under concurrent reads, and add the general outbox and encrypted secret
-envelopes. The ZEC journal/binding/alert path proves migration through schema v4,
+envelopes. The ZEC journal/binding/alert path remains proven in schema v5,
+which also creates role-local accepted-agreement, open/closed first-lock-intent,
+and revisioned transition tables without yet claiming a production SDK adapter.
 future-version rejection, atomic rollback, restart loading, role isolation,
 stale revision rejection, idempotent replay, and durable acknowledgment. Revisit
 only if measured write latency violates daemon requirements.
