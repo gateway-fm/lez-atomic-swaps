@@ -1,6 +1,6 @@
 # System architecture and actor flows
 
-Status: Living target architecture — 2026-07-11
+Status: Living target architecture — 2026-07-12
 
 This is the canonical whole-system view. ADRs record why individual choices
 were made; this document shows how the choices compose into the product that
@@ -113,8 +113,10 @@ must independently recompute every chain-derived account, input, and deadline.
 The dashed state reflects delivery honestly. The deterministic core, SQLite
 repository, maker daemon, authenticated maker CLI flow, LEZ semantic
 verification, pinned SPEL/LEZ generated-IDL/client fixture, and ZEC exact-script
-plus signed V5 spend foundation
-exist. Deterministic actor-owned funding/change and pinned, vulnerability-clean
+plus signed V5 spend foundation exist. Bounded spend recognition now matches
+pinned Zebra consensus across all defined sighash modes and alternate valid
+stack/signature encodings while reporting stricter SDK construction policy
+separately. Deterministic actor-owned funding/change and pinned, vulnerability-clean
 Zebra 5.2.0 Regtest acceptance/rejection/confirmation, concurrent swaps,
 confirmation regression, exact rebroadcast, block reconsideration, and a
 two-node conflicting four-over-three-block fork replacement now exist as

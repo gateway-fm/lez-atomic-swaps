@@ -7,7 +7,8 @@ the two-phase tracker, the version-1 primitive event/binding records, atomic
 SQLite journal/alert commit, participant-aware projection, authenticated alert
 operations, and actual two-Zebra close/reopen/requery/removal/replay are
 implemented. A daemon-integrated production polling loop and the composed
-LEZ/ZEC actor corridor remain M2 work.
+LEZ/ZEC actor corridor remain M2 work. Bounded transparent spend recognition is
+implemented separately; durable claim/refund spend journaling remains open.
 
 Taker- and maker-funded legs have independent immutable confirmation policies.
 This is required for reverse public-testnet ZEC, where maker-funded ZEC uses a
@@ -45,6 +46,31 @@ The tracker is two phase: `propose` is pure and repeatable, an adapter atomicall
 commits the complete event and aggregate transition, and only then does
 `apply_committed` advance the in-memory head. Replacement is one event carrying
 both the validated detach proof and new canonical observation.
+
+A BIP-199 spend has two distinct validity questions. Mandatory recognition uses
+the exact pinned Zebra 5.2.0 flags (`P2SH | CHECKLOCKTIMEVERIFY`) and accepts all
+six defined ZIP-244 sighash modes plus consensus-valid high-S, nonminimal-push,
+and semantically equivalent stack forms. This prevents a valid claim from hiding
+its revealed preimage merely because another wallet did not use this SDK's
+preferred encoding. A separate SDK-canonical policy report records deviations
+from the exact one-input, low-S, minimal-push, `SIGHASH_ALL`, destination, fee,
+expiry, sequence, and output construction; policy deviation never erases chain
+truth.
+
+```mermaid
+flowchart LR
+    RpcBytes["Untrusted Zebra raw spend bytes"] --> RawBound["2,000,000-byte predecode bound"]
+    RawBound --> Decode["Exact V5 decode and 10,000-byte script bound"]
+    Decode --> Consensus["Pinned Zebra P2SH plus CLTV execution"]
+    Consensus --> Kind["Semantic claim or refund classification"]
+    Kind --> Evidence["Preserve preimage, outputs, lock time, expiry, sequence, and inclusion"]
+    Evidence --> CorePath["Mandatory chain/recovery evidence"]
+    Evidence --> Policy["Separate SDK-canonical policy report"]
+    CorePath -.-> DurableSpend["Versioned spend journal and reorg tracker"]
+
+    classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
+    class DurableSpend planned;
+```
 
 ```mermaid
 flowchart LR
@@ -96,6 +122,10 @@ sequenceDiagram
 ## Consequences
 
 - A transient RPC failure cannot manufacture a removal.
+- Consensus-valid alternate spend encodings cannot hide a claim preimage; the
+  SDK's stricter construction policy is reported independently.
+- Raw spend bytes are rejected above Zebra's pinned 2,000,000-byte block bound
+  before transaction decoding, and script bytes are capped at 10,000.
 - Confirmation-only changes are durable events; identical polls are suppressed.
 - Journal replay identity includes the predecessor revision; identical evidence
   after an intervening removal/update is retained as a new transition.
@@ -127,6 +157,12 @@ sequenceDiagram
   projection, close/reopen, unchanged fresh-query suppression, affirmative
   deeper-fork removal, second close/reopen, and exact retry without duplication.
   The production daemon polling loop remains separate work.
+
+The spend recognizer is not yet durable protocol truth. It still needs expected
+terms derived from the concrete agreement plus canonical funding provenance,
+all prevout contexts before supporting multi-input non-`ANYONECANPAY` spends,
+and versioned claim/refund removal/replacement persistence before it can drive
+terminal projection.
 
 The concrete maker-runtime composition derives the ZEC funder from
 immutable direction, probes unknown-outcome replay before core mutation, maps

@@ -329,6 +329,12 @@ outputs above.
   rejection, and confirmation through pinned Zebra RPC.
 - [x] Exercise wrong preimage/signature, non-final sequence, CLTV edge, and
   fee/dust cases across local and Zebra-authoritative layers.
+- [x] Recognize bounded canonical BIP-199 spend evidence with the exact pinned
+  Zebra consensus flags, all six ZIP-244 sighash modes, and consensus-valid
+  high-S/nonminimal/semantic stack forms. Preserve the revealed preimage and
+  complete transaction policy fields, while reporting the SDK's stricter
+  low-S/minimal/`SIGHASH_ALL` construction policy separately. Agreement-derived
+  funding provenance plus durable spend reorg tracking remain open.
 - [x] Exercise two independent funding/spend lifecycles concurrently through
   Zebra, invalidate their shared non-finalized terminal block, detect
   confirmation regression, rebroadcast exact actor transactions, reject a
@@ -498,7 +504,7 @@ CI and local scripts fail if the project name is empty or does not start with
 | Provisional LEZ v0.2 compile graph contains upstream Hickory advisories | The hash-locked fixture is compile-only and non-polled, DNSSEC features are absent, and `cargo-deny` permits only two narrow advisory exceptions | Prohibit this graph from runtime/testnet use; require a safe upstream dependency path, DNS removal, or an explicit security review before an executable lane |
 | Upstream LEZ native sequencer tests compile RocksDB and can contend with host work | Clean native lane passes with two jobs in a unique checkout and no Docker/ports | Keep the two-job cap and do not run the heavy lane alongside detected host compilation |
 | Mainnet deadlines remain uncalibrated | `public-testnet-v1` fixes testnet depths/horizons and conservative bounds; mainnet is deliberately absent | Gather chain telemetry and fee/reorg stress evidence, then require formal review before enabling a mainnet profile |
-| Chain proof is not yet adapter-grade | Core `ChainProof` carries only transaction ID and confirmations, while real-node evidence also needs network, branch, block, outpoint, value, and script commitment | Add a validated typed ZEC observation before feeding node results into the coordinator |
+| Spend evidence is not yet durable adapter truth | Funding observations are durable and adapter-grade; bounded spend recognition now preserves consensus-valid claim/refund semantics and policy fields, but expected terms are still caller-supplied and spend reorg history is not journaled | Derive expected spends from the concrete agreement plus canonical funding, then add versioned claim/refund removal/replacement persistence before terminal projection |
 | LEZ and core timestamp units differ | Typed `UnixSeconds`/`LezUnixMilliseconds` conversion now checks guest multiplication, floors observations, ceils earlier-latest bounds, and passes boundary/overflow tests | Require named profiles to be the only construction path used by composed refund-margin E2E |
 | Final E2E must represent actual users | Operator process harness exists; taker and chain lifecycles still call protocol core directly | Extend the role harness through taker CLI and real chain adapters before labeling tests as full E2E |
 | Prototype local RPC still uses loopback HTTP and an environment capability | Tower rejects a Bearer header before JSON parsing and non-loopback binds are refused | Move to an owner-restricted Unix socket and credential file before M5 freeze |

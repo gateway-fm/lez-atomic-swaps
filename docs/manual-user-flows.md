@@ -349,6 +349,23 @@ still uses the earlier generic agreement type. Both adapters are in-memory
 contract doubles; neither command proves Logos Delivery/Chat, encrypted
 production storage, or LEZ/Zebra lifecycle actions.
 
+Before starting Zebra, reproduce spend recognition independently from SDK
+construction policy:
+
+```sh
+cargo test --locked -p lez-zec-swap-sdk --test zcash_spend_observations -- --nocapture
+```
+
+The eight cases enforce Zebra's exact P2SH/CLTV consensus flags, every defined
+ZIP-244 sighash mode, consensus-valid high-S and nonminimal/semantic stack
+forms, raw/script bounds, exact decoding, stable inclusion, and preservation of
+outputs, lock time, expiry, sequence, role, and claim preimage. A separate
+policy report flags any deviation from the SDK's canonical low-S, minimal,
+`SIGHASH_ALL`, exact destination/fee/expiry shape without discarding the valid
+claim. This command uses no RPC, node, Docker, faucet, or external resource.
+It does not yet prove agreement-derived funding provenance, multi-input
+non-`ANYONECANPAY` prevout context, or durable spend reorg tracking.
+
 First reproduce the lightweight runtime/store user-role semantics without
 Docker:
 

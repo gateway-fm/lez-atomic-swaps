@@ -8,6 +8,7 @@ mod observation_record;
 mod ports;
 mod profile;
 mod sdk;
+mod spend_observation;
 mod transaction;
 mod zec_binding_record;
 
@@ -47,6 +48,11 @@ pub use observation_record::{
 pub use ports::{NegotiationChannel, OfferDiscovery, RecoveryStore};
 pub use profile::{ProfileError, ZecProfileId, ZecRefundProfile};
 pub use sdk::{ActiveZecSwap, ZecPairSdk};
+pub use spend_observation::{
+    Bip199SpendKind, CanonicalZcashSpendObservation, ExpectedBip199Spend,
+    SdkCanonicalSpendDeviation, SdkCanonicalSpendPolicy, SpendObservationError,
+    ZCASH_MAX_SCRIPT_BYTES, ZEBRA_MAX_BLOCK_BYTES, ZcashSpendNodeSnapshot,
+};
 pub use zec_binding_record::{
     ZecBindingRecordError, ZecProfileRecordV1, ZecSwapBinding, ZecSwapBindingRecordV1,
 };

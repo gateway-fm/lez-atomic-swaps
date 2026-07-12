@@ -194,7 +194,12 @@ impl ZcashStableTip {
         }
     }
 
-    fn validated(self) -> Result<(BlockHash, BlockHeight), ObservationError> {
+    pub(crate) const fn set_after(&mut self, hash: BlockHash, height: BlockHeight) {
+        self.after_hash = hash;
+        self.after_height = height;
+    }
+
+    pub(crate) fn validated(self) -> Result<(BlockHash, BlockHeight), ObservationError> {
         if self.before_hash != self.after_hash || self.before_height != self.after_height {
             return Err(ObservationError::UnstableTip);
         }
