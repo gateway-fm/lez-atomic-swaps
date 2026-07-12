@@ -299,6 +299,16 @@ outputs above.
   may use that exact head for engineering evidence; the final M2 tag requires a
   merged/tagged release or an explicit reviewed exception. Open issues #242 and
   #243 also require fail-closed PDA/program-ID handling.
+- [x] Pin a provisional LEZ v0.2 compile-only compatibility lane to official
+  tag `v0.2.0` and SPEL PR #238 head
+  `df17acd98436be4f09c55877dae1fe2e73cbcdca`. CI proves the LEE
+  configuration seam, a single `lee_core` type identity, and the `/LEE/` PDA
+  vector without polling the constructed sequencer future. The exact upstream
+  graph contains Hickory advisories RUSTSEC-2026-0118/-0119, so narrow,
+  feature-guarded exceptions apply only to this hash-locked compile fixture.
+  This graph is prohibited for runtime or testnet use until upstream removes
+  the vulnerable dependency path or a separate security review approves a
+  safe replacement.
 - [ ] Deploy the evidenced escrow to LEZ testnet 0.2 and retain an immutable
   deployment manifest plus public smoke transaction evidence.
 - [ ] Re-measure initialize, claim, and refund compute units on the exact deployed
@@ -475,6 +485,7 @@ CI and local scripts fail if the project name is empty or does not start with
 | Zcash node migration is active | `zcashd` halts before NU6.3; Zallet omits raw-tx builder RPCs; Zebra's 5.x support horizon ends ahead of NU7 | Use pinned 5.2.0 consensus plus local canonical Rust construction in the vulnerability-clean minimal runtime; re-audit releases and final image before public-testnet evidence |
 | SPEL documentation targets older `nssa` paths | SPEL v0.5 docs and current LEZ `dev` disagree | Build a minimal generated program against one pinned compatibility set before escrow implementation |
 | Pinned SPEL guest cannot run on current LEZ testnet | v0.1.2 uses NSSA ABI and `/NSSA/` PDA domain; v0.2.0 uses LEE ABI and `/LEE/`; upstream issues #234/#237 record live signature rejection | Prove locally on exact v0.1.2 standalone, then rebuild the full guest/client/PDA lane on a reviewed v0.2 SPEL release or exact approved successor to PR #238 |
+| Provisional LEZ v0.2 compile graph contains upstream Hickory advisories | The hash-locked fixture is compile-only and non-polled, DNSSEC features are absent, and `cargo-deny` permits only two narrow advisory exceptions | Prohibit this graph from runtime/testnet use; require a safe upstream dependency path, DNS removal, or an explicit security review before an executable lane |
 | Upstream LEZ native sequencer tests compile RocksDB and can contend with host work | Clean native lane passes with two jobs in a unique checkout and no Docker/ports | Keep the two-job cap and do not run the heavy lane alongside detected host compilation |
 | Mainnet deadlines remain uncalibrated | `public-testnet-v1` fixes testnet depths/horizons and conservative bounds; mainnet is deliberately absent | Gather chain telemetry and fee/reorg stress evidence, then require formal review before enabling a mainnet profile |
 | Chain proof is not yet adapter-grade | Core `ChainProof` carries only transaction ID and confirmations, while real-node evidence also needs network, branch, block, outpoint, value, and script commitment | Add a validated typed ZEC observation before feeding node results into the coordinator |

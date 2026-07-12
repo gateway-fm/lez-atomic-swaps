@@ -93,7 +93,32 @@ and funding assumptions are an explicit M2 documentation gate. See the
     npm audit --audit-level=moderate
     npm run audit:licenses
     npm run test:mermaid
+    RUN_ID=local-lez-v02-a ./scripts/verify-lez-v02-provisional.sh
     RUN_ID=local-zebra-1 ./scripts/run-zebra-e2e.sh
+
+The provisional LEZ v0.2 command compiles exact SPEL PR #238 head
+`df17acd98436be4f09c55877dae1fe2e73cbcdca` against official LEZ `v0.2.0`
+at `a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a`. It uses two Cargo jobs and
+unique `/tmp` target/tool paths derived from the lowercase `RUN_ID`. It starts
+no Docker workload, network namespace, port, service, or sequencer. A cold run
+still needs crates.io/GitHub access, `unzip`, and working libclang C headers,
+and compiles the large standalone dependency graph; avoid overlapping it with
+another heavy build on the same host.
+
+That seam proves the v0.2 standalone config and `LeeTransaction` API compile,
+one tag-based `lee_core` identity is locked to the exact LEZ commit, and SPEL's
+public PDA matches LEZ's fixed `/LEE/` vector. It does not build or deploy the
+escrow guest/client, execute actor lifecycles, measure costs, or contact the
+public testnet. PR #238 remains unmerged and unreviewed, so a pass is explicitly
+not M2 completion or final release approval.
+
+Cargo-deny also reports that exact LEZ graph as forcing vulnerable Hickory DNS
+`0.25.0-alpha.5` (`RUSTSEC-2026-0118` and `RUSTSEC-2026-0119`). The provisional
+fixture carries compile-only exceptions guarded by a hash-locked test plus
+checks that no standalone future is polled and no DNSSEC feature is enabled.
+This graph is prohibited for runtime and testnet use. The next slice remains
+security-blocked until upstream supplies a safe graph or a separate explicit
+review accepts a narrowly defined runtime risk.
 
 `npm run test:mermaid` scans every tracked Markdown Mermaid block, rejects
 GitHub-host-sensitive configuration, beta/new-shape, and interactive syntax,

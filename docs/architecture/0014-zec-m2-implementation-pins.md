@@ -46,7 +46,9 @@ flowchart LR
     TokenFlow --> TokenEvidence["Owner roles + holding/supply conservation + negatives"]
     TokenEvidence --> TokenCostReplay["Production token replay without setup/Clock noise"]
     TokenCostReplay --> TokenCostJson["Escrow + ATA + Token sessions + checked JSON"]
-    Port["Rebuild SPEL/guest/client for LEZ v0.2 PDA + ABI"] -.-> LezTest["LEZ testnet 0.2"]
+    Provisional["SPEL PR #238 exact head<br/>open + unreviewed"] --> V02Compat["Separate provisional v0.2<br/>compile/config/PDA lane"]
+    V02Compat -.-> Port["Rebuild SPEL/guest/client for LEZ v0.2 PDA + ABI"]
+    Port -.-> LezTest["LEZ testnet 0.2"]
     Native["Reviewed SPEL/LEZ v0.2 compatibility pin"] -.-> Port
     Drift["LEZ dev + current Zebra scheduled drift lanes"] -.-> Tests
     Tests --> Roles["Independent maker/taker happy, refund, concurrency E2E"]
@@ -139,6 +141,16 @@ merged/tagged SPEL release or an explicit reviewed exception. This is not a runt
 v0.1.2 derives public PDAs under `/NSSA/v0.2/AccountId/PDA/`, while v0.2.0
 validates `/LEE/v0.2/AccountId/PDA/`. The guest, generated client, account
 derivations, and actor tests must be rebuilt together.
+
+The separate provisional compile/config/PDA fixture also exposes a new runtime
+security boundary: exact LEZ v0.2.0 forces `hickory-proto 0.25.0-alpha.5`, which
+is affected by `RUSTSEC-2026-0118` and `RUSTSEC-2026-0119`. Fixture-local
+exceptions are allowed only while the hash-locked test constructs and drops the
+standalone future without polling and DNSSEC features remain absent; CI checks
+both conditions and fails on any test-byte change. This graph is prohibited for
+runtime and testnet use. Expanding the port therefore requires a safe upstream
+graph or a separate explicit security review as well as the SPEL review/release
+decision.
 
 The local compatibility lane now uses the exact v0.1.2 `sequencer_service`
 standalone path in-process with port `0`, temporary state, and deterministic

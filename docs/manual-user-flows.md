@@ -16,6 +16,7 @@ actor boundary, expected result, or cleanup rule changes.
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
 | LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an in-process, ephemeral-port LEZ v0.1.2 standalone sequencer | This is a local compatibility proof, not the incompatible LEZ 0.2 public testnet |
 | LEZ recursive execution costs | Exact checked guest replayed through production `V03State` transitions with nested authenticated-transfer and ATA/Token sessions | This measures deterministic local execution, not public-testnet fees or latency |
+| Provisional LEZ v0.2 compatibility | Exact SPEL PR #238 and LEZ v0.2.0 compile the new standalone config, `LeeTransaction`, and a fixed `/LEE/` PDA vector | No sequencer starts; no guest/client, actor lifecycle, costs, deployment, or maintainer approval is proved |
 
 The following are **not complete yet**: one composed LEZ↔ZEC run with
 independent maker and taker processes, both ZEC trade directions through all
@@ -67,6 +68,8 @@ Run all commands from the repository root. A fresh checkout needs:
 - Git and `rustup`, with Rust 1.96.0, `rustfmt`, and Clippy;
 - Docker Engine and Docker Compose v2 for Zebra and the Risc0 guest builder;
 - `curl`, `gcc`, `tar`, `sha256sum`, `awk`, `diff`, and `rg` for the LEZ runner;
+- `unzip` and a working libclang C-header search path for the provisional LEZ
+  v0.2 standalone dependency build;
 - outbound access on the first LEZ run so the script can install pinned `rzup`
   0.5.1/Risc0 3.0.5 tools and download the checksum-verified circuits archive;
   and
@@ -95,6 +98,53 @@ cargo deny check advisories bans licenses sources
 
 The lockfiles are part of the evidence. Do not omit `--locked` to work around a
 dependency change.
+
+## Flow 0: provisional LEZ v0.2 compile/PDA seam
+
+Choose a fresh lowercase run ID and run:
+
+```sh
+RUN_ID=manual-lez-v02-20260712-a ./scripts/verify-lez-v02-provisional.sh
+```
+
+The runner rejects any `RUN_ID` outside
+`^[a-z0-9][a-z0-9_-]*$`, fixes Cargo at two build jobs, and creates only unique
+target/tool directories under `${TMPDIR:-/tmp}`. It does not invoke Docker,
+create a network namespace, bind a port, start a service/sequencer, or issue a
+global process/container cleanup command. The graph is large, so do not overlap
+its cold build with another heavy local suite.
+
+A fresh uncached run needs crates.io and the exact locked GitHub repositories,
+including SPEL, LEZ, Logos Blockchain/circuits, Overwatch, Jellyfish, and
+Risc0-related sources. It also needs `unzip` for the pinned rapidsnark archive
+and functional libclang system headers for RocksDB bindgen. Cached sources and
+build artifacts reduce availability risk but never relax the lockfile checks.
+
+A pass proves all of the following and nothing broader:
+
+- SPEL PR #238 exact head `df17acd98436be4f09c55877dae1fe2e73cbcdca`;
+- official LEZ tag `v0.2.0` resolves only to
+  `a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a`, without a duplicate revision
+  source/type identity;
+- the v0.2 `SequencerConfig` and standalone entry point compile, without polling
+  the future or starting the sequencer;
+- the renamed `LeeTransaction` envelope compiles; and
+- SPEL and LEZ derive the same fixed public `/LEE/` PDA vector.
+
+It does **not** rebuild the escrow guest, generated IDL/client, or checked ELF;
+does not run maker/taker roles, custody, deadlines, costs, RPC, deployment, or
+public-testnet traffic; and does not resolve upstream SPEL issues #242/#243.
+PR #238 is open, unmerged, and has no submitted maintainer review. Therefore
+this flow is provisional engineering evidence, not M2 completion and not final
+release approval.
+
+The exact graph also contains `hickory-proto 0.25.0-alpha.5`, affected by
+`RUSTSEC-2026-0118` and `RUSTSEC-2026-0119`. Cargo-deny exceptions are confined
+to this compile-only fixture: the verifier hash-locks the test, rejects DNSSEC
+features, and rejects any test change that polls/starts the standalone future.
+This graph is prohibited for runtime and testnet use. That next slice requires
+a safe upstream graph or explicit security review and must rerun the full
+advisory audit.
 
 ## External resources and flakiness
 

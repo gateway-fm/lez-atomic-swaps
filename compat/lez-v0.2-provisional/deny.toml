@@ -1,0 +1,45 @@
+[advisories]
+unmaintained = "workspace"
+yanked = "deny"
+unused-ignored-advisory = "deny"
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = "Exact LEZ v0.2.0 forces rsa 0.9.10 through risc0/rzup; CI proves rzup publish/install features are absent, so no private-key operation is compiled into this provisional compatibility fixture. Re-audit before deployment or pin changes." },
+    { id = "RUSTSEC-2025-0055", reason = "Exact LEZ v0.2.0 forces tracing-subscriber 0.2.25 through risc0/arkworks; CI proves its vulnerable fmt and ansi features are absent. Re-audit before deployment or pin changes." },
+    { id = "RUSTSEC-2026-0118", reason = "Exact LEZ v0.2.0 forces hickory-proto 0.25.0-alpha.5 through Logos Blockchain/libp2p. CI proves DNSSEC features are absent and the compile-only test never polls the standalone future. This exception is invalid for an executable sequencer or deployment lane." },
+    { id = "RUSTSEC-2026-0119", reason = "Exact LEZ v0.2.0 forces hickory-proto 0.25.0-alpha.5 through Logos Blockchain/libp2p. The fixture produces no runtime artifact; CI hash-locks the compile-only test and proves it never polls or starts the service, so DNS message encoding is unreachable. Remove this exception before any executable v0.2 lane." },
+]
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "MIT",
+]
+confidence-threshold = 0.93
+
+# SPEL carries both files at the exact PR head but omits Cargo license fields.
+[[licenses.clarify]]
+crate = "spel-framework-core@0.5.0"
+expression = "MIT OR Apache-2.0"
+license-files = [
+    { path = "../LICENSE-MIT", hash = 0x6193b12d },
+    { path = "../LICENSE-APACHE-v2", hash = 0x0b75c107 },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-git = "deny"
+unknown-registry = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = [
+    "https://github.com/EspressoSystems/jellyfish",
+    "https://github.com/logos-blockchain/logos-blockchain-circuits.git",
+    "https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark.git",
+    "https://github.com/logos-blockchain/logos-blockchain.git",
+    "https://github.com/logos-blockchain/logos-execution-zone.git",
+    "https://github.com/logos-co/Overwatch",
+    "https://github.com/logos-co/spel.git",
+    "https://github.com/arkworks-rs/spongefish.git",
+]
