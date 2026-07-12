@@ -10,6 +10,7 @@ actor boundary, expected result, or cleanup rule changes.
 
 | Flow | Boundary exercised | Current limitation |
 |---|---|---|
+| ZEC SDK agreement/activation | Independent role-fixed maker/taker SDK instances, adapter-authenticated agreement contract, separate recovery stores, transport-free active type, wrong-role/pair/profile negatives, and zeroizing preimage | Uses in-memory discovery/negotiation/store adapters; it is not Delivery/Chat, encrypted storage, or chain lifecycle evidence |
 | Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
 | Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v4 SQLite journal/alerts, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The production daemon does not yet own a polling loop, and maker/taker actors are not yet independent |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
@@ -97,7 +98,10 @@ dependency change.
 
 ## External resources and flakiness
 
-No currently documented user flow calls a public blockchain RPC or faucet.
+No currently executable user flow calls a public blockchain RPC or faucet. The
+official LEZ v0.2 endpoint `https://testnet.lez.logos.co` is now selected and
+its health/block/program methods were checked on 2026-07-12, but no flow below
+submits a transaction to it yet.
 The maker RPC is a locally created loopback endpoint and both Zebra RPCs use
 ephemeral host-loopback mappings. The LEZ test client uses loopback, but pinned
 upstream v0.1.2 binds its short-lived server to the host wildcard address on an
@@ -131,6 +135,7 @@ Cold setup and CI do use external software-distribution services:
 | Rust toolchain distribution selected by `rustup` | Fresh toolchain install and CI | Exact Rust `1.96.0`; CI toolchain action is commit-pinned | DNS/CDN/proxy outage can block cold setup; warm installed toolchains avoid it |
 | crates.io index and crate downloads | Workspace build, `cargo install rzup`, cargo-deny installation | Cargo lockfiles, exact `rzup 0.5.1`, and crate checksums | Registry/CDN/rate-limit outage can block an uncached build; cached sources avoid most requests |
 | GitHub Git endpoints for Logos LEZ, SPEL, Overwatch, Jellyfish, and other locked Git dependencies | First LEZ compatibility build | Cargo lockfiles resolve exact commits; source policy allowlists exact repositories | GitHub/DNS/proxy outage can block an uncached checkout; it cannot silently substitute another locked commit |
+| `https://testnet.lez.logos.co` and its explorer | Future M2 v0.2 deployment/actor evidence; health audit only today | Official LEZ v0.2 endpoint; deployment must bind exact runtime, checked ELF, ProgramId, tx IDs, and blocks | Public service/rate-limit/reorg outage can make testnet evidence flaky; no SLA or self-hosted fallback is selected yet, so local standalone remains the deterministic lower lane |
 | Docker Hub `zfnd/zebra` and `risczero/risc0-guest-builder` | Cold Zebra image build and Risc0 guest build | Zebra `5.2.0` source image and guest builder are digest-pinned | Registry outage, throttling, or authentication policy can block a cold pull; local images reduce but do not guarantee offline BuildKit resolution |
 | Google Container Registry distroless image | Cold minimal Zebra image build | Exact `cc-debian13:nonroot` digest | Registry/DNS outage can block a cold pull; no moving tag is accepted |
 | GitHub release asset for `logos-blockchain-circuits v0.4.2` | First LEZ run | Exact release URL plus required SHA-256 before extraction | Release/CDN outage can fail after retries; a verified run-specific cache avoids redownload |
@@ -143,12 +148,12 @@ Retry only with a fresh run ID after checking the scoped logs. Do not weaken a
 digest, checksum, vulnerability result, or consensus assertion to classify an
 external outage as success.
 
-Public-testnet corridor work will necessarily add selected LEZ/Zcash RPC
-routes and funded transparent accounts or faucets. Before that flow is called
-available, this table and the global README must name each endpoint/faucet,
+Public-testnet corridor work must add the still-unselected Zcash RPC route and
+funded LEZ/Zcash accounts or faucets. Before that flow is called available, this
+table and the global README must name each endpoint/faucet,
 authentication and rate limits, expected funding/confirmation latency,
-fallback/self-hosted route, health check, and evidence-retention policy. None
-has been selected or is required by the current local suites.
+fallback/self-hosted route, health check, and evidence-retention policy. The LEZ endpoint alone is selected; no public route is required by the current
+local suites.
 
 ## Isolation and no-clash rules
 
@@ -270,7 +275,19 @@ endpoint. The database and readiness file are the run-specific manual-flow
 artifacts; remove that specific `$RUN_DIR` only after the daemon has stopped
 and the evidence is no longer needed.
 
-## Flow 2: Zcash reconciliation, then actor claim/refund/fork
+## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
+
+First reproduce the public pre-lock/post-lock SDK boundary:
+
+```sh
+cargo test --locked -p lez-zec-swap-sdk --test sdk_lifecycle -- --nocapture
+```
+
+The test creates independent maker and taker SDK instances with fixed roles and
+separate stores. It proves publish/discover/negotiate, immutable agreement
+validation, persist-before-activation, transport-free active types, and resume.
+Its adapters are in-memory contract doubles; this command does not prove Logos
+Delivery/Chat, encrypted production storage, or LEZ/Zebra lifecycle actions.
 
 First reproduce the lightweight runtime/store user-role semantics without
 Docker:

@@ -41,7 +41,7 @@ flowchart TB
     end
 
     subgraph Nodes["Actor-selected node boundary"]
-        LEZ["LEZ sequencer<br/>v0.1.2 guest deployment proven / v0.2 testnet target"]
+        LEZ["LEZ sequencer<br/>v0.1.2 local guest proven / official v0.2 testnet live, adapter pending"]
         BTC["Bitcoin Core"]
         XMR["monerod + wallet RPC"]
         ZEC["Minimal Zebra 5.2.0 + local Zcash construction"]

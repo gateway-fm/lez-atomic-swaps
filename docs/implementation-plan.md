@@ -103,6 +103,7 @@ security databases, pins/checksums, availability risks, and fallback policy.
 | Pinned LEZ execution semantics | Source inspection alone could not prove the mempool/block split or accepted transaction-byte preservation; an initial filtered native command falsely ran zero tests | A clean pinned checkout passes 14 validity cases, the full BIP-340 vector test, and exactly one run each of the repository-owned admission/block reproducer and upstream transaction-equality test | Keep the pinned lane required and use the scheduled current-`dev` lane only as forward-compatibility drift detection |
 | RFP F4 ZEC chain ordering | 2026-07-11 M2 source reconciliation found M1's generic role-relative claim/refund prose allowed ZEC-before-LEZ in `TakerSellsLez` | RED required typed participants and chain-ordered bounds; GREEN adds 2 regressions and 23-test workspace pass: LEZ always reveals/refunds before later ZEC in both directions | Reprove all M1 gates, tag corrective commit `m1-complete.1`, then keep these vectors as M2 entry tests |
 | CI security and quality gates | 2026-07-11 workflow audit found the advisory scope implicit and a malformed `rzup` install command in the scheduled LEZ lane | CI hard-fails advisories, bans, licenses, sources, Rust format/clippy/test/docs, ShellCheck, traceability, Mermaid, Docker isolation, and SHA-pinned Trivy high/critical scanning of the Zebra image | Run the exact local equivalents, then require every GitHub job before each milestone tag |
+| ZEC full-lifecycle SDK boundary | 2026-07-12 `sdk_lifecycle` could not import discovery, negotiation, agreement, active-swap, recovery-store, or secret types | Independent role-fixed SDKs publish/discover/negotiate the same immutable agreement, reject wrong role/pair/profile policy, persist separately before activation, and resume through an `ActiveZecSwap` type with no transport handles; preimage debug is redacted and storage zeroizes | Add typed LEZ/Zcash action ports, atomic transition persistence, both-direction happy/refund/restart/concurrency actors, then actual nodes |
 | Whole-system architecture and actor flows | 2026-07-11 ADR-local diagrams passed the old gate but did not provide one composed system, actor, trust-boundary, or lifecycle view | Canonical living architecture diagrams independent maker/taker actors, runtime components, node boundaries, happy/refund/restart flows, and current-versus-planned status; CI requires these views | Keep the status and flows synchronized whenever a slice crosses a new real process or chain boundary |
 | Exact BIP-199 contract envelope | 2026-07-11 redeem API was absent; subsequent REDs exposed missing P2SH/scriptSig, refund policy, fetched-prevout validation, V5 epochs, UTXO ownership, dust/change, and Zebra acceptance | Exact script and V5 bytes/txids pass; deterministic selection and actor-only change use canonical builders; pinned Zebra confirms funding/claim/refund and rejects mutated funding/claim signatures plus pre-CLTV refund | Add replacement/reorg/refund-margin stress and composed LEZ↔ZEC roles |
 | Arbitrary P2SH transaction signing | Stable source review shows ordinary and PCZT signers/finalizers recognize P2PKH/P2PK/multisig but not BIP-199; transparent builder also defaults every input to final sequence | GREEN uses canonical `TxOut`, `Bundle`, ZIP-244, deterministic secp256k1, and `TransactionData`; exact HTLC scriptSig is the only adapter-owned encoding, interpreter mutation tests pass, and Zebra is the final authority | Retain vectors and extend the node lane to replacement/reorg cases |
@@ -292,7 +293,12 @@ outputs above.
   and the complete generated escrow evidence JSON.
 - [ ] Port and rebuild SPEL, guest, generated client, and PDA derivations for LEZ
   v0.2.0 before live-testnet evidence. v0.1.2 `/NSSA/` and v0.2.0 `/LEE/` PDA
-  domains are incompatible; upstream PR #238 remains provisional/unmerged.
+  domains are incompatible. Official LEZ v0.2.0 and its public testnet are live,
+  but SPEL PR #238 head `df17acd98436be4f09c55877dae1fe2e73cbcdca`
+  remains open/unmerged with no submitted maintainer review. A provisional port
+  may use that exact head for engineering evidence; the final M2 tag requires a
+  merged/tagged release or an explicit reviewed exception. Open issues #242 and
+  #243 also require fail-closed PDA/program-ID handling.
 - [ ] Deploy the evidenced escrow to LEZ testnet 0.2 and retain an immutable
   deployment manifest plus public smoke transaction evidence.
 - [ ] Re-measure initialize, claim, and refund compute units on the exact deployed
@@ -404,6 +410,13 @@ outputs above.
   binding, close/reopen, unchanged fresh-query suppression, affirmative
   two-Zebra fork removal, second close/reopen, and exact retry pass through the
   maker runtime on schema v4. Daemon-integrated polling remains open.
+- [x] Establish the ZEC SDK pre-lock boundary: role-fixed async discovery and
+  negotiation ports return one validated immutable agreement; separate role
+  stores persist before activation; the post-lock `ActiveZecSwap` type contains
+  no discovery/negotiation handles; claim material is redacted and zeroized.
+- [ ] Add typed LEZ and Zcash action/observation ports plus atomic active-swap
+  transition persistence for escrow creation, both claims, and both refunds. The
+  first port/in-memory slice alone does not satisfy the accepted full lifecycle.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
   nodes. The LEZ
   Unix-millisecond/core Unix-second boundary is typed, checked, conservatively
@@ -417,17 +430,19 @@ outputs above.
   M2 tag; remove or freshly justify its two exact, feature-gated advisory
   exceptions.
 
-### Actor-real delivery and M2 exit
+### Reference-actor delivery and M2 exit
 
 - [x] Publish a living manual reproduction guide for the currently proven maker
   operator, Zebra actor/fork, and LEZ native/token/cost fixtures, with exact
   no-clash and cleanup rules. This does not satisfy the independent composed
   maker/taker or public-testnet items below.
-- [ ] Run independent maker and taker processes with direction-correct keys,
-  transparent funds, LEZ funds, selected node routes, and durable recovery state
+- [ ] Run independent SDK reference maker and taker processes with direction-correct
+  keys, transparent funds, LEZ funds, selected node routes, and durable recovery state
   for both supported ZEC directions.
-- [ ] Pass happy, abandonment/refund, Delivery/Chat-loss, restart, and concurrent
-  swap suites through actual CLI/daemon/RPC/chain boundaries.
+- [ ] Pass happy, abandonment/refund, restart, and concurrent swap suites through
+  the public SDK and actual chain boundaries; destroy the test-only pre-lock
+  mailbox after terms persist. Production daemon/CLI and Logos Delivery/Chat
+  integration remain M5 deliverables and are not relabeled as M2.
 - [ ] Publish self-hosted and public Zebra connection/funding guides, transparent
   privacy warnings, and the shield-after-swap journey.
 - [ ] Generate happy/refund/concurrency recordings only from passing actor suites.

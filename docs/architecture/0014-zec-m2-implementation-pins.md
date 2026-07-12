@@ -131,8 +131,11 @@ never attempt to sign with an ATA. Fixed-destination refunds are permissionless.
 Local v0.1.2 compatibility is sufficient for source-correct custody semantics,
 but it is not sufficient for live-testnet completion: upstream SPEL issues #234
 and #237 record v0.5.0 public-signature rejection against the newer testnet. The
-v0.2.0 compatibility upgrade remains an exact-pinned, provisional lane until
-upstream PR #238 is reviewed and merged. This is not a runtime-only pin change:
+official LEZ v0.2.0 release and `https://testnet.lez.logos.co` are live, but
+the compatibility upgrade remains provisional: SPEL PR #238 head
+`df17acd98436be4f09c55877dae1fe2e73cbcdca` is open, unmerged, and has no
+submitted maintainer review despite green checks. Final M2 evidence requires a
+merged/tagged SPEL release or an explicit reviewed exception. This is not a runtime-only pin change:
 v0.1.2 derives public PDAs under `/NSSA/v0.2/AccountId/PDA/`, while v0.2.0
 validates `/LEE/v0.2/AccountId/PDA/`. The guest, generated client, account
 derivations, and actor tests must be rebuilt together.

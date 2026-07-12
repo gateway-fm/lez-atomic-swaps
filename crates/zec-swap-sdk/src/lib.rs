@@ -1,15 +1,22 @@
 //! Transparent Zcash protocol adapter for LEZ atomic swaps.
 
 mod funding;
+mod lifecycle;
 mod observation;
 mod observation_record;
+mod ports;
 mod profile;
+mod sdk;
 mod transaction;
 mod zec_binding_record;
 
 pub use funding::{
     FundingBuildError, FundingSelection, TransparentFundingRequest, TransparentUtxo,
     build_funding_transaction, select_funding_utxos,
+};
+pub use lifecycle::{
+    BoxPortError, ClaimPreimage, ZEC_AGREEMENT_SCHEMA_V1, ZecAgreement, ZecAgreementError,
+    ZecLifecycleAction, ZecSdkError,
 };
 
 pub use observation::{
@@ -23,7 +30,9 @@ pub use observation_record::{
     replay_zcash_observation_history, revalidate_historical_event,
 };
 
+pub use ports::{NegotiationChannel, OfferDiscovery, RecoveryStore};
 pub use profile::{ProfileError, ZecProfileId, ZecRefundProfile};
+pub use sdk::{ActiveZecSwap, ZecPairSdk};
 pub use zec_binding_record::{
     ZecBindingRecordError, ZecProfileRecordV1, ZecSwapBinding, ZecSwapBindingRecordV1,
 };

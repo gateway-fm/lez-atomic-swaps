@@ -53,8 +53,10 @@ cleanup behavior.
 
 ### External dependencies and flakiness
 
-The current operator, Zebra, and LEZ flows use no public blockchain RPC or
-faucet. Maker and Zebra host endpoints are ephemeral loopback services. The LEZ
+The current executable operator, Zebra, and LEZ flows use no public blockchain
+RPC or faucet. The official LEZ v0.2 endpoint
+`https://testnet.lez.logos.co` is selected and its health/block/program methods
+were checked on 2026-07-12, but no repository user flow submits to it yet. Maker and Zebra host endpoints are ephemeral loopback services. The LEZ
 test client uses loopback, but pinned upstream v0.1.2 binds its ephemeral server
 to the host wildcard address; it is short-lived and collision-isolated, not
 loopback/network-namespace isolated. Test funds are
@@ -78,9 +80,9 @@ testnet corridor with real funded accounts remain mandatory M2 evidence.
 
 CI also refreshes RustSec and Trivy vulnerability data. A database outage may
 block scanning; a newly published advisory may deliberately turn a prior pass
-red. Do not bypass that failure as “flaky.” Public-testnet RPCs/faucets have not
-yet been selected; their provider limits, health checks, fallback/self-hosted
-routes, and funding assumptions are an explicit M2 documentation gate. See the
+red. Do not bypass that failure as “flaky.” The LEZ v0.2 RPC is selected, while a Zcash public/self-hosted route and both
+chains’ funding/faucet path remain unselected. Provider limits, fallback routes,
+and funding assumptions are an explicit M2 documentation gate. See the
 [full resource/flakiness table](docs/manual-user-flows.md#external-resources-and-flakiness).
 
     cargo test --locked --workspace --all-targets

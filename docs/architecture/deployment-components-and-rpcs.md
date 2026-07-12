@@ -75,7 +75,43 @@ isolated but not loopback/network-namespace isolated. This must remain visible
 until upstream accepts a bind address or the lane is placed in an isolated
 network namespace/container.
 
-## M2 ZEC corridor target topology
+## M2 SDK/reference-demo target topology
+
+This is the accepted M2 demo boundary. It is independent of the M5 production
+daemon/CLI/Delivery/Chat delivery below.
+
+```mermaid
+flowchart LR
+    Maker["Maker reference actor process"]
+    Taker["Taker reference actor process"]
+    MakerState[("Maker-only recovery state")]
+    TakerState[("Taker-only recovery state")]
+    Mailbox["Test-only pre-lock agreement mailbox"]
+    Zebra["Selected Zebra route"]
+    Lez["Selected LEZ route"]
+
+    Maker --> MakerState
+    Taker --> TakerState
+    Maker -.->|"Publish and countersign before first lock"| Mailbox
+    Taker -.->|"Discover and countersign before first lock"| Mailbox
+    Maker -.->|"Typed funding, observation, claim, refund"| Zebra
+    Taker -.->|"Typed funding, observation, claim, refund"| Zebra
+    Maker -.->|"Generated escrow client actions"| Lez
+    Taker -.->|"Generated escrow client actions"| Lez
+    Mailbox -.->|"Destroyed after immutable terms persist"| Maker
+    Mailbox -.->|"Destroyed after immutable terms persist"| Taker
+
+    classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
+    class Maker,Taker,MakerState,TakerState,Mailbox,Zebra,Lez planned;
+```
+
+Each process must have a distinct PID, owner-only state/key paths, fixed local
+role, and separately persisted agreement. The local mailbox is explicitly a test
+adapter, not Logos Delivery or Chat. Once terms persist and the first lock is
+submitted, it is destroyed; both actors must complete or refund using only their
+own state and selected chain nodes.
+
+## M5 production application target topology
 
 ```mermaid
 flowchart LR
@@ -138,7 +174,7 @@ it never opens SQLite or becomes protocol authority.
 | Logos Core adapter | Planned | No transport/port selected beyond the daemon control endpoint | Protected OS credential handle | `start`, `endpoint`, `health`, `stop` | Optional supervisor of the same daemon binary |
 | Delivery / Chat | Planned | No protocol, endpoint, or port selected | Authenticated offers and both-role signed transcript | `OfferDiscovery`; `NegotiationChannel` | Untrusted/removable after first lock |
 | Production Zebra watcher route | Planned | Self-hosted and public-testnet routes unselected | Provider credentials/rate limits unselected | Stable-tip observation, broadcast, reorg reconciliation | Actor-selected node; fallback and health policy required |
-| Production LEZ route | Planned | Public v0.2 route unselected | Provider credentials/rate limits unselected | Escrow submit, canonical observation, health | Must use v0.2-compatible guest/client/PDA domain |
+| Official node live; adapter/deployment planned | HTTPS JSON-RPC `https://testnet.lez.logos.co` | Public reads; actor wallet/signature authorizes transactions; rate limits unspecified | Verified `checkHealth`, `getLastBlockId`, `getProgramIds`; escrow submit/observation still pending | Official LEZ v0.2.0; must use v0.2-compatible guest/client and `/LEE/` PDA domain |
 | Bitcoin Core | M3 planned | No port/image/provider selected | Actor-owned node and wallet credentials | Typed `BitcoinChain` port | Do not infer conventional ports before selection |
 | `monerod` plus wallet RPC | M4 planned | No ports/images/providers selected | Actor-owned daemon/wallet credentials | Typed `MoneroChain` port | Wallet/key state remains actor-owned |
 

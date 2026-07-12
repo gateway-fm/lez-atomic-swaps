@@ -1327,6 +1327,7 @@ dependencies = [
 name = "lez-zec-swap-sdk"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "hex",
  "jsonrpsee",
  "jsonrpsee-http-client",
@@ -1344,6 +1345,7 @@ dependencies = [
  "zcash_protocol",
  "zcash_script",
  "zcash_transparent",
+ "zeroize",
 ]
 
 [[package]]
