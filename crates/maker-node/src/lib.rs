@@ -50,6 +50,21 @@ impl MakerRpc {
 pub struct AppliedZcashFundingEvent {
     swap: SwapCoordinator,
     commit: EventCommit,
+    outcome: ZcashFundingProjectionOutcome,
+}
+
+/// Durable runtime classification of one Zcash funding event.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ZcashFundingProjectionOutcome {
+    /// The event changed or refreshed non-terminal protocol state.
+    Applied,
+    /// A removal/replacement affected an absorbing lifecycle outcome.
+    TerminalReorgDetected {
+        /// Completed or refunded lifecycle result retained for audit.
+        terminal_phase: Phase,
+        /// Direction-derived participant whose funding evidence changed.
+        funded_by: Participant,
+    },
 }
 
 impl AppliedZcashFundingEvent {
@@ -63,6 +78,12 @@ impl AppliedZcashFundingEvent {
     #[must_use]
     pub const fn commit(&self) -> EventCommit {
         self.commit
+    }
+
+    /// Durable projection classification used to gate subsequent effects.
+    #[must_use]
+    pub const fn outcome(&self) -> ZcashFundingProjectionOutcome {
+        self.outcome
     }
 }
 
@@ -125,12 +146,43 @@ pub fn apply_zcash_funding_event(
         store.committed_zcash_event(predecessor_revision, id, funded_by, &record)?
     {
         swap = store.load(id)?.ok_or(StoreError::MissingSwap)?;
-        return Ok(AppliedZcashFundingEvent { swap, commit });
+        let outcome = terminal_reorg_outcome(&swap, funded_by, event)
+            .unwrap_or(ZcashFundingProjectionOutcome::Applied);
+        return Ok(AppliedZcashFundingEvent {
+            swap,
+            commit,
+            outcome,
+        });
     }
 
-    project_zcash_funding_event(&mut swap, funded_by, event)?;
+    let outcome = if let Some(outcome) = terminal_reorg_outcome(&swap, funded_by, event) {
+        outcome
+    } else {
+        project_zcash_funding_event(&mut swap, funded_by, event)?;
+        ZcashFundingProjectionOutcome::Applied
+    };
     let commit = store.commit_zcash_event(predecessor_revision, &swap, funded_by, &record)?;
-    Ok(AppliedZcashFundingEvent { swap, commit })
+    Ok(AppliedZcashFundingEvent {
+        swap,
+        commit,
+        outcome,
+    })
+}
+
+fn terminal_reorg_outcome(
+    swap: &SwapCoordinator,
+    funded_by: Participant,
+    event: &ZcashObservationEvent,
+) -> Option<ZcashFundingProjectionOutcome> {
+    (matches!(swap.phase(), Phase::Completed | Phase::Refunded)
+        && matches!(
+            event,
+            ZcashObservationEvent::Removed(_) | ZcashObservationEvent::Replaced { .. }
+        ))
+    .then_some(ZcashFundingProjectionOutcome::TerminalReorgDetected {
+        terminal_phase: swap.phase(),
+        funded_by,
+    })
 }
 
 fn zcash_funder(swap: &SwapCoordinator) -> Result<Participant, ZcashFundingApplyError> {

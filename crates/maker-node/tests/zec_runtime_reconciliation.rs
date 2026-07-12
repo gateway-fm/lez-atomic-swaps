@@ -1,6 +1,8 @@
-use lez_maker_node::{apply_zcash_funding_event, load_zcash_observation_tracker};
+use lez_maker_node::{
+    ZcashFundingProjectionOutcome, apply_zcash_funding_event, load_zcash_observation_tracker,
+};
 use lez_swap_core::{
-    Chain, ChainPosition, ChainProof, ConfirmationPolicy, Pair, Participant, Phase,
+    Chain, ChainPosition, ChainProof, ClaimEvidence, ConfirmationPolicy, Pair, Participant, Phase,
     RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::SqliteSwapStore;
@@ -178,4 +180,84 @@ fn reverse_zec_runtime_replays_removal_before_core_and_restores_exact_reappearan
         None,
         "fresh exact requery is known after historical replay"
     );
+}
+
+#[test]
+fn terminal_removal_is_journaled_and_reported_without_erasing_the_outcome() {
+    for terminal in [Phase::Completed, Phase::Refunded] {
+        let data = tempdir().unwrap();
+        let mut store = SqliteSwapStore::open(data.path().join("terminal.sqlite3")).unwrap();
+        let mut swap = swap("terminal-runtime", SwapDirection::TakerSellsForeign);
+        store.save(&swap).unwrap();
+        let canonical = canonical_observation();
+        let canonical_event = ZcashObservationEvent::Canonical(canonical.clone());
+        apply_zcash_funding_event(&mut store, 0, swap.id(), &canonical_event).unwrap();
+        swap = store.load(swap.id()).unwrap().unwrap();
+        swap.observe_funding(
+            Participant::Maker,
+            ChainProof::new("lez-maker-lock", 1).unwrap(),
+        )
+        .unwrap();
+        match terminal {
+            Phase::Completed => {
+                let first = swap.first_claimant();
+                swap.observe_revealing_claim(
+                    first,
+                    ChainProof::new("revealing-claim", 1).unwrap(),
+                    ClaimEvidence::new([9; 32]),
+                )
+                .unwrap();
+                swap.observe_followup_claim(
+                    first.other(),
+                    ChainProof::new("followup-claim", 1).unwrap(),
+                )
+                .unwrap();
+            }
+            Phase::Refunded => {
+                swap.refund_maker_leg(ChainPosition::block_height(Chain::Lez, 100))
+                    .unwrap();
+                swap.refund_taker_leg(ChainPosition::block_height(Chain::Zcash, 120))
+                    .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        store.save(&swap).unwrap();
+
+        let removed_event = ZcashObservationEvent::Removed(removal(&canonical));
+        let applied = apply_zcash_funding_event(&mut store, 1, swap.id(), &removed_event).unwrap();
+        assert_eq!(applied.swap().phase(), terminal);
+        assert_eq!(
+            applied.outcome(),
+            ZcashFundingProjectionOutcome::TerminalReorgDetected {
+                terminal_phase: terminal,
+                funded_by: Participant::Taker,
+            }
+        );
+        assert_eq!(applied.commit().revision(), 2);
+        assert_eq!(
+            store
+                .load_zcash_events(swap.id(), Participant::Taker)
+                .unwrap()
+                .len(),
+            2
+        );
+
+        let replay = apply_zcash_funding_event(&mut store, 1, swap.id(), &removed_event).unwrap();
+        assert!(replay.commit().was_replay());
+        assert_eq!(replay.swap().phase(), terminal);
+        assert_eq!(
+            replay.outcome(),
+            ZcashFundingProjectionOutcome::TerminalReorgDetected {
+                terminal_phase: terminal,
+                funded_by: Participant::Taker,
+            }
+        );
+        assert_eq!(
+            store
+                .load_zcash_events(swap.id(), Participant::Taker)
+                .unwrap()
+                .len(),
+            2
+        );
+    }
 }

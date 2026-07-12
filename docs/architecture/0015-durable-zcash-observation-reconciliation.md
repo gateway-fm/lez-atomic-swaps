@@ -106,6 +106,10 @@ sequenceDiagram
   refunds remain available for either funded leg.
 - Confirmation-only canonical updates can suspend and restore maker funding
   without falsely claiming the transaction was removed.
+- Removal or replacement after `Completed` or `Refunded` is journaled while the
+  absorbing lifecycle result is retained and classified as
+  `TerminalReorgDetected`; it is never reported as a normal applied event, even
+  when the exact durable event is retried after an unknown commit outcome.
 - Runtime journal-to-core wiring and actual two-Zebra store/restart evidence
   remain required before this ADR is fully proven.
 
@@ -115,5 +119,6 @@ canonical/removal evidence, commits event plus aggregate atomically, and reloads
 across restart in both directions. It is not yet the production watcher: journal
 history is now revalidated and replayed into the exact tracker head, and an
 identical fresh requery is suppressed. Durable profile/expected-output binding,
-atomic conflicting-replacement outcomes, terminal-reorg alerts, and actual
-two-Zebra store/restart evidence remain required.
+atomic conflicting-replacement outcomes, a separately persisted
+operator/security alert outbox for terminal reorgs, and actual two-Zebra
+store/restart evidence remain required.

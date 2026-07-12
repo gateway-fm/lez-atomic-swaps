@@ -335,11 +335,15 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
   replacement fail closed; close/open restores removed and reappeared heads, and
   an identical fresh requery is suppressed without treating history as current
   canonicality.
+- [x] Journal removal/replacement after `Completed` or `Refunded` without
+  mutating the absorbing lifecycle result, and return
+  `TerminalReorgDetected` rather than a normal applied outcome, including on
+  exact replay. Durable operator/security alert delivery remains open.
 - [ ] Complete production runtime wiring: persist immutable profile and expected
   output bindings; journal conflicting replacements while retaining the
   committed-ID reorg phase;
-  durably surface terminal reorg alerts; and prove close/reopen/requery through
-  actual two-Zebra replacement.
+  deliver terminal reorg outcomes through a durable alert outbox; and prove
+  close/reopen/requery through actual two-Zebra replacement.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
   nodes. The LEZ
   Unix-millisecond/core Unix-second boundary is typed, checked, conservatively
