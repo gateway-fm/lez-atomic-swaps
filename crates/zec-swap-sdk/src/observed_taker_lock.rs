@@ -337,6 +337,17 @@ impl ObservedTakerFirstLockTransitionV1 {
         }
     }
 
+    /// Complete canonical LEZ event retained by this transition, when any.
+    #[must_use]
+    pub fn lez_observation_event(&self) -> Option<crate::LezObservationEventV1> {
+        match &self.evidence.source {
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalLez(canonical) => Some(
+                crate::LezObservationEventV1::Canonical(canonical.as_ref().clone()),
+            ),
+            _ => None,
+        }
+    }
+
     /// Applies this trusted transition to the exact predecessor coordinator.
     ///
     /// The input is cloned before either half of an atomic replacement is

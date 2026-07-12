@@ -69,8 +69,10 @@ current executable slices enforce:
   suppression, monotonic Pending/Safe/Finalized updates, affirmative same-tip
   replacement, stale/tip-regressing evidence rejection, and fatal
   finalized-history changes.
-  The official-wire LEZ RPC adapter, tracker integration with the ordered
-  SDK/SQLite journal, later effects, and the
+  The active SDK and schema-v6 SQLite journal now fold the agreement-selected
+  LEZ tracker: exact duplicates write no row and same-inclusion finality/depth
+  updates survive close/reopen. The official-wire LEZ RPC adapter, durable LEZ
+  removal/replacement record forms, later effects, and the
   completed corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the

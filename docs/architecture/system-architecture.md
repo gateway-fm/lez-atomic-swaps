@@ -132,12 +132,14 @@ head without caching authority, writing a duplicate, or changing
 persists a stable primitive snapshot bound to the signed channel/genesis,
 public fund transaction, canonical block/tip, complete SPEL metadata, exact
 custody, depth, and finality policy. SDK and SQLite replay rerun the same
-validator. The dependency-free exact-head tracker now proves duplicate
-suppression, monotonic finality, affirmative same-tip replacement, stale
-evidence rejection, and fatal finalized-history changes. The official-wire LEZ
-node port, ordered SDK/SQLite tracker integration, reverse fresh eligibility,
-and maker effect that consumes eligibility internally remain; the SDK returns
-Wait.
+validator. The dependency-free exact-head tracker is now folded by the active
+SDK and the schema-v6 journal. Exact duplicates write no row, while a
+same-inclusion Pending-to-Finalized update advances one contiguous revision and
+survives close/reopen. The pure tracker also proves affirmative same-tip
+replacement, stale-evidence rejection, and fatal finalized-history changes.
+The official-wire LEZ node port, durable removal/replacement record forms,
+reverse fresh eligibility, and maker effect that consumes eligibility
+internally remain; the SDK returns Wait.
 
 The dashed state reflects delivery honestly. The deterministic core, SQLite
 repository, maker daemon, authenticated maker CLI flow, LEZ semantic

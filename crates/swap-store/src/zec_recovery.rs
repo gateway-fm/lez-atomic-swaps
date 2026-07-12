@@ -11,14 +11,21 @@ use lez_zec_swap_sdk::{
     AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, CreateAgreementOutcome,
     CreateFirstLockOutcome, FIRST_LOCK_RECORD_SCHEMA_V1, FirstLockIntentRecordV1,
     FirstLockIntentV1, FirstLockProjectionCommit, FirstLockTransitionRecordV1,
-    FirstLockTransitionV1, ObservedTakerFirstLockTransitionRecordV1,
-    ObservedTakerFirstLockTransitionV1, RecoveryStore, ZcashObservationTracker,
+    FirstLockTransitionV1, LezAssetV1, LezObservationTrackerV1,
+    ObservedTakerFirstLockTransitionRecordV1, ObservedTakerFirstLockTransitionV1, RecoveryStore,
+    ZcashObservationTracker,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::{StoreError, open_configured_connection, participant_name, revision_from_sql};
 
 const AGREEMENT_PAYLOAD_VERSION: i64 = 1;
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct MakerObservationTrackers {
+    lez: LezObservationTrackerV1,
+    zcash: ZcashObservationTracker,
+}
 
 /// Cloneable, role-fixed SDK recovery repository.
 ///
@@ -360,7 +367,7 @@ impl RecoveryStore for SqliteZecRecoveryStore {
         let committed_sql = sql_u64(committed)?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let (accepted, active_revision, current, mut tracker) = validated_maker_journal_head(
+        let (accepted, active_revision, current, mut trackers) = validated_maker_journal_head(
             &transaction,
             self.role_name(),
             self.local_participant,
@@ -384,6 +391,7 @@ impl RecoveryStore for SqliteZecRecoveryStore {
                 || decode_observed_taker_lock_record(
                     existing.payload_version,
                     &existing.payload_json,
+                    &accepted,
                 )?
                 .revalidate(&accepted, predecessor)?
                     != *transition
@@ -396,15 +404,7 @@ impl RecoveryStore for SqliteZecRecoveryStore {
         if active_revision != predecessor {
             return Err(StoreError::InvalidZecRecoveryState);
         }
-        match trusted.zcash_observation_event() {
-            Some(event) => tracker
-                .apply_committed(&event)
-                .map_err(|_| StoreError::InvalidZecRecoveryState)?,
-            None if active_revision != 0 => {
-                return Err(StoreError::InvalidZecRecoveryState);
-            }
-            None => {}
-        }
+        apply_selected_observation_event(&mut trackers, &trusted, active_revision == 0)?;
         let _ = trusted.apply_to(accepted.agreement(), &current, predecessor)?;
         transaction.execute(
             "
@@ -475,7 +475,8 @@ impl RecoveryStore for SqliteZecRecoveryStore {
         if row.committed_revision != sql_u64(committed)? || active_revision < committed {
             return Err(StoreError::InvalidZecRecoveryState);
         }
-        let record = decode_observed_taker_lock_record(row.payload_version, &row.payload_json)?;
+        let record =
+            decode_observed_taker_lock_record(row.payload_version, &row.payload_json, &accepted)?;
         Ok(Some(record.revalidate(&accepted, predecessor_revision)?))
     }
 }
@@ -673,9 +674,9 @@ fn replay_maker_journal(
     swap_id: &SwapId,
     accepted: &AcceptedZecAgreementV1,
     active_revision: u64,
-) -> Result<(SwapCoordinator, ZcashObservationTracker), StoreError> {
+) -> Result<(SwapCoordinator, MakerObservationTrackers), StoreError> {
     let mut coordinator = accepted.agreement().coordinator().clone();
-    let mut tracker = ZcashObservationTracker::default();
+    let mut trackers = MakerObservationTrackers::default();
     for predecessor in 0..active_revision {
         let row = load_transition_row(connection, role, swap_id, sql_u64(predecessor)?)?
             .ok_or(StoreError::InvalidZecRecoveryState)?;
@@ -685,20 +686,35 @@ fn replay_maker_journal(
         if row.committed_revision != sql_u64(committed)? {
             return Err(StoreError::InvalidZecRecoveryState);
         }
-        let record = decode_observed_taker_lock_record(row.payload_version, &row.payload_json)?;
+        let record =
+            decode_observed_taker_lock_record(row.payload_version, &row.payload_json, accepted)?;
         let transition = record.revalidate(accepted, predecessor)?;
-        match transition.zcash_observation_event() {
-            Some(event) => tracker
-                .apply_committed(&event)
-                .map_err(|_| StoreError::InvalidZecRecoveryState)?,
-            None if predecessor != 0 => {
-                return Err(StoreError::InvalidZecRecoveryState);
-            }
-            None => {}
-        }
+        apply_selected_observation_event(&mut trackers, &transition, predecessor == 0)?;
         coordinator = transition.apply_to(accepted.agreement(), &coordinator, predecessor)?;
     }
-    Ok((coordinator, tracker))
+    Ok((coordinator, trackers))
+}
+
+fn apply_selected_observation_event(
+    trackers: &mut MakerObservationTrackers,
+    transition: &ObservedTakerFirstLockTransitionV1,
+    allow_initial_adapter_assertion: bool,
+) -> Result<(), StoreError> {
+    match (
+        transition.lez_observation_event(),
+        transition.zcash_observation_event(),
+    ) {
+        (Some(event), None) => trackers
+            .lez
+            .apply_committed(&event)
+            .map_err(|_| StoreError::InvalidZecRecoveryState),
+        (None, Some(event)) => trackers
+            .zcash
+            .apply_committed(&event)
+            .map_err(|_| StoreError::InvalidZecRecoveryState),
+        (None, None) if allow_initial_adapter_assertion => Ok(()),
+        (None, None) | (Some(_), Some(_)) => Err(StoreError::InvalidZecRecoveryState),
+    }
 }
 
 fn validated_maker_journal_head(
@@ -711,7 +727,7 @@ fn validated_maker_journal_head(
         AcceptedZecAgreementV1,
         u64,
         SwapCoordinator,
-        ZcashObservationTracker,
+        MakerObservationTrackers,
     ),
     StoreError,
 > {
@@ -779,13 +795,42 @@ fn decode_transition_record(
 fn decode_observed_taker_lock_record(
     payload_version: i64,
     payload_json: &str,
+    accepted: &AcceptedZecAgreementV1,
 ) -> Result<ObservedTakerFirstLockTransitionRecordV1, StoreError> {
     require_payload(
         "SDK observed taker first lock",
         payload_version,
         i64::from(FIRST_LOCK_RECORD_SCHEMA_V1),
     )?;
-    serde_json::from_str(payload_json).map_err(StoreError::from)
+    if let Ok(current) = serde_json::from_str(payload_json) {
+        return Ok(current);
+    }
+    let mut value: serde_json::Value = serde_json::from_str(payload_json)?;
+    if let Some(transaction) = value
+        .get_mut("lez_canonical")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|canonical| canonical.get_mut("transaction"))
+        .and_then(serde_json::Value::as_object_mut)
+        && !transaction.contains_key("instruction")
+        && let Some(swap_id) = transaction.remove("swap_id")
+    {
+        let instruction_name = match accepted.agreement().lez_terms().asset() {
+            LezAssetV1::Native { .. } => "Native",
+            LezAssetV1::FungibleToken { .. } => "Token",
+        };
+        let mut instruction_body = serde_json::Map::new();
+        instruction_body.insert("swap_id".to_owned(), swap_id);
+        let mut instruction = serde_json::Map::new();
+        instruction.insert(
+            instruction_name.to_owned(),
+            serde_json::Value::Object(instruction_body),
+        );
+        transaction.insert(
+            "instruction".to_owned(),
+            serde_json::Value::Object(instruction),
+        );
+    }
+    serde_json::from_value(value).map_err(StoreError::from)
 }
 
 fn validate_transition_replay(

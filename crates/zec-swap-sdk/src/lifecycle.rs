@@ -6,8 +6,8 @@ use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
-    FirstLockIntentError, FirstLockTransitionError, ObservationTrackerError,
-    ObservedTakerFirstLockTransitionError, ZecAgreementV1Error,
+    FirstLockIntentError, FirstLockTransitionError, LezObservationTrackerError,
+    ObservationTrackerError, ObservedTakerFirstLockTransitionError, ZecAgreementV1Error,
 };
 
 /// A SHA-256 claim preimage that is redacted, zeroized, and not serializable.
@@ -63,6 +63,9 @@ pub enum ZecSdkError {
     /// Canonical Zcash observation history is stale, duplicated, or missing replacement proof.
     #[error(transparent)]
     InvalidZcashObservationHistory(#[from] ObservationTrackerError),
+    /// Canonical LEZ observation history is stale, regressed, or missing replacement proof.
+    #[error(transparent)]
+    InvalidLezObservationHistory(#[from] LezObservationTrackerError),
     /// This direction lacks a canonical maker eligibility adapter.
     #[error("fresh maker-funding eligibility is unavailable for this swap direction")]
     MakerFundingEligibilityUnavailable,

@@ -1,7 +1,7 @@
 # ADR 0019: Canonical LEZ funded-escrow observation
 
-Status: accepted for the M2 SDK boundary; production RPC adapter and exact-head
-reconciliation remain open.
+Status: accepted for the M2 SDK/SQLite boundary; production RPC adapter and
+durable removal/replacement record forms remain open.
 
 ~~~mermaid
 flowchart LR
@@ -87,9 +87,18 @@ regression, and finality regression, and treats any finalized removal as an
 operator-fatal violation. Proposal never mutates the head; only an exact
 committed event does.
 
+The active SDK and schema-v6 SQLite journal now fold canonical and
+same-inclusion LEZ tracker events. Exact duplicates write no row, and restart
+restores the exact updated head. Historical payload-v1 snapshots that stored
+`swap_id` before the generated instruction kind was bound are decoded
+schema-aware and derive Native versus Token only from the signed agreement
+before full revalidation. Current records take the strict typed decoder first;
+the narrow legacy fallback uses serde_json's standard `arbitrary_precision`
+feature so signed native or token amounts retain their complete `u128` value.
+Current and legacy restart tests cover `u64::MAX + 1`.
+
 The next slice must use official LEZ wire types to decode and hash the public
-transaction, integrate the tracker into the ordered SDK/SQLite journal,
-distinguish a still-canonical fund whose
+transaction, persist removal/replacement event forms, distinguish a still-canonical fund whose
 escrow has become Claimed or Refunded, and add native plus token standalone
 actor evidence. A finalized block changing is an operator-fatal finality
 violation, not a routine reorg.

@@ -6,6 +6,7 @@ use crate::{
     AcceptedZecAgreementV1, CreateAgreementOutcome, CreateFirstLockOutcome,
     FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentV1, FirstLockObservation,
     FirstLockPlanV1, FirstLockProjectionCommit, FirstLockTransitionV1, LezFirstLockPort,
+    LezObservationEventV1, LezObservationReconciliationV1, LezObservationTrackerV1,
     LezTakerFirstLockObservationPort, MakerFundingEligibilityOutcome, NegotiationChannel,
     ObserveTakerFirstLockOutcome, ObservedTakerFirstLockTransitionV1, OfferDiscovery,
     PreparedFirstLockSubmissionV1, RecoveryStore, TakerFirstLockObservationV1, ZcashFirstLockPort,
@@ -213,6 +214,7 @@ where
             coordinator,
             revision,
             zcash_taker_lock_tracker: ZcashObservationTracker::default(),
+            lez_taker_lock_tracker: LezObservationTrackerV1::default(),
             lez: self.lez.clone(),
             zcash: self.zcash.clone(),
             store: self.store.clone(),
@@ -262,6 +264,7 @@ pub struct ActiveZecSwap<Lez, Zcash, Store> {
     coordinator: SwapCoordinator,
     revision: u64,
     zcash_taker_lock_tracker: ZcashObservationTracker,
+    lez_taker_lock_tracker: LezObservationTrackerV1,
     lez: Lez,
     zcash: Zcash,
     store: Store,
@@ -425,7 +428,8 @@ where
             else {
                 return Ok(());
             };
-            let next_tracker = self.apply_committed_zcash_event(&transition)?;
+            let next_zcash_tracker = self.apply_committed_zcash_event(&transition)?;
+            let next_lez_tracker = self.apply_committed_lez_event(&transition)?;
             let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
             self.revision =
                 self.revision
@@ -435,7 +439,8 @@ where
                         actual: u64::MAX,
                     })?;
             self.coordinator = next;
-            self.zcash_taker_lock_tracker = next_tracker;
+            self.zcash_taker_lock_tracker = next_zcash_tracker;
+            self.lez_taker_lock_tracker = next_lez_tracker;
         }
     }
 
@@ -475,6 +480,44 @@ where
             return Ok(None);
         }
         Ok(Some(self.apply_committed_zcash_event(transition)?))
+    }
+
+    fn apply_committed_lez_event(
+        &self,
+        transition: &ObservedTakerFirstLockTransitionV1,
+    ) -> Result<LezObservationTrackerV1, ZecSdkError> {
+        let mut next = self.lez_taker_lock_tracker.clone();
+        if let Some(event) = transition.lez_observation_event() {
+            next.apply_committed(&event)?;
+        }
+        Ok(next)
+    }
+
+    fn propose_lez_event(
+        &self,
+        transition: &ObservedTakerFirstLockTransitionV1,
+    ) -> Result<Option<LezObservationTrackerV1>, ZecSdkError> {
+        let Some(event) = transition.lez_observation_event() else {
+            return Ok(Some(self.lez_taker_lock_tracker.clone()));
+        };
+        let input = match &event {
+            LezObservationEventV1::Canonical(canonical) => {
+                LezObservationReconciliationV1::Canonical(canonical.clone())
+            }
+            LezObservationEventV1::Removed(removed) => {
+                LezObservationReconciliationV1::Removed(removed.clone())
+            }
+            LezObservationEventV1::Replaced { removed, canonical } => {
+                LezObservationReconciliationV1::Replaced {
+                    removed: removed.clone(),
+                    canonical: canonical.clone(),
+                }
+            }
+        };
+        if self.lez_taker_lock_tracker.propose(&input)?.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(self.apply_committed_lez_event(transition)?))
     }
 
     /// Stages exact role-local first-lock recovery material before any node call.
@@ -546,14 +589,11 @@ where
             });
         }
         self.replay_observed_taker_first_lock_transition().await?;
-        let forward_zcash =
-            self.agreement().direction() == lez_swap_core::SwapDirection::TakerSellsForeign;
         if self.status() != Phase::Offered
-            && !(forward_zcash
-                && matches!(
-                    self.status(),
-                    Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed
-                ))
+            && !matches!(
+                self.status(),
+                Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed
+            )
         {
             return Err(ZecSdkError::FirstLockNotOffered(self.status()));
         }
@@ -583,6 +623,9 @@ where
             evidence,
         )?;
         let Some(next_tracker) = self.propose_zcash_event(&transition)? else {
+            return Ok(ObserveTakerFirstLockOutcome::Unchanged(step));
+        };
+        let Some(next_lez_tracker) = self.propose_lez_event(&transition)? else {
             return Ok(ObserveTakerFirstLockOutcome::Unchanged(step));
         };
         let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
@@ -621,6 +664,7 @@ where
         self.coordinator = next;
         self.revision = commit.revision();
         self.zcash_taker_lock_tracker = next_tracker;
+        self.lez_taker_lock_tracker = next_lez_tracker;
         self.replay_observed_taker_first_lock_transition().await?;
         Ok(ObserveTakerFirstLockOutcome::Projected(commit))
     }

@@ -594,12 +594,17 @@ async fn canonical_lez_maker_observation_survives_sqlite_close_and_reopen() {
     let path = data.path().join("reverse-maker-observation.sqlite3");
     let id = "sqlite-maker-observes-lez";
     let accepted = accept(
-        &agreement_wire_direction(id, FixtureVariant::Local, SwapDirection::TakerSellsLez),
+        &agreement_wire_direction_with_lez_amount(
+            id,
+            FixtureVariant::Local,
+            SwapDirection::TakerSellsLez,
+            u128::from(u64::MAX) + 1,
+        ),
         Participant::Maker,
     );
     let canonical = canonical_lez_taker_lock(accepted.agreement());
     let observation = MakerObservation(TakerFirstLockObservationV1::CanonicalLez(Box::new(
-        canonical,
+        canonical.clone(),
     )));
     let store =
         SqliteZecRecoveryStore::open(&path, Participant::Maker).expect("open reverse maker store");
@@ -611,32 +616,136 @@ async fn canonical_lez_maker_observation_survives_sqlite_close_and_reopen() {
         MakerObservation(TakerFirstLockObservationV1::Absent),
         store,
     )
-    .activate(accepted)
+    .activate(accepted.clone())
     .await
     .expect("activate reverse maker");
-    assert!(matches!(
-        active.observe_taker_first_lock().await,
-        Ok(ObserveTakerFirstLockOutcome::Projected(_))
-    ));
+    let initial = active.observe_taker_first_lock().await;
+    assert!(
+        matches!(initial, Ok(ObserveTakerFirstLockOutcome::Projected(_))),
+        "large-amount initial projection failed: {initial:?}"
+    );
     assert_eq!(active.status(), Phase::TakerLockConfirmed);
     drop(active);
 
-    let reopened = SqliteZecRecoveryStore::open(&path, Participant::Maker)
-        .expect("reopen reverse maker store");
-    let resumed = ZecPairSdk::new(
+    assert_eq!(
+        reverse_maker_state_after_reopen(&path, id).await,
+        (Phase::TakerLockConfirmed, 1),
+        "current payload preserves a valid LEZ amount above u64"
+    );
+    rewrite_lez_row_as_legacy_payload_v1(&path, id, *accepted.agreement().onchain_swap_id());
+    let (duplicate, phase, revision) = poll_reverse_maker_after_reopen(&path, id, canonical).await;
+    assert_eq!(
+        duplicate,
+        ObserveTakerFirstLockOutcome::Unchanged(FirstLockStepV1::LezFund)
+    );
+    assert_eq!((phase, revision), (Phase::TakerLockConfirmed, 1));
+    assert_eq!(maker_transition_count(&path, id), 1);
+
+    let deeper = canonical_lez_taker_lock_at(
+        accepted.agreement(),
+        LezInclusionStatusV1::Finalized,
+        [0x44; 32],
+        103,
+    );
+    let (update, phase, revision) = poll_reverse_maker_after_reopen(&path, id, deeper).await;
+    assert!(matches!(update, ObserveTakerFirstLockOutcome::Projected(_)));
+    assert_eq!((phase, revision), (Phase::TakerLockConfirmed, 2));
+    assert_eq!(
+        reverse_maker_state_after_reopen(&path, id).await,
+        (Phase::TakerLockConfirmed, 2)
+    );
+}
+
+async fn reverse_maker_state_after_reopen(path: &std::path::Path, id: &str) -> (Phase, u64) {
+    let store =
+        SqliteZecRecoveryStore::open(path, Participant::Maker).expect("reopen reverse maker store");
+    let active = ZecPairSdk::new(
         Participant::Maker,
         NoDiscovery,
         FixedNegotiation,
         MakerObservation(TakerFirstLockObservationV1::Absent),
         MakerObservation(TakerFirstLockObservationV1::Absent),
-        reopened,
+        store,
     )
     .resume(&SwapId::new(id).expect("swap ID"))
     .await
     .expect("resume reverse maker")
     .expect("durable reverse agreement");
-    assert_eq!(resumed.status(), Phase::TakerLockConfirmed);
-    assert_eq!(resumed.revision(), 1);
+    (active.status(), active.revision())
+}
+
+async fn poll_reverse_maker_after_reopen(
+    path: &std::path::Path,
+    id: &str,
+    canonical: CanonicalLezEscrowObservationV1,
+) -> (ObserveTakerFirstLockOutcome, Phase, u64) {
+    let store =
+        SqliteZecRecoveryStore::open(path, Participant::Maker).expect("reopen reverse maker poll");
+    let mut active = ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        MakerObservation(TakerFirstLockObservationV1::CanonicalLez(Box::new(
+            canonical,
+        ))),
+        MakerObservation(TakerFirstLockObservationV1::Absent),
+        store,
+    )
+    .resume(&SwapId::new(id).expect("swap ID"))
+    .await
+    .expect("resume reverse maker poll")
+    .expect("durable reverse agreement");
+    let outcome = active
+        .observe_taker_first_lock()
+        .await
+        .expect("reverse maker poll");
+    (outcome, active.status(), active.revision())
+}
+
+fn rewrite_lez_row_as_legacy_payload_v1(
+    path: &std::path::Path,
+    id: &str,
+    onchain_swap_id: [u8; 32],
+) {
+    let connection = Connection::open(path).expect("open legacy LEZ payload fixture");
+    let current: String = connection
+        .query_row(
+            "SELECT payload_json FROM zec_sdk_first_lock_transitions
+             WHERE local_role = 'maker' AND swap_id = ?1 AND predecessor_revision = 0",
+            params![id],
+            |row| row.get(0),
+        )
+        .expect("current LEZ payload");
+    let instruction = serde_json::to_string(&LezFundInstructionV1::Native {
+        swap_id: onchain_swap_id,
+    })
+    .expect("instruction JSON");
+    let swap_id = serde_json::to_string(&onchain_swap_id).expect("swap ID JSON");
+    let legacy = current.replacen(
+        &format!("\"instruction\":{instruction}"),
+        &format!("\"swap_id\":{swap_id}"),
+        1,
+    );
+    assert_ne!(legacy, current, "historical instruction shape installed");
+    connection
+        .execute(
+            "UPDATE zec_sdk_first_lock_transitions SET payload_json = ?1
+             WHERE local_role = 'maker' AND swap_id = ?2 AND predecessor_revision = 0",
+            params![legacy, id],
+        )
+        .expect("install historical payload-v1 row");
+}
+
+fn maker_transition_count(path: &std::path::Path, id: &str) -> i64 {
+    Connection::open(path)
+        .expect("inspect maker journal")
+        .query_row(
+            "SELECT COUNT(*) FROM zec_sdk_first_lock_transitions
+             WHERE local_role = 'maker' AND swap_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .expect("maker journal count")
 }
 
 async fn assert_fresh_eligibility_after_reopen(
@@ -1208,6 +1317,15 @@ fn confirmed(
 fn canonical_lez_taker_lock(
     agreement: &lez_zec_swap_sdk::ZecAgreementV1,
 ) -> CanonicalLezEscrowObservationV1 {
+    canonical_lez_taker_lock_at(agreement, LezInclusionStatusV1::Pending, [0x42; 32], 102)
+}
+
+fn canonical_lez_taker_lock_at(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    inclusion_status: LezInclusionStatusV1,
+    tip_hash: [u8; 32],
+    tip_height: u64,
+) -> CanonicalLezEscrowObservationV1 {
     let terms = agreement.lez_terms();
     let LezAssetV1::Native {
         authenticated_transfer_program_id,
@@ -1251,7 +1369,7 @@ fn canonical_lez_taker_lock(
         100,
         [0x41; 32],
         [0x41; 32],
-        LezInclusionStatusV1::Finalized,
+        inclusion_status,
     );
     CanonicalLezEscrowObservationV1::validate(
         agreement,
@@ -1259,7 +1377,7 @@ fn canonical_lez_taker_lock(
             terms.chain().environment(),
             *terms.chain().channel_id(),
             *terms.chain().genesis_block_hash(),
-            LezStableTipV1::new([0x42; 32], 102, [0x42; 32], 102),
+            LezStableTipV1::new(tip_hash, tip_height, tip_hash, tip_height),
             transaction,
             *terms.escrow_program_id(),
             *terms.metadata_account(),
@@ -1288,6 +1406,15 @@ fn agreement_wire_direction(
     id: &str,
     variant: FixtureVariant,
     direction: SwapDirection,
+) -> Vec<u8> {
+    agreement_wire_direction_with_lez_amount(id, variant, direction, 42)
+}
+
+fn agreement_wire_direction_with_lez_amount(
+    id: &str,
+    variant: FixtureVariant,
+    direction: SwapDirection,
+    lez_amount: u128,
 ) -> Vec<u8> {
     let maker_secret = SecretKey::from_slice(&[1; 32]).expect("maker key");
     let taker_secret = SecretKey::from_slice(&[2; 32]).expect("taker key");
@@ -1330,7 +1457,7 @@ fn agreement_wire_direction(
             LezAssetV1::Native {
                 authenticated_transfer_program_id: [2; 8],
             },
-            42,
+            lez_amount,
             metadata_account,
             custody_account,
         ),

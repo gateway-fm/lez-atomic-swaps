@@ -1294,10 +1294,11 @@ async fn reverse_maker_observes_lez_while_taker_cannot_use_maker_observation() {
         Err(ZecSdkError::InvalidObservedTakerFirstLockTransition(_))
     ));
     assert_eq!(reverse_maker.revision(), 0);
+    let initial_lez = canonical_lez_taker_lock(reverse_maker.agreement());
     reverse_lez
         .0
         .respond(Ok(TakerFirstLockObservationV1::CanonicalLez(Box::new(
-            canonical_lez_taker_lock(reverse_maker.agreement()),
+            initial_lez.clone(),
         ))));
     assert!(matches!(
         reverse_maker.observe_taker_first_lock().await,
@@ -1317,6 +1318,37 @@ async fn reverse_maker_observes_lez_while_taker_cannot_use_maker_observation() {
     record
         .revalidate(&reverse_accepted, 0)
         .expect("canonical LEZ primitive record survives restart revalidation");
+    reverse_lez
+        .0
+        .respond(Ok(TakerFirstLockObservationV1::CanonicalLez(Box::new(
+            initial_lez,
+        ))));
+    assert_eq!(
+        reverse_maker
+            .observe_taker_first_lock()
+            .await
+            .expect("duplicate canonical LEZ poll"),
+        ObserveTakerFirstLockOutcome::Unchanged(FirstLockStepV1::LezFund)
+    );
+    let deeper_finalized = CanonicalLezEscrowObservationV1::validate(
+        reverse_maker.agreement(),
+        &canonical_lez_snapshot(
+            reverse_maker.agreement(),
+            LezSnapshotMutation::DeeperFinalized,
+        ),
+    )
+    .expect("same-inclusion finalized update");
+    reverse_lez
+        .0
+        .respond(Ok(TakerFirstLockObservationV1::CanonicalLez(Box::new(
+            deeper_finalized,
+        ))));
+    assert!(matches!(
+        reverse_maker.observe_taker_first_lock().await,
+        Ok(ObserveTakerFirstLockOutcome::Projected(_))
+    ));
+    assert_eq!(reverse_maker.revision(), 2);
+    assert_eq!(reverse_lez.0.calls(), 4);
     assert_eq!(
         reverse_maker.next_action(),
         ZecLifecycleAction::Wait,
@@ -1327,7 +1359,10 @@ async fn reverse_maker_observes_lez_while_taker_cannot_use_maker_observation() {
         Err(ZecSdkError::MakerFundingEligibilityUnavailable)
     ));
 
-    let taker_store = MemoryStore::default();
+    assert_taker_cannot_observe_for_maker().await;
+}
+
+async fn assert_taker_cannot_observe_for_maker() {
     let taker_sdk = ZecPairSdk::new(
         Participant::Taker,
         MemoryDiscovery::default(),
@@ -1340,7 +1375,7 @@ async fn reverse_maker_observes_lez_while_taker_cannot_use_maker_observation() {
         },
         MemoryLezTakerLockObservation::default(),
         MemoryZcashTakerLockObservation::default(),
-        taker_store,
+        MemoryStore::default(),
     );
     let taker_accepted = taker_sdk
         .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
@@ -1364,14 +1399,13 @@ fn canonical_lez_taker_lock(
 ) -> CanonicalLezEscrowObservationV1 {
     CanonicalLezEscrowObservationV1::validate(
         agreement,
-        &canonical_lez_snapshot(agreement, LezSnapshotMutation::None),
+        &canonical_lez_snapshot(agreement, LezSnapshotMutation::Pending),
     )
     .expect("agreement-bound canonical LEZ observation")
 }
 
 #[derive(Clone, Copy)]
 enum LezSnapshotMutation {
-    None,
     Environment,
     Channel,
     Genesis,
@@ -1670,9 +1704,7 @@ fn lez_tracker_requires_durable_exact_head_events_and_preserves_finality() {
         .apply_committed(&safe_event)
         .expect("safe promotion commit");
     assert_eq!(
-        tracker.propose(&LezObservationReconciliationV1::Canonical(
-            regressed_safe
-        )),
+        tracker.propose(&LezObservationReconciliationV1::Canonical(regressed_safe)),
         Err(LezObservationTrackerError::TipRegression)
     );
     let finalized_event = tracker
