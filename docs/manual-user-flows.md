@@ -353,7 +353,7 @@ exact wire decoding, both low-S signatures, every signed-field mutation, both
 directions, deterministic-local execution terms, fail-closed public deployment,
 actual LEZ/ZEC deadlines, role/digest binding, agreement-derived
 fees/destinations/expiry/funding requests, exact native/token PDA/ATA accounts,
-accepted-at resume, and redacted diagnostics. The second runs 21 integrated
+accepted-at resume, and redacted diagnostics. The second runs 22 integrated
 cases in which independent maker and taker SDK instances with fixed roles
 receive untrusted bytes, validate the concrete record, persist separate accepted
 envelopes before activation, and resume the original wire after transcript
@@ -385,8 +385,10 @@ Zcash fund. Every drive performs a fresh eligibility poll, the exact plan is
 durable before submission, confirmed Maker evidence advances to
 `BothLegsLocked`, and restart reconstructs that phase. A stale second maker
 instance catches up from the durable transition without another submission.
+Projection fault injection leaves the maker intent open and in-memory phase
+unchanged; an unknown successful commit is adopted only after exact probe.
 The store command runs
-11 production-adapter cases over a real temporary
+12 production-adapter cases over a real temporary
 schema-v7 database: exact replay/conflict, same-ID role isolation, retained
 closed intent, taker and maker trigger-injected rollback,
 future/malformed/torn/orphan/holey-state rejection, poison-append rejection,
@@ -405,7 +407,7 @@ remains fail-closed pending reviewed deployment. Stable absence and unstable pol
 eligibility, write nothing, and preserve the revision. Its new schema-v7 case
 inspects maker staged/closed and transition predecessor/committed revisions for
 both directions, then closes and reopens at `BothLegsLocked`. Production chain
-RPC adapters, maker-effect retry/reorg fault hardening, claims/refunds, and
+RPC adapters, maker submission/reorg/corruption hardening, claims/refunds, and
 independent actor processes are remaining work.
 
 Before starting Zebra, reproduce spend recognition independently from SDK

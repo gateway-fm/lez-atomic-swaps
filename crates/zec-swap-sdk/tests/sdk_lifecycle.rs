@@ -337,6 +337,10 @@ impl RecoveryStore for MemoryStore {
         &self,
         transition: &MakerLockTransitionV1,
     ) -> Result<FirstLockProjectionCommit, Self::Error> {
+        let mode = *self.transition_mode.lock().expect("transition mode lock");
+        if mode == TransitionCommitMode::FailBeforeCommit {
+            return Err(TestPortError("forced maker transition failure".to_owned()));
+        }
         let key = (
             transition.swap_id().as_str().to_owned(),
             transition.predecessor_revision(),
@@ -357,6 +361,9 @@ impl RecoveryStore for MemoryStore {
             .lock()
             .expect("maker-lock lock")
             .remove(transition.swap_id().as_str());
+        if mode == TransitionCommitMode::CommitThenReportFailure {
+            return Err(TestPortError("unknown successful maker commit".to_owned()));
+        }
         Ok(FirstLockProjectionCommit::new(
             transition.predecessor_revision() + 1,
             was_replay,
@@ -1264,6 +1271,100 @@ async fn stale_maker_replays_committed_second_lock_without_resubmission() {
         submissions,
         "stale retry must not submit"
     );
+    assert_eq!(
+        store
+            .maker_lock_transitions
+            .lock()
+            .expect("maker transitions")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn maker_projection_failure_preserves_intent_and_unknown_commit_is_probed() {
+    let wire = agreement_wire(
+        "sdk-maker-projection-faults",
+        SwapDirection::TakerSellsForeign,
+        FixtureVariant::Local,
+    );
+    let store = MemoryStore::default();
+    let lez = MemoryLezTakerLockObservation::default();
+    let zcash = MemoryZcashTakerLockObservation::default();
+    let sdk = maker_lock_sdk(wire, lez, zcash.clone(), store.clone());
+    let accepted = sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("maker agreement");
+    let mut active = sdk.activate(accepted).await.expect("maker activation");
+    zcash
+        .0
+        .respond(Ok(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
+            canonical_zcash_taker_lock(active.agreement()),
+        ))));
+    active
+        .observe_taker_first_lock()
+        .await
+        .expect("canonical taker lock");
+    active
+        .drive_maker_lock(
+            FirstLockPlanV1::lez(
+                PreparedFirstLockSubmissionV1::new(
+                    FirstLockStepV1::LezInitialize,
+                    [0xa1; 32],
+                    vec![0xd1],
+                )
+                .expect("initialize"),
+                PreparedFirstLockSubmissionV1::new(
+                    FirstLockStepV1::LezFund,
+                    [0xa2; 32],
+                    vec![0xd2],
+                )
+                .expect("fund"),
+            )
+            .expect("maker plan"),
+        )
+        .await
+        .expect("maker intent is durable");
+    let evidence = FirstLockConfirmedEvidenceV1::new(
+        FirstLockStepV1::LezFund,
+        [0xa2; 32],
+        "maker-projection-fault",
+        100,
+    )
+    .expect("maker evidence");
+
+    store.set_transition_mode(TransitionCommitMode::FailBeforeCommit);
+    assert!(matches!(
+        active.project_maker_lock(evidence.clone()).await,
+        Err(ZecSdkError::Persistence(_))
+    ));
+    assert_eq!(
+        (active.status(), active.revision()),
+        (Phase::TakerLockConfirmed, 1)
+    );
+    assert_eq!(store.maker_locks.lock().expect("maker intent").len(), 1);
+    assert!(
+        store
+            .maker_lock_transitions
+            .lock()
+            .expect("maker transitions")
+            .is_empty()
+    );
+
+    store.set_transition_mode(TransitionCommitMode::CommitThenReportFailure);
+    assert_eq!(
+        active
+            .project_maker_lock(evidence)
+            .await
+            .expect("exact probe proves unknown maker commit"),
+        FirstLockProjectionCommit::new(2, true)
+    );
+    assert_eq!(
+        (active.status(), active.revision()),
+        (Phase::BothLegsLocked, 2)
+    );
+    assert!(store.maker_locks.lock().expect("maker intent").is_empty());
     assert_eq!(
         store
             .maker_lock_transitions

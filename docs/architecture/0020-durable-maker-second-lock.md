@@ -88,6 +88,12 @@ swap-store suite repeats stale-instance zero-resubmission in both directions and
 passes schema-v7 migration, existing rollback/corruption/replay cases, and the
 new union-journal path.
 
+Projection fault injection proves a store failure leaves phase and revision at
+`TakerLockConfirmed` with the intent still open. An unknown successful commit is
+accepted only after an exact transition probe. A real SQLite close-trigger
+failure rolls back the transition insert, agreement revision CAS, and intent
+closure; removing the trigger permits an exact retry.
+
 ## Consequences
 
 Fresh eligibility is now consumed by a real durable maker effect and is no

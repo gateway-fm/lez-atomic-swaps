@@ -895,6 +895,106 @@ async fn assert_maker_lock_reopens(path: &std::path::Path, id: &str) {
 }
 
 #[tokio::test]
+async fn maker_lock_trigger_failure_rolls_back_transition_revision_and_intent_close() {
+    let id = "sqlite-maker-lock-rollback";
+    let data = TempDir::new().expect("maker-lock rollback store");
+    let path = data.path().join("maker-lock-rollback.sqlite3");
+    let accepted = accept(
+        &agreement_wire_direction(id, FixtureVariant::Local, SwapDirection::TakerSellsForeign),
+        Participant::Maker,
+    );
+    let chain = MakerHappyPort::new(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
+        canonical_zcash_taker_lock(accepted.agreement()),
+    )));
+    let store = SqliteZecRecoveryStore::open(&path, Participant::Maker)
+        .expect("open maker-lock rollback store");
+    let mut active = ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        chain.clone(),
+        chain,
+        store,
+    )
+    .activate(accepted)
+    .await
+    .expect("activate maker");
+    active
+        .observe_taker_first_lock()
+        .await
+        .expect("canonical taker funding");
+    active
+        .drive_maker_lock(
+            FirstLockPlanV1::lez(
+                PreparedFirstLockSubmissionV1::new(
+                    FirstLockStepV1::LezInitialize,
+                    [0xb1; 32],
+                    vec![0xe1],
+                )
+                .expect("initialize"),
+                PreparedFirstLockSubmissionV1::new(
+                    FirstLockStepV1::LezFund,
+                    [0xb2; 32],
+                    vec![0xe2],
+                )
+                .expect("fund"),
+            )
+            .expect("maker plan"),
+        )
+        .await
+        .expect("durable maker intent");
+    let evidence = FirstLockConfirmedEvidenceV1::new(
+        FirstLockStepV1::LezFund,
+        [0xb2; 32],
+        "sqlite-maker-lock-rollback",
+        100,
+    )
+    .expect("maker evidence");
+
+    let raw = Connection::open(&path).expect("open fault injector");
+    raw.execute_batch(
+        "CREATE TRIGGER fail_maker_intent_close
+         BEFORE UPDATE OF closed_revision ON zec_sdk_maker_lock_intents
+         WHEN NEW.closed_revision IS NOT NULL
+         BEGIN
+             SELECT RAISE(FAIL, 'forced maker intent close failure');
+         END;",
+    )
+    .expect("install maker close trigger");
+    assert!(active.project_maker_lock(evidence.clone()).await.is_err());
+    assert_eq!(
+        (active.status(), active.revision()),
+        (Phase::TakerLockConfirmed, 1)
+    );
+    let state: (i64, i64, i64) = raw
+        .query_row(
+            "SELECT a.active_revision,
+                    (SELECT COUNT(*) FROM zec_sdk_maker_lock_transitions t
+                     WHERE t.local_role = a.local_role AND t.swap_id = a.swap_id),
+                    (SELECT COUNT(*) FROM zec_sdk_maker_lock_intents i
+                     WHERE i.local_role = a.local_role AND i.swap_id = a.swap_id
+                       AND i.closed_revision IS NULL)
+             FROM zec_sdk_agreements a
+             WHERE a.local_role = 'maker' AND a.swap_id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("inspect rolled-back maker state");
+    assert_eq!(state, (1, 0, 1));
+
+    raw.execute_batch("DROP TRIGGER fail_maker_intent_close;")
+        .expect("remove maker close trigger");
+    active
+        .project_maker_lock(evidence)
+        .await
+        .expect("retry maker projection");
+    assert_eq!(
+        (active.status(), active.revision()),
+        (Phase::BothLegsLocked, 2)
+    );
+}
+
+#[tokio::test]
 async fn canonical_lez_maker_observation_survives_sqlite_close_and_reopen() {
     let data = TempDir::new().expect("reverse maker observation store");
     let path = data.path().join("reverse-maker-observation.sqlite3");
