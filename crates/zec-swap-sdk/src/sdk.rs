@@ -7,12 +7,13 @@ use crate::{
     FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentV1, FirstLockObservation,
     FirstLockPlanV1, FirstLockProjectionCommit, FirstLockTransitionV1, LezFirstLockPort,
     LezObservationEventV1, LezObservationReconciliationV1, LezObservationTrackerV1,
-    LezTakerFirstLockObservationPort, MakerFundingEligibilityOutcome, NegotiationChannel,
-    ObserveTakerFirstLockOutcome, ObservedTakerFirstLockTransitionV1, OfferDiscovery,
-    PreparedFirstLockSubmissionV1, RecoveryStore, TakerFirstLockObservationV1, ZcashFirstLockPort,
-    ZcashObservationEvent, ZcashObservationReconciliation, ZcashObservationTracker,
-    ZcashTakerFirstLockObservationPort, ZecAgreementV1, ZecLifecycleAction, ZecSdkError,
-    lifecycle::next_action, observed_taker_lock::taker_first_lock_step,
+    LezTakerFirstLockObservationPort, MakerFundingEligibilityOutcome, MakerLockDriveOutcome,
+    MakerLockIntentV1, MakerLockTransitionV1, NegotiationChannel, ObserveTakerFirstLockOutcome,
+    ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
+    RecoveryStore, TakerFirstLockObservationV1, ZcashFirstLockPort, ZcashObservationEvent,
+    ZcashObservationReconciliation, ZcashObservationTracker, ZcashTakerFirstLockObservationPort,
+    ZecAgreementV1, ZecLifecycleAction, ZecSdkError, lifecycle::next_action,
+    observed_taker_lock::taker_first_lock_step,
 };
 
 /// Complete pre-lock facade composed from application-supplied ports.
@@ -396,7 +397,8 @@ where
 
     async fn replay_first_lock_transition(&mut self) -> Result<(), ZecSdkError> {
         if self.local_participant() == Participant::Maker {
-            return self.replay_observed_taker_first_lock_transition().await;
+            self.replay_observed_taker_first_lock_transition().await?;
+            return self.replay_maker_lock_transition().await;
         }
         let Some(transition) = self
             .store
@@ -416,6 +418,88 @@ where
                 })?;
         self.coordinator = next;
         Ok(())
+    }
+
+    async fn replay_maker_lock_transition(&mut self) -> Result<(), ZecSdkError> {
+        let Some(transition) = self
+            .store
+            .load_maker_lock_transition(self.coordinator.id(), self.revision)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Ok(());
+        };
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        self.revision =
+            self.revision
+                .checked_add(1)
+                .ok_or(ZecSdkError::InvalidProjectionRevision {
+                    expected: u64::MAX,
+                    actual: u64::MAX,
+                })?;
+        self.coordinator = next;
+        Ok(())
+    }
+
+    /// Atomically projects confirmed maker-lock evidence after the plan is durable.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a missing/substituted intent, invalid evidence or phase, an invalid
+    /// store revision, or a structured persistence failure.
+    pub async fn project_maker_lock(
+        &mut self,
+        evidence: FirstLockConfirmedEvidenceV1,
+    ) -> Result<FirstLockProjectionCommit, ZecSdkError> {
+        if self.local_participant() != Participant::Maker {
+            return Err(ZecSdkError::WrongRole {
+                expected: Participant::Maker,
+                actual: self.local_participant(),
+            });
+        }
+        let swap_id = self.coordinator.id().clone();
+        let Some(intent) = self
+            .store
+            .load_maker_lock_intent(&swap_id)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Err(ZecSdkError::MissingMakerLockIntent);
+        };
+        let transition =
+            MakerLockTransitionV1::from_active(self.agreement(), &intent, self.revision, evidence)?;
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        let expected_revision =
+            self.revision
+                .checked_add(1)
+                .ok_or(ZecSdkError::InvalidProjectionRevision {
+                    expected: u64::MAX,
+                    actual: u64::MAX,
+                })?;
+        let commit = match self.store.commit_maker_lock_transition(&transition).await {
+            Ok(commit) => commit,
+            Err(error) => {
+                let probe = self
+                    .store
+                    .load_maker_lock_transition(&swap_id, self.revision)
+                    .await
+                    .map_err(|probe_error| ZecSdkError::Persistence(Box::new(probe_error)))?;
+                if probe.as_ref() == Some(&transition) {
+                    FirstLockProjectionCommit::new(expected_revision, true)
+                } else {
+                    return Err(ZecSdkError::Persistence(Box::new(error)));
+                }
+            }
+        };
+        if commit.revision() != expected_revision {
+            return Err(ZecSdkError::InvalidProjectionRevision {
+                expected: expected_revision,
+                actual: commit.revision(),
+            });
+        }
+        self.coordinator = next;
+        self.revision = commit.revision();
+        Ok(commit)
     }
 
     async fn replay_observed_taker_first_lock_transition(&mut self) -> Result<(), ZecSdkError> {
@@ -813,7 +897,14 @@ where
         };
         intent.validate_for_active(self.agreement(), self.local_participant(), self.revision())?;
 
-        match intent.plan() {
+        self.drive_lock_plan(intent.plan()).await
+    }
+
+    async fn drive_lock_plan(
+        &self,
+        plan: &FirstLockPlanV1,
+    ) -> Result<FirstLockDriveOutcome, ZecSdkError> {
+        match plan {
             FirstLockPlanV1::Zcash { funding } => self.drive_zcash_step(funding).await,
             FirstLockPlanV1::Lez { initialize, fund } => {
                 match self.observe_lez_step(initialize).await? {
@@ -883,6 +974,75 @@ where
             .submit_first_lock(self.agreement(), submission)
             .await
             .map_err(|error| ZecSdkError::LezFirstLock(Box::new(error)))
+    }
+}
+
+impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
+where
+    Lez: LezFirstLockPort + LezTakerFirstLockObservationPort,
+    Zcash: ZcashFirstLockPort + ZcashTakerFirstLockObservationPort,
+    Store: RecoveryStore,
+{
+    /// Rechecks the taker's canonical lock, durably stages the exact maker plan,
+    /// then observes/submits only the opposite-chain step fixed by the agreement.
+    ///
+    /// Every invocation consumes a fresh eligibility result. A noneligible result
+    /// creates no maker intent and invokes no maker submission operation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a wrong role/phase/chain plan, changed durable material, invalid
+    /// observation history, or a structured store/chain failure.
+    pub async fn drive_maker_lock(
+        &mut self,
+        plan: FirstLockPlanV1,
+    ) -> Result<MakerLockDriveOutcome, ZecSdkError> {
+        if self.local_participant() != Participant::Maker {
+            return Err(ZecSdkError::WrongRole {
+                expected: Participant::Maker,
+                actual: self.local_participant(),
+            });
+        }
+        let eligibility = self.refresh_maker_funding_eligibility().await?;
+        if !matches!(eligibility, MakerFundingEligibilityOutcome::Eligible { .. }) {
+            return Ok(MakerLockDriveOutcome::AwaitingEligibility(eligibility));
+        }
+
+        let swap_id = self.coordinator.id().clone();
+        let intent = if let Some(intent) = self
+            .store
+            .load_maker_lock_intent(&swap_id)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        {
+            intent.validate_for_active(self.agreement(), self.revision)?;
+            if intent.plan() != &plan {
+                return Err(ZecSdkError::MakerLockConflict);
+            }
+            intent
+        } else {
+            let intent = MakerLockIntentV1::from_active(
+                self.agreement(),
+                self.local_participant(),
+                self.revision,
+                plan,
+            )?;
+            match self
+                .store
+                .create_maker_lock_intent(&intent)
+                .await
+                .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+            {
+                CreateFirstLockOutcome::Created | CreateFirstLockOutcome::ExistingSame => {}
+                CreateFirstLockOutcome::Conflict => {
+                    return Err(ZecSdkError::MakerLockConflict);
+                }
+            }
+            intent
+        };
+        Ok(MakerLockDriveOutcome::Lock(
+            self.drive_lock_plan(intent.plan()).await?,
+        ))
     }
 }
 

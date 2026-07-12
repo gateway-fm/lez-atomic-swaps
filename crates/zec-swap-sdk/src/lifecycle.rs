@@ -6,7 +6,7 @@ use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
-    FirstLockIntentError, FirstLockTransitionError, LezObservationTrackerError,
+    FirstLockIntentError, FirstLockTransitionError, LezObservationTrackerError, MakerLockError,
     ObservationTrackerError, ObservedTakerFirstLockTransitionError, ZecAgreementV1Error,
 };
 
@@ -60,6 +60,9 @@ pub enum ZecSdkError {
     /// Maker-local taker-lock evidence or durable projection is invalid.
     #[error(transparent)]
     InvalidObservedTakerFirstLockTransition(#[from] ObservedTakerFirstLockTransitionError),
+    /// Maker second-lock recovery material or confirmed transition is invalid.
+    #[error(transparent)]
+    InvalidMakerLock(#[from] MakerLockError),
     /// Canonical Zcash observation history is stale, duplicated, or missing replacement proof.
     #[error(transparent)]
     InvalidZcashObservationHistory(#[from] ObservationTrackerError),
@@ -91,9 +94,15 @@ pub enum ZecSdkError {
     /// A different exact first-lock plan already occupies this role-local swap key.
     #[error("a conflicting immutable first-lock plan is already durable")]
     FirstLockConflict,
+    /// A different exact maker-lock plan already occupies this role-local swap key.
+    #[error("a conflicting immutable maker-lock plan is already durable")]
+    MakerLockConflict,
     /// No durable first-lock plan exists for the active agreement.
     #[error("no durable first-lock plan exists for the active agreement")]
     MissingFirstLockIntent,
+    /// No durable maker-lock plan exists for the active agreement.
+    #[error("no durable maker-lock plan exists for the active agreement")]
+    MissingMakerLockIntent,
     /// First-lock intent may only be staged from the fresh offered phase.
     #[error("first-lock intent requires Offered; active phase is {0:?}")]
     FirstLockNotOffered(Phase),

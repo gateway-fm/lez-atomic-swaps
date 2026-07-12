@@ -8,15 +8,15 @@ pub use zec_recovery::SqliteZecRecoveryStore;
 
 use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId};
 use lez_zec_swap_sdk::{
-    FirstLockRecordError, ObservationRecordError, ObservedTakerFirstLockTransitionError,
-    ZcashObservationEventRecordV1, ZecAgreementV1Error, ZecBindingRecordError, ZecSwapBinding,
-    ZecSwapBindingRecordV1, revalidate_historical_event,
+    FirstLockRecordError, MakerLockError, MakerLockRecordError, ObservationRecordError,
+    ObservedTakerFirstLockTransitionError, ZcashObservationEventRecordV1, ZecAgreementV1Error,
+    ZecBindingRecordError, ZecSwapBinding, ZecSwapBindingRecordV1, revalidate_historical_event,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 6;
+const DATABASE_SCHEMA_VERSION: i64 = 7;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_BINDING_PAYLOAD_VERSION: i64 = 1;
@@ -266,6 +266,12 @@ pub enum StoreError {
     /// A primitive SDK first-lock record failed full context revalidation.
     #[error("persisted SDK first-lock record is invalid")]
     FirstLockRecord(#[from] FirstLockRecordError),
+    /// A primitive SDK maker-lock record failed full context revalidation.
+    #[error("persisted SDK maker-lock record is invalid")]
+    MakerLockRecord(#[from] MakerLockRecordError),
+    /// A durable maker-lock transition cannot apply to the reconstructed aggregate.
+    #[error("persisted SDK maker-lock transition is invalid")]
+    MakerLock(#[from] MakerLockError),
     /// A maker-local taker-lock observation record failed revalidation.
     #[error("persisted maker taker-lock observation is invalid")]
     ObservedTakerFirstLock(#[from] ObservedTakerFirstLockTransitionError),
@@ -1141,6 +1147,45 @@ fn migrate_zec_sdk_recovery(transaction: &rusqlite::Transaction<'_>) -> Result<(
             UNIQUE (local_role, swap_id, committed_revision),
             FOREIGN KEY (local_role, swap_id)
                 REFERENCES zec_sdk_agreements(local_role, swap_id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS zec_sdk_maker_lock_intents (
+            local_role          TEXT NOT NULL CHECK (local_role = 'maker'),
+            swap_id             TEXT NOT NULL,
+            staged_revision     INTEGER NOT NULL CHECK (staged_revision >= 0),
+            payload_version     INTEGER NOT NULL CHECK (payload_version > 0),
+            payload_json        TEXT NOT NULL,
+            closed_revision     INTEGER CHECK (
+                closed_revision IS NULL OR closed_revision > staged_revision
+            ),
+            PRIMARY KEY (local_role, swap_id),
+            UNIQUE (local_role, swap_id, staged_revision),
+            FOREIGN KEY (local_role, swap_id)
+                REFERENCES zec_sdk_agreements(local_role, swap_id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS zec_sdk_open_maker_lock_intents
+            ON zec_sdk_maker_lock_intents (local_role, swap_id)
+            WHERE closed_revision IS NULL;
+        CREATE TABLE IF NOT EXISTS zec_sdk_maker_lock_transitions (
+            local_role          TEXT NOT NULL CHECK (local_role = 'maker'),
+            swap_id             TEXT NOT NULL,
+            predecessor_revision INTEGER NOT NULL CHECK (predecessor_revision >= 0),
+            committed_revision  INTEGER NOT NULL CHECK (
+                committed_revision = predecessor_revision + 1
+            ),
+            intent_staged_revision INTEGER NOT NULL CHECK (
+                intent_staged_revision >= 0
+                AND intent_staged_revision <= predecessor_revision
+            ),
+            payload_version     INTEGER NOT NULL CHECK (payload_version > 0),
+            payload_json        TEXT NOT NULL,
+            PRIMARY KEY (local_role, swap_id, predecessor_revision),
+            UNIQUE (local_role, swap_id, intent_staged_revision),
+            FOREIGN KEY (local_role, swap_id)
+                REFERENCES zec_sdk_agreements(local_role, swap_id) ON DELETE CASCADE,
+            FOREIGN KEY (local_role, swap_id, intent_staged_revision)
+                REFERENCES zec_sdk_maker_lock_intents(
+                    local_role, swap_id, staged_revision
+                ) ON DELETE CASCADE
         ) STRICT;
         ",
     )?;

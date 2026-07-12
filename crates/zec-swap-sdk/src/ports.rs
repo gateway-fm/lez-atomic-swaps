@@ -7,8 +7,9 @@ use lez_swap_core::{Participant, SwapId};
 
 use crate::{
     AcceptedZecAgreementEnvelopeV1, CreateFirstLockOutcome, FirstLockIntentV1,
-    FirstLockObservation, FirstLockProjectionCommit, FirstLockTransitionV1,
-    ObservedTakerFirstLockTransitionV1, PreparedFirstLockSubmissionV1, TakerFirstLockObservationV1,
+    FirstLockObservation, FirstLockProjectionCommit, FirstLockTransitionV1, MakerLockIntentV1,
+    MakerLockTransitionV1, ObservedTakerFirstLockTransitionV1, PreparedFirstLockSubmissionV1,
+    TakerFirstLockObservationV1,
 };
 
 /// Authenticated, expiring offer discovery supplied by a Delivery adapter.
@@ -213,4 +214,29 @@ pub trait RecoveryStore: Clone + Send + Sync {
         swap_id: &SwapId,
         predecessor_revision: u64,
     ) -> Result<Option<ObservedTakerFirstLockTransitionV1>, Self::Error>;
+
+    /// Atomically creates the maker's exact opposite-chain plan before any node call.
+    async fn create_maker_lock_intent(
+        &self,
+        intent: &MakerLockIntentV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error>;
+
+    /// Loads the pending maker plan; its staging revision may precede the active head.
+    async fn load_maker_lock_intent(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<MakerLockIntentV1>, Self::Error>;
+
+    /// Atomically commits maker funding and closes its retained intent.
+    async fn commit_maker_lock_transition(
+        &self,
+        transition: &MakerLockTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error>;
+
+    /// Loads one exact maker-funding predecessor slot for probe/restart replay.
+    async fn load_maker_lock_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<MakerLockTransitionV1>, Self::Error>;
 }

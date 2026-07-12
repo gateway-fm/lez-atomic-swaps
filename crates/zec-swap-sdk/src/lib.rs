@@ -7,6 +7,8 @@ mod funding;
 mod lez_derivation;
 mod lez_observation;
 mod lifecycle;
+mod maker_lock;
+mod maker_lock_record;
 mod observation;
 mod observation_record;
 mod observed_taker_lock;
@@ -55,6 +57,13 @@ pub use lez_observation::{
     LezObservationTrackerError, LezObservationTrackerV1, LezStableTipV1,
 };
 pub use lifecycle::{BoxPortError, ClaimPreimage, ZecLifecycleAction, ZecSdkError};
+pub use maker_lock::{
+    MakerLockDriveOutcome, MakerLockError, MakerLockIntentV1, MakerLockTransitionV1,
+};
+pub use maker_lock_record::{
+    MAKER_LOCK_RECORD_SCHEMA_V1, MakerLockIntentRecordV1, MakerLockRecordError,
+    MakerLockTransitionRecordV1,
+};
 
 pub use observation::{
     CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval, ExpectedBip199Output,

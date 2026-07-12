@@ -18,7 +18,7 @@ pub const FIRST_LOCK_RECORD_SCHEMA_V1: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-struct FirstLockSubmissionRecordV1 {
+pub(crate) struct FirstLockSubmissionRecordV1 {
     step: Box<str>,
     expected_submission_id: [u8; 32],
     exact_submission: Vec<u8>,
@@ -35,7 +35,7 @@ impl From<&PreparedFirstLockSubmissionV1> for FirstLockSubmissionRecordV1 {
 }
 
 impl FirstLockSubmissionRecordV1 {
-    fn revalidate(&self) -> Result<PreparedFirstLockSubmissionV1, FirstLockRecordError> {
+    pub(crate) fn revalidate(&self) -> Result<PreparedFirstLockSubmissionV1, FirstLockRecordError> {
         PreparedFirstLockSubmissionV1::new(
             parse_step(&self.step)?,
             self.expected_submission_id,
@@ -47,7 +47,7 @@ impl FirstLockSubmissionRecordV1 {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "plan", rename_all = "snake_case", deny_unknown_fields)]
-enum FirstLockPlanRecordV1 {
+pub(crate) enum FirstLockPlanRecordV1 {
     Zcash {
         funding: FirstLockSubmissionRecordV1,
     },
@@ -72,7 +72,7 @@ impl From<&FirstLockPlanV1> for FirstLockPlanRecordV1 {
 }
 
 impl FirstLockPlanRecordV1 {
-    fn revalidate(&self) -> Result<FirstLockPlanV1, FirstLockRecordError> {
+    pub(crate) fn revalidate(&self) -> Result<FirstLockPlanV1, FirstLockRecordError> {
         match self {
             Self::Zcash { funding } => {
                 FirstLockPlanV1::zcash(funding.revalidate()?).map_err(FirstLockRecordError::Intent)
@@ -163,7 +163,7 @@ impl FirstLockIntentRecordV1 {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-struct FirstLockEvidenceRecordV1 {
+pub(crate) struct FirstLockEvidenceRecordV1 {
     schema_version: u16,
     step: Box<str>,
     expected_submission_id: [u8; 32],
@@ -184,7 +184,7 @@ impl From<&FirstLockConfirmedEvidenceV1> for FirstLockEvidenceRecordV1 {
 }
 
 impl FirstLockEvidenceRecordV1 {
-    fn revalidate(&self) -> Result<FirstLockConfirmedEvidenceV1, FirstLockRecordError> {
+    pub(crate) fn revalidate(&self) -> Result<FirstLockConfirmedEvidenceV1, FirstLockRecordError> {
         require_schema("first-lock evidence", self.schema_version)?;
         FirstLockConfirmedEvidenceV1::new(
             parse_step(&self.step)?,
@@ -325,7 +325,10 @@ pub enum FirstLockRecordError {
     Core(lez_swap_core::Error),
 }
 
-fn require_schema(record: &'static str, actual: u16) -> Result<(), FirstLockRecordError> {
+pub(crate) fn require_schema(
+    record: &'static str,
+    actual: u16,
+) -> Result<(), FirstLockRecordError> {
     if actual == FIRST_LOCK_RECORD_SCHEMA_V1 {
         Ok(())
     } else {
@@ -333,14 +336,14 @@ fn require_schema(record: &'static str, actual: u16) -> Result<(), FirstLockReco
     }
 }
 
-const fn participant_name(participant: Participant) -> &'static str {
+pub(crate) const fn participant_name(participant: Participant) -> &'static str {
     match participant {
         Participant::Maker => "maker",
         Participant::Taker => "taker",
     }
 }
 
-fn parse_participant(value: &str) -> Result<Participant, FirstLockRecordError> {
+pub(crate) fn parse_participant(value: &str) -> Result<Participant, FirstLockRecordError> {
     match value {
         "maker" => Ok(Participant::Maker),
         "taker" => Ok(Participant::Taker),

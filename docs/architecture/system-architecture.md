@@ -24,13 +24,14 @@ flowchart TB
         LC["Logos Core lifecycle adapter"]
         MD["Maker daemon"]
         CO["Durable swap coordinator"]
-        DB[("SQLite schema v6 SDK recovery + runtime journal<br/>encryption and outbox planned")]
+        DB[("SQLite schema v7 SDK recovery + runtime journal<br/>encryption and outbox planned")]
         PS["BTC / XMR / ZEC pair SDKs"]
         ZA["Canonical dual-signed LEZ/ZEC agreement validator"]
         ZTX["ZEC BIP-199 V5 transaction SDK"]
         CA["Validated chain adapters"]
         MOA["Maker-only taker-lock observation"]
         OJ["Contiguous exact-tracker journal<br/>canonical / depth / same-tip replacement / removal"]
+        ME["Fresh-gated durable maker second lock"]
     end
 
     subgraph TakerDevice["Taker-controlled device"]
@@ -71,6 +72,7 @@ flowchart TB
     PS --> ZTX
     PS --> CA
     PS --> MOA
+    PS --> ME
     ZTX --> CA
 
     T --> TC
@@ -90,6 +92,9 @@ flowchart TB
     MOA -->|"validated event"| OJ
     OJ -->|"atomic role-local projection"| DB
     OJ -->|"full-history replay"| CO
+    ME -->|"fresh exact-head query"| MOA
+    ME -->|"intent and confirmed transition"| DB
+    ME -.->|"typed production action pending"| CA
     TS --> LEZ
     TS --> BTC
     TS --> XMR
@@ -116,24 +121,27 @@ one bounded canonical wire contract. Negotiation yields untrusted bytes;
 role-fixed SDK instances validate and persist an accepted envelope before
 activation, then revalidate its exact durable wire on resume without retaining
 transport or raw adapter handles. The current executable SDK store is a
-role-fixed production SQLite adapter for accepted agreement, first-lock intent,
-taker projection, and maker-independent observation replay. The remaining M2
-work is typed later effects and actor integration; chain adapters must
+role-fixed production SQLite adapter for accepted agreement, both lock intents,
+taker projection, maker-independent observation replay, and confirmed maker
+funding. The remaining M2 work is claims/refunds, production adapters, and actor
+integration; chain adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
-observation is non-authorizing today: forward Zcash persists and revalidates
+observation alone is non-authorizing: forward Zcash persists and revalidates
 the complete canonical output type plus ordered canonical, depth, atomic
 same-tip replacement, and affirmative exact-head removal events. The SDK and
 store fold `ZcashObservationTracker`, so duplicate polls write nothing and
-changed inclusion without replacement fails. Schema v6 rejects orphan, holey,
+changed inclusion without replacement fails. Schema v7 rejects orphan, holey,
 or history-incompatible rows and catches stale instances up before returning.
-The distinct fresh pre-second-lock call now replays and re-queries the exact
-head without caching authority, writing a duplicate, or changing
-`next_action`. Reverse LEZ now rejects primitive ID/depth assertions and
+The maker effect invokes the distinct fresh pre-second-lock call internally,
+then persists the exact direction-fixed opposite-chain plan before submission.
+Confirmed Maker evidence commits atomically and replays to `BothLegsLocked` in
+both directions without caching authority in `next_action`. Reverse LEZ rejects
+primitive ID/depth assertions and
 persists a stable primitive snapshot bound to the signed channel/genesis,
 public fund transaction, canonical block/tip, complete SPEL metadata, exact
 custody, depth, and finality policy. SDK and SQLite replay rerun the same
 validator. The dependency-free exact-head tracker is now folded by the active
-SDK and the schema-v6 journal. Exact duplicates write no row, while a
+SDK and the schema-v7 journal. Exact duplicates write no row, while a
 same-inclusion Pending-to-Finalized update advances one contiguous revision and
 survives close/reopen. The pure tracker also proves affirmative same-tip
 replacement, stale-evidence rejection, and fatal finalized-history changes.
@@ -144,8 +152,8 @@ replays and re-queries the exact head and checks signed depth; local Pending
 remains eligible when depth is sufficient, and no result is cached as
 authority. The public Finalized/typed-finality policy is unit-tested but remains
 unreachable while public agreement activation is fail-closed. The official-wire
-LEZ node port, reviewed public deployment, and maker effect that
-consumes eligibility internally remain; the SDK returns Wait.
+LEZ node port, reviewed public deployment, maker-effect fault hardening,
+claims/refunds, and independent actor composition remain.
 
 The dashed state reflects delivery honestly. The deterministic core, SQLite
 repository, maker daemon, authenticated maker CLI flow, LEZ semantic
@@ -369,7 +377,7 @@ legs: removal pins the exact ID, suspends claims, exact reappearance restores
 authority, conflicting replacement fails, and refunds remain available.
 Independent leg policies also make maker-depth regression suspend and depth
 recovery restore claims. The runtime event-to-participant path is now solid: the
-isolated two-Zebra fixture drives real canonical and removal evidence through schema-v6 SQLite
+isolated two-Zebra fixture drives real canonical and removal evidence through schema-v7 SQLite
 close/reopen and exact replay. The composed LEZ/ZEC actor corridor remains
 dashed M2 work. RPC errors or absence never imply removal: a detach event
 requires a stable replacement tip and a changed canonical hash at the prior

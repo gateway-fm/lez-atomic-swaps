@@ -1,8 +1,8 @@
 # ADR 0013: Deterministic SDK core with optional async orchestration
 
-Status: concrete ZEC negotiation, activation, resume, first-lock intent, taker
-projection, and maker-independent SQLite observation/replay implemented; chain
-and transport adapters in progress — 2026-07-12
+Status: concrete ZEC negotiation, activation, both lock effects, and schema-v7
+observation/transition replay implemented; chain and transport adapters in
+progress -- 2026-07-12
 
 ```mermaid
 flowchart TB
@@ -13,7 +13,7 @@ flowchart TB
     Negotiation --> Validator["Bounded concrete agreement validator"]
     Validator --> Accepted["Role-fixed accepted envelope"]
     Accepted --> Store["RecoveryStore contract"]
-    Store --> SQLite["Role-fixed schema-v6 SQLite adapter"]
+    Store --> SQLite["Role-fixed schema-v7 SQLite adapter"]
     Store --> Active["ActiveZecSwap without transport or raw adapter handles"]
     Active --> Intent["Durable exact first-lock intent"]
     Intent --> Observe["Observe before byte-identical submission"]
@@ -21,11 +21,13 @@ flowchart TB
     Projection --> Active
     Active --> MakerObserve["Maker-only observation of taker lock"]
     MakerObserve --> MakerProjection["Role-local atomic observation projection"]
-    MakerProjection --> Journal["Contiguous schema v6 observation journal"]
+    MakerProjection --> Journal["Contiguous schema v7 observation journal"]
     Journal --> Reconcile["Exact tracker fold: canonical, depth, same-tip replacement, or removal"]
     Reconcile --> Active
     Reconcile --> Fresh["Fresh non-cached exact-head eligibility requery"]
-    Fresh -.-> MakerEffect["Maker second-lock effect consumes result internally"]
+    Fresh --> MakerEffect["Durable maker second-lock effect"]
+    MakerEffect --> MakerIntent["Schema-v7 maker intent and transition"]
+    MakerIntent --> SQLite
     Active -.-> Runtime["Reference async coordinator"]
     Runtime -.-> Nodes["Typed chain ports"]
     SQLite -.-> Encrypted["Encrypted later-effect secret storage"]
@@ -33,7 +35,7 @@ flowchart TB
     Core --> Tests["Model/vector/replay tests"]
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Runtime,Nodes,Encrypted,MakerEffect planned;
+    class Runtime,Nodes,Encrypted planned;
 ```
 
 ## Context
@@ -111,8 +113,11 @@ fresh eligibility call replays and re-queries, but deliberately caches no
 authority. It now applies to both deterministic-local directions and checks
 signed depth explicitly. The public-policy unit seam distinguishes LEZ
 Pending/Safe from Finalized, but public activation remains fail-closed. It leaves
-`next_action` at `Wait`; the future maker second-lock
-method must consume the result internally in the same operation.
+`next_action` at `Wait` because permission is never cached. The implemented
+maker method consumes the fresh result internally, persists the exact
+opposite-chain plan, and atomically projects confirmed funding. Both directions
+replay from schema-v7 SQLite at `BothLegsLocked`; production node ports and
+maker-effect fault hardening remain.
 
 ## Consequences
 

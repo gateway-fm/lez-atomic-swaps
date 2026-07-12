@@ -104,8 +104,8 @@ security databases, pins/checksums, availability risks, and fallback policy.
 | RFP F4 ZEC chain ordering | 2026-07-11 M2 source reconciliation found M1's generic role-relative claim/refund prose allowed ZEC-before-LEZ in `TakerSellsLez` | RED required typed participants and chain-ordered bounds; GREEN adds 2 regressions and 23-test workspace pass: LEZ always reveals/refunds before later ZEC in both directions | Reprove all M1 gates, tag corrective commit `m1-complete.1`, then keep these vectors as M2 entry tests |
 | CI security and quality gates | 2026-07-11 workflow audit found the advisory scope implicit and a malformed `rzup` install command in the scheduled LEZ lane | CI hard-fails advisories, bans, licenses, sources, Rust format/clippy/test/docs, ShellCheck, traceability, Mermaid, Docker isolation, and SHA-pinned Trivy high/critical scanning of the Zebra image | Run the exact local equivalents, then require every GitHub job before each milestone tag |
 | ZEC full-lifecycle SDK boundary | 2026-07-12 `sdk_lifecycle` could not import discovery, negotiation, concrete agreement, active-swap, recovery-store, or secret types | Eight integrated cases prove independent role-fixed SDKs receive bounded untrusted wire, validate the same dual-signed agreement, persist exact accepted envelopes before activation, treat exact retry as idempotent and changed same-key input as conflict, reject adversarial role/revision/wire/swap-ID resume, and expose an `ActiveZecSwap` with no transport, chain, or store handles; full package has 72 passing tests plus the intentional Docker gate | Add typed LEZ/Zcash action ports, atomic transition persistence, both-direction happy/refund/restart/concurrency actors, then actual nodes |
-| Crash-safe ZEC first-lock intent and projection | Initial active chain capabilities were inert; a naive RPC-success transition would lose unknown outcomes and combined LEZ initialize/fund into one unsafe effect | Taker staging/retry/projection plus maker-independent direction-selected observation commit before memory changes, probe unknown outcomes, reject corrupt primitive records, and replay from separate role-local stores; forward Zcash rejects primitive ID/depth assertions and durably journals complete canonical evidence, atomic same-tip replacement, same-inclusion depth change, and affirmative removal through `ZcashObservationTracker`; reverse LEZ rejects primitive assertions and revalidates signed channel/genesis plus stable transaction/block/metadata/exact-custody snapshots after SQLite reopen; its `LezObservationTrackerV1` is now folded by both the active SDK and schema-v6 SQLite journal, so exact duplicates write no row and a same-inclusion Pending-to-Finalized update survives close/reopen at the next contiguous revision; complete primitive removal/replacement records now make nonfinal removal, atomic same-tip replacement, exact duplicate suppression, stale-old-head rejection, and current-head removal durable across restart; the observation port receives the replayed exact head; the store folds the agreement-selected tracker before append, rejects orphan/holey/duplicate/stale/poison histories, rolls back trigger failures, and catches stale instances up to the durable head; both deterministic-local directions now expose a distinct non-cached fresh eligibility call that replays then re-queries and rejects stable absence, instability, or insufficient depth; the public-v0.2 policy seam requires Finalized and returns typed awaiting-finality outcomes, but public agreement activation remains fail-closed pending reviewed deployment; eligibility remains non-authorizing until a maker effect consumes it internally; SDK package has 86 ordinary tests plus one doctest and store has 23 tests | Connect official node wire types to production ports; implement the maker second-lock effect that consumes eligibility in one operation, then claims/refunds |
-| SQLite SDK-recovery schema | Schema v4 had no role-local accepted agreement, open/closed effect intent, separate active revision, or exact transition slot for the concrete SDK contract | Schema-v6 strict tables, primitive JSON DTOs, and cloneable role-fixed `SqliteZecRecoveryStore` preserve immutable acceptance separately from active revision, atomically close taker intent, and use a contiguous ordered maker journal; every load revalidates agreement, role, revision, bytes, evidence, history compatibility, and exact row range | Extend the proven adapter schema/transaction pattern to later effects; add process-kill-at-every-boundary and secret encryption in M5 without weakening the M2 first-lock guarantees |
+| Crash-safe ZEC lock intents and projection | Initial active chain capabilities were inert; a naive RPC-success transition would lose unknown outcomes and combined LEZ initialize/fund into one unsafe effect | Taker staging/projection and maker-independent canonical observation are durable and replayed. The maker now consumes a fresh exact-head eligibility result inside `drive_maker_lock`, persists the exact opposite-chain plan before submission, preserves separate LEZ initialize/fund steps, atomically projects confirmed Maker evidence, and resumes at `BothLegsLocked` in both signed directions. SDK has 87 ordinary tests plus one doctest; store has 24 tests. | Harden maker retry/reorg/unknown-outcome boundaries, connect official node wire types, then implement claims/refunds and actor processes |
+| SQLite SDK-recovery schema | Schema v4 had no role-local accepted agreement, open/closed effect intent, separate active revision, or exact transition slot for the concrete SDK contract | Schema-v7 strict tables and primitive DTOs retain taker and maker intents separately. Maker transitions bind the exact staged revision while allowing intervening observation revisions; one immediate transaction inserts evidence, compare-and-swaps active revision, and closes the intent. Union-journal replay rejects holes and duplicate predecessor slots and reconstructs `BothLegsLocked` after close/reopen. | Add maker-effect fault/corruption matrices, then extend the pattern to claims/refunds; process-kill coverage and secret encryption remain M5 |
 | Zcash public-testnet route and funding research | M2 required self-hosted/public node, wallet, faucet, privacy, and flakiness guidance but no supported route was selected | Primary official sources select self-host Zebra 6.0.0 with loopback cookie RPC; document optional Zallet alpha.4 funding and faucet/Discord fallback; no official public Zebra RPC or Zallet arbitrary HTLC signer was found | Implement project-owned disposable transparent signing, rehearse the guide on a clean host, obtain TAZ, and retain live both-direction evidence; research alone does not satisfy U10 or M2 |
 | LEZ v0.2 public-runtime security route | Fresh 2026-07-12 audit found the official v0.2.0 runtime graph still carries Hickory 0.25 and upstream explicitly ignores RUSTSEC-2026-0118/0119; SPEL PR #238 remains open and unreviewed despite green CI | Pin LEZ v0.2.0 at `a58fbce...` and SPEL PR head `df17acd...` only for engineering; port the guest and advisory-free `V03State` semantics first; build a thin official-type deployment/query client that excludes the Logos/libp2p/Hickory path; bind channel, ELF, ImageID, ProgramId, transaction, and block in evidence | Add RED lock-graph gates proving Hickory and LGPL exceptions are absent, port the guest/client, deploy and exercise actor calls, then keep public-profile enablement and the M2 tag fail-closed until SPEL is reviewed/merged or an explicit immutable-head security exception is recorded |
 | Concrete LEZ/ZEC agreement | Initial generic LEZ terms did not bind exact chain identities, custody, transaction destinations/fees, funding inputs, wire bounds, or both actor signatures | Seventeen focused tests prove bounded exact decoding, dual low-S signatures, both directions, fail-closed public deployment, actual LEZ/ZEC deadlines, exact PDA/ATA derivation, accepted-at resume, redacted diagnostics, and agreement-derived funding/claim/refund requests; the exact dependency-light derivation source also matches pinned upstream v0.2 `lee_core`, SPEL multi-seed, and ATA-core types | Independently recompute deployed chain-derived terms in effect adapters, retain public deployment fail-closed behavior until reviewed, and compose the accepted agreement through real actors and nodes |
@@ -421,7 +421,7 @@ outputs above.
   profile/coordinator confirmation-policy mismatch, and event-envelope mismatch
   fail before revision, journal, or aggregate mutation.
 - [x] Add the operator/security alert outbox (introduced in schema v4 and
-  retained through schema v6). Conflict warnings and
+  retained through schema v7). Conflict warnings and
   terminal critical alerts commit with event+aggregate; Applied emits none;
   forced insertion failure rolls back; replay/restart preserve one cursor and
   acknowledgment without changing protocol state.
@@ -431,7 +431,7 @@ outputs above.
 - [x] Prove the actual-node persistence boundary: canonical funding, immutable
   binding, close/reopen, unchanged fresh-query suppression, affirmative
   two-Zebra fork removal, second close/reopen, and exact retry pass through the
-  maker runtime on schema v6. Daemon-integrated polling remains open.
+  maker runtime on schema v7. Daemon-integrated polling remains open.
 - [x] Establish the concrete ZEC SDK pre-lock/activation/resume boundary:
   role-fixed async discovery and negotiation treat bytes as untrusted; separate
   role stores persist exact accepted envelopes before activation; exact replay
@@ -459,11 +459,15 @@ outputs above.
   Maker-independent observation now selects only the agreement-derived maker
   node route, commits without taker intent, survives SQLite restart, and remains
   non-authorizing: SDK next action is `Wait`. Forward Zcash now requires and
-  persists complete canonical evidence. Its ordered schema-v6 journal now
+  persists complete canonical evidence. Its ordered schema-v7 journal now
   commits/replays depth changes, atomic replacements, and affirmative removals
   across restarts and rejects discontinuous or history-incompatible rows.
   The distinct fresh pre-second-lock call now replays and re-queries without
-  caching authority or changing `next_action`. Reverse LEZ now rejects
+  caching authority or changing `next_action`. The maker effect invokes that
+  check internally on every drive, persists the direction-fixed opposite-chain
+  plan before submission, and atomically commits confirmed Maker evidence.
+  Both deterministic-local directions reach `BothLegsLocked` and replay there
+  after schema-v7 SQLite close/reopen. Reverse LEZ now rejects
   primitive transaction-ID/depth assertions and accepts only a stable canonical
   escrow snapshot bound to signed channel/genesis, exact public fund
   program/signer/account order, canonical inclusion and tip, complete SPEL
@@ -474,9 +478,8 @@ outputs above.
   `u128` amounts above `u64`; a single-field negative matrix covers chain,
   transaction, metadata, and custody substitutions. The production RPC
   adapter, official-wire transaction decoding, token-custody observation
-  matrix, second-lock effect that consumes eligibility in the same
-  operation, claims, and refunds are remaining work, so this item is still
-  open.
+  matrix, maker-effect hardening, claims, and refunds are remaining work, so
+  this item is still open.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
   nodes. The LEZ
   Unix-millisecond/core Unix-second boundary is typed, checked, conservatively

@@ -1,9 +1,8 @@
 # ADR 0017: Durable intent before first-lock effects
 
-Status: taker intent/projection and maker-independent SQLite observation/replay
-proven; canonical LEZ native observation and restart replay are proven, while
-official-wire LEZ decoding, exact-head reorg reconciliation, and production chain
-adapters pending — 2026-07-12
+Status: taker and maker lock intents/projections plus canonical observation and
+schema-v7 restart replay proven; production chain adapters and maker-effect
+fault hardening pending -- 2026-07-12
 
 ```mermaid
 flowchart TB
@@ -33,7 +32,7 @@ flowchart TB
     Maker["Independent maker SDK + store"] --> MakerObserve["Observe through agreement-selected node"]
     MakerObserve -->|"absent, unstable, or RPC error"| MakerWait["Remain Offered; write nothing"]
     MakerObserve -->|"canonical Zcash or LEZ assertion"| MakerProjection["Atomic maker-role transition + revision"]
-    MakerProjection --> Journal["Schema v6 contiguous role-local journal"]
+    MakerProjection --> Journal["Schema v7 contiguous role-local journal"]
     Journal --> Tracker["Agreement-selected Zcash or LEZ exact tracker fold"]
     Tracker --> Canonical["Canonical or same-inclusion depth event"]
     Tracker --> Replaced["Atomic same-tip removal plus replacement event"]
@@ -44,10 +43,13 @@ flowchart TB
     MakerCore -->|"poll again after restart"| MakerObserve
     MakerCore --> Gate["SDK next action remains Wait"]
     Gate --> Fresh["Fresh non-cached exact-head eligibility requery"]
-    Fresh -.-> MakerEffect["Maker second-lock effect consumes eligibility internally"]
+    Fresh --> MakerEffect["Durable maker second-lock effect"]
+    MakerEffect --> MakerIntent["Separate schema-v7 maker intent"]
+    MakerIntent --> MakerTransition["Atomic Maker evidence transition"]
+    MakerTransition --> MakerBoth["BothLegsLocked and restart replay"]
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Observe,Submit,Fund,MakerEffect planned;
+    class Observe,Submit,Fund planned;
 ```
 
 ## Context
@@ -117,10 +119,10 @@ after restart, so observation history cannot authorize the maker lock. The
 forward maker actor now commits and replays canonical evidence, an atomic
 different-transaction replacement, a same-inclusion depth change, and
 affirmative removal across revisions 1 through 4. The package currently passes
-86 ordinary tests plus one doctest, with the real-Zebra Docker case
+87 ordinary tests plus one doctest, with the real-Zebra Docker case
 intentionally delegated to its isolated runner.
 
-Ten production-store cases instantiate the SDK with a cloneable role-fixed
+Eleven production-store cases instantiate the SDK with a cloneable role-fixed
 `SqliteZecRecoveryStore`. They prove exact agreement replay and changed same-key
 conflict; maker/taker isolation for the same application ID; an open intent
 durable before effects; one immediate transaction that inserts the transition,
@@ -144,7 +146,7 @@ and full revalidation on every load. Forward Zcash now requires the existing
 complete canonical output type and persists its primitive event record; a
 production Zebra port must still assemble it from fresh stable RPC snapshots.
 The ordered SDK removal/replacement journal is implemented for maker-observed
-forward Zcash. Before every append/load, schema v6 proves the exact contiguous
+forward Zcash. Before every append/load, schema v7 proves the exact contiguous
 row range and folds all prior records through the agreement-selected exact
 tracker and the coordinator. Zcash replacement halves must share the same stable tip;
 duplicate canonical polls write nothing; changed inclusion requires explicit
@@ -156,12 +158,12 @@ exact duplicates write no row, and a historical payload-v1 `swap_id` record
 is upgraded according to the signed native/token asset before revalidation.
 Complete primitive LEZ removal/replacement records now survive restart, consume
 one predecessor slot, suppress exact duplicate replacement, and reject stale
-old-head removal without mutation. The official-wire node adapter remains. The SDK
-therefore exposes no maker second-lock submit method and returns Wait after
-maker projection. The distinct fresh pre-effect eligibility call now replays
-the durable head and re-queries the exact tracker head. It returns a
-revision-bound result without caching authority, adding a journal row, or
-changing `next_action`; a future maker effect must consume it internally in
-the same operation. Claim/refund
+old-head removal without mutation. The official-wire node adapter remains. The
+maker second-lock method now replays and re-queries the exact tracker head
+internally, persists a separate schema-v7 intent whose staging revision may
+precede its transition predecessor, and reaches `BothLegsLocked` in both
+directions after atomic commit. Union journal replay reconstructs that phase
+after close/reopen without caching authority in `next_action`. Maker
+retry/reorg fault hardening and claim/refund
 effects, production adapters, and real independent actors remain M2 work;
 Logos-owned live-release dependencies are tracked separately under ADR 0018.

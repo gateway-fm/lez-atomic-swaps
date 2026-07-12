@@ -42,7 +42,7 @@ current executable slices enforce:
   rebroadcast after restart, and separately recoverable LEZ initialize/fund
   steps; confirmed evidence is applied only after an atomic store commit or an
   exact unknown-outcome probe, and is replayed on resume. A role-fixed
-  schema-v6 SQLite adapter now proves exact replay, role isolation, retained
+  schema-v7 SQLite adapter now proves exact replay, role isolation, retained
   closed-intent validation, atomic rollback, corruption rejection, and
   close/reopen recovery. Its ordered maker journal durably replays canonical
   Zcash evidence, atomic reorg replacement, same-inclusion depth changes, and
@@ -57,11 +57,14 @@ current executable slices enforce:
   transaction/block/tip/output record against the signed agreement's exact
   HTLC output binding. Role-local input/change/fee/expiry policy constrains this
   SDK's own builder and is not a remote-wallet acceptance condition. These
-  first-lock observations remain non-authorizing. A distinct fresh eligibility
-  call replays the durable head, re-queries the exact canonical tracker head,
-  writes nothing when unchanged, and returns a non-cached revision-bound
-  result; `next_action` remains `Wait` because no maker effect exists to
-  consume it in the same operation. Both directions support this boundary.
+  first-lock observations remain non-authorizing on their own. A distinct fresh
+  eligibility call replays the durable head, re-queries the exact canonical
+  tracker head, writes nothing when unchanged, and returns a non-cached
+  revision-bound result. The maker effect now consumes that result internally,
+  persists the direction-fixed opposite-chain plan before submission, and
+  atomically projects confirmed Maker funding. Both directions reach
+  `BothLegsLocked` and survive schema-v7 SQLite close/reopen; `next_action`
+  still caches no permission.
   Reverse deterministic-local LEZ accepts a depth-sufficient exact head.
   The public-v0.2 policy seam additionally defines and unit-tests typed
   awaiting-finality outcomes until Bedrock reports Finalized, but public
@@ -74,13 +77,13 @@ current executable slices enforce:
   suppression, monotonic Pending/Safe/Finalized updates, affirmative same-tip
   replacement, stale/tip-regressing evidence rejection, and fatal
   finalized-history changes.
-  The active SDK and schema-v6 SQLite journal now fold the agreement-selected
+  The active SDK and schema-v7 SQLite journal now fold the agreement-selected
   LEZ tracker: exact duplicates write no row and same-inclusion finality/depth
   updates survive close/reopen. Affirmative nonfinal removal and atomic same-tip
   replacement now use complete primitive records, reject stale old-head
   evidence, consume one revision, and replay through SQLite. The official-wire
-  LEZ RPC adapter, later effects, and the
-  completed corridor remain.
+  LEZ RPC adapter, maker-effect hardening, claims/refunds, independent actors,
+  and the completed real-node corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),
