@@ -127,6 +127,30 @@ impl OperatorAlertRecordV1 {
         self.funded_by
     }
 
+    /// Removal or replacement event shape.
+    #[must_use]
+    pub const fn observed_event(&self) -> AlertObservedEvent {
+        self.observed_event
+    }
+
+    /// Exact detached funding transaction ID.
+    #[must_use]
+    pub const fn previous_transaction_id(&self) -> &str {
+        &self.previous_transaction_id
+    }
+
+    /// Newly canonical transaction ID for replacement alerts.
+    #[must_use]
+    pub fn canonical_transaction_id(&self) -> Option<&str> {
+        self.canonical_transaction_id.as_deref()
+    }
+
+    /// Absorbing lifecycle phase retained for terminal alerts.
+    #[must_use]
+    pub const fn terminal_phase(&self) -> Option<Phase> {
+        self.terminal_phase
+    }
+
     fn validate(&self) -> Result<(), StoreError> {
         let valid = match self.kind {
             OperatorAlertKind::ZcashReplacementConflict => {

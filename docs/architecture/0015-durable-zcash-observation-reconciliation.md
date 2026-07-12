@@ -131,8 +131,9 @@ immutable direction, probes unknown-outcome replay before core mutation, maps
 canonical/removal evidence, commits event plus aggregate atomically, and reloads
 across restart in both directions. It is not yet the production watcher: journal
 history is now revalidated and replayed into the exact tracker head, and an
-identical fresh requery is suppressed. Authenticated operator alert surfaces and
-actual two-Zebra store/restart evidence remain required.
+identical fresh requery is suppressed. Authenticated owner status/list/ack alert
+surfaces now pass across daemon restart. Actual two-Zebra store/restart evidence
+remains required.
 
 The SDK now defines a version-1 primitive binding record for the reviewed
 profile, network, branch, value, BIP-199 source terms, and both derived scripts.

@@ -7,7 +7,10 @@ use lez_swap_core::{
     Chain, ChainPosition, ClockBasis, ConfirmationPolicy, Error, Pair, Participant, Phase,
     RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
-use lez_swap_store::{EventCommit, OperatorAlertRecordV1, SqliteSwapStore, StoreError};
+use lez_swap_store::{
+    AlertObservedEvent, EventCommit, OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1,
+    OperatorAlertSeverity, SqliteSwapStore, StoreError,
+};
 use lez_zec_swap_sdk::{
     HistoricalReplayError, ZcashObservationEvent, ZcashObservationEventRecordV1,
     ZcashObservationTracker, ZecBindingRecordError, ZecRefundProfile, ZecSwapBinding,
@@ -370,6 +373,12 @@ pub struct SwapView {
     pub direction: SwapDirection,
     /// Current durable phase.
     pub phase: Phase,
+    /// Whether unacknowledged durable alerts require operator attention.
+    pub requires_attention: bool,
+    /// Number of unacknowledged durable alerts.
+    pub pending_alerts: u32,
+    /// Highest severity among unacknowledged alerts.
+    pub highest_alert_severity: Option<OperatorAlertSeverity>,
 }
 
 impl From<&SwapCoordinator> for SwapView {
@@ -379,6 +388,78 @@ impl From<&SwapCoordinator> for SwapView {
             pair: swap.pair(),
             direction: swap.direction(),
             phase: swap.phase(),
+            requires_attention: false,
+            pending_alerts: 0,
+            highest_alert_severity: None,
+        }
+    }
+}
+
+impl SwapView {
+    fn with_pending_alerts(
+        swap: &SwapCoordinator,
+        alerts: &[OperatorAlert],
+    ) -> Result<Self, StoreError> {
+        let pending_alerts =
+            u32::try_from(alerts.len()).map_err(|_| StoreError::RevisionOverflow)?;
+        let highest_alert_severity = alerts
+            .iter()
+            .map(|alert| alert.record().severity())
+            .max_by_key(|severity| match severity {
+                OperatorAlertSeverity::Warning => 0,
+                OperatorAlertSeverity::Critical => 1,
+            });
+        Ok(Self {
+            id: swap.id().as_str().into(),
+            pair: swap.pair(),
+            direction: swap.direction(),
+            phase: swap.phase(),
+            requires_attention: pending_alerts > 0,
+            pending_alerts,
+            highest_alert_severity,
+        })
+    }
+}
+
+/// Non-secret operator view of one durable alert.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorAlertView {
+    /// Stable local alert cursor.
+    pub sequence: u64,
+    /// Event/aggregate revision that created the alert.
+    pub aggregate_revision: u64,
+    /// Stable semantic kind.
+    pub kind: OperatorAlertKind,
+    /// Stable operator severity.
+    pub severity: OperatorAlertSeverity,
+    /// Participant whose ZEC funding evidence changed.
+    pub funded_by: Participant,
+    /// Removal or replacement shape.
+    pub observed_event: AlertObservedEvent,
+    /// Exact detached funding transaction ID.
+    pub previous_transaction_id: Box<str>,
+    /// Newly canonical transaction ID for replacement alerts.
+    pub canonical_transaction_id: Option<Box<str>>,
+    /// Retained terminal phase for terminal-reorg alerts.
+    pub terminal_phase: Option<Phase>,
+    /// Whether the owner acknowledged seeing this alert.
+    pub acknowledged: bool,
+}
+
+impl From<&OperatorAlert> for OperatorAlertView {
+    fn from(alert: &OperatorAlert) -> Self {
+        let record = alert.record();
+        Self {
+            sequence: alert.sequence(),
+            aggregate_revision: alert.aggregate_revision(),
+            kind: record.kind(),
+            severity: record.severity(),
+            funded_by: record.funded_by(),
+            observed_event: record.observed_event(),
+            previous_transaction_id: record.previous_transaction_id().into(),
+            canonical_transaction_id: record.canonical_transaction_id().map(Into::into),
+            terminal_phase: record.terminal_phase(),
+            acknowledged: alert.acknowledged(),
         }
     }
 }
@@ -437,6 +518,26 @@ pub struct StatusRequest {
     pub id: Box<str>,
 }
 
+/// Parameters for listing durable operator alerts.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AlertListRequest {
+    /// Stable swap identifier.
+    pub id: Box<str>,
+    /// Return alerts with a sequence strictly greater than this cursor.
+    pub after_sequence: u64,
+    /// Include alerts already acknowledged by the owner.
+    pub include_acknowledged: bool,
+}
+
+/// Parameters for acknowledging one durable operator alert.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AlertAcknowledgeRequest {
+    /// Stable swap identifier.
+    pub id: Box<str>,
+    /// Stable alert cursor returned by `swap_alerts`.
+    pub alert_sequence: u64,
+}
+
 /// Builds the RPC module shared by daemon transports and direct contract tests.
 ///
 /// # Errors
@@ -488,7 +589,55 @@ pub fn rpc_module(context: MakerRpc) -> anyhow::Result<RpcModule<MakerRpc>> {
                 .load(&id)
                 .map_err(internal_store_error)?
                 .ok_or_else(|| rpc_error(NOT_FOUND, "swap not found"))?;
-            Ok(SwapView::from(&swap))
+            let alerts = store
+                .list_operator_alerts(&id, 0, false)
+                .map_err(internal_store_error)?;
+            SwapView::with_pending_alerts(&swap, &alerts).map_err(internal_store_error)
+        },
+    )?;
+    module.register_blocking_method::<RpcResult<Vec<OperatorAlertView>>, _>(
+        "swap_alerts",
+        |params, context, _| {
+            let request: AlertListRequest = params.one()?;
+            let id = SwapId::new(request.id).map_err(invalid_request)?;
+            let store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            if store.load(&id).map_err(internal_store_error)?.is_none() {
+                return Err(rpc_error(NOT_FOUND, "swap not found"));
+            }
+            store
+                .list_operator_alerts(&id, request.after_sequence, request.include_acknowledged)
+                .map(|alerts| alerts.iter().map(OperatorAlertView::from).collect())
+                .map_err(internal_store_error)
+        },
+    )?;
+    module.register_blocking_method::<RpcResult<SwapView>, _>(
+        "swap_alert_acknowledge",
+        |params, context, _| {
+            let request: AlertAcknowledgeRequest = params.one()?;
+            let id = SwapId::new(request.id).map_err(invalid_request)?;
+            let store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            let swap = store
+                .load(&id)
+                .map_err(internal_store_error)?
+                .ok_or_else(|| rpc_error(NOT_FOUND, "swap not found"))?;
+            store
+                .acknowledge_operator_alert(&id, request.alert_sequence)
+                .map_err(|error| match error {
+                    StoreError::MissingOperatorAlert => {
+                        rpc_error(NOT_FOUND, "operator alert not found")
+                    }
+                    other => internal_store_error(other),
+                })?;
+            let alerts = store
+                .list_operator_alerts(&id, 0, false)
+                .map_err(internal_store_error)?;
+            SwapView::with_pending_alerts(&swap, &alerts).map_err(internal_store_error)
         },
     )?;
     Ok(module)

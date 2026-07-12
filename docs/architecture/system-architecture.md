@@ -334,6 +334,8 @@ and still requires a fresh stable Zebra reconciliation before effects.
 Completed/refunded removal or replacement is now journaled without erasing the
 lifecycle result and is classified as `TerminalReorgDetected`; its critical
 alert now commits atomically and survives replay/restart.
+Authenticated maker status/list/ack RPC and CLI flows surface that durable alert;
+acknowledgment clears attention metadata without changing the protocol phase.
 Post-dependent replacement now commits chain truth atomically, retains the
 protocol-committed transaction ID in the participant-specific reorg phase, and
 returns `ReplacementConflict`; pre-dependent replacement and same-transaction

@@ -291,6 +291,37 @@ atomic swap+binding and event+aggregate rollback, immutable rebinding, lower
 commit/probe enforcement, and restart-safe loading. These runtime/store tests do
 not substitute for the actual-node command below.
 
+Reproduce the owner-facing incident path through the real authenticated daemon
+and CLI with:
+
+```sh
+cargo test --locked -p lez-maker-node --test operator_journey \
+  owner_lists_and_acknowledges_durable_alert_across_daemon_restart \
+  -- --exact --nocapture
+```
+
+That journey creates a genuine post-dependent Zcash replacement conflict through
+the maker runtime, starts the daemon on an ephemeral loopback port, and uses the
+owner CLI to verify the attention summary, list the durable alert, restart the
+daemon, and acknowledge the same alert. A wrong bearer token must be rejected.
+For an equivalent already-running daemon, the owner commands are:
+
+```sh
+target/debug/lez-maker --rpc-url "$RPC_URL" --rpc-token "$RPC_TOKEN" \
+  status --id "$SWAP_ID"
+target/debug/lez-maker --rpc-url "$RPC_URL" --rpc-token "$RPC_TOKEN" \
+  alerts --id "$SWAP_ID"
+target/debug/lez-maker --rpc-url "$RPC_URL" --rpc-token "$RPC_TOKEN" \
+  acknowledge-alert --id "$SWAP_ID" --alert "$ALERT_SEQUENCE"
+target/debug/lez-maker --rpc-url "$RPC_URL" --rpc-token "$RPC_TOKEN" \
+  alerts --id "$SWAP_ID" --all
+```
+
+Acknowledgment records operator receipt only: it neither changes the swap phase
+nor makes an unsafe claim/refund eligible. There is intentionally no production
+RPC that injects watcher events; the automated journey seeds the conflict through
+the same typed maker runtime boundary used by the watcher.
+
 Use a fresh run ID and let the repository runner own the complete Docker
 lifecycle:
 

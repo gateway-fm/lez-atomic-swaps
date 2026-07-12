@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use jsonrpsee::{core::client::ClientT, rpc_params};
 use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClientBuilder};
-use lez_maker_node::{CreateSwapRequest, RecoveryRequest, StatusRequest, SwapView};
+use lez_maker_node::{
+    AlertAcknowledgeRequest, AlertListRequest, CreateSwapRequest, OperatorAlertView,
+    RecoveryRequest, StatusRequest, SwapView,
+};
 use lez_swap_core::{ClockBasis, Pair, SwapDirection};
 
 #[derive(Parser)]
@@ -46,6 +49,20 @@ enum Command {
     Status {
         #[arg(long)]
         id: String,
+    },
+    Alerts {
+        #[arg(long)]
+        id: String,
+        #[arg(long, default_value_t = 0)]
+        after: u64,
+        #[arg(long)]
+        all: bool,
+    },
+    AcknowledgeAlert {
+        #[arg(long)]
+        id: String,
+        #[arg(long = "alert")]
+        alert_sequence: u64,
     },
 }
 
@@ -101,14 +118,8 @@ impl From<PairArgument> for Pair {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
-    let mut headers = HeaderMap::new();
-    let mut authorization = HeaderValue::from_str(&format!("Bearer {}", arguments.rpc_token))?;
-    authorization.set_sensitive(true);
-    headers.insert("authorization", authorization);
-    let client = HttpClientBuilder::default()
-        .set_headers(headers)
-        .build(&arguments.rpc_url)?;
-    let view: SwapView = match arguments.command {
+    let client = rpc_client(&arguments.rpc_url, &arguments.rpc_token)?;
+    let output = match arguments.command {
         Command::CreateSwap {
             id,
             pair,
@@ -171,13 +182,46 @@ async fn main() -> anyhow::Result<()> {
                 confirmations,
                 recovery,
             };
-            client.request("swap_create", rpc_params![request]).await?
+            let view: SwapView = client.request("swap_create", rpc_params![request]).await?;
+            serde_json::to_value(view)?
         }
         Command::Status { id } => {
             let request = StatusRequest { id: id.into() };
-            client.request("swap_status", rpc_params![request]).await?
+            let view: SwapView = client.request("swap_status", rpc_params![request]).await?;
+            serde_json::to_value(view)?
+        }
+        Command::Alerts { id, after, all } => {
+            let request = AlertListRequest {
+                id: id.into(),
+                after_sequence: after,
+                include_acknowledged: all,
+            };
+            let alerts: Vec<OperatorAlertView> =
+                client.request("swap_alerts", rpc_params![request]).await?;
+            serde_json::to_value(alerts)?
+        }
+        Command::AcknowledgeAlert { id, alert_sequence } => {
+            let request = AlertAcknowledgeRequest {
+                id: id.into(),
+                alert_sequence,
+            };
+            let view: SwapView = client
+                .request("swap_alert_acknowledge", rpc_params![request])
+                .await?;
+            serde_json::to_value(view)?
         }
     };
-    println!("{}", serde_json::to_string(&view)?);
+    println!("{}", serde_json::to_string(&output)?);
     Ok(())
+}
+
+fn rpc_client(rpc_url: &str, rpc_token: &str) -> anyhow::Result<jsonrpsee_http_client::HttpClient> {
+    let mut headers = HeaderMap::new();
+    let mut authorization = HeaderValue::from_str(&format!("Bearer {rpc_token}"))?;
+    authorization.set_sensitive(true);
+    headers.insert("authorization", authorization);
+    HttpClientBuilder::default()
+        .set_headers(headers)
+        .build(rpc_url)
+        .map_err(Into::into)
 }

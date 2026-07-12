@@ -34,7 +34,7 @@ flowchart TB
     end
 
     Operator --> CLI
-    CLI -->|"HTTP JSON-RPC plus Bearer token; swap_create and swap_status"| Daemon
+    CLI -->|"Bearer HTTP JSON-RPC; create, status, alert list, alert acknowledge"| Daemon
     Daemon -->|"rusqlite; caller-selected local file; Mutex-serialized"| Store
     RuntimeTest -->|"Direct maker runtime API; no network RPC"| Store
     ZebraTest -->|"Unauthenticated JSON-RPC on ephemeral host-loopback port"| ZebraPrimary
@@ -47,9 +47,11 @@ The maker daemon hard-refuses a non-loopback bind and defaults to
 `127.0.0.1:0`. Its ready file contains only the selected URL; the Bearer token
 comes from `LEZ_MAKER_RPC_TOKEN` and is never written there. The CLI default is
 `http://127.0.0.1:9944`, so an ephemeral daemon must be called with the ready URL.
-The only registered methods today are `swap_create` and `swap_status`. There is
-no daemon-integrated chain watcher, chain-key owner, health method, or production
-ZEC ingestion RPC yet.
+Registered methods are `swap_create`, `swap_status`, `swap_alerts`, and
+`swap_alert_acknowledge`. Status includes pending count/highest severity; list
+supports a cursor and acknowledged-history flag. Acknowledgment never changes
+protocol phase. There is no daemon-integrated chain watcher, chain-key owner,
+health method, or production ZEC ingestion RPC yet.
 
 Each Zebra container listens on `0.0.0.0:18232` inside its isolated project
 network. Compose publishes it as a different ephemeral `127.0.0.1` host port.
@@ -120,8 +122,8 @@ it never opens SQLite or becomes protocol authority.
 
 | Component | Status | Transport and bind | Authentication / authority | Methods exercised or required | Lifecycle and isolation |
 |---|---|---|---|---|---|
-| `lez-maker-daemon` | Running prototype | HTTP JSON-RPC; default `127.0.0.1:0`; non-loopback rejected | Bearer token from hidden environment; minimum 24 bytes; header checked before JSON parsing | Actual: `swap_create`, `swap_status` | Operator/test-owned process; caller-selected SQLite path; Ctrl-C shutdown |
-| `lez-maker` | Running prototype | HTTP client; default `127.0.0.1:9944`; explicit ready URL for ephemeral daemon | Authorization header marked sensitive | Actual CLI create/status mapping to the two daemon methods | Independent operator process |
+| `lez-maker-daemon` | Running prototype | HTTP JSON-RPC; default `127.0.0.1:0`; non-loopback rejected | Bearer token from hidden environment; minimum 24 bytes; header checked before JSON parsing | Actual: `swap_create`, `swap_status`, `swap_alerts`, `swap_alert_acknowledge` | Operator/test-owned process; caller-selected SQLite path; Ctrl-C shutdown |
+| `lez-maker` | Running prototype | HTTP client; default `127.0.0.1:9944`; explicit ready URL for ephemeral daemon | Authorization header marked sensitive | Actual CLI: `create-swap`, `status`, `alerts`, `acknowledge-alert` | Independent operator process |
 | SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority | Aggregate, revision, ZEC journal, immutable binding, operator-alert list/ack APIs | WAL, `FULL` synchronous, schema v4, one process mutex today |
 | Primary Zebra | Running in ignored E2E | Container `0.0.0.0:18232`; ephemeral host `127.0.0.1` mapping | Regtest fixture has no cookie auth; signed transactions and consensus remain authoritative | `getblockcount`, `generate`, `getblockhash`, `getblock`, `getblockheader`, `submitblock`, `getaddressutxos`, `getrawtransaction`, `sendrawtransaction`, `getblockchaininfo` | Unique Compose project and tmpfs state per `RUN_ID` |
 | Fork Zebra | Running in ignored E2E | Same container port; distinct ephemeral host-loopback mapping | Same Regtest-only policy | Same RPC set; produces independent higher-work branch | Separate tmpfs state; no initial peer; fixture-controlled block relay |
