@@ -353,7 +353,7 @@ exact wire decoding, both low-S signatures, every signed-field mutation, both
 directions, deterministic-local execution terms, fail-closed public deployment,
 actual LEZ/ZEC deadlines, role/digest binding, agreement-derived
 fees/destinations/expiry/funding requests, exact native/token PDA/ATA accounts,
-accepted-at resume, and redacted diagnostics. The second runs 23 integrated
+accepted-at resume, and redacted diagnostics. The second runs 26 integrated
 cases in which independent maker and taker SDK instances with fixed roles
 receive untrusted bytes, validate the concrete record, persist separate accepted
 envelopes before activation, and resume the original wire after transcript
@@ -388,8 +388,13 @@ instance catches up from the durable transition without another submission.
 Projection fault injection leaves the maker intent open and in-memory phase
 unchanged; an unknown successful commit is adopted only after exact probe.
 Stable absence in either direction creates no maker intent and submits nothing.
+Accept-then-fail fixtures cover LEZ initialize, LEZ fund, and Zcash fund: each
+restart observes the accepted step before proceeding and submission counts do
+not increase. A taker removal after LEZ initialization holds the maker in
+`Offered`, submits no fund through stable absence, and resumes only after a
+validated replacement.
 The store command runs
-12 production-adapter cases over a real temporary
+14 production-adapter cases over a real temporary
 schema-v7 database: exact replay/conflict, same-ID role isolation, retained
 closed intent, taker and maker trigger-injected rollback,
 future/malformed/torn/orphan/holey-state rejection, poison-append rejection,
@@ -410,7 +415,7 @@ proves both directions stage at revision 1, commit an intervening canonical
 depth/finality update at revision 2 without another maker submission, then
 close the intent and maker transition at revision 3 before reopen at
 `BothLegsLocked`. Production chain
-RPC adapters, maker submission/reorg/corruption hardening, claims/refunds, and
+RPC adapters, actual-node transport/reorg repetition, claims/refunds, and
 independent actor processes are remaining work.
 
 Before starting Zebra, reproduce spend recognition independently from SDK

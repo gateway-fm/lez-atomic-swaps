@@ -152,7 +152,7 @@ replays and re-queries the exact head and checks signed depth; local Pending
 remains eligible when depth is sufficient, and no result is cached as
 authority. The public Finalized/typed-finality policy is unit-tested but remains
 unreachable while public agreement activation is fail-closed. The official-wire
-LEZ node port, reviewed public deployment, maker-effect fault hardening,
+LEZ node port, reviewed public deployment, actual-node maker fault evidence,
 claims/refunds, and independent actor composition remain.
 
 The dashed state reflects delivery honestly. The deterministic core, SQLite

@@ -117,7 +117,7 @@ Pending/Safe from Finalized, but public activation remains fail-closed. It leave
 maker method consumes the fresh result internally, persists the exact
 opposite-chain plan, and atomically projects confirmed funding. Both directions
 replay from schema-v7 SQLite at `BothLegsLocked`; production node ports and
-maker-effect fault hardening remain.
+actual-node transport/reorg repetition remain.
 
 ## Consequences
 

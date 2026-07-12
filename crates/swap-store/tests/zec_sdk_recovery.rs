@@ -110,6 +110,7 @@ impl ZcashTakerFirstLockObservationPort for MakerObservation {
 struct MakerHappyPort {
     taker_observation: std::sync::Arc<std::sync::Mutex<TakerFirstLockObservationV1>>,
     submitted: std::sync::Arc<std::sync::Mutex<Vec<FirstLockStepV1>>>,
+    fail_after_accept: std::sync::Arc<std::sync::Mutex<Vec<FirstLockStepV1>>>,
 }
 
 impl MakerHappyPort {
@@ -117,6 +118,7 @@ impl MakerHappyPort {
         Self {
             taker_observation: std::sync::Arc::new(std::sync::Mutex::new(taker_observation)),
             submitted: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            fail_after_accept: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -152,6 +154,27 @@ impl MakerHappyPort {
 
     fn submitted_steps(&self) -> Vec<FirstLockStepV1> {
         self.submitted.lock().expect("submitted-step lock").clone()
+    }
+
+    fn fail_after_accept(&self, step: FirstLockStepV1) {
+        self.fail_after_accept
+            .lock()
+            .expect("submit-failure lock")
+            .push(step);
+    }
+
+    fn submit(&self, submission: &PreparedFirstLockSubmissionV1) -> Result<(), TestPortError> {
+        self.record_submission(submission);
+        if self
+            .fail_after_accept
+            .lock()
+            .expect("submit-failure lock")
+            .contains(&submission.step())
+        {
+            Err(TestPortError("node accepted before transport failure"))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -205,8 +228,7 @@ impl LezFirstLockPort for MakerHappyPort {
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
     ) -> Result<(), Self::Error> {
-        self.record_submission(submission);
-        Ok(())
+        self.submit(submission)
     }
 }
 
@@ -227,8 +249,7 @@ impl ZcashFirstLockPort for MakerHappyPort {
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
     ) -> Result<(), Self::Error> {
-        self.record_submission(submission);
-        Ok(())
+        self.submit(submission)
     }
 }
 
@@ -735,6 +756,117 @@ async fn maker_second_lock_happy_path_survives_sqlite_reopen_in_both_directions(
     }
 }
 
+#[tokio::test]
+async fn unknown_maker_submissions_survive_sqlite_reopen_in_both_directions() {
+    for (id, direction) in [
+        ("sqlite-unknown-maker-lez", SwapDirection::TakerSellsForeign),
+        ("sqlite-unknown-maker-zcash", SwapDirection::TakerSellsLez),
+    ] {
+        let data = TempDir::new().expect("unknown maker submission store");
+        let path = data.path().join("unknown-maker-submission.sqlite3");
+        assert_sqlite_unknown_maker_submission(&path, id, direction).await;
+    }
+}
+
+async fn assert_sqlite_unknown_maker_submission(
+    path: &std::path::Path,
+    id: &str,
+    direction: SwapDirection,
+) {
+    let accepted = accept(
+        &agreement_wire_direction(id, FixtureVariant::Local, direction),
+        Participant::Maker,
+    );
+    let observation = match direction {
+        SwapDirection::TakerSellsForeign => TakerFirstLockObservationV1::CanonicalZcash(Box::new(
+            canonical_zcash_taker_lock(accepted.agreement()),
+        )),
+        SwapDirection::TakerSellsLez => TakerFirstLockObservationV1::CanonicalLez(Box::new(
+            canonical_lez_taker_lock(accepted.agreement()),
+        )),
+    };
+    let chain = MakerHappyPort::new(observation);
+    let store = SqliteZecRecoveryStore::open(path, Participant::Maker)
+        .expect("open unknown-submission store");
+    let mut active = ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        chain.clone(),
+        chain.clone(),
+        store,
+    )
+    .activate(accepted)
+    .await
+    .expect("activate maker");
+    active
+        .observe_taker_first_lock()
+        .await
+        .expect("canonical taker funding");
+    let (plan, _, evidence) = maker_lock_fixture(direction);
+    match direction {
+        SwapDirection::TakerSellsForeign => {
+            chain.fail_after_accept(FirstLockStepV1::LezInitialize);
+            assert!(active.drive_maker_lock(plan.clone()).await.is_err());
+            drop(active);
+            let mut after_initialize = resume_sqlite_maker(path, id, chain.clone()).await;
+            chain.fail_after_accept(FirstLockStepV1::LezFund);
+            assert!(
+                after_initialize
+                    .drive_maker_lock(plan.clone())
+                    .await
+                    .is_err()
+            );
+            drop(after_initialize);
+            assert_eq!(
+                chain.submitted_steps(),
+                vec![FirstLockStepV1::LezInitialize, FirstLockStepV1::LezFund]
+            );
+        }
+        SwapDirection::TakerSellsLez => {
+            chain.fail_after_accept(FirstLockStepV1::ZcashFund);
+            assert!(active.drive_maker_lock(plan.clone()).await.is_err());
+            drop(active);
+            assert_eq!(chain.submitted_steps(), vec![FirstLockStepV1::ZcashFund]);
+        }
+    }
+    let submitted = chain.submitted_steps();
+    let mut final_attempt = resume_sqlite_maker(path, id, chain.clone()).await;
+    assert_eq!(
+        final_attempt
+            .drive_maker_lock(plan)
+            .await
+            .expect("accepted maker submission is observed"),
+        MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection)
+    );
+    assert_eq!(chain.submitted_steps(), submitted);
+    final_attempt
+        .project_maker_lock(evidence)
+        .await
+        .expect("project recovered maker lock");
+    assert_eq!(final_attempt.status(), Phase::BothLegsLocked);
+}
+
+async fn resume_sqlite_maker(
+    path: &std::path::Path,
+    id: &str,
+    chain: MakerHappyPort,
+) -> ActiveZecSwap<MakerHappyPort, MakerHappyPort, SqliteZecRecoveryStore> {
+    let store = SqliteZecRecoveryStore::open(path, Participant::Maker).expect("reopen maker store");
+    ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        chain.clone(),
+        chain,
+        store,
+    )
+    .resume(&SwapId::new(id).expect("swap ID"))
+    .await
+    .expect("resume maker")
+    .expect("maker agreement")
+}
+
 async fn assert_sqlite_maker_lock_happy_path(
     path: &std::path::Path,
     id: &str,
@@ -1059,6 +1191,66 @@ async fn maker_lock_trigger_failure_rolls_back_transition_revision_and_intent_cl
         (active.status(), active.revision()),
         (Phase::BothLegsLocked, 2)
     );
+}
+
+#[tokio::test]
+async fn corrupt_maker_intent_or_transition_fails_closed_after_reopen() {
+    for corrupt_intent in [true, false] {
+        let data = TempDir::new().expect("corrupt maker-lock store");
+        let path = data.path().join("corrupt-maker-lock.sqlite3");
+        let id = if corrupt_intent {
+            "sqlite-corrupt-maker-intent"
+        } else {
+            "sqlite-corrupt-maker-transition"
+        };
+        assert_sqlite_maker_lock_happy_path(&path, id, SwapDirection::TakerSellsForeign).await;
+        let raw = Connection::open(&path).expect("open corruption fixture");
+        if corrupt_intent {
+            raw.execute(
+                "UPDATE zec_sdk_maker_lock_intents SET payload_json = '{'
+                 WHERE local_role = 'maker' AND swap_id = ?1",
+                params![id],
+            )
+            .expect("corrupt retained maker intent");
+        } else {
+            let payload: String = raw
+                .query_row(
+                    "SELECT payload_json FROM zec_sdk_maker_lock_transitions
+                     WHERE local_role = 'maker' AND swap_id = ?1",
+                    params![id],
+                    |row| row.get(0),
+                )
+                .expect("maker transition payload");
+            let mut value: serde_json::Value =
+                serde_json::from_str(&payload).expect("transition JSON");
+            value["schema_version"] = serde_json::json!(2);
+            raw.execute(
+                "UPDATE zec_sdk_maker_lock_transitions SET payload_json = ?1
+                 WHERE local_role = 'maker' AND swap_id = ?2",
+                params![serde_json::to_string(&value).expect("future JSON"), id],
+            )
+            .expect("install future maker transition");
+        }
+        drop(raw);
+
+        let reopened = SqliteZecRecoveryStore::open(&path, Participant::Maker)
+            .expect("reopen corrupt maker-lock store");
+        let absent = MakerHappyPort::new(TakerFirstLockObservationV1::Absent);
+        assert!(
+            ZecPairSdk::new(
+                Participant::Maker,
+                NoDiscovery,
+                FixedNegotiation,
+                absent.clone(),
+                absent,
+                reopened,
+            )
+            .resume(&SwapId::new(id).expect("swap ID"))
+            .await
+            .is_err(),
+            "corrupt maker recovery rows must never reconstruct trusted state"
+        );
+    }
 }
 
 #[tokio::test]

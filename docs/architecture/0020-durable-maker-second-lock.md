@@ -102,6 +102,14 @@ accepted only after an exact transition probe. A real SQLite close-trigger
 failure rolls back the transition insert, agreement revision CAS, and intent
 closure; removing the trigger permits an exact retry.
 
+Accept-then-transport-failure tests cover both LEZ steps and Zcash funding. Each
+restart uses the same schema-v7 intent, observes the accepted identity, and
+never rebroadcasts. If the taker Zcash lock is removed after LEZ initialization,
+fresh eligibility returns to `Offered` and LEZ fund is withheld through stable
+absence; only a validated canonical replacement permits the exact fund step.
+Malformed retained maker intent JSON and a future transition schema both fail
+closed during reopen.
+
 ## Consequences
 
 Fresh eligibility is now consumed by a real durable maker effect and is no
@@ -109,8 +117,8 @@ longer merely advisory. `next_action` still does not cache permission. The same
 prepared-submission and typed chain-port contracts are reused instead of adding
 another RPC or serialization system.
 
-This proves the SDK and SQLite happy-path boundary, not the complete M2
+This proves the hardened SDK and SQLite lock boundary, not the complete M2
 corridor. Official LEZ v0.2 wire decoding, production Zebra/LEZ ports,
 independent maker/taker processes, claims, refunds, concurrency, public-testnet
-evidence, and recordings remain required. Retry, reorg, unknown-submission, and
-corruption hardening for the new maker effect follows the happy path.
+evidence, recordings, and repetition of transport/reorg faults against actual
+nodes remain required.
