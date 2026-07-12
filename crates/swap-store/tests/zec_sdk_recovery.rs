@@ -4,12 +4,15 @@ use lez_swap_store::SqliteZecRecoveryStore;
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, Bip199Contract, CreateFirstLockOutcome, ExpectedBip199Output,
     FirstLockConfirmedEvidenceV1, FirstLockPlanV1, FirstLockProjectionCommit, FirstLockStepV1,
-    LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, NegotiationChannel, NegotiationTranscriptV1,
-    OfferDiscovery, PreparedFirstLockSubmissionV1, RecoveryStore, ZEC_CONCRETE_AGREEMENT_SCHEMA_V1,
-    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecLezTermsV1,
-    ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1,
-    ZecRefundPlanV1, ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
-    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, LezTakerFirstLockObservationPort,
+    NegotiationChannel, NegotiationTranscriptV1, ObserveTakerFirstLockOutcome,
+    ObservedTakerFirstLockEvidenceV1, OfferDiscovery, PreparedFirstLockSubmissionV1, RecoveryStore,
+    TakerFirstLockObservationV1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V1,
+    ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
+    ZecAgreementRecordV1, ZecLezTermsV1, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1,
+    ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding,
+    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
+    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
@@ -62,6 +65,33 @@ impl NegotiationChannel for FixedNegotiation {
 
 #[derive(Clone, Copy, Debug)]
 struct NoChain;
+
+#[derive(Clone, Debug)]
+struct MakerObservation(TakerFirstLockObservationV1);
+
+#[async_trait]
+impl LezTakerFirstLockObservationPort for MakerObservation {
+    type Error = TestPortError;
+
+    async fn observe_taker_first_lock(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<TakerFirstLockObservationV1, Self::Error> {
+        Ok(self.0.clone())
+    }
+}
+
+#[async_trait]
+impl ZcashTakerFirstLockObservationPort for MakerObservation {
+    type Error = TestPortError;
+
+    async fn observe_taker_first_lock(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<TakerFirstLockObservationV1, Self::Error> {
+        Ok(self.0.clone())
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("{0}")]
@@ -429,6 +459,127 @@ async fn closed_intent_without_its_transition_fails_closed_on_resume() {
     assert!(matches!(
         pair_sdk.resume(&SwapId::new(id).expect("swap ID")).await,
         Err(ZecSdkError::Persistence(_))
+    ));
+}
+
+#[tokio::test]
+async fn maker_observation_is_role_local_and_survives_sqlite_reopen() {
+    let data = TempDir::new().expect("maker observation store");
+    let path = data.path().join("maker-observation.sqlite3");
+    let id = "sqlite-maker-observes-taker";
+    let observation = MakerObservation(TakerFirstLockObservationV1::Confirmed(
+        ObservedTakerFirstLockEvidenceV1::new(
+            FirstLockStepV1::ZcashFund,
+            "maker-canonical-taker-lock",
+            100,
+        )
+        .expect("confirmed maker-local evidence"),
+    ));
+    let store = SqliteZecRecoveryStore::open(&path, Participant::Maker).expect("open maker store");
+    let pair_sdk = ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        observation.clone(),
+        observation,
+        store.clone(),
+    );
+    let mut active = pair_sdk
+        .activate(accept(
+            &agreement_wire(id, FixtureVariant::Local),
+            Participant::Maker,
+        ))
+        .await
+        .expect("activate maker");
+    assert_eq!(
+        active
+            .observe_taker_first_lock()
+            .await
+            .expect("maker projects its own canonical observation"),
+        ObserveTakerFirstLockOutcome::Projected(FirstLockProjectionCommit::new(1, false))
+    );
+    assert_eq!(active.status(), Phase::TakerLockConfirmed);
+    let maker_transition = store
+        .load_observed_taker_first_lock_transition(&SwapId::new(id).expect("swap ID"), 0)
+        .await
+        .expect("load maker transition")
+        .expect("maker transition retained");
+    assert_eq!(
+        store
+            .commit_observed_taker_first_lock_transition(&maker_transition)
+            .await
+            .expect("exact maker transition replay"),
+        FirstLockProjectionCommit::new(1, true)
+    );
+
+    let raw = Connection::open(&path).expect("inspect maker recovery");
+    let (transition_count, intent_count, active_revision): (i64, i64, i64) = raw
+        .query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM zec_sdk_first_lock_transitions
+                 WHERE local_role = 'maker' AND swap_id = ?1),
+                (SELECT COUNT(*) FROM zec_sdk_first_lock_intents
+                 WHERE local_role = 'maker' AND swap_id = ?1),
+                active_revision
+             FROM zec_sdk_agreements
+             WHERE local_role = 'maker' AND swap_id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("maker rows");
+    assert_eq!((transition_count, intent_count, active_revision), (1, 0, 1));
+
+    drop(active);
+    drop(pair_sdk);
+    drop(store);
+    let reopened =
+        SqliteZecRecoveryStore::open(&path, Participant::Maker).expect("reopen maker store");
+    let resumed = ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        MakerObservation(TakerFirstLockObservationV1::Absent),
+        MakerObservation(TakerFirstLockObservationV1::Absent),
+        reopened,
+    )
+    .resume(&SwapId::new(id).expect("swap ID"))
+    .await
+    .expect("maker resume")
+    .expect("maker agreement");
+    assert_eq!(resumed.status(), Phase::TakerLockConfirmed);
+    assert_eq!(resumed.revision(), 1);
+
+    drop(resumed);
+    assert_orphan_future_maker_transition_fails_closed(&path, id).await;
+}
+
+async fn assert_orphan_future_maker_transition_fails_closed(path: &std::path::Path, id: &str) {
+    let raw = Connection::open(path).expect("inject orphan future maker transition");
+    raw.execute(
+        "INSERT INTO zec_sdk_first_lock_transitions (
+            local_role, swap_id, predecessor_revision, committed_revision,
+            payload_version, payload_json
+        ) VALUES ('maker', ?1, 1, 2, 1, '{}')",
+        params![id],
+    )
+    .expect("inject orphan future maker transition");
+    drop(raw);
+    let corrupt =
+        SqliteZecRecoveryStore::open(path, Participant::Maker).expect("reopen corrupt maker store");
+    let result = ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        MakerObservation(TakerFirstLockObservationV1::Absent),
+        MakerObservation(TakerFirstLockObservationV1::Absent),
+        corrupt,
+    )
+    .resume(&SwapId::new(id).expect("swap ID"))
+    .await;
+    assert!(matches!(
+        result,
+        Err(ZecSdkError::Persistence(error))
+            if error.to_string().contains("internally inconsistent")
     ));
 }
 

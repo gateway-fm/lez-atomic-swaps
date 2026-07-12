@@ -5,7 +5,10 @@ use std::error::Error;
 use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::{FirstLockIntentError, FirstLockTransitionError, ZecAgreementV1Error};
+use crate::{
+    FirstLockIntentError, FirstLockTransitionError, ObservedTakerFirstLockTransitionError,
+    ZecAgreementV1Error,
+};
 
 /// A SHA-256 claim preimage that is redacted, zeroized, and not serializable.
 #[derive(Zeroize, ZeroizeOnDrop)]
@@ -54,6 +57,9 @@ pub enum ZecSdkError {
     /// Confirmed first-lock evidence or its durable transition is invalid.
     #[error(transparent)]
     InvalidFirstLockTransition(#[from] FirstLockTransitionError),
+    /// Maker-local taker-lock evidence or durable projection is invalid.
+    #[error(transparent)]
+    InvalidObservedTakerFirstLockTransition(#[from] ObservedTakerFirstLockTransitionError),
     /// A new activation must begin at durable revision zero.
     #[error("new LEZ/ZEC agreement has invalid initial revision {0}")]
     InvalidActivationRevision(u64),
@@ -108,6 +114,12 @@ pub enum ZecSdkError {
     /// Zcash first-lock observation or submission failed.
     #[error("Zcash first-lock adapter failed")]
     ZcashFirstLock(#[source] BoxPortError),
+    /// Maker observation of the taker's LEZ first lock failed.
+    #[error("LEZ taker-first-lock observation adapter failed")]
+    LezTakerFirstLockObservation(#[source] BoxPortError),
+    /// Maker observation of the taker's Zcash first lock failed.
+    #[error("Zcash taker-first-lock observation adapter failed")]
+    ZcashTakerFirstLockObservation(#[source] BoxPortError),
 }
 
 /// Next high-level role action derived without accepting peer messages.

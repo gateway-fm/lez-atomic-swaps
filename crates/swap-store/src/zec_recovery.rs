@@ -11,7 +11,8 @@ use lez_zec_swap_sdk::{
     AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, CreateAgreementOutcome,
     CreateFirstLockOutcome, FIRST_LOCK_RECORD_SCHEMA_V1, FirstLockIntentRecordV1,
     FirstLockIntentV1, FirstLockProjectionCommit, FirstLockTransitionRecordV1,
-    FirstLockTransitionV1, RecoveryStore,
+    FirstLockTransitionV1, ObservedTakerFirstLockTransitionRecordV1,
+    ObservedTakerFirstLockTransitionV1, RecoveryStore,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
@@ -369,6 +370,139 @@ impl RecoveryStore for SqliteZecRecoveryStore {
             predecessor_revision,
         )?))
     }
+
+    async fn commit_observed_taker_first_lock_transition(
+        &self,
+        transition: &ObservedTakerFirstLockTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error> {
+        self.require_role(transition.local_participant())?;
+        if self.local_participant != Participant::Maker {
+            return Err(StoreError::ZecRecoveryRoleMismatch);
+        }
+        let record = ObservedTakerFirstLockTransitionRecordV1::from(transition);
+        let payload_version = i64::from(record.schema_version());
+        let payload_json = serde_json::to_string(&record)?;
+        let predecessor = transition.predecessor_revision();
+        let committed = predecessor
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        let predecessor_sql = sql_u64(predecessor)?;
+        let committed_sql = sql_u64(committed)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let agreement_row =
+            load_agreement_row(&transaction, self.role_name(), transition.swap_id())?
+                .ok_or(StoreError::MissingZecRecoveryAgreement)?;
+        let active_revision = revision_from_sql(agreement_row.active_revision)?;
+        let accepted =
+            validated_agreement(&agreement_row, self.local_participant, transition.swap_id())?;
+        let transition_count =
+            count_transition_rows(&transaction, self.role_name(), transition.swap_id())?;
+        let trusted = record.revalidate(&accepted, predecessor)?;
+        if &trusted != transition
+            || load_intent_row(&transaction, self.role_name(), transition.swap_id())?.is_some()
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+
+        if let Some(existing) = load_transition_row(
+            &transaction,
+            self.role_name(),
+            transition.swap_id(),
+            predecessor_sql,
+        )? {
+            if transition_count != 1
+                || existing.committed_revision != committed_sql
+                || active_revision != committed
+                || decode_observed_taker_lock_record(
+                    existing.payload_version,
+                    &existing.payload_json,
+                )?
+                .revalidate(&accepted, predecessor)?
+                    != *transition
+            {
+                return Err(StoreError::ConflictingZecFirstLockTransition);
+            }
+            transaction.commit()?;
+            return Ok(FirstLockProjectionCommit::new(committed, true));
+        }
+        if transition_count != 0 || active_revision != predecessor {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        transaction.execute(
+            "
+            INSERT INTO zec_sdk_first_lock_transitions (
+                local_role, swap_id, predecessor_revision, committed_revision,
+                payload_version, payload_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ",
+            params![
+                self.role_name(),
+                transition.swap_id().as_str(),
+                predecessor_sql,
+                committed_sql,
+                payload_version,
+                payload_json
+            ],
+        )?;
+        let updated = transaction.execute(
+            "
+            UPDATE zec_sdk_agreements
+            SET active_revision = ?1
+            WHERE local_role = ?2 AND swap_id = ?3 AND active_revision = ?4
+            ",
+            params![
+                committed_sql,
+                self.role_name(),
+                transition.swap_id().as_str(),
+                predecessor_sql
+            ],
+        )?;
+        if updated != 1 {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        transaction.commit()?;
+        Ok(FirstLockProjectionCommit::new(committed, false))
+    }
+
+    async fn load_observed_taker_first_lock_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<ObservedTakerFirstLockTransitionV1>, Self::Error> {
+        if self.local_participant != Participant::Maker {
+            return Err(StoreError::ZecRecoveryRoleMismatch);
+        }
+        let connection = self.connection()?;
+        let predecessor_sql = sql_u64(predecessor_revision)?;
+        let agreement_row = load_agreement_row(&connection, self.role_name(), swap_id)?
+            .ok_or(StoreError::MissingZecRecoveryAgreement)?;
+        let active_revision = revision_from_sql(agreement_row.active_revision)?;
+        let accepted = validated_agreement(&agreement_row, self.local_participant, swap_id)?;
+        let transition_count = count_transition_rows(&connection, self.role_name(), swap_id)?;
+        if load_intent_row(&connection, self.role_name(), swap_id)?.is_some() {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let Some(row) =
+            load_transition_row(&connection, self.role_name(), swap_id, predecessor_sql)?
+        else {
+            if transition_count != 0 || active_revision != predecessor_revision {
+                return Err(StoreError::InvalidZecRecoveryState);
+            }
+            return Ok(None);
+        };
+        let committed = predecessor_revision
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        if transition_count != 1
+            || row.committed_revision != sql_u64(committed)?
+            || active_revision != committed
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let record = decode_observed_taker_lock_record(row.payload_version, &row.payload_json)?;
+        Ok(Some(record.revalidate(&accepted, predecessor_revision)?))
+    }
 }
 
 #[derive(Debug)]
@@ -475,6 +609,24 @@ fn load_transition_row(
         .map_err(StoreError::from)
 }
 
+fn count_transition_rows(
+    connection: &Connection,
+    role: &str,
+    swap_id: &SwapId,
+) -> Result<i64, StoreError> {
+    connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM zec_sdk_first_lock_transitions
+            WHERE local_role = ?1 AND swap_id = ?2
+            ",
+            params![role, swap_id.as_str()],
+            |row| row.get(0),
+        )
+        .map_err(StoreError::from)
+}
+
 fn validated_agreement(
     row: &AgreementRow,
     local_participant: Participant,
@@ -524,6 +676,18 @@ fn decode_transition_record(
 ) -> Result<FirstLockTransitionRecordV1, StoreError> {
     require_payload(
         "SDK first-lock transition",
+        payload_version,
+        i64::from(FIRST_LOCK_RECORD_SCHEMA_V1),
+    )?;
+    serde_json::from_str(payload_json).map_err(StoreError::from)
+}
+
+fn decode_observed_taker_lock_record(
+    payload_version: i64,
+    payload_json: &str,
+) -> Result<ObservedTakerFirstLockTransitionRecordV1, StoreError> {
+    require_payload(
+        "SDK observed taker first lock",
         payload_version,
         i64::from(FIRST_LOCK_RECORD_SCHEMA_V1),
     )?;

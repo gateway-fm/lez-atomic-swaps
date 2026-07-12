@@ -15,7 +15,7 @@ project-owned transparent signer and actor adapter.
 
 | Flow | Boundary exercised | Current limitation |
 |---|---|---|
-| ZEC SDK agreement/activation/first lock | Canonical bounded dual-signed record is integrated through untrusted negotiation, role-fixed persistence-before-activation, adversarial resume, exact first-lock intent, primitive-record revalidation, observe-before-rebroadcast, production SQLite atomic projection, unknown-commit probe, and close/reopen replay | Chain adapters remain contract doubles; these commands do not prove production LEZ/Zebra effects, maker-independent observation, claims/refunds, or actor E2E |
+| ZEC SDK agreement/activation/first lock | Canonical bounded dual-signed record is integrated through untrusted negotiation, role-fixed persistence-before-activation, adversarial resume, exact taker first-lock intent, primitive-record revalidation, observe-before-rebroadcast, maker-independent direction-selected observation, production SQLite atomic projection, unknown-commit probe, and separate-role close/reopen replay | Chain adapters remain contract doubles; maker observation is deliberately non-authorizing, reverse LEZ is not canonical, and these commands do not prove later effects or actor E2E |
 | Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
 | Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v5 SQLite journal/alerts plus the production role-fixed SDK first-lock recovery adapter, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The daemon polling loop, later SDK effects, and independent maker/taker actors remain pending |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
@@ -353,14 +353,14 @@ exact wire decoding, both low-S signatures, every signed-field mutation, both
 directions, deterministic-local execution terms, fail-closed public deployment,
 actual LEZ/ZEC deadlines, role/digest binding, agreement-derived
 fees/destinations/expiry/funding requests, exact native/token PDA/ATA accounts,
-accepted-at resume, and redacted diagnostics. The second runs thirteen integrated
+accepted-at resume, and redacted diagnostics. The second runs 16 integrated
 cases in which independent maker and taker SDK instances with fixed roles
 receive untrusted bytes, validate the concrete record, persist separate accepted
 envelopes before activation, and resume the original wire after transcript
 expiry. It also proves exact retry idempotence, changed same-key conflict,
 wrong-role/revision/wire/swap-ID rejection, redacted active diagnostics, and
-transport-free active types. The lifecycle command runs fourteen cases; its
-primitive-record case rejects future/substituted/corrupt recovery fields.
+transport-free active types. Its primitive-record case rejects
+future/substituted/corrupt recovery fields.
 Package rustdoc additionally compile-fails any
 attempt to obtain raw LEZ, Zcash, or recovery-store handles from an active swap.
 
@@ -373,12 +373,16 @@ rebroadcast, and LEZ initialization must be confirmed before its separately
 durable fund transaction is submitted. Two projection cases prove invalid
 evidence and a failed commit leave the coordinator `Offered`, an unknown
 successful commit is accepted only after an exact predecessor-slot probe, and
-restart replays the durable transition to `TakerLockConfirmed`. The store
-command runs six production-adapter cases over a real temporary schema-v5
+restart replays the durable transition to `TakerLockConfirmed`. Maker-specific
+cases prove that only the agreement-derived node port is queried, non-confirmed
+outcomes write nothing, the maker never owns a taker intent, persisted adapter
+assertions remain non-authorizing, and restart uses the maker-only store. The
+store command runs seven production-adapter cases over a real temporary schema-v5
 database: exact replay/conflict, same-ID role isolation, retained closed intent,
 atomic trigger-injected rollback, future/malformed/mirrored-torn-state
-rejection, and close/reopen resume. Production chain RPC adapters and the
-maker's independent observation remain required.
+rejection, exact maker replay, orphan-future-row rejection, and close/reopen
+resume. Production chain RPC adapters, durable reorg eligibility, and later
+effects are remaining work.
 
 Before starting Zebra, reproduce spend recognition independently from SDK
 construction policy:

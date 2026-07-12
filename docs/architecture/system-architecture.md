@@ -24,11 +24,12 @@ flowchart TB
         LC["Logos Core lifecycle adapter"]
         MD["Maker daemon"]
         CO["Durable swap coordinator"]
-        DB[("Encrypted SQLite state + outbox")]
+        DB[("SQLite SDK recovery + runtime journal<br/>encryption and outbox planned")]
         PS["BTC / XMR / ZEC pair SDKs"]
         ZA["Canonical dual-signed LEZ/ZEC agreement validator"]
         ZTX["ZEC BIP-199 V5 transaction SDK"]
         CA["Validated chain adapters"]
+        MOA["Maker-only taker-lock observation"]
     end
 
     subgraph TakerDevice["Taker-controlled device"]
@@ -68,6 +69,7 @@ flowchart TB
     PS --> ZA
     PS --> ZTX
     PS --> CA
+    PS --> MOA
     ZTX --> CA
 
     T --> TC
@@ -82,6 +84,9 @@ flowchart TB
     CA --> BTC
     CA --> XMR
     CA --> ZEC
+    MOA -->|"signed direction selects one node"| LEZ
+    MOA -->|"signed direction selects one node"| ZEC
+    MOA -->|"atomic role-local projection"| DB
     TS --> LEZ
     TS --> BTC
     TS --> XMR
@@ -92,7 +97,7 @@ flowchart TB
     ZEC --> ZN
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class MM,LC,PS,CA,TC,TM,TS,DB planned;
+    class MM,LC,PS,CA,TC,TM,TS planned;
 ```
 
 The maker operator owns maker policy, keys, node selection, and the daemon
@@ -107,10 +112,15 @@ The concrete LEZ/ZEC agreement validator is integrated on both actor sides as
 one bounded canonical wire contract. Negotiation yields untrusted bytes;
 role-fixed SDK instances validate and persist an accepted envelope before
 activation, then revalidate its exact durable wire on resume without retaining
-transport or raw adapter handles. The current executable store is an in-memory
-contract double. The dashed M2 topology records the remaining production store,
-typed effect, and actor integration boundary; chain adapters must independently
-recompute every chain-derived account, input, and deadline.
+transport or raw adapter handles. The current executable SDK store is a
+role-fixed production SQLite adapter for accepted agreement, first-lock intent,
+taker projection, and maker-independent observation replay. The remaining M2
+work is typed later effects and actor integration; chain adapters must
+independently recompute every chain-derived account, input, and deadline. Maker
+observation is non-authorizing today: forward Zcash can reuse the canonical
+output validator, reverse LEZ still needs an equivalent escrow snapshot
+validator, and the SDK returns Wait until a fresh reorg-safe eligibility check
+exists.
 
 The dashed state reflects delivery honestly. The deterministic core, SQLite
 repository, maker daemon, authenticated maker CLI flow, LEZ semantic
@@ -133,8 +143,8 @@ recursive cost evidence is machine-checked from production state transitions
 without Clock noise. The official ATA lifecycle also passes for two independent
 definitions with real owner roles and permissionless fixed refunds. Their
 escrow/ATA/Token recursion is also included in the machine-checked cost record.
-Public-testnet evidence, composed both-direction maker/taker processes, typed
-adapter-grade ZEC observations, cross-chain deadline composition, encrypted
+Public-testnet evidence, composed both-direction maker/taker processes,
+production adapter composition, cross-chain deadline composition, encrypted
 state/outbox, and mini-apps remain milestone work and cannot yet be represented
 as production E2E.
 

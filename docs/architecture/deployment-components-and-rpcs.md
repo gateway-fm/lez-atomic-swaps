@@ -89,6 +89,7 @@ flowchart LR
     Mailbox["Test-only pre-lock agreement mailbox"]
     MakerValidator["Maker concrete agreement validator"]
     TakerValidator["Taker concrete agreement validator"]
+    MakerObserver["Maker-only taker-lock observer"]
     Zebra["Selected Zebra route"]
     Lez["Selected LEZ route"]
 
@@ -104,6 +105,10 @@ flowchart LR
     Taker -.->|"Typed funding, observation, claim, refund"| Zebra
     Maker -.->|"Generated escrow client actions"| Lez
     Taker -.->|"Generated escrow client actions"| Lez
+    Zebra -->|"Forward canonical evidence adapter pending"| MakerObserver
+    Lez -->|"Reverse canonical validator pending"| MakerObserver
+    MakerObserver -->|"Atomic non-authorizing maker projection"| MakerState
+    MakerState -.->|"Fresh reorg-safe eligibility required"| Maker
     Mailbox -.->|"Destroyed after immutable terms persist"| Maker
     Mailbox -.->|"Destroyed after immutable terms persist"| Taker
 
@@ -173,8 +178,8 @@ it never opens SQLite or becomes protocol authority.
 |---|---|---|---|---|---|
 | `lez-maker-daemon` | Running prototype | HTTP JSON-RPC; default `127.0.0.1:0`; non-loopback rejected | Bearer token from hidden environment; minimum 24 bytes; header checked before JSON parsing | Actual: `swap_create`, `swap_status`, `swap_alerts`, `swap_alert_acknowledge` | Operator/test-owned process; caller-selected SQLite path; Ctrl-C shutdown |
 | `lez-maker` | Running prototype | HTTP client; default `127.0.0.1:9944`; explicit ready URL for ephemeral daemon | Authorization header marked sensitive | Actual CLI: `create-swap`, `status`, `alerts`, `acknowledge-alert` | Independent operator process |
-| SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority; SDK adapter fixes one local role per handle | Aggregate, revision, ZEC journal, immutable binding, operator-alert list/ack APIs; schema-v5 role-local SDK agreement/open-or-closed-intent/transition recovery | WAL, `FULL` synchronous, foreign keys, immediate transition transaction; six SDK-adapter tests prove role isolation, rollback, mirrored torn-state rejection, and close/reopen replay; one process mutex remains |
-| Concrete LEZ/ZEC agreement and lifecycle boundary | Running library boundary | No socket or RPC; bounded Borsh v1 bytes enter from an untrusted negotiation adapter; typed first-lock ports have no selected production endpoint | Maker and taker transparent keys provide dual low-S signatures; each SDK and SQLite adapter fixes its local role; chain adapters receive the agreement and exact durable bytes and remain authoritative for chain-derived facts | Exact decode, cross-binding, persistence-before-activation, adversarial resume, durable exact first-lock intent, primitive-record revalidation, observe-before-rebroadcast, ordered LEZ initialize/fund, atomic SQLite projection/unknown-commit probe/replay | 16 KiB agreement and 2,000,000-byte per-submission caps; production first-lock SQLite recovery passes, while production LEZ/Zebra effect adapters and maker-independent observation remain pending |
+| SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority; SDK adapter fixes one local role per handle | Aggregate, revision, ZEC journal, immutable binding, operator-alert list/ack APIs; schema-v5 role-local SDK agreement/open-or-closed taker intent plus taker-submission or maker-observation transition recovery | WAL, `FULL` synchronous, foreign keys, immediate transition transaction; seven SDK-adapter tests prove role isolation, rollback, torn-state rejection, exact maker replay, no maker-side taker intent, and close/reopen recovery; one process mutex remains |
+| Concrete LEZ/ZEC agreement and lifecycle boundary | Running library boundary | No socket or RPC; bounded Borsh v1 bytes enter from an untrusted negotiation adapter; typed first-lock action and maker-observation ports have no selected production endpoint | Maker and taker transparent keys provide dual low-S signatures; each SDK and SQLite adapter fixes its local role; signed direction alone selects the maker's LEZ or Zcash observation port | Exact decode, cross-binding, persistence-before-activation, adversarial resume, durable exact taker first-lock intent, primitive-record revalidation, observe-before-rebroadcast, ordered LEZ initialize/fund, atomic taker and maker projection/unknown-commit probe/replay | 16 KiB agreement and 2,000,000-byte per-submission caps; 81 SDK tests and 20 store tests pass. Maker observation remains non-authorizing; canonical adapters, reorg eligibility, and later effects are remaining M2 work |
 | Primary Zebra | Running in ignored E2E | Container `0.0.0.0:18232`; ephemeral host `127.0.0.1` mapping | Regtest fixture has no cookie auth; signed transactions and consensus remain authoritative | `getblockcount`, `generate`, `getblockhash`, `getblock`, `getblockheader`, `submitblock`, `getaddressutxos`, `getrawtransaction`, `sendrawtransaction`, `getblockchaininfo` | Unique Compose project and tmpfs state per `RUN_ID` |
 | Fork Zebra | Running in ignored E2E | Same container port; distinct ephemeral host-loopback mapping | Same Regtest-only policy | Same RPC set; produces independent higher-work branch | Separate tmpfs state; no initial peer; fixture-controlled block relay |
 | LEZ standalone v0.1.2 | Running in ignored E2E | Upstream server `0.0.0.0:0`; client uses `127.0.0.1:<assigned>` | No transport credential; actor signatures authorize transactions | `checkHealth`, `sendTransaction`, `getLastBlockId`, `getTransaction`, `getAccountsNonces`, `getAccount`, `getBlock` | In-process handle, tempfile state, deterministic genesis actors; not public v0.2 |

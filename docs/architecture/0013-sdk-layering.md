@@ -1,8 +1,8 @@
 # ADR 0013: Deterministic SDK core with optional async orchestration
 
-Status: concrete ZEC negotiation, activation, resume, first-lock intent, and
-production SQLite atomic projection/replay implemented; chain and transport
-adapters in progress — 2026-07-12
+Status: concrete ZEC negotiation, activation, resume, first-lock intent, taker
+projection, and maker-independent SQLite observation/replay implemented; chain
+and transport adapters in progress — 2026-07-12
 
 ```mermaid
 flowchart TB
@@ -19,6 +19,10 @@ flowchart TB
     Intent --> Observe["Observe before byte-identical submission"]
     Observe --> Projection["Atomic transition + revision + intent close"]
     Projection --> Active
+    Active --> MakerObserve["Maker-only observation of taker lock"]
+    MakerObserve --> MakerProjection["Role-local atomic observation projection"]
+    MakerProjection --> Active
+    MakerProjection -.-> Reconcile["Removal, replacement, and fresh pre-second-lock check"]
     Active -.-> Runtime["Reference async coordinator"]
     Runtime -.-> Nodes["Typed chain ports"]
     SQLite -.-> Encrypted["Encrypted later-effect secret storage"]
@@ -26,7 +30,7 @@ flowchart TB
     Core --> Tests["Model/vector/replay tests"]
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Runtime,Nodes,Encrypted planned;
+    class Runtime,Nodes,Encrypted,Reconcile planned;
 ```
 
 ## Context
@@ -75,6 +79,16 @@ atomically commits transition/revision/closure, isolates maker and taker rows,
 revalidates primitive payloads, survives close/reopen, and rejects injected
 rollback and mirrored torn-state corruption. Encryption and the general
 later-effect outbox remain M5 work.
+
+The maker now has a separate observation-only route. Signed direction chooses
+LEZ or Zcash, the other port is not queried, and absence, unstable state, or an
+RPC error cannot advance or persist protocol state. A stable adapter assertion
+commits to the maker-role predecessor slot before memory changes and replays
+from the maker's own SQLite store without taker intent or negotiation state.
+The SDK returns Wait afterward, including on restart. Zcash must still be wired
+to the canonical validator and LEZ needs an equivalent escrow snapshot
+validator; removal/replacement reconciliation and a fresh eligibility check
+must exist before a maker second-lock submission method is added.
 
 ## Consequences
 

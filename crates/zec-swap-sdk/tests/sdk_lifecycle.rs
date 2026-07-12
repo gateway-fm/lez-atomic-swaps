@@ -12,9 +12,12 @@ use lez_zec_swap_sdk::{
     FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1, FirstLockProjectionCommit,
     FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1, FirstLockTransitionV1,
     LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, LezFirstLockPort,
-    MAX_FIRST_LOCK_SUBMISSION_BYTES, MAX_ZEC_AGREEMENT_RECORD_BYTES, NegotiationChannel,
-    NegotiationTranscriptV1, OfferDiscovery, PreparedFirstLockSubmissionV1, RecoveryStore,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZcashFirstLockPort, ZcashTransparentDestinationV1,
+    LezTakerFirstLockObservationPort, MAX_FIRST_LOCK_SUBMISSION_BYTES,
+    MAX_ZEC_AGREEMENT_RECORD_BYTES, NegotiationChannel, NegotiationTranscriptV1,
+    ObserveTakerFirstLockOutcome, ObservedTakerFirstLockEvidenceV1,
+    ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
+    RecoveryStore, TakerFirstLockObservationV1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V1,
+    ZcashFirstLockPort, ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1,
     ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1Error, ZecLezTermsV1,
     ZecLifecycleAction, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
     ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1,
@@ -95,6 +98,8 @@ struct MemoryStore {
     agreements: Arc<Mutex<AgreementMap>>,
     first_locks: Arc<Mutex<HashMap<String, FirstLockIntentV1>>>,
     first_lock_transitions: Arc<Mutex<HashMap<(String, u64), FirstLockTransitionV1>>>,
+    observed_taker_first_lock_transitions:
+        Arc<Mutex<HashMap<(String, u64), ObservedTakerFirstLockTransitionV1>>>,
     transition_mode: Arc<Mutex<TransitionCommitMode>>,
     fail_create: bool,
 }
@@ -239,6 +244,52 @@ impl RecoveryStore for MemoryStore {
             .get(&(swap_id.as_str().to_owned(), predecessor_revision))
             .cloned())
     }
+
+    async fn commit_observed_taker_first_lock_transition(
+        &self,
+        transition: &ObservedTakerFirstLockTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error> {
+        let mode = *self.transition_mode.lock().expect("transition mode lock");
+        if mode == TransitionCommitMode::FailBeforeCommit {
+            return Err(TestPortError("forced transition failure".to_owned()));
+        }
+        let key = (
+            transition.swap_id().as_str().to_owned(),
+            transition.predecessor_revision(),
+        );
+        let mut transitions = self
+            .observed_taker_first_lock_transitions
+            .lock()
+            .expect("observed transition lock");
+        let was_replay = match transitions.get(&key) {
+            None => {
+                transitions.insert(key, transition.clone());
+                false
+            }
+            Some(existing) if existing == transition => true,
+            Some(_) => return Err(TestPortError("conflicting transition".to_owned())),
+        };
+        if mode == TransitionCommitMode::CommitThenReportFailure {
+            return Err(TestPortError("unknown successful commit".to_owned()));
+        }
+        Ok(FirstLockProjectionCommit::new(
+            transition.predecessor_revision() + 1,
+            was_replay,
+        ))
+    }
+
+    async fn load_observed_taker_first_lock_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<ObservedTakerFirstLockTransitionV1>, Self::Error> {
+        Ok(self
+            .observed_taker_first_lock_transitions
+            .lock()
+            .expect("observed transition lock")
+            .get(&(swap_id.as_str().to_owned(), predecessor_revision))
+            .cloned())
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -246,6 +297,71 @@ struct NoopLez;
 
 #[derive(Clone, Copy, Debug)]
 struct NoopZcash;
+
+#[derive(Clone, Debug)]
+struct MemoryTakerLockObservation {
+    response: Arc<Mutex<Result<TakerFirstLockObservationV1, TestPortError>>>,
+    calls: Arc<Mutex<usize>>,
+}
+
+impl Default for MemoryTakerLockObservation {
+    fn default() -> Self {
+        Self {
+            response: Arc::new(Mutex::new(Ok(TakerFirstLockObservationV1::Absent))),
+            calls: Arc::new(Mutex::new(0)),
+        }
+    }
+}
+
+impl MemoryTakerLockObservation {
+    fn respond(&self, response: Result<TakerFirstLockObservationV1, TestPortError>) {
+        *self.response.lock().expect("observation response lock") = response;
+    }
+
+    fn calls(&self) -> usize {
+        *self.calls.lock().expect("observation calls lock")
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct MemoryLezTakerLockObservation(MemoryTakerLockObservation);
+
+#[async_trait]
+impl LezTakerFirstLockObservationPort for MemoryLezTakerLockObservation {
+    type Error = TestPortError;
+
+    async fn observe_taker_first_lock(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<TakerFirstLockObservationV1, Self::Error> {
+        *self.0.calls.lock().expect("observation calls lock") += 1;
+        self.0
+            .response
+            .lock()
+            .expect("observation response lock")
+            .clone()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct MemoryZcashTakerLockObservation(MemoryTakerLockObservation);
+
+#[async_trait]
+impl ZcashTakerFirstLockObservationPort for MemoryZcashTakerLockObservation {
+    type Error = TestPortError;
+
+    async fn observe_taker_first_lock(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<TakerFirstLockObservationV1, Self::Error> {
+        *self.0.calls.lock().expect("observation calls lock") += 1;
+        self.0
+            .response
+            .lock()
+            .expect("observation response lock")
+            .clone()
+    }
+}
 
 type FirstLockSubmissions = Vec<(FirstLockStepV1, Vec<u8>)>;
 
@@ -797,6 +913,242 @@ async fn projection_failure_never_mutates_core_and_unknown_success_is_probed() {
     assert_eq!(commit, FirstLockProjectionCommit::new(1, true));
     assert_eq!(active.revision(), 1);
     assert_eq!(active.status(), Phase::TakerLockConfirmed);
+}
+
+#[tokio::test]
+async fn maker_independently_observes_and_durably_projects_taker_first_locks_in_both_directions() {
+    let forward_id = "sdk-maker-observes-zcash";
+    let forward_wire = agreement_wire(
+        forward_id,
+        SwapDirection::TakerSellsForeign,
+        FixtureVariant::Local,
+    );
+    let forward_store = MemoryStore::default();
+    let forward_lez = MemoryLezTakerLockObservation::default();
+    let forward_zcash = MemoryZcashTakerLockObservation::default();
+    let forward_sdk = ZecPairSdk::new(
+        Participant::Maker,
+        MemoryDiscovery::default(),
+        MemoryNegotiation {
+            wire: forward_wire.clone(),
+        },
+        forward_lez.clone(),
+        forward_zcash.clone(),
+        forward_store.clone(),
+    );
+    let accepted = forward_sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("maker validates the same signed agreement");
+    let mut maker = forward_sdk
+        .activate(accepted)
+        .await
+        .expect("maker activation");
+    assert_eq!(maker.status(), Phase::Offered);
+    assert_eq!(maker.next_action(), ZecLifecycleAction::Wait);
+
+    assert_forward_observation_does_not_advance(
+        &mut maker,
+        &forward_lez,
+        &forward_zcash,
+        &forward_store,
+    )
+    .await;
+
+    forward_zcash.0.respond(Ok(confirmed_observed_taker_lock(
+        FirstLockStepV1::ZcashFund,
+        "confirmed-zcash-lock",
+        100,
+    )));
+    forward_store.set_transition_mode(TransitionCommitMode::FailBeforeCommit);
+    assert!(maker.observe_taker_first_lock().await.is_err());
+    assert_eq!(maker.status(), Phase::Offered);
+    assert_eq!(maker.revision(), 0);
+
+    forward_store.set_transition_mode(TransitionCommitMode::CommitThenReportFailure);
+    assert_eq!(
+        maker
+            .observe_taker_first_lock()
+            .await
+            .expect("exact predecessor-slot probe proves unknown commit"),
+        ObserveTakerFirstLockOutcome::Projected(FirstLockProjectionCommit::new(1, true))
+    );
+    assert_eq!(maker.status(), Phase::TakerLockConfirmed);
+    assert_eq!(maker.revision(), 1);
+    assert_eq!(
+        maker.next_action(),
+        ZecLifecycleAction::Wait,
+        "adapter-asserted maker observation must not authorize the second lock"
+    );
+
+    let restarted = ZecPairSdk::new(
+        Participant::Maker,
+        MemoryDiscovery::default(),
+        MemoryNegotiation { wire: forward_wire },
+        forward_lez,
+        forward_zcash,
+        forward_store,
+    )
+    .resume(&SwapId::new(forward_id).expect("id"))
+    .await
+    .expect("maker restart reads only its independent recovery store")
+    .expect("durable agreement and observed transition");
+    assert_eq!(restarted.status(), Phase::TakerLockConfirmed);
+    assert_eq!(restarted.revision(), 1);
+    assert_eq!(
+        restarted.next_action(),
+        ZecLifecycleAction::Wait,
+        "replayed observation requires a fresh canonical eligibility check"
+    );
+}
+
+async fn assert_forward_observation_does_not_advance(
+    maker: &mut ActiveZecSwap<
+        MemoryLezTakerLockObservation,
+        MemoryZcashTakerLockObservation,
+        MemoryStore,
+    >,
+    lez: &MemoryLezTakerLockObservation,
+    zcash: &MemoryZcashTakerLockObservation,
+    store: &MemoryStore,
+) {
+    assert_eq!(
+        maker
+            .observe_taker_first_lock()
+            .await
+            .expect("stable absence is not a state transition"),
+        ObserveTakerFirstLockOutcome::AwaitingStableObservation(FirstLockStepV1::ZcashFund)
+    );
+    assert_eq!(zcash.0.calls(), 1);
+    assert_eq!(lez.0.calls(), 0);
+    assert_eq!(maker.status(), Phase::Offered);
+    assert!(
+        store
+            .observed_taker_first_lock_transitions
+            .lock()
+            .expect("transition lock")
+            .is_empty()
+    );
+
+    zcash.0.respond(Ok(TakerFirstLockObservationV1::Unstable));
+    assert!(matches!(
+        maker.observe_taker_first_lock().await,
+        Ok(ObserveTakerFirstLockOutcome::AwaitingStableObservation(
+            FirstLockStepV1::ZcashFund
+        ))
+    ));
+    zcash
+        .0
+        .respond(Err(TestPortError("fresh RPC query failed".to_owned())));
+    assert!(maker.observe_taker_first_lock().await.is_err());
+    assert_eq!(maker.status(), Phase::Offered);
+
+    zcash.0.respond(Ok(confirmed_observed_taker_lock(
+        FirstLockStepV1::LezFund,
+        "wrong-chain-lock",
+        100,
+    )));
+    assert!(matches!(
+        maker.observe_taker_first_lock().await,
+        Err(ZecSdkError::InvalidObservedTakerFirstLockTransition(_))
+    ));
+    assert!(
+        ObservedTakerFirstLockEvidenceV1::new(
+            FirstLockStepV1::ZcashFund,
+            "zero-confirmation-lock",
+            0,
+        )
+        .is_err()
+    );
+    assert_eq!(maker.revision(), 0);
+}
+
+#[tokio::test]
+async fn reverse_maker_observes_lez_while_taker_cannot_use_maker_observation() {
+    let reverse_store = MemoryStore::default();
+    let reverse_lez = MemoryLezTakerLockObservation::default();
+    let reverse_zcash = MemoryZcashTakerLockObservation::default();
+    reverse_lez.0.respond(Ok(confirmed_observed_taker_lock(
+        FirstLockStepV1::LezFund,
+        "confirmed-lez-lock",
+        100,
+    )));
+    let reverse_sdk = ZecPairSdk::new(
+        Participant::Maker,
+        MemoryDiscovery::default(),
+        MemoryNegotiation {
+            wire: agreement_wire(
+                "sdk-maker-observes-lez",
+                SwapDirection::TakerSellsLez,
+                FixtureVariant::Local,
+            ),
+        },
+        reverse_lez.clone(),
+        reverse_zcash.clone(),
+        reverse_store,
+    );
+    let reverse_accepted = reverse_sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("reverse agreement");
+    let mut reverse_maker = reverse_sdk
+        .activate(reverse_accepted)
+        .await
+        .expect("reverse maker activation");
+    assert!(matches!(
+        reverse_maker.observe_taker_first_lock().await,
+        Ok(ObserveTakerFirstLockOutcome::Projected(_))
+    ));
+    assert_eq!(reverse_lez.0.calls(), 1);
+    assert_eq!(reverse_zcash.0.calls(), 0);
+    assert_eq!(reverse_maker.status(), Phase::TakerLockConfirmed);
+    assert_eq!(
+        reverse_maker.next_action(),
+        ZecLifecycleAction::Wait,
+        "provisional LEZ evidence must never authorize Zcash funding"
+    );
+
+    let taker_store = MemoryStore::default();
+    let taker_sdk = ZecPairSdk::new(
+        Participant::Taker,
+        MemoryDiscovery::default(),
+        MemoryNegotiation {
+            wire: agreement_wire(
+                "sdk-taker-cannot-observe-for-maker",
+                SwapDirection::TakerSellsForeign,
+                FixtureVariant::Local,
+            ),
+        },
+        MemoryLezTakerLockObservation::default(),
+        MemoryZcashTakerLockObservation::default(),
+        taker_store,
+    );
+    let taker_accepted = taker_sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("taker agreement");
+    let mut taker = taker_sdk
+        .activate(taker_accepted)
+        .await
+        .expect("activation");
+    assert!(matches!(
+        taker.observe_taker_first_lock().await,
+        Err(ZecSdkError::WrongRole {
+            expected: Participant::Maker,
+            actual: Participant::Taker
+        })
+    ));
+}
+
+fn confirmed_observed_taker_lock(
+    step: FirstLockStepV1,
+    transaction_id: &str,
+    confirmations: u32,
+) -> TakerFirstLockObservationV1 {
+    TakerFirstLockObservationV1::Confirmed(
+        ObservedTakerFirstLockEvidenceV1::new(step, transaction_id, confirmations)
+            .expect("well-formed primitive evidence"),
+    )
 }
 
 #[tokio::test]

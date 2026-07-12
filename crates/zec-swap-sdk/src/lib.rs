@@ -8,6 +8,7 @@ mod lez_derivation;
 mod lifecycle;
 mod observation;
 mod observation_record;
+mod observed_taker_lock;
 mod ports;
 mod profile;
 mod sdk;
@@ -57,10 +58,15 @@ pub use observation_record::{
     ZcashObservationEventRecordV1, ZcashOutputObservationRecordV1, ZcashOutputRemovalRecordV1,
     replay_zcash_observation_history, revalidate_historical_event,
 };
+pub use observed_taker_lock::{
+    ObserveTakerFirstLockOutcome, ObservedTakerFirstLockEvidenceV1,
+    ObservedTakerFirstLockTransitionError, ObservedTakerFirstLockTransitionRecordV1,
+    ObservedTakerFirstLockTransitionV1, TakerFirstLockObservationV1,
+};
 
 pub use ports::{
-    CreateAgreementOutcome, LezFirstLockPort, NegotiationChannel, OfferDiscovery, RecoveryStore,
-    ZcashFirstLockPort,
+    CreateAgreementOutcome, LezFirstLockPort, LezTakerFirstLockObservationPort, NegotiationChannel,
+    OfferDiscovery, RecoveryStore, ZcashFirstLockPort, ZcashTakerFirstLockObservationPort,
 };
 pub use profile::{ProfileError, ZecProfileId, ZecRefundProfile};
 pub use sdk::{ActiveZecSwap, ZecPairSdk};

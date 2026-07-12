@@ -1,7 +1,8 @@
 # ADR 0017: Durable intent before first-lock effects
 
-Status: SDK intent, primitive recovery records, and production SQLite atomic
-projection/replay proven; production chain adapters pending — 2026-07-12
+Status: taker intent/projection and maker-independent SQLite observation/replay
+proven; canonical LEZ observation, reorg reconciliation, and production chain
+adapters pending — 2026-07-12
 
 ```mermaid
 flowchart TB
@@ -28,8 +29,15 @@ flowchart TB
     ClosedIntent --> Core
     Projection --> Core["Advance in-memory coordinator after durable proof"]
 
+    Maker["Independent maker SDK + store"] --> MakerObserve["Observe through agreement-selected node"]
+    MakerObserve -->|"absent, unstable, or RPC error"| MakerWait["Remain Offered; write nothing"]
+    MakerObserve -->|"stable adapter assertion"| MakerProjection["Atomic maker-role transition + revision"]
+    MakerProjection --> MakerCore["Persist observed TakerLockConfirmed"]
+    MakerCore --> Gate["SDK next action remains Wait"]
+    Gate -.-> Fresh["Canonical reorg-safe check before maker second lock"]
+
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Observe,Submit,Fund planned;
+    class Observe,Submit,Fund,Fresh planned;
 ```
 
 ## Context
@@ -75,7 +83,7 @@ decode and recompute chain policy.
 
 ## Executable evidence
 
-Six SDK RED–GREEN lifecycle cases prove maker rejection, signed-direction plan
+The SDK RED–GREEN lifecycle cases prove maker rejection, signed-direction plan
 selection, durable-before-effect staging, exact replay, changed-byte conflict,
 unstable-query non-submission, observe-before-rebroadcast restart, and ordered
 LEZ initialize/fund behavior. They also prove that invalid evidence and a failed
@@ -84,11 +92,17 @@ only after an exact predecessor-slot probe, and restart replays the committed
 transition to `TakerLockConfirmed`. Adversarial primitive-record tests reject
 future schemas, unknown fields, substituted swap/role/commitment/revision/plan,
 oversized exact bytes, wrong final step/identity, zero-confirmation evidence,
-and a corrupt retained closed intent. The full package currently passes 79
+and a corrupt retained closed intent. Two additional cases prove that a maker
+queries only its agreement-derived node route, writes no taker intent, does not
+advance on absence, instability, RPC failure, wrong-chain evidence, or a failed
+commit, adopts an unknown successful commit only by exact probe, and replays its
+own role-local observation after restart. The public next-action projection
+remains Wait, including after restart, so this adapter assertion cannot
+authorize the maker lock. The full package currently passes 81
 tests, with the real-Zebra Docker case intentionally delegated to its isolated
 runner.
 
-Six production-store cases instantiate the SDK with a cloneable role-fixed
+Seven production-store cases instantiate the SDK with a cloneable role-fixed
 `SqliteZecRecoveryStore`. They prove exact agreement replay and changed same-key
 conflict; maker/taker isolation for the same application ID; an open intent
 durable before effects; one immediate transaction that inserts the transition,
@@ -97,16 +111,23 @@ close/reopen resume to `TakerLockConfirmed`. An external SQLite trigger forces
 the middle update to fail and proves all three writes roll back. Future payloads,
 malformed primitive JSON, an active revision missing its transition, and a
 closed intent missing its transition fail closed rather than reconstructing
-trusted state.
+trusted state. The seventh case proves exact maker replay, no taker intent,
+maker-only revision advancement, close/reopen recovery, and rejection of an
+orphan future maker-transition row.
 
 ## Consequences and remaining boundary
 
 The first-lock recovery boundary is now production SQLite durability, but it is
 not a completed corridor swap. The adapter uses WAL, `FULL` synchronous mode,
 foreign keys, immediate transactions, role-composite keys, primitive payloads,
-and full revalidation on every load. Confirmed evidence is still a typed
-adapter assertion; actual LEZ and Zebra adapters must produce it from fresh
-stable canonical evidence at the signed threshold. The maker still needs to
-persist its own independent observation of the taker lock before staging the
-second lock. Claim/refund effects, production adapters, real independent actors,
-and public-testnet evidence remain M2 blockers.
+and full revalidation on every load. Confirmed evidence is still a typed adapter
+assertion; actual LEZ and Zebra adapters must produce it from fresh stable
+canonical evidence at the signed threshold. Forward Zcash can reuse the
+canonical output validator and removal/replacement journal. Reverse LEZ remains
+a contract double until a validator binds channel/chain, deployment, derived
+accounts, terms, funded state, transaction, block, and finality. The SDK
+therefore exposes no maker second-lock submit method and returns Wait after
+maker projection. Durable regression/removal/replacement plus a fresh
+pre-effect check remain required before adding that effect. Claim/refund
+effects, production adapters, and real independent actors remain M2 work;
+Logos-owned live-release dependencies are tracked separately under ADR 0018.

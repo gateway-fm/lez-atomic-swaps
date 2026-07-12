@@ -8,7 +8,7 @@ use lez_swap_core::{Participant, SwapId};
 use crate::{
     AcceptedZecAgreementEnvelopeV1, CreateFirstLockOutcome, FirstLockIntentV1,
     FirstLockObservation, FirstLockProjectionCommit, FirstLockTransitionV1,
-    PreparedFirstLockSubmissionV1,
+    ObservedTakerFirstLockTransitionV1, PreparedFirstLockSubmissionV1, TakerFirstLockObservationV1,
 };
 
 /// Authenticated, expiring offer discovery supplied by a Delivery adapter.
@@ -105,6 +105,40 @@ pub trait ZcashFirstLockPort: Send + Sync {
     ) -> Result<(), Self::Error>;
 }
 
+/// Observation-only LEZ boundary used by the maker for the taker's first lock.
+///
+/// Implementors must derive every account and funded-state expectation from
+/// the accepted agreement and return confirmed evidence only for stable
+/// canonical inclusion. This port has no submission operation.
+#[async_trait]
+pub trait LezTakerFirstLockObservationPort: Send + Sync {
+    /// Structured adapter/RPC error retained by the SDK.
+    type Error: Error + Send + Sync + 'static;
+
+    /// Observes the taker's agreement-bound LEZ escrow funding.
+    async fn observe_taker_first_lock(
+        &self,
+        agreement: &crate::ZecAgreementV1,
+    ) -> Result<TakerFirstLockObservationV1, Self::Error>;
+}
+
+/// Observation-only Zcash boundary used by the maker for the taker's first lock.
+///
+/// Implementors must validate the canonical transaction/output against the
+/// accepted BIP-199 binding and stable tip. This port has no submission
+/// operation.
+#[async_trait]
+pub trait ZcashTakerFirstLockObservationPort: Send + Sync {
+    /// Structured adapter/RPC error retained by the SDK.
+    type Error: Error + Send + Sync + 'static;
+
+    /// Observes the taker's agreement-bound transparent funding output.
+    async fn observe_taker_first_lock(
+        &self,
+        agreement: &crate::ZecAgreementV1,
+    ) -> Result<TakerFirstLockObservationV1, Self::Error>;
+}
+
 /// Atomic result of creating one immutable role-local agreement record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CreateAgreementOutcome {
@@ -165,4 +199,17 @@ pub trait RecoveryStore: Clone + Send + Sync {
         swap_id: &SwapId,
         predecessor_revision: u64,
     ) -> Result<Option<FirstLockTransitionV1>, Self::Error>;
+
+    /// Atomically commits the maker's independent taker-lock observation.
+    async fn commit_observed_taker_first_lock_transition(
+        &self,
+        transition: &ObservedTakerFirstLockTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error>;
+
+    /// Loads one exact maker observation predecessor slot for probe/restart.
+    async fn load_observed_taker_first_lock_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<ObservedTakerFirstLockTransitionV1>, Self::Error>;
 }

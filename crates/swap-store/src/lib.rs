@@ -8,9 +8,9 @@ pub use zec_recovery::SqliteZecRecoveryStore;
 
 use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId};
 use lez_zec_swap_sdk::{
-    FirstLockRecordError, ObservationRecordError, ZcashObservationEventRecordV1,
-    ZecAgreementV1Error, ZecBindingRecordError, ZecSwapBinding, ZecSwapBindingRecordV1,
-    revalidate_historical_event,
+    FirstLockRecordError, ObservationRecordError, ObservedTakerFirstLockTransitionError,
+    ZcashObservationEventRecordV1, ZecAgreementV1Error, ZecBindingRecordError, ZecSwapBinding,
+    ZecSwapBindingRecordV1, revalidate_historical_event,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -266,6 +266,9 @@ pub enum StoreError {
     /// A primitive SDK first-lock record failed full context revalidation.
     #[error("persisted SDK first-lock record is invalid")]
     FirstLockRecord(#[from] FirstLockRecordError),
+    /// A maker-local taker-lock observation record failed revalidation.
+    #[error("persisted maker taker-lock observation is invalid")]
+    ObservedTakerFirstLock(#[from] ObservedTakerFirstLockTransitionError),
     /// The database was created by a newer unsupported application version.
     #[error("unsupported SQLite schema version {0}")]
     UnsupportedDatabaseVersion(i64),

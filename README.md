@@ -44,7 +44,12 @@ current executable slices enforce:
   exact unknown-outcome probe, and is replayed on resume. A role-fixed
   schema-v5 SQLite adapter now proves exact replay, role isolation, retained
   closed-intent validation, atomic rollback, corruption rejection, and
-  close/reopen recovery. Chain adapters and the completed corridor remain.
+  close/reopen recovery. The maker independently observes only the
+  agreement-selected taker-lock chain and replays that role-local projection
+  without taker intent or negotiation state. It remains non-authorizing:
+  next action is `Wait` until canonical evidence and a fresh reorg-safe
+  eligibility check exist. Production adapters, later effects, and the
+  completed corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),
@@ -52,6 +57,9 @@ the [deployment component and RPC inventory](docs/architecture/deployment-compon
 the [architecture decision log](docs/architecture/README.md), the living
 [manual reproduction guide](docs/manual-user-flows.md), and the first
 [acceptance tests](crates/swap-core/tests/e2e_swap_lifecycle.rs). The
+[upstream Logos production-blocker register](docs/upstream-production-blockers.md)
+separates disclosed external release risks from repository-controlled milestone
+acceptance. The
 [Zcash public-testnet setup guide](docs/zcash-testnet-setup.md) records the
 selected self-hosted route, optional funding wallet, external dependencies, and
 the still-missing transparent signer without claiming a completed testnet run.
