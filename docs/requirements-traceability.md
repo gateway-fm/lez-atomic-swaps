@@ -37,7 +37,7 @@ requires a corresponding test—not merely a row—for every F, U, R, and P item
 | U7 | SPEL IDL for LEZ escrow program(s) | IDL generation/validation test against pinned compatible SPEL/LEZ versions | Generated IDL/client and signer roles pass; custody ABI is being regenerated around authenticated transfer and official ATAs |
 | U8 | Bitcoin Core testnet setup guide, self-hosted and public | Fresh-machine documentation test reaches funded wallet and SDK connectivity for both routes | Planned M3 |
 | U9 | Monero stagenet and wallet-RPC setup guide, self-hosted and public | Fresh-machine documentation test reaches funded wallet and SDK connectivity for both routes | Planned M4 |
-| U10 | Zebra/Zcash testnet transparent-wallet guide, self-hosted and public | Fresh-machine documentation test reaches funded transparent wallet and SDK connectivity for both routes | Planned M2 |
+| U10 | Zebra/Zcash testnet transparent-wallet guide, self-hosted and public | Fresh-machine documentation test reaches funded transparent wallet and SDK connectivity for both routes | Partial M2: primary-source guide selects self-host Zebra 6.0.0, optional Zallet funding, and faucet/Discord fallback; no official public Zebra RPC or project HTLC signer exists, and no clean-machine funded rehearsal has passed |
 
 ## Reliability
 

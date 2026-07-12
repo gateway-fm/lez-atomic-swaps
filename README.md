@@ -49,7 +49,10 @@ See the living [implementation plan](docs/implementation-plan.md), the
 the [deployment component and RPC inventory](docs/architecture/deployment-components-and-rpcs.md),
 the [architecture decision log](docs/architecture/README.md), the living
 [manual reproduction guide](docs/manual-user-flows.md), and the first
-[acceptance tests](crates/swap-core/tests/e2e_swap_lifecycle.rs).
+[acceptance tests](crates/swap-core/tests/e2e_swap_lifecycle.rs). The
+[Zcash public-testnet setup guide](docs/zcash-testnet-setup.md) records the
+selected self-hosted route, optional funding wallet, external dependencies, and
+the still-missing transparent signer without claiming a completed testnet run.
 
 ## Development
 
@@ -89,10 +92,13 @@ testnet corridor with real funded accounts remain mandatory M2 evidence.
 
 CI also refreshes RustSec and Trivy vulnerability data. A database outage may
 block scanning; a newly published advisory may deliberately turn a prior pass
-red. Do not bypass that failure as “flaky.” The LEZ v0.2 RPC is selected, while a Zcash public/self-hosted route and both
-chains’ funding/faucet path remain unselected. Provider limits, fallback routes,
-and funding assumptions are an explicit M2 documentation gate. See the
-[full resource/flakiness table](docs/manual-user-flows.md#external-resources-and-flakiness).
+red. Do not bypass that failure as “flaky.” The LEZ v0.2 RPC and self-hosted
+Zebra 6.0.0 public-testnet route are selected; no official public Zebra
+JSON-RPC route was found. Zcash funding may use a community faucet, Discord
+request, or controlled pre-funded wallet, all with explicit availability risk.
+The project-owned transparent testnet signer remains unimplemented. Provider
+limits, fallback routes, and funding assumptions remain an M2 evidence gate. See
+the [full resource/flakiness table](docs/manual-user-flows.md#external-resources-and-flakiness).
 
     cargo test --locked --workspace --all-targets
     cargo fmt --all --check
