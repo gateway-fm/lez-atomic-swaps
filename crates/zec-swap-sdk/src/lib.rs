@@ -5,6 +5,7 @@ mod observation;
 mod observation_record;
 mod profile;
 mod transaction;
+mod zec_binding_record;
 
 pub use funding::{
     FundingBuildError, FundingSelection, TransparentFundingRequest, TransparentUtxo,
@@ -23,6 +24,9 @@ pub use observation_record::{
 };
 
 pub use profile::{ProfileError, ZecProfileId, ZecRefundProfile};
+pub use zec_binding_record::{
+    ZecBindingRecordError, ZecProfileRecordV1, ZecSwapBinding, ZecSwapBindingRecordV1,
+};
 
 pub use transaction::{
     TransactionBuildError, TransparentSpendRequest, build_claim_transaction,

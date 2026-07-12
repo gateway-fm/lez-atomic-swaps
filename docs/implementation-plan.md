@@ -346,6 +346,9 @@ M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
 - [x] Replay and validate the exact durable watcher head before projecting a new
   event. Same-transaction but stale-inclusion replacement evidence fails before
   aggregate or journal mutation.
+- [x] Define a version-1 primitive ZEC binding record for immutable profile,
+  expected network/branch/value, BIP-199 source terms, and derived redeem/P2SH
+  bytes. Loading reconstructs the contract and rejects profile or script drift.
 - [ ] Complete production runtime wiring: persist immutable profile and expected
   output bindings; deliver conflict and terminal reorg outcomes through a
   durable alert outbox; and prove close/reopen/requery through actual two-Zebra

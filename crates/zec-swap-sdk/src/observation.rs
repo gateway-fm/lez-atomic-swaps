@@ -44,6 +44,24 @@ impl ExpectedBip199Output {
     pub const fn contract(&self) -> &Bip199Contract {
         &self.contract
     }
+
+    /// Zcash network authorized by the negotiated terms.
+    #[must_use]
+    pub const fn network(&self) -> NetworkType {
+        self.network
+    }
+
+    /// Consensus branch authorized by the negotiated terms.
+    #[must_use]
+    pub const fn consensus_branch_id(&self) -> BranchId {
+        self.consensus_branch_id
+    }
+
+    /// Exact transparent output value authorized by the negotiated terms.
+    #[must_use]
+    pub const fn value(&self) -> Zatoshis {
+        self.value
+    }
 }
 
 /// One internally consistent snapshot assembled from authoritative node RPC responses.

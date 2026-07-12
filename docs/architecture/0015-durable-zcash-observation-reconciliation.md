@@ -130,3 +130,9 @@ history is now revalidated and replayed into the exact tracker head, and an
 identical fresh requery is suppressed. Durable profile/expected-output binding,
 a separately persisted operator/security alert outbox for terminal reorgs, and
 actual two-Zebra store/restart evidence remain required.
+
+The SDK now defines a version-1 primitive binding record for the reviewed
+profile, network, branch, value, BIP-199 source terms, and both derived scripts.
+Loading rebuilds the contract and validates profile consensus before returning
+a trusted binding. Schema storage, immutable insert semantics, and runtime event
+matching remain the next production slice.

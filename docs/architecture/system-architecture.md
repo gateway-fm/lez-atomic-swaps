@@ -281,6 +281,8 @@ flowchart LR
     Select --> ZecDeadline["Checked funding height + CLTV blocks"]
     Telemetry["Measured bounds or controlled harness"] --> Safety["LEZ-latest + required margin ≤ ZEC-earliest"]
     Select --> Safety
+    Terms --> Binding["Validated ZEC binding record v1"]
+    Binding -.-> Journal
     Safety -->|"missing/short"| Reject
     Safety --> Schedule["Direction-mapped RecoverySchedule<br/>LEZ always earlier than ZEC"]
     Depths --> Validator["Typed observation validator"]
@@ -336,6 +338,9 @@ Post-dependent replacement now commits chain truth atomically, retains the
 protocol-committed transaction ID in the participant-specific reorg phase, and
 returns `ReplacementConflict`; pre-dependent replacement and same-transaction
 re-mining remain normal applied outcomes.
+The SDK binding record now revalidates primitive profile and BIP-199 terms,
+including both derived scripts; schema-v3 persistence and runtime enforcement
+remain part of the dashed binding-to-journal edge.
 
 ## Happy-path user flow
 
