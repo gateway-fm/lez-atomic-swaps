@@ -10,6 +10,18 @@ of the decisions behind that system.
 ADRs are append-only. Superseded decisions remain here and link to their
 replacement.
 
+## Diagram compatibility policy
+
+Every tracked Markdown Mermaid block must use the conservative GitHub-compatible
+subset enforced by CI: stable flowchart, sequence, state-v2, class, or ER
+declarations without host configuration, beta/new-shape syntax, or interactive
+links and callbacks. The same gate renders every diagram with the exact Mermaid
+CLI 11.16.0 pin. GitHub's live Viewscreen asset also reported 11.16.0 on
+2026-07-12; its URL and SHA-256 are retained in
+[`../evidence/github-mermaid-renderer.json`](../evidence/github-mermaid-renderer.json).
+GitHub controls that renderer, so visual verification on GitHub is still
+required after pushing documentation changes.
+
 ```mermaid
 flowchart TB
     System["System architecture + actor flows"] --> Scope["0001 Scope"]

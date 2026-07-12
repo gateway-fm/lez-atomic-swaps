@@ -1,0 +1,9 @@
+{
+  "checked_on": "2026-07-12",
+  "github_render_path": "https://viewscreen.githubusercontent.com/markdown/mermaid",
+  "renderer_asset": "https://viewscreen.githubusercontent.com/static/assets/mermaidMarkdown-e0bd4023caf06a4eaeed.js",
+  "renderer_asset_sha256": "add1f25eef270daf6bc9a011c16030ca1c5033d690cf2ead922af232349f9fdf",
+  "reported_mermaid_version": "11.16.0",
+  "repository_mermaid_cli_version": "11.16.0",
+  "policy": "GitHub controls the live renderer; retain conservative syntax checks and verify the rendered repository after each documentation push."
+}

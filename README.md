@@ -95,6 +95,16 @@ and funding assumptions are an explicit M2 documentation gate. See the
     npm run test:mermaid
     RUN_ID=local-zebra-1 ./scripts/run-zebra-e2e.sh
 
+`npm run test:mermaid` scans every tracked Markdown Mermaid block, rejects
+GitHub-host-sensitive configuration, beta/new-shape, and interactive syntax,
+then renders every diagram with the exact Mermaid CLI 11.16.0 pin. GitHub's
+live Viewscreen renderer also reported 11.16.0 on 2026-07-12; the exact asset
+and SHA-256 are recorded in
+[`docs/evidence/github-mermaid-renderer.json`](docs/evidence/github-mermaid-renderer.json).
+GitHub controls that renderer, so the repository deliberately retains a
+conservative syntax subset and requires a visual check after documentation is
+pushed.
+
 The Zebra suite uses a unique `lez-atomic-swaps-${RUN_ID}` Compose project. It
 copies the binary from the digest-pinned official Zebra 5.2.0 image into a
 digest-pinned distroless nonroot runtime, then runs two disconnected nodes on a

@@ -3,7 +3,7 @@
   "scripts": {
     "audit:dependencies": "npm audit --audit-level=moderate",
     "audit:licenses": "node scripts/check-node-tooling-licenses.mjs",
-    "test:mermaid": "./scripts/render-mermaid-diagrams.sh"
+    "test:mermaid": "./scripts/test-mermaid-github-compatibility.sh && ./scripts/render-mermaid-diagrams.sh"
   },
   "devDependencies": {
     "@mermaid-js/mermaid-cli": "11.16.0",

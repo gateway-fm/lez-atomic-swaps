@@ -63,4 +63,5 @@ for document in "${documents[@]}"; do
   fi
 done
 
+./scripts/test-mermaid-github-compatibility.sh
 ./scripts/render-mermaid-diagrams.sh

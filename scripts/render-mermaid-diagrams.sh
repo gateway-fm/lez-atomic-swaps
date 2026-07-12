@@ -20,8 +20,10 @@ fi
 render_dir="$(mktemp -d "${TMPDIR:-/tmp}/lez-mermaid-render.XXXXXX")"
 trap 'rm -rf -- "$render_dir"' EXIT
 
+./scripts/check-mermaid-github-compatibility.sh
+
 mapfile -t documents < <(
-  find docs/architecture docs/milestone-1 -maxdepth 1 -type f -name '*.md' -print | sort
+  git ls-files --cached --others --exclude-standard -- '*.md'
 )
 
 block_count=0
