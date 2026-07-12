@@ -3,17 +3,19 @@ use lez_swap_core::{Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_swap_store::SqliteZecRecoveryStore;
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, Bip199Contract, CanonicalZcashOutputObservation,
-    CreateFirstLockOutcome, ExpectedBip199Output, FirstLockConfirmedEvidenceV1, FirstLockPlanV1,
-    FirstLockProjectionCommit, FirstLockStepV1, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
-    LezTakerFirstLockObservationPort, NegotiationChannel, NegotiationTranscriptV1,
-    ObserveTakerFirstLockOutcome, OfferDiscovery, PreparedFirstLockSubmissionV1, RecoveryStore,
-    TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZcashNodeSnapshot, ZcashStableTip,
-    ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
-    ZecAgreementRecordV1, ZecLezTermsV1, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1,
-    ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding,
-    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_funding_transaction,
-    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    CanonicalZcashOutputRemoval, CreateFirstLockOutcome, ExpectedBip199Output,
+    FirstLockConfirmedEvidenceV1, FirstLockPlanV1, FirstLockProjectionCommit, FirstLockStepV1,
+    LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, LezTakerFirstLockObservationPort,
+    NegotiationChannel, NegotiationTranscriptV1, ObserveTakerFirstLockOutcome,
+    ObservedTakerFirstLockTransitionRecordV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
+    RecoveryStore, TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
+    ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZcashNodeRemovalSnapshot, ZcashNodeSnapshot,
+    ZcashObservationEventRecordV1, ZcashStableTip, ZcashTakerFirstLockObservationPort,
+    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecLezTermsV1,
+    ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1,
+    ZecRefundPlanV1, ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
+    build_funding_transaction, derive_lez_metadata_account_v1,
+    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
@@ -265,6 +267,34 @@ async fn first_lock_intent_transition_and_closed_recovery_survive_reopen() {
         .expect("agreement remains durable");
     assert_eq!(resumed.status(), Phase::TakerLockConfirmed);
     assert_eq!(resumed.revision(), 1);
+    drop(resumed);
+    assert_orphan_future_taker_transition_fails_closed(&path, id, &swap_id).await;
+}
+
+async fn assert_orphan_future_taker_transition_fails_closed(
+    path: &std::path::Path,
+    id: &str,
+    swap_id: &SwapId,
+) {
+    Connection::open(path)
+        .expect("inject orphan taker transition")
+        .execute(
+            "INSERT INTO zec_sdk_first_lock_transitions (
+                local_role, swap_id, predecessor_revision, committed_revision,
+                payload_version, payload_json
+             )
+             SELECT local_role, swap_id, 1, 2, payload_version, payload_json
+             FROM zec_sdk_first_lock_transitions
+             WHERE local_role = 'taker' AND swap_id = ?1 AND predecessor_revision = 0",
+            params![id],
+        )
+        .expect("inject future taker row without aggregate advance");
+    let corrupt =
+        SqliteZecRecoveryStore::open(path, Participant::Taker).expect("reopen orphan fixture");
+    assert!(matches!(
+        sdk(Participant::Taker, corrupt).resume(swap_id).await,
+        Err(ZecSdkError::Persistence(_))
+    ));
 }
 
 #[tokio::test]
@@ -479,7 +509,203 @@ async fn maker_observation_is_role_local_and_survives_sqlite_reopen() {
     let observation = MakerObservation(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
         canonical_zcash_taker_lock(accepted.agreement()),
     )));
+    let canonical = match &observation.0 {
+        TakerFirstLockObservationV1::CanonicalZcash(value) => value.as_ref().clone(),
+        _ => unreachable!("canonical fixture"),
+    };
+    assert_initial_maker_observation_persists(&path, id, &accepted, observation).await;
+    assert_store_rejects_unproved_canonical_replacement(&path, id, &accepted).await;
+    let reopened =
+        SqliteZecRecoveryStore::open(&path, Participant::Maker).expect("reopen maker store");
+    let resumed = ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        MakerObservation(TakerFirstLockObservationV1::Absent),
+        MakerObservation(TakerFirstLockObservationV1::Absent),
+        reopened,
+    )
+    .resume(&SwapId::new(id).expect("swap ID"))
+    .await
+    .expect("maker resume")
+    .expect("maker agreement");
+    assert_eq!(resumed.status(), Phase::TakerLockConfirmed);
+    assert_eq!(resumed.revision(), 1);
+
+    drop(resumed);
+    let removed = canonical_zcash_removal(&canonical);
+    let replacement = canonical_zcash_replacement(accepted.agreement(), &removed);
+    commit_maker_observation_after_reopen(
+        &path,
+        id,
+        TakerFirstLockObservationV1::ZcashReplaced {
+            removed: Box::new(removed),
+            canonical: Box::new(replacement),
+        },
+        Phase::TakerLockConfirmed,
+        2,
+    )
+    .await;
+    let deeper = canonical_zcash_replacement_depth_update(accepted.agreement());
+    commit_maker_observation_after_reopen(
+        &path,
+        id,
+        TakerFirstLockObservationV1::CanonicalZcash(Box::new(deeper.clone())),
+        Phase::TakerLockConfirmed,
+        3,
+    )
+    .await;
+    commit_maker_observation_after_reopen(
+        &path,
+        id,
+        TakerFirstLockObservationV1::ZcashRemoved(Box::new(canonical_zcash_removal(&deeper))),
+        Phase::Offered,
+        4,
+    )
+    .await;
+
+    let removal_replay =
+        SqliteZecRecoveryStore::open(&path, Participant::Maker).expect("reopen removed state");
+    let removed = ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        MakerObservation(TakerFirstLockObservationV1::Absent),
+        MakerObservation(TakerFirstLockObservationV1::Absent),
+        removal_replay,
+    )
+    .resume(&SwapId::new(id).expect("swap ID"))
+    .await
+    .expect("replay removal")
+    .expect("maker agreement");
+    assert_eq!(removed.status(), Phase::Offered);
+    assert_eq!(removed.revision(), 4);
+    drop(removed);
+    assert_orphan_future_maker_transition_fails_closed(&path, id).await;
+}
+
+#[tokio::test]
+async fn stale_maker_instance_catches_up_before_an_absent_poll_returns() {
+    let data = TempDir::new().expect("concurrent maker store");
+    let path = data.path().join("maker-head-ahead.sqlite3");
+    let id = "sqlite-maker-head-ahead";
+    let accepted = accept(
+        &agreement_wire(id, FixtureVariant::Local),
+        Participant::Maker,
+    );
+    let canonical = canonical_zcash_taker_lock(accepted.agreement());
+    let initial = MakerObservation(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
+        canonical,
+    )));
     let store = SqliteZecRecoveryStore::open(&path, Participant::Maker).expect("open maker store");
+    let stale_sdk = ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        MakerObservation(TakerFirstLockObservationV1::Absent),
+        MakerObservation(TakerFirstLockObservationV1::Absent),
+        store.clone(),
+    );
+    let leader_sdk = ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        initial.clone(),
+        initial,
+        store,
+    );
+    let mut stale = stale_sdk
+        .activate(accepted.clone())
+        .await
+        .expect("activate stale maker");
+    let mut leader = leader_sdk
+        .activate(accepted.clone())
+        .await
+        .expect("activate leader maker");
+    leader
+        .observe_taker_first_lock()
+        .await
+        .expect("leader commits canonical revision");
+
+    let deeper = canonical_zcash_taker_lock_at_depth(accepted.agreement(), [9; 32], 4);
+    commit_maker_observation_after_reopen(
+        &path,
+        id,
+        TakerFirstLockObservationV1::CanonicalZcash(Box::new(deeper)),
+        Phase::TakerLockConfirmed,
+        2,
+    )
+    .await;
+    assert_eq!(
+        stale
+            .observe_taker_first_lock()
+            .await
+            .expect("absent poll returns only after durable catch-up"),
+        ObserveTakerFirstLockOutcome::AwaitingStableObservation(FirstLockStepV1::ZcashFund)
+    );
+    assert_eq!(stale.status(), Phase::TakerLockConfirmed);
+    assert_eq!(stale.revision(), 2);
+}
+
+#[tokio::test]
+async fn maker_observation_trigger_failure_rolls_back_row_and_revision() {
+    let data = TempDir::new().expect("maker rollback store");
+    let path = data.path().join("maker-rollback.sqlite3");
+    let id = "sqlite-maker-rollback";
+    let accepted = accept(
+        &agreement_wire(id, FixtureVariant::Local),
+        Participant::Maker,
+    );
+    let observation = MakerObservation(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
+        canonical_zcash_taker_lock(accepted.agreement()),
+    )));
+    let store = SqliteZecRecoveryStore::open(&path, Participant::Maker).expect("open maker store");
+    let sdk = ZecPairSdk::new(
+        Participant::Maker,
+        NoDiscovery,
+        FixedNegotiation,
+        observation.clone(),
+        observation,
+        store,
+    );
+    let mut active = sdk.activate(accepted).await.expect("activate maker");
+    let raw = Connection::open(&path).expect("install maker fault");
+    raw.execute_batch(
+        "CREATE TRIGGER fail_maker_revision
+         BEFORE UPDATE OF active_revision ON zec_sdk_agreements
+         BEGIN SELECT RAISE(ABORT, 'forced maker rollback'); END;",
+    )
+    .expect("install maker rollback trigger");
+    assert!(active.observe_taker_first_lock().await.is_err());
+    assert_eq!(active.revision(), 0);
+    let rows: (i64, i64) = raw
+        .query_row(
+            "SELECT active_revision,
+                    (SELECT COUNT(*) FROM zec_sdk_first_lock_transitions
+                     WHERE local_role = 'maker' AND swap_id = ?1)
+             FROM zec_sdk_agreements
+             WHERE local_role = 'maker' AND swap_id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("rolled-back maker unit");
+    assert_eq!(rows, (0, 0));
+    raw.execute_batch("DROP TRIGGER fail_maker_revision;")
+        .expect("remove maker rollback trigger");
+    active
+        .observe_taker_first_lock()
+        .await
+        .expect("maker retry commits");
+    assert_eq!(active.revision(), 1);
+}
+
+async fn assert_initial_maker_observation_persists(
+    path: &std::path::Path,
+    id: &str,
+    accepted: &AcceptedZecAgreementV1,
+    observation: MakerObservation,
+) {
+    let store = SqliteZecRecoveryStore::open(path, Participant::Maker).expect("open maker store");
     let pair_sdk = ZecPairSdk::new(
         Participant::Maker,
         NoDiscovery,
@@ -488,7 +714,10 @@ async fn maker_observation_is_role_local_and_survives_sqlite_reopen() {
         observation,
         store.clone(),
     );
-    let mut active = pair_sdk.activate(accepted).await.expect("activate maker");
+    let mut active = pair_sdk
+        .activate(accepted.clone())
+        .await
+        .expect("activate maker");
     assert_eq!(
         active
             .observe_taker_first_lock()
@@ -510,8 +739,8 @@ async fn maker_observation_is_role_local_and_survives_sqlite_reopen() {
         FirstLockProjectionCommit::new(1, true)
     );
 
-    let raw = Connection::open(&path).expect("inspect maker recovery");
-    let (transition_count, intent_count, active_revision): (i64, i64, i64) = raw
+    let raw = Connection::open(path).expect("inspect maker recovery");
+    let rows: (i64, i64, i64) = raw
         .query_row(
             "SELECT
                 (SELECT COUNT(*) FROM zec_sdk_first_lock_transitions
@@ -525,34 +754,208 @@ async fn maker_observation_is_role_local_and_survives_sqlite_reopen() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .expect("maker rows");
-    assert_eq!((transition_count, intent_count, active_revision), (1, 0, 1));
+    assert_eq!(rows, (1, 0, 1));
+}
 
-    drop(active);
-    drop(pair_sdk);
-    drop(store);
-    let reopened =
-        SqliteZecRecoveryStore::open(&path, Participant::Maker).expect("reopen maker store");
-    let resumed = ZecPairSdk::new(
+async fn assert_store_rejects_unproved_canonical_replacement(
+    path: &std::path::Path,
+    id: &str,
+    accepted: &AcceptedZecAgreementV1,
+) {
+    let raw = Connection::open(path).expect("read canonical transition fixture");
+    let payload: String = raw
+        .query_row(
+            "SELECT payload_json FROM zec_sdk_first_lock_transitions
+             WHERE local_role = 'maker' AND swap_id = ?1 AND predecessor_revision = 0",
+            params![id],
+            |row| row.get(0),
+        )
+        .expect("canonical transition payload");
+    let store =
+        SqliteZecRecoveryStore::open(path, Participant::Maker).expect("open tracker boundary");
+    let initial = canonical_zcash_taker_lock(accepted.agreement());
+    let duplicate = observed_transition_from_event(&payload, accepted, &initial, 1);
+    assert!(
+        store
+            .commit_observed_taker_first_lock_transition(&duplicate)
+            .await
+            .is_err(),
+        "store must reject an unchanged canonical poll"
+    );
+
+    let changed_inclusion = canonical_zcash_taker_lock_fixture(
+        accepted.agreement(),
+        [9; 32],
+        BlockHash([0x55; 32]),
+        BlockHash([0xbb; 32]),
+        BlockHeight::from_u32(103),
+    );
+    let changed_inclusion_transition =
+        observed_transition_from_event(&payload, accepted, &changed_inclusion, 1);
+    assert!(
+        store
+            .commit_observed_taker_first_lock_transition(&changed_inclusion_transition)
+            .await
+            .is_err(),
+        "same transaction in a different inclusion requires replacement proof"
+    );
+
+    let stale_removal = canonical_zcash_removal(&changed_inclusion);
+    let stale_transaction_id = stale_removal.previous().transaction_id().to_string();
+    let stale_removal_transition = observed_transition_from_record(
+        &payload,
+        accepted,
+        &stale_transaction_id,
+        stale_removal.previous().confirmations().get(),
+        ZcashObservationEventRecordV1::from_event(
+            &lez_zec_swap_sdk::ZcashObservationEvent::Removed(stale_removal),
+        ),
+        1,
+    );
+    assert!(
+        store
+            .commit_observed_taker_first_lock_transition(&stale_removal_transition)
+            .await
+            .is_err(),
+        "removal must name the exact tracker inclusion, not only the same transaction"
+    );
+
+    let changed_transaction = canonical_zcash_taker_lock_with_input(accepted.agreement(), [7; 32]);
+    let changed_transaction_transition =
+        observed_transition_from_event(&payload, accepted, &changed_transaction, 1);
+    assert!(
+        store
+            .commit_observed_taker_first_lock_transition(&changed_transaction_transition)
+            .await
+            .is_err(),
+        "changed canonical transaction requires replacement evidence"
+    );
+}
+
+fn observed_transition_from_event(
+    payload: &str,
+    accepted: &AcceptedZecAgreementV1,
+    canonical: &CanonicalZcashOutputObservation,
+    predecessor: u64,
+) -> lez_zec_swap_sdk::ObservedTakerFirstLockTransitionV1 {
+    let transaction_id = canonical.transaction_id().to_string();
+    observed_transition_from_record(
+        payload,
+        accepted,
+        &transaction_id,
+        canonical.confirmations().get(),
+        ZcashObservationEventRecordV1::from_canonical(canonical),
+        predecessor,
+    )
+}
+
+fn observed_transition_from_record(
+    payload: &str,
+    accepted: &AcceptedZecAgreementV1,
+    transaction_id: &str,
+    confirmations: u32,
+    event: ZcashObservationEventRecordV1,
+    predecessor: u64,
+) -> lez_zec_swap_sdk::ObservedTakerFirstLockTransitionV1 {
+    let mut value: serde_json::Value = serde_json::from_str(payload).expect("transition JSON");
+    value["predecessor_revision"] = serde_json::json!(predecessor);
+    value["transaction_id"] = serde_json::json!(transaction_id);
+    value["confirmations"] = serde_json::json!(confirmations);
+    value["zcash_canonical"] = serde_json::to_value(event).expect("canonical event JSON");
+    let record: ObservedTakerFirstLockTransitionRecordV1 =
+        serde_json::from_value(value).expect("well-formed transition record");
+    record
+        .revalidate(accepted, predecessor)
+        .expect("individually agreement-valid transition")
+}
+
+async fn commit_maker_observation_after_reopen(
+    path: &std::path::Path,
+    id: &str,
+    observation: TakerFirstLockObservationV1,
+    expected_phase: Phase,
+    expected_revision: u64,
+) {
+    let store =
+        SqliteZecRecoveryStore::open(path, Participant::Maker).expect("reopen maker journal");
+    let mut active = ZecPairSdk::new(
         Participant::Maker,
         NoDiscovery,
         FixedNegotiation,
         MakerObservation(TakerFirstLockObservationV1::Absent),
-        MakerObservation(TakerFirstLockObservationV1::Absent),
-        reopened,
+        MakerObservation(observation),
+        store,
     )
     .resume(&SwapId::new(id).expect("swap ID"))
     .await
-    .expect("maker resume")
+    .expect("resume maker journal")
     .expect("maker agreement");
-    assert_eq!(resumed.status(), Phase::TakerLockConfirmed);
-    assert_eq!(resumed.revision(), 1);
-
-    drop(resumed);
-    assert_orphan_future_maker_transition_fails_closed(&path, id).await;
+    assert!(matches!(
+        active.observe_taker_first_lock().await,
+        Ok(ObserveTakerFirstLockOutcome::Projected(_))
+    ));
+    assert_eq!(active.status(), expected_phase);
+    assert_eq!(active.revision(), expected_revision);
 }
 
 fn canonical_zcash_taker_lock(
     agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+) -> CanonicalZcashOutputObservation {
+    canonical_zcash_taker_lock_at_depth(agreement, [9; 32], 3)
+}
+
+fn canonical_zcash_taker_lock_with_input(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    input_transaction_id: [u8; 32],
+) -> CanonicalZcashOutputObservation {
+    canonical_zcash_taker_lock_at_depth(agreement, input_transaction_id, 3)
+}
+
+fn canonical_zcash_taker_lock_at_depth(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    input_transaction_id: [u8; 32],
+    confirmations: u32,
+) -> CanonicalZcashOutputObservation {
+    canonical_zcash_taker_lock_fixture(
+        agreement,
+        input_transaction_id,
+        BlockHash([0x44; 32]),
+        BlockHash([0xaa; 32]),
+        BlockHeight::from_u32(100 + confirmations - 1),
+    )
+}
+
+fn canonical_zcash_replacement(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    removed: &CanonicalZcashOutputRemoval,
+) -> CanonicalZcashOutputObservation {
+    canonical_zcash_taker_lock_fixture(
+        agreement,
+        [8; 32],
+        removed.canonical_block_hash_at_removed_height(),
+        removed.tip_block_hash(),
+        removed.tip_height(),
+    )
+}
+
+fn canonical_zcash_replacement_depth_update(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+) -> CanonicalZcashOutputObservation {
+    canonical_zcash_taker_lock_fixture(
+        agreement,
+        [8; 32],
+        BlockHash([0x55; 32]),
+        BlockHash([0xcc; 32]),
+        BlockHeight::from_u32(104),
+    )
+}
+
+fn canonical_zcash_taker_lock_fixture(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    input_transaction_id: [u8; 32],
+    transaction_block_hash: BlockHash,
+    tip_block_hash: BlockHash,
+    tip_height: BlockHeight,
 ) -> CanonicalZcashOutputObservation {
     let expected = agreement.binding().expected_output();
     let key = SecretKey::from_slice(&[7; 32]).expect("canonical observation owner key");
@@ -560,7 +963,7 @@ fn canonical_zcash_taker_lock(
     let owner_script: Script = TransparentAddress::from_pubkey(&public_key).script().into();
     let request = TransparentFundingRequest::new(
         vec![TransparentUtxo::new(
-            OutPoint::new([9; 32], 0),
+            OutPoint::new(input_transaction_id, 0),
             TxOut::new(
                 Zatoshis::from_u64(
                     u64::from(expected.value())
@@ -589,34 +992,57 @@ fn canonical_zcash_taker_lock(
             expected.network(),
             expected.consensus_branch_id(),
             true,
-            BlockHash([0x44; 32]),
-            BlockHash([0x44; 32]),
+            transaction_block_hash,
+            transaction_block_hash,
             BlockHeight::from_u32(100),
-            ZcashStableTip::new(
-                BlockHash([0xaa; 32]),
-                BlockHeight::from_u32(102),
-                BlockHash([0xaa; 32]),
-                BlockHeight::from_u32(102),
-            ),
+            ZcashStableTip::new(tip_block_hash, tip_height, tip_block_hash, tip_height),
             transaction.txid(),
             raw,
             0,
-            3,
+            u32::from(tip_height) - 100 + 1,
         ),
     )
     .expect("agreement-bound canonical observation")
 }
 
+fn canonical_zcash_removal(
+    previous: &CanonicalZcashOutputObservation,
+) -> CanonicalZcashOutputRemoval {
+    let (replacement_block_hash, tip_block_hash) = if previous.block_hash() == BlockHash([0x44; 32])
+    {
+        (BlockHash([0x55; 32]), BlockHash([0xbb; 32]))
+    } else {
+        (BlockHash([0x66; 32]), BlockHash([0xdd; 32]))
+    };
+    let tip_height = BlockHeight::from_u32(u32::from(previous.tip_height()) + 1);
+    CanonicalZcashOutputRemoval::validate(
+        previous,
+        &ZcashNodeRemovalSnapshot::new(
+            previous.network(),
+            previous.consensus_branch_id(),
+            replacement_block_hash,
+            ZcashStableTip::new(tip_block_hash, tip_height, tip_block_hash, tip_height),
+        ),
+    )
+    .expect("affirmative stable canonical removal")
+}
+
 async fn assert_orphan_future_maker_transition_fails_closed(path: &std::path::Path, id: &str) {
     let raw = Connection::open(path).expect("inject orphan future maker transition");
+    raw.execute(
+        "DELETE FROM zec_sdk_first_lock_transitions
+         WHERE local_role = 'maker' AND swap_id = ?1 AND predecessor_revision = 1",
+        params![id],
+    )
+    .expect("remove middle maker transition");
     raw.execute(
         "INSERT INTO zec_sdk_first_lock_transitions (
             local_role, swap_id, predecessor_revision, committed_revision,
             payload_version, payload_json
-        ) VALUES ('maker', ?1, 1, 2, 1, '{}')",
+        ) VALUES ('maker', ?1, 4, 5, 1, '{}')",
         params![id],
     )
-    .expect("inject orphan future maker transition");
+    .expect("substitute future maker transition while preserving row count");
     drop(raw);
     let corrupt =
         SqliteZecRecoveryStore::open(path, Participant::Maker).expect("reopen corrupt maker store");

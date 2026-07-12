@@ -7,23 +7,24 @@ use async_trait::async_trait;
 use lez_swap_core::{Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract,
-    CanonicalZcashOutputObservation, ClaimPreimage, CreateAgreementOutcome, CreateFirstLockOutcome,
-    ExpectedBip199Output, FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome,
-    FirstLockIntentRecordV1, FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1,
-    FirstLockProjectionCommit, FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1,
-    FirstLockTransitionV1, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, LezFirstLockPort,
+    CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval, ClaimPreimage,
+    CreateAgreementOutcome, CreateFirstLockOutcome, ExpectedBip199Output,
+    FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentRecordV1,
+    FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1, FirstLockProjectionCommit,
+    FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1, FirstLockTransitionV1,
+    LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, LezFirstLockPort,
     LezTakerFirstLockObservationPort, MAX_FIRST_LOCK_SUBMISSION_BYTES,
     MAX_ZEC_AGREEMENT_RECORD_BYTES, NegotiationChannel, NegotiationTranscriptV1,
     ObserveTakerFirstLockOutcome, ObservedTakerFirstLockEvidenceV1,
     ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
     RecoveryStore, TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZcashFirstLockPort, ZcashNodeSnapshot, ZcashStableTip,
-    ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
-    ZecAgreementRecordV1, ZecAgreementV1Error, ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk,
-    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
-    ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
-    build_funding_transaction, derive_lez_metadata_account_v1,
-    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZcashFirstLockPort, ZcashNodeRemovalSnapshot,
+    ZcashNodeSnapshot, ZcashStableTip, ZcashTakerFirstLockObservationPort,
+    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1Error,
+    ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1,
+    ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding,
+    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_funding_transaction,
+    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use zcash_primitives::block::BlockHash;
@@ -970,10 +971,11 @@ async fn maker_independently_observes_and_durably_projects_taker_first_locks_in_
         Err(ZecSdkError::InvalidObservedTakerFirstLockTransition(_))
     ));
     assert_eq!(maker.status(), Phase::Offered);
+    let canonical = canonical_zcash_taker_lock(maker.agreement());
     forward_zcash
         .0
         .respond(Ok(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
-            canonical_zcash_taker_lock(maker.agreement()),
+            canonical.clone(),
         ))));
     forward_store.set_transition_mode(TransitionCommitMode::FailBeforeCommit);
     assert!(maker.observe_taker_first_lock().await.is_err());
@@ -995,8 +997,36 @@ async fn maker_independently_observes_and_durably_projects_taker_first_locks_in_
         ZecLifecycleAction::Wait,
         "adapter-asserted maker observation must not authorize the second lock"
     );
+    assert_eq!(
+        maker
+            .observe_taker_first_lock()
+            .await
+            .expect("unchanged canonical poll is not persisted"),
+        ObserveTakerFirstLockOutcome::Unchanged(FirstLockStepV1::ZcashFund)
+    );
+    assert_eq!(maker.revision(), 1);
 
-    let restarted = ZecPairSdk::new(
+    assert_forward_canonical_history_survives_restart(
+        forward_id,
+        forward_wire,
+        forward_lez,
+        forward_zcash,
+        forward_store,
+        canonical,
+    )
+    .await;
+}
+
+async fn assert_forward_canonical_history_survives_restart(
+    forward_id: &str,
+    forward_wire: Vec<u8>,
+    forward_lez: MemoryLezTakerLockObservation,
+    forward_zcash: MemoryZcashTakerLockObservation,
+    forward_store: MemoryStore,
+    canonical: CanonicalZcashOutputObservation,
+) {
+    let reorg_zcash = forward_zcash.clone();
+    let mut restarted = ZecPairSdk::new(
         Participant::Maker,
         MemoryDiscovery::default(),
         MemoryNegotiation { wire: forward_wire },
@@ -1015,6 +1045,67 @@ async fn maker_independently_observes_and_durably_projects_taker_first_locks_in_
         ZecLifecycleAction::Wait,
         "replayed observation requires a fresh canonical eligibility check"
     );
+    let removed = canonical_zcash_removal(&canonical);
+    let mismatched_replacement =
+        canonical_zcash_taker_lock_with_input(restarted.agreement(), [8; 32]);
+    reorg_zcash
+        .0
+        .respond(Ok(TakerFirstLockObservationV1::ZcashReplaced {
+            removed: Box::new(removed.clone()),
+            canonical: Box::new(mismatched_replacement),
+        }));
+    assert!(
+        restarted.observe_taker_first_lock().await.is_err(),
+        "replacement halves from different stable tips must fail"
+    );
+    assert_eq!(restarted.revision(), 1);
+    let replacement = canonical_zcash_replacement(restarted.agreement(), &removed);
+    reorg_zcash
+        .0
+        .respond(Ok(TakerFirstLockObservationV1::ZcashReplaced {
+            removed: Box::new(removed),
+            canonical: Box::new(replacement.clone()),
+        }));
+    let replaced = restarted
+        .observe_taker_first_lock()
+        .await
+        .expect("atomic canonical replacement commits");
+    assert!(matches!(
+        replaced,
+        ObserveTakerFirstLockOutcome::Projected(_)
+    ));
+    assert_eq!(restarted.status(), Phase::TakerLockConfirmed);
+    assert_eq!(restarted.revision(), 2);
+
+    let deeper = canonical_zcash_replacement_depth_update(restarted.agreement());
+    reorg_zcash
+        .0
+        .respond(Ok(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
+            deeper.clone(),
+        ))));
+    restarted
+        .observe_taker_first_lock()
+        .await
+        .expect("same-inclusion depth increase commits");
+    assert_eq!(restarted.status(), Phase::TakerLockConfirmed);
+    assert_eq!(restarted.revision(), 3);
+
+    reorg_zcash
+        .0
+        .respond(Ok(TakerFirstLockObservationV1::ZcashRemoved(Box::new(
+            canonical_zcash_removal(&deeper),
+        ))));
+    let removal = restarted
+        .observe_taker_first_lock()
+        .await
+        .expect("canonical removal commits");
+    assert!(matches!(
+        removal,
+        ObserveTakerFirstLockOutcome::Projected(_)
+    ));
+    assert_eq!(restarted.status(), Phase::Offered);
+    assert_eq!(restarted.revision(), 4);
+    assert_eq!(restarted.next_action(), ZecLifecycleAction::Wait);
 }
 
 async fn assert_forward_observation_does_not_advance(
@@ -1169,6 +1260,62 @@ fn confirmed_observed_taker_lock(
 fn canonical_zcash_taker_lock(
     agreement: &lez_zec_swap_sdk::ZecAgreementV1,
 ) -> CanonicalZcashOutputObservation {
+    canonical_zcash_taker_lock_at_depth(agreement, [9; 32], 3)
+}
+
+fn canonical_zcash_taker_lock_with_input(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    input_transaction_id: [u8; 32],
+) -> CanonicalZcashOutputObservation {
+    canonical_zcash_taker_lock_at_depth(agreement, input_transaction_id, 3)
+}
+
+fn canonical_zcash_taker_lock_at_depth(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    input_transaction_id: [u8; 32],
+    confirmations: u32,
+) -> CanonicalZcashOutputObservation {
+    canonical_zcash_taker_lock_fixture(
+        agreement,
+        input_transaction_id,
+        BlockHash([0x44; 32]),
+        BlockHash([0xaa; 32]),
+        BlockHeight::from_u32(100 + confirmations - 1),
+    )
+}
+
+fn canonical_zcash_replacement(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    removed: &CanonicalZcashOutputRemoval,
+) -> CanonicalZcashOutputObservation {
+    canonical_zcash_taker_lock_fixture(
+        agreement,
+        [8; 32],
+        removed.canonical_block_hash_at_removed_height(),
+        removed.tip_block_hash(),
+        removed.tip_height(),
+    )
+}
+
+fn canonical_zcash_replacement_depth_update(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+) -> CanonicalZcashOutputObservation {
+    canonical_zcash_taker_lock_fixture(
+        agreement,
+        [8; 32],
+        BlockHash([0x55; 32]),
+        BlockHash([0xcc; 32]),
+        BlockHeight::from_u32(104),
+    )
+}
+
+fn canonical_zcash_taker_lock_fixture(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    input_transaction_id: [u8; 32],
+    transaction_block_hash: BlockHash,
+    tip_block_hash: BlockHash,
+    tip_height: BlockHeight,
+) -> CanonicalZcashOutputObservation {
     let expected = agreement.binding().expected_output();
     let key = SecretKey::from_slice(&[7; 32]).expect("canonical observation owner key");
     let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &key);
@@ -1178,7 +1325,7 @@ fn canonical_zcash_taker_lock(
         .expect("fixture input value");
     let request = TransparentFundingRequest::new(
         vec![TransparentUtxo::new(
-            OutPoint::new([9; 32], 0),
+            OutPoint::new(input_transaction_id, 0),
             TxOut::new(
                 Zatoshis::from_u64(input_value).expect("fixture input"),
                 owner_script,
@@ -1202,22 +1349,39 @@ fn canonical_zcash_taker_lock(
             expected.network(),
             expected.consensus_branch_id(),
             true,
-            BlockHash([0x44; 32]),
-            BlockHash([0x44; 32]),
+            transaction_block_hash,
+            transaction_block_hash,
             BlockHeight::from_u32(100),
-            ZcashStableTip::new(
-                BlockHash([0xaa; 32]),
-                BlockHeight::from_u32(102),
-                BlockHash([0xaa; 32]),
-                BlockHeight::from_u32(102),
-            ),
+            ZcashStableTip::new(tip_block_hash, tip_height, tip_block_hash, tip_height),
             transaction.txid(),
             raw,
             0,
-            3,
+            u32::from(tip_height) - 100 + 1,
         ),
     )
     .expect("agreement-bound canonical observation")
+}
+
+fn canonical_zcash_removal(
+    previous: &CanonicalZcashOutputObservation,
+) -> CanonicalZcashOutputRemoval {
+    let (replacement_block_hash, tip_block_hash) = if previous.block_hash() == BlockHash([0x44; 32])
+    {
+        (BlockHash([0x55; 32]), BlockHash([0xbb; 32]))
+    } else {
+        (BlockHash([0x66; 32]), BlockHash([0xdd; 32]))
+    };
+    let tip_height = BlockHeight::from_u32(u32::from(previous.tip_height()) + 1);
+    CanonicalZcashOutputRemoval::validate(
+        previous,
+        &ZcashNodeRemovalSnapshot::new(
+            previous.network(),
+            previous.consensus_branch_id(),
+            replacement_block_hash,
+            ZcashStableTip::new(tip_block_hash, tip_height, tip_block_hash, tip_height),
+        ),
+    )
+    .expect("affirmative stable canonical removal")
 }
 
 #[tokio::test]

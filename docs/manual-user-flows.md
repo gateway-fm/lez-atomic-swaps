@@ -15,9 +15,9 @@ project-owned transparent signer and actor adapter.
 
 | Flow | Boundary exercised | Current limitation |
 |---|---|---|
-| ZEC SDK agreement/activation/first lock | Canonical bounded dual-signed record is integrated through untrusted negotiation, role-fixed persistence-before-activation, adversarial resume, exact taker first-lock intent, primitive-record revalidation, observe-before-rebroadcast, complete canonical forward-Zcash maker evidence, production SQLite atomic projection, unknown-commit probe, and separate-role close/reopen replay | Node ports remain contract doubles; maker observation is deliberately non-authorizing, reverse LEZ is not canonical, and these commands do not prove the ordered reorg journal, later effects, or actor E2E |
+| ZEC SDK agreement/activation/first lock | Canonical bounded dual-signed record is integrated through untrusted negotiation, role-fixed persistence-before-activation, adversarial resume, exact taker first-lock intent, primitive-record revalidation, observe-before-rebroadcast, complete canonical forward-Zcash maker evidence, schema-v6 ordered canonical/depth/replacement/removal replay, unknown-commit probe, and separate-role close/reopen recovery | Node ports remain contract doubles; maker observation is deliberately non-authorizing, reverse LEZ is not canonical, and these commands do not prove fresh second-lock eligibility, later effects, or actor E2E |
 | Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
-| Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v5 SQLite journal/alerts plus the production role-fixed SDK first-lock recovery adapter, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The daemon polling loop, later SDK effects, and independent maker/taker actors remain pending |
+| Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v6 SQLite journal/alerts plus the production role-fixed SDK first-lock recovery adapter, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The daemon polling loop, later SDK effects, and independent maker/taker actors remain pending |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
 | LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an in-process, ephemeral-port LEZ v0.1.2 standalone sequencer | This is a local compatibility proof, not the incompatible LEZ 0.2 public testnet |
 | LEZ recursive execution costs | Exact checked guest replayed through production `V03State` transitions with nested authenticated-transfer and ATA/Token sessions | This measures deterministic local execution, not public-testnet fees or latency |
@@ -379,12 +379,17 @@ forward Zcash assertion is rejected, complete canonical output evidence survives
 record revalidation against the HTLC output binding, non-confirmed
 outcomes write nothing, the maker never owns a taker intent, persisted adapter
 assertions remain non-authorizing, and restart uses the maker-only store. The
-store command runs seven production-adapter cases over a real temporary schema-v5
-database: exact replay/conflict, same-ID role isolation, retained closed intent,
-atomic trigger-injected rollback, future/malformed/mirrored-torn-state
-rejection, exact maker replay, orphan-future-row rejection, and close/reopen
-resume. Production chain RPC adapters, durable reorg eligibility, and later
-effects are remaining work.
+store command runs nine production-adapter cases over a real temporary
+schema-v6 database: exact replay/conflict, same-ID role isolation, retained
+closed intent, taker and maker trigger-injected rollback,
+future/malformed/torn/orphan/holey-state rejection, poison-append rejection,
+exact and historical maker replay, stale-instance catch-up, and four-event
+close/reopen resume. The maker actor flow is canonical observation at revision
+1, atomic replacement at revision 2, same-inclusion depth update at revision 3,
+and affirmative removal at revision 4. Replacement halves share one stable
+tip; unchanged polls write nothing; changed inclusion without replacement and
+stale removal of an old inclusion fail before append. Production chain RPC adapters, fresh
+pre-second-lock eligibility, and later effects are remaining work.
 
 Before starting Zebra, reproduce spend recognition independently from SDK
 construction policy:
@@ -466,7 +471,7 @@ Rust fixtures. It refuses a pre-existing manifest, database, WAL, or SHM before
 Compose starts. The maker runtime fixture runs first and:
 
 1. constructs and broadcasts canonical BIP-199 funding to the primary node;
-2. commits its immutable binding, event, and aggregate revision to schema-v5
+2. commits its immutable binding, event, and aggregate revision to schema-v6
    SQLite, closes the store, reopens it, replays the journal, and proves an
    unchanged fresh RPC requery creates no duplicate;
 3. mines a longer independent fork without the funding transaction, relays it

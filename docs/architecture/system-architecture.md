@@ -24,12 +24,13 @@ flowchart TB
         LC["Logos Core lifecycle adapter"]
         MD["Maker daemon"]
         CO["Durable swap coordinator"]
-        DB[("SQLite SDK recovery + runtime journal<br/>encryption and outbox planned")]
+        DB[("SQLite schema v6 SDK recovery + runtime journal<br/>encryption and outbox planned")]
         PS["BTC / XMR / ZEC pair SDKs"]
         ZA["Canonical dual-signed LEZ/ZEC agreement validator"]
         ZTX["ZEC BIP-199 V5 transaction SDK"]
         CA["Validated chain adapters"]
         MOA["Maker-only taker-lock observation"]
+        OJ["Contiguous exact-tracker journal<br/>canonical / depth / same-tip replacement / removal"]
     end
 
     subgraph TakerDevice["Taker-controlled device"]
@@ -86,7 +87,9 @@ flowchart TB
     CA --> ZEC
     MOA -->|"signed direction selects one node"| LEZ
     MOA -->|"signed direction selects one node"| ZEC
-    MOA -->|"atomic role-local projection"| DB
+    MOA -->|"validated event"| OJ
+    OJ -->|"atomic role-local projection"| DB
+    OJ -->|"full-history replay"| CO
     TS --> LEZ
     TS --> BTC
     TS --> XMR
@@ -117,11 +120,15 @@ role-fixed production SQLite adapter for accepted agreement, first-lock intent,
 taker projection, and maker-independent observation replay. The remaining M2
 work is typed later effects and actor integration; chain adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
-observation is non-authorizing today: forward Zcash now persists and revalidates
-the complete canonical output type but still needs its production node port and
-ordered reorg journal; reverse LEZ still needs an equivalent escrow snapshot
-validator, and the SDK returns Wait until a fresh reorg-safe eligibility check
-exists.
+observation is non-authorizing today: forward Zcash persists and revalidates
+the complete canonical output type plus ordered canonical, depth, atomic
+same-tip replacement, and affirmative exact-head removal events. The SDK and
+store fold `ZcashObservationTracker`, so duplicate polls write nothing and
+changed inclusion without replacement fails. Schema v6 rejects orphan, holey,
+or history-incompatible rows and catches stale instances up before returning.
+The production node port and a distinct fresh pre-second-lock eligibility check
+remain; reverse LEZ still needs an equivalent escrow snapshot validator, and
+the SDK returns Wait.
 
 The dashed state reflects delivery honestly. The deterministic core, SQLite
 repository, maker daemon, authenticated maker CLI flow, LEZ semantic
@@ -345,7 +352,7 @@ legs: removal pins the exact ID, suspends claims, exact reappearance restores
 authority, conflicting replacement fails, and refunds remain available.
 Independent leg policies also make maker-depth regression suspend and depth
 recovery restore claims. The runtime event-to-participant path is now solid: the
-isolated two-Zebra fixture drives real canonical and removal evidence through schema-v5 SQLite
+isolated two-Zebra fixture drives real canonical and removal evidence through schema-v6 SQLite
 close/reopen and exact replay. The composed LEZ/ZEC actor corridor remains
 dashed M2 work. RPC errors or absence never imply removal: a detach event
 requires a stable replacement tip and a changed canonical hash at the prior

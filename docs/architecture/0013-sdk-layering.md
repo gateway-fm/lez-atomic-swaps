@@ -13,7 +13,7 @@ flowchart TB
     Negotiation --> Validator["Bounded concrete agreement validator"]
     Validator --> Accepted["Role-fixed accepted envelope"]
     Accepted --> Store["RecoveryStore contract"]
-    Store --> SQLite["Role-fixed schema-v5 SQLite adapter"]
+    Store --> SQLite["Role-fixed schema-v6 SQLite adapter"]
     Store --> Active["ActiveZecSwap without transport or raw adapter handles"]
     Active --> Intent["Durable exact first-lock intent"]
     Intent --> Observe["Observe before byte-identical submission"]
@@ -21,8 +21,10 @@ flowchart TB
     Projection --> Active
     Active --> MakerObserve["Maker-only observation of taker lock"]
     MakerObserve --> MakerProjection["Role-local atomic observation projection"]
-    MakerProjection --> Active
-    MakerProjection -.-> Reconcile["Removal, replacement, and fresh pre-second-lock check"]
+    MakerProjection --> Journal["Contiguous schema v6 observation journal"]
+    Journal --> Reconcile["Exact tracker fold: canonical, depth, same-tip replacement, or removal"]
+    Reconcile --> Active
+    Reconcile -.-> Fresh["Fresh pre-second-lock eligibility check"]
     Active -.-> Runtime["Reference async coordinator"]
     Runtime -.-> Nodes["Typed chain ports"]
     SQLite -.-> Encrypted["Encrypted later-effect secret storage"]
@@ -30,7 +32,7 @@ flowchart TB
     Core --> Tests["Model/vector/replay tests"]
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Runtime,Nodes,Encrypted,Reconcile planned;
+    class Runtime,Nodes,Encrypted,Fresh planned;
 ```
 
 ## Context
@@ -67,7 +69,7 @@ redacted; secret storage zeroizes on drop. The discovery, negotiation, and chain
 adapters prove the API/type boundary only; they are not Logos Delivery/Chat,
 production chain actions, or actor E2E.
 
-The next slice adds a bounded first-lock action/observation contract without
+The implemented first-lock slice adds a bounded action/observation contract without
 exposing raw adapters: exact Zcash funding bytes, or separate exact LEZ
 initialize and fund bytes, are staged before any node call. Restart revalidates
 the intent and observes before byte-identical submission. Confirmed final-step
@@ -88,10 +90,16 @@ block, tip, outpoint, value, scripts, depth, and agreement HTLC-output binding a
 restart; the primitive transaction-ID/depth assertion is rejected. Validated evidence commits
 to the maker-role predecessor slot before memory changes and replays
 from the maker's own SQLite store without taker intent or negotiation state.
-The SDK returns Wait afterward, including on restart. The production Zcash port
-must still assemble fresh canonical snapshots and LEZ needs an equivalent escrow snapshot
-validator; removal/replacement reconciliation and a fresh eligibility check
-must exist before a maker second-lock submission method is added.
+The ordered journal folds canonical evidence, same-inclusion depth changes,
+atomic same-tip replacement, and affirmative exact-head removal through
+`ZcashObservationTracker` before every append/load. Duplicate polls write
+nothing and changed inclusion without replacement fails; exact row-range
+validation, poison-append rejection, rollback, restart, and stale-instance
+catch-up are tested. The SDK returns Wait afterward, including on
+restart. The production Zcash port must still assemble fresh canonical
+snapshots and LEZ needs an equivalent escrow snapshot validator; a distinct
+fresh eligibility check must exist before a maker second-lock submission
+method is added.
 
 ## Consequences
 

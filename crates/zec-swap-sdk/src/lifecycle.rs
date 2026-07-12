@@ -6,8 +6,8 @@ use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
-    FirstLockIntentError, FirstLockTransitionError, ObservedTakerFirstLockTransitionError,
-    ZecAgreementV1Error,
+    FirstLockIntentError, FirstLockTransitionError, ObservationTrackerError,
+    ObservedTakerFirstLockTransitionError, ZecAgreementV1Error,
 };
 
 /// A SHA-256 claim preimage that is redacted, zeroized, and not serializable.
@@ -60,6 +60,9 @@ pub enum ZecSdkError {
     /// Maker-local taker-lock evidence or durable projection is invalid.
     #[error(transparent)]
     InvalidObservedTakerFirstLockTransition(#[from] ObservedTakerFirstLockTransitionError),
+    /// Canonical Zcash observation history is stale, duplicated, or missing replacement proof.
+    #[error(transparent)]
+    InvalidZcashObservationHistory(#[from] ObservationTrackerError),
     /// A new activation must begin at durable revision zero.
     #[error("new LEZ/ZEC agreement has invalid initial revision {0}")]
     InvalidActivationRevision(u64),

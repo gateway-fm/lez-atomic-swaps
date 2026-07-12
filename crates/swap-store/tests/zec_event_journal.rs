@@ -381,7 +381,7 @@ fn legacy_v1_table_migrates_and_future_versions_fail_explicitly() {
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        5
+        6
     );
     for table in [
         "zec_sdk_agreements",
@@ -410,7 +410,7 @@ fn legacy_v1_table_migrates_and_future_versions_fail_explicitly() {
 }
 
 #[test]
-fn schema_v5_sdk_recovery_tables_are_role_local_revisioned_and_referential() {
+fn schema_v6_sdk_recovery_tables_are_role_local_revisioned_and_referential() {
     let data = tempdir().unwrap();
     let path = data.path().join("sdk-recovery-schema.sqlite3");
     drop(SqliteSwapStore::open(&path).unwrap());

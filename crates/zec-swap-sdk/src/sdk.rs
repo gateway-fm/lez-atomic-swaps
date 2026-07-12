@@ -8,9 +8,10 @@ use crate::{
     FirstLockPlanV1, FirstLockProjectionCommit, FirstLockTransitionV1, LezFirstLockPort,
     LezTakerFirstLockObservationPort, NegotiationChannel, ObserveTakerFirstLockOutcome,
     ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
-    RecoveryStore, TakerFirstLockObservationV1, ZcashFirstLockPort,
-    ZcashTakerFirstLockObservationPort, ZecAgreementV1, ZecLifecycleAction, ZecSdkError,
-    lifecycle::next_action, observed_taker_lock::taker_first_lock_step,
+    RecoveryStore, TakerFirstLockObservationV1, ZcashFirstLockPort, ZcashObservationEvent,
+    ZcashObservationReconciliation, ZcashObservationTracker, ZcashTakerFirstLockObservationPort,
+    ZecAgreementV1, ZecLifecycleAction, ZecSdkError, lifecycle::next_action,
+    observed_taker_lock::taker_first_lock_step,
 };
 
 /// Complete pre-lock facade composed from application-supplied ports.
@@ -211,6 +212,7 @@ where
             accepted,
             coordinator,
             revision,
+            zcash_taker_lock_tracker: ZcashObservationTracker::default(),
             lez: self.lez.clone(),
             zcash: self.zcash.clone(),
             store: self.store.clone(),
@@ -259,6 +261,7 @@ pub struct ActiveZecSwap<Lez, Zcash, Store> {
     accepted: AcceptedZecAgreementV1,
     coordinator: SwapCoordinator,
     revision: u64,
+    zcash_taker_lock_tracker: ZcashObservationTracker,
     lez: Lez,
     zcash: Zcash,
     store: Store,
@@ -413,24 +416,65 @@ where
     }
 
     async fn replay_observed_taker_first_lock_transition(&mut self) -> Result<(), ZecSdkError> {
-        let Some(transition) = self
-            .store
-            .load_observed_taker_first_lock_transition(self.coordinator.id(), self.revision)
-            .await
-            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
-        else {
-            return Ok(());
+        loop {
+            let Some(transition) = self
+                .store
+                .load_observed_taker_first_lock_transition(self.coordinator.id(), self.revision)
+                .await
+                .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+            else {
+                return Ok(());
+            };
+            let next_tracker = self.apply_committed_zcash_event(&transition)?;
+            let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+            self.revision =
+                self.revision
+                    .checked_add(1)
+                    .ok_or(ZecSdkError::InvalidProjectionRevision {
+                        expected: u64::MAX,
+                        actual: u64::MAX,
+                    })?;
+            self.coordinator = next;
+            self.zcash_taker_lock_tracker = next_tracker;
+        }
+    }
+
+    fn apply_committed_zcash_event(
+        &self,
+        transition: &ObservedTakerFirstLockTransitionV1,
+    ) -> Result<ZcashObservationTracker, ZecSdkError> {
+        let mut next = self.zcash_taker_lock_tracker.clone();
+        if let Some(event) = transition.zcash_observation_event() {
+            next.apply_committed(&event)?;
+        }
+        Ok(next)
+    }
+
+    fn propose_zcash_event(
+        &self,
+        transition: &ObservedTakerFirstLockTransitionV1,
+    ) -> Result<Option<ZcashObservationTracker>, ZecSdkError> {
+        let Some(event) = transition.zcash_observation_event() else {
+            return Ok(Some(self.zcash_taker_lock_tracker.clone()));
         };
-        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
-        self.revision =
-            self.revision
-                .checked_add(1)
-                .ok_or(ZecSdkError::InvalidProjectionRevision {
-                    expected: u64::MAX,
-                    actual: u64::MAX,
-                })?;
-        self.coordinator = next;
-        Ok(())
+        let input = match &event {
+            ZcashObservationEvent::Canonical(canonical) => {
+                ZcashObservationReconciliation::Canonical(canonical.clone())
+            }
+            ZcashObservationEvent::Removed(removed) => {
+                ZcashObservationReconciliation::Removed(removed.clone())
+            }
+            ZcashObservationEvent::Replaced { removed, canonical } => {
+                ZcashObservationReconciliation::Replaced {
+                    removed: removed.clone(),
+                    canonical: canonical.clone(),
+                }
+            }
+        };
+        if self.zcash_taker_lock_tracker.propose(&input)?.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(self.apply_committed_zcash_event(transition)?))
     }
 
     /// Stages exact role-local first-lock recovery material before any node call.
@@ -501,7 +545,16 @@ where
                 actual: self.local_participant(),
             });
         }
-        if self.status() != Phase::Offered {
+        self.replay_observed_taker_first_lock_transition().await?;
+        let forward_zcash =
+            self.agreement().direction() == lez_swap_core::SwapDirection::TakerSellsForeign;
+        if self.status() != Phase::Offered
+            && !(forward_zcash
+                && matches!(
+                    self.status(),
+                    Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed
+                ))
+        {
             return Err(ZecSdkError::FirstLockNotOffered(self.status()));
         }
         let step = taker_first_lock_step(self.agreement().direction());
@@ -523,6 +576,14 @@ where
             TakerFirstLockObservationV1::CanonicalZcash(canonical) => {
                 crate::ObservedTakerFirstLockEvidenceV1::from_canonical_zcash(*canonical)
             }
+            TakerFirstLockObservationV1::ZcashRemoved(removed) => {
+                crate::ObservedTakerFirstLockEvidenceV1::from_canonical_zcash_removal(*removed)
+            }
+            TakerFirstLockObservationV1::ZcashReplaced { removed, canonical } => {
+                crate::ObservedTakerFirstLockEvidenceV1::from_canonical_zcash_replacement(
+                    *removed, *canonical,
+                )
+            }
             TakerFirstLockObservationV1::Absent | TakerFirstLockObservationV1::Unstable => {
                 return Ok(ObserveTakerFirstLockOutcome::AwaitingStableObservation(
                     step,
@@ -535,6 +596,9 @@ where
             self.revision,
             evidence,
         )?;
+        let Some(next_tracker) = self.propose_zcash_event(&transition)? else {
+            return Ok(ObserveTakerFirstLockOutcome::Unchanged(step));
+        };
         let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
         let expected_revision =
             self.revision
@@ -570,6 +634,8 @@ where
         }
         self.coordinator = next;
         self.revision = commit.revision();
+        self.zcash_taker_lock_tracker = next_tracker;
+        self.replay_observed_taker_first_lock_transition().await?;
         Ok(ObserveTakerFirstLockOutcome::Projected(commit))
     }
 }

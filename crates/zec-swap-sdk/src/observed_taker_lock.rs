@@ -25,12 +25,26 @@ pub enum TakerFirstLockObservationV1 {
     Confirmed(ObservedTakerFirstLockEvidenceV1),
     /// Complete canonical Zcash evidence validated from a stable node snapshot.
     CanonicalZcash(Box<CanonicalZcashOutputObservation>),
+    /// Affirmative stable evidence that the prior canonical Zcash output was removed.
+    ZcashRemoved(Box<crate::CanonicalZcashOutputRemoval>),
+    /// One stable poll atomically removed prior evidence and found its replacement.
+    ZcashReplaced {
+        /// Affirmative evidence for the detached output.
+        removed: Box<crate::CanonicalZcashOutputRemoval>,
+        /// Complete canonical replacement evidence.
+        canonical: Box<CanonicalZcashOutputObservation>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ObservedTakerFirstLockEvidenceSourceV1 {
     AdapterAssertion,
     CanonicalZcash(Box<CanonicalZcashOutputObservation>),
+    CanonicalZcashRemoval(Box<crate::CanonicalZcashOutputRemoval>),
+    CanonicalZcashReplacement {
+        removed: Box<crate::CanonicalZcashOutputRemoval>,
+        canonical: Box<CanonicalZcashOutputObservation>,
+    },
 }
 
 /// Versioned provisional LEZ evidence asserted by a typed observation adapter.
@@ -84,6 +98,32 @@ impl ObservedTakerFirstLockEvidenceV1 {
             transaction_id: value.transaction_id().to_string().into(),
             confirmations: value.confirmations().get(),
             source: ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcash(Box::new(value)),
+        }
+    }
+
+    pub(crate) fn from_canonical_zcash_removal(value: crate::CanonicalZcashOutputRemoval) -> Self {
+        Self {
+            schema_version: OBSERVED_TAKER_FIRST_LOCK_SCHEMA_V1,
+            step: FirstLockStepV1::ZcashFund,
+            transaction_id: value.previous().transaction_id().to_string().into(),
+            confirmations: value.previous().confirmations().get(),
+            source: ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashRemoval(Box::new(value)),
+        }
+    }
+
+    pub(crate) fn from_canonical_zcash_replacement(
+        removed: crate::CanonicalZcashOutputRemoval,
+        canonical: CanonicalZcashOutputObservation,
+    ) -> Self {
+        Self {
+            schema_version: OBSERVED_TAKER_FIRST_LOCK_SCHEMA_V1,
+            step: FirstLockStepV1::ZcashFund,
+            transaction_id: canonical.transaction_id().to_string().into(),
+            confirmations: canonical.confirmations().get(),
+            source: ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashReplacement {
+                removed: Box::new(removed),
+                canonical: Box::new(canonical),
+            },
         }
     }
 
@@ -149,6 +189,27 @@ impl ObservedTakerFirstLockTransitionV1 {
             ) => validate_canonical_zcash_binding(agreement, canonical.as_ref())?,
             (
                 FirstLockStepV1::ZcashFund,
+                ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashRemoval(removed),
+            ) => validate_canonical_zcash_binding(agreement, removed.previous())?,
+            (
+                FirstLockStepV1::ZcashFund,
+                ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashReplacement {
+                    removed,
+                    canonical,
+                },
+            ) => {
+                validate_canonical_zcash_binding(agreement, removed.previous())?;
+                validate_canonical_zcash_binding(agreement, canonical.as_ref())?;
+                if removed.tip_block_hash() != canonical.tip_block_hash()
+                    || removed.tip_height() != canonical.tip_height()
+                {
+                    return Err(
+                        ObservedTakerFirstLockTransitionError::CanonicalZcashReplacementTipMismatch,
+                    );
+                }
+            }
+            (
+                FirstLockStepV1::ZcashFund,
                 ObservedTakerFirstLockEvidenceSourceV1::AdapterAssertion,
             ) => return Err(ObservedTakerFirstLockTransitionError::CanonicalZcashRequired),
             (
@@ -157,7 +218,9 @@ impl ObservedTakerFirstLockTransitionV1 {
             ) => {}
             (
                 FirstLockStepV1::LezFund,
-                ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcash(_),
+                ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcash(_)
+                | ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashRemoval(_)
+                | ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashReplacement { .. },
             ) => return Err(ObservedTakerFirstLockTransitionError::UnexpectedCanonicalZcash),
             (FirstLockStepV1::LezInitialize, _) => {
                 return Err(ObservedTakerFirstLockTransitionError::NonFinalStep(
@@ -168,7 +231,11 @@ impl ObservedTakerFirstLockTransitionV1 {
         let required = agreement
             .coordinator()
             .required_confirmations(Participant::Taker);
-        if evidence.confirmations < required {
+        if matches!(
+            evidence.source,
+            ObservedTakerFirstLockEvidenceSourceV1::AdapterAssertion
+        ) && evidence.confirmations < required
+        {
             return Err(
                 ObservedTakerFirstLockTransitionError::InsufficientConfirmations {
                     required,
@@ -222,7 +289,39 @@ impl ObservedTakerFirstLockTransitionV1 {
         &self.evidence
     }
 
-    pub(crate) fn apply_to(
+    /// Complete canonical Zcash event retained by this transition, when any.
+    ///
+    /// Provisional reverse-LEZ assertions have no Zcash event.
+    #[must_use]
+    pub fn zcash_observation_event(&self) -> Option<ZcashObservationEvent> {
+        match &self.evidence.source {
+            ObservedTakerFirstLockEvidenceSourceV1::AdapterAssertion => None,
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcash(canonical) => {
+                Some(ZcashObservationEvent::Canonical(canonical.as_ref().clone()))
+            }
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashRemoval(removed) => {
+                Some(ZcashObservationEvent::Removed(removed.as_ref().clone()))
+            }
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashReplacement {
+                removed,
+                canonical,
+            } => Some(ZcashObservationEvent::Replaced {
+                removed: removed.clone(),
+                canonical: canonical.clone(),
+            }),
+        }
+    }
+
+    /// Applies this trusted transition to the exact predecessor coordinator.
+    ///
+    /// The input is cloned before either half of an atomic replacement is
+    /// applied, so an invalid replacement never mutates caller state.
+    ///
+    /// # Errors
+    ///
+    /// Rejects context, revision, confirmation, removal, replacement, and core
+    /// lifecycle conflicts.
+    pub fn apply_to(
         &self,
         agreement: &ZecAgreementV1,
         coordinator: &lez_swap_core::SwapCoordinator,
@@ -239,7 +338,11 @@ impl ObservedTakerFirstLockTransitionV1 {
             return Err(ObservedTakerFirstLockTransitionError::ContextMismatch);
         }
         let required = coordinator.required_confirmations(Participant::Taker);
-        if self.evidence.confirmations < required {
+        if matches!(
+            self.evidence.source,
+            ObservedTakerFirstLockEvidenceSourceV1::AdapterAssertion
+        ) && self.evidence.confirmations < required
+        {
             return Err(
                 ObservedTakerFirstLockTransitionError::InsufficientConfirmations {
                     required,
@@ -248,15 +351,43 @@ impl ObservedTakerFirstLockTransitionV1 {
             );
         }
         let mut next = coordinator.clone();
-        next.observe_funding(
-            Participant::Taker,
-            ChainProof::new(
-                self.evidence.transaction_id.clone(),
-                self.evidence.confirmations,
-            )
-            .map_err(ObservedTakerFirstLockTransitionError::Core)?,
-        )
-        .map_err(ObservedTakerFirstLockTransitionError::Core)?;
+        match &self.evidence.source {
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashRemoval(removed) => next
+                .observe_funding_removed(
+                    Participant::Taker,
+                    &removed.previous().transaction_id().to_string(),
+                )
+                .map_err(ObservedTakerFirstLockTransitionError::Core)?,
+            ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashReplacement {
+                removed,
+                canonical,
+            } => {
+                next.observe_funding_removed(
+                    Participant::Taker,
+                    &removed.previous().transaction_id().to_string(),
+                )
+                .map_err(ObservedTakerFirstLockTransitionError::Core)?;
+                next.observe_funding(
+                    Participant::Taker,
+                    ChainProof::new(
+                        canonical.transaction_id().to_string(),
+                        canonical.confirmations().get(),
+                    )
+                    .map_err(ObservedTakerFirstLockTransitionError::Core)?,
+                )
+                .map_err(ObservedTakerFirstLockTransitionError::Core)?;
+            }
+            _ => next
+                .observe_funding(
+                    Participant::Taker,
+                    ChainProof::new(
+                        self.evidence.transaction_id.clone(),
+                        self.evidence.confirmations,
+                    )
+                    .map_err(ObservedTakerFirstLockTransitionError::Core)?,
+                )
+                .map_err(ObservedTakerFirstLockTransitionError::Core)?,
+        }
         Ok(next)
     }
 }
@@ -266,6 +397,8 @@ impl ObservedTakerFirstLockTransitionV1 {
 pub enum ObserveTakerFirstLockOutcome {
     /// No stable confirmed lock was projected.
     AwaitingStableObservation(FirstLockStepV1),
+    /// Stable evidence exactly matched the current canonical tracker head.
+    Unchanged(FirstLockStepV1),
     /// Exact evidence was committed before in-memory projection.
     Projected(FirstLockProjectionCommit),
 }
@@ -288,6 +421,9 @@ pub enum ObservedTakerFirstLockTransitionError {
     /// Canonical Zcash evidence differs from the signed agreement binding.
     #[error("canonical Zcash evidence does not match the signed agreement")]
     CanonicalZcashBindingMismatch,
+    /// Atomic replacement halves were not derived from one stable node tip.
+    #[error("canonical Zcash replacement halves use different stable tips")]
+    CanonicalZcashReplacementTipMismatch,
     /// Only the maker owns this observation transition.
     #[error("observed taker-lock transition requires maker; actual role is {0:?}")]
     WrongRole(Participant),
@@ -350,6 +486,20 @@ impl From<&ObservedTakerFirstLockTransitionV1> for ObservedTakerFirstLockTransit
                 ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcash(canonical) => Some(
                     ZcashObservationEventRecordV1::from_canonical(canonical.as_ref()),
                 ),
+                ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashRemoval(removed) => {
+                    Some(ZcashObservationEventRecordV1::from_event(
+                        &ZcashObservationEvent::Removed(removed.as_ref().clone()),
+                    ))
+                }
+                ObservedTakerFirstLockEvidenceSourceV1::CanonicalZcashReplacement {
+                    removed,
+                    canonical,
+                } => Some(ZcashObservationEventRecordV1::from_event(
+                    &ZcashObservationEvent::Replaced {
+                        removed: removed.clone(),
+                        canonical: canonical.clone(),
+                    },
+                )),
             },
         }
     }
@@ -391,16 +541,21 @@ impl ObservedTakerFirstLockTransitionRecordV1 {
                 self.confirmations,
             )?,
             Some(record) => {
-                let ZcashObservationEvent::Canonical(canonical) =
-                    revalidate_historical_event(record).map_err(|_| {
-                        ObservedTakerFirstLockTransitionError::CanonicalZcashBindingMismatch
-                    })?
-                else {
-                    return Err(
-                        ObservedTakerFirstLockTransitionError::CanonicalZcashBindingMismatch,
-                    );
-                };
-                ObservedTakerFirstLockEvidenceV1::from_canonical_zcash(canonical)
+                match revalidate_historical_event(record).map_err(|_| {
+                    ObservedTakerFirstLockTransitionError::CanonicalZcashBindingMismatch
+                })? {
+                    ZcashObservationEvent::Canonical(canonical) => {
+                        ObservedTakerFirstLockEvidenceV1::from_canonical_zcash(canonical)
+                    }
+                    ZcashObservationEvent::Removed(removed) => {
+                        ObservedTakerFirstLockEvidenceV1::from_canonical_zcash_removal(removed)
+                    }
+                    ZcashObservationEvent::Replaced { removed, canonical } => {
+                        ObservedTakerFirstLockEvidenceV1::from_canonical_zcash_replacement(
+                            *removed, *canonical,
+                        )
+                    }
+                }
             }
         };
         let trusted = ObservedTakerFirstLockTransitionV1::from_active(

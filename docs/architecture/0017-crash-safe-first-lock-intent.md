@@ -32,7 +32,15 @@ flowchart TB
     Maker["Independent maker SDK + store"] --> MakerObserve["Observe through agreement-selected node"]
     MakerObserve -->|"absent, unstable, or RPC error"| MakerWait["Remain Offered; write nothing"]
     MakerObserve -->|"canonical Zcash or LEZ assertion"| MakerProjection["Atomic maker-role transition + revision"]
-    MakerProjection --> MakerCore["Persist observed TakerLockConfirmed"]
+    MakerProjection --> Journal["Schema v6 contiguous role-local journal"]
+    Journal --> Tracker["Exact Zcash observation tracker fold"]
+    Tracker --> Canonical["Canonical or same-inclusion depth event"]
+    Tracker --> Replaced["Atomic same-tip removal plus replacement event"]
+    Tracker --> Removed["Affirmative exact-head removal event"]
+    Canonical --> MakerCore["Replay exact coordinator phase"]
+    Replaced --> MakerCore
+    Removed --> MakerCore
+    MakerCore -->|"poll again after restart"| MakerObserve
     MakerCore --> Gate["SDK next action remains Wait"]
     Gate -.-> Fresh["Canonical reorg-safe check before maker second lock"]
 
@@ -92,7 +100,7 @@ only after an exact predecessor-slot probe, and restart replays the committed
 transition to `TakerLockConfirmed`. Adversarial primitive-record tests reject
 future schemas, unknown fields, substituted swap/role/commitment/revision/plan,
 oversized exact bytes, wrong final step/identity, zero-confirmation evidence,
-and a corrupt retained closed intent. Two additional cases prove that a maker
+and a corrupt retained closed intent. Additional cases prove that a maker
 queries only its agreement-derived node route, writes no taker intent, does not
 advance on absence, instability, RPC failure, wrong-chain evidence, or a failed
 commit, adopts an unknown successful commit only by exact probe, and replays its
@@ -102,24 +110,28 @@ block, tip, outpoint, output, script, and depth record, revalidates it against
 the signed agreement's HTLC output binding after SQLite restart, and only then
 projects. Input candidates, change, fee target, and expiry remain the funder's
 role-local construction policy rather than a disclosure requirement imposed on
-the remote wallet. The public next-action projection
-remains Wait, including after restart, so this adapter assertion cannot
-authorize the maker lock. The full package currently passes 81
-tests, with the real-Zebra Docker case intentionally delegated to its isolated
-runner.
+the remote wallet. The public next-action projection remains Wait, including
+after restart, so observation history cannot authorize the maker lock. The
+forward maker actor now commits and replays canonical evidence, an atomic
+different-transaction replacement, a same-inclusion depth change, and
+affirmative removal across revisions 1 through 4. The package currently passes
+81 ordinary tests plus one doctest, with the real-Zebra Docker case
+intentionally delegated to its isolated runner.
 
-Seven production-store cases instantiate the SDK with a cloneable role-fixed
+Nine production-store cases instantiate the SDK with a cloneable role-fixed
 `SqliteZecRecoveryStore`. They prove exact agreement replay and changed same-key
 conflict; maker/taker isolation for the same application ID; an open intent
 durable before effects; one immediate transaction that inserts the transition,
 advances active revision, and closes but retains the intent; exact replay; and
 close/reopen resume to `TakerLockConfirmed`. An external SQLite trigger forces
 the middle update to fail and proves all three writes roll back. Future payloads,
-malformed primitive JSON, an active revision missing its transition, and a
-closed intent missing its transition fail closed rather than reconstructing
-trusted state. The seventh case proves exact maker replay, no taker intent,
-maker-only revision advancement, close/reopen recovery, and rejection of an
-orphan future maker-transition row.
+malformed primitive JSON, an active revision missing its transition, a closed
+intent missing its transition, and an orphan taker row fail closed rather than
+reconstructing trusted state. Maker cases prove exact and historical replay,
+no taker intent, rollback of row plus revision after a trigger failure,
+stale-instance catch-up, four-event close/reopen recovery, rejection of a
+same-cardinality journal hole, and rejection of an individually valid
+different transaction that lacks atomic replacement evidence.
 
 ## Consequences and remaining boundary
 
@@ -129,11 +141,18 @@ foreign keys, immediate transactions, role-composite keys, primitive payloads,
 and full revalidation on every load. Forward Zcash now requires the existing
 complete canonical output type and persists its primitive event record; a
 production Zebra port must still assemble it from fresh stable RPC snapshots.
-The ordered SDK removal/replacement journal is the next slice. Reverse LEZ remains
-a contract double until a validator binds channel/chain, deployment, derived
+The ordered SDK removal/replacement journal is implemented for maker-observed
+forward Zcash. Before every append/load, schema v6 proves the exact contiguous
+row range and folds all prior records through both `ZcashObservationTracker`
+and the coordinator. Replacement halves must share the same stable tip;
+duplicate canonical polls write nothing; changed inclusion requires explicit
+replacement; and stale removal must match the exact tracker head. Replacement
+applies remove plus observe to a clone, and the store rejects history poison
+before mutation. Reverse LEZ remains a contract double until a validator binds
+channel/chain, deployment, derived
 accounts, terms, funded state, transaction, block, and finality. The SDK
 therefore exposes no maker second-lock submit method and returns Wait after
-maker projection. Durable regression/removal/replacement plus a fresh
-pre-effect check remain required before adding that effect. Claim/refund
+maker projection. The distinct fresh pre-effect eligibility check remains
+required before adding that effect. Claim/refund
 effects, production adapters, and real independent actors remain M2 work;
 Logos-owned live-release dependencies are tracked separately under ADR 0018.
