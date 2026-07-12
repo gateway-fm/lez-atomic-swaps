@@ -7,7 +7,8 @@ use lez_swap_core::{Participant, SwapId};
 
 use crate::{
     AcceptedZecAgreementEnvelopeV1, CreateFirstLockOutcome, FirstLockIntentV1,
-    FirstLockObservation, PreparedFirstLockSubmissionV1,
+    FirstLockObservation, FirstLockProjectionCommit, FirstLockTransitionV1,
+    PreparedFirstLockSubmissionV1,
 };
 
 /// Authenticated, expiring offer discovery supplied by a Delivery adapter.
@@ -149,4 +150,19 @@ pub trait RecoveryStore: Clone + Send + Sync {
         &self,
         swap_id: &SwapId,
     ) -> Result<Option<FirstLockIntentV1>, Self::Error>;
+
+    /// Atomically commits exact confirmed evidence with the next aggregate
+    /// revision and closes the matching pending intent.
+    async fn commit_first_lock_transition(
+        &self,
+        transition: &FirstLockTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error>;
+
+    /// Probes one exact predecessor slot after an unknown commit outcome and
+    /// loads it during restart replay.
+    async fn load_first_lock_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<FirstLockTransitionV1>, Self::Error>;
 }

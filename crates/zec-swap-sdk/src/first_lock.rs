@@ -1,6 +1,6 @@
 //! Versioned, bounded first-lock intent records staged before any node call.
 
-use lez_swap_core::{Participant, SwapDirection, SwapId};
+use lez_swap_core::{ChainProof, Participant, SwapCoordinator, SwapDirection, SwapId};
 
 use crate::ZecAgreementV1;
 
@@ -276,6 +276,266 @@ pub enum FirstLockDriveOutcome {
     AwaitingStableObservation(FirstLockStepV1),
     /// Every first-lock step is observed; a later atomic evidence projection may advance core.
     ReadyForFundingProjection,
+}
+
+/// Stable final-step evidence produced by a typed chain observation adapter.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FirstLockConfirmedEvidenceV1 {
+    schema_version: u16,
+    step: FirstLockStepV1,
+    expected_submission_id: [u8; 32],
+    transaction_id: Box<str>,
+    confirmations: u32,
+}
+
+impl FirstLockConfirmedEvidenceV1 {
+    /// Creates validated primitive evidence for the final first-lock submission.
+    ///
+    /// # Errors
+    ///
+    /// Rejects initialization-only evidence, an empty expected identity, an
+    /// invalid transaction identifier, or zero confirmations.
+    pub fn new(
+        step: FirstLockStepV1,
+        expected_submission_id: [u8; 32],
+        transaction_id: impl Into<Box<str>>,
+        confirmations: u32,
+    ) -> Result<Self, FirstLockTransitionError> {
+        if step == FirstLockStepV1::LezInitialize {
+            return Err(FirstLockTransitionError::NonFinalStep(step));
+        }
+        if expected_submission_id == [0; 32] {
+            return Err(FirstLockTransitionError::EmptyExpectedIdentity);
+        }
+        let transaction_id = transaction_id.into();
+        ChainProof::new(transaction_id.clone(), confirmations)
+            .map_err(FirstLockTransitionError::Core)?;
+        if confirmations == 0 {
+            return Err(FirstLockTransitionError::ZeroConfirmations);
+        }
+        Ok(Self {
+            schema_version: 1,
+            step,
+            expected_submission_id,
+            transaction_id,
+            confirmations,
+        })
+    }
+
+    /// Primitive evidence schema.
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
+    /// Final chain submission kind.
+    #[must_use]
+    pub const fn step(&self) -> FirstLockStepV1 {
+        self.step
+    }
+
+    /// Exact identity committed by the durable submission.
+    #[must_use]
+    pub const fn expected_submission_id(&self) -> &[u8; 32] {
+        &self.expected_submission_id
+    }
+
+    /// Canonical chain transaction identifier.
+    #[must_use]
+    pub fn transaction_id(&self) -> &str {
+        &self.transaction_id
+    }
+
+    /// Stable canonical confirmations reported by the typed adapter.
+    #[must_use]
+    pub const fn confirmations(&self) -> u32 {
+        self.confirmations
+    }
+}
+
+/// Exact validated transition committed atomically with aggregate revision and intent closure.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FirstLockTransitionV1 {
+    schema_version: u16,
+    swap_id: SwapId,
+    agreement_commitment: [u8; 32],
+    local_participant: Participant,
+    predecessor_revision: u64,
+    evidence: FirstLockConfirmedEvidenceV1,
+}
+
+impl FirstLockTransitionV1 {
+    pub(crate) fn from_active(
+        agreement: &ZecAgreementV1,
+        intent: &FirstLockIntentV1,
+        predecessor_revision: u64,
+        evidence: FirstLockConfirmedEvidenceV1,
+    ) -> Result<Self, FirstLockTransitionError> {
+        intent
+            .validate_for_active(agreement, Participant::Taker, predecessor_revision)
+            .map_err(FirstLockTransitionError::Intent)?;
+        let final_submission = match intent.plan() {
+            FirstLockPlanV1::Zcash { funding } => funding,
+            FirstLockPlanV1::Lez { fund, .. } => fund,
+        };
+        if evidence.step != final_submission.step() {
+            return Err(FirstLockTransitionError::WrongFinalStep {
+                expected: final_submission.step(),
+                actual: evidence.step,
+            });
+        }
+        if evidence.expected_submission_id != *final_submission.expected_submission_id() {
+            return Err(FirstLockTransitionError::SubmissionIdentityMismatch);
+        }
+        let required = agreement
+            .coordinator()
+            .required_confirmations(Participant::Taker);
+        if evidence.confirmations < required {
+            return Err(FirstLockTransitionError::InsufficientConfirmations {
+                required,
+                actual: evidence.confirmations,
+            });
+        }
+        Ok(Self {
+            schema_version: 1,
+            swap_id: agreement.coordinator().id().clone(),
+            agreement_commitment: *agreement.agreement_commitment(),
+            local_participant: Participant::Taker,
+            predecessor_revision,
+            evidence,
+        })
+    }
+
+    /// Transition schema version.
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
+    /// Signed application swap ID.
+    #[must_use]
+    pub const fn swap_id(&self) -> &SwapId {
+        &self.swap_id
+    }
+
+    /// Aggregate revision that must exist immediately before this transition.
+    #[must_use]
+    pub const fn predecessor_revision(&self) -> u64 {
+        self.predecessor_revision
+    }
+
+    /// Exact final-step evidence.
+    #[must_use]
+    pub const fn evidence(&self) -> &FirstLockConfirmedEvidenceV1 {
+        &self.evidence
+    }
+
+    pub(crate) fn apply_to(
+        &self,
+        agreement: &ZecAgreementV1,
+        coordinator: &SwapCoordinator,
+        revision: u64,
+    ) -> Result<SwapCoordinator, FirstLockTransitionError> {
+        if self.schema_version != 1
+            || self.swap_id != *agreement.coordinator().id()
+            || self.agreement_commitment != *agreement.agreement_commitment()
+            || self.local_participant != Participant::Taker
+            || self.predecessor_revision != revision
+            || coordinator.id() != &self.swap_id
+        {
+            return Err(FirstLockTransitionError::ContextMismatch);
+        }
+        let required = coordinator.required_confirmations(Participant::Taker);
+        if self.evidence.confirmations < required {
+            return Err(FirstLockTransitionError::InsufficientConfirmations {
+                required,
+                actual: self.evidence.confirmations,
+            });
+        }
+        let mut next = coordinator.clone();
+        next.observe_funding(
+            Participant::Taker,
+            ChainProof::new(
+                self.evidence.transaction_id.clone(),
+                self.evidence.confirmations,
+            )
+            .map_err(FirstLockTransitionError::Core)?,
+        )
+        .map_err(FirstLockTransitionError::Core)?;
+        Ok(next)
+    }
+}
+
+/// Result of atomically committing the transition, aggregate revision, and intent closure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FirstLockProjectionCommit {
+    revision: u64,
+    was_replay: bool,
+}
+
+impl FirstLockProjectionCommit {
+    /// Creates a store result. The SDK independently validates the revision.
+    #[must_use]
+    pub const fn new(revision: u64, was_replay: bool) -> Self {
+        Self {
+            revision,
+            was_replay,
+        }
+    }
+
+    /// Durable aggregate revision after the projection.
+    #[must_use]
+    pub const fn revision(self) -> u64 {
+        self.revision
+    }
+
+    /// Whether an exact predecessor-slot transition already existed.
+    #[must_use]
+    pub const fn was_replay(self) -> bool {
+        self.was_replay
+    }
+}
+
+/// Invalid confirmed evidence or durable first-lock transition.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum FirstLockTransitionError {
+    /// LEZ initialization is not the final funding transition.
+    #[error("{0:?} is not a final first-lock step")]
+    NonFinalStep(FirstLockStepV1),
+    /// Expected identity is empty.
+    #[error("confirmed first-lock expected identity is empty")]
+    EmptyExpectedIdentity,
+    /// Stable evidence must contain at least one confirmation.
+    #[error("confirmed first-lock evidence has zero confirmations")]
+    ZeroConfirmations,
+    /// Durable intent failed revalidation.
+    #[error(transparent)]
+    Intent(FirstLockIntentError),
+    /// Evidence names a different final plan step.
+    #[error("confirmed step is {actual:?}; durable plan requires {expected:?}")]
+    WrongFinalStep {
+        /// Final step fixed by the durable plan.
+        expected: FirstLockStepV1,
+        /// Step supplied by observation evidence.
+        actual: FirstLockStepV1,
+    },
+    /// Evidence identity differs from the exact durable submission.
+    #[error("confirmed first-lock identity does not match durable submission")]
+    SubmissionIdentityMismatch,
+    /// Evidence has not reached the signed confirmation threshold.
+    #[error("confirmed first lock has {actual} confirmations; requires {required}")]
+    InsufficientConfirmations {
+        /// Signed threshold.
+        required: u32,
+        /// Observed stable depth.
+        actual: u32,
+    },
+    /// Loaded transition does not match agreement, swap, role, revision, or aggregate.
+    #[error("durable first-lock transition context mismatch")]
+    ContextMismatch,
+    /// Core rejected the reconstructed proof or transition.
+    #[error(transparent)]
+    Core(lez_swap_core::Error),
 }
 
 /// Invalid first-lock recovery material or agreement binding.

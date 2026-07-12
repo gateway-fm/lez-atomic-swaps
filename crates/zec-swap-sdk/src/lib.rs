@@ -27,9 +27,10 @@ pub use agreement_v1::{
 };
 
 pub use first_lock::{
-    CreateFirstLockOutcome, FirstLockDriveOutcome, FirstLockIntentError, FirstLockIntentV1,
-    FirstLockObservation, FirstLockPlanV1, FirstLockStepV1, MAX_FIRST_LOCK_SUBMISSION_BYTES,
-    PreparedFirstLockSubmissionV1,
+    CreateFirstLockOutcome, FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome,
+    FirstLockIntentError, FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1,
+    FirstLockProjectionCommit, FirstLockStepV1, FirstLockTransitionError, FirstLockTransitionV1,
+    MAX_FIRST_LOCK_SUBMISSION_BYTES, PreparedFirstLockSubmissionV1,
 };
 pub use funding::{
     FundingBuildError, FundingSelection, TransparentFundingRequest, TransparentUtxo,

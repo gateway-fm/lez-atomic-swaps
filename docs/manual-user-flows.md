@@ -10,7 +10,7 @@ actor boundary, expected result, or cleanup rule changes.
 
 | Flow | Boundary exercised | Current limitation |
 |---|---|---|
-| ZEC SDK agreement/activation/first lock | Canonical bounded dual-signed record is integrated through untrusted negotiation, role-fixed persistence-before-activation, adversarial resume, exact first-lock intent, and observe-before-rebroadcast | Recovery and chain adapters are in-memory contract doubles; no coordinator transition is projected, and these commands do not prove real RPCs, production storage, or actor E2E |
+| ZEC SDK agreement/activation/first lock | Canonical bounded dual-signed record is integrated through untrusted negotiation, role-fixed persistence-before-activation, adversarial resume, exact first-lock intent, observe-before-rebroadcast, atomic projection, unknown-commit probe, and replay | Recovery and chain adapters are in-memory contract doubles; these commands do not prove production SQLite/RPCs, maker-independent observation, claims/refunds, or actor E2E |
 | Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
 | Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v4 SQLite journal/alerts, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The production daemon does not yet own a polling loop, and maker/taker actors are not yet independent |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
@@ -342,7 +342,7 @@ exact wire decoding, both low-S signatures, every signed-field mutation, both
 directions, deterministic-local execution terms, fail-closed public deployment,
 actual LEZ/ZEC deadlines, role/digest binding, agreement-derived
 fees/destinations/expiry/funding requests, exact native/token PDA/ATA accounts,
-accepted-at resume, and redacted diagnostics. The second runs eleven integrated
+accepted-at resume, and redacted diagnostics. The second runs thirteen integrated
 cases in which independent maker and taker SDK instances with fixed roles
 receive untrusted bytes, validate the concrete record, persist separate accepted
 envelopes before activation, and resume the original wire after transcript
@@ -357,9 +357,11 @@ real maker/taker actor E2E. Its three first-lock cases additionally prove exact
 role/direction-bound bytes are staged before a node call, changed replay
 conflicts, unstable observations submit nothing, restart observes before exact
 rebroadcast, and LEZ initialization must be confirmed before its separately
-durable fund transaction is submitted. The coordinator intentionally remains
-`Offered`; production SQLite intent storage and atomic confirmed-evidence
-projection are still required.
+durable fund transaction is submitted. Two projection cases prove invalid
+evidence and a failed commit leave the coordinator `Offered`, an unknown
+successful commit is accepted only after an exact predecessor-slot probe, and
+restart replays the durable transition to `TakerLockConfirmed`. Production
+SQLite/RPC adapters and the maker's independent observation remain required.
 
 Before starting Zebra, reproduce spend recognition independently from SDK
 construction policy:

@@ -1,13 +1,14 @@
 # ADR 0017: Durable intent before first-lock effects
 
-Status: in-memory SDK contract proven; production persistence and atomic evidence
-projection pending — 2026-07-12
+Status: in-memory SDK intent, atomic projection, and replay contract proven;
+production SQLite and chain adapters pending — 2026-07-12
 
 ```mermaid
 flowchart TB
     Accepted["Validated role-fixed agreement"] --> Prepare["Prepare exact signed submissions"]
     Prepare --> Stage["Atomically stage first-lock intent"]
     Stage --> Durable["Role-local RecoveryStore"]
+    Durable -.-> SQLite["Production SQLite adapter"]
     Durable --> Restart["Resume without Delivery or Chat"]
     Restart --> Revalidate["Revalidate agreement, role, revision, direction, and bytes"]
     Revalidate --> Observe["Fresh chain observation before submission"]
@@ -18,10 +19,10 @@ flowchart TB
     Next -->|"fund pending"| Fund["Observe then submit LEZ fund step"]
     Fund --> Observe
     Next -->|"no"| Projection["Atomic evidence projection"]
-    Projection -.-> Core["Advance durable coordinator"]
+    Projection --> Core["Advance in-memory coordinator after durable proof"]
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Projection,Core planned;
+    class SQLite planned;
 ```
 
 ## Context
@@ -58,22 +59,23 @@ decode and recompute chain policy.
 
 ## Executable evidence
 
-Three RED–GREEN lifecycle cases prove maker rejection, signed-direction plan
+Five RED–GREEN lifecycle cases prove maker rejection, signed-direction plan
 selection, durable-before-effect staging, exact replay, changed-byte conflict,
 unstable-query non-submission, observe-before-rebroadcast restart, and ordered
-LEZ initialize/fund behavior. Node submission and confirmed observation leave
-the in-memory coordinator in `Offered`; the SDK never fabricates a transition.
-The full package currently passes 75 tests, with the real-Zebra Docker case
-intentionally delegated to its isolated runner.
+LEZ initialize/fund behavior. They also prove that invalid evidence and a failed
+commit leave the coordinator in `Offered`, an unknown successful commit advances
+only after an exact predecessor-slot probe, and restart replays the committed
+transition to `TakerLockConfirmed`. The full package currently passes 78 tests,
+with the real-Zebra Docker case intentionally delegated to its isolated runner.
 
 ## Consequences and remaining boundary
 
 This is an SDK contract and in-memory test adapter, not production durability or
-a completed corridor swap. `RecoveryStore` now requires agreement and first-lock
-intent operations, but no SQLite implementation exists yet. `Confirmed` is a
-typed adapter assertion; actual LEZ and Zebra adapters must produce it from
-fresh stable canonical evidence at the signed threshold. The next slice must
-persist validated observation and coordinator revision atomically, probe unknown
-database outcomes, replay on restart, and only then advance the in-memory core.
-Claim/refund effects, production adapters, real independent actors, and public
-testnet evidence remain M2 blockers.
+a completed corridor swap. `RecoveryStore` now requires atomic transition,
+aggregate-revision, and intent-close semantics plus exact predecessor-slot
+probing, but no SQLite implementation exists yet. Confirmed evidence is a typed
+adapter assertion; actual LEZ and Zebra adapters must produce it from fresh
+stable canonical evidence at the signed threshold. The maker still needs to
+persist its own independent observation of the taker lock before staging the
+second lock. Claim/refund effects, production adapters, real independent actors,
+and public-testnet evidence remain M2 blockers.

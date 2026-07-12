@@ -1,12 +1,13 @@
 //! Pre-lock and post-lock LEZ/ZEC SDK facades.
 
-use lez_swap_core::{Participant, Phase, SwapId, UnixSeconds};
+use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId, UnixSeconds};
 
 use crate::{
-    AcceptedZecAgreementV1, CreateAgreementOutcome, CreateFirstLockOutcome, FirstLockDriveOutcome,
-    FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1, LezFirstLockPort, NegotiationChannel,
-    OfferDiscovery, PreparedFirstLockSubmissionV1, RecoveryStore, ZcashFirstLockPort,
-    ZecAgreementV1, ZecLifecycleAction, ZecSdkError, lifecycle::next_action,
+    AcceptedZecAgreementV1, CreateAgreementOutcome, CreateFirstLockOutcome,
+    FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentV1, FirstLockObservation,
+    FirstLockPlanV1, FirstLockProjectionCommit, FirstLockTransitionV1, LezFirstLockPort,
+    NegotiationChannel, OfferDiscovery, PreparedFirstLockSubmissionV1, RecoveryStore,
+    ZcashFirstLockPort, ZecAgreementV1, ZecLifecycleAction, ZecSdkError, lifecycle::next_action,
 };
 
 /// Complete pre-lock facade composed from application-supplied ports.
@@ -195,12 +196,18 @@ where
                 actual: actual.clone(),
             });
         }
-        Ok(Some(self.active(accepted)))
+        let mut active = self.active(accepted);
+        active.replay_first_lock_transition().await?;
+        Ok(Some(active))
     }
 
     fn active(&self, accepted: AcceptedZecAgreementV1) -> ActiveZecSwap<Lez, Zcash, Store> {
+        let coordinator = accepted.agreement().coordinator().clone();
+        let revision = accepted.revision();
         ActiveZecSwap {
             accepted,
+            coordinator,
+            revision,
             lez: self.lez.clone(),
             zcash: self.zcash.clone(),
             store: self.store.clone(),
@@ -247,6 +254,8 @@ where
 /// ```
 pub struct ActiveZecSwap<Lez, Zcash, Store> {
     accepted: AcceptedZecAgreementV1,
+    coordinator: SwapCoordinator,
+    revision: u64,
     lez: Lez,
     zcash: Zcash,
     store: Store,
@@ -286,19 +295,19 @@ impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store> {
     /// Current deterministic protocol phase.
     #[must_use]
     pub const fn status(&self) -> Phase {
-        self.agreement().coordinator().phase()
+        self.coordinator.phase()
     }
 
     /// Last role-local durable revision loaded during activation/resume.
     #[must_use]
     pub const fn revision(&self) -> u64 {
-        self.accepted.revision()
+        self.revision
     }
 
     /// Next construction-specific role action, if one is currently safe.
     #[must_use]
     pub fn next_action(&self) -> ZecLifecycleAction {
-        next_action(self.agreement().coordinator(), self.local_participant())
+        next_action(&self.coordinator, self.local_participant())
     }
 }
 
@@ -306,6 +315,87 @@ impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
 where
     Store: RecoveryStore,
 {
+    /// Atomically projects confirmed final first-lock evidence, probing an exact
+    /// predecessor slot after an unknown store outcome.
+    ///
+    /// In-memory coordinator state changes only after the store proves the
+    /// exact transition durable.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid/sub-threshold evidence, context drift, a missing intent,
+    /// an invalid store revision, or a structured persistence failure.
+    pub async fn project_first_lock(
+        &mut self,
+        evidence: FirstLockConfirmedEvidenceV1,
+    ) -> Result<FirstLockProjectionCommit, ZecSdkError> {
+        let swap_id = self.coordinator.id().clone();
+        let Some(intent) = self
+            .store
+            .load_first_lock_intent(&swap_id)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Err(ZecSdkError::MissingFirstLockIntent);
+        };
+        let transition =
+            FirstLockTransitionV1::from_active(self.agreement(), &intent, self.revision, evidence)?;
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        let expected_revision =
+            self.revision
+                .checked_add(1)
+                .ok_or(ZecSdkError::InvalidProjectionRevision {
+                    expected: u64::MAX,
+                    actual: u64::MAX,
+                })?;
+
+        let commit = match self.store.commit_first_lock_transition(&transition).await {
+            Ok(commit) => commit,
+            Err(error) => {
+                let probe = self
+                    .store
+                    .load_first_lock_transition(&swap_id, self.revision)
+                    .await
+                    .map_err(|probe_error| ZecSdkError::Persistence(Box::new(probe_error)))?;
+                if probe.as_ref() == Some(&transition) {
+                    FirstLockProjectionCommit::new(expected_revision, true)
+                } else {
+                    return Err(ZecSdkError::Persistence(Box::new(error)));
+                }
+            }
+        };
+        if commit.revision() != expected_revision {
+            return Err(ZecSdkError::InvalidProjectionRevision {
+                expected: expected_revision,
+                actual: commit.revision(),
+            });
+        }
+        self.coordinator = next;
+        self.revision = commit.revision();
+        Ok(commit)
+    }
+
+    async fn replay_first_lock_transition(&mut self) -> Result<(), ZecSdkError> {
+        let Some(transition) = self
+            .store
+            .load_first_lock_transition(self.coordinator.id(), self.revision)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Ok(());
+        };
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        self.revision =
+            self.revision
+                .checked_add(1)
+                .ok_or(ZecSdkError::InvalidProjectionRevision {
+                    expected: u64::MAX,
+                    actual: u64::MAX,
+                })?;
+        self.coordinator = next;
+        Ok(())
+    }
+
     /// Stages exact role-local first-lock recovery material before any node call.
     ///
     /// This method performs no chain effect and never advances the coordinator.
@@ -326,6 +416,9 @@ where
                 expected: Participant::Taker,
                 actual: self.local_participant(),
             });
+        }
+        if self.status() != Phase::Offered {
+            return Err(ZecSdkError::FirstLockNotOffered(self.status()));
         }
         let intent = FirstLockIntentV1::from_active(
             self.agreement(),

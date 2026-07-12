@@ -40,7 +40,9 @@ current executable slices enforce:
   exposing transport, raw chain, or recovery-store handles after activation;
   plus exact first-lock intent staged before node effects, observe-before-exact
   rebroadcast after restart, and separately recoverable LEZ initialize/fund
-  steps. This is an in-memory SDK contract, not a completed chain corridor.
+  steps; confirmed evidence is applied only after an atomic store commit or an
+  exact unknown-outcome probe, and is replayed on resume. This is an in-memory
+  SDK/store contract, not a completed chain corridor.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),

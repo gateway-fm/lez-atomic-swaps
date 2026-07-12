@@ -7,8 +7,9 @@ use async_trait::async_trait;
 use lez_swap_core::{Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementEnvelopeV1, ActiveZecSwap, Bip199Contract, ClaimPreimage,
-    CreateAgreementOutcome, CreateFirstLockOutcome, ExpectedBip199Output, FirstLockDriveOutcome,
-    FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1, FirstLockStepV1, LezAssetV1,
+    CreateAgreementOutcome, CreateFirstLockOutcome, ExpectedBip199Output,
+    FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentV1, FirstLockObservation,
+    FirstLockPlanV1, FirstLockProjectionCommit, FirstLockStepV1, FirstLockTransitionV1, LezAssetV1,
     LezChainIdentityV1, LezEnvironmentV1, LezFirstLockPort, MAX_ZEC_AGREEMENT_RECORD_BYTES,
     NegotiationChannel, NegotiationTranscriptV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
     RecoveryStore, ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZcashFirstLockPort,
@@ -91,7 +92,17 @@ type AgreementMap = HashMap<String, AcceptedZecAgreementEnvelopeV1>;
 struct MemoryStore {
     agreements: Arc<Mutex<AgreementMap>>,
     first_locks: Arc<Mutex<HashMap<String, FirstLockIntentV1>>>,
+    first_lock_transitions: Arc<Mutex<HashMap<(String, u64), FirstLockTransitionV1>>>,
+    transition_mode: Arc<Mutex<TransitionCommitMode>>,
     fail_create: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum TransitionCommitMode {
+    #[default]
+    Normal,
+    FailBeforeCommit,
+    CommitThenReportFailure,
 }
 
 impl MemoryStore {
@@ -102,6 +113,10 @@ impl MemoryStore {
             agreements: Arc::new(Mutex::new(agreements)),
             ..Self::default()
         }
+    }
+
+    fn set_transition_mode(&self, mode: TransitionCommitMode) {
+        *self.transition_mode.lock().expect("transition mode lock") = mode;
     }
 }
 
@@ -167,6 +182,59 @@ impl RecoveryStore for MemoryStore {
             .lock()
             .expect("first-lock lock")
             .get(swap_id.as_str())
+            .cloned())
+    }
+
+    async fn commit_first_lock_transition(
+        &self,
+        transition: &FirstLockTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error> {
+        let mode = *self.transition_mode.lock().expect("transition mode lock");
+        if mode == TransitionCommitMode::FailBeforeCommit {
+            return Err(TestPortError("forced transition failure".to_owned()));
+        }
+        let key = (
+            transition.swap_id().as_str().to_owned(),
+            transition.predecessor_revision(),
+        );
+        let mut transitions = self
+            .first_lock_transitions
+            .lock()
+            .expect("first-lock transition lock");
+        let was_replay = match transitions.get(&key) {
+            None => {
+                transitions.insert(key, transition.clone());
+                false
+            }
+            Some(existing) if existing == transition => true,
+            Some(_) => return Err(TestPortError("conflicting transition".to_owned())),
+        };
+        self.first_locks
+            .lock()
+            .expect("first-lock lock")
+            .remove(transition.swap_id().as_str());
+        if mode == TransitionCommitMode::CommitThenReportFailure {
+            return Err(TestPortError("unknown successful commit".to_owned()));
+        }
+        Ok(FirstLockProjectionCommit::new(
+            transition
+                .predecessor_revision()
+                .checked_add(1)
+                .expect("test revision"),
+            was_replay,
+        ))
+    }
+
+    async fn load_first_lock_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<FirstLockTransitionV1>, Self::Error> {
+        Ok(self
+            .first_lock_transitions
+            .lock()
+            .expect("first-lock transition lock")
+            .get(&(swap_id.as_str().to_owned(), predecessor_revision))
             .cloned())
     }
 }
@@ -616,6 +684,120 @@ async fn lez_initialize_is_observed_before_fund_and_each_retry_is_exact() {
 }
 
 #[tokio::test]
+async fn confirmed_first_lock_commits_before_apply_and_replays_after_restart() {
+    let id = "sdk-first-lock-project";
+    let wire = agreement_wire(id, SwapDirection::TakerSellsForeign, FixtureVariant::Local);
+    let store = MemoryStore::default();
+    let sdk = first_lock_sdk(
+        Participant::Taker,
+        wire.clone(),
+        MemoryLezPort::default(),
+        MemoryZcashPort::default(),
+        store.clone(),
+    );
+    let accepted = sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("agreement");
+    let mut active = sdk.activate(accepted).await.expect("activation");
+    active
+        .stage_first_lock(zcash_first_lock_plan([0x31; 32], vec![0x51]))
+        .await
+        .expect("intent");
+
+    let commit = active
+        .project_first_lock(confirmed_zcash_first_lock([0x31; 32], "zec-first-lock"))
+        .await
+        .expect("atomic projection");
+    assert_eq!(commit, FirstLockProjectionCommit::new(1, false));
+    assert_eq!(active.revision(), 1);
+    assert_eq!(active.status(), Phase::TakerLockConfirmed);
+    assert!(store.first_locks.lock().expect("intent lock").is_empty());
+    assert!(matches!(
+        active
+            .stage_first_lock(zcash_first_lock_plan([0x31; 32], vec![0x51]))
+            .await,
+        Err(ZecSdkError::FirstLockNotOffered(Phase::TakerLockConfirmed))
+    ));
+
+    let restarted = first_lock_sdk(
+        Participant::Taker,
+        wire,
+        MemoryLezPort::default(),
+        MemoryZcashPort::default(),
+        store,
+    );
+    let resumed = restarted
+        .resume(&SwapId::new(id).expect("id"))
+        .await
+        .expect("resume")
+        .expect("active");
+    assert_eq!(resumed.revision(), 1);
+    assert_eq!(resumed.status(), Phase::TakerLockConfirmed);
+}
+
+#[tokio::test]
+async fn projection_failure_never_mutates_core_and_unknown_success_is_probed() {
+    let wire = agreement_wire(
+        "sdk-first-lock-atomic-faults",
+        SwapDirection::TakerSellsForeign,
+        FixtureVariant::Local,
+    );
+    let store = MemoryStore::default();
+    let sdk = first_lock_sdk(
+        Participant::Taker,
+        wire,
+        MemoryLezPort::default(),
+        MemoryZcashPort::default(),
+        store.clone(),
+    );
+    let accepted = sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("agreement");
+    let mut active = sdk.activate(accepted).await.expect("activation");
+    active
+        .stage_first_lock(zcash_first_lock_plan([0x32; 32], vec![0x52]))
+        .await
+        .expect("intent");
+
+    store.set_transition_mode(TransitionCommitMode::FailBeforeCommit);
+    assert!(matches!(
+        active
+            .project_first_lock(
+                FirstLockConfirmedEvidenceV1::new(
+                    FirstLockStepV1::ZcashFund,
+                    [0x33; 32],
+                    "wrong-identity",
+                    100,
+                )
+                .expect("well-formed but mismatched evidence")
+            )
+            .await,
+        Err(ZecSdkError::InvalidFirstLockTransition(_))
+    ));
+    assert_eq!(active.revision(), 0);
+    assert_eq!(active.status(), Phase::Offered);
+    assert!(matches!(
+        active
+            .project_first_lock(confirmed_zcash_first_lock([0x32; 32], "fault-first-lock"))
+            .await,
+        Err(ZecSdkError::Persistence(_))
+    ));
+    assert_eq!(active.revision(), 0);
+    assert_eq!(active.status(), Phase::Offered);
+
+    store.set_transition_mode(TransitionCommitMode::CommitThenReportFailure);
+    let commit = active
+        .project_first_lock(confirmed_zcash_first_lock([0x32; 32], "fault-first-lock"))
+        .await
+        .expect("exact probe proves unknown success");
+    assert_eq!(commit, FirstLockProjectionCommit::new(1, true));
+    assert_eq!(active.revision(), 1);
+    assert_eq!(active.status(), Phase::TakerLockConfirmed);
+}
+
+#[tokio::test]
 async fn activation_is_idempotent_for_exact_replay_and_conflicts_on_changed_same_key() {
     let store = MemoryStore::default();
     let first = sdk(
@@ -870,6 +1052,34 @@ fn first_lock_sdk(
         zcash,
         store,
     )
+}
+
+fn zcash_first_lock_plan(
+    expected_submission_id: [u8; 32],
+    exact_submission: Vec<u8>,
+) -> FirstLockPlanV1 {
+    FirstLockPlanV1::zcash(
+        PreparedFirstLockSubmissionV1::new(
+            FirstLockStepV1::ZcashFund,
+            expected_submission_id,
+            exact_submission,
+        )
+        .expect("submission"),
+    )
+    .expect("plan")
+}
+
+fn confirmed_zcash_first_lock(
+    expected_submission_id: [u8; 32],
+    transaction_id: &str,
+) -> FirstLockConfirmedEvidenceV1 {
+    FirstLockConfirmedEvidenceV1::new(
+        FirstLockStepV1::ZcashFund,
+        expected_submission_id,
+        transaction_id.to_owned(),
+        100,
+    )
+    .expect("confirmed evidence")
 }
 
 fn envelope(

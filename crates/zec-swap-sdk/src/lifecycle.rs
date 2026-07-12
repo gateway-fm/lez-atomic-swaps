@@ -5,7 +5,7 @@ use std::error::Error;
 use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::{FirstLockIntentError, ZecAgreementV1Error};
+use crate::{FirstLockIntentError, FirstLockTransitionError, ZecAgreementV1Error};
 
 /// A SHA-256 claim preimage that is redacted, zeroized, and not serializable.
 #[derive(Zeroize, ZeroizeOnDrop)]
@@ -51,6 +51,9 @@ pub enum ZecSdkError {
     /// Prepared first-lock material violates role, direction, shape, or size invariants.
     #[error(transparent)]
     InvalidFirstLock(#[from] FirstLockIntentError),
+    /// Confirmed first-lock evidence or its durable transition is invalid.
+    #[error(transparent)]
+    InvalidFirstLockTransition(#[from] FirstLockTransitionError),
     /// A new activation must begin at durable revision zero.
     #[error("new LEZ/ZEC agreement has invalid initial revision {0}")]
     InvalidActivationRevision(u64),
@@ -79,6 +82,17 @@ pub enum ZecSdkError {
     /// No durable first-lock plan exists for the active agreement.
     #[error("no durable first-lock plan exists for the active agreement")]
     MissingFirstLockIntent,
+    /// First-lock intent may only be staged from the fresh offered phase.
+    #[error("first-lock intent requires Offered; active phase is {0:?}")]
+    FirstLockNotOffered(Phase),
+    /// Store reported a revision inconsistent with the exact committed transition.
+    #[error("first-lock projection committed revision {actual}; expected {expected}")]
+    InvalidProjectionRevision {
+        /// Only valid next aggregate revision.
+        expected: u64,
+        /// Revision returned by the store.
+        actual: u64,
+    },
     /// Offer discovery/publishing failed in its adapter.
     #[error("offer discovery failed")]
     Discovery(#[source] BoxPortError),

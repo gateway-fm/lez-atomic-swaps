@@ -1,7 +1,7 @@
 # ADR 0013: Deterministic SDK core with optional async orchestration
 
-Status: concrete ZEC negotiation, activation, resume, and first-lock intent
-boundary implemented; durable evidence projection in progress — 2026-07-12
+Status: concrete ZEC negotiation, activation, resume, first-lock intent, and
+atomic projection/replay contract implemented; production adapters in progress — 2026-07-12
 
 ```mermaid
 flowchart TB
@@ -15,6 +15,8 @@ flowchart TB
     Store --> Active["ActiveZecSwap without transport or raw adapter handles"]
     Active --> Intent["Durable exact first-lock intent"]
     Intent --> Observe["Observe before byte-identical submission"]
+    Observe --> Projection["Atomic transition + revision + intent close"]
+    Projection --> Active
     Active -.-> Runtime["Reference async coordinator"]
     Runtime -.-> Nodes["Typed chain ports"]
     Store -.-> Encrypted["Encrypted production adapter"]
@@ -62,8 +64,11 @@ storage, typed chain actions, or actor E2E.
 The next slice adds a bounded first-lock action/observation contract without
 exposing raw adapters: exact Zcash funding bytes, or separate exact LEZ
 initialize and fund bytes, are staged before any node call. Restart revalidates
-the intent and observes before byte-identical submission. This does not yet
-atomically persist confirmed evidence or advance the coordinator.
+the intent and observes before byte-identical submission. Confirmed final-step
+evidence is projected only after the store atomically commits the exact
+transition, next revision, and intent closure; an unknown result is probed before
+in-memory apply, and resume replays the committed transition. The executable
+adapter remains an in-memory contract double rather than production SQLite.
 
 ## Consequences
 
