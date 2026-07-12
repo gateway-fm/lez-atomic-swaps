@@ -359,6 +359,34 @@ impl RecoverySchedule {
         self.maker_trigger
     }
 
+    /// Returns the negotiated refund deadline governed by `chain`, when one exists.
+    ///
+    /// Event-gated maker recovery has no synthetic deadline. Its taker refund deadline remains
+    /// available on the chain that governs that refund.
+    #[must_use]
+    pub fn deadline_for_chain(self, chain: Chain) -> Option<ChainPosition> {
+        if let MakerRecoveryTrigger::Deadline(deadline) = self.maker_trigger
+            && deadline.chain == chain
+        {
+            return Some(deadline);
+        }
+        if self.taker_refund.chain == chain {
+            return Some(self.taker_refund);
+        }
+        None
+    }
+
+    /// Returns the conservative cross-chain safety margin, when the profile is deadline-based.
+    ///
+    /// Event-gated XMR recovery intentionally has no numeric cross-chain margin.
+    #[must_use]
+    pub const fn required_safety_margin_seconds(self) -> Option<u64> {
+        match self.safety {
+            Some(safety) => Some(safety.required_margin),
+            None => None,
+        }
+    }
+
     /// Tests a deadline-based maker recovery against the same chain clock.
     ///
     /// # Errors
@@ -816,6 +844,12 @@ impl SwapCoordinator {
     #[must_use]
     pub const fn direction(&self) -> SwapDirection {
         self.direction
+    }
+
+    /// Immutable recovery schedule negotiated for this swap.
+    #[must_use]
+    pub const fn recovery_schedule(&self) -> RecoverySchedule {
+        self.recovery_schedule
     }
 
     /// Chain funded by one participant under the negotiated product direction.
