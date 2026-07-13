@@ -15,6 +15,7 @@ use lez_zec_swap_sdk::{
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
 const DATABASE_SCHEMA_VERSION: i64 = 9;
@@ -255,6 +256,12 @@ pub enum StoreError {
     /// Durable state could not be encoded or decoded.
     #[error("swap state serialization failed")]
     Serialization(#[from] serde_json::Error),
+    /// A pre-v9 aggregate cannot be migrated without guessing about durable state.
+    #[error("legacy swap aggregate is malformed or internally inconsistent")]
+    InvalidLegacySwapState,
+    /// A reader prevented secure truncation of historical migration WAL frames.
+    #[error("legacy swap migration WAL could not be securely truncated")]
+    LegacyMigrationCheckpointBusy,
     /// Persisted Zcash evidence is internally inconsistent.
     #[error("persisted Zcash observation record is invalid")]
     ObservationRecord(#[from] ObservationRecordError),
@@ -861,7 +868,13 @@ fn open_configured_connection(path: impl AsRef<Path>) -> Result<Connection, Stor
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "synchronous", "FULL")?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
+    connection.pragma_update(None, "secure_delete", "ON")?;
     migrate(&mut connection)?;
+    let checkpoint_busy: i64 =
+        connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))?;
+    if checkpoint_busy != 0 {
+        return Err(StoreError::LegacyMigrationCheckpointBusy);
+    }
     Ok(connection)
 }
 
@@ -1085,6 +1098,9 @@ fn migrate(connection: &mut Connection) -> Result<(), StoreError> {
             [],
         )?;
     }
+    if version < DATABASE_SCHEMA_VERSION {
+        migrate_legacy_claim_evidence(&transaction)?;
+    }
     transaction.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS chain_events (
@@ -1130,6 +1146,81 @@ fn migrate(connection: &mut Connection) -> Result<(), StoreError> {
     transaction.pragma_update(None, "user_version", DATABASE_SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
+}
+
+fn migrate_legacy_claim_evidence(
+    transaction: &rusqlite::Transaction<'_>,
+) -> Result<(), StoreError> {
+    let rows = {
+        let mut statement =
+            transaction.prepare("SELECT id, schema_version, state_json FROM swaps ORDER BY id")?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    for (id, payload_version, encoded) in rows {
+        if payload_version != SWAP_PAYLOAD_VERSION {
+            return Err(StoreError::UnsupportedPayloadVersion {
+                kind: "swap",
+                version: payload_version,
+            });
+        }
+        let mut value: serde_json::Value = serde_json::from_str(&encoded)?;
+        let object = value
+            .as_object_mut()
+            .ok_or(StoreError::InvalidLegacySwapState)?;
+        let was_plaintext = match object.get_mut("claim_evidence") {
+            None | Some(serde_json::Value::Null | serde_json::Value::Object(_)) => false,
+            Some(serde_json::Value::Array(bytes)) => {
+                let preimage = legacy_claim_preimage(bytes)?;
+                object.insert(
+                    "claim_evidence".to_owned(),
+                    serde_json::json!({
+                        "commitment": <[u8; 32]>::from(Sha256::digest(preimage))
+                    }),
+                );
+                true
+            }
+            Some(_) => return Err(StoreError::InvalidLegacySwapState),
+        };
+
+        let trusted: SwapCoordinator = serde_json::from_value(value)?;
+        if trusted.id().as_str() != id {
+            return Err(StoreError::InvalidLegacySwapState);
+        }
+        if was_plaintext {
+            let canonical = serde_json::to_string(&trusted)?;
+            let updated = transaction.execute(
+                "UPDATE swaps SET state_json = ?1 WHERE id = ?2 AND state_json = ?3",
+                params![canonical, id, encoded],
+            )?;
+            if updated != 1 {
+                return Err(StoreError::InvalidLegacySwapState);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn legacy_claim_preimage(bytes: &[serde_json::Value]) -> Result<[u8; 32], StoreError> {
+    if bytes.len() != 32 {
+        return Err(StoreError::InvalidLegacySwapState);
+    }
+    let mut preimage = [0_u8; 32];
+    for (target, value) in preimage.iter_mut().zip(bytes) {
+        *target = value
+            .as_u64()
+            .and_then(|byte| u8::try_from(byte).ok())
+            .ok_or(StoreError::InvalidLegacySwapState)?;
+    }
+    Ok(preimage)
 }
 
 // The schema is intentionally kept in one atomic declarative batch so every

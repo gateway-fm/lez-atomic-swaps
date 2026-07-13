@@ -3,7 +3,9 @@ use lez_swap_core::{
     Phase, RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::SqliteSwapStore;
-use tempfile::tempdir;
+use rusqlite::{Connection, params};
+use sha2::{Digest as _, Sha256};
+use tempfile::{TempDir, tempdir};
 
 fn swap(id: &str, pair: Pair) -> SwapCoordinator {
     let direction = if pair == Pair::Monero {
@@ -81,6 +83,130 @@ fn save_and_reload(database: &std::path::Path, swap: &mut SwapCoordinator) {
         .load(swap.id())
         .unwrap()
         .expect("swap survives restart");
+}
+
+#[test]
+fn schema_v8_plaintext_claim_evidence_migrates_to_v9_marker_and_is_scrubbed() {
+    let data = TempDir::new().expect("isolated migration directory");
+    let path = data.path().join("legacy-v8-claim.sqlite3");
+    let preimage = [
+        0xd3, 0x25, 0xe7, 0x41, 0x9b, 0x06, 0xca, 0x58, 0xf2, 0x1d, 0x83, 0x6e, 0xb4, 0x79, 0x0f,
+        0xa5, 0x67, 0xc1, 0x3a, 0x8d, 0xee, 0x52, 0x94, 0x17, 0xbb, 0x63, 0x2c, 0xf8, 0x45, 0xad,
+        0x71, 0x0b,
+    ];
+    let mut legacy = swap("legacy-v8-claim", Pair::Zcash);
+    legacy
+        .observe_taker_lock(ChainProof::new("legacy-taker-lock", 2).unwrap())
+        .unwrap();
+    legacy
+        .observe_maker_lock(ChainProof::new("legacy-maker-lock", 2).unwrap())
+        .unwrap();
+    legacy
+        .observe_revealing_claim(
+            legacy.first_claimant(),
+            ChainProof::new("legacy-revealing-claim", 2).unwrap(),
+            ClaimEvidence::new(preimage),
+        )
+        .unwrap();
+    let mut state = serde_json::to_value(&legacy).expect("current coordinator JSON");
+    state["claim_evidence"] = serde_json::json!(preimage);
+    assert!(
+        serde_json::from_value::<SwapCoordinator>(state.clone()).is_err(),
+        "core must continue rejecting the historical plaintext tuple"
+    );
+    let state_json = serde_json::to_string(&state).expect("legacy coordinator JSON");
+    let legacy_pattern = format!(
+        "\"claim_evidence\":{}",
+        serde_json::to_string(&preimage).expect("legacy tuple JSON")
+    );
+    create_schema_v8_claim_fixture(&path, legacy.id(), &state_json);
+    assert_sqlite_files_contain(&path, legacy_pattern.as_bytes());
+
+    let store = SqliteSwapStore::open(&path).expect("migrate schema-v8 claim row");
+    let recovered = store
+        .load(legacy.id())
+        .expect("load migrated coordinator")
+        .expect("migrated coordinator exists");
+    assert_eq!(recovered.phase(), Phase::ClaimEvidenceAvailable);
+    assert_eq!(
+        recovered
+            .claim_evidence()
+            .expect("one-way claim marker")
+            .commitment(),
+        &<[u8; 32]>::from(Sha256::digest(preimage))
+    );
+    drop(store);
+
+    let connection = Connection::open(&path).expect("inspect migrated database");
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("schema version");
+    assert_eq!(version, 9);
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .expect("checkpoint migrated plaintext pages");
+    drop(connection);
+    assert_sqlite_files_exclude(&path, legacy_pattern.as_bytes());
+    assert_sqlite_files_exclude(&path, &preimage);
+}
+
+fn create_schema_v8_claim_fixture(path: &std::path::Path, id: &SwapId, state_json: &str) {
+    let connection = Connection::open(path).expect("create schema-v8 fixture");
+    connection
+        .execute_batch(
+            "
+            PRAGMA journal_mode = WAL;
+            CREATE TABLE swaps (
+                id             TEXT PRIMARY KEY NOT NULL,
+                schema_version INTEGER NOT NULL,
+                state_json     TEXT NOT NULL,
+                revision       INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0)
+            ) STRICT;
+            PRAGMA user_version = 8;
+            ",
+        )
+        .expect("schema-v8 swaps table");
+    connection
+        .execute(
+            "INSERT INTO swaps (id, schema_version, state_json, revision)
+             VALUES (?1, 1, ?2, 0)",
+            params![id.as_str(), state_json],
+        )
+        .expect("legacy plaintext claim row");
+    drop(connection);
+}
+
+fn assert_sqlite_files_contain(path: &std::path::Path, pattern: &[u8]) {
+    assert!(
+        sqlite_file_bytes(path)
+            .iter()
+            .any(|(_, bytes)| bytes.windows(pattern.len()).any(|window| window == pattern)),
+        "legacy fixture must contain its distinctive plaintext JSON"
+    );
+}
+
+fn assert_sqlite_files_exclude(path: &std::path::Path, pattern: &[u8]) {
+    for (candidate, bytes) in sqlite_file_bytes(path) {
+        assert!(
+            !bytes.windows(pattern.len()).any(|window| window == pattern),
+            "legacy plaintext remains in {}",
+            candidate.display()
+        );
+    }
+}
+
+fn sqlite_file_bytes(path: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+    [
+        path.to_path_buf(),
+        std::path::PathBuf::from(format!("{}-wal", path.display())),
+    ]
+    .into_iter()
+    .filter_map(|candidate| {
+        std::fs::read(&candidate)
+            .ok()
+            .map(|bytes| (candidate, bytes))
+    })
+    .collect()
 }
 
 #[test]
