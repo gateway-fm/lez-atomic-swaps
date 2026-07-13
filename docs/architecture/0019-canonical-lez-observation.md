@@ -3,7 +3,7 @@
 Status: accepted for the M2 SDK/SQLite exact-head boundary; the production RPC
 adapter and post-funding escrow-state semantics remain open.
 
-~~~mermaid
+```mermaid
 flowchart LR
     Agreement["Dual-signed agreement<br/>channel, genesis, program, roles, asset, amount"]
     RPC["LEZ v0.2 RPC adapter<br/>tip before and after"]
@@ -24,7 +24,7 @@ flowchart LR
     Validator --> Journal
     Journal --> Replay
     Agreement --> Replay
-~~~
+```
 
 ## Context
 

@@ -141,8 +141,11 @@ and #237 record v0.5.0 public-signature rejection against the newer testnet. The
 official LEZ v0.2.0 release and `https://testnet.lez.logos.co` are live, but
 the compatibility upgrade remains provisional: SPEL PR #238 head
 `df17acd98436be4f09c55877dae1fe2e73cbcdca` is open, unmerged, and has no
-submitted maintainer review despite green checks. Final M2 evidence requires a
-merged/tagged SPEL release or an explicit reviewed exception. This is not a runtime-only pin change:
+submitted maintainer review despite green checks. Final production readiness
+requires a merged/tagged SPEL release or an explicit reviewed exception. Under
+ADR 0018, M2 may certify repository-controlled evidence against the immutable
+provisional head while retaining this exact Logos-owned release item in the
+production-blocker register. This is not a runtime-only pin change:
 v0.1.2 derives public PDAs under `/NSSA/v0.2/AccountId/PDA/`, while v0.2.0
 validates `/LEE/v0.2/AccountId/PDA/`. The guest, generated client, account
 derivations, and actor tests must be rebuilt together.
@@ -182,10 +185,12 @@ Public evidence must bind the LEZ/SPEL/Risc0 commits, ELF SHA-256, ImageID and
 derived ProgramId, endpoint, `getChannelId`, pre/post block IDs, returned
 transaction hash, exact deployment bytes, and containing canonical block. The
 network has announced another upgrade/reset, so evidence is invalid across a
-channel change and must be regenerated. Public-profile enablement and the M2
-tag remain fail-closed until SPEL PR #238 receives maintainer review/merge or an
-explicit project security/governance acceptance records its immutable head and
-the narrow client fork.
+channel change and must be regenerated. Public-profile enablement and production
+readiness remain fail-closed until SPEL PR #238 receives maintainer review/merge
+or an explicit project security/governance acceptance records its immutable
+head and the narrow client fork. M2 tagging follows ADR 0018: the upstream item
+does not waive repository-controlled behavior or evidence, but it is disclosed
+rather than treated as a milestone stop.
 
 Primary audit inputs are the official [LEZ v0.2.0
 release](https://github.com/logos-blockchain/logos-execution-zone/releases/tag/v0.2.0),

@@ -1,8 +1,8 @@
 # ADR 0021: Protected role-local claim recovery
 
-Status: Accepted; schema-v9 two-direction SQLite happy path implemented,
-legacy generic-state secret migration and production key rotation pending --
-2026-07-13
+Status: Accepted; schema-v9 two-direction SQLite happy path, legacy
+generic-state secret migration, and claim recovery hardening implemented;
+production key rotation and chain adapters pending -- 2026-07-13
 
 ```mermaid
 flowchart TB
@@ -123,8 +123,22 @@ database and WAL for the preimage and both secret-bearing transaction
 payloads. The full SDK recovery suite and strict production-library Clippy
 also pass.
 
-The legacy generic-state migration is a separate failing-first gate and is not
-claimed complete by this ADR.
+Commit `5ed04ec` proves the failing-first legacy-state migration gate. A schema-v8
+fixture begins with the exact plaintext preimage in `state_json`; schema-v9 open
+rewrites it to the tagged SHA-256 commitment in one migration transaction,
+enables secure deletion, checkpoints the WAL with truncation, and verifies that
+neither the distinctive JSON tuple nor the raw preimage remains in the database,
+WAL, or shared-memory files. Pre-migration backups remain explicitly sensitive.
+
+Commit `340bf10` completes the repository-controlled claim recovery hardening
+matrix. Claim-capable reopen rejects a wrong key identifier or key material,
+corrupt ciphertext or nonce, a changed authenticated fingerprint, and a future
+protected-payload version without mutating state. Unified replay rejects orphan
+closed intents, orphan observed material, duplicate revisions, and active-head
+drift. Forced SQLite aborts roll back every coupled owned-claim or observed-reveal
+effect. Unknown LEZ submission outcomes and stale instances observe the exact
+durable bytes before any possible rebroadcast. The committed swap-store suite
+contains 35 passing tests for the complete schema-v9 surface.
 
 ## Consequences
 
@@ -138,7 +152,8 @@ Production hardening must add active-key selection plus lookup of retained old
 keys, migration or rewrapping policy, missing-key operator diagnostics, and
 tests proving old rows remain readable after rotation.
 
-Additional production gates remain: the legacy plaintext-state rewrite and
-scrub, forced rollback and corruption coverage for every claim transaction
-shape, production key provisioning, canonical LEZ/Zcash claim adapters,
-independent actor processes, and repetition against actual nodes.
+Remaining production gates are rotation-aware key provisioning, canonical
+LEZ/Zcash claim adapters, independent actor processes, and repetition against
+actual nodes. Broader operating-system process-kill coverage remains an M5
+coordinator gate; it does not replace the transaction-level rollback and
+unknown-outcome evidence completed here.

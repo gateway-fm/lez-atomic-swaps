@@ -48,6 +48,9 @@ flowchart TB
     Agreement --> FirstLock["0017 Durable first-lock intent"]
     FirstLock --> MakerLock["0020 Durable maker second lock"]
     MakerLock --> ClaimRecovery["0021 Protected claim recovery"]
+    ClaimRecovery --> LezSidecar["0022 LEZ official-wire sidecar"]
+    ZecPins --> LezSidecar
+    LEZ --> LezSidecar
     ZecPins --> Agreement
     Agreement -.-> ZecReconcile
     FirstLock -.-> ZecReconcile
@@ -57,13 +60,14 @@ flowchart TB
     Persistence --> SDK
     Persistence --> RPC
     Persistence --> ClaimRecovery
+    LezSidecar -.-> Upstream
 ```
 
 | ADR | Decision | Status |
 |---|---|---|
 | [0001](0001-authoritative-scope.md) | Live RFP plus accepted issue #112 define BTC/XMR/ZEC scope | Accepted |
 | [0002](0002-ports-and-adapters.md) | Explicit protocol core with ports/adapters around external systems | Accepted |
-| [0003](0003-sqlite-persistence.md) | SQLite/`rusqlite` persistence behind a repository port | Schema-v9 role-local locks and protected claims proven; legacy secret migration and later effects pending |
+| [0003](0003-sqlite-persistence.md) | SQLite/`rusqlite` persistence behind a repository port | Schema-v9 role-local locks, protected claims, legacy-secret migration, and claim hardening proven; later effects pending |
 | [0004](0004-zcash-stack.md) | Zebra plus local canonical transaction construction; selective Zallet use | Accepted |
 | [0005](0005-docker-isolation.md) | Per-run Compose project, networks, volumes, and ephemeral ports | Accepted |
 | [0006](0006-lez-upstream-semantics.md) | Pin LEZ behavior and verify source assumptions executablely | Accepted |
@@ -81,4 +85,5 @@ flowchart TB
 | [0018](0018-logos-upstream-production-exceptions.md) | Logos-owned live-release blockers are disclosed separately from repository-controlled milestone evidence | Accepted; living production register required through final release |
 | [0019](0019-canonical-lez-observation.md) | Stable agreement-bound LEZ fund transaction, block, metadata, and custody evidence is replayed from primitive snapshots | Canonical/update/removal/replacement exact-head folding accepted in SDK/SQLite; official-wire adapter pending |
 | [0020](0020-durable-maker-second-lock.md) | Fresh eligibility is consumed by a separately durable opposite-chain maker effect | Separate maker/taker stores replay from schema v8 at `BothLegsLocked`; claims continue under 0021 and production adapters remain pending |
-| [0021](0021-protected-claim-recovery.md) | Claim material and exact submissions use authenticated envelopes plus a four-table role-local schema-v9 journal | Both directions and independent SQLite actors replay at `Completed`; legacy secret migration, key rotation, and production adapters pending |
+| [0021](0021-protected-claim-recovery.md) | Claim material and exact submissions use authenticated envelopes plus a four-table role-local schema-v9 journal | Both directions, legacy-secret migration/scrub, corruption/rollback/unknown-outcome hardening, and independent SQLite replay at `Completed` proven; key rotation and production adapters pending |
+| [0022](0022-isolate-lez-official-wire-sidecar.md) | Keep incompatible pinned LEZ official-wire and Zcash graphs in separate processes behind a bounded local protocol | Accepted for the M2 actual-node corridor; canonical claim prerequisites, adapters, runner, and composed evidence in progress |
