@@ -4,31 +4,39 @@ use std::{
 };
 
 use async_trait::async_trait;
-use lez_swap_core::{Pair, Participant, Phase, SwapDirection, SwapId, UnixSeconds};
+use lez_swap_core::{
+    Pair, Participant, Phase, SwapCoordinator, SwapDirection, SwapId, UnixSeconds,
+};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract,
     CanonicalLezEscrowObservationV1, CanonicalLezEscrowRemovalV1, CanonicalZcashOutputObservation,
-    CanonicalZcashOutputRemoval, ClaimError, ClaimMaterialContext, ClaimMaterialPurpose,
-    ClaimPreimage, ClaimRecoveryStore, CreateAgreementOutcome, CreateFirstLockOutcome,
-    ExpectedBip199Output, FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome,
-    FirstLockIntentRecordV1, FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1,
-    FirstLockProjectionCommit, FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1,
-    FirstLockTransitionV1, LezAssetV1, LezChainIdentityV1, LezCustodySnapshotV1, LezEnvironmentV1,
-    LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort, LezFundInstructionV1,
-    LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezMakerLockObservationPort,
-    LezNodeRemovalSnapshotV1, LezNodeSnapshotV1, LezObservationEventV1,
-    LezObservationReconciliationV1, LezObservationTrackerError, LezObservationTrackerV1,
-    LezStableTipV1, LezTakerFirstLockObservationPort, MAX_FIRST_LOCK_SUBMISSION_BYTES,
-    MAX_ZEC_AGREEMENT_RECORD_BYTES, MakerFundingEligibilityOutcome, MakerLockDriveOutcome,
-    MakerLockIntentV1, MakerLockObservationV1, MakerLockTransitionV1, NegotiationChannel,
-    NegotiationTranscriptV1, ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome,
-    ObservedMakerLockTransitionV1, ObservedTakerFirstLockEvidenceV1,
-    ObservedTakerFirstLockTransitionError, ObservedTakerFirstLockTransitionRecordV1,
-    ObservedTakerFirstLockTransitionV1, OfferDiscovery, PROTECTED_CLAIM_SCHEMA_V1,
-    PreparedFirstLockSubmissionV1, ProtectedClaimEnvelope, ProtectedClaimKey, RecoveryStore,
-    TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFirstLockPort, ZcashMakerLockObservationPort,
-    ZcashNodeRemovalSnapshot, ZcashNodeSnapshot, ZcashStableTip,
+    CanonicalZcashOutputRemoval, ClaimError, ClaimIntentRecordV1, ClaimIntentV1,
+    ClaimMaterialContext, ClaimMaterialPurpose, ClaimPreimage, ClaimRecoveryStore, ClaimStepV1,
+    CreateAgreementOutcome, CreateFirstLockOutcome, ExpectedBip199Output,
+    FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentRecordV1,
+    FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1, FirstLockProjectionCommit,
+    FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1, FirstLockTransitionV1,
+    FollowupClaimEvidenceV1, FollowupClaimObservationV1, FollowupClaimTransitionRecordV1,
+    FollowupClaimTransitionV1, LezAssetV1, LezChainIdentityV1, LezClaimPort, LezCustodySnapshotV1,
+    LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort,
+    LezFundInstructionV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1,
+    LezMakerLockObservationPort, LezNodeRemovalSnapshotV1, LezNodeSnapshotV1,
+    LezObservationEventV1, LezObservationReconciliationV1, LezObservationTrackerError,
+    LezObservationTrackerV1, LezStableTipV1, LezTakerFirstLockObservationPort,
+    MAX_FIRST_LOCK_SUBMISSION_BYTES, MAX_ZEC_AGREEMENT_RECORD_BYTES,
+    MakerFundingEligibilityOutcome, MakerLockDriveOutcome, MakerLockIntentV1,
+    MakerLockObservationV1, MakerLockTransitionV1, NegotiationChannel, NegotiationTranscriptV1,
+    ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome, ObservedFollowupClaimTransitionRecordV1,
+    ObservedFollowupClaimTransitionV1, ObservedMakerLockTransitionV1,
+    ObservedRevealingClaimTransitionRecordV1, ObservedRevealingClaimTransitionV1,
+    ObservedTakerFirstLockEvidenceV1, ObservedTakerFirstLockTransitionError,
+    ObservedTakerFirstLockTransitionRecordV1, ObservedTakerFirstLockTransitionV1, OfferDiscovery,
+    PROTECTED_CLAIM_SCHEMA_V1, PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1,
+    ProtectedClaimEnvelope, ProtectedClaimKey, ProtectedClaimPayloadEnvelope, RecoveryStore,
+    RevealingClaimEvidenceV1, RevealingClaimObservationV1, RevealingClaimTransitionRecordV1,
+    RevealingClaimTransitionV1, TakerFirstLockObservationV1, TransparentFundingRequest,
+    TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimPort, ZcashFirstLockPort,
+    ZcashMakerLockObservationPort, ZcashNodeRemovalSnapshot, ZcashNodeSnapshot, ZcashStableTip,
     ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
     ZecAgreementRecordV1, ZecAgreementV1Error, ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk,
     ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
@@ -110,11 +118,40 @@ impl NegotiationChannel for MemoryNegotiation {
 
 type AgreementMap = HashMap<String, AcceptedZecAgreementEnvelopeV1>;
 type ClaimMaterialMap = HashMap<String, ProtectedClaimEnvelope>;
+type ClaimIntentMap = HashMap<String, (ClaimIntentV1, ProtectedClaimPayloadEnvelope)>;
+type RevealingClaimTransitionMap = HashMap<
+    (String, u64),
+    (
+        RevealingClaimTransitionRecordV1,
+        ClaimIntentRecordV1,
+        ProtectedClaimEnvelope,
+        ClaimMaterialPurpose,
+    ),
+>;
+type FollowupClaimTransitionMap =
+    HashMap<(String, u64), (FollowupClaimTransitionRecordV1, ClaimIntentRecordV1)>;
+type ObservedRevealingClaimTransitionMap = HashMap<
+    (String, u64),
+    (
+        ObservedRevealingClaimTransitionRecordV1,
+        ProtectedClaimEnvelope,
+        ClaimMaterialPurpose,
+    ),
+>;
+type ObservedFollowupClaimTransitionMap =
+    HashMap<(String, u64), ObservedFollowupClaimTransitionRecordV1>;
 
 #[derive(Clone, Debug, Default)]
 struct MemoryStore {
     agreements: Arc<Mutex<AgreementMap>>,
     claim_materials: Arc<Mutex<ClaimMaterialMap>>,
+    claim_material_purposes: Arc<Mutex<HashMap<String, ClaimMaterialPurpose>>>,
+    claim_intents: Arc<Mutex<ClaimIntentMap>>,
+    revealing_claim_transitions: Arc<Mutex<RevealingClaimTransitionMap>>,
+    followup_claim_transitions: Arc<Mutex<FollowupClaimTransitionMap>>,
+    observed_revealing_claim_transitions: Arc<Mutex<ObservedRevealingClaimTransitionMap>>,
+    observed_followup_claim_transitions: Arc<Mutex<ObservedFollowupClaimTransitionMap>>,
+    claim_nonce_sequence: Arc<Mutex<u64>>,
     first_locks: Arc<Mutex<HashMap<String, FirstLockIntentV1>>>,
     first_lock_transitions: Arc<Mutex<HashMap<(String, u64), FirstLockTransitionV1>>>,
     observed_taker_first_lock_transitions:
@@ -147,6 +184,193 @@ impl MemoryStore {
 
     fn set_transition_mode(&self, mode: TransitionCommitMode) {
         *self.transition_mode.lock().expect("transition mode lock") = mode;
+    }
+
+    fn next_claim_nonce(&self, domain: &[u8]) -> [u8; 24] {
+        let mut sequence = self
+            .claim_nonce_sequence
+            .lock()
+            .expect("claim nonce sequence lock");
+        *sequence = sequence.checked_add(1).expect("test nonce sequence");
+        let mut digest = Sha256::new();
+        digest.update(b"lez-zec-sdk-test/claim-payload-nonce/v1");
+        digest.update(domain);
+        digest.update(sequence.to_le_bytes());
+        let digest = digest.finalize();
+        let mut nonce = [0_u8; 24];
+        nonce.copy_from_slice(&digest[..24]);
+        nonce
+    }
+
+    fn accepted(&self, swap_id: &SwapId) -> Result<AcceptedZecAgreementV1, TestPortError> {
+        let envelope = self
+            .agreements
+            .lock()
+            .expect("agreements lock")
+            .get(swap_id.as_str())
+            .cloned()
+            .ok_or_else(|| TestPortError("missing accepted agreement".to_owned()))?;
+        AcceptedZecAgreementV1::resume(&envelope).map_err(|error| TestPortError(error.to_string()))
+    }
+
+    fn coordinator_at(
+        &self,
+        accepted: &AcceptedZecAgreementV1,
+        target_revision: u64,
+    ) -> Result<SwapCoordinator, TestPortError> {
+        let agreement = accepted.agreement();
+        let swap_key = agreement.coordinator().id().as_str().to_owned();
+        let mut coordinator = agreement.coordinator().clone();
+        for revision in 0..target_revision {
+            let key = (swap_key.clone(), revision);
+            let next = self.apply_lock_transition(agreement, &coordinator, revision, &key)?;
+            coordinator = match next {
+                Some(next) => next,
+                None => self
+                    .apply_claim_transition(accepted, &coordinator, revision, &key)?
+                    .ok_or_else(|| {
+                        TestPortError(format!("missing transition at revision {revision}"))
+                    })?,
+            };
+        }
+        Ok(coordinator)
+    }
+
+    fn apply_lock_transition(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        coordinator: &SwapCoordinator,
+        revision: u64,
+        key: &(String, u64),
+    ) -> Result<Option<SwapCoordinator>, TestPortError> {
+        if let Some(transition) = self
+            .first_lock_transitions
+            .lock()
+            .expect("first-lock transitions lock")
+            .get(key)
+            .cloned()
+        {
+            return transition
+                .apply_to(agreement, coordinator, revision)
+                .map(Some)
+                .map_err(|error| TestPortError(error.to_string()));
+        }
+        if let Some(transition) = self
+            .observed_taker_first_lock_transitions
+            .lock()
+            .expect("observed taker transitions lock")
+            .get(key)
+            .cloned()
+        {
+            return transition
+                .apply_to(agreement, coordinator, revision)
+                .map(Some)
+                .map_err(|error| TestPortError(error.to_string()));
+        }
+        if let Some(transition) = self
+            .maker_lock_transitions
+            .lock()
+            .expect("maker transitions lock")
+            .get(key)
+            .cloned()
+        {
+            return transition
+                .apply_to(agreement, coordinator, revision)
+                .map(Some)
+                .map_err(|error| TestPortError(error.to_string()));
+        }
+        self.observed_maker_lock_transitions
+            .lock()
+            .expect("observed maker transitions lock")
+            .get(key)
+            .cloned()
+            .map_or(Ok(None), |transition| {
+                transition
+                    .apply_to(agreement, coordinator, revision)
+                    .map(Some)
+                    .map_err(|error| TestPortError(error.to_string()))
+            })
+    }
+
+    fn apply_claim_transition(
+        &self,
+        accepted: &AcceptedZecAgreementV1,
+        coordinator: &SwapCoordinator,
+        revision: u64,
+        key: &(String, u64),
+    ) -> Result<Option<SwapCoordinator>, TestPortError> {
+        let agreement = accepted.agreement();
+        if let Some((record, intent, protected, purpose)) = self
+            .revealing_claim_transitions
+            .lock()
+            .expect("revealing transitions lock")
+            .get(key)
+            .cloned()
+        {
+            let preimage = protected
+                .decrypt(
+                    &memory_claim_key(),
+                    claim_material_context_for(accepted, purpose),
+                )
+                .map_err(|error| TestPortError(error.to_string()))?;
+            let transition = record
+                .revalidate(accepted, coordinator, &intent, revision, preimage)
+                .map_err(|error| TestPortError(error.to_string()))?;
+            return transition
+                .apply_to(agreement, coordinator, revision)
+                .map(Some)
+                .map_err(|error| TestPortError(error.to_string()));
+        }
+        if let Some((record, protected, purpose)) = self
+            .observed_revealing_claim_transitions
+            .lock()
+            .expect("observed revealing transitions lock")
+            .get(key)
+            .cloned()
+        {
+            let preimage = protected
+                .decrypt(
+                    &memory_claim_key(),
+                    claim_material_context_for(accepted, purpose),
+                )
+                .map_err(|error| TestPortError(error.to_string()))?;
+            let transition = record
+                .revalidate(accepted, coordinator, revision, preimage)
+                .map_err(|error| TestPortError(error.to_string()))?;
+            return transition
+                .apply_to(agreement, coordinator, revision)
+                .map(Some)
+                .map_err(|error| TestPortError(error.to_string()));
+        }
+        if let Some((record, intent)) = self
+            .followup_claim_transitions
+            .lock()
+            .expect("follow-up transitions lock")
+            .get(key)
+            .cloned()
+        {
+            let transition = record
+                .revalidate(accepted, coordinator, &intent, revision)
+                .map_err(|error| TestPortError(error.to_string()))?;
+            return transition
+                .apply_to(agreement, coordinator, revision)
+                .map(Some)
+                .map_err(|error| TestPortError(error.to_string()));
+        }
+        self.observed_followup_claim_transitions
+            .lock()
+            .expect("observed follow-up transitions lock")
+            .get(key)
+            .cloned()
+            .map_or(Ok(None), |record| {
+                let transition = record
+                    .revalidate(accepted, coordinator, revision)
+                    .map_err(|error| TestPortError(error.to_string()))?;
+                transition
+                    .apply_to(agreement, coordinator, revision)
+                    .map(Some)
+                    .map_err(|error| TestPortError(error.to_string()))
+            })
     }
 }
 
@@ -181,6 +405,13 @@ fn memory_claim_key() -> ProtectedClaimKey {
 }
 
 fn claim_material_context(accepted: &AcceptedZecAgreementV1) -> ClaimMaterialContext<'_> {
+    claim_material_context_for(accepted, ClaimMaterialPurpose::LocalFirstClaim)
+}
+
+fn claim_material_context_for(
+    accepted: &AcceptedZecAgreementV1,
+    purpose: ClaimMaterialPurpose,
+) -> ClaimMaterialContext<'_> {
     let agreement = accepted.agreement();
     ClaimMaterialContext::new(
         PROTECTED_CLAIM_SCHEMA_V1,
@@ -189,7 +420,26 @@ fn claim_material_context(accepted: &AcceptedZecAgreementV1) -> ClaimMaterialCon
         agreement.direction(),
         agreement.agreement_commitment(),
         accepted.local_participant(),
-        ClaimMaterialPurpose::LocalFirstClaim,
+        purpose,
+    )
+}
+
+fn claim_submission_context(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    local: Participant,
+    step: ClaimStepV1,
+) -> ClaimMaterialContext<'_> {
+    ClaimMaterialContext::new(
+        PROTECTED_CLAIM_SCHEMA_V1,
+        agreement.coordinator().id(),
+        Pair::Zcash,
+        agreement.direction(),
+        agreement.agreement_commitment(),
+        local,
+        match step {
+            ClaimStepV1::RevealingLez => ClaimMaterialPurpose::LezClaimSubmission,
+            ClaimStepV1::FollowupZcash => ClaimMaterialPurpose::ZcashClaimSubmission,
+        },
     )
 }
 
@@ -522,6 +772,10 @@ impl ClaimRecoveryStore for MemoryStore {
 
         let mut agreements = self.agreements.lock().expect("agreements lock");
         let mut materials = self.claim_materials.lock().expect("claim materials lock");
+        let mut purposes = self
+            .claim_material_purposes
+            .lock()
+            .expect("claim material purposes lock");
         match (agreements.get(&swap_key), materials.get(&swap_key)) {
             (Some(existing_envelope), Some(existing_material)) if existing_envelope == envelope => {
                 let existing_preimage = existing_material
@@ -542,6 +796,10 @@ impl ClaimRecoveryStore for MemoryStore {
                 )
                 .map_err(|error| TestPortError(error.to_string()))?;
                 materials.insert(swap_key, protected);
+                purposes.insert(
+                    accepted.agreement().coordinator().id().as_str().to_owned(),
+                    ClaimMaterialPurpose::LocalFirstClaim,
+                );
                 Ok(CreateAgreementOutcome::Created)
             }
             (None, None) => {
@@ -553,7 +811,8 @@ impl ClaimRecoveryStore for MemoryStore {
                 )
                 .map_err(|error| TestPortError(error.to_string()))?;
                 agreements.insert(swap_key.clone(), envelope.clone());
-                materials.insert(swap_key, protected);
+                materials.insert(swap_key.clone(), protected);
+                purposes.insert(swap_key, ClaimMaterialPurpose::LocalFirstClaim);
                 Ok(CreateAgreementOutcome::Created)
             }
             _ => Ok(CreateAgreementOutcome::Conflict),
@@ -566,6 +825,10 @@ impl ClaimRecoveryStore for MemoryStore {
     ) -> Result<Option<ClaimPreimage>, Self::Error> {
         let agreements = self.agreements.lock().expect("agreements lock");
         let materials = self.claim_materials.lock().expect("claim materials lock");
+        let purposes = self
+            .claim_material_purposes
+            .lock()
+            .expect("claim material purposes lock");
         let envelope = agreements.get(swap_id.as_str());
         let protected = materials.get(swap_id.as_str());
         match (envelope, protected) {
@@ -573,8 +836,15 @@ impl ClaimRecoveryStore for MemoryStore {
             (Some(envelope), Some(protected)) => {
                 let accepted = AcceptedZecAgreementV1::resume(envelope)
                     .map_err(|error| TestPortError(error.to_string()))?;
+                let purpose = purposes
+                    .get(swap_id.as_str())
+                    .copied()
+                    .unwrap_or(ClaimMaterialPurpose::LocalFirstClaim);
                 protected
-                    .decrypt(&memory_claim_key(), claim_material_context(&accepted))
+                    .decrypt(
+                        &memory_claim_key(),
+                        claim_material_context_for(&accepted, purpose),
+                    )
                     .map(Some)
                     .map_err(|error| TestPortError(error.to_string()))
             }
@@ -582,6 +852,383 @@ impl ClaimRecoveryStore for MemoryStore {
                 "agreement and protected claim material are not atomic".to_owned(),
             )),
         }
+    }
+
+    async fn protect_claim_submission(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        local_participant: Participant,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<ProtectedClaimPayloadEnvelope, Self::Error> {
+        ProtectedClaimPayloadEnvelope::encrypt(
+            prepared.exact_submission(),
+            &memory_claim_key(),
+            self.next_claim_nonce(prepared.expected_submission_id()),
+            claim_submission_context(agreement, local_participant, prepared.step()),
+        )
+        .map_err(|error| TestPortError(error.to_string()))
+    }
+
+    async fn open_claim_submission(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        intent: &ClaimIntentV1,
+        protected: &ProtectedClaimPayloadEnvelope,
+    ) -> Result<PreparedClaimSubmissionV1, Self::Error> {
+        if protected.fingerprint() != intent.protected_payload_fingerprint() {
+            return Err(TestPortError(
+                "claim intent and protected payload disagree".to_owned(),
+            ));
+        }
+        let exact = protected
+            .decrypt(
+                &memory_claim_key(),
+                claim_submission_context(agreement, intent.local_participant(), intent.step()),
+            )
+            .map_err(|error| TestPortError(error.to_string()))?;
+        PreparedClaimSubmissionV1::new(
+            intent.step(),
+            *intent.expected_submission_id(),
+            exact.to_vec(),
+        )
+        .map_err(|error| TestPortError(error.to_string()))
+    }
+
+    async fn create_claim_intent(
+        &self,
+        intent: &ClaimIntentV1,
+        protected: &ProtectedClaimPayloadEnvelope,
+    ) -> Result<CreateFirstLockOutcome, Self::Error> {
+        if protected.fingerprint() != intent.protected_payload_fingerprint() {
+            return Err(TestPortError(
+                "claim intent and protected payload disagree".to_owned(),
+            ));
+        }
+        let key = intent.swap_id().as_str().to_owned();
+        let mut intents = self.claim_intents.lock().expect("claim intents lock");
+        match intents.get(&key) {
+            None => {
+                intents.insert(key, (intent.clone(), protected.clone()));
+                Ok(CreateFirstLockOutcome::Created)
+            }
+            Some((existing_intent, existing_protected))
+                if existing_intent == intent && existing_protected == protected =>
+            {
+                Ok(CreateFirstLockOutcome::ExistingSame)
+            }
+            Some(_) => Ok(CreateFirstLockOutcome::Conflict),
+        }
+    }
+
+    async fn load_claim_intent(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<(ClaimIntentV1, ProtectedClaimPayloadEnvelope)>, Self::Error> {
+        Ok(self
+            .claim_intents
+            .lock()
+            .expect("claim intents lock")
+            .get(swap_id.as_str())
+            .cloned())
+    }
+
+    async fn commit_revealing_claim_transition(
+        &self,
+        transition: &RevealingClaimTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error> {
+        let swap_id = transition.swap_id();
+        let accepted = self.accepted(swap_id)?;
+        let predecessor = transition.predecessor_revision();
+        let coordinator = self.coordinator_at(&accepted, predecessor)?;
+        transition
+            .apply_to(accepted.agreement(), &coordinator, predecessor)
+            .map_err(|error| TestPortError(error.to_string()))?;
+        let key = (swap_id.as_str().to_owned(), predecessor);
+        let record = RevealingClaimTransitionRecordV1::from(transition);
+        if let Some((existing, _, _, _)) = self
+            .revealing_claim_transitions
+            .lock()
+            .expect("revealing transitions lock")
+            .get(&key)
+        {
+            if existing == &record {
+                return Ok(FirstLockProjectionCommit::new(predecessor + 1, true));
+            }
+            return Err(TestPortError(
+                "conflicting revealing claim transition".to_owned(),
+            ));
+        }
+        let (intent, _) = self
+            .claim_intents
+            .lock()
+            .expect("claim intents lock")
+            .get(swap_id.as_str())
+            .cloned()
+            .ok_or_else(|| TestPortError("missing revealing claim intent".to_owned()))?;
+        let intent_record = ClaimIntentRecordV1::from(&intent);
+        let protected_preimage = self
+            .claim_materials
+            .lock()
+            .expect("claim materials lock")
+            .get(swap_id.as_str())
+            .cloned()
+            .ok_or_else(|| TestPortError("owner claim material is missing".to_owned()))?;
+        let purpose = self
+            .claim_material_purposes
+            .lock()
+            .expect("claim material purposes lock")
+            .get(swap_id.as_str())
+            .copied()
+            .unwrap_or(ClaimMaterialPurpose::LocalFirstClaim);
+        self.revealing_claim_transitions
+            .lock()
+            .expect("revealing transitions lock")
+            .insert(key, (record, intent_record, protected_preimage, purpose));
+        self.claim_intents
+            .lock()
+            .expect("claim intents lock")
+            .remove(swap_id.as_str());
+        Ok(FirstLockProjectionCommit::new(predecessor + 1, false))
+    }
+
+    async fn load_revealing_claim_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<RevealingClaimTransitionV1>, Self::Error> {
+        let Some((record, intent, protected, purpose)) = self
+            .revealing_claim_transitions
+            .lock()
+            .expect("revealing transitions lock")
+            .get(&(swap_id.as_str().to_owned(), predecessor_revision))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let accepted = self.accepted(swap_id)?;
+        let coordinator = self.coordinator_at(&accepted, predecessor_revision)?;
+        let preimage = protected
+            .decrypt(
+                &memory_claim_key(),
+                claim_material_context_for(&accepted, purpose),
+            )
+            .map_err(|error| TestPortError(error.to_string()))?;
+        record
+            .revalidate(
+                &accepted,
+                &coordinator,
+                &intent,
+                predecessor_revision,
+                preimage,
+            )
+            .map(Some)
+            .map_err(|error| TestPortError(error.to_string()))
+    }
+
+    async fn commit_observed_revealing_claim_transition(
+        &self,
+        transition: &ObservedRevealingClaimTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error> {
+        let swap_id = transition.swap_id();
+        let accepted = self.accepted(swap_id)?;
+        let predecessor = transition.predecessor_revision();
+        let coordinator = self.coordinator_at(&accepted, predecessor)?;
+        transition
+            .apply_to(accepted.agreement(), &coordinator, predecessor)
+            .map_err(|error| TestPortError(error.to_string()))?;
+        let key = (swap_id.as_str().to_owned(), predecessor);
+        let record = ObservedRevealingClaimTransitionRecordV1::from(transition);
+        if let Some((existing, _, _)) = self
+            .observed_revealing_claim_transitions
+            .lock()
+            .expect("observed revealing transitions lock")
+            .get(&key)
+        {
+            if existing == &record {
+                return Ok(FirstLockProjectionCommit::new(predecessor + 1, true));
+            }
+            return Err(TestPortError(
+                "conflicting observed revealing claim transition".to_owned(),
+            ));
+        }
+        if self
+            .claim_materials
+            .lock()
+            .expect("claim materials lock")
+            .contains_key(swap_id.as_str())
+        {
+            return Err(TestPortError(
+                "observer unexpectedly already owns claim material".to_owned(),
+            ));
+        }
+        let purpose = ClaimMaterialPurpose::ObservedFollowUpClaim;
+        let protected = ProtectedClaimEnvelope::encrypt(
+            transition.evidence().preimage(),
+            &memory_claim_key(),
+            self.next_claim_nonce(swap_id.as_str().as_bytes()),
+            claim_material_context_for(&accepted, purpose),
+        )
+        .map_err(|error| TestPortError(error.to_string()))?;
+        self.claim_materials
+            .lock()
+            .expect("claim materials lock")
+            .insert(swap_id.as_str().to_owned(), protected.clone());
+        self.claim_material_purposes
+            .lock()
+            .expect("claim material purposes lock")
+            .insert(swap_id.as_str().to_owned(), purpose);
+        self.observed_revealing_claim_transitions
+            .lock()
+            .expect("observed revealing transitions lock")
+            .insert(key, (record, protected, purpose));
+        Ok(FirstLockProjectionCommit::new(predecessor + 1, false))
+    }
+
+    async fn load_observed_revealing_claim_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<ObservedRevealingClaimTransitionV1>, Self::Error> {
+        let Some((record, protected, purpose)) = self
+            .observed_revealing_claim_transitions
+            .lock()
+            .expect("observed revealing transitions lock")
+            .get(&(swap_id.as_str().to_owned(), predecessor_revision))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let accepted = self.accepted(swap_id)?;
+        let coordinator = self.coordinator_at(&accepted, predecessor_revision)?;
+        let preimage = protected
+            .decrypt(
+                &memory_claim_key(),
+                claim_material_context_for(&accepted, purpose),
+            )
+            .map_err(|error| TestPortError(error.to_string()))?;
+        record
+            .revalidate(&accepted, &coordinator, predecessor_revision, preimage)
+            .map(Some)
+            .map_err(|error| TestPortError(error.to_string()))
+    }
+
+    async fn commit_followup_claim_transition(
+        &self,
+        transition: &FollowupClaimTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error> {
+        let swap_id = transition.swap_id();
+        let accepted = self.accepted(swap_id)?;
+        let predecessor = transition.predecessor_revision();
+        let coordinator = self.coordinator_at(&accepted, predecessor)?;
+        transition
+            .apply_to(accepted.agreement(), &coordinator, predecessor)
+            .map_err(|error| TestPortError(error.to_string()))?;
+        let key = (swap_id.as_str().to_owned(), predecessor);
+        let record = FollowupClaimTransitionRecordV1::from(transition);
+        if let Some((existing, _)) = self
+            .followup_claim_transitions
+            .lock()
+            .expect("follow-up transitions lock")
+            .get(&key)
+        {
+            if existing == &record {
+                return Ok(FirstLockProjectionCommit::new(predecessor + 1, true));
+            }
+            return Err(TestPortError(
+                "conflicting follow-up claim transition".to_owned(),
+            ));
+        }
+        let (intent, _) = self
+            .claim_intents
+            .lock()
+            .expect("claim intents lock")
+            .get(swap_id.as_str())
+            .cloned()
+            .ok_or_else(|| TestPortError("missing follow-up claim intent".to_owned()))?;
+        self.followup_claim_transitions
+            .lock()
+            .expect("follow-up transitions lock")
+            .insert(key, (record, ClaimIntentRecordV1::from(&intent)));
+        self.claim_intents
+            .lock()
+            .expect("claim intents lock")
+            .remove(swap_id.as_str());
+        Ok(FirstLockProjectionCommit::new(predecessor + 1, false))
+    }
+
+    async fn load_followup_claim_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<FollowupClaimTransitionV1>, Self::Error> {
+        let Some((record, intent)) = self
+            .followup_claim_transitions
+            .lock()
+            .expect("follow-up transitions lock")
+            .get(&(swap_id.as_str().to_owned(), predecessor_revision))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let accepted = self.accepted(swap_id)?;
+        let coordinator = self.coordinator_at(&accepted, predecessor_revision)?;
+        record
+            .revalidate(&accepted, &coordinator, &intent, predecessor_revision)
+            .map(Some)
+            .map_err(|error| TestPortError(error.to_string()))
+    }
+
+    async fn commit_observed_followup_claim_transition(
+        &self,
+        transition: &ObservedFollowupClaimTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error> {
+        let swap_id = transition.swap_id();
+        let accepted = self.accepted(swap_id)?;
+        let predecessor = transition.predecessor_revision();
+        let coordinator = self.coordinator_at(&accepted, predecessor)?;
+        transition
+            .apply_to(accepted.agreement(), &coordinator, predecessor)
+            .map_err(|error| TestPortError(error.to_string()))?;
+        let key = (swap_id.as_str().to_owned(), predecessor);
+        let record = ObservedFollowupClaimTransitionRecordV1::from(transition);
+        let mut transitions = self
+            .observed_followup_claim_transitions
+            .lock()
+            .expect("observed follow-up transitions lock");
+        match transitions.get(&key) {
+            Some(existing) if existing == &record => {
+                Ok(FirstLockProjectionCommit::new(predecessor + 1, true))
+            }
+            Some(_) => Err(TestPortError(
+                "conflicting observed follow-up claim transition".to_owned(),
+            )),
+            None => {
+                transitions.insert(key, record);
+                Ok(FirstLockProjectionCommit::new(predecessor + 1, false))
+            }
+        }
+    }
+
+    async fn load_observed_followup_claim_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<ObservedFollowupClaimTransitionV1>, Self::Error> {
+        let Some(record) = self
+            .observed_followup_claim_transitions
+            .lock()
+            .expect("observed follow-up transitions lock")
+            .get(&(swap_id.as_str().to_owned(), predecessor_revision))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let accepted = self.accepted(swap_id)?;
+        let coordinator = self.coordinator_at(&accepted, predecessor_revision)?;
+        record
+            .revalidate(&accepted, &coordinator, predecessor_revision)
+            .map(Some)
+            .map_err(|error| TestPortError(error.to_string()))
     }
 }
 
@@ -622,6 +1269,43 @@ struct MemoryMakerLockObservation {
     calls: Arc<Mutex<usize>>,
 }
 
+#[derive(Clone, Debug, Default)]
+struct MemoryClaimCorridor {
+    submissions: Arc<Mutex<Vec<ClaimStepV1>>>,
+    revealing_preimage: Arc<Mutex<Option<[u8; 32]>>>,
+    followup_confirmed: Arc<Mutex<bool>>,
+}
+
+impl MemoryClaimCorridor {
+    fn confirm_revealing_claim(&self, preimage: [u8; 32]) {
+        *self
+            .revealing_preimage
+            .lock()
+            .expect("revealing claim lock") = Some(preimage);
+    }
+
+    fn confirm_followup_claim(&self) {
+        *self
+            .followup_confirmed
+            .lock()
+            .expect("follow-up claim lock") = true;
+    }
+
+    fn submissions(&self) -> Vec<ClaimStepV1> {
+        self.submissions
+            .lock()
+            .expect("claim submissions lock")
+            .clone()
+    }
+
+    fn record_submission(&self, step: ClaimStepV1) {
+        self.submissions
+            .lock()
+            .expect("claim submissions lock")
+            .push(step);
+    }
+}
+
 impl Default for MemoryMakerLockObservation {
     fn default() -> Self {
         Self {
@@ -646,6 +1330,7 @@ struct MemoryLezTakerLockObservation(
     Arc<Mutex<Vec<Option<[u8; 32]>>>>,
     MemoryFirstLockPort,
     MemoryMakerLockObservation,
+    MemoryClaimCorridor,
 );
 
 #[async_trait]
@@ -715,11 +1400,82 @@ impl LezMakerLockObservationPort for MemoryLezTakerLockObservation {
     }
 }
 
+#[async_trait]
+impl LezClaimPort for MemoryLezTakerLockObservation {
+    type Error = TestPortError;
+
+    async fn prepare_revealing_claim(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        preimage: &ClaimPreimage,
+    ) -> Result<PreparedClaimSubmissionV1, Self::Error> {
+        let mut exact = vec![0x6c, 0x65, 0x7a];
+        exact.extend_from_slice(preimage.expose_secret());
+        PreparedClaimSubmissionV1::new(ClaimStepV1::RevealingLez, [0xc1; 32], exact)
+            .map_err(|error| TestPortError(error.to_string()))
+    }
+
+    async fn observe_prepared_revealing_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        if prepared.step() != ClaimStepV1::RevealingLez
+            || prepared.expected_submission_id() != &[0xc1; 32]
+        {
+            return Err(TestPortError(
+                "unexpected prepared LEZ claim identity".to_owned(),
+            ));
+        }
+        self.observe_counterparty_revealing_claim(agreement).await
+    }
+
+    async fn observe_counterparty_revealing_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        let preimage = *self
+            .4
+            .revealing_preimage
+            .lock()
+            .expect("revealing claim lock");
+        preimage.map_or(Ok(RevealingClaimObservationV1::Absent), |preimage| {
+            RevealingClaimEvidenceV1::new(
+                agreement,
+                [0xc1; 32],
+                "actor-lez-revealing-claim",
+                100,
+                ClaimPreimage::new(preimage),
+            )
+            .map(RevealingClaimObservationV1::Confirmed)
+            .map_err(|error| TestPortError(error.to_string()))
+        })
+    }
+
+    async fn submit_revealing_claim(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<(), Self::Error> {
+        if prepared.step() != ClaimStepV1::RevealingLez
+            || prepared.expected_submission_id() != &[0xc1; 32]
+            || !prepared.exact_submission().starts_with(&[0x6c, 0x65, 0x7a])
+        {
+            return Err(TestPortError(
+                "unexpected deterministic LEZ claim bytes".to_owned(),
+            ));
+        }
+        self.4.record_submission(ClaimStepV1::RevealingLez);
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct MemoryZcashTakerLockObservation(
     MemoryTakerLockObservation,
     MemoryFirstLockPort,
     MemoryMakerLockObservation,
+    MemoryClaimCorridor,
 );
 
 #[async_trait]
@@ -781,6 +1537,72 @@ impl ZcashMakerLockObservationPort for MemoryZcashTakerLockObservation {
             .lock()
             .expect("maker observation response lock")
             .clone()
+    }
+}
+
+#[async_trait]
+impl ZcashClaimPort for MemoryZcashTakerLockObservation {
+    type Error = TestPortError;
+
+    async fn prepare_followup_claim(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        preimage: &ClaimPreimage,
+    ) -> Result<PreparedClaimSubmissionV1, Self::Error> {
+        let mut exact = vec![0x7a, 0x65, 0x63];
+        exact.extend_from_slice(preimage.expose_secret());
+        PreparedClaimSubmissionV1::new(ClaimStepV1::FollowupZcash, [0xc2; 32], exact)
+            .map_err(|error| TestPortError(error.to_string()))
+    }
+
+    async fn observe_prepared_followup_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<FollowupClaimObservationV1, Self::Error> {
+        if prepared.step() != ClaimStepV1::FollowupZcash
+            || prepared.expected_submission_id() != &[0xc2; 32]
+        {
+            return Err(TestPortError(
+                "unexpected prepared Zcash claim identity".to_owned(),
+            ));
+        }
+        self.observe_counterparty_followup_claim(agreement).await
+    }
+
+    async fn observe_counterparty_followup_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<FollowupClaimObservationV1, Self::Error> {
+        if *self
+            .3
+            .followup_confirmed
+            .lock()
+            .expect("follow-up claim lock")
+        {
+            FollowupClaimEvidenceV1::new(agreement, [0xc2; 32], "actor-zcash-followup-claim", 100)
+                .map(FollowupClaimObservationV1::Confirmed)
+                .map_err(|error| TestPortError(error.to_string()))
+        } else {
+            Ok(FollowupClaimObservationV1::Absent)
+        }
+    }
+
+    async fn submit_followup_claim(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<(), Self::Error> {
+        if prepared.step() != ClaimStepV1::FollowupZcash
+            || prepared.expected_submission_id() != &[0xc2; 32]
+            || !prepared.exact_submission().starts_with(&[0x7a, 0x65, 0x63])
+        {
+            return Err(TestPortError(
+                "unexpected deterministic Zcash claim bytes".to_owned(),
+            ));
+        }
+        self.3.record_submission(ClaimStepV1::FollowupZcash);
+        Ok(())
     }
 }
 
@@ -3750,8 +4572,278 @@ async fn independent_actors_reach_both_legs_locked_from_chain_evidence_in_both_d
     .await;
 }
 
+#[tokio::test]
+async fn independent_actors_complete_lez_then_zcash_claims_in_both_directions() {
+    for (id, direction, first_claimant, secret) in [
+        (
+            "sdk-actors-forward-completed",
+            SwapDirection::TakerSellsForeign,
+            Participant::Taker,
+            [0x91; 32],
+        ),
+        (
+            "sdk-actors-reverse-completed",
+            SwapDirection::TakerSellsLez,
+            Participant::Maker,
+            [0x92; 32],
+        ),
+    ] {
+        Box::pin(assert_independent_claim_happy_path(
+            id,
+            direction,
+            first_claimant,
+            secret,
+        ))
+        .await;
+    }
+}
+
 type ActorActive =
     ActiveZecSwap<MemoryLezTakerLockObservation, MemoryZcashTakerLockObservation, MemoryStore>;
+
+struct ClaimActorFixture {
+    wire: Vec<u8>,
+    corridor: MemoryClaimCorridor,
+    lez: MemoryLezTakerLockObservation,
+    zcash: MemoryZcashTakerLockObservation,
+    maker_store: MemoryStore,
+    taker_store: MemoryStore,
+    maker: ActorActive,
+    taker: ActorActive,
+    first_claimant: Participant,
+    secret: [u8; 32],
+}
+
+async fn assert_independent_claim_happy_path(
+    id: &str,
+    direction: SwapDirection,
+    first_claimant: Participant,
+    secret: [u8; 32],
+) {
+    let mut fixture = activate_claim_actor_fixture(id, direction, first_claimant, secret).await;
+    lock_claim_actor_fixture(direction, &mut fixture).await;
+    drive_claim_actor_fixture(id, &mut fixture).await;
+    Box::pin(assert_claim_actor_restarts(id, fixture)).await;
+}
+
+async fn activate_claim_actor_fixture(
+    id: &str,
+    direction: SwapDirection,
+    first_claimant: Participant,
+    secret: [u8; 32],
+) -> ClaimActorFixture {
+    let wire = agreement_wire_with_digest(
+        id,
+        direction,
+        FixtureVariant::Local,
+        Sha256::digest(secret).into(),
+    );
+    let corridor = MemoryClaimCorridor::default();
+    let lez = MemoryLezTakerLockObservation(
+        MemoryTakerLockObservation::default(),
+        Arc::default(),
+        MemoryFirstLockPort::default(),
+        MemoryMakerLockObservation::default(),
+        corridor.clone(),
+    );
+    let zcash = MemoryZcashTakerLockObservation(
+        MemoryTakerLockObservation::default(),
+        MemoryFirstLockPort::default(),
+        MemoryMakerLockObservation::default(),
+        corridor.clone(),
+    );
+    let maker_store = MemoryStore::default();
+    let taker_store = MemoryStore::default();
+    let maker_sdk = actor_sdk(
+        Participant::Maker,
+        wire.clone(),
+        lez.clone(),
+        zcash.clone(),
+        maker_store.clone(),
+    );
+    let taker_sdk = actor_sdk(
+        Participant::Taker,
+        wire.clone(),
+        lez.clone(),
+        zcash.clone(),
+        taker_store.clone(),
+    );
+    let maker_terms = maker_sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("maker agreement");
+    let taker_terms = taker_sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("taker agreement");
+    let maker = if first_claimant == Participant::Maker {
+        maker_sdk
+            .activate_with_claim_preimage(maker_terms, ClaimPreimage::new(secret))
+            .await
+            .expect("first claimant protects its preimage at activation")
+    } else {
+        maker_sdk
+            .activate(maker_terms)
+            .await
+            .expect("maker activation")
+    };
+    let taker = if first_claimant == Participant::Taker {
+        taker_sdk
+            .activate_with_claim_preimage(taker_terms, ClaimPreimage::new(secret))
+            .await
+            .expect("first claimant protects its preimage at activation")
+    } else {
+        taker_sdk
+            .activate(taker_terms)
+            .await
+            .expect("taker activation")
+    };
+    ClaimActorFixture {
+        wire,
+        corridor,
+        lez,
+        zcash,
+        maker_store,
+        taker_store,
+        maker,
+        taker,
+        first_claimant,
+        secret,
+    }
+}
+
+async fn lock_claim_actor_fixture(direction: SwapDirection, fixture: &mut ClaimActorFixture) {
+    project_actor_taker_first_lock(direction, &mut fixture.taker, &fixture.lez, &fixture.zcash)
+        .await;
+    expose_taker_lock_to_maker(direction, &fixture.maker, &fixture.lez, &fixture.zcash);
+    fixture
+        .maker
+        .observe_taker_first_lock()
+        .await
+        .expect("maker observes the taker lock");
+    let evidence = project_actor_maker_second_lock(
+        direction,
+        &mut fixture.maker,
+        &fixture.lez,
+        &fixture.zcash,
+    )
+    .await;
+    expose_maker_lock_to_taker(direction, evidence, &fixture.lez, &fixture.zcash);
+    fixture
+        .taker
+        .observe_maker_lock()
+        .await
+        .expect("taker observes the maker lock");
+    assert_eq!(fixture.maker.status(), Phase::BothLegsLocked);
+    assert_eq!(fixture.taker.status(), Phase::BothLegsLocked);
+}
+
+async fn drive_claim_actor_fixture(id: &str, fixture: &mut ClaimActorFixture) {
+    match fixture.first_claimant {
+        Participant::Maker => fixture
+            .maker
+            .drive_claim()
+            .await
+            .expect("maker durably prepares and submits the LEZ reveal"),
+        Participant::Taker => fixture
+            .taker
+            .drive_claim()
+            .await
+            .expect("taker durably prepares and submits the LEZ reveal"),
+    };
+    assert_eq!(
+        fixture.corridor.submissions(),
+        vec![ClaimStepV1::RevealingLez]
+    );
+    fixture.corridor.confirm_revealing_claim(fixture.secret);
+    fixture
+        .maker
+        .drive_claim()
+        .await
+        .expect("maker canonically observes the LEZ reveal");
+    fixture
+        .taker
+        .drive_claim()
+        .await
+        .expect("taker canonically observes the LEZ reveal");
+    assert_eq!(fixture.maker.status(), Phase::ClaimEvidenceAvailable);
+    assert_eq!(fixture.taker.status(), Phase::ClaimEvidenceAvailable);
+
+    let follower_store = match fixture.first_claimant {
+        Participant::Maker => &fixture.taker_store,
+        Participant::Taker => &fixture.maker_store,
+    };
+    let recovered = follower_store
+        .load_claim_material(&SwapId::new(id).expect("swap ID"))
+        .await
+        .expect("follower authenticates extracted material")
+        .expect("canonical LEZ evidence persisted the preimage internally");
+    assert_eq!(recovered.expose_secret(), &fixture.secret);
+    match fixture.first_claimant {
+        Participant::Maker => fixture
+            .taker
+            .drive_claim()
+            .await
+            .expect("taker consumes only protected material for Zcash"),
+        Participant::Taker => fixture
+            .maker
+            .drive_claim()
+            .await
+            .expect("maker consumes only protected material for Zcash"),
+    };
+    assert_eq!(
+        fixture.corridor.submissions(),
+        vec![ClaimStepV1::RevealingLez, ClaimStepV1::FollowupZcash],
+        "the corridor must reveal on LEZ before spending Zcash"
+    );
+    fixture.corridor.confirm_followup_claim();
+    fixture
+        .maker
+        .drive_claim()
+        .await
+        .expect("maker observes canonical Zcash completion");
+    fixture
+        .taker
+        .drive_claim()
+        .await
+        .expect("taker observes canonical Zcash completion");
+    assert_eq!(
+        (fixture.maker.status(), fixture.maker.revision()),
+        (Phase::Completed, 4)
+    );
+    assert_eq!(
+        (fixture.taker.status(), fixture.taker.revision()),
+        (Phase::Completed, 4)
+    );
+}
+
+async fn assert_claim_actor_restarts(id: &str, fixture: ClaimActorFixture) {
+    let swap_id = SwapId::new(id).expect("swap ID");
+    let maker_replay = actor_sdk(
+        Participant::Maker,
+        fixture.wire.clone(),
+        fixture.lez.clone(),
+        fixture.zcash.clone(),
+        fixture.maker_store,
+    )
+    .resume_claim_capable(&swap_id)
+    .await
+    .expect("maker restart")
+    .expect("durable maker swap");
+    let taker_recovery = actor_sdk(
+        Participant::Taker,
+        fixture.wire,
+        fixture.lez,
+        fixture.zcash,
+        fixture.taker_store,
+    )
+    .resume_claim_capable(&swap_id)
+    .await
+    .expect("taker restart")
+    .expect("durable taker swap");
+    assert_eq!(maker_replay.status(), Phase::Completed);
+    assert_eq!(taker_recovery.status(), Phase::Completed);
+}
 
 async fn assert_independent_actors_reach_both_legs_locked(id: &str, direction: SwapDirection) {
     let wire = agreement_wire(id, direction, FixtureVariant::Local);

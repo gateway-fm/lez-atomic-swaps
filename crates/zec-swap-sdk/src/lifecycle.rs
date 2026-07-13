@@ -110,6 +110,18 @@ pub enum ZecSdkError {
     /// No durable maker-lock plan exists for the active agreement.
     #[error("no durable maker-lock plan exists for the active agreement")]
     MissingMakerLockIntent,
+    /// No protected claim preimage exists for the agreement-directed local claimant.
+    #[error("no protected claim material exists for the active agreement")]
+    MissingClaimMaterial,
+    /// No durable protected exact submission exists for the active claim step.
+    #[error("no durable claim intent exists for the active claim step")]
+    MissingClaimIntent,
+    /// A different protected exact claim submission occupies this role-local key.
+    #[error("a conflicting immutable claim intent is already durable")]
+    ClaimIntentConflict,
+    /// Claim driving is unavailable before both locks are confirmed.
+    #[error("claim driving requires BothLegsLocked or later; active phase is {0:?}")]
+    ClaimNotReady(Phase),
     /// First-lock intent may only be staged from the fresh offered phase.
     #[error("first-lock intent requires Offered; active phase is {0:?}")]
     FirstLockNotOffered(Phase),
@@ -151,6 +163,12 @@ pub enum ZecSdkError {
     /// Taker observation of the maker's Zcash second lock failed.
     #[error("Zcash maker-lock observation adapter failed")]
     ZcashMakerLockObservation(#[source] BoxPortError),
+    /// LEZ revealing-claim preparation, observation, or submission failed.
+    #[error("LEZ claim adapter failed")]
+    LezClaim(#[source] BoxPortError),
+    /// Zcash follow-up claim preparation, observation, or submission failed.
+    #[error("Zcash claim adapter failed")]
+    ZcashClaim(#[source] BoxPortError),
 }
 
 /// Next high-level role action derived without accepting peer messages.

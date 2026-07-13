@@ -3,19 +3,24 @@
 use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId, UnixSeconds};
 
 use crate::{
-    AcceptedZecAgreementV1, ClaimPreimage, ClaimRecoveryStore, CreateAgreementOutcome,
-    CreateFirstLockOutcome, FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentV1,
-    FirstLockObservation, FirstLockPlanV1, FirstLockProjectionCommit, FirstLockTransitionV1,
-    LezFirstLockPort, LezMakerLockObservationPort, LezObservationEventV1,
-    LezObservationReconciliationV1, LezObservationTrackerV1, LezTakerFirstLockObservationPort,
-    MakerFundingEligibilityOutcome, MakerLockDriveOutcome, MakerLockIntentV1,
-    MakerLockObservationV1, MakerLockTransitionV1, NegotiationChannel, ObserveMakerLockOutcome,
-    ObserveTakerFirstLockOutcome, ObservedMakerLockTransitionV1,
-    ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
-    RecoveryStore, TakerFirstLockObservationV1, ZcashFirstLockPort, ZcashMakerLockObservationPort,
-    ZcashObservationEvent, ZcashObservationReconciliation, ZcashObservationTracker,
-    ZcashTakerFirstLockObservationPort, ZecAgreementV1, ZecLifecycleAction, ZecSdkError,
-    claim::validate_preimage, lifecycle::next_action, observed_maker_lock::maker_final_lock_step,
+    AcceptedZecAgreementV1, ClaimDriveOutcome, ClaimIntentV1, ClaimPreimage, ClaimRecoveryStore,
+    ClaimStepV1, CreateAgreementOutcome, CreateFirstLockOutcome, FirstLockConfirmedEvidenceV1,
+    FirstLockDriveOutcome, FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1,
+    FirstLockProjectionCommit, FirstLockTransitionV1, FollowupClaimObservationV1,
+    FollowupClaimTransitionRecordV1, FollowupClaimTransitionV1, LezClaimPort, LezFirstLockPort,
+    LezMakerLockObservationPort, LezObservationEventV1, LezObservationReconciliationV1,
+    LezObservationTrackerV1, LezTakerFirstLockObservationPort, MakerFundingEligibilityOutcome,
+    MakerLockDriveOutcome, MakerLockIntentV1, MakerLockObservationV1, MakerLockTransitionV1,
+    NegotiationChannel, ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome,
+    ObservedFollowupClaimTransitionRecordV1, ObservedFollowupClaimTransitionV1,
+    ObservedMakerLockTransitionV1, ObservedRevealingClaimTransitionRecordV1,
+    ObservedRevealingClaimTransitionV1, ObservedTakerFirstLockTransitionV1, OfferDiscovery,
+    PreparedFirstLockSubmissionV1, RecoveryStore, RevealingClaimObservationV1,
+    RevealingClaimTransitionRecordV1, RevealingClaimTransitionV1, TakerFirstLockObservationV1,
+    ZcashClaimPort, ZcashFirstLockPort, ZcashMakerLockObservationPort, ZcashObservationEvent,
+    ZcashObservationReconciliation, ZcashObservationTracker, ZcashTakerFirstLockObservationPort,
+    ZecAgreementV1, ZecLifecycleAction, ZecSdkError, claim::validate_preimage,
+    lifecycle::next_action, observed_maker_lock::maker_final_lock_step,
     observed_taker_lock::taker_first_lock_step,
 };
 
@@ -250,6 +255,31 @@ where
         }
         let mut active = self.active(accepted);
         active.replay_first_lock_transition().await?;
+        Ok(Some(active))
+    }
+
+    /// Resumes all lock and claim transitions for claim-capable chain/store adapters.
+    ///
+    /// Use this entry point when a restarted actor may already have durable claim transitions;
+    /// the base [`Self::resume`] remains available to narrower pre-claim adapter compositions.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same validation and persistence failures as [`Self::resume`], plus invalid
+    /// durable claim evidence or claim-transition revision failures.
+    pub async fn resume_claim_capable(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<ActiveZecSwap<Lez, Zcash, Store>>, ZecSdkError>
+    where
+        Lez: LezClaimPort,
+        Zcash: ZcashClaimPort,
+        Store: ClaimRecoveryStore,
+    {
+        let Some(mut active) = self.resume(swap_id).await? else {
+            return Ok(None);
+        };
+        active.replay_claim_transitions().await?;
         Ok(Some(active))
     }
 
@@ -1212,6 +1242,491 @@ where
         Ok(MakerLockDriveOutcome::Lock(
             self.drive_lock_plan(intent.plan()).await?,
         ))
+    }
+}
+
+impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
+where
+    Lez: LezClaimPort,
+    Zcash: ZcashClaimPort,
+    Store: ClaimRecoveryStore,
+{
+    /// Advances the agreement-directed claim path without accepting role, chain, or secret args.
+    ///
+    /// Exact owner submissions are protected and staged before any chain call. Every owner retry
+    /// authenticates and reopens those bytes, observes their exact identity before submission,
+    /// and commits canonical evidence before changing memory. Counterparties use observation-only
+    /// ports and distinct durable transition slots.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an invalid phase, missing protected material, conflicting durable intent, invalid
+    /// evidence/revision, or a structured store/chain adapter failure.
+    pub async fn drive_claim(&mut self) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        self.replay_claim_transitions().await?;
+        match self.status() {
+            Phase::BothLegsLocked
+                if self.local_participant() == self.agreement().lez_claimant() =>
+            {
+                self.drive_owned_revealing_claim().await
+            }
+            Phase::BothLegsLocked => self.observe_revealing_claim().await,
+            Phase::ClaimEvidenceAvailable
+                if self.local_participant() == self.agreement().lez_claimant().other() =>
+            {
+                self.drive_owned_followup_claim().await
+            }
+            Phase::ClaimEvidenceAvailable => self.observe_followup_claim().await,
+            Phase::Completed => Ok(ClaimDriveOutcome::Completed {
+                revision: self.revision,
+            }),
+            phase => Err(ZecSdkError::ClaimNotReady(phase)),
+        }
+    }
+
+    async fn drive_owned_revealing_claim(&mut self) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        let (intent, protected) = self.revealing_claim_intent().await?;
+        let prepared = self
+            .store
+            .open_claim_submission(self.agreement(), &intent, &protected)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
+        let observation = self
+            .lez
+            .observe_prepared_revealing_claim(self.agreement(), &prepared)
+            .await
+            .map_err(|error| ZecSdkError::LezClaim(Box::new(error)))?;
+        match observation {
+            RevealingClaimObservationV1::Absent => {
+                self.lez
+                    .submit_revealing_claim(self.agreement(), &prepared)
+                    .await
+                    .map_err(|error| ZecSdkError::LezClaim(Box::new(error)))?;
+                Ok(ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingLez))
+            }
+            RevealingClaimObservationV1::Unstable => Ok(
+                ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::RevealingLez),
+            ),
+            RevealingClaimObservationV1::Confirmed(evidence) => {
+                let transition = RevealingClaimTransitionV1::from_active(
+                    self.agreement(),
+                    &self.coordinator,
+                    &intent,
+                    self.revision,
+                    evidence,
+                )?;
+                self.commit_owned_revealing_claim(transition).await
+            }
+        }
+    }
+
+    async fn observe_revealing_claim(&mut self) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        let observation = self
+            .lez
+            .observe_counterparty_revealing_claim(self.agreement())
+            .await
+            .map_err(|error| ZecSdkError::LezClaim(Box::new(error)))?;
+        match observation {
+            RevealingClaimObservationV1::Confirmed(evidence) => {
+                let transition = ObservedRevealingClaimTransitionV1::from_active(
+                    self.agreement(),
+                    &self.coordinator,
+                    self.local_participant(),
+                    self.revision,
+                    evidence,
+                )?;
+                self.commit_observed_revealing_claim(transition).await
+            }
+            RevealingClaimObservationV1::Absent | RevealingClaimObservationV1::Unstable => Ok(
+                ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::RevealingLez),
+            ),
+        }
+    }
+
+    async fn drive_owned_followup_claim(&mut self) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        let (intent, protected) = self.followup_claim_intent().await?;
+        let prepared = self
+            .store
+            .open_claim_submission(self.agreement(), &intent, &protected)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
+        let observation = self
+            .zcash
+            .observe_prepared_followup_claim(self.agreement(), &prepared)
+            .await
+            .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
+        match observation {
+            FollowupClaimObservationV1::Absent => {
+                self.zcash
+                    .submit_followup_claim(self.agreement(), &prepared)
+                    .await
+                    .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
+                Ok(ClaimDriveOutcome::Submitted(ClaimStepV1::FollowupZcash))
+            }
+            FollowupClaimObservationV1::Unstable => Ok(
+                ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::FollowupZcash),
+            ),
+            FollowupClaimObservationV1::Confirmed(evidence) => {
+                let transition = FollowupClaimTransitionV1::from_active(
+                    self.agreement(),
+                    &self.coordinator,
+                    &intent,
+                    self.revision,
+                    evidence,
+                )?;
+                self.commit_owned_followup_claim(transition).await
+            }
+        }
+    }
+
+    async fn observe_followup_claim(&mut self) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        let observation = self
+            .zcash
+            .observe_counterparty_followup_claim(self.agreement())
+            .await
+            .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
+        match observation {
+            FollowupClaimObservationV1::Confirmed(evidence) => {
+                let transition = ObservedFollowupClaimTransitionV1::from_active(
+                    self.agreement(),
+                    &self.coordinator,
+                    self.local_participant(),
+                    self.revision,
+                    evidence,
+                )?;
+                self.commit_observed_followup_claim(transition).await
+            }
+            FollowupClaimObservationV1::Absent | FollowupClaimObservationV1::Unstable => Ok(
+                ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::FollowupZcash),
+            ),
+        }
+    }
+
+    async fn revealing_claim_intent(
+        &self,
+    ) -> Result<(ClaimIntentV1, crate::ProtectedClaimPayloadEnvelope), ZecSdkError> {
+        if let Some(retained) = self.load_claim_intent().await? {
+            return Ok(retained);
+        }
+        let preimage = self.load_claim_material().await?;
+        let prepared = self
+            .lez
+            .prepare_revealing_claim(self.agreement(), &preimage)
+            .await
+            .map_err(|error| ZecSdkError::LezClaim(Box::new(error)))?;
+        self.stage_claim_intent(&prepared).await?;
+        self.load_claim_intent()
+            .await?
+            .ok_or(ZecSdkError::MissingClaimIntent)
+    }
+
+    async fn followup_claim_intent(
+        &self,
+    ) -> Result<(ClaimIntentV1, crate::ProtectedClaimPayloadEnvelope), ZecSdkError> {
+        if let Some(retained) = self.load_claim_intent().await? {
+            return Ok(retained);
+        }
+        let preimage = self.load_claim_material().await?;
+        let prepared = self
+            .zcash
+            .prepare_followup_claim(self.agreement(), &preimage)
+            .await
+            .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
+        self.stage_claim_intent(&prepared).await?;
+        self.load_claim_intent()
+            .await?
+            .ok_or(ZecSdkError::MissingClaimIntent)
+    }
+
+    async fn load_claim_material(&self) -> Result<ClaimPreimage, ZecSdkError> {
+        self.store
+            .load_claim_material(self.coordinator.id())
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+            .ok_or(ZecSdkError::MissingClaimMaterial)
+    }
+
+    async fn load_claim_intent(
+        &self,
+    ) -> Result<Option<(ClaimIntentV1, crate::ProtectedClaimPayloadEnvelope)>, ZecSdkError> {
+        self.store
+            .load_claim_intent(self.coordinator.id())
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))
+    }
+
+    async fn stage_claim_intent(
+        &self,
+        prepared: &crate::PreparedClaimSubmissionV1,
+    ) -> Result<(), ZecSdkError> {
+        let protected = self
+            .store
+            .protect_claim_submission(self.agreement(), self.local_participant(), prepared)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
+        let intent = ClaimIntentV1::from_active(
+            self.agreement(),
+            &self.coordinator,
+            self.local_participant(),
+            self.revision,
+            prepared,
+            *protected.fingerprint(),
+        )?;
+        match self.store.create_claim_intent(&intent, &protected).await {
+            Ok(CreateFirstLockOutcome::Created | CreateFirstLockOutcome::ExistingSame) => Ok(()),
+            Ok(CreateFirstLockOutcome::Conflict) => Err(ZecSdkError::ClaimIntentConflict),
+            Err(error) => {
+                let probe = self
+                    .store
+                    .load_claim_intent(self.coordinator.id())
+                    .await
+                    .map_err(|probe_error| ZecSdkError::Persistence(Box::new(probe_error)))?;
+                if probe.as_ref() == Some(&(intent, protected)) {
+                    Ok(())
+                } else {
+                    Err(ZecSdkError::Persistence(Box::new(error)))
+                }
+            }
+        }
+    }
+
+    async fn replay_claim_transitions(&mut self) -> Result<(), ZecSdkError> {
+        loop {
+            let advanced = match self.status() {
+                Phase::BothLegsLocked
+                    if self.local_participant() == self.agreement().lez_claimant() =>
+                {
+                    self.replay_owned_revealing_claim().await?
+                }
+                Phase::BothLegsLocked => self.replay_observed_revealing_claim().await?,
+                Phase::ClaimEvidenceAvailable
+                    if self.local_participant() == self.agreement().lez_claimant().other() =>
+                {
+                    self.replay_owned_followup_claim().await?
+                }
+                Phase::ClaimEvidenceAvailable => self.replay_observed_followup_claim().await?,
+                _ => false,
+            };
+            if !advanced {
+                return Ok(());
+            }
+        }
+    }
+
+    async fn replay_owned_revealing_claim(&mut self) -> Result<bool, ZecSdkError> {
+        let Some(transition) = self
+            .store
+            .load_revealing_claim_transition(self.coordinator.id(), self.revision)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Ok(false);
+        };
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        self.advance_claim_replay(next)?;
+        Ok(true)
+    }
+
+    async fn replay_observed_revealing_claim(&mut self) -> Result<bool, ZecSdkError> {
+        let Some(transition) = self
+            .store
+            .load_observed_revealing_claim_transition(self.coordinator.id(), self.revision)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Ok(false);
+        };
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        self.advance_claim_replay(next)?;
+        Ok(true)
+    }
+
+    async fn replay_owned_followup_claim(&mut self) -> Result<bool, ZecSdkError> {
+        let Some(transition) = self
+            .store
+            .load_followup_claim_transition(self.coordinator.id(), self.revision)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Ok(false);
+        };
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        self.advance_claim_replay(next)?;
+        Ok(true)
+    }
+
+    async fn replay_observed_followup_claim(&mut self) -> Result<bool, ZecSdkError> {
+        let Some(transition) = self
+            .store
+            .load_observed_followup_claim_transition(self.coordinator.id(), self.revision)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Ok(false);
+        };
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        self.advance_claim_replay(next)?;
+        Ok(true)
+    }
+
+    fn advance_claim_replay(&mut self, next: SwapCoordinator) -> Result<(), ZecSdkError> {
+        self.revision = self.checked_next_claim_revision()?;
+        self.coordinator = next;
+        Ok(())
+    }
+
+    fn checked_next_claim_revision(&self) -> Result<u64, ZecSdkError> {
+        self.revision
+            .checked_add(1)
+            .ok_or(ZecSdkError::InvalidProjectionRevision {
+                expected: u64::MAX,
+                actual: u64::MAX,
+            })
+    }
+
+    async fn commit_owned_revealing_claim(
+        &mut self,
+        transition: RevealingClaimTransitionV1,
+    ) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        let expected = self.checked_next_claim_revision()?;
+        let commit = match self
+            .store
+            .commit_revealing_claim_transition(&transition)
+            .await
+        {
+            Ok(commit) => commit,
+            Err(error) => {
+                let probe = self
+                    .store
+                    .load_revealing_claim_transition(self.coordinator.id(), self.revision)
+                    .await
+                    .map_err(|probe_error| ZecSdkError::Persistence(Box::new(probe_error)))?;
+                if probe.as_ref().map(RevealingClaimTransitionRecordV1::from)
+                    == Some(RevealingClaimTransitionRecordV1::from(&transition))
+                {
+                    FirstLockProjectionCommit::new(expected, true)
+                } else {
+                    return Err(ZecSdkError::Persistence(Box::new(error)));
+                }
+            }
+        };
+        self.finish_claim_commit(commit, expected, next, ClaimStepV1::RevealingLez)
+    }
+
+    async fn commit_observed_revealing_claim(
+        &mut self,
+        transition: ObservedRevealingClaimTransitionV1,
+    ) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        let expected = self.checked_next_claim_revision()?;
+        let commit = match self
+            .store
+            .commit_observed_revealing_claim_transition(&transition)
+            .await
+        {
+            Ok(commit) => commit,
+            Err(error) => {
+                let probe = self
+                    .store
+                    .load_observed_revealing_claim_transition(self.coordinator.id(), self.revision)
+                    .await
+                    .map_err(|probe_error| ZecSdkError::Persistence(Box::new(probe_error)))?;
+                if probe
+                    .as_ref()
+                    .map(ObservedRevealingClaimTransitionRecordV1::from)
+                    == Some(ObservedRevealingClaimTransitionRecordV1::from(&transition))
+                {
+                    FirstLockProjectionCommit::new(expected, true)
+                } else {
+                    return Err(ZecSdkError::Persistence(Box::new(error)));
+                }
+            }
+        };
+        self.finish_claim_commit(commit, expected, next, ClaimStepV1::RevealingLez)
+    }
+
+    async fn commit_owned_followup_claim(
+        &mut self,
+        transition: FollowupClaimTransitionV1,
+    ) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        let expected = self.checked_next_claim_revision()?;
+        let commit = match self
+            .store
+            .commit_followup_claim_transition(&transition)
+            .await
+        {
+            Ok(commit) => commit,
+            Err(error) => {
+                let probe = self
+                    .store
+                    .load_followup_claim_transition(self.coordinator.id(), self.revision)
+                    .await
+                    .map_err(|probe_error| ZecSdkError::Persistence(Box::new(probe_error)))?;
+                if probe.as_ref().map(FollowupClaimTransitionRecordV1::from)
+                    == Some(FollowupClaimTransitionRecordV1::from(&transition))
+                {
+                    FirstLockProjectionCommit::new(expected, true)
+                } else {
+                    return Err(ZecSdkError::Persistence(Box::new(error)));
+                }
+            }
+        };
+        self.finish_claim_commit(commit, expected, next, ClaimStepV1::FollowupZcash)
+    }
+
+    async fn commit_observed_followup_claim(
+        &mut self,
+        transition: ObservedFollowupClaimTransitionV1,
+    ) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        let expected = self.checked_next_claim_revision()?;
+        let commit = match self
+            .store
+            .commit_observed_followup_claim_transition(&transition)
+            .await
+        {
+            Ok(commit) => commit,
+            Err(error) => {
+                let probe = self
+                    .store
+                    .load_observed_followup_claim_transition(self.coordinator.id(), self.revision)
+                    .await
+                    .map_err(|probe_error| ZecSdkError::Persistence(Box::new(probe_error)))?;
+                if probe
+                    .as_ref()
+                    .map(ObservedFollowupClaimTransitionRecordV1::from)
+                    == Some(ObservedFollowupClaimTransitionRecordV1::from(&transition))
+                {
+                    FirstLockProjectionCommit::new(expected, true)
+                } else {
+                    return Err(ZecSdkError::Persistence(Box::new(error)));
+                }
+            }
+        };
+        self.finish_claim_commit(commit, expected, next, ClaimStepV1::FollowupZcash)
+    }
+
+    fn finish_claim_commit(
+        &mut self,
+        commit: FirstLockProjectionCommit,
+        expected: u64,
+        next: SwapCoordinator,
+        step: ClaimStepV1,
+    ) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        if commit.revision() != expected {
+            return Err(ZecSdkError::InvalidProjectionRevision {
+                expected,
+                actual: commit.revision(),
+            });
+        }
+        self.coordinator = next;
+        self.revision = commit.revision();
+        Ok(ClaimDriveOutcome::Projected {
+            step,
+            revision: self.revision,
+        })
     }
 }
 
