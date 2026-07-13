@@ -4,7 +4,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use lez_swap_core::{SwapDirection, UnixSeconds};
+use lez_swap_core::{Participant, SwapDirection, UnixSeconds};
 use lez_zebra_node_adapter::{
     ZebraCanonicalBlock, ZebraChainIdentity, ZebraChainInfo, ZebraFirstLockError, ZebraRpc,
     ZebraRpcChain, ZebraRpcSwapPort, ZebraTransactionState, ZebraUnspentOutput,
@@ -199,7 +199,7 @@ async fn stable_confirmed_absent_mempool_and_moving_tip_are_distinct() {
     let prepared = prepared(&agreement);
 
     let (rpc, identity) = FakeRpc::confirmed(&agreement, &prepared);
-    let port = ZebraRpcSwapPort::new(rpc.clone(), identity);
+    let port = ZebraRpcSwapPort::new(rpc.clone(), identity, Participant::Taker);
     let expected = FirstLockConfirmedEvidenceV1::new(
         FirstLockStepV1::ZcashFund,
         *prepared.expected_submission_id(),
@@ -231,7 +231,7 @@ async fn stable_confirmed_absent_mempool_and_moving_tip_are_distinct() {
         state.transaction_state = None;
     });
     assert_eq!(
-        ZebraRpcSwapPort::new(absent.clone(), identity)
+        ZebraRpcSwapPort::new(absent.clone(), identity, Participant::Taker)
             .observe_first_lock(&agreement, &prepared)
             .await
             .expect("stable absence"),
@@ -260,7 +260,7 @@ async fn stable_confirmed_absent_mempool_and_moving_tip_are_distinct() {
         );
     });
     assert_eq!(
-        ZebraRpcSwapPort::new(moving, identity)
+        ZebraRpcSwapPort::new(moving, identity, Participant::Taker)
             .observe_first_lock(&agreement, &prepared)
             .await
             .expect("moving tip is not absence"),
@@ -274,11 +274,68 @@ async fn stable_confirmed_absent_mempool_and_moving_tip_are_distinct() {
         });
     });
     assert_eq!(
-        ZebraRpcSwapPort::new(mempool, identity)
+        ZebraRpcSwapPort::new(mempool, identity, Participant::Taker)
             .observe_first_lock(&agreement, &prepared)
             .await
             .expect("mempool is visible but unconfirmed"),
         FirstLockObservation::Unstable
+    );
+}
+
+#[tokio::test]
+async fn reverse_maker_observes_and_submits_exact_zcash_funding() {
+    let agreement = agreement(SwapDirection::TakerSellsLez);
+    let prepared = prepared(&agreement);
+    let expected = FirstLockConfirmedEvidenceV1::new(
+        FirstLockStepV1::ZcashFund,
+        *prepared.expected_submission_id(),
+        TxId::from_bytes(*prepared.expected_submission_id()).to_string(),
+        TIP_HEIGHT - INCLUSION_HEIGHT + 1,
+    )
+    .expect("canonical reverse-maker evidence");
+
+    let (observe_rpc, identity) = FakeRpc::confirmed(&agreement, &prepared);
+    let maker_port = ZebraRpcSwapPort::new(observe_rpc, identity, Participant::Maker);
+    assert_eq!(maker_port.local_participant(), Participant::Maker);
+    assert_eq!(
+        maker_port
+            .observe_first_lock(&agreement, &prepared)
+            .await
+            .expect("reverse maker observes its exact Zcash funding"),
+        FirstLockObservation::Confirmed(expected)
+    );
+
+    let (submitted, identity) = FakeRpc::confirmed(&agreement, &prepared);
+    ZebraRpcSwapPort::new(submitted.clone(), identity, Participant::Maker)
+        .submit_first_lock(&agreement, &prepared)
+        .await
+        .expect("reverse maker submits its exact Zcash funding once");
+    assert_eq!(
+        submitted.submitted(),
+        vec![prepared.exact_submission().to_vec()]
+    );
+
+    let (unknown, identity) = FakeRpc::confirmed(&agreement, &prepared);
+    unknown.edit(move_after_tip);
+    assert!(matches!(
+        ZebraRpcSwapPort::new(unknown.clone(), identity, Participant::Maker)
+            .submit_first_lock(&agreement, &prepared)
+            .await,
+        Err(ZebraFirstLockError::UnstableTipDuringSubmission)
+    ));
+    assert_eq!(
+        unknown.submitted(),
+        vec![prepared.exact_submission().to_vec()],
+        "an unknown reverse submission outcome is attempted exactly once"
+    );
+    assert_eq!(
+        unknown
+            .calls()
+            .iter()
+            .filter(|call| call.as_str() == "send_raw_transaction")
+            .count(),
+        1,
+        "the adapter never retries an ambiguous reverse submission"
     );
 }
 
@@ -293,7 +350,7 @@ async fn moving_tip_prevents_found_or_mempool_classification() {
         move_after_tip(state);
     });
     assert_eq!(
-        ZebraRpcSwapPort::new(found, identity)
+        ZebraRpcSwapPort::new(found, identity, Participant::Taker)
             .observe_first_lock(&agreement, &prepared)
             .await
             .expect("moving found snapshot is not classified"),
@@ -308,7 +365,7 @@ async fn moving_tip_prevents_found_or_mempool_classification() {
         move_after_tip(state);
     });
     assert_eq!(
-        ZebraRpcSwapPort::new(mempool, identity)
+        ZebraRpcSwapPort::new(mempool, identity, Participant::Taker)
             .observe_first_lock(&agreement, &prepared)
             .await
             .expect("moving mempool snapshot is not classified"),
@@ -339,7 +396,7 @@ async fn local_transaction_and_agreement_negative_matrix_precedes_every_rpc() {
     )
     .expect("bounded wrong-step fixture");
     assert!(matches!(
-        ZebraRpcSwapPort::new(rpc.clone(), identity)
+        ZebraRpcSwapPort::new(rpc.clone(), identity, Participant::Taker)
             .observe_first_lock(&agreement, &wrong_step)
             .await,
         Err(ZebraFirstLockError::WrongStep(
@@ -347,15 +404,26 @@ async fn local_transaction_and_agreement_negative_matrix_precedes_every_rpc() {
         ))
     ));
 
+    assert!(matches!(
+        ZebraRpcSwapPort::new(rpc.clone(), identity, Participant::Maker)
+            .observe_first_lock(&agreement, &valid)
+            .await,
+        Err(ZebraFirstLockError::WrongRole {
+            expected: Participant::Taker,
+            actual: Participant::Maker,
+        })
+    ));
+
     let reverse = self::agreement(SwapDirection::TakerSellsLez);
     let reverse_prepared = prepared(&reverse);
     assert!(matches!(
-        ZebraRpcSwapPort::new(rpc.clone(), identity)
+        ZebraRpcSwapPort::new(rpc.clone(), identity, Participant::Taker)
             .observe_first_lock(&reverse, &reverse_prepared)
             .await,
-        Err(ZebraFirstLockError::WrongDirection(
-            SwapDirection::TakerSellsLez
-        ))
+        Err(ZebraFirstLockError::WrongRole {
+            expected: Participant::Maker,
+            actual: Participant::Taker,
+        })
     ));
 
     let wrong_id = PreparedFirstLockSubmissionV1::new(
@@ -365,7 +433,7 @@ async fn local_transaction_and_agreement_negative_matrix_precedes_every_rpc() {
     )
     .expect("nonzero wrong identity");
     assert!(matches!(
-        ZebraRpcSwapPort::new(rpc.clone(), identity)
+        ZebraRpcSwapPort::new(rpc.clone(), identity, Participant::Taker)
             .observe_first_lock(&agreement, &wrong_id)
             .await,
         Err(ZebraFirstLockError::ExpectedTransactionIdMismatch)
@@ -375,7 +443,7 @@ async fn local_transaction_and_agreement_negative_matrix_precedes_every_rpc() {
         PreparedFirstLockSubmissionV1::new(FirstLockStepV1::ZcashFund, [1; 32], vec![0xff])
             .expect("bounded malformed fixture");
     assert!(matches!(
-        ZebraRpcSwapPort::new(rpc.clone(), identity)
+        ZebraRpcSwapPort::new(rpc.clone(), identity, Participant::Taker)
             .observe_first_lock(&agreement, &malformed)
             .await,
         Err(ZebraFirstLockError::MalformedSubmission(_))
@@ -390,7 +458,7 @@ async fn local_transaction_and_agreement_negative_matrix_precedes_every_rpc() {
     )
     .expect("bounded trailing fixture");
     assert!(matches!(
-        ZebraRpcSwapPort::new(rpc.clone(), identity)
+        ZebraRpcSwapPort::new(rpc.clone(), identity, Participant::Taker)
             .observe_first_lock(&agreement, &trailing)
             .await,
         Err(ZebraFirstLockError::TrailingSubmissionBytes)
@@ -398,7 +466,7 @@ async fn local_transaction_and_agreement_negative_matrix_precedes_every_rpc() {
 
     let missing_output = prepared_from(&empty_transaction(TxVersion::V5));
     assert!(matches!(
-        ZebraRpcSwapPort::new(rpc.clone(), identity)
+        ZebraRpcSwapPort::new(rpc.clone(), identity, Participant::Taker)
             .observe_first_lock(&agreement, &missing_output)
             .await,
         Err(ZebraFirstLockError::MissingExpectedOutput)
@@ -406,7 +474,7 @@ async fn local_transaction_and_agreement_negative_matrix_precedes_every_rpc() {
 
     let wrong_version = prepared_from(&empty_transaction(TxVersion::V4));
     assert!(matches!(
-        ZebraRpcSwapPort::new(rpc.clone(), identity)
+        ZebraRpcSwapPort::new(rpc.clone(), identity, Participant::Taker)
             .observe_first_lock(&agreement, &wrong_version)
             .await,
         Err(ZebraFirstLockError::WrongTransactionVersion)
@@ -427,7 +495,7 @@ async fn local_output_and_config_negative_matrix_precedes_every_rpc() {
     );
     let wrong_value = prepared_from(&wrong_value_tx);
     assert!(matches!(
-        ZebraRpcSwapPort::new(rpc.clone(), identity)
+        ZebraRpcSwapPort::new(rpc.clone(), identity, Participant::Taker)
             .observe_first_lock(&agreement, &wrong_value)
             .await,
         Err(ZebraFirstLockError::OutputValueMismatch)
@@ -441,7 +509,7 @@ async fn local_output_and_config_negative_matrix_precedes_every_rpc() {
     );
     let wrong_script = prepared_from(&wrong_script_tx);
     assert!(matches!(
-        ZebraRpcSwapPort::new(rpc.clone(), identity)
+        ZebraRpcSwapPort::new(rpc.clone(), identity, Participant::Taker)
             .observe_first_lock(&agreement, &wrong_script)
             .await,
         Err(ZebraFirstLockError::OutputScriptMismatch)
@@ -455,7 +523,7 @@ async fn local_output_and_config_negative_matrix_precedes_every_rpc() {
     )
     .expect("valid but agreement-incompatible identity");
     assert!(matches!(
-        ZebraRpcSwapPort::new(rpc.clone(), wrong_network)
+        ZebraRpcSwapPort::new(rpc.clone(), wrong_network, Participant::Taker)
             .observe_first_lock(&agreement, &valid)
             .await,
         Err(ZebraFirstLockError::ConfiguredNetworkMismatch)
@@ -468,7 +536,7 @@ async fn local_output_and_config_negative_matrix_precedes_every_rpc() {
     )
     .expect("valid but agreement-incompatible branch identity");
     assert!(matches!(
-        ZebraRpcSwapPort::new(rpc.clone(), wrong_branch)
+        ZebraRpcSwapPort::new(rpc.clone(), wrong_branch, Participant::Taker)
             .observe_first_lock(&agreement, &valid)
             .await,
         Err(ZebraFirstLockError::ConfiguredConsensusBranchMismatch)
@@ -492,7 +560,7 @@ async fn chain_identity_and_canonical_snapshot_negative_matrix_fails_closed() {
         );
     });
     assert!(matches!(
-        ZebraRpcSwapPort::new(wrong_chain, identity)
+        ZebraRpcSwapPort::new(wrong_chain, identity, Participant::Taker)
             .observe_first_lock(&agreement, &prepared)
             .await,
         Err(ZebraFirstLockError::RpcChainMismatch)
@@ -509,7 +577,7 @@ async fn chain_identity_and_canonical_snapshot_negative_matrix_fails_closed() {
         );
     });
     assert!(matches!(
-        ZebraRpcSwapPort::new(wrong_branch, identity)
+        ZebraRpcSwapPort::new(wrong_branch, identity, Participant::Taker)
             .observe_first_lock(&agreement, &prepared)
             .await,
         Err(ZebraFirstLockError::RpcConsensusBranchMismatch)
@@ -520,7 +588,7 @@ async fn chain_identity_and_canonical_snapshot_negative_matrix_fails_closed() {
         state.genesis_hashes = VecDeque::from([BlockHash([0xee; 32])]);
     });
     assert!(matches!(
-        ZebraRpcSwapPort::new(wrong_genesis, identity)
+        ZebraRpcSwapPort::new(wrong_genesis, identity, Participant::Taker)
             .observe_first_lock(&agreement, &prepared)
             .await,
         Err(ZebraFirstLockError::GenesisMismatch)
@@ -529,7 +597,7 @@ async fn chain_identity_and_canonical_snapshot_negative_matrix_fails_closed() {
     let (wrong_block, identity) = FakeRpc::confirmed(&agreement, &prepared);
     wrong_block.edit(|state| state.canonical_inclusion_hash = BlockHash([0xdd; 32]));
     assert!(matches!(
-        ZebraRpcSwapPort::new(wrong_block, identity)
+        ZebraRpcSwapPort::new(wrong_block, identity, Participant::Taker)
             .observe_first_lock(&agreement, &prepared)
             .await,
         Err(ZebraFirstLockError::Observation(
@@ -546,7 +614,7 @@ async fn chain_identity_and_canonical_snapshot_negative_matrix_fails_closed() {
         }
     });
     assert!(matches!(
-        ZebraRpcSwapPort::new(wrong_depth, identity)
+        ZebraRpcSwapPort::new(wrong_depth, identity, Participant::Taker)
             .observe_first_lock(&agreement, &prepared)
             .await,
         Err(ZebraFirstLockError::Observation(
@@ -564,7 +632,7 @@ async fn chain_identity_and_canonical_snapshot_negative_matrix_fails_closed() {
         }
     });
     assert!(matches!(
-        ZebraRpcSwapPort::new(inactive, identity)
+        ZebraRpcSwapPort::new(inactive, identity, Participant::Taker)
             .observe_first_lock(&agreement, &prepared)
             .await,
         Err(ZebraFirstLockError::Observation(
@@ -586,7 +654,7 @@ async fn stable_v5_authorization_byte_mismatch_fails_closed() {
         });
     });
     assert!(matches!(
-        ZebraRpcSwapPort::new(wrong_raw, identity)
+        ZebraRpcSwapPort::new(wrong_raw, identity, Participant::Taker)
             .observe_first_lock(&agreement, &prepared)
             .await,
         Err(ZebraFirstLockError::ObservedRawTransactionMismatch)
@@ -598,7 +666,7 @@ async fn submission_is_byte_exact_and_fails_closed_on_id_tip_or_genesis_drift() 
     let agreement = agreement(SwapDirection::TakerSellsForeign);
     let prepared = prepared(&agreement);
     let (rpc, identity) = FakeRpc::confirmed(&agreement, &prepared);
-    ZebraRpcSwapPort::new(rpc.clone(), identity)
+    ZebraRpcSwapPort::new(rpc.clone(), identity, Participant::Taker)
         .submit_first_lock(&agreement, &prepared)
         .await
         .expect("byte-exact submission");
@@ -617,7 +685,7 @@ async fn submission_is_byte_exact_and_fails_closed_on_id_tip_or_genesis_drift() 
     let (wrong_id, identity) = FakeRpc::confirmed(&agreement, &prepared);
     wrong_id.edit(|state| state.submitted_transaction_id = TxId::from_bytes([0x99; 32]));
     assert!(matches!(
-        ZebraRpcSwapPort::new(wrong_id, identity)
+        ZebraRpcSwapPort::new(wrong_id, identity, Participant::Taker)
             .submit_first_lock(&agreement, &prepared)
             .await,
         Err(ZebraFirstLockError::SubmittedTransactionIdMismatch)
@@ -634,7 +702,7 @@ async fn submission_is_byte_exact_and_fails_closed_on_id_tip_or_genesis_drift() 
         );
     });
     assert!(matches!(
-        ZebraRpcSwapPort::new(moving.clone(), identity)
+        ZebraRpcSwapPort::new(moving.clone(), identity, Participant::Taker)
             .submit_first_lock(&agreement, &prepared)
             .await,
         Err(ZebraFirstLockError::UnstableTipDuringSubmission)
@@ -650,7 +718,7 @@ async fn submission_is_byte_exact_and_fails_closed_on_id_tip_or_genesis_drift() 
         state.genesis_hashes = VecDeque::from([identity.genesis_hash(), BlockHash([0xee; 32])]);
     });
     assert!(matches!(
-        ZebraRpcSwapPort::new(changed_genesis.clone(), identity)
+        ZebraRpcSwapPort::new(changed_genesis.clone(), identity, Participant::Taker)
             .submit_first_lock(&agreement, &prepared)
             .await,
         Err(ZebraFirstLockError::GenesisMismatch)

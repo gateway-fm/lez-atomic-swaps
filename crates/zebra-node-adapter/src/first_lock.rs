@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
 use async_trait::async_trait;
-use lez_swap_core::SwapDirection;
+use lez_swap_core::Participant;
 use lez_zec_swap_sdk::{
     CanonicalZcashOutputObservation, FirstLockConfirmedEvidenceV1, FirstLockObservation,
     FirstLockStepV1, FirstLockTransitionError, ObservationError, PreparedFirstLockSubmissionV1,
@@ -18,13 +18,18 @@ use crate::rpc::{ZebraChainIdentity, ZebraChainInfo, ZebraRpc, ZebraTransactionS
 pub struct ZebraRpcSwapPort<R> {
     rpc: R,
     identity: ZebraChainIdentity,
+    local_participant: Participant,
 }
 
 impl<R> ZebraRpcSwapPort<R> {
-    /// Binds one RPC implementation to an immutable, explicit chain identity.
+    /// Binds one RPC implementation to an immutable chain identity and local role.
     #[must_use]
-    pub const fn new(rpc: R, identity: ZebraChainIdentity) -> Self {
-        Self { rpc, identity }
+    pub const fn new(rpc: R, identity: ZebraChainIdentity, local_participant: Participant) -> Self {
+        Self {
+            rpc,
+            identity,
+            local_participant,
+        }
     }
 
     /// Configured immutable chain identity.
@@ -38,6 +43,12 @@ impl<R> ZebraRpcSwapPort<R> {
     pub const fn rpc(&self) -> &R {
         &self.rpc
     }
+
+    /// Role fixed to this adapter instance by the local actor.
+    #[must_use]
+    pub const fn local_participant(&self) -> Participant {
+        self.local_participant
+    }
 }
 
 /// A rejected prepared transaction, node identity, snapshot, or submission result.
@@ -46,9 +57,14 @@ pub enum ZebraFirstLockError<E: std::error::Error + Send + Sync + 'static> {
     /// This adapter accepts only the Zcash funding step.
     #[error("Zebra first-lock adapter received wrong step {0:?}")]
     WrongStep(FirstLockStepV1),
-    /// Zcash is the first lock only when the taker sells the foreign asset.
-    #[error("Zebra first-lock adapter received wrong swap direction {0:?}")]
-    WrongDirection(SwapDirection),
+    /// The role fixed to this adapter is not the agreement's signed Zcash funder.
+    #[error("Zebra funding adapter requires role {expected:?}; configured role is {actual:?}")]
+    WrongRole {
+        /// Role that the accepted agreement assigns to Zcash funding.
+        expected: Participant,
+        /// Role fixed to this adapter instance.
+        actual: Participant,
+    },
     /// The configured network differs from the accepted agreement.
     #[error("configured Zebra network differs from the accepted agreement")]
     ConfiguredNetworkMismatch,
@@ -277,8 +293,12 @@ where
         if submission.step() != FirstLockStepV1::ZcashFund {
             return Err(ZebraFirstLockError::WrongStep(submission.step()));
         }
-        if agreement.direction() != SwapDirection::TakerSellsForeign {
-            return Err(ZebraFirstLockError::WrongDirection(agreement.direction()));
+        let expected_funder = agreement.lez_claimant();
+        if self.local_participant != expected_funder {
+            return Err(ZebraFirstLockError::WrongRole {
+                expected: expected_funder,
+                actual: self.local_participant,
+            });
         }
         let expected = agreement.binding().expected_output();
         if self.identity.network() != expected.network() {
