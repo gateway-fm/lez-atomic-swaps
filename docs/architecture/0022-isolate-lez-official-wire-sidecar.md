@@ -4,9 +4,10 @@ Status: Accepted for the M2 actual-node corridor; implementation in progress --
 the official native and revealing-claim planners, native escrow observation,
 revealing-claim owner/discovery observation, node-RPC core, authenticated bridge
 server/client, executable role-isolated sidecars, signed-agreement
-first-lock/observation adapter, and Zebra owner/counterparty claim/refund ports
-are GREEN. Native refund sidecar/adapter composition, remaining SDK-port/actor
-wiring, and the composed proof remain RED -- 2026-07-13
+first-lock/observation and native-refund validation adapters, and Zebra
+owner/counterparty claim/refund ports are GREEN. Native refund sidecar handlers,
+main revealing-claim composition, remaining SDK-port/actor wiring, and the
+composed proof remain RED -- 2026-07-13
 
 ```mermaid
 flowchart LR
@@ -208,8 +209,14 @@ owner/observer transition contracts are implemented in the SDK. The Zebra
 refund port now revalidates canonical funding, maturity, exact signed policy,
 prepared bytes, and counterparty spends with conservative unknown outcomes.
 The schema-v10 SQLite refund journal is implemented with atomic owner/observer
-replay. The production LEZ refund port remains required before peer-independent
-timeout recovery is an M2 implementation claim. Neither path
+replay. The main LEZ refund adapter now binds both signed directions and exposes
+caller-owned request IDs/windows for state, preparation, exact owner lookup,
+counterparty discovery, and one-attempt submit. It independently validates
+stable clock, accounts, exact transaction/instruction facts, deadline, depth,
+and durable identity; uncertain submit results are `Unknown`, never rejection.
+The official sidecar refund handlers and a context-owning SDK-port wrapper remain
+required before peer-independent timeout recovery is an M2 implementation
+claim. Neither path
 can guarantee liveness during indefinite node outage, censorship, or a
 reorganization deeper than the signed policy.
 The deterministic v0.1.2 lane also has only depth-qualified `Pending` blocks;
@@ -267,9 +274,10 @@ reference actors satisfy that contract. No broken commit is published while
 this slice is being driven GREEN.
 
 The official claim observation boundary is now source-correct and independently
-decoded, but the main revealing-claim adapter, the native-refund sidecar and
-adapter, and composed post-lock actor evidence remain repository-controlled
-prerequisites. The Zcash taker-first observation path must still receive its
+decoded, but the main revealing-claim adapter, native-refund sidecar handlers,
+context-owning SDK-port composition, and composed post-lock actor evidence
+remain repository-controlled prerequisites. The Zcash taker-first observation
+path must still receive its
 previous canonical head so removal/replacement can be assembled after process
 restart; the maker-lock SDK boundary needs a later durable post-lock history
 extension rather than an invented adapter assertion.

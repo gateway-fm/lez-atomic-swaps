@@ -134,9 +134,12 @@ current executable slices enforce:
   partial coverage is unknown and ambiguity or a moving tip fails closed. The
   executable runner starts concurrent maker and taker sidecars with separate
   private keys, capabilities, runtime descriptors, durable stores, and
-  ephemeral loopback listeners. The production LEZ refund path, main
-  claim/refund SDK-port composition, independent reference actors, and the
-  completed LEZ-plus-Zebra corridor remain.
+  ephemeral loopback listeners. The main native-refund adapter now validates
+  both signed directions, stable account/clock/transaction facts, exact
+  millisecond deadlines, caller-owned windows and durable identity, and
+  conservative one-attempt submit outcomes. Official refund-sidecar execution,
+  main claim/context SDK-port composition, independent reference actors, and
+  the completed LEZ-plus-Zebra corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),
