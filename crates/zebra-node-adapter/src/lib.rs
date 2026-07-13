@@ -6,7 +6,10 @@ mod claim;
 mod first_lock;
 mod rpc;
 
-pub use claim::{ZebraClaimError, ZebraClaimSigner, ZebraRpcClaimPort};
+pub use claim::{
+    ZebraClaimError, ZebraClaimSigner, ZebraRefundError, ZebraRefundSigner, ZebraRpcClaimPort,
+    ZebraRpcRefundPort,
+};
 pub use first_lock::{ZebraFirstLockError, ZebraRpcSwapPort};
 pub use rpc::{
     HttpZebraRpc, HttpZebraRpcConfig, HttpZebraRpcError, ZebraCanonicalBlock, ZebraChainIdentity,
