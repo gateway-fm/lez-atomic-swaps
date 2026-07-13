@@ -1,27 +1,32 @@
 # Zcash public-testnet node, wallet, and funding guide
 
-Status: primary-source route selected on 2026-07-12; live corridor execution
+Status: self-hosted and public-provider routes selected on 2026-07-13; live corridor execution
 and clean-machine rehearsal pending.
 
 This guide separates what an operator can configure today from the missing M2
-implementation. It does not claim a passing public-testnet swap. The supported
-node route is a self-hosted Zebra JSON-RPC endpoint. No official public Zebra
-JSON-RPC service was found; lightwalletd gRPC and vendor gateways are not
-interchangeable with the RPC contract used by this project.
+implementation. It does not claim a passing public-testnet swap. The primary
+route is a self-hosted Zebra JSON-RPC endpoint. No Zcash Foundation-operated
+public Zebra JSON-RPC service was found. Tatum's documented Zebrad-powered
+Testnet gateway is the selected public-provider route; it is not interchangeable
+with lightwalletd gRPC, and it remains unavailable to this project until the
+HTTPS credential transport and exact method contract pass a live rehearsal.
 
 ```mermaid
 flowchart LR
     Operator["Maker or taker operator"] --> Keys["Project-owned disposable transparent keys"]
     Keys --> SDK["LEZ/ZEC SDK transaction builder"]
-    SDK --> RPC["Cookie-authenticated loopback JSON-RPC"]
+    SDK --> Route["Selected node route"]
+    Route --> RPC["Cookie-authenticated loopback JSON-RPC"]
     RPC --> Zebra["Self-hosted Zebra 6.0.0"]
     Zebra <-->|"public Testnet P2P"| Peers["Zcash Testnet peers"]
+    Route -.-> Tatum["Tatum Zebrad Testnet gateway"]
+    Tatum -.-> Managed["Provider-managed Zebra"]
+    Managed <-->|"public Testnet P2P"| Peers
     Faucet["Community faucet or Zcash Discord"] -.-> Funding["Optional Zallet funding wallet"]
     Funding --> Keys
-    Public["Official public Zebra JSON-RPC"] -.-> Missing["Not available or substantiated"]
 
     classDef external stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Peers,Faucet,Public,Missing external;
+    class Peers,Faucet,Tatum,Managed external;
 ```
 
 ## Proven facts and current blockers
@@ -32,6 +37,14 @@ flowchart LR
   and [GitHub tag](https://github.com/ZcashFoundation/zebra/releases/tag/v6.0.0).
 - Zebra is the consensus oracle and broadcaster. librustzcash construction or
   parser success alone is not consensus evidence.
+- Tatum documents a dedicated Zebrad JSON-RPC endpoint at
+  `https://zcash-testnet-zebrad.gateway.tatum.io`, API-key authentication, a
+  free Testnet key, and a separately monitored Testnet Zebrad status component.
+  This is a third-party authoritative-node route, not independent consensus
+  proof or an official Zcash Foundation service. See Tatum's
+  [Zebrad gateway announcement](https://docs.tatum.io/changelog/zcash-zebrad-rpc-support-added),
+  [Zcash authentication guidance](https://tatum.io/chain/zcash), and
+  [status page](https://status.tatum.io/).
 - Zallet `v0.1.0-alpha.4` can create a testnet account, expose a transparent
   P2PKH receiver, and send ordinary transparent funds. It cannot export its
   HD-derived transparent private keys or sign arbitrary raw/PCZT HTLC
@@ -126,6 +139,33 @@ The manual corridor will require at least `getblockchaininfo`, `getblockcount`,
 the exact surface with `rpc.discover`; see Zebra's
 [RPC trait](https://zebra.zfnd.org/internal/zebra_rpc/methods/trait.RpcServer.html).
 
+## Public Zebrad provider route
+
+Create a dedicated Testnet API key in Tatum and keep it in an owner-readable
+credential source. The documented endpoint is:
+
+```text
+https://zcash-testnet-zebrad.gateway.tatum.io
+```
+
+Use the recommended `x-api-key` header. Never place the key in a URL, source,
+shell history, test snapshot, debug output, or recording. Before enabling a
+swap, query `getblockchaininfo` and enforce the same Testnet, sync, tip, and
+`consensus.next_block` checks as the self-hosted route. Then smoke every method
+the actor needs: `getblockcount`, `getblockhash`, `getblock`,
+`getrawtransaction`, `getrawmempool`, `gettxout`, and `sendrawtransaction`.
+Method discovery and unauthenticated availability alone are not sufficient.
+
+The current production adapter intentionally accepts literal loopback HTTP only,
+so it cannot yet consume this route. The public transport must be a separate
+configuration that requires HTTPS, a bounded sensitive API-key header, no URL
+credentials, bounded response bodies/time/concurrency, and no automatic retry
+of `sendrawtransaction` after an unknown outcome. Validate returned chain,
+branch, genesis, block, transaction, and stable-tip facts exactly as on the
+self-hosted route. Where practical, cross-check read evidence against the
+self-hosted node; never merge disagreeing observations or silently fail over
+between nodes during a state transition.
+
 ## Disposable transparent wallet and funds
 
 The intended swap address is produced by project-owned testnet key custody,
@@ -172,8 +212,9 @@ This section remains blocked until project-owned transparent signing and the
 actual public-testnet actor adapter exist. The eventual rehearsal must:
 
 1. build the workspace and exact SDK with `cargo build --locked`;
-2. start independent maker and taker processes with separate keys, state, and
-   Zebra routes;
+2. start independent maker and taker processes with separate keys and state;
+   run the evidence suite once through self-hosted Zebra and once through the
+   selected Tatum Zebrad route rather than switching a live swap mid-effect;
 3. query and record node version, height, sync state, and next consensus branch;
 4. verify funded transparent outpoints before negotiation;
 5. construct, decode, and broadcast canonical standard BIP-199 funding, claim,
@@ -210,8 +251,8 @@ diagnostic evidence and are never silently ignored.
 | Resource | Required today | Authority | Flakiness / limitation |
 |---|---:|---|---|
 | Self-host Zebra 6.0.0 | Selected for future public testnet | Local operator; public consensus peers | Initial sync, disk, DNS/P2P, epoch transitions |
-| Official public Zebra JSON-RPC | No route found | None selected | Do not substitute lightwalletd or an undocumented vendor gateway |
+| Tatum Testnet Zebrad JSON-RPC | Selected public-provider route; live contract pending | Tatum API-key gateway and provider-managed Zebra | Account/key provisioning, quotas, outage, method policy, lag, and provider trust; never substitute generic Zcash RPC or lightwalletd |
 | Community faucet | Optional | External community operator | No SLA/current limits; may time out or be depleted |
 | Zcash Discord funding request | Optional fallback | External support process | Manual response and availability |
 | Zallet alpha.4 | Optional funding wallet only | Local operator | Alpha compatibility; no arbitrary HTLC signing; NU6.3 must be reverified |
-| Project transparent signer | Required blocker | Independent maker/taker | Not implemented; no public-testnet corridor can pass without it |
+| Project transparent signer | Required repository work | Independent maker/taker | Not implemented; no public-testnet corridor can pass without it |

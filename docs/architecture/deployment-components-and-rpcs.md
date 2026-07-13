@@ -265,7 +265,7 @@ it never opens SQLite or becomes protocol authority.
 | LEZ standalone v0.1.2 | Running in ignored E2E | Upstream server `0.0.0.0:0`; client uses `127.0.0.1:<assigned>` | No transport credential; actor signatures authorize transactions | `checkHealth`, `sendTransaction`, `getLastBlockId`, `getTransaction`, `getAccountsNonces`, `getAccount`, `getBlock` | In-process handle, tempfile state, deterministic genesis actors; not public v0.2 |
 | Logos Core adapter | Planned | No transport/port selected beyond the daemon control endpoint | Protected OS credential handle | `start`, `endpoint`, `health`, `stop` | Optional supervisor of the same daemon binary |
 | Delivery / Chat | Planned | No protocol, endpoint, or port selected | Authenticated offers and both-role signed transcript | `OfferDiscovery`; `NegotiationChannel` | Untrusted/removable after first lock |
-| Production Zebra watcher route | Self-hosted public-Testnet route selected; adapter/evidence planned | Zebra 6.0.0 JSON-RPC on operator-owned loopback with cookie auth; no official public Zebra JSON-RPC route found | Operator owns cookie and node; public peers provide consensus data; never substitute lightwalletd gRPC | Required: sync/branch preflight, stable-tip observation, `gettxout`, raw transaction lookup, broadcast, reorg reconciliation | Initial sync/disk/P2P/epoch flakiness; project transparent signer and live actor suite remain |
+| Production Zebra watcher routes | Self-hosted and public-provider routes selected; public HTTPS adapter/evidence planned | Zebra 6.0.0 JSON-RPC on operator-owned loopback with cookie auth, or `https://zcash-testnet-zebrad.gateway.tatum.io` with a sensitive `x-api-key`; no Zcash Foundation-operated public Zebra RPC was found | Self-hosted: operator owns cookie/node and public peers provide consensus. Public: Tatum operates the authoritative node/gateway; never substitute generic Zcash RPC or lightwalletd gRPC | Required on both routes: sync/branch/genesis preflight, stable-tip observation, `gettxout`, raw transaction/mempool/block lookup, broadcast, and reorg reconciliation. Public route must pass an exact method smoke before use | Self-hosted initial sync/disk/P2P/epoch risk; provider provisioning/quota/outage/lag/method-policy/trust risk; never switch routes mid-effect or automatically retry an ambiguous broadcast; project transparent signer and live actor suite remain |
 | Official LEZ testnet v0.2 node | Live node; narrow adapter/deployment planned | HTTPS JSON-RPC `https://testnet.lez.logos.co` | Public reads; actor wallet/signature authorizes transactions; rate limits unspecified | Verified `checkHealth`, `getLastBlockId`, `getProgramIds`; required deployment evidence adds `getChannelId`, returned `sendTransaction` hash, `getTransaction`, and exact `getBlock` inclusion | Official LEZ v0.2.0 commit `a58fbce...`; guest/client must use `/LEE/` PDA domain; announced resets invalidate evidence when channel changes |
 | LEZ v0.2 deployment/query client | Planned, security-constrained | HTTPS JSON-RPC to the official node; no local listener | Official LEZ transaction/RPC types; actor signing material remains process-local | Deploy checked guest, retain transaction hash, query exact transaction and containing block | Thin `jsonrpsee` graph must exclude Logos node auth, libp2p, Hickory 0.25, and pending LGPL exceptions; full released standalone graph is prohibited for public runtime use |
 | Bitcoin Core | M3 planned | No port/image/provider selected | Actor-owned node and wallet credentials | Typed `BitcoinChain` port | Do not infer conventional ports before selection |
@@ -291,9 +291,11 @@ Future public evidence adds different failure modes. The official LEZ endpoint
 `https://testnet.lez.logos.co` can be rate-limited, unavailable, reset, or move
 to another channel; every result must bind the observed channel, block,
 transaction, ProgramId, ELF, ImageID, and exact commits. The selected Zcash
-route is a self-hosted Zebra 6.0.0 public-Testnet node because no official public
-Zebra JSON-RPC service was found; initial sync, disk use, peers, epoch changes,
-and organic reorgs can delay it. Community faucets or Discord funding have no
+routes are a self-hosted Zebra 6.0.0 public-Testnet node and Tatum's
+API-key-authenticated Testnet Zebrad gateway. The former carries initial sync,
+disk, peer, epoch, and organic-reorg risk; the latter carries provisioning,
+quota, outage, lag, method-policy, and authoritative-provider trust risk.
+Community faucets or Discord funding have no
 SLA and may be depleted, so CI must not silently treat their outage as success.
 No current executable user flow calls those public endpoints or funding routes.
 

@@ -117,8 +117,9 @@ the [architecture decision log](docs/architecture/README.md), the living
 separates disclosed external release risks from repository-controlled milestone
 acceptance. The
 [Zcash public-testnet setup guide](docs/zcash-testnet-setup.md) records the
-selected self-hosted route, optional funding wallet, external dependencies, and
-the still-missing transparent signer without claiming a completed testnet run.
+selected self-hosted and Tatum Testnet Zebrad routes, optional funding wallet,
+external dependencies, and the still-missing transparent signer/provider
+transport without claiming a completed testnet run.
 
 ## Development
 
@@ -166,12 +167,14 @@ separate node suites and is not implied by the contract-double corridor.
 
 CI also refreshes RustSec and Trivy vulnerability data. A database outage may
 block scanning; a newly published advisory may deliberately turn a prior pass
-red. Do not bypass that failure as “flaky.” The LEZ v0.2 RPC and self-hosted
-Zebra 6.0.0 public-testnet route are selected; no official public Zebra
-JSON-RPC route was found. Zcash funding may use a community faucet, Discord
-request, or controlled pre-funded wallet, all with explicit availability risk.
-The project-owned transparent testnet signer remains unimplemented. Provider
-limits, fallback routes, and funding assumptions remain an M2 evidence gate. See
+red. Do not bypass that failure as “flaky.” The LEZ v0.2 RPC, self-hosted Zebra
+6.0.0, and Tatum's API-key-authenticated Testnet Zebrad gateway are selected.
+The Tatum route is a third-party authoritative-node service, not an official
+Zcash Foundation endpoint, and its HTTPS adapter/method contract has not passed
+live evidence yet. Zcash funding may use a community faucet, Discord request,
+or controlled pre-funded wallet, all with explicit availability risk. The
+project-owned transparent testnet signer remains unimplemented. Provider limits,
+fallback routes, and funding assumptions remain an M2 evidence gate. See
 the [full resource/flakiness table](docs/manual-user-flows.md#external-resources-and-flakiness).
 
     cargo test --locked --workspace --all-targets

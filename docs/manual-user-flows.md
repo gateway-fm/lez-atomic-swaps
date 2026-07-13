@@ -8,8 +8,9 @@ actor boundary, expected result, or cleanup rule changes.
 
 Public-testnet setup and funding prerequisites are maintained in the
 [Zcash public-testnet guide](zcash-testnet-setup.md). That guide selects a
-self-hosted Zebra route but explicitly leaves the live corridor blocked on the
-project-owned transparent signer and actor adapter.
+self-hosted Zebra route and Tatum's public-provider Testnet Zebrad route, but
+explicitly leaves live execution pending the project-owned transparent signer,
+HTTPS provider transport, and actor adapter.
 
 ## What this guide proves today
 
@@ -219,7 +220,7 @@ Cold setup and CI do use external software-distribution services:
 | GitHub Git endpoints for Logos LEZ, SPEL, Overwatch, Jellyfish, and other locked Git dependencies | First LEZ compatibility build | Cargo lockfiles resolve exact commits; source policy allowlists exact repositories | GitHub/DNS/proxy outage can block an uncached checkout; it cannot silently substitute another locked commit |
 | `https://testnet.lez.logos.co` and its explorer | Future M2 v0.2 deployment/actor evidence; health audit only today | Official LEZ v0.2 endpoint; deployment must bind exact runtime, checked ELF, ProgramId, tx IDs, and blocks | Public service/rate-limit/reorg outage can make testnet evidence flaky; no SLA or self-hosted fallback is selected yet, so local standalone remains the deterministic lower lane |
 | Self-host Zebra 6.0.0 on public Testnet | Selected future M2 node route; not called by current flows | Exact stable tag/release; cookie-authenticated loopback RPC; query current `consensus.next_block` | Initial sync, disk, DNS/P2P, organic reorg, and epoch activation can delay/fail a run |
-| Official public Zebra JSON-RPC | Required public-route research | No official service was found; lightwalletd gRPC is not substituted | Remains an M2 route limitation unless an auditable supported provider is selected |
+| Tatum Testnet Zebrad JSON-RPC | Selected public-provider route; not called by current flows | `https://zcash-testnet-zebrad.gateway.tatum.io`; dedicated API key in sensitive `x-api-key`; require the exact actor method contract and chain/branch/genesis/stable-tip checks | Third-party authoritative node with account provisioning, quotas, outage, lag, method-policy, and provider-trust risk; HTTPS adapter and live rehearsal remain M2 work; no silent failover or submit retry |
 | Community Zcash faucet or Discord support | Optional future TAZ funding | External operator; verify any returned txid independently through self-hosted Zebra | No SLA/current rate or amount; faucet may time out or be depleted and is never a required CI gate |
 | Zallet v0.1.0-alpha.4 | Optional future funding wallet, never the HTLC signer | Exact alpha tag, loopback RPC, Zebra cookie; explicit transparent privacy policy | Alpha/epoch compatibility; cannot export derived transparent keys or sign arbitrary HTLC transactions |
 | Docker Hub `zfnd/zebra` and `risczero/risc0-guest-builder` | Cold Zebra image build and Risc0 guest build | Zebra `5.2.0` source image and guest builder are digest-pinned | Registry outage, throttling, or authentication policy can block a cold pull; local images reduce but do not guarantee offline BuildKit resolution |
@@ -234,13 +235,15 @@ Retry only with a fresh run ID after checking the scoped logs. Do not weaken a
 digest, checksum, vulnerability result, or consensus assertion to classify an
 external outage as success.
 
-Public-testnet corridor work has selected self-hosted Zebra 6.0.0, but no
-official public Zebra JSON-RPC service exists in the reviewed primary sources.
-The project transparent signer, funded LEZ/Zcash accounts, live endpoint health,
-and clean-machine rehearsal remain. Before that flow is called available, the
-guide and global README must retain endpoint/faucet authentication, current
-limits, observed funding/confirmation latency, fallback policy, health checks,
-and evidence retention. No public route is required by the current local suites.
+Public-testnet corridor work has selected self-hosted Zebra 6.0.0 and Tatum's
+documented Zebrad-powered Testnet gateway. No Zcash Foundation-operated public
+Zebra JSON-RPC service exists in the reviewed primary sources. The project
+transparent signer, provider HTTPS adapter, exact live method smoke, funded
+LEZ/Zcash accounts, endpoint health, and clean-machine rehearsal remain. Before
+that flow is called available, the guide and global README must retain
+endpoint/faucet authentication, current limits, observed funding/confirmation
+latency, fallback policy, health checks, and evidence retention. No public route
+is required by the current local suites.
 
 ## Isolation and no-clash rules
 
