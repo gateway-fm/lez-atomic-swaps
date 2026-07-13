@@ -32,7 +32,7 @@ flowchart TB
         MOA["Maker-only taker-lock observation"]
         OJ["Contiguous exact-tracker journal<br/>canonical / depth / same-tip replacement / removal"]
         ME["Fresh-gated durable maker second lock"]
-        MLB["Agreement-validating LEZ bridge adapter"]
+        MLB["Context-owning LEZ SDK ports + adapter"]
     end
 
     subgraph TakerDevice["Taker-controlled device"]
@@ -42,7 +42,7 @@ flowchart TB
         TA["Taker-side concrete agreement validator"]
         TMO["Taker-only maker-lock observation"]
         TDB[("Taker SQLite schema v10<br/>role-local recovery")]
-        TLB["Agreement-validating LEZ bridge adapter"]
+        TLB["Context-owning LEZ SDK ports + adapter"]
     end
 
     subgraph SharedSecurity["Shared SDK security boundary"]
@@ -54,12 +54,18 @@ flowchart TB
         TLS["Taker sidecar<br/>official wire + signer + durable cache"]
     end
 
+    subgraph LocalLezFixture["Run-scoped exact-v0.1.2 node fixture"]
+        ELN["Reusable external standalone process<br/>checked guest + fresh mode-0700 home"]
+        LRM[("Private mode-0600 readiness<br/>endpoint + deployment tx/block + ProgramId<br/>built-in owner + funded actor keys")]
+        LRR["Future reference-actor runner<br/>splits role-local endpoint and key files"]
+    end
+
     subgraph OffChain["Untrusted, removable after lock"]
         DC["Delivery / Chat"]
     end
 
     subgraph Nodes["Actor-selected node boundary"]
-        LEZ["LEZ sequencer<br/>v0.1.2 local guest + official sidecar path<br/>public v0.2 activation pending"]
+        LEZ["LEZ sequencer<br/>dynamic port; loopback client URL<br/>upstream wildcard bind<br/>public v0.2 activation pending"]
         BTC["Bitcoin Core"]
         XMR["monerod + wallet RPC"]
         ZEC["Minimal Zebra 5.2.0 + local Zcash construction"]
@@ -109,6 +115,12 @@ flowchart TB
     TLB <-->|"bounded authenticated lez_bridge.v1"| TLS
     MSL -->|"pinned generated JSON-RPC"| LEZ
     TLS -->|"pinned generated JSON-RPC"| LEZ
+    ELN -->|"start exact upstream service"| LEZ
+    LEZ -->|"official health, tx/block, static built-in, account RPC"| ELN
+    ELN -->|"atomic no-clobber publish after verification"| LRM
+    LRM -.->|"future private handoff"| LRR
+    LRR -.->|"maker-only provisioning"| MSL
+    LRR -.->|"taker-only provisioning"| TLS
 
     MD <-->|"discovery + negotiation only"| DC
     TS <-->|"discovery + negotiation only"| DC
@@ -134,7 +146,7 @@ flowchart TB
     ZEC --> ZN
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class MM,LC,CA,TC,TM planned;
+    class MM,LC,CA,TC,TM,LRR planned;
 ```
 
 The maker operator owns maker policy, keys, node selection, and the daemon
@@ -156,9 +168,9 @@ and the taker-local observed-maker transition. Schema-v10 claim and refund
 journals protect exact owner material, keep observer paths secret-free, and
 replay separate role stores to `Completed` or `Refunded` in both directions.
 The official native-refund sidecar, main revealing-claim/refund validation
-adapters, and both-direction agreement-bound Zebra funding discovery are now
-GREEN. The remaining M2 work is crash-safe caller-context SDK-port composition,
-post-lock hardening, and independent actor integration; chain adapters must
+adapters, both-direction agreement-bound Zebra funding discovery, and
+context-owning LEZ SDK ports are now GREEN. The remaining M2 work is post-lock
+hardening and independent actor integration; chain adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
 observation alone is non-authorizing: forward Zcash persists and revalidates
 the complete canonical output type plus ordered canonical, depth, atomic
@@ -186,10 +198,10 @@ replays and re-queries the exact head and checks signed depth; local Pending
 remains eligible when depth is sufficient, and no result is cached as
 authority. The public Finalized/typed-finality policy is unit-tested but remains
 unreachable while public agreement activation is fail-closed. The official
-v0.1.2 node/escrow, revealing-claim, and native-refund owner/discovery ports plus
-main escrow/claim/refund agreement conversion are GREEN. Crash-safe
-caller-context SDK-port wiring, reviewed public deployment, actual-node maker
-fault evidence, and independent actor processes remain.
+v0.1.2 node/escrow, revealing-claim, and native-refund owner/discovery ports,
+main escrow/claim/refund agreement conversion, and crash-safe context-owning
+SDK-port wiring are GREEN. Reviewed public deployment, actual-node maker fault
+evidence, and independent actor processes remain.
 
 The protected-claim module derives per-context keys with HKDF-SHA256 and encrypts
 preimages and bounded exact claim-submission bytes with XChaCha20-Poly1305 while
@@ -223,6 +235,23 @@ Public-testnet evidence, composed both-direction maker/taker processes,
 production adapter composition, cross-chain deadline composition, encrypted
 state/outbox, and mini-apps remain milestone work and cannot yet be represented
 as production E2E.
+
+The reusable external local-node boundary is narrower than that composed E2E.
+It recomputes the tracked ELF SHA-256 and Risc0 ImageID before creating any
+state, refuses an existing node home or readiness path, creates its own
+mode-0700 home, and requests an upstream dynamic port. It publishes the
+literal-loopback client endpoint only after official RPC verifies health,
+genesis identity, mandatory chain progress, checked-guest deployment and
+the exact deployment transaction and containing block, ProgramId, the static
+authenticated-transfer built-in identity, plus two key-derived accounts owned
+by that built-in with positive balances. Upstream `getProgramIds` is not a
+deployment registry; custom guest authority comes from `getTransaction`, exact
+`getBlock` membership, and ProgramId derived from the contained ELF. The
+mode-0600 no-clobber readiness manifest includes those deterministic private
+keys and is therefore a run-local secret. The
+future actor edges are dashed because neither SDK actor consumes this handoff
+in a composed LEZ/Zebra swap yet. The upstream v0.1.2 server itself still binds
+the allocated port on the host wildcard address.
 
 ## LEZ escrow custody components and actor flows
 
@@ -297,16 +326,28 @@ flowchart LR
     Source["SPEL escrow source"] --> Guest["Risc0 3.0.5 guest wrapper"]
     Builder["Pinned guest-builder image digest"] --> ELF["Checked ELF<br/>SHA-256 + ImageID"]
     Guest --> Builder
-    Manifest["Tracked artifact manifest"] --> ELF
+    Manifest["Tracked artifact manifest"] --> Preflight["Verify exact manifest bytes<br/>ELF SHA-256 + ImageID"]
+    ELF --> Preflight
+    Preflight --> Process["External lez-standalone-node"]
+    Process --> Home["Fresh mode-0700 node home"]
     R0VM["Exact r0vm 3.0.5"] --> Clock["Mandatory clock execution"]
-    Clock --> Ready["Persisted readiness block"]
+    Process --> Clock
+    Clock --> ReadyBlock["Persisted readiness block"]
     ELF --> RPC["sendTransaction ProgramDeployment"]
+    Process --> RPC
     RPC --> Mempool["Standalone mempool"]
-    Ready --> Mempool
+    ReadyBlock --> Mempool
     Mempool --> Validate["Block-time deployment validation"]
     R0VM --> Validate
     Validate --> Block["Canonical persisted block"]
-    Block --> Query["getTransaction + getLastBlockId"]
+    Block --> Query["Exact getTransaction + containing getBlock"]
+    Query --> DeploymentCheck["Verify deployment variant, hash,<br/>block identity and ELF-derived ProgramId"]
+    Process --> BuiltIn["getProgramIds static built-ins<br/>bind authenticated_transfer only"]
+    Actors --> ActorCheck["getAccount ownership + balance checks"]
+    BuiltIn --> ActorCheck
+    DeploymentCheck --> Readiness["No-clobber mode-0600 schema-v2 readiness<br/>endpoint + tx/block/program + built-in + keys"]
+    ActorCheck --> Readiness
+    Readiness -.-> ActorRunner["Reference actor runner"]
     Actors["Funded depositor + claimant keys"] --> NativeLifecycle["Signed native initialise / fund / claim"]
     Relayer["Permissionless refund relayer"] --> NativeLifecycle
     NativeLifecycle --> RPC
@@ -318,27 +359,46 @@ flowchart LR
     Block --> TokenState["Definition-bound holdings + exact supply conservation"]
     TokenState --> TokenCostReplay["Deterministic token replay<br/>Clock/setup excluded"]
     TokenCostReplay --> TokenCostEvidence["Escrow + ATA + Token sessions<br/>invariants + budgets + JSON"]
-    Testnet["Rebuilt v0.2 guest + public testnet"] -.-> RPC
+    V02Pins["LEZ v0.2.0 + exact SPEL PR head"] --> V02Guest["Risc0 v0.2 escrow guest"]
+    V02Guest --> V02Artifact["Checked v0.2 ELF<br/>SHA-256 + ImageID + ProgramId"]
+    V02Artifact --> V02Local["Recursive native + two-definition token<br/>claim/refund + rollback tests"]
+    V02Artifact --> V02Deployer["Exact-once fixed-URL<br/>official-RPC deployer"]
+    V02Deployer -.-> Testnet["Official v0.2 testnet<br/>deployment + cost evidence"]
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Testnet planned;
+    class Testnet,ActorRunner planned;
 ```
 
-The deployment proof uses port `0`, a temporary sequencer home, deterministic
-genesis inputs, an exact `r0vm` path, and no shared Docker project or chain
-state. Deployment admission alone is deliberately insufficient: the readiness
-block proves the mandatory clock/executor/store loop first, and transaction
-lookup proves the deployment reached the block store rather than only the
-mempool. The solid native lifecycle uses the actual funded genesis roles,
+The deployment proof uses port `0`, a fresh mode-0700 sequencer home,
+deterministic genesis inputs, an exact `r0vm` path, and no shared Docker project
+or chain state. The external process rejects the guest before home creation if
+its bytes or manifest differ from the embedded tracked identity, and refuses to
+reuse another activity's home or readiness path. Deployment admission alone is
+deliberately insufficient: the readiness block proves the mandatory
+clock/executor/store loop first, transaction lookup proves the deployment
+reached the block store rather than only the mempool. The helper locates the
+exact transaction in a post-submit block and retains its hash plus containing
+block ID/hash. `getProgramIds` binds only the static authenticated-transfer
+built-in used as actor owner; official account RPC then revalidates both
+deterministic actors before a private schema-v2 mode-0600 handoff is published.
+The solid native lifecycle uses the actual funded genesis roles,
 validates signer-bound claim and permissionless-refund boundaries against
 canonical block time, and asserts exact balances. The solid token lifecycle
 uses two definitions, owner-signed ATA funding/claim, permissionless custody and
 refund, and cross-definition substitution negatives. Token replay attributes
-the escrow/ATA/nested-Token recursion while excluding setup and Clock noise. The
-dashed v0.2 testnet edge remains M2 exit work. Cost replay executes the same
-guest instructions through LEZ production state transitions, counts the escrow
-root and authenticated-transfer child, and compares generated JSON with the
-checked evidence artifact.
+the escrow/ATA/nested-Token recursion while excluding setup and Clock noise.
+The solid v0.2 branch builds an independently locked guest/generated client,
+binds ELF SHA-256 `40c9d37c...8021`, ImageID `f8385049...0fbe`, and
+ProgramId, and runs recursive native plus two-definition token claim/refund
+tests. A child-transfer overflow regression proves the metadata and every
+touched account roll back together. The v0.2 deployer validates immutable
+endpoint/channel/built-ins/artifact identity, submits once, and accepts only the
+exact transaction in its containing block; ambiguity or timeout is never
+retried. The dashed public-testnet edge and deployed-runtime costs remain M2
+exit work. The v0.1.2 cost replay executes the same guest instructions through
+LEZ production state transitions, counts the escrow root and
+authenticated-transfer child, and compares generated JSON with the checked
+evidence artifact.
 
 ## Zcash competing-fork consensus flow
 

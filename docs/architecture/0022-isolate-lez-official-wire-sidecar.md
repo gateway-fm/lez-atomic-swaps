@@ -4,21 +4,22 @@ Status: Accepted for the M2 actual-node corridor; implementation in progress --
 the official native, revealing-claim, and native-refund planners/observations,
 node-RPC core, authenticated eight-method bridge server/client, executable
 role-isolated sidecars, signed-agreement first-lock/claim/refund validation
-adapters, and Zebra funding/claim/refund ports are GREEN. Crash-safe
-caller-context SDK-port/actor wiring and the composed proof remain RED --
+adapters, Zebra funding/claim/refund ports, crash-safe context-owning SDK ports,
+and reusable checked external v0.1.2 schema-v2 node handoff are GREEN.
+Reference-actor wiring and the composed proof remain RED --
 2026-07-13
 
 ```mermaid
 flowchart LR
     subgraph MakerActor["Maker actor process"]
         MakerSDK["Role-fixed SDK"]
-        MakerLezAdapter["LEZ bridge adapter"]
+        MakerLezAdapter["Context-owning LEZ SDK ports + adapter"]
         MakerZebraAdapter["Zebra adapter"]
         MakerState[("Maker SQLite")]
     end
     subgraph TakerActor["Taker actor process"]
         TakerSDK["Role-fixed SDK"]
-        TakerLezAdapter["LEZ bridge adapter"]
+        TakerLezAdapter["Context-owning LEZ SDK ports + adapter"]
         TakerZebraAdapter["Zebra adapter"]
         TakerState[("Taker SQLite")]
     end
@@ -28,6 +29,9 @@ flowchart LR
     end
     Zebra["Zebra Regtest JSON-RPC"]
     LezNode["LEZ standalone JSON-RPC"]
+    LezExternal["Reusable checked external node process"]
+    LezReady[("Private schema-v2 readiness<br/>deployment tx/block + program/built-in + actor keys")]
+    LezRunner["Future run-scoped actor runner"]
 
     MakerSDK --> MakerState
     MakerSDK --> MakerLezAdapter
@@ -39,6 +43,12 @@ flowchart LR
     TakerLezAdapter -->|"Bounded serde protocol and taker capability"| TakerSidecar
     MakerSidecar -->|"Official bytes and primitive facts"| LezNode
     TakerSidecar -->|"Official bytes and primitive facts"| LezNode
+    LezExternal -->|"Start exact upstream service on fresh mode-0700 home"| LezNode
+    LezNode -->|"Official health, tx/block, static built-in, account RPC"| LezExternal
+    LezExternal -->|"Atomic no-clobber mode-0600 publish"| LezReady
+    LezReady -.->|"Future private handoff"| LezRunner
+    LezRunner -.->|"Maker-only provisioning"| MakerSidecar
+    LezRunner -.->|"Taker-only provisioning"| TakerSidecar
     MakerZebraAdapter -->|"Typed bounded JSON-RPC"| Zebra
     TakerZebraAdapter -->|"Typed bounded JSON-RPC"| Zebra
     MakerLezAdapter -->|"Primitive facts"| MakerSDK
@@ -92,6 +102,24 @@ and is owned by the one runner that starts it. A production deployment should
 prefer an owner-restricted Unix socket. Neither endpoint nor authentication
 material is protocol authority; actor signatures, exact transaction identity,
 canonical node observations, and the accepted agreement remain authoritative.
+
+The selected local sequencer is provisioned by a separate reusable process in
+the exact v0.1.2 compatibility graph. Before creating state, that process
+requires the supplied artifact manifest to equal the repository-embedded
+tracked manifest and recomputes both the ELF SHA-256 and Risc0 ImageID. It
+refuses an existing node home or readiness path, creates a mode-0700 home, asks
+upstream for a dynamic port, and publishes a literal-loopback client URL only
+after official RPC confirms health, genesis, mandatory chain progress, checked
+deployment transaction and containing block, ProgramId derived from the
+transaction ELF, the advertised authenticated-transfer built-in, and two
+key-derived funded genesis accounts owned by that built-in. The pinned
+`getProgramIds` RPC is a static built-in map and is never treated as a custom
+deployment registry. Its mode-0600 no-clobber schema-v2 readiness manifest
+includes the exact deployment hash/block identity and deterministic actor
+private keys, so it is a run-local secret handoff rather than public liveness
+metadata. The upstream server's wildcard bind remains an explicit local-fixture
+limitation; a network namespace or container is required where host-wildcard
+exposure is unacceptable.
 
 LEZ initialize and fund must be prepared and durably recorded before the first
 submission. The sidecar obtains one account nonce under an exclusive signer
@@ -159,6 +187,18 @@ concurrently with distinct identities and proves wrong capability, run, and
 role rejection plus graceful cleanup. Actor composition and the composed-chain
 proof remain pending.
 
+The exact standalone lane now also starts that upstream sequencer as an
+external child suitable for later reference actors. Process tests reject a
+tampered guest before readiness, preserve a pre-existing home without mutation,
+verify the published endpoint/genesis, exact deployment transaction and
+containing block, ELF-derived ProgramId, static built-in owner, and both actor
+key/account/balance bindings through official RPC, keep keys out of bounded
+diagnostics, and prove graceful stdin shutdown. The first exact run retained the
+false static-program-map assumption as RED; the corrected full runner then
+passed the process suite, actual native/two-definition lifecycle, strict
+Clippy, and byte-identical recursive costs. No actor or sidecar is yet wired to
+consume this now-GREEN readiness boundary in the cross-chain corridor.
+
 ## Atomicity preservation
 
 No implementation can make LEZ and Zcash commit in one shared database or
@@ -221,9 +261,9 @@ caller-owned request IDs/windows for state, preparation, exact owner lookup,
 counterparty discovery, and one-attempt submit. It independently validates
 stable clock, accounts, exact transaction/instruction facts, deadline, depth,
 and durable identity; uncertain submit results are `Unknown`, never rejection.
-The official sidecar refund handlers are GREEN. A crash-safe context-owning
-SDK-port wrapper remains required before peer-independent timeout recovery is
-an M2 implementation claim. Neither path
+The official sidecar refund handlers and crash-safe context-owning SDK-port
+wrapper are GREEN. Independent actor composition remains required before
+peer-independent timeout recovery is an M2 implementation claim. Neither path
 can guarantee liveness during indefinite node outage, censorship, or a
 reorganization deeper than the signed policy.
 The deterministic v0.1.2 lane also has only depth-qualified `Pending` blocks;
@@ -276,17 +316,17 @@ test still requires
 distinct loopback LEZ-sidecar and Zebra endpoints, distinct role funding,
 separate maker/taker databases and claim keys, both signed directions, the
 fixed `locks -> LEZ reveal -> Zcash follow-up` order, and restart after every
-effect. It remains RED until the remaining claim/refund/funding adapters and
-reference actors satisfy that contract. No broken commit is published while
-this slice is being driven GREEN.
+effect. The isolated claim/refund/funding adapters and context-owning SDK ports
+and external checked-node handoff are GREEN. The corridor remains RED until
+reference actors, post-lock revalidation, and actual composition satisfy the
+contract. No broken commit is published while this slice is being driven GREEN.
 
 The official claim/refund observation boundaries and the main revealing-claim/
 refund adapters are source-correct and independently validated. The Zebra
 adapter also discovers agreement-bound unknown-ID funding for both role
 directions from a full signed anchor with stable block/mempool scans.
-Context-owning SDK-port composition and composed post-lock actor evidence remain
-repository-controlled prerequisites. The Zcash taker-first observation path
-must still receive its
-previous canonical head so removal/replacement can be assembled after process
-restart; the maker-lock SDK boundary needs a later durable post-lock history
-extension rather than an invented adapter assertion.
+Context-owning SDK-port composition is GREEN; composed post-lock actor evidence
+remains a repository-controlled prerequisite. The Zcash taker-first observation
+path must still receive its previous canonical head so removal/replacement can
+be assembled after process restart; the maker-lock SDK boundary needs a later
+durable post-lock history extension rather than an invented adapter assertion.

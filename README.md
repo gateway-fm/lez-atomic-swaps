@@ -144,8 +144,22 @@ current executable slices enforce:
   complete primitive facts, durable identities/bytes, and conservative
   one-attempt outcomes. Zebra now also discovers agreement-bound unknown-ID
   funding for both role directions from stable canonical block and mempool
-  evidence. Context-owning SDK-port composition, independent reference actors,
-  and the completed LEZ-plus-Zebra corridor remain.
+  evidence. A reusable external exact-v0.1.2 standalone-node implementation
+  verifies the tracked guest ELF SHA-256 and Risc0 ImageID before creating any
+  state, starts from a fresh mode-0700 home on a dynamic port, deploys the
+  checked guest, and publishes a no-clobber mode-0600 readiness manifest. The
+  private handoff binds the loopback endpoint, channel, genesis ID/hash,
+  ELF/ImageID/ProgramId, canonical deployment transaction and containing block,
+  the advertised authenticated-transfer built-in, and two official-RPC-verified
+  funded actor accounts and signing keys; tampered guests and pre-existing homes
+  fail without mutation. Its first exact process run exposed and rejected an
+  incorrect assumption that `getProgramIds` listed custom deployments. The
+  corrected full exact runner is GREEN: schema-v2 transaction/block evidence,
+  process rejection paths, native/two-definition actor lifecycles, strict
+  Clippy, and recursive cost reproduction all pass. This completes the local
+  node handoff, but not its consumption by independent corridor actors.
+  Context-owning SDK-port composition, independent reference actors, and the
+  completed LEZ-plus-Zebra corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),
@@ -179,8 +193,18 @@ Maker, Zebra-adapter, and sidecar host endpoints are ephemeral loopback
 services. The LEZ
 test client uses loopback, but pinned upstream v0.1.2 binds its ephemeral server
 to the host wildcard address; it is short-lived and collision-isolated, not
-loopback/network-namespace isolated. Test funds are
-deterministic local genesis/Regtest outputs. Cold builds still depend on
+loopback/network-namespace isolated. The reusable external node refuses an
+existing home, creates its own mode-0700 directory, and publishes only a
+dynamic `127.0.0.1` client endpoint in a mode-0600 readiness file. That file is
+secret-bearing because it carries the two deterministic genesis signing keys;
+it must remain run-local and must never be logged or committed. Test funds are
+deterministic local genesis/Regtest outputs whose account IDs, key derivations,
+authenticated-transfer ownership, and positive balances are re-read through
+the official LEZ RPC before readiness. Upstream `getProgramIds` is a static map
+of built-ins, not a deployed-program registry: the process uses it only to bind
+the authenticated-transfer owner. Custom guest deployment is proved by exact
+`getTransaction` bytes plus the containing canonical `getBlock` ID/hash stored
+in readiness. Cold builds still depend on
 rustup/crates.io, locked GitHub sources, digest-pinned Docker Hub/GCR images,
 the checksum-pinned Logos circuits release, and `rzup`'s pinned Risc0 tools.
 Availability, DNS, proxy, registry throttling, or GitHub/CDN outages can block
@@ -250,29 +274,34 @@ replaying revision 4 as `Completed` via `resume_claim_capable`.
 The provisional LEZ v0.2 command compiles exact SPEL PR #238 head
 `df17acd98436be4f09c55877dae1fe2e73cbcdca` against official LEZ `v0.2.0`
 at `a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a`. It uses two Cargo jobs and
-unique `/tmp` target/tool paths derived from the lowercase `RUN_ID`. It starts
-no Docker workload, network namespace, port, service, or sequencer. A cold run
-still needs crates.io/GitHub access, `unzip`, and working libclang C headers,
-and compiles the large standalone dependency graph; avoid overlapping it with
-another heavy build on the same host.
+separate run-local root, guest, artifact, tool, and Docker-source paths derived
+from the lowercase `RUN_ID`. It builds the deployment ELF with a digest-pinned
+official Risc0 guest-builder image, but starts no sequencer, listener, or fixed
+port. A cold run needs Docker plus crates.io/GitHub and circuit/image
+distribution access, `unzip`, and working libclang C headers, and compiles the
+large official graph; do not overlap it with another Docker-heavy or native
+build on the same host.
 
-That seam proves the v0.2 standalone config and `LeeTransaction` API compile,
-one tag-based `lee_core` identity is locked to the exact LEZ commit, and SPEL's
-public PDA matches LEZ's fixed `/LEE/` vector. A second test compiles the SDK's
-dependency-light derivation source directly in this pinned fixture and proves
-its swap metadata, native multi-seed custody, and associated-token-account bytes
-match exact upstream `lee_core`, SPEL, and ATA-core types. It does not build or
-deploy the escrow guest/client, execute actor lifecycles, measure costs, or
-contact the public testnet. PR #238 remains unmerged and unreviewed, so a pass
-is explicitly not M2 completion or final release approval.
+The lane now proves the v0.2 standalone config and `LeeTransaction` API compile,
+locks one tag-based `lee_core` identity to the exact LEZ commit, and matches
+SPEL public PDA bytes to LEZ's fixed `/LEE/` vector. It also builds the Risc0
+escrow guest and generated client, binds exact ELF SHA-256/ImageID/ProgramId,
+executes recursive native and two-definition token claim/refund lifecycles, and
+proves full rollback when a child transfer fails. Its exact-once official-RPC
+deployer accepts evidence only after immutable endpoint/channel/built-in,
+transaction-byte, transaction, block, and artifact checks. Public-testnet
+deployment, deployed-runtime costs, and the independent-actor corridor remain
+pending. PR #238 remains unmerged and unreviewed, so these passes are not M2
+completion or final production-release approval.
 
-Cargo-deny also reports that exact LEZ graph as forcing vulnerable Hickory DNS
-`0.25.0-alpha.5` (`RUSTSEC-2026-0118` and `RUSTSEC-2026-0119`). The provisional
-fixture carries compile-only exceptions guarded by a hash-locked test plus
-checks that no standalone future is polled and no DNSSEC feature is enabled.
-This graph is prohibited for runtime and testnet use. The next slice remains
-security-blocked until upstream supplies a safe graph or a separate explicit
-review accepts a narrowly defined runtime risk.
+Cargo-deny reports that the exact official LEZ graph forces Hickory DNS
+`0.25.0-alpha.5` (`RUSTSEC-2026-0118` and `RUSTSEC-2026-0119`) through
+Logos-owned common/libp2p dependencies. Graph-local policy permits only those
+exact advisories; tests bind the pins, exclude the generated wallet graph, keep
+the sequencer future unpolled, and reject DNSSEC features. Under ADR 0018 this
+disclosed upstream exception does not block M2 testnet evidence, but it remains
+a production-release blocker pending an upstream fix or explicit security
+acceptance.
 
 `npm run test:mermaid` scans every tracked Markdown Mermaid block, rejects
 GitHub-host-sensitive configuration, beta/new-shape, and interactive syntax,

@@ -16,14 +16,14 @@ HTTPS provider transport, and actor adapter.
 
 | Flow | Boundary exercised | Current limitation |
 |---|---|---|
-| ZEC SDK agreement/activation/locks/claims/refunds | Canonical bounded dual-signed terms, separate role stores, exact lock recovery, and direction-fixed effects reach `BothLegsLocked`; LEZ reveal then Zcash follow-up reaches `Completed`; or exact owner intents plus observer-only transitions drive LEZ then Zcash refunds to `Refunded` in both directions | These commands still use deterministic contract doubles and no RPC, node, Docker, faucet, or external resource. Claims and refunds replay through schema-v10 SQLite with atomic owner/observer journals. Main LEZ/Zebra validation adapters and official LEZ refund execution are GREEN; crash-safe context-owning SDK wiring and the composed actor/node flow remain pending, so this is not yet the manual actual-node flow |
-| LEZ bridge and Zebra claim/refund contracts | The one-attempt authenticated loopback client and sidecar serve all eight bounded methods. The sidecar restores exact native, revealing-claim, and permissionless native-refund bytes and writes an unknown guard before submit. Official native escrow, claim, and refund observations decode exact-owner facts or bounded counterparty discovery; main escrow/claim/refund adapters independently validate the signed agreement, stable clock/tip, accounts, transactions, instructions, windows, deadlines, depth, and durable identity/bytes. Two real sidecar processes run concurrently with distinct maker/taker roles, keys, capabilities, stores, runtimes, and ephemeral listeners. Typed Zebra ports validate owner claims/refunds, discover counterparty spends, and discover agreement-bound funding in both directions through bounded canonical scans | These are isolated adapter and process contract tests, not yet a composed consensus proof. The runner's describe/authentication path uses no chain call; official observation uses an ephemeral loopback RPC mock returning pinned node types. Context-owning SDK wiring, actor processes, and the composed corridor remain pending. No Docker, faucet, public endpoint, or fixed port is used |
+| ZEC SDK agreement/activation/locks/claims/refunds | Canonical bounded dual-signed terms, separate role stores, exact lock recovery, and direction-fixed effects reach `BothLegsLocked`; LEZ reveal then Zcash follow-up reaches `Completed`; or exact owner intents plus observer-only transitions drive LEZ then Zcash refunds to `Refunded` in both directions | These commands still use deterministic contract doubles and no RPC, node, Docker, faucet, or external resource. Claims and refunds replay through schema-v10 SQLite with atomic owner/observer journals. Main LEZ/Zebra validation adapters, official LEZ refund execution, and crash-safe context-owning LEZ SDK ports are GREEN; the composed actor/node flow remains pending, so this is not yet the manual actual-node flow |
+| LEZ bridge and Zebra claim/refund contracts | The one-attempt authenticated loopback client and sidecar serve all eight bounded methods. The sidecar restores exact native, revealing-claim, and permissionless native-refund bytes and writes an unknown guard before submit. Official native escrow, claim, and refund observations decode exact-owner facts or bounded counterparty discovery; main escrow/claim/refund adapters independently validate the signed agreement, stable clock/tip, accounts, transactions, instructions, windows, deadlines, depth, and durable identity/bytes. Context-owning SDK ports journal caller-owned IDs/windows per logical operation, open fresh clients for exact retry, and preserve ambiguous prepare/refund contexts across restart. Two real sidecar processes run concurrently with distinct maker/taker roles, keys, capabilities, stores, runtimes, and ephemeral listeners. Typed Zebra ports validate owner claims/refunds, discover counterparty spends, and discover agreement-bound funding in both directions through bounded canonical scans | These are isolated adapter and process contract tests, not yet a composed consensus proof. The runner's describe/authentication path uses no chain call; official observation uses an ephemeral loopback RPC mock returning pinned node types. Independent actor processes and the composed corridor remain pending. No Docker, faucet, public endpoint, or fixed port is used |
 | Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
 | Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v10 SQLite journal/alerts plus the production role-fixed SDK recovery adapter, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The daemon polling loop, LEZ SDK-port/refund composition, and independent maker/taker processes remain pending |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
-| LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an in-process, ephemeral-port LEZ v0.1.2 standalone sequencer | This is a local compatibility proof, not the incompatible LEZ 0.2 public testnet |
+| LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an ephemeral-port LEZ v0.1.2 standalone sequencer. The corrected full runner exits `0` after the reusable external process publishes a private schema-v2 handoff containing the exact deployment transaction and canonical block, the built-in-only `getProgramIds` result, and two funded deterministic actors | The native/two-definition lifecycle and corrected external-node handoff are GREEN with ELF SHA-256 `a324355c...7006` and ImageID `c14c978a...4483`. No reference SDK actor consumes that handoff in a composed LEZ/Zebra flow yet, and this local v0.1.2 evidence is not LEZ v0.2 public-testnet evidence |
 | LEZ recursive execution costs | Exact checked guest replayed through production `V03State` transitions with nested authenticated-transfer and ATA/Token sessions | This measures deterministic local execution, not public-testnet fees or latency |
-| Provisional LEZ v0.2 compatibility | Exact SPEL PR #238 and LEZ v0.2.0 compile the new standalone config, `LeeTransaction`, and a fixed `/LEE/` PDA vector | No sequencer starts; no guest/client, actor lifecycle, costs, deployment, or maintainer approval is proved |
+| Provisional LEZ v0.2 executable lane | Exact SPEL PR #238 and LEZ v0.2.0 build a checked Risc0 escrow ELF, compile the generated typed client, and execute recursive native plus two-definition token claim/refund tests, including child-failure rollback. The fail-closed deployer is tested through the official RPC types against an ephemeral loopback server | Local ELF SHA-256 `40c9d37c...8021` and ImageID `f8385049...0fbe` are GREEN. No v0.2 public deployment, deployed-runtime CU evidence, independent maker/taker actor flow, composed LEZ/Zebra corridor, or maintainer approval is proved |
 
 The following are **not complete yet**: one composed LEZ↔ZEC run with
 independent maker and taker processes, both ZEC trade directions through all
@@ -41,7 +41,8 @@ sequenceDiagram
     actor Taker as Taker actor (fixture today)
     participant MakerDB as Maker SQLite v10
     participant TakerDB as Taker SQLite v10
-    participant LEZ as LEZ standalone
+    participant LEZ as LEZ v0.1.2 standalone
+    participant V02 as LEZ v0.2 recursive fixture
     participant Z1 as Primary Zebra
     participant Z2 as Fork Zebra
 
@@ -55,6 +56,16 @@ sequenceDiagram
 
     Note over Operator,TakerDB: SDK claim corridor uses separate DBs and one external key per role across restart
     Note over Operator,Z2: Chain suites below are separate actor fixtures today
+    Note over Operator,V02: v0.2 guest and deployer proofs are local and not a public deployment
+    Operator->>V02: Execute native and token initialize then fund
+    alt v0.2 recursive claim
+        Taker->>V02: Claim with the checked preimage
+        V02-->>Operator: Exact nested state transition committed
+    else v0.2 recursive refund
+        Operator->>V02: Permissionless fixed-destination refund
+        V02-->>Operator: Exact nested state transition committed
+    end
+    Note over V02,Z1: Public v0.2 deployment and composed actors remain pending
     Operator->>LEZ: Initialize and fund native or token custody
     alt TakerSellsForeign happy path
         Taker->>LEZ: Taker reveals preimage
@@ -118,20 +129,33 @@ cargo deny check advisories bans licenses sources
 The lockfiles are part of the evidence. Do not omit `--locked` to work around a
 dependency change.
 
-## Flow 0: provisional LEZ v0.2 compile/PDA seam
+## Flow 0: provisional LEZ v0.2 executable guest/client/deployer lane
 
 Choose a fresh lowercase run ID and run:
 
 ```sh
 RUN_ID=manual-lez-v02-20260712-a ./scripts/verify-lez-v02-provisional.sh
+cargo deny --manifest-path compat/lez-v0.2-provisional/Cargo.toml \
+  check --config compat/lez-v0.2-provisional/deny.toml \
+  advisories bans licenses sources
+cargo deny --manifest-path compat/lez-v0.2-provisional/escrow/methods/Cargo.toml \
+  check --config compat/lez-v0.2-provisional/escrow/methods/deny.toml \
+  advisories bans licenses sources
+cargo deny --manifest-path compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml \
+  check --config compat/lez-v0.2-provisional/escrow/methods/guest/deny.toml \
+  advisories bans licenses sources
+cargo deny --manifest-path compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml \
+  check --config compat/lez-v0.2-provisional/escrow/deployer/deny.toml \
+  advisories bans licenses sources
 ```
 
 The runner rejects any `RUN_ID` outside
 `^[a-z0-9][a-z0-9_-]*$`, fixes Cargo at two build jobs, and creates only unique
-target/tool directories under `${TMPDIR:-/tmp}`. It does not invoke Docker,
-create a network namespace, bind a port, start a service/sequencer, or issue a
-global process/container cleanup command. The graph is large, so do not overlap
-its cold build with another heavy local suite.
+root, guest, artifact, tool, and Docker-source directories under
+`${TMPDIR:-/tmp}`. It invokes the digest-pinned Risc0 guest-builder container
+for the checked artifact, but does not create a network namespace, bind a port,
+start a service/sequencer, or issue a global process/container cleanup command.
+The graph is large, so do not overlap its cold build with another heavy suite.
 
 A fresh uncached run needs crates.io and the exact locked GitHub repositories,
 including SPEL, LEZ, Logos Blockchain/circuits, Overwatch, Jellyfish, and
@@ -151,22 +175,45 @@ A pass proves all of the following and nothing broader:
 - SPEL and LEZ derive the same fixed public `/LEE/` PDA vector; and
 - the exact dependency-light SDK source produces the same metadata PDA, native
   `custody`/swap multi-seed PDA, and owner/definition ATA as pinned upstream
-  `lee_core`, SPEL, and ATA-core types.
+  `lee_core`, SPEL, and ATA-core types;
+- the generated typed client compiles against the checked escrow IDL and exact
+  public ProgramId wire types;
+- the digest-pinned builder and the independently embedded methods build agree
+  on ELF SHA-256
+  `40c9d37c5dc3c8544bcb7c26916a5be1039b76cc862b2c9dcd34e0cf61468021`
+  and ImageID
+  `f8385049e93a319b44d868e0d0cf805b058eddcf92141a186ffd69e4596c0fbe`;
+- recursive native claim/refund and two-definition token claim/refund execute
+  through official `V03State`, authenticated-transfer, ATA, and Token paths;
+- child-transfer failure rolls back terminal metadata, custody, and actor state;
+  and
+- the deployment client rejects local identity mutation before RPC, submits the
+  exact checked `ProgramDeployment` once, rejects a mismatched returned hash,
+  never resubmits an ambiguous/timeout outcome, and binds inclusion to the exact
+  post-tip transaction and canonical block.
 
-It does **not** rebuild the escrow guest, generated IDL/client, or checked ELF;
-does not run maker/taker roles, custody, deadlines, costs, RPC, deployment, or
-public-testnet traffic; and does not resolve upstream SPEL issues #242/#243.
-PR #238 is open, unmerged, and has no submitted maintainer review. Therefore
-this flow is provisional engineering evidence, not M2 completion and not final
-release approval.
+CI audits four independently locked v0.2 graphs with graph-local `cargo-deny`
+policy: compatibility root, methods, guest, and deployer. The local verifier
+also checks the reviewed advisory feature/reachability assumptions and rejects
+lock, artifact, ProgramId, or deployment-manifest drift.
 
-The exact graph also contains `hickory-proto 0.25.0-alpha.5`, affected by
-`RUSTSEC-2026-0118` and `RUSTSEC-2026-0119`. Cargo-deny exceptions are confined
-to this compile-only fixture: the verifier hash-locks the test, rejects DNSSEC
-features, and rejects any test change that polls/starts the standalone future.
-This graph is prohibited for runtime and testnet use. That next slice requires
-a safe upstream graph or explicit security review and must rerun the full
-advisory audit.
+This flow does **not** start a sequencer, deploy to the public endpoint, record
+deployed-runtime compute units, or run independent maker/taker actors or the
+composed LEZ/Zebra corridor. The checked deployment manifest deliberately keeps
+its transaction hash and inclusion block pending. SPEL PR #238 is open,
+unmerged, and without submitted maintainer review; issues #242/#243 also remain
+upstream disclosures. Under ADR 0018 those Logos-owned conditions do not block
+M2 certification, but they remain production-release blockers. This is
+provisional engineering evidence, not final release approval.
+
+The official LEZ graph also contains `hickory-proto 0.25.0-alpha.5`, affected
+by `RUSTSEC-2026-0118` and `RUSTSEC-2026-0119`, through Logos-owned
+common/libp2p paths. The root compile-only test remains hash-locked and cannot
+poll/start the standalone future; the bounded deployer has its own policy and
+exact endpoint/feature tests. DNSSEC features are rejected. These exact
+graph-local exceptions are nonblocking only for M2 under ADR 0018 and are
+production-blocking until Logos removes the paths or a separate security review
+explicitly accepts them.
 
 ## External resources and flakiness
 
@@ -203,7 +250,14 @@ transaction, validation, execution, and canonical-block boundaries:
 - The LEZ v0.1.2 standalone sequencer accepts the checked Risc0 guest and actor
   transactions through public RPC, executes production `V03State` transitions,
   persists canonical blocks, and exposes resulting nonce/custody/balance state.
-  Standalone does not prove LEZ testnet 0.2 compatibility or public sequencing.
+  Its reusable external process verifies the tracked ELF SHA-256 and ImageID
+  before creating state, refuses a pre-existing home or readiness path, and
+  publishes readiness only after official RPC confirms genesis, chain progress,
+  the exact deployment transaction and containing block, ProgramId, the static
+  authenticated-transfer built-in identity, and two key-derived funded
+  accounts. Upstream `getProgramIds` lists built-ins only; it is not used as a
+  custom-deployment registry. Standalone does not prove LEZ testnet 0.2
+  compatibility or public sequencing.
 
 The required evidence ladder is exact local vectors, actual isolated consensus
 nodes, a composed independent maker/taker local corridor, and then self-hosted
@@ -262,6 +316,9 @@ underscores, and hyphens.
   `LEZ_E2E_TOOL_DIR`, `LEZ_METHODS_TARGET_DIR`,
   `LEZ_STANDALONE_TARGET_DIR`, and `LEZ_COST_OUTPUT_DIR` values as shown below.
   A shared completed tool cache is safe only when no other run is writing it.
+- A direct reusable-node launch must also receive a never-before-created node
+  home and readiness path under a private run directory. Never point it at
+  another process's home: pre-existing homes are rejected and preserved.
 
 ### Isolated LEZ maker/taker sidecar processes
 
@@ -719,6 +776,12 @@ LEZ standalone guest native/token lifecycle proof passed: elf_sha256=a324355c641
 LEZ native/token recursive cost evidence passed: /tmp/lez-costs-manual-lez-20260711-a/generated.json
 ```
 
+The corrected complete runner also exits `0` after exercising the reusable
+external-node process. Its private schema-v2 readiness binds the same checked
+ELF/ImageID to the exact deployment transaction and containing canonical block,
+treats `getProgramIds` as a built-in-only map, and verifies two funded
+deterministic actors through official account RPC.
+
 The generated JSON must be byte-identical to
 [`docs/evidence/lez-v0.1.2-escrow-costs.json`](evidence/lez-v0.1.2-escrow-costs.json).
 That comparison checks operation order, recursive session topology, segments,
@@ -728,6 +791,58 @@ The sequencer uses an ephemeral port and temporary state and stops when the test
 ends. The unique tool, build, and cost directories remain as reproducibility
 caches/evidence. Remove only the directories belonging to this run, only after
 no process is using them; never delete another run's shared cache.
+
+### Direct reusable LEZ node handoff
+
+The full runner above builds and tests the external
+`lez-standalone-node` process. To keep that checked node alive for a manual
+consumer after the runner has produced the exact guest, use a new run directory
+and the same isolated standalone target directory:
+
+```sh
+RUN_DIR=/tmp/lez-node-manual-20260713-a
+LEZ_NODE_TARGET_DIR=/tmp/lez-standalone-node-manual-20260713-a
+umask 077
+mkdir "$RUN_DIR"
+CARGO_TARGET_DIR="$LEZ_NODE_TARGET_DIR" \
+  cargo build --locked --manifest-path compat/lez-standalone-e2e/Cargo.toml \
+    --bin lez-standalone-node
+"$LEZ_NODE_TARGET_DIR/debug/lez-standalone-node" \
+  --home "$RUN_DIR/node" \
+  --guest-elf compat/spel-zec-escrow/methods/guest/target/riscv32im-risc0-zkvm-elf/docker/zec_escrow.bin \
+  --artifact-manifest compat/spel-zec-escrow/methods/guest/artifact-manifest.toml \
+  --readiness-manifest "$RUN_DIR/readiness.json"
+```
+
+The node prints only `ready` after the private manifest has been durably
+published, then waits for stdin or Ctrl-C. In a second shell, check permissions
+without printing the secret-bearing JSON:
+
+```sh
+RUN_DIR=/tmp/lez-node-manual-20260713-a
+test "$(stat -c '%a' "$RUN_DIR/node")" = 700
+test "$(stat -c '%a' "$RUN_DIR/readiness.json")" = 600
+```
+
+The schema-v2 JSON contains the dynamic `http://127.0.0.1:<port>` client
+endpoint, exact channel and genesis identity, checked ELF
+SHA-256/ImageID/ProgramId, canonical deployment transaction hash and containing
+block ID/hash, the advertised authenticated-transfer built-in identity, and two
+deterministic funded actor account IDs, balances, and private signing keys.
+`getProgramIds` supplies only that static built-in identity; a consumer re-fetches
+the exact deployment through `getTransaction` and `getBlock`, verifies its
+variant/hash/block membership, and derives ProgramId from the contained ELF. The
+readiness file is a run-local capability and must not be displayed, logged,
+uploaded, or committed. The upstream server still binds its allocated port on `0.0.0.0` even
+though the published client URL is literal loopback; use a network namespace or
+container when host-wildcard exposure is unacceptable. Press Ctrl-C in the
+first shell for graceful shutdown, then remove only this `$RUN_DIR` after all
+consumers have stopped. The process does not use Docker, a public RPC, a faucet,
+or public testnet funds; the only cold-run availability risks are the software
+and artifact distribution resources already listed above. The corrected exact
+full runner has passed with exit `0`; a direct launch is still only a local
+v0.1.2 node handoff and must not be reported as a v0.2 public deployment or a
+composed actor corridor.
 
 ## Troubleshooting
 
