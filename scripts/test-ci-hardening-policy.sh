@@ -45,6 +45,11 @@ require_fixed 'Repository-owned findings are fail-hard; Logos-owned findings rem
 require_fixed 'rapidsnark_root="${RAPIDSNARK_LIB_DIR%/rapidsnark-linux-x86_64-pic-v0.0.8/lib}"' "$workflow"
 require_fixed 'unzip -q "${rapidsnark_archive}" -d "${rapidsnark_root}"' "$workflow"
 
+if rg -Uq $'readonly REPOSITORY_ROOT\nREPOSITORY_ROOT=|readonly repository_root\nrepository_root=' \
+    "${repo_root}/scripts"; then
+  fail "a shell wrapper assigns a variable only after marking it readonly"
+fi
+
 "$pin_checker"
 
 echo "CI hardening contract is complete"
