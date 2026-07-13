@@ -6,16 +6,23 @@ use std::{
 };
 
 use async_trait::async_trait;
-use lez_swap_core::{Participant, SwapCoordinator, SwapId, UnixSeconds};
+use lez_swap_core::{Pair, Participant, SwapCoordinator, SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{
-    AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, CreateAgreementOutcome,
+    AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, CLAIM_RECORD_SCHEMA_V1,
+    ClaimIntentRecordV1, ClaimIntentV1, ClaimMaterialContext, ClaimMaterialPurpose, ClaimPreimage,
+    ClaimRecoveryStore, ClaimStepV1, ClaimSubmissionContext, CreateAgreementOutcome,
     CreateFirstLockOutcome, FIRST_LOCK_RECORD_SCHEMA_V1, FirstLockIntentRecordV1,
     FirstLockIntentV1, FirstLockProjectionCommit, FirstLockTransitionRecordV1,
-    FirstLockTransitionV1, LezAssetV1, LezObservationTrackerV1, MAKER_LOCK_RECORD_SCHEMA_V1,
-    MakerLockIntentRecordV1, MakerLockIntentV1, MakerLockTransitionRecordV1, MakerLockTransitionV1,
-    OBSERVED_MAKER_LOCK_SCHEMA_V1, ObservedMakerLockTransitionRecordV1,
-    ObservedMakerLockTransitionV1, ObservedTakerFirstLockTransitionRecordV1,
-    ObservedTakerFirstLockTransitionV1, RecoveryStore, ZcashObservationTracker,
+    FirstLockTransitionV1, FollowupClaimTransitionRecordV1, FollowupClaimTransitionV1, LezAssetV1,
+    LezObservationTrackerV1, MAKER_LOCK_RECORD_SCHEMA_V1, MakerLockIntentRecordV1,
+    MakerLockIntentV1, MakerLockTransitionRecordV1, MakerLockTransitionV1,
+    OBSERVED_MAKER_LOCK_SCHEMA_V1, ObservedFollowupClaimTransitionRecordV1,
+    ObservedFollowupClaimTransitionV1, ObservedMakerLockTransitionRecordV1,
+    ObservedMakerLockTransitionV1, ObservedRevealingClaimTransitionRecordV1,
+    ObservedRevealingClaimTransitionV1, ObservedTakerFirstLockTransitionRecordV1,
+    ObservedTakerFirstLockTransitionV1, PROTECTED_CLAIM_SCHEMA_V1, PreparedClaimSubmissionV1,
+    ProtectedClaimEnvelope, ProtectedClaimKey, ProtectedClaimPayloadEnvelope, RecoveryStore,
+    RevealingClaimTransitionRecordV1, RevealingClaimTransitionV1, ZcashObservationTracker,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
@@ -37,6 +44,7 @@ struct MakerObservationTrackers {
 pub struct SqliteZecRecoveryStore {
     local_participant: Participant,
     connection: Arc<Mutex<Connection>>,
+    claim_key: Option<Arc<ProtectedClaimKey>>,
 }
 
 impl SqliteZecRecoveryStore {
@@ -53,6 +61,28 @@ impl SqliteZecRecoveryStore {
         Ok(Self {
             local_participant,
             connection: Arc::new(Mutex::new(open_configured_connection(path)?)),
+            claim_key: None,
+        })
+    }
+
+    /// Opens or creates a schema-v9 store with protected claim recovery enabled.
+    ///
+    /// The key is retained only in zeroizing process memory and is never written
+    /// to the database. Reopening claim rows requires the same key ID and material.
+    ///
+    /// # Errors
+    ///
+    /// Returns a store error when `SQLite` cannot open, configure, or migrate the
+    /// database.
+    pub fn open_claim_capable(
+        path: impl AsRef<Path>,
+        local_participant: Participant,
+        claim_key: ProtectedClaimKey,
+    ) -> Result<Self, StoreError> {
+        Ok(Self {
+            local_participant,
+            connection: Arc::new(Mutex::new(open_configured_connection(path)?)),
+            claim_key: Some(Arc::new(claim_key)),
         })
     }
 
@@ -78,6 +108,12 @@ impl SqliteZecRecoveryStore {
         } else {
             Err(StoreError::ZecRecoveryRoleMismatch)
         }
+    }
+
+    fn claim_key(&self) -> Result<&ProtectedClaimKey, StoreError> {
+        self.claim_key
+            .as_deref()
+            .ok_or(StoreError::MissingZecClaimKey)
     }
 }
 
@@ -399,6 +435,7 @@ impl RecoveryStore for SqliteZecRecoveryStore {
             &transaction,
             self.role_name(),
             self.local_participant,
+            self.claim_key.as_deref(),
             transition.swap_id(),
         )?;
         let trusted = record.revalidate(&accepted, predecessor)?;
@@ -484,6 +521,7 @@ impl RecoveryStore for SqliteZecRecoveryStore {
             &connection,
             self.role_name(),
             self.local_participant,
+            self.claim_key.as_deref(),
             swap_id,
         )?;
         if load_intent_row(&connection, self.role_name(), swap_id)?.is_some() {
@@ -531,6 +569,7 @@ impl RecoveryStore for SqliteZecRecoveryStore {
             &transaction,
             self.role_name(),
             self.local_participant,
+            self.claim_key.as_deref(),
             transition.swap_id(),
         )?;
 
@@ -606,6 +645,7 @@ impl RecoveryStore for SqliteZecRecoveryStore {
             &connection,
             self.role_name(),
             self.local_participant,
+            self.claim_key.as_deref(),
             swap_id,
         )?;
         if predecessor_revision > active_revision {
@@ -649,6 +689,7 @@ impl RecoveryStore for SqliteZecRecoveryStore {
             &transaction,
             self.role_name(),
             self.local_participant,
+            self.claim_key.as_deref(),
             intent.swap_id(),
         )?;
         let trusted = record.revalidate(&accepted)?;
@@ -702,6 +743,7 @@ impl RecoveryStore for SqliteZecRecoveryStore {
             &connection,
             self.role_name(),
             self.local_participant,
+            self.claim_key.as_deref(),
             swap_id,
         )?;
         let Some(row) = load_maker_intent_row(&connection, self.role_name(), swap_id)? else {
@@ -740,6 +782,7 @@ impl RecoveryStore for SqliteZecRecoveryStore {
             &transaction,
             self.role_name(),
             self.local_participant,
+            self.claim_key.as_deref(),
             transition.swap_id(),
         )?;
         let intent_row =
@@ -836,6 +879,7 @@ impl RecoveryStore for SqliteZecRecoveryStore {
             &connection,
             self.role_name(),
             self.local_participant,
+            self.claim_key.as_deref(),
             swap_id,
         )?;
         if predecessor_revision > active_revision {
@@ -868,6 +912,897 @@ impl RecoveryStore for SqliteZecRecoveryStore {
             &intent_record,
             predecessor_revision,
         )?))
+    }
+}
+
+// Each long method below is one auditable SQLite IMMEDIATE transaction whose
+// statement order is part of its crash-safety invariant.
+#[allow(clippy::too_many_lines)]
+#[async_trait]
+impl ClaimRecoveryStore for SqliteZecRecoveryStore {
+    async fn create_agreement_with_local_claim_material(
+        &self,
+        envelope: &AcceptedZecAgreementEnvelopeV1,
+        preimage: &ClaimPreimage,
+    ) -> Result<CreateAgreementOutcome, Self::Error> {
+        let key = self.claim_key()?;
+        let accepted = AcceptedZecAgreementV1::resume(envelope)?;
+        self.require_role(accepted.local_participant())?;
+        if accepted.revision() != 0
+            || accepted.local_participant() != accepted.agreement().lez_claimant()
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let swap_id = accepted.agreement().coordinator().id();
+        let protected = ProtectedClaimEnvelope::encrypt(
+            preimage,
+            key,
+            fresh_claim_nonce()?,
+            claim_material_context(&accepted, ClaimMaterialPurpose::LocalFirstClaim),
+        )?;
+        let accepted_at = sql_u64(envelope.accepted_at().value())?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let agreement_row = load_agreement_row(&transaction, self.role_name(), swap_id)?;
+        match agreement_row {
+            None => {
+                transaction.execute(
+                    "INSERT INTO zec_sdk_agreements (
+                        local_role, swap_id, payload_version, agreement_wire,
+                        accepted_at, accepted_revision, active_revision
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, 0, 0)",
+                    params![
+                        self.role_name(),
+                        swap_id.as_str(),
+                        AGREEMENT_PAYLOAD_VERSION,
+                        envelope.agreement_wire(),
+                        accepted_at
+                    ],
+                )?;
+            }
+            Some(row) => {
+                let durable = validated_agreement(&row, self.local_participant, swap_id)?;
+                if durable.durable_envelope()? != *envelope || row.active_revision != 0 {
+                    transaction.commit()?;
+                    return Ok(CreateAgreementOutcome::Conflict);
+                }
+            }
+        }
+        let outcome = match load_claim_material_row(&transaction, self.role_name(), swap_id)? {
+            None => {
+                insert_claim_material(
+                    &transaction,
+                    self.role_name(),
+                    swap_id,
+                    ClaimMaterialPurpose::LocalFirstClaim,
+                    0,
+                    &protected,
+                )?;
+                CreateAgreementOutcome::Created
+            }
+            Some(row)
+                if row.created_revision == 0
+                    && claim_material_purpose(&row.purpose)?
+                        == ClaimMaterialPurpose::LocalFirstClaim =>
+            {
+                let existing = decrypt_claim_material(&row, &accepted, key)?;
+                if existing.expose_secret() == preimage.expose_secret() {
+                    CreateAgreementOutcome::ExistingSame
+                } else {
+                    CreateAgreementOutcome::Conflict
+                }
+            }
+            Some(_) => CreateAgreementOutcome::Conflict,
+        };
+        transaction.commit()?;
+        Ok(outcome)
+    }
+
+    async fn load_claim_material(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<ClaimPreimage>, Self::Error> {
+        let key = self.claim_key()?;
+        let connection = self.connection()?;
+        let (accepted, _, _) = validated_claim_journal_head(
+            &connection,
+            self.role_name(),
+            self.local_participant,
+            key,
+            swap_id,
+        )?;
+        load_claim_material_row(&connection, self.role_name(), swap_id)?
+            .map(|row| decrypt_claim_material(&row, &accepted, key))
+            .transpose()
+    }
+
+    async fn protect_claim_submission(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        local_participant: Participant,
+        staged_revision: u64,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<ProtectedClaimPayloadEnvelope, Self::Error> {
+        self.require_role(local_participant)?;
+        ProtectedClaimPayloadEnvelope::encrypt(
+            prepared.exact_submission(),
+            self.claim_key()?,
+            fresh_claim_nonce()?,
+            prepared_claim_submission_context(
+                agreement,
+                local_participant,
+                staged_revision,
+                prepared,
+            ),
+        )
+        .map_err(StoreError::from)
+    }
+
+    async fn open_claim_submission(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        intent: &ClaimIntentV1,
+        protected: &ProtectedClaimPayloadEnvelope,
+    ) -> Result<PreparedClaimSubmissionV1, Self::Error> {
+        self.require_role(intent.local_participant())?;
+        intent.validate_protected_payload_fingerprint(protected.fingerprint())?;
+        let exact = protected.decrypt(
+            self.claim_key()?,
+            claim_submission_context(agreement, intent),
+        )?;
+        PreparedClaimSubmissionV1::new(
+            intent.step(),
+            *intent.expected_submission_id(),
+            exact.to_vec(),
+        )
+        .map_err(StoreError::from)
+    }
+
+    async fn create_claim_intent(
+        &self,
+        intent: &ClaimIntentV1,
+        protected: &ProtectedClaimPayloadEnvelope,
+    ) -> Result<CreateFirstLockOutcome, Self::Error> {
+        self.require_role(intent.local_participant())?;
+        let key = self.claim_key()?;
+        intent.validate_protected_payload_fingerprint(protected.fingerprint())?;
+        let record = ClaimIntentRecordV1::from(intent);
+        let payload_json = serde_json::to_string(&record)?;
+        let staged_sql = sql_u64(intent.staged_revision())?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (accepted, active_revision, coordinator) = validated_claim_journal_head(
+            &transaction,
+            self.role_name(),
+            self.local_participant,
+            key,
+            intent.swap_id(),
+        )?;
+        if active_revision != intent.staged_revision() {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let trusted = record.revalidate(&accepted, &coordinator, active_revision)?;
+        if &trusted != intent {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let material = load_claim_material_row(&transaction, self.role_name(), intent.swap_id())?
+            .ok_or(StoreError::MissingZecClaimMaterial)?;
+        if revision_from_sql(material.created_revision)? > intent.staged_revision() {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let _ = decrypt_claim_material(&material, &accepted, key)?;
+        let exact =
+            protected.decrypt(key, claim_submission_context(accepted.agreement(), intent))?;
+        let _ = PreparedClaimSubmissionV1::new(
+            intent.step(),
+            *intent.expected_submission_id(),
+            exact.to_vec(),
+        )?;
+        let outcome = match load_claim_intent_row(&transaction, self.role_name(), intent.swap_id())?
+        {
+            None => {
+                transaction.execute(
+                    "INSERT INTO zec_sdk_claim_intents (
+                            local_role, swap_id, staged_revision, material_created_revision,
+                            payload_version, payload_json, protected_version,
+                            protected_ciphertext, protected_nonce, protected_key_id,
+                            protected_fingerprint, closed_revision
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
+                    params![
+                        self.role_name(),
+                        intent.swap_id().as_str(),
+                        staged_sql,
+                        material.created_revision,
+                        i64::from(record.schema_version()),
+                        payload_json,
+                        i64::from(PROTECTED_CLAIM_SCHEMA_V1),
+                        protected.ciphertext(),
+                        protected.nonce().as_slice(),
+                        protected.key_id(),
+                        protected.fingerprint().as_slice()
+                    ],
+                )?;
+                CreateFirstLockOutcome::Created
+            }
+            Some(existing) => {
+                let existing_record = decode_claim_intent_record(&existing)?;
+                let existing_protected = protected_claim_payload(&existing)?;
+                if existing.closed_revision.is_none()
+                    && existing_record == record
+                    && existing_protected == *protected
+                {
+                    CreateFirstLockOutcome::ExistingSame
+                } else {
+                    CreateFirstLockOutcome::Conflict
+                }
+            }
+        };
+        transaction.commit()?;
+        Ok(outcome)
+    }
+
+    async fn load_claim_intent(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<(ClaimIntentV1, ProtectedClaimPayloadEnvelope)>, Self::Error> {
+        let key = self.claim_key()?;
+        let connection = self.connection()?;
+        let (accepted, active_revision, coordinator) = validated_claim_journal_head(
+            &connection,
+            self.role_name(),
+            self.local_participant,
+            key,
+            swap_id,
+        )?;
+        let Some(row) = load_claim_intent_row(&connection, self.role_name(), swap_id)? else {
+            return Ok(None);
+        };
+        if row.closed_revision.is_some() {
+            return Ok(None);
+        }
+        let intent = decode_claim_intent_record(&row)?.revalidate(
+            &accepted,
+            &coordinator,
+            active_revision,
+        )?;
+        let protected = protected_claim_payload(&row)?;
+        intent.validate_protected_payload_fingerprint(protected.fingerprint())?;
+        let _ = protected.decrypt(key, claim_submission_context(accepted.agreement(), &intent))?;
+        Ok(Some((intent, protected)))
+    }
+
+    async fn commit_revealing_claim_transition(
+        &self,
+        transition: &RevealingClaimTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error> {
+        let key = self.claim_key()?;
+        self.require_role(self.local_participant)?;
+        let record = RevealingClaimTransitionRecordV1::from(transition);
+        let payload_json = serde_json::to_string(&record)?;
+        let predecessor = transition.predecessor_revision();
+        let committed = predecessor
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        let predecessor_sql = sql_u64(predecessor)?;
+        let committed_sql = sql_u64(committed)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (accepted, active_revision, coordinator) = validated_claim_journal_head(
+            &transaction,
+            self.role_name(),
+            self.local_participant,
+            key,
+            transition.swap_id(),
+        )?;
+        let intent_row =
+            load_claim_intent_row(&transaction, self.role_name(), transition.swap_id())?
+                .ok_or(StoreError::MissingZecClaimIntent)?;
+        if let Some(existing) = load_owned_claim_transition_row(
+            &transaction,
+            self.role_name(),
+            transition.swap_id(),
+            predecessor_sql,
+        )? {
+            if existing.transition_kind == "revealing_lez"
+                && existing.committed_revision == committed_sql
+                && existing.intent_staged_revision == Some(intent_row.staged_revision)
+                && existing.payload_version == i64::from(record.schema_version())
+                && existing.payload_json == payload_json
+                && intent_row.closed_revision == Some(committed_sql)
+                && active_revision >= committed
+            {
+                transaction.commit()?;
+                return Ok(FirstLockProjectionCommit::new(committed, true));
+            }
+            return Err(StoreError::ConflictingZecClaimTransition);
+        }
+        if active_revision != predecessor
+            || intent_row.closed_revision.is_some()
+            || intent_row.staged_revision != sql_u64(transition.intent_staged_revision())?
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let intent_record = decode_claim_intent_record(&intent_row)?;
+        let material =
+            load_claim_material_row(&transaction, self.role_name(), transition.swap_id())?
+                .ok_or(StoreError::MissingZecClaimMaterial)?;
+        if material.created_revision != 0
+            || claim_material_purpose(&material.purpose)? != ClaimMaterialPurpose::LocalFirstClaim
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let preimage = decrypt_claim_material(&material, &accepted, key)?;
+        let trusted = record.revalidate(
+            &accepted,
+            &coordinator,
+            &intent_record,
+            predecessor,
+            preimage,
+        )?;
+        if RevealingClaimTransitionRecordV1::from(&trusted) != record {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let _ = transition.apply_to(accepted.agreement(), &coordinator, predecessor)?;
+        transaction.execute(
+            "INSERT INTO zec_sdk_owned_claim_transitions (
+                local_role, swap_id, transition_kind, predecessor_revision,
+                committed_revision, intent_staged_revision, payload_version, payload_json
+             ) VALUES (?1, ?2, 'revealing_lez', ?3, ?4, ?5, ?6, ?7)",
+            params![
+                self.role_name(),
+                transition.swap_id().as_str(),
+                predecessor_sql,
+                committed_sql,
+                intent_row.staged_revision,
+                i64::from(record.schema_version()),
+                payload_json
+            ],
+        )?;
+        let intent_updates = transaction.execute(
+            "UPDATE zec_sdk_claim_intents SET closed_revision = ?1
+             WHERE local_role = ?2 AND swap_id = ?3
+               AND staged_revision = ?4 AND closed_revision IS NULL",
+            params![
+                committed_sql,
+                self.role_name(),
+                transition.swap_id().as_str(),
+                intent_row.staged_revision
+            ],
+        )?;
+        let agreement_updates = transaction.execute(
+            "UPDATE zec_sdk_agreements SET active_revision = ?1
+             WHERE local_role = ?2 AND swap_id = ?3 AND active_revision = ?4",
+            params![
+                committed_sql,
+                self.role_name(),
+                transition.swap_id().as_str(),
+                predecessor_sql
+            ],
+        )?;
+        if intent_updates != 1 || agreement_updates != 1 {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        transaction.commit()?;
+        Ok(FirstLockProjectionCommit::new(committed, false))
+    }
+
+    async fn load_revealing_claim_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<RevealingClaimTransitionV1>, Self::Error> {
+        let key = self.claim_key()?;
+        let connection = self.connection()?;
+        let (accepted, active_revision, _) = validated_claim_journal_head(
+            &connection,
+            self.role_name(),
+            self.local_participant,
+            key,
+            swap_id,
+        )?;
+        if predecessor_revision > active_revision {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let predecessor_sql = sql_u64(predecessor_revision)?;
+        let Some(row) = load_owned_claim_transition_row(
+            &connection,
+            self.role_name(),
+            swap_id,
+            predecessor_sql,
+        )?
+        else {
+            return Ok(None);
+        };
+        if row.transition_kind != "revealing_lez" {
+            return Ok(None);
+        }
+        let intent_row = load_claim_intent_row(&connection, self.role_name(), swap_id)?
+            .ok_or(StoreError::MissingZecClaimIntent)?;
+        if row.intent_staged_revision != Some(intent_row.staged_revision)
+            || intent_row.closed_revision != Some(row.committed_revision)
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let coordinator = claim_coordinator_at(
+            &connection,
+            self.role_name(),
+            &accepted,
+            predecessor_revision,
+            key,
+        )?;
+        let material = load_claim_material_row(&connection, self.role_name(), swap_id)?
+            .ok_or(StoreError::MissingZecClaimMaterial)?;
+        let preimage = decrypt_claim_material(&material, &accepted, key)?;
+        require_payload(
+            "SDK revealing claim transition",
+            row.payload_version,
+            i64::from(CLAIM_RECORD_SCHEMA_V1),
+        )?;
+        let record: RevealingClaimTransitionRecordV1 = serde_json::from_str(&row.payload_json)?;
+        record
+            .revalidate(
+                &accepted,
+                &coordinator,
+                &decode_claim_intent_record(&intent_row)?,
+                predecessor_revision,
+                preimage,
+            )
+            .map(Some)
+            .map_err(StoreError::from)
+    }
+
+    async fn commit_observed_revealing_claim_transition(
+        &self,
+        transition: &ObservedRevealingClaimTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error> {
+        let key = self.claim_key()?;
+        let record = ObservedRevealingClaimTransitionRecordV1::from(transition);
+        let payload_json = serde_json::to_string(&record)?;
+        let predecessor = transition.predecessor_revision();
+        let committed = predecessor
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        let predecessor_sql = sql_u64(predecessor)?;
+        let committed_sql = sql_u64(committed)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (accepted, active_revision, coordinator) = validated_claim_journal_head(
+            &transaction,
+            self.role_name(),
+            self.local_participant,
+            key,
+            transition.swap_id(),
+        )?;
+        if let Some(existing) = load_observed_claim_transition_row(
+            &transaction,
+            self.role_name(),
+            transition.swap_id(),
+            predecessor_sql,
+        )? {
+            if existing.transition_kind == "observed_revealing_lez"
+                && existing.committed_revision == committed_sql
+                && existing.material_created_revision == Some(committed_sql)
+                && existing.payload_version == i64::from(record.schema_version())
+                && existing.payload_json == payload_json
+                && active_revision >= committed
+            {
+                transaction.commit()?;
+                return Ok(FirstLockProjectionCommit::new(committed, true));
+            }
+            return Err(StoreError::ConflictingZecClaimTransition);
+        }
+        if active_revision != predecessor
+            || load_claim_material_row(&transaction, self.role_name(), transition.swap_id())?
+                .is_some()
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let trusted = record.revalidate(
+            &accepted,
+            &coordinator,
+            predecessor,
+            ClaimPreimage::new(*transition.evidence().preimage().expose_secret()),
+        )?;
+        if ObservedRevealingClaimTransitionRecordV1::from(&trusted) != record {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let _ = transition.apply_to(accepted.agreement(), &coordinator, predecessor)?;
+        let protected = ProtectedClaimEnvelope::encrypt(
+            transition.evidence().preimage(),
+            key,
+            fresh_claim_nonce()?,
+            claim_material_context(&accepted, ClaimMaterialPurpose::ObservedFollowUpClaim),
+        )?;
+        insert_claim_material(
+            &transaction,
+            self.role_name(),
+            transition.swap_id(),
+            ClaimMaterialPurpose::ObservedFollowUpClaim,
+            committed_sql,
+            &protected,
+        )?;
+        transaction.execute(
+            "INSERT INTO zec_sdk_observed_claim_transitions (
+                local_role, swap_id, transition_kind, predecessor_revision,
+                committed_revision, material_created_revision, payload_version, payload_json
+             ) VALUES (?1, ?2, 'observed_revealing_lez', ?3, ?4, ?4, ?5, ?6)",
+            params![
+                self.role_name(),
+                transition.swap_id().as_str(),
+                predecessor_sql,
+                committed_sql,
+                i64::from(record.schema_version()),
+                payload_json
+            ],
+        )?;
+        let agreement_updates = transaction.execute(
+            "UPDATE zec_sdk_agreements SET active_revision = ?1
+             WHERE local_role = ?2 AND swap_id = ?3 AND active_revision = ?4",
+            params![
+                committed_sql,
+                self.role_name(),
+                transition.swap_id().as_str(),
+                predecessor_sql
+            ],
+        )?;
+        if agreement_updates != 1 {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        transaction.commit()?;
+        Ok(FirstLockProjectionCommit::new(committed, false))
+    }
+
+    async fn load_observed_revealing_claim_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<ObservedRevealingClaimTransitionV1>, Self::Error> {
+        let key = self.claim_key()?;
+        let connection = self.connection()?;
+        let (accepted, active_revision, _) = validated_claim_journal_head(
+            &connection,
+            self.role_name(),
+            self.local_participant,
+            key,
+            swap_id,
+        )?;
+        if predecessor_revision > active_revision {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let Some(row) = load_observed_claim_transition_row(
+            &connection,
+            self.role_name(),
+            swap_id,
+            sql_u64(predecessor_revision)?,
+        )?
+        else {
+            return Ok(None);
+        };
+        if row.transition_kind != "observed_revealing_lez" {
+            return Ok(None);
+        }
+        let coordinator = claim_coordinator_at(
+            &connection,
+            self.role_name(),
+            &accepted,
+            predecessor_revision,
+            key,
+        )?;
+        let material = load_claim_material_row(&connection, self.role_name(), swap_id)?
+            .ok_or(StoreError::MissingZecClaimMaterial)?;
+        if material.created_revision != row.committed_revision
+            || claim_material_purpose(&material.purpose)?
+                != ClaimMaterialPurpose::ObservedFollowUpClaim
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let preimage = decrypt_claim_material(&material, &accepted, key)?;
+        require_payload(
+            "SDK observed revealing claim transition",
+            row.payload_version,
+            i64::from(CLAIM_RECORD_SCHEMA_V1),
+        )?;
+        let record: ObservedRevealingClaimTransitionRecordV1 =
+            serde_json::from_str(&row.payload_json)?;
+        record
+            .revalidate(&accepted, &coordinator, predecessor_revision, preimage)
+            .map(Some)
+            .map_err(StoreError::from)
+    }
+
+    async fn commit_followup_claim_transition(
+        &self,
+        transition: &FollowupClaimTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error> {
+        let key = self.claim_key()?;
+        let record = FollowupClaimTransitionRecordV1::from(transition);
+        let payload_json = serde_json::to_string(&record)?;
+        let predecessor = transition.predecessor_revision();
+        let committed = predecessor
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        let predecessor_sql = sql_u64(predecessor)?;
+        let committed_sql = sql_u64(committed)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (accepted, active_revision, coordinator) = validated_claim_journal_head(
+            &transaction,
+            self.role_name(),
+            self.local_participant,
+            key,
+            transition.swap_id(),
+        )?;
+        let intent_row =
+            load_claim_intent_row(&transaction, self.role_name(), transition.swap_id())?
+                .ok_or(StoreError::MissingZecClaimIntent)?;
+        if let Some(existing) = load_owned_claim_transition_row(
+            &transaction,
+            self.role_name(),
+            transition.swap_id(),
+            predecessor_sql,
+        )? {
+            if existing.transition_kind == "followup_zcash"
+                && existing.committed_revision == committed_sql
+                && existing.intent_staged_revision == Some(intent_row.staged_revision)
+                && existing.payload_version == i64::from(record.schema_version())
+                && existing.payload_json == payload_json
+                && intent_row.closed_revision == Some(committed_sql)
+                && active_revision >= committed
+            {
+                transaction.commit()?;
+                return Ok(FirstLockProjectionCommit::new(committed, true));
+            }
+            return Err(StoreError::ConflictingZecClaimTransition);
+        }
+        if active_revision != predecessor
+            || intent_row.closed_revision.is_some()
+            || intent_row.staged_revision != sql_u64(transition.intent_staged_revision())?
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let intent_record = decode_claim_intent_record(&intent_row)?;
+        let material =
+            load_claim_material_row(&transaction, self.role_name(), transition.swap_id())?
+                .ok_or(StoreError::MissingZecClaimMaterial)?;
+        if claim_material_purpose(&material.purpose)? != ClaimMaterialPurpose::ObservedFollowUpClaim
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let _ = decrypt_claim_material(&material, &accepted, key)?;
+        let trusted = record.revalidate(&accepted, &coordinator, &intent_record, predecessor)?;
+        if &trusted != transition {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let _ = transition.apply_to(accepted.agreement(), &coordinator, predecessor)?;
+        transaction.execute(
+            "INSERT INTO zec_sdk_owned_claim_transitions (
+                local_role, swap_id, transition_kind, predecessor_revision,
+                committed_revision, intent_staged_revision, payload_version, payload_json
+             ) VALUES (?1, ?2, 'followup_zcash', ?3, ?4, ?5, ?6, ?7)",
+            params![
+                self.role_name(),
+                transition.swap_id().as_str(),
+                predecessor_sql,
+                committed_sql,
+                intent_row.staged_revision,
+                i64::from(record.schema_version()),
+                payload_json
+            ],
+        )?;
+        let intent_updates = transaction.execute(
+            "UPDATE zec_sdk_claim_intents SET closed_revision = ?1
+             WHERE local_role = ?2 AND swap_id = ?3
+               AND staged_revision = ?4 AND closed_revision IS NULL",
+            params![
+                committed_sql,
+                self.role_name(),
+                transition.swap_id().as_str(),
+                intent_row.staged_revision
+            ],
+        )?;
+        let agreement_updates = transaction.execute(
+            "UPDATE zec_sdk_agreements SET active_revision = ?1
+             WHERE local_role = ?2 AND swap_id = ?3 AND active_revision = ?4",
+            params![
+                committed_sql,
+                self.role_name(),
+                transition.swap_id().as_str(),
+                predecessor_sql
+            ],
+        )?;
+        if intent_updates != 1 || agreement_updates != 1 {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        transaction.commit()?;
+        Ok(FirstLockProjectionCommit::new(committed, false))
+    }
+
+    async fn load_followup_claim_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<FollowupClaimTransitionV1>, Self::Error> {
+        let key = self.claim_key()?;
+        let connection = self.connection()?;
+        let (accepted, active_revision, _) = validated_claim_journal_head(
+            &connection,
+            self.role_name(),
+            self.local_participant,
+            key,
+            swap_id,
+        )?;
+        if predecessor_revision > active_revision {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let Some(row) = load_owned_claim_transition_row(
+            &connection,
+            self.role_name(),
+            swap_id,
+            sql_u64(predecessor_revision)?,
+        )?
+        else {
+            return Ok(None);
+        };
+        if row.transition_kind != "followup_zcash" {
+            return Ok(None);
+        }
+        let intent_row = load_claim_intent_row(&connection, self.role_name(), swap_id)?
+            .ok_or(StoreError::MissingZecClaimIntent)?;
+        if row.intent_staged_revision != Some(intent_row.staged_revision)
+            || intent_row.closed_revision != Some(row.committed_revision)
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let coordinator = claim_coordinator_at(
+            &connection,
+            self.role_name(),
+            &accepted,
+            predecessor_revision,
+            key,
+        )?;
+        require_payload(
+            "SDK follow-up claim transition",
+            row.payload_version,
+            i64::from(CLAIM_RECORD_SCHEMA_V1),
+        )?;
+        let record: FollowupClaimTransitionRecordV1 = serde_json::from_str(&row.payload_json)?;
+        record
+            .revalidate(
+                &accepted,
+                &coordinator,
+                &decode_claim_intent_record(&intent_row)?,
+                predecessor_revision,
+            )
+            .map(Some)
+            .map_err(StoreError::from)
+    }
+
+    async fn commit_observed_followup_claim_transition(
+        &self,
+        transition: &ObservedFollowupClaimTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error> {
+        let key = self.claim_key()?;
+        let record = ObservedFollowupClaimTransitionRecordV1::from(transition);
+        let payload_json = serde_json::to_string(&record)?;
+        let predecessor = transition.predecessor_revision();
+        let committed = predecessor
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        let predecessor_sql = sql_u64(predecessor)?;
+        let committed_sql = sql_u64(committed)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (accepted, active_revision, coordinator) = validated_claim_journal_head(
+            &transaction,
+            self.role_name(),
+            self.local_participant,
+            key,
+            transition.swap_id(),
+        )?;
+        if let Some(existing) = load_observed_claim_transition_row(
+            &transaction,
+            self.role_name(),
+            transition.swap_id(),
+            predecessor_sql,
+        )? {
+            if existing.transition_kind == "observed_followup_zcash"
+                && existing.committed_revision == committed_sql
+                && existing.material_created_revision.is_none()
+                && existing.payload_version == i64::from(record.schema_version())
+                && existing.payload_json == payload_json
+                && active_revision >= committed
+            {
+                transaction.commit()?;
+                return Ok(FirstLockProjectionCommit::new(committed, true));
+            }
+            return Err(StoreError::ConflictingZecClaimTransition);
+        }
+        if active_revision != predecessor {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let trusted = record.revalidate(&accepted, &coordinator, predecessor)?;
+        if &trusted != transition {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let _ = transition.apply_to(accepted.agreement(), &coordinator, predecessor)?;
+        transaction.execute(
+            "INSERT INTO zec_sdk_observed_claim_transitions (
+                local_role, swap_id, transition_kind, predecessor_revision,
+                committed_revision, material_created_revision, payload_version, payload_json
+             ) VALUES (?1, ?2, 'observed_followup_zcash', ?3, ?4, NULL, ?5, ?6)",
+            params![
+                self.role_name(),
+                transition.swap_id().as_str(),
+                predecessor_sql,
+                committed_sql,
+                i64::from(record.schema_version()),
+                payload_json
+            ],
+        )?;
+        let updates = transaction.execute(
+            "UPDATE zec_sdk_agreements SET active_revision = ?1
+             WHERE local_role = ?2 AND swap_id = ?3 AND active_revision = ?4",
+            params![
+                committed_sql,
+                self.role_name(),
+                transition.swap_id().as_str(),
+                predecessor_sql
+            ],
+        )?;
+        if updates != 1 {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        transaction.commit()?;
+        Ok(FirstLockProjectionCommit::new(committed, false))
+    }
+
+    async fn load_observed_followup_claim_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<ObservedFollowupClaimTransitionV1>, Self::Error> {
+        let key = self.claim_key()?;
+        let connection = self.connection()?;
+        let (accepted, active_revision, _) = validated_claim_journal_head(
+            &connection,
+            self.role_name(),
+            self.local_participant,
+            key,
+            swap_id,
+        )?;
+        if predecessor_revision > active_revision {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let Some(row) = load_observed_claim_transition_row(
+            &connection,
+            self.role_name(),
+            swap_id,
+            sql_u64(predecessor_revision)?,
+        )?
+        else {
+            return Ok(None);
+        };
+        if row.transition_kind != "observed_followup_zcash" {
+            return Ok(None);
+        }
+        let coordinator = claim_coordinator_at(
+            &connection,
+            self.role_name(),
+            &accepted,
+            predecessor_revision,
+            key,
+        )?;
+        require_payload(
+            "SDK observed follow-up claim transition",
+            row.payload_version,
+            i64::from(CLAIM_RECORD_SCHEMA_V1),
+        )?;
+        let record: ObservedFollowupClaimTransitionRecordV1 =
+            serde_json::from_str(&row.payload_json)?;
+        record
+            .revalidate(&accepted, &coordinator, predecessor_revision)
+            .map(Some)
+            .map_err(StoreError::from)
     }
 }
 
@@ -956,6 +1891,41 @@ struct MakerIntentRow {
 struct MakerTransitionRow {
     committed_revision: i64,
     intent_staged_revision: i64,
+    payload_version: i64,
+    payload_json: String,
+}
+
+#[derive(Debug)]
+struct ClaimMaterialRow {
+    purpose: String,
+    created_revision: i64,
+    envelope_version: i64,
+    ciphertext: Vec<u8>,
+    nonce: Vec<u8>,
+    key_id: String,
+    fingerprint: Vec<u8>,
+}
+
+#[derive(Debug)]
+struct ClaimIntentRow {
+    staged_revision: i64,
+    material_created_revision: i64,
+    payload_version: i64,
+    payload_json: String,
+    protected_version: i64,
+    protected_ciphertext: Vec<u8>,
+    protected_nonce: Vec<u8>,
+    protected_key_id: String,
+    protected_fingerprint: Vec<u8>,
+    closed_revision: Option<i64>,
+}
+
+#[derive(Debug)]
+struct ClaimTransitionRow {
+    transition_kind: String,
+    committed_revision: i64,
+    intent_staged_revision: Option<i64>,
+    material_created_revision: Option<i64>,
     payload_version: i64,
     payload_json: String,
 }
@@ -1118,6 +2088,123 @@ fn load_observed_maker_transition_row(
         .map_err(StoreError::from)
 }
 
+fn load_claim_material_row(
+    connection: &Connection,
+    role: &str,
+    swap_id: &SwapId,
+) -> Result<Option<ClaimMaterialRow>, StoreError> {
+    connection
+        .query_row(
+            "SELECT purpose, created_revision, envelope_version, ciphertext,
+                    nonce, key_id, fingerprint
+             FROM zec_sdk_claim_materials
+             WHERE local_role = ?1 AND swap_id = ?2",
+            params![role, swap_id.as_str()],
+            |row| {
+                Ok(ClaimMaterialRow {
+                    purpose: row.get(0)?,
+                    created_revision: row.get(1)?,
+                    envelope_version: row.get(2)?,
+                    ciphertext: row.get(3)?,
+                    nonce: row.get(4)?,
+                    key_id: row.get(5)?,
+                    fingerprint: row.get(6)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(StoreError::from)
+}
+
+fn load_claim_intent_row(
+    connection: &Connection,
+    role: &str,
+    swap_id: &SwapId,
+) -> Result<Option<ClaimIntentRow>, StoreError> {
+    connection
+        .query_row(
+            "SELECT staged_revision, material_created_revision,
+                    payload_version, payload_json, protected_version,
+                    protected_ciphertext, protected_nonce, protected_key_id,
+                    protected_fingerprint, closed_revision
+             FROM zec_sdk_claim_intents
+             WHERE local_role = ?1 AND swap_id = ?2",
+            params![role, swap_id.as_str()],
+            |row| {
+                Ok(ClaimIntentRow {
+                    staged_revision: row.get(0)?,
+                    material_created_revision: row.get(1)?,
+                    payload_version: row.get(2)?,
+                    payload_json: row.get(3)?,
+                    protected_version: row.get(4)?,
+                    protected_ciphertext: row.get(5)?,
+                    protected_nonce: row.get(6)?,
+                    protected_key_id: row.get(7)?,
+                    protected_fingerprint: row.get(8)?,
+                    closed_revision: row.get(9)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(StoreError::from)
+}
+
+fn load_owned_claim_transition_row(
+    connection: &Connection,
+    role: &str,
+    swap_id: &SwapId,
+    predecessor_revision: i64,
+) -> Result<Option<ClaimTransitionRow>, StoreError> {
+    connection
+        .query_row(
+            "SELECT transition_kind, committed_revision, intent_staged_revision,
+                    payload_version, payload_json
+             FROM zec_sdk_owned_claim_transitions
+             WHERE local_role = ?1 AND swap_id = ?2 AND predecessor_revision = ?3",
+            params![role, swap_id.as_str(), predecessor_revision],
+            |row| {
+                Ok(ClaimTransitionRow {
+                    transition_kind: row.get(0)?,
+                    committed_revision: row.get(1)?,
+                    intent_staged_revision: Some(row.get(2)?),
+                    material_created_revision: None,
+                    payload_version: row.get(3)?,
+                    payload_json: row.get(4)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(StoreError::from)
+}
+
+fn load_observed_claim_transition_row(
+    connection: &Connection,
+    role: &str,
+    swap_id: &SwapId,
+    predecessor_revision: i64,
+) -> Result<Option<ClaimTransitionRow>, StoreError> {
+    connection
+        .query_row(
+            "SELECT transition_kind, committed_revision, material_created_revision,
+                    payload_version, payload_json
+             FROM zec_sdk_observed_claim_transitions
+             WHERE local_role = ?1 AND swap_id = ?2 AND predecessor_revision = ?3",
+            params![role, swap_id.as_str(), predecessor_revision],
+            |row| {
+                Ok(ClaimTransitionRow {
+                    transition_kind: row.get(0)?,
+                    committed_revision: row.get(1)?,
+                    intent_staged_revision: None,
+                    material_created_revision: row.get(2)?,
+                    payload_version: row.get(3)?,
+                    payload_json: row.get(4)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(StoreError::from)
+}
+
 fn validate_transition_journal(
     connection: &Connection,
     role: &str,
@@ -1149,6 +2236,14 @@ fn validate_transition_journal(
                 UNION ALL
                 SELECT predecessor_revision, committed_revision
                 FROM zec_sdk_observed_maker_lock_transitions
+                WHERE local_role = ?1 AND swap_id = ?2
+                UNION ALL
+                SELECT predecessor_revision, committed_revision
+                FROM zec_sdk_owned_claim_transitions
+                WHERE local_role = ?1 AND swap_id = ?2
+                UNION ALL
+                SELECT predecessor_revision, committed_revision
+                FROM zec_sdk_observed_claim_transitions
                 WHERE local_role = ?1 AND swap_id = ?2
             )
             ",
@@ -1184,6 +2279,7 @@ fn replay_maker_journal(
     swap_id: &SwapId,
     accepted: &AcceptedZecAgreementV1,
     active_revision: u64,
+    claim_key: Option<&ProtectedClaimKey>,
 ) -> Result<(SwapCoordinator, MakerObservationTrackers), StoreError> {
     let mut coordinator = accepted.agreement().coordinator().clone();
     let mut trackers = MakerObservationTrackers::default();
@@ -1225,6 +2321,18 @@ fn replay_maker_journal(
                 coordinator =
                     transition.apply_to(accepted.agreement(), &coordinator, predecessor)?;
             }
+            (None, None) => {
+                coordinator = apply_claim_journal_slot(
+                    connection,
+                    role,
+                    swap_id,
+                    accepted,
+                    &coordinator,
+                    predecessor,
+                    committed_sql,
+                    claim_key.ok_or(StoreError::MissingZecClaimKey)?,
+                )?;
+            }
             _ => return Err(StoreError::InvalidZecRecoveryState),
         }
     }
@@ -1237,6 +2345,7 @@ fn replay_taker_journal(
     swap_id: &SwapId,
     accepted: &AcceptedZecAgreementV1,
     active_revision: u64,
+    claim_key: Option<&ProtectedClaimKey>,
 ) -> Result<SwapCoordinator, StoreError> {
     let mut coordinator = accepted.agreement().coordinator().clone();
     for predecessor in 0..active_revision {
@@ -1272,6 +2381,18 @@ fn replay_taker_journal(
                 coordinator =
                     transition.apply_to(accepted.agreement(), &coordinator, predecessor)?;
             }
+            (None, None) => {
+                coordinator = apply_claim_journal_slot(
+                    connection,
+                    role,
+                    swap_id,
+                    accepted,
+                    &coordinator,
+                    predecessor,
+                    committed_sql,
+                    claim_key.ok_or(StoreError::MissingZecClaimKey)?,
+                )?;
+            }
             _ => return Err(StoreError::InvalidZecRecoveryState),
         }
     }
@@ -1304,6 +2425,7 @@ fn validated_maker_journal_head(
     connection: &Connection,
     role: &str,
     local_participant: Participant,
+    claim_key: Option<&ProtectedClaimKey>,
     swap_id: &SwapId,
 ) -> Result<
     (
@@ -1319,8 +2441,24 @@ fn validated_maker_journal_head(
     let active_revision = revision_from_sql(agreement_row.active_revision)?;
     let accepted = validated_agreement(&agreement_row, local_participant, swap_id)?;
     validate_transition_journal(connection, role, swap_id, active_revision)?;
-    let (coordinator, tracker) =
-        replay_maker_journal(connection, role, swap_id, &accepted, active_revision)?;
+    let (coordinator, tracker) = replay_maker_journal(
+        connection,
+        role,
+        swap_id,
+        &accepted,
+        active_revision,
+        claim_key,
+    )?;
+    if let Some(key) = claim_key {
+        validate_claim_auxiliary_state(
+            connection,
+            role,
+            &accepted,
+            active_revision,
+            &coordinator,
+            key,
+        )?;
+    }
     Ok((accepted, active_revision, coordinator, tracker))
 }
 
@@ -1328,6 +2466,7 @@ fn validated_taker_journal_head(
     connection: &Connection,
     role: &str,
     local_participant: Participant,
+    claim_key: Option<&ProtectedClaimKey>,
     swap_id: &SwapId,
 ) -> Result<(AcceptedZecAgreementV1, u64, SwapCoordinator), StoreError> {
     let agreement_row = load_agreement_row(connection, role, swap_id)?
@@ -1335,8 +2474,77 @@ fn validated_taker_journal_head(
     let active_revision = revision_from_sql(agreement_row.active_revision)?;
     let accepted = validated_agreement(&agreement_row, local_participant, swap_id)?;
     validate_transition_journal(connection, role, swap_id, active_revision)?;
-    let coordinator = replay_taker_journal(connection, role, swap_id, &accepted, active_revision)?;
+    let coordinator = replay_taker_journal(
+        connection,
+        role,
+        swap_id,
+        &accepted,
+        active_revision,
+        claim_key,
+    )?;
+    if let Some(key) = claim_key {
+        validate_claim_auxiliary_state(
+            connection,
+            role,
+            &accepted,
+            active_revision,
+            &coordinator,
+            key,
+        )?;
+    }
     Ok((accepted, active_revision, coordinator))
+}
+
+fn validated_claim_journal_head(
+    connection: &Connection,
+    role: &str,
+    local_participant: Participant,
+    key: &ProtectedClaimKey,
+    swap_id: &SwapId,
+) -> Result<(AcceptedZecAgreementV1, u64, SwapCoordinator), StoreError> {
+    match local_participant {
+        Participant::Maker => {
+            let (accepted, revision, coordinator, _) = validated_maker_journal_head(
+                connection,
+                role,
+                local_participant,
+                Some(key),
+                swap_id,
+            )?;
+            Ok((accepted, revision, coordinator))
+        }
+        Participant::Taker => {
+            validated_taker_journal_head(connection, role, local_participant, Some(key), swap_id)
+        }
+    }
+}
+
+fn claim_coordinator_at(
+    connection: &Connection,
+    role: &str,
+    accepted: &AcceptedZecAgreementV1,
+    revision: u64,
+    key: &ProtectedClaimKey,
+) -> Result<SwapCoordinator, StoreError> {
+    match accepted.local_participant() {
+        Participant::Maker => replay_maker_journal(
+            connection,
+            role,
+            accepted.agreement().coordinator().id(),
+            accepted,
+            revision,
+            Some(key),
+        )
+        .map(|(coordinator, _)| coordinator),
+        Participant::Taker => replay_taker_journal(
+            connection,
+            role,
+            accepted.agreement().coordinator().id(),
+            accepted,
+            revision,
+            Some(key),
+        ),
+    }
 }
 
 fn validated_agreement(
@@ -1494,6 +2702,410 @@ fn validate_transition_replay(
         return Err(StoreError::ConflictingZecFirstLockTransition);
     }
     Ok(FirstLockProjectionCommit::new(committed_revision, true))
+}
+
+fn claim_material_purpose(value: &str) -> Result<ClaimMaterialPurpose, StoreError> {
+    match value {
+        "local_first_claim" => Ok(ClaimMaterialPurpose::LocalFirstClaim),
+        "observed_followup_claim" => Ok(ClaimMaterialPurpose::ObservedFollowUpClaim),
+        _ => Err(StoreError::InvalidZecRecoveryState),
+    }
+}
+
+fn claim_material_purpose_name(value: ClaimMaterialPurpose) -> &'static str {
+    match value {
+        ClaimMaterialPurpose::LocalFirstClaim => "local_first_claim",
+        ClaimMaterialPurpose::ObservedFollowUpClaim => "observed_followup_claim",
+        ClaimMaterialPurpose::LezClaimSubmission | ClaimMaterialPurpose::ZcashClaimSubmission => {
+            unreachable!("submission purposes are stored with claim intents")
+        }
+    }
+}
+
+fn claim_material_context(
+    accepted: &AcceptedZecAgreementV1,
+    purpose: ClaimMaterialPurpose,
+) -> ClaimMaterialContext<'_> {
+    let agreement = accepted.agreement();
+    ClaimMaterialContext::new(
+        PROTECTED_CLAIM_SCHEMA_V1,
+        agreement.coordinator().id(),
+        Pair::Zcash,
+        agreement.direction(),
+        agreement.agreement_commitment(),
+        accepted.local_participant(),
+        purpose,
+    )
+}
+
+fn claim_submission_context<'a>(
+    agreement: &'a lez_zec_swap_sdk::ZecAgreementV1,
+    intent: &'a ClaimIntentV1,
+) -> ClaimSubmissionContext<'a> {
+    let purpose = match intent.step() {
+        ClaimStepV1::RevealingLez => ClaimMaterialPurpose::LezClaimSubmission,
+        ClaimStepV1::FollowupZcash => ClaimMaterialPurpose::ZcashClaimSubmission,
+    };
+    ClaimSubmissionContext::new(
+        ClaimMaterialContext::new(
+            PROTECTED_CLAIM_SCHEMA_V1,
+            agreement.coordinator().id(),
+            Pair::Zcash,
+            agreement.direction(),
+            agreement.agreement_commitment(),
+            intent.local_participant(),
+            purpose,
+        ),
+        intent.step(),
+        intent.staged_revision(),
+        intent.expected_submission_id(),
+    )
+}
+
+fn prepared_claim_submission_context<'a>(
+    agreement: &'a lez_zec_swap_sdk::ZecAgreementV1,
+    local: Participant,
+    staged_revision: u64,
+    prepared: &'a PreparedClaimSubmissionV1,
+) -> ClaimSubmissionContext<'a> {
+    let purpose = match prepared.step() {
+        ClaimStepV1::RevealingLez => ClaimMaterialPurpose::LezClaimSubmission,
+        ClaimStepV1::FollowupZcash => ClaimMaterialPurpose::ZcashClaimSubmission,
+    };
+    ClaimSubmissionContext::new(
+        ClaimMaterialContext::new(
+            PROTECTED_CLAIM_SCHEMA_V1,
+            agreement.coordinator().id(),
+            Pair::Zcash,
+            agreement.direction(),
+            agreement.agreement_commitment(),
+            local,
+            purpose,
+        ),
+        prepared.step(),
+        staged_revision,
+        prepared.expected_submission_id(),
+    )
+}
+
+fn fresh_claim_nonce() -> Result<[u8; 24], StoreError> {
+    let mut nonce = [0_u8; 24];
+    getrandom::fill(&mut nonce).map_err(|_| StoreError::ClaimEntropy)?;
+    Ok(nonce)
+}
+
+fn insert_claim_material(
+    transaction: &rusqlite::Transaction<'_>,
+    role: &str,
+    swap_id: &SwapId,
+    purpose: ClaimMaterialPurpose,
+    created_revision: i64,
+    protected: &ProtectedClaimEnvelope,
+) -> Result<(), StoreError> {
+    transaction.execute(
+        "INSERT INTO zec_sdk_claim_materials (
+            local_role, swap_id, purpose, created_revision, envelope_version,
+            ciphertext, nonce, key_id, fingerprint
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            role,
+            swap_id.as_str(),
+            claim_material_purpose_name(purpose),
+            created_revision,
+            i64::from(PROTECTED_CLAIM_SCHEMA_V1),
+            protected.ciphertext(),
+            protected.nonce().as_slice(),
+            protected.key_id(),
+            protected.fingerprint().as_slice()
+        ],
+    )?;
+    Ok(())
+}
+
+fn fixed_bytes<const N: usize>(value: Vec<u8>) -> Result<[u8; N], StoreError> {
+    value
+        .try_into()
+        .map_err(|_| StoreError::InvalidZecRecoveryState)
+}
+
+fn protected_claim_material(row: &ClaimMaterialRow) -> Result<ProtectedClaimEnvelope, StoreError> {
+    require_payload(
+        "SDK protected claim material",
+        row.envelope_version,
+        i64::from(PROTECTED_CLAIM_SCHEMA_V1),
+    )?;
+    ProtectedClaimEnvelope::from_record_fields(
+        fixed_bytes(row.ciphertext.clone())?,
+        fixed_bytes(row.nonce.clone())?,
+        row.key_id.clone(),
+        fixed_bytes(row.fingerprint.clone())?,
+    )
+    .map_err(StoreError::from)
+}
+
+fn protected_claim_payload(
+    row: &ClaimIntentRow,
+) -> Result<ProtectedClaimPayloadEnvelope, StoreError> {
+    require_payload(
+        "SDK protected claim payload",
+        row.protected_version,
+        i64::from(PROTECTED_CLAIM_SCHEMA_V1),
+    )?;
+    ProtectedClaimPayloadEnvelope::from_record_fields(
+        row.protected_ciphertext.clone(),
+        fixed_bytes(row.protected_nonce.clone())?,
+        row.protected_key_id.clone(),
+        fixed_bytes(row.protected_fingerprint.clone())?,
+    )
+    .map_err(StoreError::from)
+}
+
+fn decrypt_claim_material(
+    row: &ClaimMaterialRow,
+    accepted: &AcceptedZecAgreementV1,
+    key: &ProtectedClaimKey,
+) -> Result<ClaimPreimage, StoreError> {
+    let purpose = claim_material_purpose(&row.purpose)?;
+    protected_claim_material(row)?
+        .decrypt(key, claim_material_context(accepted, purpose))
+        .map_err(StoreError::from)
+}
+
+fn decode_claim_intent_record(row: &ClaimIntentRow) -> Result<ClaimIntentRecordV1, StoreError> {
+    require_payload(
+        "SDK claim intent",
+        row.payload_version,
+        i64::from(CLAIM_RECORD_SCHEMA_V1),
+    )?;
+    serde_json::from_str(&row.payload_json).map_err(StoreError::from)
+}
+
+fn validate_claim_auxiliary_state(
+    connection: &Connection,
+    role: &str,
+    accepted: &AcceptedZecAgreementV1,
+    active_revision: u64,
+    coordinator: &SwapCoordinator,
+    key: &ProtectedClaimKey,
+) -> Result<(), StoreError> {
+    let swap_id = accepted.agreement().coordinator().id();
+    let material = load_claim_material_row(connection, role, swap_id)?;
+    if let Some(material) = material.as_ref() {
+        let purpose = claim_material_purpose(&material.purpose)?;
+        match purpose {
+            ClaimMaterialPurpose::LocalFirstClaim
+                if accepted.local_participant() == accepted.agreement().lez_claimant()
+                    && material.created_revision == 0 => {}
+            ClaimMaterialPurpose::ObservedFollowUpClaim
+                if accepted.local_participant() != accepted.agreement().lez_claimant()
+                    && material.created_revision > 0 =>
+            {
+                let predecessor = material
+                    .created_revision
+                    .checked_sub(1)
+                    .ok_or(StoreError::InvalidZecRecoveryState)?;
+                let transition =
+                    load_observed_claim_transition_row(connection, role, swap_id, predecessor)?
+                        .ok_or(StoreError::InvalidZecRecoveryState)?;
+                if transition.transition_kind != "observed_revealing_lez"
+                    || transition.committed_revision != material.created_revision
+                    || transition.material_created_revision != Some(material.created_revision)
+                {
+                    return Err(StoreError::InvalidZecRecoveryState);
+                }
+            }
+            _ => return Err(StoreError::InvalidZecRecoveryState),
+        }
+        let _ = decrypt_claim_material(material, accepted, key)?;
+    }
+    if let Some(intent_row) = load_claim_intent_row(connection, role, swap_id)? {
+        let material = material
+            .as_ref()
+            .ok_or(StoreError::MissingZecClaimMaterial)?;
+        if intent_row.material_created_revision != material.created_revision {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let record = decode_claim_intent_record(&intent_row)?;
+        let intent = if intent_row.closed_revision.is_none() {
+            record.revalidate(accepted, coordinator, active_revision)?
+        } else {
+            let committed = intent_row
+                .closed_revision
+                .ok_or(StoreError::InvalidZecRecoveryState)?;
+            let predecessor = committed
+                .checked_sub(1)
+                .ok_or(StoreError::InvalidZecRecoveryState)?;
+            let transition =
+                load_owned_claim_transition_row(connection, role, swap_id, predecessor)?
+                    .ok_or(StoreError::InvalidZecRecoveryState)?;
+            if transition.committed_revision != committed
+                || transition.intent_staged_revision != Some(intent_row.staged_revision)
+            {
+                return Err(StoreError::InvalidZecRecoveryState);
+            }
+            let predecessor_coordinator = claim_coordinator_at(
+                connection,
+                role,
+                accepted,
+                revision_from_sql(predecessor)?,
+                key,
+            )?;
+            record.revalidate(
+                accepted,
+                &predecessor_coordinator,
+                revision_from_sql(predecessor)?,
+            )?
+        };
+        let protected = protected_claim_payload(&intent_row)?;
+        intent.validate_protected_payload_fingerprint(protected.fingerprint())?;
+        let exact =
+            protected.decrypt(key, claim_submission_context(accepted.agreement(), &intent))?;
+        let _ = PreparedClaimSubmissionV1::new(
+            intent.step(),
+            *intent.expected_submission_id(),
+            exact.to_vec(),
+        )?;
+    }
+    Ok(())
+}
+
+// Keeping the four typed claim variants together makes the exactly-one-row
+// predecessor dispatch explicit during full-history replay.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn apply_claim_journal_slot(
+    connection: &Connection,
+    role: &str,
+    swap_id: &SwapId,
+    accepted: &AcceptedZecAgreementV1,
+    coordinator: &SwapCoordinator,
+    predecessor: u64,
+    committed_sql: i64,
+    key: &ProtectedClaimKey,
+) -> Result<SwapCoordinator, StoreError> {
+    let predecessor_sql = sql_u64(predecessor)?;
+    let owned = load_owned_claim_transition_row(connection, role, swap_id, predecessor_sql)?;
+    let observed = load_observed_claim_transition_row(connection, role, swap_id, predecessor_sql)?;
+    match (owned, observed) {
+        (Some(row), None) if row.committed_revision == committed_sql => {
+            let intent_row = load_claim_intent_row(connection, role, swap_id)?
+                .ok_or(StoreError::MissingZecClaimIntent)?;
+            if row.intent_staged_revision != Some(intent_row.staged_revision)
+                || intent_row.closed_revision != Some(committed_sql)
+            {
+                return Err(StoreError::InvalidZecRecoveryState);
+            }
+            let intent_record = decode_claim_intent_record(&intent_row)?;
+            let intent = intent_record.revalidate(accepted, coordinator, predecessor)?;
+            let protected_payload = protected_claim_payload(&intent_row)?;
+            intent.validate_protected_payload_fingerprint(protected_payload.fingerprint())?;
+            let exact = protected_payload
+                .decrypt(key, claim_submission_context(accepted.agreement(), &intent))?;
+            let _ = PreparedClaimSubmissionV1::new(
+                intent.step(),
+                *intent.expected_submission_id(),
+                exact.to_vec(),
+            )?;
+            let linked_material = load_claim_material_row(connection, role, swap_id)?
+                .ok_or(StoreError::MissingZecClaimMaterial)?;
+            if intent_row.material_created_revision != linked_material.created_revision {
+                return Err(StoreError::InvalidZecRecoveryState);
+            }
+            let expected_purpose = match row.transition_kind.as_str() {
+                "revealing_lez" => ClaimMaterialPurpose::LocalFirstClaim,
+                "followup_zcash" => ClaimMaterialPurpose::ObservedFollowUpClaim,
+                _ => return Err(StoreError::InvalidZecRecoveryState),
+            };
+            if claim_material_purpose(&linked_material.purpose)? != expected_purpose {
+                return Err(StoreError::InvalidZecRecoveryState);
+            }
+            let _ = decrypt_claim_material(&linked_material, accepted, key)?;
+            match row.transition_kind.as_str() {
+                "revealing_lez" => {
+                    require_payload(
+                        "SDK revealing claim transition",
+                        row.payload_version,
+                        i64::from(CLAIM_RECORD_SCHEMA_V1),
+                    )?;
+                    let preimage = decrypt_claim_material(&linked_material, accepted, key)?;
+                    let record: RevealingClaimTransitionRecordV1 =
+                        serde_json::from_str(&row.payload_json)?;
+                    let transition = record.revalidate(
+                        accepted,
+                        coordinator,
+                        &intent_record,
+                        predecessor,
+                        preimage,
+                    )?;
+                    transition
+                        .apply_to(accepted.agreement(), coordinator, predecessor)
+                        .map_err(StoreError::from)
+                }
+                "followup_zcash" => {
+                    require_payload(
+                        "SDK follow-up claim transition",
+                        row.payload_version,
+                        i64::from(CLAIM_RECORD_SCHEMA_V1),
+                    )?;
+                    let record: FollowupClaimTransitionRecordV1 =
+                        serde_json::from_str(&row.payload_json)?;
+                    let transition =
+                        record.revalidate(accepted, coordinator, &intent_record, predecessor)?;
+                    transition
+                        .apply_to(accepted.agreement(), coordinator, predecessor)
+                        .map_err(StoreError::from)
+                }
+                _ => Err(StoreError::InvalidZecRecoveryState),
+            }
+        }
+        (None, Some(row)) if row.committed_revision == committed_sql => {
+            match row.transition_kind.as_str() {
+                "observed_revealing_lez" => {
+                    if row.material_created_revision != Some(committed_sql) {
+                        return Err(StoreError::InvalidZecRecoveryState);
+                    }
+                    require_payload(
+                        "SDK observed revealing claim transition",
+                        row.payload_version,
+                        i64::from(CLAIM_RECORD_SCHEMA_V1),
+                    )?;
+                    let material = load_claim_material_row(connection, role, swap_id)?
+                        .ok_or(StoreError::MissingZecClaimMaterial)?;
+                    if material.created_revision != committed_sql
+                        || claim_material_purpose(&material.purpose)?
+                            != ClaimMaterialPurpose::ObservedFollowUpClaim
+                    {
+                        return Err(StoreError::InvalidZecRecoveryState);
+                    }
+                    let preimage = decrypt_claim_material(&material, accepted, key)?;
+                    let record: ObservedRevealingClaimTransitionRecordV1 =
+                        serde_json::from_str(&row.payload_json)?;
+                    let transition =
+                        record.revalidate(accepted, coordinator, predecessor, preimage)?;
+                    transition
+                        .apply_to(accepted.agreement(), coordinator, predecessor)
+                        .map_err(StoreError::from)
+                }
+                "observed_followup_zcash" => {
+                    if row.material_created_revision.is_some() {
+                        return Err(StoreError::InvalidZecRecoveryState);
+                    }
+                    require_payload(
+                        "SDK observed follow-up claim transition",
+                        row.payload_version,
+                        i64::from(CLAIM_RECORD_SCHEMA_V1),
+                    )?;
+                    let record: ObservedFollowupClaimTransitionRecordV1 =
+                        serde_json::from_str(&row.payload_json)?;
+                    let transition = record.revalidate(accepted, coordinator, predecessor)?;
+                    transition
+                        .apply_to(accepted.agreement(), coordinator, predecessor)
+                        .map_err(StoreError::from)
+                }
+                _ => Err(StoreError::InvalidZecRecoveryState),
+            }
+        }
+        _ => Err(StoreError::InvalidZecRecoveryState),
+    }
 }
 
 fn require_payload(kind: &'static str, version: i64, expected: i64) -> Result<(), StoreError> {

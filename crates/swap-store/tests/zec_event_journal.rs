@@ -381,7 +381,7 @@ fn legacy_v1_table_migrates_and_future_versions_fail_explicitly() {
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        8
+        9
     );
     for table in [
         "zec_sdk_agreements",
@@ -390,6 +390,10 @@ fn legacy_v1_table_migrates_and_future_versions_fail_explicitly() {
         "zec_sdk_maker_lock_intents",
         "zec_sdk_maker_lock_transitions",
         "zec_sdk_observed_maker_lock_transitions",
+        "zec_sdk_claim_materials",
+        "zec_sdk_claim_intents",
+        "zec_sdk_owned_claim_transitions",
+        "zec_sdk_observed_claim_transitions",
     ] {
         let present: bool = connection
             .query_row(
@@ -398,7 +402,7 @@ fn legacy_v1_table_migrates_and_future_versions_fail_explicitly() {
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(present, "schema-v8 table {table} must exist");
+        assert!(present, "schema-v9 table {table} must exist");
     }
     drop(connection);
 

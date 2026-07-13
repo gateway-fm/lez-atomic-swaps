@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 async-trait = "0.1.89"
+getrandom = "=0.3.4"
 lez-swap-core = { version = "0.1.0", path = "../swap-core" }
 lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk" }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
@@ -22,6 +23,7 @@ thiserror = "2.0.18"
 [dev-dependencies]
 tempfile = "3.27.0"
 secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
+sha2 = "=0.10.9"
 tokio = { version = "1.52.0", features = ["macros", "rt-multi-thread"] }
 zcash_primitives = { version = "=0.28.0", default-features = false, features = ["std"] }
 zcash_protocol = { version = "=0.9.0", default-features = false }

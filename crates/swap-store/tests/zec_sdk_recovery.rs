@@ -4,17 +4,20 @@ use lez_swap_store::SqliteZecRecoveryStore;
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract, CanonicalLezEscrowObservationV1,
     CanonicalLezEscrowRemovalV1, CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval,
-    CreateFirstLockOutcome, ExpectedBip199Output, FirstLockConfirmedEvidenceV1,
-    FirstLockDriveOutcome, FirstLockObservation, FirstLockPlanV1, FirstLockProjectionCommit,
-    FirstLockStepV1, LezAssetV1, LezChainIdentityV1, LezCustodySnapshotV1, LezEnvironmentV1,
-    LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort, LezFundInstructionV1,
-    LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezMakerLockObservationPort,
-    LezNodeRemovalSnapshotV1, LezNodeSnapshotV1, LezObservationTrackerError, LezStableTipV1,
-    LezTakerFirstLockObservationPort, MakerFundingEligibilityOutcome, MakerLockDriveOutcome,
-    MakerLockObservationV1, NegotiationChannel, NegotiationTranscriptV1, ObserveMakerLockOutcome,
+    ClaimPreimage, ClaimRecoveryStore, ClaimStepV1, CreateFirstLockOutcome, ExpectedBip199Output,
+    FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockObservation, FirstLockPlanV1,
+    FirstLockProjectionCommit, FirstLockStepV1, FollowupClaimEvidenceV1,
+    FollowupClaimObservationV1, LezAssetV1, LezChainIdentityV1, LezClaimPort, LezCustodySnapshotV1,
+    LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort,
+    LezFundInstructionV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1,
+    LezMakerLockObservationPort, LezNodeRemovalSnapshotV1, LezNodeSnapshotV1,
+    LezObservationTrackerError, LezStableTipV1, LezTakerFirstLockObservationPort,
+    MakerFundingEligibilityOutcome, MakerLockDriveOutcome, MakerLockObservationV1,
+    NegotiationChannel, NegotiationTranscriptV1, ObserveMakerLockOutcome,
     ObserveTakerFirstLockOutcome, ObservedTakerFirstLockTransitionRecordV1, OfferDiscovery,
-    PreparedFirstLockSubmissionV1, RecoveryStore, TakerFirstLockObservationV1,
-    TransparentFundingRequest, TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
+    PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1, ProtectedClaimKey, RecoveryStore,
+    RevealingClaimEvidenceV1, RevealingClaimObservationV1, TakerFirstLockObservationV1,
+    TransparentFundingRequest, TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimPort,
     ZcashFirstLockPort, ZcashMakerLockObservationPort, ZcashNodeRemovalSnapshot, ZcashNodeSnapshot,
     ZcashObservationEventRecordV1, ZcashStableTip, ZcashTakerFirstLockObservationPort,
     ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecLezTermsV1,
@@ -25,6 +28,7 @@ use lez_zec_swap_sdk::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
+use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use zcash_primitives::block::BlockHash;
 use zcash_protocol::{
@@ -281,11 +285,701 @@ impl ZcashFirstLockPort for MakerHappyPort {
     }
 }
 
+#[derive(Clone, Debug)]
+struct SqliteClaimPort {
+    taker_observation: std::sync::Arc<std::sync::Mutex<TakerFirstLockObservationV1>>,
+    maker_observation: std::sync::Arc<std::sync::Mutex<MakerLockObservationV1>>,
+    lock_submissions: std::sync::Arc<std::sync::Mutex<Vec<FirstLockStepV1>>>,
+    claim_submissions: std::sync::Arc<std::sync::Mutex<Vec<ClaimStepV1>>>,
+    revealing_preimage: std::sync::Arc<std::sync::Mutex<Option<[u8; 32]>>>,
+    followup_confirmed: std::sync::Arc<std::sync::Mutex<bool>>,
+}
+
+impl Default for SqliteClaimPort {
+    fn default() -> Self {
+        Self {
+            taker_observation: std::sync::Arc::new(std::sync::Mutex::new(
+                TakerFirstLockObservationV1::Absent,
+            )),
+            maker_observation: std::sync::Arc::new(std::sync::Mutex::new(
+                MakerLockObservationV1::Absent,
+            )),
+            lock_submissions: std::sync::Arc::default(),
+            claim_submissions: std::sync::Arc::default(),
+            revealing_preimage: std::sync::Arc::default(),
+            followup_confirmed: std::sync::Arc::default(),
+        }
+    }
+}
+
+impl SqliteClaimPort {
+    fn expose_taker_lock(&self, observation: TakerFirstLockObservationV1) {
+        *self
+            .taker_observation
+            .lock()
+            .expect("taker observation lock") = observation;
+    }
+
+    fn expose_maker_lock(&self, evidence: FirstLockConfirmedEvidenceV1) {
+        *self
+            .maker_observation
+            .lock()
+            .expect("maker observation lock") = MakerLockObservationV1::Confirmed(evidence);
+    }
+
+    fn confirm_revealing_claim(&self, preimage: [u8; 32]) {
+        *self
+            .revealing_preimage
+            .lock()
+            .expect("revealing observation lock") = Some(preimage);
+    }
+
+    fn confirm_followup_claim(&self) {
+        *self
+            .followup_confirmed
+            .lock()
+            .expect("follow-up observation lock") = true;
+    }
+
+    fn claim_submissions(&self) -> Vec<ClaimStepV1> {
+        self.claim_submissions
+            .lock()
+            .expect("claim submissions lock")
+            .clone()
+    }
+
+    fn observe_lock(&self, submission: &PreparedFirstLockSubmissionV1) -> FirstLockObservation {
+        if self
+            .lock_submissions
+            .lock()
+            .expect("lock submissions lock")
+            .contains(&submission.step())
+        {
+            FirstLockObservation::Confirmed
+        } else {
+            FirstLockObservation::Absent
+        }
+    }
+
+    fn submit_lock(&self, submission: &PreparedFirstLockSubmissionV1) {
+        let mut submissions = self.lock_submissions.lock().expect("lock submissions lock");
+        if !submissions.contains(&submission.step()) {
+            submissions.push(submission.step());
+        }
+    }
+
+    fn revealing_observation(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<RevealingClaimObservationV1, TestPortError> {
+        let preimage = *self
+            .revealing_preimage
+            .lock()
+            .expect("revealing observation lock");
+        preimage.map_or(Ok(RevealingClaimObservationV1::Absent), |preimage| {
+            RevealingClaimEvidenceV1::new(
+                agreement,
+                [0xc1; 32],
+                "sqlite-lez-revealing-claim",
+                100,
+                ClaimPreimage::new(preimage),
+            )
+            .map(RevealingClaimObservationV1::Confirmed)
+            .map_err(|_| TestPortError("invalid revealing claim fixture"))
+        })
+    }
+
+    fn followup_observation(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<FollowupClaimObservationV1, TestPortError> {
+        if *self
+            .followup_confirmed
+            .lock()
+            .expect("follow-up observation lock")
+        {
+            FollowupClaimEvidenceV1::new(agreement, [0xc2; 32], "sqlite-zcash-followup-claim", 100)
+                .map(FollowupClaimObservationV1::Confirmed)
+                .map_err(|_| TestPortError("invalid follow-up claim fixture"))
+        } else {
+            Ok(FollowupClaimObservationV1::Absent)
+        }
+    }
+}
+
+#[async_trait]
+impl LezTakerFirstLockObservationPort for SqliteClaimPort {
+    type Error = TestPortError;
+
+    async fn observe_taker_first_lock(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        _previous: Option<&CanonicalLezEscrowObservationV1>,
+    ) -> Result<TakerFirstLockObservationV1, Self::Error> {
+        Ok(self
+            .taker_observation
+            .lock()
+            .expect("taker observation lock")
+            .clone())
+    }
+}
+
+#[async_trait]
+impl ZcashTakerFirstLockObservationPort for SqliteClaimPort {
+    type Error = TestPortError;
+
+    async fn observe_taker_first_lock(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<TakerFirstLockObservationV1, Self::Error> {
+        Ok(self
+            .taker_observation
+            .lock()
+            .expect("taker observation lock")
+            .clone())
+    }
+}
+
+#[async_trait]
+impl LezMakerLockObservationPort for SqliteClaimPort {
+    type Error = TestPortError;
+
+    async fn observe_maker_lock(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<MakerLockObservationV1, Self::Error> {
+        Ok(self
+            .maker_observation
+            .lock()
+            .expect("maker observation lock")
+            .clone())
+    }
+}
+
+#[async_trait]
+impl ZcashMakerLockObservationPort for SqliteClaimPort {
+    type Error = TestPortError;
+
+    async fn observe_maker_lock(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<MakerLockObservationV1, Self::Error> {
+        Ok(self
+            .maker_observation
+            .lock()
+            .expect("maker observation lock")
+            .clone())
+    }
+}
+
+#[async_trait]
+impl LezFirstLockPort for SqliteClaimPort {
+    type Error = TestPortError;
+
+    async fn observe_first_lock(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<FirstLockObservation, Self::Error> {
+        Ok(self.observe_lock(submission))
+    }
+
+    async fn submit_first_lock(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<(), Self::Error> {
+        self.submit_lock(submission);
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ZcashFirstLockPort for SqliteClaimPort {
+    type Error = TestPortError;
+
+    async fn observe_first_lock(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<FirstLockObservation, Self::Error> {
+        Ok(self.observe_lock(submission))
+    }
+
+    async fn submit_first_lock(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<(), Self::Error> {
+        self.submit_lock(submission);
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl LezClaimPort for SqliteClaimPort {
+    type Error = TestPortError;
+
+    async fn prepare_revealing_claim(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        preimage: &ClaimPreimage,
+    ) -> Result<PreparedClaimSubmissionV1, Self::Error> {
+        let mut exact = b"sqlite-lez-claim:".to_vec();
+        exact.extend_from_slice(preimage.expose_secret());
+        PreparedClaimSubmissionV1::new(ClaimStepV1::RevealingLez, [0xc1; 32], exact)
+            .map_err(|_| TestPortError("invalid revealing submission fixture"))
+    }
+
+    async fn observe_prepared_revealing_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        if prepared.expected_submission_id() != &[0xc1; 32] {
+            return Err(TestPortError("substituted revealing claim identity"));
+        }
+        self.revealing_observation(agreement)
+    }
+
+    async fn observe_counterparty_revealing_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        self.revealing_observation(agreement)
+    }
+
+    async fn submit_revealing_claim(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<(), Self::Error> {
+        if !prepared
+            .exact_submission()
+            .starts_with(b"sqlite-lez-claim:")
+        {
+            return Err(TestPortError("substituted revealing claim bytes"));
+        }
+        self.claim_submissions
+            .lock()
+            .expect("claim submissions lock")
+            .push(ClaimStepV1::RevealingLez);
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ZcashClaimPort for SqliteClaimPort {
+    type Error = TestPortError;
+
+    async fn prepare_followup_claim(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        preimage: &ClaimPreimage,
+    ) -> Result<PreparedClaimSubmissionV1, Self::Error> {
+        let mut exact = b"sqlite-zec-claim:".to_vec();
+        exact.extend_from_slice(preimage.expose_secret());
+        PreparedClaimSubmissionV1::new(ClaimStepV1::FollowupZcash, [0xc2; 32], exact)
+            .map_err(|_| TestPortError("invalid follow-up submission fixture"))
+    }
+
+    async fn observe_prepared_followup_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<FollowupClaimObservationV1, Self::Error> {
+        if prepared.expected_submission_id() != &[0xc2; 32] {
+            return Err(TestPortError("substituted follow-up claim identity"));
+        }
+        self.followup_observation(agreement)
+    }
+
+    async fn observe_counterparty_followup_claim(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<FollowupClaimObservationV1, Self::Error> {
+        self.followup_observation(agreement)
+    }
+
+    async fn submit_followup_claim(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<(), Self::Error> {
+        if !prepared
+            .exact_submission()
+            .starts_with(b"sqlite-zec-claim:")
+        {
+            return Err(TestPortError("substituted follow-up claim bytes"));
+        }
+        self.claim_submissions
+            .lock()
+            .expect("claim submissions lock")
+            .push(ClaimStepV1::FollowupZcash);
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("{0}")]
 struct TestPortError(&'static str);
 
 type TestSdk = ZecPairSdk<NoDiscovery, FixedNegotiation, NoChain, NoChain, SqliteZecRecoveryStore>;
+
+type ClaimActive = ActiveZecSwap<SqliteClaimPort, SqliteClaimPort, SqliteZecRecoveryStore>;
+
+#[tokio::test]
+async fn schema_v9_claim_journal_completes_and_reopens_independent_actors_in_both_directions() {
+    for (id, direction, first_claimant, secret) in [
+        (
+            "sqlite-v9-claim-forward",
+            SwapDirection::TakerSellsForeign,
+            Participant::Taker,
+            [0x91; 32],
+        ),
+        (
+            "sqlite-v9-claim-reverse",
+            SwapDirection::TakerSellsLez,
+            Participant::Maker,
+            [0x92; 32],
+        ),
+    ] {
+        assert_schema_v9_claim_direction(id, direction, first_claimant, secret).await;
+    }
+}
+
+async fn assert_schema_v9_claim_direction(
+    id: &str,
+    direction: SwapDirection,
+    first_claimant: Participant,
+    secret: [u8; 32],
+) {
+    let data = TempDir::new().expect("isolated claim recovery directory");
+    let maker_path = data.path().join("maker.sqlite3");
+    let taker_path = data.path().join("taker.sqlite3");
+    let wire = agreement_wire_direction_with_digest(
+        id,
+        FixtureVariant::Local,
+        direction,
+        Sha256::digest(secret).into(),
+    );
+    let port = SqliteClaimPort::default();
+    let maker_store = claim_store(&maker_path, Participant::Maker);
+    let taker_store = claim_store(&taker_path, Participant::Taker);
+    let maker_sdk = claim_sdk(Participant::Maker, port.clone(), maker_store.clone());
+    let taker_sdk = claim_sdk(Participant::Taker, port.clone(), taker_store.clone());
+    let maker_terms = accept(&wire, Participant::Maker);
+    let taker_terms = accept(&wire, Participant::Taker);
+    let mut maker = if first_claimant == Participant::Maker {
+        maker_sdk
+            .activate_with_claim_preimage(maker_terms, ClaimPreimage::new(secret))
+            .await
+            .expect("maker protects activation preimage")
+    } else {
+        maker_sdk
+            .activate(maker_terms)
+            .await
+            .expect("maker activation")
+    };
+    let mut taker = if first_claimant == Participant::Taker {
+        taker_sdk
+            .activate_with_claim_preimage(taker_terms, ClaimPreimage::new(secret))
+            .await
+            .expect("taker protects activation preimage")
+    } else {
+        taker_sdk
+            .activate(taker_terms)
+            .await
+            .expect("taker activation")
+    };
+
+    drive_sqlite_claim_locks(direction, &port, &mut maker, &mut taker).await;
+    drive_sqlite_claims(
+        id,
+        first_claimant,
+        secret,
+        &port,
+        (&maker_store, &taker_store),
+        &mut maker,
+        &mut taker,
+    )
+    .await;
+    assert_eq!((maker.status(), maker.revision()), (Phase::Completed, 4));
+    assert_eq!((taker.status(), taker.revision()), (Phase::Completed, 4));
+    assert_schema_v9_journal(&maker_path, id, "maker");
+    assert_schema_v9_journal(&taker_path, id, "taker");
+    assert_claim_plaintext_absent(&maker_path, secret);
+    assert_claim_plaintext_absent(&taker_path, secret);
+
+    drop(maker);
+    drop(taker);
+    drop(maker_sdk);
+    drop(taker_sdk);
+    let swap_id = SwapId::new(id).expect("swap ID");
+    let maker_replay = claim_sdk(
+        Participant::Maker,
+        port.clone(),
+        claim_store(&maker_path, Participant::Maker),
+    )
+    .resume_claim_capable(&swap_id)
+    .await
+    .expect("maker claim journal replay")
+    .expect("maker claim agreement");
+    let taker_recovery = claim_sdk(
+        Participant::Taker,
+        port,
+        claim_store(&taker_path, Participant::Taker),
+    )
+    .resume_claim_capable(&swap_id)
+    .await
+    .expect("taker claim journal replay")
+    .expect("taker claim agreement");
+    assert_eq!(
+        (maker_replay.status(), maker_replay.revision()),
+        (Phase::Completed, 4)
+    );
+    assert_eq!(
+        (taker_recovery.status(), taker_recovery.revision()),
+        (Phase::Completed, 4)
+    );
+    assert_claim_plaintext_absent(&maker_path, secret);
+    assert_claim_plaintext_absent(&taker_path, secret);
+}
+
+fn claim_store(path: &std::path::Path, participant: Participant) -> SqliteZecRecoveryStore {
+    SqliteZecRecoveryStore::open_claim_capable(
+        path,
+        participant,
+        ProtectedClaimKey::new("sqlite-test-claim-key-v1", [0x7a; 32])
+            .expect("deterministic test claim key"),
+    )
+    .expect("open claim-capable role-fixed store")
+}
+
+fn claim_sdk(
+    participant: Participant,
+    port: SqliteClaimPort,
+    store: SqliteZecRecoveryStore,
+) -> ZecPairSdk<
+    NoDiscovery,
+    FixedNegotiation,
+    SqliteClaimPort,
+    SqliteClaimPort,
+    SqliteZecRecoveryStore,
+> {
+    ZecPairSdk::new(
+        participant,
+        NoDiscovery,
+        FixedNegotiation,
+        port.clone(),
+        port,
+        store,
+    )
+}
+
+async fn drive_sqlite_claim_locks(
+    direction: SwapDirection,
+    port: &SqliteClaimPort,
+    maker: &mut ClaimActive,
+    taker: &mut ClaimActive,
+) {
+    let (taker_plan, taker_evidence) = taker_lock_fixture(direction);
+    taker
+        .stage_first_lock(taker_plan)
+        .await
+        .expect("durable taker first-lock intent");
+    drive_first_lock_until_ready(taker).await;
+    taker
+        .project_first_lock(taker_evidence)
+        .await
+        .expect("durable taker first-lock projection");
+    port.expose_taker_lock(match direction {
+        SwapDirection::TakerSellsForeign => TakerFirstLockObservationV1::CanonicalZcash(Box::new(
+            canonical_zcash_taker_lock(maker.agreement()),
+        )),
+        SwapDirection::TakerSellsLez => TakerFirstLockObservationV1::CanonicalLez(Box::new(
+            canonical_lez_taker_lock(maker.agreement()),
+        )),
+    });
+    maker
+        .observe_taker_first_lock()
+        .await
+        .expect("maker observes canonical taker lock");
+    let (maker_plan, _, maker_evidence) = maker_lock_fixture(direction);
+    drive_maker_lock_until_ready(maker, maker_plan).await;
+    maker
+        .project_maker_lock(maker_evidence.clone())
+        .await
+        .expect("durable maker second-lock projection");
+    port.expose_maker_lock(maker_evidence);
+    taker
+        .observe_maker_lock()
+        .await
+        .expect("taker observes canonical maker lock");
+    assert_eq!(maker.status(), Phase::BothLegsLocked);
+    assert_eq!(taker.status(), Phase::BothLegsLocked);
+}
+
+async fn drive_first_lock_until_ready(active: &mut ClaimActive) {
+    for _ in 0..3 {
+        if active
+            .drive_first_lock()
+            .await
+            .expect("drive exact taker lock")
+            == FirstLockDriveOutcome::ReadyForFundingProjection
+        {
+            return;
+        }
+    }
+    panic!("taker lock did not become ready")
+}
+
+async fn drive_maker_lock_until_ready(active: &mut ClaimActive, plan: FirstLockPlanV1) {
+    for _ in 0..3 {
+        if active
+            .drive_maker_lock(plan.clone())
+            .await
+            .expect("drive exact maker lock")
+            == MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection)
+        {
+            return;
+        }
+    }
+    panic!("maker lock did not become ready")
+}
+
+async fn drive_sqlite_claims(
+    id: &str,
+    first_claimant: Participant,
+    secret: [u8; 32],
+    port: &SqliteClaimPort,
+    stores: (&SqliteZecRecoveryStore, &SqliteZecRecoveryStore),
+    maker: &mut ClaimActive,
+    taker: &mut ClaimActive,
+) {
+    match first_claimant {
+        Participant::Maker => maker.drive_claim().await.expect("submit LEZ reveal"),
+        Participant::Taker => taker.drive_claim().await.expect("submit LEZ reveal"),
+    };
+    assert_eq!(port.claim_submissions(), vec![ClaimStepV1::RevealingLez]);
+    port.confirm_revealing_claim(secret);
+    maker
+        .drive_claim()
+        .await
+        .expect("maker observes LEZ reveal");
+    taker
+        .drive_claim()
+        .await
+        .expect("taker observes LEZ reveal");
+    let follower_store = match first_claimant {
+        Participant::Maker => stores.1,
+        Participant::Taker => stores.0,
+    };
+    let recovered = follower_store
+        .load_claim_material(&SwapId::new(id).expect("swap ID"))
+        .await
+        .expect("load observed protected preimage")
+        .expect("follower protected preimage");
+    assert_eq!(recovered.expose_secret(), &secret);
+    match first_claimant {
+        Participant::Maker => taker.drive_claim().await.expect("submit Zcash follow-up"),
+        Participant::Taker => maker.drive_claim().await.expect("submit Zcash follow-up"),
+    };
+    assert_eq!(
+        port.claim_submissions(),
+        vec![ClaimStepV1::RevealingLez, ClaimStepV1::FollowupZcash]
+    );
+    port.confirm_followup_claim();
+    maker
+        .drive_claim()
+        .await
+        .expect("maker observes completion");
+    taker
+        .drive_claim()
+        .await
+        .expect("taker observes completion");
+}
+
+fn assert_schema_v9_journal(path: &std::path::Path, id: &str, role: &str) {
+    let raw = Connection::open(path).expect("inspect schema-v9 journal");
+    let version: i64 = raw
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("schema version");
+    assert_eq!(version, 9);
+    let active_revision: i64 = raw
+        .query_row(
+            "SELECT active_revision FROM zec_sdk_agreements
+             WHERE local_role = ?1 AND swap_id = ?2",
+            params![role, id],
+            |row| row.get(0),
+        )
+        .expect("active revision");
+    assert_eq!(active_revision, 4);
+    let protected_material_bytes: i64 = raw
+        .query_row(
+            "SELECT length(ciphertext) FROM zec_sdk_claim_materials
+             WHERE local_role = ?1 AND swap_id = ?2",
+            params![role, id],
+            |row| row.get(0),
+        )
+        .expect("protected activation or observed material");
+    assert!(protected_material_bytes > 16);
+    let (closed_revision, protected_submission_bytes): (i64, i64) = raw
+        .query_row(
+            "SELECT closed_revision, length(protected_ciphertext)
+             FROM zec_sdk_claim_intents
+             WHERE local_role = ?1 AND swap_id = ?2",
+            params![role, id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("closed claim intent with protected exact payload");
+    assert!(matches!(closed_revision, 3 | 4));
+    assert!(protected_submission_bytes > 16);
+    let revisions: String = raw
+        .query_row(
+            "SELECT group_concat(committed_revision, ',') FROM (
+                SELECT committed_revision FROM zec_sdk_first_lock_transitions
+                    WHERE local_role = ?1 AND swap_id = ?2
+                UNION ALL SELECT committed_revision FROM zec_sdk_maker_lock_transitions
+                    WHERE local_role = ?1 AND swap_id = ?2
+                UNION ALL SELECT committed_revision FROM zec_sdk_observed_maker_lock_transitions
+                    WHERE local_role = ?1 AND swap_id = ?2
+                UNION ALL SELECT committed_revision FROM zec_sdk_owned_claim_transitions
+                    WHERE local_role = ?1 AND swap_id = ?2
+                UNION ALL SELECT committed_revision FROM zec_sdk_observed_claim_transitions
+                    WHERE local_role = ?1 AND swap_id = ?2
+                ORDER BY committed_revision
+             )",
+            params![role, id],
+            |row| row.get(0),
+        )
+        .expect("unified revision journal");
+    assert_eq!(revisions, "1,2,3,4");
+}
+
+fn assert_claim_plaintext_absent(path: &std::path::Path, secret: [u8; 32]) {
+    let mut revealing = b"sqlite-lez-claim:".to_vec();
+    revealing.extend_from_slice(&secret);
+    let mut followup = b"sqlite-zec-claim:".to_vec();
+    followup.extend_from_slice(&secret);
+    for candidate in [
+        path.to_path_buf(),
+        std::path::PathBuf::from(format!("{}-wal", path.display())),
+    ] {
+        let Ok(bytes) = std::fs::read(&candidate) else {
+            continue;
+        };
+        for plaintext in [&secret[..], revealing.as_slice(), followup.as_slice()] {
+            assert!(
+                !bytes
+                    .windows(plaintext.len())
+                    .any(|window| window == plaintext),
+                "plaintext claim material leaked into {}",
+                candidate.display()
+            );
+        }
+    }
+}
 
 #[tokio::test]
 async fn agreement_replay_conflict_and_same_swap_role_isolation_are_durable() {
@@ -2490,6 +3184,25 @@ fn agreement_wire_direction_with_lez_amount(
     direction: SwapDirection,
     lez_amount: u128,
 ) -> Vec<u8> {
+    agreement_wire_direction_with_lez_amount_and_digest(id, variant, direction, lez_amount, [9; 32])
+}
+
+fn agreement_wire_direction_with_digest(
+    id: &str,
+    variant: FixtureVariant,
+    direction: SwapDirection,
+    digest: [u8; 32],
+) -> Vec<u8> {
+    agreement_wire_direction_with_lez_amount_and_digest(id, variant, direction, 42, digest)
+}
+
+fn agreement_wire_direction_with_lez_amount_and_digest(
+    id: &str,
+    variant: FixtureVariant,
+    direction: SwapDirection,
+    lez_amount: u128,
+    digest: [u8; 32],
+) -> Vec<u8> {
     let maker_secret = SecretKey::from_slice(&[1; 32]).expect("maker key");
     let taker_secret = SecretKey::from_slice(&[2; 32]).expect("taker key");
     let secp = Secp256k1::new();
@@ -2505,7 +3218,6 @@ fn agreement_wire_direction_with_lez_amount(
     let onchain_swap_id = derive_lez_swap_id_v1(id.as_bytes());
     let metadata_account = derive_lez_metadata_account_v1(&escrow_program, &onchain_swap_id);
     let custody_account = derive_lez_native_custody_account_v1(&escrow_program, &onchain_swap_id);
-    let digest = [9; 32];
     let binding = ZecSwapBinding::new(
         ZecProfileId::DeterministicLocalV1,
         ExpectedBip199Output::new(

@@ -8,16 +8,16 @@ pub use zec_recovery::SqliteZecRecoveryStore;
 
 use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId};
 use lez_zec_swap_sdk::{
-    FirstLockRecordError, MakerLockError, MakerLockRecordError, ObservationRecordError,
-    ObservedMakerLockError, ObservedTakerFirstLockTransitionError, ZcashObservationEventRecordV1,
-    ZecAgreementV1Error, ZecBindingRecordError, ZecSwapBinding, ZecSwapBindingRecordV1,
-    revalidate_historical_event,
+    ClaimError, ClaimRecordError, FirstLockRecordError, MakerLockError, MakerLockRecordError,
+    ObservationRecordError, ObservedMakerLockError, ObservedTakerFirstLockTransitionError,
+    ProtectedClaimError, ZcashObservationEventRecordV1, ZecAgreementV1Error, ZecBindingRecordError,
+    ZecSwapBinding, ZecSwapBindingRecordV1, revalidate_historical_event,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 8;
+const DATABASE_SCHEMA_VERSION: i64 = 9;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_BINDING_PAYLOAD_VERSION: i64 = 1;
@@ -279,6 +279,18 @@ pub enum StoreError {
     /// A taker-local maker-lock observation record failed revalidation.
     #[error("persisted taker maker-lock observation is invalid")]
     ObservedMakerLock(#[from] ObservedMakerLockError),
+    /// A secret-free durable claim record failed full context revalidation.
+    #[error("persisted SDK claim record is invalid")]
+    ClaimRecord(#[from] ClaimRecordError),
+    /// A durable claim transition cannot apply to the reconstructed aggregate.
+    #[error("persisted SDK claim transition is invalid")]
+    Claim(#[from] ClaimError),
+    /// A protected claim envelope could not be authenticated or decoded.
+    #[error("protected SDK claim material is invalid")]
+    ProtectedClaim(#[from] ProtectedClaimError),
+    /// The operating system could not provide a fresh claim-envelope nonce.
+    #[error("claim nonce generation failed")]
+    ClaimEntropy,
     /// The database was created by a newer unsupported application version.
     #[error("unsupported SQLite schema version {0}")]
     UnsupportedDatabaseVersion(i64),
@@ -325,6 +337,18 @@ pub enum StoreError {
     /// A first-lock transition has no matching retained intent.
     #[error("SDK first-lock intent does not exist")]
     MissingZecFirstLockIntent,
+    /// A claim-capable operation was attempted on a store opened without a key.
+    #[error("SDK claim recovery key is unavailable")]
+    MissingZecClaimKey,
+    /// A claim transition or exact payload has no matching retained material.
+    #[error("SDK claim recovery material does not exist")]
+    MissingZecClaimMaterial,
+    /// A claim transition has no matching retained intent.
+    #[error("SDK claim intent does not exist")]
+    MissingZecClaimIntent,
+    /// An exact claim predecessor slot contains different evidence.
+    #[error("SDK claim transition conflicts with durable evidence")]
+    ConflictingZecClaimTransition,
     /// An exact predecessor transition slot contains different evidence.
     #[error("SDK first-lock transition conflicts with durable evidence")]
     ConflictingZecFirstLockTransition,
@@ -1108,6 +1132,9 @@ fn migrate(connection: &mut Connection) -> Result<(), StoreError> {
     Ok(())
 }
 
+// The schema is intentionally kept in one atomic declarative batch so every
+// supported legacy database receives the same referential graph or none of it.
+#[allow(clippy::too_many_lines)]
 fn migrate_zec_sdk_recovery(transaction: &rusqlite::Transaction<'_>) -> Result<(), StoreError> {
     transaction.execute_batch(
         "
@@ -1204,6 +1231,118 @@ fn migrate_zec_sdk_recovery(transaction: &rusqlite::Transaction<'_>) -> Result<(
             UNIQUE (local_role, swap_id, committed_revision),
             FOREIGN KEY (local_role, swap_id)
                 REFERENCES zec_sdk_agreements(local_role, swap_id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS zec_sdk_claim_materials (
+            local_role          TEXT NOT NULL CHECK (local_role IN ('maker', 'taker')),
+            swap_id             TEXT NOT NULL,
+            purpose             TEXT NOT NULL CHECK (
+                purpose IN ('local_first_claim', 'observed_followup_claim')
+            ),
+            created_revision    INTEGER NOT NULL CHECK (created_revision >= 0),
+            envelope_version    INTEGER NOT NULL CHECK (envelope_version > 0),
+            ciphertext          BLOB NOT NULL CHECK (length(ciphertext) = 48),
+            nonce               BLOB NOT NULL CHECK (length(nonce) = 24),
+            key_id              TEXT NOT NULL CHECK (
+                length(CAST(key_id AS BLOB)) BETWEEN 1 AND 128
+            ),
+            fingerprint         BLOB NOT NULL CHECK (length(fingerprint) = 32),
+            PRIMARY KEY (local_role, swap_id),
+            UNIQUE (local_role, swap_id, created_revision),
+            UNIQUE (key_id, nonce),
+            FOREIGN KEY (local_role, swap_id)
+                REFERENCES zec_sdk_agreements(local_role, swap_id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS zec_sdk_claim_intents (
+            local_role          TEXT NOT NULL CHECK (local_role IN ('maker', 'taker')),
+            swap_id             TEXT NOT NULL,
+            staged_revision     INTEGER NOT NULL CHECK (staged_revision >= 0),
+            material_created_revision INTEGER NOT NULL CHECK (
+                material_created_revision >= 0
+                AND material_created_revision <= staged_revision
+            ),
+            payload_version     INTEGER NOT NULL CHECK (payload_version > 0),
+            payload_json        TEXT NOT NULL,
+            protected_version   INTEGER NOT NULL CHECK (protected_version > 0),
+            protected_ciphertext BLOB NOT NULL CHECK (
+                length(protected_ciphertext) BETWEEN 17 AND 2000016
+            ),
+            protected_nonce     BLOB NOT NULL CHECK (length(protected_nonce) = 24),
+            protected_key_id    TEXT NOT NULL CHECK (
+                length(CAST(protected_key_id AS BLOB)) BETWEEN 1 AND 128
+            ),
+            protected_fingerprint BLOB NOT NULL CHECK (
+                length(protected_fingerprint) = 32
+            ),
+            closed_revision     INTEGER CHECK (
+                closed_revision IS NULL OR closed_revision > staged_revision
+            ),
+            PRIMARY KEY (local_role, swap_id),
+            UNIQUE (local_role, swap_id, staged_revision),
+            UNIQUE (protected_key_id, protected_nonce),
+            FOREIGN KEY (local_role, swap_id)
+                REFERENCES zec_sdk_agreements(local_role, swap_id) ON DELETE CASCADE,
+            FOREIGN KEY (local_role, swap_id, material_created_revision)
+                REFERENCES zec_sdk_claim_materials(
+                    local_role, swap_id, created_revision
+                ) ON DELETE CASCADE
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS zec_sdk_open_claim_intents
+            ON zec_sdk_claim_intents (local_role, swap_id)
+            WHERE closed_revision IS NULL;
+        CREATE TABLE IF NOT EXISTS zec_sdk_owned_claim_transitions (
+            local_role          TEXT NOT NULL CHECK (local_role IN ('maker', 'taker')),
+            swap_id             TEXT NOT NULL,
+            transition_kind     TEXT NOT NULL CHECK (
+                transition_kind IN ('revealing_lez', 'followup_zcash')
+            ),
+            predecessor_revision INTEGER NOT NULL CHECK (predecessor_revision >= 0),
+            committed_revision  INTEGER NOT NULL CHECK (
+                committed_revision = predecessor_revision + 1
+            ),
+            intent_staged_revision INTEGER NOT NULL CHECK (
+                intent_staged_revision >= 0
+                AND intent_staged_revision <= predecessor_revision
+            ),
+            payload_version     INTEGER NOT NULL CHECK (payload_version > 0),
+            payload_json        TEXT NOT NULL,
+            PRIMARY KEY (local_role, swap_id, predecessor_revision),
+            UNIQUE (local_role, swap_id, committed_revision),
+            UNIQUE (local_role, swap_id, intent_staged_revision),
+            FOREIGN KEY (local_role, swap_id)
+                REFERENCES zec_sdk_agreements(local_role, swap_id) ON DELETE CASCADE,
+            FOREIGN KEY (local_role, swap_id, intent_staged_revision)
+                REFERENCES zec_sdk_claim_intents(
+                    local_role, swap_id, staged_revision
+                ) ON DELETE CASCADE
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS zec_sdk_observed_claim_transitions (
+            local_role          TEXT NOT NULL CHECK (local_role IN ('maker', 'taker')),
+            swap_id             TEXT NOT NULL,
+            transition_kind     TEXT NOT NULL CHECK (
+                transition_kind IN ('observed_revealing_lez', 'observed_followup_zcash')
+            ),
+            predecessor_revision INTEGER NOT NULL CHECK (predecessor_revision >= 0),
+            committed_revision  INTEGER NOT NULL CHECK (
+                committed_revision = predecessor_revision + 1
+            ),
+            material_created_revision INTEGER,
+            payload_version     INTEGER NOT NULL CHECK (payload_version > 0),
+            payload_json        TEXT NOT NULL,
+            PRIMARY KEY (local_role, swap_id, predecessor_revision),
+            UNIQUE (local_role, swap_id, committed_revision),
+            CHECK (
+                (transition_kind = 'observed_revealing_lez'
+                    AND material_created_revision = committed_revision)
+                OR
+                (transition_kind = 'observed_followup_zcash'
+                    AND material_created_revision IS NULL)
+            ),
+            FOREIGN KEY (local_role, swap_id)
+                REFERENCES zec_sdk_agreements(local_role, swap_id) ON DELETE CASCADE,
+            FOREIGN KEY (local_role, swap_id, material_created_revision)
+                REFERENCES zec_sdk_claim_materials(
+                    local_role, swap_id, created_revision
+                ) ON DELETE CASCADE
         ) STRICT;
         ",
     )?;

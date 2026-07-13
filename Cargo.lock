@@ -1362,12 +1362,14 @@ name = "lez-swap-store"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "getrandom 0.3.4",
  "lez-swap-core",
  "lez-zec-swap-sdk",
  "rusqlite",
  "secp256k1",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
