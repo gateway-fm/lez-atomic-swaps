@@ -8,29 +8,35 @@ use std::{
 
 use async_trait::async_trait;
 use lez_bridge_adapter::{
-    LezBridgeAdapter, LezBridgeObservationTransport, LezBridgeRefundTransport, LezBridgeTransport,
-    NativeRefundAdapterError, ObserveNativeEscrowError, PrepareNativeFirstLockError,
+    LezBridgeAdapter, LezBridgeClaimTransport, LezBridgeObservationTransport,
+    LezBridgeRefundTransport, LezBridgeTransport, NativeRefundAdapterError,
+    NativeRevealingClaimAdapterError, ObserveNativeEscrowError, PrepareNativeFirstLockError,
+    RevealingClaimSubmitOutcome,
 };
 use lez_bridge_protocol::{
     AccountIds, ChainClock, ChainPosition, ChainTip, DiscoveryWindow, EscrowMetadataFacts,
     EscrowObservationTarget, EscrowState, ExactTransactionBytes, FundingFoundFacts,
     FundingObservation, Hex32, InitializationFoundFacts, InitializationObservation, MessageContext,
-    NativeAmount, NativeCustodyFacts, NativeEscrowAccountFacts, NativeEscrowAccountObservation,
-    NativeEscrowTerms, NativeEscrowTermsInput, NativeFundInstructionFacts,
-    NativeInitializeInstructionFacts, NativeRefundFoundFacts, NativeRefundInstructionFacts,
-    NativeRefundObservation, NativeRefundObservationTarget, ObserveEscrowRequest,
-    ObserveEscrowResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
+    NativeAmount, NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
+    NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
+    NativeFundInstructionFacts, NativeInitializeInstructionFacts, NativeRefundFoundFacts,
+    NativeRefundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
+    ObserveEscrowRequest, ObserveEscrowResult, ObserveNativeRefundRequest,
+    ObserveNativeRefundResult, ObserveRevealingClaimRequest, ObserveRevealingClaimResult,
     ObservedTransactionFacts, Participant as BridgeParticipant, PrepareNativeEscrowRequest,
     PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
-    PreparedTransaction, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
-    SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
+    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PreparedTransaction, RequestId,
+    RevealingClaimFoundFacts, RevealingClaimObservation, RevealingClaimObservationTarget,
+    RevealingPreimage, RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
+    SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
 };
 use lez_swap_core::{Chain, LezUnixMilliseconds, Participant, SwapDirection, UnixSeconds};
 use lez_zec_swap_sdk::{
-    Bip199Contract, ExpectedBip199Output, FirstLockPlanV1, FirstLockStepV1, LezAssetV1,
-    LezChainIdentityV1, LezEnvironmentV1, NegotiationTranscriptV1, PreparedRefundSubmissionV1,
-    RefundEligibilityObservationV1, RefundError, RefundEvidenceV1, RefundFundingWaitReasonV1,
-    RefundObservationV1, RefundStepV1, RefundSubmitOutcomeV1, TakerFirstLockObservationV1,
+    Bip199Contract, ClaimPreimage, ClaimStepV1, ExpectedBip199Output, FirstLockPlanV1,
+    FirstLockStepV1, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, NegotiationTranscriptV1,
+    PreparedClaimSubmissionV1, PreparedRefundSubmissionV1, RefundEligibilityObservationV1,
+    RefundError, RefundEvidenceV1, RefundFundingWaitReasonV1, RefundObservationV1, RefundStepV1,
+    RefundSubmitOutcomeV1, RevealingClaimObservationV1, TakerFirstLockObservationV1,
     ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
     ZecAgreementRecordV1, ZecAgreementV1, ZecLezTermsV1, ZecParticipantIdentityV1,
     ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding,
@@ -170,6 +176,852 @@ impl LezBridgeRefundTransport for RefundTransport {
             transaction_id,
             SubmissionOutcome::Accepted,
         ))
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ClaimTransport {
+    prepare_requests: Arc<Mutex<Vec<PrepareRevealingClaimRequest>>>,
+    observe_requests: Arc<Mutex<Vec<ObserveRevealingClaimRequest>>>,
+    submit_requests: Arc<Mutex<Vec<SubmitTransactionRequest>>>,
+    observations: Arc<Mutex<VecDeque<ObserveRevealingClaimResult>>>,
+    behavior: ClaimBehavior,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+enum ClaimBehavior {
+    #[default]
+    Happy,
+    FailPrepare,
+    FailObserve,
+    FailSubmit,
+    WrongPrepareContext,
+    WrongObserveContext,
+    WrongSubmitContext,
+    WrongSubmitId,
+    ZeroPreparedId,
+}
+
+impl ClaimTransport {
+    fn new(observations: impl IntoIterator<Item = ObserveRevealingClaimResult>) -> Self {
+        Self {
+            prepare_requests: Arc::default(),
+            observe_requests: Arc::default(),
+            submit_requests: Arc::default(),
+            observations: Arc::new(Mutex::new(observations.into_iter().collect())),
+            behavior: ClaimBehavior::Happy,
+        }
+    }
+
+    fn with_behavior(mut self, behavior: ClaimBehavior) -> Self {
+        self.behavior = behavior;
+        self
+    }
+}
+
+#[async_trait]
+impl LezBridgeClaimTransport for ClaimTransport {
+    type Error = FakeError;
+
+    async fn prepare_revealing_claim(
+        &self,
+        request: PrepareRevealingClaimRequest,
+    ) -> Result<PrepareRevealingClaimResult, Self::Error> {
+        let mut context = request.context.clone();
+        self.prepare_requests
+            .lock()
+            .expect("claim prepare log")
+            .push(request);
+        if matches!(self.behavior, ClaimBehavior::FailPrepare) {
+            return Err(FakeError);
+        }
+        if matches!(self.behavior, ClaimBehavior::WrongPrepareContext) {
+            context.request_id = RequestId::new("wrong-claim-prepare-context").expect("id");
+        }
+        let claim = if matches!(self.behavior, ClaimBehavior::ZeroPreparedId) {
+            PreparedTransaction::new(
+                TransactionId::from_bytes([0; 32]),
+                ExactTransactionBytes::new(vec![0xca, 0xfe]).expect("claim bytes"),
+            )
+        } else {
+            prepared_claim_transaction()
+        };
+        Ok(PrepareRevealingClaimResult::new(context, claim))
+    }
+
+    async fn observe_revealing_claim(
+        &self,
+        request: ObserveRevealingClaimRequest,
+    ) -> Result<ObserveRevealingClaimResult, Self::Error> {
+        self.observe_requests
+            .lock()
+            .expect("claim observe log")
+            .push(request);
+        if matches!(self.behavior, ClaimBehavior::FailObserve) {
+            return Err(FakeError);
+        }
+        let mut response = self
+            .observations
+            .lock()
+            .expect("claim observations")
+            .pop_front()
+            .ok_or(FakeError)?;
+        if matches!(self.behavior, ClaimBehavior::WrongObserveContext) {
+            response.context.request_id =
+                RequestId::new("wrong-claim-observe-context").expect("id");
+        }
+        Ok(response)
+    }
+
+    async fn submit_transaction(
+        &self,
+        request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, Self::Error> {
+        self.submit_requests
+            .lock()
+            .expect("claim submit log")
+            .push(request.clone());
+        if matches!(self.behavior, ClaimBehavior::FailSubmit) {
+            return Err(FakeError);
+        }
+        let mut context = request.context;
+        if matches!(self.behavior, ClaimBehavior::WrongSubmitContext) {
+            context.request_id = RequestId::new("wrong-claim-submit-context").expect("id");
+        }
+        let transaction_id = if matches!(self.behavior, ClaimBehavior::WrongSubmitId) {
+            TransactionId::from_bytes([0x55; 32])
+        } else {
+            request.transaction.transaction_id
+        };
+        Ok(SubmitTransactionResult::new(
+            context,
+            transaction_id,
+            SubmissionOutcome::Accepted,
+        ))
+    }
+}
+
+#[tokio::test]
+async fn signed_claimant_prepares_observes_and_submits_exact_revealing_claim_once() {
+    let agreement = agreement();
+    let transport = ClaimTransport::new([claim_found_observation(
+        &agreement,
+        claim_context(Participant::Maker, "claim-observe-0001"),
+    )]);
+    let adapter = claim_adapter(transport.clone(), &agreement, Participant::Maker);
+    let preimage = ClaimPreimage::new([0x91; 32]);
+    let funding_id = TransactionId::from_bytes([0x22; 32]);
+
+    let prepared = adapter
+        .prepare_native_revealing_claim(
+            &agreement,
+            RequestId::new("claim-prepare-0001").expect("request id"),
+            funding_id,
+            &preimage,
+        )
+        .await
+        .expect("official agreement-bound claim");
+    assert_eq!(prepared.step(), ClaimStepV1::RevealingLez);
+    assert_eq!(prepared.expected_submission_id(), &[0x34; 32]);
+    assert_eq!(prepared.exact_submission(), &[0xca, 0xfe]);
+
+    let observed = adapter
+        .observe_prepared_native_revealing_claim(
+            &agreement,
+            RequestId::new("claim-observe-0001").expect("request id"),
+            &prepared,
+        )
+        .await
+        .expect("canonical exact revealing claim");
+    let RevealingClaimObservationV1::Confirmed(evidence) = observed else {
+        panic!("canonical claim must produce evidence")
+    };
+    assert_eq!(evidence.observed_submission_id(), &[0x34; 32]);
+    assert_eq!(evidence.preimage().expose_secret(), &[0x91; 32]);
+    assert_eq!(evidence.confirmations(), 2);
+
+    assert_eq!(
+        adapter
+            .submit_native_revealing_claim(
+                &agreement,
+                RequestId::new("claim-submit-0001").expect("request id"),
+                &prepared,
+            )
+            .await
+            .expect("one submit attempt"),
+        RevealingClaimSubmitOutcome::Accepted,
+    );
+
+    let prepare_requests = transport.prepare_requests.lock().expect("claim log");
+    assert_eq!(prepare_requests.len(), 1);
+    assert_eq!(prepare_requests[0].funding_transaction_id, funding_id);
+    assert_eq!(prepare_requests[0].preimage().expose_secret(), &[0x91; 32]);
+    assert!(!format!("{:?}", prepare_requests[0]).contains("145, 145"));
+    let observe_requests = transport.observe_requests.lock().expect("claim log");
+    assert!(matches!(
+        observe_requests[0].target,
+        RevealingClaimObservationTarget::Exact { claim_transaction_id }
+            if claim_transaction_id == TransactionId::from_bytes([0x34; 32])
+    ));
+    assert_eq!(
+        transport.submit_requests.lock().expect("claim log").len(),
+        1
+    );
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn revealing_claim_roles_and_discovery_hold_for_both_signed_directions() {
+    for (agreement, claimant, depositor, suffix) in [
+        (
+            agreement(),
+            Participant::Maker,
+            Participant::Taker,
+            "forward",
+        ),
+        (
+            agreement_for_direction(
+                LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility,
+                false,
+                SwapDirection::TakerSellsForeign,
+            ),
+            Participant::Taker,
+            Participant::Maker,
+            "reverse",
+        ),
+    ] {
+        let owner_transport = ClaimTransport::new([]);
+        let owner = claim_adapter(owner_transport.clone(), &agreement, claimant);
+        owner
+            .prepare_native_revealing_claim(
+                &agreement,
+                RequestId::new(format!("claim-owner-{suffix}")).expect("request id"),
+                TransactionId::from_bytes([0x22; 32]),
+                &ClaimPreimage::new([0x91; 32]),
+            )
+            .await
+            .expect("signed claimant prepares");
+        assert_eq!(
+            owner_transport.prepare_requests.lock().expect("log").len(),
+            1
+        );
+        assert!(matches!(
+            owner
+                .observe_counterparty_native_revealing_claim(
+                    &agreement,
+                    RequestId::new(format!("claim-owner-discovery-{suffix}")).expect("request id"),
+                    DiscoveryWindow::new(10, 3).expect("window"),
+                )
+                .await,
+            Err(NativeRevealingClaimAdapterError::DiscoveryRequiresDepositor)
+        ));
+
+        let prepared = prepared_claim_submission();
+        let observer_context = claim_context(depositor, &format!("claim-discovery-{suffix}"));
+        let observer_transport =
+            ClaimTransport::new([claim_found_observation(&agreement, observer_context)]);
+        let observer = claim_adapter(observer_transport.clone(), &agreement, depositor);
+        assert!(matches!(
+            observer
+                .prepare_native_revealing_claim(
+                    &agreement,
+                    RequestId::new(format!("claim-nonowner-prepare-{suffix}")).expect("request id"),
+                    TransactionId::from_bytes([0x22; 32]),
+                    &ClaimPreimage::new([0x91; 32]),
+                )
+                .await,
+            Err(NativeRevealingClaimAdapterError::WrongClaimant)
+        ));
+        assert!(matches!(
+            observer
+                .observe_prepared_native_revealing_claim(
+                    &agreement,
+                    RequestId::new(format!("claim-nonowner-exact-{suffix}")).expect("request id"),
+                    &prepared,
+                )
+                .await,
+            Err(NativeRevealingClaimAdapterError::ExactTargetRequiresClaimant)
+        ));
+        assert!(matches!(
+            observer
+                .submit_native_revealing_claim(
+                    &agreement,
+                    RequestId::new(format!("claim-nonowner-submit-{suffix}")).expect("request id"),
+                    &prepared,
+                )
+                .await,
+            Err(NativeRevealingClaimAdapterError::WrongClaimant)
+        ));
+        let window = DiscoveryWindow::new(10, 3).expect("window");
+        assert!(matches!(
+            observer
+                .observe_counterparty_native_revealing_claim(
+                    &agreement,
+                    RequestId::new(format!("claim-discovery-{suffix}")).expect("request id"),
+                    window,
+                )
+                .await,
+            Ok(RevealingClaimObservationV1::Confirmed(_))
+        ));
+        let requests = observer_transport.observe_requests.lock().expect("log");
+        assert_eq!(requests.len(), 1);
+        assert!(matches!(
+            requests[0].target,
+            RevealingClaimObservationTarget::DiscoverByTerms { window: actual }
+                if actual == window
+        ));
+        assert!(
+            observer_transport
+                .prepare_requests
+                .lock()
+                .expect("log")
+                .is_empty()
+        );
+        assert!(
+            observer_transport
+                .submit_requests
+                .lock()
+                .expect("log")
+                .is_empty()
+        );
+    }
+}
+
+#[tokio::test]
+async fn revealing_claim_absence_is_stable_only_for_exact_or_fully_covered_discovery() {
+    let agreement = agreement();
+    let stable_tip = ChainTip::new(Hex32::from_bytes([0x90; 32]), 12);
+    for (suffix, claim, before, after, expected) in [
+        (
+            "exact-absent",
+            RevealingClaimObservation::Absent,
+            stable_tip,
+            stable_tip,
+            "absent",
+        ),
+        (
+            "exact-unknown",
+            RevealingClaimObservation::UnknownOrPending,
+            stable_tip,
+            stable_tip,
+            "unstable",
+        ),
+        (
+            "exact-drift",
+            RevealingClaimObservation::Absent,
+            stable_tip,
+            ChainTip::new(Hex32::from_bytes([0x91; 32]), 13),
+            "unstable",
+        ),
+    ] {
+        let request_id = format!("claim-{suffix}");
+        let transport = ClaimTransport::new([ObserveRevealingClaimResult::new(
+            claim_context(Participant::Maker, &request_id),
+            before,
+            claim,
+            after,
+        )]);
+        let adapter = claim_adapter(transport, &agreement, Participant::Maker);
+        let result = adapter
+            .observe_prepared_native_revealing_claim(
+                &agreement,
+                RequestId::new(request_id).expect("request id"),
+                &prepared_claim_submission(),
+            )
+            .await
+            .expect("conservative exact absence");
+        match expected {
+            "absent" => assert!(matches!(result, RevealingClaimObservationV1::Absent)),
+            "unstable" => assert!(matches!(result, RevealingClaimObservationV1::Unstable)),
+            _ => unreachable!("fixed case"),
+        }
+    }
+
+    for (suffix, window, expected) in [
+        (
+            "covered",
+            DiscoveryWindow::new(10, 3).expect("window"),
+            "absent",
+        ),
+        (
+            "incomplete",
+            DiscoveryWindow::new(11, 3).expect("window"),
+            "unstable",
+        ),
+    ] {
+        let request_id = format!("claim-discovery-{suffix}");
+        let transport = ClaimTransport::new([ObserveRevealingClaimResult::new(
+            claim_context(Participant::Taker, &request_id),
+            stable_tip,
+            RevealingClaimObservation::Absent,
+            stable_tip,
+        )]);
+        let adapter = claim_adapter(transport, &agreement, Participant::Taker);
+        let result = adapter
+            .observe_counterparty_native_revealing_claim(
+                &agreement,
+                RequestId::new(request_id).expect("request id"),
+                window,
+            )
+            .await
+            .expect("bounded discovery absence");
+        match expected {
+            "absent" => assert!(matches!(result, RevealingClaimObservationV1::Absent)),
+            "unstable" => assert!(matches!(result, RevealingClaimObservationV1::Unstable)),
+            _ => unreachable!("fixed case"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ClaimMutation {
+    ResponseContext,
+    TipHash,
+    TipHeight,
+    TransactionId,
+    TransactionBytes,
+    NonPublic,
+    Signer,
+    Program,
+    Accounts,
+    SwapId,
+    Preimage,
+    AboveTip,
+    SameHeightWrongHash,
+    MetadataOwner,
+    MetadataAccount,
+    MetadataTerms,
+    MetadataStatus,
+    CustodyAccount,
+    CustodyOwner,
+    CustodyBalance,
+    DepthOverflow,
+}
+
+const ALL_CLAIM_MUTATIONS: [ClaimMutation; 21] = [
+    ClaimMutation::ResponseContext,
+    ClaimMutation::TipHash,
+    ClaimMutation::TipHeight,
+    ClaimMutation::TransactionId,
+    ClaimMutation::TransactionBytes,
+    ClaimMutation::NonPublic,
+    ClaimMutation::Signer,
+    ClaimMutation::Program,
+    ClaimMutation::Accounts,
+    ClaimMutation::SwapId,
+    ClaimMutation::Preimage,
+    ClaimMutation::AboveTip,
+    ClaimMutation::SameHeightWrongHash,
+    ClaimMutation::MetadataOwner,
+    ClaimMutation::MetadataAccount,
+    ClaimMutation::MetadataTerms,
+    ClaimMutation::MetadataStatus,
+    ClaimMutation::CustodyAccount,
+    ClaimMutation::CustodyOwner,
+    ClaimMutation::CustodyBalance,
+    ClaimMutation::DepthOverflow,
+];
+
+#[tokio::test]
+async fn revealing_claim_primitive_exact_account_tip_and_depth_mutations_fail_closed() {
+    let agreement = agreement();
+    for mutation in ALL_CLAIM_MUTATIONS {
+        let mut response = claim_found_observation(
+            &agreement,
+            claim_context(Participant::Maker, "claim-mutated"),
+        );
+        mutate_claim_observation(&mut response, mutation);
+        let transport = ClaimTransport::new([response]);
+        let adapter = claim_adapter(transport.clone(), &agreement, Participant::Maker);
+        let result = adapter
+            .observe_prepared_native_revealing_claim(
+                &agreement,
+                RequestId::new("claim-mutated").expect("request id"),
+                &prepared_claim_submission(),
+            )
+            .await;
+        assert!(
+            !matches!(result, Ok(RevealingClaimObservationV1::Confirmed(_))),
+            "mutation {mutation:?} must never produce evidence",
+        );
+        assert_eq!(transport.observe_requests.lock().expect("log").len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn discovered_revealing_claim_must_be_inside_the_caller_window() {
+    let agreement = agreement();
+    let mut response = claim_found_observation(
+        &agreement,
+        claim_context(Participant::Taker, "claim-outside-window"),
+    );
+    let RevealingClaimObservation::Found(found) = &mut response.claim else {
+        panic!("fixture contains a claim")
+    };
+    found.transaction.position.height = 9;
+    let transport = ClaimTransport::new([response]);
+    let adapter = claim_adapter(transport, &agreement, Participant::Taker);
+    assert!(matches!(
+        adapter
+            .observe_counterparty_native_revealing_claim(
+                &agreement,
+                RequestId::new("claim-outside-window").expect("request id"),
+                DiscoveryWindow::new(10, 3).expect("window"),
+            )
+            .await,
+        Err(NativeRevealingClaimAdapterError::InconsistentFacts)
+    ));
+}
+
+#[tokio::test]
+async fn revealing_claim_attempts_are_once_and_submit_uncertainty_is_unknown() {
+    let agreement = agreement();
+    let zero_funding_transport = ClaimTransport::new([]);
+    let zero_funding = claim_adapter(
+        zero_funding_transport.clone(),
+        &agreement,
+        Participant::Maker,
+    );
+    assert!(
+        zero_funding
+            .prepare_native_revealing_claim(
+                &agreement,
+                RequestId::new("claim-zero-funding").expect("request id"),
+                TransactionId::from_bytes([0; 32]),
+                &ClaimPreimage::new([0x91; 32]),
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        zero_funding_transport
+            .prepare_requests
+            .lock()
+            .expect("log")
+            .is_empty()
+    );
+
+    for (suffix, behavior) in [
+        ("transport", ClaimBehavior::FailPrepare),
+        ("context", ClaimBehavior::WrongPrepareContext),
+        ("identity", ClaimBehavior::ZeroPreparedId),
+    ] {
+        let transport = ClaimTransport::new([]).with_behavior(behavior);
+        let adapter = claim_adapter(transport.clone(), &agreement, Participant::Maker);
+        assert!(
+            adapter
+                .prepare_native_revealing_claim(
+                    &agreement,
+                    RequestId::new(format!("claim-prepare-{suffix}")).expect("request id"),
+                    TransactionId::from_bytes([0x22; 32]),
+                    &ClaimPreimage::new([0x91; 32]),
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(transport.prepare_requests.lock().expect("log").len(), 1);
+    }
+
+    for (suffix, behavior) in [
+        ("transport", ClaimBehavior::FailObserve),
+        ("context", ClaimBehavior::WrongObserveContext),
+    ] {
+        let transport = ClaimTransport::new([claim_found_observation(
+            &agreement,
+            claim_context(Participant::Maker, &format!("claim-observe-{suffix}")),
+        )])
+        .with_behavior(behavior);
+        let adapter = claim_adapter(transport.clone(), &agreement, Participant::Maker);
+        assert!(
+            adapter
+                .observe_prepared_native_revealing_claim(
+                    &agreement,
+                    RequestId::new(format!("claim-observe-{suffix}")).expect("request id"),
+                    &prepared_claim_submission(),
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(transport.observe_requests.lock().expect("log").len(), 1);
+    }
+
+    for (suffix, behavior) in [
+        ("transport", ClaimBehavior::FailSubmit),
+        ("context", ClaimBehavior::WrongSubmitContext),
+        ("identity", ClaimBehavior::WrongSubmitId),
+    ] {
+        let transport = ClaimTransport::new([]).with_behavior(behavior);
+        let adapter = claim_adapter(transport.clone(), &agreement, Participant::Maker);
+        assert_eq!(
+            adapter
+                .submit_native_revealing_claim(
+                    &agreement,
+                    RequestId::new(format!("claim-submit-{suffix}")).expect("request id"),
+                    &prepared_claim_submission(),
+                )
+                .await
+                .expect("uncertain submit is typed"),
+            RevealingClaimSubmitOutcome::Unknown,
+        );
+        assert_eq!(transport.submit_requests.lock().expect("log").len(), 1);
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn revealing_claim_wrong_step_runtime_environment_and_asset_fail_before_transport() {
+    let agreement = agreement();
+    let wrong_step =
+        PreparedClaimSubmissionV1::new(ClaimStepV1::FollowupZcash, [0x34; 32], vec![0xca, 0xfe])
+            .expect("independently valid wrong step");
+    let transport = ClaimTransport::new([]);
+    let adapter = claim_adapter(transport.clone(), &agreement, Participant::Maker);
+    assert!(matches!(
+        adapter
+            .submit_native_revealing_claim(
+                &agreement,
+                RequestId::new("claim-wrong-step").expect("request id"),
+                &wrong_step,
+            )
+            .await,
+        Err(NativeRevealingClaimAdapterError::WrongPreparedStep)
+    ));
+    assert!(transport.submit_requests.lock().expect("log").is_empty());
+
+    for (mutation, expected) in [
+        (RuntimeMutation::Channel, "chain"),
+        (RuntimeMutation::Genesis, "chain"),
+        (RuntimeMutation::Program, "program"),
+        (RuntimeMutation::Signer, "signer"),
+    ] {
+        let transport = ClaimTransport::new([]);
+        let mut descriptor = runtime(&agreement);
+        descriptor.sidecar_role = BridgeParticipant::Maker;
+        descriptor.signer_account_id =
+            Hex32::from_bytes(*agreement.lez_account(Participant::Maker));
+        match mutation {
+            RuntimeMutation::Channel => descriptor.channel_id = Hex32::from_bytes([0x71; 32]),
+            RuntimeMutation::Genesis => {
+                descriptor.genesis_block_hash = Hex32::from_bytes([0x72; 32]);
+            }
+            RuntimeMutation::Program => {
+                descriptor.escrow_program_id = Hex32::from_bytes([0x73; 32]);
+            }
+            RuntimeMutation::Signer => {
+                descriptor.signer_account_id = Hex32::from_bytes([0x74; 32]);
+            }
+        }
+        let adapter = LezBridgeAdapter::new(
+            transport.clone(),
+            RunId::new("native-run-0001").expect("run id"),
+            descriptor,
+            Participant::Maker,
+        )
+        .expect("matching role");
+        let error = adapter
+            .prepare_native_revealing_claim(
+                &agreement,
+                RequestId::new(format!("claim-runtime-{expected}")).expect("request id"),
+                TransactionId::from_bytes([0x22; 32]),
+                &ClaimPreimage::new([0x91; 32]),
+            )
+            .await
+            .expect_err("runtime drift fails closed");
+        match expected {
+            "chain" => assert!(matches!(
+                error,
+                NativeRevealingClaimAdapterError::ChainIdentityMismatch
+            )),
+            "program" => assert!(matches!(
+                error,
+                NativeRevealingClaimAdapterError::EscrowProgramMismatch
+            )),
+            "signer" => assert!(matches!(
+                error,
+                NativeRevealingClaimAdapterError::SignerAccountMismatch
+            )),
+            _ => unreachable!("fixed case"),
+        }
+        assert!(transport.prepare_requests.lock().expect("log").is_empty());
+    }
+
+    for (unsupported, expected) in [
+        (
+            agreement_for(LezEnvironmentV1::DeterministicLocalV0_2, false),
+            "environment",
+        ),
+        (
+            agreement_for(
+                LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility,
+                true,
+            ),
+            "asset",
+        ),
+    ] {
+        let claimant = unsupported.lez_claimant();
+        let transport = ClaimTransport::new([]);
+        let adapter = claim_adapter(transport.clone(), &unsupported, claimant);
+        let error = adapter
+            .prepare_native_revealing_claim(
+                &unsupported,
+                RequestId::new(format!("claim-unsupported-{expected}")).expect("request id"),
+                TransactionId::from_bytes([0x22; 32]),
+                &ClaimPreimage::new([0x91; 32]),
+            )
+            .await
+            .expect_err("unsupported terms fail closed");
+        match expected {
+            "environment" => assert!(matches!(
+                error,
+                NativeRevealingClaimAdapterError::IncompatibleEnvironment
+            )),
+            "asset" => assert!(matches!(
+                error,
+                NativeRevealingClaimAdapterError::UnsupportedAsset
+            )),
+            _ => unreachable!("fixed case"),
+        }
+        assert!(transport.prepare_requests.lock().expect("log").is_empty());
+    }
+}
+
+fn prepared_claim_submission() -> PreparedClaimSubmissionV1 {
+    PreparedClaimSubmissionV1::new(ClaimStepV1::RevealingLez, [0x34; 32], vec![0xca, 0xfe])
+        .expect("protected revealing claim")
+}
+
+fn prepared_claim_transaction() -> PreparedTransaction {
+    PreparedTransaction::new(
+        TransactionId::from_bytes([0x34; 32]),
+        ExactTransactionBytes::new(vec![0xca, 0xfe]).expect("claim bytes"),
+    )
+}
+
+fn claim_context(participant: Participant, request_id: &str) -> MessageContext {
+    refund_context(participant, request_id)
+}
+
+fn claim_adapter(
+    transport: ClaimTransport,
+    agreement: &ZecAgreementV1,
+    participant: Participant,
+) -> LezBridgeAdapter<ClaimTransport> {
+    let mut descriptor = runtime(agreement);
+    descriptor.sidecar_role = match participant {
+        Participant::Maker => BridgeParticipant::Maker,
+        Participant::Taker => BridgeParticipant::Taker,
+    };
+    descriptor.signer_account_id = Hex32::from_bytes(*agreement.lez_account(participant));
+    LezBridgeAdapter::new(
+        transport,
+        RunId::new("native-run-0001").expect("run id"),
+        descriptor,
+        participant,
+    )
+    .expect("matching claim actor")
+}
+
+fn claim_found_observation(
+    agreement: &ZecAgreementV1,
+    context: MessageContext,
+) -> ObserveRevealingClaimResult {
+    let terms = native_terms(agreement);
+    let tip = ChainTip::new(Hex32::from_bytes([0x90; 32]), 12);
+    let metadata = Hex32::from_bytes(*agreement.lez_terms().metadata_account());
+    let custody = Hex32::from_bytes(*agreement.lez_terms().custody_account());
+    let claimant = Hex32::from_bytes(*agreement.lez_account(agreement.lez_claimant()));
+    let program = Hex32::from_bytes(program_bytes(agreement.lez_terms().escrow_program_id()));
+    ObserveRevealingClaimResult::new(
+        context,
+        tip,
+        RevealingClaimObservation::found(RevealingClaimFoundFacts::new(
+            ObservedTransactionFacts::new(
+                TransactionId::from_bytes([0x34; 32]),
+                ExactTransactionBytes::new(vec![0xca, 0xfe]).expect("claim bytes"),
+                ChainPosition::new(Hex32::from_bytes([0x82; 32]), 11, 0),
+                AccountIds::new(vec![claimant]).expect("one claimant signer"),
+                true,
+            ),
+            NativeClaimInstructionFacts::new(
+                program,
+                AccountIds::new(vec![metadata, custody, claimant]).expect("claim accounts"),
+                Hex32::from_bytes(*agreement.onchain_swap_id()),
+                RevealingPreimage::new([0x91; 32]),
+            ),
+            EscrowMetadataFacts::from_native_terms(
+                metadata,
+                program,
+                custody,
+                &terms,
+                EscrowState::Claimed,
+            ),
+            NativeCustodyFacts::new(custody, terms.authenticated_transfer_program_id(), 0),
+        )),
+        tip,
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+fn mutate_claim_observation(response: &mut ObserveRevealingClaimResult, mutation: ClaimMutation) {
+    let RevealingClaimObservation::Found(found) = &mut response.claim else {
+        panic!("canonical fixture contains a claim")
+    };
+    match mutation {
+        ClaimMutation::ResponseContext => {
+            response.context.request_id = RequestId::new("wrong-claim-context").expect("id");
+        }
+        ClaimMutation::TipHash => {
+            response.tip_after.block_hash = Hex32::from_bytes([0x91; 32]);
+        }
+        ClaimMutation::TipHeight => response.tip_after.height += 1,
+        ClaimMutation::TransactionId => {
+            found.transaction.transaction_id = TransactionId::from_bytes([0x35; 32]);
+        }
+        ClaimMutation::TransactionBytes => {
+            found.transaction.exact_bytes =
+                ExactTransactionBytes::new(vec![0xde, 0xad]).expect("changed bytes");
+        }
+        ClaimMutation::NonPublic => found.transaction.is_public = false,
+        ClaimMutation::Signer => {
+            found.transaction.signer_account_ids =
+                AccountIds::new(vec![Hex32::from_bytes([0x92; 32])]).expect("signer");
+        }
+        ClaimMutation::Program => {
+            found.instruction.program_id = Hex32::from_bytes([0x93; 32]);
+        }
+        ClaimMutation::Accounts => {
+            found.instruction.ordered_account_ids =
+                AccountIds::new(vec![Hex32::from_bytes([0x94; 32])]).expect("accounts");
+        }
+        ClaimMutation::SwapId => {
+            found.instruction.swap_id = Hex32::from_bytes([0x95; 32]);
+        }
+        ClaimMutation::Preimage => {
+            found.instruction.preimage = RevealingPreimage::new([0x96; 32]);
+        }
+        ClaimMutation::AboveTip => found.transaction.position.height = 13,
+        ClaimMutation::SameHeightWrongHash => found.transaction.position.height = 12,
+        ClaimMutation::MetadataOwner => {
+            found.metadata.owner_program_id = Hex32::from_bytes([0x97; 32]);
+        }
+        ClaimMutation::MetadataAccount => {
+            found.metadata.account_id = Hex32::from_bytes([0x98; 32]);
+        }
+        ClaimMutation::MetadataTerms => {
+            found.metadata.terms_hash = Hex32::from_bytes([0x99; 32]);
+        }
+        ClaimMutation::MetadataStatus => found.metadata.status = EscrowState::Funded,
+        ClaimMutation::CustodyAccount => {
+            found.custody.account_id = Hex32::from_bytes([0x9a; 32]);
+        }
+        ClaimMutation::CustodyOwner => {
+            found.custody.owner_program_id = Hex32::from_bytes([0x9b; 32]);
+        }
+        ClaimMutation::CustodyBalance => found.custody.balance = NativeAmount::new(1),
+        ClaimMutation::DepthOverflow => {
+            response.tip_before.height = u64::MAX;
+            response.tip_after.height = u64::MAX;
+        }
     }
 }
 

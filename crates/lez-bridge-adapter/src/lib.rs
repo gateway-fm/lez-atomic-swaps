@@ -7,25 +7,30 @@ use lez_bridge_client::{BridgeClient, BridgeClientError};
 use lez_bridge_protocol::{
     AccountIds, DiscoveryWindow, EscrowMetadataFacts, EscrowObservationTarget, EscrowState,
     ExactTransactionBytes, FundingFoundFacts, FundingObservation, Hex32, InitializationFoundFacts,
-    InitializationObservation, MessageContext, NativeEscrowAccountFacts,
+    InitializationObservation, MessageContext, NativeCustodyFacts, NativeEscrowAccountFacts,
     NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
     NativeRefundFoundFacts, NativeRefundObservation, NativeRefundObservationTarget,
     ObserveEscrowRequest, ObserveEscrowResult, ObserveNativeRefundRequest,
-    ObserveNativeRefundResult, Participant as BridgeParticipant, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
-    PreparedTransaction, ProtocolValueError, RequestId, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
-    TransactionId,
+    ObserveNativeRefundResult, ObserveRevealingClaimRequest, ObserveRevealingClaimResult,
+    Participant as BridgeParticipant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
+    PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
+    PrepareRevealingClaimResult, PreparedTransaction, ProtocolValueError, RequestId,
+    RevealingClaimFoundFacts, RevealingClaimObservation, RevealingClaimObservationTarget,
+    RevealingPreimage, RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
+    SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
 };
 use lez_swap_core::{ChainPosition, LezUnixMilliseconds, Participant};
 use lez_zec_swap_sdk::{
-    CanonicalLezEscrowObservationV1, FirstLockIntentError, FirstLockPlanV1, FirstLockStepV1,
-    LezAssetV1, LezCustodySnapshotV1, LezEnvironmentV1, LezEscrowMetadataSnapshotV1,
-    LezEscrowStatusV1, LezFundInstructionV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1,
-    LezNodeSnapshotV1, LezObservationError, LezStableTipV1, PreparedFirstLockSubmissionV1,
+    CanonicalLezEscrowObservationV1, ClaimError, ClaimPreimage, ClaimStepV1, FirstLockIntentError,
+    FirstLockPlanV1, FirstLockStepV1, LezAssetV1, LezClaimInstructionV1, LezClaimNodeSnapshotV1,
+    LezClaimObservationError, LezClaimTransactionSnapshotV1, LezCustodySnapshotV1,
+    LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFundInstructionV1,
+    LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezNodeSnapshotV1, LezObservationError,
+    LezStableTipV1, PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1,
     PreparedRefundSubmissionV1, RefundEligibilityObservationV1, RefundError, RefundEvidenceV1,
     RefundFundingWaitReasonV1, RefundObservationV1, RefundStepV1, RefundSubmitOutcomeV1,
-    TakerFirstLockObservationV1, ZecAgreementV1,
+    RevealingClaimEvidenceV1, RevealingClaimObservationV1, TakerFirstLockObservationV1,
+    ZecAgreementV1,
 };
 use thiserror::Error;
 
@@ -126,6 +131,61 @@ impl LezBridgeRefundTransport for BridgeClient {
         request: ObserveNativeRefundRequest,
     ) -> Result<ObserveNativeRefundResult, Self::Error> {
         BridgeClient::observe_native_refund(self, request).await
+    }
+
+    async fn submit_transaction(
+        &self,
+        request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, Self::Error> {
+        BridgeClient::submit_transaction(self, request).await
+    }
+}
+
+/// One attempt at each native preimage-revealing claim operation.
+///
+/// This boundary deliberately does not implement the SDK's context-free
+/// `LezClaimPort`: durable request IDs and bounded discovery windows remain
+/// explicit caller-owned inputs.
+#[async_trait]
+pub trait LezBridgeClaimTransport: Send + Sync {
+    /// Concrete transport failure.
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Prepares one official claimant-signed native revealing claim.
+    async fn prepare_revealing_claim(
+        &self,
+        request: PrepareRevealingClaimRequest,
+    ) -> Result<PrepareRevealingClaimResult, Self::Error>;
+
+    /// Observes one exact or bounded terms-discovered revealing claim.
+    async fn observe_revealing_claim(
+        &self,
+        request: ObserveRevealingClaimRequest,
+    ) -> Result<ObserveRevealingClaimResult, Self::Error>;
+
+    /// Submits exact protected claim bytes through generic submit.
+    async fn submit_transaction(
+        &self,
+        request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, Self::Error>;
+}
+
+#[async_trait]
+impl LezBridgeClaimTransport for BridgeClient {
+    type Error = BridgeClientError;
+
+    async fn prepare_revealing_claim(
+        &self,
+        request: PrepareRevealingClaimRequest,
+    ) -> Result<PrepareRevealingClaimResult, Self::Error> {
+        BridgeClient::prepare_revealing_claim(self, request).await
+    }
+
+    async fn observe_revealing_claim(
+        &self,
+        request: ObserveRevealingClaimRequest,
+    ) -> Result<ObserveRevealingClaimResult, Self::Error> {
+        BridgeClient::observe_revealing_claim(self, request).await
     }
 
     async fn submit_transaction(
@@ -262,7 +322,7 @@ pub enum ObserveNativeEscrowError<E: std::error::Error + 'static> {
 /// Failure binding one native refund operation to the accepted agreement.
 #[derive(Debug, Error)]
 pub enum NativeRefundAdapterError<E: std::error::Error + 'static> {
-    /// Only the signed LEZ depositor may prepare or submit this refund.
+    /// Only the signed LEZ depositor may check eligibility, prepare, or submit this refund.
     #[error("local participant is not the signed LEZ refund owner")]
     WrongOwner,
     /// Exact durable refund lookup is reserved for the signed depositor.
@@ -289,8 +349,8 @@ pub enum NativeRefundAdapterError<E: std::error::Error + 'static> {
     /// Signed terms or durable bytes were invalid at the protocol boundary.
     #[error("signed LEZ refund values are invalid at the bridge boundary")]
     Protocol(#[source] ProtocolValueError),
-    /// A non-submit transport attempt failed with an unknown delivery outcome.
-    #[error("LEZ refund bridge outcome is unknown")]
+    /// A non-submit bridge attempt failed with an unknown delivery outcome.
+    #[error("LEZ refund bridge operation outcome is unknown")]
     Transport(#[source] E),
     /// Sidecar response did not echo the caller-owned context.
     #[error("LEZ refund bridge response context mismatch")]
@@ -310,6 +370,68 @@ pub enum NativeRefundAdapterError<E: std::error::Error + 'static> {
     /// SDK refund evidence or prepared-submission validation failed.
     #[error("LEZ refund evidence is invalid")]
     Refund(#[source] RefundError),
+}
+
+/// One conservative result from exactly one revealing-claim submission attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RevealingClaimSubmitOutcome {
+    /// The node accepted the exact bytes or already knew them.
+    Accepted,
+    /// Delivery or response validation failed after the attempt began.
+    Unknown,
+}
+
+/// Failure binding one native revealing-claim operation to the accepted agreement.
+#[derive(Debug, Error)]
+pub enum NativeRevealingClaimAdapterError<E: std::error::Error + 'static> {
+    /// Only the signed LEZ claimant may prepare, exactly observe, or submit the claim.
+    #[error("local participant is not the signed LEZ claimant")]
+    WrongClaimant,
+    /// Exact durable observation is reserved for the signed claimant.
+    #[error("exact LEZ revealing-claim observation requires the signed claimant")]
+    ExactTargetRequiresClaimant,
+    /// Counterparty discovery is reserved for the signed LEZ depositor.
+    #[error("LEZ revealing-claim discovery requires the signed depositor")]
+    DiscoveryRequiresDepositor,
+    /// This adapter is pinned to official v0.1.2 native compatibility.
+    #[error("signed LEZ environment is not compatible with this claim bridge")]
+    IncompatibleEnvironment,
+    /// Signed channel or genesis differs from the selected runtime.
+    #[error("signed LEZ chain identity differs from the selected runtime")]
+    ChainIdentityMismatch,
+    /// Signed escrow program differs from the selected runtime.
+    #[error("signed LEZ escrow program differs from the selected runtime")]
+    EscrowProgramMismatch,
+    /// Sidecar signer differs from the agreement-bound local account.
+    #[error("LEZ sidecar signer differs from the signed local account")]
+    SignerAccountMismatch,
+    /// The compatibility bridge currently supports only native escrow.
+    #[error("LEZ revealing-claim bridge does not support this signed asset")]
+    UnsupportedAsset,
+    /// Signed terms, funding identity, or durable bytes are invalid at the protocol boundary.
+    #[error("signed LEZ revealing-claim values are invalid at the bridge boundary")]
+    Protocol(#[source] ProtocolValueError),
+    /// A zero funding transaction cannot bind the claim preparation request.
+    #[error("LEZ revealing claim requires a nonzero retained funding transaction identity")]
+    EmptyFundingTransactionId,
+    /// One non-submit attempt failed with an unknown delivery outcome; no retry occurred.
+    #[error("LEZ revealing-claim bridge operation outcome is unknown")]
+    Transport(#[source] E),
+    /// Sidecar response did not echo the caller-owned context.
+    #[error("LEZ revealing-claim bridge response context mismatch")]
+    ResponseContextMismatch,
+    /// Primitive target, bytes, transaction, instruction, or position facts conflict.
+    #[error("LEZ revealing-claim bridge returned inconsistent facts")]
+    InconsistentFacts,
+    /// Durable protected bytes are not a LEZ revealing claim.
+    #[error("durable prepared submission is not a LEZ revealing claim")]
+    WrongPreparedStep,
+    /// SDK prepared claim validation failed.
+    #[error("LEZ revealing-claim submission is invalid")]
+    Claim(#[source] ClaimError),
+    /// Canonical SDK claim-snapshot validation failed.
+    #[error("LEZ revealing-claim evidence is invalid")]
+    Canonical(#[source] LezClaimObservationError),
 }
 
 impl<T: LezBridgeTransport> LezBridgeAdapter<T> {
@@ -519,7 +641,7 @@ impl<T: LezBridgeObservationTransport> LezBridgeAdapter<T> {
 }
 
 impl<T: LezBridgeRefundTransport> LezBridgeAdapter<T> {
-    /// Observes the exact signed native funding state and governing LEZ clock once.
+    /// Observes the signed depositor's exact native funding state and governing LEZ clock once.
     ///
     /// The caller durably owns the request ID. `StateOnly` never scans for a
     /// refund, and the adapter preserves the exact millisecond clock until the
@@ -527,7 +649,8 @@ impl<T: LezBridgeRefundTransport> LezBridgeAdapter<T> {
     ///
     /// # Errors
     ///
-    /// Fails closed on runtime, terms, response, clock, or account inconsistency.
+    /// Fails before transport for a non-owner and fails closed on runtime, terms,
+    /// response, clock, or account inconsistency.
     pub async fn observe_native_refund_eligibility(
         &self,
         agreement: &ZecAgreementV1,
@@ -765,6 +888,204 @@ impl<T: LezBridgeRefundTransport> LezBridgeAdapter<T> {
     }
 }
 
+impl<T: LezBridgeClaimTransport> LezBridgeAdapter<T> {
+    /// Prepares one official native revealing claim for the signed claimant.
+    ///
+    /// The caller durably owns the request ID and retained funding identity. The
+    /// preimage is copied once into the protocol's redacted bounded wrapper; the
+    /// returned secret-bearing exact bytes must immediately enter protected storage.
+    ///
+    /// # Errors
+    ///
+    /// Fails before transport for role/runtime/terms drift and preserves an
+    /// unknown one-attempt preparation outcome as a typed error.
+    pub async fn prepare_native_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        funding_transaction_id: TransactionId,
+        preimage: &ClaimPreimage,
+    ) -> Result<PreparedClaimSubmissionV1, NativeRevealingClaimAdapterError<T::Error>> {
+        self.validate_claimant(agreement)?;
+        let terms = claim_terms(agreement, &self.runtime, self.local_participant)?;
+        if funding_transaction_id.as_bytes() == &[0; 32] {
+            return Err(NativeRevealingClaimAdapterError::EmptyFundingTransactionId);
+        }
+        let context = self.claim_context(request_id);
+        let response = self
+            .transport
+            .prepare_revealing_claim(PrepareRevealingClaimRequest::new(
+                context.clone(),
+                self.runtime.clone(),
+                terms,
+                funding_transaction_id,
+                RevealingPreimage::new(*preimage.expose_secret()),
+            ))
+            .await
+            .map_err(NativeRevealingClaimAdapterError::Transport)?;
+        if response.context != context {
+            return Err(NativeRevealingClaimAdapterError::ResponseContextMismatch);
+        }
+        PreparedClaimSubmissionV1::new(
+            ClaimStepV1::RevealingLez,
+            *response.claim.transaction_id.as_bytes(),
+            response.claim.exact_bytes.into_vec(),
+        )
+        .map_err(NativeRevealingClaimAdapterError::Claim)
+    }
+
+    /// Observes the claimant's exact protected revealing-claim identity once.
+    ///
+    /// # Errors
+    ///
+    /// Rejects non-claimant use, a non-LEZ durable submission, substituted exact
+    /// identity/bytes, and any noncanonical primitive claim fact.
+    pub async fn observe_prepared_native_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<RevealingClaimObservationV1, NativeRevealingClaimAdapterError<T::Error>> {
+        if self.local_participant != agreement.lez_claimant() {
+            return Err(NativeRevealingClaimAdapterError::ExactTargetRequiresClaimant);
+        }
+        let transaction = prepared_claim_transaction(prepared)?;
+        self.observe_native_revealing_claim_target(
+            agreement,
+            request_id,
+            RevealingClaimObservationTarget::Exact {
+                claim_transaction_id: transaction.transaction_id,
+            },
+            Some(prepared),
+        )
+        .await
+    }
+
+    /// Discovers the counterparty claimant's reveal in one caller-owned window.
+    ///
+    /// # Errors
+    ///
+    /// Rejects claimant use of the observer path and all inconsistent official facts.
+    pub async fn observe_counterparty_native_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        window: DiscoveryWindow,
+    ) -> Result<RevealingClaimObservationV1, NativeRevealingClaimAdapterError<T::Error>> {
+        if self.local_participant != agreement.lez_depositor() {
+            return Err(NativeRevealingClaimAdapterError::DiscoveryRequiresDepositor);
+        }
+        self.observe_native_revealing_claim_target(
+            agreement,
+            request_id,
+            RevealingClaimObservationTarget::DiscoverByTerms { window },
+            None,
+        )
+        .await
+    }
+
+    /// Submits exact protected revealing-claim bytes once through generic submit.
+    ///
+    /// Transport failure or mismatched acknowledgement is `Unknown`, never a
+    /// rejection and never an internal retry.
+    ///
+    /// # Errors
+    ///
+    /// Fails before transport for a non-claimant, runtime drift, non-native terms,
+    /// or malformed/non-LEZ durable bytes.
+    pub async fn submit_native_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<RevealingClaimSubmitOutcome, NativeRevealingClaimAdapterError<T::Error>> {
+        self.validate_claimant(agreement)?;
+        let _terms = claim_terms(agreement, &self.runtime, self.local_participant)?;
+        let transaction = prepared_claim_transaction(prepared)?;
+        let context = self.claim_context(request_id);
+        let Ok(response) = self
+            .transport
+            .submit_transaction(SubmitTransactionRequest::new(
+                context.clone(),
+                self.runtime.clone(),
+                transaction.clone(),
+            ))
+            .await
+        else {
+            return Ok(RevealingClaimSubmitOutcome::Unknown);
+        };
+        if response.context != context || response.transaction_id != transaction.transaction_id {
+            return Ok(RevealingClaimSubmitOutcome::Unknown);
+        }
+        Ok(match response.outcome {
+            SubmissionOutcome::Accepted | SubmissionOutcome::AlreadyKnown => {
+                RevealingClaimSubmitOutcome::Accepted
+            }
+        })
+    }
+
+    async fn observe_native_revealing_claim_target(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        target: RevealingClaimObservationTarget,
+        prepared: Option<&PreparedClaimSubmissionV1>,
+    ) -> Result<RevealingClaimObservationV1, NativeRevealingClaimAdapterError<T::Error>> {
+        let terms = claim_terms(agreement, &self.runtime, self.local_participant)?;
+        let context = self.claim_context(request_id);
+        let response = self
+            .transport
+            .observe_revealing_claim(ObserveRevealingClaimRequest::new(
+                context.clone(),
+                self.runtime.clone(),
+                terms,
+                target,
+            ))
+            .await
+            .map_err(NativeRevealingClaimAdapterError::Transport)?;
+        if response.context != context {
+            return Err(NativeRevealingClaimAdapterError::ResponseContextMismatch);
+        }
+        if response.tip_before != response.tip_after {
+            return Ok(RevealingClaimObservationV1::Unstable);
+        }
+        match &response.claim {
+            RevealingClaimObservation::Absent => {
+                if claim_discovery_window_is_fully_covered(target, response.tip_after.height) {
+                    Ok(RevealingClaimObservationV1::Absent)
+                } else {
+                    Ok(RevealingClaimObservationV1::Unstable)
+                }
+            }
+            RevealingClaimObservation::UnknownOrPending => {
+                Ok(RevealingClaimObservationV1::Unstable)
+            }
+            RevealingClaimObservation::Found(found) => {
+                validate_claim_found(agreement, target, &response, found, prepared)
+                    .map(RevealingClaimObservationV1::Confirmed)
+            }
+        }
+    }
+
+    fn claim_context(&self, request_id: RequestId) -> MessageContext {
+        MessageContext::new(
+            self.run_id.clone(),
+            request_id,
+            bridge_participant(self.local_participant),
+        )
+    }
+
+    fn validate_claimant(
+        &self,
+        agreement: &ZecAgreementV1,
+    ) -> Result<(), NativeRevealingClaimAdapterError<T::Error>> {
+        if self.local_participant != agreement.lez_claimant() {
+            return Err(NativeRevealingClaimAdapterError::WrongClaimant);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 enum NativeTermsError {
     UnsupportedAsset,
@@ -870,6 +1191,187 @@ fn refund_terms<E: std::error::Error + 'static>(
         NativeTermsError::UnsupportedAsset => NativeRefundAdapterError::UnsupportedAsset,
         NativeTermsError::Protocol(source) => NativeRefundAdapterError::Protocol(source),
     })
+}
+
+fn claim_terms<E: std::error::Error + 'static>(
+    agreement: &ZecAgreementV1,
+    runtime: &RuntimeDescriptor,
+    local_participant: Participant,
+) -> Result<NativeEscrowTerms, NativeRevealingClaimAdapterError<E>> {
+    validate_runtime(agreement, runtime, local_participant).map_err(|error| match error {
+        RuntimeBindingError::IncompatibleEnvironment => {
+            NativeRevealingClaimAdapterError::IncompatibleEnvironment
+        }
+        RuntimeBindingError::ChainIdentityMismatch => {
+            NativeRevealingClaimAdapterError::ChainIdentityMismatch
+        }
+        RuntimeBindingError::EscrowProgramMismatch => {
+            NativeRevealingClaimAdapterError::EscrowProgramMismatch
+        }
+        RuntimeBindingError::SignerAccountMismatch => {
+            NativeRevealingClaimAdapterError::SignerAccountMismatch
+        }
+    })?;
+    native_terms(agreement).map_err(|error| match error {
+        NativeTermsError::UnsupportedAsset => NativeRevealingClaimAdapterError::UnsupportedAsset,
+        NativeTermsError::Protocol(source) => NativeRevealingClaimAdapterError::Protocol(source),
+    })
+}
+
+fn prepared_claim_transaction<E: std::error::Error + 'static>(
+    prepared: &PreparedClaimSubmissionV1,
+) -> Result<PreparedTransaction, NativeRevealingClaimAdapterError<E>> {
+    if prepared.step() != ClaimStepV1::RevealingLez {
+        return Err(NativeRevealingClaimAdapterError::WrongPreparedStep);
+    }
+    let exact_bytes = ExactTransactionBytes::new(prepared.exact_submission().to_vec())
+        .map_err(NativeRevealingClaimAdapterError::Protocol)?;
+    Ok(PreparedTransaction::new(
+        TransactionId::from_bytes(*prepared.expected_submission_id()),
+        exact_bytes,
+    ))
+}
+
+fn claim_discovery_window_is_fully_covered(
+    target: RevealingClaimObservationTarget,
+    tip_height: u64,
+) -> bool {
+    match target {
+        RevealingClaimObservationTarget::Exact { .. } => true,
+        RevealingClaimObservationTarget::DiscoverByTerms { window } => window
+            .start_height()
+            .checked_add(u64::from(window.max_blocks() - 1))
+            .is_some_and(|final_height| final_height <= tip_height),
+    }
+}
+
+fn validate_claim_found<E: std::error::Error + 'static>(
+    agreement: &ZecAgreementV1,
+    target: RevealingClaimObservationTarget,
+    response: &ObserveRevealingClaimResult,
+    found: &RevealingClaimFoundFacts,
+    prepared: Option<&PreparedClaimSubmissionV1>,
+) -> Result<RevealingClaimEvidenceV1, NativeRevealingClaimAdapterError<E>> {
+    let transaction = &found.transaction;
+    match target {
+        RevealingClaimObservationTarget::Exact {
+            claim_transaction_id,
+        } if transaction.transaction_id != claim_transaction_id => {
+            return Err(NativeRevealingClaimAdapterError::InconsistentFacts);
+        }
+        RevealingClaimObservationTarget::DiscoverByTerms { window } => {
+            let final_height = window
+                .start_height()
+                .checked_add(u64::from(window.max_blocks() - 1))
+                .expect("validated discovery window cannot overflow");
+            if !(window.start_height()..=final_height).contains(&transaction.position.height) {
+                return Err(NativeRevealingClaimAdapterError::InconsistentFacts);
+            }
+        }
+        RevealingClaimObservationTarget::Exact { .. } => {}
+    }
+    if let Some(prepared) = prepared
+        && (transaction.transaction_id.as_bytes() != prepared.expected_submission_id()
+            || transaction.exact_bytes.as_slice() != prepared.exact_submission())
+    {
+        return Err(NativeRevealingClaimAdapterError::InconsistentFacts);
+    }
+    let same_height_wrong_hash = transaction.position.height == response.tip_after.height
+        && transaction.position.block_hash != response.tip_after.block_hash;
+    if same_height_wrong_hash {
+        return Err(NativeRevealingClaimAdapterError::InconsistentFacts);
+    }
+    let snapshot = canonical_claim_snapshot(agreement, response, found);
+    match prepared {
+        Some(prepared) => RevealingClaimEvidenceV1::from_prepared_lez_claim_snapshot(
+            agreement, prepared, snapshot,
+        ),
+        None => RevealingClaimEvidenceV1::from_lez_claim_snapshot(agreement, snapshot),
+    }
+    .map_err(NativeRevealingClaimAdapterError::Canonical)
+}
+
+fn canonical_claim_snapshot(
+    agreement: &ZecAgreementV1,
+    response: &ObserveRevealingClaimResult,
+    found: &RevealingClaimFoundFacts,
+) -> LezClaimNodeSnapshotV1 {
+    let transaction = &found.transaction;
+    let instruction = &found.instruction;
+    let metadata = &found.metadata;
+    let claimant = *agreement.lez_account(agreement.lez_claimant());
+    LezClaimNodeSnapshotV1::new(
+        agreement.lez_terms().chain().environment(),
+        *agreement.lez_terms().chain().channel_id(),
+        *agreement.lez_terms().chain().genesis_block_hash(),
+        LezStableTipV1::new(
+            *response.tip_before.block_hash.as_bytes(),
+            response.tip_before.height,
+            *response.tip_after.block_hash.as_bytes(),
+            response.tip_after.height,
+        ),
+        LezClaimTransactionSnapshotV1::new(
+            *transaction.transaction_id.as_bytes(),
+            *transaction.transaction_id.as_bytes(),
+            words_from_bytes(instruction.program_id.as_bytes()),
+            claimant,
+            instruction
+                .ordered_account_ids
+                .as_slice()
+                .iter()
+                .map(|account| *account.as_bytes())
+                .collect(),
+            LezClaimInstructionV1::Native {
+                swap_id: *instruction.swap_id.as_bytes(),
+                preimage: ClaimPreimage::new(*instruction.preimage.expose_secret()),
+            },
+            transaction.is_public,
+            transaction.signer_account_ids.as_slice() == [Hex32::from_bytes(claimant)],
+            transaction.position.height,
+            *transaction.position.block_hash.as_bytes(),
+            *transaction.position.block_hash.as_bytes(),
+            // v0.1.2 exposes stable canonical placement but no Bedrock status.
+            // Pending is the conservative projection accepted only by local compatibility.
+            LezInclusionStatusV1::Pending,
+        ),
+        words_from_bytes(metadata.owner_program_id.as_bytes()),
+        *metadata.account_id.as_bytes(),
+        metadata_snapshot(metadata),
+        *found.custody.account_id.as_bytes(),
+        custody_snapshot(&found.custody),
+    )
+}
+
+fn metadata_snapshot(metadata: &EscrowMetadataFacts) -> LezEscrowMetadataSnapshotV1 {
+    LezEscrowMetadataSnapshotV1::new(
+        metadata.version,
+        *metadata.swap_id.as_bytes(),
+        *metadata.terms_hash.as_bytes(),
+        *metadata.secret_digest.as_bytes(),
+        *metadata.depositor_account_id.as_bytes(),
+        *metadata.depositor_asset_account_id.as_bytes(),
+        *metadata.claimant_account_id.as_bytes(),
+        *metadata.claimant_asset_account_id.as_bytes(),
+        *metadata.custody_account_id.as_bytes(),
+        words_from_bytes(metadata.asset_program_id.as_bytes()),
+        words_from_bytes(metadata.custody_program_id.as_bytes()),
+        *metadata.asset_definition.as_bytes(),
+        metadata.amount.as_u128(),
+        metadata.refund_at_ms,
+        match metadata.status {
+            EscrowState::Empty => LezEscrowStatusV1::Empty,
+            EscrowState::Funded => LezEscrowStatusV1::Funded,
+            EscrowState::Claimed => LezEscrowStatusV1::Claimed,
+            EscrowState::Refunded => LezEscrowStatusV1::Refunded,
+        },
+    )
+}
+
+fn custody_snapshot(custody: &NativeCustodyFacts) -> LezCustodySnapshotV1 {
+    LezCustodySnapshotV1::Native {
+        program_owner: words_from_bytes(custody.owner_program_id.as_bytes()),
+        balance: custody.balance.as_u128(),
+    }
 }
 
 fn validate_refund_response_context<E: std::error::Error + 'static>(
