@@ -2605,6 +2605,7 @@ dependencies = [
  "lez-bridge-protocol",
  "lez-zec-escrow-compat",
  "nssa",
+ "risc0-zkvm",
  "sequencer_service_protocol",
  "sequencer_service_rpc",
  "serde",

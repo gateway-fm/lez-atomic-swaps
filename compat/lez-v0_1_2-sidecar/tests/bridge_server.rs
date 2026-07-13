@@ -12,9 +12,10 @@ use lez_bridge_client::{BridgeClient, BridgeClientConfig, BridgeClientError, Sid
 use lez_bridge_protocol::{
     DescribeRuntimeRequest, ErrorCode, EscrowObservationTarget, Hex32, MessageContext,
     NativeEscrowTerms, NativeEscrowTermsInput, ObserveEscrowRequest, ObserveRevealingClaimRequest,
-    Participant, PrepareNativeEscrowRequest, PrepareRevealingClaimRequest, RequestId,
-    RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, SubmitTransactionRequest, SubmitTransactionResult,
+    ObserveRevealingClaimResult, Participant, PrepareNativeEscrowRequest,
+    PrepareRevealingClaimRequest, RequestId, RevealingClaimObservationTarget, RevealingPreimage,
+    RunId, RuntimeCompatibility, RuntimeDescriptor, SubmitTransactionRequest,
+    SubmitTransactionResult,
 };
 use lez_v0_1_2_sidecar::{
     BridgeServerCapability, BridgeServerConfig, ExactTransactionSubmitter, NativeEscrowPlanner,
@@ -46,6 +47,9 @@ impl NonceSource for FixedNonce {
 struct UnknownSubmitter {
     calls: Arc<AtomicUsize>,
 }
+
+#[derive(Debug)]
+struct ClaimProbeSubmitter;
 
 #[derive(Debug)]
 struct BlockingUnknownSubmitter {
@@ -83,6 +87,25 @@ impl ExactTransactionSubmitter for UnknownSubmitter {
             .await?;
         self.calls.fetch_add(1, Ordering::SeqCst);
         Err(SidecarError::UnknownSubmissionOutcome)
+    }
+}
+
+#[async_trait]
+impl ExactTransactionSubmitter for ClaimProbeSubmitter {
+    async fn submit_exact(
+        &self,
+        _planner: &NativeEscrowPlanner,
+        _request: &SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, SidecarError> {
+        Err(SidecarError::UnknownSubmissionOutcome)
+    }
+
+    async fn observe_revealing_claim(
+        &self,
+        _planner: &NativeEscrowPlanner,
+        _request: &ObserveRevealingClaimRequest,
+    ) -> Result<ObserveRevealingClaimResult, SidecarError> {
+        Err(SidecarError::MovingTip)
     }
 }
 
@@ -199,14 +222,48 @@ fn claim_request(
     escrow_program: [u32; 8],
     request_id: &str,
 ) -> PrepareRevealingClaimRequest {
+    claim_request_for_role(
+        Participant::Taker,
+        claimant,
+        depositor,
+        escrow_program,
+        request_id,
+    )
+}
+
+fn maker_claim_request(
+    signer: AccountId,
+    counterparty: AccountId,
+    escrow_program: [u32; 8],
+) -> PrepareRevealingClaimRequest {
+    claim_request_for_role(
+        Participant::Maker,
+        signer,
+        counterparty,
+        escrow_program,
+        "coexist-claim-prepare-0001",
+    )
+}
+
+fn claim_request_for_role(
+    role: Participant,
+    claimant: AccountId,
+    depositor: AccountId,
+    escrow_program: [u32; 8],
+    request_id: &str,
+) -> PrepareRevealingClaimRequest {
     let preimage = [0x55; 32];
+    let depositor_role = match role {
+        Participant::Maker => Participant::Taker,
+        Participant::Taker => Participant::Maker,
+    };
     let terms = NativeEscrowTerms::new(NativeEscrowTermsInput {
         swap_id: h(7),
         terms_hash: h(8),
         secret_digest: Hex32::from_bytes(Sha256::digest(preimage).into()),
-        depositor: Participant::Maker,
+        depositor: depositor_role,
         depositor_account_id: Hex32::from_bytes(depositor.into_value()),
-        claimant: Participant::Taker,
+        claimant: role,
         claimant_account_id: Hex32::from_bytes(claimant.into_value()),
         amount: 123,
         refund_at_ms: 1_760_000_000_123,
@@ -216,8 +273,8 @@ fn claim_request(
     })
     .unwrap();
     PrepareRevealingClaimRequest::new(
-        context_for(Participant::Taker, request_id),
-        runtime(Participant::Taker, claimant, escrow_program),
+        context_for(role, request_id),
+        runtime(role, claimant, escrow_program),
         terms,
         lez_bridge_protocol::TransactionId::from_bytes([0x99; 32]),
         RevealingPreimage::new(preimage),
@@ -516,6 +573,100 @@ async fn prepares_replays_restores_and_submits_taker_revealing_claim() {
     assert_eq!(nonce_calls.load(Ordering::SeqCst), 1);
     assert_eq!(submit_calls.load(Ordering::SeqCst), 1);
     restarted.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn durable_native_and_claim_caches_coexist_and_claim_observation_is_routed() {
+    let temp = TempDir::new().unwrap();
+    let store = temp.path().join("native-claim-coexist.json");
+    let (signer, _) = keyed_account(87);
+    let (counterparty, _) = keyed_account(88);
+    let escrow_program = [0x6677_8899; 8];
+    let descriptor = runtime(Participant::Maker, signer, escrow_program);
+    let nonce_calls = Arc::new(AtomicUsize::new(0));
+    let first = test_server(
+        &descriptor,
+        store.clone(),
+        planner(
+            87,
+            escrow_program,
+            &descriptor,
+            40,
+            Arc::clone(&nonce_calls),
+        ),
+        Arc::new(ClaimProbeSubmitter),
+    )
+    .await;
+    let first_client = client(first.endpoint(), &descriptor);
+    let native = first_client
+        .prepare_native_escrow(prepare_request(signer, counterparty, escrow_program))
+        .await
+        .unwrap();
+    first.stop().await.unwrap();
+
+    let second = test_server(
+        &descriptor,
+        store.clone(),
+        planner(
+            87,
+            escrow_program,
+            &descriptor,
+            99,
+            Arc::clone(&nonce_calls),
+        ),
+        Arc::new(ClaimProbeSubmitter),
+    )
+    .await;
+    let second_client = client(second.endpoint(), &descriptor);
+    let claim_request = maker_claim_request(signer, counterparty, escrow_program);
+    let claim_terms = claim_request.terms.clone();
+    let claim = second_client
+        .prepare_revealing_claim(claim_request)
+        .await
+        .unwrap();
+    let observe = ObserveRevealingClaimRequest::new(
+        context_for(Participant::Maker, "coexist-claim-observe-0001"),
+        descriptor.clone(),
+        claim_terms,
+        RevealingClaimObservationTarget::Exact {
+            claim_transaction_id: claim.claim.transaction_id,
+        },
+    );
+    assert!(
+        matches!(second_client.observe_revealing_claim(observe).await, Err(BridgeClientError::Remote(error)) if error.code() == ErrorCode::MovingTip)
+    );
+    second.stop().await.unwrap();
+
+    let third = test_server(
+        &descriptor,
+        store,
+        planner(
+            87,
+            escrow_program,
+            &descriptor,
+            777,
+            Arc::clone(&nonce_calls),
+        ),
+        Arc::new(ClaimProbeSubmitter),
+    )
+    .await;
+    let third_client = client(third.endpoint(), &descriptor);
+    assert_eq!(
+        third_client
+            .prepare_native_escrow(prepare_request(signer, counterparty, escrow_program))
+            .await
+            .unwrap(),
+        native
+    );
+    assert_eq!(
+        third_client
+            .prepare_revealing_claim(maker_claim_request(signer, counterparty, escrow_program,))
+            .await
+            .unwrap(),
+        claim
+    );
+    assert_eq!(nonce_calls.load(Ordering::SeqCst), 2);
+    third.stop().await.unwrap();
 }
 
 #[tokio::test]

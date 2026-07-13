@@ -25,12 +25,14 @@ use lez_bridge_protocol::{
     AccountIds, ChainPosition, ChainTip, DiscoveryWindow, EscrowMetadataFacts,
     EscrowObservationTarget, EscrowState, ExactTransactionBytes, FundingFoundFacts,
     FundingObservation, Hex32, InitializationFoundFacts, InitializationObservation,
-    MAX_DISCOVERY_BLOCKS, NativeCustodyFacts, NativeFundInstructionFacts,
-    NativeInitializeInstructionFacts, ObserveEscrowRequest, ObserveEscrowResult,
+    MAX_DISCOVERY_BLOCKS, NativeClaimInstructionFacts, NativeCustodyFacts,
+    NativeFundInstructionFacts, NativeInitializeInstructionFacts, ObserveEscrowRequest,
+    ObserveEscrowResult, ObserveRevealingClaimRequest, ObserveRevealingClaimResult,
     ObservedTransactionFacts, Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
     PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PreparedTransaction,
-    ProtocolValueError, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
-    SubmitTransactionResult, TransactionId,
+    ProtocolValueError, RevealingClaimFoundFacts, RevealingClaimObservation,
+    RevealingClaimObservationTarget, RevealingPreimage, RuntimeDescriptor, SubmissionOutcome,
+    SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
 };
 use lez_zec_escrow_compat::{EscrowMetadata, EscrowStatus, Instruction as EscrowInstruction};
 use nssa::{
@@ -42,7 +44,7 @@ use sequencer_service_rpc::{ClientError, RpcClient as _, SequencerClient, Sequen
 use sha2::{Digest as _, Sha256};
 use tokio::sync::Mutex;
 use url::{Host, Url};
-use zeroize::Zeroize as _;
+use zeroize::{Zeroize as _, Zeroizing};
 
 const MAX_NODE_REQUEST_BYTES: u32 = 2_800_000;
 const MAX_NODE_RESPONSE_BYTES: u32 = 8 * 1024 * 1024;
@@ -174,6 +176,15 @@ pub trait ExactTransactionSubmitter: Send + Sync {
     ) -> Result<ObserveEscrowResult, SidecarError> {
         Err(SidecarError::NodeObservationUnavailable)
     }
+
+    /// Observes an exact cached claim or discovers a counterparty claim by terms.
+    async fn observe_revealing_claim(
+        &self,
+        _planner: &NativeEscrowPlanner,
+        _request: &ObserveRevealingClaimRequest,
+    ) -> Result<ObserveRevealingClaimResult, SidecarError> {
+        Err(SidecarError::NodeObservationUnavailable)
+    }
 }
 
 /// Upstream settlement label attached to the block containing an exact transaction.
@@ -228,6 +239,19 @@ struct NativePairScan {
     tip_before: ChainTip,
     initialization: Option<NativeTransactionMatch>,
     funding: Option<NativeTransactionMatch>,
+    fully_covered: bool,
+}
+
+#[derive(Clone)]
+struct ClaimTransactionMatch {
+    transaction: ObservedTransactionFacts,
+    ordered_account_ids: AccountIds,
+    preimage: [u8; 32],
+}
+
+struct ClaimScan {
+    tip_before: ChainTip,
+    claim: Option<ClaimTransactionMatch>,
     fully_covered: bool,
 }
 
@@ -490,6 +514,259 @@ impl OfficialNodeRpc {
         ))
     }
 
+    async fn observe_revealing_claim_core(
+        &self,
+        planner: &NativeEscrowPlanner,
+        request: &ObserveRevealingClaimRequest,
+    ) -> Result<ObserveRevealingClaimResult, SidecarError> {
+        self.validate_claim_observe_request(request)?;
+        match request.target {
+            RevealingClaimObservationTarget::Exact {
+                claim_transaction_id,
+            } => {
+                self.observe_exact_revealing_claim(planner, request, claim_transaction_id)
+                    .await
+            }
+            RevealingClaimObservationTarget::DiscoverByTerms { window } => {
+                self.observe_discovered_revealing_claim(request, window)
+                    .await
+            }
+        }
+    }
+
+    async fn observe_exact_revealing_claim(
+        &self,
+        planner: &NativeEscrowPlanner,
+        request: &ObserveRevealingClaimRequest,
+        claim_transaction_id: TransactionId,
+    ) -> Result<ObserveRevealingClaimResult, SidecarError> {
+        let (prepared, preimage) = planner
+            .owned_revealing_claim(request, claim_transaction_id)
+            .await?;
+        let tip = self.read_tip().await?;
+        let start = tip
+            .height
+            .saturating_sub(u64::from(MAX_DISCOVERY_BLOCKS - 1));
+        let scan = self
+            .scan_exact(
+                &prepared,
+                DiscoveryWindow::new(start, MAX_DISCOVERY_BLOCKS)?,
+            )
+            .await?;
+        if scan.tip_before != scan.tip_after {
+            return Err(SidecarError::MovingTip);
+        }
+        let claim = match scan.observation {
+            OfficialExactObservation::Found(found) => {
+                let decoded = decode_prepared_for_role(
+                    &prepared,
+                    self.role,
+                    self.role,
+                    self.signer_account_id,
+                )?;
+                let [nonce] = decoded.message().nonces.as_slice() else {
+                    return Err(SidecarError::InvalidTransactionBytes);
+                };
+                let expected = native_claim_message(
+                    &request.terms,
+                    self.signer_account_id,
+                    program_id_from_hex(self.runtime.escrow_program_id),
+                    u128::from(*nonce),
+                    preimage,
+                )?;
+                if decoded.message() != &expected {
+                    return Err(SidecarError::InvalidTransactionBytes);
+                }
+                let found = ClaimTransactionMatch {
+                    transaction: found.transaction,
+                    ordered_account_ids: account_ids_from_message(decoded.message())?,
+                    preimage,
+                };
+                RevealingClaimObservation::found(
+                    self.claim_found_facts(&request.terms, found).await?,
+                )
+            }
+            OfficialExactObservation::NotYetCovered
+            | OfficialExactObservation::NotFoundInWindow => {
+                RevealingClaimObservation::UnknownOrPending
+            }
+        };
+        let tip_after = self.read_tip().await?;
+        if tip_after != scan.tip_before {
+            return Err(SidecarError::MovingTip);
+        }
+        Ok(ObserveRevealingClaimResult::new(
+            request.context.clone(),
+            scan.tip_before,
+            claim,
+            tip_after,
+        ))
+    }
+
+    async fn observe_discovered_revealing_claim(
+        &self,
+        request: &ObserveRevealingClaimRequest,
+        window: DiscoveryWindow,
+    ) -> Result<ObserveRevealingClaimResult, SidecarError> {
+        let scan = self.scan_revealing_claim(&request.terms, window).await?;
+        let claim = match scan.claim {
+            Some(found) => RevealingClaimObservation::found(
+                self.claim_found_facts(&request.terms, found).await?,
+            ),
+            None if scan.fully_covered => RevealingClaimObservation::Absent,
+            None => RevealingClaimObservation::UnknownOrPending,
+        };
+        let tip_after = self.read_tip().await?;
+        if tip_after != scan.tip_before {
+            return Err(SidecarError::MovingTip);
+        }
+        Ok(ObserveRevealingClaimResult::new(
+            request.context.clone(),
+            scan.tip_before,
+            claim,
+            tip_after,
+        ))
+    }
+
+    async fn claim_found_facts(
+        &self,
+        terms: &lez_bridge_protocol::NativeEscrowTerms,
+        found: ClaimTransactionMatch,
+    ) -> Result<RevealingClaimFoundFacts, SidecarError> {
+        let snapshot = self.read_native_account_snapshot(terms).await?;
+        if snapshot.metadata.status != EscrowState::Claimed
+            || snapshot.custody.balance.as_u128() != 0
+        {
+            return Err(SidecarError::InvalidNodeResponse);
+        }
+        Ok(RevealingClaimFoundFacts::new(
+            found.transaction,
+            NativeClaimInstructionFacts::new(
+                self.runtime.escrow_program_id,
+                found.ordered_account_ids,
+                terms.swap_id(),
+                RevealingPreimage::new(found.preimage),
+            ),
+            snapshot.metadata,
+            snapshot.custody,
+        ))
+    }
+
+    async fn scan_revealing_claim(
+        &self,
+        terms: &lez_bridge_protocol::NativeEscrowTerms,
+        window: DiscoveryWindow,
+    ) -> Result<ClaimScan, SidecarError> {
+        let tip_before = self.read_tip().await?;
+        if window.start_height() > tip_before.height {
+            return Ok(ClaimScan {
+                tip_before,
+                claim: None,
+                fully_covered: false,
+            });
+        }
+        let declared_end = window
+            .start_height()
+            .checked_add(u64::from(window.max_blocks() - 1))
+            .ok_or(SidecarError::InvalidNodeResponse)?;
+        let end = declared_end.min(tip_before.height);
+        let anchor_start = window.start_height().saturating_sub(1);
+        let blocks = self
+            .client
+            .get_block_range(anchor_start, end)
+            .await
+            .map_err(|_| SidecarError::NodeObservationUnavailable)?;
+        validate_block_range(&blocks, anchor_start, end, self.runtime.genesis_block_hash)?;
+
+        let mut claim = None;
+        for block in blocks.iter().skip(usize::from(window.start_height() > 0)) {
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                let Some(found) = self.decode_claim_match(transaction, block, index, terms)? else {
+                    continue;
+                };
+                if claim.replace(found).is_some() {
+                    return Err(SidecarError::AmbiguousDiscovery);
+                }
+            }
+        }
+        Ok(ClaimScan {
+            tip_before,
+            claim,
+            fully_covered: tip_before.height >= declared_end,
+        })
+    }
+
+    fn decode_claim_match(
+        &self,
+        transaction: &NSSATransaction,
+        block: &Block,
+        index: usize,
+        terms: &lez_bridge_protocol::NativeEscrowTerms,
+    ) -> Result<Option<ClaimTransactionMatch>, SidecarError> {
+        let NSSATransaction::Public(public) = transaction else {
+            return Ok(None);
+        };
+        if public.message().program_id != program_id_from_hex(self.runtime.escrow_program_id) {
+            return Ok(None);
+        }
+        let Ok(instruction) = risc0_zkvm::serde::from_slice::<EscrowInstruction, _>(
+            &public.message().instruction_data,
+        ) else {
+            return Ok(None);
+        };
+        let EscrowInstruction::ClaimNative { swap_id, preimage } = instruction else {
+            return Ok(None);
+        };
+        if swap_id != *terms.swap_id().as_bytes() {
+            return Ok(None);
+        }
+        let digest: [u8; 32] = Sha256::digest(preimage).into();
+        if digest != *terms.secret_digest().as_bytes() {
+            return Err(SidecarError::InvalidNodeResponse);
+        }
+        let [nonce] = public.message().nonces.as_slice() else {
+            return Err(SidecarError::InvalidTransactionBytes);
+        };
+        let expected = native_claim_message(
+            terms,
+            AccountId::new(*terms.claimant_account_id().as_bytes()),
+            program_id_from_hex(self.runtime.escrow_program_id),
+            u128::from(*nonce),
+            preimage,
+        )?;
+        if public.message() != &expected {
+            return Err(SidecarError::InvalidTransactionBytes);
+        }
+        let prepared = prepared_from_transaction(public)?;
+        let decoded = decode_prepared_for_role(
+            &prepared,
+            terms.claimant(),
+            terms.claimant(),
+            AccountId::new(*terms.claimant_account_id().as_bytes()),
+        )?;
+        let signer_account_ids = decoded
+            .witness_set()
+            .signatures_and_public_keys()
+            .iter()
+            .map(|(_, key)| Hex32::from_bytes(AccountId::from(key).into_value()))
+            .collect();
+        Ok(Some(ClaimTransactionMatch {
+            transaction: ObservedTransactionFacts::new(
+                prepared.transaction_id,
+                prepared.exact_bytes,
+                ChainPosition::new(
+                    Hex32::from_bytes(block.header.hash.0),
+                    block.header.block_id,
+                    u32::try_from(index).map_err(|_| SidecarError::InvalidNodeResponse)?,
+                ),
+                AccountIds::new(signer_account_ids)?,
+                true,
+            ),
+            ordered_account_ids: account_ids_from_message(decoded.message())?,
+            preimage,
+        }))
+    }
+
     async fn scan_native_pair(
         &self,
         terms: &lez_bridge_protocol::NativeEscrowTerms,
@@ -749,6 +1026,49 @@ impl OfficialNodeRpc {
         Ok(())
     }
 
+    fn validate_claim_observe_request(
+        &self,
+        request: &ObserveRevealingClaimRequest,
+    ) -> Result<(), SidecarError> {
+        if request.runtime != self.runtime {
+            return Err(SidecarError::WrongRuntimeIdentity);
+        }
+        if request.context.sidecar_role != self.role || request.runtime.sidecar_role != self.role {
+            return Err(SidecarError::WrongSidecarRole);
+        }
+        if request.runtime.compatibility != lez_bridge_protocol::RuntimeCompatibility::NssaV0_1_2 {
+            return Err(SidecarError::WrongRuntimeCompatibility);
+        }
+        let signer = Hex32::from_bytes(self.signer_account_id.into_value());
+        match request.target {
+            RevealingClaimObservationTarget::Exact { .. } => {
+                if request.terms.claimant() != self.role {
+                    return Err(SidecarError::WrongClaimantRole);
+                }
+                if request.terms.claimant_account_id() != signer {
+                    return Err(SidecarError::WrongSigner);
+                }
+            }
+            RevealingClaimObservationTarget::DiscoverByTerms { .. } => {
+                if request.terms.depositor() != self.role || request.terms.claimant() == self.role {
+                    return Err(SidecarError::WrongDepositorRole);
+                }
+                if request.terms.depositor_account_id() != signer {
+                    return Err(SidecarError::WrongSigner);
+                }
+            }
+        }
+        if request.runtime.escrow_program_id != self.runtime.escrow_program_id {
+            return Err(SidecarError::WrongEscrowProgram);
+        }
+        if request.terms.authenticated_transfer_program_id()
+            != program_id_to_hex(Program::authenticated_transfer_program().id())
+        {
+            return Err(SidecarError::WrongAuthenticatedTransferProgram);
+        }
+        Ok(())
+    }
+
     async fn read_tip(&self) -> Result<ChainTip, SidecarError> {
         let height = self
             .client
@@ -832,6 +1152,14 @@ impl ExactTransactionSubmitter for OfficialNodeRpc {
     ) -> Result<ObserveEscrowResult, SidecarError> {
         self.observe_native_escrow_core(planner, request).await
     }
+
+    async fn observe_revealing_claim(
+        &self,
+        planner: &NativeEscrowPlanner,
+        request: &ObserveRevealingClaimRequest,
+    ) -> Result<ObserveRevealingClaimResult, SidecarError> {
+        self.observe_revealing_claim_core(planner, request).await
+    }
 }
 
 #[derive(Clone)]
@@ -840,10 +1168,12 @@ struct ActivePrepare {
     result: PrepareNativeEscrowResult,
 }
 
-#[derive(Clone)]
 struct ActiveClaimPrepare {
     request_sha256: [u8; 32],
     result: PrepareRevealingClaimResult,
+    terms: lez_bridge_protocol::NativeEscrowTerms,
+    funding_transaction_id: TransactionId,
+    preimage: Zeroizing<[u8; 32]>,
 }
 
 #[derive(Default)]
@@ -938,9 +1268,6 @@ impl NativeEscrowPlanner {
         self.validate_request(&request)?;
 
         let mut state = self.state.lock().await;
-        if state.claim.is_some() {
-            return Err(SidecarError::ActivePrepare);
-        }
         if let Some(active) = state.native.as_ref() {
             return if active.request == request {
                 Ok(active.result.clone())
@@ -956,6 +1283,12 @@ impl NativeEscrowPlanner {
         let funding_nonce = initialization_nonce
             .checked_add(1)
             .ok_or(SidecarError::NonceOverflow)?;
+        if let Some(claim) = state.claim.as_ref() {
+            let claim_nonce = self.prepared_nonce(&claim.result.claim)?;
+            if claim_nonce == initialization_nonce || claim_nonce == funding_nonce {
+                return Err(SidecarError::ActivePrepare);
+            }
+        }
         let result = self.plan_pair(&request, initialization_nonce, funding_nonce)?;
         state.native = Some(ActivePrepare {
             request,
@@ -1021,8 +1354,11 @@ impl NativeEscrowPlanner {
         }
 
         let mut state = self.state.lock().await;
-        if state.claim.is_some() {
-            return Err(SidecarError::ActivePrepare);
+        if let Some(claim) = state.claim.as_ref() {
+            let claim_nonce = self.prepared_nonce(&claim.result.claim)?;
+            if claim_nonce == initialization_nonce || claim_nonce == expected_funding_nonce {
+                return Err(SidecarError::ActivePrepare);
+            }
         }
         if let Some(active) = state.native.as_ref() {
             return if active.request == request && active.result == result {
@@ -1054,9 +1390,6 @@ impl NativeEscrowPlanner {
         self.validate_claim_request(request)?;
         let request_sha256 = claim_request_sha256(request)?;
         let mut state = self.state.lock().await;
-        if state.native.is_some() {
-            return Err(SidecarError::ActiveClaimPrepare);
-        }
         if let Some(active) = state.claim.as_ref() {
             return if active.request_sha256 == request_sha256 {
                 Ok(active.result.clone())
@@ -1068,6 +1401,12 @@ impl NativeEscrowPlanner {
             .nonce_source
             .account_nonce(self.signer_account_id)
             .await?;
+        if let Some(native) = state.native.as_ref()
+            && (self.prepared_nonce(&native.result.initialization)? == nonce
+                || self.prepared_nonce(&native.result.funding)? == nonce)
+        {
+            return Err(SidecarError::ActiveClaimPrepare);
+        }
         let message = self.claim_message(request, nonce)?;
         let result = PrepareRevealingClaimResult::new(
             request.context.clone(),
@@ -1076,6 +1415,9 @@ impl NativeEscrowPlanner {
         state.claim = Some(ActiveClaimPrepare {
             request_sha256,
             result: result.clone(),
+            terms: request.terms.clone(),
+            funding_transaction_id: request.funding_transaction_id,
+            preimage: Zeroizing::new(*request.preimage().expose_secret()),
         });
         Ok(result)
     }
@@ -1107,7 +1449,11 @@ impl NativeEscrowPlanner {
         }
         let request_sha256 = claim_request_sha256(request)?;
         let mut state = self.state.lock().await;
-        if state.native.is_some() {
+        let claim_nonce = u128::from(*nonce);
+        if let Some(native) = state.native.as_ref()
+            && (self.prepared_nonce(&native.result.initialization)? == claim_nonce
+                || self.prepared_nonce(&native.result.funding)? == claim_nonce)
+        {
             return Err(SidecarError::ActiveClaimPrepare);
         }
         if let Some(active) = state.claim.as_ref() {
@@ -1120,6 +1466,9 @@ impl NativeEscrowPlanner {
         state.claim = Some(ActiveClaimPrepare {
             request_sha256,
             result,
+            terms: request.terms.clone(),
+            funding_transaction_id: request.funding_transaction_id,
+            preimage: Zeroizing::new(*request.preimage().expose_secret()),
         });
         Ok(())
     }
@@ -1192,6 +1541,42 @@ impl NativeEscrowPlanner {
             return Err(SidecarError::TransactionNotPrepared);
         }
         Ok(active.result.clone())
+    }
+
+    async fn owned_revealing_claim(
+        &self,
+        request: &ObserveRevealingClaimRequest,
+        claim_transaction_id: TransactionId,
+    ) -> Result<(PreparedTransaction, [u8; 32]), SidecarError> {
+        if request.runtime != self.expected_runtime
+            || request.context.sidecar_role != self.role
+            || request.terms.claimant() != self.role
+            || request.terms.claimant_account_id()
+                != Hex32::from_bytes(self.signer_account_id.into_value())
+        {
+            return Err(SidecarError::WrongRuntimeIdentity);
+        }
+        let state = self.state.lock().await;
+        let active = state
+            .claim
+            .as_ref()
+            .ok_or(SidecarError::TransactionNotPrepared)?;
+        if active.terms != request.terms
+            || active.result.claim.transaction_id != claim_transaction_id
+            || active.funding_transaction_id.as_bytes() == &[0; 32]
+        {
+            return Err(SidecarError::TransactionNotPrepared);
+        }
+        Ok((active.result.claim.clone(), *active.preimage))
+    }
+
+    fn prepared_nonce(&self, prepared: &PreparedTransaction) -> Result<u128, SidecarError> {
+        let decoded =
+            decode_prepared_for_role(prepared, self.role, self.role, self.signer_account_id)?;
+        let [nonce] = decoded.message().nonces.as_slice() else {
+            return Err(SidecarError::InvalidTransactionBytes);
+        };
+        Ok(u128::from(*nonce))
     }
 
     fn validate_request(&self, request: &PrepareNativeEscrowRequest) -> Result<(), SidecarError> {
@@ -1269,23 +1654,13 @@ impl NativeEscrowPlanner {
         request: &PrepareRevealingClaimRequest,
         nonce: u128,
     ) -> Result<Message, SidecarError> {
-        let swap_id = *request.terms.swap_id().as_bytes();
-        let metadata = spel_framework_core::pda::compute_pda(&self.escrow_program_id, &[&swap_id]);
-        let custody_label = spel_framework_core::pda::seed_from_str("custody");
-        let custody = spel_framework_core::pda::compute_pda(
-            &self.escrow_program_id,
-            &[&custody_label, &swap_id],
-        );
-        Message::try_new(
+        native_claim_message(
+            &request.terms,
+            self.signer_account_id,
             self.escrow_program_id,
-            vec![metadata, custody, self.signer_account_id],
-            vec![nonce.into()],
-            EscrowInstruction::ClaimNative {
-                swap_id,
-                preimage: *request.preimage().expose_secret(),
-            },
+            nonce,
+            *request.preimage().expose_secret(),
         )
-        .map_err(|_| SidecarError::InstructionEncoding)
     }
 
     fn plan_pair(
@@ -1470,6 +1845,37 @@ fn native_messages(
     )
     .map_err(|_| SidecarError::InstructionEncoding)?;
     Ok((initialization, funding))
+}
+
+fn native_claim_message(
+    terms: &lez_bridge_protocol::NativeEscrowTerms,
+    claimant: AccountId,
+    escrow_program_id: [u32; 8],
+    nonce: u128,
+    preimage: [u8; 32],
+) -> Result<Message, SidecarError> {
+    let swap_id = *terms.swap_id().as_bytes();
+    let metadata = spel_framework_core::pda::compute_pda(&escrow_program_id, &[&swap_id]);
+    let custody_label = spel_framework_core::pda::seed_from_str("custody");
+    let custody =
+        spel_framework_core::pda::compute_pda(&escrow_program_id, &[&custody_label, &swap_id]);
+    Message::try_new(
+        escrow_program_id,
+        vec![metadata, custody, claimant],
+        vec![nonce.into()],
+        EscrowInstruction::ClaimNative { swap_id, preimage },
+    )
+    .map_err(|_| SidecarError::InstructionEncoding)
+}
+
+fn account_ids_from_message(message: &Message) -> Result<AccountIds, SidecarError> {
+    Ok(AccountIds::new(
+        message
+            .account_ids
+            .iter()
+            .map(|account| Hex32::from_bytes(account.into_value()))
+            .collect(),
+    )?)
 }
 
 fn validate_pair_order(

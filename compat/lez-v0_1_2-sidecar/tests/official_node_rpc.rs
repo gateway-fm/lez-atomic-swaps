@@ -7,9 +7,11 @@ use common::{HashType, block::Block, transaction::NSSATransaction};
 use jsonrpsee::{server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_protocol::{
     DiscoveryWindow, EscrowObservationTarget, FundingObservation, Hex32, InitializationObservation,
-    MessageContext, NativeEscrowTerms, NativeEscrowTermsInput, ObserveEscrowRequest, Participant,
-    PrepareNativeEscrowRequest, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
-    SubmissionOutcome, SubmitTransactionRequest, TransactionId,
+    MessageContext, NativeEscrowTerms, NativeEscrowTermsInput, ObserveEscrowRequest,
+    ObserveRevealingClaimRequest, Participant, PrepareNativeEscrowRequest,
+    PrepareRevealingClaimRequest, RequestId, RevealingClaimObservation,
+    RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
+    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, TransactionId,
 };
 use lez_v0_1_2_sidecar::{
     ExactTransactionSubmitter, NativeEscrowPlanner, OfficialExactObservation, OfficialNodeRpc,
@@ -233,6 +235,14 @@ fn funded_native_accounts(
     terms: &NativeEscrowTerms,
     escrow_program: [u32; 8],
 ) -> BTreeMap<AccountId, Account> {
+    native_accounts(terms, escrow_program, EscrowStatus::Funded)
+}
+
+fn native_accounts(
+    terms: &NativeEscrowTerms,
+    escrow_program: [u32; 8],
+    status: EscrowStatus,
+) -> BTreeMap<AccountId, Account> {
     let swap_id = *terms.swap_id().as_bytes();
     let metadata_id = spel_framework_core::pda::compute_pda(&escrow_program, &[&swap_id]);
     let custody_label = spel_framework_core::pda::seed_from_str("custody");
@@ -254,7 +264,7 @@ fn funded_native_accounts(
         asset_definition: [0; 32],
         amount: terms.amount().as_u128(),
         refund_at: terms.refund_at_ms(),
-        status: EscrowStatus::Funded,
+        status,
     };
     BTreeMap::from([
         (
@@ -269,11 +279,34 @@ fn funded_native_accounts(
             custody_id,
             Account {
                 program_owner: authenticated_transfer,
-                balance: terms.amount().as_u128(),
+                balance: u128::from(matches!(status, EscrowStatus::Funded))
+                    * terms.amount().as_u128(),
                 ..Account::default()
             },
         ),
     ])
+}
+
+fn counterparty_claim_terms(
+    depositor: AccountId,
+    claimant: AccountId,
+    preimage: [u8; 32],
+) -> NativeEscrowTerms {
+    NativeEscrowTerms::new(NativeEscrowTermsInput {
+        swap_id: h(0x31),
+        terms_hash: h(0x32),
+        secret_digest: Hex32::from_bytes(Sha256::digest(preimage).into()),
+        depositor: Participant::Maker,
+        depositor_account_id: Hex32::from_bytes(depositor.into_value()),
+        claimant: Participant::Taker,
+        claimant_account_id: Hex32::from_bytes(claimant.into_value()),
+        amount: 888,
+        refund_at_ms: 1_790_000_000_123,
+        authenticated_transfer_program_id: program_hex(
+            Program::authenticated_transfer_program().id(),
+        ),
+    })
+    .unwrap()
 }
 
 async fn start_mock(mock: MockNode) -> (String, jsonrpsee::server::ServerHandle) {
@@ -934,6 +967,340 @@ async fn discovers_a_counterparty_pair_and_only_reports_absence_for_a_full_stabl
         prepare.terms,
         genesis,
     )
+    .await;
+    handle.stop().unwrap();
+}
+
+struct ExactClaimEdgeFixture<'a> {
+    rpc: &'a OfficialNodeRpc,
+    planner: &'a NativeEscrowPlanner,
+    mock: &'a MockNode,
+    request: &'a ObserveRevealingClaimRequest,
+    terms: &'a NativeEscrowTerms,
+    escrow_program: [u32; 8],
+    genesis: Block,
+    canonical_blocks: Vec<Block>,
+    canonical_accounts: BTreeMap<AccountId, Account>,
+}
+
+async fn assert_exact_claim_edges(fixture: ExactClaimEdgeFixture<'_>) {
+    *fixture.mock.accounts.lock().unwrap() =
+        native_accounts(fixture.terms, fixture.escrow_program, EscrowStatus::Funded);
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_revealing_claim(fixture.planner, fixture.request)
+            .await
+            .unwrap_err(),
+        SidecarError::InvalidNodeResponse
+    );
+    *fixture.mock.accounts.lock().unwrap() = fixture.canonical_accounts.clone();
+    fixture.mock.accounts.lock().unwrap().pop_first();
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_revealing_claim(fixture.planner, fixture.request)
+            .await
+            .unwrap_err(),
+        SidecarError::InvalidNodeResponse
+    );
+    *fixture.mock.accounts.lock().unwrap() = fixture.canonical_accounts;
+    *fixture.mock.blocks.lock().unwrap() = vec![fixture.genesis];
+    let missed = fixture
+        .rpc
+        .observe_revealing_claim(fixture.planner, fixture.request)
+        .await
+        .unwrap();
+    assert!(matches!(
+        missed.claim,
+        RevealingClaimObservation::UnknownOrPending
+    ));
+    *fixture.mock.blocks.lock().unwrap() = fixture.canonical_blocks;
+    *fixture.mock.tip_overrides.lock().unwrap() = vec![1, 1, 1, 0];
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_revealing_claim(fixture.planner, fixture.request)
+            .await
+            .unwrap_err(),
+        SidecarError::MovingTip
+    );
+}
+
+#[tokio::test]
+async fn observes_exact_claim_with_terminal_accounts_and_never_infers_absence() {
+    let (claimant, key) = keyed_account(111);
+    let (depositor, _) = keyed_account(112);
+    let escrow_program = [0x7788_99aa; 8];
+    let preimage = [0x5a; 32];
+    let genesis = common::test_utils::produce_dummy_block(0, None, Vec::new());
+    let mut descriptor = runtime(Participant::Taker, claimant, escrow_program);
+    descriptor.genesis_block_hash = Hex32::from_bytes(genesis.header.hash.0);
+    let terms = NativeEscrowTerms::new(NativeEscrowTermsInput {
+        swap_id: h(0x21),
+        terms_hash: h(0x22),
+        secret_digest: Hex32::from_bytes(Sha256::digest(preimage).into()),
+        depositor: Participant::Maker,
+        depositor_account_id: Hex32::from_bytes(depositor.into_value()),
+        claimant: Participant::Taker,
+        claimant_account_id: Hex32::from_bytes(claimant.into_value()),
+        amount: 777,
+        refund_at_ms: 1_780_000_000_123,
+        authenticated_transfer_program_id: program_hex(
+            Program::authenticated_transfer_program().id(),
+        ),
+    })
+    .unwrap();
+    let mock = MockNode::new(claimant, 121);
+    let (endpoint, handle) = start_mock(mock.clone()).await;
+    let rpc = Arc::new(
+        OfficialNodeRpc::connect(&endpoint, Participant::Taker, claimant, descriptor.clone())
+            .unwrap(),
+    );
+    let planner = NativeEscrowPlanner::new(
+        Participant::Taker,
+        key,
+        escrow_program,
+        descriptor.clone(),
+        Arc::clone(&rpc),
+    )
+    .unwrap();
+    let prepared = planner
+        .prepare_revealing_claim(&PrepareRevealingClaimRequest::new(
+            context(Participant::Taker, "claim-observe-prepare-0001"),
+            descriptor.clone(),
+            terms.clone(),
+            TransactionId::from_bytes([0x81; 32]),
+            RevealingPreimage::new(preimage),
+        ))
+        .await
+        .unwrap();
+    let claim_tx = planner
+        .decode_exact_for_submission(&prepared.claim, Participant::Taker)
+        .await
+        .unwrap();
+    let claimed =
+        common::test_utils::produce_dummy_block(1, Some(genesis.header.hash), vec![claim_tx]);
+    let canonical_blocks = vec![genesis.clone(), claimed];
+    let canonical_accounts = native_accounts(&terms, escrow_program, EscrowStatus::Claimed);
+    *mock.blocks.lock().unwrap() = canonical_blocks.clone();
+    *mock.accounts.lock().unwrap() = canonical_accounts.clone();
+    let observe = ObserveRevealingClaimRequest::new(
+        context(Participant::Taker, "claim-observe-exact-0001"),
+        descriptor,
+        terms.clone(),
+        RevealingClaimObservationTarget::Exact {
+            claim_transaction_id: prepared.claim.transaction_id,
+        },
+    );
+
+    let found = rpc
+        .observe_revealing_claim(&planner, &observe)
+        .await
+        .unwrap();
+    assert_eq!(found.tip_before, found.tip_after);
+    let RevealingClaimObservation::Found(facts) = found.claim else {
+        panic!("exact revealing claim must be found");
+    };
+    assert_eq!(
+        facts.transaction.transaction_id,
+        prepared.claim.transaction_id
+    );
+    assert_eq!(facts.transaction.exact_bytes, prepared.claim.exact_bytes);
+    assert_eq!(facts.instruction.preimage.expose_secret(), &preimage);
+    assert_eq!(
+        facts.metadata.status,
+        lez_bridge_protocol::EscrowState::Claimed
+    );
+    assert_eq!(facts.custody.balance.as_u128(), 0);
+    assert_exact_claim_edges(ExactClaimEdgeFixture {
+        rpc: rpc.as_ref(),
+        planner: &planner,
+        mock: &mock,
+        request: &observe,
+        terms: &terms,
+        escrow_program,
+        genesis,
+        canonical_blocks,
+        canonical_accounts,
+    })
+    .await;
+    handle.stop().unwrap();
+}
+
+struct ClaimDiscoveryEdgeFixture<'a> {
+    rpc: &'a OfficialNodeRpc,
+    planner: &'a NativeEscrowPlanner,
+    mock: &'a MockNode,
+    request: &'a ObserveRevealingClaimRequest,
+    genesis: Block,
+    claim: NSSATransaction,
+    canonical_blocks: Vec<Block>,
+    canonical_accounts: BTreeMap<AccountId, Account>,
+}
+
+async fn assert_claim_discovery_edges(fixture: ClaimDiscoveryEdgeFixture<'_>) {
+    let mut wrong_digest = fixture.request.clone();
+    wrong_digest.terms = counterparty_claim_terms(
+        AccountId::new(*fixture.request.terms.depositor_account_id().as_bytes()),
+        AccountId::new(*fixture.request.terms.claimant_account_id().as_bytes()),
+        [0x7c; 32],
+    );
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_revealing_claim(fixture.planner, &wrong_digest)
+            .await
+            .unwrap_err(),
+        SidecarError::InvalidNodeResponse
+    );
+
+    let ambiguous = common::test_utils::produce_dummy_block(
+        1,
+        Some(fixture.genesis.header.hash),
+        vec![fixture.claim.clone(), fixture.claim],
+    );
+    *fixture.mock.blocks.lock().unwrap() = vec![fixture.genesis.clone(), ambiguous];
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_revealing_claim(fixture.planner, fixture.request)
+            .await
+            .unwrap_err(),
+        SidecarError::AmbiguousDiscovery
+    );
+
+    *fixture.mock.blocks.lock().unwrap() = vec![fixture.genesis];
+    fixture.mock.accounts.lock().unwrap().clear();
+    let mut full = fixture.request.clone();
+    full.target = RevealingClaimObservationTarget::DiscoverByTerms {
+        window: DiscoveryWindow::new(0, 1).unwrap(),
+    };
+    let absent = fixture
+        .rpc
+        .observe_revealing_claim(fixture.planner, &full)
+        .await
+        .unwrap();
+    assert_eq!(absent.claim, RevealingClaimObservation::Absent);
+    let partial = fixture
+        .rpc
+        .observe_revealing_claim(fixture.planner, fixture.request)
+        .await
+        .unwrap();
+    assert_eq!(partial.claim, RevealingClaimObservation::UnknownOrPending);
+
+    *fixture.mock.blocks.lock().unwrap() = fixture.canonical_blocks;
+    *fixture.mock.accounts.lock().unwrap() = fixture.canonical_accounts;
+    *fixture.mock.tip_overrides.lock().unwrap() = vec![1, 0];
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_revealing_claim(fixture.planner, fixture.request)
+            .await
+            .unwrap_err(),
+        SidecarError::MovingTip
+    );
+}
+
+#[tokio::test]
+async fn depositor_discovers_a_counterparty_claim_and_revealed_preimage() {
+    let (depositor, depositor_key) = keyed_account(121);
+    let (claimant, claimant_key) = keyed_account(122);
+    let escrow_program = [0xaabb_ccdd; 8];
+    let preimage = [0x6b; 32];
+    let genesis = common::test_utils::produce_dummy_block(0, None, Vec::new());
+    let mut claimant_runtime = runtime(Participant::Taker, claimant, escrow_program);
+    claimant_runtime.genesis_block_hash = Hex32::from_bytes(genesis.header.hash.0);
+    let mut depositor_runtime = runtime(Participant::Maker, depositor, escrow_program);
+    depositor_runtime.genesis_block_hash = claimant_runtime.genesis_block_hash;
+    let terms = counterparty_claim_terms(depositor, claimant, preimage);
+    let mock = MockNode::new(claimant, 131);
+    let (endpoint, handle) = start_mock(mock.clone()).await;
+    let claimant_rpc = Arc::new(
+        OfficialNodeRpc::connect(
+            &endpoint,
+            Participant::Taker,
+            claimant,
+            claimant_runtime.clone(),
+        )
+        .unwrap(),
+    );
+    let claimant_planner = NativeEscrowPlanner::new(
+        Participant::Taker,
+        claimant_key,
+        escrow_program,
+        claimant_runtime.clone(),
+        Arc::clone(&claimant_rpc),
+    )
+    .unwrap();
+    let prepared = claimant_planner
+        .prepare_revealing_claim(&PrepareRevealingClaimRequest::new(
+            context(Participant::Taker, "claim-discovery-prepare-0001"),
+            claimant_runtime,
+            terms.clone(),
+            TransactionId::from_bytes([0x91; 32]),
+            RevealingPreimage::new(preimage),
+        ))
+        .await
+        .unwrap();
+    let claim = claimant_planner
+        .decode_exact_for_submission(&prepared.claim, Participant::Taker)
+        .await
+        .unwrap();
+    let claimed =
+        common::test_utils::produce_dummy_block(1, Some(genesis.header.hash), vec![claim.clone()]);
+    let canonical_blocks = vec![genesis.clone(), claimed];
+    let canonical_accounts = native_accounts(&terms, escrow_program, EscrowStatus::Claimed);
+    *mock.blocks.lock().unwrap() = canonical_blocks.clone();
+    *mock.accounts.lock().unwrap() = canonical_accounts.clone();
+    let depositor_rpc = Arc::new(
+        OfficialNodeRpc::connect(
+            &endpoint,
+            Participant::Maker,
+            depositor,
+            depositor_runtime.clone(),
+        )
+        .unwrap(),
+    );
+    let depositor_planner = NativeEscrowPlanner::new(
+        Participant::Maker,
+        depositor_key,
+        escrow_program,
+        depositor_runtime.clone(),
+        Arc::clone(&depositor_rpc),
+    )
+    .unwrap();
+    let observe = ObserveRevealingClaimRequest::new(
+        context(Participant::Maker, "claim-discovery-observe-0001"),
+        depositor_runtime,
+        terms,
+        RevealingClaimObservationTarget::DiscoverByTerms {
+            window: DiscoveryWindow::new(0, 2).unwrap(),
+        },
+    );
+
+    let found = depositor_rpc
+        .observe_revealing_claim(&depositor_planner, &observe)
+        .await
+        .unwrap();
+    let RevealingClaimObservation::Found(facts) = found.claim else {
+        panic!("counterparty revealing claim must be discovered");
+    };
+    assert_eq!(
+        facts.transaction.transaction_id,
+        prepared.claim.transaction_id
+    );
+    assert_eq!(facts.instruction.preimage.expose_secret(), &preimage);
+    assert_claim_discovery_edges(ClaimDiscoveryEdgeFixture {
+        rpc: depositor_rpc.as_ref(),
+        planner: &depositor_planner,
+        mock: &mock,
+        request: &observe,
+        genesis,
+        claim,
+        canonical_blocks,
+        canonical_accounts,
+    })
     .await;
     handle.stop().unwrap();
 }

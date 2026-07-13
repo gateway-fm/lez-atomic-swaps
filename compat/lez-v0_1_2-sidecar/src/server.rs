@@ -398,13 +398,6 @@ struct OperationFailure {
 }
 
 impl OperationFailure {
-    const fn unavailable(message: &'static str) -> Self {
-        Self {
-            code: ErrorCode::Unavailable,
-            message,
-        }
-    }
-
     const fn invalid_request(message: &'static str) -> Self {
         Self {
             code: ErrorCode::InvalidRequest,
@@ -741,15 +734,20 @@ fn register_claim_and_submit_methods(
         |params, state, _| async move {
             let request: ObserveRevealingClaimRequest = params.one()?;
             state.validate_runtime(&request.context, &request.runtime)?;
+            let planner = Arc::clone(&state.planner);
+            let observer = Arc::clone(&state.submitter);
+            let operation_request = request.clone();
             state
                 .execute(
                     METHOD_OBSERVE_REVEALING_CLAIM,
                     &request.context,
                     &request,
-                    || async {
-                        Err(OperationFailure::unavailable(
-                            "complete official revealing-claim observations are not implemented",
-                        ))
+                    || async move {
+                        observer
+                            .observe_revealing_claim(&planner, &operation_request)
+                            .await
+                            .map_err(OperationFailure::from)
+                            .and_then(to_value)
                     },
                 )
                 .await
