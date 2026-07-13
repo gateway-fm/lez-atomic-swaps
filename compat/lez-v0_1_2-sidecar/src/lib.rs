@@ -15,21 +15,26 @@ pub use server::{
 use std::{fmt, net::IpAddr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use borsh::BorshDeserialize as _;
 use common::{
     HashType,
     block::{BedrockStatus, Block, HashableBlockData},
     transaction::NSSATransaction,
 };
 use lez_bridge_protocol::{
-    AccountIds, ChainPosition, ChainTip, DiscoveryWindow, ExactTransactionBytes, Hex32,
+    AccountIds, ChainPosition, ChainTip, DiscoveryWindow, EscrowMetadataFacts,
+    EscrowObservationTarget, EscrowState, ExactTransactionBytes, FundingFoundFacts,
+    FundingObservation, Hex32, InitializationFoundFacts, InitializationObservation,
+    MAX_DISCOVERY_BLOCKS, NativeCustodyFacts, NativeFundInstructionFacts,
+    NativeInitializeInstructionFacts, ObserveEscrowRequest, ObserveEscrowResult,
     ObservedTransactionFacts, Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
     PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PreparedTransaction,
     ProtocolValueError, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
     SubmitTransactionResult, TransactionId,
 };
-use lez_zec_escrow_compat::Instruction as EscrowInstruction;
+use lez_zec_escrow_compat::{EscrowMetadata, EscrowStatus, Instruction as EscrowInstruction};
 use nssa::{
-    AccountId, PrivateKey, PublicKey, PublicTransaction,
+    Account, AccountId, PrivateKey, PublicKey, PublicTransaction,
     program::Program,
     public_transaction::{Message, WitnessSet},
 };
@@ -103,6 +108,12 @@ pub enum SidecarError {
     /// Node block facts were incomplete, inconsistent, or not exact.
     #[error("official node returned an invalid block response")]
     InvalidNodeResponse,
+    /// Canonical tips changed while transaction/account facts were being read.
+    #[error("official node tip moved during observation")]
+    MovingTip,
+    /// More than one canonical transaction matched one signed-terms slot.
+    #[error("official node discovery matched more than one transaction")]
+    AmbiguousDiscovery,
     /// The consecutive funding nonce would exceed u128.
     #[error("official signer nonce cannot be incremented")]
     NonceOverflow,
@@ -151,6 +162,18 @@ pub trait ExactTransactionSubmitter: Send + Sync {
         planner: &NativeEscrowPlanner,
         request: &SubmitTransactionRequest,
     ) -> Result<SubmitTransactionResult, SidecarError>;
+
+    /// Observes one exact owned pair or one counterparty pair by signed terms.
+    ///
+    /// Implementations without an official canonical/account observation source
+    /// fail closed. They must never synthesize absence from an unavailable fact.
+    async fn observe_native_escrow(
+        &self,
+        _planner: &NativeEscrowPlanner,
+        _request: &ObserveEscrowRequest,
+    ) -> Result<ObserveEscrowResult, SidecarError> {
+        Err(SidecarError::NodeObservationUnavailable)
+    }
 }
 
 /// Upstream settlement label attached to the block containing an exact transaction.
@@ -193,6 +216,25 @@ pub struct OfficialExactScan {
     pub observation: OfficialExactObservation,
     /// Validated node tip immediately after the bounded range request.
     pub tip_after: ChainTip,
+}
+
+#[derive(Clone)]
+struct NativeTransactionMatch {
+    transaction: ObservedTransactionFacts,
+    ordered_account_ids: AccountIds,
+}
+
+struct NativePairScan {
+    tip_before: ChainTip,
+    initialization: Option<NativeTransactionMatch>,
+    funding: Option<NativeTransactionMatch>,
+    fully_covered: bool,
+}
+
+#[derive(Clone)]
+struct NativeAccountSnapshot {
+    metadata: EscrowMetadataFacts,
+    custody: NativeCustodyFacts,
 }
 
 /// Bounded official v0.1.2 sequencer RPC client for one role and signer.
@@ -356,6 +398,357 @@ impl OfficialNodeRpc {
         })
     }
 
+    async fn observe_native_escrow_core(
+        &self,
+        planner: &NativeEscrowPlanner,
+        request: &ObserveEscrowRequest,
+    ) -> Result<ObserveEscrowResult, SidecarError> {
+        let exact = matches!(request.target, EscrowObservationTarget::Exact { .. });
+        self.validate_observe_request(request, exact)?;
+        let (window, expected) = match request.target {
+            EscrowObservationTarget::Exact {
+                initialization_transaction_id,
+                funding_transaction_id,
+            } => {
+                let pair = planner
+                    .owned_native_pair(
+                        request,
+                        initialization_transaction_id,
+                        funding_transaction_id,
+                    )
+                    .await?;
+                let tip = self.read_tip().await?;
+                let start = tip
+                    .height
+                    .saturating_sub(u64::from(MAX_DISCOVERY_BLOCKS - 1));
+                (
+                    DiscoveryWindow::new(start, MAX_DISCOVERY_BLOCKS)?,
+                    Some((pair.initialization, pair.funding)),
+                )
+            }
+            EscrowObservationTarget::DiscoverByTerms { window } => (window, None),
+        };
+        let scan = self
+            .scan_native_pair(&request.terms, window, expected.as_ref())
+            .await?;
+        validate_pair_order(scan.initialization.as_ref(), scan.funding.as_ref())?;
+
+        let snapshot = if scan.initialization.is_some() || scan.funding.is_some() {
+            Some(self.read_native_account_snapshot(&request.terms).await?)
+        } else {
+            None
+        };
+        let tip_after = self.read_tip().await?;
+        if tip_after != scan.tip_before {
+            return Err(SidecarError::MovingTip);
+        }
+
+        let missing_is_absent = !exact && scan.fully_covered;
+        let initialization = match scan.initialization {
+            Some(found) => {
+                let snapshot = snapshot.as_ref().ok_or(SidecarError::InvalidNodeResponse)?;
+                InitializationObservation::found(InitializationFoundFacts::new(
+                    found.transaction,
+                    NativeInitializeInstructionFacts::new(
+                        self.runtime.escrow_program_id,
+                        found.ordered_account_ids,
+                        request.terms.clone(),
+                    ),
+                    snapshot.metadata.clone(),
+                ))
+            }
+            None if missing_is_absent => InitializationObservation::Absent,
+            None => InitializationObservation::UnknownOrPending,
+        };
+        let funding = match scan.funding {
+            Some(found) => {
+                let snapshot = snapshot.as_ref().ok_or(SidecarError::InvalidNodeResponse)?;
+                if snapshot.metadata.status == EscrowState::Empty {
+                    return Err(SidecarError::InvalidNodeResponse);
+                }
+                FundingObservation::found(FundingFoundFacts::new(
+                    found.transaction,
+                    NativeFundInstructionFacts::new(
+                        self.runtime.escrow_program_id,
+                        found.ordered_account_ids,
+                        request.terms.swap_id(),
+                    ),
+                    snapshot.metadata.clone(),
+                    snapshot.custody.clone(),
+                ))
+            }
+            None if missing_is_absent => FundingObservation::Absent,
+            None => FundingObservation::UnknownOrPending,
+        };
+
+        Ok(ObserveEscrowResult::new(
+            request.context.clone(),
+            scan.tip_before,
+            initialization,
+            funding,
+            tip_after,
+        ))
+    }
+
+    async fn scan_native_pair(
+        &self,
+        terms: &lez_bridge_protocol::NativeEscrowTerms,
+        window: DiscoveryWindow,
+        expected: Option<&(PreparedTransaction, PreparedTransaction)>,
+    ) -> Result<NativePairScan, SidecarError> {
+        let tip_before = self.read_tip().await?;
+        if window.start_height() > tip_before.height {
+            return Ok(NativePairScan {
+                tip_before,
+                initialization: None,
+                funding: None,
+                fully_covered: false,
+            });
+        }
+        let declared_end = window
+            .start_height()
+            .checked_add(u64::from(window.max_blocks() - 1))
+            .ok_or(SidecarError::InvalidNodeResponse)?;
+        let end = declared_end.min(tip_before.height);
+        let anchor_start = window.start_height().saturating_sub(1);
+        let blocks = self
+            .client
+            .get_block_range(anchor_start, end)
+            .await
+            .map_err(|_| SidecarError::NodeObservationUnavailable)?;
+        validate_block_range(&blocks, anchor_start, end, self.runtime.genesis_block_hash)?;
+
+        let mut initialization = None;
+        let mut funding = None;
+        for block in blocks.iter().skip(usize::from(window.start_height() > 0)) {
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                let Some((is_initialization, found)) =
+                    self.decode_native_match(transaction, block, index, terms, expected)?
+                else {
+                    continue;
+                };
+                let slot = if is_initialization {
+                    &mut initialization
+                } else {
+                    &mut funding
+                };
+                if slot.replace(found).is_some() {
+                    return Err(if expected.is_some() {
+                        SidecarError::InvalidNodeResponse
+                    } else {
+                        SidecarError::AmbiguousDiscovery
+                    });
+                }
+            }
+        }
+        Ok(NativePairScan {
+            tip_before,
+            initialization,
+            funding,
+            fully_covered: tip_before.height >= declared_end,
+        })
+    }
+
+    fn decode_native_match(
+        &self,
+        transaction: &NSSATransaction,
+        block: &Block,
+        index: usize,
+        terms: &lez_bridge_protocol::NativeEscrowTerms,
+        expected: Option<&(PreparedTransaction, PreparedTransaction)>,
+    ) -> Result<Option<(bool, NativeTransactionMatch)>, SidecarError> {
+        let transaction_id = TransactionId::from_bytes(transaction.hash().0);
+        let exact_kind = expected.and_then(|(initialization, funding)| {
+            if transaction_id == initialization.transaction_id {
+                Some((true, initialization))
+            } else if transaction_id == funding.transaction_id {
+                Some((false, funding))
+            } else {
+                None
+            }
+        });
+        if expected.is_some() && exact_kind.is_none() {
+            return Ok(None);
+        }
+        let NSSATransaction::Public(public) = transaction else {
+            return if exact_kind.is_some() {
+                Err(SidecarError::InvalidNodeResponse)
+            } else {
+                Ok(None)
+            };
+        };
+        if public.message().program_id != program_id_from_hex(self.runtime.escrow_program_id) {
+            return if exact_kind.is_some() {
+                Err(SidecarError::WrongEscrowProgram)
+            } else {
+                Ok(None)
+            };
+        }
+        let [nonce] = public.message().nonces.as_slice() else {
+            return if exact_kind.is_some() {
+                Err(SidecarError::InvalidTransactionBytes)
+            } else {
+                Ok(None)
+            };
+        };
+        let (expected_initialization, expected_funding) = native_messages(
+            terms,
+            program_id_from_hex(self.runtime.escrow_program_id),
+            u128::from(*nonce),
+        )?;
+        let is_initialization = public.message() == &expected_initialization;
+        let is_funding = public.message() == &expected_funding;
+        let prepared = prepared_from_transaction(public)?;
+        if let Some((must_initialize, persisted)) = exact_kind {
+            if &prepared != persisted
+                || must_initialize != is_initialization
+                || must_initialize == is_funding
+            {
+                return Err(SidecarError::InvalidTransactionBytes);
+            }
+        } else if !is_initialization && !is_funding {
+            return Ok(None);
+        }
+        let decoded = decode_prepared_for_role(
+            &prepared,
+            self.role,
+            self.role,
+            AccountId::new(*terms.depositor_account_id().as_bytes()),
+        )?;
+        let signer_account_ids = decoded
+            .witness_set()
+            .signatures_and_public_keys()
+            .iter()
+            .map(|(_, key)| Hex32::from_bytes(AccountId::from(key).into_value()))
+            .collect::<Vec<_>>();
+        Ok(Some((
+            is_initialization,
+            NativeTransactionMatch {
+                transaction: ObservedTransactionFacts::new(
+                    prepared.transaction_id,
+                    prepared.exact_bytes,
+                    ChainPosition::new(
+                        Hex32::from_bytes(block.header.hash.0),
+                        block.header.block_id,
+                        u32::try_from(index).map_err(|_| SidecarError::InvalidNodeResponse)?,
+                    ),
+                    AccountIds::new(signer_account_ids)?,
+                    true,
+                ),
+                ordered_account_ids: AccountIds::new(
+                    decoded
+                        .message()
+                        .account_ids
+                        .iter()
+                        .map(|account| Hex32::from_bytes(account.into_value()))
+                        .collect(),
+                )?,
+            },
+        )))
+    }
+
+    async fn read_native_account_snapshot(
+        &self,
+        terms: &lez_bridge_protocol::NativeEscrowTerms,
+    ) -> Result<NativeAccountSnapshot, SidecarError> {
+        let swap_id = *terms.swap_id().as_bytes();
+        let metadata_id = spel_framework_core::pda::compute_pda(
+            &program_id_from_hex(self.runtime.escrow_program_id),
+            &[&swap_id],
+        );
+        let custody_label = spel_framework_core::pda::seed_from_str("custody");
+        let custody_id = spel_framework_core::pda::compute_pda(
+            &program_id_from_hex(self.runtime.escrow_program_id),
+            &[&custody_label, &swap_id],
+        );
+        let metadata_account = self.read_account(metadata_id).await?;
+        let custody_account = self.read_account(custody_id).await?;
+        let metadata = EscrowMetadata::try_from_slice(metadata_account.data.as_ref())
+            .map_err(|_| SidecarError::InvalidNodeResponse)?;
+        validate_metadata(
+            &metadata,
+            terms,
+            custody_id,
+            metadata_account.program_owner,
+            program_id_from_hex(self.runtime.escrow_program_id),
+        )?;
+        let status = escrow_state(metadata.status);
+        let expected_balance = match status {
+            EscrowState::Empty | EscrowState::Claimed | EscrowState::Refunded => 0,
+            EscrowState::Funded => terms.amount().as_u128(),
+        };
+        let authenticated_transfer = program_id_from_hex(terms.authenticated_transfer_program_id());
+        if custody_account.program_owner != authenticated_transfer
+            || custody_account.balance != expected_balance
+        {
+            return Err(SidecarError::InvalidNodeResponse);
+        }
+        Ok(NativeAccountSnapshot {
+            metadata: EscrowMetadataFacts::from_native_terms(
+                Hex32::from_bytes(metadata_id.into_value()),
+                self.runtime.escrow_program_id,
+                Hex32::from_bytes(custody_id.into_value()),
+                terms,
+                status,
+            ),
+            custody: NativeCustodyFacts::new(
+                Hex32::from_bytes(custody_id.into_value()),
+                terms.authenticated_transfer_program_id(),
+                custody_account.balance,
+            ),
+        })
+    }
+
+    async fn read_account(&self, account_id: AccountId) -> Result<Account, SidecarError> {
+        self.client
+            .get_account(account_id)
+            .await
+            .map_err(|_| SidecarError::NodeObservationUnavailable)
+    }
+
+    fn validate_observe_request(
+        &self,
+        request: &ObserveEscrowRequest,
+        exact: bool,
+    ) -> Result<(), SidecarError> {
+        if request.runtime != self.runtime {
+            return Err(SidecarError::WrongRuntimeIdentity);
+        }
+        if request.context.sidecar_role != self.role || request.runtime.sidecar_role != self.role {
+            return Err(SidecarError::WrongSidecarRole);
+        }
+        if request.runtime.compatibility != lez_bridge_protocol::RuntimeCompatibility::NssaV0_1_2 {
+            return Err(SidecarError::WrongRuntimeCompatibility);
+        }
+        if request.runtime.escrow_program_id
+            != program_id_to_hex(program_id_from_hex(self.runtime.escrow_program_id))
+        {
+            return Err(SidecarError::WrongEscrowProgram);
+        }
+        if request.terms.authenticated_transfer_program_id()
+            != program_id_to_hex(Program::authenticated_transfer_program().id())
+        {
+            return Err(SidecarError::WrongAuthenticatedTransferProgram);
+        }
+        let signer = Hex32::from_bytes(self.signer_account_id.into_value());
+        if exact {
+            if request.terms.depositor() != self.role {
+                return Err(SidecarError::WrongDepositorRole);
+            }
+            if request.terms.depositor_account_id() != signer {
+                return Err(SidecarError::WrongSigner);
+            }
+        } else {
+            if request.terms.claimant() != self.role || request.terms.depositor() == self.role {
+                return Err(SidecarError::WrongClaimantRole);
+            }
+            if request.terms.claimant_account_id() != signer {
+                return Err(SidecarError::WrongSigner);
+            }
+        }
+        Ok(())
+    }
+
     async fn read_tip(&self) -> Result<ChainTip, SidecarError> {
         let height = self
             .client
@@ -430,6 +823,14 @@ impl ExactTransactionSubmitter for OfficialNodeRpc {
             request.transaction.transaction_id,
             SubmissionOutcome::Accepted,
         ))
+    }
+
+    async fn observe_native_escrow(
+        &self,
+        planner: &NativeEscrowPlanner,
+        request: &ObserveEscrowRequest,
+    ) -> Result<ObserveEscrowResult, SidecarError> {
+        self.observe_native_escrow_core(planner, request).await
     }
 }
 
@@ -764,6 +1165,35 @@ impl NativeEscrowPlanner {
         Ok(NSSATransaction::Public(transaction))
     }
 
+    async fn owned_native_pair(
+        &self,
+        request: &ObserveEscrowRequest,
+        initialization_transaction_id: TransactionId,
+        funding_transaction_id: TransactionId,
+    ) -> Result<PrepareNativeEscrowResult, SidecarError> {
+        if request.runtime != self.expected_runtime
+            || request.context.sidecar_role != self.role
+            || request.terms.depositor() != self.role
+            || request.terms.depositor_account_id()
+                != Hex32::from_bytes(self.signer_account_id.into_value())
+        {
+            return Err(SidecarError::WrongRuntimeIdentity);
+        }
+        let state = self.state.lock().await;
+        let active = state
+            .native
+            .as_ref()
+            .ok_or(SidecarError::TransactionNotPrepared)?;
+        if active.request.runtime != request.runtime
+            || active.request.terms != request.terms
+            || active.result.initialization.transaction_id != initialization_transaction_id
+            || active.result.funding.transaction_id != funding_transaction_id
+        {
+            return Err(SidecarError::TransactionNotPrepared);
+        }
+        Ok(active.result.clone())
+    }
+
     fn validate_request(&self, request: &PrepareNativeEscrowRequest) -> Result<(), SidecarError> {
         if request.runtime != self.expected_runtime {
             return Err(SidecarError::WrongRuntimeIdentity);
@@ -1002,6 +1432,102 @@ fn program_id_from_hex(value: Hex32) -> [u32; 8] {
         *word = u32::from_le_bytes(chunk.try_into().expect("four-byte chunk"));
     }
     program_id
+}
+
+fn native_messages(
+    terms: &lez_bridge_protocol::NativeEscrowTerms,
+    escrow_program_id: [u32; 8],
+    nonce: u128,
+) -> Result<(Message, Message), SidecarError> {
+    let swap_id = *terms.swap_id().as_bytes();
+    let metadata = spel_framework_core::pda::compute_pda(&escrow_program_id, &[&swap_id]);
+    let custody_label = spel_framework_core::pda::seed_from_str("custody");
+    let custody =
+        spel_framework_core::pda::compute_pda(&escrow_program_id, &[&custody_label, &swap_id]);
+    let depositor = AccountId::new(*terms.depositor_account_id().as_bytes());
+    let claimant = AccountId::new(*terms.claimant_account_id().as_bytes());
+    let initialization = Message::try_new(
+        escrow_program_id,
+        vec![metadata, custody, depositor, claimant],
+        vec![nonce.into()],
+        EscrowInstruction::InitializeNative {
+            swap_id,
+            terms_hash: *terms.terms_hash().as_bytes(),
+            secret_digest: *terms.secret_digest().as_bytes(),
+            amount: terms.amount().as_u128(),
+            refund_at: terms.refund_at_ms(),
+            authenticated_transfer_program: program_id_from_hex(
+                terms.authenticated_transfer_program_id(),
+            ),
+        },
+    )
+    .map_err(|_| SidecarError::InstructionEncoding)?;
+    let funding = Message::try_new(
+        escrow_program_id,
+        vec![metadata, custody, depositor],
+        vec![nonce.into()],
+        EscrowInstruction::FundNative { swap_id },
+    )
+    .map_err(|_| SidecarError::InstructionEncoding)?;
+    Ok((initialization, funding))
+}
+
+fn validate_pair_order(
+    initialization: Option<&NativeTransactionMatch>,
+    funding: Option<&NativeTransactionMatch>,
+) -> Result<(), SidecarError> {
+    let (Some(initialization), Some(funding)) = (initialization, funding) else {
+        return Ok(());
+    };
+    let initialization_position = initialization.transaction.position;
+    let funding_position = funding.transaction.position;
+    if (funding_position.height, funding_position.transaction_index)
+        <= (
+            initialization_position.height,
+            initialization_position.transaction_index,
+        )
+    {
+        return Err(SidecarError::InvalidNodeResponse);
+    }
+    Ok(())
+}
+
+fn validate_metadata(
+    metadata: &EscrowMetadata,
+    terms: &lez_bridge_protocol::NativeEscrowTerms,
+    custody_id: AccountId,
+    metadata_owner: [u32; 8],
+    escrow_program_id: [u32; 8],
+) -> Result<(), SidecarError> {
+    let authenticated_transfer = program_id_from_hex(terms.authenticated_transfer_program_id());
+    if metadata_owner != escrow_program_id
+        || metadata.version != 1
+        || metadata.swap_id != *terms.swap_id().as_bytes()
+        || metadata.terms_hash != *terms.terms_hash().as_bytes()
+        || metadata.secret_digest != *terms.secret_digest().as_bytes()
+        || metadata.depositor.into_value() != *terms.depositor_account_id().as_bytes()
+        || metadata.depositor_asset.into_value() != *terms.depositor_account_id().as_bytes()
+        || metadata.claimant.into_value() != *terms.claimant_account_id().as_bytes()
+        || metadata.claimant_asset.into_value() != *terms.claimant_account_id().as_bytes()
+        || metadata.custody != custody_id
+        || metadata.asset_program != authenticated_transfer
+        || metadata.custody_program != authenticated_transfer
+        || metadata.asset_definition != [0; 32]
+        || metadata.amount != terms.amount().as_u128()
+        || metadata.refund_at != terms.refund_at_ms()
+    {
+        return Err(SidecarError::InvalidNodeResponse);
+    }
+    Ok(())
+}
+
+const fn escrow_state(status: EscrowStatus) -> EscrowState {
+    match status {
+        EscrowStatus::Empty => EscrowState::Empty,
+        EscrowStatus::Funded => EscrowState::Funded,
+        EscrowStatus::Claimed => EscrowState::Claimed,
+        EscrowStatus::Refunded => EscrowState::Refunded,
+    }
 }
 
 fn settlement(status: &BedrockStatus) -> OfficialSettlement {

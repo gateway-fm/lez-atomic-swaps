@@ -518,6 +518,8 @@ impl From<SidecarError> for OperationFailure {
             | SidecarError::WrongTransactionId
             | SidecarError::InvalidSignature => ErrorCode::InvalidTransaction,
             SidecarError::UnknownSubmissionOutcome => ErrorCode::UnknownSubmissionOutcome,
+            SidecarError::MovingTip => ErrorCode::MovingTip,
+            SidecarError::AmbiguousDiscovery => ErrorCode::AmbiguousDiscovery,
             SidecarError::NonceUnavailable
             | SidecarError::NodeObservationUnavailable
             | SidecarError::InvalidNodeResponse => ErrorCode::Unavailable,
@@ -687,15 +689,20 @@ fn register_runtime_and_escrow_methods(
     module.register_async_method(METHOD_OBSERVE_ESCROW, |params, state, _| async move {
         let request: ObserveEscrowRequest = params.one()?;
         state.validate_runtime(&request.context, &request.runtime)?;
+        let planner = Arc::clone(&state.planner);
+        let observer = Arc::clone(&state.submitter);
+        let operation_request = request.clone();
         state
             .execute(
                 METHOD_OBSERVE_ESCROW,
                 &request.context,
                 &request,
-                || async {
-                    Err(OperationFailure::unavailable(
-                        "complete official escrow account observations are not implemented",
-                    ))
+                || async move {
+                    observer
+                        .observe_native_escrow(&planner, &operation_request)
+                        .await
+                        .map_err(OperationFailure::from)
+                        .and_then(to_value)
                 },
             )
             .await

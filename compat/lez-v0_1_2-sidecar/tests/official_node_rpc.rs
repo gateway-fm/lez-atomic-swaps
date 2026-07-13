@@ -6,7 +6,8 @@ use std::{
 use common::{HashType, block::Block, transaction::NSSATransaction};
 use jsonrpsee::{server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_protocol::{
-    DiscoveryWindow, Hex32, MessageContext, NativeEscrowTerms, NativeEscrowTermsInput, Participant,
+    DiscoveryWindow, EscrowObservationTarget, FundingObservation, Hex32, InitializationObservation,
+    MessageContext, NativeEscrowTerms, NativeEscrowTermsInput, ObserveEscrowRequest, Participant,
     PrepareNativeEscrowRequest, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
     SubmissionOutcome, SubmitTransactionRequest, TransactionId,
 };
@@ -14,7 +15,8 @@ use lez_v0_1_2_sidecar::{
     ExactTransactionSubmitter, NativeEscrowPlanner, OfficialExactObservation, OfficialNodeRpc,
     OfficialSettlement, SidecarError,
 };
-use nssa::{AccountId, PrivateKey, PublicKey, program::Program};
+use lez_zec_escrow_compat::{EscrowMetadata, EscrowStatus};
+use nssa::{AccountId, Data, PrivateKey, PublicKey, program::Program};
 use sequencer_service_protocol::{Account, BlockId, Commitment, MembershipProof, Nonce, ProgramId};
 use sequencer_service_rpc::RpcServer;
 use sha2::{Digest as _, Sha256};
@@ -35,6 +37,8 @@ struct MockNode {
     nonce_requests: Arc<Mutex<Vec<Vec<AccountId>>>>,
     submitted: Arc<Mutex<Vec<NSSATransaction>>>,
     blocks: Arc<Mutex<Vec<Block>>>,
+    accounts: Arc<Mutex<BTreeMap<AccountId, Account>>>,
+    tip_overrides: Arc<Mutex<Vec<BlockId>>>,
 }
 
 impl MockNode {
@@ -46,6 +50,8 @@ impl MockNode {
             nonce_requests: Arc::new(Mutex::new(Vec::new())),
             submitted: Arc::new(Mutex::new(Vec::new())),
             blocks: Arc::new(Mutex::new(Vec::new())),
+            accounts: Arc::new(Mutex::new(BTreeMap::new())),
+            tip_overrides: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -104,6 +110,9 @@ impl RpcServer for MockNode {
     }
 
     async fn get_last_block_id(&self) -> Result<BlockId, ErrorObjectOwned> {
+        if !self.tip_overrides.lock().unwrap().is_empty() {
+            return Ok(self.tip_overrides.lock().unwrap().remove(0));
+        }
         Ok(self
             .blocks
             .lock()
@@ -139,8 +148,14 @@ impl RpcServer for MockNode {
         Ok(None)
     }
 
-    async fn get_account(&self, _account_id: AccountId) -> Result<Account, ErrorObjectOwned> {
-        Ok(Account::default())
+    async fn get_account(&self, account_id: AccountId) -> Result<Account, ErrorObjectOwned> {
+        Ok(self
+            .accounts
+            .lock()
+            .unwrap()
+            .get(&account_id)
+            .cloned()
+            .unwrap_or_default())
     }
 
     async fn get_program_ids(&self) -> Result<BTreeMap<String, ProgramId>, ErrorObjectOwned> {
@@ -212,6 +227,53 @@ fn prepare_request(
         runtime(role, signer, escrow_program),
         terms,
     )
+}
+
+fn funded_native_accounts(
+    terms: &NativeEscrowTerms,
+    escrow_program: [u32; 8],
+) -> BTreeMap<AccountId, Account> {
+    let swap_id = *terms.swap_id().as_bytes();
+    let metadata_id = spel_framework_core::pda::compute_pda(&escrow_program, &[&swap_id]);
+    let custody_label = spel_framework_core::pda::seed_from_str("custody");
+    let custody_id =
+        spel_framework_core::pda::compute_pda(&escrow_program, &[&custody_label, &swap_id]);
+    let authenticated_transfer = Program::authenticated_transfer_program().id();
+    let metadata = EscrowMetadata {
+        version: 1,
+        swap_id,
+        terms_hash: *terms.terms_hash().as_bytes(),
+        secret_digest: *terms.secret_digest().as_bytes(),
+        depositor: AccountId::new(*terms.depositor_account_id().as_bytes()),
+        depositor_asset: AccountId::new(*terms.depositor_account_id().as_bytes()),
+        claimant: AccountId::new(*terms.claimant_account_id().as_bytes()),
+        claimant_asset: AccountId::new(*terms.claimant_account_id().as_bytes()),
+        custody: custody_id,
+        asset_program: authenticated_transfer,
+        custody_program: authenticated_transfer,
+        asset_definition: [0; 32],
+        amount: terms.amount().as_u128(),
+        refund_at: terms.refund_at_ms(),
+        status: EscrowStatus::Funded,
+    };
+    BTreeMap::from([
+        (
+            metadata_id,
+            Account {
+                program_owner: escrow_program,
+                data: Data::try_from(borsh::to_vec(&metadata).unwrap()).unwrap(),
+                ..Account::default()
+            },
+        ),
+        (
+            custody_id,
+            Account {
+                program_owner: authenticated_transfer,
+                balance: terms.amount().as_u128(),
+                ..Account::default()
+            },
+        ),
+    ])
 }
 
 async fn start_mock(mock: MockNode) -> (String, jsonrpsee::server::ServerHandle) {
@@ -486,5 +548,392 @@ async fn scans_a_bounded_linked_range_for_only_the_exact_persisted_transaction()
         .unwrap_err(),
         SidecarError::InvalidNodeResponse
     );
+    handle.stop().unwrap();
+}
+
+struct OwnedMutationFixture<'a> {
+    rpc: &'a OfficialNodeRpc,
+    planner: &'a NativeEscrowPlanner,
+    request: &'a ObserveEscrowRequest,
+    terms: &'a NativeEscrowTerms,
+    mock: &'a MockNode,
+    escrow_program: [u32; 8],
+    genesis: &'a Block,
+    initialization_tx: NSSATransaction,
+    funding_tx: NSSATransaction,
+    canonical_blocks: Vec<Block>,
+    canonical_accounts: BTreeMap<AccountId, Account>,
+}
+
+fn changed_amount_and_deadline(terms: &NativeEscrowTerms) -> NativeEscrowTerms {
+    NativeEscrowTerms::new(NativeEscrowTermsInput {
+        swap_id: terms.swap_id(),
+        terms_hash: terms.terms_hash(),
+        secret_digest: terms.secret_digest(),
+        depositor: terms.depositor(),
+        depositor_account_id: terms.depositor_account_id(),
+        claimant: terms.claimant(),
+        claimant_account_id: terms.claimant_account_id(),
+        amount: terms.amount().as_u128() + 1,
+        refund_at_ms: terms.refund_at_ms() + 1,
+        authenticated_transfer_program_id: terms.authenticated_transfer_program_id(),
+    })
+    .unwrap()
+}
+
+async fn assert_owned_observation_mutations(fixture: OwnedMutationFixture<'_>) {
+    let mut wrong_runtime = fixture.request.clone();
+    wrong_runtime.runtime.channel_id = h(0xf1);
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_native_escrow(fixture.planner, &wrong_runtime)
+            .await
+            .unwrap_err(),
+        SidecarError::WrongRuntimeIdentity
+    );
+    let mut wrong_role = fixture.request.clone();
+    wrong_role.context.sidecar_role = Participant::Taker;
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_native_escrow(fixture.planner, &wrong_role)
+            .await
+            .unwrap_err(),
+        SidecarError::WrongSidecarRole
+    );
+    let mut wrong_terms = fixture.request.clone();
+    wrong_terms.terms = changed_amount_and_deadline(fixture.terms);
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_native_escrow(fixture.planner, &wrong_terms)
+            .await
+            .unwrap_err(),
+        SidecarError::TransactionNotPrepared
+    );
+
+    let metadata_id = spel_framework_core::pda::compute_pda(
+        &fixture.escrow_program,
+        &[fixture.terms.swap_id().as_bytes()],
+    );
+    fixture
+        .mock
+        .accounts
+        .lock()
+        .unwrap()
+        .get_mut(&metadata_id)
+        .unwrap()
+        .program_owner = [0; 8];
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_native_escrow(fixture.planner, fixture.request)
+            .await
+            .unwrap_err(),
+        SidecarError::InvalidNodeResponse
+    );
+    *fixture.mock.accounts.lock().unwrap() = fixture.canonical_accounts.clone();
+    let custody_label = spel_framework_core::pda::seed_from_str("custody");
+    let custody_id = spel_framework_core::pda::compute_pda(
+        &fixture.escrow_program,
+        &[&custody_label, fixture.terms.swap_id().as_bytes()],
+    );
+    fixture
+        .mock
+        .accounts
+        .lock()
+        .unwrap()
+        .get_mut(&custody_id)
+        .unwrap()
+        .balance += 1;
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_native_escrow(fixture.planner, fixture.request)
+            .await
+            .unwrap_err(),
+        SidecarError::InvalidNodeResponse
+    );
+    *fixture.mock.accounts.lock().unwrap() = fixture.canonical_accounts;
+    let reversed = common::test_utils::produce_dummy_block(
+        1,
+        Some(fixture.genesis.header.hash),
+        vec![fixture.funding_tx, fixture.initialization_tx],
+    );
+    *fixture.mock.blocks.lock().unwrap() = vec![fixture.genesis.clone(), reversed];
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_native_escrow(fixture.planner, fixture.request)
+            .await
+            .unwrap_err(),
+        SidecarError::InvalidNodeResponse
+    );
+    *fixture.mock.blocks.lock().unwrap() = fixture.canonical_blocks;
+    *fixture.mock.tip_overrides.lock().unwrap() = vec![1, 1, 0];
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_native_escrow(fixture.planner, fixture.request)
+            .await
+            .unwrap_err(),
+        SidecarError::MovingTip
+    );
+}
+
+async fn assert_discovery_absence_semantics(
+    rpc: &OfficialNodeRpc,
+    planner: &NativeEscrowPlanner,
+    mock: &MockNode,
+    runtime: RuntimeDescriptor,
+    terms: NativeEscrowTerms,
+    genesis: Block,
+) {
+    *mock.blocks.lock().unwrap() = vec![genesis];
+    mock.accounts.lock().unwrap().clear();
+    let full_absence = ObserveEscrowRequest::new(
+        context(Participant::Taker, "observe-discovery-rpc-0002"),
+        runtime.clone(),
+        terms.clone(),
+        EscrowObservationTarget::DiscoverByTerms {
+            window: DiscoveryWindow::new(0, 1).unwrap(),
+        },
+    );
+    let absent = rpc
+        .observe_native_escrow(planner, &full_absence)
+        .await
+        .unwrap();
+    assert_eq!(absent.initialization, InitializationObservation::Absent);
+    assert_eq!(absent.funding, FundingObservation::Absent);
+
+    let partial = ObserveEscrowRequest::new(
+        context(Participant::Taker, "observe-discovery-rpc-0003"),
+        runtime,
+        terms,
+        EscrowObservationTarget::DiscoverByTerms {
+            window: DiscoveryWindow::new(0, 2).unwrap(),
+        },
+    );
+    let unknown = rpc.observe_native_escrow(planner, &partial).await.unwrap();
+    assert_eq!(
+        unknown.initialization,
+        InitializationObservation::UnknownOrPending
+    );
+    assert_eq!(unknown.funding, FundingObservation::UnknownOrPending);
+}
+
+async fn assert_ambiguous_discovery(
+    rpc: &OfficialNodeRpc,
+    planner: &NativeEscrowPlanner,
+    mock: &MockNode,
+    request: &ObserveEscrowRequest,
+    genesis: &Block,
+    initialization: NSSATransaction,
+    funding: NSSATransaction,
+) {
+    let ambiguous = common::test_utils::produce_dummy_block(
+        1,
+        Some(genesis.header.hash),
+        vec![initialization.clone(), initialization, funding],
+    );
+    *mock.blocks.lock().unwrap() = vec![genesis.clone(), ambiguous];
+    assert_eq!(
+        rpc.observe_native_escrow(planner, request)
+            .await
+            .unwrap_err(),
+        SidecarError::AmbiguousDiscovery
+    );
+}
+
+#[tokio::test]
+async fn observes_the_owned_exact_native_pair_through_the_official_core() {
+    let (depositor, key) = keyed_account(91);
+    let (claimant, _) = keyed_account(92);
+    let escrow_program = [0x3333_4444; 8];
+    let genesis = common::test_utils::produce_dummy_block(0, None, Vec::new());
+    let mut descriptor = runtime(Participant::Maker, depositor, escrow_program);
+    descriptor.genesis_block_hash = Hex32::from_bytes(genesis.header.hash.0);
+    let mock = MockNode::new(depositor, 101);
+    let (endpoint, handle) = start_mock(mock.clone()).await;
+    let rpc = Arc::new(
+        OfficialNodeRpc::connect(&endpoint, Participant::Maker, depositor, descriptor.clone())
+            .unwrap(),
+    );
+    let planner = NativeEscrowPlanner::new(
+        Participant::Maker,
+        key,
+        escrow_program,
+        descriptor.clone(),
+        Arc::clone(&rpc),
+    )
+    .unwrap();
+    let mut prepare = prepare_request(Participant::Maker, depositor, claimant, escrow_program);
+    prepare.runtime = descriptor.clone();
+    let prepared = planner.prepare(prepare.clone()).await.unwrap();
+    let initialization_tx = planner
+        .decode_exact_for_submission(&prepared.initialization, Participant::Maker)
+        .await
+        .unwrap();
+    let funding_tx = planner
+        .decode_exact_for_submission(&prepared.funding, Participant::Maker)
+        .await
+        .unwrap();
+    let funded = common::test_utils::produce_dummy_block(
+        1,
+        Some(genesis.header.hash),
+        vec![initialization_tx.clone(), funding_tx.clone()],
+    );
+    let canonical_blocks = vec![genesis.clone(), funded];
+    let canonical_accounts = funded_native_accounts(&prepare.terms, escrow_program);
+    *mock.blocks.lock().unwrap() = canonical_blocks.clone();
+    *mock.accounts.lock().unwrap() = canonical_accounts.clone();
+    let request = ObserveEscrowRequest::new(
+        context(Participant::Maker, "observe-exact-rpc-0001"),
+        descriptor,
+        prepare.terms.clone(),
+        EscrowObservationTarget::Exact {
+            initialization_transaction_id: prepared.initialization.transaction_id,
+            funding_transaction_id: prepared.funding.transaction_id,
+        },
+    );
+
+    let result = rpc.observe_native_escrow(&planner, &request).await.unwrap();
+
+    assert_eq!(result.tip_before, result.tip_after);
+    let InitializationObservation::Found(initialization) = result.initialization else {
+        panic!("exact initialization must be found");
+    };
+    let FundingObservation::Found(funding) = result.funding else {
+        panic!("exact funding must be found");
+    };
+    assert_eq!(initialization.transaction.position.transaction_index, 0);
+    assert_eq!(funding.transaction.position.transaction_index, 1);
+    assert_eq!(
+        funding.custody.balance.as_u128(),
+        prepare.terms.amount().as_u128()
+    );
+    assert_eq!(funding.metadata.terms_hash, prepare.terms.terms_hash());
+
+    assert_owned_observation_mutations(OwnedMutationFixture {
+        rpc: rpc.as_ref(),
+        planner: &planner,
+        request: &request,
+        terms: &prepare.terms,
+        mock: &mock,
+        escrow_program,
+        genesis: &genesis,
+        initialization_tx,
+        funding_tx,
+        canonical_blocks,
+        canonical_accounts,
+    })
+    .await;
+    handle.stop().unwrap();
+}
+
+#[tokio::test]
+async fn discovers_a_counterparty_pair_and_only_reports_absence_for_a_full_stable_window() {
+    let (depositor, depositor_key) = keyed_account(101);
+    let (claimant, claimant_key) = keyed_account(102);
+    let escrow_program = [0x5555_6666; 8];
+    let genesis = common::test_utils::produce_dummy_block(0, None, Vec::new());
+    let mut depositor_runtime = runtime(Participant::Maker, depositor, escrow_program);
+    depositor_runtime.genesis_block_hash = Hex32::from_bytes(genesis.header.hash.0);
+    let mut claimant_runtime = runtime(Participant::Taker, claimant, escrow_program);
+    claimant_runtime.genesis_block_hash = Hex32::from_bytes(genesis.header.hash.0);
+    let mock = MockNode::new(depositor, 111);
+    let (endpoint, handle) = start_mock(mock.clone()).await;
+    let depositor_rpc = Arc::new(
+        OfficialNodeRpc::connect(
+            &endpoint,
+            Participant::Maker,
+            depositor,
+            depositor_runtime.clone(),
+        )
+        .unwrap(),
+    );
+    let depositor_planner = NativeEscrowPlanner::new(
+        Participant::Maker,
+        depositor_key,
+        escrow_program,
+        depositor_runtime.clone(),
+        Arc::clone(&depositor_rpc),
+    )
+    .unwrap();
+    let claimant_rpc = Arc::new(
+        OfficialNodeRpc::connect(
+            &endpoint,
+            Participant::Taker,
+            claimant,
+            claimant_runtime.clone(),
+        )
+        .unwrap(),
+    );
+    let claimant_planner = NativeEscrowPlanner::new(
+        Participant::Taker,
+        claimant_key,
+        escrow_program,
+        claimant_runtime.clone(),
+        Arc::clone(&claimant_rpc),
+    )
+    .unwrap();
+    let mut prepare = prepare_request(Participant::Maker, depositor, claimant, escrow_program);
+    prepare.runtime = depositor_runtime;
+    let prepared = depositor_planner.prepare(prepare.clone()).await.unwrap();
+    let initialization = depositor_planner
+        .decode_exact_for_submission(&prepared.initialization, Participant::Maker)
+        .await
+        .unwrap();
+    let funding = depositor_planner
+        .decode_exact_for_submission(&prepared.funding, Participant::Maker)
+        .await
+        .unwrap();
+    let funded = common::test_utils::produce_dummy_block(
+        1,
+        Some(genesis.header.hash),
+        vec![initialization.clone(), funding.clone()],
+    );
+    *mock.blocks.lock().unwrap() = vec![genesis.clone(), funded];
+    *mock.accounts.lock().unwrap() = funded_native_accounts(&prepare.terms, escrow_program);
+
+    let discovery = ObserveEscrowRequest::new(
+        context(Participant::Taker, "observe-discovery-rpc-0001"),
+        claimant_runtime.clone(),
+        prepare.terms.clone(),
+        EscrowObservationTarget::DiscoverByTerms {
+            window: DiscoveryWindow::new(0, 2).unwrap(),
+        },
+    );
+    let found = claimant_rpc
+        .observe_native_escrow(&claimant_planner, &discovery)
+        .await
+        .unwrap();
+    assert!(matches!(
+        found.initialization,
+        InitializationObservation::Found(_)
+    ));
+    assert!(matches!(found.funding, FundingObservation::Found(_)));
+
+    assert_ambiguous_discovery(
+        claimant_rpc.as_ref(),
+        &claimant_planner,
+        &mock,
+        &discovery,
+        &genesis,
+        initialization,
+        funding,
+    )
+    .await;
+
+    assert_discovery_absence_semantics(
+        claimant_rpc.as_ref(),
+        &claimant_planner,
+        &mock,
+        claimant_runtime,
+        prepare.terms,
+        genesis,
+    )
+    .await;
     handle.stop().unwrap();
 }
