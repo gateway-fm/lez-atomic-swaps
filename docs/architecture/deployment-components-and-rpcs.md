@@ -1,6 +1,6 @@
 # Deployment components, RPCs, and local nodes
 
-Status: Living executable inventory — 2026-07-12
+Status: Living executable inventory — 2026-07-13
 
 This document is the concrete deployment companion to the
 [system architecture](system-architecture.md). It distinguishes processes that
@@ -17,10 +17,19 @@ flowchart TB
     subgraph MakerHost["Maker host"]
         CLI["lez-maker CLI"]
         Daemon["lez-maker-daemon"]
-        Store[("SQLite schema v8")]
+        Store[("SQLite schema v9")]
         RuntimeTest["maker runtime restart fixture"]
         SdkJournal["SDK exact-tracker canonical / depth / same-tip replacement / removal journal"]
         SdkMaker["SDK fresh-gated maker-lock fixture"]
+    end
+
+    subgraph DeterministicCorridor["Deterministic SDK claim corridor; no node or RPC"]
+        MakerActor["Role-fixed maker SDK actor"]
+        TakerActor["Role-fixed taker SDK actor"]
+        MakerClaimState[("Maker schema-v9 state")]
+        TakerClaimState[("Taker schema-v9 state")]
+        ClaimDouble["Deterministic LEZ/Zcash claim-port doubles"]
+        Completed["Both actors Completed at revision 4"]
     end
 
     subgraph ZebraProject["Isolated Docker Compose project per RUN_ID"]
@@ -42,6 +51,13 @@ flowchart TB
     RuntimeTest --> SdkJournal
     SdkJournal -->|"Immediate transaction and full-history replay"| Store
     SdkMaker -->|"Both directions; intent and confirmed transition"| Store
+    MakerActor --> MakerClaimState
+    TakerActor --> TakerClaimState
+    MakerActor -->|"LEZ reveal or Zcash follow-up"| ClaimDouble
+    TakerActor -->|"Observe reveal and continue from protected preimage"| ClaimDouble
+    ClaimDouble --> Completed
+    Completed --> MakerClaimState
+    Completed --> TakerClaimState
     RuntimeTest -->|"Stable JSON-RPC query and block relay"| ZebraPrimary
     RuntimeTest -->|"Independent fork mining JSON-RPC"| ZebraFork
     ZebraTest -->|"Unauthenticated JSON-RPC on ephemeral host-loopback port"| ZebraPrimary
@@ -80,6 +96,16 @@ isolated but not loopback/network-namespace isolated. This must remain visible
 until upstream accepts a bind address or the lane is placed in an isolated
 network namespace/container.
 
+The deterministic claim corridor is deliberately separate from both local-node
+lanes. It uses two role-fixed SDK actors, two different temporary schema-v9
+SQLite databases, and an externally supplied test claim key per role. The key is
+not stored in SQLite. In both signed directions it persists exact protected
+claim submissions, observes the LEZ reveal, protects the extracted preimage,
+submits the Zcash follow-up, and reopens both actors at revision 4 and
+`Completed`. Its LEZ and Zcash ports are deterministic test doubles: it starts no
+service, opens no RPC connection, and proves neither `LezClaimPort` nor
+`ZcashClaimPort` against a node.
+
 ## M2 SDK/reference-demo target topology
 
 This is the accepted M2 demo boundary. It is independent of the M5 production
@@ -96,6 +122,8 @@ flowchart LR
     TakerValidator["Taker concrete agreement validator"]
     MakerObserver["Maker-only taker-lock observer"]
     MakerEffect["Fresh-gated durable maker effect"]
+    ZcashClaimPort["Production ZcashClaimPort pending"]
+    LezClaimPort["Production LezClaimPort pending"]
     Zebra["Selected Zebra route"]
     Lez["Selected LEZ route"]
 
@@ -107,10 +135,12 @@ flowchart LR
     Taker -.->|"Discover and countersign before first lock"| Mailbox
     Mailbox -->|"Bounded dual-signed Borsh schema-2 record"| MakerValidator
     Mailbox -->|"Bounded dual-signed Borsh schema-2 record"| TakerValidator
-    Maker -.->|"Typed funding, observation, claim, refund"| Zebra
-    Taker -.->|"Typed funding, observation, claim, refund"| Zebra
-    Maker -.->|"Generated escrow client actions"| Lez
-    Taker -.->|"Generated escrow client actions"| Lez
+    Maker -.->|"Prepared exact follow-up claim"| ZcashClaimPort
+    Taker -.->|"Prepared exact follow-up claim"| ZcashClaimPort
+    Maker -.->|"Prepared exact revealing claim"| LezClaimPort
+    Taker -.->|"Prepared exact revealing claim"| LezClaimPort
+    ZcashClaimPort -.->|"Observe, broadcast, and return canonical spend evidence"| Zebra
+    LezClaimPort -.->|"Official-wire submit, observe, and extract preimage"| Lez
     Zebra -->|"Forward canonical evidence adapter pending"| MakerObserver
     Lez -->|"Reverse stable snapshot<br/>channel, tx, block, metadata, custody"| MakerObserver
     MakerObserver -->|"Atomic non-authorizing maker projection"| MakerState
@@ -122,7 +152,7 @@ flowchart LR
     Mailbox -.->|"Destroyed after immutable terms persist"| Taker
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Maker,Taker,MakerState,TakerState,Mailbox,Zebra,Lez planned;
+    class Maker,Taker,MakerState,TakerState,Mailbox,ZcashClaimPort,LezClaimPort,Zebra,Lez planned;
 ```
 
 Each process must have a distinct PID, owner-only state/key paths, fixed local
@@ -187,8 +217,9 @@ it never opens SQLite or becomes protocol authority.
 |---|---|---|---|---|---|
 | `lez-maker-daemon` | Running prototype | HTTP JSON-RPC; default `127.0.0.1:0`; non-loopback rejected | Bearer token from hidden environment; minimum 24 bytes; header checked before JSON parsing | Actual: `swap_create`, `swap_status`, `swap_alerts`, `swap_alert_acknowledge` | Operator/test-owned process; caller-selected SQLite path; Ctrl-C shutdown |
 | `lez-maker` | Running prototype | HTTP client; default `127.0.0.1:9944`; explicit ready URL for ephemeral daemon | Authorization header marked sensitive | Actual CLI: `create-swap`, `status`, `alerts`, `acknowledge-alert` | Independent operator process |
-| SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority; SDK adapter fixes one local role per handle | Aggregate, revision, ZEC journal, immutable binding, alerts, separate taker/maker intents, canonical observation transitions, and confirmed maker-funding transitions | WAL, `FULL` synchronous, foreign keys, immediate transactions; schema-v8 union replay rejects holes/duplicate predecessor slots and both directions close/reopen at `BothLegsLocked`; 28 store tests pass; one process mutex remains |
-| Concrete LEZ/ZEC agreement and lifecycle boundary | Running library boundary | No socket or RPC; bounded Borsh schema-2 bytes enter from an untrusted negotiation adapter; typed action/observation ports have no selected production endpoint | Fixed maker/taker roles and signed direction select observation and opposite-chain action; callers cannot select a participant or chain | Exact agreement validation, protected first-claimant activation, taker intent, canonical observation, fresh eligibility, durable maker plan, taker-local maker observation, ordered LEZ initialize/fund, confirmed projection, unknown-commit probe, and replay through schema v8. Both directions reach `BothLegsLocked`; public-v0.2 activation remains fail-closed | 16 KiB agreement and 2,000,000-byte submission caps; 118 passing SDK checks including one doctest and 28 store tests pass. Protected claim cryptography and contract-double activation are tested but not SQLite-persisted; production ports, official-wire LEZ decoding, claims/refunds, and actor-process E2E remain |
+| SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority; SDK adapter fixes one local role per handle; claim key material is supplied externally and never stored | Aggregate, revision, ZEC journal, immutable binding, alerts, separate taker/maker lock and claim intents, protected claim material, owner/observer claim transitions, and canonical observation transitions | WAL, `FULL` synchronous, foreign keys, immediate transactions; schema-v9 replay retains the schema-v8 lock journal, rejects inconsistent history, and closes/reopens both directions at revision 4 and `Completed`; the v8→v9 migration replaces legacy plaintext claim evidence and scrubs SQLite/WAL remnants; 30 committed store tests pass; one process mutex remains |
+| Deterministic LEZ/ZEC SDK and claim corridor | Running library/test boundary | No socket, RPC, node, Docker, faucet, or public endpoint; bounded Borsh schema-2 bytes enter from an untrusted negotiation adapter | Fixed maker/taker roles and the signed direction select observations and effects; separate role databases and external claim keys prevent shared recovery authority | Exact agreement validation, protected activation, both lock directions, LEZ reveal, observer preimage extraction, Zcash follow-up, and claim-capable replay at `Completed` in both directions | 16 KiB agreement and 2,000,000-byte submission caps; 120 committed SDK checks including one doctest plus 30 committed store tests pass. Chain evidence comes from deterministic port doubles, so this row is not an actual-node claim |
+| Production LEZ/Zcash lifecycle ports | Planned | Required transports are official-wire LEZ JSON-RPC and Zebra JSON-RPC; no production `LezClaimPort` or `ZcashClaimPort` implementation is selected in the SDK today | Each adapter must independently derive deployment, transaction, signer, account, outpoint, and canonical evidence from the accepted agreement and selected node; fixture-supplied identities are not authority | Required: observe before rebroadcast, submit byte-identical protected intent, decode canonical LEZ reveal and extract the bound preimage, submit/observe the Zcash follow-up, handle unknown outcomes and removal/replacement | The real Zebra and local LEZ lifecycles pass separately below; a composed LEZ+Zebra two-actor claim flow, refunds, actor processes, and public-testnet evidence remain M2 work |
 | Primary Zebra | Running in ignored E2E | Container `0.0.0.0:18232`; ephemeral host `127.0.0.1` mapping | Regtest fixture has no cookie auth; signed transactions and consensus remain authoritative | `getblockcount`, `generate`, `getblockhash`, `getblock`, `getblockheader`, `submitblock`, `getaddressutxos`, `getrawtransaction`, `sendrawtransaction`, `getblockchaininfo` | Unique Compose project and tmpfs state per `RUN_ID` |
 | Fork Zebra | Running in ignored E2E | Same container port; distinct ephemeral host-loopback mapping | Same Regtest-only policy | Same RPC set; produces independent higher-work branch | Separate tmpfs state; no initial peer; fixture-controlled block relay |
 | LEZ standalone v0.1.2 | Running in ignored E2E | Upstream server `0.0.0.0:0`; client uses `127.0.0.1:<assigned>` | No transport credential; actor signatures authorize transactions | `checkHealth`, `sendTransaction`, `getLastBlockId`, `getTransaction`, `getAccountsNonces`, `getAccount`, `getBlock` | In-process handle, tempfile state, deterministic genesis actors; not public v0.2 |
@@ -199,6 +230,32 @@ it never opens SQLite or becomes protocol authority.
 | LEZ v0.2 deployment/query client | Planned, security-constrained | HTTPS JSON-RPC to the official node; no local listener | Official LEZ transaction/RPC types; actor signing material remains process-local | Deploy checked guest, retain transaction hash, query exact transaction and containing block | Thin `jsonrpsee` graph must exclude Logos node auth, libp2p, Hickory 0.25, and pending LGPL exceptions; full released standalone graph is prohibited for public runtime use |
 | Bitcoin Core | M3 planned | No port/image/provider selected | Actor-owned node and wallet credentials | Typed `BitcoinChain` port | Do not infer conventional ports before selection |
 | `monerod` plus wallet RPC | M4 planned | No ports/images/providers selected | Actor-owned daemon/wallet credentials | Typed `MoneroChain` port | Wallet/key state remains actor-owned |
+
+## External resources and flakiness
+
+The deterministic SDK/schema-v9 corridor uses only local temporary files and
+process input. It cannot fail because a public RPC, faucet, chain peer, Docker
+registry, or testnet is unavailable. The ignored Zebra and LEZ suites cross real
+local consensus/state-transition boundaries, but they also remain independent
+suites rather than one composed swap. Regtest coinbase outputs and LEZ genesis
+balances provide deterministic local funds.
+
+Cold setup can still depend on crates.io, GitHub, container registries, Risc0
+tool distribution, and the checksummed Logos circuits release. CPU, memory,
+disk, registry availability, and an uncached dependency graph can therefore
+delay or fail a local-node run without changing its chain assertions. Warm,
+verified caches reduce availability risk but do not justify bypassing a digest,
+lockfile, or vulnerability failure.
+
+Future public evidence adds different failure modes. The official LEZ endpoint
+`https://testnet.lez.logos.co` can be rate-limited, unavailable, reset, or move
+to another channel; every result must bind the observed channel, block,
+transaction, ProgramId, ELF, ImageID, and exact commits. The selected Zcash
+route is a self-hosted Zebra 6.0.0 public-Testnet node because no official public
+Zebra JSON-RPC service was found; initial sync, disk use, peers, epoch changes,
+and organic reorgs can delay it. Community faucets or Discord funding have no
+SLA and may be depleted, so CI must not silently treat their outage as success.
+No current executable user flow calls those public endpoints or funding routes.
 
 ## Local test concurrency
 
