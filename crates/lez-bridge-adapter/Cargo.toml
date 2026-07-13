@@ -12,6 +12,7 @@ async-trait = "0.1.89"
 lez-bridge-client = { version = "0.1.0", path = "../lez-bridge-client" }
 lez-bridge-protocol = { version = "0.1.0", path = "../lez-bridge-protocol" }
 lez-swap-core = { version = "0.1.0", path = "../swap-core" }
+lez-swap-store = { version = "0.1.0", path = "../swap-store" }
 lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk" }
 thiserror = "2.0.18"
 

@@ -1327,6 +1327,7 @@ dependencies = [
  "lez-bridge-client",
  "lez-bridge-protocol",
  "lez-swap-core",
+ "lez-swap-store",
  "lez-zec-swap-sdk",
  "secp256k1",
  "sha2 0.10.9",

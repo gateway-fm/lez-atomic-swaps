@@ -8,10 +8,12 @@ use std::{
 
 use async_trait::async_trait;
 use lez_bridge_adapter::{
-    LezBridgeAdapter, LezBridgeClaimTransport, LezBridgeObservationTransport,
-    LezBridgeRefundTransport, LezBridgeTransport, NativeRefundAdapterError,
-    NativeRevealingClaimAdapterError, ObserveNativeEscrowError, PrepareNativeFirstLockError,
-    RevealingClaimSubmitOutcome,
+    BridgeRequestContextSource, CanonicalLezFundingSource, ContextOwningLezBridgePorts,
+    ContextOwningLezPortError, FreshLezBridgeTransportFactory, LezBridgeAdapter,
+    LezBridgeClaimTransport, LezBridgeFirstLockTransport, LezBridgeObservationTransport,
+    LezBridgeRefundTransport, LezBridgeTransport, NativeFirstLockSubmitOutcome,
+    NativeRefundAdapterError, NativeRevealingClaimAdapterError, ObserveNativeEscrowError,
+    PrepareNativeFirstLockError, RevealingClaimSubmitOutcome,
 };
 use lez_bridge_protocol::{
     AccountIds, ChainClock, ChainPosition, ChainTip, DiscoveryWindow, EscrowMetadataFacts,
@@ -31,16 +33,21 @@ use lez_bridge_protocol::{
     SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
 };
 use lez_swap_core::{Chain, LezUnixMilliseconds, Participant, SwapDirection, UnixSeconds};
+use lez_swap_store::{
+    BridgeOperationKey, BridgeRequestSpec, SqliteBridgeOperationJournal, SqliteZecRecoveryStore,
+};
 use lez_zec_swap_sdk::{
-    Bip199Contract, ClaimPreimage, ClaimStepV1, ExpectedBip199Output, FirstLockPlanV1,
-    FirstLockStepV1, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, NegotiationTranscriptV1,
-    PreparedClaimSubmissionV1, PreparedRefundSubmissionV1, RefundEligibilityObservationV1,
-    RefundError, RefundEvidenceV1, RefundFundingWaitReasonV1, RefundObservationV1, RefundStepV1,
-    RefundSubmitOutcomeV1, RevealingClaimObservationV1, TakerFirstLockObservationV1,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
-    ZecAgreementRecordV1, ZecAgreementV1, ZecLezTermsV1, ZecParticipantIdentityV1,
-    ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding,
-    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
+    AcceptedZecAgreementV1, Bip199Contract, ClaimPreimage, ClaimStepV1, ExpectedBip199Output,
+    FirstLockConfirmedEvidenceV1, FirstLockObservation, FirstLockPlanV1, FirstLockStepV1,
+    LezAssetV1, LezChainIdentityV1, LezClaimPort, LezEnvironmentV1, LezFirstLockPort,
+    LezRefundPort, NegotiationChannel, NegotiationTranscriptV1, OfferDiscovery,
+    PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1, PreparedRefundSubmissionV1,
+    RefundEligibilityObservationV1, RefundError, RefundEvidenceV1, RefundFundingWaitReasonV1,
+    RefundObservationV1, RefundStepV1, RefundSubmitOutcomeV1, RevealingClaimObservationV1,
+    TakerFirstLockObservationV1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashTransparentDestinationV1,
+    ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1, ZecLezTermsV1, ZecPairSdk,
+    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
+    ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
     derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
     derive_nssa_v0_1_2_metadata_account_v1, derive_nssa_v0_1_2_native_custody_account_v1,
     derive_nssa_v0_1_2_token_account_v1,
@@ -62,6 +69,362 @@ struct FakeTransport {
 #[derive(Clone, Copy, Debug, Error)]
 #[error("fake transport failure")]
 struct FakeError;
+
+static CONTEXT_DB_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Clone, Debug)]
+struct CloneTransportFactory<T> {
+    transport: T,
+    opens: Arc<AtomicUsize>,
+}
+
+impl<T> FreshLezBridgeTransportFactory for CloneTransportFactory<T>
+where
+    T: Clone + Send + Sync,
+{
+    type Transport = T;
+    type Error = FakeError;
+
+    fn fresh_transport(&self) -> Result<Self::Transport, Self::Error> {
+        self.opens.fetch_add(1, Ordering::SeqCst);
+        Ok(self.transport.clone())
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SeedDiscovery;
+
+#[async_trait]
+impl OfferDiscovery for SeedDiscovery {
+    type Error = FakeError;
+    type Offer = ();
+    type OfferRef = ();
+    type Query = ();
+
+    async fn publish(&self, _offer: Self::Offer) -> Result<Self::OfferRef, Self::Error> {
+        Ok(())
+    }
+
+    async fn discover(&self, _query: &Self::Query) -> Result<Vec<Self::OfferRef>, Self::Error> {
+        Ok(Vec::new())
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SeedNegotiation;
+
+#[async_trait]
+impl NegotiationChannel for SeedNegotiation {
+    type Error = FakeError;
+    type LocalProposal = ();
+    type OfferRef = ();
+
+    async fn negotiate(
+        &self,
+        _local_participant: Participant,
+        _offer: &Self::OfferRef,
+        _proposal: Self::LocalProposal,
+    ) -> Result<Vec<u8>, Self::Error> {
+        Err(FakeError)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct FixedCanonicalFunding(FirstLockConfirmedEvidenceV1);
+
+#[async_trait]
+impl CanonicalLezFundingSource for FixedCanonicalFunding {
+    type Error = FakeError;
+
+    async fn canonical_lez_funding(
+        &self,
+        _agreement: &ZecAgreementV1,
+    ) -> Result<FirstLockConfirmedEvidenceV1, Self::Error> {
+        Ok(self.0.clone())
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ContextPrepareTransport {
+    remaining_failures: Arc<AtomicUsize>,
+    requests: Arc<Mutex<Vec<PrepareNativeEscrowRequest>>>,
+}
+
+#[async_trait]
+impl LezBridgeTransport for ContextPrepareTransport {
+    type Error = FakeError;
+
+    async fn prepare_native_escrow(
+        &self,
+        request: PrepareNativeEscrowRequest,
+    ) -> Result<PrepareNativeEscrowResult, Self::Error> {
+        self.requests
+            .lock()
+            .expect("context prepare requests")
+            .push(request.clone());
+        if self
+            .remaining_failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(FakeError);
+        }
+        Ok(prepared_response(request.context))
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ContextPrepareFactory {
+    transport: ContextPrepareTransport,
+    opens: Arc<AtomicUsize>,
+    remaining_open_failures: Arc<AtomicUsize>,
+}
+
+impl FreshLezBridgeTransportFactory for ContextPrepareFactory {
+    type Transport = ContextPrepareTransport;
+    type Error = FakeError;
+
+    fn fresh_transport(&self) -> Result<Self::Transport, Self::Error> {
+        self.opens.fetch_add(1, Ordering::SeqCst);
+        if self
+            .remaining_open_failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(FakeError);
+        }
+        Ok(self.transport.clone())
+    }
+}
+
+#[derive(Debug)]
+struct QueuedContexts {
+    requests: Arc<Mutex<VecDeque<BridgeRequestSpec>>>,
+    calls: Arc<AtomicUsize>,
+}
+
+impl BridgeRequestContextSource for QueuedContexts {
+    type Error = FakeError;
+
+    fn next_request(&self, _key: &BridgeOperationKey) -> Result<BridgeRequestSpec, Self::Error> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.requests
+            .lock()
+            .expect("context requests")
+            .pop_front()
+            .ok_or(FakeError)
+    }
+}
+
+fn isolated_sqlite_path(prefix: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "{prefix}-{}-{}.sqlite",
+        std::process::id(),
+        CONTEXT_DB_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+fn remove_sqlite_files(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+    let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+}
+
+async fn stage_native_first_lock_plan(
+    store: &SqliteZecRecoveryStore,
+    agreement: &ZecAgreementV1,
+    plan: FirstLockPlanV1,
+) {
+    let wire = agreement.encode_wire().expect("bounded signed agreement");
+    let accepted =
+        AcceptedZecAgreementV1::accept_wire_at(&wire, UnixSeconds::new(10), Participant::Taker, 0)
+            .expect("accepted signed agreement");
+    let sdk = ZecPairSdk::new(
+        Participant::Taker,
+        SeedDiscovery,
+        SeedNegotiation,
+        (),
+        (),
+        store.clone(),
+    );
+    let active = sdk.activate(accepted).await.expect("persist agreement");
+    active
+        .stage_first_lock(plan)
+        .await
+        .expect("persist full LEZ first-lock plan");
+}
+
+fn runtime_for_participant(
+    agreement: &ZecAgreementV1,
+    participant: Participant,
+) -> RuntimeDescriptor {
+    let mut descriptor = runtime(agreement);
+    descriptor.sidecar_role = match participant {
+        Participant::Maker => BridgeParticipant::Maker,
+        Participant::Taker => BridgeParticipant::Taker,
+    };
+    descriptor.signer_account_id = Hex32::from_bytes(*agreement.lez_account(participant));
+    descriptor
+}
+
+#[tokio::test]
+async fn ambiguous_prepare_reopens_the_exact_context_with_a_fresh_transport() {
+    let agreement = agreement();
+    let path = std::env::temp_dir().join(format!(
+        "lez-bridge-context-{}-{}.sqlite",
+        std::process::id(),
+        CONTEXT_DB_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let opens = Arc::new(AtomicUsize::new(0));
+    let factory = ContextPrepareFactory {
+        transport: ContextPrepareTransport {
+            remaining_failures: Arc::new(AtomicUsize::new(1)),
+            requests: Arc::clone(&requests),
+        },
+        opens: Arc::clone(&opens),
+        remaining_open_failures: Arc::new(AtomicUsize::new(0)),
+    };
+    let allocation_calls = Arc::new(AtomicUsize::new(0));
+    let caller_request = BridgeRequestSpec::new(
+        RequestId::new("context-owned-prepare-0001").expect("request id"),
+        None,
+    );
+    let first_contexts = QueuedContexts {
+        requests: Arc::new(Mutex::new(VecDeque::from([caller_request]))),
+        calls: Arc::clone(&allocation_calls),
+    };
+    let first = ContextOwningLezBridgePorts::new(
+        RunId::new("context-owned-run-0001").expect("run id"),
+        runtime(&agreement),
+        Participant::Taker,
+        factory.clone(),
+        first_contexts,
+        (),
+        (),
+        SqliteBridgeOperationJournal::open(&path).expect("operation journal"),
+    )
+    .expect("role-local composition");
+
+    assert!(first.prepare_native_first_lock(&agreement).await.is_err());
+    assert_eq!(allocation_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(opens.load(Ordering::SeqCst), 1);
+    drop(first);
+
+    let resumed = ContextOwningLezBridgePorts::new(
+        RunId::new("context-owned-run-0001").expect("run id"),
+        runtime(&agreement),
+        Participant::Taker,
+        factory,
+        QueuedContexts {
+            requests: Arc::new(Mutex::new(VecDeque::new())),
+            calls: Arc::clone(&allocation_calls),
+        },
+        (),
+        (),
+        SqliteBridgeOperationJournal::open(&path).expect("reopened operation journal"),
+    )
+    .expect("restarted role-local composition");
+    let plan = resumed
+        .prepare_native_first_lock(&agreement)
+        .await
+        .expect("exact context succeeds through a fresh client");
+    assert!(matches!(plan, FirstLockPlanV1::Lez { .. }));
+    assert_eq!(allocation_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(opens.load(Ordering::SeqCst), 2);
+    let requests = requests.lock().expect("prepare request log");
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0].context.request_id,
+        requests[1].context.request_id
+    );
+    drop(requests);
+    drop(resumed);
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+    let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+}
+
+#[tokio::test]
+async fn factory_failure_after_reserve_reopens_exact_context_without_a_sidecar_call() {
+    let agreement = agreement();
+    let path = std::env::temp_dir().join(format!(
+        "lez-bridge-pre-call-context-{}-{}.sqlite",
+        std::process::id(),
+        CONTEXT_DB_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let opens = Arc::new(AtomicUsize::new(0));
+    let factory = ContextPrepareFactory {
+        transport: ContextPrepareTransport {
+            remaining_failures: Arc::new(AtomicUsize::new(0)),
+            requests: Arc::clone(&requests),
+        },
+        opens: Arc::clone(&opens),
+        remaining_open_failures: Arc::new(AtomicUsize::new(1)),
+    };
+    let allocation_calls = Arc::new(AtomicUsize::new(0));
+    let caller_request = BridgeRequestSpec::new(
+        RequestId::new("context-owned-pre-call-prepare-0001").expect("request id"),
+        None,
+    );
+    let caller_request_id = caller_request.request_id().clone();
+    let first = ContextOwningLezBridgePorts::new(
+        RunId::new("context-owned-pre-call-run-0001").expect("run id"),
+        runtime(&agreement),
+        Participant::Taker,
+        factory.clone(),
+        QueuedContexts {
+            requests: Arc::new(Mutex::new(VecDeque::from([caller_request]))),
+            calls: Arc::clone(&allocation_calls),
+        },
+        (),
+        (),
+        SqliteBridgeOperationJournal::open(&path).expect("operation journal"),
+    )
+    .expect("role-local composition");
+
+    assert!(first.prepare_native_first_lock(&agreement).await.is_err());
+    assert_eq!(allocation_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(opens.load(Ordering::SeqCst), 1);
+    assert!(requests.lock().expect("prepare request log").is_empty());
+    drop(first);
+
+    let resumed = ContextOwningLezBridgePorts::new(
+        RunId::new("context-owned-pre-call-run-0001").expect("run id"),
+        runtime(&agreement),
+        Participant::Taker,
+        factory,
+        QueuedContexts {
+            requests: Arc::new(Mutex::new(VecDeque::new())),
+            calls: Arc::clone(&allocation_calls),
+        },
+        (),
+        (),
+        SqliteBridgeOperationJournal::open(&path).expect("reopened operation journal"),
+    )
+    .expect("restarted role-local composition");
+    let plan = resumed
+        .prepare_native_first_lock(&agreement)
+        .await
+        .expect("durably reserved context succeeds after restart");
+
+    assert!(matches!(plan, FirstLockPlanV1::Lez { .. }));
+    assert_eq!(allocation_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(opens.load(Ordering::SeqCst), 2);
+    let requests = requests.lock().expect("prepare request log");
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].context.request_id, caller_request_id);
+    drop(requests);
+    drop(resumed);
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+    let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+}
 
 #[derive(Clone, Debug)]
 struct RefundTransport {
@@ -177,6 +540,96 @@ impl LezBridgeRefundTransport for RefundTransport {
             SubmissionOutcome::Accepted,
         ))
     }
+}
+
+#[tokio::test]
+async fn refund_unknown_reuses_the_exact_submit_context_after_sqlite_reopen() {
+    let agreement = agreement();
+    let prepared = prepared_refund_submission();
+    let store_path = isolated_sqlite_path("lez-wrapper-refund-store");
+    let journal_path = isolated_sqlite_path("lez-wrapper-refund-journal");
+    let transport = RefundTransport::new([]).with_behavior(RefundBehavior::FailSubmit);
+    let opens = Arc::new(AtomicUsize::new(0));
+    let factory = CloneTransportFactory {
+        transport: transport.clone(),
+        opens: Arc::clone(&opens),
+    };
+    let allocation_calls = Arc::new(AtomicUsize::new(0));
+    let store = SqliteZecRecoveryStore::open(&store_path, Participant::Taker)
+        .expect("open production recovery store");
+    let first = ContextOwningLezBridgePorts::new(
+        RunId::new("native-run-0001").expect("run ID"),
+        runtime_for_participant(&agreement, Participant::Taker),
+        Participant::Taker,
+        factory.clone(),
+        QueuedContexts {
+            requests: Arc::new(Mutex::new(VecDeque::from([BridgeRequestSpec::new(
+                RequestId::new("wrapper-refund-submit-unknown").expect("request ID"),
+                None,
+            )]))),
+            calls: Arc::clone(&allocation_calls),
+        },
+        store,
+        (),
+        SqliteBridgeOperationJournal::open(&journal_path).expect("operation journal"),
+    )
+    .expect("role-local refund wrapper");
+
+    assert_eq!(
+        first
+            .submit_refund(&agreement, &prepared)
+            .await
+            .expect("transport ambiguity is an outcome"),
+        RefundSubmitOutcomeV1::Unknown
+    );
+    assert_eq!(allocation_calls.load(Ordering::SeqCst), 1);
+    drop(first);
+
+    let reopened_store = SqliteZecRecoveryStore::open(&store_path, Participant::Taker)
+        .expect("reopen production recovery store");
+    let resumed = ContextOwningLezBridgePorts::new(
+        RunId::new("native-run-0001").expect("run ID"),
+        runtime_for_participant(&agreement, Participant::Taker),
+        Participant::Taker,
+        factory,
+        QueuedContexts {
+            requests: Arc::new(Mutex::new(VecDeque::new())),
+            calls: Arc::clone(&allocation_calls),
+        },
+        reopened_store,
+        (),
+        SqliteBridgeOperationJournal::open(&journal_path).expect("reopened operation journal"),
+    )
+    .expect("restarted refund wrapper");
+    assert_eq!(
+        resumed
+            .submit_refund(&agreement, &prepared)
+            .await
+            .expect("replayed ambiguity remains an outcome"),
+        RefundSubmitOutcomeV1::Unknown
+    );
+
+    assert_eq!(allocation_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(opens.load(Ordering::SeqCst), 2);
+    let submissions = transport.submit_requests.lock().expect("submit log");
+    assert_eq!(submissions.len(), 2);
+    assert_eq!(submissions[0].context, submissions[1].context);
+    assert_eq!(
+        submissions[0].context.request_id,
+        RequestId::new("wrapper-refund-submit-unknown").expect("request ID")
+    );
+    assert_eq!(
+        submissions[0].transaction.exact_bytes.as_slice(),
+        prepared.exact_submission()
+    );
+    assert_eq!(
+        submissions[1].transaction.exact_bytes.as_slice(),
+        prepared.exact_submission()
+    );
+    drop(submissions);
+    drop(resumed);
+    remove_sqlite_files(&journal_path);
+    remove_sqlite_files(&store_path);
 }
 
 #[derive(Clone, Debug)]
@@ -298,6 +751,85 @@ impl LezBridgeClaimTransport for ClaimTransport {
             transaction_id,
             SubmissionOutcome::Accepted,
         ))
+    }
+}
+
+#[tokio::test]
+async fn wrapper_rejects_mutated_canonical_funding_before_opening_the_sidecar() {
+    let agreement = agreement();
+    assert!(
+        FirstLockConfirmedEvidenceV1::new(
+            FirstLockStepV1::LezFund,
+            [0x22; 32],
+            "22".repeat(32),
+            0,
+        )
+        .is_err(),
+        "zero-depth evidence is rejected before it can reach a funding source or sidecar"
+    );
+    let mutations = [
+        (
+            "step",
+            FirstLockConfirmedEvidenceV1::new(
+                FirstLockStepV1::ZcashFund,
+                [0x22; 32],
+                "22".repeat(32),
+                1,
+            )
+            .expect("independently valid wrong-chain evidence"),
+        ),
+        (
+            "transaction-id",
+            FirstLockConfirmedEvidenceV1::new(
+                FirstLockStepV1::LezFund,
+                [0x22; 32],
+                "33".repeat(32),
+                1,
+            )
+            .expect("independently valid mismatched transaction ID"),
+        ),
+    ];
+
+    for (suffix, evidence) in mutations {
+        let journal_path = isolated_sqlite_path(&format!("lez-wrapper-claim-{suffix}"));
+        let opens = Arc::new(AtomicUsize::new(0));
+        let context_calls = Arc::new(AtomicUsize::new(0));
+        let transport = ClaimTransport::new([]);
+        let ports = ContextOwningLezBridgePorts::new(
+            RunId::new(format!("claim-mutation-{suffix}")).expect("run ID"),
+            runtime_for_participant(&agreement, Participant::Maker),
+            Participant::Maker,
+            CloneTransportFactory {
+                transport: transport.clone(),
+                opens: Arc::clone(&opens),
+            },
+            QueuedContexts {
+                requests: Arc::new(Mutex::new(VecDeque::new())),
+                calls: Arc::clone(&context_calls),
+            },
+            (),
+            FixedCanonicalFunding(evidence),
+            SqliteBridgeOperationJournal::open(&journal_path).expect("operation journal"),
+        )
+        .expect("role-local claim wrapper");
+
+        assert!(matches!(
+            ports
+                .prepare_revealing_claim(&agreement, &ClaimPreimage::new([0x91; 32]))
+                .await,
+            Err(ContextOwningLezPortError::InvalidCanonicalFunding)
+        ));
+        assert_eq!(opens.load(Ordering::SeqCst), 0);
+        assert_eq!(context_calls.load(Ordering::SeqCst), 0);
+        assert!(
+            transport
+                .prepare_requests
+                .lock()
+                .expect("claim prepare log")
+                .is_empty()
+        );
+        drop(ports);
+        remove_sqlite_files(&journal_path);
     }
 }
 
@@ -1889,17 +2421,30 @@ fn mutate_refund_observation(response: &mut ObserveNativeRefundResult, mutation:
 #[derive(Clone, Debug)]
 struct ObservationTransport {
     requests: Arc<Mutex<Vec<ObserveEscrowRequest>>>,
-    response: Arc<Mutex<Option<ObserveEscrowResult>>>,
+    submit_requests: Arc<Mutex<Vec<SubmitTransactionRequest>>>,
+    responses: Arc<Mutex<VecDeque<ObserveEscrowResult>>>,
     attempts: Arc<AtomicUsize>,
+    fail_submit: bool,
 }
 
 impl ObservationTransport {
     fn new(response: ObserveEscrowResult) -> Self {
+        Self::from_responses([response])
+    }
+
+    fn from_responses(responses: impl IntoIterator<Item = ObserveEscrowResult>) -> Self {
         Self {
             requests: Arc::default(),
-            response: Arc::new(Mutex::new(Some(response))),
+            submit_requests: Arc::default(),
+            responses: Arc::new(Mutex::new(responses.into_iter().collect())),
             attempts: Arc::default(),
+            fail_submit: false,
         }
+    }
+
+    fn failing_submit(mut self) -> Self {
+        self.fail_submit = true;
+        self
     }
 }
 
@@ -1913,12 +2458,497 @@ impl LezBridgeObservationTransport for ObservationTransport {
     ) -> Result<ObserveEscrowResult, Self::Error> {
         self.attempts.fetch_add(1, Ordering::SeqCst);
         self.requests.lock().expect("request log").push(request);
-        self.response
+        self.responses
             .lock()
-            .expect("response")
-            .take()
+            .expect("responses")
+            .pop_front()
             .ok_or(FakeError)
     }
+}
+
+#[async_trait]
+impl LezBridgeFirstLockTransport for ObservationTransport {
+    type Error = FakeError;
+
+    async fn observe_escrow(
+        &self,
+        request: ObserveEscrowRequest,
+    ) -> Result<ObserveEscrowResult, Self::Error> {
+        self.attempts.fetch_add(1, Ordering::SeqCst);
+        self.requests.lock().expect("request log").push(request);
+        self.responses
+            .lock()
+            .expect("responses")
+            .pop_front()
+            .ok_or(FakeError)
+    }
+
+    async fn submit_transaction(
+        &self,
+        request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, Self::Error> {
+        self.submit_requests
+            .lock()
+            .expect("submit request log")
+            .push(request.clone());
+        if self.fail_submit {
+            return Err(FakeError);
+        }
+        Ok(SubmitTransactionResult::new(
+            request.context,
+            request.transaction.transaction_id,
+            SubmissionOutcome::Accepted,
+        ))
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn sqlite_wrapper_never_submits_fund_before_canonical_initialization() {
+    let agreement = agreement();
+    let plan = native_first_lock_plan();
+    let FirstLockPlanV1::Lez { initialize, fund } = &plan else {
+        panic!("native LEZ plan")
+    };
+    let store_path = isolated_sqlite_path("lez-wrapper-first-lock-store");
+    let journal_path = isolated_sqlite_path("lez-wrapper-first-lock-journal");
+    let store = SqliteZecRecoveryStore::open(&store_path, Participant::Taker)
+        .expect("open production recovery store");
+    stage_native_first_lock_plan(&store, &agreement, plan.clone()).await;
+
+    let mut before_initialization = canonical_observation(
+        &agreement,
+        observation_context(Participant::Taker, "wrapper-fund-before-init"),
+    );
+    before_initialization.initialization = InitializationObservation::UnknownOrPending;
+    before_initialization.funding = FundingObservation::UnknownOrPending;
+    let mut initialization_found = initialization_only_observation(
+        &agreement,
+        observation_context(Participant::Taker, "wrapper-init-found"),
+    );
+    initialization_found.funding = FundingObservation::UnknownOrPending;
+    let mut funding_unknown = initialization_only_observation(
+        &agreement,
+        observation_context(Participant::Taker, "wrapper-fund-unknown"),
+    );
+    funding_unknown.funding = FundingObservation::UnknownOrPending;
+    let transport = ObservationTransport::from_responses([
+        before_initialization,
+        initialization_found,
+        funding_unknown,
+    ]);
+    let opens = Arc::new(AtomicUsize::new(0));
+    let allocation_calls = Arc::new(AtomicUsize::new(0));
+    let contexts = QueuedContexts {
+        requests: Arc::new(Mutex::new(VecDeque::from([
+            BridgeRequestSpec::new(
+                RequestId::new("wrapper-fund-before-init").expect("request ID"),
+                None,
+            ),
+            BridgeRequestSpec::new(
+                RequestId::new("wrapper-init-found").expect("request ID"),
+                None,
+            ),
+            BridgeRequestSpec::new(
+                RequestId::new("wrapper-fund-unknown").expect("request ID"),
+                None,
+            ),
+            BridgeRequestSpec::new(
+                RequestId::new("wrapper-observe-next").expect("request ID"),
+                None,
+            ),
+            BridgeRequestSpec::new(
+                RequestId::new("wrapper-fund-submit").expect("request ID"),
+                None,
+            ),
+        ]))),
+        calls: Arc::clone(&allocation_calls),
+    };
+    let ports = ContextOwningLezBridgePorts::new(
+        RunId::new("native-run-0001").expect("run ID"),
+        runtime_for_participant(&agreement, Participant::Taker),
+        Participant::Taker,
+        CloneTransportFactory {
+            transport: transport.clone(),
+            opens: Arc::clone(&opens),
+        },
+        contexts,
+        store.clone(),
+        (),
+        SqliteBridgeOperationJournal::open(&journal_path).expect("operation journal"),
+    )
+    .expect("role-local wrapper");
+
+    assert_eq!(
+        ports
+            .observe_first_lock(&agreement, fund)
+            .await
+            .expect("fund-before-init observation"),
+        FirstLockObservation::Unstable
+    );
+    assert!(
+        transport
+            .submit_requests
+            .lock()
+            .expect("submit log")
+            .is_empty()
+    );
+    assert!(matches!(
+        ports
+            .observe_first_lock(&agreement, initialize)
+            .await
+            .expect("canonical initialization"),
+        FirstLockObservation::Confirmed(evidence)
+            if evidence.step() == FirstLockStepV1::LezInitialize
+    ));
+    assert_eq!(
+        ports
+            .observe_first_lock(&agreement, fund)
+            .await
+            .expect("production exact funding miss"),
+        FirstLockObservation::Absent
+    );
+    ports
+        .submit_first_lock(&agreement, fund)
+        .await
+        .expect("submit exact durable funding bytes");
+
+    let observations = transport.requests.lock().expect("observation log");
+    assert_eq!(observations.len(), 3);
+    assert_eq!(
+        observations[0].context.request_id,
+        RequestId::new("wrapper-fund-before-init").expect("request ID")
+    );
+    assert_eq!(
+        observations[1].context.request_id,
+        RequestId::new("wrapper-init-found").expect("request ID")
+    );
+    assert_eq!(
+        observations[2].context.request_id,
+        RequestId::new("wrapper-fund-unknown").expect("request ID")
+    );
+    drop(observations);
+    let submissions = transport.submit_requests.lock().expect("submit log");
+    assert_eq!(submissions.len(), 1);
+    assert_eq!(
+        submissions[0].context.request_id,
+        RequestId::new("wrapper-fund-submit").expect("request ID")
+    );
+    assert_eq!(
+        submissions[0].transaction.transaction_id.as_bytes(),
+        fund.expected_submission_id()
+    );
+    assert_eq!(
+        submissions[0].transaction.exact_bytes.as_slice(),
+        fund.exact_submission()
+    );
+    assert_eq!(allocation_calls.load(Ordering::SeqCst), 5);
+    assert_eq!(opens.load(Ordering::SeqCst), 4);
+    drop(submissions);
+    drop(ports);
+    drop(store);
+    remove_sqlite_files(&journal_path);
+    remove_sqlite_files(&store_path);
+}
+
+#[tokio::test]
+async fn owner_step_observation_requires_the_complete_durable_lez_plan() {
+    let agreement = agreement();
+    let context = observation_context(Participant::Taker, "observe-step-0001");
+    let transport = ObservationTransport::new(canonical_observation(&agreement, context));
+    let adapter = observation_adapter(transport.clone(), &agreement, Participant::Taker);
+    let initialize = PreparedFirstLockSubmissionV1::new(
+        FirstLockStepV1::LezInitialize,
+        [0x11; 32],
+        vec![0xa1, 0xb1],
+    )
+    .expect("initialization");
+    let fund =
+        PreparedFirstLockSubmissionV1::new(FirstLockStepV1::LezFund, [0x22; 32], vec![0xa2, 0xb2])
+            .expect("funding");
+    let plan = FirstLockPlanV1::lez(initialize.clone(), fund).expect("complete LEZ plan");
+
+    let observed = adapter
+        .observe_native_first_lock_step(
+            &agreement,
+            RequestId::new("observe-step-0001").expect("request id"),
+            &plan,
+            &initialize,
+        )
+        .await
+        .expect("exact initialization observation");
+
+    let FirstLockObservation::Confirmed(evidence) = observed else {
+        panic!("the canonical initialization must be confirmed")
+    };
+    assert_eq!(evidence.step(), FirstLockStepV1::LezInitialize);
+    assert_eq!(evidence.expected_submission_id(), &[0x11; 32]);
+    assert_eq!(transport.attempts.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn initialization_confirmation_precedes_a_stably_absent_funding_step() {
+    let agreement = agreement();
+    let plan = native_first_lock_plan();
+    let FirstLockPlanV1::Lez { initialize, fund } = &plan else {
+        panic!("native LEZ plan")
+    };
+
+    let init_context = observation_context(Participant::Taker, "observe-init-only");
+    let init_response = initialization_only_observation(&agreement, init_context);
+    let init_adapter = observation_adapter(
+        ObservationTransport::new(init_response),
+        &agreement,
+        Participant::Taker,
+    );
+    assert!(matches!(
+        init_adapter
+            .observe_native_first_lock_step(
+                &agreement,
+                RequestId::new("observe-init-only").expect("request id"),
+                &plan,
+                initialize,
+            )
+            .await
+            .expect("stable initialization"),
+        FirstLockObservation::Confirmed(evidence)
+            if evidence.step() == FirstLockStepV1::LezInitialize
+    ));
+
+    let fund_context = observation_context(Participant::Taker, "observe-fund-absent");
+    let fund_response = initialization_only_observation(&agreement, fund_context);
+    let fund_adapter = observation_adapter(
+        ObservationTransport::new(fund_response),
+        &agreement,
+        Participant::Taker,
+    );
+    assert_eq!(
+        fund_adapter
+            .observe_native_first_lock_step(
+                &agreement,
+                RequestId::new("observe-fund-absent").expect("request id"),
+                &plan,
+                fund,
+            )
+            .await
+            .expect("stable funding absence"),
+        FirstLockObservation::Absent
+    );
+}
+
+#[tokio::test]
+async fn production_exact_unknown_shapes_progress_only_in_protocol_order() {
+    let agreement = agreement();
+    let plan = native_first_lock_plan();
+    let FirstLockPlanV1::Lez { initialize, fund } = &plan else {
+        panic!("native LEZ plan")
+    };
+
+    let mut no_steps = canonical_observation(
+        &agreement,
+        observation_context(Participant::Taker, "observe-no-steps"),
+    );
+    no_steps.initialization = InitializationObservation::UnknownOrPending;
+    no_steps.funding = FundingObservation::UnknownOrPending;
+    let no_steps_adapter = observation_adapter(
+        ObservationTransport::new(no_steps.clone()),
+        &agreement,
+        Participant::Taker,
+    );
+    assert_eq!(
+        no_steps_adapter
+            .observe_native_first_lock_step(
+                &agreement,
+                RequestId::new("observe-no-steps").expect("request id"),
+                &plan,
+                initialize,
+            )
+            .await
+            .expect("exact init miss is safe to replay"),
+        FirstLockObservation::Absent
+    );
+    no_steps.context = observation_context(Participant::Taker, "observe-fund-before-init");
+    let fund_before_init = observation_adapter(
+        ObservationTransport::new(no_steps),
+        &agreement,
+        Participant::Taker,
+    );
+    assert_eq!(
+        fund_before_init
+            .observe_native_first_lock_step(
+                &agreement,
+                RequestId::new("observe-fund-before-init").expect("request id"),
+                &plan,
+                fund,
+            )
+            .await
+            .expect("fund cannot advance before initialization"),
+        FirstLockObservation::Unstable
+    );
+
+    let mut init_found = initialization_only_observation(
+        &agreement,
+        observation_context(Participant::Taker, "observe-fund-production-miss"),
+    );
+    init_found.funding = FundingObservation::UnknownOrPending;
+    let fund_after_init = observation_adapter(
+        ObservationTransport::new(init_found),
+        &agreement,
+        Participant::Taker,
+    );
+    assert_eq!(
+        fund_after_init
+            .observe_native_first_lock_step(
+                &agreement,
+                RequestId::new("observe-fund-production-miss").expect("request id"),
+                &plan,
+                fund,
+            )
+            .await
+            .expect("validated init makes exact fund replay safe"),
+        FirstLockObservation::Absent
+    );
+}
+
+#[tokio::test]
+async fn step_observation_rejects_a_substituted_sibling_before_transport() {
+    let agreement = agreement();
+    let plan = native_first_lock_plan();
+    let substituted = PreparedFirstLockSubmissionV1::new(
+        FirstLockStepV1::LezInitialize,
+        [0x11; 32],
+        vec![0xff, 0xb1],
+    )
+    .expect("well-formed but substituted initialization");
+    let context = observation_context(Participant::Taker, "observe-substituted-step");
+    let transport = ObservationTransport::new(canonical_observation(&agreement, context));
+    let adapter = observation_adapter(transport.clone(), &agreement, Participant::Taker);
+
+    let error = adapter
+        .observe_native_first_lock_step(
+            &agreement,
+            RequestId::new("observe-substituted-step").expect("request id"),
+            &plan,
+            &substituted,
+        )
+        .await
+        .expect_err("substituted sibling is not in the durable plan");
+
+    assert!(matches!(
+        error,
+        ObserveNativeEscrowError::PreparedPlanMismatch
+    ));
+    assert_eq!(transport.attempts.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn funding_never_confirms_without_canonical_initialization() {
+    let agreement = agreement();
+    let plan = native_first_lock_plan();
+    let FirstLockPlanV1::Lez { fund, .. } = &plan else {
+        panic!("native LEZ plan")
+    };
+    let context = observation_context(Participant::Taker, "observe-missing-init");
+    let mut response = canonical_observation(&agreement, context);
+    response.initialization = InitializationObservation::Absent;
+    let adapter = observation_adapter(
+        ObservationTransport::new(response),
+        &agreement,
+        Participant::Taker,
+    );
+
+    assert!(matches!(
+        adapter
+            .observe_native_first_lock_step(
+                &agreement,
+                RequestId::new("observe-missing-init").expect("request id"),
+                &plan,
+                fund,
+            )
+            .await,
+        Err(ObserveNativeEscrowError::InconsistentFacts)
+    ));
+}
+
+#[tokio::test]
+async fn first_lock_submit_selects_exact_step_and_keeps_ambiguity_unknown() {
+    let agreement = agreement();
+    let plan = native_first_lock_plan();
+    let FirstLockPlanV1::Lez { initialize, fund } = &plan else {
+        panic!("native LEZ plan")
+    };
+    let context = observation_context(Participant::Taker, "unused-observation");
+    let transport = ObservationTransport::new(canonical_observation(&agreement, context));
+    let adapter = observation_adapter(transport.clone(), &agreement, Participant::Taker);
+
+    assert_eq!(
+        adapter
+            .submit_native_first_lock_step(
+                &agreement,
+                RequestId::new("submit-init-exact").expect("request id"),
+                &plan,
+                initialize,
+            )
+            .await
+            .expect("initialization submit"),
+        NativeFirstLockSubmitOutcome::Accepted
+    );
+    let request = transport
+        .submit_requests
+        .lock()
+        .expect("submit request log")
+        .last()
+        .expect("one submit")
+        .clone();
+    assert_eq!(request.transaction.transaction_id.as_bytes(), &[0x11; 32]);
+    assert_eq!(request.transaction.exact_bytes.as_slice(), &[0xa1, 0xb1]);
+
+    let failing = ObservationTransport::new(canonical_observation(
+        &agreement,
+        observation_context(Participant::Taker, "unused-failing-observation"),
+    ))
+    .failing_submit();
+    let failing_adapter = observation_adapter(failing, &agreement, Participant::Taker);
+    assert_eq!(
+        failing_adapter
+            .submit_native_first_lock_step(
+                &agreement,
+                RequestId::new("submit-fund-unknown").expect("request id"),
+                &plan,
+                fund,
+            )
+            .await
+            .expect("ambiguous submit is an outcome"),
+        NativeFirstLockSubmitOutcome::Unknown
+    );
+}
+
+#[tokio::test]
+async fn reverse_taker_discovers_the_maker_funded_lez_lock() {
+    let agreement = agreement_for_direction(
+        LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility,
+        false,
+        SwapDirection::TakerSellsForeign,
+    );
+    let context = observation_context(Participant::Taker, "observe-reverse-maker");
+    let transport = ObservationTransport::new(canonical_observation(&agreement, context));
+    let adapter = observation_adapter(transport, &agreement, Participant::Taker);
+
+    let observed = adapter
+        .observe_native_maker_lock(
+            &agreement,
+            RequestId::new("observe-reverse-maker").expect("request id"),
+            DiscoveryWindow::new(9, 4).expect("covered discovery window"),
+        )
+        .await
+        .expect("canonical reverse maker lock");
+
+    assert!(matches!(
+        observed,
+        lez_zec_swap_sdk::MakerLockObservationV1::Confirmed(evidence)
+            if evidence.step() == FirstLockStepV1::LezFund
+                && evidence.expected_submission_id() == &[0x22; 32]
+    ));
 }
 
 #[tokio::test]
@@ -2981,8 +4011,8 @@ fn canonical_observation(
         Hex32::from_bytes(program_bytes(agreement.lez_terms().escrow_program_id()));
     let metadata_account = Hex32::from_bytes(*agreement.lez_terms().metadata_account());
     let custody_account = Hex32::from_bytes(*agreement.lez_terms().custody_account());
-    let depositor = Hex32::from_bytes(*agreement.lez_account(Participant::Taker));
-    let claimant = Hex32::from_bytes(*agreement.lez_account(Participant::Maker));
+    let depositor = Hex32::from_bytes(*agreement.lez_account(agreement.lez_depositor()));
+    let claimant = Hex32::from_bytes(*agreement.lez_account(agreement.lez_claimant()));
     let signers = AccountIds::new(vec![depositor]).expect("signer list");
     let metadata = EscrowMetadataFacts::from_native_terms(
         metadata_account,
@@ -3036,6 +4066,39 @@ fn canonical_observation(
         FundingObservation::found(funding),
         tip,
     )
+}
+
+fn native_first_lock_plan() -> FirstLockPlanV1 {
+    FirstLockPlanV1::lez(
+        PreparedFirstLockSubmissionV1::new(
+            FirstLockStepV1::LezInitialize,
+            [0x11; 32],
+            vec![0xa1, 0xb1],
+        )
+        .expect("initialization"),
+        PreparedFirstLockSubmissionV1::new(FirstLockStepV1::LezFund, [0x22; 32], vec![0xa2, 0xb2])
+            .expect("funding"),
+    )
+    .expect("complete LEZ plan")
+}
+
+fn initialization_only_observation(
+    agreement: &ZecAgreementV1,
+    context: MessageContext,
+) -> ObserveEscrowResult {
+    let mut response = canonical_observation(agreement, context);
+    let InitializationObservation::Found(initialization) = &mut response.initialization else {
+        panic!("canonical fixture has initialization")
+    };
+    initialization.metadata = EscrowMetadataFacts::from_native_terms(
+        Hex32::from_bytes(*agreement.lez_terms().metadata_account()),
+        Hex32::from_bytes(program_bytes(agreement.lez_terms().escrow_program_id())),
+        Hex32::from_bytes(*agreement.lez_terms().custody_account()),
+        &native_terms(agreement),
+        EscrowState::Empty,
+    );
+    response.funding = FundingObservation::Absent;
+    response
 }
 
 fn agreement() -> ZecAgreementV1 {

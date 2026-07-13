@@ -2,6 +2,13 @@
 
 #![forbid(unsafe_code)]
 
+mod sdk_ports;
+
+pub use sdk_ports::{
+    BridgeRequestContextSource, CanonicalLezFundingSource, ContextOwningLezBridgePorts,
+    ContextOwningLezPortError, FreshLezBridgeTransportFactory,
+};
+
 use async_trait::async_trait;
 use lez_bridge_client::{BridgeClient, BridgeClientError};
 use lez_bridge_protocol::{
@@ -12,25 +19,27 @@ use lez_bridge_protocol::{
     NativeRefundFoundFacts, NativeRefundObservation, NativeRefundObservationTarget,
     ObserveEscrowRequest, ObserveEscrowResult, ObserveNativeRefundRequest,
     ObserveNativeRefundResult, ObserveRevealingClaimRequest, ObserveRevealingClaimResult,
-    Participant as BridgeParticipant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
-    PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
-    PrepareRevealingClaimResult, PreparedTransaction, ProtocolValueError, RequestId,
-    RevealingClaimFoundFacts, RevealingClaimObservation, RevealingClaimObservationTarget,
-    RevealingPreimage, RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
-    SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
+    ObservedTransactionFacts, Participant as BridgeParticipant, PrepareNativeEscrowRequest,
+    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
+    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PreparedTransaction,
+    ProtocolValueError, RequestId, RevealingClaimFoundFacts, RevealingClaimObservation,
+    RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
+    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
+    TransactionId,
 };
 use lez_swap_core::{ChainPosition, LezUnixMilliseconds, Participant};
 use lez_zec_swap_sdk::{
-    CanonicalLezEscrowObservationV1, ClaimError, ClaimPreimage, ClaimStepV1, FirstLockIntentError,
-    FirstLockPlanV1, FirstLockStepV1, LezAssetV1, LezClaimInstructionV1, LezClaimNodeSnapshotV1,
-    LezClaimObservationError, LezClaimTransactionSnapshotV1, LezCustodySnapshotV1,
-    LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFundInstructionV1,
-    LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezNodeSnapshotV1, LezObservationError,
-    LezStableTipV1, PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1,
-    PreparedRefundSubmissionV1, RefundEligibilityObservationV1, RefundError, RefundEvidenceV1,
-    RefundFundingWaitReasonV1, RefundObservationV1, RefundStepV1, RefundSubmitOutcomeV1,
-    RevealingClaimEvidenceV1, RevealingClaimObservationV1, TakerFirstLockObservationV1,
-    ZecAgreementV1,
+    CanonicalLezEscrowObservationV1, ClaimError, ClaimPreimage, ClaimStepV1,
+    FirstLockConfirmedEvidenceV1, FirstLockIntentError, FirstLockObservation, FirstLockPlanV1,
+    FirstLockStepV1, FirstLockTransitionError, LezAssetV1, LezClaimInstructionV1,
+    LezClaimNodeSnapshotV1, LezClaimObservationError, LezClaimTransactionSnapshotV1,
+    LezCustodySnapshotV1, LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1,
+    LezFundInstructionV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezNodeSnapshotV1,
+    LezObservationError, LezStableTipV1, MakerLockObservationV1, ObservedTakerFirstLockEvidenceV1,
+    PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1, PreparedRefundSubmissionV1,
+    RefundEligibilityObservationV1, RefundError, RefundEvidenceV1, RefundFundingWaitReasonV1,
+    RefundObservationV1, RefundStepV1, RefundSubmitOutcomeV1, RevealingClaimEvidenceV1,
+    RevealingClaimObservationV1, TakerFirstLockObservationV1, ZecAgreementV1,
 };
 use thiserror::Error;
 
@@ -84,6 +93,48 @@ impl LezBridgeObservationTransport for BridgeClient {
         request: ObserveEscrowRequest,
     ) -> Result<ObserveEscrowResult, Self::Error> {
         BridgeClient::observe_escrow(self, request).await
+    }
+}
+
+/// One fresh-client attempt at exact owner first-lock observation or submission.
+///
+/// A process-local bridge client rejects request-ID reuse. Context-owning SDK
+/// composition therefore creates a fresh transport for an ambiguous retry and
+/// reuses the exact durable request context rather than retrying inside this trait.
+#[async_trait]
+pub trait LezBridgeFirstLockTransport: Send + Sync {
+    /// Concrete transport failure.
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Observes the complete initialize/fund pair by its two durable identities.
+    async fn observe_escrow(
+        &self,
+        request: ObserveEscrowRequest,
+    ) -> Result<ObserveEscrowResult, Self::Error>;
+
+    /// Submits one exact durable transaction.
+    async fn submit_transaction(
+        &self,
+        request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, Self::Error>;
+}
+
+#[async_trait]
+impl LezBridgeFirstLockTransport for BridgeClient {
+    type Error = BridgeClientError;
+
+    async fn observe_escrow(
+        &self,
+        request: ObserveEscrowRequest,
+    ) -> Result<ObserveEscrowResult, Self::Error> {
+        BridgeClient::observe_escrow(self, request).await
+    }
+
+    async fn submit_transaction(
+        &self,
+        request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, Self::Error> {
+        BridgeClient::submit_transaction(self, request).await
     }
 }
 
@@ -267,6 +318,9 @@ pub enum PrepareNativeFirstLockError<E: std::error::Error + 'static> {
     /// The SDK rejected malformed or aliased prepared transaction evidence.
     #[error("LEZ bridge returned an invalid first-lock plan")]
     FirstLockPlan(#[source] FirstLockIntentError),
+    /// The selected step is not one of the complete durable LEZ plan's exact values.
+    #[error("LEZ first-lock step differs from the complete durable plan")]
+    PreparedPlanMismatch,
     /// No retry is attempted because delivery may have succeeded.
     #[error("LEZ bridge preparation outcome is unknown")]
     Transport(#[source] E),
@@ -317,6 +371,21 @@ pub enum ObserveNativeEscrowError<E: std::error::Error + 'static> {
     /// The official-sidecar primitives failed the independent SDK agreement validator.
     #[error("LEZ bridge facts do not prove the signed escrow")]
     Canonical(#[source] LezObservationError),
+    /// The exact step or complete durable two-transaction plan was substituted.
+    #[error("LEZ first-lock observation differs from the complete durable plan")]
+    PreparedPlanMismatch,
+    /// SDK first-lock evidence construction rejected the canonical primitive facts.
+    #[error("LEZ first-lock observation evidence is invalid")]
+    FirstLock(#[source] FirstLockTransitionError),
+}
+
+/// Conservative result of one exact first-lock submission attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeFirstLockSubmitOutcome {
+    /// The node accepted the exact bytes or already knew them.
+    Accepted,
+    /// Delivery or acknowledgement became ambiguous after the attempt began.
+    Unknown,
 }
 
 /// Failure binding one native refund operation to the accepted agreement.
@@ -532,6 +601,223 @@ impl<T: LezBridgeTransport> LezBridgeAdapter<T> {
     }
 }
 
+impl<T: LezBridgeFirstLockTransport> LezBridgeAdapter<T> {
+    /// Observes one exact owner step while retaining the complete durable LEZ plan.
+    ///
+    /// Both initialize and fund identities are sent on every query. Initialization
+    /// can be confirmed independently so the SDK may proceed to funding, while
+    /// funding is confirmed only after the complete ordered pair passes validation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role, runtime, plan, response, or canonical observation mismatches
+    /// and preserves a single transport-attempt failure.
+    // Keeping both ordered steps together makes the no-fund-before-initialize
+    // safety invariant auditable in one state machine.
+    #[allow(clippy::too_many_lines)]
+    pub async fn observe_native_first_lock_step(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        plan: &FirstLockPlanV1,
+        submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<FirstLockObservation, ObserveNativeEscrowError<T::Error>> {
+        if self.local_participant != agreement.lez_depositor() {
+            return Err(ObserveNativeEscrowError::ExactTargetRequiresDepositor);
+        }
+        let (initialize, fund) = complete_lez_plan(plan, submission)?;
+        validate_runtime(agreement, &self.runtime, self.local_participant)
+            .map_err(map_runtime_observation_error)?;
+        let terms = native_terms(agreement).map_err(|error| match error {
+            NativeTermsError::UnsupportedAsset => ObserveNativeEscrowError::UnsupportedAsset,
+            NativeTermsError::Protocol(source) => ObserveNativeEscrowError::Protocol(source),
+        })?;
+        let target = EscrowObservationTarget::Exact {
+            initialization_transaction_id: TransactionId::from_bytes(
+                *initialize.expected_submission_id(),
+            ),
+            funding_transaction_id: TransactionId::from_bytes(*fund.expected_submission_id()),
+        };
+        let context = MessageContext::new(
+            self.run_id.clone(),
+            request_id,
+            bridge_participant(self.local_participant),
+        );
+        let response = LezBridgeFirstLockTransport::observe_escrow(
+            &self.transport,
+            ObserveEscrowRequest::new(context.clone(), self.runtime.clone(), terms.clone(), target),
+        )
+        .await
+        .map_err(ObserveNativeEscrowError::Transport)?;
+        if response.context != context {
+            return Err(ObserveNativeEscrowError::ResponseContextMismatch);
+        }
+        if response.tip_before != response.tip_after {
+            return Err(ObserveNativeEscrowError::UnstableTip);
+        }
+
+        match submission.step() {
+            FirstLockStepV1::LezInitialize => match &response.initialization {
+                InitializationObservation::Absent => {
+                    if matches!(&response.funding, FundingObservation::Found(_)) {
+                        Err(ObserveNativeEscrowError::InconsistentFacts)
+                    } else {
+                        Ok(FirstLockObservation::Absent)
+                    }
+                }
+                InitializationObservation::UnknownOrPending => {
+                    if matches!(
+                        &response.funding,
+                        FundingObservation::Absent | FundingObservation::UnknownOrPending
+                    ) {
+                        Ok(FirstLockObservation::Absent)
+                    } else {
+                        Err(ObserveNativeEscrowError::InconsistentFacts)
+                    }
+                }
+                InitializationObservation::Found(initialization) => {
+                    validate_found_initialization(
+                        agreement,
+                        &terms,
+                        &response,
+                        initialization,
+                        initialize,
+                    )?;
+                    if let FundingObservation::Found(funding) = &response.funding {
+                        validate_found_pair(
+                            agreement,
+                            &terms,
+                            &target,
+                            &response,
+                            initialization,
+                            funding,
+                        )?;
+                        validate_prepared_pair(initialization, funding, initialize, fund)?;
+                    }
+                    confirmed_first_lock_observation(
+                        submission,
+                        &initialization.transaction,
+                        response.tip_after.height,
+                    )
+                }
+            },
+            FirstLockStepV1::LezFund => match (&response.initialization, &response.funding) {
+                (
+                    InitializationObservation::Found(initialization),
+                    FundingObservation::Absent | FundingObservation::UnknownOrPending,
+                ) => {
+                    validate_found_initialization(
+                        agreement,
+                        &terms,
+                        &response,
+                        initialization,
+                        initialize,
+                    )?;
+                    Ok(FirstLockObservation::Absent)
+                }
+                (
+                    InitializationObservation::Found(initialization),
+                    FundingObservation::Found(funding),
+                ) => {
+                    validate_found_pair(
+                        agreement,
+                        &terms,
+                        &target,
+                        &response,
+                        initialization,
+                        funding,
+                    )?;
+                    validate_prepared_pair(initialization, funding, initialize, fund)?;
+                    let snapshot = canonical_snapshot(agreement, &response, funding);
+                    CanonicalLezEscrowObservationV1::validate(agreement, &snapshot)
+                        .map_err(ObserveNativeEscrowError::Canonical)?;
+                    confirmed_first_lock_observation(
+                        submission,
+                        &funding.transaction,
+                        response.tip_after.height,
+                    )
+                }
+                (InitializationObservation::Absent, FundingObservation::Found(_)) => {
+                    Err(ObserveNativeEscrowError::InconsistentFacts)
+                }
+                (InitializationObservation::UnknownOrPending, _)
+                | (
+                    InitializationObservation::Absent,
+                    FundingObservation::Absent | FundingObservation::UnknownOrPending,
+                ) => Ok(FirstLockObservation::Unstable),
+            },
+            FirstLockStepV1::ZcashFund => Err(ObserveNativeEscrowError::PreparedPlanMismatch),
+        }
+    }
+
+    /// Submits one exact step from the complete durable LEZ plan once.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role, runtime, plan, or exact-byte mismatches and preserves a
+    /// conservative unknown outcome after the single transport attempt.
+    pub async fn submit_native_first_lock_step(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        plan: &FirstLockPlanV1,
+        submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<NativeFirstLockSubmitOutcome, PrepareNativeFirstLockError<T::Error>> {
+        if self.local_participant != agreement.lez_depositor() {
+            return Err(PrepareNativeFirstLockError::WrongDepositor);
+        }
+        validate_runtime(agreement, &self.runtime, self.local_participant)
+            .map_err(map_runtime_prepare_error)?;
+        match native_terms(agreement) {
+            Ok(_) => {}
+            Err(NativeTermsError::UnsupportedAsset) => {
+                return Err(PrepareNativeFirstLockError::UnsupportedAsset);
+            }
+            Err(NativeTermsError::Protocol(source)) => {
+                return Err(PrepareNativeFirstLockError::Protocol(source));
+            }
+        }
+        let (initialize, fund) = complete_lez_plan_for_submit(plan, submission)?;
+        let selected = match submission.step() {
+            FirstLockStepV1::LezInitialize => initialize,
+            FirstLockStepV1::LezFund => fund,
+            FirstLockStepV1::ZcashFund => {
+                return Err(PrepareNativeFirstLockError::PreparedPlanMismatch);
+            }
+        };
+        let transaction = PreparedTransaction::new(
+            TransactionId::from_bytes(*selected.expected_submission_id()),
+            ExactTransactionBytes::new(selected.exact_submission().to_vec())
+                .map_err(PrepareNativeFirstLockError::Protocol)?,
+        );
+        let context = MessageContext::new(
+            self.run_id.clone(),
+            request_id,
+            bridge_participant(self.local_participant),
+        );
+        let Ok(response) = LezBridgeFirstLockTransport::submit_transaction(
+            &self.transport,
+            SubmitTransactionRequest::new(
+                context.clone(),
+                self.runtime.clone(),
+                transaction.clone(),
+            ),
+        )
+        .await
+        else {
+            return Ok(NativeFirstLockSubmitOutcome::Unknown);
+        };
+        if response.context != context || response.transaction_id != transaction.transaction_id {
+            return Ok(NativeFirstLockSubmitOutcome::Unknown);
+        }
+        Ok(match response.outcome {
+            SubmissionOutcome::Accepted | SubmissionOutcome::AlreadyKnown => {
+                NativeFirstLockSubmitOutcome::Accepted
+            }
+        })
+    }
+}
+
 impl<T: LezBridgeObservationTransport> LezBridgeAdapter<T> {
     /// Observes a native taker-funded LEZ escrow in one transport attempt.
     ///
@@ -560,6 +846,82 @@ impl<T: LezBridgeObservationTransport> LezBridgeAdapter<T> {
         if agreement.direction() != SwapDirection::TakerSellsLez {
             return Err(ObserveNativeEscrowError::WrongDirection);
         }
+        self.observe_native_escrow_target(agreement, request_id, target)
+            .await
+    }
+
+    /// Discovers the maker-funded LEZ escrow for the reverse product direction.
+    ///
+    /// The taker has no maker-local prepared plan, so the expected submission
+    /// identity is asserted from the fully validated canonical node transaction.
+    ///
+    /// # Errors
+    ///
+    /// Rejects the wrong product direction or any runtime, transport, response,
+    /// canonical observation, or evidence-construction failure.
+    pub async fn observe_native_maker_lock(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        window: DiscoveryWindow,
+    ) -> Result<MakerLockObservationV1, ObserveNativeEscrowError<T::Error>> {
+        use lez_swap_core::SwapDirection;
+
+        if agreement.direction() != SwapDirection::TakerSellsForeign {
+            return Err(ObserveNativeEscrowError::WrongDirection);
+        }
+        let observation = self
+            .observe_native_escrow_target(
+                agreement,
+                request_id,
+                EscrowObservationTarget::DiscoverByTerms { window },
+            )
+            .await?;
+        match observation {
+            TakerFirstLockObservationV1::Absent => Ok(MakerLockObservationV1::Absent),
+            TakerFirstLockObservationV1::Unstable => Ok(MakerLockObservationV1::Unstable),
+            TakerFirstLockObservationV1::CanonicalLez(canonical) => {
+                let transaction_id = *canonical.transaction_id();
+                FirstLockConfirmedEvidenceV1::new(
+                    FirstLockStepV1::LezFund,
+                    transaction_id,
+                    encode_hex32(&transaction_id),
+                    canonical.confirmations().get(),
+                )
+                .map(MakerLockObservationV1::Confirmed)
+                .map_err(ObserveNativeEscrowError::FirstLock)
+            }
+            TakerFirstLockObservationV1::Confirmed(observed) => {
+                let transaction_id = TransactionId::from_bytes(
+                    *Hex32::from_hex(observed.transaction_id())
+                        .map_err(ObserveNativeEscrowError::Protocol)?
+                        .as_bytes(),
+                );
+                FirstLockConfirmedEvidenceV1::new(
+                    FirstLockStepV1::LezFund,
+                    *transaction_id.as_bytes(),
+                    observed.transaction_id(),
+                    observed.confirmations(),
+                )
+                .map(MakerLockObservationV1::Confirmed)
+                .map_err(ObserveNativeEscrowError::FirstLock)
+            }
+            TakerFirstLockObservationV1::LezRemoved(_)
+            | TakerFirstLockObservationV1::LezReplaced { .. }
+            | TakerFirstLockObservationV1::CanonicalZcash(_)
+            | TakerFirstLockObservationV1::ZcashRemoved(_)
+            | TakerFirstLockObservationV1::ZcashReplaced { .. } => {
+                Err(ObserveNativeEscrowError::InconsistentFacts)
+            }
+        }
+    }
+
+    async fn observe_native_escrow_target(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        target: EscrowObservationTarget,
+    ) -> Result<TakerFirstLockObservationV1, ObserveNativeEscrowError<T::Error>> {
         match target {
             EscrowObservationTarget::Exact { .. }
                 if self.local_participant != agreement.lez_depositor() =>
@@ -629,12 +991,29 @@ impl<T: LezBridgeObservationTransport> LezBridgeAdapter<T> {
                     initialization,
                     funding,
                 )?;
-                let snapshot = canonical_snapshot(agreement, &response, funding);
-                let canonical = CanonicalLezEscrowObservationV1::validate(agreement, &snapshot)
-                    .map_err(ObserveNativeEscrowError::Canonical)?;
-                Ok(TakerFirstLockObservationV1::CanonicalLez(Box::new(
-                    canonical,
-                )))
+                if agreement.direction() == lez_swap_core::SwapDirection::TakerSellsLez {
+                    let snapshot = canonical_snapshot(agreement, &response, funding);
+                    let canonical = CanonicalLezEscrowObservationV1::validate(agreement, &snapshot)
+                        .map_err(ObserveNativeEscrowError::Canonical)?;
+                    Ok(TakerFirstLockObservationV1::CanonicalLez(Box::new(
+                        canonical,
+                    )))
+                } else {
+                    let confirmations = response
+                        .tip_after
+                        .height
+                        .checked_sub(funding.transaction.position.height)
+                        .and_then(|distance| distance.checked_add(1))
+                        .and_then(|depth| u32::try_from(depth).ok())
+                        .ok_or(ObserveNativeEscrowError::InconsistentFacts)?;
+                    ObservedTakerFirstLockEvidenceV1::new(
+                        FirstLockStepV1::LezFund,
+                        encode_hex32(funding.transaction.transaction_id.as_bytes()),
+                        confirmations,
+                    )
+                    .map(TakerFirstLockObservationV1::Confirmed)
+                    .map_err(|_| ObserveNativeEscrowError::InconsistentFacts)
+                }
             }
         }
     }
@@ -1144,6 +1523,154 @@ fn map_runtime_observation_error<E: std::error::Error + 'static>(
             ObserveNativeEscrowError::SignerAccountMismatch
         }
     }
+}
+
+fn map_runtime_prepare_error<E: std::error::Error + 'static>(
+    error: RuntimeBindingError,
+) -> PrepareNativeFirstLockError<E> {
+    match error {
+        RuntimeBindingError::IncompatibleEnvironment => {
+            PrepareNativeFirstLockError::IncompatibleEnvironment
+        }
+        RuntimeBindingError::ChainIdentityMismatch => {
+            PrepareNativeFirstLockError::ChainIdentityMismatch
+        }
+        RuntimeBindingError::EscrowProgramMismatch => {
+            PrepareNativeFirstLockError::EscrowProgramMismatch
+        }
+        RuntimeBindingError::SignerAccountMismatch => {
+            PrepareNativeFirstLockError::SignerAccountMismatch
+        }
+    }
+}
+
+fn complete_lez_plan<'a, E: std::error::Error + 'static>(
+    plan: &'a FirstLockPlanV1,
+    submission: &PreparedFirstLockSubmissionV1,
+) -> Result<
+    (
+        &'a PreparedFirstLockSubmissionV1,
+        &'a PreparedFirstLockSubmissionV1,
+    ),
+    ObserveNativeEscrowError<E>,
+> {
+    let FirstLockPlanV1::Lez { initialize, fund } = plan else {
+        return Err(ObserveNativeEscrowError::PreparedPlanMismatch);
+    };
+    if submission != initialize && submission != fund {
+        return Err(ObserveNativeEscrowError::PreparedPlanMismatch);
+    }
+    Ok((initialize, fund))
+}
+
+fn complete_lez_plan_for_submit<'a, E: std::error::Error + 'static>(
+    plan: &'a FirstLockPlanV1,
+    submission: &PreparedFirstLockSubmissionV1,
+) -> Result<
+    (
+        &'a PreparedFirstLockSubmissionV1,
+        &'a PreparedFirstLockSubmissionV1,
+    ),
+    PrepareNativeFirstLockError<E>,
+> {
+    let FirstLockPlanV1::Lez { initialize, fund } = plan else {
+        return Err(PrepareNativeFirstLockError::PreparedPlanMismatch);
+    };
+    if submission != initialize && submission != fund {
+        return Err(PrepareNativeFirstLockError::PreparedPlanMismatch);
+    }
+    Ok((initialize, fund))
+}
+
+fn validate_found_initialization<E: std::error::Error + 'static>(
+    agreement: &ZecAgreementV1,
+    terms: &NativeEscrowTerms,
+    response: &ObserveEscrowResult,
+    initialization: &InitializationFoundFacts,
+    prepared: &PreparedFirstLockSubmissionV1,
+) -> Result<(), ObserveNativeEscrowError<E>> {
+    if prepared.step() != FirstLockStepV1::LezInitialize {
+        return Err(ObserveNativeEscrowError::PreparedPlanMismatch);
+    }
+    let transaction = &initialization.transaction;
+    let depositor = Hex32::from_bytes(*agreement.lez_account(agreement.lez_depositor()));
+    let expected_signers = AccountIds::new(vec![depositor]).expect("one signer is bounded");
+    let expected_accounts = AccountIds::new(vec![
+        Hex32::from_bytes(*agreement.lez_terms().metadata_account()),
+        Hex32::from_bytes(*agreement.lez_terms().custody_account()),
+        depositor,
+        Hex32::from_bytes(*agreement.lez_account(agreement.lez_claimant())),
+    ])
+    .expect("four accounts are bounded");
+    let escrow_program =
+        Hex32::from_bytes(program_id_bytes(agreement.lez_terms().escrow_program_id()));
+    if !matches!(
+        initialization.metadata.status,
+        EscrowState::Empty | EscrowState::Funded
+    ) {
+        return Err(ObserveNativeEscrowError::InconsistentFacts);
+    }
+    let expected_metadata = EscrowMetadataFacts::from_native_terms(
+        Hex32::from_bytes(*agreement.lez_terms().metadata_account()),
+        escrow_program,
+        Hex32::from_bytes(*agreement.lez_terms().custody_account()),
+        terms,
+        initialization.metadata.status,
+    );
+    let same_height_wrong_hash = transaction.position.height == response.tip_after.height
+        && transaction.position.block_hash != response.tip_after.block_hash;
+    if transaction.transaction_id.as_bytes() != prepared.expected_submission_id()
+        || transaction.exact_bytes.as_slice() != prepared.exact_submission()
+        || !transaction.is_public
+        || transaction.signer_account_ids != expected_signers
+        || initialization.instruction.program_id != escrow_program
+        || initialization.instruction.ordered_account_ids != expected_accounts
+        || initialization.instruction.terms != *terms
+        || initialization.metadata != expected_metadata
+        || transaction.position.height > response.tip_after.height
+        || same_height_wrong_hash
+    {
+        return Err(ObserveNativeEscrowError::InconsistentFacts);
+    }
+    Ok(())
+}
+
+fn validate_prepared_pair<E: std::error::Error + 'static>(
+    initialization: &InitializationFoundFacts,
+    funding: &FundingFoundFacts,
+    prepared_initialize: &PreparedFirstLockSubmissionV1,
+    prepared_fund: &PreparedFirstLockSubmissionV1,
+) -> Result<(), ObserveNativeEscrowError<E>> {
+    if initialization.transaction.transaction_id.as_bytes()
+        != prepared_initialize.expected_submission_id()
+        || initialization.transaction.exact_bytes.as_slice()
+            != prepared_initialize.exact_submission()
+        || funding.transaction.transaction_id.as_bytes() != prepared_fund.expected_submission_id()
+        || funding.transaction.exact_bytes.as_slice() != prepared_fund.exact_submission()
+    {
+        return Err(ObserveNativeEscrowError::InconsistentFacts);
+    }
+    Ok(())
+}
+
+fn confirmed_first_lock_observation<E: std::error::Error + 'static>(
+    submission: &PreparedFirstLockSubmissionV1,
+    transaction: &ObservedTransactionFacts,
+    tip_height: u64,
+) -> Result<FirstLockObservation, ObserveNativeEscrowError<E>> {
+    let confirmations = tip_height
+        .checked_sub(transaction.position.height)
+        .and_then(|distance| distance.checked_add(1))
+        .and_then(|depth| u32::try_from(depth).ok())
+        .ok_or(ObserveNativeEscrowError::InconsistentFacts)?;
+    FirstLockConfirmedEvidenceV1::from_observation(
+        submission.step(),
+        *submission.expected_submission_id(),
+        encode_hex32(transaction.transaction_id.as_bytes()),
+        confirmations,
+    )
+    .map(FirstLockObservation::Confirmed)
+    .map_err(ObserveNativeEscrowError::FirstLock)
 }
 
 fn native_terms(agreement: &ZecAgreementV1) -> Result<NativeEscrowTerms, NativeTermsError> {
