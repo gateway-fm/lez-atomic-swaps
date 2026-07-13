@@ -25,11 +25,14 @@ non-standalone sequencer stack. The same v0.2 actor/sidecar binaries must later
 select the public route through signed configuration and provisioning only.
 
 The separately locked v0.2 foundation is now GREEN for exact upstream LEE
-account/transaction types, canonical signed-transaction decoding, literal
-loopback sequencer health plus channel identity, and an authenticated
-run/role-bound describe-only server. Its signer/nonce ownership, durable
-effect cache, prepare/observe/submit methods, executable maker/taker processes,
-and public HTTPS configuration remain RED.
+account/transaction/Vault/escrow types, canonical signed-transaction decoding,
+literal-loopback sequencer health plus channel identity, and an authenticated
+run/role-bound describe server. Exact native initialize/fund and deterministic
+maker/taker Vault Claim preparation bind signer, role, runtime, programs,
+accounts, allocations, node-confirmed nonces, bytes, hashes, and signatures.
+Durable reservation recovery, authenticated effect-server integration,
+observation, one-attempt submission, executable maker/taker processes, and
+public HTTPS configuration remain pending.
 
 ```mermaid
 flowchart LR
@@ -59,10 +62,10 @@ flowchart LR
     LezReady[("Private schema-v2 readiness<br/>deployment tx/block + program/built-in + actor keys")]
     LezRunner["Future run-scoped actor runner"]
     subgraph V02Foundation["LEZ v0.2 sidecar foundation"]
-        MakerV02["Maker describe + health + official decoder GREEN<br/>effect methods pending"]
-        TakerV02["Taker describe + health + official decoder GREEN<br/>effect methods pending"]
+        MakerV02["Maker native + Vault prepare GREEN<br/>durable effects pending"]
+        TakerV02["Taker native + Vault prepare GREEN<br/>durable effects pending"]
     end
-    LezV02["Full local LEZ v0.2 sequencer"]
+    LezV02["Local LEZ v0.2 services GREEN<br/>full runtime tuple pending"]
 
     MakerSDK --> MakerState
     MakerSDK --> MakerLezAdapter

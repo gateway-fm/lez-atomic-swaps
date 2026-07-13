@@ -191,17 +191,18 @@ Zcash Regtest devnet, and
 independent maker/taker processes while deferring public evidence without
 claiming it exists. The
 [source-audited local-stack decision](docs/architecture/0024-source-audited-lez-v0-2-local-stack.md)
-now binds the exact Bedrock image/source labels, LEZ source, toolchain, native
-inputs, service flows, and service-binary hashes. The exact binaries and r0vm
-also pass restricted nonroot distroless CLI smoke. A separately locked Rust
+binds the exact Bedrock image/source labels, LEZ source, toolchain, native inputs, service flows, and service-binary hashes. Run `v02-stack-20260713n` additionally proves isolated Bedrock, real non-standalone sequencer, and indexer startup; signed key-derived channel onboarding; finalized non-genesis cross-RPC block identity; channel advancement; and fail-closed exact cleanup. A separately locked Rust
 1.96.0 v0.2 sidecar foundation now uses the exact upstream `AccountId`,
 `PublicTransaction`, `LeeTransaction`, and sequencer RPC types; it proves
 literal-loopback health/channel binding, canonical signed-transaction decoding,
-and an authenticated run/role-bound describe server. Its effect-bearing
-prepare/observe/submit methods and executable role processes remain RED.
-Container assembly,
-three-service execution/finality, Vault Claim actor onboarding, escrow
-deployment, and actor consumption remain RED; standalone mock settlement and
+and an authenticated run/role-bound describe server. Exact native
+initialize/fund and maker/taker Vault Claim preparation are GREEN using
+official types, node-confirmed nonces, canonical bytes, and fail-closed
+in-memory reservations. Durable recovery, authenticated server integration,
+observation, one-attempt submission, and executable role processes remain
+pending. The service stack is GREEN. Finalized Vault Claim actor onboarding,
+checked escrow deployment, independent actor consumption, swap effects, and
+restart recovery remain pending; standalone mock settlement and
 v0.1.2 remain lower-level coverage. The
 [Zcash public-testnet setup guide](docs/zcash-testnet-setup.md) records the
 selected self-hosted and Tatum Testnet Zebrad routes, optional funding wallet,
@@ -221,6 +222,29 @@ offline; use the hash-attesting wrapper documented in the manual guide. The
 [manual reproduction guide](docs/manual-user-flows.md) lists the complete
 per-run prerequisites, isolation rules, commands, expected evidence, and
 cleanup behavior.
+
+### Local LEZ v0.2 service-readiness quick start
+
+From a clean host, provision a clean exact LEZ `v0.2.0` checkout, the two
+locked service binaries, and verified `r0vm 3.0.5` as described in the
+[manual flow](docs/manual-user-flows.md#flow-0b2-run-the-isolated-lez-v02-service-stack).
+Then run:
+
+```sh
+export LEZ_V02_SOURCE_DIR=/absolute/path/to/clean/logos-execution-zone-v0.2.0
+export LEZ_V02_SERVICES_DIR=/absolute/path/to/locked/release-binaries
+export LEZ_V02_R0VM=/absolute/path/to/verified/r0vm
+RUN_ID=manual-v02-stack-001 ./scripts/run-lez-v02-stack.sh
+```
+
+The command creates unique run-scoped containers and a no-masquerade bridge,
+uses dynamic `127.0.0.1` RPC ports, writes evidence below
+`.e2e/manual-v02-stack-001/lez-v02`, and removes plus asserts absence of only
+its exact containers, network, and image. It uses no public chain RPC, faucet,
+or public funds. A cold setup can still depend on GHCR/GCR for the two exact
+digest-pinned images and on GitHub/Rust/crates distribution while provisioning
+source and binaries. This proves LEZ service readiness only; it is not yet the
+manual atomic-swap corridor.
 
 ### External dependencies and flakiness
 

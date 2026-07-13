@@ -1,7 +1,7 @@
-# Immutable source contract for the future full LEZ v0.2 local stack.
-# This file does not claim that the three-service stack has been started.
+# Immutable source and service-readiness contract for the local LEZ v0.2 stack.
+# Vault Claim, escrow deployment, actors, swaps, and restart recovery remain pending.
 schema_version = 1
-contract_status = "binaries_built_distroless_cli_smoked_stack_not_executed"
+contract_status = "isolated_service_readiness_green_full_runtime_tuple_pending"
 stack_kind = "bedrock_settled_non_standalone"
 public_transition = "configuration_plus_escrow_deployment"
 
@@ -37,7 +37,7 @@ public_runtime_parity_status = "unverified_upstream_tagged_readme_calls_bundled_
 upstream_compose_path = "bedrock/docker-compose.yml"
 upstream_compose_sha256 = "c2d09752a4d2f994308efae88b6cd65c1a21e0159cf3343692a5fbd90b060b13"
 runtime_fixture_policy = "exact_mounts_direct_bedrock_binary_invocation"
-runner_script_status = "source_observation_only_runner_bypasses_timestamp_substitution"
+runner_script_status = "repository_runner_replaces_only_audited_genesis_timestamp_and_onboards_signed_runtime_channel"
 
 [bedrock.runtime_fixtures.deployment_settings]
 path = "bedrock/deployment-settings.yaml"
@@ -61,21 +61,30 @@ cargo_build_command = "cargo +1.94.0 build --locked --release --jobs 2 --package
 runtime_base_reference = "gcr.io/distroless/cc-debian13:nonroot@sha256:aded2458d026e046cb68199db0e5793e1028ffa143f7258f3c4278253e20add7"
 r0vm_version = "3.0.5"
 r0vm_sha256 = "36c016a5bb2ded5bd1f8f92cc487e6ffaeb1e95ec05850c983081a0f716b515b"
-# These values must become exact lower-hex digests before this contract can
-# advance from source-verified to executable-stack evidence.
-binary_sha256_status = "locked_source_build_hashes_bound_warm_rerun_stable_not_container_executed"
+# These exact lower-hex digests bind the locally executed service artifacts.
+binary_sha256_status = "locked_source_build_hashes_bound_and_executed_in_isolated_service_stack"
 sequencer_binary_sha256 = "3727e9aa10600d04d0cdfda6eb39df146ef4cc14f5b09ad33bcf076a8f2c412f"
 indexer_binary_sha256 = "6ed54f04ae018f3554898a9f0aef6decd6930c4e8609326d146ca164e48d7442"
 sequencer_binary_version = "sequencer_service 0.1.0"
 indexer_binary_version = "indexer_service 0.1.0"
 binary_runtime_dependency_status = "ldd_standard_cc_runtime_only"
-runtime_smoke_status = "distroless_cli_smoked_not_service_started"
-runtime_smoke_security = [
+runtime_smoke_status = "distroless_services_executed_isolated_service_readiness_green"
+cli_smoke_security = [
   "uid_65532",
   "network_none",
   "read_only_root",
   "cap_drop_all",
   "no_new_privileges",
+]
+service_runtime_security = [
+  "numeric_nonroot_host_uid_gid",
+  "unique_private_bridge",
+  "ip_masquerade_disabled",
+  "dynamic_loopback_publication",
+  "read_only_root",
+  "cap_drop_all",
+  "no_new_privileges",
+  "resource_limits",
 ]
 # The tagged Dockerfiles use mutable base tags/installers. Their hashes are
 # retained as source evidence, but they are not the M2 packaging recipe.
@@ -109,8 +118,12 @@ sha256 = "7690d9f1a726462d6c5dbd86f7ff452f818d12c6399767106a330c6a2b75f0c7"
 [generated_configuration]
 mode = "runner_generated_minimal_not_upstream_example_copy"
 bedrock_node_url = "http://bedrock:18080"
-channel_id = "0101010101010101010101010101010101010101010101010101010101010101"
-channel_id_source = "contracted_lez_zone_channel_01_repeated_32"
+channel_id = "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748"
+channel_id_source = "ed25519_public_key_of_deterministic_local_bedrock_signing_seed"
+bedrock_genesis_channel_id = "0000000000000000000000000000000000000000000000000000000000000000"
+upstream_example_channel_id = "0101010101010101010101010101010101010101010101010101010101010101"
+bedrock_signing_key_file_sha256 = "8fd0d8a6423536c14b5d3979e5135bf37253f5dfbc8485b52202bbf963b8f02e"
+bedrock_signing_key_policy = "deterministic_local_only_raw_32_byte_seed_never_production"
 sequencer_state_dir = ".e2e/{run_id}/lez-v02/sequencer"
 indexer_state_dir = ".e2e/{run_id}/lez-v02/indexer"
 backoff_field_policy = "omitted_unsupported_upstream_example_field"
@@ -136,11 +149,13 @@ sha256 = "428320c0e9db6490e0949c354fdeada8b55e47eb3a037d05677714601f3e620d"
 
 [isolation]
 run_id_pattern = "^[a-z0-9][a-z0-9_-]{0,63}$"
-compose_project_template = "lez-atomic-swaps-lez-v02-{run_id}"
+compose_project_template = "configuration_validation_only_lez-atomic-swaps-lez-v02-{run_id}"
+container_group_template = "lez-atomic-swaps-lez-v02-{run_id}"
+network_template = "lez-atomic-swaps-lez-v02-{run_id}-private"
 state_root_template = ".e2e/{run_id}/lez-v02"
 host_port_policy = "dynamic_zero_only"
-container_name_policy = "forbidden"
-cleanup_scope = "matching_run_id_only"
+container_name_policy = "no_fixed_or_global_names_exact_run_scoped_names_required"
+cleanup_scope = "captured_exact_container_ids_then_exact_network_and_image"
 
 [services.bedrock]
 upstream_name = "logos-blockchain-node-0"
@@ -156,7 +171,9 @@ host_port = 0
 readiness = [
   "http:GET_/cryptarchia/info_tip_and_lib_present",
   "http:GET_/cryptarchia/info_tip_or_slot_advances",
-  "http:GET_/channel/0101010101010101010101010101010101010101010101010101010101010101_returns_200",
+  "http:GET_runtime_channel_before_sequencer_returns_404_or_500_with_exact_17_byte_channel_not_found_body",
+  "http:GET_runtime_channel_after_sequencer_returns_200_with_accredited_key_equal_channel_id",
+  "http:GET_runtime_channel_after_finality_tip_message_or_slot_advances",
 ]
 upstream_source_path = "bedrock/docker-compose.yml"
 upstream_source_sha256 = "c2d09752a4d2f994308efae88b6cd65c1a21e0159cf3343692a5fbd90b060b13"
@@ -177,9 +194,10 @@ host_port = 0
 readiness = [
   # checkHealth only recalculates local DB state; it does not prove Bedrock
   # connectivity, channel ingestion, or finalized-block availability.
-  "rpc:getLastFinalizedBlockId_returns_some",
-  "rpc:getBlockById(last_finalized)_returns_same_block_id",
-  "cross_check:indexer_finalized_block_matches_sequencer_block_at_same_id",
+  "rpc:getLastFinalizedBlockId_returns_some_id_greater_than_or_equal_to_2",
+  "rpc:getBlockById(last_finalized)_returns_decoded_block",
+  "rpc:getBlockByHash(decoded_hash)_equals_getBlockById_semantically",
+  "cross_check:indexer_header_id_prev_hash_hash_signature_match_sequencer_borsh_header_offsets",
 ]
 upstream_source_path = "lez/indexer/service/Cargo.toml"
 upstream_source_sha256 = "2e8af720e109d7ea40580e4c1d5db71d47897c71c76405279b2c5c4f51d20b37"
@@ -205,12 +223,18 @@ readiness = [
   "rpc:getProgramIds_contains_required_builtins",
   "rpc:getBlock(1)_returns_genesis",
   "rpc:getLastBlockId_at_or_after_genesis",
-  "rpc:getLastBlockId_advances_after_probe_transaction",
+  "rpc:getBlock(finalized_non_genesis_id)_returns_canonical_borsh_base64",
 ]
 upstream_source_path = "lez/sequencer/service/Cargo.toml"
 upstream_source_sha256 = "3166bb45eae3aeb44876c7d85938337eae730b0c2bf36c0748d18a553c6d0011"
 upstream_bind_source_path = "lez/sequencer/service/src/lib.rs"
 upstream_bind_source_sha256 = "e9472ea5a15061c617257de849d19e90af213565c765c302515f97e265e357c3"
+
+[service_readiness]
+scope = "bedrock_cryptarchia_signed_channel_onboarding_non_genesis_finality_and_cross_rpc_block_identity"
+last_green_run_id = "v02-stack-20260713n"
+full_runtime_tuple_green = false
+pending = ["vault_claims", "checked_escrow_deployment", "maker_actor", "taker_actor", "swap_effects", "restart_recovery"]
 
 [[flows]]
 name = "actor_submission"
@@ -248,6 +272,6 @@ source = "indexer"
 destination = "local_stack_orchestrator"
 direction = "request_response"
 protocol = "official_indexer_json_rpc"
-semantics = "retrieve_finalized_block_and_match_sequencer_block_at_same_id"
+semantics = "retrieve_finalized_non_genesis_block_by_id_and_hash_then_match_id_prev_hash_hash_signature_to_sequencer_borsh_header"
 upstream_source_path = "lez/indexer/service/rpc/src/lib.rs"
 upstream_source_sha256 = "a7a2a3114e0b65a9f33decff79bb5ffe5c75c54507f5054560c4e1fef1e0af3e"

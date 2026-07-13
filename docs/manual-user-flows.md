@@ -66,9 +66,7 @@ a fresh checkout for all of the following:
 The M2 rehearsal uses one pinned public-compatible local LEZ v0.2 devnet and one
 pinned local Zcash Regtest devnet. The LEZ devnet must include the full Bedrock node, indexer, and
 non-standalone sequencer. Their exact source, image labels, service flow,
-toolchain, native inputs, and service-binary hashes are now attested. Container
-assembly, three-service execution/finality, Vault Claim onboarding, escrow
-deployment, and actor use remain RED. The
+toolchain, native inputs, and service-binary hashes are now attested. Container assembly, signed runtime-channel onboarding, and three-service non-genesis finality are GREEN in isolated run `v02-stack-20260713n`. Vault Claim onboarding, escrow deployment, actor use, swap effects, and restart recovery remain pending. The
 standalone mock block publisher and v0.1.2 lane are lower-level checks only. Maker and taker
 use separate configs, keys, funds,
 stores, journals, sidecars, and processes. The guide will identify every local
@@ -93,8 +91,8 @@ as unavailable.
 | LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an ephemeral-port LEZ v0.1.2 standalone sequencer. The last corrected full runner exited `0` after the reusable external process published a private schema-v2 handoff containing the exact deployment transaction and canonical block, the built-in-only `getProgramIds` result, and two funded deterministic actors | The native/two-definition lifecycle and corrected external-node handoff are GREEN with ELF SHA-256 `a324355c...7006` and ImageID `c14c978a...4483`. A later actor-contract RED replaced the agreement-invalid zero channel with one nonempty deterministic identity; its focused suite passes and the exact full runner must be repeated before using the handoff as current corridor evidence. No reference SDK actor consumes that handoff in a composed LEZ/Zebra flow yet, and this local v0.1.2 evidence is not LEZ v0.2 public-testnet evidence |
 | LEZ recursive execution costs | Exact checked guest replayed through production `V03State` transitions with nested authenticated-transfer and ATA/Token sessions | This measures deterministic local execution, not public-testnet fees or latency |
 | Provisional LEZ v0.2 executable lane | Exact SPEL PR #238 and LEZ v0.2.0 build a checked Risc0 escrow ELF, compile the generated typed client, and execute recursive native plus two-definition token claim/refund tests, including child-failure rollback. The fail-closed deployer is tested through the official RPC types against an ephemeral loopback server | Local ELF SHA-256 `40c9d37c...8021` and ImageID `f8385049...0fbe` are GREEN. No v0.2 public deployment, deployed-runtime CU evidence, independent maker/taker actor flow, composed LEZ/Zebra corridor, or maintainer approval is proved |
-| Full local LEZ v0.2 source/binary contract | Clean exact LEZ v0.2 source, Rust 1.94.0, Bedrock fixtures and OCI labels, Rapisnark/r0vm inputs, and both locked service binary hashes are checked by one command; the binaries plus r0vm have passed restricted distroless CLI smoke | This starts no service or container and proves no finality, Vault Claim, escrow deployment, actor process, or swap. Full-stack and corridor execution remain pending |
-| Official-wire LEZ v0.2 sidecar foundation | Exact upstream LEE account/transaction types and generated sequencer health/channel RPC are separately locked. Five tests cover runtime/role/signer/channel binding, canonical signed-transaction decoding, loopback endpoint policy, and an authenticated ephemeral describe-only server | The verifier is a local build/test/dependency gate, not a running actor flow. Prepare/observe/submit methods, durable effect recovery, executable maker/taker processes, and actual-node corridor use remain pending. It uses no public RPC, faucet, or Docker |
+| Full local LEZ v0.2 service readiness | Clean exact source and artifacts are checked, then digest-pinned Bedrock, non-standalone sequencer, and indexer execute on one unique no-masquerade bridge with dynamic loopback RPCs. The real sequencer signs and onboards its key-derived channel; finalized block 2 is equal through indexer ID/hash lookup and sequencer Borsh identity | GREEN in `v02-stack-20260713n`, including fail-closed exact cleanup. This does not prove Vault Claims, checked escrow deployment, independent actors, swap effects, restart recovery, or the composed LEZ/Zebra corridor |
+| Official-wire LEZ v0.2 prepare foundation | Exact upstream LEE account/transaction, Vault, and generated escrow/RPC types are separately locked. Seventeen tests cover runtime/role/signer/channel binding, canonical decoding, authenticated loopback describe, exact native initialize/fund preparation, deterministic maker/taker Vault Claim preparation, node-confirmed nonces, recovery mutation rejection, and redaction | The verifier is a local build/test/dependency gate, not a running actor flow. Prepared exact bytes remain only in fail-closed memory; durable recovery, authenticated server wiring, observation, one-attempt submission, executable maker/taker processes, finalized actor balances, and actual-node corridor use remain pending. It uses no public RPC, faucet, or Docker |
 
 The following are **not complete yet**: one composed LEZ↔ZEC run with
 independent maker and taker processes, both ZEC trade directions through all
@@ -318,13 +316,145 @@ RUN_ID=manual-v02-contract-20260713-a ./scripts/verify-lez-v02-local-stack-contr
 
 The exact Bedrock digest must already be cached locally so the verifier can
 inspect its source, revision, version, and license labels without pulling it.
-Expected output ends with `status=stack-not-executed` and names OCI revision
+Expected output ends with `verification_scope=source-contract-only` and names OCI revision
 `d8711bbc3d43d3ef9755ef9b73af32fd0f703160`. A dirty source checkout, changed
 binary, wrong toolchain or native library, missing cached image, or changed OCI
 label fails closed. This command needs Docker metadata access but starts no
 container, uses no public chain RPC or faucet, and proves no swap execution.
 
-## Flow 0C: verify the official-wire v0.2 sidecar foundation
+## Flow 0B2: run the isolated LEZ v0.2 service stack
+
+This flow runs the real pinned Bedrock node, non-standalone sequencer, and
+indexer. It proves service onboarding and non-genesis finality, not a swap.
+
+```mermaid
+sequenceDiagram
+    participant O as Host orchestrator
+    participant B as Bedrock HTTP
+    participant S as Sequencer JSON-RPC
+    participant I as Indexer JSON-RPC
+    O->>B: Start and prove cryptarchia advances
+    O->>B: Prove exact missing runtime channel
+    O->>S: Start with deterministic local signing key
+    S->>B: Submit signed channel onboarding
+    O->>B: Verify accredited key and channel schema
+    O->>I: Start after channel exists
+    I->>B: Poll finalized channel messages
+    O->>S: Read finalized block as canonical Borsh
+    O->>I: Read the same block by ID and hash
+    O->>B: Verify channel tip advances
+    O->>O: Remove and assert exact run resources absent
+```
+
+Prerequisites from a clean host:
+
+- a non-root Unix user, Docker Engine with Compose v2, Git, curl, jq, ripgrep,
+  sha256sum, base64, xxd, od, sed, and a Docker build backend;
+- a clean LEZ `v0.2.0` checkout at commit
+  `a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a` with the local tag resolving to
+  that commit;
+- locked release binaries named `sequencer_service` and `indexer_service` in
+  one directory, with SHA-256 values `3727e9aa...412f` and
+  `6ed54f04...7442`; and
+- the verified executable `r0vm 3.0.5`, SHA-256 `36c016a5...15b`.
+
+One clean-host provisioning route is:
+
+```sh
+PROVISION="$PWD/.e2e/lez-v02-provision"
+LEZ_V02_SOURCE_DIR="$PROVISION/logos-execution-zone"
+LEZ_V02_BUILD_DIR="$PROVISION/build"
+LEZ_V02_TOOL_DIR="$PROVISION/tools"
+mkdir -p "$PROVISION"
+git clone --branch v0.2.0 --single-branch \
+  https://github.com/logos-blockchain/logos-execution-zone.git \
+  "$LEZ_V02_SOURCE_DIR"
+test "$(git -C "$LEZ_V02_SOURCE_DIR" rev-parse HEAD)" = \
+  a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a
+test -z "$(git -C "$LEZ_V02_SOURCE_DIR" status --porcelain=v1 --untracked-files=all)"
+rustup toolchain install 1.94.0 --profile minimal
+
+RAPIDSNARK_ARCHIVE="$PROVISION/rapidsnark-linux-x86_64-pic-v0.0.8.zip"
+curl -fL \
+  https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark/releases/download/rapidsnark-pic-v0.0.8/rapidsnark-linux-x86_64-pic-v0.0.8.zip \
+  -o "$RAPIDSNARK_ARCHIVE"
+printf "%s  %s\n" \
+  59bdd709eed96235de061f352893f4650c923b54b591052118593012bb1cd831 \
+  "$RAPIDSNARK_ARCHIVE" | sha256sum --check --strict
+mkdir -p "$PROVISION/rapidsnark"
+unzip -q "$RAPIDSNARK_ARCHIVE" -d "$PROVISION/rapidsnark"
+RAPIDSNARK_LIB_DIR="$(dirname "$(find "$PROVISION/rapidsnark" \
+  -type f -name librapidsnark.a -print -quit)")"
+(
+  cd "$RAPIDSNARK_LIB_DIR"
+  printf "%s  %s\n" \
+    d4133227f845ff5bfa3672eb5b9c018a6a086bfa164b176bdaf76949c7d1f423 librapidsnark.a \
+    0a910b420c3ad603c83c9dc2818c7ae05394c231ca23135c7b873e8e680ea41b libgmp.a \
+    797b5d24bb8e8b088f811bddfff35f33973af9c797fb3812489cd42ba6a957d0 libfq.a \
+    40f809394904682cb5517845cd3c2f936a5eb4609712534b573f552f2811fb82 libfr.a \
+    | sha256sum --check --strict
+)
+export RAPIDSNARK_LIB_DIR
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+(
+  cd "$LEZ_V02_SOURCE_DIR"
+  CARGO_TARGET_DIR="$LEZ_V02_BUILD_DIR" \
+    cargo +1.94.0 build --locked --release --jobs 2 \
+      --package sequencer_service --package indexer_service
+)
+LEZ_V02_SERVICES_DIR="$LEZ_V02_BUILD_DIR/release"
+printf "%s  %s\n" \
+  3727e9aa10600d04d0cdfda6eb39df146ef4cc14f5b09ad33bcf076a8f2c412f \
+  "$LEZ_V02_SERVICES_DIR/sequencer_service" \
+  6ed54f04ae018f3554898a9f0aef6decd6930c4e8609326d146ca164e48d7442 \
+  "$LEZ_V02_SERVICES_DIR/indexer_service" \
+  | sha256sum --check --strict
+
+cargo install rzup --version 0.5.1 --locked --root "$LEZ_V02_TOOL_DIR"
+RISC0_HOME="$LEZ_V02_TOOL_DIR/risc0-3.0.5/home" \
+  "$LEZ_V02_TOOL_DIR/bin/rzup" install r0vm 3.0.5
+LEZ_V02_R0VM="$LEZ_V02_TOOL_DIR/risc0-3.0.5/home/extensions/v3.0.5-cargo-risczero-x86_64-unknown-linux-gnu/r0vm"
+printf "%s  %s\n" \
+  36c016a5bb2ded5bd1f8f92cc487e6ffaeb1e95ec05850c983081a0f716b515b \
+  "$LEZ_V02_R0VM" | sha256sum --check --strict
+```
+
+Keep the three resulting absolute paths for the runner. A cold host also needs the exact Bedrock GHCR digest and distroless GCR digest.
+The runner may pull those immutable images if they are absent. The exact clone, native-library verification, locked build, and r0vm provisioning commands above produce those inputs; the runtime runner never floats source or artifact versions.
+
+```sh
+export LEZ_V02_SOURCE_DIR=/absolute/path/to/clean/logos-execution-zone-v0.2.0
+export LEZ_V02_SERVICES_DIR=/absolute/path/to/locked/release-binaries
+export LEZ_V02_R0VM=/absolute/path/to/verified/r0vm
+RUN_ID=manual-v02-stack-001 ./scripts/run-lez-v02-stack.sh
+```
+
+Expected output ends with `LEZ v0.2 isolated service-readiness passed` and a
+finalized block ID of at least 2. Evidence remains under
+`.e2e/manual-v02-stack-001/lez-v02`: `run.env` binds source, artifacts, exact
+container and network IDs, dynamic loopback URLs, and finalized ID; `evidence/`
+contains the cryptarchia samples, exact pre-bootstrap missing-channel body,
+channel snapshots, port bindings, sequencer Borsh block, and indexer ID/hash
+responses; `logs/` contains each service log. Normal exit removes only the
+captured containers, exact network, and exact image, then asserts all three
+absent. A cleanup assertion failure changes a successful run into failure.
+
+For live inspection, set `LEZ_V02_KEEP_RUNNING=1`. Retention is honored only
+after a GREEN run. The runner prints exact cleanup commands containing the
+captured container IDs, network, and image; execute all three commands when
+finished. Never use a global prune.
+
+All chain RPCs in this flow are dynamically published on literal loopback, and
+all service traffic stays on its unique no-masquerade bridge. Runtime execution
+uses no public RPC, public peer, faucet, or public funds. Only cold image or
+source provisioning can depend on GHCR, GCR, GitHub, Rust distribution, or
+crates.io; cached verified inputs remove that availability risk. Deterministic
+local genesis and signing material make the run reproducible, while correctness
+comes from executing the pinned real implementations and cross-checking their
+canonical outputs. Public peer propagation, fee pressure, and public-runtime
+parity are deliberately outside this local claim.
+
+## Flow 0C: verify the official-wire v0.2 prepare foundation
 
 Provision the exact four already-extracted Rapisnark libraries named in the
 local-stack contract, then run the fail-closed wrapper from the repository
@@ -338,8 +468,10 @@ export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
 
 Expected output ends with `LEZ v0.2 sidecar verification: ok`. The wrapper
 attests all four static-library SHA-256 identities before invoking Cargo and
-then runs locked offline formatting, five all-target tests, strict Clippy,
-rustdoc warnings, and graph-local advisory/license/source policy. A missing,
+then runs locked offline formatting, 17 integration tests, strict Clippy,
+rustdoc warnings, and graph-local advisory/license/source policy. Those tests
+include exact native initialize/fund and deterministic maker/taker Vault Claim
+preparation, but no durable recovery or submission. A missing,
 relative, or changed library directory fails before Cargo. Do not replace this
 with direct `cargo --offline`: the upstream build script can still attempt its
 own release-asset download. This command starts no node, sidecar process,

@@ -1,31 +1,36 @@
 # ADR 0024: Package and isolate the source-audited LEZ v0.2 local stack
 
-Status: Accepted architecture; source and binary attestation verified, container execution RED
+Status: Accepted architecture; isolated service readiness GREEN, full runtime tuple pending
 
 ```mermaid
 flowchart LR
-    Maker["Maker v0.2 sidecar"]
-    Taker["Taker v0.2 sidecar"]
-    Orchestrator["Run-scoped orchestrator"]
+    Operator["Local operator"]
+    Orchestrator["Run-scoped host orchestrator"]
+    State[(".e2e RUN_ID lez-v02")]
+    Key["Deterministic local signing seed"]
 
-    subgraph RunNetwork["Private Docker network"]
-        Sequencer["Non-standalone sequencer"]
-        Bedrock["Bedrock node"]
-        Indexer["Finalized LEZ indexer"]
+    subgraph Bridge["Unique run-owned Docker bridge; IP masquerade disabled"]
+        Bedrock["Bedrock node; HTTP 18080"]
+        Sequencer["LEZ v0.2 sequencer; JSON-RPC 3040"]
+        Indexer["LEZ v0.2 indexer; JSON-RPC 8779"]
     end
 
-    Host["Dynamic 127.0.0.1 ports"]
-    State[".e2e/run_id/lez-v02"]
+    Loopback["Dynamic 127.0.0.1 ports"]
+    Pending["Pending full tuple: Vault claims, escrow, actors, swaps, recovery"]
 
-    Maker -->|"official LEZ JSON-RPC"| Sequencer
-    Taker -->|"official LEZ JSON-RPC"| Sequencer
-    Sequencer -->|"Zone SDK publish"| Bedrock
-    Indexer -->|"poll finalized channel"| Bedrock
-    Orchestrator -->|"health, channel, program and block RPC"| Sequencer
-    Orchestrator -->|"cryptarchia and channel observation"| Bedrock
-    Orchestrator -->|"local health diagnostic and finalized block RPC"| Indexer
-    Host --> Orchestrator
+    Operator --> Orchestrator
     Orchestrator --> State
+    Key --> Sequencer
+    Orchestrator -->|"start and cryptarchia probe"| Bedrock
+    Orchestrator -->|"start after exact missing-channel proof"| Sequencer
+    Sequencer -->|"signed channel onboarding and block publication"| Bedrock
+    Orchestrator -->|"start after channel accreditation"| Indexer
+    Indexer -->|"poll finalized channel messages"| Bedrock
+    Orchestrator -->|"health, channel, program, Borsh block RPC"| Sequencer
+    Orchestrator -->|"cryptarchia and channel HTTP"| Bedrock
+    Orchestrator -->|"finalized block by ID and hash RPC"| Indexer
+    Loopback --> Orchestrator
+    Orchestrator -.-> Pending
 ```
 
 ## Context
@@ -66,10 +71,7 @@ unchanged. This attests the selected outputs but does not yet prove bit-for-bit
 reproducibility through an independent second clean rebuild. A binary's
 reported Cargo version `0.1.0` is a diagnostic, not provenance and not a
 substitute for the commit, source hashes, build inputs, and output hashes.
-Both exact binaries and r0vm pass an artifact/runtime-compatibility smoke in the
-selected distroless image as uid 65532 with no network, a read-only filesystem,
-all capabilities dropped, and `no-new-privileges`. That smoke is not service
-startup or full-stack execution.
+Both exact binaries and r0vm first passed an artifact compatibility smoke in the selected distroless image as uid 65532 with no network. The repository runner then executed both services with Bedrock as a numeric non-root host UID/GID, read-only root filesystems, all capabilities dropped, `no-new-privileges`, and CPU, memory, PID, and tmpfs limits.
 
 Bedrock uses
 `ghcr.io/logos-blockchain/logos-blockchain@sha256:91d6c5bf07e07fcfba5e7cf07d21ee686a6bc4b9f6210f2d28bffbcad9a3729f`.
@@ -82,57 +84,33 @@ disclosed upstream production-readiness gap, not a local M2 execution claim.
 
 The upstream sequencer/indexer Dockerfiles remain hashed source observations
 only. They are not trusted packaging recipes because they include mutable base
-tags and installers. The repository-owned recipe uses the immutable inputs
-above and later records the exact output binary and image digests.
+tags and installers. The repository-owned recipe uses the immutable inputs above and records the exact output binary digests. Its run-scoped image is deleted after each normal test run.
 
-Every execution owns Compose project
-`lez-atomic-swaps-lez-v02-{run_id}`, private state root
-`.e2e/{run_id}/lez-v02`, fresh service state, and one private Docker network.
-No `container_name` or fixed host port is allowed. Internal wildcard listeners
-are reachable only inside that network; the orchestrator publishes required
-operator probes on dynamically assigned literal `127.0.0.1` ports and cleans
-only resources bearing its exact run identity.
+Every execution owns the group `lez-atomic-swaps-lez-v02-{run_id}`, private state root `.e2e/{run_id}/lez-v02`, fresh service state, exact run-scoped container names, and one unique bridge with IP masquerade disabled. Docker Compose validates the generated configuration only because the installed Compose/Engine pair does not reliably materialize ephemeral loopback ports. The runner therefore creates containers directly, publishes only dynamically assigned literal `127.0.0.1` ports, captures every container ID, and deletes exactly those IDs, its exact network, and its exact image. Fixed or global names and fixed host ports remain forbidden.
 
-Startup is ordered Bedrock, then indexer, then sequencer. Restart preserves one
-state tuple: Bedrock state, `/data/bedrock_signing_key`, sequencer RocksDB and
-publication checkpoint, and indexer RocksDB and finalized-channel cursor. A
+Startup is ordered Bedrock, then sequencer, then indexer. The sequencer starts only after Bedrock proves the runtime channel is absent with the exact audited response. The indexer starts only after the sequencer has submitted the signed onboarding inscription and Bedrock reports the accredited runtime channel. A future restart test must preserve one state tuple: Bedrock state, the sequencer home containing the signing key plus RocksDB and publication checkpoint, and indexer RocksDB plus finalized-channel cursor. A
 fresh signing key against an existing channel is not equivalent: it is not
 accredited and can leave block publication stalled.
 
-Bedrock's all-zero channel is its system/cryptarchia channel. The local LEZ
-rollup uses the distinct all-`01` channel configured identically in sequencer
-and indexer. These values are not interchangeable. The immutable runtime
+Bedrock genesis retains the source-required all-zero system channel. The upstream LEZ example all-`01` channel is a hashed observation, not a live identity. The local runtime channel is `b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748`, the Ed25519 public key derived from a deterministic local-only raw signing seed. Its key file SHA-256 is `8fd0d8a6423536c14b5d3979e5135bf37253f5dfbc8485b52202bbf963b8f02e`. The runner never rewrites the protected genesis channel; the real sequencer creates and accredits its own signed channel through the supported Bedrock inscription path. The immutable runtime
 identity tuple is:
 
 `(LEZ source commit, Bedrock image revision and digest, system channel,
 LEZ channel, sequencer binary digest, indexer binary digest, r0vm digest,
 runtime-image digest)`.
 
-The run-time readiness tuple is:
+The currently certified service-readiness tuple is:
 
-`(Bedrock cryptarchia checkpoint, observed LEZ channel checkpoint, sequencer
-channel and genesis, fixed sequencer checkpoint block, indexer finalized copy
-of that checkpoint, built-in program IDs, checked escrow deployment,
-maker account state, taker account state)`.
+`(Bedrock cryptarchia advancement, exact missing-channel response, signed channel accreditation and advancement, sequencer health/channel/built-ins/genesis, finalized non-genesis block ID at least 2, indexer lookup by ID and hash, cross-RPC block-header identity)`.
+
+The full runtime tuple additionally requires checked escrow deployment, actor Vault Claims and account state, both independent role processes, swap effects, and restart recovery; those items remain pending and are not implied by service readiness.
 
 Readiness is conjunctive and is evaluated by the host orchestrator against all
 three services:
 
-1. Bedrock `GET /cryptarchia/info` must return a present tip and last immutable
-   block, and its tip/slot must advance. The exact
-   `GET /channel/{channel_id}` path for the configured all-`01` LEZ channel must
-   return HTTP 200; the gate does not assume a response-body echo.
-2. Sequencer `checkHealth`, `getChannelId`, genesis/block queries, and
-   `getProgramIds` must match the Bedrock channel and required built-ins.
-   `getBlock(1)` must return genesis; `getLastBlockId` must be at least genesis
-   and advance after a probe transaction. The checked escrow deployment and its
-   exact containing block must be observed through official sequencer RPC.
-3. Indexer `checkHealth` reads only local database state and is excluded from
-   the finality gate; the orchestrator may retain it only as a liveness
-   diagnostic. `getLastFinalizedBlockId` must return `Some(id)`,
-   `getBlockById(id)` must return that same ID, and the immutable block must
-   match the sequencer block queried at the identical ID. The continuously
-   moving sequencer and indexer tips are not required to be equal.
+1. Bedrock `GET /cryptarchia/info` returns a present tip and last immutable block and advances. Before sequencer startup, `GET /channel/{channel_id}` must return only HTTP 404 or 500 with the exact 17-byte body `channel not found`; an arbitrary HTTP 500 fails. After startup, Bedrock must report exactly the runtime public key as its accredited key and the expected threshold schema. Its tip slot or tip message must advance after finality.
+2. Sequencer `checkHealth`, `getChannelId`, `getProgramIds`, genesis, and tip queries must succeed. `getBlock(1)` proves genesis availability, and `getBlock(finalized_id)` must return canonical Borsh bytes for a finalized ID of at least 2.
+3. Indexer health remains diagnostic only. `getLastFinalizedBlockId` must return an ID of at least 2. `getBlockById` and `getBlockByHash` must return the same decoded block, whose ID, previous hash, hash, and signature match the sequencer Borsh header at offsets 0, 8, 40, and 80. Continuously moving service tips need not be equal.
 
 Genesis `supply_account` entries credit actor-specific Vault PDAs through
 `GenesisTransferVault`; they do not directly initialize spendable actor
@@ -150,9 +128,7 @@ runtime binding exist.
 
 ## Consequences
 
-- Source, binary, and artifact/runtime compatibility verification are GREEN
-  before the stack runs, but the full stack, readiness tuple, Vault Claim onboarding, escrow
-  deployment, and actor corridor remain RED until executed and evidenced.
+- Source, binary, packaging, isolated service startup, signed channel onboarding, and non-genesis cross-RPC finality readiness are GREEN in run `v02-stack-20260713n`. The full runtime tuple, including Vault Claims, checked escrow deployment, independent actors, swap effects, and restart recovery, remains pending.
 - Wildcard upstream binds no longer expose fixed host ports or collide with
   unrelated Docker activity.
 - A healthy indexer cannot be mistaken for finality, and a transiently moving

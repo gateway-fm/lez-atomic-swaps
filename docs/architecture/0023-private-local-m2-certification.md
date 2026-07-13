@@ -8,10 +8,11 @@ flowchart LR
     Taker["Independent taker actor"]
 
     subgraph LocalLez["Public-compatible local LEZ v0.2 devnet"]
-        Bedrock["Bedrock node<br/>digest and OCI revision source-bound"]
-        Indexer["LEZ v0.2 indexer<br/>binary attested; execution RED"]
-        Sequencer["Non-standalone v0.2 sequencer RPC<br/>binary attested; execution RED"]
-        Escrow["Checked escrow deployment"]
+        Bedrock["Bedrock node<br/>isolated service GREEN"]
+        Indexer["LEZ v0.2 indexer<br/>finalized service GREEN"]
+        Sequencer["Non-standalone v0.2 sequencer RPC<br/>signed channel service GREEN"]
+        ServiceReady["Service readiness GREEN"]
+        FullRuntime["Vault claims, escrow, actors,<br/>swaps, and recovery pending"]
     end
 
     subgraph LocalZcash["Pinned local Zcash Regtest devnet"]
@@ -25,15 +26,18 @@ flowchart LR
     PublicZec["Public Zcash testnet run"]
     Release["Production-readiness backlog"]
 
-    Maker -->|"v0.2 official-wire sidecar"| Sequencer
-    Taker -->|"v0.2 official-wire sidecar"| Sequencer
+    Maker -.->|"v0.2 official-wire sidecar pending"| Sequencer
+    Taker -.->|"v0.2 official-wire sidecar pending"| Sequencer
     Maker -->|"Typed Zebra adapter"| Zebra
     Taker -->|"Typed Zebra adapter"| Zebra
-    Sequencer -.->|"Zone SDK block publish"| Bedrock
-    Indexer -.->|"Poll finalized LEZ channel"| Bedrock
-    Sequencer --> Escrow
+    Sequencer -->|"Zone SDK block publish"| Bedrock
+    Indexer -->|"Poll finalized LEZ channel"| Bedrock
+    Bedrock --> ServiceReady
+    Sequencer --> ServiceReady
+    Indexer --> ServiceReady
+    ServiceReady -.-> FullRuntime
     ZebraFork -.->|"Explicit reorg relay in fault tests"| Zebra
-    Escrow --> LocalEvidence
+    FullRuntime -.-> LocalEvidence
     Zebra --> LocalEvidence
     LocalEvidence --> M2
     PublicLez -.-> Release
@@ -85,11 +89,13 @@ funds, stores, journals, sidecars, and restart lifecycles.
 
 ADR 0024 now attests the clean v0.2 source contract, Bedrock OCI source mapping,
 correct sequencer-to-Bedrock publication and indexer-to-Bedrock polling flows,
-and attested sequencer/indexer output hashes. Independent clean rebuild
-reproducibility, container assembly, ordered
-Bedrock/indexer/sequencer startup, restart-state preservation, same-ID finalized
-block readiness, Vault Claim onboarding, escrow deployment, and actor use remain
-RED; this ADR still makes no running-stack claim.
+and exact sequencer/indexer output hashes. Run `v02-stack-20260713n` proves
+isolated ordered service startup, signed channel onboarding, finalized
+non-genesis block identity across both RPCs, channel advancement, dynamic
+loopback publication, and exact fail-closed cleanup. Independent clean rebuild
+reproducibility, restart-state preservation, Vault Claim onboarding, checked
+escrow deployment, independent actor use, swap effects, and recovery remain
+pending. This ADR makes a running-service claim, not a corridor claim.
 
 The M2 implementation must produce local and future public routes in the same
 actor binaries, SDK state machine, chain-port traits, transaction builders, and

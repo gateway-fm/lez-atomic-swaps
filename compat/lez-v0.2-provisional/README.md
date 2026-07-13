@@ -47,21 +47,9 @@ must still re-query deployed program and account identities.
 
 ## Full local-stack source contract
 
-`local-stack.toml` is the immutable, not-yet-executed stack contract for the
-non-mock local lane. It selects the exact v0.2.0 source commit, the Bedrock
-image digest shipped by that source, real non-standalone
-`sequencer_service`, real `indexer_service`, event directions, readiness
-gates, and run isolation. It uses Compose project
-`lez-atomic-swaps-lez-v02-${RUN_ID}` and private state beneath
-`.e2e/${RUN_ID}/lez-v02`. Because both Rust services bind `0.0.0.0`
-unconditionally, the contract requires one private per-run container network
-and only dynamic `127.0.0.1` host publications. Fixed container names, fixed
-host ports, and reuse of pre-existing run state are forbidden.
+`local-stack.toml` is the immutable source, packaging, isolation, and service-readiness contract for the non-mock local lane. It selects exact LEZ v0.2.0, the digest-pinned Bedrock node, real non-standalone sequencer and indexer binaries, corrected event directions, conjunctive readiness, and the explicit pending full-runtime tuple. Docker Compose validates configuration; the runner directly creates exact run-scoped containers because this Compose/Engine pair cannot reliably realize ephemeral loopback publications. Each run owns `.e2e/${RUN_ID}/lez-v02`, one unique no-masquerade bridge, dynamic literal-loopback host ports, and captured container IDs. Fixed or global names, fixed host ports, and reused state remain forbidden.
 
-Bedrock receives the exact hashed node/deployment/KZG fixtures and invokes the
-Bedrock binary directly. The observed upstream helper's timestamp substitution
-does not apply to the already-concrete deployment fixture and is not used by
-the runner. Minimal sequencer/indexer configs are generated from contracted
+Bedrock receives the exact hashed node, deployment, and KZG fixtures and invokes the Bedrock binary directly. The runner replaces exactly one audited stale embedded genesis timestamp with the current run epoch, then proves the generated fixture contains exactly one replacement and no old bytes. It never changes the source-required all-zero genesis channel. Minimal sequencer/indexer configs are generated from contracted
 semantic fields; the unsupported stale example `backoff` field is omitted.
 
 The upstream service Dockerfiles are retained only as hashed source
@@ -76,8 +64,7 @@ sequencer/indexer SHA-256 values; a warm locked offline no-op rerun left those
 outputs unchanged. This is not evidence of independent bit-reproducibility.
 Both binaries plus r0vm returned their versions inside that runtime
 as uid 65532 with no network, a read-only root, no capabilities, and
-no-new-privileges. This is CLI/runtime compatibility evidence only: neither
-service nor the composed stack has executed.
+no-new-privileges. The CLI smoke remains separate evidence. Run `v02-stack-20260713n` then executed all three services as a numeric non-root UID/GID with read-only roots, dropped capabilities, `no-new-privileges`, and resource limits.
 
 Verify a clean source checkout, the local artifacts, and the already-cached
 Bedrock image without starting a container:
@@ -96,8 +83,25 @@ RUN_ID=local-source-audit \
 
 The verifier requires a reachable Docker daemon and the exact Bedrock digest
 already present locally. It runs `docker image inspect` and validates the
-source, revision, version, and license labels; it never pulls or starts the
-image.
+source, revision, version, and license labels; it never pulls or starts the image.
+
+After provisioning those exact artifacts, run the isolated service stack:
+
+```sh
+export LEZ_V02_SOURCE_DIR=/absolute/path/to/clean/logos-execution-zone-v0.2.0
+export LEZ_V02_SERVICES_DIR=/absolute/path/to/locked/release-binaries
+export LEZ_V02_R0VM=/absolute/path/to/verified/r0vm
+RUN_ID=local-v02-stack-001 ./scripts/run-lez-v02-stack.sh
+```
+
+The success line reports a finalized ID of at least 2. Evidence remains under
+`.e2e/local-v02-stack-001/lez-v02`. Normal cleanup removes exact captured IDs,
+the exact network, and the run image and then proves all are absent; removal or
+assertion failure makes the run fail. `LEZ_V02_KEEP_RUNNING=1` retains resources
+only after a GREEN run and prints the exact cleanup commands. Runtime uses no
+public RPC, faucet, or public funds. A cold build may need the exact GHCR and
+GCR image registries; clone and artifact provisioning may need GitHub, Rust,
+and crates distribution.
 
 The source checkout must have exact HEAD `a58fbce2...` and an empty
 `git status --porcelain --untracked-files=all`. If local tag `v0.2.0` exists,
@@ -114,13 +118,7 @@ digest and its source/version/license labels. This source mapping does not
 establish public-runtime parity: the tagged LEZ README still describes its
 bundled node as outdated, so that distinct upstream parity gap remains.
 
-Readiness is functional rather than port-only. Bedrock must expose advancing
-Cryptarchia state and HTTP 200 for the exact zone channel; the sequencer must
-report health, required built-ins, channel, genesis block 1, and advancing tip;
-the indexer must return an actual finalized block. Certification compares that
-immutable finalized block with the sequencer block at the same ID, never two
-moving tips. Indexer `checkHealth` is excluded because upstream implements it
-as local database recalculation only.
+Readiness is functional rather than port-only. Before sequencer startup, the key-derived runtime channel must be absent with only HTTP 404 or 500 plus the exact 17-byte body `channel not found`. The real sequencer then signs its onboarding inscription, and Bedrock must report only that public key as accredited. The indexer must finalize an ID of at least 2; lookup by ID and hash must agree, and its decoded ID, previous hash, hash, and signature must match the sequencer canonical Borsh header. Bedrock channel slot or tip must advance after finality. Indexer `checkHealth` remains diagnostic only.
 
 Run the complete lint/test/pin check with:
 
