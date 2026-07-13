@@ -7,18 +7,23 @@ use common::{HashType, block::Block, transaction::NSSATransaction};
 use jsonrpsee::{server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_protocol::{
     DiscoveryWindow, EscrowObservationTarget, FundingObservation, Hex32, InitializationObservation,
-    MessageContext, NativeEscrowTerms, NativeEscrowTermsInput, ObserveEscrowRequest,
-    ObserveRevealingClaimRequest, Participant, PrepareNativeEscrowRequest,
-    PrepareRevealingClaimRequest, RequestId, RevealingClaimObservation,
-    RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, TransactionId,
+    MessageContext, NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
+    NativeRefundObservation, NativeRefundObservationTarget, ObserveEscrowRequest,
+    ObserveNativeRefundRequest, ObserveRevealingClaimRequest, Participant,
+    PrepareNativeEscrowRequest, PrepareNativeRefundRequest, PrepareRevealingClaimRequest,
+    RequestId, RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage,
+    RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
+    TransactionId,
 };
 use lez_v0_1_2_sidecar::{
     ExactTransactionSubmitter, NativeEscrowPlanner, OfficialExactObservation, OfficialNodeRpc,
     OfficialSettlement, SidecarError,
 };
 use lez_zec_escrow_compat::{EscrowMetadata, EscrowStatus};
-use nssa::{AccountId, Data, PrivateKey, PublicKey, program::Program};
+use nssa::{
+    AccountId, Data, PrivateKey, PublicKey, PublicTransaction, program::Program,
+    public_transaction::WitnessSet,
+};
 use sequencer_service_protocol::{Account, BlockId, Commitment, MembershipProof, Nonce, ProgramId};
 use sequencer_service_rpc::RpcServer;
 use sha2::{Digest as _, Sha256};
@@ -1298,6 +1303,449 @@ async fn depositor_discovers_a_counterparty_claim_and_revealed_preimage() {
         request: &observe,
         genesis,
         claim,
+        canonical_blocks,
+        canonical_accounts,
+    })
+    .await;
+    handle.stop().unwrap();
+}
+
+#[tokio::test]
+async fn observes_stable_native_refund_state_and_consensus_clock_without_scanning() {
+    let (depositor, key) = keyed_account(141);
+    let (claimant, _) = keyed_account(142);
+    let escrow_program = [0x5060_7080; 8];
+    let genesis = common::test_utils::produce_dummy_block(0, None, Vec::new());
+    let tip = common::test_utils::produce_dummy_block(1, Some(genesis.header.hash), Vec::new());
+    let mut descriptor = runtime(Participant::Maker, depositor, escrow_program);
+    descriptor.genesis_block_hash = Hex32::from_bytes(genesis.header.hash.0);
+    let mock = MockNode::new(depositor, 161);
+    *mock.blocks.lock().unwrap() = vec![genesis, tip.clone()];
+    let (endpoint, handle) = start_mock(mock.clone()).await;
+    let rpc = Arc::new(
+        OfficialNodeRpc::connect(&endpoint, Participant::Maker, depositor, descriptor.clone())
+            .unwrap(),
+    );
+    let planner = NativeEscrowPlanner::new(
+        Participant::Maker,
+        key,
+        escrow_program,
+        descriptor.clone(),
+        Arc::clone(&rpc),
+    )
+    .unwrap();
+    let prepare = prepare_request(Participant::Maker, depositor, claimant, escrow_program);
+    let terms = prepare.terms;
+    *mock.accounts.lock().unwrap() = funded_native_accounts(&terms, escrow_program);
+    let request = ObserveNativeRefundRequest::new(
+        context(Participant::Maker, "refund-state-only-rpc-0001"),
+        descriptor,
+        terms,
+        NativeRefundObservationTarget::StateOnly,
+    );
+
+    let observed = rpc.observe_native_refund(&planner, &request).await.unwrap();
+    assert_eq!(observed.clock_before, observed.clock_after);
+    assert_eq!(observed.clock_after.height, 1);
+    assert_eq!(observed.clock_after.timestamp_ms, tip.header.timestamp);
+    assert!(matches!(
+        observed.accounts,
+        NativeEscrowAccountObservation::Found(_)
+    ));
+    assert_eq!(observed.refund, NativeRefundObservation::NotRequested);
+
+    mock.accounts.lock().unwrap().clear();
+    let absent = rpc.observe_native_refund(&planner, &request).await.unwrap();
+    assert_eq!(absent.accounts, NativeEscrowAccountObservation::Absent);
+    assert_eq!(absent.refund, NativeRefundObservation::NotRequested);
+    *mock.accounts.lock().unwrap() = funded_native_accounts(&request.terms, escrow_program);
+    mock.accounts.lock().unwrap().pop_first();
+    assert_eq!(
+        rpc.observe_native_refund(&planner, &request)
+            .await
+            .unwrap_err(),
+        SidecarError::InvalidNodeResponse
+    );
+    *mock.accounts.lock().unwrap() = funded_native_accounts(&request.terms, escrow_program);
+    *mock.tip_overrides.lock().unwrap() = vec![1, 0];
+    assert_eq!(
+        rpc.observe_native_refund(&planner, &request)
+            .await
+            .unwrap_err(),
+        SidecarError::MovingTip
+    );
+    handle.stop().unwrap();
+}
+
+struct ExactRefundEdgeFixture<'a> {
+    rpc: &'a OfficialNodeRpc,
+    planner: &'a NativeEscrowPlanner,
+    mock: &'a MockNode,
+    request: &'a ObserveNativeRefundRequest,
+    escrow_program: [u32; 8],
+    genesis: Block,
+    refund_tx: NSSATransaction,
+    canonical_blocks: Vec<Block>,
+    canonical_accounts: BTreeMap<AccountId, Account>,
+}
+
+async fn assert_exact_refund_edges(fixture: ExactRefundEdgeFixture<'_>) {
+    *fixture.mock.accounts.lock().unwrap() = native_accounts(
+        &fixture.request.terms,
+        fixture.escrow_program,
+        EscrowStatus::Funded,
+    );
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_native_refund(fixture.planner, fixture.request)
+            .await
+            .unwrap_err(),
+        SidecarError::InvalidNodeResponse
+    );
+    *fixture.mock.accounts.lock().unwrap() = fixture.canonical_accounts.clone();
+    let duplicate = common::test_utils::produce_dummy_block(
+        1,
+        Some(fixture.genesis.header.hash),
+        vec![fixture.refund_tx.clone(), fixture.refund_tx],
+    );
+    *fixture.mock.blocks.lock().unwrap() = vec![fixture.genesis.clone(), duplicate];
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_native_refund(fixture.planner, fixture.request)
+            .await
+            .unwrap_err(),
+        SidecarError::InvalidNodeResponse
+    );
+
+    *fixture.mock.blocks.lock().unwrap() = vec![fixture.genesis];
+    let mut full_miss = fixture.request.clone();
+    let NativeRefundObservationTarget::Exact {
+        refund_transaction_id,
+        ..
+    } = full_miss.target
+    else {
+        unreachable!();
+    };
+    full_miss.target = NativeRefundObservationTarget::Exact {
+        refund_transaction_id,
+        window: DiscoveryWindow::new(0, 1).unwrap(),
+    };
+    let missed = fixture
+        .rpc
+        .observe_native_refund(fixture.planner, &full_miss)
+        .await
+        .unwrap();
+    assert_eq!(missed.refund, NativeRefundObservation::UnknownOrPending);
+    full_miss.target = NativeRefundObservationTarget::Exact {
+        refund_transaction_id: TransactionId::from_bytes([0xee; 32]),
+        window: DiscoveryWindow::new(0, 1).unwrap(),
+    };
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_native_refund(fixture.planner, &full_miss)
+            .await
+            .unwrap_err(),
+        SidecarError::TransactionNotPrepared
+    );
+
+    *fixture.mock.blocks.lock().unwrap() = fixture.canonical_blocks;
+    *fixture.mock.tip_overrides.lock().unwrap() = vec![1, 0];
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_native_refund(fixture.planner, fixture.request)
+            .await
+            .unwrap_err(),
+        SidecarError::MovingTip
+    );
+}
+
+#[tokio::test]
+async fn observes_owned_exact_permissionless_refund_with_terminal_accounts() {
+    let (depositor, key) = keyed_account(151);
+    let (claimant, _) = keyed_account(152);
+    let escrow_program = [0x90a0_b0c0; 8];
+    let genesis = common::test_utils::produce_dummy_block(0, None, Vec::new());
+    let mut descriptor = runtime(Participant::Maker, depositor, escrow_program);
+    descriptor.genesis_block_hash = Hex32::from_bytes(genesis.header.hash.0);
+    let mock = MockNode::new(depositor, 171);
+    let (endpoint, handle) = start_mock(mock.clone()).await;
+    let rpc = Arc::new(
+        OfficialNodeRpc::connect(&endpoint, Participant::Maker, depositor, descriptor.clone())
+            .unwrap(),
+    );
+    let planner = NativeEscrowPlanner::new(
+        Participant::Maker,
+        key,
+        escrow_program,
+        descriptor.clone(),
+        Arc::clone(&rpc),
+    )
+    .unwrap();
+    let terms = prepare_request(Participant::Maker, depositor, claimant, escrow_program).terms;
+    let prepared = planner
+        .prepare_native_refund(PrepareNativeRefundRequest::new(
+            context(Participant::Maker, "refund-prepare-rpc-0001"),
+            descriptor.clone(),
+            terms.clone(),
+        ))
+        .await
+        .unwrap();
+    let refund_tx = planner
+        .decode_exact_for_submission(&prepared.refund, Participant::Maker)
+        .await
+        .unwrap();
+    let refunded = common::test_utils::produce_dummy_block(
+        1,
+        Some(genesis.header.hash),
+        vec![refund_tx.clone()],
+    );
+    let canonical_blocks = vec![genesis.clone(), refunded];
+    let canonical_accounts = native_accounts(&terms, escrow_program, EscrowStatus::Refunded);
+    *mock.blocks.lock().unwrap() = canonical_blocks.clone();
+    *mock.accounts.lock().unwrap() = canonical_accounts.clone();
+    let request = ObserveNativeRefundRequest::new(
+        context(Participant::Maker, "refund-observe-exact-rpc-0001"),
+        descriptor,
+        terms,
+        NativeRefundObservationTarget::Exact {
+            refund_transaction_id: prepared.refund.transaction_id,
+            window: DiscoveryWindow::new(0, 2).unwrap(),
+        },
+    );
+
+    let observed = rpc.observe_native_refund(&planner, &request).await.unwrap();
+    assert_eq!(observed.clock_before, observed.clock_after);
+    let NativeRefundObservation::Found(facts) = observed.refund else {
+        panic!("owned exact refund must be found");
+    };
+    assert_eq!(
+        facts.transaction.transaction_id,
+        prepared.refund.transaction_id
+    );
+    assert_eq!(facts.transaction.exact_bytes, prepared.refund.exact_bytes);
+    assert_eq!(facts.transaction.position.transaction_index, 0);
+    assert!(facts.transaction.signer_account_ids.as_slice().is_empty());
+    assert_eq!(facts.instruction.swap_id, request.terms.swap_id());
+    assert_exact_refund_edges(ExactRefundEdgeFixture {
+        rpc: rpc.as_ref(),
+        planner: &planner,
+        mock: &mock,
+        request: &request,
+        escrow_program,
+        genesis,
+        refund_tx,
+        canonical_blocks,
+        canonical_accounts,
+    })
+    .await;
+    handle.stop().unwrap();
+}
+
+struct RefundDiscoveryEdgeFixture<'a> {
+    rpc: &'a OfficialNodeRpc,
+    planner: &'a NativeEscrowPlanner,
+    mock: &'a MockNode,
+    request: &'a ObserveNativeRefundRequest,
+    escrow_program: [u32; 8],
+    genesis: Block,
+    refund_tx: NSSATransaction,
+    canonical_blocks: Vec<Block>,
+    canonical_accounts: BTreeMap<AccountId, Account>,
+}
+
+fn refund_with_forbidden_nonce(transaction: &NSSATransaction) -> NSSATransaction {
+    let NSSATransaction::Public(public) = transaction else {
+        unreachable!();
+    };
+    let mut message = public.message().clone();
+    message.nonces = vec![191_u128.into()];
+    let key = PrivateKey::try_new([0xaf; 32]).unwrap();
+    let witnesses = WitnessSet::for_message(&message, &[&key]);
+    NSSATransaction::Public(PublicTransaction::new(message, witnesses))
+}
+
+async fn assert_refund_discovery_edges(fixture: RefundDiscoveryEdgeFixture<'_>) {
+    *fixture.mock.accounts.lock().unwrap() = native_accounts(
+        &fixture.request.terms,
+        fixture.escrow_program,
+        EscrowStatus::Funded,
+    );
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_native_refund(fixture.planner, fixture.request)
+            .await
+            .unwrap_err(),
+        SidecarError::InvalidNodeResponse
+    );
+    *fixture.mock.accounts.lock().unwrap() = fixture.canonical_accounts.clone();
+    let malformed = common::test_utils::produce_dummy_block(
+        1,
+        Some(fixture.genesis.header.hash),
+        vec![refund_with_forbidden_nonce(&fixture.refund_tx)],
+    );
+    *fixture.mock.blocks.lock().unwrap() = vec![fixture.genesis.clone(), malformed];
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_native_refund(fixture.planner, fixture.request)
+            .await
+            .unwrap_err(),
+        SidecarError::InvalidTransactionBytes
+    );
+    let ambiguous = common::test_utils::produce_dummy_block(
+        1,
+        Some(fixture.genesis.header.hash),
+        vec![fixture.refund_tx.clone(), fixture.refund_tx],
+    );
+    *fixture.mock.blocks.lock().unwrap() = vec![fixture.genesis.clone(), ambiguous];
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_native_refund(fixture.planner, fixture.request)
+            .await
+            .unwrap_err(),
+        SidecarError::AmbiguousDiscovery
+    );
+
+    *fixture.mock.blocks.lock().unwrap() = vec![fixture.genesis];
+    *fixture.mock.accounts.lock().unwrap() = native_accounts(
+        &fixture.request.terms,
+        fixture.escrow_program,
+        EscrowStatus::Funded,
+    );
+    let mut full = fixture.request.clone();
+    full.target = NativeRefundObservationTarget::DiscoverByTerms {
+        window: DiscoveryWindow::new(0, 1).unwrap(),
+    };
+    let absent = fixture
+        .rpc
+        .observe_native_refund(fixture.planner, &full)
+        .await
+        .unwrap();
+    assert_eq!(absent.refund, NativeRefundObservation::Absent);
+    let partial = fixture
+        .rpc
+        .observe_native_refund(fixture.planner, fixture.request)
+        .await
+        .unwrap();
+    assert_eq!(partial.refund, NativeRefundObservation::UnknownOrPending);
+
+    *fixture.mock.blocks.lock().unwrap() = fixture.canonical_blocks;
+    *fixture.mock.accounts.lock().unwrap() = fixture.canonical_accounts;
+    *fixture.mock.tip_overrides.lock().unwrap() = vec![1, 0];
+    assert_eq!(
+        fixture
+            .rpc
+            .observe_native_refund(fixture.planner, fixture.request)
+            .await
+            .unwrap_err(),
+        SidecarError::MovingTip
+    );
+}
+
+#[tokio::test]
+async fn claimant_discovers_counterparty_permissionless_refund_by_terms() {
+    let (depositor, depositor_key) = keyed_account(161);
+    let (claimant, claimant_key) = keyed_account(162);
+    let escrow_program = [0xd0e0_f001; 8];
+    let genesis = common::test_utils::produce_dummy_block(0, None, Vec::new());
+    let mut depositor_runtime = runtime(Participant::Maker, depositor, escrow_program);
+    depositor_runtime.genesis_block_hash = Hex32::from_bytes(genesis.header.hash.0);
+    let mut claimant_runtime = runtime(Participant::Taker, claimant, escrow_program);
+    claimant_runtime.genesis_block_hash = depositor_runtime.genesis_block_hash;
+    let terms = prepare_request(Participant::Maker, depositor, claimant, escrow_program).terms;
+    let mock = MockNode::new(depositor, 181);
+    let (endpoint, handle) = start_mock(mock.clone()).await;
+    let depositor_rpc = Arc::new(
+        OfficialNodeRpc::connect(
+            &endpoint,
+            Participant::Maker,
+            depositor,
+            depositor_runtime.clone(),
+        )
+        .unwrap(),
+    );
+    let depositor_planner = NativeEscrowPlanner::new(
+        Participant::Maker,
+        depositor_key,
+        escrow_program,
+        depositor_runtime.clone(),
+        Arc::clone(&depositor_rpc),
+    )
+    .unwrap();
+    let prepared = depositor_planner
+        .prepare_native_refund(PrepareNativeRefundRequest::new(
+            context(Participant::Maker, "refund-discovery-prepare-rpc-0001"),
+            depositor_runtime,
+            terms.clone(),
+        ))
+        .await
+        .unwrap();
+    let refund_tx = depositor_planner
+        .decode_exact_for_submission(&prepared.refund, Participant::Maker)
+        .await
+        .unwrap();
+    let refunded = common::test_utils::produce_dummy_block(
+        1,
+        Some(genesis.header.hash),
+        vec![refund_tx.clone()],
+    );
+    let canonical_blocks = vec![genesis.clone(), refunded];
+    let canonical_accounts = native_accounts(&terms, escrow_program, EscrowStatus::Refunded);
+    *mock.blocks.lock().unwrap() = canonical_blocks.clone();
+    *mock.accounts.lock().unwrap() = canonical_accounts.clone();
+    let claimant_rpc = Arc::new(
+        OfficialNodeRpc::connect(
+            &endpoint,
+            Participant::Taker,
+            claimant,
+            claimant_runtime.clone(),
+        )
+        .unwrap(),
+    );
+    let claimant_planner = NativeEscrowPlanner::new(
+        Participant::Taker,
+        claimant_key,
+        escrow_program,
+        claimant_runtime.clone(),
+        Arc::clone(&claimant_rpc),
+    )
+    .unwrap();
+    let request = ObserveNativeRefundRequest::new(
+        context(Participant::Taker, "refund-discovery-observe-rpc-0001"),
+        claimant_runtime,
+        terms,
+        NativeRefundObservationTarget::DiscoverByTerms {
+            window: DiscoveryWindow::new(0, 2).unwrap(),
+        },
+    );
+
+    let observed = claimant_rpc
+        .observe_native_refund(&claimant_planner, &request)
+        .await
+        .unwrap();
+    let NativeRefundObservation::Found(facts) = observed.refund else {
+        panic!("claimant must discover the depositor refund");
+    };
+    assert_eq!(
+        facts.transaction.transaction_id,
+        prepared.refund.transaction_id
+    );
+    assert!(facts.transaction.signer_account_ids.as_slice().is_empty());
+    assert_eq!(facts.instruction.swap_id, request.terms.swap_id());
+    assert_refund_discovery_edges(RefundDiscoveryEdgeFixture {
+        rpc: claimant_rpc.as_ref(),
+        planner: &claimant_planner,
+        mock: &mock,
+        request: &request,
+        escrow_program,
+        genesis,
+        refund_tx,
         canonical_blocks,
         canonical_accounts,
     })

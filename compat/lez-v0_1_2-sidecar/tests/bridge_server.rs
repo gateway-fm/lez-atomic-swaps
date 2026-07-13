@@ -10,12 +10,14 @@ use std::{
 use async_trait::async_trait;
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, BridgeClientError, SidecarCapability};
 use lez_bridge_protocol::{
-    DescribeRuntimeRequest, ErrorCode, EscrowObservationTarget, Hex32, MessageContext,
-    NativeEscrowTerms, NativeEscrowTermsInput, ObserveEscrowRequest, ObserveRevealingClaimRequest,
-    ObserveRevealingClaimResult, Participant, PrepareNativeEscrowRequest,
-    PrepareRevealingClaimRequest, RequestId, RevealingClaimObservationTarget, RevealingPreimage,
-    RunId, RuntimeCompatibility, RuntimeDescriptor, SubmitTransactionRequest,
-    SubmitTransactionResult,
+    DescribeRuntimeRequest, DiscoveryWindow, ErrorCode, EscrowObservationTarget, Hex32,
+    MessageContext, NativeEscrowTerms, NativeEscrowTermsInput, NativeRefundObservationTarget,
+    ObserveEscrowRequest, ObserveNativeRefundRequest, ObserveNativeRefundResult,
+    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, Participant,
+    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
+    RequestId, RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
+    RuntimeDescriptor, SubmitTransactionRequest, SubmitTransactionResult,
 };
 use lez_v0_1_2_sidecar::{
     BridgeServerCapability, BridgeServerConfig, ExactTransactionSubmitter, NativeEscrowPlanner,
@@ -94,9 +96,12 @@ impl ExactTransactionSubmitter for UnknownSubmitter {
 impl ExactTransactionSubmitter for ClaimProbeSubmitter {
     async fn submit_exact(
         &self,
-        _planner: &NativeEscrowPlanner,
-        _request: &SubmitTransactionRequest,
+        planner: &NativeEscrowPlanner,
+        request: &SubmitTransactionRequest,
     ) -> Result<SubmitTransactionResult, SidecarError> {
+        planner
+            .decode_exact_for_submission(&request.transaction, request.context.sidecar_role)
+            .await?;
         Err(SidecarError::UnknownSubmissionOutcome)
     }
 
@@ -105,6 +110,14 @@ impl ExactTransactionSubmitter for ClaimProbeSubmitter {
         _planner: &NativeEscrowPlanner,
         _request: &ObserveRevealingClaimRequest,
     ) -> Result<ObserveRevealingClaimResult, SidecarError> {
+        Err(SidecarError::MovingTip)
+    }
+
+    async fn observe_native_refund(
+        &self,
+        _planner: &NativeEscrowPlanner,
+        _request: &ObserveNativeRefundRequest,
+    ) -> Result<ObserveNativeRefundResult, SidecarError> {
         Err(SidecarError::MovingTip)
     }
 }
@@ -175,6 +188,32 @@ fn prepare_request(
         context("prepare-server-0001"),
         runtime(Participant::Maker, signer, escrow_program),
         terms,
+    )
+}
+
+fn refund_request(
+    signer: AccountId,
+    claimant: AccountId,
+    escrow_program: [u32; 8],
+    request_id: &str,
+) -> PrepareNativeRefundRequest {
+    PrepareNativeRefundRequest::new(
+        context(request_id),
+        runtime(Participant::Maker, signer, escrow_program),
+        prepare_request(signer, claimant, escrow_program).terms,
+    )
+}
+
+fn crash_refund_request(
+    signer: AccountId,
+    claimant: AccountId,
+    escrow_program: [u32; 8],
+) -> PrepareNativeRefundRequest {
+    refund_request(
+        signer,
+        claimant,
+        escrow_program,
+        "crash-refund-prepare-server-0001",
     )
 }
 
@@ -415,7 +454,7 @@ async fn durable_cache_replays_randomized_prepare_and_unknown_submit_across_rest
 }
 
 #[tokio::test]
-async fn registers_all_six_methods_and_rejects_claim_for_wrong_actor_role() {
+async fn registers_all_eight_methods_and_rejects_claim_for_wrong_actor_role() {
     let temp = TempDir::new().unwrap();
     let store = temp.path().join("all-methods.json");
     let (signer, _) = keyed_account(83);
@@ -469,6 +508,26 @@ async fn registers_all_six_methods_and_rejects_claim_for_wrong_actor_role() {
     );
     assert!(
         matches!(bridge.prepare_revealing_claim(claim).await, Err(BridgeClientError::Remote(error)) if error.code() == ErrorCode::WrongSidecarRole)
+    );
+    let refund = bridge
+        .prepare_native_refund(PrepareNativeRefundRequest::new(
+            context("prepare-refund-server-0001"),
+            descriptor.clone(),
+            request.terms.clone(),
+        ))
+        .await
+        .unwrap();
+    let observe_refund = ObserveNativeRefundRequest::new(
+        context("observe-refund-server-0001"),
+        descriptor.clone(),
+        request.terms.clone(),
+        NativeRefundObservationTarget::Exact {
+            refund_transaction_id: refund.refund.transaction_id,
+            window: DiscoveryWindow::new(0, 1).unwrap(),
+        },
+    );
+    assert!(
+        matches!(bridge.observe_native_refund(observe_refund).await, Err(BridgeClientError::Remote(error)) if error.code() == ErrorCode::Unavailable)
     );
     let observe_claim = ObserveRevealingClaimRequest::new(
         context("observe-claim-server-0001"),
@@ -575,8 +634,100 @@ async fn prepares_replays_restores_and_submits_taker_revealing_claim() {
     restarted.stop().await.unwrap();
 }
 
+async fn assert_claim_and_refund_observation_routes(
+    client: &BridgeClient,
+    descriptor: &RuntimeDescriptor,
+    claim_terms: NativeEscrowTerms,
+    claim_transaction_id: lez_bridge_protocol::TransactionId,
+    refund_terms: NativeEscrowTerms,
+    refund_transaction_id: lez_bridge_protocol::TransactionId,
+) {
+    let observe_claim = ObserveRevealingClaimRequest::new(
+        context_for(Participant::Maker, "coexist-claim-observe-0001"),
+        descriptor.clone(),
+        claim_terms,
+        RevealingClaimObservationTarget::Exact {
+            claim_transaction_id,
+        },
+    );
+    assert!(
+        matches!(client.observe_revealing_claim(observe_claim).await, Err(BridgeClientError::Remote(error)) if error.code() == ErrorCode::MovingTip)
+    );
+    let observe_refund = ObserveNativeRefundRequest::new(
+        context("coexist-refund-observe-0001"),
+        descriptor.clone(),
+        refund_terms,
+        NativeRefundObservationTarget::Exact {
+            refund_transaction_id,
+            window: DiscoveryWindow::new(0, 1).unwrap(),
+        },
+    );
+    assert!(
+        matches!(client.observe_native_refund(observe_refund).await, Err(BridgeClientError::Remote(error)) if error.code() == ErrorCode::MovingTip)
+    );
+}
+
+struct CoexistReplayFixture<'a> {
+    client: &'a BridgeClient,
+    descriptor: &'a RuntimeDescriptor,
+    signer: AccountId,
+    counterparty: AccountId,
+    escrow_program: [u32; 8],
+    native: &'a PrepareNativeEscrowResult,
+    claim: &'a PrepareRevealingClaimResult,
+    refund: &'a PrepareNativeRefundResult,
+}
+
+async fn assert_all_prepares_replay_and_refund_submits(fixture: CoexistReplayFixture<'_>) {
+    assert_eq!(
+        fixture
+            .client
+            .prepare_native_escrow(prepare_request(
+                fixture.signer,
+                fixture.counterparty,
+                fixture.escrow_program,
+            ))
+            .await
+            .unwrap(),
+        *fixture.native
+    );
+    assert_eq!(
+        fixture
+            .client
+            .prepare_revealing_claim(maker_claim_request(
+                fixture.signer,
+                fixture.counterparty,
+                fixture.escrow_program,
+            ))
+            .await
+            .unwrap(),
+        *fixture.claim
+    );
+    assert_eq!(
+        fixture
+            .client
+            .prepare_native_refund(PrepareNativeRefundRequest::new(
+                context("coexist-refund-prepare-0001"),
+                fixture.descriptor.clone(),
+                prepare_request(fixture.signer, fixture.counterparty, fixture.escrow_program,)
+                    .terms,
+            ))
+            .await
+            .unwrap(),
+        *fixture.refund
+    );
+    let submit_refund = SubmitTransactionRequest::new(
+        context("coexist-refund-submit-0001"),
+        fixture.descriptor.clone(),
+        fixture.refund.refund.clone(),
+    );
+    assert!(
+        matches!(fixture.client.submit_transaction(submit_refund).await, Err(BridgeClientError::Remote(error)) if error.code() == ErrorCode::UnknownSubmissionOutcome)
+    );
+}
+
 #[tokio::test]
-async fn durable_native_and_claim_caches_coexist_and_claim_observation_is_routed() {
+async fn durable_native_claim_and_refund_caches_coexist_and_observations_route() {
     let temp = TempDir::new().unwrap();
     let store = temp.path().join("native-claim-coexist.json");
     let (signer, _) = keyed_account(87);
@@ -598,8 +749,10 @@ async fn durable_native_and_claim_caches_coexist_and_claim_observation_is_routed
     )
     .await;
     let first_client = client(first.endpoint(), &descriptor);
+    let native_request = prepare_request(signer, counterparty, escrow_program);
+    let refund_terms = native_request.terms.clone();
     let native = first_client
-        .prepare_native_escrow(prepare_request(signer, counterparty, escrow_program))
+        .prepare_native_escrow(native_request)
         .await
         .unwrap();
     first.stop().await.unwrap();
@@ -624,17 +777,23 @@ async fn durable_native_and_claim_caches_coexist_and_claim_observation_is_routed
         .prepare_revealing_claim(claim_request)
         .await
         .unwrap();
-    let observe = ObserveRevealingClaimRequest::new(
-        context_for(Participant::Maker, "coexist-claim-observe-0001"),
-        descriptor.clone(),
+    let refund = second_client
+        .prepare_native_refund(PrepareNativeRefundRequest::new(
+            context("coexist-refund-prepare-0001"),
+            descriptor.clone(),
+            refund_terms.clone(),
+        ))
+        .await
+        .unwrap();
+    assert_claim_and_refund_observation_routes(
+        &second_client,
+        &descriptor,
         claim_terms,
-        RevealingClaimObservationTarget::Exact {
-            claim_transaction_id: claim.claim.transaction_id,
-        },
-    );
-    assert!(
-        matches!(second_client.observe_revealing_claim(observe).await, Err(BridgeClientError::Remote(error)) if error.code() == ErrorCode::MovingTip)
-    );
+        claim.claim.transaction_id,
+        refund_terms,
+        refund.refund.transaction_id,
+    )
+    .await;
     second.stop().await.unwrap();
 
     let third = test_server(
@@ -651,20 +810,17 @@ async fn durable_native_and_claim_caches_coexist_and_claim_observation_is_routed
     )
     .await;
     let third_client = client(third.endpoint(), &descriptor);
-    assert_eq!(
-        third_client
-            .prepare_native_escrow(prepare_request(signer, counterparty, escrow_program))
-            .await
-            .unwrap(),
-        native
-    );
-    assert_eq!(
-        third_client
-            .prepare_revealing_claim(maker_claim_request(signer, counterparty, escrow_program,))
-            .await
-            .unwrap(),
-        claim
-    );
+    assert_all_prepares_replay_and_refund_submits(CoexistReplayFixture {
+        client: &third_client,
+        descriptor: &descriptor,
+        signer,
+        counterparty,
+        escrow_program,
+        native: &native,
+        claim: &claim,
+        refund: &refund,
+    })
+    .await;
     assert_eq!(nonce_calls.load(Ordering::SeqCst), 2);
     third.stop().await.unwrap();
 }
@@ -790,7 +946,7 @@ async fn rejects_malformed_and_oversized_bodies_before_planning() {
 }
 
 #[tokio::test]
-async fn persists_unknown_marker_before_submit_and_restart_never_resubmits() {
+async fn persists_unknown_refund_marker_before_submit_and_restart_never_resubmits() {
     let temp = TempDir::new().unwrap();
     let live_store = temp.path().join("live-idempotency.json");
     let crash_store = temp.path().join("crash-idempotency.json");
@@ -813,10 +969,12 @@ async fn persists_unknown_marker_before_submit_and_restart_never_resubmits() {
         }),
     )
     .await;
-    let request = prepare_request(signer, claimant, escrow_program);
     let live_client = client(server.endpoint(), &descriptor);
-    let prepared = live_client.prepare_native_escrow(request).await.unwrap();
-    let submitted_transaction = prepared.initialization.clone();
+    let prepared = live_client
+        .prepare_native_refund(crash_refund_request(signer, claimant, escrow_program))
+        .await
+        .unwrap();
+    let submitted_transaction = prepared.refund;
     drop(live_client);
     server.stop().await.unwrap();
 

@@ -11,12 +11,14 @@ use std::{
 use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_protocol::{
     DescribeRuntimeRequest, DescribeRuntimeResult, ErrorCode, ErrorMessage, MAX_RPC_BODY_BYTES,
-    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_REVEALING_CLAIM,
-    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_REVEALING_CLAIM, METHOD_SUBMIT_TRANSACTION,
-    MessageContext, ObserveEscrowRequest, ObserveRevealingClaimRequest, Participant,
-    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareRevealingClaimRequest,
-    PrepareRevealingClaimResult, ProtocolErrorReply, RUN_ID_HEADER, RunId, RuntimeDescriptor,
-    SIDECAR_ROLE_HEADER, SubmitTransactionRequest,
+    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_NATIVE_REFUND,
+    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND,
+    METHOD_PREPARE_REVEALING_CLAIM, METHOD_SUBMIT_TRANSACTION, MessageContext,
+    ObserveEscrowRequest, ObserveNativeRefundRequest, ObserveRevealingClaimRequest, Participant,
+    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
+    ProtocolErrorReply, RUN_ID_HEADER, RunId, RuntimeDescriptor, SIDECAR_ROLE_HEADER,
+    SubmitTransactionRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -268,7 +270,9 @@ impl DurableStore {
                     && entry.replay_request.as_ref().is_none_or(|_| {
                         matches!(
                             entry.method.as_str(),
-                            METHOD_PREPARE_NATIVE_ESCROW | METHOD_PREPARE_REVEALING_CLAIM
+                            METHOD_PREPARE_NATIVE_ESCROW
+                                | METHOD_PREPARE_REVEALING_CLAIM
+                                | METHOD_PREPARE_NATIVE_REFUND
                         )
                     })
             })
@@ -348,6 +352,39 @@ impl DurableStore {
             let request = serde_json::from_value::<PrepareRevealingClaimRequest>(request_value)
                 .map_err(|_| BridgeServerError::InvalidDurableState)?;
             let result = serde_json::from_value::<PrepareRevealingClaimResult>(response.clone())
+                .map_err(|_| BridgeServerError::InvalidDurableState)?;
+            restored = Some((request, result));
+        }
+        Ok(restored)
+    }
+
+    fn restored_refund(
+        &self,
+    ) -> Result<Option<(PrepareNativeRefundRequest, PrepareNativeRefundResult)>, BridgeServerError>
+    {
+        let mut restored = None;
+        for entry in self.persisted.entries.values() {
+            if entry.method != METHOD_PREPARE_NATIVE_REFUND {
+                continue;
+            }
+            let PersistedOutcome::Success(response) = &entry.outcome else {
+                continue;
+            };
+            if restored.is_some() {
+                return Err(BridgeServerError::InvalidDurableState);
+            }
+            let request_value = entry
+                .replay_request
+                .clone()
+                .ok_or(BridgeServerError::InvalidDurableState)?;
+            let request_bytes = serde_json::to_vec(&request_value)
+                .map_err(|_| BridgeServerError::InvalidDurableState)?;
+            if hex::encode(Sha256::digest(&request_bytes)) != entry.request_sha256 {
+                return Err(BridgeServerError::InvalidDurableState);
+            }
+            let request = serde_json::from_value::<PrepareNativeRefundRequest>(request_value)
+                .map_err(|_| BridgeServerError::InvalidDurableState)?;
+            let result = serde_json::from_value::<PrepareNativeRefundResult>(response.clone())
                 .map_err(|_| BridgeServerError::InvalidDurableState)?;
             restored = Some((request, result));
         }
@@ -524,6 +561,7 @@ impl From<SidecarError> for OperationFailure {
             | SidecarError::WrongRuntimeIdentity
             | SidecarError::ActivePrepare
             | SidecarError::ActiveClaimPrepare
+            | SidecarError::ActiveRefundPrepare
             | SidecarError::WrongClaimPreimage
             | SidecarError::InvalidFundingTransaction
             | SidecarError::InvalidNodeEndpoint
@@ -576,6 +614,12 @@ where
     if let Some((request, result)) = store.restored_claim()? {
         planner
             .restore_revealing_claim(&request, result)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+    }
+    if let Some((request, result)) = store.restored_refund()? {
+        planner
+            .restore_native_refund(request, result)
             .await
             .map_err(|_| BridgeServerError::InvalidDurableState)?;
     }
@@ -637,6 +681,7 @@ fn register_methods(
     module: &mut RpcModule<ServerState>,
 ) -> Result<(), jsonrpsee::core::RegisterMethodError> {
     register_runtime_and_escrow_methods(module)?;
+    register_refund_methods(module)?;
     register_claim_and_submit_methods(module)
 }
 
@@ -700,6 +745,59 @@ fn register_runtime_and_escrow_methods(
             )
             .await
     })?;
+    Ok(())
+}
+
+fn register_refund_methods(
+    module: &mut RpcModule<ServerState>,
+) -> Result<(), jsonrpsee::core::RegisterMethodError> {
+    module.register_async_method(
+        METHOD_PREPARE_NATIVE_REFUND,
+        |params, state, _| async move {
+            let request: PrepareNativeRefundRequest = params.one()?;
+            state.validate_runtime(&request.context, &request.runtime)?;
+            let planner = Arc::clone(&state.planner);
+            let operation_request = request.clone();
+            state
+                .execute(
+                    METHOD_PREPARE_NATIVE_REFUND,
+                    &request.context,
+                    &request,
+                    || async move {
+                        planner
+                            .prepare_native_refund(operation_request)
+                            .await
+                            .map_err(OperationFailure::from)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
+    module.register_async_method(
+        METHOD_OBSERVE_NATIVE_REFUND,
+        |params, state, _| async move {
+            let request: ObserveNativeRefundRequest = params.one()?;
+            state.validate_runtime(&request.context, &request.runtime)?;
+            let planner = Arc::clone(&state.planner);
+            let observer = Arc::clone(&state.submitter);
+            let operation_request = request.clone();
+            state
+                .execute(
+                    METHOD_OBSERVE_NATIVE_REFUND,
+                    &request.context,
+                    &request,
+                    || async move {
+                        observer
+                            .observe_native_refund(&planner, &operation_request)
+                            .await
+                            .map_err(OperationFailure::from)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
     Ok(())
 }
 
@@ -882,7 +980,9 @@ fn encode_request<Request: Serialize>(
     let request_sha256 = hex::encode(Sha256::digest(&request_bytes));
     let replay_request = matches!(
         method,
-        METHOD_PREPARE_NATIVE_ESCROW | METHOD_PREPARE_REVEALING_CLAIM
+        METHOD_PREPARE_NATIVE_ESCROW
+            | METHOD_PREPARE_REVEALING_CLAIM
+            | METHOD_PREPARE_NATIVE_REFUND
     )
     .then_some(request_value);
     Ok((request_sha256, replay_request))
@@ -910,6 +1010,8 @@ fn valid_method(method: &str) -> bool {
             | METHOD_OBSERVE_ESCROW
             | METHOD_PREPARE_REVEALING_CLAIM
             | METHOD_OBSERVE_REVEALING_CLAIM
+            | METHOD_PREPARE_NATIVE_REFUND
+            | METHOD_OBSERVE_NATIVE_REFUND
             | METHOD_SUBMIT_TRANSACTION
     )
 }
