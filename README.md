@@ -93,8 +93,9 @@ current executable slices enforce:
   LEZ tracker: exact duplicates write no row and same-inclusion finality/depth
   updates survive close/reopen. Affirmative nonfinal removal and atomic same-tip
   replacement now use complete primitive records, reject stale old-head
-  evidence, consume one revision, and replay through SQLite. The official-wire
-  LEZ observation/refund conversion, independent actor processes, and the
+  evidence, consume one revision, and replay through SQLite. Official-wire LEZ
+  native escrow, revealing-claim, and native-refund conversion is implemented;
+  the context-owning SDK-port wrapper, independent actor processes, and the
   completed real-node corridor remain. Schema-v10 now also persists exact
   refund owner intents before broadcast and atomically commits owner/observer
   transitions through `Refunded` in both directions, including rollback,
@@ -134,12 +135,17 @@ current executable slices enforce:
   partial coverage is unknown and ambiguity or a moving tip fails closed. The
   executable runner starts concurrent maker and taker sidecars with separate
   private keys, capabilities, runtime descriptors, durable stores, and
-  ephemeral loopback listeners. The main native-refund adapter now validates
-  both signed directions, stable account/clock/transaction facts, exact
-  millisecond deadlines, caller-owned windows and durable identity, and
-  conservative one-attempt submit outcomes. Official refund-sidecar execution,
-  main claim/context SDK-port composition, independent reference actors, and
-  the completed LEZ-plus-Zebra corridor remain.
+  ephemeral loopback listeners. All eight sidecar methods now execute. Native
+  refunds are official permissionless `RefundNative` transactions with no
+  nonce or witness; exact-owner and bounded counterparty observations require
+  a stable clock, terminal refunded accounts, zero custody, canonical bytes,
+  and restart-safe cache membership. The main native-refund and revealing-claim
+  adapters validate both signed directions, exact caller-owned IDs/windows,
+  complete primitive facts, durable identities/bytes, and conservative
+  one-attempt outcomes. Zebra now also discovers agreement-bound unknown-ID
+  funding for both role directions from stable canonical block and mempool
+  evidence. Context-owning SDK-port composition, independent reference actors,
+  and the completed LEZ-plus-Zebra corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),

@@ -16,8 +16,8 @@ HTTPS provider transport, and actor adapter.
 
 | Flow | Boundary exercised | Current limitation |
 |---|---|---|
-| ZEC SDK agreement/activation/locks/claims/refunds | Canonical bounded dual-signed terms, separate role stores, exact lock recovery, and direction-fixed effects reach `BothLegsLocked`; LEZ reveal then Zcash follow-up reaches `Completed`; or exact owner intents plus observer-only transitions drive LEZ then Zcash refunds to `Refunded` in both directions | These commands still use deterministic contract doubles and no RPC, node, Docker, faucet, or external resource. Claims and refunds replay through schema-v10 SQLite with atomic owner/observer journals. Main LEZ/Zebra refund validation adapters are GREEN; official LEZ refund execution, context-owning SDK wiring, and the composed actor/node flow remain pending, so this is not yet the manual actual-node flow |
-| LEZ bridge and Zebra claim/refund contracts | The one-attempt authenticated loopback client binds all eight bounded methods; the sidecar currently serves six while refund handlers are driven RED/GREEN. It restores exact native and revealing-claim bytes and writes an unknown guard before submit. Official native escrow and revealing-claim observations decode exact owner facts or bounded counterparty discovery; main escrow/refund adapters independently validate signed agreement, stable clock, account, transaction, instruction, deadline, depth, and durable identity facts. Two real sidecar processes run concurrently with distinct maker/taker roles, keys, capabilities, stores, runtimes, and ephemeral listeners. Typed Zebra ports validate owner claims/refunds and discover counterparty spends through bounded canonical scans | These are isolated adapter and process contract tests, not yet a composed consensus proof. The runner's describe/authentication path uses no chain call; official observation uses an ephemeral loopback RPC mock returning pinned node types. Native-refund sidecar execution, main claim and context-owning SDK wiring, actor processes, and the composed corridor remain pending. No Docker, faucet, public endpoint, or fixed port is used |
+| ZEC SDK agreement/activation/locks/claims/refunds | Canonical bounded dual-signed terms, separate role stores, exact lock recovery, and direction-fixed effects reach `BothLegsLocked`; LEZ reveal then Zcash follow-up reaches `Completed`; or exact owner intents plus observer-only transitions drive LEZ then Zcash refunds to `Refunded` in both directions | These commands still use deterministic contract doubles and no RPC, node, Docker, faucet, or external resource. Claims and refunds replay through schema-v10 SQLite with atomic owner/observer journals. Main LEZ/Zebra validation adapters and official LEZ refund execution are GREEN; crash-safe context-owning SDK wiring and the composed actor/node flow remain pending, so this is not yet the manual actual-node flow |
+| LEZ bridge and Zebra claim/refund contracts | The one-attempt authenticated loopback client and sidecar serve all eight bounded methods. The sidecar restores exact native, revealing-claim, and permissionless native-refund bytes and writes an unknown guard before submit. Official native escrow, claim, and refund observations decode exact-owner facts or bounded counterparty discovery; main escrow/claim/refund adapters independently validate the signed agreement, stable clock/tip, accounts, transactions, instructions, windows, deadlines, depth, and durable identity/bytes. Two real sidecar processes run concurrently with distinct maker/taker roles, keys, capabilities, stores, runtimes, and ephemeral listeners. Typed Zebra ports validate owner claims/refunds, discover counterparty spends, and discover agreement-bound funding in both directions through bounded canonical scans | These are isolated adapter and process contract tests, not yet a composed consensus proof. The runner's describe/authentication path uses no chain call; official observation uses an ephemeral loopback RPC mock returning pinned node types. Context-owning SDK wiring, actor processes, and the composed corridor remain pending. No Docker, faucet, public endpoint, or fixed port is used |
 | Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
 | Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v10 SQLite journal/alerts plus the production role-fixed SDK recovery adapter, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The daemon polling loop, LEZ SDK-port/refund composition, and independent maker/taker processes remain pending |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
@@ -39,8 +39,8 @@ sequenceDiagram
     participant CLI as lez-maker CLI
     participant Daemon as Maker daemon + SQLite
     actor Taker as Taker actor (fixture today)
-    participant MakerDB as Maker SQLite v9
-    participant TakerDB as Taker SQLite v9
+    participant MakerDB as Maker SQLite v10
+    participant TakerDB as Taker SQLite v10
     participant LEZ as LEZ standalone
     participant Z1 as Primary Zebra
     participant Z2 as Fork Zebra
@@ -285,7 +285,8 @@ an on-chain observation. Official native observation behavior is covered
 separately by the sidecar's `official_node_rpc` test against an ephemeral
 loopback service returning the pinned generated RPC types.
 
-From the repository root, reproduce the main-process agreement/refund boundary:
+From the repository root, reproduce the main-process agreement, claim, and
+refund boundaries:
 
 ```sh
 cargo test --offline --locked -p lez-bridge-adapter --test native_first_lock -- --nocapture
@@ -293,11 +294,37 @@ cargo test --offline --locked -p lez-bridge-adapter --test native_first_lock -- 
 
 The adapter suite uses no socket, node, Docker, faucet, or public endpoint. It
 must pass both signed directions, owner/observer separation, caller-owned
-request IDs and windows, account-state eligibility, prepare/exact/discovery/
-submit conversion, stable clock and exact millisecond deadline checks, complete
-transaction/instruction mutation rejection, and uncertain-submit handling.
-This proves fail-closed main-process conversion only; it does not execute the
-still-pending official sidecar refund handlers or the composed SDK actor flow.
+request IDs and windows, exact funding/preimage binding, account-state
+eligibility, claim/refund prepare/exact/discovery/submit conversion, stable
+clock and exact millisecond deadline checks, complete primitive mutation
+rejection, and uncertain-submit handling. This proves fail-closed main-process
+conversion only; it does not prove the composed SDK actor flow.
+
+From `compat/lez-v0_1_2-sidecar`, reproduce the exact official native-refund
+planner, node observation, authenticated server, and restart gates:
+
+```sh
+cargo test --offline --locked --all-targets -- --nocapture
+```
+
+All 33 tests must pass. This invokes no Docker, faucet, public endpoint, or fixed
+port. The official-node tests use an ephemeral loopback mock that returns the
+pinned generated LEZ RPC types; they prove source-correct conversion and
+fail-closed scanning, not public-testnet consensus.
+
+From the repository root, reproduce the agreement-bound Zebra funding/claim/
+refund adapter boundary:
+
+```sh
+cargo test --offline --locked -p zebra-node-adapter --test first_lock -- --nocapture
+```
+
+The 15 integration checks, together with the crate's 37 unit checks in a full
+crate test, cover both funding directions, stable-tip block/mempool discovery,
+exact V5 bytes and output policy, absence/ambiguity/horizon behavior, prior
+removal/replacement reconciliation, claims, and refunds. They use a bounded
+ephemeral loopback RPC fixture rather than an actual Zebra process; the separate
+isolated Zebra suite remains the consensus lane.
 
 For a direct manual launch, create the parent directory for the state file and
 supply the six required flags shown by the test fixture:

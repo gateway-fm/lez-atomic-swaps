@@ -1,13 +1,12 @@
 # ADR 0022: Isolate pinned LEZ official-wire code behind a sidecar
 
 Status: Accepted for the M2 actual-node corridor; implementation in progress --
-the official native and revealing-claim planners, native escrow observation,
-revealing-claim owner/discovery observation, node-RPC core, authenticated bridge
-server/client, executable role-isolated sidecars, signed-agreement
-first-lock/observation and native-refund validation adapters, and Zebra
-owner/counterparty claim/refund ports are GREEN. Native refund sidecar handlers,
-main revealing-claim composition, remaining SDK-port/actor wiring, and the
-composed proof remain RED -- 2026-07-13
+the official native, revealing-claim, and native-refund planners/observations,
+node-RPC core, authenticated eight-method bridge server/client, executable
+role-isolated sidecars, signed-agreement first-lock/claim/refund validation
+adapters, and Zebra funding/claim/refund ports are GREEN. Crash-safe
+caller-context SDK-port/actor wiring and the composed proof remain RED --
+2026-07-13
 
 ```mermaid
 flowchart LR
@@ -120,9 +119,8 @@ server, parse, timeout, and transport ambiguity remain unknown outcomes. The
 local server library now authenticates capability, run, and role before parsing;
 uses an ephemeral literal-loopback listener; restores exact randomized prepare
 results through the official decoder; and persists a submission-in-flight
-marker before the node call so a crash cannot cause blind resubmission. The six
-implemented executable methods are registered; the shared protocol and client
-also define the two native-refund methods whose sidecar handlers remain RED.
+marker before the node call so a crash cannot cause blind resubmission. All
+eight executable methods are registered.
 Revealing-claim preparation validates the exact
 claimant role, runtime, signer, signed terms, preimage, and request-bound funding
 transaction before nonce use; restart restores the exact randomized official
@@ -144,6 +142,15 @@ the depositor discovers the counterparty claim by signed terms in a caller-owned
 window. Ambiguity and moving tips fail closed, incomplete scans remain
 `UnknownOrPending`, and only complete stable windows produce absence. Native
 and claim reservations coexist across restart while rejecting nonce reuse.
+Native refunds use the official permissionless `RefundNative` ABI with the
+generated metadata/custody/depositor account order, no nonces, and no witnesses.
+Preparation and restoration are byte-identical and cache-bound without reading
+a signer nonce. Exact owner lookup never turns a miss into absence; bounded
+claimant discovery returns absence only for a complete stable window. Found
+evidence requires canonical unsigned bytes, terminal `Refunded` metadata, zero
+custody, exact chain placement, and identical bracketing consensus clocks.
+Native, claim, and refund reservations coexist across restart, and the generic
+submit crash marker prevents blind replay of any cached transaction kind.
 
 The executable starts one sidecar with private capability/signer files, an
 exact runtime descriptor, a 0600 durable idempotency store, and a
@@ -214,9 +221,9 @@ caller-owned request IDs/windows for state, preparation, exact owner lookup,
 counterparty discovery, and one-attempt submit. It independently validates
 stable clock, accounts, exact transaction/instruction facts, deadline, depth,
 and durable identity; uncertain submit results are `Unknown`, never rejection.
-The official sidecar refund handlers and a context-owning SDK-port wrapper remain
-required before peer-independent timeout recovery is an M2 implementation
-claim. Neither path
+The official sidecar refund handlers are GREEN. A crash-safe context-owning
+SDK-port wrapper remains required before peer-independent timeout recovery is
+an M2 implementation claim. Neither path
 can guarantee liveness during indefinite node outage, censorship, or a
 reorganization deeper than the signed policy.
 The deterministic v0.1.2 lane also has only depth-qualified `Pending` blocks;
@@ -246,8 +253,8 @@ The implemented main-workspace bridge client exercises all eight typed protocol
 methods, accepts only literal loopback HTTP, sends a sensitive capability plus
 exact run and role headers, validates the echoed run/role/runtime context, and
 permits each request ID once per client instance. It makes one attempt with no
-redirect, proxy, or automatic retry. The sidecar currently serves six of those
-methods; native-refund handlers are the next TDD slice. The first main-process
+redirect, proxy, or automatic retry. The sidecar serves all eight methods. The
+first main-process
 adapter accepts a
 caller-owned durable request ID, verifies the signed compatibility environment,
 channel, genesis, escrow program, role, and signer, and converts one official
@@ -273,11 +280,13 @@ effect. It remains RED until the remaining claim/refund/funding adapters and
 reference actors satisfy that contract. No broken commit is published while
 this slice is being driven GREEN.
 
-The official claim observation boundary is now source-correct and independently
-decoded, but the main revealing-claim adapter, native-refund sidecar handlers,
-context-owning SDK-port composition, and composed post-lock actor evidence
-remain repository-controlled prerequisites. The Zcash taker-first observation
-path must still receive its
+The official claim/refund observation boundaries and the main revealing-claim/
+refund adapters are source-correct and independently validated. The Zebra
+adapter also discovers agreement-bound unknown-ID funding for both role
+directions from a full signed anchor with stable block/mempool scans.
+Context-owning SDK-port composition and composed post-lock actor evidence remain
+repository-controlled prerequisites. The Zcash taker-first observation path
+must still receive its
 previous canonical head so removal/replacement can be assembled after process
 restart; the maker-lock SDK boundary needs a later durable post-lock history
 extension rather than an invented adapter assertion.
