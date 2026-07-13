@@ -8,9 +8,9 @@ flowchart LR
     Taker["Independent taker actor"]
 
     subgraph LocalLez["Public-compatible local LEZ v0.2 devnet"]
-        Bedrock["Bedrock node<br/>immutable pin RED"]
-        Indexer["LEZ v0.2 indexer<br/>immutable pin RED"]
-        Sequencer["Non-standalone v0.2 sequencer RPC<br/>immutable pin RED"]
+        Bedrock["Bedrock node<br/>digest and OCI revision source-bound"]
+        Indexer["LEZ v0.2 indexer<br/>binary attested; execution RED"]
+        Sequencer["Non-standalone v0.2 sequencer RPC<br/>binary attested; execution RED"]
         Escrow["Checked escrow deployment"]
     end
 
@@ -29,9 +29,8 @@ flowchart LR
     Taker -->|"v0.2 official-wire sidecar"| Sequencer
     Maker -->|"Typed Zebra adapter"| Zebra
     Taker -->|"Typed Zebra adapter"| Zebra
-    Sequencer -.->|"Candidate publish path; source verification RED"| Bedrock
-    Bedrock -.->|"Candidate finalized-event path; verification RED"| Indexer
-    Indexer -.->|"Candidate settlement path; verification RED"| Sequencer
+    Sequencer -.->|"Zone SDK block publish"| Bedrock
+    Indexer -.->|"Poll finalized LEZ channel"| Bedrock
     Sequencer --> Escrow
     ZebraFork -.->|"Explicit reorg relay in fault tests"| Zebra
     Escrow --> LocalEvidence
@@ -83,6 +82,14 @@ Zebra process is a temporary member of the same Zcash test environment only for
 fork/reorg cases; it is not a third swap leg or a shared actor. Maker and taker
 remain independent operating-system processes with different configs, keys,
 funds, stores, journals, sidecars, and restart lifecycles.
+
+ADR 0024 now attests the clean v0.2 source contract, Bedrock OCI source mapping,
+correct sequencer-to-Bedrock publication and indexer-to-Bedrock polling flows,
+and attested sequencer/indexer output hashes. Independent clean rebuild
+reproducibility, container assembly, ordered
+Bedrock/indexer/sequencer startup, restart-state preservation, same-ID finalized
+block readiness, Vault Claim onboarding, escrow deployment, and actor use remain
+RED; this ADR still makes no running-stack claim.
 
 The M2 implementation must produce local and future public routes in the same
 actor binaries, SDK state machine, chain-port traits, transaction builders, and

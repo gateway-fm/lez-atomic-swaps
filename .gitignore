@@ -1,4 +1,5 @@
 /target/
+/.e2e/
 /compat/*/target/
 /compat/**/target/
 /.env

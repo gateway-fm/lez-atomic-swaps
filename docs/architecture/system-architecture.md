@@ -66,11 +66,13 @@ flowchart TB
     end
 
     subgraph LocalLezV02["Required public-compatible local LEZ v0.2 devnet"]
-        BR["Bedrock node<br/>immutable pin RED"]
-        IX["LEZ v0.2 indexer<br/>immutable pin RED"]
-        SQ["Non-standalone sequencer RPC<br/>immutable pin RED"]
-        V02R["Run-scoped full-v0.2 runner"]
-        V02Ready[("Private v0.2 readiness<br/>channel + deployment + actor funds")]
+        BR["Bedrock node<br/>digest and OCI revision source-bound"]
+        IX["LEZ v0.2 indexer<br/>binary attested; service execution pending"]
+        SQ["Non-standalone sequencer RPC<br/>binary attested; service execution pending"]
+        V02R["Host orchestrator<br/>all-service readiness probes"]
+        V02Net["Private run-owned Docker network"]
+        V02Ready[("Private v0.2 readiness tuple<br/>fixed finalized checkpoint + deployment + actor state")]
+        V02State[(".e2e/run_id/lez-v02")]
     end
 
     subgraph OffChain["Untrusted, removable after lock"]
@@ -138,12 +140,16 @@ flowchart TB
     TLB <-.->|"same bounded bridge; v0.2 selector"| TLS2
     MSL2 -.->|"official v0.2 JSON-RPC"| SQ
     TLS2 -.->|"official v0.2 JSON-RPC"| SQ
-    V02R -.-> BR
-    V02R -.-> IX
-    V02R -.-> SQ
-    SQ -.->|"candidate publish path; verification RED"| BR
-    BR -.->|"candidate finalized-event path; verification RED"| IX
-    IX -.->|"candidate settlement path; verification RED"| SQ
+    V02R -.->|"cryptarchia + channel probe"| BR
+    V02R -.->|"local health diagnostic + finalized checkpoint RPC"| IX
+    V02R -.->|"health + channel + program/block RPC"| SQ
+    V02R -.-> V02Net
+    V02R -.-> V02State
+    V02Net -.-> BR
+    V02Net -.-> IX
+    V02Net -.-> SQ
+    SQ -.->|"Zone SDK block publish"| BR
+    IX -.->|"poll finalized LEZ channel"| BR
     V02R -.->|"verified no-clobber publish"| V02Ready
     V02Ready -.->|"runtime and funding handoff"| LRR
 
@@ -172,7 +178,7 @@ flowchart TB
     ZEC --> ZN
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class MM,LC,CA,TC,TM,LRR,MSL2,TLS2,BR,IX,SQ,V02R,V02Ready planned;
+    class MM,LC,CA,TC,TM,LRR,MSL2,TLS2,BR,IX,SQ,V02R,V02Net,V02Ready,V02State planned;
 ```
 
 The maker operator owns maker policy, keys, node selection, and the daemon
@@ -204,9 +210,12 @@ Zcash lock. The role-keyed Zcash funding/claim/refund signer retains only
 zeroizing key bytes and uses the canonical SDK builders. The
 agreement-committed exact-outpoint planner, checked all-trait Zebra composite,
 refund-aware full-history resume, and the mode-0600, path-isolated one-shot
-maker/taker CLI boundary are GREEN. The remaining M2 work is descriptor-safe
-actor command/port wiring, the official-wire v0.2 sidecar, full local v0.2
-Bedrock/indexer/non-standalone orchestration, dormant public-route
+maker/taker CLI boundary are GREEN. Offline `status` now opens only a
+pre-existing hardened role store, replays all durable lock/claim/refund state
+with chain ports impossible by type, and leaves missing state uncreated. The
+remaining M2 work is effect-bearing `activate`/`drive` command/port wiring, the
+official-wire v0.2 sidecar, containerized full local v0.2
+Bedrock/indexer/non-standalone execution and readiness, dormant public-route
 configuration/adapters, composed both-direction execution, and post-lock hardening; chain
 adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
@@ -294,6 +303,23 @@ future actor edges are dashed because neither SDK actor consumes this handoff
 in a composed LEZ/Zebra swap yet. This entire v0.1.2 boundary is retained as a
 lower lane and cannot replace ADR 0023's full v0.2 stack. The upstream v0.1.2 server itself still binds
 the allocated port on the host wildcard address.
+
+The v0.2 stack contract is now source- and binary-attested without claiming a
+running stack. It binds clean LEZ `v0.2.0` source at `a58fbce2...`, Rust 1.94.0,
+the digest-pinned Bedrock image and its immutable `d8711bbc...` OCI source
+revision, exact Risc0/Rapisnark inputs, the non-standalone feature boundary, and
+attested locked service outputs. The sequencer SHA-256 is
+`3727e9aa10600d04d0cdfda6eb39df146ef4cc14f5b09ad33bcf076a8f2c412f` and
+the indexer SHA-256 is
+`6ed54f04ae018f3554898a9f0aef6decd6930c4e8609326d146ca164e48d7442`.
+Both binaries report package version `0.1.0`, which is not provenance. They
+have not yet passed an independent second clean rebuild; a warm locked offline
+rerun performed no rebuild and retained the same hashes. They
+must still be packaged and executed with Bedrock inside the isolated
+`lez-atomic-swaps-lez-v02-{run_id}` project, and the readiness tuple remains
+RED. ADR 0024 defines the exact component flow, all-zero system channel versus
+all-`01` LEZ channel, owner-authorized Vault Claim onboarding, and fixed-block
+finality proof.
 
 ## LEZ escrow custody components and actor flows
 
@@ -649,6 +675,31 @@ Each actor retains enough local data to recover without the counterparty.
 Deadline comparisons are typed by chain and clock domain. ZEC always refunds
 LEZ first and ZEC later by the configured margin. XMR recovery is gated by a
 canonical LEZ event rather than a fictitious Monero deadline.
+
+## Offline actor status flow
+
+```mermaid
+flowchart LR
+    User["Maker or taker"] --> Command["One-shot status command"]
+    Command --> Config["Private role-fixed schema-v2 config"]
+    Config --> Inspect["Inspect role-store path"]
+    Inspect -->|"missing"| Missing["Versioned not_activated output"]
+    Inspect -->|"exists"| Material["Load claim-recovery key only"]
+    Material --> Open["Open existing SQLite with NOFOLLOW and identity checks"]
+    Open --> SDK["Role-fixed ZEC SDK with unit LEZ and Zcash ports"]
+    NoChain["No sidecar, Zebra credential, or chain capability"] --> SDK
+    SDK --> Replay["Replay agreement, locks, claims, and refunds"]
+    Replay --> Output["Secret-free phase, revision, and next action"]
+```
+
+`status` is an implemented store-recovery path, not a configuration-only
+placeholder. Missing SQLite returns `not_activated` without creating a file.
+Existing state is opened with the existing-only hardened SQLite entry point and
+replayed through `resume_all_capable`; the SDK is instantiated with unit LEZ and
+Zcash port types, so a chain call is impossible even if a later adapter changes.
+It loads neither the sidecar capability nor Zebra cookie, signing key,
+agreement file, or preimage. `activate` and `drive` continue to fail closed
+until the real v0.2 sidecar and Zebra composition exists.
 
 ## Crash, restart, and at-least-once observation flow
 

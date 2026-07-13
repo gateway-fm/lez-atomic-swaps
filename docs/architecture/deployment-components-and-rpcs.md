@@ -150,11 +150,13 @@ flowchart LR
     Mailbox["Test-only pre-lock agreement mailbox"]
     Zebra["Primary Zebra Regtest JSON-RPC"]
     ZebraFork["Temporary fork Zebra"]
-    Bedrock["Bedrock node<br/>immutable pin RED"]
-    LezIndexer["LEZ v0.2 indexer<br/>immutable pin RED"]
-    LezNode["Non-standalone LEZ v0.2 sequencer JSON-RPC<br/>immutable pin RED"]
-    LezV02Runner["Run-scoped full-v0.2 devnet runner"]
-    LezReady[("Private v0.2 readiness<br/>channel + deployment tx/block + program + actor funds")]
+    Bedrock["Bedrock node<br/>digest and OCI revision source-bound"]
+    LezIndexer["LEZ v0.2 indexer<br/>binary attested; execution RED"]
+    LezNode["Non-standalone LEZ v0.2 sequencer JSON-RPC<br/>binary attested; execution RED"]
+    LezV02Runner["Host orchestrator<br/>all-service probes"]
+    LezNetwork["Private run-owned Docker network"]
+    LezState[(".e2e/run_id/lez-v02")]
+    LezReady[("Private v0.2 readiness tuple<br/>fixed finalized block + deployment + actor state")]
     LezRunner["Run-scoped reference corridor runner"]
 
     subgraph MakerProcess["Role-fixed maker reference actor process"]
@@ -193,8 +195,8 @@ flowchart LR
     TakerConfig --> TakerStatus
     MakerConfig -.->|"Validated inputs; lifecycle wiring pending"| MakerSdk
     TakerConfig -.->|"Validated inputs; lifecycle wiring pending"| TakerSdk
-    MakerStatus -.->|"Descriptor-bound store open pending; no RPC"| MakerState
-    TakerStatus -.->|"Descriptor-bound store open pending; no RPC"| TakerState
+    MakerStatus -->|"Existing-only hardened open; no RPC"| MakerState
+    TakerStatus -->|"Existing-only hardened open; no RPC"| TakerState
     MakerSdk -.->|"Primitive request"| MakerBridge
     TakerSdk -.->|"Primitive request"| TakerBridge
     MakerBridge -.->|"Bounded serde-only local protocol"| MakerCapability
@@ -203,12 +205,16 @@ flowchart LR
     TakerCapability --> TakerOfficial
     MakerOfficial -.->|"Official LEZ transaction and JSON-RPC types"| LezNode
     TakerOfficial -.->|"Official LEZ transaction and JSON-RPC types"| LezNode
-    LezV02Runner -.->|"Start isolated pinned services"| Bedrock
-    LezV02Runner -.-> LezIndexer
-    LezV02Runner -.-> LezNode
-    LezNode -.->|"Candidate publish path; source verification RED"| Bedrock
-    Bedrock -.->|"Candidate finalized-event path; verification RED"| LezIndexer
-    LezIndexer -.->|"Candidate settlement path; verification RED"| LezNode
+    LezV02Runner -.->|"Cryptarchia and LEZ-channel probe"| Bedrock
+    LezV02Runner -.->|"Local health diagnostic and finalized-block RPC"| LezIndexer
+    LezV02Runner -.->|"Health, channel, program and block RPC"| LezNode
+    LezV02Runner -.-> LezNetwork
+    LezV02Runner -.-> LezState
+    LezNetwork -.-> Bedrock
+    LezNetwork -.-> LezIndexer
+    LezNetwork -.-> LezNode
+    LezNode -.->|"Zone SDK block publish"| Bedrock
+    LezIndexer -.->|"Poll finalized LEZ channel"| Bedrock
     LezV02Runner -.->|"No-clobber private publish after verification"| LezReady
     LezReady -.->|"Runtime and funding handoff"| LezRunner
     LezRunner -.->|"Maker-only endpoint and key files"| MakerCapability
@@ -224,7 +230,7 @@ flowchart LR
     Mailbox -.->|"Destroyed after immutable terms persist"| TakerSdk
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Mailbox,Zebra,ZebraFork,Bedrock,LezIndexer,LezNode,LezV02Runner,LezReady,LezRunner,MakerSdk,MakerState,MakerConfig,MakerStatus,MakerBridge,MakerZebra,MakerCapability,MakerOfficial,TakerSdk,TakerState,TakerConfig,TakerStatus,TakerBridge,TakerZebra,TakerCapability,TakerOfficial planned;
+    class Mailbox,Zebra,ZebraFork,Bedrock,LezIndexer,LezNode,LezV02Runner,LezNetwork,LezState,LezReady,LezRunner,MakerSdk,MakerBridge,MakerZebra,MakerCapability,MakerOfficial,TakerSdk,TakerBridge,TakerZebra,TakerCapability,TakerOfficial planned;
 ```
 
 Each actor and each actor-owned sidecar has a distinct PID. Actor state, claim
@@ -244,9 +250,12 @@ Paired validation requires one preimage owner and one Zcash funder, identical
 agreement/runtime/Zebra terms, distinct sidecars and signers, and no path
 aliases. Offline `status` deliberately loads only claim-recovery material and
 the role-store location: it requires no sidecar/Zebra credential and opens no
-chain port. The dotted diagram edges remain accurate because current actor
-commands validate these inputs but do not yet compose SDK lifecycle ports;
-descriptor-bound mutable SQLite opening is the next command-boundary task.
+chain port. It returns `not_activated` without creating a missing database; for
+existing state it uses the hardened existing-only SQLite opener and
+`resume_all_capable` with unit LEZ and Zcash port types. Its versioned output is
+secret-free. `activate` and `drive` remain fail-closed because their SDK and
+effect ports are not composed yet; the dotted effect-bearing edges remain
+accurate.
 
 The local mailbox is explicitly a test adapter, not Logos Delivery or Chat.
 Once terms persist and the first lock is submitted, it is destroyed; both actors
@@ -314,9 +323,9 @@ it never opens SQLite or becomes protocol authority.
 
 | Component | Status | Transport and bind | Authentication / authority | Methods exercised or required | Lifecycle and isolation |
 |---|---|---|---|---|---|
-| Full local LEZ v0.2 devnet | Official v0.2 service sources exist upstream; immutable Bedrock/indexer/sequencer pins, exact settlement wiring, runner, and readiness are RED | Target run-scoped immutable-pinned Bedrock node, LEZ indexer, and non-standalone v0.2 sequencer after source verification. Final host-facing sequencer client URL must be ephemeral literal loopback; internal ports stay inside the run-owned network | Actor signatures authorize transactions; the candidate non-standalone publication/indexer/finality path must be source-verified before it is treated as authority. The `standalone` mock block publisher is prohibited as the sole M2 proof | Official v0.2 health, channel, block/range/tip, account/balance/nonce, transaction, program-ID, and `sendTransaction` RPCs. The exposed commitment-proof RPC is not independent finality authority without the missing reviewed verifier-key/recipe; readiness must prove the source-verified indexer/finality path and the checked escrow deployment | One unique `RUN_ID`, fresh private homes/volumes/network, required exact image/source pins, deterministic funded actors, no fixed host ports, no global cleanup. The existing v0.1.2 and v0.2 standalone lanes remain faster lower coverage |
+| Full local LEZ v0.2 devnet | Source contract and locked service output hashes attested; independent clean rebuild reproducibility, container assembly, startup, readiness, deployment, and actor use remain RED | Bedrock digest `91d6c5...729f` with OCI revision `d8711bbc...3160`; clean LEZ source `a58fbce2...`; sequencer `3727e9aa...412f`; indexer `6ed54f04...7442`; Rust 1.94.0, exact Rapisnark and r0vm 3.0.5, digest-pinned distroless nonroot. One clean-source build produced the hashes; a warm no-rebuild rerun retained them. Upstream Dockerfiles are observations only | Bedrock all-zero system channel is distinct from the all-`01` LEZ channel. Sequencer publishes through Zone SDK to Bedrock; indexer polls Bedrock finalized messages. Actor signatures and checked program/account state authorize effects; there is no indexer-to-sequencer edge | Require Bedrock advancing `/cryptarchia/info` and HTTP 200 on exact `/channel/{channel_id}`; sequencer health, matching channel, built-ins, `getBlock(1)`, and advancing probe block; indexer last-finalized retrieval and immutable same-ID match with sequencer. Indexer health is local-only and excluded; moving tips need not equal | Start Bedrock, indexer, sequencer. Project `lez-atomic-swaps-lez-v02-{run_id}` owns `.e2e/{run_id}/lez-v02`; restart preserves Bedrock state and signing key, sequencer RocksDB/checkpoint, and indexer RocksDB/cursor. No fixed names/ports or cross-run cleanup. Full execution remains pending |
 | Official-wire LEZ v0.2 sidecar | Planned M2 portability component; v0.1.2 implementation cannot substitute | Same bounded actor-facing loopback protocol as ADR 0022; upstream node transport is configured as local loopback HTTP or the exact future public HTTPS endpoint | Role/run capability at the local boundary; official LEE transaction/signer types and `/LEE/` derivation; exact runtime/channel/genesis/program/signer checks. Actor-facing payload remains primitive and bounded | Append-only v0.2 compatibility selector plus the same describe, prepare, exact/discovery observe, and one-attempt submit families; current v0.1.2 `NssaV0_1_2` selector remains distinct | Separately locked v0.2 graph and one sidecar per actor. The same v0.2 actor/sidecar binaries must switch local/public routes through signed configuration and deployment/funding provisioning only |
-| Reference actor configuration and offline status | Unix-only schema-v2 configuration, paired-role validation, command-scoped material loading, and one-shot `activate`/`drive`/`status` CLI boundary implemented; lifecycle composition remains planned | Config and command files only. Sidecar and Zebra endpoints are validated as distinct literal-loopback HTTP URLs, but config load and offline status open no socket | Exact nonzero signed-agreement SHA-256; typed run/swap/role/runtime and Zebra identities; one preimage owner and one funder; distinct sidecar roles, signers, endpoints, stores, journals, and keys. Command secrets are bounded mode-`0600`, single-link regular non-symlink files; agreement bytes are public but exact-hash bound. Paths and payloads are redacted | `activate` loads agreement, role keys, sidecar capability, and optional preimage; `drive` additionally loads the Zebra cookie; `status` loads only claim-recovery material and the role-store location. Current commands validate and report configuration only; they do not call SDK or chain ports | Stable device/inode/length/mtime/ctime checks around open reject replacement, hardlink, alias, and rewrite races at the immutable-file boundary. Mutable SQLite is not yet opened by the actor; descriptor-bound open plus identity revalidation is the next repository-controlled composition task |
+| Reference actor configuration and offline status | Unix-only schema-v2 configuration, paired-role validation, command-scoped material loading, and one-shot command boundary implemented. Offline store-recovery `status` is GREEN; effect-bearing lifecycle composition remains planned | Config and command files plus role-local SQLite only. Sidecar and Zebra endpoints are validated as distinct literal-loopback HTTP URLs, but config load and `status` open no socket | Exact nonzero signed-agreement SHA-256; typed run/swap/role/runtime and Zebra identities; one preimage owner and one funder; distinct sidecar roles, signers, endpoints, stores, journals, and keys. Command secrets are bounded mode-`0600`, single-link regular non-symlink files; paths and payloads are redacted. `status` loads only the claim-recovery key | `status` returns versioned `not_activated` without creating missing state, or uses `open_claim_capable_existing` and `resume_all_capable` to project phase, revision, and next action from durable history. Its SDK has unit LEZ/Zcash port types, so chain calls are impossible. `activate`/`drive` still fail closed | Immutable-file device/inode/length/mtime/ctime checks reject replacement, hardlink, alias, and rewrite races. Existing SQLite uses `SQLITE_OPEN_NOFOLLOW`, regular/single-link/private-mode and pre/post identity checks. Stable payload-free failures reveal neither paths nor secret contents |
 | `lez-maker-daemon` | Running prototype | HTTP JSON-RPC; default `127.0.0.1:0`; non-loopback rejected | Bearer token from hidden environment; minimum 24 bytes; header checked before JSON parsing | Actual: `swap_create`, `swap_status`, `swap_alerts`, `swap_alert_acknowledge` | Operator/test-owned process; caller-selected SQLite path; Ctrl-C shutdown |
 | `lez-maker` | Running prototype | HTTP client; default `127.0.0.1:9944`; explicit ready URL for ephemeral daemon | Authorization header marked sensitive | Actual CLI: `create-swap`, `status`, `alerts`, `acknowledge-alert` | Independent operator process |
 | SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority; SDK adapter fixes one local role per handle; claim key material is supplied externally and never stored | Aggregate, revision, ZEC journal, immutable binding, alerts, separate lock/claim/refund owner intents, protected claim material, owner/observer claim/refund transitions, and canonical observation transitions | WAL, `FULL` synchronous, foreign keys, immediate transactions; schema-v10 replay retains prior lock/claim journals, rejects inconsistent history, and closes/reopens both directions at revision 4 and `Completed` or `Refunded`. Owner refund commit copies the exact intent, inserts the transition, advances revision once, and deletes pending intent in one immediate transaction; observer rows retain no signing intent. The v8→v9 migration still replaces legacy plaintext claim evidence and scrubs SQLite/WAL remnants; 39 store tests pass; one process mutex remains |
@@ -373,13 +382,19 @@ flowchart LR
     Check -->|"yes"| Wait["Wait or use isolated checkout and resources"]
     Check -->|"no"| Choose{"Select one heavy lane"}
     Choose --> Zebra["Two-node Zebra Compose project"]
-    Choose --> Lez["LEZ standalone and Risc0 lane"]
+    Choose --> Lez["LEZ v0.1.2 standalone and Risc0 lane"]
+    Choose --> LezV02["Full LEZ v0.2 private-network lane"]
     Zebra --> ScopedCleanup["Clean exact Compose project only"]
     Lez --> ScopedCleanup
+    LezV02 --> ScopedCleanup
 ```
 
 Never run the Zebra and LEZ heavy lanes concurrently on the same host. Never use
 global Docker prune/stop commands. Every Zebra run owns a unique Compose project,
 ephemeral host ports, run manifest, and absolute maker database. Reusing a run
 manifest or database is rejected before Compose starts. LEZ runs require unique
-tool, target, standalone, and evidence directories when another checkout might be active.
+tool, target, standalone, and evidence directories when another checkout might
+be active. The full v0.2 lane specifically owns project
+`lez-atomic-swaps-lez-v02-{run_id}`, state `.e2e/{run_id}/lez-v02`, one private
+network, and dynamic literal-loopback host ports; it must never reuse fixed
+container names or clean another project's resources.

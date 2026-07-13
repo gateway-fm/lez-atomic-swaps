@@ -64,9 +64,11 @@ a fresh checkout for all of the following:
 7. stop only resources owned by the chosen run and locate the retained evidence.
 
 The M2 rehearsal uses one pinned public-compatible local LEZ v0.2 devnet and one
-pinned local Zcash Regtest devnet. The LEZ devnet must include the full Bedrock
-node, indexer, and non-standalone sequencer after their immutable pins and
-settlement wiring are source-verified; that check is currently RED. The
+pinned local Zcash Regtest devnet. The LEZ devnet must include the full Bedrock node, indexer, and
+non-standalone sequencer. Their exact source, image labels, service flow,
+toolchain, native inputs, and service-binary hashes are now attested. Container
+assembly, three-service execution/finality, Vault Claim onboarding, escrow
+deployment, and actor use remain RED. The
 standalone mock block publisher and v0.1.2 lane are lower-level checks only. Maker and taker
 use separate configs, keys, funds,
 stores, journals, sidecars, and processes. The guide will identify every local
@@ -84,13 +86,14 @@ as unavailable.
 | Flow | Boundary exercised | Current limitation |
 |---|---|---|
 | ZEC SDK agreement/activation/locks/claims/refunds | Canonical bounded dual-signed terms, separate role stores, exact lock recovery, and direction-fixed effects reach `BothLegsLocked`; LEZ reveal then Zcash follow-up reaches `Completed`; or exact owner intents plus observer-only transitions drive LEZ then Zcash refunds to `Refunded` in both directions | These commands still use deterministic contract doubles and no RPC, node, Docker, faucet, or external resource. Claims and refunds replay through schema-v10 SQLite with atomic owner/observer journals. Main LEZ/Zebra validation adapters, official LEZ refund execution, and crash-safe context-owning LEZ SDK ports are GREEN; the composed actor/node flow remains pending, so this is not yet the manual actual-node flow |
-| LEZ bridge and Zebra funding/claim/refund contracts | The one-attempt authenticated loopback client and sidecar serve all eight bounded methods. The sidecar restores exact native, revealing-claim, and permissionless native-refund bytes and writes an unknown guard before submit. Official native escrow, claim, and refund observations decode exact-owner facts or bounded counterparty discovery; main escrow/claim/refund adapters independently validate the signed agreement, stable clock/tip, accounts, transactions, instructions, windows, deadlines, depth, and durable identity/bytes. Context-owning SDK ports journal caller-owned IDs/windows per logical operation, open fresh clients for exact retry, and preserve ambiguous prepare/refund contexts across restart. Two real sidecar processes run concurrently with distinct maker/taker roles, keys, capabilities, stores, runtimes, and ephemeral listeners. Typed Zebra ports validate exact-outpoint funding plans, owner claims/refunds, counterparty spends, and agreement-bound funding in both directions. A one-shot actor CLI now validates separate maker/taker private configs and rejects shared or config-overwriting paths | These are isolated adapter, planner, process, and actor-boundary contract tests, not yet a composed consensus proof. The actor currently validates `activate`/`drive`/`status` configuration but does not yet execute the lifecycle. The runner's describe/authentication path uses no chain call; official observation uses an ephemeral loopback RPC mock returning pinned node types. The composed corridor remains pending. No Docker, faucet, public endpoint, or fixed port is used |
+| LEZ bridge and Zebra funding/claim/refund contracts | The one-attempt authenticated loopback client and sidecar serve all eight bounded methods. The sidecar restores exact native, revealing-claim, and permissionless native-refund bytes and writes an unknown guard before submit. Official native escrow, claim, and refund observations decode exact-owner facts or bounded counterparty discovery; main escrow/claim/refund adapters independently validate the signed agreement, stable clock/tip, accounts, transactions, instructions, windows, deadlines, depth, and durable identity/bytes. Context-owning SDK ports journal caller-owned IDs/windows per logical operation, open fresh clients for exact retry, and preserve ambiguous prepare/refund contexts across restart. Two real sidecar processes run concurrently with distinct maker/taker roles, keys, capabilities, stores, runtimes, and ephemeral listeners. Typed Zebra ports validate exact-outpoint funding plans, owner claims/refunds, counterparty spends, and agreement-bound funding in both directions. A one-shot actor CLI now validates separate maker/taker private configs and rejects shared or config-overwriting paths | These are isolated adapter, planner, process, and actor-boundary contract tests, not yet a composed consensus proof. The actor still rejects effect-bearing `activate`/`drive`, but `status` now performs existing-only hardened SQLite recovery through an SDK type that cannot call either chain; missing state remains uncreated as `not_activated`. The runner's describe/authentication path uses no chain call; official observation uses an ephemeral loopback RPC mock returning pinned node types. The composed corridor remains pending. No Docker, faucet, public endpoint, or fixed port is used |
 | Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
 | Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v10 SQLite journal/alerts plus the production role-fixed SDK recovery adapter, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The daemon polling loop, LEZ SDK-port/refund composition, and independent maker/taker processes remain pending |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
 | LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an ephemeral-port LEZ v0.1.2 standalone sequencer. The last corrected full runner exited `0` after the reusable external process published a private schema-v2 handoff containing the exact deployment transaction and canonical block, the built-in-only `getProgramIds` result, and two funded deterministic actors | The native/two-definition lifecycle and corrected external-node handoff are GREEN with ELF SHA-256 `a324355c...7006` and ImageID `c14c978a...4483`. A later actor-contract RED replaced the agreement-invalid zero channel with one nonempty deterministic identity; its focused suite passes and the exact full runner must be repeated before using the handoff as current corridor evidence. No reference SDK actor consumes that handoff in a composed LEZ/Zebra flow yet, and this local v0.1.2 evidence is not LEZ v0.2 public-testnet evidence |
 | LEZ recursive execution costs | Exact checked guest replayed through production `V03State` transitions with nested authenticated-transfer and ATA/Token sessions | This measures deterministic local execution, not public-testnet fees or latency |
 | Provisional LEZ v0.2 executable lane | Exact SPEL PR #238 and LEZ v0.2.0 build a checked Risc0 escrow ELF, compile the generated typed client, and execute recursive native plus two-definition token claim/refund tests, including child-failure rollback. The fail-closed deployer is tested through the official RPC types against an ephemeral loopback server | Local ELF SHA-256 `40c9d37c...8021` and ImageID `f8385049...0fbe` are GREEN. No v0.2 public deployment, deployed-runtime CU evidence, independent maker/taker actor flow, composed LEZ/Zebra corridor, or maintainer approval is proved |
+| Full local LEZ v0.2 source/binary contract | Clean exact LEZ v0.2 source, Rust 1.94.0, Bedrock fixtures and OCI labels, Rapisnark/r0vm inputs, and both locked service binary hashes are checked by one command; the binaries plus r0vm have passed restricted distroless CLI smoke | This starts no service or container and proves no finality, Vault Claim, escrow deployment, actor process, or swap. Full-stack and corridor execution remain pending |
 
 The following are **not complete yet**: one composed LEZ↔ZEC run with
 independent maker and taker processes, both ZEC trade directions through all
@@ -104,9 +107,11 @@ SHA-256, LEZ runtime and discovery window, Zebra network/branch/genesis, and a
 bounded exact-outpoint set. Existing private files must be regular, owner-only
 mode `0600`, single-link, and unchanged between validation and use; symlinks,
 hard-link aliases, late agreement/state aliasing, unsafe lexical paths,
-cross-role state reuse, and secret-bearing diagnostics fail closed. This
-hardening does not solve the remaining mutable SQLite path-to-descriptor race;
-the actual store-open composition must close and test that boundary.
+cross-role state reuse, and secret-bearing diagnostics fail closed. The existing-only and create-capable store openers now use
+`SQLITE_OPEN_NOFOLLOW`, reject non-regular/hardlinked/wrong-mode files, and
+compare device/inode identity around mutable setup. Owner-private parent
+directories remain mandatory because later SQLite WAL/SHM opens are not
+descriptor-bound.
 
 ## User and custody flow
 
@@ -292,6 +297,32 @@ graph-local exceptions are nonblocking only for M2 under ADR 0018 and are
 production-blocking until Logos removes the paths or a separate security review
 explicitly accepts them.
 
+## Flow 0B: verify the exact local-v0.2 source and binary contract
+
+This is the current reproducible boundary before the three-service runner. It
+checks a clean exact source checkout, toolchain and native inputs, service
+binary hashes and versions, Bedrock fixture hashes, and immutable OCI labels.
+It does not start a container or call an RPC.
+
+```sh
+export LEZ_V02_SOURCE_DIR=/path/to/clean/logos-execution-zone-v0.2.0
+export LEZ_V02_R0VM=/path/to/verified/r0vm
+export LEZ_V02_SEQUENCER_BINARY=/path/to/verified/sequencer_service
+export LEZ_V02_INDEXER_BINARY=/path/to/verified/indexer_service
+export LEZ_V02_RAPIDSNARK_ARCHIVE=/path/to/rapidsnark-linux-x86_64-pic-v0.0.8.zip
+export RAPIDSNARK_LIB_DIR=/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+RUN_ID=manual-v02-contract-20260713-a ./scripts/verify-lez-v02-local-stack-contract.sh
+```
+
+The exact Bedrock digest must already be cached locally so the verifier can
+inspect its source, revision, version, and license labels without pulling it.
+Expected output ends with `status=stack-not-executed` and names OCI revision
+`d8711bbc3d43d3ef9755ef9b73af32fd0f703160`. A dirty source checkout, changed
+binary, wrong toolchain or native library, missing cached image, or changed OCI
+label fails closed. This command needs Docker metadata access but starts no
+container, uses no public chain RPC or faucet, and proves no swap execution.
+
 ## External resources and flakiness
 
 No currently executable user flow calls a public blockchain RPC or faucet. The
@@ -355,8 +386,10 @@ Cold setup and CI do use external software-distribution services:
 | Tatum Testnet Zebrad JSON-RPC | Selected public-provider route; not called by current flows | `https://zcash-testnet-zebrad.gateway.tatum.io`; dedicated API key in sensitive `x-api-key`; require the exact actor method contract and chain/branch/genesis/stable-tip checks | Third-party authoritative node with account provisioning, quotas, outage, lag, method-policy, and provider-trust risk; HTTPS adapter contract remains an M2 portability gate, while live rehearsal is deferred to production readiness; no silent failover or submit retry |
 | Community Zcash faucet or Discord support | Optional future TAZ funding | External operator; verify any returned txid independently through self-hosted Zebra | No SLA/current rate or amount; faucet may time out or be depleted and is never a required CI gate |
 | Zallet v0.1.0-alpha.4 | Optional future funding wallet, never the HTLC signer | Exact alpha tag, loopback RPC, Zebra cookie; explicit transparent privacy policy | Alpha/epoch compatibility; cannot export derived transparent keys or sign arbitrary HTLC transactions |
+| GHCR Logos Blockchain image | Local LEZ v0.2 Bedrock node and source/binary contract | Exact digest `sha256:91d6c5bf07e07fcfba5e7cf07d21ee686a6bc4b9f6210f2d28bffbcad9a3729f`; verifier checks OCI source revision `d8711bbc...` and license | Registry outage can block a cold pull; the manual contract verifier never pulls and fails if the exact cached image is absent. Public-testnet parity remains an upstream production question |
+| GitHub Rapisnark v0.0.8 release asset | Exact LEZ v0.2 service and sidecar builds | Revision, archive name, SHA-256, and all four extracted static-library hashes are contract-bound | Release/CDN outage blocks an uncached build; implicit build-script download is rejected in favor of the preverified local directory |
 | Docker Hub `zfnd/zebra` and `risczero/risc0-guest-builder` | Cold Zebra image build and Risc0 guest build | Zebra `5.2.0` source image and guest builder are digest-pinned | Registry outage, throttling, or authentication policy can block a cold pull; local images reduce but do not guarantee offline BuildKit resolution |
-| Google Container Registry distroless image | Cold minimal Zebra image build | Exact `cc-debian13:nonroot` digest | Registry/DNS outage can block a cold pull; no moving tag is accepted |
+| Google Container Registry distroless image | Cold minimal Zebra and LEZ v0.2 service image builds | Exact `cc-debian13:nonroot` digest | Registry/DNS outage can block a cold pull; no moving tag is accepted |
 | GitHub release asset for `logos-blockchain-circuits v0.4.2` | First LEZ run | Exact release URL plus required SHA-256 before extraction | Release/CDN outage can fail after retries; a verified run-specific cache avoids redownload |
 | `rzup`-managed Risc0 release endpoint | First install of `r0vm`/`cargo-risczero` 3.0.5 | Runner checks exact tool versions and the final ELF digest/ImageID | Upstream release availability can block cold setup; keep the verified `LEZ_E2E_TOOL_DIR` cache |
 | RustSec advisory database and Trivy vulnerability database | cargo-deny locally/CI; Trivy in CI | Scanner actions are commit-pinned; databases intentionally update | Network outage can prevent refresh, and a new advisory/CVE can make a previously green commit fail; this is a security signal, not a flaky test to bypass |

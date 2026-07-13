@@ -45,6 +45,83 @@ multi-seed, and official owner/definition ATA results with the pinned upstream
 types. This is compatibility evidence for local derivation; a chain adapter
 must still re-query deployed program and account identities.
 
+## Full local-stack source contract
+
+`local-stack.toml` is the immutable, not-yet-executed stack contract for the
+non-mock local lane. It selects the exact v0.2.0 source commit, the Bedrock
+image digest shipped by that source, real non-standalone
+`sequencer_service`, real `indexer_service`, event directions, readiness
+gates, and run isolation. It uses Compose project
+`lez-atomic-swaps-lez-v02-${RUN_ID}` and private state beneath
+`.e2e/${RUN_ID}/lez-v02`. Because both Rust services bind `0.0.0.0`
+unconditionally, the contract requires one private per-run container network
+and only dynamic `127.0.0.1` host publications. Fixed container names, fixed
+host ports, and reuse of pre-existing run state are forbidden.
+
+Bedrock receives the exact hashed node/deployment/KZG fixtures and invokes the
+Bedrock binary directly. The observed upstream helper's timestamp substitution
+does not apply to the already-concrete deployment fixture and is not used by
+the runner. Minimal sequencer/indexer configs are generated from contracted
+semantic fields; the unsupported stale example `backoff` field is omitted.
+
+The upstream service Dockerfiles are retained only as hashed source
+observations: they use mutable build/runtime inputs and are not the M2
+packaging recipe. The contracted recipe builds both binaries from the locked
+v0.2 graph with upstream Rust 1.94.0 and two jobs. It also binds the locked
+`rust-rapidsnark` revision, native v0.0.8 release archive, and all four static
+library hashes used by the offline build. The resulting services are packaged
+with the verified r0vm 3.0.5 artifact on a digest-pinned distroless nonroot
+runtime. One fresh-target clean-source locked offline build produced bound
+sequencer/indexer SHA-256 values; a warm locked offline no-op rerun left those
+outputs unchanged. This is not evidence of independent bit-reproducibility.
+Both binaries plus r0vm returned their versions inside that runtime
+as uid 65532 with no network, a read-only root, no capabilities, and
+no-new-privileges. This is CLI/runtime compatibility evidence only: neither
+service nor the composed stack has executed.
+
+Verify a clean source checkout, the local artifacts, and the already-cached
+Bedrock image without starting a container:
+
+```sh
+LEZ_V02_SOURCE_DIR=/path/to/exact-v0.2.0-checkout \
+LEZ_V02_R0VM=/path/to/verified/r0vm-3.0.5 \
+LEZ_V02_SEQUENCER_BINARY=/path/to/verified/sequencer_service \
+LEZ_V02_INDEXER_BINARY=/path/to/verified/indexer_service \
+LEZ_V02_RAPIDSNARK_ARCHIVE=/path/to/rapidsnark-linux-x86_64-pic-v0.0.8.zip \
+RAPIDSNARK_LIB_DIR=/path/to/verified/rapidsnark-v0.0.8-libraries \
+BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include \
+RUN_ID=local-source-audit \
+./scripts/verify-lez-v02-local-stack-contract.sh
+```
+
+The verifier requires a reachable Docker daemon and the exact Bedrock digest
+already present locally. It runs `docker image inspect` and validates the
+source, revision, version, and license labels; it never pulls or starts the
+image.
+
+The source checkout must have exact HEAD `a58fbce2...` and an empty
+`git status --porcelain --untracked-files=all`. If local tag `v0.2.0` exists,
+it must resolve to that commit; otherwise the verifier reports the tag as
+absent. Cargo-managed Git checkouts containing `.cargo-ok` are deliberately
+rejected as build source, even when HEAD is correct. The local dependency cache
+may supply a byte-identical rapidsnark archive, but it is never trusted as the
+LEZ source checkout.
+
+The Bedrock digest's immutable OCI revision label is
+`d8711bbc3d43d3ef9755ef9b73af32fd0f703160`, matching the Logos Blockchain
+revision in the exact LEZ lock graph. Re-certification must inspect that local
+digest and its source/version/license labels. This source mapping does not
+establish public-runtime parity: the tagged LEZ README still describes its
+bundled node as outdated, so that distinct upstream parity gap remains.
+
+Readiness is functional rather than port-only. Bedrock must expose advancing
+Cryptarchia state and HTTP 200 for the exact zone channel; the sequencer must
+report health, required built-ins, channel, genesis block 1, and advancing tip;
+the indexer must return an actual finalized block. Certification compares that
+immutable finalized block with the sequencer block at the same ID, never two
+moving tips. Indexer `checkHealth` is excluded because upstream implements it
+as local database recalculation only.
+
 Run the complete lint/test/pin check with:
 
 ```sh

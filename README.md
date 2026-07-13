@@ -189,10 +189,14 @@ acceptance. The
 requires one actual public-compatible local LEZ v0.2 devnet, one actual local
 Zcash Regtest devnet, and
 independent maker/taker processes while deferring public evidence without
-claiming it exists. LEZ certification targets the full Bedrock node, indexer,
-and non-standalone sequencer after their immutable pins and settlement wiring
-are source-verified; that verification is still RED. Standalone mock settlement
-and v0.1.2 are lower-level coverage. The
+claiming it exists. The
+[source-audited local-stack decision](docs/architecture/0024-source-audited-lez-v0-2-local-stack.md)
+now binds the exact Bedrock image/source labels, LEZ source, toolchain, native
+inputs, service flows, and service-binary hashes. The exact binaries and r0vm
+also pass restricted nonroot distroless CLI smoke. Container assembly,
+three-service execution/finality, Vault Claim actor onboarding, escrow
+deployment, and actor consumption remain RED; standalone mock settlement and
+v0.1.2 remain lower-level coverage. The
 [Zcash public-testnet setup guide](docs/zcash-testnet-setup.md) records the
 selected self-hosted and Tatum Testnet Zebrad routes, optional funding wallet,
 external dependencies, and the still-missing transparent signer/provider
@@ -201,8 +205,11 @@ transport without claiming a completed testnet run.
 ## Development
 
 Prerequisites: Rust 1.96.0. Docker is needed for the isolated Zebra consensus
-suite and the pinned Risc0 guest builder; Docker Compose v2 is used by Zebra.
-The [manual reproduction guide](docs/manual-user-flows.md) lists the complete
+suite, pinned Risc0 guest builder, and full local LEZ v0.2 lane; Docker Compose
+v2 is used by both local-chain suites. Building the exact upstream v0.2
+sequencer/indexer artifacts additionally uses upstream Rust 1.94.0 plus the
+hash-checked r0vm and Rapisnark inputs; the repository-owned sidecar remains on
+Rust 1.96.0. The [manual reproduction guide](docs/manual-user-flows.md) lists the complete
 per-run prerequisites, isolation rules, commands, expected evidence, and
 cleanup behavior.
 
