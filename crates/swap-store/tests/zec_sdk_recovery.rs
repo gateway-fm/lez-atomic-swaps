@@ -20,7 +20,7 @@ use lez_zec_swap_sdk::{
     PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1, ProtectedClaimKey, RecoveryStore,
     RevealingClaimEvidenceV1, RevealingClaimObservationV1, RevealingClaimTransitionRecordV1,
     TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimPort, ZcashFirstLockPort,
+    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimContextV1, ZcashClaimPort, ZcashFirstLockPort,
     ZcashMakerLockObservationPort, ZcashNodeRemovalSnapshot, ZcashNodeSnapshot,
     ZcashObservationEventRecordV1, ZcashStableTip, ZcashTakerFirstLockObservationPort,
     ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecLezTermsV1,
@@ -303,6 +303,7 @@ struct SqliteClaimPort {
     claim_fail_after_accept: std::sync::Arc<std::sync::Mutex<Vec<ClaimStepV1>>>,
     revealing_preimage: std::sync::Arc<std::sync::Mutex<Option<[u8; 32]>>>,
     followup_confirmed: std::sync::Arc<std::sync::Mutex<bool>>,
+    zcash_contexts: std::sync::Arc<std::sync::Mutex<Vec<ZcashClaimContextV1>>>,
 }
 
 type ClaimPayloadLog = Vec<(ClaimStepV1, Vec<u8>)>;
@@ -322,6 +323,7 @@ impl Default for SqliteClaimPort {
             claim_fail_after_accept: std::sync::Arc::default(),
             revealing_preimage: std::sync::Arc::default(),
             followup_confirmed: std::sync::Arc::default(),
+            zcash_contexts: std::sync::Arc::default(),
         }
     }
 }
@@ -376,20 +378,51 @@ impl SqliteClaimPort {
             .clone()
     }
 
-    fn observe_lock(&self, submission: &PreparedFirstLockSubmissionV1) -> FirstLockObservation {
+    fn observe_lock(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        submission: &PreparedFirstLockSubmissionV1,
+    ) -> FirstLockObservation {
         if self
             .lock_submissions
             .lock()
             .expect("lock submissions lock")
             .contains(&submission.step())
         {
-            FirstLockObservation::Confirmed(observed_first_lock_evidence(
-                submission.step(),
-                *submission.expected_submission_id(),
-            ))
+            let evidence = if submission.step() == FirstLockStepV1::ZcashFund {
+                FirstLockConfirmedEvidenceV1::from_observation(
+                    submission.step(),
+                    *submission.expected_submission_id(),
+                    canonical_zcash_taker_lock(agreement)
+                        .transaction_id()
+                        .to_string(),
+                    100,
+                )
+                .expect("canonical Zcash adapter evidence")
+            } else {
+                observed_first_lock_evidence(
+                    submission.step(),
+                    *submission.expected_submission_id(),
+                )
+            };
+            FirstLockObservation::Confirmed(evidence)
         } else {
             FirstLockObservation::Absent
         }
+    }
+
+    fn record_zcash_context(&self, context: &ZcashClaimContextV1) {
+        self.zcash_contexts
+            .lock()
+            .expect("Zcash claim contexts lock")
+            .push(context.clone());
+    }
+
+    fn zcash_contexts(&self) -> Vec<ZcashClaimContextV1> {
+        self.zcash_contexts
+            .lock()
+            .expect("Zcash claim contexts lock")
+            .clone()
     }
 
     fn submit_lock(&self, submission: &PreparedFirstLockSubmissionV1) {
@@ -512,10 +545,10 @@ impl LezFirstLockPort for SqliteClaimPort {
 
     async fn observe_first_lock(
         &self,
-        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
     ) -> Result<FirstLockObservation, Self::Error> {
-        Ok(self.observe_lock(submission))
+        Ok(self.observe_lock(agreement, submission))
     }
 
     async fn submit_first_lock(
@@ -534,10 +567,10 @@ impl ZcashFirstLockPort for SqliteClaimPort {
 
     async fn observe_first_lock(
         &self,
-        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
     ) -> Result<FirstLockObservation, Self::Error> {
-        Ok(self.observe_lock(submission))
+        Ok(self.observe_lock(agreement, submission))
     }
 
     async fn submit_first_lock(
@@ -625,8 +658,10 @@ impl ZcashClaimPort for SqliteClaimPort {
     async fn prepare_followup_claim(
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashClaimContextV1,
         preimage: &ClaimPreimage,
     ) -> Result<PreparedClaimSubmissionV1, Self::Error> {
+        self.record_zcash_context(context);
         let mut exact = b"sqlite-zec-claim:".to_vec();
         exact.extend_from_slice(preimage.expose_secret());
         PreparedClaimSubmissionV1::new(ClaimStepV1::FollowupZcash, [0xc2; 32], exact)
@@ -636,8 +671,10 @@ impl ZcashClaimPort for SqliteClaimPort {
     async fn observe_prepared_followup_claim(
         &self,
         agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashClaimContextV1,
         prepared: &PreparedClaimSubmissionV1,
     ) -> Result<FollowupClaimObservationV1, Self::Error> {
+        self.record_zcash_context(context);
         if prepared.expected_submission_id() != &[0xc2; 32] {
             return Err(TestPortError("substituted follow-up claim identity"));
         }
@@ -654,15 +691,19 @@ impl ZcashClaimPort for SqliteClaimPort {
     async fn observe_counterparty_followup_claim(
         &self,
         agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashClaimContextV1,
     ) -> Result<FollowupClaimObservationV1, Self::Error> {
+        self.record_zcash_context(context);
         self.followup_observation(agreement)
     }
 
     async fn submit_followup_claim(
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashClaimContextV1,
         prepared: &PreparedClaimSubmissionV1,
     ) -> Result<(), Self::Error> {
+        self.record_zcash_context(context);
         if !prepared
             .exact_submission()
             .starts_with(b"sqlite-zec-claim:")
@@ -770,6 +811,7 @@ async fn assert_schema_v9_claim_direction(
         &mut taker,
     )
     .await;
+    assert_sqlite_zcash_claim_contexts(id, first_claimant, &port, maker.agreement());
     assert_eq!((maker.status(), maker.revision()), (Phase::Completed, 4));
     assert_eq!((taker.status(), taker.revision()), (Phase::Completed, 4));
     assert_schema_v9_journal(&maker_path, id, "maker", secret);
@@ -810,6 +852,33 @@ async fn assert_schema_v9_claim_direction(
     );
     assert_claim_plaintext_absent(&maker_path, secret);
     assert_claim_plaintext_absent(&taker_path, secret);
+}
+
+fn assert_sqlite_zcash_claim_contexts(
+    id: &str,
+    zcash_funder: Participant,
+    port: &SqliteClaimPort,
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+) {
+    let canonical = canonical_zcash_taker_lock(agreement);
+    let transaction_id = canonical.transaction_id();
+    let displayed_transaction_id = transaction_id.to_string();
+    let expected_outpoint = OutPoint::new(*transaction_id.as_ref(), 0);
+    let contexts = port.zcash_contexts();
+    assert_eq!(
+        contexts.len(),
+        5,
+        "all schema-v9 prepare/observe/submit paths must carry durable funding context"
+    );
+    assert!(contexts.iter().all(|context| {
+        context.agreement_commitment() == agreement.agreement_commitment()
+            && context.swap_id().as_str() == id
+            && context.zcash_funder() == zcash_funder
+            && context.funding_transaction_id() == displayed_transaction_id
+            && context.funding_transaction_id_bytes() == transaction_id.as_ref()
+            && context.funding_output_index() == 0
+            && context.funding_outpoint() == &expected_outpoint
+    }));
 }
 
 fn claim_store(path: &std::path::Path, participant: Participant) -> SqliteZecRecoveryStore {
@@ -1561,7 +1630,83 @@ fn install_claim_abort_trigger(path: &std::path::Path, name: &str, table: &str) 
 #[tokio::test]
 async fn claim_retry_observes_exact_durable_bytes_before_any_rebroadcast() {
     assert_unknown_revealing_submission_is_observed().await;
+    assert_unknown_followup_submission_reuses_context_after_reopen().await;
     assert_stale_revealing_commit_is_replayed().await;
+}
+
+async fn assert_unknown_followup_submission_reuses_context_after_reopen() {
+    let id = "sqlite-unknown-zcash-followup-submission";
+    let mut fixture = locked_claim_fixture(id).await;
+    fixture
+        .taker
+        .drive_claim()
+        .await
+        .expect("submit revealing claim");
+    fixture.port.confirm_revealing_claim(fixture.secret);
+    fixture
+        .taker
+        .drive_claim()
+        .await
+        .expect("owner commits revealing claim");
+    fixture
+        .maker
+        .drive_claim()
+        .await
+        .expect("follower durably extracts the preimage");
+
+    fixture
+        .port
+        .fail_claim_after_accept(ClaimStepV1::FollowupZcash);
+    assert!(fixture.maker.drive_claim().await.is_err());
+    assert_eq!(
+        fixture.port.claim_submissions(),
+        vec![ClaimStepV1::RevealingLez, ClaimStepV1::FollowupZcash]
+    );
+    let before_reopen = fixture.port.zcash_contexts();
+    assert_eq!(
+        before_reopen.len(),
+        3,
+        "prepare, observe, then unknown submit"
+    );
+    assert!(
+        before_reopen
+            .iter()
+            .all(|context| context == &before_reopen[0])
+    );
+
+    drop(fixture.maker);
+    drop(fixture.maker_store);
+    let mut recovered = claim_sdk(
+        Participant::Maker,
+        fixture.port.clone(),
+        claim_store(&fixture.maker_path, Participant::Maker),
+    )
+    .resume_claim_capable(&SwapId::new(id).expect("swap ID"))
+    .await
+    .expect("reopen unknown Zcash follow-up")
+    .expect("durable follower claim");
+    fixture.port.confirm_followup_claim();
+    recovered
+        .drive_claim()
+        .await
+        .expect("observe accepted exact follow-up after reopen");
+    assert_eq!(recovered.status(), Phase::Completed);
+    assert_eq!(
+        fixture.port.claim_submissions(),
+        vec![ClaimStepV1::RevealingLez, ClaimStepV1::FollowupZcash],
+        "unknown accepted Zcash spend must not be broadcast twice"
+    );
+    let after_reopen = fixture.port.zcash_contexts();
+    assert_eq!(
+        after_reopen.len(),
+        4,
+        "reopen adds one exact prepared observation"
+    );
+    assert!(
+        after_reopen
+            .iter()
+            .all(|context| context == &after_reopen[0])
+    );
 }
 
 async fn assert_unknown_revealing_submission_is_observed() {

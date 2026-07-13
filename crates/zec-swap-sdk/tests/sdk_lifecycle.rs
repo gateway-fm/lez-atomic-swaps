@@ -36,17 +36,18 @@ use lez_zec_swap_sdk::{
     ProtectedClaimEnvelope, ProtectedClaimKey, ProtectedClaimPayloadEnvelope, RecoveryStore,
     RevealingClaimEvidenceV1, RevealingClaimObservationV1, RevealingClaimTransitionRecordV1,
     RevealingClaimTransitionV1, TakerFirstLockObservationV1, TransparentFundingRequest,
-    TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimPort, ZcashFirstLockPort,
-    ZcashMakerLockObservationPort, ZcashNodeRemovalSnapshot, ZcashNodeSnapshot, ZcashStableTip,
-    ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
-    ZecAgreementRecordV1, ZecAgreementV1Error, ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk,
-    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
-    ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
-    build_funding_transaction, derive_lez_metadata_account_v1,
-    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimContextError, ZcashClaimContextV1,
+    ZcashClaimPort, ZcashFirstLockPort, ZcashMakerLockObservationPort, ZcashNodeRemovalSnapshot,
+    ZcashNodeSnapshot, ZcashStableTip, ZcashTakerFirstLockObservationPort,
+    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1Error,
+    ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1,
+    ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding,
+    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_funding_transaction,
+    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use sha2::{Digest as _, Sha256};
+use zcash_encoding::ReverseHex;
 use zcash_primitives::block::BlockHash;
 use zcash_protocol::{
     consensus::{BlockHeight, BranchId, NetworkType},
@@ -1295,6 +1296,7 @@ struct MemoryClaimCorridor {
     submissions: Arc<Mutex<Vec<ClaimStepV1>>>,
     revealing_preimage: Arc<Mutex<Option<[u8; 32]>>>,
     followup_confirmed: Arc<Mutex<bool>>,
+    zcash_contexts: Arc<Mutex<Vec<ZcashClaimContextV1>>>,
 }
 
 impl MemoryClaimCorridor {
@@ -1317,6 +1319,20 @@ impl MemoryClaimCorridor {
             .lock()
             .expect("claim submissions lock")
             .clone()
+    }
+
+    fn zcash_contexts(&self) -> Vec<ZcashClaimContextV1> {
+        self.zcash_contexts
+            .lock()
+            .expect("Zcash claim contexts lock")
+            .clone()
+    }
+
+    fn record_zcash_context(&self, context: &ZcashClaimContextV1) {
+        self.zcash_contexts
+            .lock()
+            .expect("Zcash claim contexts lock")
+            .push(context.clone());
     }
 
     fn record_submission(&self, step: ClaimStepV1) {
@@ -1590,8 +1606,10 @@ impl ZcashClaimPort for MemoryZcashTakerLockObservation {
     async fn prepare_followup_claim(
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashClaimContextV1,
         preimage: &ClaimPreimage,
     ) -> Result<PreparedClaimSubmissionV1, Self::Error> {
+        self.3.record_zcash_context(context);
         let mut exact = vec![0x7a, 0x65, 0x63];
         exact.extend_from_slice(preimage.expose_secret());
         PreparedClaimSubmissionV1::new(ClaimStepV1::FollowupZcash, [0xc2; 32], exact)
@@ -1601,8 +1619,10 @@ impl ZcashClaimPort for MemoryZcashTakerLockObservation {
     async fn observe_prepared_followup_claim(
         &self,
         agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashClaimContextV1,
         prepared: &PreparedClaimSubmissionV1,
     ) -> Result<FollowupClaimObservationV1, Self::Error> {
+        self.3.record_zcash_context(context);
         if prepared.step() != ClaimStepV1::FollowupZcash
             || prepared.expected_submission_id() != &[0xc2; 32]
         {
@@ -1610,13 +1630,43 @@ impl ZcashClaimPort for MemoryZcashTakerLockObservation {
                 "unexpected prepared Zcash claim identity".to_owned(),
             ));
         }
-        self.observe_counterparty_followup_claim(agreement).await
+        self.followup_observation(agreement)
     }
 
     async fn observe_counterparty_followup_claim(
         &self,
         agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashClaimContextV1,
     ) -> Result<FollowupClaimObservationV1, Self::Error> {
+        self.3.record_zcash_context(context);
+        self.followup_observation(agreement)
+    }
+
+    async fn submit_followup_claim(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+        prepared: &PreparedClaimSubmissionV1,
+    ) -> Result<(), Self::Error> {
+        self.3.record_zcash_context(context);
+        if prepared.step() != ClaimStepV1::FollowupZcash
+            || prepared.expected_submission_id() != &[0xc2; 32]
+            || !prepared.exact_submission().starts_with(&[0x7a, 0x65, 0x63])
+        {
+            return Err(TestPortError(
+                "unexpected deterministic Zcash claim bytes".to_owned(),
+            ));
+        }
+        self.3.record_submission(ClaimStepV1::FollowupZcash);
+        Ok(())
+    }
+}
+
+impl MemoryZcashTakerLockObservation {
+    fn followup_observation(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<FollowupClaimObservationV1, TestPortError> {
         if *self
             .3
             .followup_confirmed
@@ -1629,23 +1679,6 @@ impl ZcashClaimPort for MemoryZcashTakerLockObservation {
         } else {
             Ok(FollowupClaimObservationV1::Absent)
         }
-    }
-
-    async fn submit_followup_claim(
-        &self,
-        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
-        prepared: &PreparedClaimSubmissionV1,
-    ) -> Result<(), Self::Error> {
-        if prepared.step() != ClaimStepV1::FollowupZcash
-            || prepared.expected_submission_id() != &[0xc2; 32]
-            || !prepared.exact_submission().starts_with(&[0x7a, 0x65, 0x63])
-        {
-            return Err(TestPortError(
-                "unexpected deterministic Zcash claim bytes".to_owned(),
-            ));
-        }
-        self.3.record_submission(ClaimStepV1::FollowupZcash);
-        Ok(())
     }
 }
 
@@ -4807,7 +4840,23 @@ async fn assert_independent_claim_happy_path(
     secret: [u8; 32],
 ) {
     let mut fixture = activate_claim_actor_fixture(id, direction, first_claimant, secret).await;
+    assert!(matches!(
+        fixture.maker.zcash_claim_context(),
+        Err(ZecSdkError::InvalidZcashClaimContext(
+            ZcashClaimContextError::ClaimNotReady {
+                actual: Phase::Offered
+            }
+        ))
+    ));
     lock_claim_actor_fixture(direction, &mut fixture).await;
+    assert!(matches!(
+        fixture.taker.zcash_claim_context(),
+        Err(ZecSdkError::InvalidZcashClaimContext(
+            ZcashClaimContextError::ClaimNotReady {
+                actual: Phase::BothLegsLocked
+            }
+        ))
+    ));
     drive_claim_actor_fixture(id, &mut fixture).await;
     Box::pin(assert_claim_actor_restarts(id, fixture)).await;
 }
@@ -4994,6 +5043,26 @@ async fn drive_claim_actor_fixture(id: &str, fixture: &mut ClaimActorFixture) {
         .drive_claim()
         .await
         .expect("taker observes canonical Zcash completion");
+    let funding_transaction_id = canonical_zcash_taker_lock(fixture.maker.agreement())
+        .transaction_id()
+        .to_string();
+    let internal_transaction_id =
+        ReverseHex::decode(&funding_transaction_id).expect("canonical fixture transaction ID");
+    let contexts = fixture.corridor.zcash_contexts();
+    assert_eq!(
+        contexts.len(),
+        5,
+        "prepare, exact observation, submit, owner retry, and counterparty observation all bind context"
+    );
+    assert!(contexts.iter().all(|context| {
+        context.agreement_commitment() == fixture.maker.agreement().agreement_commitment()
+            && context.swap_id().as_str() == id
+            && context.zcash_funder() == fixture.first_claimant
+            && context.funding_transaction_id() == funding_transaction_id
+            && context.funding_transaction_id_bytes() == &internal_transaction_id
+            && context.funding_output_index() == 0
+            && context.funding_outpoint() == &OutPoint::new(internal_transaction_id, 0)
+    }));
     assert_eq!(
         (fixture.maker.status(), fixture.maker.revision()),
         (Phase::Completed, 4)
@@ -5169,7 +5238,10 @@ async fn project_actor_taker_first_lock(
                 .await
                 .expect("stage Zcash");
             taker.drive_first_lock().await.expect("submit Zcash");
-            let evidence = confirmed_zcash_first_lock([0x31; 32], "actor-taker-zcash");
+            let funding_transaction_id = canonical_zcash_taker_lock(taker.agreement())
+                .transaction_id()
+                .to_string();
+            let evidence = confirmed_zcash_first_lock([0x31; 32], &funding_transaction_id);
             zcash.1.observe_as(
                 FirstLockStepV1::ZcashFund,
                 FirstLockObservation::Confirmed(evidence.clone()),
@@ -5288,7 +5360,10 @@ async fn project_actor_maker_second_lock(
                 .drive_maker_lock(plan.clone())
                 .await
                 .expect("submit maker Zcash");
-            let expected = confirmed_zcash_first_lock([0x81; 32], "actor-maker-zcash");
+            let funding_transaction_id = canonical_zcash_taker_lock(maker.agreement())
+                .transaction_id()
+                .to_string();
+            let expected = confirmed_zcash_first_lock([0x81; 32], &funding_transaction_id);
             zcash.1.observe_as(
                 FirstLockStepV1::ZcashFund,
                 FirstLockObservation::Confirmed(expected.clone()),

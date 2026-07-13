@@ -17,10 +17,10 @@ use crate::{
     ObservedRevealingClaimTransitionV1, ObservedTakerFirstLockTransitionV1, OfferDiscovery,
     PreparedFirstLockSubmissionV1, RecoveryStore, RevealingClaimObservationV1,
     RevealingClaimTransitionRecordV1, RevealingClaimTransitionV1, TakerFirstLockObservationV1,
-    ZcashClaimPort, ZcashFirstLockPort, ZcashMakerLockObservationPort, ZcashObservationEvent,
-    ZcashObservationReconciliation, ZcashObservationTracker, ZcashTakerFirstLockObservationPort,
-    ZecAgreementV1, ZecLifecycleAction, ZecSdkError, claim::validate_preimage,
-    lifecycle::next_action, observed_maker_lock::maker_final_lock_step,
+    ZcashClaimContextV1, ZcashClaimPort, ZcashFirstLockPort, ZcashMakerLockObservationPort,
+    ZcashObservationEvent, ZcashObservationReconciliation, ZcashObservationTracker,
+    ZcashTakerFirstLockObservationPort, ZecAgreementV1, ZecLifecycleAction, ZecSdkError,
+    claim::validate_preimage, lifecycle::next_action, observed_maker_lock::maker_final_lock_step,
     observed_taker_lock::taker_first_lock_step,
 };
 
@@ -388,6 +388,20 @@ impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store> {
     #[must_use]
     pub const fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// Derives the exact durable Zcash funding input authorized for the follow-up claim.
+    ///
+    /// This diagnostic view is available only in the claim-ready phase. Claim driving derives it
+    /// again on every attempt, including after restart, before invoking a Zcash claim adapter.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a non-claim-ready or mismatched coordinator and any missing, malformed,
+    /// non-canonical, or null coordinator-pinned Zcash funding transaction ID.
+    pub fn zcash_claim_context(&self) -> Result<ZcashClaimContextV1, ZecSdkError> {
+        ZcashClaimContextV1::from_active(self.agreement(), &self.coordinator)
+            .map_err(ZecSdkError::from)
     }
 
     /// Next construction-specific role action, if one is currently safe.
@@ -1364,7 +1378,8 @@ where
     }
 
     async fn drive_owned_followup_claim(&mut self) -> Result<ClaimDriveOutcome, ZecSdkError> {
-        let (intent, protected) = self.followup_claim_intent().await?;
+        let context = self.zcash_claim_context()?;
+        let (intent, protected) = self.followup_claim_intent(&context).await?;
         let prepared = self
             .store
             .open_claim_submission(self.agreement(), &intent, &protected)
@@ -1372,13 +1387,13 @@ where
             .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
         let observation = self
             .zcash
-            .observe_prepared_followup_claim(self.agreement(), &prepared)
+            .observe_prepared_followup_claim(self.agreement(), &context, &prepared)
             .await
             .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
         match observation {
             FollowupClaimObservationV1::Absent => {
                 self.zcash
-                    .submit_followup_claim(self.agreement(), &prepared)
+                    .submit_followup_claim(self.agreement(), &context, &prepared)
                     .await
                     .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
                 Ok(ClaimDriveOutcome::Submitted(ClaimStepV1::FollowupZcash))
@@ -1400,9 +1415,10 @@ where
     }
 
     async fn observe_followup_claim(&mut self) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        let context = self.zcash_claim_context()?;
         let observation = self
             .zcash
-            .observe_counterparty_followup_claim(self.agreement())
+            .observe_counterparty_followup_claim(self.agreement(), &context)
             .await
             .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
         match observation {
@@ -1442,6 +1458,7 @@ where
 
     async fn followup_claim_intent(
         &self,
+        context: &ZcashClaimContextV1,
     ) -> Result<(ClaimIntentV1, crate::ProtectedClaimPayloadEnvelope), ZecSdkError> {
         if let Some(retained) = self.load_claim_intent().await? {
             return Ok(retained);
@@ -1449,7 +1466,7 @@ where
         let preimage = self.load_claim_material().await?;
         let prepared = self
             .zcash
-            .prepare_followup_claim(self.agreement(), &preimage)
+            .prepare_followup_claim(self.agreement(), context, &preimage)
             .await
             .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
         self.stage_claim_intent(&prepared).await?;

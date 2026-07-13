@@ -23,6 +23,7 @@ mod profile;
 mod sdk;
 mod spend_observation;
 mod transaction;
+mod zcash_claim_context;
 mod zec_binding_record;
 
 pub use agreement_v1::{
@@ -129,6 +130,7 @@ pub use spend_observation::{
     SdkCanonicalSpendDeviation, SdkCanonicalSpendPolicy, SpendObservationError,
     ZCASH_MAX_SCRIPT_BYTES, ZEBRA_MAX_BLOCK_BYTES, ZcashSpendNodeSnapshot,
 };
+pub use zcash_claim_context::{ZcashClaimContextError, ZcashClaimContextV1};
 pub use zec_binding_record::{
     ZecBindingRecordError, ZecProfileRecordV1, ZecSwapBinding, ZecSwapBindingRecordV1,
 };

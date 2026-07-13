@@ -13,7 +13,7 @@ use crate::{
     ObservedMakerLockTransitionV1, ObservedRevealingClaimTransitionV1,
     ObservedTakerFirstLockTransitionV1, PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1,
     ProtectedClaimPayloadEnvelope, RevealingClaimObservationV1, RevealingClaimTransitionV1,
-    TakerFirstLockObservationV1, ZecAgreementV1,
+    TakerFirstLockObservationV1, ZcashClaimContextV1, ZecAgreementV1,
 };
 
 /// Narrow LEZ boundary for the preimage-revealing first claim.
@@ -47,31 +47,38 @@ pub trait LezClaimPort: Send + Sync {
 }
 
 /// Narrow Zcash boundary for the preimage-consuming follow-up claim.
+///
+/// Every operation receives the same SDK-derived durable funding context. Implementors must spend
+/// or observe that exact outpoint and must not replace it through wallet or node discovery.
 #[async_trait]
 pub trait ZcashClaimPort: Send + Sync {
     /// Structured adapter, RPC, or signing error retained by the SDK.
     type Error: Error + Send + Sync + 'static;
-    /// Derives and signs exact agreement-bound Zcash claim bytes.
+    /// Derives and signs exact agreement- and funding-outpoint-bound Zcash claim bytes.
     async fn prepare_followup_claim(
         &self,
         agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
         preimage: &ClaimPreimage,
     ) -> Result<PreparedClaimSubmissionV1, Self::Error>;
     /// Observes the exact durable Zcash claim identity before any rebroadcast.
     async fn observe_prepared_followup_claim(
         &self,
         agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
         prepared: &PreparedClaimSubmissionV1,
     ) -> Result<FollowupClaimObservationV1, Self::Error>;
     /// Observes the counterparty's agreement-bound Zcash follow-up without a local plan.
     async fn observe_counterparty_followup_claim(
         &self,
         agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
     ) -> Result<FollowupClaimObservationV1, Self::Error>;
     /// Submits exact bytes reopened from protected durable storage.
     async fn submit_followup_claim(
         &self,
         agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
         prepared: &PreparedClaimSubmissionV1,
     ) -> Result<(), Self::Error>;
 }

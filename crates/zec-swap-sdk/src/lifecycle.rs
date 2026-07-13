@@ -70,6 +70,9 @@ pub enum ZecSdkError {
     /// Claim material or a claim transition violates the accepted agreement.
     #[error(transparent)]
     InvalidClaim(#[from] ClaimError),
+    /// The durable coordinator cannot identify the exact agreement-bound Zcash funding outpoint.
+    #[error(transparent)]
+    InvalidZcashClaimContext(#[from] crate::ZcashClaimContextError),
     /// Canonical Zcash observation history is stale, duplicated, or missing replacement proof.
     #[error(transparent)]
     InvalidZcashObservationHistory(#[from] ObservationTrackerError),
