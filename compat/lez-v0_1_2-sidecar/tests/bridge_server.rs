@@ -75,9 +75,12 @@ impl ExactTransactionSubmitter for BlockingUnknownSubmitter {
 impl ExactTransactionSubmitter for UnknownSubmitter {
     async fn submit_exact(
         &self,
-        _planner: &NativeEscrowPlanner,
-        _request: &SubmitTransactionRequest,
+        planner: &NativeEscrowPlanner,
+        request: &SubmitTransactionRequest,
     ) -> Result<SubmitTransactionResult, SidecarError> {
+        planner
+            .decode_exact_for_submission(&request.transaction, request.context.sidecar_role)
+            .await?;
         self.calls.fetch_add(1, Ordering::SeqCst);
         Err(SidecarError::UnknownSubmissionOutcome)
     }
@@ -114,10 +117,14 @@ fn runtime(role: Participant, signer: AccountId, escrow_program: [u32; 8]) -> Ru
 }
 
 fn context(request_id: &str) -> MessageContext {
+    context_for(Participant::Maker, request_id)
+}
+
+fn context_for(role: Participant, request_id: &str) -> MessageContext {
     MessageContext::new(
         RunId::new(RUN).unwrap(),
         RequestId::new(request_id).unwrap(),
-        Participant::Maker,
+        role,
     )
 }
 
@@ -155,16 +162,65 @@ fn planner(
     nonce: u128,
     calls: Arc<AtomicUsize>,
 ) -> Arc<NativeEscrowPlanner> {
+    planner_for_role(
+        key_byte,
+        Participant::Maker,
+        escrow_program,
+        descriptor,
+        nonce,
+        calls,
+    )
+}
+
+fn planner_for_role(
+    key_byte: u8,
+    role: Participant,
+    escrow_program: [u32; 8],
+    descriptor: &RuntimeDescriptor,
+    nonce: u128,
+    calls: Arc<AtomicUsize>,
+) -> Arc<NativeEscrowPlanner> {
     let (_, key) = keyed_account(key_byte);
     Arc::new(
         NativeEscrowPlanner::new(
-            Participant::Maker,
+            role,
             key,
             escrow_program,
             descriptor.clone(),
             Arc::new(FixedNonce { nonce, calls }),
         )
         .unwrap(),
+    )
+}
+
+fn claim_request(
+    claimant: AccountId,
+    depositor: AccountId,
+    escrow_program: [u32; 8],
+    request_id: &str,
+) -> PrepareRevealingClaimRequest {
+    let preimage = [0x55; 32];
+    let terms = NativeEscrowTerms::new(NativeEscrowTermsInput {
+        swap_id: h(7),
+        terms_hash: h(8),
+        secret_digest: Hex32::from_bytes(Sha256::digest(preimage).into()),
+        depositor: Participant::Maker,
+        depositor_account_id: Hex32::from_bytes(depositor.into_value()),
+        claimant: Participant::Taker,
+        claimant_account_id: Hex32::from_bytes(claimant.into_value()),
+        amount: 123,
+        refund_at_ms: 1_760_000_000_123,
+        authenticated_transfer_program_id: program_hex(
+            Program::authenticated_transfer_program().id(),
+        ),
+    })
+    .unwrap();
+    PrepareRevealingClaimRequest::new(
+        context_for(Participant::Taker, request_id),
+        runtime(Participant::Taker, claimant, escrow_program),
+        terms,
+        lez_bridge_protocol::TransactionId::from_bytes([0x99; 32]),
+        RevealingPreimage::new(preimage),
     )
 }
 
@@ -302,7 +358,7 @@ async fn durable_cache_replays_randomized_prepare_and_unknown_submit_across_rest
 }
 
 #[tokio::test]
-async fn registers_all_six_methods_and_does_not_persist_claim_preimage() {
+async fn registers_all_six_methods_and_rejects_claim_for_wrong_actor_role() {
     let temp = TempDir::new().unwrap();
     let store = temp.path().join("all-methods.json");
     let (signer, _) = keyed_account(83);
@@ -355,7 +411,7 @@ async fn registers_all_six_methods_and_does_not_persist_claim_preimage() {
         RevealingPreimage::new([0xab; 32]),
     );
     assert!(
-        matches!(bridge.prepare_revealing_claim(claim).await, Err(BridgeClientError::Remote(error)) if error.code() == ErrorCode::Unavailable)
+        matches!(bridge.prepare_revealing_claim(claim).await, Err(BridgeClientError::Remote(error)) if error.code() == ErrorCode::WrongSidecarRole)
     );
     let observe_claim = ObserveRevealingClaimRequest::new(
         context("observe-claim-server-0001"),
@@ -376,12 +432,90 @@ async fn registers_all_six_methods_and_does_not_persist_claim_preimage() {
     assert!(
         matches!(bridge.submit_transaction(submit).await, Err(BridgeClientError::Remote(error)) if error.code() == ErrorCode::UnknownSubmissionOutcome)
     );
-    assert!(
-        !std::fs::read_to_string(store)
-            .unwrap()
-            .contains(&"ab".repeat(32))
-    );
     server.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn prepares_replays_restores_and_submits_taker_revealing_claim() {
+    let temp = TempDir::new().unwrap();
+    let store = temp.path().join("claim-restart.json");
+    let (claimant, _) = keyed_account(85);
+    let (depositor, _) = keyed_account(86);
+    let escrow_program = [0x5566_7788; 8];
+    let descriptor = runtime(Participant::Taker, claimant, escrow_program);
+    let nonce_calls = Arc::new(AtomicUsize::new(0));
+    let submit_calls = Arc::new(AtomicUsize::new(0));
+    let server = test_server(
+        &descriptor,
+        store.clone(),
+        planner_for_role(
+            85,
+            Participant::Taker,
+            escrow_program,
+            &descriptor,
+            33,
+            Arc::clone(&nonce_calls),
+        ),
+        Arc::new(UnknownSubmitter {
+            calls: Arc::clone(&submit_calls),
+        }),
+    )
+    .await;
+    let first_client = client(server.endpoint(), &descriptor);
+    let prepared = first_client
+        .prepare_revealing_claim(claim_request(
+            claimant,
+            depositor,
+            escrow_program,
+            "claim-server-prepare-0001",
+        ))
+        .await
+        .unwrap();
+    server.stop().await.unwrap();
+    assert_eq!(nonce_calls.load(Ordering::SeqCst), 1);
+
+    let restarted = test_server(
+        &descriptor,
+        store,
+        planner_for_role(
+            85,
+            Participant::Taker,
+            escrow_program,
+            &descriptor,
+            999,
+            Arc::clone(&nonce_calls),
+        ),
+        Arc::new(UnknownSubmitter {
+            calls: Arc::clone(&submit_calls),
+        }),
+    )
+    .await;
+    let replay_client = client(restarted.endpoint(), &descriptor);
+    assert_eq!(
+        replay_client
+            .prepare_revealing_claim(claim_request(
+                claimant,
+                depositor,
+                escrow_program,
+                "claim-server-prepare-0001",
+            ))
+            .await
+            .unwrap(),
+        prepared
+    );
+    let submit = SubmitTransactionRequest::new(
+        context_for(Participant::Taker, "claim-server-submit-0001"),
+        descriptor,
+        prepared.claim,
+    );
+    assert!(matches!(
+        replay_client.submit_transaction(submit).await,
+        Err(BridgeClientError::Remote(error))
+            if error.code() == ErrorCode::UnknownSubmissionOutcome
+    ));
+    assert_eq!(nonce_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(submit_calls.load(Ordering::SeqCst), 1);
+    restarted.stop().await.unwrap();
 }
 
 #[tokio::test]

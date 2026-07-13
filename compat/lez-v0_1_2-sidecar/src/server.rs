@@ -15,8 +15,8 @@ use lez_bridge_protocol::{
     METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_REVEALING_CLAIM, METHOD_SUBMIT_TRANSACTION,
     MessageContext, ObserveEscrowRequest, ObserveRevealingClaimRequest, Participant,
     PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareRevealingClaimRequest,
-    ProtocolErrorReply, RUN_ID_HEADER, RunId, RuntimeDescriptor, SIDECAR_ROLE_HEADER,
-    SubmitTransactionRequest,
+    PrepareRevealingClaimResult, ProtocolErrorReply, RUN_ID_HEADER, RunId, RuntimeDescriptor,
+    SIDECAR_ROLE_HEADER, SubmitTransactionRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -265,10 +265,12 @@ impl DurableStore {
                         .request_sha256
                         .bytes()
                         .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                    && entry
-                        .replay_request
-                        .as_ref()
-                        .is_none_or(|_| entry.method == METHOD_PREPARE_NATIVE_ESCROW)
+                    && entry.replay_request.as_ref().is_none_or(|_| {
+                        matches!(
+                            entry.method.as_str(),
+                            METHOD_PREPARE_NATIVE_ESCROW | METHOD_PREPARE_REVEALING_CLAIM
+                        )
+                    })
             })
         {
             return Err(BridgeServerError::InvalidDurableState);
@@ -311,6 +313,41 @@ impl DurableStore {
             let request = serde_json::from_value::<PrepareNativeEscrowRequest>(request_value)
                 .map_err(|_| BridgeServerError::InvalidDurableState)?;
             let result = serde_json::from_value::<PrepareNativeEscrowResult>(response.clone())
+                .map_err(|_| BridgeServerError::InvalidDurableState)?;
+            restored = Some((request, result));
+        }
+        Ok(restored)
+    }
+
+    fn restored_claim(
+        &self,
+    ) -> Result<
+        Option<(PrepareRevealingClaimRequest, PrepareRevealingClaimResult)>,
+        BridgeServerError,
+    > {
+        let mut restored = None;
+        for entry in self.persisted.entries.values() {
+            if entry.method != METHOD_PREPARE_REVEALING_CLAIM {
+                continue;
+            }
+            let PersistedOutcome::Success(response) = &entry.outcome else {
+                continue;
+            };
+            if restored.is_some() {
+                return Err(BridgeServerError::InvalidDurableState);
+            }
+            let request_value = entry
+                .replay_request
+                .clone()
+                .ok_or(BridgeServerError::InvalidDurableState)?;
+            let request_bytes = serde_json::to_vec(&request_value)
+                .map_err(|_| BridgeServerError::InvalidDurableState)?;
+            if hex::encode(Sha256::digest(&request_bytes)) != entry.request_sha256 {
+                return Err(BridgeServerError::InvalidDurableState);
+            }
+            let request = serde_json::from_value::<PrepareRevealingClaimRequest>(request_value)
+                .map_err(|_| BridgeServerError::InvalidDurableState)?;
+            let result = serde_json::from_value::<PrepareRevealingClaimResult>(response.clone())
                 .map_err(|_| BridgeServerError::InvalidDurableState)?;
             restored = Some((request, result));
         }
@@ -472,7 +509,9 @@ impl DurableStore {
 impl From<SidecarError> for OperationFailure {
     fn from(error: SidecarError) -> Self {
         let code = match error {
-            SidecarError::WrongSidecarRole => ErrorCode::WrongSidecarRole,
+            SidecarError::WrongSidecarRole | SidecarError::WrongClaimantRole => {
+                ErrorCode::WrongSidecarRole
+            }
             SidecarError::NodeRejected
             | SidecarError::TransactionNotPrepared
             | SidecarError::InvalidTransactionBytes
@@ -489,6 +528,9 @@ impl From<SidecarError> for OperationFailure {
             | SidecarError::WrongRuntimeCompatibility
             | SidecarError::WrongRuntimeIdentity
             | SidecarError::ActivePrepare
+            | SidecarError::ActiveClaimPrepare
+            | SidecarError::WrongClaimPreimage
+            | SidecarError::InvalidFundingTransaction
             | SidecarError::InvalidNodeEndpoint
             | SidecarError::NonceOverflow
             | SidecarError::InstructionEncoding
@@ -533,6 +575,12 @@ where
     if let Some((request, result)) = store.restored_prepare()? {
         planner
             .restore_prepared(request, result)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+    }
+    if let Some((request, result)) = store.restored_claim()? {
+        planner
+            .restore_revealing_claim(&request, result)
             .await
             .map_err(|_| BridgeServerError::InvalidDurableState)?;
     }
@@ -661,17 +709,21 @@ fn register_claim_and_submit_methods(
     module.register_async_method(
         METHOD_PREPARE_REVEALING_CLAIM,
         |params, state, _| async move {
-            let request: PrepareRevealingClaimRequest = params.one()?;
+            let request = Arc::new(params.one::<PrepareRevealingClaimRequest>()?);
             state.validate_runtime(&request.context, &request.runtime)?;
+            let planner = Arc::clone(&state.planner);
+            let operation_request = Arc::clone(&request);
             state
                 .execute(
                     METHOD_PREPARE_REVEALING_CLAIM,
                     &request.context,
-                    &request,
-                    || async {
-                        Err(OperationFailure::unavailable(
-                            "official revealing-claim planning is not implemented",
-                        ))
+                    request.as_ref(),
+                    || async move {
+                        planner
+                            .prepare_revealing_claim(operation_request.as_ref())
+                            .await
+                            .map_err(OperationFailure::from)
+                            .and_then(to_value)
                     },
                 )
                 .await
@@ -823,7 +875,11 @@ fn encode_request<Request: Serialize>(
     let request_bytes = serde_json::to_vec(&request_value)
         .map_err(|_| OperationFailure::invalid_request("request cannot be encoded canonically"))?;
     let request_sha256 = hex::encode(Sha256::digest(&request_bytes));
-    let replay_request = (method == METHOD_PREPARE_NATIVE_ESCROW).then_some(request_value);
+    let replay_request = matches!(
+        method,
+        METHOD_PREPARE_NATIVE_ESCROW | METHOD_PREPARE_REVEALING_CLAIM
+    )
+    .then_some(request_value);
     Ok((request_sha256, replay_request))
 }
 

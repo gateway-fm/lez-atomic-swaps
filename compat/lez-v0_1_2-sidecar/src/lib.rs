@@ -23,8 +23,9 @@ use common::{
 use lez_bridge_protocol::{
     AccountIds, ChainPosition, ChainTip, DiscoveryWindow, ExactTransactionBytes, Hex32,
     ObservedTransactionFacts, Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
-    PreparedTransaction, ProtocolValueError, RuntimeDescriptor, SubmissionOutcome,
-    SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
+    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PreparedTransaction,
+    ProtocolValueError, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
+    SubmitTransactionResult, TransactionId,
 };
 use lez_zec_escrow_compat::Instruction as EscrowInstruction;
 use nssa::{
@@ -33,8 +34,10 @@ use nssa::{
     public_transaction::{Message, WitnessSet},
 };
 use sequencer_service_rpc::{ClientError, RpcClient as _, SequencerClient, SequencerClientBuilder};
+use sha2::{Digest as _, Sha256};
 use tokio::sync::Mutex;
 use url::{Host, Url};
+use zeroize::Zeroize as _;
 
 const MAX_NODE_REQUEST_BYTES: u32 = 2_800_000;
 const MAX_NODE_RESPONSE_BYTES: u32 = 8 * 1024 * 1024;
@@ -52,6 +55,9 @@ pub enum SidecarError {
     /// Signed escrow terms assign the depositor role to another participant.
     #[error("native escrow depositor role does not match the isolated sidecar")]
     WrongDepositorRole,
+    /// Signed escrow terms assign the claimant role to another participant.
+    #[error("native escrow claimant role does not match the isolated sidecar")]
+    WrongClaimantRole,
     /// Runtime escrow program identity differs from the configured program.
     #[error("runtime escrow program does not match the configured official program")]
     WrongEscrowProgram,
@@ -67,6 +73,15 @@ pub enum SidecarError {
     /// Another distinct nonce reservation is active for this one-swap signer.
     #[error("a distinct native escrow preparation is already active")]
     ActivePrepare,
+    /// Another distinct revealing-claim nonce reservation is active.
+    #[error("a distinct native revealing-claim preparation is already active")]
+    ActiveClaimPrepare,
+    /// Revealing preimage does not hash to the signed terms digest.
+    #[error("revealing claim preimage does not match the signed terms")]
+    WrongClaimPreimage,
+    /// Funding identity is the impossible all-zero transaction ID.
+    #[error("revealing claim funding transaction identity is invalid")]
+    InvalidFundingTransaction,
     /// Submission is not one of the exact transactions cached by this planner.
     #[error("transaction was not prepared by this sidecar instance")]
     TransactionNotPrepared,
@@ -424,6 +439,18 @@ struct ActivePrepare {
     result: PrepareNativeEscrowResult,
 }
 
+#[derive(Clone)]
+struct ActiveClaimPrepare {
+    request_sha256: [u8; 32],
+    result: PrepareRevealingClaimResult,
+}
+
+#[derive(Default)]
+struct PlannerState {
+    native: Option<ActivePrepare>,
+    claim: Option<ActiveClaimPrepare>,
+}
+
 /// One-role, one-signer native planner for an isolated composed run.
 pub struct NativeEscrowPlanner {
     role: Participant,
@@ -432,7 +459,7 @@ pub struct NativeEscrowPlanner {
     escrow_program_id: [u32; 8],
     expected_runtime: RuntimeDescriptor,
     nonce_source: Arc<dyn NonceSource>,
-    active: Mutex<Option<ActivePrepare>>,
+    state: Mutex<PlannerState>,
 }
 
 impl fmt::Debug for NativeEscrowPlanner {
@@ -489,7 +516,7 @@ impl NativeEscrowPlanner {
             escrow_program_id,
             expected_runtime,
             nonce_source,
-            active: Mutex::new(None),
+            state: Mutex::new(PlannerState::default()),
         })
     }
 
@@ -509,8 +536,11 @@ impl NativeEscrowPlanner {
     ) -> Result<PrepareNativeEscrowResult, SidecarError> {
         self.validate_request(&request)?;
 
-        let mut active = self.active.lock().await;
-        if let Some(active) = active.as_ref() {
+        let mut state = self.state.lock().await;
+        if state.claim.is_some() {
+            return Err(SidecarError::ActivePrepare);
+        }
+        if let Some(active) = state.native.as_ref() {
             return if active.request == request {
                 Ok(active.result.clone())
             } else {
@@ -526,7 +556,7 @@ impl NativeEscrowPlanner {
             .checked_add(1)
             .ok_or(SidecarError::NonceOverflow)?;
         let result = self.plan_pair(&request, initialization_nonce, funding_nonce)?;
-        *active = Some(ActivePrepare {
+        state.native = Some(ActivePrepare {
             request,
             result: result.clone(),
         });
@@ -589,15 +619,107 @@ impl NativeEscrowPlanner {
             return Err(SidecarError::InvalidTransactionBytes);
         }
 
-        let mut active = self.active.lock().await;
-        if let Some(active) = active.as_ref() {
+        let mut state = self.state.lock().await;
+        if state.claim.is_some() {
+            return Err(SidecarError::ActivePrepare);
+        }
+        if let Some(active) = state.native.as_ref() {
             return if active.request == request && active.result == result {
                 Ok(())
             } else {
                 Err(SidecarError::ActivePrepare)
             };
         }
-        *active = Some(ActivePrepare { request, result });
+        state.native = Some(ActivePrepare { request, result });
+        Ok(())
+    }
+
+    /// Prepares and caches one exact official native revealing-claim transaction.
+    ///
+    /// The pinned guest ABI signs `ClaimNative { swap_id, preimage }` over the
+    /// exact ordered accounts `[metadata, custody, claimant]`. The funding
+    /// transaction ID is not a guest field; it is instead bound to the complete
+    /// cached bridge request so a different funding identity cannot reuse the
+    /// nonce reservation or randomized signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for role/runtime/terms/signer/preimage/funding mismatch,
+    /// another active preparation, unavailable nonce, or official encoding failure.
+    pub async fn prepare_revealing_claim(
+        &self,
+        request: &PrepareRevealingClaimRequest,
+    ) -> Result<PrepareRevealingClaimResult, SidecarError> {
+        self.validate_claim_request(request)?;
+        let request_sha256 = claim_request_sha256(request)?;
+        let mut state = self.state.lock().await;
+        if state.native.is_some() {
+            return Err(SidecarError::ActiveClaimPrepare);
+        }
+        if let Some(active) = state.claim.as_ref() {
+            return if active.request_sha256 == request_sha256 {
+                Ok(active.result.clone())
+            } else {
+                Err(SidecarError::ActiveClaimPrepare)
+            };
+        }
+        let nonce = self
+            .nonce_source
+            .account_nonce(self.signer_account_id)
+            .await?;
+        let message = self.claim_message(request, nonce)?;
+        let result = PrepareRevealingClaimResult::new(
+            request.context.clone(),
+            self.prepare_message(message)?,
+        );
+        state.claim = Some(ActiveClaimPrepare {
+            request_sha256,
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
+    /// Restores an exact durably cached revealing claim without obtaining a
+    /// nonce or reconstructing its randomized signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the official transaction, signer, nonce,
+    /// program, ordered accounts, instruction, context, and request fingerprint
+    /// all match this isolated planner.
+    pub async fn restore_revealing_claim(
+        &self,
+        request: &PrepareRevealingClaimRequest,
+        result: PrepareRevealingClaimResult,
+    ) -> Result<(), SidecarError> {
+        self.validate_claim_request(request)?;
+        if result.context != request.context {
+            return Err(SidecarError::ProtocolEncoding);
+        }
+        let claim =
+            decode_prepared_for_role(&result.claim, self.role, self.role, self.signer_account_id)?;
+        let [nonce] = claim.message.nonces.as_slice() else {
+            return Err(SidecarError::InvalidTransactionBytes);
+        };
+        if claim.message != self.claim_message(request, u128::from(*nonce))? {
+            return Err(SidecarError::InvalidTransactionBytes);
+        }
+        let request_sha256 = claim_request_sha256(request)?;
+        let mut state = self.state.lock().await;
+        if state.native.is_some() {
+            return Err(SidecarError::ActiveClaimPrepare);
+        }
+        if let Some(active) = state.claim.as_ref() {
+            return if active.request_sha256 == request_sha256 && active.result == result {
+                Ok(())
+            } else {
+                Err(SidecarError::ActiveClaimPrepare)
+            };
+        }
+        state.claim = Some(ActiveClaimPrepare {
+            request_sha256,
+            result,
+        });
         Ok(())
     }
 
@@ -619,11 +741,15 @@ impl NativeEscrowPlanner {
         if transaction_role != self.role {
             return Err(SidecarError::WrongSidecarRole);
         }
-        let active = self.active.lock().await;
-        let active = active
+        let state = self.state.lock().await;
+        let native_match = state.native.as_ref().is_some_and(|active| {
+            prepared == &active.result.initialization || prepared == &active.result.funding
+        });
+        let claim_match = state
+            .claim
             .as_ref()
-            .ok_or(SidecarError::TransactionNotPrepared)?;
-        if prepared != &active.result.initialization && prepared != &active.result.funding {
+            .is_some_and(|active| prepared == &active.result.claim);
+        if !native_match && !claim_match {
             return Err(SidecarError::TransactionNotPrepared);
         }
         let transaction = decode_prepared_for_role(
@@ -666,6 +792,70 @@ impl NativeEscrowPlanner {
             return Err(SidecarError::WrongAuthenticatedTransferProgram);
         }
         Ok(())
+    }
+
+    fn validate_claim_request(
+        &self,
+        request: &PrepareRevealingClaimRequest,
+    ) -> Result<(), SidecarError> {
+        if request.context.sidecar_role != self.role || request.runtime.sidecar_role != self.role {
+            return Err(SidecarError::WrongSidecarRole);
+        }
+        if request.runtime != self.expected_runtime {
+            return Err(SidecarError::WrongRuntimeIdentity);
+        }
+        if request.runtime.compatibility != lez_bridge_protocol::RuntimeCompatibility::NssaV0_1_2 {
+            return Err(SidecarError::WrongRuntimeCompatibility);
+        }
+        if request.terms.claimant() != self.role {
+            return Err(SidecarError::WrongClaimantRole);
+        }
+        let signer = Hex32::from_bytes(self.signer_account_id.into_value());
+        if request.runtime.signer_account_id != signer
+            || request.terms.claimant_account_id() != signer
+        {
+            return Err(SidecarError::WrongSigner);
+        }
+        if request.runtime.escrow_program_id != program_id_to_hex(self.escrow_program_id) {
+            return Err(SidecarError::WrongEscrowProgram);
+        }
+        if request.terms.authenticated_transfer_program_id()
+            != program_id_to_hex(Program::authenticated_transfer_program().id())
+        {
+            return Err(SidecarError::WrongAuthenticatedTransferProgram);
+        }
+        if request.funding_transaction_id.as_bytes() == &[0; 32] {
+            return Err(SidecarError::InvalidFundingTransaction);
+        }
+        let digest: [u8; 32] = Sha256::digest(request.preimage().expose_secret()).into();
+        if request.terms.secret_digest().as_bytes() != &digest {
+            return Err(SidecarError::WrongClaimPreimage);
+        }
+        Ok(())
+    }
+
+    fn claim_message(
+        &self,
+        request: &PrepareRevealingClaimRequest,
+        nonce: u128,
+    ) -> Result<Message, SidecarError> {
+        let swap_id = *request.terms.swap_id().as_bytes();
+        let metadata = spel_framework_core::pda::compute_pda(&self.escrow_program_id, &[&swap_id]);
+        let custody_label = spel_framework_core::pda::seed_from_str("custody");
+        let custody = spel_framework_core::pda::compute_pda(
+            &self.escrow_program_id,
+            &[&custody_label, &swap_id],
+        );
+        Message::try_new(
+            self.escrow_program_id,
+            vec![metadata, custody, self.signer_account_id],
+            vec![nonce.into()],
+            EscrowInstruction::ClaimNative {
+                swap_id,
+                preimage: *request.preimage().expose_secret(),
+            },
+        )
+        .map_err(|_| SidecarError::InstructionEncoding)
     }
 
     fn plan_pair(
@@ -797,6 +987,13 @@ fn program_id_to_hex(program_id: [u32; 8]) -> Hex32 {
         chunk.copy_from_slice(&word.to_le_bytes());
     }
     Hex32::from_bytes(bytes)
+}
+
+fn claim_request_sha256(request: &PrepareRevealingClaimRequest) -> Result<[u8; 32], SidecarError> {
+    let mut encoded = serde_json::to_vec(request).map_err(|_| SidecarError::ProtocolEncoding)?;
+    let digest = Sha256::digest(&encoded).into();
+    encoded.zeroize();
+    Ok(digest)
 }
 
 fn program_id_from_hex(value: Hex32) -> [u32; 8] {
