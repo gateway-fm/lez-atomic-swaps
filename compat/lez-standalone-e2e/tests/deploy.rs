@@ -1,16 +1,24 @@
-use std::{path::PathBuf, time::Duration};
+use std::{
+    io::Write as _,
+    path::PathBuf,
+    process::{Child, Command, Output, Stdio},
+    str::FromStr as _,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context as _, Result, ensure};
 use borsh::BorshDeserialize as _;
-use bytesize::ByteSize;
 use common::{HashType, transaction::NSSATransaction};
+use lez_standalone_e2e::{
+    GENESIS_BLOCK_ID, LOCAL_CHANNEL_ID, LocalNodeReadinessManifest, deploy_checked_guest,
+    isolated_config, verify_checked_guest_artifact, wait_for_chain_advance,
+};
 use lez_zec_escrow_compat::{EscrowMetadata, EscrowStatus, Instruction as EscrowInstruction};
 use nssa::{
-    AccountId, PrivateKey, ProgramDeploymentTransaction, PublicKey, PublicTransaction,
+    AccountId, PrivateKey, PublicKey, PublicTransaction,
     program::Program,
     public_transaction::{Message, WitnessSet},
 };
-use sequencer_service::{BedrockConfig, SequencerConfig};
 use sequencer_service_rpc::{RpcClient as _, SequencerClient, SequencerClientBuilder};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
@@ -20,26 +28,367 @@ use token_core::{TokenDefinition, TokenHolding};
 const LEZ_PIN: &str = "v0.1.2/cf3639d8252040d13b3d4e933feb19b42c76e14a";
 const TX_TIMEOUT: Duration = Duration::from_secs(60);
 
-async fn wait_for_chain_advance(
-    client: &SequencerClient,
-    handle: &sequencer_service::SequencerHandle,
-    before: u64,
-) -> Result<u64> {
-    tokio::time::timeout(TX_TIMEOUT, async {
-        loop {
-            ensure!(handle.is_healthy(), "standalone sequencer stopped");
-            let current = client
-                .get_last_block_id()
-                .await
-                .context("poll canonical block id")?;
-            if current > before {
-                break Ok::<_, anyhow::Error>(current);
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+struct ChildGuard(Option<Child>);
+
+impl ChildGuard {
+    fn child_mut(&mut self) -> &mut Child {
+        self.0.as_mut().expect("child remains owned")
+    }
+
+    fn wait_with_output(mut self) -> std::io::Result<Output> {
+        self.0
+            .take()
+            .expect("child remains owned")
+            .wait_with_output()
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if let Some(child) = self.0.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
         }
-    })
-    .await
-    .context("canonical chain did not advance before timeout")?
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires the separately built checked Risc0 guest ELF"]
+async fn exposes_reusable_external_local_node_process() -> Result<()> {
+    let guest_elf = std::env::var_os("LEZ_ESCROW_GUEST_ELF")
+        .map(PathBuf::from)
+        .context("LEZ_ESCROW_GUEST_ELF must point to the checked guest")?;
+    let artifact_manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../spel-zec-escrow/methods/guest/artifact-manifest.toml");
+    let guest_bytes = std::fs::read(&guest_elf).context("read checked guest for identity")?;
+    let expected_identity = verify_checked_guest_artifact(&guest_bytes, &artifact_manifest)
+        .context("preflight tracked guest identity")?;
+    let deterministic_actor_keys = testnet_initial_state::initial_pub_accounts_private_keys()
+        .into_iter()
+        .take(2)
+        .map(|actor| actor.pub_sign_key.to_string())
+        .collect::<Vec<_>>();
+    ensure!(
+        deterministic_actor_keys.len() == 2,
+        "two deterministic actor keys must exist"
+    );
+    let workspace = tempfile::tempdir().context("create external node workspace")?;
+    let manifest_path = workspace.path().join("readiness.json");
+
+    let mut tampered_guest = guest_bytes;
+    tampered_guest[0] ^= 1;
+    let tampered_guest_path = workspace.path().join("tampered-guest.bin");
+    std::fs::write(&tampered_guest_path, tampered_guest).context("write tampered guest")?;
+    let tampered_manifest_path = workspace.path().join("tampered-readiness.json");
+    let tampered = Command::new(env!("CARGO_BIN_EXE_lez-standalone-node"))
+        .arg("--home")
+        .arg(workspace.path().join("tampered-node"))
+        .arg("--guest-elf")
+        .arg(&tampered_guest_path)
+        .arg("--artifact-manifest")
+        .arg(&artifact_manifest)
+        .arg("--readiness-manifest")
+        .arg(&tampered_manifest_path)
+        .output()
+        .context("run external node with tampered guest")?;
+    ensure!(
+        !tampered.status.success() && !tampered_manifest_path.exists(),
+        "external node must reject a guest that differs from the tracked artifact"
+    );
+    ensure!(
+        tampered.stdout.len() + tampered.stderr.len() <= 16 * 1024,
+        "tampered-guest diagnostics must remain bounded"
+    );
+    for private_key in &deterministic_actor_keys {
+        ensure!(
+            !tampered
+                .stdout
+                .windows(private_key.len())
+                .any(|window| window == private_key.as_bytes())
+                && !tampered
+                    .stderr
+                    .windows(private_key.len())
+                    .any(|window| window == private_key.as_bytes()),
+            "tampered-guest diagnostics must not expose actor keys"
+        );
+    }
+
+    let existing_home = workspace.path().join("existing-node");
+    std::fs::create_dir(&existing_home).context("create pre-existing node home")?;
+    let owner_marker = existing_home.join("owned-by-other-activity");
+    std::fs::write(&owner_marker, b"do-not-touch").context("write node-home owner marker")?;
+    let reused_manifest_path = workspace.path().join("reused-home-readiness.json");
+    let reused = Command::new(env!("CARGO_BIN_EXE_lez-standalone-node"))
+        .arg("--home")
+        .arg(&existing_home)
+        .arg("--guest-elf")
+        .arg(&guest_elf)
+        .arg("--artifact-manifest")
+        .arg(&artifact_manifest)
+        .arg("--readiness-manifest")
+        .arg(&reused_manifest_path)
+        .output()
+        .context("run external node against pre-existing home")?;
+    ensure!(
+        !reused.status.success()
+            && !reused_manifest_path.exists()
+            && std::fs::read(&owner_marker).context("re-read node-home owner marker")?
+                == b"do-not-touch",
+        "external node must reject and preserve a pre-existing home"
+    );
+    ensure!(
+        reused.stdout.len() + reused.stderr.len() <= 16 * 1024,
+        "pre-existing-home diagnostics must remain bounded"
+    );
+    for private_key in &deterministic_actor_keys {
+        ensure!(
+            !reused
+                .stdout
+                .windows(private_key.len())
+                .any(|window| window == private_key.as_bytes())
+                && !reused
+                    .stderr
+                    .windows(private_key.len())
+                    .any(|window| window == private_key.as_bytes()),
+            "pre-existing-home diagnostics must not expose actor keys"
+        );
+    }
+
+    let node_home = workspace.path().join("node");
+    let mut process = ChildGuard(Some(
+        Command::new(env!("CARGO_BIN_EXE_lez-standalone-node"))
+            .arg("--home")
+            .arg(&node_home)
+            .arg("--guest-elf")
+            .arg(&guest_elf)
+            .arg("--artifact-manifest")
+            .arg(&artifact_manifest)
+            .arg("--readiness-manifest")
+            .arg(&manifest_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("spawn external standalone node")?,
+    ));
+
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !manifest_path.exists() {
+        ensure!(
+            process
+                .child_mut()
+                .try_wait()
+                .context("poll external standalone node")?
+                .is_none(),
+            "external standalone node exited before readiness"
+        );
+        ensure!(
+            Instant::now() < deadline,
+            "external standalone node did not become ready before timeout"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let home_mode = std::fs::metadata(&node_home)
+            .context("read isolated node-home metadata")?
+            .permissions()
+            .mode()
+            & 0o777;
+        ensure!(home_mode == 0o700, "isolated node-home mode must be 0700");
+        let mode = std::fs::metadata(&manifest_path)
+            .context("read readiness manifest metadata")?
+            .permissions()
+            .mode()
+            & 0o777;
+        ensure!(mode == 0o600, "readiness manifest mode must be 0600");
+    }
+    let readiness: LocalNodeReadinessManifest = serde_json::from_slice(
+        &std::fs::read(&manifest_path).context("read private readiness manifest")?,
+    )
+    .context("decode private readiness manifest")?;
+    ensure!(
+        readiness.schema_version == 2,
+        "manifest schema must be exact"
+    );
+    ensure!(
+        readiness.genesis_block_id == GENESIS_BLOCK_ID,
+        "manifest genesis ID must be exact"
+    );
+    ensure!(
+        readiness.channel_id == hex::encode(LOCAL_CHANNEL_ID),
+        "manifest channel must be exact"
+    );
+    ensure!(
+        readiness.elf_sha256 == expected_identity.elf_sha256
+            && readiness.image_id == expected_identity.image_id,
+        "readiness must carry the verified tracked guest identity"
+    );
+    ensure!(
+        risc0_zkvm::Digest::from(readiness.escrow_program_id).to_string() == readiness.image_id,
+        "deployed program ID must equal the verified Risc0 ImageID"
+    );
+    let port = readiness
+        .endpoint
+        .strip_prefix("http://127.0.0.1:")
+        .context("node endpoint must be literal loopback HTTP")?
+        .parse::<u16>()
+        .context("node endpoint must use a valid dynamic port")?;
+    ensure!(port != 0, "node endpoint must publish its allocated port");
+
+    let client = SequencerClientBuilder::default()
+        .build(readiness.endpoint.clone())
+        .context("build official client for external node")?;
+    client
+        .check_health()
+        .await
+        .context("external node official health RPC")?;
+    let genesis = client
+        .get_block(readiness.genesis_block_id)
+        .await
+        .context("external node official genesis RPC")?
+        .context("external node genesis must exist")?;
+    ensure!(
+        genesis.header.hash.to_string() == readiness.genesis_block_hash,
+        "manifest genesis hash must match official RPC"
+    );
+    let built_in_programs = client
+        .get_program_ids()
+        .await
+        .context("external node official built-in program-list RPC")?;
+    let native_program = Program::authenticated_transfer_program().id();
+    ensure!(
+        built_in_programs.get("authenticated_transfer")
+            == Some(&readiness.authenticated_transfer_program_id)
+            && readiness.authenticated_transfer_program_id == native_program,
+        "readiness must bind the pinned advertised authenticated-transfer built-in"
+    );
+
+    let deployment_hash = HashType::from_str(&readiness.deployment_transaction_hash)
+        .context("readiness deployment hash must be canonical")?;
+    let deployment_transaction = client
+        .get_transaction(deployment_hash)
+        .await
+        .context("external node canonical deployment transaction RPC")?
+        .context("readiness deployment transaction must exist")?;
+    ensure!(
+        deployment_transaction.hash() == deployment_hash,
+        "readiness deployment transaction hash must be exact"
+    );
+    let NSSATransaction::ProgramDeployment(deployment) = &deployment_transaction else {
+        anyhow::bail!("readiness transaction must be a program deployment");
+    };
+    let deployed_program = Program::new(deployment.clone().into_message().into_bytecode())
+        .context("readiness deployment must contain a canonical program")?;
+    ensure!(
+        deployed_program.id() == readiness.escrow_program_id,
+        "readiness deployment bytes must derive the checked ProgramId"
+    );
+
+    let deployment_block = client
+        .get_block(readiness.deployment_block_id)
+        .await
+        .context("external node canonical deployment block RPC")?
+        .context("readiness deployment block must exist")?;
+    ensure!(
+        deployment_block.header.block_id == readiness.deployment_block_id
+            && deployment_block.header.hash.to_string() == readiness.deployment_block_hash,
+        "readiness deployment block identity must match official RPC"
+    );
+    let matching_deployments = deployment_block
+        .body
+        .transactions
+        .iter()
+        .filter(|transaction| transaction.hash() == deployment_hash)
+        .collect::<Vec<_>>();
+    ensure!(
+        matching_deployments.len() == 1,
+        "readiness deployment must occur exactly once in its canonical block"
+    );
+    ensure!(
+        matching_deployments[0] == &deployment_transaction,
+        "getTransaction and containing getBlock deployment bytes must be exact"
+    );
+    let NSSATransaction::ProgramDeployment(block_deployment) = matching_deployments[0] else {
+        anyhow::bail!("matching block transaction must be a program deployment");
+    };
+    let block_program = Program::new(block_deployment.clone().into_message().into_bytecode())
+        .context("canonical block deployment must contain a valid program")?;
+    ensure!(
+        block_program.id() == readiness.escrow_program_id,
+        "canonical block deployment must derive the readiness ProgramId"
+    );
+    ensure!(readiness.actors.len() == 2, "two actors must be published");
+    for actor in &readiness.actors {
+        ensure!(
+            deterministic_actor_keys.contains(&actor.private_key),
+            "readiness actor must be one of the deterministic genesis actors"
+        );
+        let account_id = AccountId::from_str(&actor.account_id)
+            .context("manifest actor account must be canonical")?;
+        let private_key = PrivateKey::from_str(&actor.private_key)
+            .context("manifest actor key must be canonical")?;
+        ensure!(
+            AccountId::from(&PublicKey::new_from_private_key(&private_key)) == account_id,
+            "manifest actor key must derive its account"
+        );
+        let account = client
+            .get_account(account_id)
+            .await
+            .context("fetch manifest actor through official RPC")?;
+        ensure!(
+            account.program_owner == native_program
+                && account.balance == actor.balance
+                && actor.balance > 0,
+            "manifest actor must match funded official RPC state"
+        );
+    }
+
+    process
+        .child_mut()
+        .stdin
+        .take()
+        .context("external node stdin must be piped")?
+        .write_all(b"\n")
+        .context("request graceful external node shutdown")?;
+    let shutdown_deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if process
+            .child_mut()
+            .try_wait()
+            .context("poll graceful external node shutdown")?
+            .is_some()
+        {
+            break;
+        }
+        ensure!(
+            Instant::now() < shutdown_deadline,
+            "external standalone node did not shut down gracefully"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let output = process
+        .wait_with_output()
+        .context("collect external node output")?;
+    ensure!(
+        output.status.success(),
+        "external node must exit successfully"
+    );
+    let stdout = String::from_utf8(output.stdout).context("external node stdout must be UTF-8")?;
+    let stderr = String::from_utf8(output.stderr).context("external node stderr must be UTF-8")?;
+    ensure!(
+        stdout.len() + stderr.len() <= 64 * 1024,
+        "successful external node diagnostics must remain bounded"
+    );
+    for actor in &readiness.actors {
+        ensure!(
+            !stdout.contains(&actor.private_key) && !stderr.contains(&actor.private_key),
+            "external node diagnostics must not expose actor keys"
+        );
+    }
+    Ok(())
 }
 
 async fn wait_for_inclusion(
@@ -320,29 +669,6 @@ async fn setup_token_fixture(
     })
 }
 
-fn isolated_config(home: PathBuf) -> SequencerConfig {
-    SequencerConfig {
-        home,
-        genesis_id: 1,
-        is_genesis_random: false,
-        max_num_tx_in_block: 20,
-        max_block_size: ByteSize::mib(4),
-        mempool_max_size: 1_000,
-        block_create_timeout: Duration::from_millis(250),
-        retry_pending_blocks_timeout: Duration::from_millis(100),
-        signing_key: [37; 32],
-        bedrock_config: BedrockConfig {
-            backoff: Default::default(),
-            channel_id: [0; 32].into(),
-            node_url: "http://127.0.0.1:1".parse().expect("static URL"),
-            auth: None,
-        },
-        indexer_rpc_url: "ws://127.0.0.1:1".parse().expect("static URL"),
-        initial_public_accounts: Some(testnet_initial_state::initial_accounts()),
-        initial_private_accounts: Some(testnet_initial_state::initial_commitments()),
-    }
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires the separately built Risc0 guest ELF"]
 async fn deploys_guest_and_executes_real_actor_lifecycles() -> Result<()> {
@@ -352,8 +678,6 @@ async fn deploys_guest_and_executes_real_actor_lifecycles() -> Result<()> {
         .context("LEZ_ESCROW_GUEST_ELF must name the checked guest ELF")?;
     let elf = std::fs::read(&elf_path)
         .with_context(|| format!("read guest ELF at {}", elf_path.display()))?;
-    ensure!(!elf.is_empty(), "guest ELF must not be empty");
-    let program = Program::new(elf.clone()).context("guest must be a canonical LEZ program")?;
 
     let home = tempfile::tempdir().context("create isolated sequencer state")?;
     let handle = sequencer_service::run(isolated_config(home.path().to_path_buf()), 0)
@@ -375,36 +699,10 @@ async fn deploys_guest_and_executes_real_actor_lifecycles() -> Result<()> {
     wait_for_chain_advance(&client, &handle, genesis)
         .await
         .context("standalone did not produce its mandatory-clock readiness block")?;
-    let before = client
-        .get_last_block_id()
+    let deployment = deploy_checked_guest(&client, &handle, elf)
         .await
-        .context("pre-deployment block id")?;
-
-    let message = nssa::program_deployment_transaction::Message::new(elf);
-    let deployment = ProgramDeploymentTransaction::new(message);
-    let expected_hash = HashType(deployment.hash());
-    let submitted_hash = client
-        .send_transaction(NSSATransaction::ProgramDeployment(deployment))
-        .await
-        .context("submit deployment through sendTransaction")?;
-    ensure!(
-        submitted_hash == expected_hash,
-        "deployment hash must be canonical"
-    );
-
-    let included = wait_for_inclusion(&client, &handle, expected_hash).await?;
-    ensure!(
-        matches!(included, NSSATransaction::ProgramDeployment(_)),
-        "included transaction must be the deployment"
-    );
-    let after = client
-        .get_last_block_id()
-        .await
-        .context("included block id")?;
-    ensure!(
-        after > before,
-        "deployment must advance the canonical block chain"
-    );
+        .context("deploy checked guest through reusable helper")?;
+    let program = deployment.program;
 
     let actors = testnet_initial_state::initial_pub_accounts_private_keys();
     let depositor = &actors[0];
@@ -1055,9 +1353,8 @@ async fn deploys_guest_and_executes_real_actor_lifecycles() -> Result<()> {
     );
 
     println!(
-        "proved LEZ {LEZ_PIN} deployment plus native and two-definition token actor lifecycles: program_id={:?} tx={} block={after:?}",
-        program.id(),
-        expected_hash
+        "proved LEZ {LEZ_PIN} deployment plus native and two-definition token actor lifecycles: program_id={:?}",
+        program.id()
     );
     drop(handle);
     drop(home);

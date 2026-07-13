@@ -116,8 +116,12 @@ RISC0_SKIP_BUILD=1 CARGO_TARGET_DIR="$methods_target" \
 cargo fmt --manifest-path "$standalone_manifest" -- --check
 CARGO_TARGET_DIR="$standalone_target" \
   cargo clippy --locked --manifest-path "$standalone_manifest" --all-targets -- -D warnings
+CARGO_TARGET_DIR="$standalone_target" \
+  cargo test --locked --manifest-path "$standalone_manifest" --all-targets -- \
+    --test-threads=1
 RISC0_DEV_MODE=1 LEZ_ESCROW_GUEST_ELF="$guest_elf_absolute" CARGO_TARGET_DIR="$standalone_target" \
-  cargo test --locked --manifest-path "$standalone_manifest" --test deploy -- --ignored --nocapture
+  cargo test --locked --manifest-path "$standalone_manifest" --test deploy -- \
+    --ignored --nocapture --test-threads=1
 
 cost_output_dir="${LEZ_COST_OUTPUT_DIR:-${TMPDIR:-/tmp}/lez-costs-${run_id}}"
 cost_log="${cost_output_dir}/cost.log"

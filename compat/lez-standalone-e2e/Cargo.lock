@@ -3024,17 +3024,21 @@ dependencies = [
  "bytesize",
  "common",
  "env_logger",
+ "hex",
  "lez-zec-escrow-compat",
  "nssa",
+ "risc0-zkvm",
  "sequencer_service",
  "sequencer_service_rpc",
  "serde",
+ "serde_json",
  "sha2",
  "spel-framework-core",
  "tempfile",
  "testnet_initial_state",
  "token_core",
  "tokio",
+ "toml",
 ]
 
 [[package]]
