@@ -1,11 +1,12 @@
 # ADR 0022: Isolate pinned LEZ official-wire code behind a sidecar
 
 Status: Accepted for the M2 actual-node corridor; implementation in progress --
-the official native and revealing-claim planners, node-RPC core, authenticated
-bridge server/client, signed-agreement first-lock adapter, and Zebra
-owner/counterparty claim/refund ports are GREEN.
-Escrow/claim observation, the executable runner, actor wiring, and the composed
-proof remain RED -- 2026-07-13
+the official native and revealing-claim planners, native escrow observation,
+node-RPC core, authenticated bridge server/client, executable role-isolated
+sidecars, signed-agreement first-lock/observation adapter, and Zebra
+owner/counterparty claim/refund ports are GREEN. Revealing-claim observation,
+refund bridging, SDK-port/actor wiring, and the composed proof remain RED --
+2026-07-13
 
 ```mermaid
 flowchart LR
@@ -125,9 +126,22 @@ transaction before nonce use; restart restores the exact randomized official
 bytes, and submission requires cache membership. The pinned guest ABI carries
 only swap ID and preimage, so the funding transaction identity is enforced by
 the request/cache boundary but cannot be embedded in the on-chain instruction
-without an upstream ABI change. Escrow and revealing-claim observation still
-return typed `Unavailable` until their official cores exist. The sidecar
-executable, actor composition, and composed-chain proof remain pending.
+without an upstream ABI change. Native escrow observation now decodes official
+transactions, signatures, instructions, block links, metadata, and custody,
+brackets account reads with an identical tip, rejects ambiguity, and reports
+absence only after a complete stable discovery window. Exact-owner lookup is
+limited to the latest 4,096 canonical blocks because the upstream transaction
+lookup has no chain position; an older miss is `UnknownOrPending`, never
+absence. The main adapter independently validates the primitive pair against
+the signed agreement and conservative local-depth policy. Revealing-claim
+observation still returns typed `Unavailable`.
+
+The executable starts one sidecar with private capability/signer files, an
+exact runtime descriptor, a 0600 durable idempotency store, and a
+`127.0.0.1:0` listener. Its process contract runs maker and taker
+concurrently with distinct identities and proves wrong capability, run, and
+role rejection plus graceful cleanup. Actor composition and the composed-chain
+proof remain pending.
 
 ## Atomicity preservation
 
@@ -220,7 +234,10 @@ permits each request ID once per client instance. It makes one attempt with no
 redirect, proxy, or automatic retry. The first main-process adapter accepts a
 caller-owned durable request ID, verifies the signed compatibility environment,
 channel, genesis, escrow program, role, and signer, and converts one official
-native prepare response into the exact two-step SDK first-lock plan. Durable
+native prepare response into the exact two-step SDK first-lock plan. Its
+observation path accepts caller-owned exact IDs or a bounded discovery window,
+validates full initialization/funding facts, and invokes the SDK canonical
+agreement validator without importing official wire types. Durable
 replay protection and idempotent responses across client or sidecar restart are
 server-owned. The implemented Zebra claim/refund ports independently derive
 signed terms, delegate only transaction signing, validate exact retained V5
@@ -230,13 +247,14 @@ an unknown outcome. Bounded canonical block/mempool counterparty discovery
 returns `Unstable` for unresolved or exhausted searches rather than false
 absence.
 
-The initial failing composed test lives in the main workspace. It requires
+The executable sidecar process contract is GREEN, but the composed corridor
+test still requires
 distinct loopback LEZ-sidecar and Zebra endpoints, distinct role funding,
 separate maker/taker databases and claim keys, both signed directions, the
 fixed `locks -> LEZ reveal -> Zcash follow-up` order, and restart after every
-effect. It remains RED until concrete adapters and the single-owner isolated
-runner satisfy that contract. No broken commit is published while this slice
-is being driven GREEN.
+effect. It remains RED until the remaining claim/refund/funding adapters and
+reference actors satisfy that contract. No broken commit is published while
+this slice is being driven GREEN.
 
 Before the claim ports can be certified, the SDK must validate canonical LEZ
 revealing-claim snapshots rather than constructing evidence from primitive

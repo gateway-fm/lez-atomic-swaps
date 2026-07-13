@@ -555,11 +555,17 @@ outputs above.
   validates the exact claimant role, runtime, signer, agreement terms,
   preimage, and funding binding, restores byte-identical randomized output
   after restart, and restricts submission to the exact cached transaction.
-  Escrow and revealing-claim observation remain typed `Unavailable`. Their
-  official cores, the sidecar executable/runner, remaining observation/refund
-  composition, and isolated actor processes remain. Commit `8c92007` closes
-  official revealing-claim preparation and restart restoration with 21 locked
-  sidecar tests.
+  Commit `f1f98a1` closes native escrow observation and the executable
+  sidecar runner. Official transaction/signature/instruction/account decoding,
+  linked-block/genesis validation, identical tip brackets, exact cached owner
+  lookup, bounded counterparty discovery, ambiguity/moving-tip rejection, and
+  conservative full-window absence pass. Maker and taker processes run
+  concurrently with distinct private capabilities, signers, runtime
+  descriptors, stores, and ephemeral listeners. Revealing-claim observation,
+  refund composition, SDK-port actors, and the composed corridor remain.
+  Commit `8c92007` closes official revealing-claim preparation and restart
+  restoration; the exact post-runner sidecar tree passes 25 all-target tests
+  plus strict Clippy, rustdoc, advisory, license, ban, and source gates.
   Commit `cdb732e` supplies the in-process Zebra first-lock half: bounded private
   DTOs, exact lowercase hash/transaction decoding, agreement/network/branch/
   genesis binding, stable-tip canonical snapshots, exact V5 authorization-byte
@@ -600,7 +606,11 @@ outputs above.
   official initialize/fund result into one SDK first-lock plan. Six tests cover
   the exact mapping, signed/runtime mutations, token rejection, response
   mismatch, and unknown-outcome no-retry behavior. Server-side durable
-  idempotency is implemented; runner lifecycle integration remains. Pin
+  idempotency is implemented. Commit `a2697e6` adds agreement-bound exact
+  owner and bounded claimant-discovery observation, revalidates full primitive
+  initialization/funding facts through the SDK canonical validator, rejects 41
+  mutation classes, and preserves caller-owned request identity with one
+  transport attempt. Refund/claim SDK-port composition remains. Pin
   weakening, crypto patches, and hand-copied LEZ wire/RPC types are prohibited.
 - [ ] Prove the composed native happy path preserves the ADR 0022 atomicity
   invariants in both directions: separate role processes/stores/keys/sidecars;

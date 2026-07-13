@@ -17,9 +17,9 @@ HTTPS provider transport, and actor adapter.
 | Flow | Boundary exercised | Current limitation |
 |---|---|---|
 | ZEC SDK agreement/activation/locks/claims/refunds | Canonical bounded dual-signed terms, separate role stores, exact lock recovery, and direction-fixed effects reach `BothLegsLocked`; LEZ reveal then Zcash follow-up reaches `Completed`; or exact owner intents plus observer-only transitions drive LEZ then Zcash refunds to `Refunded` in both directions | These commands still use deterministic contract doubles and no RPC, node, Docker, faucet, or external resource. Claims and refunds replay through schema-v10 SQLite with atomic owner/observer journals. The production LEZ refund port and composed actor/node flow remain pending, so this is not yet the manual actual-node flow |
-| LEZ bridge and Zebra claim/refund contracts | One-attempt authenticated loopback client and server bind all six bounded methods. The server restores exact native and revealing-claim bytes and writes an unknown guard before submit. The official claim planner binds role/runtime/signer/terms/preimage/funding before nonce use. The main-process adapter converts the signed compatibility agreement into exact LEZ initialize/fund SDK plans. Typed Zebra ports validate owner claims/refunds and discover counterparty spends through bounded canonical scans | These are adapter contract tests against ephemeral loopback RPC mocks, not a manual end-user flow or composed consensus proof. The sidecar's escrow and revealing-claim observation cores return typed `Unavailable`; its executable runner, actor processes, production LEZ refund port, and composed corridor remain pending. No Docker, faucet, or public endpoint is used |
+| LEZ bridge and Zebra claim/refund contracts | One-attempt authenticated loopback client and server bind all six bounded methods. The server restores exact native and revealing-claim bytes and writes an unknown guard before submit. Official native escrow observation decodes and brackets exact owner facts or bounded counterparty discovery, and the main adapter independently validates them against signed compatibility terms. Two real sidecar processes run concurrently with distinct maker/taker roles, keys, capabilities, stores, runtimes, and ephemeral listeners. Typed Zebra ports validate owner claims/refunds and discover counterparty spends through bounded canonical scans | These are isolated adapter and process contract tests, not yet a composed consensus proof. The runner's describe/authentication path uses no chain call; official observation uses an ephemeral loopback RPC mock that returns official node types. Revealing-claim observation, SDK-port wiring, actor processes, the production LEZ refund port, and the composed corridor remain pending. No Docker, faucet, public endpoint, or fixed port is used |
 | Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
-| Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v10 SQLite journal/alerts plus the production role-fixed SDK recovery adapter, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The daemon polling loop, production LEZ observation/refund conversion, and independent maker/taker processes remain pending |
+| Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v10 SQLite journal/alerts plus the production role-fixed SDK recovery adapter, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The daemon polling loop, LEZ SDK-port/refund composition, and independent maker/taker processes remain pending |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
 | LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an in-process, ephemeral-port LEZ v0.1.2 standalone sequencer | This is a local compatibility proof, not the incompatible LEZ 0.2 public testnet |
 | LEZ recursive execution costs | Exact checked guest replayed through production `V03State` transitions with nested authenticated-transfer and ATA/Token sessions | This measures deterministic local execution, not public-testnet fees or latency |
@@ -262,6 +262,36 @@ underscores, and hyphens.
   `LEZ_E2E_TOOL_DIR`, `LEZ_METHODS_TARGET_DIR`,
   `LEZ_STANDALONE_TARGET_DIR`, and `LEZ_COST_OUTPUT_DIR` values as shown below.
   A shared completed tool cache is safe only when no other run is writing it.
+
+### Isolated LEZ maker/taker sidecar processes
+
+Build and run the exact locked compatibility executable contract without
+Docker, a public endpoint, faucet funds, or a fixed port:
+
+```sh
+cd compat/lez-v0_1_2-sidecar
+cargo build --offline --locked --bin lez-v0-1-2-sidecar
+cargo test --offline --locked --test runner_process -- --nocapture
+```
+
+The test starts maker and taker binaries concurrently. Each child reads a
+different 0600 signer file, capability file, runtime descriptor, and durable
+state path, then publishes a distinct literal-loopback ephemeral endpoint.
+Wrong capability, run ID, and role calls must fail; the correct actor can call
+`lez_bridge.v1.describe_runtime`; graceful shutdown must leave a private
+state file and no child process. The configured official node endpoint is an
+unused loopback sentinel in this process-lifecycle test, so it does not claim
+an on-chain observation. Official native observation behavior is covered
+separately by the sidecar's `official_node_rpc` test against an ephemeral
+loopback service returning the pinned generated RPC types.
+
+For a direct manual launch, create the parent directory for the state file and
+supply the six required flags shown by the test fixture:
+`--node-endpoint`, `--run-id`, `--runtime-file`,
+`--capability-file`, `--signer-key-file`, and `--state-file`.
+Secret files must be regular non-symlinks with no group/other permission bits;
+the signer file is exactly 64 lowercase hexadecimal characters. Omit the
+test-only `--shutdown-on-stdin` flag so the process waits for Ctrl-C.
 
 ## Flow 1: maker operator CLI and daemon restart
 

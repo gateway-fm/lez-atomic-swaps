@@ -121,10 +121,17 @@ current executable slices enforce:
   submissions before the node call. Official revealing-claim preparation now
   binds the signed role, runtime, signer, terms, preimage, and funding identity,
   restores the exact randomized bytes after restart, and admits only that
-  cached transaction for submission. Escrow and revealing-claim observation
-  still fail closed as unavailable. The sidecar executable/runner, those
-  observation cores, actor-process integration, and completed LEZ-plus-Zebra
-  corridor remain.
+  cached transaction for submission. Native escrow observation now decodes
+  official transactions, signatures, instructions, metadata, custody, block
+  links, genesis, and stable tip brackets for exact owners and bounded
+  counterparty discovery; the main adapter independently revalidates those
+  primitive facts against the signed agreement. Bounded or old misses remain
+  unknown, never false absence. The executable runner starts concurrent maker
+  and taker sidecars with separate private keys, capabilities, runtime
+  descriptors, durable stores, and ephemeral loopback listeners. Revealing-
+  claim observation, the production LEZ refund path, SDK-port composition,
+  independent reference actors, and the completed LEZ-plus-Zebra corridor
+  remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),
@@ -153,8 +160,9 @@ cleanup behavior.
 The current executable operator, Zebra, and LEZ flows use no public blockchain
 RPC or faucet. The official LEZ v0.2 endpoint
 `https://testnet.lez.logos.co` is selected and its health/block/program methods
-were checked on 2026-07-12, but no repository user flow submits to it yet. Maker
-and Zebra host endpoints are ephemeral loopback services. The LEZ
+were checked on 2026-07-12, but no repository user flow submits to it yet.
+Maker, Zebra-adapter, and sidecar host endpoints are ephemeral loopback
+services. The LEZ
 test client uses loopback, but pinned upstream v0.1.2 binds its ephemeral server
 to the host wildcard address; it is short-lived and collision-isolated, not
 loopback/network-namespace isolated. Test funds are

@@ -1,6 +1,6 @@
 # System architecture and actor flows
 
-Status: Living target architecture — 2026-07-12
+Status: Living target architecture — 2026-07-13
 
 This is the canonical whole-system view. ADRs record why individual choices
 were made; this document shows how the choices compose into the product that
@@ -24,7 +24,7 @@ flowchart TB
         LC["Logos Core lifecycle adapter"]
         MD["Maker daemon"]
         CO["Durable swap coordinator"]
-        DB[("Maker SQLite schema v8 SDK recovery + runtime journal<br/>claim-envelope wiring pending")]
+        DB[("Maker SQLite schema v10<br/>lock + claim + refund journals")]
         PS["BTC / XMR / ZEC pair SDKs"]
         ZA["Canonical dual-signed LEZ/ZEC agreement validator"]
         ZTX["ZEC BIP-199 V5 transaction SDK"]
@@ -32,6 +32,7 @@ flowchart TB
         MOA["Maker-only taker-lock observation"]
         OJ["Contiguous exact-tracker journal<br/>canonical / depth / same-tip replacement / removal"]
         ME["Fresh-gated durable maker second lock"]
+        MLB["Agreement-validating LEZ bridge adapter"]
     end
 
     subgraph TakerDevice["Taker-controlled device"]
@@ -40,11 +41,17 @@ flowchart TB
         TS["Taker pair SDK + durable recovery state"]
         TA["Taker-side concrete agreement validator"]
         TMO["Taker-only maker-lock observation"]
-        TDB[("Taker SQLite schema v8<br/>role-local recovery")]
+        TDB[("Taker SQLite schema v10<br/>role-local recovery")]
+        TLB["Agreement-validating LEZ bridge adapter"]
     end
 
     subgraph SharedSecurity["Shared SDK security boundary"]
-        PCM["Protected preimage + exact claim payload<br/>XChaCha20-Poly1305 + HKDF<br/>SQLite claim wiring pending"]
+        PCM["Protected preimage + exact claim payload<br/>XChaCha20-Poly1305 + HKDF<br/>schema-v10 envelope journal"]
+    end
+
+    subgraph LezSidecars["Role-isolated official LEZ v0.1.2 processes"]
+        MSL["Maker sidecar<br/>official wire + signer + durable cache"]
+        TLS["Taker sidecar<br/>official wire + signer + durable cache"]
     end
 
     subgraph OffChain["Untrusted, removable after lock"]
@@ -52,7 +59,7 @@ flowchart TB
     end
 
     subgraph Nodes["Actor-selected node boundary"]
-        LEZ["LEZ sequencer<br/>v0.1.2 local guest proven / official v0.2 testnet live, adapter pending"]
+        LEZ["LEZ sequencer<br/>v0.1.2 local guest + official sidecar path<br/>public v0.2 activation pending"]
         BTC["Bitcoin Core"]
         XMR["monerod + wallet RPC"]
         ZEC["Minimal Zebra 5.2.0 + local Zcash construction"]
@@ -79,6 +86,7 @@ flowchart TB
     PS --> CA
     PS --> MOA
     PS --> ME
+    PS --> MLB
     ZTX --> CA
 
     T --> TC
@@ -87,14 +95,20 @@ flowchart TB
     TS --> TA
     TS --> TMO
     TS --> TDB
+    TS --> TLB
     TMO --> TDB
     TMO -->|"signed direction selects one node"| LEZ
     TMO -->|"signed direction selects one node"| ZEC
     PS --> PCM
     TS --> PCM
-    PCM -.->|"encrypted envelope pending"| DB
-    PCM -.->|"encrypted envelope pending"| TDB
+    PCM -->|"encrypted envelope + journal"| DB
+    PCM -->|"encrypted envelope + journal"| TDB
     TM -.-> TS
+
+    MLB <-->|"bounded authenticated lez_bridge.v1"| MSL
+    TLB <-->|"bounded authenticated lez_bridge.v1"| TLS
+    MSL -->|"pinned generated JSON-RPC"| LEZ
+    TLS -->|"pinned generated JSON-RPC"| LEZ
 
     MD <-->|"discovery + negotiation only"| DC
     TS <-->|"discovery + negotiation only"| DC
@@ -120,7 +134,7 @@ flowchart TB
     ZEC --> ZN
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class MM,LC,PS,CA,TC,TM,TS planned;
+    class MM,LC,CA,TC,TM planned;
 ```
 
 The maker operator owns maker policy, keys, node selection, and the daemon
@@ -138,15 +152,17 @@ activation, then revalidate its exact durable wire on resume without retaining
 transport or raw adapter handles. The current executable SDK store is a
 role-fixed production SQLite adapter for accepted agreement, both lock intents,
 taker projection, maker-independent observation replay, confirmed maker funding,
-and the taker-local observed-maker transition. Separate role stores now converge
-at `BothLegsLocked` and replay there in both directions. The remaining M2 work is claims/refunds, production adapters, and actor
-integration; chain adapters must
+and the taker-local observed-maker transition. Schema-v10 claim and refund
+journals protect exact owner material, keep observer paths secret-free, and
+replay separate role stores to `Completed` or `Refunded` in both directions.
+The remaining M2 work is production port composition, post-lock hardening, and
+independent actor integration; chain adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
 observation alone is non-authorizing: forward Zcash persists and revalidates
 the complete canonical output type plus ordered canonical, depth, atomic
 same-tip replacement, and affirmative exact-head removal events. The SDK and
 store fold `ZcashObservationTracker`, so duplicate polls write nothing and
-changed inclusion without replacement fails. Schema v8 rejects orphan, holey,
+changed inclusion without replacement fails. Schema v10 rejects orphan, holey,
 or history-incompatible rows and catches stale instances up before returning.
 The maker effect invokes the distinct fresh pre-second-lock call internally,
 then persists the exact direction-fixed opposite-chain plan before submission.
@@ -157,7 +173,7 @@ persists a stable primitive snapshot bound to the signed channel/genesis,
 public fund transaction, canonical block/tip, complete SPEL metadata, exact
 custody, depth, and finality policy. SDK and SQLite replay rerun the same
 validator. The dependency-free exact-head tracker is now folded by the active
-SDK and the schema-v8 journal. Exact duplicates write no row, while a
+SDK and the schema-v10 journal. Exact duplicates write no row, while a
 same-inclusion Pending-to-Finalized update advances one contiguous revision and
 survives close/reopen. The pure tracker also proves affirmative same-tip
 replacement, stale-evidence rejection, and fatal finalized-history changes.
@@ -167,15 +183,18 @@ a row or revision change. Deterministic-local reverse fresh eligibility now
 replays and re-queries the exact head and checks signed depth; local Pending
 remains eligible when depth is sufficient, and no result is cached as
 authority. The public Finalized/typed-finality policy is unit-tested but remains
-unreachable while public agreement activation is fail-closed. The official-wire
-LEZ node port, reviewed public deployment, actual-node maker fault evidence,
-claims/refunds, canonical production maker-lock adapters, and independent actor processes remain.
+unreachable while public agreement activation is fail-closed. The official
+v0.1.2 node/escrow observation port and main agreement conversion are GREEN;
+revealing-claim observation, LEZ refund, SDK-port composition, reviewed public
+deployment, actual-node maker fault evidence, and independent actor processes
+remain.
 
 The protected-claim module derives per-context keys with HKDF-SHA256 and encrypts
-preimages and bounded exact claim-submission bytes with XChaCha20-Poly1305 while binding schema, swap, pair, direction,
-agreement, role, purpose, and key ID. Its SQLite claim-intent/transition wiring is
-not implemented, so the diagram marks those persistence edges as pending and no
-claim-restart guarantee is asserted yet.
+preimages and bounded exact claim-submission bytes with XChaCha20-Poly1305 while
+binding schema, swap, pair, direction, agreement, role, purpose, and key ID.
+Schema-v10 SQLite claim/refund intents and owner/observer transitions are
+implemented with atomic revision commits, close/reopen replay, rollback,
+conflict, corruption, and legacy-secret scrub coverage.
 
 The dashed state reflects delivery honestly. The deterministic core, SQLite
 repository, maker daemon, authenticated maker CLI flow, LEZ semantic
@@ -399,7 +418,7 @@ legs: removal pins the exact ID, suspends claims, exact reappearance restores
 authority, conflicting replacement fails, and refunds remain available.
 Independent leg policies also make maker-depth regression suspend and depth
 recovery restore claims. The runtime event-to-participant path is now solid: the
-isolated two-Zebra fixture drives real canonical and removal evidence through schema-v8 SQLite
+isolated two-Zebra fixture drives real canonical and removal evidence through schema-v10 SQLite
 close/reopen and exact replay. The composed LEZ/ZEC actor corridor remains
 dashed M2 work. RPC errors or absence never imply removal: a detach event
 requires a stable replacement tip and a changed canonical hash at the prior
