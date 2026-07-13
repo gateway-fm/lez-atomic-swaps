@@ -3,10 +3,14 @@
 #![forbid(unsafe_code)]
 
 mod client_factory;
+mod request_context;
 mod sdk_ports;
 
 pub use client_factory::{
     CapabilityFileBridgeClientFactory, CapabilityFileBridgeClientFactoryError,
+};
+pub use request_context::{
+    ActorBridgeRequestContextError, ActorBridgeRequestContextSource, BridgeDiscoveryWindowSource,
 };
 pub use sdk_ports::{
     BridgeRequestContextSource, CanonicalLezFundingSource, ContextOwningLezBridgePorts,

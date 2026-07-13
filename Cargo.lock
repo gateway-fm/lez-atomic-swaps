@@ -1324,6 +1324,7 @@ name = "lez-bridge-adapter"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "getrandom 0.3.4",
  "lez-bridge-client",
  "lez-bridge-protocol",
  "lez-swap-core",

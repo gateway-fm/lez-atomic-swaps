@@ -3,7 +3,7 @@
 use std::{
     error::Error,
     fmt,
-    sync::{Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use async_trait::async_trait;
@@ -143,7 +143,29 @@ pub struct ContextOwningLezBridgePorts<Factory, Contexts, Store, Funding> {
     contexts: Contexts,
     store: Store,
     funding: Funding,
-    journal: Mutex<SqliteBridgeOperationJournal>,
+    journal: Arc<Mutex<SqliteBridgeOperationJournal>>,
+}
+
+impl<Factory, Contexts, Store, Funding> Clone
+    for ContextOwningLezBridgePorts<Factory, Contexts, Store, Funding>
+where
+    Factory: Clone,
+    Contexts: Clone,
+    Store: Clone,
+    Funding: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            run_id: self.run_id.clone(),
+            runtime: self.runtime.clone(),
+            local_participant: self.local_participant,
+            factory: self.factory.clone(),
+            contexts: self.contexts.clone(),
+            store: self.store.clone(),
+            funding: self.funding.clone(),
+            journal: Arc::clone(&self.journal),
+        }
+    }
 }
 
 impl<Factory, Contexts, Store, Funding> fmt::Debug
@@ -194,7 +216,7 @@ impl<Factory, Contexts, Store, Funding>
             contexts,
             store,
             funding,
-            journal: Mutex::new(journal),
+            journal: Arc::new(Mutex::new(journal)),
         })
     }
 
@@ -869,7 +891,10 @@ mod tests {
     use std::{
         convert::Infallible,
         fmt, fs,
-        sync::atomic::{AtomicU64, Ordering},
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
     };
 
     use lez_bridge_protocol::{
@@ -881,8 +906,10 @@ mod tests {
 
     static NEXT_DB: AtomicU64 = AtomicU64::new(0);
 
+    #[derive(Clone)]
     struct FixedContext(BridgeRequestSpec);
 
+    #[derive(Clone)]
     struct SensitiveBoundary;
 
     impl fmt::Debug for SensitiveBoundary {
@@ -900,6 +927,44 @@ mod tests {
         ) -> Result<BridgeRequestSpec, Self::Error> {
             Ok(self.0.clone())
         }
+    }
+
+    #[test]
+    fn actor_clones_share_one_role_local_operation_journal() {
+        let path = std::env::temp_dir().join(format!(
+            "lez-bridge-sdk-ports-clone-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_DB.fetch_add(1, Ordering::Relaxed)
+        ));
+        let ports = ContextOwningLezBridgePorts {
+            run_id: RunId::new("sdk-port-clone-run").expect("run id"),
+            runtime: RuntimeDescriptor::new(
+                BridgeParticipant::Taker,
+                RuntimeCompatibility::NssaV0_1_2,
+                Hex32::from_bytes([1; 32]),
+                Hex32::from_bytes([2; 32]),
+                Hex32::from_bytes([3; 32]),
+                Hex32::from_bytes([4; 32]),
+                Hex32::from_bytes([5; 32]),
+            ),
+            local_participant: Participant::Taker,
+            factory: SensitiveBoundary,
+            contexts: SensitiveBoundary,
+            store: SensitiveBoundary,
+            funding: SensitiveBoundary,
+            journal: Arc::new(Mutex::new(
+                SqliteBridgeOperationJournal::open(&path).expect("operation journal"),
+            )),
+        };
+
+        let cloned = ports.clone();
+        assert!(Arc::ptr_eq(&ports.journal, &cloned.journal));
+
+        drop(cloned);
+        drop(ports);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path.with_extension("sqlite-wal"));
+        let _ = fs::remove_file(path.with_extension("sqlite-shm"));
     }
 
     #[test]
@@ -925,9 +990,9 @@ mod tests {
             contexts: SensitiveBoundary,
             store: SensitiveBoundary,
             funding: SensitiveBoundary,
-            journal: Mutex::new(
+            journal: Arc::new(Mutex::new(
                 SqliteBridgeOperationJournal::open(&path).expect("operation journal"),
-            ),
+            )),
         };
 
         let diagnostic = format!("{ports:?}");
@@ -988,7 +1053,7 @@ mod tests {
             contexts: FixedContext(next),
             store: (),
             funding: (),
-            journal: Mutex::new(journal),
+            journal: Arc::new(Mutex::new(journal)),
         };
 
         assert!(matches!(

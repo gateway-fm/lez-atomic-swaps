@@ -5,8 +5,9 @@ the official native, revealing-claim, and native-refund planners/observations,
 node-RPC core, authenticated eight-method bridge server/client, executable
 role-isolated sidecars, signed-agreement first-lock/claim/refund validation
 adapters, Zebra funding/claim/refund ports, crash-safe context-owning SDK ports,
-the secure file-backed fresh-client factory, and reusable checked external
-v0.1.2 schema-v2 node handoff are GREEN.
+the secure file-backed fresh-client factory, actor-owned random request/window
+allocator, cloneable role-local shared operation journal, and reusable checked
+external v0.1.2 schema-v2 node handoff are GREEN.
 Reference-actor wiring and the composed proof remain RED --
 2026-07-13
 
@@ -268,7 +269,13 @@ counterparty discovery, and one-attempt submit. It independently validates
 stable clock, accounts, exact transaction/instruction facts, deadline, depth,
 and durable identity; uncertain submit results are `Unknown`, never rejection.
 The official sidecar refund handlers and crash-safe context-owning SDK-port
-wrapper are GREEN. Independent actor composition remains required before
+wrapper are GREEN. Every clone for one role shares the same locked SQLite
+operation journal, so SDK activation cannot accidentally create a second
+in-memory owner for request reuse decisions. Each new logical operation gets a
+128-bit OS-random request ID; only the four protocol operations that perform
+bounded discovery receive a window from the injected chain authority. The
+durable journal remains the collision and exact-reuse authority. Independent
+actor composition remains required before
 peer-independent timeout recovery is an M2 implementation claim. Neither path
 can guarantee liveness during indefinite node outage, censorship, or a
 reorganization deeper than the signed policy.

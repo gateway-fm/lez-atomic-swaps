@@ -169,8 +169,12 @@ journals protect exact owner material, keep observer paths secret-free, and
 replay separate role stores to `Completed` or `Refunded` in both directions.
 The official native-refund sidecar, main revealing-claim/refund validation
 adapters, both-direction agreement-bound Zebra funding discovery, and
-context-owning LEZ SDK ports are now GREEN. The remaining M2 work is post-lock
-hardening and independent actor integration; chain adapters must
+context-owning LEZ SDK ports are now GREEN. The production fresh-client
+factory, actor-owned random request/window allocator, and cloneable shared
+role-local operation journal close the corresponding process-composition
+prerequisites. The remaining M2 work is the store-derived canonical LEZ funding
+authority, role-keyed Zebra construction, post-lock hardening, and independent
+actor integration; chain adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
 observation alone is non-authorizing: forward Zcash persists and revalidates
 the complete canonical output type plus ordered canonical, depth, atomic
