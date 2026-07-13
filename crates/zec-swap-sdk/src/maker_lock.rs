@@ -8,7 +8,7 @@ use crate::{
 };
 
 /// One outcome from a maker-lock attempt that always performs a fresh eligibility check.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MakerLockDriveOutcome {
     /// Another instance already committed maker funding; replay caught this instance up.
     AlreadyLocked {

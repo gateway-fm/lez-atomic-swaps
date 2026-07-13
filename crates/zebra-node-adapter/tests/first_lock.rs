@@ -10,14 +10,14 @@ use lez_zebra_node_adapter::{
     ZebraRpcSwapPort, ZebraTransactionState,
 };
 use lez_zec_swap_sdk::{
-    Bip199Contract, FirstLockObservation, FirstLockStepV1, LezAssetV1, LezChainIdentityV1,
-    LezEnvironmentV1, NegotiationTranscriptV1, PreparedFirstLockSubmissionV1,
-    TransparentFundingRequest, TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
-    ZcashFirstLockPort, ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1,
-    ZecAgreementV1, ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
-    ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding, ZecSwapBindingRecordV1,
-    ZecTransactionPolicyV1, build_funding_transaction, derive_lez_metadata_account_v1,
-    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    Bip199Contract, FirstLockConfirmedEvidenceV1, FirstLockObservation, FirstLockStepV1,
+    LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, NegotiationTranscriptV1,
+    PreparedFirstLockSubmissionV1, TransparentFundingRequest, TransparentUtxo,
+    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFirstLockPort, ZcashTransparentDestinationV1,
+    ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1, ZecLezTermsV1,
+    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
+    ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_funding_transaction,
+    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use zcash_primitives::{
@@ -174,11 +174,18 @@ async fn stable_confirmed_absent_mempool_and_moving_tip_are_distinct() {
 
     let (rpc, identity) = FakeRpc::confirmed(&agreement, &prepared);
     let port = ZebraRpcSwapPort::new(rpc.clone(), identity);
+    let expected = FirstLockConfirmedEvidenceV1::new(
+        FirstLockStepV1::ZcashFund,
+        *prepared.expected_submission_id(),
+        TxId::from_bytes(*prepared.expected_submission_id()).to_string(),
+        TIP_HEIGHT - INCLUSION_HEIGHT + 1,
+    )
+    .expect("canonical evidence");
     assert_eq!(
         port.observe_first_lock(&agreement, &prepared)
             .await
             .expect("confirmed"),
-        FirstLockObservation::Confirmed
+        FirstLockObservation::Confirmed(expected)
     );
     assert_eq!(
         rpc.calls(),

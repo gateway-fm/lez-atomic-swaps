@@ -1108,18 +1108,22 @@ where
                     FirstLockObservation::Unstable => Ok(
                         FirstLockDriveOutcome::AwaitingStableObservation(initialize.step()),
                     ),
-                    FirstLockObservation::Confirmed => match self.observe_lez_step(fund).await? {
-                        FirstLockObservation::Absent => {
-                            self.submit_lez_step(fund).await?;
-                            Ok(FirstLockDriveOutcome::Submitted(fund.step()))
+                    FirstLockObservation::Confirmed(evidence) => {
+                        self.validate_first_lock_observation(initialize, &evidence)?;
+                        match self.observe_lez_step(fund).await? {
+                            FirstLockObservation::Absent => {
+                                self.submit_lez_step(fund).await?;
+                                Ok(FirstLockDriveOutcome::Submitted(fund.step()))
+                            }
+                            FirstLockObservation::Unstable => Ok(
+                                FirstLockDriveOutcome::AwaitingStableObservation(fund.step()),
+                            ),
+                            FirstLockObservation::Confirmed(evidence) => {
+                                self.validate_first_lock_observation(fund, &evidence)?;
+                                Ok(FirstLockDriveOutcome::ReadyForFundingProjection(evidence))
+                            }
                         }
-                        FirstLockObservation::Unstable => Ok(
-                            FirstLockDriveOutcome::AwaitingStableObservation(fund.step()),
-                        ),
-                        FirstLockObservation::Confirmed => {
-                            Ok(FirstLockDriveOutcome::ReadyForFundingProjection)
-                        }
-                    },
+                    }
                 }
             }
         }
@@ -1145,8 +1149,24 @@ where
             FirstLockObservation::Unstable => Ok(FirstLockDriveOutcome::AwaitingStableObservation(
                 funding.step(),
             )),
-            FirstLockObservation::Confirmed => Ok(FirstLockDriveOutcome::ReadyForFundingProjection),
+            FirstLockObservation::Confirmed(evidence) => {
+                self.validate_first_lock_observation(funding, &evidence)?;
+                Ok(FirstLockDriveOutcome::ReadyForFundingProjection(evidence))
+            }
         }
+    }
+
+    fn validate_first_lock_observation(
+        &self,
+        submission: &PreparedFirstLockSubmissionV1,
+        evidence: &FirstLockConfirmedEvidenceV1,
+    ) -> Result<(), ZecSdkError> {
+        let required = self
+            .agreement()
+            .coordinator()
+            .required_confirmations(self.local_participant());
+        evidence.validate_for_observation(submission, required)?;
+        Ok(())
     }
 
     async fn observe_lez_step(

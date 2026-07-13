@@ -3,9 +3,10 @@ use std::io::Cursor;
 use async_trait::async_trait;
 use lez_swap_core::SwapDirection;
 use lez_zec_swap_sdk::{
-    CanonicalZcashOutputObservation, FirstLockObservation, FirstLockStepV1, ObservationError,
-    PreparedFirstLockSubmissionV1, ProfileError, ZcashFirstLockPort, ZcashNodeSnapshot,
-    ZcashStableTip, ZecAgreementV1, ZecRefundProfile,
+    CanonicalZcashOutputObservation, FirstLockConfirmedEvidenceV1, FirstLockObservation,
+    FirstLockStepV1, FirstLockTransitionError, ObservationError, PreparedFirstLockSubmissionV1,
+    ProfileError, ZcashFirstLockPort, ZcashNodeSnapshot, ZcashStableTip, ZecAgreementV1,
+    ZecRefundProfile,
 };
 use zcash_primitives::transaction::{Transaction, TxVersion};
 use zcash_protocol::{TxId, consensus::BlockHeight};
@@ -96,6 +97,9 @@ pub enum ZebraFirstLockError<E: std::error::Error + Send + Sync + 'static> {
     /// The SDK canonical output validator rejected the RPC snapshot.
     #[error("Zebra canonical output validation failed: {0}")]
     Observation(#[source] ObservationError),
+    /// The SDK rejected the primitive envelope derived from the canonical snapshot.
+    #[error("Zebra canonical first-lock evidence was invalid: {0}")]
+    Evidence(#[source] FirstLockTransitionError),
     /// Zebra returned a different ID after accepting exact bytes.
     #[error("Zebra returned a transaction ID different from the submitted V5 identity")]
     SubmittedTransactionIdMismatch,
@@ -213,7 +217,14 @@ where
                 if canonical.confirmations().get() < required {
                     Ok(FirstLockObservation::Unstable)
                 } else {
-                    Ok(FirstLockObservation::Confirmed)
+                    let evidence = FirstLockConfirmedEvidenceV1::new(
+                        submission.step(),
+                        *submission.expected_submission_id(),
+                        canonical.transaction_id().to_string(),
+                        canonical.confirmations().get(),
+                    )
+                    .map_err(ZebraFirstLockError::Evidence)?;
+                    Ok(FirstLockObservation::Confirmed(evidence))
                 }
             }
         }

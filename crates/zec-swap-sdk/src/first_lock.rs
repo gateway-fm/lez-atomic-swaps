@@ -257,28 +257,28 @@ pub enum CreateFirstLockOutcome {
 }
 
 /// Stable observation result returned by a chain-specific adapter.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FirstLockObservation {
     /// The expected chain identity is absent from a stable fresh query.
     Absent,
     /// The query cannot yet prove stable presence or stable absence.
     Unstable,
     /// The exact expected submission is canonical at the agreement's required depth.
-    Confirmed,
+    Confirmed(FirstLockConfirmedEvidenceV1),
 }
 
 /// One safe outcome of driving a previously durable first-lock plan.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FirstLockDriveOutcome {
     /// Exact durable bytes were submitted or rebroadcast for this step.
     Submitted(FirstLockStepV1),
     /// No bytes were submitted because the observation was unstable.
     AwaitingStableObservation(FirstLockStepV1),
-    /// Every first-lock step is observed; a later atomic evidence projection may advance core.
-    ReadyForFundingProjection,
+    /// Every first-lock step is observed; the adapter's final-step evidence is ready to project.
+    ReadyForFundingProjection(FirstLockConfirmedEvidenceV1),
 }
 
-/// Stable final-step evidence produced by a typed chain observation adapter.
+/// Stable submission evidence produced by a typed chain observation adapter.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FirstLockConfirmedEvidenceV1 {
     schema_version: u16,
@@ -304,6 +304,24 @@ impl FirstLockConfirmedEvidenceV1 {
         if step == FirstLockStepV1::LezInitialize {
             return Err(FirstLockTransitionError::NonFinalStep(step));
         }
+        Self::from_observation(step, expected_submission_id, transaction_id, confirmations)
+    }
+
+    /// Creates validated primitive evidence for any observed first-lock submission.
+    ///
+    /// This includes LEZ initialization evidence used only to sequence the later
+    /// funding call. Durable projection still independently requires a final step.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an empty expected identity, an invalid transaction identifier,
+    /// or zero confirmations.
+    pub fn from_observation(
+        step: FirstLockStepV1,
+        expected_submission_id: [u8; 32],
+        transaction_id: impl Into<Box<str>>,
+        confirmations: u32,
+    ) -> Result<Self, FirstLockTransitionError> {
         if expected_submission_id == [0; 32] {
             return Err(FirstLockTransitionError::EmptyExpectedIdentity);
         }
@@ -350,6 +368,29 @@ impl FirstLockConfirmedEvidenceV1 {
     #[must_use]
     pub const fn confirmations(&self) -> u32 {
         self.confirmations
+    }
+
+    pub(crate) fn validate_for_observation(
+        &self,
+        submission: &PreparedFirstLockSubmissionV1,
+        required_confirmations: u32,
+    ) -> Result<(), FirstLockTransitionError> {
+        if self.step != submission.step() {
+            return Err(FirstLockTransitionError::WrongFinalStep {
+                expected: submission.step(),
+                actual: self.step,
+            });
+        }
+        if self.expected_submission_id != *submission.expected_submission_id() {
+            return Err(FirstLockTransitionError::SubmissionIdentityMismatch);
+        }
+        if self.confirmations < required_confirmations {
+            return Err(FirstLockTransitionError::InsufficientConfirmations {
+                required: required_confirmations,
+                actual: self.confirmations,
+            });
+        }
+        Ok(())
     }
 }
 

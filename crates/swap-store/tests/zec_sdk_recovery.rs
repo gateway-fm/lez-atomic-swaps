@@ -168,7 +168,10 @@ impl MakerHappyPort {
             .expect("submitted-step lock")
             .contains(&submission.step())
         {
-            FirstLockObservation::Confirmed
+            FirstLockObservation::Confirmed(observed_first_lock_evidence(
+                submission.step(),
+                *submission.expected_submission_id(),
+            ))
         } else {
             FirstLockObservation::Absent
         }
@@ -380,7 +383,10 @@ impl SqliteClaimPort {
             .expect("lock submissions lock")
             .contains(&submission.step())
         {
-            FirstLockObservation::Confirmed
+            FirstLockObservation::Confirmed(observed_first_lock_evidence(
+                submission.step(),
+                *submission.expected_submission_id(),
+            ))
         } else {
             FirstLockObservation::Absent
         }
@@ -843,12 +849,12 @@ async fn drive_sqlite_claim_locks(
     maker: &mut ClaimActive,
     taker: &mut ClaimActive,
 ) {
-    let (taker_plan, taker_evidence) = taker_lock_fixture(direction);
+    let (taker_plan, _) = taker_lock_fixture(direction);
     taker
         .stage_first_lock(taker_plan)
         .await
         .expect("durable taker first-lock intent");
-    drive_first_lock_until_ready(taker).await;
+    let taker_evidence = drive_first_lock_until_ready(taker).await;
     taker
         .project_first_lock(taker_evidence)
         .await
@@ -865,8 +871,8 @@ async fn drive_sqlite_claim_locks(
         .observe_taker_first_lock()
         .await
         .expect("maker observes canonical taker lock");
-    let (maker_plan, _, maker_evidence) = maker_lock_fixture(direction);
-    drive_maker_lock_until_ready(maker, maker_plan).await;
+    let (maker_plan, _, _) = maker_lock_fixture(direction);
+    let maker_evidence = drive_maker_lock_until_ready(maker, maker_plan).await;
     maker
         .project_maker_lock(maker_evidence.clone())
         .await
@@ -880,29 +886,32 @@ async fn drive_sqlite_claim_locks(
     assert_eq!(taker.status(), Phase::BothLegsLocked);
 }
 
-async fn drive_first_lock_until_ready(active: &mut ClaimActive) {
+async fn drive_first_lock_until_ready(active: &mut ClaimActive) -> FirstLockConfirmedEvidenceV1 {
     for _ in 0..3 {
-        if active
+        if let FirstLockDriveOutcome::ReadyForFundingProjection(evidence) = active
             .drive_first_lock()
             .await
             .expect("drive exact taker lock")
-            == FirstLockDriveOutcome::ReadyForFundingProjection
         {
-            return;
+            return evidence;
         }
     }
     panic!("taker lock did not become ready")
 }
 
-async fn drive_maker_lock_until_ready(active: &mut ClaimActive, plan: FirstLockPlanV1) {
+async fn drive_maker_lock_until_ready(
+    active: &mut ClaimActive,
+    plan: FirstLockPlanV1,
+) -> FirstLockConfirmedEvidenceV1 {
     for _ in 0..3 {
-        if active
+        if let MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection(
+            evidence,
+        )) = active
             .drive_maker_lock(plan.clone())
             .await
             .expect("drive exact maker lock")
-            == MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection)
         {
-            return;
+            return evidence;
         }
     }
     panic!("maker lock did not become ready")
@@ -2461,7 +2470,7 @@ async fn assert_sqlite_unknown_maker_submission(
         .observe_taker_first_lock()
         .await
         .expect("canonical taker funding");
-    let (plan, _, evidence) = maker_lock_fixture(direction);
+    let (plan, _, _) = maker_lock_fixture(direction);
     match direction {
         SwapDirection::TakerSellsForeign => {
             chain.fail_after_accept(FirstLockStepV1::LezInitialize);
@@ -2490,13 +2499,14 @@ async fn assert_sqlite_unknown_maker_submission(
     }
     let submitted = chain.submitted_steps();
     let mut final_attempt = resume_sqlite_maker(path, id, chain.clone()).await;
-    assert_eq!(
+    let MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection(evidence)) =
         final_attempt
             .drive_maker_lock(plan)
             .await
-            .expect("accepted maker submission is observed"),
-        MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection)
-    );
+            .expect("accepted maker submission is observed")
+    else {
+        panic!("recovered adapter evidence must be ready for projection");
+    };
     assert_eq!(chain.submitted_steps(), submitted);
     final_attempt
         .project_maker_lock(evidence)
@@ -2691,7 +2701,10 @@ fn maker_lock_fixture(
                 vec![
                     FirstLockDriveOutcome::Submitted(FirstLockStepV1::LezInitialize),
                     FirstLockDriveOutcome::Submitted(FirstLockStepV1::LezFund),
-                    FirstLockDriveOutcome::ReadyForFundingProjection,
+                    FirstLockDriveOutcome::ReadyForFundingProjection(observed_first_lock_evidence(
+                        FirstLockStepV1::LezFund,
+                        [0x72; 32],
+                    )),
                 ],
                 FirstLockConfirmedEvidenceV1::new(
                     FirstLockStepV1::LezFund,
@@ -2706,7 +2719,10 @@ fn maker_lock_fixture(
             zcash_plan([0x81; 32], vec![0xb1]),
             vec![
                 FirstLockDriveOutcome::Submitted(FirstLockStepV1::ZcashFund),
-                FirstLockDriveOutcome::ReadyForFundingProjection,
+                FirstLockDriveOutcome::ReadyForFundingProjection(observed_first_lock_evidence(
+                    FirstLockStepV1::ZcashFund,
+                    [0x81; 32],
+                )),
             ],
             confirmed([0x81; 32], "sqlite-maker-zcash-fund"),
         ),
@@ -3823,6 +3839,19 @@ fn confirmed(
         100,
     )
     .expect("stable confirmed first lock")
+}
+
+fn observed_first_lock_evidence(
+    step: FirstLockStepV1,
+    expected_submission_id: [u8; 32],
+) -> FirstLockConfirmedEvidenceV1 {
+    FirstLockConfirmedEvidenceV1::from_observation(
+        step,
+        expected_submission_id,
+        "typed-adapter-first-lock-observation",
+        100,
+    )
+    .expect("typed adapter evidence")
 }
 
 fn canonical_lez_taker_lock(

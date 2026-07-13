@@ -15,12 +15,12 @@ use lez_zec_swap_sdk::{
     ClaimSubmissionContext, CreateAgreementOutcome, CreateFirstLockOutcome, ExpectedBip199Output,
     FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentRecordV1,
     FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1, FirstLockProjectionCommit,
-    FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1, FirstLockTransitionV1,
-    FollowupClaimEvidenceV1, FollowupClaimObservationV1, FollowupClaimTransitionRecordV1,
-    FollowupClaimTransitionV1, LezAssetV1, LezChainIdentityV1, LezClaimInstructionV1,
-    LezClaimNodeSnapshotV1, LezClaimPort, LezClaimTransactionSnapshotV1, LezCustodySnapshotV1,
-    LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort,
-    LezFundInstructionV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1,
+    FirstLockRecordError, FirstLockStepV1, FirstLockTransitionError, FirstLockTransitionRecordV1,
+    FirstLockTransitionV1, FollowupClaimEvidenceV1, FollowupClaimObservationV1,
+    FollowupClaimTransitionRecordV1, FollowupClaimTransitionV1, LezAssetV1, LezChainIdentityV1,
+    LezClaimInstructionV1, LezClaimNodeSnapshotV1, LezClaimPort, LezClaimTransactionSnapshotV1,
+    LezCustodySnapshotV1, LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1,
+    LezFirstLockPort, LezFundInstructionV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1,
     LezMakerLockObservationPort, LezNodeRemovalSnapshotV1, LezNodeSnapshotV1,
     LezObservationEventV1, LezObservationReconciliationV1, LezObservationTrackerError,
     LezObservationTrackerV1, LezStableTipV1, LezTakerFirstLockObservationPort,
@@ -1391,7 +1391,7 @@ impl LezFirstLockPort for MemoryLezTakerLockObservation {
             .lock()
             .expect("observations lock")
             .get(&submission.step())
-            .copied()
+            .cloned()
             .unwrap_or(FirstLockObservation::Absent))
     }
 
@@ -1553,7 +1553,7 @@ impl ZcashFirstLockPort for MemoryZcashTakerLockObservation {
             .lock()
             .expect("observations lock")
             .get(&submission.step())
-            .copied()
+            .cloned()
             .unwrap_or(FirstLockObservation::Absent))
     }
 
@@ -1715,7 +1715,7 @@ impl LezFirstLockPort for MemoryLezPort {
             .lock()
             .expect("observations lock")
             .get(&submission.step())
-            .copied()
+            .cloned()
             .unwrap_or(FirstLockObservation::Absent))
     }
 
@@ -1746,7 +1746,7 @@ impl ZcashFirstLockPort for MemoryZcashPort {
             .lock()
             .expect("observations lock")
             .get(&submission.step())
-            .copied()
+            .cloned()
             .unwrap_or(FirstLockObservation::Absent))
     }
 
@@ -2121,9 +2121,25 @@ async fn restart_observes_before_exact_zcash_rebroadcast_without_advancing_phase
     );
     assert_eq!(active.status(), Phase::Offered);
 
-    zcash
-        .0
-        .observe_as(FirstLockStepV1::ZcashFund, FirstLockObservation::Confirmed);
+    zcash.0.observe_as(
+        FirstLockStepV1::ZcashFund,
+        FirstLockObservation::Confirmed(confirmed_zcash_first_lock(
+            [0x32; 32],
+            "wrong-zcash-first-lock",
+        )),
+    );
+    assert!(matches!(
+        active.drive_first_lock().await,
+        Err(ZecSdkError::InvalidFirstLockTransition(
+            FirstLockTransitionError::SubmissionIdentityMismatch
+        ))
+    ));
+
+    let confirmed = confirmed_zcash_first_lock([0x31; 32], "restarted-zcash-first-lock");
+    zcash.0.observe_as(
+        FirstLockStepV1::ZcashFund,
+        FirstLockObservation::Confirmed(confirmed.clone()),
+    );
     let restarted = first_lock_sdk(Participant::Taker, wire, lez, zcash.clone(), store);
     let resumed = restarted
         .resume(&SwapId::new("sdk-first-lock-zcash-restart").expect("id"))
@@ -2132,7 +2148,7 @@ async fn restart_observes_before_exact_zcash_rebroadcast_without_advancing_phase
         .expect("active");
     assert_eq!(
         resumed.drive_first_lock().await.expect("observe first"),
-        FirstLockDriveOutcome::ReadyForFundingProjection
+        FirstLockDriveOutcome::ReadyForFundingProjection(confirmed)
     );
     assert_eq!(zcash.0.submissions().len(), 1);
     assert_eq!(resumed.status(), Phase::Offered);
@@ -2191,7 +2207,11 @@ async fn lez_initialize_is_observed_before_fund_and_each_retry_is_exact() {
 
     lez.0.observe_as(
         FirstLockStepV1::LezInitialize,
-        FirstLockObservation::Confirmed,
+        confirmed_first_lock_observation(
+            FirstLockStepV1::LezInitialize,
+            [0x11; 32],
+            "lez-initialize",
+        ),
     );
     assert_eq!(
         active.drive_first_lock().await.expect("fund"),
@@ -2205,11 +2225,14 @@ async fn lez_initialize_is_observed_before_fund_and_each_retry_is_exact() {
         ]
     );
 
-    lez.0
-        .observe_as(FirstLockStepV1::LezFund, FirstLockObservation::Confirmed);
+    let fund_evidence = confirmed_first_lock(FirstLockStepV1::LezFund, [0x12; 32], "lez-fund");
+    lez.0.observe_as(
+        FirstLockStepV1::LezFund,
+        FirstLockObservation::Confirmed(fund_evidence.clone()),
+    );
     assert_eq!(
         active.drive_first_lock().await.expect("both observed"),
-        FirstLockDriveOutcome::ReadyForFundingProjection
+        FirstLockDriveOutcome::ReadyForFundingProjection(fund_evidence)
     );
     assert_eq!(lez.0.submissions().len(), 2);
     assert_eq!(active.status(), Phase::Offered);
@@ -2480,14 +2503,24 @@ async fn stale_maker_replays_committed_second_lock_without_resubmission() {
         .expect("submit initialize");
     lez.2.observe_as(
         FirstLockStepV1::LezInitialize,
-        FirstLockObservation::Confirmed,
+        confirmed_first_lock_observation(
+            FirstLockStepV1::LezInitialize,
+            [0x91; 32],
+            "stale-maker-lez-initialize",
+        ),
     );
     first
         .drive_maker_lock(plan.clone())
         .await
         .expect("submit fund");
-    lez.2
-        .observe_as(FirstLockStepV1::LezFund, FirstLockObservation::Confirmed);
+    lez.2.observe_as(
+        FirstLockStepV1::LezFund,
+        confirmed_first_lock_observation(
+            FirstLockStepV1::LezFund,
+            [0x92; 32],
+            "stale-maker-lez-fund",
+        ),
+    );
     first
         .project_maker_lock(
             FirstLockConfirmedEvidenceV1::new(
@@ -2729,7 +2762,11 @@ async fn maker_restart_observes_each_unknown_lez_submission_before_any_rebroadca
 
     lez.2.observe_as(
         FirstLockStepV1::LezInitialize,
-        FirstLockObservation::Confirmed,
+        confirmed_first_lock_observation(
+            FirstLockStepV1::LezInitialize,
+            [0xd1; 32],
+            "unknown-lez-initialize",
+        ),
     );
     lez.2.fail_after_accept(FirstLockStepV1::LezFund);
     let restarted_sdk = maker_lock_sdk(wire.clone(), lez.clone(), zcash.clone(), store.clone());
@@ -2750,8 +2787,12 @@ async fn maker_restart_observes_each_unknown_lez_submission_before_any_rebroadca
         ]
     );
 
-    lez.2
-        .observe_as(FirstLockStepV1::LezFund, FirstLockObservation::Confirmed);
+    let fund_evidence =
+        confirmed_first_lock(FirstLockStepV1::LezFund, [0xd2; 32], "unknown-lez-fund");
+    lez.2.observe_as(
+        FirstLockStepV1::LezFund,
+        FirstLockObservation::Confirmed(fund_evidence.clone()),
+    );
     let final_sdk = maker_lock_sdk(wire, lez.clone(), zcash, store);
     let mut final_attempt = final_sdk
         .resume(&SwapId::new(id).expect("swap ID"))
@@ -2763,19 +2804,13 @@ async fn maker_restart_observes_each_unknown_lez_submission_before_any_rebroadca
             .drive_maker_lock(plan)
             .await
             .expect("both accepted submissions are observed"),
-        MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection)
+        MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection(
+            fund_evidence.clone(),
+        ))
     );
     assert_eq!(lez.2.submissions().len(), 2, "neither step is rebroadcast");
     final_attempt
-        .project_maker_lock(
-            FirstLockConfirmedEvidenceV1::new(
-                FirstLockStepV1::LezFund,
-                [0xd2; 32],
-                "unknown-lez-fund",
-                100,
-            )
-            .expect("maker evidence"),
-        )
+        .project_maker_lock(fund_evidence)
         .await
         .expect("project confirmed maker funding");
     assert_eq!(final_attempt.status(), Phase::BothLegsLocked);
@@ -2813,9 +2848,11 @@ async fn maker_restart_observes_unknown_zcash_submission_before_any_rebroadcast(
         vec![(FirstLockStepV1::ZcashFund, vec![0x05, 0x06])]
     );
 
-    zcash
-        .1
-        .observe_as(FirstLockStepV1::ZcashFund, FirstLockObservation::Confirmed);
+    let fund_evidence = confirmed_zcash_first_lock([0xe1; 32], "unknown-zcash-fund");
+    zcash.1.observe_as(
+        FirstLockStepV1::ZcashFund,
+        FirstLockObservation::Confirmed(fund_evidence.clone()),
+    );
     let restarted_sdk = maker_lock_sdk(wire, lez, zcash.clone(), store);
     let mut restarted = restarted_sdk
         .resume(&SwapId::new(id).expect("swap ID"))
@@ -2827,11 +2864,13 @@ async fn maker_restart_observes_unknown_zcash_submission_before_any_rebroadcast(
             .drive_maker_lock(plan)
             .await
             .expect("accepted Zcash submission is observed"),
-        MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection)
+        MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection(
+            fund_evidence.clone(),
+        ))
     );
     assert_eq!(zcash.1.submissions().len(), 1, "Zcash is not rebroadcast");
     restarted
-        .project_maker_lock(confirmed_zcash_first_lock([0xe1; 32], "unknown-zcash-fund"))
+        .project_maker_lock(fund_evidence)
         .await
         .expect("project confirmed maker funding");
     assert_eq!(restarted.status(), Phase::BothLegsLocked);
@@ -2871,7 +2910,7 @@ async fn taker_reorg_between_lez_maker_steps_suspends_funding_until_replacement(
         .expect("submit initialize");
     lez.2.observe_as(
         FirstLockStepV1::LezInitialize,
-        FirstLockObservation::Confirmed,
+        confirmed_lez_initialize([0xf1; 32], "removed-maker-initialize"),
     );
 
     let removed = canonical_zcash_removal(&canonical);
@@ -3005,7 +3044,7 @@ async fn assert_maker_happy_path_zcash_to_lez() {
 
     forward_lez.2.observe_as(
         FirstLockStepV1::LezInitialize,
-        FirstLockObservation::Confirmed,
+        confirmed_lez_initialize([0x71; 32], "maker-lez-initialize"),
     );
     assert_eq!(
         forward
@@ -3014,26 +3053,23 @@ async fn assert_maker_happy_path_zcash_to_lez() {
             .expect("fresh eligibility submits LEZ fund"),
         MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::Submitted(FirstLockStepV1::LezFund))
     );
-    forward_lez
-        .2
-        .observe_as(FirstLockStepV1::LezFund, FirstLockObservation::Confirmed);
+    let forward_fund_evidence =
+        confirmed_first_lock(FirstLockStepV1::LezFund, [0x72; 32], "maker-lez-fund");
+    forward_lez.2.observe_as(
+        FirstLockStepV1::LezFund,
+        FirstLockObservation::Confirmed(forward_fund_evidence.clone()),
+    );
     assert_eq!(
         forward
             .drive_maker_lock(forward_plan)
             .await
             .expect("both maker steps observed"),
-        MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection)
+        MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection(
+            forward_fund_evidence.clone(),
+        ))
     );
     forward
-        .project_maker_lock(
-            FirstLockConfirmedEvidenceV1::new(
-                FirstLockStepV1::LezFund,
-                [0x72; 32],
-                "maker-lez-fund",
-                100,
-            )
-            .expect("confirmed maker LEZ evidence"),
-        )
+        .project_maker_lock(forward_fund_evidence)
         .await
         .expect("maker LEZ transition commits");
     assert_eq!(forward.status(), Phase::BothLegsLocked);
@@ -3088,9 +3124,10 @@ async fn assert_maker_happy_path_lez_to_zcash() {
         reverse_zcash.1.submissions(),
         vec![(FirstLockStepV1::ZcashFund, vec![0xb1])]
     );
-    reverse_zcash
-        .1
-        .observe_as(FirstLockStepV1::ZcashFund, FirstLockObservation::Confirmed);
+    reverse_zcash.1.observe_as(
+        FirstLockStepV1::ZcashFund,
+        FirstLockObservation::Confirmed(confirmed_zcash_first_lock([0x81; 32], "maker-zcash-fund")),
+    );
     reverse
         .project_maker_lock(confirmed_zcash_first_lock([0x81; 32], "maker-zcash-fund"))
         .await
@@ -5124,7 +5161,7 @@ async fn project_actor_taker_first_lock(
     lez: &MemoryLezTakerLockObservation,
     zcash: &MemoryZcashTakerLockObservation,
 ) {
-    let (plan, evidence) = match direction {
+    let expected_evidence = match direction {
         SwapDirection::TakerSellsForeign => {
             let plan = zcash_first_lock_plan([0x31; 32], vec![0x51]);
             taker
@@ -5132,13 +5169,12 @@ async fn project_actor_taker_first_lock(
                 .await
                 .expect("stage Zcash");
             taker.drive_first_lock().await.expect("submit Zcash");
-            zcash
-                .1
-                .observe_as(FirstLockStepV1::ZcashFund, FirstLockObservation::Confirmed);
-            (
-                plan,
-                confirmed_zcash_first_lock([0x31; 32], "actor-taker-zcash"),
-            )
+            let evidence = confirmed_zcash_first_lock([0x31; 32], "actor-taker-zcash");
+            zcash.1.observe_as(
+                FirstLockStepV1::ZcashFund,
+                FirstLockObservation::Confirmed(evidence.clone()),
+            );
+            evidence
         }
         SwapDirection::TakerSellsLez => {
             let plan = lez_first_lock_plan([0x41; 32], vec![0x61], [0x42; 32], vec![0x62]);
@@ -5152,32 +5188,32 @@ async fn project_actor_taker_first_lock(
                 .expect("submit LEZ initialize");
             lez.2.observe_as(
                 FirstLockStepV1::LezInitialize,
-                FirstLockObservation::Confirmed,
+                confirmed_first_lock_observation(
+                    FirstLockStepV1::LezInitialize,
+                    [0x41; 32],
+                    "actor-taker-lez-initialize",
+                ),
             );
             taker.drive_first_lock().await.expect("submit LEZ fund");
-            lez.2
-                .observe_as(FirstLockStepV1::LezFund, FirstLockObservation::Confirmed);
-            (
-                plan,
-                FirstLockConfirmedEvidenceV1::new(
-                    FirstLockStepV1::LezFund,
-                    [0x42; 32],
-                    "actor-taker-lez",
-                    100,
-                )
-                .expect("taker LEZ evidence"),
-            )
+            let evidence =
+                confirmed_first_lock(FirstLockStepV1::LezFund, [0x42; 32], "actor-taker-lez");
+            lez.2.observe_as(
+                FirstLockStepV1::LezFund,
+                FirstLockObservation::Confirmed(evidence.clone()),
+            );
+            evidence
         }
     };
-    assert_eq!(
-        taker.drive_first_lock().await.expect("observe exact plan"),
-        FirstLockDriveOutcome::ReadyForFundingProjection
-    );
+    let FirstLockDriveOutcome::ReadyForFundingProjection(observed_evidence) =
+        taker.drive_first_lock().await.expect("observe exact plan")
+    else {
+        panic!("final adapter observation must be ready for projection");
+    };
+    assert_eq!(observed_evidence, expected_evidence);
     taker
-        .project_first_lock(evidence)
+        .project_first_lock(observed_evidence)
         .await
         .expect("project taker lock");
-    drop(plan);
 }
 
 fn expose_taker_lock_to_maker(
@@ -5218,32 +5254,56 @@ async fn project_actor_maker_second_lock(
                 .expect("submit maker initialize");
             lez.2.observe_as(
                 FirstLockStepV1::LezInitialize,
-                FirstLockObservation::Confirmed,
+                confirmed_first_lock_observation(
+                    FirstLockStepV1::LezInitialize,
+                    [0x71; 32],
+                    "actor-maker-lez-initialize",
+                ),
             );
             maker
-                .drive_maker_lock(plan)
+                .drive_maker_lock(plan.clone())
                 .await
                 .expect("submit maker LEZ fund");
-            lez.2
-                .observe_as(FirstLockStepV1::LezFund, FirstLockObservation::Confirmed);
-            FirstLockConfirmedEvidenceV1::new(
+            let expected =
+                confirmed_first_lock(FirstLockStepV1::LezFund, [0x72; 32], "actor-maker-lez");
+            lez.2.observe_as(
                 FirstLockStepV1::LezFund,
-                [0x72; 32],
-                "actor-maker-lez",
-                100,
-            )
-            .expect("maker LEZ evidence")
+                FirstLockObservation::Confirmed(expected.clone()),
+            );
+            let MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection(
+                observed,
+            )) = maker
+                .drive_maker_lock(plan)
+                .await
+                .expect("observe maker LEZ fund")
+            else {
+                panic!("maker LEZ evidence must be ready for projection");
+            };
+            assert_eq!(observed, expected);
+            observed
         }
         SwapDirection::TakerSellsLez => {
             let plan = zcash_first_lock_plan([0x81; 32], vec![0xb1]);
             maker
-                .drive_maker_lock(plan)
+                .drive_maker_lock(plan.clone())
                 .await
                 .expect("submit maker Zcash");
-            zcash
-                .1
-                .observe_as(FirstLockStepV1::ZcashFund, FirstLockObservation::Confirmed);
-            confirmed_zcash_first_lock([0x81; 32], "actor-maker-zcash")
+            let expected = confirmed_zcash_first_lock([0x81; 32], "actor-maker-zcash");
+            zcash.1.observe_as(
+                FirstLockStepV1::ZcashFund,
+                FirstLockObservation::Confirmed(expected.clone()),
+            );
+            let MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection(
+                observed,
+            )) = maker
+                .drive_maker_lock(plan)
+                .await
+                .expect("observe maker Zcash fund")
+            else {
+                panic!("maker Zcash evidence must be ready for projection");
+            };
+            assert_eq!(observed, expected);
+            observed
         }
     };
     maker
@@ -5398,6 +5458,43 @@ fn confirmed_zcash_first_lock(
         100,
     )
     .expect("confirmed evidence")
+}
+
+fn confirmed_first_lock(
+    step: FirstLockStepV1,
+    expected_submission_id: [u8; 32],
+    transaction_id: &str,
+) -> FirstLockConfirmedEvidenceV1 {
+    FirstLockConfirmedEvidenceV1::from_observation(
+        step,
+        expected_submission_id,
+        transaction_id.to_owned(),
+        100,
+    )
+    .expect("confirmed evidence")
+}
+
+fn confirmed_first_lock_observation(
+    step: FirstLockStepV1,
+    expected_submission_id: [u8; 32],
+    transaction_id: &str,
+) -> FirstLockObservation {
+    FirstLockObservation::Confirmed(confirmed_first_lock(
+        step,
+        expected_submission_id,
+        transaction_id,
+    ))
+}
+
+fn confirmed_lez_initialize(
+    expected_submission_id: [u8; 32],
+    transaction_id: &str,
+) -> FirstLockObservation {
+    confirmed_first_lock_observation(
+        FirstLockStepV1::LezInitialize,
+        expected_submission_id,
+        transaction_id,
+    )
 }
 
 fn envelope(
