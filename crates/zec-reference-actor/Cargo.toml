@@ -15,12 +15,14 @@ clap = { version = "4.6.0", features = ["derive"] }
 lez-bridge-client = { version = "0.1.0", path = "../lez-bridge-client" }
 lez-bridge-protocol = { version = "0.1.0", path = "../lez-bridge-protocol" }
 lez-swap-core = { version = "0.1.0", path = "../swap-core" }
+lez-swap-store = { version = "0.1.0", path = "../swap-store" }
 lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk" }
 secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 sha2 = "=0.10.9"
 thiserror = "2.0.18"
+tokio = { version = "1.48.0", features = ["macros", "rt"] }
 url = { version = "2.5.4", features = ["serde"] }
 zeroize = "1.9.0"
 

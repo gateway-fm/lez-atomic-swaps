@@ -28,7 +28,10 @@ use lez_zec_swap_sdk::{
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-use crate::{StoreError, open_configured_connection, participant_name, revision_from_sql};
+use crate::{
+    StoreError, open_configured_connection, open_existing_configured_connection, participant_name,
+    revision_from_sql,
+};
 
 const AGREEMENT_PAYLOAD_VERSION: i64 = 1;
 
@@ -83,6 +86,38 @@ impl SqliteZecRecoveryStore {
         claim_key: ProtectedClaimKey,
     ) -> Result<Self, StoreError> {
         let connection = open_configured_connection(path)?;
+        validate_existing_claim_envelopes(
+            &connection,
+            participant_name(local_participant),
+            local_participant,
+            &claim_key,
+        )?;
+        Ok(Self {
+            local_participant,
+            connection: Arc::new(Mutex::new(connection)),
+            claim_key: Some(Arc::new(claim_key)),
+        })
+    }
+
+    /// Opens an existing schema-v10 store with protected claim recovery enabled.
+    ///
+    /// Unlike [`Self::open_claim_capable`], this entry point never creates a
+    /// missing database. It is intended for offline status, where observing an
+    /// unactivated actor must not mutate durable state. The existing database
+    /// receives the same private-file checks, configuration, migrations, and
+    /// claim-envelope authentication as the create-capable entry point.
+    ///
+    /// # Errors
+    ///
+    /// Returns a store error when the path is missing or unsafe, `SQLite` cannot
+    /// open, configure, or migrate it, or the supplied key cannot authenticate
+    /// an existing role-local claim envelope.
+    pub fn open_claim_capable_existing(
+        path: impl AsRef<Path>,
+        local_participant: Participant,
+        claim_key: ProtectedClaimKey,
+    ) -> Result<Self, StoreError> {
+        let connection = open_existing_configured_connection(path)?;
         validate_existing_claim_envelopes(
             &connection,
             participant_name(local_participant),

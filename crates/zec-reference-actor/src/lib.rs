@@ -7,9 +7,11 @@ use std::{fmt, path::PathBuf};
 
 use clap::{Parser, Subcommand};
 
+mod command;
 mod config;
 mod secure_file;
 
+pub use command::{ActorCommandError, ActorCommandOutputV1, ActorStatusV1, execute_actor_command};
 pub use config::{
     ActivateMaterial, ActorConfig, ActorConfigError, ActorRole, CandidateOutpoint, DriveMaterial,
     StatusMaterial, ZcashNetworkConfig, ZebraRpcChainConfig, validate_actor_pair,

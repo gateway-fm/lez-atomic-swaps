@@ -12,7 +12,7 @@ use lez_zec_swap_sdk::{
     ClaimPreimage, MAX_ZEC_AGREEMENT_RECORD_BYTES, MAX_ZEC_FUNDING_INPUTS, ProtectedClaimKey,
 };
 use secp256k1::SecretKey;
-use serde::{Deserialize, Deserializer, de::Error as _};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use url::{Host, Url};
@@ -34,7 +34,7 @@ const MAX_REQUEST_TIMEOUT_MILLIS: u64 = 60_000;
 const MAX_COUNTERPARTY_SCAN_BLOCKS: u32 = 50_000;
 
 /// Role permanently bound to one actor configuration.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActorRole {
     /// Liquidity-providing participant.
@@ -44,10 +44,17 @@ pub enum ActorRole {
 }
 
 impl ActorRole {
-    const fn participant(self) -> Participant {
+    pub(crate) const fn bridge_participant(self) -> Participant {
         match self {
             Self::Maker => Participant::Maker,
             Self::Taker => Participant::Taker,
+        }
+    }
+
+    pub(crate) const fn sdk_participant(self) -> lez_swap_core::Participant {
+        match self {
+            Self::Maker => lez_swap_core::Participant::Maker,
+            Self::Taker => lez_swap_core::Participant::Taker,
         }
     }
 }
@@ -477,7 +484,7 @@ impl ActorConfig {
         if self.schema_version != CONFIG_SCHEMA_VERSION
             || SwapId::new(self.swap_id.as_str()).is_err()
             || is_zero(self.signed_agreement_sha256)
-            || self.bridge.runtime.sidecar_role != self.role.participant()
+            || self.bridge.runtime.sidecar_role != self.role.bridge_participant()
             || self.bridge.endpoint == self.zebra.endpoint
             || self.bridge.request_timeout_millis == 0
             || self.bridge.request_timeout_millis > MAX_REQUEST_TIMEOUT_MILLIS
@@ -701,6 +708,10 @@ impl StatusMaterial {
     #[must_use]
     pub const fn claim_recovery_key(&self) -> &ProtectedClaimKey {
         &self.claim_recovery_key
+    }
+
+    pub(crate) fn into_claim_recovery_key(self) -> ProtectedClaimKey {
+        self.claim_recovery_key
     }
 }
 

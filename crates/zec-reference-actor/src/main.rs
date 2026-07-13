@@ -1,11 +1,20 @@
 use clap::Parser as _;
-use zec_reference_actor::{ActorCli, ActorConfig};
+use zec_reference_actor::{ActorCli, ActorConfig, execute_actor_command};
 
-fn main() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
     let cli = ActorCli::parse();
-    if let Err(error) = ActorConfig::load_private(cli.config) {
-        eprintln!("{error}");
-        std::process::exit(2);
-    }
-    println!("reference actor boundary validated for {:?}", cli.command);
+    let config = ActorConfig::load_private(cli.config)
+        .unwrap_or_else(|_| exit_with("actor configuration is unavailable"));
+    let output = execute_actor_command(&config, cli.command)
+        .await
+        .unwrap_or_else(|error| exit_with(error));
+    let json =
+        serde_json::to_string(&output).unwrap_or_else(|_| exit_with("actor output is unavailable"));
+    println!("{json}");
+}
+
+fn exit_with(message: impl std::fmt::Display) -> ! {
+    eprintln!("{message}");
+    std::process::exit(2);
 }

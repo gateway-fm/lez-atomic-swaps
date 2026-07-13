@@ -911,15 +911,36 @@ impl SqliteSwapStore {
 }
 
 fn open_configured_connection(path: impl AsRef<Path>) -> Result<Connection, StoreError> {
-    let path = path.as_ref();
-    let prepared = prepare_database_file(path)?;
+    open_configured_connection_with_mode(path.as_ref(), DatabaseOpenMode::CreateIfMissing)
+}
+
+fn open_existing_configured_connection(path: impl AsRef<Path>) -> Result<Connection, StoreError> {
+    open_configured_connection_with_mode(path.as_ref(), DatabaseOpenMode::ExistingOnly)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DatabaseOpenMode {
+    CreateIfMissing,
+    ExistingOnly,
+}
+
+fn open_configured_connection_with_mode(
+    path: &Path,
+    mode: DatabaseOpenMode,
+) -> Result<Connection, StoreError> {
+    let prepared = prepare_database_file(path, mode)?;
     // SQLite's NOFOLLOW flag covers only the terminal database component. The
     // identity checks detect a changed terminal inode before any PRAGMA/migration
     // and again before return, but they cannot descriptor-bind SQLite's later
     // pathname-based WAL/SHM opens or prevent replacement of a writable parent
     // directory between checks. Deployments must keep every database parent
     // directory private and non-writable by other principals.
-    let flags = OpenFlags::default() | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+    let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX
+        | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+    if mode == DatabaseOpenMode::CreateIfMissing {
+        flags |= OpenFlags::SQLITE_OPEN_CREATE;
+    }
     let mut connection = Connection::open_with_flags(path, flags)?;
     verify_database_file(path, &prepared)?;
     connection.busy_timeout(Duration::from_secs(5))?;
@@ -954,13 +975,21 @@ struct DatabaseFileIdentity {
 }
 
 #[cfg(unix)]
-fn prepare_database_file(path: &Path) -> Result<PreparedDatabaseFile, StoreError> {
+fn prepare_database_file(
+    path: &Path,
+    mode: DatabaseOpenMode,
+) -> Result<PreparedDatabaseFile, StoreError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => Ok(PreparedDatabaseFile {
             identity: validate_private_database_metadata(&metadata)?,
             _creation_guard: None,
         }),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => create_private_database_file(path),
+        Err(error)
+            if error.kind() == io::ErrorKind::NotFound
+                && mode == DatabaseOpenMode::CreateIfMissing =>
+        {
+            create_private_database_file(path)
+        }
         Err(_) => Err(StoreError::DatabaseFileUnavailable),
     }
 }
@@ -1032,8 +1061,15 @@ fn validate_private_database_metadata(
 struct PreparedDatabaseFile;
 
 #[cfg(not(unix))]
-fn prepare_database_file(_path: &Path) -> Result<PreparedDatabaseFile, StoreError> {
-    Ok(PreparedDatabaseFile)
+fn prepare_database_file(
+    path: &Path,
+    mode: DatabaseOpenMode,
+) -> Result<PreparedDatabaseFile, StoreError> {
+    if mode == DatabaseOpenMode::ExistingOnly && !path.exists() {
+        Err(StoreError::DatabaseFileUnavailable)
+    } else {
+        Ok(PreparedDatabaseFile)
+    }
 }
 
 #[cfg(not(unix))]

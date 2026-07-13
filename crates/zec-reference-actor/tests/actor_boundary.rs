@@ -4,10 +4,16 @@ use std::{
 };
 
 use clap::Parser as _;
+use lez_swap_core::Participant;
+use lez_swap_store::SqliteZecRecoveryStore;
+use lez_zec_swap_sdk::ProtectedClaimKey;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
-use zec_reference_actor::{ActorCli, ActorCommand, ActorConfig, ActorRole, validate_actor_pair};
+use zec_reference_actor::{
+    ActorCli, ActorCommand, ActorCommandError, ActorConfig, ActorRole, execute_actor_command,
+    validate_actor_pair,
+};
 
 const CAPABILITY: &[u8] = b"actor_capability_0123456789abcdef";
 const COOKIE: &[u8] = b"actor:private-cookie\n";
@@ -24,6 +30,96 @@ fn cli_exposes_exact_one_shot_commands_and_requires_private_config() {
         assert_eq!(cli.command, expected);
     }
     assert!(ActorCli::try_parse_from(["actor", "activate"]).is_err());
+}
+
+#[tokio::test]
+async fn status_reports_versioned_not_activated_without_creating_role_state() {
+    let fixture = PairFixture::new();
+    let role_state = fixture.path("maker-state");
+    let config = fixture.load("maker");
+
+    let output = execute_actor_command(&config, ActorCommand::Status)
+        .await
+        .expect("missing durable state has a truthful offline status");
+
+    assert_eq!(
+        serde_json::to_value(output).expect("status serializes"),
+        json!({"schema_version": 1, "role": "maker", "state": "not_activated"})
+    );
+    assert!(!role_state.exists(), "status must not create actor state");
+}
+
+#[tokio::test]
+async fn existing_store_status_uses_offline_claim_capable_replay() {
+    let fixture = PairFixture::new();
+    let role_state = fixture.path("maker-state");
+    drop(
+        SqliteZecRecoveryStore::open_claim_capable(
+            &role_state,
+            Participant::Maker,
+            ProtectedClaimKey::new("maker-claim-key-v1", [7; 32]).expect("claim key"),
+        )
+        .expect("create role-local store"),
+    );
+    for name in [
+        "agreement",
+        "maker-zcash-key",
+        "maker-capability",
+        "maker-cookie",
+        "maker-preimage",
+    ] {
+        fs::remove_file(fixture.path(name)).unwrap();
+    }
+    let config = fixture.load("maker");
+
+    let output = execute_actor_command(&config, ActorCommand::Status)
+        .await
+        .expect("existing store replays with no effect material or live RPC");
+
+    assert_eq!(
+        serde_json::to_value(output).expect("status serializes"),
+        json!({"schema_version": 1, "role": "maker", "state": "not_activated"})
+    );
+}
+
+#[tokio::test]
+async fn status_failures_are_stable_and_payload_free() {
+    let fixture = PairFixture::new();
+    regular_file(
+        &fixture.path("maker-state"),
+        b"secret marker and invalid SQLite payload",
+    );
+    let config = fixture.load("maker");
+
+    let error = execute_actor_command(&config, ActorCommand::Status)
+        .await
+        .expect_err("invalid durable state fails closed");
+
+    assert_eq!(error, ActorCommandError::StatusStoreUnavailable);
+    let diagnostics = format!("{error:?} {error}");
+    for forbidden in [
+        "secret marker",
+        "swap-001",
+        "maker-state",
+        fixture.root.path().to_string_lossy().as_ref(),
+    ] {
+        assert!(!diagnostics.contains(forbidden));
+    }
+}
+
+#[tokio::test]
+async fn effect_commands_fail_closed_until_real_composition_exists() {
+    for command in [ActorCommand::Activate, ActorCommand::Drive] {
+        let fixture = PairFixture::new();
+        let config = fixture.load("maker");
+
+        assert_eq!(
+            execute_actor_command(&config, command).await,
+            Err(ActorCommandError::CommandUnavailable)
+        );
+        assert!(!fixture.path("maker-state").exists());
+        assert!(!fixture.path("maker-journal").exists());
+    }
 }
 
 #[test]

@@ -60,6 +60,22 @@ use zcash_transparent::{
 
 const ACCEPTED_AT: UnixSeconds = UnixSeconds::new(10);
 
+#[test]
+fn claim_capable_existing_open_never_creates_missing_state() {
+    let temporary = TempDir::new().expect("temporary store");
+    let path = temporary.path().join("missing-claim.sqlite");
+
+    let error = SqliteZecRecoveryStore::open_claim_capable_existing(
+        &path,
+        Participant::Maker,
+        claim_key("existing-only-key", [0x21; 32]),
+    )
+    .expect_err("status must not create a missing role store");
+
+    assert!(matches!(error, StoreError::DatabaseFileUnavailable));
+    assert!(!path.exists(), "existing-only open must never create state");
+}
+
 #[cfg(unix)]
 #[test]
 fn claim_capable_open_rejects_terminal_symlink_without_touching_target() {
@@ -91,9 +107,8 @@ fn claim_capable_open_rejects_terminal_symlink_without_touching_target() {
     );
 }
 
-#[cfg(unix)]
 #[test]
-fn claim_capable_open_creates_owner_private_regular_database() {
+fn claim_capable_open_creates_database_and_is_owner_private_on_unix() {
     let temporary = TempDir::new().expect("temporary store");
     let path = temporary.path().join("private-claim.sqlite");
 
@@ -106,10 +121,16 @@ fn claim_capable_open_creates_owner_private_regular_database() {
         .expect("create private claim store"),
     );
 
-    let metadata = fs::symlink_metadata(&path).expect("inspect claim database");
-    assert!(metadata.file_type().is_file());
-    assert_eq!(metadata.permissions().mode() & 0o7777, 0o600);
-    assert_eq!(metadata.nlink(), 1);
+    assert!(
+        path.is_file(),
+        "create-capable open must create its database"
+    );
+    #[cfg(unix)]
+    {
+        let metadata = fs::symlink_metadata(&path).expect("inspect claim database");
+        assert_eq!(metadata.permissions().mode() & 0o7777, 0o600);
+        assert_eq!(metadata.nlink(), 1);
+    }
 }
 
 #[cfg(unix)]
