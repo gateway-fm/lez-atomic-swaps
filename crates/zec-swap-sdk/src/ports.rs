@@ -13,7 +13,8 @@ use crate::{
     ObservedMakerLockTransitionV1, ObservedRevealingClaimTransitionV1,
     ObservedTakerFirstLockTransitionV1, PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1,
     ProtectedClaimPayloadEnvelope, RevealingClaimObservationV1, RevealingClaimTransitionV1,
-    TakerFirstLockObservationV1, ZcashClaimContextV1, ZecAgreementV1,
+    TakerFirstLockObservationV1, ZcashClaimContextV1, ZcashFundingContextV1,
+    ZcashFundingObservationV1, ZecAgreementV1,
 };
 
 /// Narrow LEZ boundary for the preimage-revealing first claim.
@@ -54,6 +55,12 @@ pub trait LezClaimPort: Send + Sync {
 pub trait ZcashClaimPort: Send + Sync {
     /// Structured adapter, RPC, or signing error retained by the SDK.
     type Error: Error + Send + Sync + 'static;
+    /// Freshly proves the exact funding output is canonical and unspent before LEZ reveal.
+    async fn observe_funding_before_reveal(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashFundingContextV1,
+    ) -> Result<ZcashFundingObservationV1, Self::Error>;
     /// Derives and signs exact agreement- and funding-outpoint-bound Zcash claim bytes.
     async fn prepare_followup_claim(
         &self,

@@ -42,7 +42,7 @@ pub use claim::{
     FollowupClaimObservationV1, FollowupClaimTransitionV1, MAX_CLAIM_SUBMISSION_BYTES,
     ObservedFollowupClaimTransitionV1, ObservedRevealingClaimTransitionV1,
     PreparedClaimSubmissionV1, RevealingClaimEvidenceV1, RevealingClaimObservationV1,
-    RevealingClaimTransitionV1,
+    RevealingClaimTransitionV1, ZcashFundingWaitReasonV1,
 };
 pub use claim_material::{
     ClaimMaterialContext, ClaimMaterialPurpose, ClaimSubmissionContext,
@@ -130,7 +130,10 @@ pub use spend_observation::{
     SdkCanonicalSpendDeviation, SdkCanonicalSpendPolicy, SpendObservationError,
     ZCASH_MAX_SCRIPT_BYTES, ZEBRA_MAX_BLOCK_BYTES, ZcashSpendNodeSnapshot,
 };
-pub use zcash_claim_context::{ZcashClaimContextError, ZcashClaimContextV1};
+pub use zcash_claim_context::{
+    ZcashClaimContextError, ZcashClaimContextV1, ZcashFundingContextV1,
+    ZcashFundingObservationError, ZcashFundingObservationV1, ZcashUnspentOutputSnapshotV1,
+};
 pub use zec_binding_record::{
     ZecBindingRecordError, ZecProfileRecordV1, ZecSwapBinding, ZecSwapBindingRecordV1,
 };

@@ -17,7 +17,8 @@ use crate::{
     ObservedRevealingClaimTransitionV1, ObservedTakerFirstLockTransitionV1, OfferDiscovery,
     PreparedFirstLockSubmissionV1, RecoveryStore, RevealingClaimObservationV1,
     RevealingClaimTransitionRecordV1, RevealingClaimTransitionV1, TakerFirstLockObservationV1,
-    ZcashClaimContextV1, ZcashClaimPort, ZcashFirstLockPort, ZcashMakerLockObservationPort,
+    ZcashClaimContextV1, ZcashClaimPort, ZcashFirstLockPort, ZcashFundingContextV1,
+    ZcashFundingObservationV1, ZcashFundingWaitReasonV1, ZcashMakerLockObservationPort,
     ZcashObservationEvent, ZcashObservationReconciliation, ZcashObservationTracker,
     ZcashTakerFirstLockObservationPort, ZecAgreementV1, ZecLifecycleAction, ZecSdkError,
     claim::validate_preimage, lifecycle::next_action, observed_maker_lock::maker_final_lock_step,
@@ -401,6 +402,20 @@ impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store> {
     /// non-canonical, or null coordinator-pinned Zcash funding transaction ID.
     pub fn zcash_claim_context(&self) -> Result<ZcashClaimContextV1, ZecSdkError> {
         ZcashClaimContextV1::from_active(self.agreement(), &self.coordinator)
+            .map_err(ZecSdkError::from)
+    }
+
+    /// Derives the exact durable Zcash funding output protecting a preimage reveal.
+    ///
+    /// This view is available while both legs are locked and remains available in the
+    /// follow-up phase. Claim driving derives it again after reopening durable reveal bytes.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a pre-lock or mismatched coordinator and any missing, malformed,
+    /// non-canonical, or null coordinator-pinned Zcash funding transaction ID.
+    pub fn zcash_funding_context(&self) -> Result<ZcashFundingContextV1, ZecSdkError> {
+        ZcashFundingContextV1::from_active(self.agreement(), &self.coordinator)
             .map_err(ZecSdkError::from)
     }
 
@@ -1332,6 +1347,38 @@ where
             .map_err(|error| ZecSdkError::LezClaim(Box::new(error)))?;
         match observation {
             RevealingClaimObservationV1::Absent => {
+                let context = self.zcash_funding_context()?;
+                let funding = self
+                    .zcash
+                    .observe_funding_before_reveal(self.agreement(), &context)
+                    .await
+                    .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
+                match funding {
+                    ZcashFundingObservationV1::Absent => {
+                        return Ok(ClaimDriveOutcome::AwaitingSafeZcashFunding(
+                            ZcashFundingWaitReasonV1::Absent,
+                        ));
+                    }
+                    ZcashFundingObservationV1::Spent => {
+                        return Ok(ClaimDriveOutcome::AwaitingSafeZcashFunding(
+                            ZcashFundingWaitReasonV1::Spent,
+                        ));
+                    }
+                    ZcashFundingObservationV1::Unstable => {
+                        return Ok(ClaimDriveOutcome::AwaitingSafeZcashFunding(
+                            ZcashFundingWaitReasonV1::Unstable,
+                        ));
+                    }
+                    ZcashFundingObservationV1::Confirmed { canonical, unspent } => {
+                        ZcashFundingObservationV1::validate_confirmed_for_reveal(
+                            &canonical,
+                            &unspent,
+                            self.agreement(),
+                            &self.coordinator,
+                            &context,
+                        )?;
+                    }
+                }
                 self.lez
                     .submit_revealing_claim(self.agreement(), &prepared)
                     .await

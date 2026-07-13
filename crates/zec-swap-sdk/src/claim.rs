@@ -19,6 +19,17 @@ pub enum ClaimStepV1 {
     FollowupZcash,
 }
 
+/// Fail-closed reason the revealing claimant is waiting for safe Zcash funding.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ZcashFundingWaitReasonV1 {
+    /// The exact durable funding transaction is not canonical.
+    Absent,
+    /// The exact durable funding output is already spent.
+    Spent,
+    /// The adapter could not assemble one stable node view.
+    Unstable,
+}
+
 /// One bounded result from advancing the agreement-directed claim lifecycle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClaimDriveOutcome {
@@ -26,6 +37,8 @@ pub enum ClaimDriveOutcome {
     Submitted(ClaimStepV1),
     /// The expected transaction is absent or not yet stable enough to project.
     AwaitingStableObservation(ClaimStepV1),
+    /// The LEZ reveal was withheld because fresh Zcash funding was not safe.
+    AwaitingSafeZcashFunding(ZcashFundingWaitReasonV1),
     /// Stable canonical evidence was durably projected.
     Projected { step: ClaimStepV1, revision: u64 },
     /// Both claims were already durably replayed or projected.

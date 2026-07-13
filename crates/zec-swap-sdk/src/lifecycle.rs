@@ -73,6 +73,9 @@ pub enum ZecSdkError {
     /// The durable coordinator cannot identify the exact agreement-bound Zcash funding outpoint.
     #[error(transparent)]
     InvalidZcashClaimContext(#[from] crate::ZcashClaimContextError),
+    /// Fresh Zcash funding evidence is not safe enough to reveal the preimage.
+    #[error(transparent)]
+    InvalidZcashFundingObservation(#[from] crate::ZcashFundingObservationError),
     /// Canonical Zcash observation history is stale, duplicated, or missing replacement proof.
     #[error(transparent)]
     InvalidZcashObservationHistory(#[from] ObservationTrackerError),

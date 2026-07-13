@@ -4,7 +4,7 @@ use lez_swap_store::SqliteZecRecoveryStore;
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract, CLAIM_RECORD_SCHEMA_V1,
     CLAIM_RECORD_SCHEMA_V2, CanonicalLezEscrowObservationV1, CanonicalLezEscrowRemovalV1,
-    CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval, ClaimPreimage,
+    CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval, ClaimDriveOutcome, ClaimPreimage,
     ClaimRecoveryStore, ClaimStepV1, CreateFirstLockOutcome, ExpectedBip199Output,
     FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockObservation, FirstLockPlanV1,
     FirstLockProjectionCommit, FirstLockStepV1, FollowupClaimEvidenceV1,
@@ -21,13 +21,14 @@ use lez_zec_swap_sdk::{
     RevealingClaimEvidenceV1, RevealingClaimObservationV1, RevealingClaimTransitionRecordV1,
     TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
     ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimContextV1, ZcashClaimPort, ZcashFirstLockPort,
+    ZcashFundingContextV1, ZcashFundingObservationV1, ZcashFundingWaitReasonV1,
     ZcashMakerLockObservationPort, ZcashNodeRemovalSnapshot, ZcashNodeSnapshot,
     ZcashObservationEventRecordV1, ZcashStableTip, ZcashTakerFirstLockObservationPort,
-    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecLezTermsV1,
-    ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1,
-    ZecRefundPlanV1, ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
-    build_funding_transaction, derive_lez_metadata_account_v1,
-    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    ZcashTransparentDestinationV1, ZcashUnspentOutputSnapshotV1, ZecAgreementBodyV1,
+    ZecAgreementRecordV1, ZecLezTermsV1, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1,
+    ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding,
+    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_funding_transaction,
+    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
@@ -304,6 +305,7 @@ struct SqliteClaimPort {
     revealing_preimage: std::sync::Arc<std::sync::Mutex<Option<[u8; 32]>>>,
     followup_confirmed: std::sync::Arc<std::sync::Mutex<bool>>,
     zcash_contexts: std::sync::Arc<std::sync::Mutex<Vec<ZcashClaimContextV1>>>,
+    funding_observation: std::sync::Arc<std::sync::Mutex<Option<ZcashFundingObservationV1>>>,
 }
 
 type ClaimPayloadLog = Vec<(ClaimStepV1, Vec<u8>)>;
@@ -324,11 +326,26 @@ impl Default for SqliteClaimPort {
             revealing_preimage: std::sync::Arc::default(),
             followup_confirmed: std::sync::Arc::default(),
             zcash_contexts: std::sync::Arc::default(),
+            funding_observation: std::sync::Arc::default(),
         }
     }
 }
 
 impl SqliteClaimPort {
+    fn expose_funding_as(&self, observation: ZcashFundingObservationV1) {
+        *self
+            .funding_observation
+            .lock()
+            .expect("funding observation lock") = Some(observation);
+    }
+
+    fn expose_exact_funding(&self) {
+        *self
+            .funding_observation
+            .lock()
+            .expect("funding observation lock") = None;
+    }
+
     fn expose_taker_lock(&self, observation: TakerFirstLockObservationV1) {
         *self
             .taker_observation
@@ -654,6 +671,34 @@ impl LezClaimPort for SqliteClaimPort {
 #[async_trait]
 impl ZcashClaimPort for SqliteClaimPort {
     type Error = TestPortError;
+
+    async fn observe_funding_before_reveal(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        _context: &ZcashFundingContextV1,
+    ) -> Result<ZcashFundingObservationV1, Self::Error> {
+        if let Some(configured) = self
+            .funding_observation
+            .lock()
+            .expect("funding observation lock")
+            .clone()
+        {
+            return Ok(configured);
+        }
+        let canonical = canonical_zcash_taker_lock(agreement);
+        let tip = ZcashStableTip::new(
+            canonical.tip_block_hash(),
+            canonical.tip_height(),
+            canonical.tip_block_hash(),
+            canonical.tip_height(),
+        );
+        let unspent = ZcashUnspentOutputSnapshotV1::new(
+            canonical.outpoint().clone(),
+            canonical.output().clone(),
+            tip,
+        );
+        Ok(ZcashFundingObservationV1::confirmed(canonical, unspent))
+    }
 
     async fn prepare_followup_claim(
         &self,
@@ -1629,9 +1674,63 @@ fn install_claim_abort_trigger(path: &std::path::Path, name: &str, table: &str) 
 
 #[tokio::test]
 async fn claim_retry_observes_exact_durable_bytes_before_any_rebroadcast() {
+    assert_unsafe_revealing_funding_retains_one_intent_across_restart().await;
     assert_unknown_revealing_submission_is_observed().await;
     assert_unknown_followup_submission_reuses_context_after_reopen().await;
     assert_stale_revealing_commit_is_replayed().await;
+}
+
+async fn assert_unsafe_revealing_funding_retains_one_intent_across_restart() {
+    let id = "sqlite-unsafe-revealing-funding-restart";
+    let mut fixture = locked_claim_fixture(id).await;
+    fixture
+        .port
+        .expose_funding_as(ZcashFundingObservationV1::Spent);
+    assert_eq!(
+        fixture
+            .taker
+            .drive_claim()
+            .await
+            .expect("spent funding waits without reveal"),
+        ClaimDriveOutcome::AwaitingSafeZcashFunding(ZcashFundingWaitReasonV1::Spent)
+    );
+    assert!(fixture.port.claim_submissions().is_empty());
+    let connection = Connection::open(&fixture.taker_path).expect("inspect retained reveal");
+    let retained: (i64, Option<i64>) = connection
+        .query_row(
+            "SELECT COUNT(*), MAX(closed_revision) FROM zec_sdk_claim_intents
+             WHERE local_role = 'taker' AND swap_id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("one open retained reveal intent");
+    assert_eq!(retained, (1, None));
+    drop(connection);
+
+    drop(fixture.taker);
+    drop(fixture.taker_store);
+    let mut recovered = claim_sdk(
+        Participant::Taker,
+        fixture.port.clone(),
+        claim_store(&fixture.taker_path, Participant::Taker),
+    )
+    .resume_claim_capable(&SwapId::new(id).expect("swap ID"))
+    .await
+    .expect("restart unsafe retained reveal")
+    .expect("durable revealing claimant");
+    fixture.port.expose_exact_funding();
+    assert_eq!(
+        recovered
+            .drive_claim()
+            .await
+            .expect("exact funding permits retained reveal"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingLez)
+    );
+    assert_eq!(
+        fixture.port.claim_submissions(),
+        vec![ClaimStepV1::RevealingLez]
+    );
+    assert_exact_revealing_observations(&fixture.port, fixture.secret);
 }
 
 async fn assert_unknown_followup_submission_reuses_context_after_reopen() {

@@ -10,7 +10,7 @@ use lez_swap_core::{
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract,
     CanonicalLezEscrowObservationV1, CanonicalLezEscrowRemovalV1, CanonicalZcashOutputObservation,
-    CanonicalZcashOutputRemoval, ClaimError, ClaimIntentRecordV1, ClaimIntentV1,
+    CanonicalZcashOutputRemoval, ClaimDriveOutcome, ClaimError, ClaimIntentRecordV1, ClaimIntentV1,
     ClaimMaterialContext, ClaimMaterialPurpose, ClaimPreimage, ClaimRecoveryStore, ClaimStepV1,
     ClaimSubmissionContext, CreateAgreementOutcome, CreateFirstLockOutcome, ExpectedBip199Output,
     FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentRecordV1,
@@ -37,13 +37,15 @@ use lez_zec_swap_sdk::{
     RevealingClaimEvidenceV1, RevealingClaimObservationV1, RevealingClaimTransitionRecordV1,
     RevealingClaimTransitionV1, TakerFirstLockObservationV1, TransparentFundingRequest,
     TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimContextError, ZcashClaimContextV1,
-    ZcashClaimPort, ZcashFirstLockPort, ZcashMakerLockObservationPort, ZcashNodeRemovalSnapshot,
+    ZcashClaimPort, ZcashFirstLockPort, ZcashFundingContextV1, ZcashFundingObservationV1,
+    ZcashFundingWaitReasonV1, ZcashMakerLockObservationPort, ZcashNodeRemovalSnapshot,
     ZcashNodeSnapshot, ZcashStableTip, ZcashTakerFirstLockObservationPort,
-    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1Error,
-    ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1,
-    ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding,
-    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_funding_transaction,
-    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    ZcashTransparentDestinationV1, ZcashUnspentOutputSnapshotV1, ZecAgreementBodyV1,
+    ZecAgreementRecordV1, ZecAgreementV1Error, ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk,
+    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
+    ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
+    build_funding_transaction, derive_lez_metadata_account_v1,
+    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use sha2::{Digest as _, Sha256};
@@ -1291,15 +1293,80 @@ struct MemoryMakerLockObservation {
     calls: Arc<Mutex<usize>>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ClaimPortEvent {
+    PrepareReveal,
+    ObserveReveal,
+    ObserveFunding,
+    SubmitReveal,
+}
+
 #[derive(Clone, Debug, Default)]
 struct MemoryClaimCorridor {
     submissions: Arc<Mutex<Vec<ClaimStepV1>>>,
+    revealing_submission_bytes: Arc<Mutex<Vec<Vec<u8>>>>,
     revealing_preimage: Arc<Mutex<Option<[u8; 32]>>>,
     followup_confirmed: Arc<Mutex<bool>>,
     zcash_contexts: Arc<Mutex<Vec<ZcashClaimContextV1>>>,
+    funding_contexts: Arc<Mutex<Vec<ZcashFundingContextV1>>>,
+    funding_observation: Arc<Mutex<Option<ZcashFundingObservationV1>>>,
+    port_events: Arc<Mutex<Vec<ClaimPortEvent>>>,
 }
 
 impl MemoryClaimCorridor {
+    fn expose_funding_as(&self, observation: ZcashFundingObservationV1) {
+        *self
+            .funding_observation
+            .lock()
+            .expect("funding observation lock") = Some(observation);
+    }
+
+    fn configured_funding_observation(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> ZcashFundingObservationV1 {
+        self.funding_observation
+            .lock()
+            .expect("funding observation lock")
+            .clone()
+            .unwrap_or_else(|| exact_zcash_funding_observation(agreement))
+    }
+
+    fn port_events(&self) -> Vec<ClaimPortEvent> {
+        self.port_events
+            .lock()
+            .expect("claim port events lock")
+            .clone()
+    }
+
+    fn record_event(&self, event: ClaimPortEvent) {
+        self.port_events
+            .lock()
+            .expect("claim port events lock")
+            .push(event);
+    }
+
+    fn revealing_submission_bytes(&self) -> Vec<Vec<u8>> {
+        self.revealing_submission_bytes
+            .lock()
+            .expect("revealing submission bytes lock")
+            .clone()
+    }
+
+    fn funding_contexts(&self) -> Vec<ZcashFundingContextV1> {
+        self.funding_contexts
+            .lock()
+            .expect("funding contexts lock")
+            .clone()
+    }
+
+    fn record_funding_context(&self, context: &ZcashFundingContextV1) {
+        self.funding_contexts
+            .lock()
+            .expect("funding contexts lock")
+            .push(context.clone());
+    }
+
     fn confirm_revealing_claim(&self, preimage: [u8; 32]) {
         *self
             .revealing_preimage
@@ -1340,6 +1407,13 @@ impl MemoryClaimCorridor {
             .lock()
             .expect("claim submissions lock")
             .push(step);
+    }
+
+    fn record_revealing_submission(&self, exact: &[u8]) {
+        self.revealing_submission_bytes
+            .lock()
+            .expect("revealing submission bytes lock")
+            .push(exact.to_vec());
     }
 }
 
@@ -1446,6 +1520,7 @@ impl LezClaimPort for MemoryLezTakerLockObservation {
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         preimage: &ClaimPreimage,
     ) -> Result<PreparedClaimSubmissionV1, Self::Error> {
+        self.4.record_event(ClaimPortEvent::PrepareReveal);
         let mut exact = vec![0x6c, 0x65, 0x7a];
         exact.extend_from_slice(preimage.expose_secret());
         PreparedClaimSubmissionV1::new(ClaimStepV1::RevealingLez, [0xc1; 32], exact)
@@ -1457,6 +1532,7 @@ impl LezClaimPort for MemoryLezTakerLockObservation {
         agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         prepared: &PreparedClaimSubmissionV1,
     ) -> Result<RevealingClaimObservationV1, Self::Error> {
+        self.4.record_event(ClaimPortEvent::ObserveReveal);
         if prepared.step() != ClaimStepV1::RevealingLez
             || prepared.expected_submission_id() != &[0xc1; 32]
         {
@@ -1512,6 +1588,9 @@ impl LezClaimPort for MemoryLezTakerLockObservation {
                 "unexpected deterministic LEZ claim bytes".to_owned(),
             ));
         }
+        self.4.record_event(ClaimPortEvent::SubmitReveal);
+        self.4
+            .record_revealing_submission(prepared.exact_submission());
         self.4.record_submission(ClaimStepV1::RevealingLez);
         Ok(())
     }
@@ -1602,6 +1681,16 @@ impl ZcashMakerLockObservationPort for MemoryZcashTakerLockObservation {
 #[async_trait]
 impl ZcashClaimPort for MemoryZcashTakerLockObservation {
     type Error = TestPortError;
+
+    async fn observe_funding_before_reveal(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashFundingContextV1,
+    ) -> Result<ZcashFundingObservationV1, Self::Error> {
+        self.3.record_event(ClaimPortEvent::ObserveFunding);
+        self.3.record_funding_context(context);
+        Ok(self.3.configured_funding_observation(agreement))
+    }
 
     async fn prepare_followup_claim(
         &self,
@@ -4213,6 +4302,166 @@ fn canonical_zcash_taker_lock(
     canonical_zcash_taker_lock_at_depth(agreement, [9; 32], 3)
 }
 
+fn exact_zcash_funding_observation(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+) -> ZcashFundingObservationV1 {
+    let canonical = canonical_zcash_taker_lock(agreement);
+    let tip = ZcashStableTip::new(
+        canonical.tip_block_hash(),
+        canonical.tip_height(),
+        canonical.tip_block_hash(),
+        canonical.tip_height(),
+    );
+    let unspent = ZcashUnspentOutputSnapshotV1::new(
+        canonical.outpoint().clone(),
+        canonical.output().clone(),
+        tip,
+    );
+    ZcashFundingObservationV1::confirmed(canonical, unspent)
+}
+
+#[derive(Clone, Copy, Debug)]
+enum FundingMutation {
+    CanonicalTransactionId,
+    CanonicalValue,
+    CanonicalScript,
+    Network,
+    ConsensusBranch,
+    InsufficientConfirmations,
+    UnstableUnspentTip,
+    UnspentTip,
+    UnspentTransactionId,
+    UnspentOutputIndex,
+    UnspentValue,
+    UnspentScript,
+    RefundHeightReached,
+}
+
+fn mutated_zcash_funding_observation(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    mutation: FundingMutation,
+) -> ZcashFundingObservationV1 {
+    let agreed = agreement.binding().expected_output();
+    let alternate = alternate_expected_funding(agreement, mutation);
+    let tip_height = if matches!(mutation, FundingMutation::RefundHeightReached) {
+        BlockHeight::from_u32(agreement.zcash_refund_at_height())
+    } else if matches!(mutation, FundingMutation::InsufficientConfirmations) {
+        BlockHeight::from_u32(100)
+    } else {
+        BlockHeight::from_u32(102)
+    };
+    let input_transaction_id = if matches!(mutation, FundingMutation::CanonicalTransactionId) {
+        [8; 32]
+    } else {
+        [9; 32]
+    };
+    let canonical = canonical_zcash_taker_lock_fixture_for_expected(
+        alternate.as_ref().unwrap_or(agreed),
+        input_transaction_id,
+        BlockHash([0x44; 32]),
+        BlockHash([0xaa; 32]),
+        tip_height,
+    );
+    mutated_unspent_funding(canonical, mutation)
+}
+
+fn alternate_expected_funding(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    mutation: FundingMutation,
+) -> Option<ExpectedBip199Output> {
+    let agreed = agreement.binding().expected_output();
+    match mutation {
+        FundingMutation::CanonicalValue => Some(ExpectedBip199Output::new(
+            agreed.network(),
+            agreed.consensus_branch_id(),
+            Zatoshis::from_u64(
+                u64::from(agreed.value())
+                    .checked_add(1)
+                    .expect("alternate funding value"),
+            )
+            .expect("alternate funding value"),
+            agreed.contract().clone(),
+        )),
+        FundingMutation::CanonicalScript => Some(ExpectedBip199Output::new(
+            agreed.network(),
+            agreed.consensus_branch_id(),
+            agreed.value(),
+            Bip199Contract::new(
+                agreed.contract().refund_lock_time(),
+                [0x31; 20],
+                *agreement.secret_digest(),
+                [0x32; 20],
+            ),
+        )),
+        FundingMutation::Network => Some(ExpectedBip199Output::new(
+            NetworkType::Test,
+            agreed.consensus_branch_id(),
+            agreed.value(),
+            agreed.contract().clone(),
+        )),
+        FundingMutation::ConsensusBranch => Some(ExpectedBip199Output::new(
+            agreed.network(),
+            BranchId::Nu6_1,
+            agreed.value(),
+            agreed.contract().clone(),
+        )),
+        _ => None,
+    }
+}
+
+fn mutated_unspent_funding(
+    canonical: CanonicalZcashOutputObservation,
+    mutation: FundingMutation,
+) -> ZcashFundingObservationV1 {
+    let mut outpoint = canonical.outpoint().clone();
+    if matches!(mutation, FundingMutation::UnspentTransactionId) {
+        outpoint = OutPoint::new([0x77; 32], 0);
+    } else if matches!(mutation, FundingMutation::UnspentOutputIndex) {
+        outpoint = OutPoint::new(*canonical.transaction_id().as_ref(), 1);
+    }
+    let output = match mutation {
+        FundingMutation::UnspentValue => TxOut::new(
+            Zatoshis::from_u64(
+                u64::from(canonical.output().value())
+                    .checked_add(1)
+                    .expect("alternate UTXO value"),
+            )
+            .expect("alternate UTXO value"),
+            canonical.output().script_pubkey().clone(),
+        ),
+        FundingMutation::UnspentScript => {
+            let key = SecretKey::from_slice(&[8; 32]).expect("alternate UTXO owner key");
+            let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &key);
+            TxOut::new(
+                canonical.output().value(),
+                TransparentAddress::from_pubkey(&public_key).script().into(),
+            )
+        }
+        _ => canonical.output().clone(),
+    };
+    let unspent_tip_height = if matches!(mutation, FundingMutation::UnspentTip) {
+        BlockHeight::from_u32(u32::from(canonical.tip_height()) + 1)
+    } else {
+        canonical.tip_height()
+    };
+    let after_tip_hash = if matches!(mutation, FundingMutation::UnstableUnspentTip) {
+        BlockHash([0xbb; 32])
+    } else {
+        canonical.tip_block_hash()
+    };
+    let unspent = ZcashUnspentOutputSnapshotV1::new(
+        outpoint,
+        output,
+        ZcashStableTip::new(
+            canonical.tip_block_hash(),
+            unspent_tip_height,
+            after_tip_hash,
+            unspent_tip_height,
+        ),
+    );
+    ZcashFundingObservationV1::confirmed(canonical, unspent)
+}
+
 fn canonical_zcash_taker_lock_with_input(
     agreement: &lez_zec_swap_sdk::ZecAgreementV1,
     input_transaction_id: [u8; 32],
@@ -4267,6 +4516,22 @@ fn canonical_zcash_taker_lock_fixture(
     tip_height: BlockHeight,
 ) -> CanonicalZcashOutputObservation {
     let expected = agreement.binding().expected_output();
+    canonical_zcash_taker_lock_fixture_for_expected(
+        expected,
+        input_transaction_id,
+        transaction_block_hash,
+        tip_block_hash,
+        tip_height,
+    )
+}
+
+fn canonical_zcash_taker_lock_fixture_for_expected(
+    expected: &ExpectedBip199Output,
+    input_transaction_id: [u8; 32],
+    transaction_block_hash: BlockHash,
+    tip_block_hash: BlockHash,
+    tip_height: BlockHeight,
+) -> CanonicalZcashOutputObservation {
     let key = SecretKey::from_slice(&[7; 32]).expect("canonical observation owner key");
     let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &key);
     let owner_script: Script = TransparentAddress::from_pubkey(&public_key).script().into();
@@ -4814,6 +5079,223 @@ async fn independent_actors_complete_lez_then_zcash_claims_in_both_directions() 
             secret,
         ))
         .await;
+    }
+}
+
+#[tokio::test]
+async fn reveal_waits_for_exact_fresh_unspent_zcash_funding_after_restart_in_both_directions() {
+    for (id, direction, first_claimant, secret) in [
+        (
+            "sdk-pre-reveal-gate-forward",
+            SwapDirection::TakerSellsForeign,
+            Participant::Taker,
+            [0xa1; 32],
+        ),
+        (
+            "sdk-pre-reveal-gate-reverse",
+            SwapDirection::TakerSellsLez,
+            Participant::Maker,
+            [0xa2; 32],
+        ),
+    ] {
+        Box::pin(assert_pre_reveal_funding_gate(
+            id,
+            direction,
+            first_claimant,
+            secret,
+        ))
+        .await;
+    }
+}
+
+async fn assert_pre_reveal_funding_gate(
+    id: &str,
+    direction: SwapDirection,
+    first_claimant: Participant,
+    secret: [u8; 32],
+) {
+    let mut fixture = activate_claim_actor_fixture(id, direction, first_claimant, secret).await;
+    lock_claim_actor_fixture(direction, &mut fixture).await;
+    let expected_context = match first_claimant {
+        Participant::Maker => fixture.maker.zcash_funding_context(),
+        Participant::Taker => fixture.taker.zcash_funding_context(),
+    }
+    .expect("both locked derives exact funding context");
+
+    assert_funding_wait(
+        &mut fixture,
+        ZcashFundingObservationV1::Absent,
+        ZcashFundingWaitReasonV1::Absent,
+    )
+    .await;
+    assert_eq!(
+        fixture
+            .corridor
+            .port_events()
+            .iter()
+            .filter(|event| **event == ClaimPortEvent::PrepareReveal)
+            .count(),
+        1,
+        "unsafe funding still leaves one durable reveal intent"
+    );
+
+    restart_revealing_actor(id, &mut fixture).await;
+    assert_funding_wait(
+        &mut fixture,
+        ZcashFundingObservationV1::Spent,
+        ZcashFundingWaitReasonV1::Spent,
+    )
+    .await;
+    assert_funding_wait(
+        &mut fixture,
+        ZcashFundingObservationV1::Unstable,
+        ZcashFundingWaitReasonV1::Unstable,
+    )
+    .await;
+
+    let agreement = fixture.maker.agreement().clone();
+    assert_unsafe_funding_mutations(&mut fixture, &agreement).await;
+    assert_exact_funding_submission(&mut fixture, &agreement, &expected_context, secret).await;
+}
+
+async fn assert_funding_wait(
+    fixture: &mut ClaimActorFixture,
+    observation: ZcashFundingObservationV1,
+    reason: ZcashFundingWaitReasonV1,
+) {
+    fixture.corridor.expose_funding_as(observation);
+    assert_eq!(
+        drive_revealing_actor(fixture)
+            .await
+            .expect("unsafe funding waits"),
+        ClaimDriveOutcome::AwaitingSafeZcashFunding(reason)
+    );
+    assert!(fixture.corridor.submissions().is_empty());
+}
+
+async fn assert_unsafe_funding_mutations(
+    fixture: &mut ClaimActorFixture,
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+) {
+    for mutation in [
+        FundingMutation::CanonicalTransactionId,
+        FundingMutation::CanonicalValue,
+        FundingMutation::CanonicalScript,
+        FundingMutation::Network,
+        FundingMutation::ConsensusBranch,
+        FundingMutation::InsufficientConfirmations,
+        FundingMutation::UnstableUnspentTip,
+        FundingMutation::UnspentTip,
+        FundingMutation::UnspentTransactionId,
+        FundingMutation::UnspentOutputIndex,
+        FundingMutation::UnspentValue,
+        FundingMutation::UnspentScript,
+        FundingMutation::RefundHeightReached,
+    ] {
+        fixture
+            .corridor
+            .expose_funding_as(mutated_zcash_funding_observation(agreement, mutation));
+        assert_invalid_funding_observation(fixture, mutation).await;
+    }
+}
+
+async fn assert_invalid_funding_observation(
+    fixture: &mut ClaimActorFixture,
+    mutation: FundingMutation,
+) {
+    assert!(
+        matches!(
+            drive_revealing_actor(fixture).await,
+            Err(ZecSdkError::InvalidZcashFundingObservation(_))
+        ),
+        "{mutation:?} must fail closed"
+    );
+    assert!(
+        fixture.corridor.submissions().is_empty(),
+        "{mutation:?} must not reveal the preimage"
+    );
+}
+
+async fn assert_exact_funding_submission(
+    fixture: &mut ClaimActorFixture,
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    expected_context: &ZcashFundingContextV1,
+    secret: [u8; 32],
+) {
+    fixture
+        .corridor
+        .expose_funding_as(exact_zcash_funding_observation(agreement));
+    assert_eq!(
+        drive_revealing_actor(fixture)
+            .await
+            .expect("exact canonical unspent funding permits reveal"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingLez)
+    );
+    let mut expected_submission = vec![0x6c, 0x65, 0x7a];
+    expected_submission.extend_from_slice(&secret);
+    assert_eq!(
+        fixture.corridor.revealing_submission_bytes(),
+        vec![expected_submission],
+        "restart submits the same single retained reveal, never a re-prepared substitute"
+    );
+    let events = fixture.corridor.port_events();
+    assert_eq!(
+        &events[events.len() - 3..],
+        &[
+            ClaimPortEvent::ObserveReveal,
+            ClaimPortEvent::ObserveFunding,
+            ClaimPortEvent::SubmitReveal,
+        ],
+        "fresh funding observation is literally the final awaited claim-port call before submit"
+    );
+    assert!(
+        fixture
+            .corridor
+            .funding_contexts()
+            .iter()
+            .all(|context| context == expected_context),
+        "every retry, including after restart, re-derives the same durable exact outpoint"
+    );
+}
+
+async fn drive_revealing_actor(
+    fixture: &mut ClaimActorFixture,
+) -> Result<ClaimDriveOutcome, ZecSdkError> {
+    match fixture.first_claimant {
+        Participant::Maker => fixture.maker.drive_claim().await,
+        Participant::Taker => fixture.taker.drive_claim().await,
+    }
+}
+
+async fn restart_revealing_actor(id: &str, fixture: &mut ClaimActorFixture) {
+    let swap_id = SwapId::new(id).expect("swap ID");
+    match fixture.first_claimant {
+        Participant::Maker => {
+            fixture.maker = actor_sdk(
+                Participant::Maker,
+                fixture.wire.clone(),
+                fixture.lez.clone(),
+                fixture.zcash.clone(),
+                fixture.maker_store.clone(),
+            )
+            .resume_claim_capable(&swap_id)
+            .await
+            .expect("restart revealing maker")
+            .expect("durable revealing maker");
+        }
+        Participant::Taker => {
+            fixture.taker = actor_sdk(
+                Participant::Taker,
+                fixture.wire.clone(),
+                fixture.lez.clone(),
+                fixture.zcash.clone(),
+                fixture.taker_store.clone(),
+            )
+            .resume_claim_capable(&swap_id)
+            .await
+            .expect("restart revealing taker")
+            .expect("durable revealing taker");
+        }
     }
 }
 
