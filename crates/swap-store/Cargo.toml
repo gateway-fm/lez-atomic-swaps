@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 async-trait = "0.1.89"
 getrandom = "=0.3.4"
+lez-bridge-protocol = { version = "0.1.0", path = "../lez-bridge-protocol" }
 lez-swap-core = { version = "0.1.0", path = "../swap-core" }
 lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk" }
 rusqlite = { version = "0.40.1", features = ["bundled"] }

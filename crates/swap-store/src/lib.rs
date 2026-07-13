@@ -2,8 +2,13 @@
 
 use std::{path::Path, time::Duration};
 
+mod bridge_operation_journal;
 mod zec_recovery;
 
+pub use bridge_operation_journal::{
+    BridgeContextCommit, BridgeObservationOutcome, BridgeOperationKey, BridgeOperationKind,
+    BridgeRequestSpec, DurableBridgeRequestContext, SqliteBridgeOperationJournal,
+};
 pub use zec_recovery::SqliteZecRecoveryStore;
 
 use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId};
@@ -253,6 +258,24 @@ pub enum StoreError {
     /// `SQLite` operation failed.
     #[error("SQLite swap-store operation failed")]
     Sqlite(#[from] rusqlite::Error),
+    /// A persisted bridge protocol value was malformed or unsupported.
+    #[error("persisted bridge operation context contains an invalid bounded value")]
+    BridgeProtocolValue(#[from] lez_bridge_protocol::ProtocolValueError),
+    /// An active bridge request differs from the exact caller context being resumed.
+    #[error("active bridge operation context conflicts with the caller request")]
+    BridgeOperationContextConflict,
+    /// No active bridge request exists for the complete operation key.
+    #[error("bridge operation has no active durable request context")]
+    MissingBridgeOperationContext,
+    /// A bridge request ID was already consumed by the same run and role client.
+    #[error("bridge request ID was already used by this run and role")]
+    BridgeRequestIdReused,
+    /// Bridge operation kind and request/window shape are inconsistent.
+    #[error("bridge operation context is internally inconsistent")]
+    InvalidBridgeOperationContext,
+    /// A bridge poll sequence cannot be represented durably.
+    #[error("bridge operation poll sequence overflowed")]
+    BridgePollSequenceOverflow,
     /// Durable state could not be encoded or decoded.
     #[error("swap state serialization failed")]
     Serialization(#[from] serde_json::Error),
