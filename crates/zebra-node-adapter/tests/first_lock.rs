@@ -10,14 +10,17 @@ use lez_zebra_node_adapter::{
     ZebraRpcChain, ZebraRpcSwapPort, ZebraTransactionState, ZebraUnspentOutput,
 };
 use lez_zec_swap_sdk::{
-    Bip199Contract, FirstLockConfirmedEvidenceV1, FirstLockObservation, FirstLockStepV1,
-    LezAssetV1, LezChainIdentityV1, LezEnvironmentV1, NegotiationTranscriptV1,
-    PreparedFirstLockSubmissionV1, TransparentFundingRequest, TransparentUtxo,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFirstLockPort, ZcashTransparentDestinationV1,
-    ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1, ZecLezTermsV1,
-    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
-    ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_funding_transaction,
-    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    Bip199Contract, CanonicalZcashOutputObservation, FirstLockConfirmedEvidenceV1,
+    FirstLockObservation, FirstLockStepV1, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
+    MakerLockObservationV1, NegotiationTranscriptV1, PreparedFirstLockSubmissionV1,
+    TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
+    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFirstLockPort, ZcashMakerLockObservationPort,
+    ZcashNodeSnapshot, ZcashStableTip, ZcashTakerFirstLockObservationPort,
+    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1,
+    ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1,
+    ZecRefundPlanV1, ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1,
+    ZecTransactionPolicyV1, build_funding_transaction, derive_lez_metadata_account_v1,
+    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use zcash_primitives::{
@@ -51,6 +54,10 @@ struct FakeState {
     chain_infos: VecDeque<ZebraChainInfo>,
     genesis_hashes: VecDeque<BlockHash>,
     canonical_inclusion_hash: BlockHash,
+    canonical_blocks: Vec<ZebraCanonicalBlock>,
+    canonical_block_override: Option<ZebraCanonicalBlock>,
+    block_transactions: Vec<(TxId, BlockHash, Vec<u8>)>,
+    mempool_transactions: Vec<(TxId, Vec<u8>)>,
     raw_transaction: Option<Vec<u8>>,
     transaction_state: Option<ZebraTransactionState>,
     submitted_transaction_id: TxId,
@@ -82,6 +89,10 @@ impl FakeRpc {
                         identity.genesis_hash(),
                     ]),
                     canonical_inclusion_hash: inclusion_hash,
+                    canonical_blocks: vec![],
+                    canonical_block_override: None,
+                    block_transactions: vec![],
+                    mempool_transactions: vec![],
                     raw_transaction: Some(raw.clone()),
                     transaction_state: Some(ZebraTransactionState::Confirmed {
                         raw_transaction: raw,
@@ -91,6 +102,60 @@ impl FakeRpc {
                         in_active_chain: true,
                     }),
                     submitted_transaction_id: TxId::from_bytes(*prepared.expected_submission_id()),
+                    submitted: vec![],
+                    calls: vec![],
+                })),
+            },
+            identity,
+        )
+    }
+
+    fn discoverable(
+        agreement: &ZecAgreementV1,
+        prepared: &PreparedFirstLockSubmissionV1,
+        inclusion_height: u32,
+        tip_height: u32,
+    ) -> (Self, ZebraChainIdentity) {
+        let identity = identity_for(agreement);
+        let tip_hash = block_hash_for(tip_height);
+        let info = ZebraChainInfo::new(
+            identity.rpc_chain(),
+            BlockHeight::from_u32(tip_height),
+            tip_hash,
+            identity.consensus_branch_id(),
+        );
+        let transaction_id = TxId::from_bytes(*prepared.expected_submission_id());
+        let anchor = funding_anchor(agreement);
+        let canonical_blocks = (anchor..=tip_height)
+            .map(|height| {
+                ZebraCanonicalBlock::new(
+                    block_hash_for(height),
+                    BlockHeight::from_u32(height),
+                    if height == inclusion_height {
+                        vec![transaction_id]
+                    } else {
+                        vec![]
+                    },
+                )
+            })
+            .collect();
+        (
+            Self {
+                state: Arc::new(Mutex::new(FakeState {
+                    chain_infos: VecDeque::from([info, info]),
+                    genesis_hashes: VecDeque::from([identity.genesis_hash()]),
+                    canonical_inclusion_hash: block_hash_for(inclusion_height),
+                    canonical_blocks,
+                    canonical_block_override: None,
+                    block_transactions: vec![(
+                        transaction_id,
+                        block_hash_for(inclusion_height),
+                        prepared.exact_submission().to_vec(),
+                    )],
+                    mempool_transactions: vec![],
+                    raw_transaction: None,
+                    transaction_state: None,
+                    submitted_transaction_id: transaction_id,
                     submitted: vec![],
                     calls: vec![],
                 })),
@@ -139,6 +204,12 @@ impl ZebraRpc for FakeRpc {
                 .genesis_hashes
                 .pop_front()
                 .expect("each test supplies every genesis sample"))
+        } else if let Some(block) = state
+            .canonical_blocks
+            .iter()
+            .find(|block| block.block_height() == height)
+        {
+            Ok(block.block_hash())
         } else {
             Ok(state.canonical_inclusion_hash)
         }
@@ -146,27 +217,56 @@ impl ZebraRpc for FakeRpc {
 
     async fn canonical_block(
         &self,
-        _block_hash: BlockHash,
+        block_hash: BlockHash,
     ) -> Result<ZebraCanonicalBlock, Self::Error> {
-        panic!("first-lock tests never scan blocks")
+        let mut state = self.state.lock().expect("fake state lock");
+        state.calls.push("canonical_block".to_owned());
+        if let Some(block) = &state.canonical_block_override {
+            return Ok(block.clone());
+        }
+        Ok(state
+            .canonical_blocks
+            .iter()
+            .find(|block| block.block_hash() == block_hash)
+            .expect("each scan supplies every canonical block")
+            .clone())
     }
 
     async fn block_transaction(
         &self,
-        _transaction_id: TxId,
-        _block_hash: BlockHash,
+        transaction_id: TxId,
+        block_hash: BlockHash,
     ) -> Result<Option<Vec<u8>>, Self::Error> {
-        panic!("first-lock tests never scan block transactions")
+        let mut state = self.state.lock().expect("fake state lock");
+        state.calls.push("block_transaction".to_owned());
+        Ok(state
+            .block_transactions
+            .iter()
+            .find(|(candidate_id, candidate_hash, _)| {
+                *candidate_id == transaction_id && *candidate_hash == block_hash
+            })
+            .map(|(_, _, raw)| raw.clone()))
     }
 
     async fn mempool_transaction_ids(&self) -> Result<Vec<TxId>, Self::Error> {
-        panic!("first-lock tests never enumerate the mempool")
+        let mut state = self.state.lock().expect("fake state lock");
+        state.calls.push("mempool_transaction_ids".to_owned());
+        Ok(state
+            .mempool_transactions
+            .iter()
+            .map(|(transaction_id, _)| *transaction_id)
+            .collect())
     }
 
-    async fn raw_transaction(&self, _transaction_id: TxId) -> Result<Option<Vec<u8>>, Self::Error> {
+    async fn raw_transaction(&self, transaction_id: TxId) -> Result<Option<Vec<u8>>, Self::Error> {
         let mut state = self.state.lock().expect("fake state lock");
         state.calls.push("raw_transaction".to_owned());
-        Ok(state.raw_transaction.clone())
+        Ok(state
+            .mempool_transactions
+            .iter()
+            .find(|(candidate_id, _)| *candidate_id == transaction_id)
+            .map(|(_, raw)| raw.clone())
+            .or_else(|| state.raw_transaction.clone()))
     }
 
     async fn transaction_state(
@@ -337,6 +437,529 @@ async fn reverse_maker_observes_and_submits_exact_zcash_funding() {
         1,
         "the adapter never retries an ambiguous reverse submission"
     );
+}
+
+#[tokio::test]
+async fn role_fixed_observers_discover_unknown_id_funding_in_both_directions() {
+    let forward = agreement(SwapDirection::TakerSellsForeign);
+    let forward_prepared = prepared(&forward);
+    let (forward_rpc, identity) = FakeRpc::discoverable(&forward, &forward_prepared, 116, 120);
+    let forward_observation = ZebraRpcSwapPort::new(forward_rpc, identity, Participant::Maker)
+        .observe_taker_first_lock(&forward, None)
+        .await
+        .expect("maker discovers the unknown-ID taker funding");
+    let TakerFirstLockObservationV1::CanonicalZcash(forward_canonical) = forward_observation else {
+        panic!("forward observer must return complete canonical Zcash evidence");
+    };
+    assert_eq!(
+        forward_canonical.transaction_id(),
+        TxId::from_bytes(*forward_prepared.expected_submission_id())
+    );
+    assert_eq!(forward_canonical.block_height(), BlockHeight::from_u32(116));
+    assert_eq!(forward_canonical.tip_height(), BlockHeight::from_u32(120));
+
+    let reverse = agreement(SwapDirection::TakerSellsLez);
+    let reverse_prepared = prepared(&reverse);
+    let (reverse_rpc, identity) = FakeRpc::discoverable(&reverse, &reverse_prepared, 116, 120);
+    let reverse_observation = ZebraRpcSwapPort::new(reverse_rpc, identity, Participant::Taker)
+        .observe_maker_lock(&reverse)
+        .await
+        .expect("taker discovers the unknown-ID maker funding");
+    assert_eq!(
+        reverse_observation,
+        MakerLockObservationV1::Confirmed(
+            FirstLockConfirmedEvidenceV1::new(
+                FirstLockStepV1::ZcashFund,
+                *reverse_prepared.expected_submission_id(),
+                TxId::from_bytes(*reverse_prepared.expected_submission_id()).to_string(),
+                5,
+            )
+            .expect("canonical reverse maker evidence"),
+        )
+    );
+}
+
+#[tokio::test]
+async fn observer_absence_and_instability_require_complete_stable_coverage() {
+    let agreement = agreement(SwapDirection::TakerSellsForeign);
+    let prepared = prepared(&agreement);
+
+    let (absent_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 120);
+    absent_rpc.edit(clear_canonical_transactions);
+    assert_eq!(
+        ZebraRpcSwapPort::new(absent_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&agreement, None)
+            .await
+            .expect("complete stable scan proves absence"),
+        TakerFirstLockObservationV1::Absent
+    );
+
+    let (mempool_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 120);
+    let mempool_id = TxId::from_bytes(*prepared.expected_submission_id());
+    let mempool_raw = prepared.exact_submission().to_vec();
+    mempool_rpc.edit(|state| {
+        clear_canonical_transactions(state);
+        state.mempool_transactions.push((mempool_id, mempool_raw));
+    });
+    assert_eq!(
+        ZebraRpcSwapPort::new(mempool_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&agreement, None)
+            .await
+            .expect("mempool funding is not canonical"),
+        TakerFirstLockObservationV1::Unstable
+    );
+
+    let (before_anchor_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 115);
+    assert_eq!(
+        ZebraRpcSwapPort::new(before_anchor_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&agreement, None)
+            .await
+            .expect("a node tip behind the signed anchor is inconclusive"),
+        TakerFirstLockObservationV1::Unstable
+    );
+
+    let (short_bound_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 120);
+    assert_eq!(
+        ZebraRpcSwapPort::new(short_bound_rpc, identity, Participant::Maker)
+            .with_counterparty_scan_blocks(4)
+            .observe_taker_first_lock(&agreement, None)
+            .await
+            .expect("a bound shorter than the inclusive profile horizon is inconclusive"),
+        TakerFirstLockObservationV1::Unstable
+    );
+
+    let (exhausted_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 121);
+    assert_eq!(
+        ZebraRpcSwapPort::new(exhausted_rpc, identity, Participant::Maker)
+            .with_counterparty_scan_blocks(5)
+            .observe_taker_first_lock(&agreement, None)
+            .await
+            .expect("an exhausted full-window scan is inconclusive"),
+        TakerFirstLockObservationV1::Unstable
+    );
+
+    let (moving_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 120);
+    moving_rpc.edit(move_after_tip);
+    assert_eq!(
+        ZebraRpcSwapPort::new(moving_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&agreement, None)
+            .await
+            .expect("moving tip prevents canonical classification"),
+        TakerFirstLockObservationV1::Unstable
+    );
+}
+
+#[tokio::test]
+async fn observer_roles_directions_and_chain_identity_fail_closed() {
+    let forward = agreement(SwapDirection::TakerSellsForeign);
+    let forward_prepared = prepared(&forward);
+
+    let (wrong_role_rpc, identity) = FakeRpc::discoverable(&forward, &forward_prepared, 116, 120);
+    assert!(matches!(
+        ZebraRpcSwapPort::new(wrong_role_rpc.clone(), identity, Participant::Taker)
+            .observe_taker_first_lock(&forward, None)
+            .await,
+        Err(ZebraFirstLockError::WrongRole {
+            expected: Participant::Maker,
+            actual: Participant::Taker,
+        })
+    ));
+    assert!(wrong_role_rpc.calls().is_empty());
+
+    let (wrong_direction_rpc, identity) =
+        FakeRpc::discoverable(&forward, &forward_prepared, 116, 120);
+    assert!(matches!(
+        ZebraRpcSwapPort::new(wrong_direction_rpc.clone(), identity, Participant::Taker)
+            .observe_maker_lock(&forward)
+            .await,
+        Err(ZebraFirstLockError::WrongObservedFunder {
+            expected: Participant::Maker,
+            actual: Participant::Taker,
+        })
+    ));
+    assert!(wrong_direction_rpc.calls().is_empty());
+
+    let reverse = agreement(SwapDirection::TakerSellsLez);
+    let reverse_prepared = prepared(&reverse);
+    let (reverse_role_rpc, identity) = FakeRpc::discoverable(&reverse, &reverse_prepared, 116, 120);
+    assert!(matches!(
+        ZebraRpcSwapPort::new(reverse_role_rpc.clone(), identity, Participant::Maker)
+            .observe_maker_lock(&reverse)
+            .await,
+        Err(ZebraFirstLockError::WrongRole {
+            expected: Participant::Taker,
+            actual: Participant::Maker,
+        })
+    ));
+    assert!(reverse_role_rpc.calls().is_empty());
+
+    let (reverse_direction_rpc, identity) =
+        FakeRpc::discoverable(&reverse, &reverse_prepared, 116, 120);
+    assert!(matches!(
+        ZebraRpcSwapPort::new(reverse_direction_rpc.clone(), identity, Participant::Maker,)
+            .observe_taker_first_lock(&reverse, None)
+            .await,
+        Err(ZebraFirstLockError::WrongObservedFunder {
+            expected: Participant::Taker,
+            actual: Participant::Maker,
+        })
+    ));
+    assert!(reverse_direction_rpc.calls().is_empty());
+
+    let (wrong_network_rpc, _) = FakeRpc::discoverable(&forward, &forward_prepared, 116, 120);
+    let wrong_network = ZebraChainIdentity::new(
+        NetworkType::Test,
+        ZebraRpcChain::Test,
+        BranchId::Nu6_2,
+        BlockHash([0x55; 32]),
+    )
+    .expect("valid wrong-network identity");
+    assert!(matches!(
+        ZebraRpcSwapPort::new(wrong_network_rpc.clone(), wrong_network, Participant::Maker,)
+            .observe_taker_first_lock(&forward, None)
+            .await,
+        Err(ZebraFirstLockError::ConfiguredNetworkMismatch)
+    ));
+    assert!(wrong_network_rpc.calls().is_empty());
+
+    let (wrong_branch_rpc, identity) = FakeRpc::discoverable(&forward, &forward_prepared, 116, 120);
+    wrong_branch_rpc.edit(|state| {
+        let before = state.chain_infos[0];
+        state.chain_infos[0] = ZebraChainInfo::new(
+            before.rpc_chain(),
+            before.tip_height(),
+            before.tip_hash(),
+            BranchId::Nu6_1,
+        );
+    });
+    assert!(matches!(
+        ZebraRpcSwapPort::new(wrong_branch_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&forward, None)
+            .await,
+        Err(ZebraFirstLockError::RpcConsensusBranchMismatch)
+    ));
+
+    let (wrong_genesis_rpc, identity) =
+        FakeRpc::discoverable(&forward, &forward_prepared, 116, 120);
+    wrong_genesis_rpc.edit(|state| {
+        state.genesis_hashes = VecDeque::from([BlockHash([0xee; 32])]);
+    });
+    assert!(matches!(
+        ZebraRpcSwapPort::new(wrong_genesis_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&forward, None)
+            .await,
+        Err(ZebraFirstLockError::GenesisMismatch)
+    ));
+}
+
+#[tokio::test]
+async fn observer_inventory_matrix_fails_closed() {
+    let agreement = agreement(SwapDirection::TakerSellsForeign);
+    let prepared = prepared(&agreement);
+    let original_id = TxId::from_bytes(*prepared.expected_submission_id());
+    let alternate_transaction = funding_transaction_with_input(
+        &agreement,
+        agreement.binding().expected_output().contract(),
+        agreement.binding().expected_output().value(),
+        [0x88; 32],
+    );
+    let alternate = prepared_from(&alternate_transaction);
+    let alternate_id = TxId::from_bytes(*alternate.expected_submission_id());
+
+    let (ambiguous_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 120);
+    let alternate_raw = alternate.exact_submission().to_vec();
+    ambiguous_rpc.edit(|state| {
+        let block = state
+            .canonical_blocks
+            .iter_mut()
+            .find(|block| u32::from(block.block_height()) == 116)
+            .expect("funding block");
+        let block_hash = block.block_hash();
+        *block = ZebraCanonicalBlock::new(
+            block_hash,
+            BlockHeight::from_u32(116),
+            vec![original_id, alternate_id],
+        );
+        state
+            .block_transactions
+            .push((alternate_id, block_hash, alternate_raw));
+    });
+    assert!(matches!(
+        ZebraRpcSwapPort::new(ambiguous_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&agreement, None)
+            .await,
+        Err(ZebraFirstLockError::AmbiguousFundingCandidates)
+    ));
+
+    let (wrong_hash_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 120);
+    wrong_hash_rpc.edit(|state| {
+        state.canonical_block_override = Some(ZebraCanonicalBlock::new(
+            BlockHash([0xee; 32]),
+            BlockHeight::from_u32(116),
+            vec![original_id],
+        ));
+    });
+    assert!(matches!(
+        ZebraRpcSwapPort::new(wrong_hash_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&agreement, None)
+            .await,
+        Err(ZebraFirstLockError::BlockInventoryMismatch)
+    ));
+
+    let (wrong_height_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 120);
+    wrong_height_rpc.edit(|state| {
+        state.canonical_block_override = Some(ZebraCanonicalBlock::new(
+            block_hash_for(116),
+            BlockHeight::from_u32(117),
+            vec![original_id],
+        ));
+    });
+    assert!(matches!(
+        ZebraRpcSwapPort::new(wrong_height_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&agreement, None)
+            .await,
+        Err(ZebraFirstLockError::BlockInventoryMismatch)
+    ));
+
+    let (missing_transaction_rpc, identity) =
+        FakeRpc::discoverable(&agreement, &prepared, 116, 120);
+    missing_transaction_rpc.edit(|state| state.block_transactions.clear());
+    assert!(matches!(
+        ZebraRpcSwapPort::new(missing_transaction_rpc, identity, Participant::Maker,)
+            .observe_taker_first_lock(&agreement, None)
+            .await,
+        Err(ZebraFirstLockError::BlockInventoryMismatch)
+    ));
+}
+
+#[tokio::test]
+async fn observer_transaction_and_exact_output_matrix_fails_closed() {
+    let agreement = agreement(SwapDirection::TakerSellsForeign);
+    let prepared = prepared(&agreement);
+    let alternate_transaction = funding_transaction_with_input(
+        &agreement,
+        agreement.binding().expected_output().contract(),
+        agreement.binding().expected_output().value(),
+        [0x88; 32],
+    );
+    let alternate = prepared_from(&alternate_transaction);
+
+    let (wrong_id_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 120);
+    let alternate_raw = alternate.exact_submission().to_vec();
+    wrong_id_rpc.edit(|state| state.block_transactions[0].2 = alternate_raw);
+    assert!(matches!(
+        ZebraRpcSwapPort::new(wrong_id_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&agreement, None)
+            .await,
+        Err(ZebraFirstLockError::DiscoveredTransactionIdMismatch)
+    ));
+
+    let (malformed_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 120);
+    malformed_rpc.edit(|state| state.block_transactions[0].2 = vec![0xff]);
+    assert!(matches!(
+        ZebraRpcSwapPort::new(malformed_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&agreement, None)
+            .await,
+        Err(ZebraFirstLockError::MalformedDiscoveredTransaction(_))
+    ));
+
+    let (trailing_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 120);
+    trailing_rpc.edit(|state| state.block_transactions[0].2.push(0));
+    assert!(matches!(
+        ZebraRpcSwapPort::new(trailing_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&agreement, None)
+            .await,
+        Err(ZebraFirstLockError::TrailingDiscoveredTransactionBytes)
+    ));
+
+    let wrong_value = prepared_from(&funding_transaction(
+        &agreement,
+        agreement.binding().expected_output().contract(),
+        Zatoshis::from_u64(99_999_999).expect("wrong value"),
+    ));
+    let (wrong_value_rpc, identity) = FakeRpc::discoverable(&agreement, &wrong_value, 116, 120);
+    assert_eq!(
+        ZebraRpcSwapPort::new(wrong_value_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&agreement, None)
+            .await
+            .expect("wrong value is a nonmatching canonical transaction"),
+        TakerFirstLockObservationV1::Absent
+    );
+
+    let wrong_contract = Bip199Contract::new(120, [0xaa; 20], [0xbb; 32], [0xcc; 20]);
+    let wrong_script = prepared_from(&funding_transaction(
+        &agreement,
+        &wrong_contract,
+        agreement.binding().expected_output().value(),
+    ));
+    let (wrong_script_rpc, identity) = FakeRpc::discoverable(&agreement, &wrong_script, 116, 120);
+    assert_eq!(
+        ZebraRpcSwapPort::new(wrong_script_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&agreement, None)
+            .await
+            .expect("wrong script is a nonmatching canonical transaction"),
+        TakerFirstLockObservationV1::Absent
+    );
+
+    let later_vout = prepared_from(&funding_transaction_with_expected_output_at_vout_one(
+        &agreement,
+    ));
+    let (later_vout_rpc, identity) = FakeRpc::discoverable(&agreement, &later_vout, 116, 120);
+    assert_eq!(
+        ZebraRpcSwapPort::new(later_vout_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&agreement, None)
+            .await
+            .expect("a matching later vout never substitutes for protocol vout zero"),
+        TakerFirstLockObservationV1::Absent
+    );
+}
+
+#[tokio::test]
+async fn taker_funding_observer_reconciles_same_removed_and_replaced_heads() {
+    let agreement = agreement(SwapDirection::TakerSellsForeign);
+    let prepared = prepared(&agreement);
+    let (initial_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 120);
+    let initial = match ZebraRpcSwapPort::new(initial_rpc, identity, Participant::Maker)
+        .observe_taker_first_lock(&agreement, None)
+        .await
+        .expect("initial canonical funding")
+    {
+        TakerFirstLockObservationV1::CanonicalZcash(canonical) => *canonical,
+        other => panic!("expected canonical initial funding, got {other:?}"),
+    };
+
+    let (same_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 120);
+    assert_eq!(
+        ZebraRpcSwapPort::new(same_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&agreement, Some(&initial))
+            .await
+            .expect("same canonical inclusion remains observable"),
+        TakerFirstLockObservationV1::CanonicalZcash(Box::new(initial.clone()))
+    );
+
+    let (removed_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 120);
+    removed_rpc.edit(|state| {
+        clear_canonical_transactions(state);
+        let block = state
+            .canonical_blocks
+            .iter_mut()
+            .find(|block| u32::from(block.block_height()) == 116)
+            .expect("previous inclusion height");
+        *block =
+            ZebraCanonicalBlock::new(BlockHash([0xa1; 32]), BlockHeight::from_u32(116), vec![]);
+    });
+    let removed = ZebraRpcSwapPort::new(removed_rpc, identity, Participant::Maker)
+        .observe_taker_first_lock(&agreement, Some(&initial))
+        .await
+        .expect("affirmative canonical removal");
+    let TakerFirstLockObservationV1::ZcashRemoved(removed) = removed else {
+        panic!("detached predecessor must emit removal evidence");
+    };
+    assert_eq!(removed.previous(), &initial);
+
+    let alternate_transaction = funding_transaction_with_input(
+        &agreement,
+        agreement.binding().expected_output().contract(),
+        agreement.binding().expected_output().value(),
+        [0x88; 32],
+    );
+    let alternate = prepared_from(&alternate_transaction);
+    let alternate_id = TxId::from_bytes(*alternate.expected_submission_id());
+    let alternate_raw = alternate.exact_submission().to_vec();
+    let (replaced_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 120);
+    replaced_rpc.edit(|state| {
+        clear_canonical_transactions(state);
+        let removed_block = state
+            .canonical_blocks
+            .iter_mut()
+            .find(|block| u32::from(block.block_height()) == 116)
+            .expect("previous inclusion height");
+        *removed_block =
+            ZebraCanonicalBlock::new(BlockHash([0xa2; 32]), BlockHeight::from_u32(116), vec![]);
+        let replacement_block = state
+            .canonical_blocks
+            .iter_mut()
+            .find(|block| u32::from(block.block_height()) == 117)
+            .expect("replacement inclusion height");
+        let replacement_hash = replacement_block.block_hash();
+        *replacement_block = ZebraCanonicalBlock::new(
+            replacement_hash,
+            BlockHeight::from_u32(117),
+            vec![alternate_id],
+        );
+        state
+            .block_transactions
+            .push((alternate_id, replacement_hash, alternate_raw));
+    });
+    let replaced = ZebraRpcSwapPort::new(replaced_rpc, identity, Participant::Maker)
+        .observe_taker_first_lock(&agreement, Some(&initial))
+        .await
+        .expect("same-poll canonical replacement");
+    let TakerFirstLockObservationV1::ZcashReplaced { removed, canonical } = replaced else {
+        panic!("detached predecessor plus new funding must be one replacement");
+    };
+    assert_eq!(removed.previous(), &initial);
+    assert_eq!(canonical.transaction_id(), alternate_id);
+    assert_eq!(removed.tip_block_hash(), canonical.tip_block_hash());
+    assert_eq!(removed.tip_height(), canonical.tip_height());
+}
+
+#[tokio::test]
+async fn taker_funding_observer_treats_tip_retreat_as_unstable() {
+    let agreement = agreement(SwapDirection::TakerSellsForeign);
+    let prepared = prepared(&agreement);
+    let (initial_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 120);
+    let initial = match ZebraRpcSwapPort::new(initial_rpc, identity, Participant::Maker)
+        .observe_taker_first_lock(&agreement, None)
+        .await
+        .expect("initial canonical funding")
+    {
+        TakerFirstLockObservationV1::CanonicalZcash(canonical) => *canonical,
+        other => panic!("expected canonical initial funding, got {other:?}"),
+    };
+
+    let (retreated_rpc, identity) = FakeRpc::discoverable(&agreement, &prepared, 116, 115);
+    assert_eq!(
+        ZebraRpcSwapPort::new(retreated_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&agreement, Some(&initial))
+            .await
+            .expect("a tip below the prior inclusion is transient instability"),
+        TakerFirstLockObservationV1::Unstable
+    );
+
+    let anchor = funding_anchor(&agreement);
+    let below_anchor = anchor.checked_sub(1).expect("nonzero funding anchor");
+    let tip_height = 120;
+    let below_anchor_observation = CanonicalZcashOutputObservation::validate(
+        agreement.binding().expected_output(),
+        &ZcashNodeSnapshot::new(
+            NetworkType::Regtest,
+            BranchId::Nu6_2,
+            true,
+            block_hash_for(below_anchor),
+            block_hash_for(below_anchor),
+            BlockHeight::from_u32(below_anchor),
+            ZcashStableTip::new(
+                block_hash_for(tip_height),
+                BlockHeight::from_u32(tip_height),
+                block_hash_for(tip_height),
+                BlockHeight::from_u32(tip_height),
+            ),
+            TxId::from_bytes(*prepared.expected_submission_id()),
+            prepared.exact_submission().to_vec(),
+            0,
+            tip_height - below_anchor + 1,
+        ),
+    )
+    .expect("valid canonical observation below this agreement's funding window");
+    let (below_anchor_rpc, identity) =
+        FakeRpc::discoverable(&agreement, &prepared, 116, tip_height);
+    assert!(matches!(
+        ZebraRpcSwapPort::new(below_anchor_rpc, identity, Participant::Maker)
+            .observe_taker_first_lock(&agreement, Some(&below_anchor_observation))
+            .await,
+        Err(ZebraFirstLockError::PreviousObservationOutsideFundingWindow)
+    ));
 }
 
 #[tokio::test]
@@ -731,11 +1354,41 @@ async fn submission_is_byte_exact_and_fails_closed_on_id_tip_or_genesis_drift() 
 }
 
 fn identity_for(agreement: &ZecAgreementV1) -> ZebraChainIdentity {
-    assert_eq!(
-        agreement.binding().expected_output().network(),
-        NetworkType::Regtest
-    );
-    ZebraChainIdentity::deterministic_regtest_nu6_2()
+    match agreement.binding().expected_output().network() {
+        NetworkType::Regtest => ZebraChainIdentity::deterministic_regtest_nu6_2(),
+        NetworkType::Test => ZebraChainIdentity::new(
+            NetworkType::Test,
+            ZebraRpcChain::Test,
+            agreement.binding().expected_output().consensus_branch_id(),
+            BlockHash([0x55; 32]),
+        )
+        .expect("valid testnet fixture identity"),
+        NetworkType::Main => panic!("first-lock fixtures never use mainnet"),
+    }
+}
+
+fn funding_anchor(agreement: &ZecAgreementV1) -> u32 {
+    agreement
+        .zcash_refund_at_height()
+        .checked_sub(
+            ZecRefundProfile::for_id(agreement.binding().profile_id()).zcash_refund_blocks(),
+        )
+        .expect("validated agreement has a funding anchor")
+}
+
+fn block_hash_for(height: u32) -> BlockHash {
+    let mut hash = [0; 32];
+    hash[..4].copy_from_slice(&height.to_le_bytes());
+    BlockHash(hash)
+}
+
+fn clear_canonical_transactions(state: &mut FakeState) {
+    state.canonical_blocks = state
+        .canonical_blocks
+        .iter()
+        .map(|block| ZebraCanonicalBlock::new(block.block_hash(), block.block_height(), vec![]))
+        .collect();
+    state.block_transactions.clear();
 }
 
 fn prepared(agreement: &ZecAgreementV1) -> PreparedFirstLockSubmissionV1 {
@@ -778,13 +1431,22 @@ fn funding_transaction(
     contract: &Bip199Contract,
     value: Zatoshis,
 ) -> Transaction {
+    funding_transaction_with_input(agreement, contract, value, [0x77; 32])
+}
+
+fn funding_transaction_with_input(
+    agreement: &ZecAgreementV1,
+    contract: &Bip199Contract,
+    value: Zatoshis,
+    input_transaction_id: [u8; 32],
+) -> Transaction {
     let key = SecretKey::from_slice(&[7; 32]).expect("fixed funding key");
     let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &key);
     let owner_script: Script = TransparentAddress::from_pubkey(&public_key).script().into();
     let input_value = Zatoshis::from_u64(u64::from(value) + 20_000).expect("input value");
     let request = TransparentFundingRequest::new(
         vec![TransparentUtxo::new(
-            OutPoint::new([0x77; 32], 0),
+            OutPoint::new(input_transaction_id, 0),
             TxOut::new(input_value, owner_script),
         )],
         public_key,
@@ -796,6 +1458,30 @@ fn funding_transaction(
     )
     .expect("funding request");
     build_funding_transaction(contract, &request, &key).expect("signed V5 funding transaction")
+}
+
+fn funding_transaction_with_expected_output_at_vout_one(agreement: &ZecAgreementV1) -> Transaction {
+    let expected = agreement.binding().expected_output();
+    let transaction = funding_transaction(agreement, expected.contract(), expected.value());
+    let data = transaction.into_data();
+    let mut transparent = data
+        .transparent_bundle()
+        .cloned()
+        .expect("funding fixture has a transparent bundle");
+    assert_eq!(transparent.vout.len(), 2, "funding fixture has change");
+    transparent.vout.swap(0, 1);
+    TransactionData::<Authorized>::from_parts(
+        data.version(),
+        data.consensus_branch_id(),
+        data.lock_time(),
+        data.expiry_height(),
+        Some(transparent),
+        None,
+        None,
+        None,
+    )
+    .freeze()
+    .expect("reordered transparent fixture freezes")
 }
 
 fn mutate_authorization(raw: &[u8]) -> Vec<u8> {
@@ -824,6 +1510,10 @@ fn mutate_authorization(raw: &[u8]) -> Vec<u8> {
 }
 
 fn agreement(direction: SwapDirection) -> ZecAgreementV1 {
+    agreement_for_profile(direction, ZecProfileId::DeterministicLocalV1)
+}
+
+fn agreement_for_profile(direction: SwapDirection, profile: ZecProfileId) -> ZecAgreementV1 {
     let maker_secret = SecretKey::from_slice(&[1; 32]).expect("maker key");
     let taker_secret = SecretKey::from_slice(&[2; 32]).expect("taker key");
     let secp = Secp256k1::new();
@@ -835,31 +1525,50 @@ fn agreement(direction: SwapDirection) -> ZecAgreementV1 {
     };
     let refund_hash = pubkey_hash(&refund_key);
     let claimant_hash = pubkey_hash(&claimant_key);
-    let contract = Bip199Contract::new(120, refund_hash, [9; 32], claimant_hash);
+    let (network, environment, zcash_anchor, refund_lock, earlier_latest_ms, later_earliest) =
+        match profile {
+            ZecProfileId::DeterministicLocalV1 => (
+                NetworkType::Regtest,
+                LezEnvironmentV1::DeterministicLocalV0_2,
+                116,
+                120,
+                160_000,
+                200,
+            ),
+            ZecProfileId::PublicTestnetV1 => (
+                NetworkType::Test,
+                LezEnvironmentV1::PublicTestnetV0_2,
+                100,
+                292,
+                7_300_000,
+                14_500,
+            ),
+        };
+    let contract = Bip199Contract::new(refund_lock, refund_hash, [9; 32], claimant_hash);
     let binding = ZecSwapBinding::new(
-        ZecProfileId::DeterministicLocalV1,
+        profile,
         lez_zec_swap_sdk::ExpectedBip199Output::new(
-            NetworkType::Regtest,
+            network,
             BranchId::Nu6_2,
             Zatoshis::from_u64(100_000_000).expect("principal"),
             contract,
         ),
     )
     .expect("profile binding");
-    let id = format!("zebra-adapter-{direction:?}");
+    let id = format!("zebra-adapter-{direction:?}-{profile:?}");
     let escrow_program = [1; 8];
     let onchain_id = derive_lez_swap_id_v1(id.as_bytes());
     let body = ZecAgreementBodyV1::new(
         id,
         direction,
-        ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
+        ZecProfileRecordV1::from(profile),
         ZecParticipantsV1::new(
             ZecParticipantIdentityV1::new([3; 32], maker_key),
             ZecParticipantIdentityV1::new([4; 32], taker_key),
         ),
         [9; 32],
         ZecLezTermsV1::new(
-            LezChainIdentityV1::new(LezEnvironmentV1::DeterministicLocalV0_2, [8; 32], [7; 32]),
+            LezChainIdentityV1::new(environment, [8; 32], [7; 32]),
             escrow_program,
             LezAssetV1::Native {
                 authenticated_transfer_program_id: [2; 8],
@@ -880,7 +1589,7 @@ fn agreement(direction: SwapDirection) -> ZecAgreementV1 {
             10_000,
             40,
         ),
-        ZecRefundPlanV1::new(100, 116, 160_000, 200),
+        ZecRefundPlanV1::new(100, zcash_anchor, earlier_latest_ms, later_earliest),
         NegotiationTranscriptV1::new([5; 32], [6; 32], 1_000),
     );
     let commitment = body.commitment();
