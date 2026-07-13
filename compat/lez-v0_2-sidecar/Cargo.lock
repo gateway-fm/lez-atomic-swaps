@@ -3394,6 +3394,7 @@ dependencies = [
  "lez-bridge-client",
  "lez-bridge-protocol",
  "lez-zec-escrow-v02",
+ "programs",
  "sequencer_service_rpc",
  "serde",
  "spel-client-gen",
@@ -3403,6 +3404,7 @@ dependencies = [
  "tower",
  "tower-http 0.7.0",
  "url",
+ "vault_core",
  "wallet",
  "zeroize",
 ]

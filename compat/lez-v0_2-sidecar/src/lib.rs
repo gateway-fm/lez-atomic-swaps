@@ -5,6 +5,7 @@
 mod native_prepare;
 mod runtime;
 mod server;
+mod vault_claim_prepare;
 
 pub use native_prepare::{
     NativeEscrowPlanner, NativePrepareError, NonceSource, ZecEscrowInstruction,
@@ -19,4 +20,8 @@ pub use runtime::{
 pub use server::{
     DescribeServerCapability, DescribeServerCapabilityError, DescribeServerConfig,
     DescribeServerError, DescribeServerHandle, start_describe_server,
+};
+pub use vault_claim_prepare::{
+    PrepareVaultClaimRequest, PrepareVaultClaimResult, VaultClaimAllocation, VaultClaimNonceSource,
+    VaultClaimPlanner, VaultClaimPrepareError,
 };

@@ -50,14 +50,34 @@ generated initialize and fund account order and every instruction field.
 Recovered pairs are validated against the complete original request; raw
 transaction bytes alone do not prove an authenticated actor role.
 
+The gate also verifies deterministic actor Vault Claim preparation against the
+official `programs` and `vault_core` crates from LEZ v0.2.0. The maker fixture
+(private-key byte `01`, allocation `100000`) and taker fixture (private-key byte
+`02`, allocation `200000`) reproduce the public-key, owner-account, and Vault
+PDA snapshots in ADR 0025. Each exact public transaction uses
+`programs::vault().id()`, `vault_core::compute_vault_account_id`, ordered
+accounts `[owner, owner_vault]`, one owner nonce, one owner witness, and
+`vault_core::Instruction::Claim { amount }`. The complete request carries the
+node-observed owner nonce; the configured nonce source must independently
+confirm that same value before signing. Tests reject role, runtime, key,
+allocation, program, account, order, amount, nonce, transaction-ID, canonical
+byte, and signature substitutions.
+
+Preparation is atomic at the planner boundary: its per-actor mutex serializes
+nonce ownership, and it installs the active reservation only after the complete
+official transaction has been constructed, signed, and converted to its exact
+bounded representation. A failed preparation exposes and caches no partial
+claim. This is local preparation atomicity only; finalized on-chain balance
+conservation remains an actor-level end-to-end property.
+
 Exact LEZ v0.2 still exposes a `PrivateKey` whose `Debug` and `Display` reveal
 raw material and which does not implement `Zeroize`. This planner never formats
 the key and keeps its retained byte copy in `Zeroizing<[u8; 32]>`, but upstream
 constructor inputs and transient signing copies cannot be claimed fully
 zeroized. LOGOS-008 tracks replacement or an upstream fix before production.
 
-The prepare foundation exposes no submission. Its single active reservation
-deliberately fails closed for the life of one one-swap signer instance. Durable
+The prepare foundations expose no submission. Each single active reservation
+deliberately fails closed for the life of its one-actor signer instance. Durable
 per-operation reservation recovery, concurrent-swap partitioning, authenticated
 server integration, official node nonce wiring, observation, and exact-byte
 submission remain future work. Submission must not be enabled until a restart
