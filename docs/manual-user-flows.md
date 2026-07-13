@@ -12,6 +12,53 @@ self-hosted Zebra route and Tatum's public-provider Testnet Zebrad route, but
 explicitly leaves live execution pending the project-owned transparent signer,
 HTTPS provider transport, and actor adapter.
 
+## Can I run the complete swap myself?
+
+Not yet as one released maker-to-taker command. A fresh checkout can reproduce
+the role-separated swap state machine, restart-safe claim/refund journals, and
+real local LEZ and Zebra on-chain lifecycles today. It cannot yet compose those
+pieces through two independent reference-actor processes. That composed
+corridor is an open M2 exit criterion; component passes must not be reported as
+a completed cross-chain swap.
+
+For the fastest currently available rehearsal, which needs no node, Docker,
+faucet, or public endpoint, run:
+
+```sh
+cargo test --locked -p lez-zec-swap-sdk --test sdk_lifecycle \
+  independent_actors_complete_lez_then_zcash_claims_in_both_directions \
+  -- --exact --nocapture
+cargo test --locked -p lez-swap-store --test zec_sdk_recovery \
+  schema_v9_claim_journal_completes_and_reopens_independent_actors_in_both_directions \
+  -- --exact --nocapture
+```
+
+Both commands exercise distinct maker and taker actors, both trade directions,
+LEZ-before-Zcash claim ordering, separate durable stores, and terminal restart.
+They use deterministic contract doubles, so continue with Flow 2's Zebra runner
+and Flow 3's LEZ runner when you need evidence from the actual pinned local
+nodes. Use a unique `RUN_ID` for every heavy run and never overlap those runners
+with another repository build.
+
+M2 will not be tagged until this guide also contains and has been checked from
+a fresh checkout for all of the following:
+
+1. build the independent reference actors and start their isolated local nodes;
+2. generate separate private maker/taker configurations and deterministic
+   role-correct funds without printing capabilities or signing keys;
+3. execute and inspect both happy-path trade directions through canonical LEZ
+   reveal followed by the exact Zcash spend;
+4. stop and restart either actor, then repeat the terminal status checks;
+5. execute pre-second-lock abandonment and post-lock peer-independent recovery;
+6. run concurrent swaps without fixed-port, database, Docker-project, or volume
+   collisions; and
+7. stop only resources owned by the chosen run and locate the retained evidence.
+
+The same section will identify every RPC, whether it is loopback or public, how
+funds are obtained, expected output without exposing secrets, and which public
+conditions can introduce flakiness. Until those exact commands exist here, use
+the narrower flows below and treat the full manual swap as unavailable.
+
 ## What this guide proves today
 
 | Flow | Boundary exercised | Current limitation |
