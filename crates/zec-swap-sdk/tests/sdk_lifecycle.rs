@@ -5,7 +5,8 @@ use std::{
 
 use async_trait::async_trait;
 use lez_swap_core::{
-    Pair, Participant, Phase, SwapCoordinator, SwapDirection, SwapId, UnixSeconds,
+    Chain, ChainPosition, LezUnixMilliseconds, Pair, Participant, Phase, SwapCoordinator,
+    SwapDirection, SwapId, UnixSeconds,
 };
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract,
@@ -23,7 +24,7 @@ use lez_zec_swap_sdk::{
     LezFirstLockPort, LezFundInstructionV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1,
     LezMakerLockObservationPort, LezNodeRemovalSnapshotV1, LezNodeSnapshotV1,
     LezObservationEventV1, LezObservationReconciliationV1, LezObservationTrackerError,
-    LezObservationTrackerV1, LezStableTipV1, LezTakerFirstLockObservationPort,
+    LezObservationTrackerV1, LezRefundPort, LezStableTipV1, LezTakerFirstLockObservationPort,
     MAX_FIRST_LOCK_SUBMISSION_BYTES, MAX_ZEC_AGREEMENT_RECORD_BYTES,
     MakerFundingEligibilityOutcome, MakerLockDriveOutcome, MakerLockIntentV1,
     MakerLockObservationV1, MakerLockTransitionV1, NegotiationChannel, NegotiationTranscriptV1,
@@ -33,19 +34,23 @@ use lez_zec_swap_sdk::{
     ObservedTakerFirstLockEvidenceV1, ObservedTakerFirstLockTransitionError,
     ObservedTakerFirstLockTransitionRecordV1, ObservedTakerFirstLockTransitionV1, OfferDiscovery,
     PROTECTED_CLAIM_SCHEMA_V1, PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1,
-    ProtectedClaimEnvelope, ProtectedClaimKey, ProtectedClaimPayloadEnvelope, RecoveryStore,
-    RevealingClaimEvidenceV1, RevealingClaimObservationV1, RevealingClaimTransitionRecordV1,
-    RevealingClaimTransitionV1, TakerFirstLockObservationV1, TransparentFundingRequest,
-    TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimContextError, ZcashClaimContextV1,
-    ZcashClaimPort, ZcashFirstLockPort, ZcashFundingContextV1, ZcashFundingObservationV1,
-    ZcashFundingWaitReasonV1, ZcashMakerLockObservationPort, ZcashNodeRemovalSnapshot,
-    ZcashNodeSnapshot, ZcashStableTip, ZcashTakerFirstLockObservationPort,
-    ZcashTransparentDestinationV1, ZcashUnspentOutputSnapshotV1, ZecAgreementBodyV1,
-    ZecAgreementRecordV1, ZecAgreementV1Error, ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk,
-    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
-    ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
-    build_funding_transaction, derive_lez_metadata_account_v1,
-    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    PreparedRefundSubmissionV1, ProtectedClaimEnvelope, ProtectedClaimKey,
+    ProtectedClaimPayloadEnvelope, RecoveryStore, RefundDriveOutcome,
+    RefundEligibilityObservationV1, RefundEvidenceV1, RefundFundingWaitReasonV1,
+    RefundIntentRecordV1, RefundIntentV1, RefundObservationV1, RefundRecordError,
+    RefundRecoveryStore, RefundStepV1, RefundSubmitOutcomeV1, RefundTransitionRecordV1,
+    RefundTransitionV1, RevealingClaimEvidenceV1, RevealingClaimObservationV1,
+    RevealingClaimTransitionRecordV1, RevealingClaimTransitionV1, TakerFirstLockObservationV1,
+    TransparentFundingRequest, TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
+    ZcashClaimContextError, ZcashClaimContextV1, ZcashClaimPort, ZcashFirstLockPort,
+    ZcashFundingContextV1, ZcashFundingObservationV1, ZcashFundingWaitReasonV1,
+    ZcashMakerLockObservationPort, ZcashNodeRemovalSnapshot, ZcashNodeSnapshot, ZcashRefundPort,
+    ZcashStableTip, ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1,
+    ZcashUnspentOutputSnapshotV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1Error,
+    ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1,
+    ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding,
+    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_funding_transaction,
+    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use sha2::{Digest as _, Sha256};
@@ -144,6 +149,8 @@ type ObservedRevealingClaimTransitionMap = HashMap<
 >;
 type ObservedFollowupClaimTransitionMap =
     HashMap<(String, u64), ObservedFollowupClaimTransitionRecordV1>;
+type RefundIntentMap = HashMap<String, RefundIntentV1>;
+type RefundTransitionMap = HashMap<(String, u64), RefundTransitionV1>;
 
 #[derive(Clone, Debug, Default)]
 struct MemoryStore {
@@ -155,6 +162,8 @@ struct MemoryStore {
     followup_claim_transitions: Arc<Mutex<FollowupClaimTransitionMap>>,
     observed_revealing_claim_transitions: Arc<Mutex<ObservedRevealingClaimTransitionMap>>,
     observed_followup_claim_transitions: Arc<Mutex<ObservedFollowupClaimTransitionMap>>,
+    refund_intents: Arc<Mutex<RefundIntentMap>>,
+    refund_transitions: Arc<Mutex<RefundTransitionMap>>,
     claim_nonce_sequence: Arc<Mutex<u64>>,
     first_locks: Arc<Mutex<HashMap<String, FirstLockIntentV1>>>,
     first_lock_transitions: Arc<Mutex<HashMap<(String, u64), FirstLockTransitionV1>>>,
@@ -230,11 +239,16 @@ impl MemoryStore {
             let next = self.apply_lock_transition(agreement, &coordinator, revision, &key)?;
             coordinator = match next {
                 Some(next) => next,
-                None => self
-                    .apply_claim_transition(accepted, &coordinator, revision, &key)?
-                    .ok_or_else(|| {
-                        TestPortError(format!("missing transition at revision {revision}"))
-                    })?,
+                None => {
+                    match self.apply_claim_transition(accepted, &coordinator, revision, &key)? {
+                        Some(next) => next,
+                        None => self
+                            .apply_refund_transition(agreement, &coordinator, revision, &key)?
+                            .ok_or_else(|| {
+                                TestPortError(format!("missing transition at revision {revision}"))
+                            })?,
+                    }
+                }
             };
         }
         Ok(coordinator)
@@ -370,6 +384,26 @@ impl MemoryStore {
                 let transition = record
                     .revalidate(accepted, coordinator, revision)
                     .map_err(|error| TestPortError(error.to_string()))?;
+                transition
+                    .apply_to(agreement, coordinator, revision)
+                    .map(Some)
+                    .map_err(|error| TestPortError(error.to_string()))
+            })
+    }
+
+    fn apply_refund_transition(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        coordinator: &SwapCoordinator,
+        revision: u64,
+        key: &(String, u64),
+    ) -> Result<Option<SwapCoordinator>, TestPortError> {
+        self.refund_transitions
+            .lock()
+            .expect("refund transitions lock")
+            .get(key)
+            .cloned()
+            .map_or(Ok(None), |transition| {
                 transition
                     .apply_to(agreement, coordinator, revision)
                     .map(Some)
@@ -1256,6 +1290,102 @@ impl ClaimRecoveryStore for MemoryStore {
     }
 }
 
+#[async_trait]
+impl RefundRecoveryStore for MemoryStore {
+    async fn create_refund_intent(
+        &self,
+        intent: &RefundIntentV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error> {
+        let key = intent.swap_id().as_str().to_owned();
+        let mut intents = self.refund_intents.lock().expect("refund intents lock");
+        match intents.get(&key) {
+            None => {
+                intents.insert(key, intent.clone());
+                Ok(CreateFirstLockOutcome::Created)
+            }
+            Some(existing) if existing == intent => Ok(CreateFirstLockOutcome::ExistingSame),
+            Some(_) => Ok(CreateFirstLockOutcome::Conflict),
+        }
+    }
+
+    async fn load_refund_intent(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<RefundIntentV1>, Self::Error> {
+        Ok(self
+            .refund_intents
+            .lock()
+            .expect("refund intents lock")
+            .get(swap_id.as_str())
+            .cloned())
+    }
+
+    async fn commit_refund_transition(
+        &self,
+        transition: &RefundTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error> {
+        let mode = *self.transition_mode.lock().expect("transition mode lock");
+        if mode == TransitionCommitMode::FailBeforeCommit {
+            return Err(TestPortError("forced refund commit failure".to_owned()));
+        }
+        let predecessor = transition.predecessor_revision();
+        let accepted = self.accepted(transition.swap_id())?;
+        let coordinator = self.coordinator_at(&accepted, predecessor)?;
+        transition
+            .apply_to(accepted.agreement(), &coordinator, predecessor)
+            .map_err(|error| TestPortError(error.to_string()))?;
+        let key = (
+            transition.swap_id().as_str().to_owned(),
+            transition.predecessor_revision(),
+        );
+        let mut transitions = self
+            .refund_transitions
+            .lock()
+            .expect("refund transitions lock");
+        let was_replay = match transitions.get(&key) {
+            None => {
+                if transition.is_owned()
+                    && !self
+                        .refund_intents
+                        .lock()
+                        .expect("refund intents lock")
+                        .contains_key(transition.swap_id().as_str())
+                {
+                    return Err(TestPortError("missing owned refund intent".to_owned()));
+                }
+                transitions.insert(key, transition.clone());
+                false
+            }
+            Some(existing) if existing == transition => true,
+            Some(_) => return Err(TestPortError("conflicting refund transition".to_owned())),
+        };
+        drop(transitions);
+        if transition.is_owned() {
+            self.refund_intents
+                .lock()
+                .expect("refund intents lock")
+                .remove(transition.swap_id().as_str());
+        }
+        if mode == TransitionCommitMode::CommitThenReportFailure {
+            return Err(TestPortError("unknown successful refund commit".to_owned()));
+        }
+        Ok(FirstLockProjectionCommit::new(predecessor + 1, was_replay))
+    }
+
+    async fn load_refund_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<RefundTransitionV1>, Self::Error> {
+        Ok(self
+            .refund_transitions
+            .lock()
+            .expect("refund transitions lock")
+            .get(&(swap_id.as_str().to_owned(), predecessor_revision))
+            .cloned())
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct NoopLez;
 
@@ -1435,6 +1565,158 @@ impl MemoryMakerLockObservation {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RefundPortEvent {
+    Eligibility(RefundStepV1),
+    Prepare(RefundStepV1),
+    ObservePrepared(RefundStepV1),
+    ObserveCounterparty(RefundStepV1),
+    Submit(RefundStepV1),
+}
+
+type RefundSubmissions = Vec<(RefundStepV1, Vec<u8>)>;
+
+#[derive(Clone, Debug, Default)]
+struct MemoryRefundCorridor {
+    eligibility: Arc<Mutex<HashMap<RefundStepV1, RefundEligibilityObservationV1>>>,
+    confirmed: Arc<Mutex<Vec<RefundStepV1>>>,
+    outcomes: Arc<Mutex<HashMap<RefundStepV1, RefundSubmitOutcomeV1>>>,
+    submissions: Arc<Mutex<RefundSubmissions>>,
+    events: Arc<Mutex<Vec<RefundPortEvent>>>,
+}
+
+impl MemoryRefundCorridor {
+    fn set_eligibility(&self, step: RefundStepV1, observation: RefundEligibilityObservationV1) {
+        self.eligibility
+            .lock()
+            .expect("refund eligibility lock")
+            .insert(step, observation);
+    }
+
+    fn eligibility(&self, step: RefundStepV1) -> RefundEligibilityObservationV1 {
+        self.record_event(RefundPortEvent::Eligibility(step));
+        self.eligibility
+            .lock()
+            .expect("refund eligibility lock")
+            .get(&step)
+            .copied()
+            .unwrap_or(RefundEligibilityObservationV1::Unstable)
+    }
+
+    fn confirm(&self, step: RefundStepV1) {
+        let mut confirmed = self.confirmed.lock().expect("refund confirmations lock");
+        if !confirmed.contains(&step) {
+            confirmed.push(step);
+        }
+    }
+
+    fn observe(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        step: RefundStepV1,
+        prepared: Option<&PreparedRefundSubmissionV1>,
+    ) -> Result<RefundObservationV1, TestPortError> {
+        if !self
+            .confirmed
+            .lock()
+            .expect("refund confirmations lock")
+            .contains(&step)
+        {
+            return Ok(RefundObservationV1::Absent);
+        }
+        let RefundEligibilityObservationV1::Canonical(position) = self
+            .eligibility
+            .lock()
+            .expect("refund eligibility lock")
+            .get(&step)
+            .copied()
+            .unwrap_or(RefundEligibilityObservationV1::Unstable)
+        else {
+            return Ok(RefundObservationV1::Unstable);
+        };
+        let expected = prepared.map_or_else(
+            || refund_submission_id(step),
+            |submission| *submission.expected_submission_id(),
+        );
+        RefundEvidenceV1::new(
+            agreement,
+            step,
+            expected,
+            match step {
+                RefundStepV1::Lez => "deterministic-lez-refund",
+                RefundStepV1::Zcash => "deterministic-zcash-refund",
+            },
+            position,
+            3,
+        )
+        .map(RefundObservationV1::Confirmed)
+        .map_err(|error| TestPortError(error.to_string()))
+    }
+
+    fn set_submit_outcome(&self, step: RefundStepV1, outcome: RefundSubmitOutcomeV1) {
+        self.outcomes
+            .lock()
+            .expect("refund outcomes lock")
+            .insert(step, outcome);
+    }
+
+    fn submit(
+        &self,
+        step: RefundStepV1,
+        prepared: &PreparedRefundSubmissionV1,
+    ) -> Result<RefundSubmitOutcomeV1, TestPortError> {
+        if prepared.step() != step
+            || prepared.expected_submission_id() != &refund_submission_id(step)
+            || prepared.exact_submission() != refund_submission_bytes(step)
+        {
+            return Err(TestPortError(
+                "unexpected deterministic refund submission".to_owned(),
+            ));
+        }
+        self.record_event(RefundPortEvent::Submit(step));
+        self.submissions
+            .lock()
+            .expect("refund submissions lock")
+            .push((step, prepared.exact_submission().to_vec()));
+        Ok(self
+            .outcomes
+            .lock()
+            .expect("refund outcomes lock")
+            .get(&step)
+            .copied()
+            .unwrap_or(RefundSubmitOutcomeV1::Accepted))
+    }
+
+    fn record_event(&self, event: RefundPortEvent) {
+        self.events.lock().expect("refund events lock").push(event);
+    }
+
+    fn events(&self) -> Vec<RefundPortEvent> {
+        self.events.lock().expect("refund events lock").clone()
+    }
+
+    fn submissions(&self) -> Vec<(RefundStepV1, Vec<u8>)> {
+        self.submissions
+            .lock()
+            .expect("refund submissions lock")
+            .clone()
+    }
+}
+
+const fn refund_submission_id(step: RefundStepV1) -> [u8; 32] {
+    match step {
+        RefundStepV1::Lez => [0xd1; 32],
+        RefundStepV1::Zcash => [0xd2; 32],
+    }
+}
+
+const fn refund_submission_bytes(step: RefundStepV1) -> &'static [u8] {
+    match step {
+        RefundStepV1::Lez => b"deterministic-lez-refund-v1",
+        RefundStepV1::Zcash => b"deterministic-zcash-refund-v1",
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct MemoryLezTakerLockObservation(
     MemoryTakerLockObservation,
@@ -1442,6 +1724,7 @@ struct MemoryLezTakerLockObservation(
     MemoryFirstLockPort,
     MemoryMakerLockObservation,
     MemoryClaimCorridor,
+    MemoryRefundCorridor,
 );
 
 #[async_trait]
@@ -1596,6 +1879,59 @@ impl LezClaimPort for MemoryLezTakerLockObservation {
     }
 }
 
+#[async_trait]
+impl LezRefundPort for MemoryLezTakerLockObservation {
+    type Error = TestPortError;
+
+    async fn observe_refund_eligibility(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<RefundEligibilityObservationV1, Self::Error> {
+        Ok(self.5.eligibility(RefundStepV1::Lez))
+    }
+
+    async fn prepare_refund(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<PreparedRefundSubmissionV1, Self::Error> {
+        self.5
+            .record_event(RefundPortEvent::Prepare(RefundStepV1::Lez));
+        PreparedRefundSubmissionV1::new(
+            RefundStepV1::Lez,
+            refund_submission_id(RefundStepV1::Lez),
+            refund_submission_bytes(RefundStepV1::Lez).to_vec(),
+        )
+        .map_err(|error| TestPortError(error.to_string()))
+    }
+
+    async fn observe_prepared_refund(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: &PreparedRefundSubmissionV1,
+    ) -> Result<RefundObservationV1, Self::Error> {
+        self.5
+            .record_event(RefundPortEvent::ObservePrepared(RefundStepV1::Lez));
+        self.5.observe(agreement, RefundStepV1::Lez, Some(prepared))
+    }
+
+    async fn observe_counterparty_refund(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<RefundObservationV1, Self::Error> {
+        self.5
+            .record_event(RefundPortEvent::ObserveCounterparty(RefundStepV1::Lez));
+        self.5.observe(agreement, RefundStepV1::Lez, None)
+    }
+
+    async fn submit_refund(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: &PreparedRefundSubmissionV1,
+    ) -> Result<RefundSubmitOutcomeV1, Self::Error> {
+        self.5.submit(RefundStepV1::Lez, prepared)
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct MemoryZcashTakerLockObservation(
     MemoryTakerLockObservation,
@@ -1603,6 +1939,7 @@ struct MemoryZcashTakerLockObservation(
     MemoryMakerLockObservation,
     MemoryClaimCorridor,
     Arc<Mutex<Vec<Option<CanonicalZcashOutputObservation>>>>,
+    MemoryRefundCorridor,
 );
 
 #[async_trait]
@@ -1748,6 +2085,80 @@ impl ZcashClaimPort for MemoryZcashTakerLockObservation {
         }
         self.3.record_submission(ClaimStepV1::FollowupZcash);
         Ok(())
+    }
+}
+
+#[async_trait]
+impl ZcashRefundPort for MemoryZcashTakerLockObservation {
+    type Error = TestPortError;
+
+    async fn observe_refund_eligibility(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashFundingContextV1,
+    ) -> Result<RefundEligibilityObservationV1, Self::Error> {
+        if context.zcash_funder() != agreement.lez_claimant() {
+            return Err(TestPortError("unexpected Zcash refund funder".to_owned()));
+        }
+        Ok(self.5.eligibility(RefundStepV1::Zcash))
+    }
+
+    async fn prepare_refund(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashFundingContextV1,
+    ) -> Result<PreparedRefundSubmissionV1, Self::Error> {
+        if context.zcash_funder() != agreement.lez_claimant() {
+            return Err(TestPortError("unexpected Zcash refund funder".to_owned()));
+        }
+        self.5
+            .record_event(RefundPortEvent::Prepare(RefundStepV1::Zcash));
+        PreparedRefundSubmissionV1::new(
+            RefundStepV1::Zcash,
+            refund_submission_id(RefundStepV1::Zcash),
+            refund_submission_bytes(RefundStepV1::Zcash).to_vec(),
+        )
+        .map_err(|error| TestPortError(error.to_string()))
+    }
+
+    async fn observe_prepared_refund(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashFundingContextV1,
+        prepared: &PreparedRefundSubmissionV1,
+    ) -> Result<RefundObservationV1, Self::Error> {
+        if context.zcash_funder() != agreement.lez_claimant() {
+            return Err(TestPortError("unexpected Zcash refund funder".to_owned()));
+        }
+        self.5
+            .record_event(RefundPortEvent::ObservePrepared(RefundStepV1::Zcash));
+        self.5
+            .observe(agreement, RefundStepV1::Zcash, Some(prepared))
+    }
+
+    async fn observe_counterparty_refund(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashFundingContextV1,
+    ) -> Result<RefundObservationV1, Self::Error> {
+        if context.zcash_funder() != agreement.lez_claimant() {
+            return Err(TestPortError("unexpected Zcash refund funder".to_owned()));
+        }
+        self.5
+            .record_event(RefundPortEvent::ObserveCounterparty(RefundStepV1::Zcash));
+        self.5.observe(agreement, RefundStepV1::Zcash, None)
+    }
+
+    async fn submit_refund(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        context: &ZcashFundingContextV1,
+        prepared: &PreparedRefundSubmissionV1,
+    ) -> Result<RefundSubmitOutcomeV1, Self::Error> {
+        if context.zcash_funder() != agreement.lez_claimant() {
+            return Err(TestPortError("unexpected Zcash refund funder".to_owned()));
+        }
+        self.5.submit(RefundStepV1::Zcash, prepared)
     }
 }
 
@@ -5083,6 +5494,437 @@ async fn independent_actors_complete_lez_then_zcash_claims_in_both_directions() 
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn refund_contract_keeps_lez_before_zcash_in_both_directions() {
+    for (id, direction, first_claimant, secret) in [
+        (
+            "sdk-refund-contract-forward",
+            SwapDirection::TakerSellsForeign,
+            Participant::Taker,
+            [0xb1; 32],
+        ),
+        (
+            "sdk-refund-contract-reverse",
+            SwapDirection::TakerSellsLez,
+            Participant::Maker,
+            [0xb2; 32],
+        ),
+    ] {
+        let mut fixture = activate_claim_actor_fixture(id, direction, first_claimant, secret).await;
+        lock_claim_actor_fixture(direction, &mut fixture).await;
+        let swap_id = SwapId::new(id).expect("swap ID");
+        let lez_owner = fixture.maker.agreement().lez_depositor();
+        let zcash_owner = fixture.maker.agreement().lez_claimant();
+        let lez_refund_at_ms = fixture.maker.agreement().lez_refund_at_ms();
+        let zcash_refund_at_height = fixture.maker.agreement().zcash_refund_at_height();
+        let lez_position = ChainPosition::lez_timestamp_from_milliseconds_floor(
+            LezUnixMilliseconds::new(lez_refund_at_ms),
+        );
+        let zcash_position =
+            ChainPosition::block_height(Chain::Zcash, u64::from(zcash_refund_at_height));
+
+        assert_eq!(RefundStepV1::Lez.next(), Some(RefundStepV1::Zcash));
+
+        fixture
+            .refunds
+            .set_eligibility(RefundStepV1::Lez, RefundEligibilityObservationV1::Unstable);
+        assert_eq!(
+            drive_refund_actor(&mut fixture, lez_owner)
+                .await
+                .expect("unstable LEZ view is a wait"),
+            RefundDriveOutcome::AwaitingStableObservation(RefundStepV1::Lez)
+        );
+        fixture.refunds.set_eligibility(
+            RefundStepV1::Lez,
+            RefundEligibilityObservationV1::FundingUnavailable(RefundFundingWaitReasonV1::Reorged),
+        );
+        assert_eq!(
+            drive_refund_actor(&mut fixture, lez_owner)
+                .await
+                .expect("reorged LEZ funding is a wait"),
+            RefundDriveOutcome::AwaitingFunding {
+                step: RefundStepV1::Lez,
+                reason: RefundFundingWaitReasonV1::Reorged,
+            }
+        );
+        fixture.refunds.set_eligibility(
+            RefundStepV1::Lez,
+            RefundEligibilityObservationV1::canonical(
+                ChainPosition::lez_timestamp_from_milliseconds_floor(LezUnixMilliseconds::new(
+                    lez_refund_at_ms.saturating_sub(1_000),
+                )),
+            ),
+        );
+        assert_eq!(
+            drive_refund_actor(&mut fixture, lez_owner)
+                .await
+                .expect("early LEZ deadline is a wait"),
+            RefundDriveOutcome::AwaitingDeadline(RefundStepV1::Lez)
+        );
+        assert!(fixture.refunds.submissions().is_empty());
+        assert!(
+            !fixture
+                .refunds
+                .events()
+                .iter()
+                .any(|event| matches!(event, RefundPortEvent::Prepare(_)))
+        );
+
+        fixture.refunds.set_eligibility(
+            RefundStepV1::Lez,
+            RefundEligibilityObservationV1::canonical(lez_position),
+        );
+        fixture
+            .refunds
+            .set_submit_outcome(RefundStepV1::Lez, RefundSubmitOutcomeV1::Unknown);
+        assert_eq!(
+            drive_refund_actor(&mut fixture, lez_owner)
+                .await
+                .expect("unknown LEZ outcome is explicit"),
+            RefundDriveOutcome::SubmissionOutcomeUnknown(RefundStepV1::Lez)
+        );
+        restart_refund_actor(id, &mut fixture, lez_owner).await;
+        fixture.refunds.set_submit_outcome(
+            RefundStepV1::Lez,
+            RefundSubmitOutcomeV1::DefinitivelyRejected,
+        );
+        assert_eq!(
+            drive_refund_actor(&mut fixture, lez_owner)
+                .await
+                .expect("definitive LEZ rejection is explicit"),
+            RefundDriveOutcome::SubmissionRejected(RefundStepV1::Lez)
+        );
+        let lez_submissions = fixture.refunds.submissions();
+        assert_eq!(lez_submissions.len(), 2);
+        assert_eq!(lez_submissions[0], lez_submissions[1]);
+        let events = fixture.refunds.events();
+        let second_submit = events
+            .iter()
+            .rposition(|event| *event == RefundPortEvent::Submit(RefundStepV1::Lez))
+            .expect("second LEZ submit event");
+        assert!(matches!(
+            events.get(second_submit.saturating_sub(2)),
+            Some(RefundPortEvent::ObservePrepared(RefundStepV1::Lez))
+        ));
+        assert!(matches!(
+            events.get(second_submit.saturating_sub(1)),
+            Some(RefundPortEvent::Eligibility(RefundStepV1::Lez))
+        ));
+
+        assert_eq!(
+            drive_refund_actor(&mut fixture, lez_owner.other())
+                .await
+                .expect("non-owner only observes LEZ"),
+            RefundDriveOutcome::AwaitingStableObservation(RefundStepV1::Lez)
+        );
+        assert!(
+            !fixture
+                .refunds
+                .events()
+                .iter()
+                .any(|event| { matches!(event, RefundPortEvent::Prepare(RefundStepV1::Zcash)) })
+        );
+        fixture
+            .refunds
+            .set_submit_outcome(RefundStepV1::Lez, RefundSubmitOutcomeV1::Accepted);
+        fixture.refunds.confirm(RefundStepV1::Lez);
+        refund_store(&fixture, lez_owner)
+            .set_transition_mode(TransitionCommitMode::FailBeforeCommit);
+        assert!(matches!(
+            drive_refund_actor(&mut fixture, lez_owner).await,
+            Err(ZecSdkError::Persistence(_))
+        ));
+        assert_eq!(
+            refund_actor(&fixture, lez_owner).status(),
+            Phase::BothLegsLocked,
+            "failed atomic projection leaves in-memory state unchanged"
+        );
+        refund_store(&fixture, lez_owner)
+            .set_transition_mode(TransitionCommitMode::CommitThenReportFailure);
+        assert!(matches!(
+            drive_refund_actor(&mut fixture, lez_owner).await,
+            Ok(RefundDriveOutcome::Projected {
+                step: RefundStepV1::Lez,
+                revision: 3
+            })
+        ));
+        refund_store(&fixture, lez_owner).set_transition_mode(TransitionCommitMode::Normal);
+        assert!(matches!(
+            drive_refund_actor(&mut fixture, lez_owner.other()).await,
+            Ok(RefundDriveOutcome::Projected {
+                step: RefundStepV1::Lez,
+                revision: 3
+            })
+        ));
+        assert!(matches!(
+            fixture.maker.drive_claim().await,
+            Err(ZecSdkError::ClaimNotReady(
+                Phase::MakerLegRefunded | Phase::TakerLegRefunded
+            ))
+        ));
+
+        fixture.refunds.set_eligibility(
+            RefundStepV1::Zcash,
+            RefundEligibilityObservationV1::canonical(zcash_position),
+        );
+        assert_eq!(
+            drive_refund_actor(&mut fixture, zcash_owner)
+                .await
+                .expect("later Zcash refund submits"),
+            RefundDriveOutcome::Submitted(RefundStepV1::Zcash)
+        );
+        fixture.refunds.confirm(RefundStepV1::Zcash);
+        assert_eq!(
+            drive_refund_actor(&mut fixture, zcash_owner)
+                .await
+                .expect("Zcash owner projects refund"),
+            RefundDriveOutcome::Refunded { revision: 4 }
+        );
+        assert_eq!(
+            drive_refund_actor(&mut fixture, zcash_owner.other())
+                .await
+                .expect("Zcash observer projects refund"),
+            RefundDriveOutcome::Refunded { revision: 4 }
+        );
+        assert_eq!(fixture.maker.status(), Phase::Refunded);
+        assert_eq!(fixture.taker.status(), Phase::Refunded);
+        assert_eq!(
+            fixture
+                .refunds
+                .events()
+                .iter()
+                .filter(|event| matches!(event, RefundPortEvent::Prepare(RefundStepV1::Lez)))
+                .count(),
+            1,
+            "restart and observer paths never re-sign the LEZ refund"
+        );
+        assert_eq!(
+            fixture
+                .refunds
+                .events()
+                .iter()
+                .filter(|event| matches!(event, RefundPortEvent::Prepare(RefundStepV1::Zcash)))
+                .count(),
+            1,
+            "only the Zcash funding owner signs the later refund"
+        );
+        assert!(matches!(
+            fixture.maker.drive_claim().await,
+            Err(ZecSdkError::ClaimNotReady(Phase::Refunded))
+        ));
+
+        fixture.maker = actor_sdk(
+            Participant::Maker,
+            fixture.wire.clone(),
+            fixture.lez.clone(),
+            fixture.zcash.clone(),
+            fixture.maker_store.clone(),
+        )
+        .resume(&swap_id)
+        .await
+        .expect("restart maker")
+        .expect("durable maker");
+        fixture.taker = actor_sdk(
+            Participant::Taker,
+            fixture.wire.clone(),
+            fixture.lez.clone(),
+            fixture.zcash.clone(),
+            fixture.taker_store.clone(),
+        )
+        .resume(&swap_id)
+        .await
+        .expect("restart taker")
+        .expect("durable taker");
+        assert_eq!(
+            fixture.maker.drive_refund().await.expect("maker replay"),
+            RefundDriveOutcome::Refunded { revision: 4 }
+        );
+        assert_eq!(
+            fixture.taker.drive_refund().await.expect("taker replay"),
+            RefundDriveOutcome::Refunded { revision: 4 }
+        );
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn refund_records_round_trip_only_after_full_context_revalidation() {
+    for (id, direction, first_claimant, secret) in [
+        (
+            "sdk-refund-record-forward",
+            SwapDirection::TakerSellsForeign,
+            Participant::Taker,
+            [0xb3; 32],
+        ),
+        (
+            "sdk-refund-record-reverse",
+            SwapDirection::TakerSellsLez,
+            Participant::Maker,
+            [0xb4; 32],
+        ),
+    ] {
+        let mut fixture = activate_claim_actor_fixture(id, direction, first_claimant, secret).await;
+        lock_claim_actor_fixture(direction, &mut fixture).await;
+        let swap_id = SwapId::new(id).expect("swap ID");
+        let owner = fixture.maker.agreement().lez_depositor();
+        let owner_store = refund_store(&fixture, owner);
+        let accepted = owner_store
+            .accepted(&swap_id)
+            .expect("accepted owner terms");
+        let coordinator = owner_store
+            .coordinator_at(&accepted, 2)
+            .expect("locked owner coordinator");
+        let prepared = PreparedRefundSubmissionV1::new(
+            RefundStepV1::Lez,
+            refund_submission_id(RefundStepV1::Lez),
+            refund_submission_bytes(RefundStepV1::Lez).to_vec(),
+        )
+        .expect("prepared LEZ refund");
+        let intent =
+            RefundIntentV1::from_active(accepted.agreement(), &coordinator, owner, 2, prepared)
+                .expect("owner intent");
+        let intent_record = RefundIntentRecordV1::from(&intent);
+        let encoded_intent = serde_json::to_vec(&intent_record).expect("serialize intent record");
+        let decoded_intent: RefundIntentRecordV1 =
+            serde_json::from_slice(&encoded_intent).expect("decode intent record");
+        assert_eq!(
+            decoded_intent
+                .revalidate(&accepted, &coordinator, 2)
+                .expect("revalidate intent"),
+            intent
+        );
+
+        let position = ChainPosition::lez_timestamp_from_milliseconds_floor(
+            LezUnixMilliseconds::new(accepted.agreement().lez_refund_at_ms()),
+        );
+        let evidence = RefundEvidenceV1::new(
+            accepted.agreement(),
+            RefundStepV1::Lez,
+            refund_submission_id(RefundStepV1::Lez),
+            "durable-record-lez-refund",
+            position,
+            3,
+        )
+        .expect("canonical refund evidence");
+        let transition = RefundTransitionV1::from_owned(
+            accepted.agreement(),
+            &coordinator,
+            &intent,
+            2,
+            evidence,
+        )
+        .expect("owner transition");
+        let transition_record = RefundTransitionRecordV1::from(&transition);
+        let encoded_transition =
+            serde_json::to_vec(&transition_record).expect("serialize transition record");
+        let decoded_transition: RefundTransitionRecordV1 =
+            serde_json::from_slice(&encoded_transition).expect("decode transition record");
+        assert_eq!(
+            decoded_transition
+                .revalidate(&accepted, &coordinator, 2, Some(&decoded_intent))
+                .expect("revalidate owner transition"),
+            transition
+        );
+        assert!(matches!(
+            decoded_transition.revalidate(&accepted, &coordinator, 2, None),
+            Err(RefundRecordError::MissingIntent)
+        ));
+
+        let observer_store = refund_store(&fixture, owner.other());
+        let observer_accepted = observer_store
+            .accepted(&swap_id)
+            .expect("accepted observer terms");
+        let observer_coordinator = observer_store
+            .coordinator_at(&observer_accepted, 2)
+            .expect("locked observer coordinator");
+        let observed_evidence = RefundEvidenceV1::new(
+            observer_accepted.agreement(),
+            RefundStepV1::Lez,
+            refund_submission_id(RefundStepV1::Lez),
+            "durable-record-lez-refund",
+            position,
+            3,
+        )
+        .expect("observed canonical refund evidence");
+        let observed = RefundTransitionV1::from_observed(
+            observer_accepted.agreement(),
+            &observer_coordinator,
+            owner.other(),
+            2,
+            observed_evidence,
+        )
+        .expect("observer transition");
+        let observed_record = RefundTransitionRecordV1::from(&observed);
+        assert_eq!(
+            observed_record
+                .revalidate(&observer_accepted, &observer_coordinator, 2, None)
+                .expect("revalidate observer transition"),
+            observed
+        );
+        assert!(matches!(
+            observed_record.revalidate(
+                &observer_accepted,
+                &observer_coordinator,
+                2,
+                Some(&decoded_intent),
+            ),
+            Err(RefundRecordError::UnexpectedIntent)
+        ));
+
+        let mut unknown_field: serde_json::Value =
+            serde_json::from_slice(&encoded_transition).expect("transition JSON");
+        unknown_field
+            .as_object_mut()
+            .expect("transition object")
+            .insert("future_field".to_owned(), serde_json::json!(true));
+        assert!(serde_json::from_value::<RefundTransitionRecordV1>(unknown_field).is_err());
+    }
+}
+
+async fn drive_refund_actor(
+    fixture: &mut ClaimActorFixture,
+    participant: Participant,
+) -> Result<RefundDriveOutcome, ZecSdkError> {
+    match participant {
+        Participant::Maker => fixture.maker.drive_refund().await,
+        Participant::Taker => fixture.taker.drive_refund().await,
+    }
+}
+
+fn refund_actor(fixture: &ClaimActorFixture, participant: Participant) -> &ActorActive {
+    match participant {
+        Participant::Maker => &fixture.maker,
+        Participant::Taker => &fixture.taker,
+    }
+}
+
+fn refund_store(fixture: &ClaimActorFixture, participant: Participant) -> &MemoryStore {
+    match participant {
+        Participant::Maker => &fixture.maker_store,
+        Participant::Taker => &fixture.taker_store,
+    }
+}
+
+async fn restart_refund_actor(id: &str, fixture: &mut ClaimActorFixture, participant: Participant) {
+    let swap_id = SwapId::new(id).expect("swap ID");
+    let resumed = actor_sdk(
+        participant,
+        fixture.wire.clone(),
+        fixture.lez.clone(),
+        fixture.zcash.clone(),
+        refund_store(fixture, participant).clone(),
+    )
+    .resume(&swap_id)
+    .await
+    .expect("restart refund owner")
+    .expect("durable refund owner");
+    match participant {
+        Participant::Maker => fixture.maker = resumed,
+        Participant::Taker => fixture.taker = resumed,
+    }
+}
+
+#[tokio::test]
 async fn reveal_waits_for_exact_fresh_unspent_zcash_funding_after_restart_in_both_directions() {
     for (id, direction, first_claimant, secret) in [
         (
@@ -5305,6 +6147,7 @@ type ActorActive =
 struct ClaimActorFixture {
     wire: Vec<u8>,
     corridor: MemoryClaimCorridor,
+    refunds: MemoryRefundCorridor,
     lez: MemoryLezTakerLockObservation,
     zcash: MemoryZcashTakerLockObservation,
     maker_store: MemoryStore,
@@ -5356,12 +6199,14 @@ async fn activate_claim_actor_fixture(
         Sha256::digest(secret).into(),
     );
     let corridor = MemoryClaimCorridor::default();
+    let refunds = MemoryRefundCorridor::default();
     let lez = MemoryLezTakerLockObservation(
         MemoryTakerLockObservation::default(),
         Arc::default(),
         MemoryFirstLockPort::default(),
         MemoryMakerLockObservation::default(),
         corridor.clone(),
+        refunds.clone(),
     );
     let zcash = MemoryZcashTakerLockObservation(
         MemoryTakerLockObservation::default(),
@@ -5369,6 +6214,7 @@ async fn activate_claim_actor_fixture(
         MemoryMakerLockObservation::default(),
         corridor.clone(),
         Arc::default(),
+        refunds.clone(),
     );
     let maker_store = MemoryStore::default();
     let taker_store = MemoryStore::default();
@@ -5419,6 +6265,7 @@ async fn activate_claim_actor_fixture(
     ClaimActorFixture {
         wire,
         corridor,
+        refunds,
         lez,
         zcash,
         maker_store,

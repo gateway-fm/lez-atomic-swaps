@@ -94,18 +94,23 @@ current executable slices enforce:
   updates survive close/reopen. Affirmative nonfinal removal and atomic same-tip
   replacement now use complete primitive records, reject stale old-head
   evidence, consume one revision, and replay through SQLite. The official-wire
-  LEZ RPC adapter, production claim/refund effects, independent actor
+  LEZ RPC adapter, production refund effects, independent actor
   processes, and the completed real-node corridor remain.
-  The main workspace now also has a bounded authenticated LEZ sidecar client
-  and a typed Zebra owner-claim adapter. The bridge client binds every request
+  The main workspace now also has a bounded authenticated LEZ sidecar client,
+  a typed Zebra owner/counterparty-claim adapter, and the public crash-safe
+  timeout-refund SDK contract. The bridge client binds every request
   and response to one run, role, runtime, and one-use request ID; the Zebra
   adapter derives the exact follow-up claim from the accepted agreement,
   delegates only signing to a role-local capability, revalidates stable
   canonical funding, observes before byte-identical rebroadcast, and treats
-  ambiguous submission outcomes conservatively. These are isolated loopback
-  contract tests, not yet a composed maker/taker user flow. The sidecar server,
-  counterparty claim discovery, actor-process integration, and completed
-  LEZ-plus-Zebra corridor remain.
+  ambiguous submission outcomes conservatively. Counterparty discovery scans a
+  bounded canonical Zebra horizon and treats unresolved or older spends as
+  unstable, never absent. The refund driver fixes LEZ-before-Zcash order in both
+  directions, persists exact owner bytes before broadcast, distinguishes
+  unknown outcomes, and uses observation-only transitions for the other role.
+  These are isolated contract tests, not yet a composed maker/taker user flow.
+  The sidecar server, production refund adapters, SQLite refund journal,
+  actor-process integration, and completed LEZ-plus-Zebra corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),

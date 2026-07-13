@@ -9,20 +9,24 @@ use crate::{
     FirstLockProjectionCommit, FirstLockTransitionV1, FollowupClaimObservationV1,
     FollowupClaimTransitionRecordV1, FollowupClaimTransitionV1, LezClaimPort, LezFirstLockPort,
     LezMakerLockObservationPort, LezObservationEventV1, LezObservationReconciliationV1,
-    LezObservationTrackerV1, LezTakerFirstLockObservationPort, MakerFundingEligibilityOutcome,
-    MakerLockDriveOutcome, MakerLockIntentV1, MakerLockObservationV1, MakerLockTransitionV1,
-    NegotiationChannel, ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome,
-    ObservedFollowupClaimTransitionRecordV1, ObservedFollowupClaimTransitionV1,
-    ObservedMakerLockTransitionV1, ObservedRevealingClaimTransitionRecordV1,
-    ObservedRevealingClaimTransitionV1, ObservedTakerFirstLockTransitionV1, OfferDiscovery,
-    PreparedFirstLockSubmissionV1, RecoveryStore, RevealingClaimObservationV1,
+    LezObservationTrackerV1, LezRefundPort, LezTakerFirstLockObservationPort,
+    MakerFundingEligibilityOutcome, MakerLockDriveOutcome, MakerLockIntentV1,
+    MakerLockObservationV1, MakerLockTransitionV1, NegotiationChannel, ObserveMakerLockOutcome,
+    ObserveTakerFirstLockOutcome, ObservedFollowupClaimTransitionRecordV1,
+    ObservedFollowupClaimTransitionV1, ObservedMakerLockTransitionV1,
+    ObservedRevealingClaimTransitionRecordV1, ObservedRevealingClaimTransitionV1,
+    ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
+    PreparedRefundSubmissionV1, RecoveryStore, RefundDriveOutcome, RefundEligibilityObservationV1,
+    RefundError, RefundIntentV1, RefundObservationV1, RefundRecoveryStore, RefundStepV1,
+    RefundSubmitOutcomeV1, RefundTransitionV1, RevealingClaimObservationV1,
     RevealingClaimTransitionRecordV1, RevealingClaimTransitionV1, TakerFirstLockObservationV1,
     ZcashClaimContextV1, ZcashClaimPort, ZcashFirstLockPort, ZcashFundingContextV1,
     ZcashFundingObservationV1, ZcashFundingWaitReasonV1, ZcashMakerLockObservationPort,
     ZcashObservationEvent, ZcashObservationReconciliation, ZcashObservationTracker,
-    ZcashTakerFirstLockObservationPort, ZecAgreementV1, ZecLifecycleAction, ZecSdkError,
-    claim::validate_preimage, lifecycle::next_action, observed_maker_lock::maker_final_lock_step,
-    observed_taker_lock::taker_first_lock_step,
+    ZcashRefundPort, ZcashTakerFirstLockObservationPort, ZecAgreementV1, ZecLifecycleAction,
+    ZecSdkError, claim::validate_preimage, lifecycle::next_action,
+    observed_maker_lock::maker_final_lock_step, observed_taker_lock::taker_first_lock_step,
+    refund::lez_refunded_phase,
 };
 
 /// Complete pre-lock facade composed from application-supplied ports.
@@ -1816,6 +1820,339 @@ where
             step,
             revision: self.revision,
         })
+    }
+}
+
+impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
+where
+    Lez: LezRefundPort,
+    Zcash: ZcashRefundPort,
+    Store: RefundRecoveryStore,
+{
+    /// Advances the agreement-fixed LEZ-then-Zcash timeout recovery without peer input.
+    ///
+    /// The owner of each funded leg is the only participant allowed to prepare or submit its
+    /// refund. The other participant uses observation-only ports. Every owner submission is
+    /// persisted exactly before broadcast, observed by exact identity after every restart, and
+    /// revalidated against fresh funding/deadline evidence immediately before rebroadcast.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured validation, adapter, or persistence error. Claim and completed phases,
+    /// wrong refund order, wrong roles, early deadlines, reorged funding, substituted identities,
+    /// and revision drift all fail closed.
+    pub async fn drive_refund(&mut self) -> Result<RefundDriveOutcome, ZecSdkError> {
+        self.replay_refund_transitions().await?;
+        let step = match self.status() {
+            Phase::Refunded => {
+                return Ok(RefundDriveOutcome::Refunded {
+                    revision: self.revision,
+                });
+            }
+            Phase::BothLegsLocked | Phase::TakerLockReorged | Phase::MakerLockReorged => {
+                RefundStepV1::Lez
+            }
+            phase if phase == lez_refunded_phase(self.agreement()) => RefundStepV1::Zcash,
+            phase => return Err(ZecSdkError::RefundNotReady(phase)),
+        };
+
+        if self.local_participant() == step.owner(self.agreement()) {
+            self.drive_owned_refund(step).await
+        } else {
+            self.observe_counterparty_refund(step).await
+        }
+    }
+
+    async fn drive_owned_refund(
+        &mut self,
+        step: RefundStepV1,
+    ) -> Result<RefundDriveOutcome, ZecSdkError> {
+        let intent = if let Some(intent) = self.load_refund_intent().await? {
+            intent
+        } else {
+            if let Some(wait) = self.check_refund_eligibility(step).await? {
+                return Ok(wait);
+            }
+            let prepared = self.prepare_refund(step).await?;
+            self.stage_refund_intent(prepared).await?;
+            self.load_refund_intent()
+                .await?
+                .ok_or(ZecSdkError::MissingRefundIntent)?
+        };
+        intent.validate_for_active(self.agreement(), &self.coordinator, self.revision)?;
+        if intent.prepared().step() != step {
+            return Err(ZecSdkError::InvalidRefund(RefundError::StepMismatch));
+        }
+
+        match self
+            .observe_prepared_refund(step, intent.prepared())
+            .await?
+        {
+            RefundObservationV1::Unstable => {
+                Ok(RefundDriveOutcome::AwaitingStableObservation(step))
+            }
+            RefundObservationV1::Confirmed(evidence) => {
+                let transition = RefundTransitionV1::from_owned(
+                    self.agreement(),
+                    &self.coordinator,
+                    &intent,
+                    self.revision,
+                    evidence,
+                )?;
+                self.commit_refund_transition(transition).await
+            }
+            RefundObservationV1::Absent => {
+                if let Some(wait) = self.check_refund_eligibility(step).await? {
+                    return Ok(wait);
+                }
+                match self.submit_refund(step, intent.prepared()).await? {
+                    RefundSubmitOutcomeV1::Accepted => Ok(RefundDriveOutcome::Submitted(step)),
+                    RefundSubmitOutcomeV1::DefinitivelyRejected => {
+                        Ok(RefundDriveOutcome::SubmissionRejected(step))
+                    }
+                    RefundSubmitOutcomeV1::Unknown => {
+                        Ok(RefundDriveOutcome::SubmissionOutcomeUnknown(step))
+                    }
+                }
+            }
+        }
+    }
+
+    async fn observe_counterparty_refund(
+        &mut self,
+        step: RefundStepV1,
+    ) -> Result<RefundDriveOutcome, ZecSdkError> {
+        let observation = match step {
+            RefundStepV1::Lez => self
+                .lez
+                .observe_counterparty_refund(self.agreement())
+                .await
+                .map_err(|error| ZecSdkError::LezRefund(Box::new(error)))?,
+            RefundStepV1::Zcash => {
+                let context = self.zcash_funding_context()?;
+                self.zcash
+                    .observe_counterparty_refund(self.agreement(), &context)
+                    .await
+                    .map_err(|error| ZecSdkError::ZcashRefund(Box::new(error)))?
+            }
+        };
+        match observation {
+            RefundObservationV1::Absent | RefundObservationV1::Unstable => {
+                Ok(RefundDriveOutcome::AwaitingStableObservation(step))
+            }
+            RefundObservationV1::Confirmed(evidence) => {
+                let transition = RefundTransitionV1::from_observed(
+                    self.agreement(),
+                    &self.coordinator,
+                    self.local_participant(),
+                    self.revision,
+                    evidence,
+                )?;
+                self.commit_refund_transition(transition).await
+            }
+        }
+    }
+
+    async fn check_refund_eligibility(
+        &self,
+        step: RefundStepV1,
+    ) -> Result<Option<RefundDriveOutcome>, ZecSdkError> {
+        let observation = match step {
+            RefundStepV1::Lez => self
+                .lez
+                .observe_refund_eligibility(self.agreement())
+                .await
+                .map_err(|error| ZecSdkError::LezRefund(Box::new(error)))?,
+            RefundStepV1::Zcash => {
+                let context = self.zcash_funding_context()?;
+                self.zcash
+                    .observe_refund_eligibility(self.agreement(), &context)
+                    .await
+                    .map_err(|error| ZecSdkError::ZcashRefund(Box::new(error)))?
+            }
+        };
+        match observation {
+            RefundEligibilityObservationV1::Unstable => {
+                Ok(Some(RefundDriveOutcome::AwaitingStableObservation(step)))
+            }
+            RefundEligibilityObservationV1::FundingUnavailable(reason) => {
+                Ok(Some(RefundDriveOutcome::AwaitingFunding { step, reason }))
+            }
+            RefundEligibilityObservationV1::Canonical(position) => {
+                match step.validate_deadline(self.agreement(), position) {
+                    Ok(()) => Ok(None),
+                    Err(RefundError::DeadlineNotReached(_)) => {
+                        Ok(Some(RefundDriveOutcome::AwaitingDeadline(step)))
+                    }
+                    Err(error) => Err(ZecSdkError::InvalidRefund(error)),
+                }
+            }
+        }
+    }
+
+    async fn prepare_refund(
+        &self,
+        step: RefundStepV1,
+    ) -> Result<PreparedRefundSubmissionV1, ZecSdkError> {
+        match step {
+            RefundStepV1::Lez => self
+                .lez
+                .prepare_refund(self.agreement())
+                .await
+                .map_err(|error| ZecSdkError::LezRefund(Box::new(error))),
+            RefundStepV1::Zcash => {
+                let context = self.zcash_funding_context()?;
+                self.zcash
+                    .prepare_refund(self.agreement(), &context)
+                    .await
+                    .map_err(|error| ZecSdkError::ZcashRefund(Box::new(error)))
+            }
+        }
+    }
+
+    async fn observe_prepared_refund(
+        &self,
+        step: RefundStepV1,
+        prepared: &PreparedRefundSubmissionV1,
+    ) -> Result<RefundObservationV1, ZecSdkError> {
+        match step {
+            RefundStepV1::Lez => self
+                .lez
+                .observe_prepared_refund(self.agreement(), prepared)
+                .await
+                .map_err(|error| ZecSdkError::LezRefund(Box::new(error))),
+            RefundStepV1::Zcash => {
+                let context = self.zcash_funding_context()?;
+                self.zcash
+                    .observe_prepared_refund(self.agreement(), &context, prepared)
+                    .await
+                    .map_err(|error| ZecSdkError::ZcashRefund(Box::new(error)))
+            }
+        }
+    }
+
+    async fn submit_refund(
+        &self,
+        step: RefundStepV1,
+        prepared: &PreparedRefundSubmissionV1,
+    ) -> Result<RefundSubmitOutcomeV1, ZecSdkError> {
+        match step {
+            RefundStepV1::Lez => self
+                .lez
+                .submit_refund(self.agreement(), prepared)
+                .await
+                .map_err(|error| ZecSdkError::LezRefund(Box::new(error))),
+            RefundStepV1::Zcash => {
+                let context = self.zcash_funding_context()?;
+                self.zcash
+                    .submit_refund(self.agreement(), &context, prepared)
+                    .await
+                    .map_err(|error| ZecSdkError::ZcashRefund(Box::new(error)))
+            }
+        }
+    }
+
+    async fn load_refund_intent(&self) -> Result<Option<RefundIntentV1>, ZecSdkError> {
+        self.store
+            .load_refund_intent(self.coordinator.id())
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))
+    }
+
+    async fn stage_refund_intent(
+        &self,
+        prepared: PreparedRefundSubmissionV1,
+    ) -> Result<(), ZecSdkError> {
+        let intent = RefundIntentV1::from_active(
+            self.agreement(),
+            &self.coordinator,
+            self.local_participant(),
+            self.revision,
+            prepared,
+        )?;
+        match self.store.create_refund_intent(&intent).await {
+            Ok(CreateFirstLockOutcome::Created | CreateFirstLockOutcome::ExistingSame) => Ok(()),
+            Ok(CreateFirstLockOutcome::Conflict) => Err(ZecSdkError::RefundIntentConflict),
+            Err(error) => {
+                let probe = self
+                    .store
+                    .load_refund_intent(self.coordinator.id())
+                    .await
+                    .map_err(|probe_error| ZecSdkError::Persistence(Box::new(probe_error)))?;
+                if probe.as_ref() == Some(&intent) {
+                    Ok(())
+                } else {
+                    Err(ZecSdkError::Persistence(Box::new(error)))
+                }
+            }
+        }
+    }
+
+    async fn replay_refund_transitions(&mut self) -> Result<(), ZecSdkError> {
+        loop {
+            let Some(transition) = self
+                .store
+                .load_refund_transition(self.coordinator.id(), self.revision)
+                .await
+                .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+            else {
+                return Ok(());
+            };
+            let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+            self.revision = self.checked_next_refund_revision()?;
+            self.coordinator = next;
+        }
+    }
+
+    fn checked_next_refund_revision(&self) -> Result<u64, ZecSdkError> {
+        self.revision
+            .checked_add(1)
+            .ok_or(ZecSdkError::InvalidProjectionRevision {
+                expected: u64::MAX,
+                actual: u64::MAX,
+            })
+    }
+
+    async fn commit_refund_transition(
+        &mut self,
+        transition: RefundTransitionV1,
+    ) -> Result<RefundDriveOutcome, ZecSdkError> {
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        let expected = self.checked_next_refund_revision()?;
+        let commit = match self.store.commit_refund_transition(&transition).await {
+            Ok(commit) => commit,
+            Err(error) => {
+                let probe = self
+                    .store
+                    .load_refund_transition(self.coordinator.id(), self.revision)
+                    .await
+                    .map_err(|probe_error| ZecSdkError::Persistence(Box::new(probe_error)))?;
+                if probe.as_ref() == Some(&transition) {
+                    FirstLockProjectionCommit::new(expected, true)
+                } else {
+                    return Err(ZecSdkError::Persistence(Box::new(error)));
+                }
+            }
+        };
+        if commit.revision() != expected {
+            return Err(ZecSdkError::InvalidProjectionRevision {
+                expected,
+                actual: commit.revision(),
+            });
+        }
+        let step = transition.evidence().step();
+        self.coordinator = next;
+        self.revision = commit.revision();
+        if self.status() == Phase::Refunded {
+            Ok(RefundDriveOutcome::Refunded {
+                revision: self.revision,
+            })
+        } else {
+            Ok(RefundDriveOutcome::Projected {
+                step,
+                revision: self.revision,
+            })
+        }
     }
 }
 

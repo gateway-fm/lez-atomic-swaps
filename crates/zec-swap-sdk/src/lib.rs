@@ -20,6 +20,8 @@ mod observed_maker_lock_record;
 mod observed_taker_lock;
 mod ports;
 mod profile;
+mod refund;
+mod refund_record;
 mod sdk;
 mod spend_observation;
 mod transaction;
@@ -119,11 +121,20 @@ pub use observed_taker_lock::{
 
 pub use ports::{
     ClaimRecoveryStore, CreateAgreementOutcome, LezClaimPort, LezFirstLockPort,
-    LezMakerLockObservationPort, LezTakerFirstLockObservationPort, NegotiationChannel,
-    OfferDiscovery, RecoveryStore, ZcashClaimPort, ZcashFirstLockPort,
-    ZcashMakerLockObservationPort, ZcashTakerFirstLockObservationPort,
+    LezMakerLockObservationPort, LezRefundPort, LezTakerFirstLockObservationPort,
+    NegotiationChannel, OfferDiscovery, RecoveryStore, RefundRecoveryStore, ZcashClaimPort,
+    ZcashFirstLockPort, ZcashMakerLockObservationPort, ZcashRefundPort,
+    ZcashTakerFirstLockObservationPort,
 };
 pub use profile::{ProfileError, ZecProfileId, ZecRefundProfile};
+pub use refund::{
+    MAX_REFUND_SUBMISSION_BYTES, PreparedRefundSubmissionV1, RefundDriveOutcome,
+    RefundEligibilityObservationV1, RefundError, RefundEvidenceV1, RefundFundingWaitReasonV1,
+    RefundIntentV1, RefundObservationV1, RefundStepV1, RefundSubmitOutcomeV1, RefundTransitionV1,
+};
+pub use refund_record::{
+    REFUND_RECORD_SCHEMA_V1, RefundIntentRecordV1, RefundRecordError, RefundTransitionRecordV1,
+};
 pub use sdk::{ActiveZecSwap, ZecPairSdk};
 pub use spend_observation::{
     Bip199SpendKind, CanonicalZcashSpendObservation, ExpectedBip199Spend,

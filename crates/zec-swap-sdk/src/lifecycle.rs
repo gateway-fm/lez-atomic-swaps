@@ -8,7 +8,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use crate::{
     ClaimError, FirstLockIntentError, FirstLockTransitionError, LezObservationTrackerError,
     MakerLockError, ObservationTrackerError, ObservedMakerLockError,
-    ObservedTakerFirstLockTransitionError, ZecAgreementV1Error,
+    ObservedTakerFirstLockTransitionError, RefundError, ZecAgreementV1Error,
 };
 
 /// A SHA-256 claim preimage that is redacted, zeroized, and not serializable.
@@ -70,6 +70,9 @@ pub enum ZecSdkError {
     /// Claim material or a claim transition violates the accepted agreement.
     #[error(transparent)]
     InvalidClaim(#[from] ClaimError),
+    /// Refund intent, evidence, ordering, or transition is invalid.
+    #[error(transparent)]
+    InvalidRefund(#[from] RefundError),
     /// The durable coordinator cannot identify the exact agreement-bound Zcash funding outpoint.
     #[error(transparent)]
     InvalidZcashClaimContext(#[from] crate::ZcashClaimContextError),
@@ -125,9 +128,18 @@ pub enum ZecSdkError {
     /// A different protected exact claim submission occupies this role-local key.
     #[error("a conflicting immutable claim intent is already durable")]
     ClaimIntentConflict,
+    /// No exact durable refund bytes exist for the active owner step.
+    #[error("no durable refund intent exists for the active refund step")]
+    MissingRefundIntent,
+    /// A different exact refund submission occupies this role-local key.
+    #[error("a conflicting immutable refund intent is already durable")]
+    RefundIntentConflict,
     /// Claim driving is unavailable before both locks are confirmed.
     #[error("claim driving requires BothLegsLocked or later; active phase is {0:?}")]
     ClaimNotReady(Phase),
+    /// Refund driving is unavailable in the active pre-lock, claim, or completed phase.
+    #[error("refund driving is unavailable in phase {0:?}")]
+    RefundNotReady(Phase),
     /// First-lock intent may only be staged from the fresh offered phase.
     #[error("first-lock intent requires Offered; active phase is {0:?}")]
     FirstLockNotOffered(Phase),
@@ -175,6 +187,12 @@ pub enum ZecSdkError {
     /// Zcash follow-up claim preparation, observation, or submission failed.
     #[error("Zcash claim adapter failed")]
     ZcashClaim(#[source] BoxPortError),
+    /// LEZ refund preparation, observation, or submission failed.
+    #[error("LEZ refund adapter failed")]
+    LezRefund(#[source] BoxPortError),
+    /// Zcash refund preparation, observation, or submission failed.
+    #[error("Zcash refund adapter failed")]
+    ZcashRefund(#[source] BoxPortError),
 }
 
 /// Next high-level role action derived without accepting peer messages.
@@ -190,6 +208,8 @@ pub enum ZecLifecycleAction {
     ClaimLez,
     /// Claim the Zcash HTLC using already persisted claim material.
     ClaimZcash,
+    /// Refund the later Zcash HTLC after the earlier LEZ refund is durable.
+    RefundZcash,
     /// The swap has reached its completed phase.
     Complete,
 }
@@ -214,7 +234,12 @@ pub(crate) fn next_action(coordinator: &SwapCoordinator, local: Participant) -> 
         Phase::ClaimEvidenceAvailable if local == coordinator.first_claimant().other() => {
             ZecLifecycleAction::ClaimZcash
         }
-        Phase::Completed => ZecLifecycleAction::Complete,
+        Phase::MakerLegRefunded | Phase::TakerLegRefunded
+            if local == coordinator.first_claimant() =>
+        {
+            ZecLifecycleAction::RefundZcash
+        }
+        Phase::Completed | Phase::Refunded => ZecLifecycleAction::Complete,
         _ => ZecLifecycleAction::Wait,
     }
 }

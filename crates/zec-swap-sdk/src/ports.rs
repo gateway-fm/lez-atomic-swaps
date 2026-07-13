@@ -12,10 +12,94 @@ use crate::{
     MakerLockObservationV1, MakerLockTransitionV1, ObservedFollowupClaimTransitionV1,
     ObservedMakerLockTransitionV1, ObservedRevealingClaimTransitionV1,
     ObservedTakerFirstLockTransitionV1, PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1,
-    ProtectedClaimPayloadEnvelope, RevealingClaimObservationV1, RevealingClaimTransitionV1,
-    TakerFirstLockObservationV1, ZcashClaimContextV1, ZcashFundingContextV1,
-    ZcashFundingObservationV1, ZecAgreementV1,
+    PreparedRefundSubmissionV1, ProtectedClaimPayloadEnvelope, RefundEligibilityObservationV1,
+    RefundIntentV1, RefundObservationV1, RefundSubmitOutcomeV1, RefundTransitionV1,
+    RevealingClaimObservationV1, RevealingClaimTransitionV1, TakerFirstLockObservationV1,
+    ZcashClaimContextV1, ZcashFundingContextV1, ZcashFundingObservationV1, ZecAgreementV1,
 };
+
+/// Agreement-derived LEZ timeout-refund boundary.
+#[async_trait]
+pub trait LezRefundPort: Send + Sync {
+    /// Structured adapter, RPC, or signing error retained by the SDK.
+    type Error: Error + Send + Sync + 'static;
+
+    /// Freshly proves the exact LEZ funding state and governing timestamp.
+    async fn observe_refund_eligibility(
+        &self,
+        agreement: &ZecAgreementV1,
+    ) -> Result<RefundEligibilityObservationV1, Self::Error>;
+
+    /// Derives and signs the exact owner-only LEZ refund.
+    async fn prepare_refund(
+        &self,
+        agreement: &ZecAgreementV1,
+    ) -> Result<PreparedRefundSubmissionV1, Self::Error>;
+
+    /// Observes the exact durable identity before every possible broadcast.
+    async fn observe_prepared_refund(
+        &self,
+        agreement: &ZecAgreementV1,
+        prepared: &PreparedRefundSubmissionV1,
+    ) -> Result<RefundObservationV1, Self::Error>;
+
+    /// Observes the agreement-derived counterparty refund without a local signing plan.
+    async fn observe_counterparty_refund(
+        &self,
+        agreement: &ZecAgreementV1,
+    ) -> Result<RefundObservationV1, Self::Error>;
+
+    /// Submits exact bytes loaded from durable recovery state.
+    async fn submit_refund(
+        &self,
+        agreement: &ZecAgreementV1,
+        prepared: &PreparedRefundSubmissionV1,
+    ) -> Result<RefundSubmitOutcomeV1, Self::Error>;
+}
+
+/// Agreement- and exact-outpoint-derived Zcash timeout-refund boundary.
+#[async_trait]
+pub trait ZcashRefundPort: Send + Sync {
+    /// Structured adapter, RPC, or signing error retained by the SDK.
+    type Error: Error + Send + Sync + 'static;
+
+    /// Freshly proves the exact Zcash funding state and governing height.
+    async fn observe_refund_eligibility(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashFundingContextV1,
+    ) -> Result<RefundEligibilityObservationV1, Self::Error>;
+
+    /// Derives and signs the exact owner-only Zcash refund of the durable outpoint.
+    async fn prepare_refund(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashFundingContextV1,
+    ) -> Result<PreparedRefundSubmissionV1, Self::Error>;
+
+    /// Observes the exact durable identity before every possible broadcast.
+    async fn observe_prepared_refund(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashFundingContextV1,
+        prepared: &PreparedRefundSubmissionV1,
+    ) -> Result<RefundObservationV1, Self::Error>;
+
+    /// Observes the agreement-derived counterparty refund without a local signing plan.
+    async fn observe_counterparty_refund(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashFundingContextV1,
+    ) -> Result<RefundObservationV1, Self::Error>;
+
+    /// Submits exact bytes loaded from durable recovery state.
+    async fn submit_refund(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashFundingContextV1,
+        prepared: &PreparedRefundSubmissionV1,
+    ) -> Result<RefundSubmitOutcomeV1, Self::Error>;
+}
 
 /// Narrow LEZ boundary for the preimage-revealing first claim.
 #[async_trait]
@@ -477,4 +561,37 @@ pub trait ClaimRecoveryStore: RecoveryStore {
         swap_id: &SwapId,
         predecessor_revision: u64,
     ) -> Result<Option<ObservedFollowupClaimTransitionV1>, Self::Error>;
+}
+
+/// Recovery storage for exact owner refund intents and owner/observer transitions.
+///
+/// Implementors atomically persist exact signed bytes before broadcast and close an owned intent
+/// in the same transaction as its canonical evidence and aggregate revision. Observer transitions
+/// never create or close an intent.
+#[async_trait]
+pub trait RefundRecoveryStore: RecoveryStore {
+    /// Creates the exact owner refund intent before any submission.
+    async fn create_refund_intent(
+        &self,
+        intent: &RefundIntentV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error>;
+
+    /// Loads the exact pending owner intent after restart.
+    async fn load_refund_intent(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<RefundIntentV1>, Self::Error>;
+
+    /// Atomically commits canonical evidence and the next aggregate revision.
+    async fn commit_refund_transition(
+        &self,
+        transition: &RefundTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error>;
+
+    /// Loads one exact predecessor slot for unknown-outcome probe or restart replay.
+    async fn load_refund_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<RefundTransitionV1>, Self::Error>;
 }
