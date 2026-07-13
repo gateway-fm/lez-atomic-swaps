@@ -90,6 +90,7 @@ security databases, pins/checksums, availability risks, and fallback policy.
 
 | Slice | RED evidence | GREEN evidence | Next refactor/gate |
 |---|---|---|---|
+| Reference-actor composition prerequisites | The first process-composition audit found no production fresh-client factory and the reusable local node exposed an all-zero channel that signed SDK agreements reject | A bounded regular non-symlink mode-0600 capability factory now creates one fresh client per attempt without retaining secret bytes; five security/freshness tests and strict Clippy pass. A focused locked-graph RED/GREEN changes node/config/readiness to one nonempty deterministic channel and all three readiness tests pass. The last exact full runner predates that channel correction. | Re-run the exact full standalone verifier, then implement the durable request allocator, store-derived canonical LEZ funding source, role-keyed Zebra signers/funding planner, and one-shot maker/taker actor process |
 | Taker-first happy path for BTC/XMR/ZEC | 2026-07-11 unresolved protocol API imports | 2026-07-11 `cargo test --workspace --all-targets`, 3 passed | Persist every fact and move from direct core calls to role harness |
 | Ordered timeout refund | Same acceptance test RED; later primary-source reconciliation exposed that generic maker/taker order contradicted ZEC's fixed chain order | BTC uses maker-funded then taker-funded recovery; ZEC uses LEZ then ZEC recovery in both directions; XMR remains event-gated | Exercise exact pair boundaries and fee/reorg stress on real nodes |
 | On-chain-only completion | Core API accepts only `ChainProof`/`ClaimEvidence` after lock | Happy path reaches `Completed` without a peer/transport handle | Prove through CLI/daemon black-box test with Delivery/Chat stopped |
@@ -293,14 +294,19 @@ outputs above.
   publishes a no-clobber mode-0600 private readiness manifest only after health,
   genesis, mandatory-clock progress, exact deployment transaction/containing
   block and ProgramId, the static authenticated-transfer built-in identity, and
-  two key-derived funded genesis actors are verified through official RPC. Its
+  two key-derived funded genesis actors are verified through official RPC. The
+  sequencer configuration and readiness handoff use one nonempty deterministic
+  channel accepted by the signed SDK agreement validator. Its
   successful and rejection paths keep signing keys out of bounded diagnostics
   and shut down on stdin or Ctrl-C. This is reusable local-node infrastructure,
   not composed actor-corridor or public-v0.2 evidence. The initial exact run
   retained the false custom-`getProgramIds` assumption as RED. The corrected
-  full runner passes the process suite, strict Clippy, actual native and
+  earlier full runner passed the process suite, strict Clippy, actual native and
   two-definition actor lifecycles, and byte-identical recursive-cost evidence
-  with the schema-v2 transaction/block proof.
+  with the schema-v2 transaction/block proof. A focused actor-contract RED then
+  exposed the prior empty channel; the corrected three-test locked-graph
+  readiness suite is GREEN and the exact full runner is repeated before
+  corridor evidence.
 - [x] Record native recursive Risc0 costs with the exact guest and production
   v0.1.2 state transition. A single-threaded direct-state replay excludes
   mandatory-clock noise, attributes the escrow root plus authenticated-transfer
@@ -601,7 +607,10 @@ outputs above.
   revealing-claim, and native-refund SDK traits over a role-local SQLite
   operation journal. They retain caller-owned IDs/windows, use a fresh client
   per attempt, restore exact ambiguous contexts after restart, and reject
-  canonical-funding mutations before the sidecar. Actor processes and the
+  canonical-funding mutations before the sidecar. The production fresh-client
+  factory now rereads a bounded regular non-symlink mode-0600 capability file
+  on every attempt, detects replacement, retains no secret bytes, zeroizes
+  rejected material, and redacts both content and path. Actor processes and the
   composed corridor remain.
   The separately locked standalone compatibility harness now also owns a
   reusable external node binary rather than requiring the future actor runner
@@ -613,10 +622,12 @@ outputs above.
   two funded deterministic actor keys. Upstream `getProgramIds` is deliberately
   used only for its static authenticated-transfer built-in; custom deployment
   authority is `getTransaction` plus exact containing-block membership.
-  The corrected exact full runner closes this provisioning boundary with exit
-  `0`, including process rejection paths, native/two-definition actor
+  The earlier corrected exact full runner closed this provisioning boundary
+  with exit `0`, including process rejection paths, native/two-definition actor
   lifecycles, strict Clippy, and byte-identical recursive costs. No SDK actor or
-  sidecar consumes that handoff in a composed LEZ/Zebra swap yet.
+  sidecar consumes that handoff in a composed LEZ/Zebra swap yet. The later
+  nonempty-channel correction passes its focused suite; the exact full runner
+  is repeated before this handoff is consumed as current corridor evidence.
   Commit `8c92007` closes official revealing-claim preparation and restart
   restoration; the exact post-runner sidecar tree passes 25 all-target tests
   plus strict Clippy, rustdoc, advisory, license, ban, and source gates.

@@ -5,7 +5,8 @@ the official native, revealing-claim, and native-refund planners/observations,
 node-RPC core, authenticated eight-method bridge server/client, executable
 role-isolated sidecars, signed-agreement first-lock/claim/refund validation
 adapters, Zebra funding/claim/refund ports, crash-safe context-owning SDK ports,
-and reusable checked external v0.1.2 schema-v2 node handoff are GREEN.
+the secure file-backed fresh-client factory, and reusable checked external
+v0.1.2 schema-v2 node handoff are GREEN.
 Reference-actor wiring and the composed proof remain RED --
 2026-07-13
 
@@ -196,8 +197,13 @@ key/account/balance bindings through official RPC, keep keys out of bounded
 diagnostics, and prove graceful stdin shutdown. The first exact run retained the
 false static-program-map assumption as RED; the corrected full runner then
 passed the process suite, actual native/two-definition lifecycle, strict
-Clippy, and byte-identical recursive costs. No actor or sidecar is yet wired to
-consume this now-GREEN readiness boundary in the cross-chain corridor.
+Clippy, and byte-identical recursive costs. A later actor-contract RED proved
+that the previous all-zero local channel could not satisfy signed agreement
+validation. The sequencer configuration and readiness handoff now bind one
+nonempty deterministic channel; the focused locked-graph readiness suite is
+GREEN and the exact full runner must be rechecked before corridor evidence. No
+actor or sidecar is yet wired to consume this boundary in the cross-chain
+corridor.
 
 ## Atomicity preservation
 
@@ -293,7 +299,11 @@ The implemented main-workspace bridge client exercises all eight typed protocol
 methods, accepts only literal loopback HTTP, sends a sensitive capability plus
 exact run and role headers, validates the echoed run/role/runtime context, and
 permits each request ID once per client instance. It makes one attempt with no
-redirect, proxy, or automatic retry. The sidecar serves all eight methods. The
+redirect, proxy, or automatic retry. The production factory reopens the
+role-local capability for every fresh client, accepts only a bounded regular
+non-symlink file with exact Unix mode `0600`, detects path replacement, and
+redacts its path and contents. Invalid input is zeroized before rejection. The
+sidecar serves all eight methods. The
 first main-process
 adapter accepts a
 caller-owned durable request ID, verifies the signed compatibility environment,

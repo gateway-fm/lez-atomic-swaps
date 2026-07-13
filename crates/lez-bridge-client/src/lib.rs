@@ -56,7 +56,7 @@ impl SidecarCapability {
     /// Rejects values outside 32..=128 ASCII bytes or outside the grammar
     /// `[A-Za-z0-9._-]`.
     pub fn new(value: impl Into<String>) -> Result<Self, CapabilityError> {
-        let value = value.into();
+        let mut value = value.into();
         if (MIN_CAPABILITY_BYTES..=MAX_CAPABILITY_BYTES).contains(&value.len())
             && value
                 .bytes()
@@ -64,6 +64,7 @@ impl SidecarCapability {
         {
             Ok(Self(value))
         } else {
+            value.zeroize();
             Err(CapabilityError)
         }
     }

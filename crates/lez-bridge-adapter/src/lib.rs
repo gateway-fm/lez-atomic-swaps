@@ -2,8 +2,12 @@
 
 #![forbid(unsafe_code)]
 
+mod client_factory;
 mod sdk_ports;
 
+pub use client_factory::{
+    CapabilityFileBridgeClientFactory, CapabilityFileBridgeClientFactoryError,
+};
 pub use sdk_ports::{
     BridgeRequestContextSource, CanonicalLezFundingSource, ContextOwningLezBridgePorts,
     ContextOwningLezPortError, FreshLezBridgeTransportFactory,

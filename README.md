@@ -154,10 +154,14 @@ current executable slices enforce:
   funded actor accounts and signing keys; tampered guests and pre-existing homes
   fail without mutation. Its first exact process run exposed and rejected an
   incorrect assumption that `getProgramIds` listed custom deployments. The
-  corrected full exact runner is GREEN: schema-v2 transaction/block evidence,
+  last corrected full exact runner was GREEN: schema-v2 transaction/block evidence,
   process rejection paths, native/two-definition actor lifecycles, strict
-  Clippy, and recursive cost reproduction all pass. This completes the local
-  node handoff, but not its consumption by independent corridor actors.
+  Clippy, and recursive cost reproduction all pass. A subsequent actor-contract
+  RED found that its all-zero deterministic channel could not enter a signed
+  SDK agreement; the node/config/readiness source now uses one nonempty fixed
+  channel and its focused locked-graph suite is GREEN. The exact full runner is
+  rechecked before corridor evidence or M2 certification. This completes the
+  local node handoff, but not its consumption by independent corridor actors.
   Context-owning SDK-port composition, independent reference actors, and the
   completed LEZ-plus-Zebra corridor remain.
 

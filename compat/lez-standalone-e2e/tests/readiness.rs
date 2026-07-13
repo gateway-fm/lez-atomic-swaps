@@ -1,8 +1,17 @@
 use anyhow::{Context as _, Result, ensure};
 use lez_standalone_e2e::{
-    LocalActorManifest, LocalNodeReadinessManifest, TRACKED_GUEST_ARTIFACT_MANIFEST,
-    verify_checked_guest_artifact, write_private_readiness_manifest,
+    LOCAL_CHANNEL_ID, LocalActorManifest, LocalNodeReadinessManifest,
+    TRACKED_GUEST_ARTIFACT_MANIFEST, verify_checked_guest_artifact,
+    write_private_readiness_manifest,
 };
+
+#[test]
+fn deterministic_actor_channel_is_valid_for_signed_agreements() {
+    assert_ne!(
+        LOCAL_CHANNEL_ID, [0; 32],
+        "the SDK rejects an empty LEZ channel before actor activation"
+    );
+}
 
 fn fixture() -> LocalNodeReadinessManifest {
     LocalNodeReadinessManifest {
@@ -10,7 +19,7 @@ fn fixture() -> LocalNodeReadinessManifest {
         endpoint: "http://127.0.0.1:49152".to_owned(),
         genesis_block_id: 1,
         genesis_block_hash: "11".repeat(32),
-        channel_id: "00".repeat(32),
+        channel_id: hex::encode(LOCAL_CHANNEL_ID),
         elf_sha256: "22".repeat(32),
         image_id: "33".repeat(32),
         escrow_program_id: [7; 8],

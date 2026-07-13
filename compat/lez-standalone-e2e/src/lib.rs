@@ -17,8 +17,12 @@ use sequencer_service_rpc::{RpcClient as _, SequencerClient};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-/// Deterministic channel identity used only by the isolated compatibility node.
-pub const LOCAL_CHANNEL_ID: [u8; 32] = [0; 32];
+/// Nonempty deterministic channel identity used only by the isolated compatibility node.
+///
+/// The SDK rejects an all-zero channel before agreement activation, so the node,
+/// private readiness handoff, and signed deterministic-local agreement must all
+/// bind this same explicit identity.
+pub const LOCAL_CHANNEL_ID: [u8; 32] = [0x31; 32];
 /// First canonical block ID produced by the pinned standalone sequencer.
 pub const GENESIS_BLOCK_ID: u64 = 1;
 /// Maximum time to wait for canonical standalone progress.
