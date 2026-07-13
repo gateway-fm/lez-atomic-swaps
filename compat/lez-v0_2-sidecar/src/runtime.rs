@@ -2,8 +2,8 @@ use std::{fmt, net::IpAddr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use common::transaction::LeeTransaction;
-use lee::{AccountId, PublicTransaction};
 use lez_bridge_protocol::{Hex32, Participant, RuntimeCompatibility, RuntimeDescriptor};
+use nssa::{AccountId, PublicTransaction};
 use sequencer_service_rpc::{RpcClient as _, SequencerClient, SequencerClientBuilder};
 use url::{Host, Url};
 

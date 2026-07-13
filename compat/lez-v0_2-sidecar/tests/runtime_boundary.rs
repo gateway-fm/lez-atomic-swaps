@@ -1,10 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use lee::{
-    AccountId, PrivateKey, PublicKey, PublicTransaction,
-    public_transaction::{Message, WitnessSet},
-};
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, BridgeClientError, SidecarCapability};
 use lez_bridge_protocol::{
     DescribeRuntimeRequest, Hex32, MessageContext, Participant, RequestId, RunId,
@@ -14,6 +10,10 @@ use lez_v0_2_sidecar::{
     DescribeServerCapability, DescribeServerConfig, DescribeServerHandle, HealthProbe,
     OfficialNodeRpc, RuntimeBoundary, RuntimeBoundaryError, RuntimeHealth,
     decode_official_public_transaction, start_describe_server,
+};
+use nssa::{
+    AccountId, PrivateKey, PublicKey, PublicTransaction,
+    public_transaction::{Message, WitnessSet},
 };
 
 const CAPABILITY: &str = "v02-describe-test-capability-000001";

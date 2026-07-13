@@ -8,17 +8,27 @@ publish = false
 license = "MIT OR Apache-2.0"
 rust-version = "1.96"
 
+[build-dependencies]
+lez-zec-escrow-v02 = { version = "=0.0.0", path = "../lez-v0.2-provisional/escrow" }
+spel-client-gen = { version = "=0.5.0", git = "https://github.com/logos-co/spel.git", rev = "df17acd98436be4f09c55877dae1fe2e73cbcdca" }
+
 [dependencies]
 async-trait = "=0.1.89"
+borsh = "=1.7.0"
 common = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+hex = "=0.4.3"
 jsonrpsee = { version = "=0.26.0", features = ["server"] }
-lee = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+nssa = { package = "lee", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
 lez-bridge-protocol = { version = "=0.1.0", path = "../../crates/lez-bridge-protocol" }
 sequencer_service_rpc = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", default-features = false, features = ["client"] }
+serde = { version = "=1.0.228", features = ["derive"] }
+spel-framework-core = { version = "=0.5.0", git = "https://github.com/logos-co/spel.git", rev = "df17acd98436be4f09c55877dae1fe2e73cbcdca" }
 thiserror = "=2.0.18"
+tokio = { version = "=1.52.3", features = ["sync"] }
 tower = "=0.5.3"
 tower-http = { version = "=0.7.0", features = ["auth"] }
 url = "=2.5.8"
+wallet = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
 zeroize = "=1.9.0"
 
 [dev-dependencies]

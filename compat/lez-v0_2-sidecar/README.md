@@ -41,12 +41,37 @@ relative, or hash-mismatched native inputs fail before Cargo starts.
 ## Scope and limitations
 
 This gate verifies the isolated sidecar source and its dependency boundary. It
-does not start Bedrock, the LEZ sequencer/indexer, Zcash Regtest, or Docker; it
+also verifies the first fail-closed native prepare foundation: the exact v0.2
+escrow instruction and account types emitted by the pinned SPEL generator,
+official LEE `Message` and `PublicTransaction` bytes, isolated role, runtime,
+signer, and program bindings, one owned consecutive nonce pair, canonical byte,
+hash, and signature validation, and exact in-memory replay. Tests assert the
+generated initialize and fund account order and every instruction field.
+Recovered pairs are validated against the complete original request; raw
+transaction bytes alone do not prove an authenticated actor role.
+
+Exact LEZ v0.2 still exposes a `PrivateKey` whose `Debug` and `Display` reveal
+raw material and which does not implement `Zeroize`. This planner never formats
+the key and keeps its retained byte copy in `Zeroizing<[u8; 32]>`, but upstream
+constructor inputs and transient signing copies cannot be claimed fully
+zeroized. LOGOS-008 tracks replacement or an upstream fix before production.
+
+The prepare foundation exposes no submission. Its single active reservation
+deliberately fails closed for the life of one one-swap signer instance. Durable
+per-operation reservation recovery, concurrent-swap partitioning, authenticated
+server integration, official node nonce wiring, observation, and exact-byte
+submission remain future work. Submission must not be enabled until a restart
+can recover the originally signed bytes without reconstructing or re-signing
+them.
+
+This gate does not start Bedrock, the LEZ sequencer/indexer, Zcash Regtest, or
+Docker; it
 does not prove a corridor swap, cross-chain atomicity, public-runtime parity,
 or a public deployment. Those claims require the separate local-stack and
 actor-level end-to-end gates.
 
-The native archive is outside Cargo license analysis. Upstream metadata identifies
+The native archive is outside Cargo license analysis. Upstream metadata
+identifies
 rapidsnark as LGPL-3.0-or-later and GMP as LGPLv3-or-GPLv2. This local/CI
 gate publishes no artifact. Before distributing a statically linked binary or
 image, production release review must determine and satisfy the applicable
