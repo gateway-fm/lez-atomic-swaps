@@ -1320,6 +1320,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "lez-bridge-adapter"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "lez-bridge-client",
+ "lez-bridge-protocol",
+ "lez-swap-core",
+ "lez-zec-swap-sdk",
+ "secp256k1",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tokio",
+ "zcash_protocol",
+ "zcash_transparent",
+]
+
+[[package]]
 name = "lez-bridge-client"
 version = "0.1.0"
 dependencies = [

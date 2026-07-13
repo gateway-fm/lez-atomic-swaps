@@ -1,0 +1,26 @@
+[package]
+name = "lez-bridge-adapter"
+version = "0.1.0"
+description = "Main-process LEZ bridge adapter for signed LEZ/ZEC swap agreements"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait = "0.1.89"
+lez-bridge-client = { version = "0.1.0", path = "../lez-bridge-client" }
+lez-bridge-protocol = { version = "0.1.0", path = "../lez-bridge-protocol" }
+lez-swap-core = { version = "0.1.0", path = "../swap-core" }
+lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk" }
+thiserror = "2.0.18"
+
+[dev-dependencies]
+secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
+sha2 = "=0.10.9"
+tokio = { version = "1.52.0", features = ["macros", "rt-multi-thread"] }
+zcash_protocol = { version = "=0.9.0", default-features = false }
+zcash_transparent = { version = "=0.8.0", default-features = false, features = ["transparent-inputs"] }
+
+[lints]
+workspace = true
