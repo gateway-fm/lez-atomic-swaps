@@ -7,6 +7,7 @@ mod first_lock;
 mod funding_planner;
 mod rpc;
 mod signer;
+mod zcash_port;
 
 pub use claim::{
     ZebraClaimError, ZebraClaimSigner, ZebraRefundError, ZebraRefundSigner, ZebraRpcClaimPort,
@@ -22,3 +23,4 @@ pub use rpc::{
     ZebraTransactionState, ZebraUnspentOutput,
 };
 pub use signer::{RoleKeyedZcashSigner, RoleKeyedZcashSignerError};
+pub use zcash_port::{ZebraRpcZcashPort, ZebraRpcZcashPortConfigError};

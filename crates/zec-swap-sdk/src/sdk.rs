@@ -87,8 +87,6 @@ impl<Discovery, Negotiation, Lez, Zcash, Store>
 impl<Discovery, Negotiation, Lez, Zcash, Store>
     ZecPairSdk<Discovery, Negotiation, Lez, Zcash, Store>
 where
-    Discovery: OfferDiscovery,
-    Negotiation: NegotiationChannel<OfferRef = Discovery::OfferRef>,
     Lez: Clone,
     Zcash: Clone,
     Store: RecoveryStore,
@@ -102,7 +100,10 @@ where
     pub async fn publish_offer(
         &self,
         offer: Discovery::Offer,
-    ) -> Result<Discovery::OfferRef, ZecSdkError> {
+    ) -> Result<Discovery::OfferRef, ZecSdkError>
+    where
+        Discovery: OfferDiscovery,
+    {
         self.require_role(Participant::Maker)?;
         self.discovery
             .publish(offer)
@@ -118,7 +119,10 @@ where
     pub async fn discover_offers(
         &self,
         query: &Discovery::Query,
-    ) -> Result<Vec<Discovery::OfferRef>, ZecSdkError> {
+    ) -> Result<Vec<Discovery::OfferRef>, ZecSdkError>
+    where
+        Discovery: OfferDiscovery,
+    {
         self.discovery
             .discover(query)
             .await
@@ -139,7 +143,11 @@ where
         offer: &Discovery::OfferRef,
         proposal: Negotiation::LocalProposal,
         accepted_at: UnixSeconds,
-    ) -> Result<AcceptedZecAgreementV1, ZecSdkError> {
+    ) -> Result<AcceptedZecAgreementV1, ZecSdkError>
+    where
+        Discovery: OfferDiscovery,
+        Negotiation: NegotiationChannel<OfferRef = Discovery::OfferRef>,
+    {
         let wire = self
             .negotiation
             .negotiate(self.local_participant, offer, proposal)
@@ -285,6 +293,31 @@ where
             return Ok(None);
         };
         active.replay_claim_transitions().await?;
+        Ok(Some(active))
+    }
+
+    /// Resumes every lock, claim, and refund transition for truthful status projection.
+    ///
+    /// This entry point performs no chain calls. It is intended for a restarted actor whose
+    /// durable history may have reached either terminal claim completion or timeout recovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same validation and persistence failures as [`Self::resume_claim_capable`],
+    /// plus invalid durable refund evidence or refund-transition revision failures.
+    pub async fn resume_all_capable(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<ActiveZecSwap<Lez, Zcash, Store>>, ZecSdkError>
+    where
+        Lez: LezClaimPort + LezRefundPort,
+        Zcash: ZcashClaimPort + ZcashRefundPort,
+        Store: ClaimRecoveryStore + RefundRecoveryStore,
+    {
+        let Some(mut active) = self.resume_claim_capable(swap_id).await? else {
+            return Ok(None);
+        };
+        active.replay_refund_transitions().await?;
         Ok(Some(active))
     }
 

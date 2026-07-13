@@ -377,11 +377,15 @@ cargo test --offline --locked -p lez-zebra-node-adapter --test first_lock -- --n
 cargo test --offline --locked -p lez-zebra-node-adapter \
   --test exact_outpoint_funding_planner \
   --test exact_outpoint_funding_planner_contract -- --nocapture
+cargo test --offline --locked -p lez-zebra-node-adapter \
+  --test zcash_port_composite \
+  --test zcash_port_composite_configuration -- --nocapture
 cargo test --offline --locked -p zec-reference-actor --all-features -- --nocapture
 ```
 
-The complete Zebra package has 62 checks: 37 unit, 15 first-lock, three signer,
-one planner-API, and six exhaustive planner-contract cases. They cover both
+The complete Zebra package has 66 checks: 37 unit, 15 first-lock, three signer,
+one planner-API, six exhaustive planner-contract, one composite-API, and three
+composite-configuration cases. They cover both
 funding directions, stable-tip block/mempool discovery, exact confirmed
 candidate outpoints and signed input-set commitment, transparent-only canonical
 V5 bytes and output/change policy, absence/ambiguity/horizon behavior, prior

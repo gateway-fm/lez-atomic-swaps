@@ -176,10 +176,11 @@ prerequisites. Reopened role-local SQLite is now the canonical LEZ claim-funding
 authority in both directions and reverse claims require the durable opposite
 Zcash lock. The role-keyed Zcash funding/claim/refund signer retains only
 zeroizing key bytes and uses the canonical SDK builders. The
-agreement-committed exact-outpoint planner and the mode-0600, path-isolated
-one-shot maker/taker CLI boundary are GREEN. The remaining M2 work is full actor
-command/port wiring, composed both-direction execution, and post-lock hardening;
-chain adapters must
+agreement-committed exact-outpoint planner, checked all-trait Zebra composite,
+refund-aware full-history resume, and the mode-0600, path-isolated one-shot
+maker/taker CLI boundary are GREEN. The remaining M2 work is full actor command/
+port wiring, composed both-direction execution, and post-lock hardening; chain
+adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
 observation alone is non-authorizing: forward Zcash persists and revalidates
 the complete canonical output type plus ordered canonical, depth, atomic

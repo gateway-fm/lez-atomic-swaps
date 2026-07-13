@@ -9,7 +9,8 @@ the secure file-backed fresh-client factory, actor-owned random request/window
 allocator, cloneable role-local shared operation journal, and reusable checked
 external v0.1.2 schema-v2 node handoff are GREEN. Store-derived canonical LEZ
 claim funding, the zeroizing role-keyed Zcash funding/claim/refund signer, the
-agreement-committed exact-outpoint planner, and the private path-isolated
+agreement-committed exact-outpoint planner, the checked all-trait Zebra SDK
+composite, refund-aware full-history resume, and the private path-isolated
 one-shot actor CLI/config boundary are also GREEN.
 Full reference-actor command/port wiring and the composed proof remain RED --
 2026-07-13

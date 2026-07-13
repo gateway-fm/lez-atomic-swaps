@@ -1392,6 +1392,9 @@ struct NoopLez;
 #[derive(Clone, Copy, Debug)]
 struct NoopZcash;
 
+#[derive(Clone, Copy, Debug)]
+struct NoPrelockCapability;
+
 #[derive(Clone, Debug)]
 struct MemoryTakerLockObservation {
     response: Arc<Mutex<Result<TakerFirstLockObservationV1, TestPortError>>>,
@@ -2449,6 +2452,60 @@ async fn first_claimant_activation_persists_agreement_and_claim_preimage_in_both
             .expect("claim material exists");
         assert_eq!(loaded.expose_secret(), &secret);
     }
+}
+
+#[tokio::test]
+async fn accepted_wire_activation_and_resume_need_no_discovery_or_negotiation_capability() {
+    let secret = [0x43; 32];
+    let wire = agreement_wire_with_digest(
+        "sdk-post-negotiation-only",
+        SwapDirection::TakerSellsForeign,
+        FixtureVariant::Local,
+        Sha256::digest(secret).into(),
+    );
+    let maker_sdk = ZecPairSdk::new(
+        Participant::Maker,
+        NoPrelockCapability,
+        NoPrelockCapability,
+        NoopLez,
+        NoopZcash,
+        MemoryStore::default(),
+    );
+    let maker_accepted =
+        AcceptedZecAgreementV1::accept_wire_at(&wire, ACCEPTED_AT, Participant::Maker, 0)
+            .expect("maker accepts the signed wire independently");
+    let maker_active = maker_sdk
+        .activate(maker_accepted)
+        .await
+        .expect("plain activation has no transcript capability");
+    assert_eq!(maker_active.status(), Phase::Offered);
+
+    let store = MemoryStore::default();
+    let sdk = ZecPairSdk::new(
+        Participant::Taker,
+        NoPrelockCapability,
+        NoPrelockCapability,
+        NoopLez,
+        NoopZcash,
+        store,
+    );
+    let accepted =
+        AcceptedZecAgreementV1::accept_wire_at(&wire, ACCEPTED_AT, Participant::Taker, 0)
+            .expect("signed wire is independently accepted");
+    let active = sdk
+        .activate_with_claim_preimage(accepted, ClaimPreimage::new(secret))
+        .await
+        .expect("post-negotiation activation has no transcript capability");
+    let swap_id = active.agreement().coordinator().id().clone();
+    assert_eq!(active.status(), Phase::Offered);
+
+    let resumed = sdk
+        .resume(&swap_id)
+        .await
+        .expect("post-negotiation resume")
+        .expect("durable active swap");
+    assert_eq!(resumed.status(), Phase::Offered);
+    assert_eq!(resumed.revision(), 0);
 }
 
 #[tokio::test]
@@ -5720,7 +5777,7 @@ async fn refund_contract_keeps_lez_before_zcash_in_both_directions() {
             fixture.zcash.clone(),
             fixture.maker_store.clone(),
         )
-        .resume(&swap_id)
+        .resume_all_capable(&swap_id)
         .await
         .expect("restart maker")
         .expect("durable maker");
@@ -5731,10 +5788,14 @@ async fn refund_contract_keeps_lez_before_zcash_in_both_directions() {
             fixture.zcash.clone(),
             fixture.taker_store.clone(),
         )
-        .resume(&swap_id)
+        .resume_all_capable(&swap_id)
         .await
         .expect("restart taker")
         .expect("durable taker");
+        assert_eq!(fixture.maker.status(), Phase::Refunded);
+        assert_eq!(fixture.maker.revision(), 4);
+        assert_eq!(fixture.taker.status(), Phase::Refunded);
+        assert_eq!(fixture.taker.revision(), 4);
         assert_eq!(
             fixture.maker.drive_refund().await.expect("maker replay"),
             RefundDriveOutcome::Refunded { revision: 4 }
