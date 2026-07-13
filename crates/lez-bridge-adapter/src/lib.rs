@@ -2,10 +2,14 @@
 
 #![forbid(unsafe_code)]
 
+mod canonical_funding;
 mod client_factory;
 mod request_context;
 mod sdk_ports;
 
+pub use canonical_funding::{
+    SqliteCanonicalLezFundingSource, SqliteCanonicalLezFundingSourceError,
+};
 pub use client_factory::{
     CapabilityFileBridgeClientFactory, CapabilityFileBridgeClientFactoryError,
 };

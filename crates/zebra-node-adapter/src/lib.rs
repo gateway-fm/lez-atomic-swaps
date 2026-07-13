@@ -5,6 +5,7 @@
 mod claim;
 mod first_lock;
 mod rpc;
+mod signer;
 
 pub use claim::{
     ZebraClaimError, ZebraClaimSigner, ZebraRefundError, ZebraRefundSigner, ZebraRpcClaimPort,
@@ -16,3 +17,4 @@ pub use rpc::{
     ZebraChainInfo, ZebraIdentityError, ZebraRpc, ZebraRpcChain, ZebraSubmissionFailure,
     ZebraTransactionState, ZebraUnspentOutput,
 };
+pub use signer::{RoleKeyedZcashSigner, RoleKeyedZcashSignerError};

@@ -172,9 +172,12 @@ adapters, both-direction agreement-bound Zebra funding discovery, and
 context-owning LEZ SDK ports are now GREEN. The production fresh-client
 factory, actor-owned random request/window allocator, and cloneable shared
 role-local operation journal close the corresponding process-composition
-prerequisites. The remaining M2 work is the store-derived canonical LEZ funding
-authority, role-keyed Zebra construction, post-lock hardening, and independent
-actor integration; chain adapters must
+prerequisites. Reopened role-local SQLite is now the canonical LEZ claim-funding
+authority in both directions and reverse claims require the durable opposite
+Zcash lock. The role-keyed Zcash claim/refund signer retains only zeroizing key
+bytes and uses the canonical SDK builders. The remaining M2 work is the
+agreement-committed exact-outpoint Zebra funding planner, post-lock hardening,
+and independent actor integration; chain adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
 observation alone is non-authorizing: forward Zcash persists and revalidates
 the complete canonical output type plus ordered canonical, depth, atomic

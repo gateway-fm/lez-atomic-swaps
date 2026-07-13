@@ -7,7 +7,9 @@ role-isolated sidecars, signed-agreement first-lock/claim/refund validation
 adapters, Zebra funding/claim/refund ports, crash-safe context-owning SDK ports,
 the secure file-backed fresh-client factory, actor-owned random request/window
 allocator, cloneable role-local shared operation journal, and reusable checked
-external v0.1.2 schema-v2 node handoff are GREEN.
+external v0.1.2 schema-v2 node handoff are GREEN. Store-derived canonical LEZ
+claim funding and the zeroizing role-keyed Zcash claim/refund signer are also
+GREEN.
 Reference-actor wiring and the composed proof remain RED --
 2026-07-13
 

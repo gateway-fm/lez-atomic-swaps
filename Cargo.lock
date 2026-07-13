@@ -1330,6 +1330,7 @@ dependencies = [
  "lez-swap-core",
  "lez-swap-store",
  "lez-zec-swap-sdk",
+ "rusqlite",
  "secp256k1",
  "sha2 0.10.9",
  "thiserror 2.0.18",
@@ -1452,6 +1453,7 @@ dependencies = [
  "zcash_protocol",
  "zcash_script",
  "zcash_transparent",
+ "zeroize",
 ]
 
 [[package]]

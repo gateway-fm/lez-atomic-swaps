@@ -18,6 +18,7 @@ lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk" }
 thiserror = "2.0.18"
 
 [dev-dependencies]
+rusqlite = { version = "0.40.1", features = ["bundled"] }
 secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
 sha2 = "=0.10.9"
 tokio = { version = "1.52.0", features = ["macros", "rt-multi-thread"] }
