@@ -5,18 +5,26 @@
 use async_trait::async_trait;
 use lez_bridge_client::{BridgeClient, BridgeClientError};
 use lez_bridge_protocol::{
-    AccountIds, EscrowMetadataFacts, EscrowObservationTarget, EscrowState, FundingFoundFacts,
-    FundingObservation, Hex32, InitializationFoundFacts, InitializationObservation, MessageContext,
-    NativeEscrowTerms, NativeEscrowTermsInput, ObserveEscrowRequest, ObserveEscrowResult,
-    Participant as BridgeParticipant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
-    ProtocolValueError, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    AccountIds, DiscoveryWindow, EscrowMetadataFacts, EscrowObservationTarget, EscrowState,
+    ExactTransactionBytes, FundingFoundFacts, FundingObservation, Hex32, InitializationFoundFacts,
+    InitializationObservation, MessageContext, NativeEscrowAccountFacts,
+    NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
+    NativeRefundFoundFacts, NativeRefundObservation, NativeRefundObservationTarget,
+    ObserveEscrowRequest, ObserveEscrowResult, ObserveNativeRefundRequest,
+    ObserveNativeRefundResult, Participant as BridgeParticipant, PrepareNativeEscrowRequest,
+    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
+    PreparedTransaction, ProtocolValueError, RequestId, RunId, RuntimeCompatibility,
+    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
+    TransactionId,
 };
-use lez_swap_core::Participant;
+use lez_swap_core::{ChainPosition, LezUnixMilliseconds, Participant};
 use lez_zec_swap_sdk::{
     CanonicalLezEscrowObservationV1, FirstLockIntentError, FirstLockPlanV1, FirstLockStepV1,
     LezAssetV1, LezCustodySnapshotV1, LezEnvironmentV1, LezEscrowMetadataSnapshotV1,
     LezEscrowStatusV1, LezFundInstructionV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1,
     LezNodeSnapshotV1, LezObservationError, LezStableTipV1, PreparedFirstLockSubmissionV1,
+    PreparedRefundSubmissionV1, RefundEligibilityObservationV1, RefundError, RefundEvidenceV1,
+    RefundFundingWaitReasonV1, RefundObservationV1, RefundStepV1, RefundSubmitOutcomeV1,
     TakerFirstLockObservationV1, ZecAgreementV1,
 };
 use thiserror::Error;
@@ -71,6 +79,60 @@ impl LezBridgeObservationTransport for BridgeClient {
         request: ObserveEscrowRequest,
     ) -> Result<ObserveEscrowResult, Self::Error> {
         BridgeClient::observe_escrow(self, request).await
+    }
+}
+
+/// One attempt at each native refund compatibility operation.
+///
+/// The transport never retries randomized preparation, observation, or exact
+/// submission. Durable request IDs and scan windows remain caller-owned.
+#[async_trait]
+pub trait LezBridgeRefundTransport: Send + Sync {
+    /// Concrete transport failure.
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Prepares one official fixed-destination native refund.
+    async fn prepare_native_refund(
+        &self,
+        request: PrepareNativeRefundRequest,
+    ) -> Result<PrepareNativeRefundResult, Self::Error>;
+
+    /// Observes canonical native account and optional refund facts.
+    async fn observe_native_refund(
+        &self,
+        request: ObserveNativeRefundRequest,
+    ) -> Result<ObserveNativeRefundResult, Self::Error>;
+
+    /// Submits exact durable refund bytes through the generic submit method.
+    async fn submit_transaction(
+        &self,
+        request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, Self::Error>;
+}
+
+#[async_trait]
+impl LezBridgeRefundTransport for BridgeClient {
+    type Error = BridgeClientError;
+
+    async fn prepare_native_refund(
+        &self,
+        request: PrepareNativeRefundRequest,
+    ) -> Result<PrepareNativeRefundResult, Self::Error> {
+        BridgeClient::prepare_native_refund(self, request).await
+    }
+
+    async fn observe_native_refund(
+        &self,
+        request: ObserveNativeRefundRequest,
+    ) -> Result<ObserveNativeRefundResult, Self::Error> {
+        BridgeClient::observe_native_refund(self, request).await
+    }
+
+    async fn submit_transaction(
+        &self,
+        request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, Self::Error> {
+        BridgeClient::submit_transaction(self, request).await
     }
 }
 
@@ -195,6 +257,59 @@ pub enum ObserveNativeEscrowError<E: std::error::Error + 'static> {
     /// The official-sidecar primitives failed the independent SDK agreement validator.
     #[error("LEZ bridge facts do not prove the signed escrow")]
     Canonical(#[source] LezObservationError),
+}
+
+/// Failure binding one native refund operation to the accepted agreement.
+#[derive(Debug, Error)]
+pub enum NativeRefundAdapterError<E: std::error::Error + 'static> {
+    /// Only the signed LEZ depositor may prepare or submit this refund.
+    #[error("local participant is not the signed LEZ refund owner")]
+    WrongOwner,
+    /// Exact durable refund lookup is reserved for the signed depositor.
+    #[error("exact LEZ refund observation requires the signed depositor")]
+    ExactTargetRequiresOwner,
+    /// Terms discovery is reserved for the non-owner observing the refund.
+    #[error("LEZ refund discovery requires the signed claimant")]
+    DiscoveryRequiresClaimant,
+    /// This adapter is pinned to official v0.1.2 native compatibility.
+    #[error("signed LEZ environment is not compatible with this refund bridge")]
+    IncompatibleEnvironment,
+    /// Signed channel or genesis differs from the selected runtime.
+    #[error("signed LEZ chain identity differs from the selected runtime")]
+    ChainIdentityMismatch,
+    /// Signed escrow program differs from the selected runtime.
+    #[error("signed LEZ escrow program differs from the selected runtime")]
+    EscrowProgramMismatch,
+    /// Sidecar signer differs from the agreement-bound local account.
+    #[error("LEZ sidecar signer differs from the signed local account")]
+    SignerAccountMismatch,
+    /// The compatibility bridge currently supports only native escrow.
+    #[error("LEZ refund bridge does not support this signed asset")]
+    UnsupportedAsset,
+    /// Signed terms or durable bytes were invalid at the protocol boundary.
+    #[error("signed LEZ refund values are invalid at the bridge boundary")]
+    Protocol(#[source] ProtocolValueError),
+    /// A non-submit transport attempt failed with an unknown delivery outcome.
+    #[error("LEZ refund bridge outcome is unknown")]
+    Transport(#[source] E),
+    /// Sidecar response did not echo the caller-owned context.
+    #[error("LEZ refund bridge response context mismatch")]
+    ResponseContextMismatch,
+    /// Bracketing canonical clocks differed.
+    #[error("LEZ refund state changed while facts were collected")]
+    UnstableClock,
+    /// Primitive account, transaction, instruction, position, or target facts conflict.
+    #[error("LEZ refund bridge returned inconsistent facts")]
+    InconsistentFacts,
+    /// A found refund predates the exact signed millisecond deadline.
+    #[error("LEZ refund transaction was observed before the signed deadline")]
+    RefundBeforeDeadline,
+    /// Durable prepared bytes are not a LEZ refund.
+    #[error("durable prepared submission is not a LEZ refund")]
+    WrongPreparedStep,
+    /// SDK refund evidence or prepared-submission validation failed.
+    #[error("LEZ refund evidence is invalid")]
+    Refund(#[source] RefundError),
 }
 
 impl<T: LezBridgeTransport> LezBridgeAdapter<T> {
@@ -403,6 +518,253 @@ impl<T: LezBridgeObservationTransport> LezBridgeAdapter<T> {
     }
 }
 
+impl<T: LezBridgeRefundTransport> LezBridgeAdapter<T> {
+    /// Observes the exact signed native funding state and governing LEZ clock once.
+    ///
+    /// The caller durably owns the request ID. `StateOnly` never scans for a
+    /// refund, and the adapter preserves the exact millisecond clock until the
+    /// final conservative projection to the SDK's whole-second position.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on runtime, terms, response, clock, or account inconsistency.
+    pub async fn observe_native_refund_eligibility(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+    ) -> Result<RefundEligibilityObservationV1, NativeRefundAdapterError<T::Error>> {
+        self.validate_refund_owner(agreement)?;
+        let terms = refund_terms(agreement, &self.runtime, self.local_participant)?;
+        let context = self.refund_context(request_id);
+        let response = self
+            .transport
+            .observe_native_refund(ObserveNativeRefundRequest::new(
+                context.clone(),
+                self.runtime.clone(),
+                terms.clone(),
+                NativeRefundObservationTarget::StateOnly,
+            ))
+            .await
+            .map_err(NativeRefundAdapterError::Transport)?;
+        validate_refund_response_context(&context, &response)?;
+        if response.refund != NativeRefundObservation::NotRequested {
+            return Err(NativeRefundAdapterError::InconsistentFacts);
+        }
+        let position = ChainPosition::lez_timestamp_from_milliseconds_floor(
+            LezUnixMilliseconds::new(response.clock_after.timestamp_ms),
+        );
+        match validate_refund_accounts(agreement, &terms, &response.accounts)? {
+            None | Some(EscrowState::Empty) => {
+                Ok(RefundEligibilityObservationV1::FundingUnavailable(
+                    RefundFundingWaitReasonV1::Absent,
+                ))
+            }
+            Some(EscrowState::Funded) => Ok(RefundEligibilityObservationV1::canonical(position)),
+            Some(EscrowState::Claimed | EscrowState::Refunded) => {
+                Ok(RefundEligibilityObservationV1::FundingUnavailable(
+                    RefundFundingWaitReasonV1::Spent,
+                ))
+            }
+        }
+    }
+
+    /// Prepares one official native refund for the signed depositor exactly once.
+    ///
+    /// The caller-owned request ID is the durable idempotency key. The returned
+    /// exact bytes and official-decoder identity must be persisted before submit.
+    ///
+    /// # Errors
+    ///
+    /// Fails before transport for a non-owner, runtime drift, or non-native terms;
+    /// otherwise preserves unknown randomized-preparation outcomes as errors.
+    pub async fn prepare_native_refund(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+    ) -> Result<PreparedRefundSubmissionV1, NativeRefundAdapterError<T::Error>> {
+        self.validate_refund_owner(agreement)?;
+        let terms = refund_terms(agreement, &self.runtime, self.local_participant)?;
+        let context = self.refund_context(request_id);
+        let response = self
+            .transport
+            .prepare_native_refund(PrepareNativeRefundRequest::new(
+                context.clone(),
+                self.runtime.clone(),
+                terms,
+            ))
+            .await
+            .map_err(NativeRefundAdapterError::Transport)?;
+        if response.context != context {
+            return Err(NativeRefundAdapterError::ResponseContextMismatch);
+        }
+        PreparedRefundSubmissionV1::new(
+            RefundStepV1::Lez,
+            *response.refund.transaction_id.as_bytes(),
+            response.refund.exact_bytes.into_vec(),
+        )
+        .map_err(NativeRefundAdapterError::Refund)
+    }
+
+    /// Observes an exact durable native refund identity in a caller-owned window.
+    ///
+    /// # Errors
+    ///
+    /// Rejects non-owner exact lookup, substituted durable bytes/identity, and
+    /// any inconsistent official transaction, account, clock, or window fact.
+    pub async fn observe_prepared_native_refund(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        prepared: &PreparedRefundSubmissionV1,
+        window: DiscoveryWindow,
+    ) -> Result<RefundObservationV1, NativeRefundAdapterError<T::Error>> {
+        if self.local_participant != agreement.lez_depositor() {
+            return Err(NativeRefundAdapterError::ExactTargetRequiresOwner);
+        }
+        let transaction = prepared_refund_transaction(prepared)?;
+        self.observe_native_refund_target(
+            agreement,
+            request_id,
+            NativeRefundObservationTarget::Exact {
+                refund_transaction_id: transaction.transaction_id,
+                window,
+            },
+            Some(prepared),
+        )
+        .await
+    }
+
+    /// Discovers the signed depositor's permissionless refund in a bounded window.
+    ///
+    /// # Errors
+    ///
+    /// Rejects owner use of the observer path and all inconsistent official facts.
+    pub async fn observe_counterparty_native_refund(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        window: DiscoveryWindow,
+    ) -> Result<RefundObservationV1, NativeRefundAdapterError<T::Error>> {
+        if self.local_participant != agreement.lez_claimant() {
+            return Err(NativeRefundAdapterError::DiscoveryRequiresClaimant);
+        }
+        self.observe_native_refund_target(
+            agreement,
+            request_id,
+            NativeRefundObservationTarget::DiscoverByTerms { window },
+            None,
+        )
+        .await
+    }
+
+    /// Submits exact durable native refund bytes once through generic submit.
+    ///
+    /// A transport failure or mismatched post-submit response is returned as
+    /// [`RefundSubmitOutcomeV1::Unknown`], never rejection and never a retry.
+    ///
+    /// # Errors
+    ///
+    /// Fails before transport for a non-owner, runtime drift, non-native terms,
+    /// wrong refund step, or malformed durable bytes.
+    pub async fn submit_native_refund(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        prepared: &PreparedRefundSubmissionV1,
+    ) -> Result<RefundSubmitOutcomeV1, NativeRefundAdapterError<T::Error>> {
+        self.validate_refund_owner(agreement)?;
+        let _terms = refund_terms(agreement, &self.runtime, self.local_participant)?;
+        let transaction = prepared_refund_transaction(prepared)?;
+        let context = self.refund_context(request_id);
+        let Ok(response) = self
+            .transport
+            .submit_transaction(SubmitTransactionRequest::new(
+                context.clone(),
+                self.runtime.clone(),
+                transaction.clone(),
+            ))
+            .await
+        else {
+            return Ok(RefundSubmitOutcomeV1::Unknown);
+        };
+        if response.context != context || response.transaction_id != transaction.transaction_id {
+            return Ok(RefundSubmitOutcomeV1::Unknown);
+        }
+        Ok(match response.outcome {
+            SubmissionOutcome::Accepted | SubmissionOutcome::AlreadyKnown => {
+                RefundSubmitOutcomeV1::Accepted
+            }
+        })
+    }
+
+    async fn observe_native_refund_target(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        target: NativeRefundObservationTarget,
+        prepared: Option<&PreparedRefundSubmissionV1>,
+    ) -> Result<RefundObservationV1, NativeRefundAdapterError<T::Error>> {
+        let terms = refund_terms(agreement, &self.runtime, self.local_participant)?;
+        let context = self.refund_context(request_id);
+        let response = self
+            .transport
+            .observe_native_refund(ObserveNativeRefundRequest::new(
+                context.clone(),
+                self.runtime.clone(),
+                terms.clone(),
+                target,
+            ))
+            .await
+            .map_err(NativeRefundAdapterError::Transport)?;
+        validate_refund_response_context(&context, &response)?;
+        let account_state = validate_refund_accounts(agreement, &terms, &response.accounts)?;
+        match &response.refund {
+            NativeRefundObservation::NotRequested => {
+                Err(NativeRefundAdapterError::InconsistentFacts)
+            }
+            NativeRefundObservation::Absent => {
+                if matches!(
+                    account_state,
+                    Some(EscrowState::Claimed | EscrowState::Refunded)
+                ) {
+                    return Ok(RefundObservationV1::Unstable);
+                }
+                if refund_window_is_fully_covered(target, response.clock_after.height) {
+                    Ok(RefundObservationV1::Absent)
+                } else {
+                    Ok(RefundObservationV1::Unstable)
+                }
+            }
+            NativeRefundObservation::UnknownOrPending => Ok(RefundObservationV1::Unstable),
+            NativeRefundObservation::Found(found) => {
+                if account_state != Some(EscrowState::Refunded) {
+                    return Err(NativeRefundAdapterError::InconsistentFacts);
+                }
+                validate_refund_found(agreement, &terms, target, &response, found, prepared)
+                    .map(RefundObservationV1::Confirmed)
+            }
+        }
+    }
+
+    fn refund_context(&self, request_id: RequestId) -> MessageContext {
+        MessageContext::new(
+            self.run_id.clone(),
+            request_id,
+            bridge_participant(self.local_participant),
+        )
+    }
+
+    fn validate_refund_owner(
+        &self,
+        agreement: &ZecAgreementV1,
+    ) -> Result<(), NativeRefundAdapterError<T::Error>> {
+        if self.local_participant != agreement.lez_depositor() {
+            return Err(NativeRefundAdapterError::WrongOwner);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 enum NativeTermsError {
     UnsupportedAsset,
@@ -483,6 +845,206 @@ fn native_terms(agreement: &ZecAgreementV1) -> Result<NativeEscrowTerms, NativeT
         authenticated_transfer_program_id,
     })
     .map_err(NativeTermsError::Protocol)
+}
+
+fn refund_terms<E: std::error::Error + 'static>(
+    agreement: &ZecAgreementV1,
+    runtime: &RuntimeDescriptor,
+    local_participant: Participant,
+) -> Result<NativeEscrowTerms, NativeRefundAdapterError<E>> {
+    validate_runtime(agreement, runtime, local_participant).map_err(|error| match error {
+        RuntimeBindingError::IncompatibleEnvironment => {
+            NativeRefundAdapterError::IncompatibleEnvironment
+        }
+        RuntimeBindingError::ChainIdentityMismatch => {
+            NativeRefundAdapterError::ChainIdentityMismatch
+        }
+        RuntimeBindingError::EscrowProgramMismatch => {
+            NativeRefundAdapterError::EscrowProgramMismatch
+        }
+        RuntimeBindingError::SignerAccountMismatch => {
+            NativeRefundAdapterError::SignerAccountMismatch
+        }
+    })?;
+    native_terms(agreement).map_err(|error| match error {
+        NativeTermsError::UnsupportedAsset => NativeRefundAdapterError::UnsupportedAsset,
+        NativeTermsError::Protocol(source) => NativeRefundAdapterError::Protocol(source),
+    })
+}
+
+fn validate_refund_response_context<E: std::error::Error + 'static>(
+    context: &MessageContext,
+    response: &ObserveNativeRefundResult,
+) -> Result<(), NativeRefundAdapterError<E>> {
+    if response.context != *context {
+        return Err(NativeRefundAdapterError::ResponseContextMismatch);
+    }
+    if response.clock_before != response.clock_after {
+        return Err(NativeRefundAdapterError::UnstableClock);
+    }
+    Ok(())
+}
+
+fn validate_refund_accounts<E: std::error::Error + 'static>(
+    agreement: &ZecAgreementV1,
+    terms: &NativeEscrowTerms,
+    observation: &NativeEscrowAccountObservation,
+) -> Result<Option<EscrowState>, NativeRefundAdapterError<E>> {
+    let NativeEscrowAccountObservation::Found(facts) = observation else {
+        return Ok(None);
+    };
+    let state = facts.metadata.status;
+    validate_refund_account_facts(agreement, terms, facts, state)?;
+    Ok(Some(state))
+}
+
+fn validate_refund_account_facts<E: std::error::Error + 'static>(
+    agreement: &ZecAgreementV1,
+    terms: &NativeEscrowTerms,
+    facts: &NativeEscrowAccountFacts,
+    state: EscrowState,
+) -> Result<(), NativeRefundAdapterError<E>> {
+    let metadata_account = Hex32::from_bytes(*agreement.lez_terms().metadata_account());
+    let custody_account = Hex32::from_bytes(*agreement.lez_terms().custody_account());
+    let escrow_program =
+        Hex32::from_bytes(program_id_bytes(agreement.lez_terms().escrow_program_id()));
+    let expected_metadata = EscrowMetadataFacts::from_native_terms(
+        metadata_account,
+        escrow_program,
+        custody_account,
+        terms,
+        state,
+    );
+    let expected_balance = if state == EscrowState::Funded {
+        terms.amount().as_u128()
+    } else {
+        0
+    };
+    if facts.metadata != expected_metadata
+        || facts.custody.account_id != custody_account
+        || facts.custody.owner_program_id != terms.authenticated_transfer_program_id()
+        || facts.custody.balance.as_u128() != expected_balance
+    {
+        return Err(NativeRefundAdapterError::InconsistentFacts);
+    }
+    Ok(())
+}
+
+fn prepared_refund_transaction<E: std::error::Error + 'static>(
+    prepared: &PreparedRefundSubmissionV1,
+) -> Result<PreparedTransaction, NativeRefundAdapterError<E>> {
+    if prepared.step() != RefundStepV1::Lez {
+        return Err(NativeRefundAdapterError::WrongPreparedStep);
+    }
+    let exact_bytes = ExactTransactionBytes::new(prepared.exact_submission().to_vec())
+        .map_err(NativeRefundAdapterError::Protocol)?;
+    Ok(PreparedTransaction::new(
+        TransactionId::from_bytes(*prepared.expected_submission_id()),
+        exact_bytes,
+    ))
+}
+
+fn refund_window_is_fully_covered(target: NativeRefundObservationTarget, tip_height: u64) -> bool {
+    refund_target_window(target).is_some_and(|window| {
+        window
+            .start_height()
+            .checked_add(u64::from(window.max_blocks() - 1))
+            .is_some_and(|final_height| final_height <= tip_height)
+    })
+}
+
+fn refund_target_window(target: NativeRefundObservationTarget) -> Option<DiscoveryWindow> {
+    match target {
+        NativeRefundObservationTarget::StateOnly => None,
+        NativeRefundObservationTarget::Exact { window, .. }
+        | NativeRefundObservationTarget::DiscoverByTerms { window } => Some(window),
+    }
+}
+
+fn validate_refund_found<E: std::error::Error + 'static>(
+    agreement: &ZecAgreementV1,
+    terms: &NativeEscrowTerms,
+    target: NativeRefundObservationTarget,
+    response: &ObserveNativeRefundResult,
+    found: &NativeRefundFoundFacts,
+    prepared: Option<&PreparedRefundSubmissionV1>,
+) -> Result<RefundEvidenceV1, NativeRefundAdapterError<E>> {
+    let Some(window) = refund_target_window(target) else {
+        return Err(NativeRefundAdapterError::InconsistentFacts);
+    };
+    let final_height = window
+        .start_height()
+        .checked_add(u64::from(window.max_blocks() - 1))
+        .expect("validated discovery window cannot overflow");
+    let transaction = &found.transaction;
+    if !(window.start_height()..=final_height).contains(&transaction.position.height) {
+        return Err(NativeRefundAdapterError::InconsistentFacts);
+    }
+    if let NativeRefundObservationTarget::Exact {
+        refund_transaction_id,
+        ..
+    } = target
+        && transaction.transaction_id != refund_transaction_id
+    {
+        return Err(NativeRefundAdapterError::InconsistentFacts);
+    }
+    if let Some(prepared) = prepared
+        && (transaction.transaction_id.as_bytes() != prepared.expected_submission_id()
+            || transaction.exact_bytes.as_slice() != prepared.exact_submission())
+    {
+        return Err(NativeRefundAdapterError::InconsistentFacts);
+    }
+
+    let metadata_account = Hex32::from_bytes(*agreement.lez_terms().metadata_account());
+    let custody_account = Hex32::from_bytes(*agreement.lez_terms().custody_account());
+    let depositor = Hex32::from_bytes(*agreement.lez_account(agreement.lez_depositor()));
+    let expected_accounts = AccountIds::new(vec![metadata_account, custody_account, depositor])
+        .expect("three refund accounts are bounded");
+    let escrow_program =
+        Hex32::from_bytes(program_id_bytes(agreement.lez_terms().escrow_program_id()));
+    let same_height_wrong_hash = transaction.position.height == response.clock_after.height
+        && transaction.position.block_hash != response.clock_after.block_hash;
+    if !transaction.is_public
+        || !transaction.signer_account_ids.as_slice().is_empty()
+        || found.instruction.program_id != escrow_program
+        || found.instruction.ordered_account_ids != expected_accounts
+        || found.instruction.swap_id != terms.swap_id()
+        || transaction.position.height > response.clock_after.height
+        || same_height_wrong_hash
+    {
+        return Err(NativeRefundAdapterError::InconsistentFacts);
+    }
+    if response.clock_after.timestamp_ms < agreement.lez_refund_at_ms() {
+        return Err(NativeRefundAdapterError::RefundBeforeDeadline);
+    }
+    let confirmations = response
+        .clock_after
+        .height
+        .checked_sub(transaction.position.height)
+        .and_then(|distance| distance.checked_add(1))
+        .and_then(|depth| u32::try_from(depth).ok())
+        .ok_or(NativeRefundAdapterError::InconsistentFacts)?;
+    RefundEvidenceV1::new(
+        agreement,
+        RefundStepV1::Lez,
+        *transaction.transaction_id.as_bytes(),
+        encode_hex32(transaction.transaction_id.as_bytes()),
+        ChainPosition::lez_timestamp_from_milliseconds_floor(LezUnixMilliseconds::new(
+            response.clock_after.timestamp_ms,
+        )),
+        confirmations,
+    )
+    .map_err(NativeRefundAdapterError::Refund)
+}
+
+fn encode_hex32(bytes: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(64);
+    for byte in bytes {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
 }
 
 fn validate_found_pair<E: std::error::Error + 'static>(

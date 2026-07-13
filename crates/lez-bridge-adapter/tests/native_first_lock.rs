@@ -1,27 +1,36 @@
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use async_trait::async_trait;
 use lez_bridge_adapter::{
-    LezBridgeAdapter, LezBridgeObservationTransport, LezBridgeTransport, ObserveNativeEscrowError,
-    PrepareNativeFirstLockError,
+    LezBridgeAdapter, LezBridgeObservationTransport, LezBridgeRefundTransport, LezBridgeTransport,
+    NativeRefundAdapterError, ObserveNativeEscrowError, PrepareNativeFirstLockError,
 };
 use lez_bridge_protocol::{
-    AccountIds, ChainPosition, ChainTip, DiscoveryWindow, EscrowMetadataFacts,
+    AccountIds, ChainClock, ChainPosition, ChainTip, DiscoveryWindow, EscrowMetadataFacts,
     EscrowObservationTarget, EscrowState, ExactTransactionBytes, FundingFoundFacts,
     FundingObservation, Hex32, InitializationFoundFacts, InitializationObservation, MessageContext,
-    NativeCustodyFacts, NativeEscrowTerms, NativeEscrowTermsInput, NativeFundInstructionFacts,
-    NativeInitializeInstructionFacts, ObserveEscrowRequest, ObserveEscrowResult,
+    NativeAmount, NativeCustodyFacts, NativeEscrowAccountFacts, NativeEscrowAccountObservation,
+    NativeEscrowTerms, NativeEscrowTermsInput, NativeFundInstructionFacts,
+    NativeInitializeInstructionFacts, NativeRefundFoundFacts, NativeRefundInstructionFacts,
+    NativeRefundObservation, NativeRefundObservationTarget, ObserveEscrowRequest,
+    ObserveEscrowResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
     ObservedTransactionFacts, Participant as BridgeParticipant, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PreparedTransaction, RequestId, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, TransactionId,
+    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
+    PreparedTransaction, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
 };
-use lez_swap_core::{Participant, SwapDirection, UnixSeconds};
+use lez_swap_core::{Chain, LezUnixMilliseconds, Participant, SwapDirection, UnixSeconds};
 use lez_zec_swap_sdk::{
     Bip199Contract, ExpectedBip199Output, FirstLockPlanV1, FirstLockStepV1, LezAssetV1,
-    LezChainIdentityV1, LezEnvironmentV1, NegotiationTranscriptV1, TakerFirstLockObservationV1,
+    LezChainIdentityV1, LezEnvironmentV1, NegotiationTranscriptV1, PreparedRefundSubmissionV1,
+    RefundEligibilityObservationV1, RefundError, RefundEvidenceV1, RefundFundingWaitReasonV1,
+    RefundObservationV1, RefundStepV1, RefundSubmitOutcomeV1, TakerFirstLockObservationV1,
     ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
     ZecAgreementRecordV1, ZecAgreementV1, ZecLezTermsV1, ZecParticipantIdentityV1,
     ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding,
@@ -47,6 +56,983 @@ struct FakeTransport {
 #[derive(Clone, Copy, Debug, Error)]
 #[error("fake transport failure")]
 struct FakeError;
+
+#[derive(Clone, Debug)]
+struct RefundTransport {
+    prepare_requests: Arc<Mutex<Vec<PrepareNativeRefundRequest>>>,
+    observe_requests: Arc<Mutex<Vec<ObserveNativeRefundRequest>>>,
+    submit_requests: Arc<Mutex<Vec<SubmitTransactionRequest>>>,
+    observations: Arc<Mutex<VecDeque<ObserveNativeRefundResult>>>,
+    behavior: RefundBehavior,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+enum RefundBehavior {
+    #[default]
+    Happy,
+    FailPrepare,
+    FailObserve,
+    FailSubmit,
+    WrongPrepareContext,
+    WrongSubmitContext,
+    WrongSubmitId,
+    ZeroPreparedId,
+}
+
+impl RefundTransport {
+    fn new(observations: impl IntoIterator<Item = ObserveNativeRefundResult>) -> Self {
+        Self {
+            prepare_requests: Arc::default(),
+            observe_requests: Arc::default(),
+            submit_requests: Arc::default(),
+            observations: Arc::new(Mutex::new(observations.into_iter().collect())),
+            behavior: RefundBehavior::Happy,
+        }
+    }
+
+    fn with_behavior(mut self, behavior: RefundBehavior) -> Self {
+        self.behavior = behavior;
+        self
+    }
+}
+
+#[async_trait]
+impl LezBridgeRefundTransport for RefundTransport {
+    type Error = FakeError;
+
+    async fn prepare_native_refund(
+        &self,
+        request: PrepareNativeRefundRequest,
+    ) -> Result<PrepareNativeRefundResult, Self::Error> {
+        self.prepare_requests
+            .lock()
+            .expect("prepare request log")
+            .push(request.clone());
+        if matches!(self.behavior, RefundBehavior::FailPrepare) {
+            return Err(FakeError);
+        }
+        let mut context = request.context;
+        if matches!(self.behavior, RefundBehavior::WrongPrepareContext) {
+            context.request_id =
+                RequestId::new("wrong-refund-prepare-context").expect("request id");
+        }
+        let refund = if matches!(self.behavior, RefundBehavior::ZeroPreparedId) {
+            PreparedTransaction::new(
+                TransactionId::from_bytes([0; 32]),
+                ExactTransactionBytes::new(vec![0xee, 0xff]).expect("refund bytes"),
+            )
+        } else {
+            prepared_refund_transaction()
+        };
+        Ok(PrepareNativeRefundResult::new(context, refund))
+    }
+
+    async fn observe_native_refund(
+        &self,
+        request: ObserveNativeRefundRequest,
+    ) -> Result<ObserveNativeRefundResult, Self::Error> {
+        self.observe_requests
+            .lock()
+            .expect("observe request log")
+            .push(request);
+        if matches!(self.behavior, RefundBehavior::FailObserve) {
+            return Err(FakeError);
+        }
+        self.observations
+            .lock()
+            .expect("observation queue")
+            .pop_front()
+            .ok_or(FakeError)
+    }
+
+    async fn submit_transaction(
+        &self,
+        request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, Self::Error> {
+        self.submit_requests
+            .lock()
+            .expect("submit request log")
+            .push(request.clone());
+        if matches!(self.behavior, RefundBehavior::FailSubmit) {
+            return Err(FakeError);
+        }
+        let mut context = request.context;
+        if matches!(self.behavior, RefundBehavior::WrongSubmitContext) {
+            context.request_id = RequestId::new("wrong-refund-submit-context").expect("request id");
+        }
+        let transaction_id = if matches!(self.behavior, RefundBehavior::WrongSubmitId) {
+            TransactionId::from_bytes([0x44; 32])
+        } else {
+            request.transaction.transaction_id
+        };
+        Ok(SubmitTransactionResult::new(
+            context,
+            transaction_id,
+            SubmissionOutcome::Accepted,
+        ))
+    }
+}
+
+#[tokio::test]
+async fn signed_owner_refund_state_prepare_exact_observe_and_submit_are_typed_once() {
+    let agreement = agreement();
+    let transport = RefundTransport::new([
+        refund_state_observation(
+            &agreement,
+            refund_context(Participant::Taker, "refund-state-0001"),
+        ),
+        refund_found_observation(
+            &agreement,
+            refund_context(Participant::Taker, "refund-exact-0001"),
+        ),
+    ]);
+    let adapter = refund_adapter(transport.clone(), &agreement, Participant::Taker);
+
+    let eligibility = adapter
+        .observe_native_refund_eligibility(
+            &agreement,
+            RequestId::new("refund-state-0001").expect("request id"),
+        )
+        .await
+        .expect("canonical funded eligibility");
+    assert_eq!(
+        eligibility,
+        RefundEligibilityObservationV1::canonical(
+            lez_swap_core::ChainPosition::lez_timestamp_from_milliseconds_floor(
+                LezUnixMilliseconds::new(200_000),
+            ),
+        )
+    );
+
+    let prepared = adapter
+        .prepare_native_refund(
+            &agreement,
+            RequestId::new("refund-prepare-0001").expect("request id"),
+        )
+        .await
+        .expect("agreement-bound refund preparation");
+    assert_eq!(prepared.step(), RefundStepV1::Lez);
+    assert_eq!(prepared.expected_submission_id(), &[0x33; 32]);
+    assert_eq!(prepared.exact_submission(), &[0xee, 0xff]);
+
+    let window = DiscoveryWindow::new(10, 3).expect("caller-owned window");
+    let observed = adapter
+        .observe_prepared_native_refund(
+            &agreement,
+            RequestId::new("refund-exact-0001").expect("request id"),
+            &prepared,
+            window,
+        )
+        .await
+        .expect("exact canonical refund");
+    let RefundObservationV1::Confirmed(evidence) = observed else {
+        panic!("found exact refund must produce evidence");
+    };
+    assert_eq!(evidence.step(), RefundStepV1::Lez);
+    assert_eq!(evidence.observed_submission_id(), &[0x33; 32]);
+    assert_eq!(evidence.position().chain(), Chain::Lez);
+    assert_eq!(evidence.position().value(), 200);
+    assert_eq!(evidence.confirmations(), 2);
+
+    assert_eq!(
+        adapter
+            .submit_native_refund(
+                &agreement,
+                RequestId::new("refund-submit-0001").expect("request id"),
+                &prepared,
+            )
+            .await
+            .expect("one exact submit attempt"),
+        RefundSubmitOutcomeV1::Accepted
+    );
+
+    let observe_requests = transport.observe_requests.lock().expect("request log");
+    assert!(matches!(
+        observe_requests[0].target,
+        NativeRefundObservationTarget::StateOnly
+    ));
+    assert!(matches!(
+        observe_requests[1].target,
+        NativeRefundObservationTarget::Exact {
+            refund_transaction_id,
+            window: actual,
+        } if refund_transaction_id == TransactionId::from_bytes([0x33; 32]) && actual == window
+    ));
+    assert_eq!(transport.prepare_requests.lock().expect("log").len(), 1);
+    assert_eq!(transport.submit_requests.lock().expect("log").len(), 1);
+}
+
+#[tokio::test]
+async fn signed_refund_roles_hold_for_both_swap_directions() {
+    for (agreement, owner, claimant, suffix) in [
+        (
+            agreement(),
+            Participant::Taker,
+            Participant::Maker,
+            "forward",
+        ),
+        (
+            agreement_for_direction(
+                LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility,
+                false,
+                SwapDirection::TakerSellsForeign,
+            ),
+            Participant::Maker,
+            Participant::Taker,
+            "reverse",
+        ),
+    ] {
+        let request_id = format!("refund-owner-{suffix}");
+        let transport = RefundTransport::new([]);
+        let adapter = refund_adapter(transport.clone(), &agreement, owner);
+        adapter
+            .prepare_native_refund(&agreement, RequestId::new(request_id).expect("request id"))
+            .await
+            .expect("signed depositor owns refund preparation");
+        assert_eq!(transport.prepare_requests.lock().expect("log").len(), 1);
+
+        let nonowner_transport = RefundTransport::new([]);
+        let nonowner = refund_adapter(nonowner_transport.clone(), &agreement, claimant);
+        let prepared = prepared_refund_submission();
+        assert!(matches!(
+            nonowner
+                .observe_native_refund_eligibility(
+                    &agreement,
+                    RequestId::new(format!("refund-state-nonowner-{suffix}")).expect("request id"),
+                )
+                .await,
+            Err(NativeRefundAdapterError::WrongOwner)
+        ));
+        assert!(matches!(
+            nonowner
+                .prepare_native_refund(
+                    &agreement,
+                    RequestId::new(format!("refund-prepare-nonowner-{suffix}"))
+                        .expect("request id"),
+                )
+                .await,
+            Err(NativeRefundAdapterError::WrongOwner)
+        ));
+        assert!(matches!(
+            nonowner
+                .submit_native_refund(
+                    &agreement,
+                    RequestId::new(format!("refund-submit-nonowner-{suffix}")).expect("request id"),
+                    &prepared,
+                )
+                .await,
+            Err(NativeRefundAdapterError::WrongOwner)
+        ));
+        assert!(
+            nonowner_transport
+                .prepare_requests
+                .lock()
+                .expect("log")
+                .is_empty()
+        );
+        assert!(
+            nonowner_transport
+                .observe_requests
+                .lock()
+                .expect("log")
+                .is_empty()
+        );
+        assert!(
+            nonowner_transport
+                .submit_requests
+                .lock()
+                .expect("log")
+                .is_empty()
+        );
+    }
+}
+
+#[tokio::test]
+async fn exact_and_discovery_refund_paths_are_role_separated_and_window_bound() {
+    let agreement = agreement();
+    let window = DiscoveryWindow::new(10, 3).expect("window");
+    let prepared = prepared_refund_submission();
+
+    let owner_transport = RefundTransport::new([]);
+    let owner = refund_adapter(owner_transport.clone(), &agreement, Participant::Taker);
+    assert!(matches!(
+        owner
+            .observe_counterparty_native_refund(
+                &agreement,
+                RequestId::new("refund-owner-discovery").expect("request id"),
+                window,
+            )
+            .await,
+        Err(NativeRefundAdapterError::DiscoveryRequiresClaimant)
+    ));
+    assert!(
+        owner_transport
+            .observe_requests
+            .lock()
+            .expect("log")
+            .is_empty()
+    );
+
+    let claimant_context = refund_context(Participant::Maker, "refund-claimant-discovery");
+    let claimant_transport =
+        RefundTransport::new([refund_found_observation(&agreement, claimant_context)]);
+    let claimant = refund_adapter(claimant_transport.clone(), &agreement, Participant::Maker);
+    assert!(matches!(
+        claimant
+            .observe_prepared_native_refund(
+                &agreement,
+                RequestId::new("refund-claimant-exact").expect("request id"),
+                &prepared,
+                window,
+            )
+            .await,
+        Err(NativeRefundAdapterError::ExactTargetRequiresOwner)
+    ));
+    assert!(matches!(
+        claimant
+            .observe_counterparty_native_refund(
+                &agreement,
+                RequestId::new("refund-claimant-discovery").expect("request id"),
+                window,
+            )
+            .await,
+        Ok(RefundObservationV1::Confirmed(_))
+    ));
+    let requests = claimant_transport.observe_requests.lock().expect("log");
+    assert_eq!(requests.len(), 1);
+    assert!(matches!(
+        requests[0].target,
+        NativeRefundObservationTarget::DiscoverByTerms { window: actual } if actual == window
+    ));
+}
+
+#[tokio::test]
+async fn eligibility_distinguishes_absent_funded_and_spent_accounts() {
+    let agreement = agreement();
+    for (suffix, accounts, expected) in [
+        (
+            "absent",
+            NativeEscrowAccountObservation::Absent,
+            RefundEligibilityObservationV1::FundingUnavailable(RefundFundingWaitReasonV1::Absent),
+        ),
+        (
+            "empty",
+            refund_accounts(&agreement, EscrowState::Empty, 0),
+            RefundEligibilityObservationV1::FundingUnavailable(RefundFundingWaitReasonV1::Absent),
+        ),
+        (
+            "claimed",
+            refund_accounts(&agreement, EscrowState::Claimed, 0),
+            RefundEligibilityObservationV1::FundingUnavailable(RefundFundingWaitReasonV1::Spent),
+        ),
+        (
+            "refunded",
+            refund_accounts(&agreement, EscrowState::Refunded, 0),
+            RefundEligibilityObservationV1::FundingUnavailable(RefundFundingWaitReasonV1::Spent),
+        ),
+    ] {
+        let request_id = format!("refund-eligibility-{suffix}");
+        let clock = refund_clock();
+        let transport = RefundTransport::new([ObserveNativeRefundResult::new(
+            refund_context(Participant::Taker, &request_id),
+            clock,
+            accounts,
+            NativeRefundObservation::NotRequested,
+            clock,
+        )]);
+        let adapter = refund_adapter(transport, &agreement, Participant::Taker);
+        assert_eq!(
+            adapter
+                .observe_native_refund_eligibility(
+                    &agreement,
+                    RequestId::new(request_id).expect("request id"),
+                )
+                .await
+                .expect("stable typed eligibility"),
+            expected
+        );
+    }
+}
+
+#[tokio::test]
+async fn eligibility_rejects_partial_facts_clock_drift_and_refund_lookup_claims() {
+    let agreement = agreement();
+    for (suffix, mut response, expected) in [
+        (
+            "partial",
+            refund_state_observation(
+                &agreement,
+                refund_context(Participant::Taker, "refund-state-partial"),
+            ),
+            "facts",
+        ),
+        (
+            "clock",
+            refund_state_observation(
+                &agreement,
+                refund_context(Participant::Taker, "refund-state-clock"),
+            ),
+            "clock",
+        ),
+        (
+            "lookup",
+            refund_state_observation(
+                &agreement,
+                refund_context(Participant::Taker, "refund-state-lookup"),
+            ),
+            "facts",
+        ),
+    ] {
+        match suffix {
+            "partial" => {
+                let NativeEscrowAccountObservation::Found(facts) = &mut response.accounts else {
+                    panic!("fixture has full facts")
+                };
+                facts.custody.account_id = Hex32::from_bytes([0x77; 32]);
+            }
+            "clock" => response.clock_after.timestamp_ms += 1,
+            "lookup" => response.refund = NativeRefundObservation::Absent,
+            _ => unreachable!("fixed cases"),
+        }
+        let transport = RefundTransport::new([response]);
+        let adapter = refund_adapter(transport, &agreement, Participant::Taker);
+        let error = adapter
+            .observe_native_refund_eligibility(
+                &agreement,
+                RequestId::new(format!("refund-state-{suffix}")).expect("request id"),
+            )
+            .await
+            .expect_err("malformed state fails closed");
+        match expected {
+            "clock" => assert!(matches!(error, NativeRefundAdapterError::UnstableClock)),
+            "facts" => assert!(matches!(error, NativeRefundAdapterError::InconsistentFacts)),
+            _ => unreachable!("fixed cases"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn refund_absence_requires_a_stable_fully_covered_window() {
+    let agreement = agreement();
+    let prepared = prepared_refund_submission();
+    let covered = DiscoveryWindow::new(10, 3).expect("covered window");
+    let incomplete = DiscoveryWindow::new(11, 3).expect("incomplete window");
+    for (suffix, window, accounts, refund, expected) in [
+        (
+            "covered",
+            covered,
+            refund_accounts(
+                &agreement,
+                EscrowState::Funded,
+                agreement.lez_terms().amount(),
+            ),
+            NativeRefundObservation::Absent,
+            RefundObservationV1::Absent,
+        ),
+        (
+            "incomplete",
+            incomplete,
+            refund_accounts(
+                &agreement,
+                EscrowState::Funded,
+                agreement.lez_terms().amount(),
+            ),
+            NativeRefundObservation::Absent,
+            RefundObservationV1::Unstable,
+        ),
+        (
+            "unknown",
+            covered,
+            refund_accounts(
+                &agreement,
+                EscrowState::Funded,
+                agreement.lez_terms().amount(),
+            ),
+            NativeRefundObservation::UnknownOrPending,
+            RefundObservationV1::Unstable,
+        ),
+        (
+            "terminal",
+            covered,
+            refund_accounts(&agreement, EscrowState::Refunded, 0),
+            NativeRefundObservation::Absent,
+            RefundObservationV1::Unstable,
+        ),
+    ] {
+        let request_id = format!("refund-absence-{suffix}");
+        let clock = refund_clock();
+        let transport = RefundTransport::new([ObserveNativeRefundResult::new(
+            refund_context(Participant::Taker, &request_id),
+            clock,
+            accounts,
+            refund,
+            clock,
+        )]);
+        let adapter = refund_adapter(transport, &agreement, Participant::Taker);
+        assert_eq!(
+            adapter
+                .observe_prepared_native_refund(
+                    &agreement,
+                    RequestId::new(request_id).expect("request id"),
+                    &prepared,
+                    window,
+                )
+                .await
+                .expect("absence is conservatively typed"),
+            expected
+        );
+    }
+}
+
+#[tokio::test]
+async fn refund_transport_attempts_are_once_and_submit_uncertainty_is_never_rejection() {
+    let agreement = agreement();
+    for (suffix, behavior) in [
+        ("transport", RefundBehavior::FailPrepare),
+        ("context", RefundBehavior::WrongPrepareContext),
+        ("identity", RefundBehavior::ZeroPreparedId),
+    ] {
+        let transport = RefundTransport::new([]).with_behavior(behavior);
+        let adapter = refund_adapter(transport.clone(), &agreement, Participant::Taker);
+        assert!(
+            adapter
+                .prepare_native_refund(
+                    &agreement,
+                    RequestId::new(format!("refund-prepare-{suffix}")).expect("request id"),
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(transport.prepare_requests.lock().expect("log").len(), 1);
+    }
+
+    let observe_transport = RefundTransport::new([]).with_behavior(RefundBehavior::FailObserve);
+    let observe_adapter = refund_adapter(observe_transport.clone(), &agreement, Participant::Taker);
+    assert!(matches!(
+        observe_adapter
+            .observe_prepared_native_refund(
+                &agreement,
+                RequestId::new("refund-observe-transport").expect("request id"),
+                &prepared_refund_submission(),
+                DiscoveryWindow::new(10, 3).expect("window"),
+            )
+            .await,
+        Err(NativeRefundAdapterError::Transport(FakeError))
+    ));
+    assert_eq!(
+        observe_transport
+            .observe_requests
+            .lock()
+            .expect("log")
+            .len(),
+        1
+    );
+
+    for (suffix, behavior) in [
+        ("transport", RefundBehavior::FailSubmit),
+        ("context", RefundBehavior::WrongSubmitContext),
+        ("identity", RefundBehavior::WrongSubmitId),
+    ] {
+        let transport = RefundTransport::new([]).with_behavior(behavior);
+        let adapter = refund_adapter(transport.clone(), &agreement, Participant::Taker);
+        let outcome = adapter
+            .submit_native_refund(
+                &agreement,
+                RequestId::new(format!("refund-submit-{suffix}")).expect("request id"),
+                &prepared_refund_submission(),
+            )
+            .await
+            .expect("unknown delivery is a typed outcome");
+        assert_eq!(outcome, RefundSubmitOutcomeV1::Unknown);
+        assert_ne!(outcome, RefundSubmitOutcomeV1::DefinitivelyRejected);
+        assert_eq!(transport.submit_requests.lock().expect("log").len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn wrong_refund_step_and_runtime_terms_fail_before_transport() {
+    let agreement = agreement();
+    let wrong_step =
+        PreparedRefundSubmissionV1::new(RefundStepV1::Zcash, [0x33; 32], vec![0xee, 0xff])
+            .expect("independently valid wrong step");
+    let transport = RefundTransport::new([]);
+    let adapter = refund_adapter(transport.clone(), &agreement, Participant::Taker);
+    assert!(matches!(
+        adapter
+            .submit_native_refund(
+                &agreement,
+                RequestId::new("refund-wrong-step").expect("request id"),
+                &wrong_step,
+            )
+            .await,
+        Err(NativeRefundAdapterError::WrongPreparedStep)
+    ));
+    assert!(transport.submit_requests.lock().expect("log").is_empty());
+
+    for (mutation, expected) in [
+        (RuntimeMutation::Channel, "chain"),
+        (RuntimeMutation::Genesis, "chain"),
+        (RuntimeMutation::Program, "program"),
+        (RuntimeMutation::Signer, "signer"),
+    ] {
+        let transport = RefundTransport::new([]);
+        let mut descriptor = runtime(&agreement);
+        match mutation {
+            RuntimeMutation::Channel => descriptor.channel_id = Hex32::from_bytes([0x71; 32]),
+            RuntimeMutation::Genesis => {
+                descriptor.genesis_block_hash = Hex32::from_bytes([0x72; 32]);
+            }
+            RuntimeMutation::Program => {
+                descriptor.escrow_program_id = Hex32::from_bytes([0x73; 32]);
+            }
+            RuntimeMutation::Signer => {
+                descriptor.signer_account_id = Hex32::from_bytes([0x74; 32]);
+            }
+        }
+        let adapter = LezBridgeAdapter::new(
+            transport.clone(),
+            RunId::new("native-run-0001").expect("run id"),
+            descriptor,
+            Participant::Taker,
+        )
+        .expect("matching role");
+        let error = adapter
+            .observe_native_refund_eligibility(
+                &agreement,
+                RequestId::new(format!("refund-runtime-{expected}")).expect("request id"),
+            )
+            .await
+            .expect_err("runtime drift fails closed");
+        match expected {
+            "chain" => assert!(matches!(
+                error,
+                NativeRefundAdapterError::ChainIdentityMismatch
+            )),
+            "program" => assert!(matches!(
+                error,
+                NativeRefundAdapterError::EscrowProgramMismatch
+            )),
+            "signer" => assert!(matches!(
+                error,
+                NativeRefundAdapterError::SignerAccountMismatch
+            )),
+            _ => unreachable!("fixed case"),
+        }
+        assert!(transport.observe_requests.lock().expect("log").is_empty());
+    }
+
+    for (unsupported, expected) in [
+        (
+            agreement_for(LezEnvironmentV1::DeterministicLocalV0_2, false),
+            "environment",
+        ),
+        (
+            agreement_for(
+                LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility,
+                true,
+            ),
+            "asset",
+        ),
+    ] {
+        let transport = RefundTransport::new([]);
+        let adapter = refund_adapter(transport.clone(), &unsupported, Participant::Taker);
+        let error = adapter
+            .observe_native_refund_eligibility(
+                &unsupported,
+                RequestId::new(format!("refund-unsupported-{expected}")).expect("request id"),
+            )
+            .await
+            .expect_err("unsupported signed terms fail closed");
+        match expected {
+            "environment" => assert!(matches!(
+                error,
+                NativeRefundAdapterError::IncompatibleEnvironment
+            )),
+            "asset" => assert!(matches!(error, NativeRefundAdapterError::UnsupportedAsset)),
+            _ => unreachable!("fixed case"),
+        }
+        assert!(transport.observe_requests.lock().expect("log").is_empty());
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum RefundMutation {
+    ResponseContext,
+    ClockHash,
+    ClockHeight,
+    ClockTimestamp,
+    MetadataTerms,
+    MetadataStatus,
+    CustodyAccount,
+    CustodyOwner,
+    CustodyBalance,
+    RefundId,
+    RefundBytes,
+    NonPublic,
+    Signer,
+    Program,
+    Accounts,
+    SwapId,
+    OutsideWindow,
+    AboveTip,
+    SameHeightWrongHash,
+    BeforeDeadline,
+    DepthOverflow,
+}
+
+const ALL_REFUND_MUTATIONS: [RefundMutation; 21] = [
+    RefundMutation::ResponseContext,
+    RefundMutation::ClockHash,
+    RefundMutation::ClockHeight,
+    RefundMutation::ClockTimestamp,
+    RefundMutation::MetadataTerms,
+    RefundMutation::MetadataStatus,
+    RefundMutation::CustodyAccount,
+    RefundMutation::CustodyOwner,
+    RefundMutation::CustodyBalance,
+    RefundMutation::RefundId,
+    RefundMutation::RefundBytes,
+    RefundMutation::NonPublic,
+    RefundMutation::Signer,
+    RefundMutation::Program,
+    RefundMutation::Accounts,
+    RefundMutation::SwapId,
+    RefundMutation::OutsideWindow,
+    RefundMutation::AboveTip,
+    RefundMutation::SameHeightWrongHash,
+    RefundMutation::BeforeDeadline,
+    RefundMutation::DepthOverflow,
+];
+
+#[tokio::test]
+async fn refund_primitive_identity_account_clock_window_and_depth_mutations_fail_closed() {
+    let agreement = agreement();
+    let window = DiscoveryWindow::new(10, 3).expect("window");
+    let prepared = prepared_refund_submission();
+    for mutation in ALL_REFUND_MUTATIONS {
+        let mut response = refund_found_observation(
+            &agreement,
+            refund_context(Participant::Taker, "refund-mutated"),
+        );
+        mutate_refund_observation(&mut response, mutation);
+        let transport = RefundTransport::new([response]);
+        let adapter = refund_adapter(transport.clone(), &agreement, Participant::Taker);
+        let result = adapter
+            .observe_prepared_native_refund(
+                &agreement,
+                RequestId::new("refund-mutated").expect("request id"),
+                &prepared,
+                window,
+            )
+            .await;
+        assert!(result.is_err(), "mutation {mutation:?} must fail closed");
+        assert_eq!(transport.observe_requests.lock().expect("log").len(), 1);
+    }
+}
+
+#[test]
+fn signed_profile_rejects_insufficient_zero_confirmation_refund_evidence() {
+    let agreement = agreement();
+    assert!(matches!(
+        RefundEvidenceV1::new(
+            &agreement,
+            RefundStepV1::Lez,
+            [0x33; 32],
+            "33".repeat(32),
+            lez_swap_core::ChainPosition::lez_timestamp_from_milliseconds_floor(
+                LezUnixMilliseconds::new(200_000),
+            ),
+            0,
+        ),
+        Err(RefundError::InsufficientConfirmations {
+            step: RefundStepV1::Lez,
+            required: 1,
+            actual: 0,
+        })
+    ));
+}
+
+fn refund_adapter(
+    transport: RefundTransport,
+    agreement: &ZecAgreementV1,
+    participant: Participant,
+) -> LezBridgeAdapter<RefundTransport> {
+    let mut descriptor = runtime(agreement);
+    descriptor.sidecar_role = match participant {
+        Participant::Maker => BridgeParticipant::Maker,
+        Participant::Taker => BridgeParticipant::Taker,
+    };
+    descriptor.signer_account_id = Hex32::from_bytes(*agreement.lez_account(participant));
+    LezBridgeAdapter::new(
+        transport,
+        RunId::new("native-run-0001").expect("run id"),
+        descriptor,
+        participant,
+    )
+    .expect("matching actor sidecar")
+}
+
+fn refund_context(participant: Participant, request_id: &str) -> MessageContext {
+    MessageContext::new(
+        RunId::new("native-run-0001").expect("run id"),
+        RequestId::new(request_id).expect("request id"),
+        match participant {
+            Participant::Maker => BridgeParticipant::Maker,
+            Participant::Taker => BridgeParticipant::Taker,
+        },
+    )
+}
+
+fn prepared_refund_transaction() -> PreparedTransaction {
+    PreparedTransaction::new(
+        TransactionId::from_bytes([0x33; 32]),
+        ExactTransactionBytes::new(vec![0xee, 0xff]).expect("refund bytes"),
+    )
+}
+
+fn prepared_refund_submission() -> PreparedRefundSubmissionV1 {
+    PreparedRefundSubmissionV1::new(RefundStepV1::Lez, [0x33; 32], vec![0xee, 0xff])
+        .expect("durable refund")
+}
+
+fn refund_clock() -> ChainClock {
+    ChainClock::new(Hex32::from_bytes([0x90; 32]), 12, 200_000)
+}
+
+fn refund_accounts(
+    agreement: &ZecAgreementV1,
+    status: EscrowState,
+    balance: u128,
+) -> NativeEscrowAccountObservation {
+    let terms = native_terms(agreement);
+    NativeEscrowAccountObservation::found(NativeEscrowAccountFacts::new(
+        EscrowMetadataFacts::from_native_terms(
+            Hex32::from_bytes(*agreement.lez_terms().metadata_account()),
+            Hex32::from_bytes(program_bytes(agreement.lez_terms().escrow_program_id())),
+            Hex32::from_bytes(*agreement.lez_terms().custody_account()),
+            &terms,
+            status,
+        ),
+        NativeCustodyFacts::new(
+            Hex32::from_bytes(*agreement.lez_terms().custody_account()),
+            terms.authenticated_transfer_program_id(),
+            balance,
+        ),
+    ))
+}
+
+fn refund_state_observation(
+    agreement: &ZecAgreementV1,
+    context: MessageContext,
+) -> ObserveNativeRefundResult {
+    let clock = refund_clock();
+    ObserveNativeRefundResult::new(
+        context,
+        clock,
+        refund_accounts(
+            agreement,
+            EscrowState::Funded,
+            agreement.lez_terms().amount(),
+        ),
+        NativeRefundObservation::NotRequested,
+        clock,
+    )
+}
+
+fn refund_found_observation(
+    agreement: &ZecAgreementV1,
+    context: MessageContext,
+) -> ObserveNativeRefundResult {
+    let clock = refund_clock();
+    let metadata = Hex32::from_bytes(*agreement.lez_terms().metadata_account());
+    let custody = Hex32::from_bytes(*agreement.lez_terms().custody_account());
+    let depositor = Hex32::from_bytes(*agreement.lez_account(agreement.lez_depositor()));
+    let program = Hex32::from_bytes(program_bytes(agreement.lez_terms().escrow_program_id()));
+    ObserveNativeRefundResult::new(
+        context,
+        clock,
+        refund_accounts(agreement, EscrowState::Refunded, 0),
+        NativeRefundObservation::found(NativeRefundFoundFacts::new(
+            ObservedTransactionFacts::new(
+                TransactionId::from_bytes([0x33; 32]),
+                ExactTransactionBytes::new(vec![0xee, 0xff]).expect("refund bytes"),
+                ChainPosition::new(Hex32::from_bytes([0x82; 32]), 11, 0),
+                AccountIds::new(Vec::new()).expect("empty official witness set"),
+                true,
+            ),
+            NativeRefundInstructionFacts::new(
+                program,
+                AccountIds::new(vec![metadata, custody, depositor]).expect("refund accounts"),
+                Hex32::from_bytes(*agreement.onchain_swap_id()),
+            ),
+        )),
+        clock,
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+fn mutate_refund_observation(response: &mut ObserveNativeRefundResult, mutation: RefundMutation) {
+    let NativeEscrowAccountObservation::Found(accounts) = &mut response.accounts else {
+        panic!("canonical refund has account facts")
+    };
+    let NativeRefundObservation::Found(refund) = &mut response.refund else {
+        panic!("canonical refund has transaction facts")
+    };
+    match mutation {
+        RefundMutation::ResponseContext => {
+            response.context.request_id = RequestId::new("wrong-refund-context").expect("id");
+        }
+        RefundMutation::ClockHash => {
+            response.clock_after.block_hash = Hex32::from_bytes([0x91; 32]);
+        }
+        RefundMutation::ClockHeight => response.clock_after.height += 1,
+        RefundMutation::ClockTimestamp => response.clock_after.timestamp_ms += 1,
+        RefundMutation::MetadataTerms => {
+            accounts.metadata.terms_hash = Hex32::from_bytes([0x92; 32]);
+        }
+        RefundMutation::MetadataStatus => accounts.metadata.status = EscrowState::Funded,
+        RefundMutation::CustodyAccount => {
+            accounts.custody.account_id = Hex32::from_bytes([0x93; 32]);
+        }
+        RefundMutation::CustodyOwner => {
+            accounts.custody.owner_program_id = Hex32::from_bytes([0x94; 32]);
+        }
+        RefundMutation::CustodyBalance => accounts.custody.balance = NativeAmount::new(1),
+        RefundMutation::RefundId => {
+            refund.transaction.transaction_id = TransactionId::from_bytes([0x95; 32]);
+        }
+        RefundMutation::RefundBytes => {
+            refund.transaction.exact_bytes =
+                ExactTransactionBytes::new(vec![0xde, 0xad]).expect("changed bytes");
+        }
+        RefundMutation::NonPublic => refund.transaction.is_public = false,
+        RefundMutation::Signer => {
+            refund.transaction.signer_account_ids =
+                AccountIds::new(vec![Hex32::from_bytes([0x96; 32])]).expect("signer");
+        }
+        RefundMutation::Program => {
+            refund.instruction.program_id = Hex32::from_bytes([0x97; 32]);
+        }
+        RefundMutation::Accounts => {
+            refund.instruction.ordered_account_ids =
+                AccountIds::new(vec![Hex32::from_bytes([0x98; 32])]).expect("accounts");
+        }
+        RefundMutation::SwapId => {
+            refund.instruction.swap_id = Hex32::from_bytes([0x99; 32]);
+        }
+        RefundMutation::OutsideWindow => refund.transaction.position.height = 9,
+        RefundMutation::AboveTip => refund.transaction.position.height = 13,
+        RefundMutation::SameHeightWrongHash => refund.transaction.position.height = 12,
+        RefundMutation::BeforeDeadline => {
+            response.clock_before.timestamp_ms = 159_999;
+            response.clock_after.timestamp_ms = 159_999;
+        }
+        RefundMutation::DepthOverflow => {
+            response.clock_before.height = u64::MAX;
+            response.clock_after.height = u64::MAX;
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 struct ObservationTransport {
@@ -1109,14 +2095,22 @@ fn native_terms(agreement: &ZecAgreementV1) -> NativeEscrowTerms {
     else {
         panic!("native fixture")
     };
+    let depositor = agreement.lez_depositor();
+    let claimant = agreement.lez_claimant();
     NativeEscrowTerms::new(NativeEscrowTermsInput {
         swap_id: Hex32::from_bytes(*agreement.onchain_swap_id()),
         terms_hash: Hex32::from_bytes(*agreement.agreement_commitment()),
         secret_digest: Hex32::from_bytes(*agreement.secret_digest()),
-        depositor: BridgeParticipant::Taker,
-        depositor_account_id: Hex32::from_bytes(*agreement.lez_account(Participant::Taker)),
-        claimant: BridgeParticipant::Maker,
-        claimant_account_id: Hex32::from_bytes(*agreement.lez_account(Participant::Maker)),
+        depositor: match depositor {
+            Participant::Maker => BridgeParticipant::Maker,
+            Participant::Taker => BridgeParticipant::Taker,
+        },
+        depositor_account_id: Hex32::from_bytes(*agreement.lez_account(depositor)),
+        claimant: match claimant {
+            Participant::Maker => BridgeParticipant::Maker,
+            Participant::Taker => BridgeParticipant::Taker,
+        },
+        claimant_account_id: Hex32::from_bytes(*agreement.lez_account(claimant)),
         amount: agreement.lez_terms().amount(),
         refund_at_ms: agreement.lez_refund_at_ms(),
         authenticated_transfer_program_id: Hex32::from_bytes(program_bytes(
@@ -1201,13 +2195,24 @@ fn agreement() -> ZecAgreementV1 {
 
 #[allow(clippy::too_many_lines)]
 fn agreement_for(environment: LezEnvironmentV1, token: bool) -> ZecAgreementV1 {
+    agreement_for_direction(environment, token, SwapDirection::TakerSellsLez)
+}
+
+#[allow(clippy::too_many_lines)]
+fn agreement_for_direction(
+    environment: LezEnvironmentV1,
+    token: bool,
+    direction: SwapDirection,
+) -> ZecAgreementV1 {
     let maker_secret = SecretKey::from_slice(&[1; 32]).expect("maker key");
     let taker_secret = SecretKey::from_slice(&[2; 32]).expect("taker key");
     let secp = Secp256k1::new();
     let maker_key = PublicKey::from_secret_key(&secp, &maker_secret).serialize();
     let taker_key = PublicKey::from_secret_key(&secp, &taker_secret).serialize();
-    let refund_hash = pubkey_hash(&maker_key);
-    let claimant_hash = pubkey_hash(&taker_key);
+    let (refund_hash, claimant_hash) = match direction {
+        SwapDirection::TakerSellsLez => (pubkey_hash(&maker_key), pubkey_hash(&taker_key)),
+        SwapDirection::TakerSellsForeign => (pubkey_hash(&taker_key), pubkey_hash(&maker_key)),
+    };
     let secret_digest: [u8; 32] = Sha256::digest([0x91; 32]).into();
     let contract = Bip199Contract::new(120, refund_hash, secret_digest, claimant_hash);
     let binding = ZecSwapBinding::new(
@@ -1220,14 +2225,21 @@ fn agreement_for(environment: LezEnvironmentV1, token: bool) -> ZecAgreementV1 {
         ),
     )
     .expect("profile binding");
-    let id = match (environment, token) {
-        (LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility, false) => {
+    let id = match (environment, token, direction) {
+        (
+            LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility,
+            false,
+            SwapDirection::TakerSellsForeign,
+        ) => "lez-bridge-native-reverse-test",
+        (LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility, false, _) => {
             "lez-bridge-native-test"
         }
-        (LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility, true) => "lez-bridge-token-test",
-        (LezEnvironmentV1::DeterministicLocalV0_2, false) => "lez-bridge-v02-test",
-        (LezEnvironmentV1::PublicTestnetV0_2, _)
-        | (LezEnvironmentV1::DeterministicLocalV0_2, true) => {
+        (LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility, true, _) => {
+            "lez-bridge-token-test"
+        }
+        (LezEnvironmentV1::DeterministicLocalV0_2, false, _) => "lez-bridge-v02-test",
+        (LezEnvironmentV1::PublicTestnetV0_2, _, _)
+        | (LezEnvironmentV1::DeterministicLocalV0_2, true, _) => {
             unreachable!("test fixtures cover supported deterministic combinations")
         }
     };
@@ -1274,7 +2286,7 @@ fn agreement_for(environment: LezEnvironmentV1, token: bool) -> ZecAgreementV1 {
     };
     let body = ZecAgreementBodyV1::new(
         id,
-        SwapDirection::TakerSellsLez,
+        direction,
         ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
         ZecParticipantsV1::new(
             ZecParticipantIdentityV1::new([3; 32], maker_key),
