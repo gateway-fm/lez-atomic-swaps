@@ -6,8 +6,8 @@ use std::{
 use async_trait::async_trait;
 use lez_swap_core::{SwapDirection, UnixSeconds};
 use lez_zebra_node_adapter::{
-    ZebraChainIdentity, ZebraChainInfo, ZebraFirstLockError, ZebraRpc, ZebraRpcChain,
-    ZebraRpcSwapPort, ZebraTransactionState, ZebraUnspentOutput,
+    ZebraCanonicalBlock, ZebraChainIdentity, ZebraChainInfo, ZebraFirstLockError, ZebraRpc,
+    ZebraRpcChain, ZebraRpcSwapPort, ZebraTransactionState, ZebraUnspentOutput,
 };
 use lez_zec_swap_sdk::{
     Bip199Contract, FirstLockConfirmedEvidenceV1, FirstLockObservation, FirstLockStepV1,
@@ -142,6 +142,25 @@ impl ZebraRpc for FakeRpc {
         } else {
             Ok(state.canonical_inclusion_hash)
         }
+    }
+
+    async fn canonical_block(
+        &self,
+        _block_hash: BlockHash,
+    ) -> Result<ZebraCanonicalBlock, Self::Error> {
+        panic!("first-lock tests never scan blocks")
+    }
+
+    async fn block_transaction(
+        &self,
+        _transaction_id: TxId,
+        _block_hash: BlockHash,
+    ) -> Result<Option<Vec<u8>>, Self::Error> {
+        panic!("first-lock tests never scan block transactions")
+    }
+
+    async fn mempool_transaction_ids(&self) -> Result<Vec<TxId>, Self::Error> {
+        panic!("first-lock tests never enumerate the mempool")
     }
 
     async fn raw_transaction(&self, _transaction_id: TxId) -> Result<Option<Vec<u8>>, Self::Error> {

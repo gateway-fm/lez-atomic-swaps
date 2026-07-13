@@ -26,6 +26,7 @@ const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_CONCURRENT_REQUESTS: usize = 8;
 const MAX_RPC_BODY_BYTES: u32 = 4_100_000;
 const TRANSACTION_NOT_FOUND_CODE: i32 = -5;
+const MAX_DISCOVERY_TRANSACTION_IDS: usize = 50_000;
 
 /// Zebra's BIP-70-compatible chain spelling.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -187,6 +188,48 @@ impl ZebraChainInfo {
     }
 }
 
+/// Exact transaction identities from one hash-addressed canonical block.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ZebraCanonicalBlock {
+    block_hash: BlockHash,
+    block_height: BlockHeight,
+    transaction_ids: Box<[TxId]>,
+}
+
+impl ZebraCanonicalBlock {
+    /// Builds one bounded block inventory, primarily for typed RPC implementations.
+    #[must_use]
+    pub fn new(
+        block_hash: BlockHash,
+        block_height: BlockHeight,
+        transaction_ids: Vec<TxId>,
+    ) -> Self {
+        Self {
+            block_hash,
+            block_height,
+            transaction_ids: transaction_ids.into_boxed_slice(),
+        }
+    }
+
+    /// Hash used to address and identify the block response.
+    #[must_use]
+    pub const fn block_hash(&self) -> BlockHash {
+        self.block_hash
+    }
+
+    /// Height claimed by the hash-addressed block response.
+    #[must_use]
+    pub const fn block_height(&self) -> BlockHeight {
+        self.block_height
+    }
+
+    /// Transaction identities in canonical block order.
+    #[must_use]
+    pub fn transaction_ids(&self) -> &[TxId] {
+        &self.transaction_ids
+    }
+}
+
 /// Typed state of an RPC-visible transaction.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ZebraTransactionState {
@@ -267,6 +310,19 @@ pub trait ZebraRpc: Send + Sync {
     async fn chain_info(&self) -> Result<ZebraChainInfo, Self::Error>;
     /// Resolves the canonical block hash at one height.
     async fn block_hash(&self, height: BlockHeight) -> Result<BlockHash, Self::Error>;
+    /// Fetches a bounded transaction-ID inventory for one hash-addressed block.
+    async fn canonical_block(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<ZebraCanonicalBlock, Self::Error>;
+    /// Fetches exact transaction bytes from one named block, mapping only code -5 to absence.
+    async fn block_transaction(
+        &self,
+        transaction_id: TxId,
+        block_hash: BlockHash,
+    ) -> Result<Option<Vec<u8>>, Self::Error>;
+    /// Lists a bounded current mempool transaction-ID snapshot.
+    async fn mempool_transaction_ids(&self) -> Result<Vec<TxId>, Self::Error>;
     /// Fetches raw bytes, mapping only Zebra RPC code -5 to absence.
     async fn raw_transaction(&self, transaction_id: TxId) -> Result<Option<Vec<u8>>, Self::Error>;
     /// Fetches complete mempool or claimed canonical transaction context.
@@ -413,6 +469,12 @@ pub enum HttpZebraRpcError {
     /// Raw transaction text violated exact lowercase/bounded hex requirements.
     #[error("Zebra returned malformed or oversized raw transaction hex")]
     MalformedTransactionHex,
+    /// A hash-addressed block response did not preserve its exact hash.
+    #[error("Zebra returned malformed hash-addressed block context")]
+    MalformedBlockContext,
+    /// A block or mempool transaction inventory exceeded the explicit client bound.
+    #[error("Zebra returned too many transaction identities")]
+    TooManyTransactionIds,
     /// `gettxout` returned a non-exact, negative, exponential, or out-of-range amount.
     #[error("Zebra returned malformed UTXO amount")]
     MalformedUtxoAmount,
@@ -485,6 +547,13 @@ struct VerboseRawTransactionDto {
 }
 
 #[derive(Debug, Deserialize)]
+struct VerboseBlockDto {
+    hash: String,
+    height: u64,
+    tx: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct GetTxOutDto {
     bestblock: String,
     confirmations: u64,
@@ -526,6 +595,42 @@ impl ZebraRpc for HttpZebraRpc {
             .await
             .map_err(HttpZebraRpcError::Request)?;
         Ok(BlockHash(parse_reverse_hash("block hash", &value)?))
+    }
+
+    async fn canonical_block(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<ZebraCanonicalBlock, Self::Error> {
+        let value: VerboseBlockDto = self
+            .client
+            .request("getblock", rpc_params![block_hash.to_string(), 1])
+            .await
+            .map_err(HttpZebraRpcError::Request)?;
+        parse_canonical_block(value, block_hash)
+    }
+
+    async fn block_transaction(
+        &self,
+        transaction_id: TxId,
+        block_hash: BlockHash,
+    ) -> Result<Option<Vec<u8>>, Self::Error> {
+        let response: Result<String, ClientError> = self
+            .client
+            .request(
+                "getrawtransaction",
+                rpc_params![transaction_id.to_string(), 0, block_hash.to_string()],
+            )
+            .await;
+        optional_call(response)?.map_or(Ok(None), |value| parse_transaction_hex(&value).map(Some))
+    }
+
+    async fn mempool_transaction_ids(&self) -> Result<Vec<TxId>, Self::Error> {
+        let values: Vec<String> = self
+            .client
+            .request("getrawmempool", rpc_params![false])
+            .await
+            .map_err(HttpZebraRpcError::Request)?;
+        parse_transaction_ids(values)
     }
 
     async fn raw_transaction(&self, transaction_id: TxId) -> Result<Option<Vec<u8>>, Self::Error> {
@@ -600,6 +705,36 @@ impl ZebraRpc for HttpZebraRpc {
             _ => ZebraSubmissionFailure::UnknownOutcome,
         }
     }
+}
+
+fn parse_canonical_block(
+    value: VerboseBlockDto,
+    expected_hash: BlockHash,
+) -> Result<ZebraCanonicalBlock, HttpZebraRpcError> {
+    let block_hash = BlockHash(parse_reverse_hash("block response hash", &value.hash)?);
+    if block_hash != expected_hash {
+        return Err(HttpZebraRpcError::MalformedBlockContext);
+    }
+    let block_height = BlockHeight::from_u32(u32::try_from(value.height).map_err(|_| {
+        HttpZebraRpcError::OutOfRange {
+            field: "block height",
+        }
+    })?);
+    Ok(ZebraCanonicalBlock::new(
+        block_hash,
+        block_height,
+        parse_transaction_ids(value.tx)?,
+    ))
+}
+
+fn parse_transaction_ids(values: Vec<String>) -> Result<Vec<TxId>, HttpZebraRpcError> {
+    if values.len() > MAX_DISCOVERY_TRANSACTION_IDS {
+        return Err(HttpZebraRpcError::TooManyTransactionIds);
+    }
+    values
+        .into_iter()
+        .map(|value| parse_reverse_hash("transaction id", &value).map(TxId::from_bytes))
+        .collect()
 }
 
 fn parse_unspent_output(value: GetTxOutDto) -> Result<ZebraUnspentOutput, HttpZebraRpcError> {
@@ -770,10 +905,11 @@ mod tests {
 
     use super::{
         BASE64_STANDARD, BlockchainInfoDto, GetTxOutDto, HttpZebraRpc, HttpZebraRpcConfig,
-        HttpZebraRpcError, MAX_FIRST_LOCK_SUBMISSION_BYTES, VerboseRawTransactionDto,
-        ZebraChainIdentity, ZebraIdentityError, ZebraRpc, ZebraRpcChain, ZebraSubmissionFailure,
-        ZebraTransactionState, optional_call, parse_branch, parse_reverse_hash,
-        parse_transaction_hex, parse_transaction_state, parse_unspent_output, parse_zec_amount,
+        HttpZebraRpcError, MAX_DISCOVERY_TRANSACTION_IDS, MAX_FIRST_LOCK_SUBMISSION_BYTES,
+        VerboseBlockDto, VerboseRawTransactionDto, ZebraChainIdentity, ZebraIdentityError,
+        ZebraRpc, ZebraRpcChain, ZebraSubmissionFailure, ZebraTransactionState, optional_call,
+        parse_branch, parse_canonical_block, parse_reverse_hash, parse_transaction_hex,
+        parse_transaction_ids, parse_transaction_state, parse_unspent_output, parse_zec_amount,
     };
 
     const HASH: &str = "029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327";
@@ -834,6 +970,48 @@ mod tests {
         assert!(matches!(
             parse_transaction_hex(&oversized),
             Err(HttpZebraRpcError::MalformedTransactionHex)
+        ));
+    }
+
+    #[test]
+    fn block_and_mempool_inventories_are_exact_and_bounded() {
+        let expected_hash = BlockHash(ReverseHex::decode(HASH).expect("fixed block hash"));
+        let block = parse_canonical_block(
+            VerboseBlockDto {
+                hash: HASH.to_owned(),
+                height: 91,
+                tx: vec![HASH.to_owned()],
+            },
+            expected_hash,
+        )
+        .expect("exact hash-addressed block inventory");
+        assert_eq!(block.block_hash(), expected_hash);
+        assert_eq!(u32::from(block.block_height()), 91);
+        assert_eq!(
+            block.transaction_ids(),
+            [TxId::from_bytes(
+                ReverseHex::decode(HASH).expect("fixed txid")
+            )]
+        );
+
+        assert!(matches!(
+            parse_canonical_block(
+                VerboseBlockDto {
+                    hash: HASH.to_owned(),
+                    height: 91,
+                    tx: Vec::new(),
+                },
+                BlockHash([0x55; 32]),
+            ),
+            Err(HttpZebraRpcError::MalformedBlockContext)
+        ));
+        assert!(matches!(
+            parse_transaction_ids(vec!["00".to_owned()]),
+            Err(HttpZebraRpcError::MalformedHash { .. })
+        ));
+        assert!(matches!(
+            parse_transaction_ids(vec![HASH.to_owned(); MAX_DISCOVERY_TRANSACTION_IDS + 1]),
+            Err(HttpZebraRpcError::TooManyTransactionIds)
         ));
     }
 
@@ -999,6 +1177,90 @@ mod tests {
                 format!("observe:{transaction_id}:1"),
                 format!("utxo:{transaction_id}:0:true"),
                 "submit:deadbeef".to_owned(),
+            ]
+        );
+        handle.stop().expect("stop loopback server");
+        handle.stopped().await;
+    }
+
+    #[tokio::test]
+    async fn loopback_wire_scans_hash_addressed_blocks_and_bounded_mempool() {
+        let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+        let mut module = RpcModule::new(Arc::clone(&calls));
+        module
+            .register_method::<Result<Value, ErrorObjectOwned>, _>(
+                "getblock",
+                |params, calls, _| {
+                    let (block_hash, verbosity): (String, u8) = params.parse()?;
+                    calls
+                        .lock()
+                        .expect("call log")
+                        .push(format!("block:{block_hash}:{verbosity}"));
+                    Ok(json!({ "hash": HASH, "height": 91, "tx": [HASH] }))
+                },
+            )
+            .expect("register block inventory");
+        module
+            .register_method::<Result<Value, ErrorObjectOwned>, _>(
+                "getrawmempool",
+                |params, calls, _| {
+                    let verbose: bool = params.one()?;
+                    calls
+                        .lock()
+                        .expect("call log")
+                        .push(format!("mempool:{verbose}"));
+                    Ok(json!([HASH]))
+                },
+            )
+            .expect("register mempool inventory");
+        module
+            .register_method::<Result<Value, ErrorObjectOwned>, _>(
+                "getrawtransaction",
+                |params, calls, _| {
+                    let (transaction_id, verbosity, block_hash): (String, u8, String) =
+                        params.parse()?;
+                    calls.lock().expect("call log").push(format!(
+                        "block-tx:{transaction_id}:{verbosity}:{block_hash}"
+                    ));
+                    Ok(json!("deadbeef"))
+                },
+            )
+            .expect("register block transaction");
+
+        let server = ServerBuilder::default()
+            .build("127.0.0.1:0")
+            .await
+            .expect("bind isolated loopback server");
+        let address = server.local_addr().expect("loopback address");
+        let handle = server.start(module);
+        let rpc = HttpZebraRpc::connect(&HttpZebraRpcConfig::new(format!("http://{address}")))
+            .expect("bounded loopback client");
+        let block_hash = BlockHash(ReverseHex::decode(HASH).expect("fixed block hash"));
+        let transaction_id = TxId::from_bytes(ReverseHex::decode(HASH).expect("fixed txid"));
+
+        let block = rpc
+            .canonical_block(block_hash)
+            .await
+            .expect("hash-addressed block inventory");
+        assert_eq!(block.transaction_ids(), [transaction_id]);
+        assert_eq!(
+            rpc.mempool_transaction_ids()
+                .await
+                .expect("bounded mempool inventory"),
+            [transaction_id]
+        );
+        assert_eq!(
+            rpc.block_transaction(transaction_id, block_hash)
+                .await
+                .expect("block-qualified transaction lookup"),
+            Some(vec![0xde, 0xad, 0xbe, 0xef])
+        );
+        assert_eq!(
+            *calls.lock().expect("call log"),
+            [
+                format!("block:{block_hash}:1"),
+                "mempool:false".to_owned(),
+                format!("block-tx:{transaction_id}:0:{block_hash}"),
             ]
         );
         handle.stop().expect("stop loopback server");

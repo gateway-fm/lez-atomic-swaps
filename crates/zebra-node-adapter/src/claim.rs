@@ -26,6 +26,8 @@ use crate::rpc::{
     ZebraUnspentOutput,
 };
 
+const DEFAULT_COUNTERPARTY_SCAN_BLOCKS: u32 = 288;
+
 /// Narrow secret-bearing capability used only after the adapter derives signed spend terms.
 #[async_trait]
 pub trait ZebraClaimSigner: Send + Sync {
@@ -47,6 +49,7 @@ pub struct ZebraRpcClaimPort<R, S> {
     rpc: R,
     signer: S,
     identity: ZebraChainIdentity,
+    counterparty_scan_blocks: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -54,6 +57,48 @@ struct FundingTarget {
     transaction_id: TxId,
     outpoint: OutPoint,
     output_index: u32,
+}
+
+#[derive(Clone, Debug)]
+enum DiscoveredSpend {
+    Mempool {
+        transaction_id: TxId,
+        raw_transaction: Vec<u8>,
+    },
+    Confirmed {
+        transaction_id: TxId,
+        raw_transaction: Vec<u8>,
+        block_hash: BlockHash,
+        block_height: BlockHeight,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct DiscoveryAnchor {
+    before: ZebraChainInfo,
+    funding_height: BlockHeight,
+    canonical_funding: CanonicalZcashOutputObservation,
+}
+
+impl DiscoveredSpend {
+    fn transaction_id(&self) -> TxId {
+        match self {
+            Self::Mempool { transaction_id, .. } | Self::Confirmed { transaction_id, .. } => {
+                *transaction_id
+            }
+        }
+    }
+
+    fn raw_transaction(&self) -> &[u8] {
+        match self {
+            Self::Mempool {
+                raw_transaction, ..
+            }
+            | Self::Confirmed {
+                raw_transaction, ..
+            } => raw_transaction,
+        }
+    }
 }
 
 impl FundingTarget {
@@ -74,7 +119,17 @@ impl<R, S> ZebraRpcClaimPort<R, S> {
             rpc,
             signer,
             identity,
+            counterparty_scan_blocks: DEFAULT_COUNTERPARTY_SCAN_BLOCKS,
         }
+    }
+
+    /// Replaces the finite canonical block horizon used for counterparty discovery.
+    ///
+    /// A zero value is normalized to one block, so discovery can never become unbounded.
+    #[must_use]
+    pub const fn with_counterparty_scan_blocks(mut self, maximum: u32) -> Self {
+        self.counterparty_scan_blocks = if maximum == 0 { 1 } else { maximum };
+        self
     }
 
     /// Typed transport used for all observations and broadcasts.
@@ -181,9 +236,15 @@ where
     /// The chain tip changed after broadcast, so acceptance remains an unknown outcome.
     #[error("Zebra tip changed during follow-up claim broadcast; outcome requires observation")]
     UnstableTipDuringSubmission,
-    /// Funding-context-only discovery cannot safely identify a counterparty's signed transaction.
-    #[error("counterparty follow-up discovery requires a bounded canonical outpoint-spend index")]
-    CounterpartyDiscoveryUnavailable,
+    /// A hash-addressed block inventory disagreed with the canonical height/hash query.
+    #[error("Zebra block inventory differs from its canonical height/hash binding")]
+    BlockInventoryMismatch,
+    /// A transaction identity and its exact fetched bytes disagreed.
+    #[error("Zebra transaction inventory identity differs from exact transaction bytes")]
+    DiscoveredTransactionIdMismatch,
+    /// One stable scan exposed conflicting transactions spending the exact durable outpoint.
+    #[error("Zebra exposed multiple transactions spending the exact durable outpoint")]
+    ConflictingSpendCandidates,
 }
 
 #[async_trait]
@@ -318,10 +379,10 @@ where
 
     async fn observe_counterparty_followup_claim(
         &self,
-        _agreement: &ZecAgreementV1,
-        _context: &ZcashClaimContextV1,
+        agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
     ) -> Result<FollowupClaimObservationV1, Self::Error> {
-        Err(ZebraClaimError::CounterpartyDiscoveryUnavailable)
+        self.discover_counterparty_claim(agreement, context).await
     }
 
     async fn submit_followup_claim(
@@ -379,6 +440,294 @@ where
     R: ZebraRpc,
     S: ZebraClaimSigner,
 {
+    async fn discover_counterparty_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+    ) -> Result<FollowupClaimObservationV1, ZebraClaimError<R::Error, S::Error>> {
+        let Some(anchor) = self.validated_discovery_anchor(agreement, context).await? else {
+            return Ok(FollowupClaimObservationV1::Unstable);
+        };
+        if let Some(unspent) = self
+            .rpc
+            .unspent_output(context.funding_outpoint())
+            .await
+            .map_err(ZebraClaimError::Rpc)?
+        {
+            let after = self.sample_validated_tip().await?;
+            if !same_tip(anchor.before, after) {
+                return Ok(FollowupClaimObservationV1::Unstable);
+            }
+            validate_unspent_binding::<R::Error, S::Error>(
+                &unspent,
+                &anchor.canonical_funding,
+                anchor.before,
+            )?;
+            return Ok(FollowupClaimObservationV1::Absent);
+        }
+
+        let candidates = self
+            .scan_discovered_spends(context, anchor.before, anchor.funding_height)
+            .await?;
+        let after = self.sample_validated_tip().await?;
+        if !same_tip(anchor.before, after) {
+            return Ok(FollowupClaimObservationV1::Unstable);
+        }
+        self.resolve_discovered_spend(agreement, context, anchor.before, after, candidates)
+    }
+
+    async fn validated_discovery_anchor(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+    ) -> Result<Option<DiscoveryAnchor>, ZebraClaimError<R::Error, S::Error>> {
+        self.validate_agreement_identity(agreement)?;
+        let before = self.sample_validated_tip().await?;
+        self.validate_genesis().await?;
+        let funding_id = TxId::from_bytes(*context.funding_transaction_id_bytes());
+        let Some(ZebraTransactionState::Confirmed {
+            raw_transaction: funding_raw,
+            block_hash: funding_block_hash,
+            block_height: funding_height,
+            confirmations: funding_confirmations,
+            in_active_chain: true,
+        }) = self
+            .rpc
+            .transaction_state(funding_id)
+            .await
+            .map_err(ZebraClaimError::Rpc)?
+        else {
+            return Ok(None);
+        };
+        let canonical_funding_block = self
+            .rpc
+            .block_hash(funding_height)
+            .await
+            .map_err(ZebraClaimError::Rpc)?;
+        if canonical_funding_block != funding_block_hash {
+            return Ok(None);
+        }
+        let funding_snapshot = ZcashNodeSnapshot::new(
+            self.identity.network(),
+            self.identity.consensus_branch_id(),
+            true,
+            funding_block_hash,
+            canonical_funding_block,
+            funding_height,
+            stable_tip(before, before),
+            funding_id,
+            funding_raw,
+            context.funding_output_index(),
+            funding_confirmations,
+        );
+        let canonical_funding = CanonicalZcashOutputObservation::validate(
+            agreement.binding().expected_output(),
+            &funding_snapshot,
+        )
+        .map_err(ZebraClaimError::FundingObservation)?;
+        if canonical_funding.outpoint() != context.funding_outpoint() {
+            return Err(ZebraClaimError::FundingOutpointMismatch);
+        }
+        Ok(Some(DiscoveryAnchor {
+            before,
+            funding_height,
+            canonical_funding,
+        }))
+    }
+
+    async fn scan_discovered_spends(
+        &self,
+        context: &ZcashClaimContextV1,
+        before: ZebraChainInfo,
+        funding_height: BlockHeight,
+    ) -> Result<Vec<DiscoveredSpend>, ZebraClaimError<R::Error, S::Error>> {
+        let mut candidates = Vec::new();
+        for transaction_id in self
+            .rpc
+            .mempool_transaction_ids()
+            .await
+            .map_err(ZebraClaimError::Rpc)?
+        {
+            let Some(raw_transaction) = self
+                .rpc
+                .raw_transaction(transaction_id)
+                .await
+                .map_err(ZebraClaimError::Rpc)?
+            else {
+                continue;
+            };
+            if self.exact_outpoint_spender(context, transaction_id, &raw_transaction)? {
+                push_discovered::<R::Error, S::Error>(
+                    &mut candidates,
+                    DiscoveredSpend::Mempool {
+                        transaction_id,
+                        raw_transaction,
+                    },
+                )?;
+            }
+        }
+
+        let tip_height = u32::from(before.tip_height());
+        let funding_height_u32 = u32::from(funding_height);
+        if funding_height_u32 > tip_height {
+            return Ok(candidates);
+        }
+        let lower_bound = tip_height
+            .saturating_add(1)
+            .saturating_sub(self.counterparty_scan_blocks)
+            .max(funding_height_u32);
+        for height in lower_bound..=tip_height {
+            let height = BlockHeight::from_u32(height);
+            let block_hash = self
+                .rpc
+                .block_hash(height)
+                .await
+                .map_err(ZebraClaimError::Rpc)?;
+            let block = self
+                .rpc
+                .canonical_block(block_hash)
+                .await
+                .map_err(ZebraClaimError::Rpc)?;
+            if block.block_hash() != block_hash || block.block_height() != height {
+                return Err(ZebraClaimError::BlockInventoryMismatch);
+            }
+            for transaction_id in block.transaction_ids() {
+                let Some(raw_transaction) = self
+                    .rpc
+                    .block_transaction(*transaction_id, block_hash)
+                    .await
+                    .map_err(ZebraClaimError::Rpc)?
+                else {
+                    return Err(ZebraClaimError::BlockInventoryMismatch);
+                };
+                if self.exact_outpoint_spender(context, *transaction_id, &raw_transaction)? {
+                    push_discovered::<R::Error, S::Error>(
+                        &mut candidates,
+                        DiscoveredSpend::Confirmed {
+                            transaction_id: *transaction_id,
+                            raw_transaction,
+                            block_hash,
+                            block_height: height,
+                        },
+                    )?;
+                }
+            }
+        }
+        Ok(candidates)
+    }
+
+    fn resolve_discovered_spend(
+        &self,
+        agreement: &ZecAgreementV1,
+        context: &ZcashClaimContextV1,
+        before: ZebraChainInfo,
+        after: ZebraChainInfo,
+        candidates: Vec<DiscoveredSpend>,
+    ) -> Result<FollowupClaimObservationV1, ZebraClaimError<R::Error, S::Error>> {
+        let Some(candidate) = candidates.into_iter().next() else {
+            // `gettxout` proved the output missing, but a bounded scan did not identify
+            // its spender. This can be a mempool race or an exhausted historical horizon.
+            return Ok(FollowupClaimObservationV1::Unstable);
+        };
+        match candidate {
+            DiscoveredSpend::Mempool {
+                transaction_id,
+                raw_transaction,
+            } => {
+                self.validate_discovered_policy(
+                    agreement,
+                    context.funding_outpoint(),
+                    transaction_id,
+                    raw_transaction,
+                )?;
+                Ok(FollowupClaimObservationV1::Unstable)
+            }
+            DiscoveredSpend::Confirmed {
+                transaction_id,
+                raw_transaction,
+                block_hash,
+                block_height,
+            } => {
+                let confirmations = u32::from(before.tip_height())
+                    .checked_sub(u32::from(block_height))
+                    .and_then(|distance| distance.checked_add(1))
+                    .ok_or(ZebraClaimError::BlockInventoryMismatch)?;
+                let canonical = self.validate_claim_snapshot(
+                    agreement,
+                    context.funding_outpoint(),
+                    transaction_id,
+                    raw_transaction,
+                    block_hash,
+                    block_hash,
+                    block_height,
+                    before,
+                    after,
+                    confirmations,
+                    true,
+                )?;
+                let evidence = FollowupClaimEvidenceV1::new(
+                    agreement,
+                    *canonical.transaction_id().as_ref(),
+                    canonical.transaction_id().to_string(),
+                    canonical.confirmations().get(),
+                )
+                .map_err(ZebraClaimError::Claim)?;
+                Ok(FollowupClaimObservationV1::Confirmed(evidence))
+            }
+        }
+    }
+
+    fn exact_outpoint_spender(
+        &self,
+        context: &ZcashClaimContextV1,
+        expected_id: TxId,
+        raw_transaction: &[u8],
+    ) -> Result<bool, ZebraClaimError<R::Error, S::Error>> {
+        let transaction = decode_transaction::<R::Error, S::Error>(
+            raw_transaction,
+            self.identity.consensus_branch_id(),
+        )?;
+        if transaction.txid() != expected_id {
+            return Err(ZebraClaimError::DiscoveredTransactionIdMismatch);
+        }
+        Ok(transaction.transparent_bundle().is_some_and(|bundle| {
+            bundle
+                .vin
+                .iter()
+                .any(|input| input.prevout() == context.funding_outpoint())
+        }))
+    }
+
+    fn validate_discovered_policy(
+        &self,
+        agreement: &ZecAgreementV1,
+        outpoint: &OutPoint,
+        transaction_id: TxId,
+        raw_transaction: Vec<u8>,
+    ) -> Result<(), ZebraClaimError<R::Error, S::Error>> {
+        let dummy_hash = BlockHash([1; 32]);
+        let dummy_tip = ZebraChainInfo::new(
+            self.identity.rpc_chain(),
+            BlockHeight::from_u32(1),
+            dummy_hash,
+            self.identity.consensus_branch_id(),
+        );
+        self.validate_claim_snapshot(
+            agreement,
+            outpoint,
+            transaction_id,
+            raw_transaction,
+            dummy_hash,
+            dummy_hash,
+            BlockHeight::from_u32(1),
+            dummy_tip,
+            dummy_tip,
+            1,
+            true,
+        )?;
+        Ok(())
+    }
+
     async fn observe_funding(
         &self,
         agreement: &ZecAgreementV1,
@@ -573,7 +922,7 @@ where
         confirmations: u32,
         in_active_chain: bool,
     ) -> Result<CanonicalZcashSpendObservation, ZebraClaimError<R::Error, S::Error>> {
-        let expected = expected_spend(agreement, outpoint.clone())?;
+        let expected = expected_spend(agreement, outpoint.clone(), &raw_transaction)?;
         let snapshot = ZcashSpendNodeSnapshot::new(
             self.identity.network(),
             self.identity.consensus_branch_id(),
@@ -590,6 +939,9 @@ where
             .map_err(ZebraClaimError::SpendObservation)?;
         if !matches!(canonical.kind(), Bip199SpendKind::Claim { .. }) {
             return Err(ZebraClaimError::WrongSpendBranch);
+        }
+        if !canonical.sdk_canonical_policy().is_compliant() {
+            return Err(ZebraClaimError::NonCanonicalClaimPolicy);
         }
         Ok(canonical)
     }
@@ -634,9 +986,35 @@ where
     }
 }
 
+fn push_discovered<RE, SE>(
+    candidates: &mut Vec<DiscoveredSpend>,
+    candidate: DiscoveredSpend,
+) -> Result<(), ZebraClaimError<RE, SE>>
+where
+    RE: std::error::Error + Send + Sync + 'static,
+    SE: std::error::Error + Send + Sync + 'static,
+{
+    if let Some(existing) = candidates.first() {
+        if existing.transaction_id() != candidate.transaction_id()
+            || existing.raw_transaction() != candidate.raw_transaction()
+        {
+            return Err(ZebraClaimError::ConflictingSpendCandidates);
+        }
+        if matches!(existing, DiscoveredSpend::Mempool { .. })
+            && matches!(candidate, DiscoveredSpend::Confirmed { .. })
+        {
+            candidates[0] = candidate;
+        }
+    } else {
+        candidates.push(candidate);
+    }
+    Ok(())
+}
+
 fn expected_spend<RE, SE>(
     agreement: &ZecAgreementV1,
     outpoint: OutPoint,
+    raw_transaction: &[u8],
 ) -> Result<ExpectedBip199Spend, ZebraClaimError<RE, SE>>
 where
     RE: std::error::Error + Send + Sync + 'static,
@@ -647,14 +1025,16 @@ where
         output.value(),
         Script(Code(output.contract().p2sh_script_pubkey().to_vec())),
     );
-    ExpectedBip199Spend::new(
-        output.network(),
-        output.consensus_branch_id(),
-        outpoint,
-        funding,
-        output.contract().clone(),
-    )
-    .map_err(ZebraClaimError::SpendObservation)
+    let transaction = decode_transaction::<RE, SE>(raw_transaction, output.consensus_branch_id())?;
+    let prepared_height = u32::from(transaction.expiry_height())
+        .checked_sub(agreement.transaction_policy().expiry_delta_blocks())
+        .map(BlockHeight::from_u32)
+        .ok_or(ZebraClaimError::ClaimExpiryPolicyMismatch)?;
+    let request = agreement
+        .claim_spend_request(outpoint, funding, prepared_height)
+        .map_err(ZebraClaimError::Agreement)?;
+    ExpectedBip199Spend::from_request(output.network(), output.contract().clone(), &request)
+        .map_err(ZebraClaimError::SpendObservation)
 }
 
 fn validate_unspent_binding<RE, SE>(
@@ -778,7 +1158,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::rpc::ZebraRpcChain;
+    use crate::rpc::{ZebraCanonicalBlock, ZebraRpcChain};
 
     const INCLUSION_HEIGHT: u32 = 100;
     const TIP_HEIGHT: u32 = 104;
@@ -847,8 +1227,15 @@ mod tests {
         chain_infos: VecDeque<ZebraChainInfo>,
         chain_info_overrides: VecDeque<Result<ZebraChainInfo, FakeError>>,
         block_hash_overrides: VecDeque<Result<BlockHash, FakeError>>,
+        canonical_block_overrides: VecDeque<Result<ZebraCanonicalBlock, FakeError>>,
+        block_transaction_overrides: VecDeque<Result<Option<Vec<u8>>, FakeError>>,
+        mempool_overrides: VecDeque<Result<Vec<TxId>, FakeError>>,
+        raw_transaction_overrides: VecDeque<Result<Option<Vec<u8>>, FakeError>>,
         identity: ZebraChainIdentity,
         canonical_block: BlockHash,
+        funding_transaction_id: TxId,
+        funding_transaction: ZebraTransactionState,
+        discovery_enabled: bool,
         transaction: Option<ZebraTransactionState>,
         unspent: Option<ZebraUnspentOutput>,
         submissions: VecDeque<Result<TxId, FakeError>>,
@@ -890,10 +1277,29 @@ mod tests {
                         chain_infos: VecDeque::from([tip, tip]),
                         chain_info_overrides: VecDeque::new(),
                         block_hash_overrides: VecDeque::new(),
+                        canonical_block_overrides: VecDeque::new(),
+                        block_transaction_overrides: VecDeque::new(),
+                        mempool_overrides: VecDeque::new(),
+                        raw_transaction_overrides: VecDeque::new(),
                         identity,
                         canonical_block,
-                        transaction: Some(ZebraTransactionState::Confirmed {
+                        funding_transaction_id: transaction_id,
+                        funding_transaction: ZebraTransactionState::Confirmed {
                             raw_transaction: raw,
+                            block_hash: canonical_block,
+                            block_height: BlockHeight::from_u32(INCLUSION_HEIGHT),
+                            confirmations: TIP_HEIGHT - INCLUSION_HEIGHT + 1,
+                            in_active_chain: true,
+                        },
+                        discovery_enabled: false,
+                        transaction: Some(ZebraTransactionState::Confirmed {
+                            raw_transaction: {
+                                let mut exact = Vec::new();
+                                transaction
+                                    .write(&mut exact)
+                                    .expect("canonical funding bytes");
+                                exact
+                            },
                             block_hash: canonical_block,
                             block_height: BlockHeight::from_u32(INCLUSION_HEIGHT),
                             confirmations: TIP_HEIGHT - INCLUSION_HEIGHT + 1,
@@ -958,25 +1364,105 @@ mod tests {
             }
             Ok(if u32::from(height) == 0 {
                 state.identity.genesis_hash()
-            } else {
+            } else if u32::from(height) == INCLUSION_HEIGHT {
                 state.canonical_block
+            } else if u32::from(height) == TIP_HEIGHT {
+                canonical_tip().tip_hash()
+            } else {
+                BlockHash([u32::from(height).to_le_bytes()[0]; 32])
+            })
+        }
+
+        async fn canonical_block(
+            &self,
+            block_hash: BlockHash,
+        ) -> Result<ZebraCanonicalBlock, Self::Error> {
+            let mut state = self.state.lock().expect("fake state");
+            state.calls.push("canonical_block".to_owned());
+            if let Some(override_result) = state.canonical_block_overrides.pop_front() {
+                return override_result;
+            }
+            let height = if block_hash == state.canonical_block {
+                INCLUSION_HEIGHT
+            } else if block_hash == canonical_tip().tip_hash() {
+                TIP_HEIGHT
+            } else {
+                u32::from(block_hash.0[0])
+            };
+            let transaction_ids = match state.transaction.as_ref() {
+                Some(transaction @ ZebraTransactionState::Confirmed { .. })
+                    if state.discovery_enabled && block_hash == state.canonical_block =>
+                {
+                    fake_state_transaction_id(transaction).into_iter().collect()
+                }
+                Some(
+                    ZebraTransactionState::Confirmed { .. } | ZebraTransactionState::Mempool { .. },
+                )
+                | None => Vec::new(),
+            };
+            Ok(ZebraCanonicalBlock::new(
+                block_hash,
+                BlockHeight::from_u32(height),
+                transaction_ids,
+            ))
+        }
+
+        async fn block_transaction(
+            &self,
+            transaction_id: TxId,
+            _block_hash: BlockHash,
+        ) -> Result<Option<Vec<u8>>, Self::Error> {
+            let mut state = self.state.lock().expect("fake state");
+            state.calls.push("block_transaction".to_owned());
+            if let Some(override_result) = state.block_transaction_overrides.pop_front() {
+                return override_result;
+            }
+            Ok(state.transaction.as_ref().and_then(|transaction| {
+                (fake_state_transaction_id(transaction) == Some(transaction_id))
+                    .then(|| fake_state_transaction_bytes(transaction))
+            }))
+        }
+
+        async fn mempool_transaction_ids(&self) -> Result<Vec<TxId>, Self::Error> {
+            let mut state = self.state.lock().expect("fake state");
+            state.calls.push("mempool_transaction_ids".to_owned());
+            if let Some(override_result) = state.mempool_overrides.pop_front() {
+                return override_result;
+            }
+            Ok(match state.transaction.as_ref() {
+                Some(transaction @ ZebraTransactionState::Mempool { .. }) => {
+                    fake_state_transaction_id(transaction).into_iter().collect()
+                }
+                Some(ZebraTransactionState::Confirmed { .. }) | None => Vec::new(),
             })
         }
 
         async fn raw_transaction(
             &self,
-            _transaction_id: TxId,
+            transaction_id: TxId,
         ) -> Result<Option<Vec<u8>>, Self::Error> {
-            panic!("claim funding observer uses one verbose lookup")
+            let mut state = self.state.lock().expect("fake state");
+            state.calls.push("raw_transaction".to_owned());
+            if let Some(override_result) = state.raw_transaction_overrides.pop_front() {
+                return override_result;
+            }
+            Ok(state.transaction.as_ref().and_then(|transaction| {
+                (fake_state_transaction_id(transaction) == Some(transaction_id))
+                    .then(|| fake_state_transaction_bytes(transaction))
+            }))
         }
 
         async fn transaction_state(
             &self,
-            _transaction_id: TxId,
+            transaction_id: TxId,
         ) -> Result<Option<ZebraTransactionState>, Self::Error> {
             let mut state = self.state.lock().expect("fake state");
             state.calls.push("transaction_state".to_owned());
-            Ok(state.transaction.clone())
+            if state.discovery_enabled && transaction_id == state.funding_transaction_id {
+                Ok(Some(state.funding_transaction.clone()))
+            } else {
+                Ok(state.transaction.clone())
+            }
         }
 
         async fn unspent_output(
@@ -996,6 +1482,22 @@ mod tests {
                 .submissions
                 .pop_front()
                 .expect("submission result configured")
+        }
+    }
+
+    fn fake_state_transaction_id(state: &ZebraTransactionState) -> Option<TxId> {
+        let raw = fake_state_transaction_bytes(state);
+        Transaction::read(&mut Cursor::new(raw), BranchId::Nu6_2)
+            .ok()
+            .map(|transaction| transaction.txid())
+    }
+
+    fn fake_state_transaction_bytes(state: &ZebraTransactionState) -> Vec<u8> {
+        match state {
+            ZebraTransactionState::Mempool { raw_transaction }
+            | ZebraTransactionState::Confirmed {
+                raw_transaction, ..
+            } => raw_transaction.clone(),
         }
     }
 
@@ -1520,6 +2022,7 @@ mod tests {
             policy_mutated_prepared(&fixture, ClaimPolicyMutation::Outpoint),
             policy_mutated_prepared(&fixture, ClaimPolicyMutation::Destination),
             policy_mutated_prepared(&fixture, ClaimPolicyMutation::Fee),
+            policy_mutated_prepared(&fixture, ClaimPolicyMutation::Expiry),
         ];
 
         for candidate in cases {
@@ -1886,19 +2389,175 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn counterparty_discovery_is_a_typed_fail_closed_boundary() {
-        let (fixture, rpc, port, _prepared) = prepared_claim_fixture().await;
+    async fn counterparty_discovery_finds_exact_canonical_spend() {
+        let (fixture, rpc, port, prepared) = prepared_claim_fixture().await;
         rpc.edit(|state| state.calls.clear());
-        let error = port
+        set_confirmed_claim(&rpc, &prepared);
+        let observed = port
             .observe_counterparty_followup_claim(&fixture.agreement, &fixture.context)
             .await
-            .expect_err("Zebra has no bounded canonical outpoint-spend index");
-        assert!(matches!(
-            error,
-            ZebraClaimError::CounterpartyDiscoveryUnavailable
-        ));
-        assert!(rpc.calls().is_empty());
+            .expect("bounded canonical scan finds the exact counterparty claim");
+        let FollowupClaimObservationV1::Confirmed(evidence) = observed else {
+            panic!("canonical counterparty spend must be confirmed")
+        };
+        assert_eq!(
+            evidence.observed_submission_id(),
+            prepared.expected_submission_id()
+        );
+        assert_eq!(
+            evidence.transaction_id(),
+            TxId::from_bytes(*prepared.expected_submission_id()).to_string()
+        );
         assert!(rpc.submitted().is_empty());
+    }
+
+    #[tokio::test]
+    async fn counterparty_discovery_distinguishes_unspent_mempool_and_exhausted_scan() {
+        let (fixture, _unspent_rpc, unspent_port, _prepared) = prepared_claim_fixture().await;
+        assert_eq!(
+            unspent_port
+                .observe_counterparty_followup_claim(&fixture.agreement, &fixture.context)
+                .await
+                .expect("stable exact UTXO proves no spend"),
+            FollowupClaimObservationV1::Absent
+        );
+
+        let (fixture, mempool_rpc, mempool_port, prepared) = prepared_claim_fixture().await;
+        set_confirmed_claim(&mempool_rpc, &prepared);
+        mempool_rpc.edit(|state| {
+            state.transaction = Some(ZebraTransactionState::Mempool {
+                raw_transaction: prepared.exact_submission().to_vec(),
+            });
+        });
+        assert_eq!(
+            mempool_port
+                .observe_counterparty_followup_claim(&fixture.agreement, &fixture.context)
+                .await
+                .expect("valid mempool claim is not final"),
+            FollowupClaimObservationV1::Unstable
+        );
+
+        let (fixture, exhausted_rpc, exhausted_port, exhausted_prepared) =
+            prepared_claim_fixture().await;
+        set_confirmed_claim(&exhausted_rpc, &exhausted_prepared);
+        let exhausted_port = exhausted_port.with_counterparty_scan_blocks(1);
+        assert_eq!(
+            exhausted_port
+                .observe_counterparty_followup_claim(&fixture.agreement, &fixture.context)
+                .await
+                .expect("a bounded miss never becomes global absence"),
+            FollowupClaimObservationV1::Unstable
+        );
+    }
+
+    #[tokio::test]
+    async fn counterparty_discovery_rejects_tip_drift_and_block_context_mutation() {
+        let (fixture, rpc, port, prepared) = prepared_claim_fixture().await;
+        set_confirmed_claim(&rpc, &prepared);
+        rpc.edit(|state| {
+            let moving = ZebraChainInfo::new(
+                ZebraRpcChain::Test,
+                BlockHeight::from_u32(TIP_HEIGHT + 1),
+                BlockHash([0x44; 32]),
+                BranchId::Nu6_2,
+            );
+            state.chain_infos = VecDeque::from([canonical_tip(), moving]);
+        });
+        assert_eq!(
+            port.observe_counterparty_followup_claim(&fixture.agreement, &fixture.context)
+                .await
+                .expect("tip drift is an unstable observation"),
+            FollowupClaimObservationV1::Unstable
+        );
+
+        let (fixture, rpc, port, prepared) = prepared_claim_fixture().await;
+        set_confirmed_claim(&rpc, &prepared);
+        rpc.edit(|state| {
+            state
+                .canonical_block_overrides
+                .push_back(Ok(ZebraCanonicalBlock::new(
+                    state.canonical_block,
+                    BlockHeight::from_u32(INCLUSION_HEIGHT + 1),
+                    Vec::new(),
+                )));
+        });
+        assert!(matches!(
+            port.observe_counterparty_followup_claim(&fixture.agreement, &fixture.context)
+                .await,
+            Err(ZebraClaimError::BlockInventoryMismatch)
+        ));
+    }
+
+    #[tokio::test]
+    async fn counterparty_discovery_rejects_conflicts_and_transaction_byte_mutation() {
+        let (fixture, rpc, port, prepared) = prepared_claim_fixture().await;
+        let conflicting = policy_mutated_prepared(&fixture, ClaimPolicyMutation::Destination);
+        set_confirmed_claim(&rpc, &prepared);
+        rpc.edit(|state| {
+            state
+                .canonical_block_overrides
+                .push_back(Ok(ZebraCanonicalBlock::new(
+                    state.canonical_block,
+                    BlockHeight::from_u32(INCLUSION_HEIGHT),
+                    vec![
+                        TxId::from_bytes(*prepared.expected_submission_id()),
+                        TxId::from_bytes(*conflicting.expected_submission_id()),
+                    ],
+                )));
+            state
+                .block_transaction_overrides
+                .push_back(Ok(Some(prepared.exact_submission().to_vec())));
+            state
+                .block_transaction_overrides
+                .push_back(Ok(Some(conflicting.exact_submission().to_vec())));
+        });
+        assert!(matches!(
+            port.observe_counterparty_followup_claim(&fixture.agreement, &fixture.context)
+                .await,
+            Err(ZebraClaimError::ConflictingSpendCandidates)
+        ));
+
+        let (fixture, rpc, port, prepared) = prepared_claim_fixture().await;
+        let changed = policy_mutated_prepared(&fixture, ClaimPolicyMutation::Fee);
+        set_confirmed_claim(&rpc, &prepared);
+        rpc.edit(|state| {
+            state
+                .block_transaction_overrides
+                .push_back(Ok(Some(changed.exact_submission().to_vec())));
+        });
+        assert!(matches!(
+            port.observe_counterparty_followup_claim(&fixture.agreement, &fixture.context)
+                .await,
+            Err(ZebraClaimError::DiscoveredTransactionIdMismatch)
+        ));
+    }
+
+    #[tokio::test]
+    async fn counterparty_discovery_validates_signed_policy_and_preserves_transport_ambiguity() {
+        for mutation in [
+            ClaimPolicyMutation::Destination,
+            ClaimPolicyMutation::Fee,
+            ClaimPolicyMutation::Expiry,
+        ] {
+            let (fixture, rpc, port, _prepared) = prepared_claim_fixture().await;
+            let changed = policy_mutated_prepared(&fixture, mutation);
+            set_confirmed_claim(&rpc, &changed);
+            assert!(
+                port.observe_counterparty_followup_claim(&fixture.agreement, &fixture.context)
+                    .await
+                    .is_err(),
+                "signed policy mutation must fail closed"
+            );
+        }
+
+        let (fixture, rpc, port, prepared) = prepared_claim_fixture().await;
+        set_confirmed_claim(&rpc, &prepared);
+        rpc.edit(|state| state.mempool_overrides.push_back(Err(FakeError::Transport)));
+        assert!(matches!(
+            port.observe_counterparty_followup_claim(&fixture.agreement, &fixture.context)
+                .await,
+            Err(ZebraClaimError::Rpc(FakeError::Transport))
+        ));
     }
 
     #[derive(Clone, Copy)]
@@ -1906,6 +2565,7 @@ mod tests {
         Outpoint,
         Destination,
         Fee,
+        Expiry,
     }
 
     async fn prepared_claim_fixture() -> (
@@ -1947,21 +2607,30 @@ mod tests {
                 BlockHeight::from_u32(TIP_HEIGHT),
             )
             .expect("canonical request");
-        let (outpoint, destination, fee) = match mutation {
+        let (outpoint, destination, fee, expiry_height) = match mutation {
             ClaimPolicyMutation::Outpoint => (
                 OutPoint::new([0x66; 32], 0),
                 canonical.destination(),
                 canonical.fee(),
+                canonical.expiry_height(),
             ),
             ClaimPolicyMutation::Destination => (
                 canonical.prevout().clone(),
                 TransparentAddress::PublicKeyHash([0x55; 20]),
                 canonical.fee(),
+                canonical.expiry_height(),
             ),
             ClaimPolicyMutation::Fee => (
                 canonical.prevout().clone(),
                 canonical.destination(),
                 Zatoshis::from_u64(10_001).expect("mutated fee"),
+                canonical.expiry_height(),
+            ),
+            ClaimPolicyMutation::Expiry => (
+                canonical.prevout().clone(),
+                canonical.destination(),
+                canonical.fee(),
+                BlockHeight::from_u32(1),
             ),
         };
         let request = TransparentSpendRequest::new(
@@ -1970,7 +2639,7 @@ mod tests {
             funding_output,
             destination,
             fee,
-            canonical.expiry_height(),
+            expiry_height,
             canonical.consensus_branch_id(),
         )
         .expect("consensus-valid policy mutation");
@@ -1998,6 +2667,8 @@ mod tests {
             state.calls.clear();
             state.chain_infos.clear();
             state.canonical_block = BlockHash([0x22; 32]);
+            state.discovery_enabled = true;
+            state.unspent = None;
             state.transaction = Some(ZebraTransactionState::Confirmed {
                 raw_transaction: prepared.exact_submission().to_vec(),
                 block_hash: state.canonical_block,

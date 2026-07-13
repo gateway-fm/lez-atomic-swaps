@@ -9,7 +9,7 @@ mod rpc;
 pub use claim::{ZebraClaimError, ZebraClaimSigner, ZebraRpcClaimPort};
 pub use first_lock::{ZebraFirstLockError, ZebraRpcSwapPort};
 pub use rpc::{
-    HttpZebraRpc, HttpZebraRpcConfig, HttpZebraRpcError, ZebraChainIdentity, ZebraChainInfo,
-    ZebraIdentityError, ZebraRpc, ZebraRpcChain, ZebraSubmissionFailure, ZebraTransactionState,
-    ZebraUnspentOutput,
+    HttpZebraRpc, HttpZebraRpcConfig, HttpZebraRpcError, ZebraCanonicalBlock, ZebraChainIdentity,
+    ZebraChainInfo, ZebraIdentityError, ZebraRpc, ZebraRpcChain, ZebraSubmissionFailure,
+    ZebraTransactionState, ZebraUnspentOutput,
 };
