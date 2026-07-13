@@ -6,22 +6,25 @@ use std::{
 
 use jsonrpsee::{RpcModule, types::ErrorObjectOwned};
 use lez_bridge_client::{
-    BridgeClient, BridgeClientConfig, BridgeClientError, MAX_RPC_BODY_BYTES,
-    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_REVEALING_CLAIM,
-    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_REVEALING_CLAIM, METHOD_SUBMIT_TRANSACTION,
-    RUN_ID_HEADER, SIDECAR_ROLE_HEADER, SidecarCapability,
+    BridgeClient, BridgeClientConfig, BridgeClientError, BridgeOperation, MAX_RPC_BODY_BYTES,
+    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_NATIVE_REFUND,
+    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND,
+    METHOD_PREPARE_REVEALING_CLAIM, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+    SidecarCapability,
 };
 use lez_bridge_protocol::{
-    ChainTip, DescribeRuntimeRequest, DescribeRuntimeResult, ErrorCode, ErrorMessage,
-    EscrowObservationTarget, ExactTransactionBytes, FundingObservation, Hex32,
-    InitializationObservation, MessageContext, NativeEscrowTerms, NativeEscrowTermsInput,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveRevealingClaimRequest,
+    ChainClock, ChainTip, DescribeRuntimeRequest, DescribeRuntimeResult, DiscoveryWindow,
+    ErrorCode, ErrorMessage, EscrowObservationTarget, ExactTransactionBytes, FundingObservation,
+    Hex32, InitializationObservation, MessageContext, NativeEscrowAccountObservation,
+    NativeEscrowTerms, NativeEscrowTermsInput, NativeRefundObservation,
+    NativeRefundObservationTarget, ObserveEscrowRequest, ObserveEscrowResult,
+    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
     ObserveRevealingClaimResult, Participant, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PreparedTransaction, ProtocolErrorReply, RequestId, RevealingClaimObservation,
-    RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
-    TransactionId,
+    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
+    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PreparedTransaction,
+    ProtocolErrorReply, RequestId, RevealingClaimObservation, RevealingClaimObservationTarget,
+    RevealingPreimage, RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
+    SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
 };
 use serde_json::json;
 use tower::ServiceBuilder;
@@ -43,8 +46,11 @@ enum Behavior {
     WrongSubmitId,
     SlowDescribe,
     SlowPrepare,
+    SlowRefundPrepare,
+    SlowRefundObserve,
     SlowSubmit,
     MaximumPrepared,
+    UnknownRefundField,
 }
 
 #[derive(Clone, Debug)]
@@ -73,7 +79,7 @@ impl Fixture {
 struct MockSidecar {
     endpoint: String,
     fixture: Fixture,
-    _handle: jsonrpsee::server::ServerHandle,
+    handle: jsonrpsee::server::ServerHandle,
 }
 
 async fn spawn_sidecar(
@@ -121,7 +127,7 @@ async fn spawn_sidecar(
     MockSidecar {
         endpoint: format!("http://{address}"),
         fixture,
-        _handle: handle,
+        handle,
     }
 }
 
@@ -157,6 +163,12 @@ fn register_methods(module: &mut RpcModule<Fixture>) {
             Ok::<_, ErrorObjectOwned>(value)
         })
         .expect("describe method");
+    register_existing_transaction_methods(module);
+    register_refund_methods(module);
+    register_submit_method(module);
+}
+
+fn register_existing_transaction_methods(module: &mut RpcModule<Fixture>) {
     module
         .register_async_method(
             METHOD_PREPARE_NATIVE_ESCROW,
@@ -223,7 +235,75 @@ fn register_methods(module: &mut RpcModule<Fixture>) {
             Ok::<_, ErrorObjectOwned>(serde_json::to_value(result).expect("serializable result"))
         })
         .expect("observe claim method");
-    register_submit_method(module);
+}
+
+fn register_refund_methods(module: &mut RpcModule<Fixture>) {
+    module
+        .register_async_method(
+            METHOD_PREPARE_NATIVE_REFUND,
+            |params, fixture, _| async move {
+                let request: PrepareNativeRefundRequest = params.one()?;
+                fixture.record(METHOD_PREPARE_NATIVE_REFUND);
+                if matches!(fixture.behavior, Behavior::SlowRefundPrepare) {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                if matches!(fixture.behavior, Behavior::TypedRemoteError) {
+                    return Err(typed_remote_error(request.context));
+                }
+                let result = PrepareNativeRefundResult::new(
+                    response_context(&request.context, fixture.behavior),
+                    if matches!(fixture.behavior, Behavior::MaximumPrepared) {
+                        prepared_sized(44, 14, MAX_TRANSACTION_BYTES)
+                    } else {
+                        prepared(44, 14)
+                    },
+                );
+                Ok::<_, ErrorObjectOwned>(result)
+            },
+        )
+        .expect("prepare refund method");
+    module
+        .register_async_method(
+            METHOD_OBSERVE_NATIVE_REFUND,
+            |params, fixture, _| async move {
+                let request: ObserveNativeRefundRequest = params.one()?;
+                fixture.record(METHOD_OBSERVE_NATIVE_REFUND);
+                if matches!(fixture.behavior, Behavior::SlowRefundObserve) {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                if matches!(fixture.behavior, Behavior::TypedRemoteError) {
+                    return Err(typed_remote_error(request.context));
+                }
+                let result = ObserveNativeRefundResult::new(
+                    response_context(&request.context, fixture.behavior),
+                    clock(52),
+                    NativeEscrowAccountObservation::Absent,
+                    NativeRefundObservation::UnknownOrPending,
+                    clock(52),
+                );
+                let mut value = serde_json::to_value(result).expect("serializable result");
+                if matches!(fixture.behavior, Behavior::UnknownRefundField) {
+                    value
+                        .as_object_mut()
+                        .expect("object result")
+                        .insert("unexpected".to_owned(), json!(true));
+                }
+                Ok::<_, ErrorObjectOwned>(value)
+            },
+        )
+        .expect("observe refund method");
+}
+
+fn typed_remote_error(context: MessageContext) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(
+        -32_010,
+        "LEZ bridge request failed",
+        Some(ProtocolErrorReply::new(
+            context,
+            ErrorCode::Unavailable,
+            ErrorMessage::new("secret-looking remote detail").expect("bounded message"),
+        )),
+    )
 }
 
 fn register_submit_method(module: &mut RpcModule<Fixture>) {
@@ -283,6 +363,14 @@ fn tip(byte: u8) -> ChainTip {
     ChainTip::new(hex32(byte), u64::from(byte))
 }
 
+fn clock(byte: u8) -> ChainClock {
+    ChainClock::new(
+        hex32(byte),
+        u64::from(byte),
+        1_800_000_000_000 + u64::from(byte),
+    )
+}
+
 fn runtime(role: Participant, byte: u8) -> RuntimeDescriptor {
     RuntimeDescriptor::new(
         role,
@@ -334,6 +422,33 @@ fn client(
         timeout,
     ))
     .expect("valid bridge client")
+}
+
+async fn round_trip_refund(
+    client: &BridgeClient,
+    run: &RunId,
+    expected_runtime: &RuntimeDescriptor,
+) {
+    let refund = client
+        .prepare_native_refund(PrepareNativeRefundRequest::new(
+            context(run, Participant::Maker, "prepare-refund"),
+            expected_runtime.clone(),
+            terms(),
+        ))
+        .await
+        .expect("prepare refund");
+    let _ = client
+        .observe_native_refund(ObserveNativeRefundRequest::new(
+            context(run, Participant::Maker, "observe-refund"),
+            expected_runtime.clone(),
+            terms(),
+            NativeRefundObservationTarget::Exact {
+                refund_transaction_id: refund.refund.transaction_id,
+                window: DiscoveryWindow::new(40, 20).expect("bounded caller window"),
+            },
+        ))
+        .await
+        .expect("observe refund");
 }
 
 #[tokio::test]
@@ -408,11 +523,13 @@ async fn all_versioned_methods_round_trip_typed_protocol_values_once() {
         .await
         .expect("observe claim");
 
+    round_trip_refund(&client, &run, &expected_runtime).await;
+
     let expected_submission_id = claim.claim.transaction_id;
     let submitted = client
         .submit_transaction(SubmitTransactionRequest::new(
             context(&run, Participant::Maker, "submit"),
-            expected_runtime,
+            expected_runtime.clone(),
             claim.claim,
         ))
         .await
@@ -426,6 +543,8 @@ async fn all_versioned_methods_round_trip_typed_protocol_values_once() {
         METHOD_OBSERVE_ESCROW,
         METHOD_PREPARE_REVEALING_CLAIM,
         METHOD_OBSERVE_REVEALING_CLAIM,
+        METHOD_PREPARE_NATIVE_REFUND,
+        METHOD_OBSERVE_NATIVE_REFUND,
         METHOD_SUBMIT_TRANSACTION,
     ] {
         assert_eq!(sidecar.fixture.calls(method), 1, "method {method}");
@@ -674,6 +793,297 @@ async fn wrong_echo_replay_unknown_fields_and_invalid_prepared_results_are_rejec
 }
 
 #[tokio::test]
+async fn refund_echo_and_strict_response_checks_fail_closed() {
+    let expected_runtime = runtime(Participant::Maker, 70);
+    let run = RunId::new(TEST_RUN).expect("run id");
+    let wrong_echo = spawn_sidecar(
+        expected_runtime.clone(),
+        MAKER_CAPABILITY,
+        Behavior::WrongEcho,
+    )
+    .await;
+    let wrong_echo_client = client(
+        &wrong_echo.endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        expected_runtime.clone(),
+        Duration::from_secs(1),
+    );
+    assert!(matches!(
+        wrong_echo_client
+            .prepare_native_refund(PrepareNativeRefundRequest::new(
+                context(&run, Participant::Maker, "refund-wrong-echo"),
+                expected_runtime.clone(),
+                terms(),
+            ))
+            .await,
+        Err(BridgeClientError::ResponseContextMismatch {
+            operation: BridgeOperation::PrepareNativeRefund,
+        })
+    ));
+    assert!(matches!(
+        wrong_echo_client
+            .observe_native_refund(ObserveNativeRefundRequest::new(
+                context(&run, Participant::Maker, "observe-refund-wrong-echo"),
+                expected_runtime.clone(),
+                terms(),
+                NativeRefundObservationTarget::StateOnly,
+            ))
+            .await,
+        Err(BridgeClientError::ResponseContextMismatch {
+            operation: BridgeOperation::ObserveNativeRefund,
+        })
+    ));
+    assert_eq!(wrong_echo.fixture.calls(METHOD_PREPARE_NATIVE_REFUND), 1);
+    assert_eq!(wrong_echo.fixture.calls(METHOD_OBSERVE_NATIVE_REFUND), 1);
+
+    let strict = spawn_sidecar(
+        expected_runtime.clone(),
+        MAKER_CAPABILITY,
+        Behavior::UnknownRefundField,
+    )
+    .await;
+    let strict_client = client(
+        &strict.endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        expected_runtime.clone(),
+        Duration::from_secs(1),
+    );
+    assert!(matches!(
+        strict_client
+            .observe_native_refund(ObserveNativeRefundRequest::new(
+                context(&run, Participant::Maker, "refund-unknown-field"),
+                expected_runtime.clone(),
+                terms(),
+                NativeRefundObservationTarget::StateOnly,
+            ))
+            .await,
+        Err(BridgeClientError::InvalidResponse {
+            operation: BridgeOperation::ObserveNativeRefund,
+        })
+    ));
+    assert_eq!(strict.fixture.calls(METHOD_OBSERVE_NATIVE_REFUND), 1);
+}
+
+#[tokio::test]
+async fn refund_runtime_role_and_request_id_checks_fail_before_transport() {
+    let expected_runtime = runtime(Participant::Maker, 70);
+    let run = RunId::new(TEST_RUN).expect("run id");
+    let happy = spawn_sidecar(expected_runtime.clone(), MAKER_CAPABILITY, Behavior::Happy).await;
+    let happy_client = client(
+        &happy.endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        expected_runtime.clone(),
+        Duration::from_secs(1),
+    );
+    let shared = context(&run, Participant::Maker, "refund-shared-id");
+    let _ = happy_client
+        .prepare_native_refund(PrepareNativeRefundRequest::new(
+            shared.clone(),
+            expected_runtime.clone(),
+            terms(),
+        ))
+        .await
+        .expect("first request id use");
+    assert!(matches!(
+        happy_client
+            .observe_native_refund(ObserveNativeRefundRequest::new(
+                shared,
+                expected_runtime.clone(),
+                terms(),
+                NativeRefundObservationTarget::StateOnly,
+            ))
+            .await,
+        Err(BridgeClientError::RequestIdReused {
+            operation: BridgeOperation::ObserveNativeRefund,
+        })
+    ));
+    assert_eq!(happy.fixture.calls(METHOD_PREPARE_NATIVE_REFUND), 1);
+    assert_eq!(happy.fixture.calls(METHOD_OBSERVE_NATIVE_REFUND), 0);
+
+    assert!(matches!(
+        happy_client
+            .prepare_native_refund(PrepareNativeRefundRequest::new(
+                context(&run, Participant::Maker, "refund-wrong-runtime"),
+                runtime(Participant::Maker, 71),
+                terms(),
+            ))
+            .await,
+        Err(BridgeClientError::RequestContextMismatch {
+            operation: BridgeOperation::PrepareNativeRefund,
+        })
+    ));
+    assert!(matches!(
+        happy_client
+            .observe_native_refund(ObserveNativeRefundRequest::new(
+                context(&run, Participant::Taker, "refund-wrong-role"),
+                expected_runtime,
+                terms(),
+                NativeRefundObservationTarget::StateOnly,
+            ))
+            .await,
+        Err(BridgeClientError::RequestContextMismatch {
+            operation: BridgeOperation::ObserveNativeRefund,
+        })
+    ));
+    assert_eq!(happy.fixture.calls(METHOD_PREPARE_NATIVE_REFUND), 1);
+    assert_eq!(happy.fixture.calls(METHOD_OBSERVE_NATIVE_REFUND), 0);
+}
+
+#[tokio::test]
+async fn refund_typed_remote_failures_are_single_attempt() {
+    let expected_runtime = runtime(Participant::Maker, 75);
+    let run = RunId::new(TEST_RUN).expect("run id");
+    let remote = spawn_sidecar(
+        expected_runtime.clone(),
+        MAKER_CAPABILITY,
+        Behavior::TypedRemoteError,
+    )
+    .await;
+    let remote_client = client(
+        &remote.endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        expected_runtime.clone(),
+        Duration::from_secs(1),
+    );
+    for error in [
+        remote_client
+            .prepare_native_refund(PrepareNativeRefundRequest::new(
+                context(&run, Participant::Maker, "refund-remote"),
+                expected_runtime.clone(),
+                terms(),
+            ))
+            .await
+            .expect_err("typed refund preparation error"),
+        remote_client
+            .observe_native_refund(ObserveNativeRefundRequest::new(
+                context(&run, Participant::Maker, "observe-refund-remote"),
+                expected_runtime.clone(),
+                terms(),
+                NativeRefundObservationTarget::StateOnly,
+            ))
+            .await
+            .expect_err("typed refund observation error"),
+    ] {
+        let BridgeClientError::Remote(remote_error) = error else {
+            panic!("wrong error class");
+        };
+        assert_eq!(remote_error.code(), ErrorCode::Unavailable);
+    }
+    assert_eq!(remote.fixture.calls(METHOD_PREPARE_NATIVE_REFUND), 1);
+    assert_eq!(remote.fixture.calls(METHOD_OBSERVE_NATIVE_REFUND), 1);
+}
+
+#[tokio::test]
+async fn refund_timeouts_are_single_attempt() {
+    let expected_runtime = runtime(Participant::Maker, 75);
+    let run = RunId::new(TEST_RUN).expect("run id");
+    let slow_prepare = spawn_sidecar(
+        expected_runtime.clone(),
+        MAKER_CAPABILITY,
+        Behavior::SlowRefundPrepare,
+    )
+    .await;
+    let slow_prepare_client = client(
+        &slow_prepare.endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        expected_runtime.clone(),
+        Duration::from_millis(10),
+    );
+    assert!(matches!(
+        slow_prepare_client
+            .prepare_native_refund(PrepareNativeRefundRequest::new(
+                context(&run, Participant::Maker, "refund-timeout"),
+                expected_runtime.clone(),
+                terms(),
+            ))
+            .await,
+        Err(BridgeClientError::Timeout {
+            operation: BridgeOperation::PrepareNativeRefund,
+        })
+    ));
+    tokio::time::sleep(Duration::from_millis(120)).await;
+    assert_eq!(slow_prepare.fixture.calls(METHOD_PREPARE_NATIVE_REFUND), 1);
+
+    let slow_observe = spawn_sidecar(
+        expected_runtime.clone(),
+        MAKER_CAPABILITY,
+        Behavior::SlowRefundObserve,
+    )
+    .await;
+    let slow_observe_client = client(
+        &slow_observe.endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        expected_runtime.clone(),
+        Duration::from_millis(10),
+    );
+    assert!(matches!(
+        slow_observe_client
+            .observe_native_refund(ObserveNativeRefundRequest::new(
+                context(&run, Participant::Maker, "observe-refund-timeout"),
+                expected_runtime.clone(),
+                terms(),
+                NativeRefundObservationTarget::StateOnly,
+            ))
+            .await,
+        Err(BridgeClientError::Timeout {
+            operation: BridgeOperation::ObserveNativeRefund,
+        })
+    ));
+    tokio::time::sleep(Duration::from_millis(120)).await;
+    assert_eq!(slow_observe.fixture.calls(METHOD_OBSERVE_NATIVE_REFUND), 1);
+}
+
+#[tokio::test]
+async fn refund_stopped_transport_is_not_retried() {
+    let expected_runtime = runtime(Participant::Maker, 75);
+    let run = RunId::new(TEST_RUN).expect("run id");
+    let stopped = spawn_sidecar(expected_runtime.clone(), MAKER_CAPABILITY, Behavior::Happy).await;
+    let endpoint = stopped.endpoint.clone();
+    let fixture = stopped.fixture.clone();
+    stopped.handle.stop().expect("stop mock sidecar");
+    stopped.handle.stopped().await;
+    let stopped_client = client(
+        &endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        expected_runtime.clone(),
+        Duration::from_millis(50),
+    );
+    let stopped_context = context(&run, Participant::Maker, "refund-transport");
+    assert!(matches!(
+        stopped_client
+            .prepare_native_refund(PrepareNativeRefundRequest::new(
+                stopped_context.clone(),
+                expected_runtime.clone(),
+                terms(),
+            ))
+            .await,
+        Err(BridgeClientError::Transport {
+            operation: BridgeOperation::PrepareNativeRefund,
+        })
+    ));
+    assert!(matches!(
+        stopped_client
+            .prepare_native_refund(PrepareNativeRefundRequest::new(
+                stopped_context,
+                expected_runtime,
+                terms(),
+            ))
+            .await,
+        Err(BridgeClientError::RequestIdReused {
+            operation: BridgeOperation::PrepareNativeRefund,
+        })
+    ));
+    assert_eq!(fixture.calls(METHOD_PREPARE_NATIVE_REFUND), 0);
+}
+
+#[tokio::test]
 async fn timeout_remote_error_and_unknown_submit_outcome_remain_distinct_without_retries() {
     let expected_runtime = runtime(Participant::Maker, 80);
     let run = RunId::new(TEST_RUN).expect("run id");
@@ -840,7 +1250,7 @@ async fn maximum_prepare_pair_fits_transport_while_over_protocol_bytes_are_rejec
     let result = client
         .prepare_native_escrow(PrepareNativeEscrowRequest::new(
             MessageContext::new(run, maximum_request_id, Participant::Maker),
-            expected_runtime,
+            expected_runtime.clone(),
             terms(),
         ))
         .await
@@ -864,6 +1274,23 @@ async fn maximum_prepare_pair_fits_transport_while_over_protocol_bytes_are_rejec
     assert!(maximum_envelope.len() > 5_333_336);
     assert!(maximum_envelope.len() <= MAX_RPC_BODY_BYTES as usize);
     assert_eq!(MAX_RPC_BODY_BYTES, 5_500_000);
+
+    let maximum_refund = client
+        .prepare_native_refund(PrepareNativeRefundRequest::new(
+            context(
+                &RunId::new(TEST_RUN).expect("run id"),
+                Participant::Maker,
+                "maximum-refund",
+            ),
+            expected_runtime,
+            terms(),
+        ))
+        .await
+        .expect("one maximum refund transaction fits the transport bound");
+    assert_eq!(
+        maximum_refund.refund.exact_bytes.as_slice().len(),
+        MAX_TRANSACTION_BYTES
+    );
 
     assert!(ExactTransactionBytes::new(vec![0; MAX_TRANSACTION_BYTES + 1]).is_err());
 }

@@ -715,6 +715,33 @@ pub struct ChainTip {
     pub height: u64,
 }
 
+/// Primitive canonical chain clock including the consensus-visible millisecond timestamp.
+///
+/// This is additive rather than changing [`ChainTip`], preserving its existing
+/// wire shape and users while refund eligibility obtains the clock domain it needs.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ChainClock {
+    /// Node-reported block hash; the official block hash commits the timestamp.
+    pub block_hash: Hex32,
+    /// Node-reported block height.
+    pub height: u64,
+    /// Consensus-visible Unix timestamp in milliseconds.
+    pub timestamp_ms: u64,
+}
+
+impl ChainClock {
+    /// Creates primitive canonical clock facts.
+    pub const fn new(block_hash: Hex32, height: u64, timestamp_ms: u64) -> Self {
+        Self {
+            block_hash,
+            height,
+            timestamp_ms,
+        }
+    }
+}
+
 impl ChainTip {
     /// Creates primitive tip facts.
     pub const fn new(block_hash: Hex32, height: u64) -> Self {

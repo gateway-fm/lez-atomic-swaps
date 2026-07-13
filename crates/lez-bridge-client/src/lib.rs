@@ -17,16 +17,18 @@ use jsonrpsee::{
 use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClient, HttpClientBuilder};
 use lez_bridge_protocol::{
     DescribeRuntimeRequest, DescribeRuntimeResult, ErrorCode, ErrorMessage, MessageContext,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveRevealingClaimRequest,
-    ObserveRevealingClaimResult, Participant, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
+    ObserveEscrowRequest, ObserveEscrowResult, ObserveNativeRefundRequest,
+    ObserveNativeRefundResult, ObserveRevealingClaimRequest, ObserveRevealingClaimResult,
+    Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
     PreparedTransaction, ProtocolErrorReply, RequestId, RunId, RuntimeDescriptor,
     SubmitTransactionRequest, SubmitTransactionResult,
 };
 pub use lez_bridge_protocol::{
     MAX_RPC_BODY_BYTES, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW,
-    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_REVEALING_CLAIM,
-    METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_PREPARE_NATIVE_ESCROW,
+    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_SUBMIT_TRANSACTION,
+    RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
@@ -150,6 +152,10 @@ pub enum BridgeOperation {
     PrepareRevealingClaim,
     /// Revealing-claim observation.
     ObserveRevealingClaim,
+    /// Fixed-destination native refund preparation.
+    PrepareNativeRefund,
+    /// Native escrow state and refund observation.
+    ObserveNativeRefund,
     /// Exact transaction submission.
     SubmitTransaction,
 }
@@ -460,6 +466,49 @@ impl BridgeClient {
         self.reserve_context(operation, &context)?;
         let result: ObserveRevealingClaimResult = self
             .request(operation, METHOD_OBSERVE_REVEALING_CLAIM, request, &context)
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        Ok(result)
+    }
+
+    /// Prepares one exact fixed-destination native refund without retries.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime mismatch, unknown delivery, malformed
+    /// prepared bytes, strict decoding failure, or typed remote error.
+    pub async fn prepare_native_refund(
+        &self,
+        request: PrepareNativeRefundRequest,
+    ) -> Result<PrepareNativeRefundResult, BridgeClientError> {
+        let operation = BridgeOperation::PrepareNativeRefund;
+        let context = request.context.clone();
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        self.reserve_context(operation, &context)?;
+        let result: PrepareNativeRefundResult = self
+            .request(operation, METHOD_PREPARE_NATIVE_REFUND, request, &context)
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_prepared(operation, &result.refund)?;
+        Ok(result)
+    }
+
+    /// Observes canonical native escrow state and an optional refund lookup once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime mismatch, unknown delivery, strict
+    /// decoding failure, or typed remote error.
+    pub async fn observe_native_refund(
+        &self,
+        request: ObserveNativeRefundRequest,
+    ) -> Result<ObserveNativeRefundResult, BridgeClientError> {
+        let operation = BridgeOperation::ObserveNativeRefund;
+        let context = request.context.clone();
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        self.reserve_context(operation, &context)?;
+        let result: ObserveNativeRefundResult = self
+            .request(operation, METHOD_OBSERVE_NATIVE_REFUND, request, &context)
             .await?;
         Self::validate_response_context(operation, &context, &result.context)?;
         Ok(result)

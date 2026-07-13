@@ -1,7 +1,7 @@
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
-    AccountIds, ChainPosition, ChainTip, DiscoveryWindow, ErrorCode, ErrorMessage,
+    AccountIds, ChainClock, ChainPosition, ChainTip, DiscoveryWindow, ErrorCode, ErrorMessage,
     ExactTransactionBytes, Hex32, MessageContext, NativeAmount, NativeEscrowTerms, Participant,
     RevealingPreimage, TransactionId,
 };
@@ -706,6 +706,376 @@ impl ObserveEscrowResult {
             initialization,
             funding,
             tip_after,
+        }
+    }
+}
+
+/// Requests one native fixed-destination refund transaction.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct PrepareNativeRefundRequest {
+    /// Version, isolation, correlation, and role fields.
+    pub context: MessageContext,
+    /// Expected runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// Exact native escrow values, including the immutable refund destination.
+    pub terms: NativeEscrowTerms,
+}
+
+impl PrepareNativeRefundRequest {
+    /// Creates a native refund preparation request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: NativeEscrowTerms,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+        }
+    }
+}
+
+/// Exact native refund transaction prepared by the official sidecar.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct PrepareNativeRefundResult {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Exact fixed-destination refund transaction.
+    pub refund: PreparedTransaction,
+}
+
+impl PrepareNativeRefundResult {
+    /// Creates a native refund preparation result.
+    pub const fn new(context: MessageContext, refund: PreparedTransaction) -> Self {
+        Self { context, refund }
+    }
+}
+
+/// Selects account-state inspection, an owned exact refund, or bounded discovery.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+#[must_use]
+pub enum NativeRefundObservationTarget {
+    /// Read only the canonical escrow accounts and chain clock before eligibility.
+    StateOnly,
+    /// Observe an actor's exact persisted refund ID in the caller-selected window.
+    Exact {
+        /// Exact native refund transaction ID.
+        refund_transaction_id: TransactionId,
+        /// Inclusive bounded scan range supplied by the caller.
+        window: DiscoveryWindow,
+    },
+    /// Discover a permissionless counterparty refund by signed terms.
+    DiscoverByTerms {
+        /// Inclusive bounded scan range that must be fully covered before absence.
+        window: DiscoveryWindow,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum StateOnlyMode {
+    StateOnly,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateOnlyRefundObservationTargetWire {
+    mode: StateOnlyMode,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExactNativeRefundObservationTargetWire {
+    mode: ExactMode,
+    refund_transaction_id: TransactionId,
+    window: DiscoveryWindow,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum NativeRefundObservationTargetWire {
+    StateOnly(StateOnlyRefundObservationTargetWire),
+    Exact(ExactNativeRefundObservationTargetWire),
+    DiscoverByTerms(DiscoverByTermsObservationTargetWire),
+}
+
+impl<'de> Deserialize<'de> for NativeRefundObservationTarget {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match NativeRefundObservationTargetWire::deserialize(deserializer)? {
+            NativeRefundObservationTargetWire::StateOnly(wire) => {
+                let StateOnlyMode::StateOnly = wire.mode;
+                Ok(Self::StateOnly)
+            }
+            NativeRefundObservationTargetWire::Exact(wire) => {
+                let ExactMode::Exact = wire.mode;
+                Ok(Self::Exact {
+                    refund_transaction_id: wire.refund_transaction_id,
+                    window: wire.window,
+                })
+            }
+            NativeRefundObservationTargetWire::DiscoverByTerms(wire) => {
+                let DiscoverByTermsMode::DiscoverByTerms = wire.mode;
+                Ok(Self::DiscoverByTerms {
+                    window: wire.window,
+                })
+            }
+        }
+    }
+}
+
+/// Requests canonical escrow state and an optional native refund observation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ObserveNativeRefundRequest {
+    /// Version, isolation, correlation, and role fields.
+    pub context: MessageContext,
+    /// Expected runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// Expected native escrow values.
+    pub terms: NativeEscrowTerms,
+    /// Account-only, exact-ID, or terms-discovery observation mode.
+    pub target: NativeRefundObservationTarget,
+}
+
+impl ObserveNativeRefundRequest {
+    /// Creates a native refund observation request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: NativeEscrowTerms,
+        target: NativeRefundObservationTarget,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+            target,
+        }
+    }
+}
+
+/// Current primitive metadata and native custody fields at one canonical clock.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct NativeEscrowAccountFacts {
+    /// Current metadata decoded at the bracketed stable clock.
+    pub metadata: EscrowMetadataFacts,
+    /// Current native custody decoded at the bracketed stable clock.
+    pub custody: NativeCustodyFacts,
+}
+
+impl NativeEscrowAccountFacts {
+    /// Creates current native escrow account facts.
+    pub const fn new(metadata: EscrowMetadataFacts, custody: NativeCustodyFacts) -> Self {
+        Self { metadata, custody }
+    }
+}
+
+/// Whether canonical native escrow accounts exist at the bracketed clock.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", content = "facts", rename_all = "snake_case")]
+#[must_use]
+pub enum NativeEscrowAccountObservation {
+    /// Both expected accounts are absent at the stable clock.
+    ///
+    /// A partial or malformed account pair is a typed RPC error, never absence.
+    Absent,
+    /// Both accounts exist and were decoded into complete primitive facts.
+    Found(Box<NativeEscrowAccountFacts>),
+}
+
+impl NativeEscrowAccountObservation {
+    /// Wraps complete account facts without inflating absent results.
+    pub fn found(facts: NativeEscrowAccountFacts) -> Self {
+        Self::Found(Box::new(facts))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum NativeEscrowAccountObservationWire {
+    Absent(AbsentObservationWire),
+    Found(Box<FoundObservationWire<NativeEscrowAccountFacts>>),
+}
+
+impl<'de> Deserialize<'de> for NativeEscrowAccountObservation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match NativeEscrowAccountObservationWire::deserialize(deserializer)? {
+            NativeEscrowAccountObservationWire::Absent(wire) => {
+                let AbsentStatus::Absent = wire.status;
+                Ok(Self::Absent)
+            }
+            NativeEscrowAccountObservationWire::Found(wire) => {
+                let FoundStatus::Found = wire.status;
+                Ok(Self::found(wire.facts))
+            }
+        }
+    }
+}
+
+/// Primitive fields of the pinned guest's `RefundNative` instruction.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct NativeRefundInstructionFacts {
+    /// Runtime escrow program targeted by the instruction.
+    pub program_id: Hex32,
+    /// Exact `[metadata, custody, depositor]` account order.
+    pub ordered_account_ids: AccountIds,
+    /// Only argument encoded by `RefundNative`.
+    pub swap_id: Hex32,
+}
+
+impl NativeRefundInstructionFacts {
+    /// Creates primitive `RefundNative` instruction facts.
+    pub const fn new(program_id: Hex32, ordered_account_ids: AccountIds, swap_id: Hex32) -> Self {
+        Self {
+            program_id,
+            ordered_account_ids,
+            swap_id,
+        }
+    }
+}
+
+/// Complete primitive facts for a found native refund transaction.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct NativeRefundFoundFacts {
+    /// Primitive transaction and placement facts.
+    pub transaction: ObservedTransactionFacts,
+    /// Primitive decoded refund instruction fields.
+    pub instruction: NativeRefundInstructionFacts,
+}
+
+impl NativeRefundFoundFacts {
+    /// Creates complete found native refund facts.
+    pub const fn new(
+        transaction: ObservedTransactionFacts,
+        instruction: NativeRefundInstructionFacts,
+    ) -> Self {
+        Self {
+            transaction,
+            instruction,
+        }
+    }
+}
+
+/// Native refund lookup result without claiming finality or absence prematurely.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", content = "facts", rename_all = "snake_case")]
+#[must_use]
+pub enum NativeRefundObservation {
+    /// The caller requested account state only, so no refund lookup occurred.
+    NotRequested,
+    /// Stable tips fully covered the caller's declared window.
+    Absent,
+    /// Upstream cannot distinguish pending from absent for the declared lookup.
+    UnknownOrPending,
+    /// The sidecar found and decoded one native refund transaction.
+    Found(Box<NativeRefundFoundFacts>),
+}
+
+impl NativeRefundObservation {
+    /// Wraps complete found refund facts without inflating absent results.
+    pub fn found(facts: NativeRefundFoundFacts) -> Self {
+        Self::Found(Box::new(facts))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum NotRequestedStatus {
+    NotRequested,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NotRequestedObservationWire {
+    status: NotRequestedStatus,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum NativeRefundObservationWire {
+    NotRequested(NotRequestedObservationWire),
+    Absent(AbsentObservationWire),
+    UnknownOrPending(UnknownOrPendingObservationWire),
+    Found(Box<FoundObservationWire<NativeRefundFoundFacts>>),
+}
+
+impl<'de> Deserialize<'de> for NativeRefundObservation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match NativeRefundObservationWire::deserialize(deserializer)? {
+            NativeRefundObservationWire::NotRequested(wire) => {
+                let NotRequestedStatus::NotRequested = wire.status;
+                Ok(Self::NotRequested)
+            }
+            NativeRefundObservationWire::Absent(wire) => {
+                let AbsentStatus::Absent = wire.status;
+                Ok(Self::Absent)
+            }
+            NativeRefundObservationWire::UnknownOrPending(wire) => {
+                let UnknownOrPendingStatus::UnknownOrPending = wire.status;
+                Ok(Self::UnknownOrPending)
+            }
+            NativeRefundObservationWire::Found(wire) => {
+                let FoundStatus::Found = wire.status;
+                Ok(Self::found(wire.facts))
+            }
+        }
+    }
+}
+
+/// Primitive native refund state bracketed by canonical clocks.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ObserveNativeRefundResult {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Canonical clock immediately before account and transaction reads.
+    pub clock_before: ChainClock,
+    /// Current metadata and custody state at the stable bracketed clock.
+    pub accounts: NativeEscrowAccountObservation,
+    /// Explicit refund lookup state and any complete found facts.
+    pub refund: NativeRefundObservation,
+    /// Canonical clock immediately after all node reads.
+    pub clock_after: ChainClock,
+}
+
+impl ObserveNativeRefundResult {
+    /// Creates primitive native refund observation facts.
+    pub const fn new(
+        context: MessageContext,
+        clock_before: ChainClock,
+        accounts: NativeEscrowAccountObservation,
+        refund: NativeRefundObservation,
+        clock_after: ChainClock,
+    ) -> Self {
+        Self {
+            context,
+            clock_before,
+            accounts,
+            refund,
+            clock_after,
         }
     }
 }

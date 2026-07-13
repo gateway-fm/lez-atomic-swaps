@@ -1,18 +1,141 @@
 use lez_bridge_protocol::{
-    AccountIds, ChainPosition, ChainTip, DescribeRuntimeRequest, DescribeRuntimeResult,
+    AccountIds, ChainClock, ChainPosition, ChainTip, DescribeRuntimeRequest, DescribeRuntimeResult,
     DiscoveryWindow, ErrorCode, ErrorMessage, EscrowMetadataFacts, EscrowObservationTarget,
     EscrowState, ExactTransactionBytes, FundingFoundFacts, FundingObservation, Hex32,
     InitializationFoundFacts, InitializationObservation, MAX_DISCOVERY_BLOCKS, MessageContext,
-    NativeAmount, NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowTerms,
-    NativeEscrowTermsInput, NativeFundInstructionFacts, NativeInitializeInstructionFacts,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveRevealingClaimRequest,
-    ObserveRevealingClaimResult, ObservedTransactionFacts, Participant, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PreparedTransaction, ProtocolErrorReply, RequestId, RevealingClaimFoundFacts,
-    RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage, RunId,
-    RuntimeCompatibility, RuntimeDescriptor, SchemaVersion, SubmissionOutcome,
-    SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
+    NativeAmount, NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
+    NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
+    NativeFundInstructionFacts, NativeInitializeInstructionFacts, NativeRefundFoundFacts,
+    NativeRefundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
+    ObserveEscrowRequest, ObserveEscrowResult, ObserveNativeRefundRequest,
+    ObserveNativeRefundResult, ObserveRevealingClaimRequest, ObserveRevealingClaimResult,
+    ObservedTransactionFacts, Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
+    PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
+    PrepareRevealingClaimResult, PreparedTransaction, ProtocolErrorReply, RequestId,
+    RevealingClaimFoundFacts, RevealingClaimObservation, RevealingClaimObservationTarget,
+    RevealingPreimage, RunId, RuntimeCompatibility, RuntimeDescriptor, SchemaVersion,
+    SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
 };
+
+#[test]
+fn native_refund_state_exact_and_discovery_are_typed_and_timestamped() {
+    let prepare = PrepareNativeRefundRequest::new(context(), runtime(), terms());
+    let prepared = PrepareNativeRefundResult::new(context(), tx(40));
+    assert_eq!(
+        serde_json::from_str::<PrepareNativeRefundRequest>(
+            &serde_json::to_string(&prepare).unwrap()
+        )
+        .unwrap(),
+        prepare
+    );
+    assert_eq!(
+        prepared.refund.transaction_id,
+        TransactionId::from_bytes([40; 32])
+    );
+
+    for target in [
+        NativeRefundObservationTarget::StateOnly,
+        NativeRefundObservationTarget::Exact {
+            refund_transaction_id: TransactionId::from_bytes([40; 32]),
+            window: DiscoveryWindow::new(10, 20).unwrap(),
+        },
+        NativeRefundObservationTarget::DiscoverByTerms {
+            window: DiscoveryWindow::new(10, 20).unwrap(),
+        },
+    ] {
+        let request = ObserveNativeRefundRequest::new(context(), runtime(), terms(), target);
+        let decoded: ObserveNativeRefundRequest =
+            serde_json::from_str(&serde_json::to_string(&request).unwrap()).unwrap();
+        assert_eq!(decoded, request);
+    }
+
+    let clock = ChainClock::new(h(41), 42, 1_800_000_000_123);
+    let result = ObserveNativeRefundResult::new(
+        context(),
+        clock,
+        NativeEscrowAccountObservation::Absent,
+        NativeRefundObservation::NotRequested,
+        clock,
+    );
+    let decoded: ObserveNativeRefundResult =
+        serde_json::from_str(&serde_json::to_string(&result).unwrap()).unwrap();
+    assert_eq!(decoded, result);
+    assert_eq!(decoded.clock_after.timestamp_ms, 1_800_000_000_123);
+
+    let found = ObserveNativeRefundResult::new(
+        context(),
+        clock,
+        NativeEscrowAccountObservation::found(NativeEscrowAccountFacts::new(
+            EscrowMetadataFacts::from_native_terms(
+                h(10),
+                h(4),
+                h(12),
+                &terms(),
+                EscrowState::Refunded,
+            ),
+            NativeCustodyFacts::new(h(12), h(22), 0),
+        )),
+        NativeRefundObservation::found(NativeRefundFoundFacts::new(
+            ObservedTransactionFacts::new(
+                TransactionId::from_bytes([40; 32]),
+                ExactTransactionBytes::new(vec![40; 128]).unwrap(),
+                ChainPosition::new(h(41), 42, 3),
+                AccountIds::new(Vec::new()).unwrap(),
+                true,
+            ),
+            NativeRefundInstructionFacts::new(
+                h(4),
+                AccountIds::new(vec![h(10), h(12), h(20)]).unwrap(),
+                terms().swap_id(),
+            ),
+        )),
+        clock,
+    );
+    let decoded: ObserveNativeRefundResult =
+        serde_json::from_str(&serde_json::to_string(&found).unwrap()).unwrap();
+    assert_eq!(decoded, found);
+}
+
+#[test]
+fn native_refund_wire_rejects_implicit_windows_ambiguity_and_unknown_fields() {
+    let transaction_id = "28".repeat(32);
+    for malformed_target in [
+        serde_json::json!({"mode": "state_only", "window": {"start_height": 10, "max_blocks": 2}}),
+        serde_json::json!({"mode": "exact", "refund_transaction_id": transaction_id}),
+        serde_json::json!({"mode": "exact", "refund_transaction_id": transaction_id, "window": {"start_height": 10, "max_blocks": 2}, "surprise": true}),
+        serde_json::json!({"mode": "discover_by_terms", "refund_transaction_id": transaction_id, "window": {"start_height": 10, "max_blocks": 2}}),
+        serde_json::json!({"mode": "discover_by_terms", "window": {"start_height": 10, "max_blocks": 0}}),
+        serde_json::json!({"window": {"start_height": 10, "max_blocks": 2}}),
+    ] {
+        assert!(serde_json::from_value::<NativeRefundObservationTarget>(malformed_target).is_err());
+    }
+
+    let mut request = serde_json::to_value(PrepareNativeRefundRequest::new(
+        context(),
+        runtime(),
+        terms(),
+    ))
+    .unwrap();
+    request["surprise"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<PrepareNativeRefundRequest>(request).is_err());
+
+    let mut clock = serde_json::to_value(ChainClock::new(h(41), 42, 1_800_000_000_123)).unwrap();
+    clock["timestamp_seconds"] = serde_json::json!(1_800_000_000);
+    assert!(serde_json::from_value::<ChainClock>(clock).is_err());
+
+    assert!(
+        serde_json::from_value::<NativeRefundObservation>(
+            serde_json::json!({"status": "not_requested", "facts": {}}),
+        )
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<NativeEscrowAccountObservation>(
+            serde_json::json!({"status": "absent", "facts": {}}),
+        )
+        .is_err()
+    );
+}
 
 fn h(byte: u8) -> Hex32 {
     Hex32::from_bytes([byte; 32])
