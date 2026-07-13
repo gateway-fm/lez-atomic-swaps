@@ -73,15 +73,23 @@ impl SqliteZecRecoveryStore {
     /// # Errors
     ///
     /// Returns a store error when `SQLite` cannot open, configure, or migrate the
-    /// database.
+    /// database, or when the supplied key cannot authenticate an existing
+    /// role-local claim envelope.
     pub fn open_claim_capable(
         path: impl AsRef<Path>,
         local_participant: Participant,
         claim_key: ProtectedClaimKey,
     ) -> Result<Self, StoreError> {
+        let connection = open_configured_connection(path)?;
+        validate_existing_claim_envelopes(
+            &connection,
+            participant_name(local_participant),
+            local_participant,
+            &claim_key,
+        )?;
         Ok(Self {
             local_participant,
-            connection: Arc::new(Mutex::new(open_configured_connection(path)?)),
+            connection: Arc::new(Mutex::new(connection)),
             claim_key: Some(Arc::new(claim_key)),
         })
     }
@@ -2517,6 +2525,30 @@ fn validated_claim_journal_head(
             validated_taker_journal_head(connection, role, local_participant, Some(key), swap_id)
         }
     }
+}
+
+fn validate_existing_claim_envelopes(
+    connection: &Connection,
+    role: &str,
+    local_participant: Participant,
+    key: &ProtectedClaimKey,
+) -> Result<(), StoreError> {
+    let swap_ids = {
+        let mut statement = connection.prepare(
+            "SELECT swap_id FROM zec_sdk_claim_materials WHERE local_role = ?1
+             UNION
+             SELECT swap_id FROM zec_sdk_claim_intents WHERE local_role = ?1
+             ORDER BY swap_id",
+        )?;
+        let rows = statement.query_map(params![role], |row| row.get::<_, String>(0))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    for stored_swap_id in swap_ids {
+        let swap_id =
+            SwapId::new(stored_swap_id).map_err(|_| StoreError::InvalidZecRecoveryState)?;
+        let _ = validated_claim_journal_head(connection, role, local_participant, key, &swap_id)?;
+    }
+    Ok(())
 }
 
 fn claim_coordinator_at(

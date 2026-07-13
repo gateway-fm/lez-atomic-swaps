@@ -291,9 +291,13 @@ struct SqliteClaimPort {
     maker_observation: std::sync::Arc<std::sync::Mutex<MakerLockObservationV1>>,
     lock_submissions: std::sync::Arc<std::sync::Mutex<Vec<FirstLockStepV1>>>,
     claim_submissions: std::sync::Arc<std::sync::Mutex<Vec<ClaimStepV1>>>,
+    observed_claim_payloads: std::sync::Arc<std::sync::Mutex<ClaimPayloadLog>>,
+    claim_fail_after_accept: std::sync::Arc<std::sync::Mutex<Vec<ClaimStepV1>>>,
     revealing_preimage: std::sync::Arc<std::sync::Mutex<Option<[u8; 32]>>>,
     followup_confirmed: std::sync::Arc<std::sync::Mutex<bool>>,
 }
+
+type ClaimPayloadLog = Vec<(ClaimStepV1, Vec<u8>)>;
 
 impl Default for SqliteClaimPort {
     fn default() -> Self {
@@ -306,6 +310,8 @@ impl Default for SqliteClaimPort {
             )),
             lock_submissions: std::sync::Arc::default(),
             claim_submissions: std::sync::Arc::default(),
+            observed_claim_payloads: std::sync::Arc::default(),
+            claim_fail_after_accept: std::sync::Arc::default(),
             revealing_preimage: std::sync::Arc::default(),
             followup_confirmed: std::sync::Arc::default(),
         }
@@ -345,6 +351,20 @@ impl SqliteClaimPort {
         self.claim_submissions
             .lock()
             .expect("claim submissions lock")
+            .clone()
+    }
+
+    fn fail_claim_after_accept(&self, step: ClaimStepV1) {
+        self.claim_fail_after_accept
+            .lock()
+            .expect("claim failure lock")
+            .push(step);
+    }
+
+    fn observed_claim_payloads(&self) -> Vec<(ClaimStepV1, Vec<u8>)> {
+        self.observed_claim_payloads
+            .lock()
+            .expect("observed claim payloads lock")
             .clone()
     }
 
@@ -539,6 +559,13 @@ impl LezClaimPort for SqliteClaimPort {
         if prepared.expected_submission_id() != &[0xc1; 32] {
             return Err(TestPortError("substituted revealing claim identity"));
         }
+        self.observed_claim_payloads
+            .lock()
+            .expect("observed claim payloads lock")
+            .push((
+                ClaimStepV1::RevealingLez,
+                prepared.exact_submission().to_vec(),
+            ));
         self.revealing_observation(agreement)
     }
 
@@ -564,7 +591,16 @@ impl LezClaimPort for SqliteClaimPort {
             .lock()
             .expect("claim submissions lock")
             .push(ClaimStepV1::RevealingLez);
-        Ok(())
+        if self
+            .claim_fail_after_accept
+            .lock()
+            .expect("claim failure lock")
+            .contains(&ClaimStepV1::RevealingLez)
+        {
+            Err(TestPortError("claim accepted before transport failure"))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -591,6 +627,13 @@ impl ZcashClaimPort for SqliteClaimPort {
         if prepared.expected_submission_id() != &[0xc2; 32] {
             return Err(TestPortError("substituted follow-up claim identity"));
         }
+        self.observed_claim_payloads
+            .lock()
+            .expect("observed claim payloads lock")
+            .push((
+                ClaimStepV1::FollowupZcash,
+                prepared.exact_submission().to_vec(),
+            ));
         self.followup_observation(agreement)
     }
 
@@ -616,7 +659,16 @@ impl ZcashClaimPort for SqliteClaimPort {
             .lock()
             .expect("claim submissions lock")
             .push(ClaimStepV1::FollowupZcash);
-        Ok(())
+        if self
+            .claim_fail_after_accept
+            .lock()
+            .expect("claim failure lock")
+            .contains(&ClaimStepV1::FollowupZcash)
+        {
+            Err(TestPortError("claim accepted before transport failure"))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -979,6 +1031,579 @@ fn assert_claim_plaintext_absent(path: &std::path::Path, secret: [u8; 32]) {
             );
         }
     }
+}
+
+struct LockedClaimFixture {
+    _data: TempDir,
+    maker_path: std::path::PathBuf,
+    taker_path: std::path::PathBuf,
+    port: SqliteClaimPort,
+    maker_store: SqliteZecRecoveryStore,
+    taker_store: SqliteZecRecoveryStore,
+    maker: ClaimActive,
+    taker: ClaimActive,
+    secret: [u8; 32],
+}
+
+struct CompletedClaimFixture {
+    _data: TempDir,
+    maker_path: std::path::PathBuf,
+    taker_path: std::path::PathBuf,
+    port: SqliteClaimPort,
+}
+
+async fn locked_claim_fixture(id: &str) -> LockedClaimFixture {
+    let data = TempDir::new().expect("isolated hardening directory");
+    let maker_path = data.path().join("maker.sqlite3");
+    let taker_path = data.path().join("taker.sqlite3");
+    let secret = [0x93; 32];
+    let wire = agreement_wire_direction_with_digest(
+        id,
+        FixtureVariant::Local,
+        SwapDirection::TakerSellsForeign,
+        Sha256::digest(secret).into(),
+    );
+    let port = SqliteClaimPort::default();
+    let maker_store = claim_store(&maker_path, Participant::Maker);
+    let taker_store = claim_store(&taker_path, Participant::Taker);
+    let maker_sdk = claim_sdk(Participant::Maker, port.clone(), maker_store.clone());
+    let taker_sdk = claim_sdk(Participant::Taker, port.clone(), taker_store.clone());
+    let mut maker = maker_sdk
+        .activate(accept(&wire, Participant::Maker))
+        .await
+        .expect("maker activation");
+    let mut taker = taker_sdk
+        .activate_with_claim_preimage(
+            accept(&wire, Participant::Taker),
+            ClaimPreimage::new(secret),
+        )
+        .await
+        .expect("taker protected activation");
+    drive_sqlite_claim_locks(
+        SwapDirection::TakerSellsForeign,
+        &port,
+        &mut maker,
+        &mut taker,
+    )
+    .await;
+    LockedClaimFixture {
+        _data: data,
+        maker_path,
+        taker_path,
+        port,
+        maker_store,
+        taker_store,
+        maker,
+        taker,
+        secret,
+    }
+}
+
+async fn completed_claim_fixture(id: &str) -> CompletedClaimFixture {
+    let mut fixture = locked_claim_fixture(id).await;
+    drive_sqlite_claims(
+        id,
+        Participant::Taker,
+        fixture.secret,
+        &fixture.port,
+        (&fixture.maker_store, &fixture.taker_store),
+        &mut fixture.maker,
+        &mut fixture.taker,
+    )
+    .await;
+    let LockedClaimFixture {
+        _data: data,
+        maker_path,
+        taker_path,
+        port,
+        maker_store,
+        taker_store,
+        maker,
+        taker,
+        ..
+    } = fixture;
+    drop(maker);
+    drop(taker);
+    drop(maker_store);
+    drop(taker_store);
+    CompletedClaimFixture {
+        _data: data,
+        maker_path,
+        taker_path,
+        port,
+    }
+}
+
+fn claim_key(key_id: &str, material: [u8; 32]) -> ProtectedClaimKey {
+    ProtectedClaimKey::new(key_id.to_owned(), material).expect("hardening claim key")
+}
+
+async fn claim_open_or_resume_fails(
+    fixture: &CompletedClaimFixture,
+    id: &str,
+    path: &std::path::Path,
+    participant: Participant,
+    key_id: &str,
+    material: [u8; 32],
+) -> bool {
+    let Ok(store) =
+        SqliteZecRecoveryStore::open_claim_capable(path, participant, claim_key(key_id, material))
+    else {
+        return true;
+    };
+    claim_sdk(participant, fixture.port.clone(), store)
+        .resume_claim_capable(&SwapId::new(id).expect("hardening swap ID"))
+        .await
+        .is_err()
+}
+
+fn claim_db_shape(path: &std::path::Path, role: &str, id: &str) -> (i64, i64, i64, i64, i64) {
+    let connection = Connection::open(path).expect("inspect claim database shape");
+    connection
+        .query_row(
+            "SELECT a.active_revision,
+                    (SELECT COUNT(*) FROM zec_sdk_claim_materials m
+                     WHERE m.local_role = a.local_role AND m.swap_id = a.swap_id),
+                    (SELECT COUNT(*) FROM zec_sdk_claim_intents i
+                     WHERE i.local_role = a.local_role AND i.swap_id = a.swap_id),
+                    (SELECT COUNT(*) FROM zec_sdk_owned_claim_transitions o
+                     WHERE o.local_role = a.local_role AND o.swap_id = a.swap_id),
+                    (SELECT COUNT(*) FROM zec_sdk_observed_claim_transitions x
+                     WHERE x.local_role = a.local_role AND x.swap_id = a.swap_id)
+             FROM zec_sdk_agreements a WHERE a.local_role = ?1 AND a.swap_id = ?2",
+            params![role, id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .expect("claim database shape")
+}
+
+#[tokio::test]
+async fn claim_reopen_rejects_wrong_key_id_or_material_without_state_mutation() {
+    let id = "sqlite-claim-wrong-keys";
+    let fixture = completed_claim_fixture(id).await;
+    let before = claim_db_shape(&fixture.maker_path, "maker", id);
+    assert!(
+        SqliteZecRecoveryStore::open_claim_capable(
+            &fixture.maker_path,
+            Participant::Maker,
+            claim_key("sqlite-test-claim-key-v2", [0x7a; 32]),
+        )
+        .is_err()
+    );
+    assert_eq!(claim_db_shape(&fixture.maker_path, "maker", id), before);
+    assert!(
+        SqliteZecRecoveryStore::open_claim_capable(
+            &fixture.maker_path,
+            Participant::Maker,
+            claim_key("sqlite-test-claim-key-v1", [0x7b; 32]),
+        )
+        .is_err()
+    );
+    assert_eq!(claim_db_shape(&fixture.maker_path, "maker", id), before);
+}
+
+#[derive(Clone, Copy)]
+enum ProtectedPayloadCorruption {
+    Ciphertext,
+    Nonce,
+    Fingerprint,
+    FutureVersion,
+}
+
+#[tokio::test]
+async fn corrupt_or_future_protected_claim_payloads_fail_closed_on_reopen() {
+    for (id, corruption) in [
+        (
+            "sqlite-claim-corrupt-ciphertext",
+            ProtectedPayloadCorruption::Ciphertext,
+        ),
+        (
+            "sqlite-claim-corrupt-nonce",
+            ProtectedPayloadCorruption::Nonce,
+        ),
+        (
+            "sqlite-claim-corrupt-fingerprint",
+            ProtectedPayloadCorruption::Fingerprint,
+        ),
+        (
+            "sqlite-claim-future-protected-version",
+            ProtectedPayloadCorruption::FutureVersion,
+        ),
+    ] {
+        let fixture = completed_claim_fixture(id).await;
+        corrupt_protected_claim_payload(&fixture.maker_path, id, corruption);
+        let before = claim_db_shape(&fixture.maker_path, "maker", id);
+        assert!(
+            claim_open_or_resume_fails(
+                &fixture,
+                id,
+                &fixture.maker_path,
+                Participant::Maker,
+                "sqlite-test-claim-key-v1",
+                [0x7a; 32],
+            )
+            .await,
+            "corrupt protected payload must fail closed for {id}"
+        );
+        assert_eq!(claim_db_shape(&fixture.maker_path, "maker", id), before);
+    }
+}
+
+fn corrupt_protected_claim_payload(
+    path: &std::path::Path,
+    id: &str,
+    corruption: ProtectedPayloadCorruption,
+) {
+    let connection = Connection::open(path).expect("open protected claim payload");
+    let column = match corruption {
+        ProtectedPayloadCorruption::Ciphertext => "protected_ciphertext",
+        ProtectedPayloadCorruption::Nonce => "protected_nonce",
+        ProtectedPayloadCorruption::Fingerprint => "protected_fingerprint",
+        ProtectedPayloadCorruption::FutureVersion => {
+            connection
+                .execute(
+                    "UPDATE zec_sdk_claim_intents SET protected_version = 2
+                     WHERE local_role = 'maker' AND swap_id = ?1",
+                    params![id],
+                )
+                .expect("install future protected payload version");
+            return;
+        }
+    };
+    let mut bytes: Vec<u8> = connection
+        .query_row(
+            &format!(
+                "SELECT {column} FROM zec_sdk_claim_intents
+                 WHERE local_role = 'maker' AND swap_id = ?1"
+            ),
+            params![id],
+            |row| row.get(0),
+        )
+        .expect("protected payload bytes");
+    bytes[0] ^= 0x80;
+    connection
+        .execute(
+            &format!(
+                "UPDATE zec_sdk_claim_intents SET {column} = ?1
+                 WHERE local_role = 'maker' AND swap_id = ?2"
+            ),
+            params![bytes, id],
+        )
+        .expect("corrupt protected payload bytes");
+}
+
+#[derive(Clone, Copy)]
+enum ClaimJournalCorruption {
+    ClosedIntentWithoutOwnedTransition,
+    ObservedMaterialWithoutReveal,
+    DuplicateRevision,
+    ActiveRevisionDrift,
+}
+
+#[tokio::test]
+async fn orphaned_duplicate_holey_or_drifted_claim_journals_fail_closed() {
+    for (id, corruption) in [
+        (
+            "sqlite-claim-orphan-closed-intent",
+            ClaimJournalCorruption::ClosedIntentWithoutOwnedTransition,
+        ),
+        (
+            "sqlite-claim-orphan-observed-material",
+            ClaimJournalCorruption::ObservedMaterialWithoutReveal,
+        ),
+        (
+            "sqlite-claim-duplicate-revision",
+            ClaimJournalCorruption::DuplicateRevision,
+        ),
+        (
+            "sqlite-claim-active-drift",
+            ClaimJournalCorruption::ActiveRevisionDrift,
+        ),
+    ] {
+        let fixture = completed_claim_fixture(id).await;
+        let (path, participant, role) = corrupt_claim_journal(&fixture, id, corruption);
+        let before = claim_db_shape(path, role, id);
+        assert!(
+            claim_open_or_resume_fails(
+                &fixture,
+                id,
+                path,
+                participant,
+                "sqlite-test-claim-key-v1",
+                [0x7a; 32],
+            )
+            .await,
+            "corrupt unified claim journal must fail closed for {id}"
+        );
+        assert_eq!(claim_db_shape(path, role, id), before);
+    }
+}
+
+fn corrupt_claim_journal<'a>(
+    fixture: &'a CompletedClaimFixture,
+    id: &str,
+    corruption: ClaimJournalCorruption,
+) -> (&'a std::path::Path, Participant, &'static str) {
+    let (path, participant, role) = match corruption {
+        ClaimJournalCorruption::ClosedIntentWithoutOwnedTransition
+        | ClaimJournalCorruption::DuplicateRevision => {
+            (&fixture.taker_path, Participant::Taker, "taker")
+        }
+        ClaimJournalCorruption::ObservedMaterialWithoutReveal
+        | ClaimJournalCorruption::ActiveRevisionDrift => {
+            (&fixture.maker_path, Participant::Maker, "maker")
+        }
+    };
+    let connection = Connection::open(path).expect("open corrupt claim journal");
+    match corruption {
+        ClaimJournalCorruption::ClosedIntentWithoutOwnedTransition => {
+            connection
+                .execute(
+                    "DELETE FROM zec_sdk_owned_claim_transitions
+                     WHERE local_role = 'taker' AND swap_id = ?1
+                       AND predecessor_revision = 2",
+                    params![id],
+                )
+                .expect("remove owned reveal");
+        }
+        ClaimJournalCorruption::ObservedMaterialWithoutReveal => {
+            connection
+                .execute(
+                    "DELETE FROM zec_sdk_observed_claim_transitions
+                     WHERE local_role = 'maker' AND swap_id = ?1
+                       AND predecessor_revision = 2",
+                    params![id],
+                )
+                .expect("remove observed reveal");
+        }
+        ClaimJournalCorruption::DuplicateRevision => {
+            connection
+                .execute(
+                    "INSERT INTO zec_sdk_observed_claim_transitions (
+                        local_role, swap_id, transition_kind, predecessor_revision,
+                        committed_revision, material_created_revision,
+                        payload_version, payload_json
+                     ) SELECT local_role, swap_id, 'observed_followup_zcash', 2, 3,
+                              NULL, payload_version, payload_json
+                       FROM zec_sdk_observed_claim_transitions
+                      WHERE local_role = 'taker' AND swap_id = ?1
+                        AND predecessor_revision = 3",
+                    params![id],
+                )
+                .expect("install duplicate aggregate revision");
+        }
+        ClaimJournalCorruption::ActiveRevisionDrift => {
+            connection
+                .execute(
+                    "UPDATE zec_sdk_agreements SET active_revision = 5
+                     WHERE local_role = 'maker' AND swap_id = ?1",
+                    params![id],
+                )
+                .expect("install active revision drift");
+        }
+    }
+    (path, participant, role)
+}
+
+#[tokio::test]
+async fn claim_transition_failures_roll_back_every_coupled_sqlite_effect() {
+    assert_owned_claim_commit_rolls_back().await;
+    assert_observed_reveal_commit_rolls_back().await;
+}
+
+async fn assert_owned_claim_commit_rolls_back() {
+    let id = "sqlite-owned-claim-rollback";
+    let mut fixture = locked_claim_fixture(id).await;
+    fixture
+        .taker
+        .drive_claim()
+        .await
+        .expect("stage and submit revealing claim");
+    install_claim_abort_trigger(
+        &fixture.taker_path,
+        "owned",
+        "zec_sdk_owned_claim_transitions",
+    );
+    fixture.port.confirm_revealing_claim(fixture.secret);
+    assert!(fixture.taker.drive_claim().await.is_err());
+    let connection = Connection::open(&fixture.taker_path).expect("inspect owned rollback");
+    let active: i64 = connection
+        .query_row(
+            "SELECT active_revision FROM zec_sdk_agreements
+             WHERE local_role = 'taker' AND swap_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .expect("owned rollback active revision");
+    let closed: Option<i64> = connection
+        .query_row(
+            "SELECT closed_revision FROM zec_sdk_claim_intents
+             WHERE local_role = 'taker' AND swap_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .expect("owned rollback intent");
+    let transitions: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM zec_sdk_owned_claim_transitions
+             WHERE local_role = 'taker' AND swap_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .expect("owned rollback transitions");
+    assert_eq!((active, closed, transitions), (2, None, 0));
+}
+
+async fn assert_observed_reveal_commit_rolls_back() {
+    let id = "sqlite-observed-reveal-rollback";
+    let mut fixture = locked_claim_fixture(id).await;
+    fixture
+        .taker
+        .drive_claim()
+        .await
+        .expect("submit revealing claim");
+    fixture.port.confirm_revealing_claim(fixture.secret);
+    fixture
+        .taker
+        .drive_claim()
+        .await
+        .expect("owner commits revealing claim");
+    install_claim_abort_trigger(
+        &fixture.maker_path,
+        "observed",
+        "zec_sdk_observed_claim_transitions",
+    );
+    assert!(fixture.maker.drive_claim().await.is_err());
+    let connection = Connection::open(&fixture.maker_path).expect("inspect observed rollback");
+    let active: i64 = connection
+        .query_row(
+            "SELECT active_revision FROM zec_sdk_agreements
+             WHERE local_role = 'maker' AND swap_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .expect("observed rollback active revision");
+    let materials: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM zec_sdk_claim_materials
+             WHERE local_role = 'maker' AND swap_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .expect("observed rollback materials");
+    let transitions: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM zec_sdk_observed_claim_transitions
+             WHERE local_role = 'maker' AND swap_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .expect("observed rollback transitions");
+    assert_eq!((active, materials, transitions), (2, 0, 0));
+}
+
+fn install_claim_abort_trigger(path: &std::path::Path, name: &str, table: &str) {
+    let connection = Connection::open(path).expect("open claim rollback trigger database");
+    connection
+        .execute_batch(&format!(
+            "CREATE TRIGGER fail_{name}_claim_insert
+             BEFORE INSERT ON {table}
+             BEGIN SELECT RAISE(ABORT, 'forced claim transition failure'); END;"
+        ))
+        .expect("install claim rollback trigger");
+}
+
+#[tokio::test]
+async fn claim_retry_observes_exact_durable_bytes_before_any_rebroadcast() {
+    assert_unknown_revealing_submission_is_observed().await;
+    assert_stale_revealing_commit_is_replayed().await;
+}
+
+async fn assert_unknown_revealing_submission_is_observed() {
+    let id = "sqlite-unknown-revealing-submission";
+    let mut fixture = locked_claim_fixture(id).await;
+    fixture
+        .port
+        .fail_claim_after_accept(ClaimStepV1::RevealingLez);
+    assert!(fixture.taker.drive_claim().await.is_err());
+    assert_eq!(
+        fixture.port.claim_submissions(),
+        vec![ClaimStepV1::RevealingLez]
+    );
+    fixture.port.confirm_revealing_claim(fixture.secret);
+    let mut recovered = claim_sdk(
+        Participant::Taker,
+        fixture.port.clone(),
+        claim_store(&fixture.taker_path, Participant::Taker),
+    )
+    .resume_claim_capable(&SwapId::new(id).expect("swap ID"))
+    .await
+    .expect("resume unknown revealing submission")
+    .expect("durable taker claim");
+    recovered
+        .drive_claim()
+        .await
+        .expect("observe accepted revealing submission");
+    assert_eq!(recovered.status(), Phase::ClaimEvidenceAvailable);
+    assert_eq!(
+        fixture.port.claim_submissions(),
+        vec![ClaimStepV1::RevealingLez],
+        "accepted revealing bytes must not be broadcast twice"
+    );
+    assert_exact_revealing_observations(&fixture.port, fixture.secret);
+}
+
+async fn assert_stale_revealing_commit_is_replayed() {
+    let id = "sqlite-stale-revealing-commit";
+    let mut fixture = locked_claim_fixture(id).await;
+    fixture
+        .taker
+        .drive_claim()
+        .await
+        .expect("stage revealing claim");
+    fixture.port.confirm_revealing_claim(fixture.secret);
+    let mut stale = claim_sdk(
+        Participant::Taker,
+        fixture.port.clone(),
+        claim_store(&fixture.taker_path, Participant::Taker),
+    )
+    .resume_claim_capable(&SwapId::new(id).expect("swap ID"))
+    .await
+    .expect("resume before unknown commit")
+    .expect("stale claim actor");
+    fixture
+        .taker
+        .drive_claim()
+        .await
+        .expect("first actor commits revealing claim");
+    stale
+        .drive_claim()
+        .await
+        .expect("stale actor replays exact committed transition");
+    assert_eq!(stale.status(), Phase::ClaimEvidenceAvailable);
+    assert_eq!(
+        fixture.port.claim_submissions(),
+        vec![ClaimStepV1::RevealingLez]
+    );
+    assert_exact_revealing_observations(&fixture.port, fixture.secret);
+}
+
+fn assert_exact_revealing_observations(port: &SqliteClaimPort, secret: [u8; 32]) {
+    let mut expected = b"sqlite-lez-claim:".to_vec();
+    expected.extend_from_slice(&secret);
+    let observations = port.observed_claim_payloads();
+    assert!(!observations.is_empty());
+    assert!(observations.iter().all(|(step, exact)| {
+        *step == ClaimStepV1::RevealingLez && exact.as_slice() == expected.as_slice()
+    }));
 }
 
 #[tokio::test]
