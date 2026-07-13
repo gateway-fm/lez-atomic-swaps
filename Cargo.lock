@@ -1320,6 +1320,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lez-bridge-protocol"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "hex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "zeroize",
+]
+
+[[package]]
 name = "lez-maker-node"
 version = "0.1.0"
 dependencies = [
