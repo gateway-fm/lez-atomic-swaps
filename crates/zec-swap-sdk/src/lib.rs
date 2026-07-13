@@ -75,7 +75,9 @@ pub use lez_claim_observation::{
 };
 pub use lez_derivation::{
     derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_public_pda_v1,
-    derive_lez_swap_id_v1, derive_lez_token_account_v1,
+    derive_lez_swap_id_v1, derive_lez_token_account_v1, derive_nssa_v0_1_2_metadata_account_v1,
+    derive_nssa_v0_1_2_native_custody_account_v1, derive_nssa_v0_1_2_public_pda_v1,
+    derive_nssa_v0_1_2_token_account_v1,
 };
 pub use lez_observation::{
     CanonicalLezEscrowObservationV1, CanonicalLezEscrowRemovalV1, LezCustodySnapshotV1,

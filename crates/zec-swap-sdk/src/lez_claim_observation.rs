@@ -437,7 +437,11 @@ fn validate_claim_inclusion_policy(
     status: LezInclusionStatusV1,
 ) -> Result<(), LezClaimObservationError> {
     match (environment, status) {
-        (LezEnvironmentV1::DeterministicLocalV0_2, _)
+        (
+            LezEnvironmentV1::DeterministicLocalV0_2
+            | LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility,
+            _,
+        )
         | (LezEnvironmentV1::PublicTestnetV0_2, LezInclusionStatusV1::Finalized) => Ok(()),
         (LezEnvironmentV1::PublicTestnetV0_2, _) => {
             Err(LezClaimObservationError::UnstableInclusionStatus)
@@ -564,16 +568,21 @@ mod tests {
 
     #[test]
     fn claim_finality_policy_separates_deterministic_standalone_from_public_bedrock() {
-        for status in [
-            LezInclusionStatusV1::Pending,
-            LezInclusionStatusV1::Safe,
-            LezInclusionStatusV1::Finalized,
+        for environment in [
+            LezEnvironmentV1::DeterministicLocalV0_2,
+            LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility,
         ] {
-            assert_eq!(
-                validate_claim_inclusion_policy(LezEnvironmentV1::DeterministicLocalV0_2, status),
-                Ok(()),
-                "deterministic status {status:?}",
-            );
+            for status in [
+                LezInclusionStatusV1::Pending,
+                LezInclusionStatusV1::Safe,
+                LezInclusionStatusV1::Finalized,
+            ] {
+                assert_eq!(
+                    validate_claim_inclusion_policy(environment, status),
+                    Ok(()),
+                    "deterministic environment {environment:?}, status {status:?}",
+                );
+            }
         }
         for status in [LezInclusionStatusV1::Pending, LezInclusionStatusV1::Safe] {
             assert_eq!(

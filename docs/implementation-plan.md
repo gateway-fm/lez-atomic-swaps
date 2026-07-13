@@ -529,8 +529,30 @@ outputs above.
   checks, observe-before-rebroadcast, byte-exact submission, explicit
   post-submit unknown outcomes, and sensitive cookie authentication on explicit
   loopback HTTP only. Its 14 tests use SDK-built canonical V5 transactions; the
-  composed actual-node corridor is still RED. Pin weakening, crypto patches,
-  and hand-copied LEZ wire/RPC types are prohibited.
+  composed actual-node corridor is still RED. Commit `b0d3b52` closes the
+  cross-adapter evidence-loss gap: typed Zebra/LEZ observations now carry the
+  exact final submission identity, canonical transaction ID, and observed depth
+  through `ReadyForFundingProjection`; the SDK checks step, durable identity,
+  and agreement-required depth before returning it, and actor/SQLite restart
+  tests project that returned evidence instead of fabricating a replacement.
+  The next runtime-identity RED
+  proved that the pinned v0.1.2 standalone's `/NSSA/` PDA domain cannot be
+  truthfully reported as v0.2 `/LEE/`. GREEN adds the append-only
+  `DeterministicLocalV0_1_2Compatibility` agreement environment, selects exact
+  metadata/native-custody/token derivations from the signed environment, keeps
+  public v0.2 fail-closed, and cross-checks the dependency-light SDK derivation
+  byte-for-byte against pinned official `nssa`/`ata_core` v0.1.2 types. This is
+  the honest deterministic corridor profile, not production v0.2 evidence.
+  Pin weakening, crypto patches, and hand-copied LEZ wire/RPC types are
+  prohibited.
+- [ ] Prove the composed native happy path preserves the ADR 0022 atomicity
+  invariants in both directions: separate role processes/stores/keys/sidecars;
+  taker-first and maker-after-canonical-evidence ordering; both locks before
+  reveal; canonical LEZ reveal before the exact Zcash outpoint spend; durable
+  intent before every broadcast; close/reopen and observe-before-rebroadcast
+  after every external effect; and no peer dependency after both locks. Record
+  the signed refund margin but keep public-latency calibration as a separate M2
+  gate rather than treating Regtest timing as production proof.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
   nodes. The LEZ
   Unix-millisecond/core Unix-second boundary is typed, checked, conservatively

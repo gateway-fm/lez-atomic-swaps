@@ -5,33 +5,39 @@ Status: Accepted for the M2 actual-node corridor; implementation in progress --
 
 ```mermaid
 flowchart LR
-    subgraph ActorProcess["Role-fixed reference actor process"]
-        SDK["LEZ/ZEC swap SDK"]
-        LezAdapter["SDK-facing LEZ node adapter"]
-        ZebraAdapter["Typed Zebra node adapter"]
-        State[("Role-local SQLite state")]
+    subgraph MakerActor["Maker actor process"]
+        MakerSDK["Role-fixed SDK"]
+        MakerLezAdapter["LEZ bridge adapter"]
+        MakerZebraAdapter["Zebra adapter"]
+        MakerState[("Maker SQLite")]
     end
-
-    subgraph LezSidecarProcess["Pinned LEZ v0.1.2 sidecar process"]
-        Capability["Run-scoped capability check"]
-        OfficialTypes["Official LEZ transaction and RPC types"]
-        LezSigner["Actor signer and nonce lease"]
+    subgraph TakerActor["Taker actor process"]
+        TakerSDK["Role-fixed SDK"]
+        TakerLezAdapter["LEZ bridge adapter"]
+        TakerZebraAdapter["Zebra adapter"]
+        TakerState[("Taker SQLite")]
     end
+    subgraph Sidecars["Pinned LEZ v0.1.2 sidecar processes"]
+        MakerSidecar["Maker capability and signer"]
+        TakerSidecar["Taker capability and signer"]
+    end
+    Zebra["Zebra Regtest JSON-RPC"]
+    LezNode["LEZ standalone JSON-RPC"]
 
-    Zebra["Zebra JSON-RPC"]
-    LezNode["LEZ sequencer JSON-RPC"]
-
-    SDK --> State
-    SDK --> LezAdapter
-    SDK --> ZebraAdapter
-    LezAdapter -->|"Bounded serde-only adapter protocol"| Capability
-    Capability --> OfficialTypes
-    OfficialTypes --> LezSigner
-    OfficialTypes -->|"Exact signed bytes and primitive snapshots"| LezNode
-    ZebraAdapter -->|"Typed bounded JSON-RPC"| Zebra
-    LezAdapter -->|"Primitive facts"| SDK
-    ZebraAdapter -->|"Primitive facts"| SDK
-    SDK -->|"Agreement-bound canonical validation"| State
+    MakerSDK --> MakerState
+    MakerSDK --> MakerLezAdapter
+    MakerSDK --> MakerZebraAdapter
+    TakerSDK --> TakerState
+    TakerSDK --> TakerLezAdapter
+    TakerSDK --> TakerZebraAdapter
+    MakerLezAdapter -->|"Bounded serde protocol and maker capability"| MakerSidecar
+    TakerLezAdapter -->|"Bounded serde protocol and taker capability"| TakerSidecar
+    MakerSidecar -->|"Official bytes and primitive facts"| LezNode
+    TakerSidecar -->|"Official bytes and primitive facts"| LezNode
+    MakerZebraAdapter -->|"Typed bounded JSON-RPC"| Zebra
+    TakerZebraAdapter -->|"Typed bounded JSON-RPC"| Zebra
+    MakerLezAdapter -->|"Primitive facts"| MakerSDK
+    TakerLezAdapter -->|"Primitive facts"| TakerSDK
 ```
 
 ## Context
@@ -66,6 +72,15 @@ declare a lock or claim canonical by assertion. The Zebra adapter similarly
 uses typed and bounded RPC DTOs, assembles stable snapshots from bracketing tip
 reads, and delegates transaction/output/spend validation to the existing SDK.
 
+The signed agreement names the runtime family exactly. The deterministic
+v0.1.2 corridor uses `DeterministicLocalV0_1_2Compatibility` and the official
+`/NSSA/v0.2/AccountId/PDA/` domain; it must never emit or be recorded as
+`DeterministicLocalV0_2`, whose deployed family uses the incompatible `/LEE/`
+domain. The SDK derives all metadata, native-custody, and token accounts from
+that signed selector, and a separate compatibility test compares the local
+derivation source to the pinned official v0.1.2 types. Public v0.2 activation
+remains fail-closed and is tracked as upstream production work.
+
 For the deterministic M2 runner, the sidecar listener is ephemeral loopback,
 requires a high-entropy run-scoped capability, rejects a different `RUN_ID`,
 and is owned by the one runner that starts it. A production deployment should
@@ -82,6 +97,44 @@ reconciliation observes exact identities before any byte-identical rebroadcast.
 The sidecar retains its own lockfile, source allowlist, license/advisory policy,
 and exact LEZ/SPEL pins. It does not depend on the swap SDK. The main workspace
 does not import the LEZ standalone/sequencer/Risc0 server graph.
+
+## Atomicity preservation
+
+No implementation can make LEZ and Zcash commit in one shared database or
+consensus transaction. This corridor therefore preserves atomic-swap safety by
+making every externally visible transition satisfy the same hashlock and a
+strictly ordered timeout protocol:
+
+1. Both signatures bind the same secret digest, amounts, actor destinations,
+   chain identities, programs, transaction policy, and asymmetric deadlines.
+2. The taker submits the first lock. The maker cannot prepare or submit the
+   second lock until fresh canonical evidence satisfies the signed identity,
+   role, output/account state, depth, and environment-specific finality policy.
+3. Neither claim path starts before both locks are durably projected. The LEZ
+   claim is always the revealing action in both trade directions. The later
+   Zcash claimant learns the preimage only from canonical LEZ transaction
+   evidence and spends the exact agreement-bound Zcash outpoint.
+4. The LEZ refund deadline is earlier than the Zcash refund deadline by the
+   signed safety margin. This gives an honest actor time to use a revealed
+   preimage on Zcash before the later refund becomes valid. Local timing proves
+   protocol ordering; public-testnet latency calibration remains an explicit M2
+   evidence gate.
+5. Exact prepared bytes and their expected identities are persisted before any
+   broadcast. After timeout, crash, or unknown submission outcome, a restarted
+   actor observes that identity before any byte-identical rebroadcast. It never
+   substitutes a newly signed transaction or advances from RPC success alone.
+6. Maker and taker use separate stores, claim keys, sidecar processes,
+   capabilities, and signers. A sidecar returns primitive facts only; the SDK
+   independently validates them against the dual-signed agreement before an
+   atomic local state-and-journal commit.
+
+These invariants preserve safety while either actor is offline after both locks:
+claim and refund drivers require only protected local state plus their chain
+nodes, not a peer message. They do not guarantee liveness during indefinite
+node outage, censorship, or a reorganization deeper than the signed policy.
+The deterministic v0.1.2 lane also has only depth-qualified `Pending` blocks;
+that weaker upstream finality model is isolated to its explicitly named local
+compatibility environment and is not production-v0.2 evidence.
 
 ## Rejected alternatives
 

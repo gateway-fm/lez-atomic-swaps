@@ -19,6 +19,8 @@ use crate::{
     TransparentUtxo, ZcashNetworkRecordV1, ZecBindingRecordError, ZecProfileId, ZecProfileRecordV1,
     ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1, derive_lez_metadata_account_v1,
     derive_lez_native_custody_account_v1, derive_lez_swap_id_v1, derive_lez_token_account_v1,
+    derive_nssa_v0_1_2_metadata_account_v1, derive_nssa_v0_1_2_native_custody_account_v1,
+    derive_nssa_v0_1_2_token_account_v1,
 };
 
 /// Domain separating version-1 agreement commitments from every other signature protocol.
@@ -79,6 +81,8 @@ pub enum LezEnvironmentV1 {
     DeterministicLocalV0_2,
     /// The public LEZ testnet v0.2 chain.
     PublicTestnetV0_2,
+    /// The pinned LEZ v0.1.2 NSSA runtime used only for deterministic compatibility evidence.
+    DeterministicLocalV0_1_2Compatibility,
 }
 
 /// Exact LEZ chain identity used by both independent actors.
@@ -110,7 +114,7 @@ impl LezChainIdentityV1 {
         self.environment
     }
 
-    /// Exact v0.2 execution channel returned by the sequencer RPC.
+    /// Exact execution channel reported by the selected runtime adapter.
     #[must_use]
     pub const fn channel_id(&self) -> &[u8; 32] {
         &self.channel_id
@@ -1457,6 +1461,7 @@ fn decode_lez_terms(
     let environment = match reader.u8()? {
         0 => LezEnvironmentV1::DeterministicLocalV0_2,
         1 => LezEnvironmentV1::PublicTestnetV0_2,
+        2 => LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility,
         _ => return Err(ZecAgreementV1Error::MalformedWireRecord),
     };
     let channel_id = if schema_version == ZEC_CONCRETE_AGREEMENT_SCHEMA_V1 {
@@ -1882,22 +1887,7 @@ fn validate_participants(participants: &ZecParticipantsV1) -> Result<(), ZecAgre
 
 fn validate_lez_terms(body: &ZecAgreementBodyV1) -> Result<(), ZecAgreementV1Error> {
     let terms = &body.lez;
-    if terms.chain.channel_id == [0; 32] {
-        return Err(ZecAgreementV1Error::EmptyLezChannel);
-    }
-    if terms.chain.genesis_block_hash == [0; 32] {
-        return Err(ZecAgreementV1Error::EmptyLezGenesis);
-    }
-    if body.profile == ZecProfileRecordV1::PublicTestnetV1 {
-        return Err(ZecAgreementV1Error::PublicTestnetDeploymentUnavailable);
-    }
-    let expected_environment = match body.profile {
-        ZecProfileRecordV1::DeterministicLocalV1 => LezEnvironmentV1::DeterministicLocalV0_2,
-        ZecProfileRecordV1::PublicTestnetV1 => LezEnvironmentV1::PublicTestnetV0_2,
-    };
-    if terms.chain.environment != expected_environment {
-        return Err(ZecAgreementV1Error::LezEnvironmentMismatch);
-    }
+    validate_lez_chain_profile(body, terms)?;
     if terms.amount == 0 {
         return Err(ZecAgreementV1Error::EmptyLezAmount);
     }
@@ -1905,8 +1895,11 @@ fn validate_lez_terms(body: &ZecAgreementBodyV1) -> Result<(), ZecAgreementV1Err
         return Err(ZecAgreementV1Error::EmptyLezIdentity);
     }
     let onchain_swap_id = derive_lez_swap_id_v1(body.application_swap_id.as_bytes());
-    let expected_metadata =
-        derive_lez_metadata_account_v1(&terms.escrow_program_id, &onchain_swap_id);
+    let expected_metadata = derive_runtime_metadata_account(
+        terms.chain.environment,
+        &terms.escrow_program_id,
+        &onchain_swap_id,
+    );
     if terms.metadata_account != expected_metadata {
         return Err(ZecAgreementV1Error::LezDerivationMismatch);
     }
@@ -1919,6 +1912,51 @@ fn validate_lez_terms(body: &ZecAgreementBodyV1) -> Result<(), ZecAgreementV1Err
         .participants
         .for_participant(lez_claimant)
         .lez_owner_account();
+    validate_lez_asset(
+        terms,
+        &onchain_swap_id,
+        expected_metadata,
+        depositor_owner,
+        claimant_owner,
+    )
+}
+
+fn validate_lez_chain_profile(
+    body: &ZecAgreementBodyV1,
+    terms: &ZecLezTermsV1,
+) -> Result<(), ZecAgreementV1Error> {
+    if terms.chain.channel_id == [0; 32] {
+        return Err(ZecAgreementV1Error::EmptyLezChannel);
+    }
+    if terms.chain.genesis_block_hash == [0; 32] {
+        return Err(ZecAgreementV1Error::EmptyLezGenesis);
+    }
+    if body.profile == ZecProfileRecordV1::PublicTestnetV1 {
+        return Err(ZecAgreementV1Error::PublicTestnetDeploymentUnavailable);
+    }
+    let environment_matches_profile = match body.profile {
+        ZecProfileRecordV1::DeterministicLocalV1 => matches!(
+            terms.chain.environment,
+            LezEnvironmentV1::DeterministicLocalV0_2
+                | LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility
+        ),
+        ZecProfileRecordV1::PublicTestnetV1 => {
+            terms.chain.environment == LezEnvironmentV1::PublicTestnetV0_2
+        }
+    };
+    if !environment_matches_profile {
+        return Err(ZecAgreementV1Error::LezEnvironmentMismatch);
+    }
+    Ok(())
+}
+
+fn validate_lez_asset(
+    terms: &ZecLezTermsV1,
+    onchain_swap_id: &[u8; 32],
+    expected_metadata: [u8; 32],
+    depositor_owner: [u8; 32],
+    claimant_owner: [u8; 32],
+) -> Result<(), ZecAgreementV1Error> {
     match &terms.asset {
         LezAssetV1::Native {
             authenticated_transfer_program_id,
@@ -1929,8 +1967,11 @@ fn validate_lez_terms(body: &ZecAgreementBodyV1) -> Result<(), ZecAgreementV1Err
             if *authenticated_transfer_program_id == terms.escrow_program_id {
                 return Err(ZecAgreementV1Error::ConflictingLezPrograms);
             }
-            let expected_custody =
-                derive_lez_native_custody_account_v1(&terms.escrow_program_id, &onchain_swap_id);
+            let expected_custody = derive_runtime_native_custody_account(
+                terms.chain.environment,
+                &terms.escrow_program_id,
+                onchain_swap_id,
+            );
             if terms.custody_account != expected_custody {
                 return Err(ZecAgreementV1Error::LezDerivationMismatch);
             }
@@ -1954,12 +1995,17 @@ fn validate_lez_terms(body: &ZecAgreementBodyV1) -> Result<(), ZecAgreementV1Err
             {
                 return Err(ZecAgreementV1Error::ConflictingLezPrograms);
             }
-            let expected_custody =
-                derive_lez_token_account_v1(ata_program_id, &expected_metadata, definition_account);
-            let expected_depositor =
-                derive_lez_token_account_v1(ata_program_id, &depositor_owner, definition_account);
-            let expected_claimant =
-                derive_lez_token_account_v1(ata_program_id, &claimant_owner, definition_account);
+            let derive_token = |owner| {
+                derive_runtime_token_account(
+                    terms.chain.environment,
+                    ata_program_id,
+                    owner,
+                    definition_account,
+                )
+            };
+            let expected_custody = derive_token(&expected_metadata);
+            let expected_depositor = derive_token(&depositor_owner);
+            let expected_claimant = derive_token(&claimant_owner);
             if terms.custody_account != expected_custody
                 || *depositor_ata != expected_depositor
                 || *claimant_ata != expected_claimant
@@ -1969,6 +2015,43 @@ fn validate_lez_terms(body: &ZecAgreementBodyV1) -> Result<(), ZecAgreementV1Err
         }
     }
     Ok(())
+}
+
+fn derive_runtime_metadata_account(
+    environment: LezEnvironmentV1,
+    escrow_program_id: &[u32; 8],
+    onchain_swap_id: &[u8; 32],
+) -> [u8; 32] {
+    if environment == LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility {
+        derive_nssa_v0_1_2_metadata_account_v1(escrow_program_id, onchain_swap_id)
+    } else {
+        derive_lez_metadata_account_v1(escrow_program_id, onchain_swap_id)
+    }
+}
+
+fn derive_runtime_native_custody_account(
+    environment: LezEnvironmentV1,
+    escrow_program_id: &[u32; 8],
+    onchain_swap_id: &[u8; 32],
+) -> [u8; 32] {
+    if environment == LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility {
+        derive_nssa_v0_1_2_native_custody_account_v1(escrow_program_id, onchain_swap_id)
+    } else {
+        derive_lez_native_custody_account_v1(escrow_program_id, onchain_swap_id)
+    }
+}
+
+fn derive_runtime_token_account(
+    environment: LezEnvironmentV1,
+    ata_program_id: &[u32; 8],
+    owner: &[u8; 32],
+    definition: &[u8; 32],
+) -> [u8; 32] {
+    if environment == LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility {
+        derive_nssa_v0_1_2_token_account_v1(ata_program_id, owner, definition)
+    } else {
+        derive_lez_token_account_v1(ata_program_id, owner, definition)
+    }
 }
 
 fn parse_role_key(

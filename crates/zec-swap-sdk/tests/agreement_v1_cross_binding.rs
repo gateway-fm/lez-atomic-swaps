@@ -9,7 +9,8 @@ use lez_zec_swap_sdk::{
     ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1,
     ZecRefundPlanV1, ZecRolePayoutV1, ZecSwapBinding, ZecSwapBindingRecordV1,
     ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
-    derive_lez_swap_id_v1, derive_lez_token_account_v1,
+    derive_lez_swap_id_v1, derive_lez_token_account_v1, derive_nssa_v0_1_2_metadata_account_v1,
+    derive_nssa_v0_1_2_native_custody_account_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use zcash_protocol::{
@@ -146,6 +147,15 @@ impl Fixture {
         fixture.earlier_latest_ms = 7_300_000;
         fixture.later_earliest = 14_500;
         fixture
+    }
+
+    fn use_nssa_v0_1_2_compatibility(&mut self) {
+        let onchain_swap_id = derive_lez_swap_id_v1(self.application_swap_id.as_bytes());
+        self.environment = LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility;
+        self.metadata_account =
+            derive_nssa_v0_1_2_metadata_account_v1(&self.escrow_program, &onchain_swap_id);
+        self.custody_account =
+            derive_nssa_v0_1_2_native_custody_account_v1(&self.escrow_program, &onchain_swap_id);
     }
 
     fn use_token_asset(
@@ -738,6 +748,33 @@ fn pinned_lez_v02_derivation_has_stable_golden_vectors() {
         hex::encode(derive_lez_token_account_v1(&[3; 8], &[3; 32], &[8; 32])),
         "a53b67a18d7eea8ba403d81edea1882aaa4e0fa1fcfdd799bc0e3003ac7a9e3c"
     );
+}
+
+#[test]
+fn deterministic_profile_accepts_explicit_nssa_v0_1_2_compatibility_identity() {
+    let mut fixture = Fixture::new(SwapDirection::TakerSellsForeign);
+    fixture.use_nssa_v0_1_2_compatibility();
+
+    let agreement = fixture
+        .validate()
+        .expect("the explicitly named pinned runtime compatibility identity is accepted");
+    assert_eq!(
+        agreement.lez_terms().chain().environment(),
+        LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility
+    );
+    assert_eq!(
+        agreement.lez_terms().metadata_account(),
+        &fixture.metadata_account
+    );
+    assert_eq!(
+        agreement.lez_terms().custody_account(),
+        &fixture.custody_account
+    );
+
+    let wire = agreement.encode_wire().expect("bounded compatibility wire");
+    let decoded =
+        ZecAgreementV1::from_wire_at(&wire, UnixSeconds::new(NOW)).expect("wire round trip");
+    assert_eq!(decoded.record(), agreement.record());
 }
 
 #[test]
