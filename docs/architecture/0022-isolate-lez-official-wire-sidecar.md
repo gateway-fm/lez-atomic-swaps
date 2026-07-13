@@ -133,10 +133,22 @@ strictly ordered timeout protocol:
 
 The implemented claim lifecycle is designed to remain peer-independent after
 both locks: it uses protected local state plus chain observations, not a peer
-message. The exact follow-up Zcash outpoint is now restart-safe. Fresh
-pre-reveal Zcash-output revalidation, durable post-lock reorg ingestion, and
-the composed actual-node proof remain M2 gates, so this safety claim is not yet
-certified for the complete corridor.
+message. The exact follow-up Zcash outpoint is restart-safe. Commit `166d3e5`
+also makes a fresh observation of that exact canonical, unspent, sufficiently
+deep, pre-CLTV Zcash output the final awaited port call before a retained LEZ
+reveal is submitted. Its two-direction restart matrix proves that absent,
+spent, unstable, replaced, under-depth, expired, and field-mutated observations
+release nothing, while restoration submits the same retained bytes once.
+Durable post-lock reorg ingestion and the composed actual-node proof remain M2
+gates, so this safety claim is not yet certified for the complete corridor.
+
+This ordering minimizes but cannot eliminate the cross-chain time-of-check to
+time-of-use window: Zcash state can change after the final observation while
+the LEZ transaction is in flight. Eliminating that interval would require a
+native atomic primitive spanning both chains. The implementation therefore
+combines the narrowest available check-to-submit interval with conservative
+confirmation depth, ordered refunds, continued chain observation, and durable
+recovery rather than claiming impossible absolute atomicity.
 
 Refund ordering is proven in the core state machine and signed parameter math,
 but executable SDK refund ports, exact durable refund intents,
