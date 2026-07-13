@@ -133,6 +133,7 @@ impl ZcashTakerFirstLockObservationPort for MakerObservation {
     async fn observe_taker_first_lock(
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        _previous: Option<&CanonicalZcashOutputObservation>,
     ) -> Result<TakerFirstLockObservationV1, Self::Error> {
         Ok(self.0.clone())
     }
@@ -234,6 +235,7 @@ impl ZcashTakerFirstLockObservationPort for MakerHappyPort {
     async fn observe_taker_first_lock(
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        _previous: Option<&CanonicalZcashOutputObservation>,
     ) -> Result<TakerFirstLockObservationV1, Self::Error> {
         Ok(self
             .taker_observation
@@ -451,6 +453,7 @@ impl ZcashTakerFirstLockObservationPort for SqliteClaimPort {
     async fn observe_taker_first_lock(
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        _previous: Option<&CanonicalZcashOutputObservation>,
     ) -> Result<TakerFirstLockObservationV1, Self::Error> {
         Ok(self
             .taker_observation

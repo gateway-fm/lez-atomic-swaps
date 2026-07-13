@@ -199,9 +199,14 @@ pub trait ZcashTakerFirstLockObservationPort: Send + Sync {
     type Error: Error + Send + Sync + 'static;
 
     /// Observes the taker's agreement-bound transparent funding output.
+    ///
+    /// `previous` is the last durably committed canonical observation, including
+    /// after restart, so the adapter can validate unchanged, removal, and replacement
+    /// snapshots against the exact predecessor.
     async fn observe_taker_first_lock(
         &self,
         agreement: &crate::ZecAgreementV1,
+        previous: Option<&crate::CanonicalZcashOutputObservation>,
     ) -> Result<TakerFirstLockObservationV1, Self::Error>;
 }
 

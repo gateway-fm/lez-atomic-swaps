@@ -878,7 +878,7 @@ where
         let observation = match step {
             crate::FirstLockStepV1::ZcashFund => self
                 .zcash
-                .observe_taker_first_lock(self.agreement())
+                .observe_taker_first_lock(self.agreement(), self.zcash_taker_lock_tracker.current())
                 .await
                 .map_err(|error| ZecSdkError::ZcashTakerFirstLockObservation(Box::new(error)))?,
             crate::FirstLockStepV1::LezFund => self

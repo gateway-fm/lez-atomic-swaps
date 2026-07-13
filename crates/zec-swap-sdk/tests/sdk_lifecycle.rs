@@ -1496,6 +1496,7 @@ struct MemoryZcashTakerLockObservation(
     MemoryFirstLockPort,
     MemoryMakerLockObservation,
     MemoryClaimCorridor,
+    Arc<Mutex<Vec<Option<CanonicalZcashOutputObservation>>>>,
 );
 
 #[async_trait]
@@ -1505,14 +1506,25 @@ impl ZcashTakerFirstLockObservationPort for MemoryZcashTakerLockObservation {
     async fn observe_taker_first_lock(
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        previous: Option<&CanonicalZcashOutputObservation>,
     ) -> Result<TakerFirstLockObservationV1, Self::Error> {
         *self.0.calls.lock().expect("observation calls lock") += 1;
+        self.4
+            .lock()
+            .expect("Zcash previous-head lock")
+            .push(previous.cloned());
         self.0
             .response
             .lock()
             .expect("observation response lock")
             .clone()
     }
+}
+
+fn take_zcash_previous_heads(
+    port: &MemoryZcashTakerLockObservation,
+) -> Vec<Option<CanonicalZcashOutputObservation>> {
+    std::mem::take(&mut *port.4.lock().expect("Zcash previous-head history"))
 }
 
 #[async_trait]
@@ -3090,6 +3102,7 @@ async fn assert_forward_canonical_history_survives_restart(
     canonical: CanonicalZcashOutputObservation,
 ) {
     let reorg_zcash = forward_zcash.clone();
+    let _ = take_zcash_previous_heads(&reorg_zcash);
     let mut restarted = ZecPairSdk::new(
         Participant::Maker,
         MemoryDiscovery::default(),
@@ -3110,6 +3123,23 @@ async fn assert_forward_canonical_history_survives_restart(
         "replayed observation requires a fresh canonical eligibility check"
     );
     assert_fresh_forward_eligibility(&mut restarted, 1).await;
+    assert_eq!(
+        take_zcash_previous_heads(&reorg_zcash),
+        vec![Some(canonical.clone())],
+        "restart replay supplies the durable canonical head for an unchanged poll"
+    );
+    assert_forward_reorg_history(&mut restarted, &reorg_zcash, canonical).await;
+}
+
+async fn assert_forward_reorg_history(
+    restarted: &mut ActiveZecSwap<
+        MemoryLezTakerLockObservation,
+        MemoryZcashTakerLockObservation,
+        MemoryStore,
+    >,
+    reorg_zcash: &MemoryZcashTakerLockObservation,
+    canonical: CanonicalZcashOutputObservation,
+) {
     let removed = canonical_zcash_removal(&canonical);
     let mismatched_replacement =
         canonical_zcash_taker_lock_with_input(restarted.agreement(), [8; 32]);
@@ -3122,6 +3152,11 @@ async fn assert_forward_canonical_history_survives_restart(
     assert!(
         restarted.observe_taker_first_lock().await.is_err(),
         "replacement halves from different stable tips must fail"
+    );
+    assert_eq!(
+        take_zcash_previous_heads(reorg_zcash),
+        vec![Some(canonical.clone())],
+        "replacement validation receives the durable canonical predecessor"
     );
     assert_eq!(restarted.revision(), 1);
     let replacement = canonical_zcash_replacement(restarted.agreement(), &removed);
@@ -3141,13 +3176,18 @@ async fn assert_forward_canonical_history_survives_restart(
     ));
     assert_eq!(restarted.status(), Phase::TakerLockConfirmed);
     assert_eq!(restarted.revision(), 2);
+    assert_eq!(
+        take_zcash_previous_heads(reorg_zcash),
+        vec![Some(canonical)],
+        "accepted replacement receives the same durable predecessor"
+    );
 
     reorg_zcash
         .0
         .respond(Ok(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
             replacement,
         ))));
-    assert_fresh_forward_eligibility(&mut restarted, 2).await;
+    assert_fresh_forward_eligibility(restarted, 2).await;
 
     let deeper = canonical_zcash_replacement_depth_update(restarted.agreement());
     reorg_zcash
@@ -3167,6 +3207,7 @@ async fn assert_forward_canonical_history_survives_restart(
     assert_eq!(restarted.status(), Phase::TakerLockConfirmed);
     assert_eq!(restarted.revision(), 3);
 
+    let _ = take_zcash_previous_heads(reorg_zcash);
     reorg_zcash
         .0
         .respond(Ok(TakerFirstLockObservationV1::ZcashRemoved(Box::new(
@@ -3183,6 +3224,11 @@ async fn assert_forward_canonical_history_survives_restart(
     assert_eq!(restarted.status(), Phase::Offered);
     assert_eq!(restarted.revision(), 4);
     assert_eq!(restarted.next_action(), ZecLifecycleAction::Wait);
+    assert_eq!(
+        take_zcash_previous_heads(reorg_zcash),
+        vec![Some(deeper)],
+        "removal validation receives the latest durable canonical predecessor"
+    );
 }
 
 async fn assert_fresh_forward_eligibility(
@@ -3271,6 +3317,11 @@ async fn assert_forward_observation_does_not_advance(
         ObserveTakerFirstLockOutcome::AwaitingStableObservation(FirstLockStepV1::ZcashFund)
     );
     assert_eq!(zcash.0.calls(), 1);
+    assert_eq!(
+        take_zcash_previous_heads(zcash),
+        vec![None],
+        "the first observation has no durable canonical predecessor"
+    );
     assert_eq!(lez.0.calls(), 0);
     assert_eq!(maker.status(), Phase::Offered);
     assert!(
@@ -4580,15 +4631,15 @@ async fn resume_revalidates_requested_id_role_commitment_and_revision() {
 
 #[tokio::test]
 async fn independent_actors_reach_both_legs_locked_from_chain_evidence_in_both_directions() {
-    assert_independent_actors_reach_both_legs_locked(
+    Box::pin(assert_independent_actors_reach_both_legs_locked(
         "sdk-actors-forward-both-locked",
         SwapDirection::TakerSellsForeign,
-    )
+    ))
     .await;
-    assert_independent_actors_reach_both_legs_locked(
+    Box::pin(assert_independent_actors_reach_both_legs_locked(
         "sdk-actors-reverse-both-locked",
         SwapDirection::TakerSellsLez,
-    )
+    ))
     .await;
 }
 
@@ -4671,6 +4722,7 @@ async fn activate_claim_actor_fixture(
         MemoryFirstLockPort::default(),
         MemoryMakerLockObservation::default(),
         corridor.clone(),
+        Arc::default(),
     );
     let maker_store = MemoryStore::default();
     let taker_store = MemoryStore::default();
