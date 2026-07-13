@@ -1,0 +1,48 @@
+[advisories]
+unmaintained = "workspace"
+yanked = "deny"
+unused-ignored-advisory = "deny"
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = "The exact embedded Risc0 3.0.5 methods graph forces rsa 0.9.10 through rzup. The verifier proves rzup publish/install features are absent; the deployer performs no RSA private-key operation. Re-audit on every Risc0 or LEZ pin change." },
+    { id = "RUSTSEC-2025-0055", reason = "The exact embedded Risc0 3.0.5 methods graph forces tracing-subscriber 0.2.25 through arkworks. The verifier proves vulnerable fmt and ansi features are absent. Re-audit on every Risc0 or LEZ pin change." },
+    { id = "RUSTSEC-2026-0118", reason = "Official LEZ v0.2.0 RPC/transaction types pull the Logos libp2p graph and Hickory 0.25.0-alpha.5 into the locked deployer. The verifier proves DNSSEC features are absent, and deployer tests exercise only the bounded fixed-URL JSON-RPC client. This Logos-owned exception is an M2 disclosure and remains a production-release blocker." },
+    { id = "RUSTSEC-2026-0119", reason = "Official LEZ v0.2.0 RPC/transaction types pull the Logos libp2p graph and Hickory 0.25.0-alpha.5 into the locked deployer. The deployer never starts a sequencer, libp2p service, or DNS listener; it submits once to one immutable HTTPS endpoint and observes by JSON-RPC. This Logos-owned exception is an M2 disclosure and remains a production-release blocker." },
+]
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.93
+exceptions = [
+    { crate = "tiny-keccak@2.0.2", allow = ["CC0-1.0"] },
+    { crate = "webpki-root-certs@0.26.11", allow = ["CDLA-Permissive-2.0"] },
+    { crate = "webpki-root-certs@1.0.8", allow = ["CDLA-Permissive-2.0"] },
+    { crate = "webpki-roots@1.0.8", allow = ["CDLA-Permissive-2.0"] },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-git = "deny"
+unknown-registry = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = [
+    "https://github.com/EspressoSystems/jellyfish",
+    "https://github.com/logos-blockchain/logos-blockchain-circuits.git",
+    "https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark.git",
+    "https://github.com/logos-blockchain/logos-blockchain.git",
+    "https://github.com/logos-blockchain/logos-execution-zone.git",
+    "https://github.com/logos-co/Overwatch",
+    "https://github.com/arkworks-rs/spongefish.git",
+]

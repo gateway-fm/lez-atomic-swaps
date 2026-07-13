@@ -2,6 +2,7 @@ use std::{path::PathBuf, time::Duration};
 
 use bytesize::ByteSize;
 use common::transaction::LeeTransaction;
+#[allow(dead_code)]
 #[path = "../../../crates/zec-swap-sdk/src/lez_derivation.rs"]
 mod sdk_lez_derivation;
 use nssa_core::program::{PdaSeed, ProgramId};

@@ -96,6 +96,30 @@ jobs:
           manifest-path: compat/lez-v0.2-provisional/Cargo.toml
           command: check
           command-arguments: --config compat/lez-v0.2-provisional/deny.toml advisories bans licenses sources
+      # Nested v0.2 graphs do not inherit the root compile-only policy. Any
+      # Logos-owned exception is justified in that graph's own deny.toml and
+      # paired with the verifier's feature/reachability checks.
+      - name: Audit provisional LEZ v0.2 Risc0 methods graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-v0.2-provisional/escrow/methods/Cargo.toml
+          command: check
+          command-arguments: --config compat/lez-v0.2-provisional/escrow/methods/deny.toml advisories bans licenses sources
+      - name: Audit provisional LEZ v0.2 guest graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml
+          command: check
+          command-arguments: --config compat/lez-v0.2-provisional/escrow/methods/guest/deny.toml advisories bans licenses sources
+      - name: Audit provisional LEZ v0.2 deployer graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml
+          command: check
+          command-arguments: --config compat/lez-v0.2-provisional/escrow/deployer/deny.toml advisories bans licenses sources
 
   spel-compatibility:
     name: pinned SPEL and LEZ compatibility
@@ -134,11 +158,13 @@ jobs:
   lez-v02-provisional:
     name: provisional LEZ v0.2 compatibility
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     env:
       CARGO_BUILD_JOBS: "2"
       RUN_ID: github-${{ github.run_id }}-${{ github.run_attempt }}
       CARGO_TARGET_DIR: ${{ runner.temp }}/lez-v02-provisional-target
+      LEZ_V02_GUEST_TARGET_DIR: ${{ runner.temp }}/lez-v02-provisional-guest-target
+      LEZ_V02_ARTIFACT_TARGET_DIR: ${{ runner.temp }}/lez-v02-provisional-artifact-target
       LEZ_V02_TOOL_DIR: ${{ runner.temp }}/lez-v02-provisional-tools
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

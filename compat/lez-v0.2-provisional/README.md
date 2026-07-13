@@ -2,9 +2,10 @@
 
 Status: engineering evidence only; not an approved M2 release baseline.
 
-This fixture preserves the proven `v0.1.2` lane and tests the smallest
-independent compatibility seam needed before porting the escrow guest and
-generated client.
+This fixture preserves the proven `v0.1.2` lane while building the independent
+LEZ v0.2 escrow guest, generated client, and fail-closed deployment client. It
+is engineering and M2 testnet evidence; it is not production approval for the
+unreviewed SPEL pin or the Logos-owned dependency exceptions below.
 
 | Upstream | Immutable identity | Review status |
 |---|---|---|
@@ -24,11 +25,13 @@ flowchart LR
     Fixture --> PDA["SPEL PDA = LEZ /LEE/ PDA<br/>fixed vector"]
     SDK["Dependency-light SDK derivation source"] --> Cross["Metadata + native custody + ATA<br/>match upstream types"]
     Fixture --> Cross
-    Config --> Next["Next: escrow guest + generated client port"]
-    Tx --> Next
-    PDA --> Next
-    Cross --> Next
-    Next -.-> Testnet["Public testnet deployment and actor E2E"]
+    Config --> Guest["Checked Risc0 escrow guest<br/>native + token recursive tests"]
+    Tx --> Client["Generated typed client"]
+    PDA --> Guest
+    Cross --> Guest
+    Guest --> Deploy["Exact-once official-RPC deployer<br/>immutable artifact manifest"]
+    Client --> Deploy
+    Deploy -.-> Testnet["Pending: public testnet deployment<br/>costs + independent actors"]
 ```
 
 The test constructs but does not poll `sequencer_service::run`; it therefore
@@ -48,24 +51,37 @@ Run the complete lint/test/pin check with:
 RUN_ID=local-unique ./scripts/verify-lez-v02-provisional.sh
 ```
 
-The verifier uses at most two Cargo jobs and an isolated target/tool directory.
-The native dependency build requires `unzip` plus a working libclang C-header
-search path. It never starts Docker, a network service, or a sequencer.
+The verifier uses at most two Cargo jobs and separate run-local root, guest,
+artifact, tool, and Docker-source directories. The native dependency build
+requires `unzip` plus a working libclang C-header search path. It builds the
+deployment ELF once with the digest-pinned official Risc0 guest-builder image,
+but starts no sequencer, listener, or fixed port. A cold run may pull that image,
+Git sources, crates, and circuit assets; do not overlap it with another
+Docker-heavy or native-build workload on the same host.
 
-This lane does not yet rebuild the escrow ELF, IDL, generated client, actor
-lifecycle, cost evidence, or public-testnet deployment. It must not be used to
-mark M2 complete. Before expanding it, retain fail-closed handling for upstream
+This lane now builds the v0.2 Risc0 escrow ELF, checks its SHA-256, ImageID, and
+ProgramId, compiles the generated typed client, and executes native plus two
+definition token claim/refund lifecycles through official recursive state
+transitions. A rollback regression proves that a failed child transfer leaves
+metadata and every account unchanged. The deployment client validates the
+immutable endpoint, channel, built-ins, artifact identity, transaction bytes,
+and canonical transaction/block observation before accepting evidence; an
+ambiguous submission is attempted once and is never blindly retried.
+
+Public-testnet deployment, deployed-runtime cost evidence, and the composed
+independent-actor LEZ/Zcash corridor remain pending. This lane alone must not be
+used to mark M2 complete. Retain fail-closed handling for upstream
 [#242](https://github.com/logos-co/spel/issues/242) (non-zero private-PDA
 identifiers are unsupported) and [#243](https://github.com/logos-co/spel/issues/243)
 (program-ID parsing can accept a wrong 32-byte identifier). The current escrow
 uses public PDAs, and its eventual deployment path must bind the program ID to
 the checked ELF and immutable deployment manifest rather than free-form input.
 
-The exact standalone graph also forces vulnerable `hickory-proto
-0.25.0-alpha.5` (`RUSTSEC-2026-0118` and `RUSTSEC-2026-0119`). This fixture's
-policy permits those advisories only because the hash-locked test never polls
-the standalone future or starts networking, and because DNSSEC features are
-absent. The verifier fails if the test bytes or either condition changes. This
-graph is prohibited for runtime and testnet use. These exceptions are not valid
-for the next executable guest, sequencer, or deployment slice; that work needs
-a safe upstream dependency or an explicit security review before it can pass.
+The exact official LEZ graph also forces `hickory-proto 0.25.0-alpha.5`
+(`RUSTSEC-2026-0118` and `RUSTSEC-2026-0119`) through Logos-owned common/libp2p
+dependencies. Graph-local `cargo-deny` policy permits only those exact
+advisories, while tests bind the upstream revisions, exclude the generated
+wallet graph, and keep the sequencer future unpolled with DNSSEC features
+absent. Under ADR 0018 this disclosed Logos-owned exception does not stop M2
+testnet certification, but it remains a production-release blocker until
+upstream removes the path or a separate security review explicitly accepts it.

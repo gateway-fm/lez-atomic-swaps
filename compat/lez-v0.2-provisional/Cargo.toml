@@ -16,11 +16,24 @@ lez_commit = "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
 
 [dev-dependencies]
 associated_token_account_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+borsh = { version = "=1.7.0", features = ["derive"] }
 bytesize = "=2.3.1"
 common = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+hex = "=0.4.3"
+lez-zec-escrow-v02 = { version = "=0.0.0", path = "escrow" }
+nssa = { package = "lee", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
 nssa_core = { package = "lee_core", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["host"] }
 sequencer_service = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["standalone"] }
+sequencer_service_rpc = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["client"] }
+serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.149"
 sha2 = "=0.10.9"
+spel-client-gen = { version = "=0.5.0", git = "https://github.com/logos-co/spel.git", rev = "df17acd98436be4f09c55877dae1fe2e73cbcdca" }
 spel-framework-core = { version = "=0.5.0", git = "https://github.com/logos-co/spel.git", rev = "df17acd98436be4f09c55877dae1fe2e73cbcdca" }
 tempfile = "=3.26.0"
+toml = "=0.8.23"
+wallet = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+
+[build-dependencies]
+lez-zec-escrow-v02 = { version = "=0.0.0", path = "escrow" }
+spel-client-gen = { version = "=0.5.0", git = "https://github.com/logos-co/spel.git", rev = "df17acd98436be4f09c55877dae1fe2e73cbcdca" }

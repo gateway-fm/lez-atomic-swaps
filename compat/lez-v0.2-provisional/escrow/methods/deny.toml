@@ -3,10 +3,8 @@ unmaintained = "workspace"
 yanked = "deny"
 unused-ignored-advisory = "deny"
 ignore = [
-    { id = "RUSTSEC-2023-0071", reason = "Exact LEZ v0.2.0 forces rsa 0.9.10 through risc0/rzup; CI proves rzup publish/install features are absent, so no private-key operation is compiled into this provisional compatibility fixture. Re-audit before deployment or pin changes." },
-    { id = "RUSTSEC-2025-0055", reason = "Exact LEZ v0.2.0 forces tracing-subscriber 0.2.25 through risc0/arkworks; CI proves its vulnerable fmt and ansi features are absent. Re-audit before deployment or pin changes." },
-    { id = "RUSTSEC-2026-0118", reason = "Exact LEZ v0.2.0 forces hickory-proto 0.25.0-alpha.5 through Logos Blockchain/libp2p. CI proves DNSSEC features are absent and the compile-only test never polls the standalone future. This exception is invalid for an executable sequencer or deployment lane." },
-    { id = "RUSTSEC-2026-0119", reason = "Exact LEZ v0.2.0 forces hickory-proto 0.25.0-alpha.5 through Logos Blockchain/libp2p. The fixture produces no runtime artifact; CI hash-locks the compile-only test and proves it never polls or starts the service, so DNS message encoding is unreachable. Remove this exception before any executable v0.2 lane." },
+    { id = "RUSTSEC-2023-0071", reason = "Exact Risc0 3.0.5 methods build tooling forces rsa 0.9.10 through rzup. The verifier proves rzup publish/install features are absent; the methods tests execute only checked LEZ state transitions. Re-audit on every Risc0 or LEZ pin change." },
+    { id = "RUSTSEC-2025-0055", reason = "Exact Risc0 3.0.5 methods tooling forces tracing-subscriber 0.2.25 through arkworks. The verifier proves vulnerable fmt and ansi features are absent. Re-audit on every Risc0 or LEZ pin change." },
 ]
 
 [licenses]
@@ -15,14 +13,17 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "ISC",
     "MIT",
     "MPL-2.0",
     "Unicode-3.0",
     "Zlib",
 ]
 confidence-threshold = 0.93
+exceptions = [
+    { crate = "webpki-roots@1.0.8", allow = ["CDLA-Permissive-2.0"] },
+]
 
-# SPEL carries both files at the exact PR head but omits Cargo license fields.
 [[licenses.clarify]]
 crate = "spel-framework@0.5.0"
 expression = "MIT OR Apache-2.0"
