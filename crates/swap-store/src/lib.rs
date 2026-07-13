@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 9;
+const DATABASE_SCHEMA_VERSION: i64 = 10;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_BINDING_PAYLOAD_VERSION: i64 = 1;
@@ -292,6 +292,12 @@ pub enum StoreError {
     /// A durable claim transition cannot apply to the reconstructed aggregate.
     #[error("persisted SDK claim transition is invalid")]
     Claim(#[from] ClaimError),
+    /// A primitive SDK refund record failed full context revalidation.
+    #[error("persisted SDK refund record is invalid")]
+    RefundRecord(#[from] lez_zec_swap_sdk::RefundRecordError),
+    /// A durable refund transition cannot apply to the reconstructed aggregate.
+    #[error("persisted SDK refund transition is invalid")]
+    Refund(#[from] lez_zec_swap_sdk::RefundError),
     /// A protected claim envelope could not be authenticated or decoded.
     #[error("protected SDK claim material is invalid")]
     ProtectedClaim(#[from] ProtectedClaimError),
@@ -353,9 +359,15 @@ pub enum StoreError {
     /// A claim transition has no matching retained intent.
     #[error("SDK claim intent does not exist")]
     MissingZecClaimIntent,
+    /// An owner refund transition has no matching pending exact intent.
+    #[error("SDK refund intent does not exist")]
+    MissingZecRefundIntent,
     /// An exact claim predecessor slot contains different evidence.
     #[error("SDK claim transition conflicts with durable evidence")]
     ConflictingZecClaimTransition,
+    /// An exact refund predecessor slot contains different durable evidence.
+    #[error("SDK refund transition conflicts with durable evidence")]
+    ConflictingZecRefundTransition,
     /// An exact predecessor transition slot contains different evidence.
     #[error("SDK first-lock transition conflicts with durable evidence")]
     ConflictingZecFirstLockTransition,
@@ -1434,6 +1446,50 @@ fn migrate_zec_sdk_recovery(transaction: &rusqlite::Transaction<'_>) -> Result<(
                 REFERENCES zec_sdk_claim_materials(
                     local_role, swap_id, created_revision
                 ) ON DELETE CASCADE
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS zec_sdk_refund_intents (
+            local_role TEXT NOT NULL CHECK (local_role IN ('maker', 'taker')),
+            swap_id TEXT NOT NULL,
+            staged_revision INTEGER NOT NULL CHECK (staged_revision >= 0),
+            payload_version INTEGER NOT NULL CHECK (payload_version > 0),
+            payload_json TEXT NOT NULL,
+            PRIMARY KEY (local_role, swap_id),
+            UNIQUE (local_role, swap_id, staged_revision),
+            FOREIGN KEY (local_role, swap_id)
+                REFERENCES zec_sdk_agreements(local_role, swap_id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS zec_sdk_refund_transitions (
+            local_role TEXT NOT NULL CHECK (local_role IN ('maker', 'taker')),
+            swap_id TEXT NOT NULL,
+            predecessor_revision INTEGER NOT NULL CHECK (predecessor_revision >= 0),
+            committed_revision INTEGER NOT NULL CHECK (
+                committed_revision = predecessor_revision + 1
+            ),
+            transition_kind TEXT NOT NULL CHECK (
+                transition_kind IN ('owned', 'observed')
+            ),
+            payload_version INTEGER NOT NULL CHECK (payload_version > 0),
+            payload_json TEXT NOT NULL,
+            retained_intent_version INTEGER,
+            retained_intent_json TEXT,
+            intent_staged_revision INTEGER,
+            PRIMARY KEY (local_role, swap_id, predecessor_revision),
+            UNIQUE (local_role, swap_id, committed_revision),
+            CHECK (
+                (transition_kind = 'owned'
+                    AND retained_intent_version IS NOT NULL
+                    AND retained_intent_json IS NOT NULL
+                    AND intent_staged_revision IS NOT NULL
+                    AND intent_staged_revision >= 0
+                    AND intent_staged_revision <= predecessor_revision)
+                OR
+                (transition_kind = 'observed'
+                    AND retained_intent_version IS NULL
+                    AND retained_intent_json IS NULL
+                    AND intent_staged_revision IS NULL)
+            ),
+            FOREIGN KEY (local_role, swap_id)
+                REFERENCES zec_sdk_agreements(local_role, swap_id) ON DELETE CASCADE
         ) STRICT;
         ",
     )?;

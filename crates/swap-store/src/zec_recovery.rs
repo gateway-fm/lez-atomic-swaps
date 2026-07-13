@@ -21,7 +21,9 @@ use lez_zec_swap_sdk::{
     ObservedMakerLockTransitionV1, ObservedRevealingClaimTransitionRecordV1,
     ObservedRevealingClaimTransitionV1, ObservedTakerFirstLockTransitionRecordV1,
     ObservedTakerFirstLockTransitionV1, PROTECTED_CLAIM_SCHEMA_V1, PreparedClaimSubmissionV1,
-    ProtectedClaimEnvelope, ProtectedClaimKey, ProtectedClaimPayloadEnvelope, RecoveryStore,
+    ProtectedClaimEnvelope, ProtectedClaimKey, ProtectedClaimPayloadEnvelope,
+    REFUND_RECORD_SCHEMA_V1, RecoveryStore, RefundIntentRecordV1, RefundIntentV1,
+    RefundRecoveryStore, RefundTransitionRecordV1, RefundTransitionV1,
     RevealingClaimTransitionRecordV1, RevealingClaimTransitionV1, ZcashObservationTracker,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -48,7 +50,7 @@ pub struct SqliteZecRecoveryStore {
 }
 
 impl SqliteZecRecoveryStore {
-    /// Opens or creates a schema-v8 recovery store for one local role.
+    /// Opens or creates a schema-v10 recovery store for one local role.
     ///
     /// # Errors
     ///
@@ -65,7 +67,7 @@ impl SqliteZecRecoveryStore {
         })
     }
 
-    /// Opens or creates a schema-v9 store with protected claim recovery enabled.
+    /// Opens or creates a schema-v10 store with protected claim recovery enabled.
     ///
     /// The key is retained only in zeroizing process memory and is never written
     /// to the database. Reopening claim rows requires the same key ID and material.
@@ -1809,6 +1811,304 @@ impl ClaimRecoveryStore for SqliteZecRecoveryStore {
     }
 }
 
+#[async_trait]
+#[allow(clippy::too_many_lines)]
+impl RefundRecoveryStore for SqliteZecRecoveryStore {
+    async fn create_refund_intent(
+        &self,
+        intent: &RefundIntentV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error> {
+        self.require_role(intent.local_participant())?;
+        let record = RefundIntentRecordV1::from(intent);
+        let payload_json = serde_json::to_string(&record)?;
+        let staged_sql = sql_u64(intent.staged_revision())?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (accepted, active_revision, coordinator) = validated_refund_journal_head(
+            &transaction,
+            self.role_name(),
+            self.local_participant,
+            self.claim_key.as_deref(),
+            intent.swap_id(),
+        )?;
+        if active_revision != intent.staged_revision()
+            || record.revalidate(&accepted, &coordinator, active_revision)? != *intent
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let outcome =
+            match load_refund_intent_row(&transaction, self.role_name(), intent.swap_id())? {
+                None => {
+                    transaction.execute(
+                        "INSERT INTO zec_sdk_refund_intents (
+                            local_role, swap_id, staged_revision, payload_version, payload_json
+                         ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                        params![
+                            self.role_name(),
+                            intent.swap_id().as_str(),
+                            staged_sql,
+                            i64::from(record.schema_version()),
+                            payload_json
+                        ],
+                    )?;
+                    CreateFirstLockOutcome::Created
+                }
+                Some(existing)
+                    if existing.staged_revision == staged_sql
+                        && existing.payload_version == i64::from(record.schema_version())
+                        && existing.payload_json == payload_json =>
+                {
+                    CreateFirstLockOutcome::ExistingSame
+                }
+                Some(_) => CreateFirstLockOutcome::Conflict,
+            };
+        transaction.commit()?;
+        Ok(outcome)
+    }
+
+    async fn load_refund_intent(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<RefundIntentV1>, Self::Error> {
+        let connection = self.connection()?;
+        let row = load_refund_intent_row(&connection, self.role_name(), swap_id)?;
+        if row.is_none() {
+            if load_agreement_row(&connection, self.role_name(), swap_id)?.is_none() {
+                return Ok(None);
+            }
+            let _ = validated_refund_journal_head(
+                &connection,
+                self.role_name(),
+                self.local_participant,
+                self.claim_key.as_deref(),
+                swap_id,
+            )?;
+            return Ok(None);
+        }
+        let (accepted, active_revision, coordinator) = validated_refund_journal_head(
+            &connection,
+            self.role_name(),
+            self.local_participant,
+            self.claim_key.as_deref(),
+            swap_id,
+        )?;
+        let row = row.ok_or(StoreError::InvalidZecRecoveryState)?;
+        if revision_from_sql(row.staged_revision)? > active_revision {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let record = decode_refund_intent_record(row.payload_version, &row.payload_json)?;
+        record
+            .revalidate(&accepted, &coordinator, active_revision)
+            .map(Some)
+            .map_err(StoreError::from)
+    }
+
+    async fn commit_refund_transition(
+        &self,
+        transition: &RefundTransitionV1,
+    ) -> Result<FirstLockProjectionCommit, Self::Error> {
+        self.require_role(transition.local_participant())?;
+        let record = RefundTransitionRecordV1::from(transition);
+        let payload_json = serde_json::to_string(&record)?;
+        let predecessor = transition.predecessor_revision();
+        let committed = predecessor
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        let predecessor_sql = sql_u64(predecessor)?;
+        let committed_sql = sql_u64(committed)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (accepted, active_revision, coordinator) = validated_refund_journal_head(
+            &transaction,
+            self.role_name(),
+            self.local_participant,
+            self.claim_key.as_deref(),
+            transition.swap_id(),
+        )?;
+
+        if let Some(existing) = load_refund_transition_row(
+            &transaction,
+            self.role_name(),
+            transition.swap_id(),
+            predecessor_sql,
+        )? {
+            let predecessor_coordinator = refund_coordinator_at(
+                &transaction,
+                self.role_name(),
+                &accepted,
+                predecessor,
+                self.claim_key.as_deref(),
+            )?;
+            let retained = decode_retained_refund_intent(&existing)?;
+            let durable =
+                decode_refund_transition_record(existing.payload_version, &existing.payload_json)?
+                    .revalidate(
+                        &accepted,
+                        &predecessor_coordinator,
+                        predecessor,
+                        retained.as_ref(),
+                    )?;
+            if existing.committed_revision != committed_sql
+                || active_revision < committed
+                || existing.transition_kind
+                    != if transition.is_owned() {
+                        "owned"
+                    } else {
+                        "observed"
+                    }
+                || existing.payload_version != i64::from(record.schema_version())
+                || existing.payload_json != payload_json
+                || durable != *transition
+            {
+                return Err(StoreError::ConflictingZecRefundTransition);
+            }
+            transaction.commit()?;
+            return Ok(FirstLockProjectionCommit::new(committed, true));
+        }
+        if active_revision != predecessor {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+
+        let intent_row =
+            load_refund_intent_row(&transaction, self.role_name(), transition.swap_id())?;
+        let retained_record = match (transition.is_owned(), intent_row.as_ref()) {
+            (true, Some(row)) => Some(decode_refund_intent_record(
+                row.payload_version,
+                &row.payload_json,
+            )?),
+            (false, None) => None,
+            _ => return Err(StoreError::InvalidZecRecoveryState),
+        };
+        let trusted = record.revalidate(
+            &accepted,
+            &coordinator,
+            predecessor,
+            retained_record.as_ref(),
+        )?;
+        if trusted != *transition {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let _ = trusted.apply_to(accepted.agreement(), &coordinator, predecessor)?;
+        let (kind, retained_version, retained_json, staged_revision) = match intent_row.as_ref() {
+            Some(row) => (
+                "owned",
+                Some(row.payload_version),
+                Some(row.payload_json.as_str()),
+                Some(row.staged_revision),
+            ),
+            None => ("observed", None, None, None),
+        };
+        transaction.execute(
+            "INSERT INTO zec_sdk_refund_transitions (
+                local_role, swap_id, predecessor_revision, committed_revision,
+                transition_kind, payload_version, payload_json,
+                retained_intent_version, retained_intent_json, intent_staged_revision
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                self.role_name(),
+                transition.swap_id().as_str(),
+                predecessor_sql,
+                committed_sql,
+                kind,
+                i64::from(record.schema_version()),
+                payload_json,
+                retained_version,
+                retained_json,
+                staged_revision
+            ],
+        )?;
+        let agreement_updates = transaction.execute(
+            "UPDATE zec_sdk_agreements SET active_revision = ?1
+             WHERE local_role = ?2 AND swap_id = ?3 AND active_revision = ?4",
+            params![
+                committed_sql,
+                self.role_name(),
+                transition.swap_id().as_str(),
+                predecessor_sql
+            ],
+        )?;
+        let intent_updates = if let Some(row) = intent_row {
+            transaction.execute(
+                "DELETE FROM zec_sdk_refund_intents
+                 WHERE local_role = ?1 AND swap_id = ?2 AND staged_revision = ?3
+                   AND payload_version = ?4 AND payload_json = ?5",
+                params![
+                    self.role_name(),
+                    transition.swap_id().as_str(),
+                    row.staged_revision,
+                    row.payload_version,
+                    row.payload_json
+                ],
+            )?
+        } else {
+            0
+        };
+        if agreement_updates != 1 || (transition.is_owned() && intent_updates != 1) {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        transaction.commit()?;
+        Ok(FirstLockProjectionCommit::new(committed, false))
+    }
+
+    async fn load_refund_transition(
+        &self,
+        swap_id: &SwapId,
+        predecessor_revision: u64,
+    ) -> Result<Option<RefundTransitionV1>, Self::Error> {
+        let connection = self.connection()?;
+        let predecessor_sql = sql_u64(predecessor_revision)?;
+        let row =
+            load_refund_transition_row(&connection, self.role_name(), swap_id, predecessor_sql)?;
+        if row.is_none() {
+            if load_agreement_row(&connection, self.role_name(), swap_id)?.is_none() {
+                return Ok(None);
+            }
+            let _ = validated_refund_journal_head(
+                &connection,
+                self.role_name(),
+                self.local_participant,
+                self.claim_key.as_deref(),
+                swap_id,
+            )?;
+            return Ok(None);
+        }
+        let (accepted, active_revision, _) = validated_refund_journal_head(
+            &connection,
+            self.role_name(),
+            self.local_participant,
+            self.claim_key.as_deref(),
+            swap_id,
+        )?;
+        if predecessor_revision > active_revision {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let row = row.ok_or(StoreError::InvalidZecRecoveryState)?;
+        let committed = predecessor_revision
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        if row.committed_revision != sql_u64(committed)? || active_revision < committed {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let coordinator = refund_coordinator_at(
+            &connection,
+            self.role_name(),
+            &accepted,
+            predecessor_revision,
+            self.claim_key.as_deref(),
+        )?;
+        let retained = decode_retained_refund_intent(&row)?;
+        decode_refund_transition_record(row.payload_version, &row.payload_json)?
+            .revalidate(
+                &accepted,
+                &coordinator,
+                predecessor_revision,
+                retained.as_ref(),
+            )
+            .map(Some)
+            .map_err(StoreError::from)
+    }
+}
+
 fn insert_taker_first_lock_transition(
     transaction: &rusqlite::Transaction<'_>,
     role: &str,
@@ -1931,6 +2231,24 @@ struct ClaimTransitionRow {
     material_created_revision: Option<i64>,
     payload_version: i64,
     payload_json: String,
+}
+
+#[derive(Debug)]
+struct RefundIntentRow {
+    staged_revision: i64,
+    payload_version: i64,
+    payload_json: String,
+}
+
+#[derive(Debug)]
+struct RefundTransitionRow {
+    committed_revision: i64,
+    transition_kind: String,
+    payload_version: i64,
+    payload_json: String,
+    retained_intent_version: Option<i64>,
+    retained_intent_json: Option<String>,
+    intent_staged_revision: Option<i64>,
 }
 
 fn load_agreement_row(
@@ -2208,6 +2526,58 @@ fn load_observed_claim_transition_row(
         .map_err(StoreError::from)
 }
 
+fn load_refund_intent_row(
+    connection: &Connection,
+    role: &str,
+    swap_id: &SwapId,
+) -> Result<Option<RefundIntentRow>, StoreError> {
+    connection
+        .query_row(
+            "SELECT staged_revision, payload_version, payload_json
+             FROM zec_sdk_refund_intents
+             WHERE local_role = ?1 AND swap_id = ?2",
+            params![role, swap_id.as_str()],
+            |row| {
+                Ok(RefundIntentRow {
+                    staged_revision: row.get(0)?,
+                    payload_version: row.get(1)?,
+                    payload_json: row.get(2)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(StoreError::from)
+}
+
+fn load_refund_transition_row(
+    connection: &Connection,
+    role: &str,
+    swap_id: &SwapId,
+    predecessor_revision: i64,
+) -> Result<Option<RefundTransitionRow>, StoreError> {
+    connection
+        .query_row(
+            "SELECT committed_revision, transition_kind, payload_version, payload_json,
+                    retained_intent_version, retained_intent_json, intent_staged_revision
+             FROM zec_sdk_refund_transitions
+             WHERE local_role = ?1 AND swap_id = ?2 AND predecessor_revision = ?3",
+            params![role, swap_id.as_str(), predecessor_revision],
+            |row| {
+                Ok(RefundTransitionRow {
+                    committed_revision: row.get(0)?,
+                    transition_kind: row.get(1)?,
+                    payload_version: row.get(2)?,
+                    payload_json: row.get(3)?,
+                    retained_intent_version: row.get(4)?,
+                    retained_intent_json: row.get(5)?,
+                    intent_staged_revision: row.get(6)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(StoreError::from)
+}
+
 fn validate_transition_journal(
     connection: &Connection,
     role: &str,
@@ -2247,6 +2617,10 @@ fn validate_transition_journal(
                 UNION ALL
                 SELECT predecessor_revision, committed_revision
                 FROM zec_sdk_observed_claim_transitions
+                WHERE local_role = ?1 AND swap_id = ?2
+                UNION ALL
+                SELECT predecessor_revision, committed_revision
+                FROM zec_sdk_refund_transitions
                 WHERE local_role = ?1 AND swap_id = ?2
             )
             ",
@@ -2325,7 +2699,7 @@ fn replay_maker_journal(
                     transition.apply_to(accepted.agreement(), &coordinator, predecessor)?;
             }
             (None, None) => {
-                coordinator = apply_claim_journal_slot(
+                coordinator = apply_terminal_journal_slot(
                     connection,
                     role,
                     swap_id,
@@ -2333,7 +2707,7 @@ fn replay_maker_journal(
                     &coordinator,
                     predecessor,
                     committed_sql,
-                    claim_key.ok_or(StoreError::MissingZecClaimKey)?,
+                    claim_key,
                 )?;
             }
             _ => return Err(StoreError::InvalidZecRecoveryState),
@@ -2385,7 +2759,7 @@ fn replay_taker_journal(
                     transition.apply_to(accepted.agreement(), &coordinator, predecessor)?;
             }
             (None, None) => {
-                coordinator = apply_claim_journal_slot(
+                coordinator = apply_terminal_journal_slot(
                     connection,
                     role,
                     swap_id,
@@ -2393,7 +2767,7 @@ fn replay_taker_journal(
                     &coordinator,
                     predecessor,
                     committed_sql,
-                    claim_key.ok_or(StoreError::MissingZecClaimKey)?,
+                    claim_key,
                 )?;
             }
             _ => return Err(StoreError::InvalidZecRecoveryState),
@@ -2519,6 +2893,58 @@ fn validated_claim_journal_head(
         Participant::Taker => {
             validated_taker_journal_head(connection, role, local_participant, Some(key), swap_id)
         }
+    }
+}
+
+fn validated_refund_journal_head(
+    connection: &Connection,
+    role: &str,
+    local_participant: Participant,
+    claim_key: Option<&ProtectedClaimKey>,
+    swap_id: &SwapId,
+) -> Result<(AcceptedZecAgreementV1, u64, SwapCoordinator), StoreError> {
+    match local_participant {
+        Participant::Maker => {
+            let (accepted, revision, coordinator, _) = validated_maker_journal_head(
+                connection,
+                role,
+                local_participant,
+                claim_key,
+                swap_id,
+            )?;
+            Ok((accepted, revision, coordinator))
+        }
+        Participant::Taker => {
+            validated_taker_journal_head(connection, role, local_participant, claim_key, swap_id)
+        }
+    }
+}
+
+fn refund_coordinator_at(
+    connection: &Connection,
+    role: &str,
+    accepted: &AcceptedZecAgreementV1,
+    revision: u64,
+    claim_key: Option<&ProtectedClaimKey>,
+) -> Result<SwapCoordinator, StoreError> {
+    match accepted.local_participant() {
+        Participant::Maker => replay_maker_journal(
+            connection,
+            role,
+            accepted.agreement().coordinator().id(),
+            accepted,
+            revision,
+            claim_key,
+        )
+        .map(|(coordinator, _)| coordinator),
+        Participant::Taker => replay_taker_journal(
+            connection,
+            role,
+            accepted.agreement().coordinator().id(),
+            accepted,
+            revision,
+            claim_key,
+        ),
     }
 }
 
@@ -2907,6 +3333,51 @@ fn decode_claim_intent_record(row: &ClaimIntentRow) -> Result<ClaimIntentRecordV
     serde_json::from_str(&row.payload_json).map_err(StoreError::from)
 }
 
+fn decode_refund_intent_record(
+    payload_version: i64,
+    payload_json: &str,
+) -> Result<RefundIntentRecordV1, StoreError> {
+    require_payload(
+        "SDK refund intent",
+        payload_version,
+        i64::from(REFUND_RECORD_SCHEMA_V1),
+    )?;
+    serde_json::from_str(payload_json).map_err(StoreError::from)
+}
+
+fn decode_refund_transition_record(
+    payload_version: i64,
+    payload_json: &str,
+) -> Result<RefundTransitionRecordV1, StoreError> {
+    require_payload(
+        "SDK refund transition",
+        payload_version,
+        i64::from(REFUND_RECORD_SCHEMA_V1),
+    )?;
+    serde_json::from_str(payload_json).map_err(StoreError::from)
+}
+
+fn decode_retained_refund_intent(
+    row: &RefundTransitionRow,
+) -> Result<Option<RefundIntentRecordV1>, StoreError> {
+    match (
+        row.transition_kind.as_str(),
+        row.retained_intent_version,
+        row.retained_intent_json.as_deref(),
+        row.intent_staged_revision,
+    ) {
+        ("owned", Some(version), Some(json), Some(staged)) => {
+            let record = decode_refund_intent_record(version, json)?;
+            if record.staged_revision() != revision_from_sql(staged)? {
+                return Err(StoreError::InvalidZecRecoveryState);
+            }
+            Ok(Some(record))
+        }
+        ("observed", None, None, None) => Ok(None),
+        _ => Err(StoreError::InvalidZecRecoveryState),
+    }
+}
+
 fn validate_claim_auxiliary_state(
     connection: &Connection,
     role: &str,
@@ -2994,6 +3465,61 @@ fn validate_claim_auxiliary_state(
         )?;
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_terminal_journal_slot(
+    connection: &Connection,
+    role: &str,
+    swap_id: &SwapId,
+    accepted: &AcceptedZecAgreementV1,
+    coordinator: &SwapCoordinator,
+    predecessor: u64,
+    committed_sql: i64,
+    claim_key: Option<&ProtectedClaimKey>,
+) -> Result<SwapCoordinator, StoreError> {
+    let predecessor_sql = sql_u64(predecessor)?;
+    let owned_claim = load_owned_claim_transition_row(connection, role, swap_id, predecessor_sql)?;
+    let observed_claim =
+        load_observed_claim_transition_row(connection, role, swap_id, predecessor_sql)?;
+    let refund = load_refund_transition_row(connection, role, swap_id, predecessor_sql)?;
+    match (owned_claim.is_some() || observed_claim.is_some(), refund) {
+        (true, None) => apply_claim_journal_slot(
+            connection,
+            role,
+            swap_id,
+            accepted,
+            coordinator,
+            predecessor,
+            committed_sql,
+            claim_key.ok_or(StoreError::MissingZecClaimKey)?,
+        ),
+        (false, Some(row)) => {
+            apply_refund_journal_slot(&row, accepted, coordinator, predecessor, committed_sql)
+        }
+        _ => Err(StoreError::InvalidZecRecoveryState),
+    }
+}
+
+fn apply_refund_journal_slot(
+    row: &RefundTransitionRow,
+    accepted: &AcceptedZecAgreementV1,
+    coordinator: &SwapCoordinator,
+    predecessor: u64,
+    committed_sql: i64,
+) -> Result<SwapCoordinator, StoreError> {
+    if row.committed_revision != committed_sql {
+        return Err(StoreError::InvalidZecRecoveryState);
+    }
+    let retained = decode_retained_refund_intent(row)?;
+    let record = decode_refund_transition_record(row.payload_version, &row.payload_json)?;
+    if record.is_owned() != retained.is_some() {
+        return Err(StoreError::InvalidZecRecoveryState);
+    }
+    record
+        .revalidate(accepted, coordinator, predecessor, retained.as_ref())?
+        .apply_to(accepted.agreement(), coordinator, predecessor)
+        .map_err(StoreError::from)
 }
 
 // Keeping the four typed claim variants together makes the exactly-one-row

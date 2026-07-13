@@ -86,7 +86,7 @@ fn save_and_reload(database: &std::path::Path, swap: &mut SwapCoordinator) {
 }
 
 #[test]
-fn schema_v8_plaintext_claim_evidence_migrates_to_v9_marker_and_is_scrubbed() {
+fn schema_v8_plaintext_claim_evidence_migrates_to_current_schema_and_is_scrubbed() {
     let data = TempDir::new().expect("isolated migration directory");
     let path = data.path().join("legacy-v8-claim.sqlite3");
     let preimage = [
@@ -141,7 +141,7 @@ fn schema_v8_plaintext_claim_evidence_migrates_to_v9_marker_and_is_scrubbed() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("schema version");
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     connection
         .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
         .expect("checkpoint migrated plaintext pages");

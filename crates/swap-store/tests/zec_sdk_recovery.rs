@@ -1,6 +1,11 @@
+use std::sync::{Arc, Mutex};
+
 use async_trait::async_trait;
-use lez_swap_core::{Participant, Phase, SwapDirection, SwapId, UnixSeconds};
-use lez_swap_store::SqliteZecRecoveryStore;
+use lez_swap_core::{
+    Chain, ChainPosition, LezUnixMilliseconds, Participant, Phase, SwapDirection, SwapId,
+    UnixSeconds,
+};
+use lez_swap_store::{SqliteZecRecoveryStore, StoreError};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract, CLAIM_RECORD_SCHEMA_V1,
     CLAIM_RECORD_SCHEMA_V2, CanonicalLezEscrowObservationV1, CanonicalLezEscrowRemovalV1,
@@ -13,22 +18,25 @@ use lez_zec_swap_sdk::{
     LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort,
     LezFundInstructionV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1,
     LezMakerLockObservationPort, LezNodeRemovalSnapshotV1, LezNodeSnapshotV1,
-    LezObservationTrackerError, LezStableTipV1, LezTakerFirstLockObservationPort,
+    LezObservationTrackerError, LezRefundPort, LezStableTipV1, LezTakerFirstLockObservationPort,
     MakerFundingEligibilityOutcome, MakerLockDriveOutcome, MakerLockObservationV1,
     NegotiationChannel, NegotiationTranscriptV1, ObserveMakerLockOutcome,
     ObserveTakerFirstLockOutcome, ObservedTakerFirstLockTransitionRecordV1, OfferDiscovery,
-    PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1, ProtectedClaimKey, RecoveryStore,
-    RevealingClaimEvidenceV1, RevealingClaimObservationV1, RevealingClaimTransitionRecordV1,
-    TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimContextV1, ZcashClaimPort, ZcashFirstLockPort,
-    ZcashFundingContextV1, ZcashFundingObservationV1, ZcashFundingWaitReasonV1,
+    PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1, PreparedRefundSubmissionV1,
+    ProtectedClaimKey, RecoveryStore, RefundDriveOutcome, RefundEligibilityObservationV1,
+    RefundEvidenceV1, RefundObservationV1, RefundRecoveryStore, RefundStepV1,
+    RefundSubmitOutcomeV1, RevealingClaimEvidenceV1, RevealingClaimObservationV1,
+    RevealingClaimTransitionRecordV1, TakerFirstLockObservationV1, TransparentFundingRequest,
+    TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimContextV1, ZcashClaimPort,
+    ZcashFirstLockPort, ZcashFundingContextV1, ZcashFundingObservationV1, ZcashFundingWaitReasonV1,
     ZcashMakerLockObservationPort, ZcashNodeRemovalSnapshot, ZcashNodeSnapshot,
-    ZcashObservationEventRecordV1, ZcashStableTip, ZcashTakerFirstLockObservationPort,
-    ZcashTransparentDestinationV1, ZcashUnspentOutputSnapshotV1, ZecAgreementBodyV1,
-    ZecAgreementRecordV1, ZecLezTermsV1, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1,
-    ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSdkError, ZecSwapBinding,
-    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, build_funding_transaction,
-    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    ZcashObservationEventRecordV1, ZcashRefundPort, ZcashStableTip,
+    ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1,
+    ZcashUnspentOutputSnapshotV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecLezTermsV1,
+    ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1,
+    ZecRefundPlanV1, ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
+    build_funding_transaction, derive_lez_metadata_account_v1,
+    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
@@ -45,6 +53,32 @@ use zcash_transparent::{
 };
 
 const ACCEPTED_AT: UnixSeconds = UnixSeconds::new(10);
+
+#[tokio::test]
+async fn schema_v10_exposes_empty_refund_recovery_before_any_effect() {
+    let temporary = TempDir::new().expect("temporary store");
+    let store = SqliteZecRecoveryStore::open(
+        temporary.path().join("refund-red.sqlite"),
+        Participant::Maker,
+    )
+    .expect("open role-fixed store");
+    let swap_id = SwapId::new("schema-v10-refund-red").expect("swap ID");
+
+    assert!(
+        store
+            .load_refund_intent(&swap_id)
+            .await
+            .expect("load empty refund intent")
+            .is_none()
+    );
+    assert!(
+        store
+            .load_refund_transition(&swap_id, 0)
+            .await
+            .expect("load empty refund transition")
+            .is_none()
+    );
+}
 
 #[derive(Clone, Copy, Debug)]
 struct NoDiscovery;
@@ -300,6 +334,7 @@ struct SqliteClaimPort {
     maker_observation: std::sync::Arc<std::sync::Mutex<MakerLockObservationV1>>,
     lock_submissions: std::sync::Arc<std::sync::Mutex<Vec<FirstLockStepV1>>>,
     claim_submissions: std::sync::Arc<std::sync::Mutex<Vec<ClaimStepV1>>>,
+    refund_submissions: Arc<Mutex<Vec<RefundStepV1>>>,
     observed_claim_payloads: std::sync::Arc<std::sync::Mutex<ClaimPayloadLog>>,
     claim_fail_after_accept: std::sync::Arc<std::sync::Mutex<Vec<ClaimStepV1>>>,
     revealing_preimage: std::sync::Arc<std::sync::Mutex<Option<[u8; 32]>>>,
@@ -321,6 +356,7 @@ impl Default for SqliteClaimPort {
             )),
             lock_submissions: std::sync::Arc::default(),
             claim_submissions: std::sync::Arc::default(),
+            refund_submissions: Arc::default(),
             observed_claim_payloads: std::sync::Arc::default(),
             claim_fail_after_accept: std::sync::Arc::default(),
             revealing_preimage: std::sync::Arc::default(),
@@ -772,6 +808,184 @@ impl ZcashClaimPort for SqliteClaimPort {
     }
 }
 
+fn refund_id(step: RefundStepV1) -> [u8; 32] {
+    match step {
+        RefundStepV1::Lez => [0xd1; 32],
+        RefundStepV1::Zcash => [0xd2; 32],
+    }
+}
+
+fn refund_bytes(step: RefundStepV1) -> &'static [u8] {
+    match step {
+        RefundStepV1::Lez => b"sqlite-lez-refund",
+        RefundStepV1::Zcash => b"sqlite-zcash-refund",
+    }
+}
+
+fn refund_position(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    step: RefundStepV1,
+) -> ChainPosition {
+    match step {
+        RefundStepV1::Lez => ChainPosition::lez_timestamp_from_milliseconds_floor(
+            LezUnixMilliseconds::new(agreement.lez_refund_at_ms()),
+        ),
+        RefundStepV1::Zcash => {
+            ChainPosition::block_height(Chain::Zcash, u64::from(agreement.zcash_refund_at_height()))
+        }
+    }
+}
+
+fn refund_observation(
+    port: &SqliteClaimPort,
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    step: RefundStepV1,
+    prepared: Option<&PreparedRefundSubmissionV1>,
+) -> Result<RefundObservationV1, TestPortError> {
+    if !port
+        .refund_submissions
+        .lock()
+        .expect("refund submission lock")
+        .contains(&step)
+    {
+        return Ok(RefundObservationV1::Absent);
+    }
+    RefundEvidenceV1::new(
+        agreement,
+        step,
+        prepared.map_or_else(|| refund_id(step), |value| *value.expected_submission_id()),
+        match step {
+            RefundStepV1::Lez => "sqlite-lez-refund",
+            RefundStepV1::Zcash => "sqlite-zcash-refund",
+        },
+        refund_position(agreement, step),
+        3,
+    )
+    .map(RefundObservationV1::Confirmed)
+    .map_err(|_| TestPortError("invalid refund evidence"))
+}
+
+fn prepared_refund(step: RefundStepV1) -> Result<PreparedRefundSubmissionV1, TestPortError> {
+    PreparedRefundSubmissionV1::new(step, refund_id(step), refund_bytes(step).to_vec())
+        .map_err(|_| TestPortError("invalid refund submission"))
+}
+
+fn submit_refund(
+    port: &SqliteClaimPort,
+    step: RefundStepV1,
+    prepared: &PreparedRefundSubmissionV1,
+) -> Result<RefundSubmitOutcomeV1, TestPortError> {
+    if prepared.step() != step
+        || prepared.expected_submission_id() != &refund_id(step)
+        || prepared.exact_submission() != refund_bytes(step)
+    {
+        return Err(TestPortError("substituted refund submission"));
+    }
+    let mut submissions = port
+        .refund_submissions
+        .lock()
+        .expect("refund submission lock");
+    if !submissions.contains(&step) {
+        submissions.push(step);
+    }
+    Ok(RefundSubmitOutcomeV1::Accepted)
+}
+
+#[async_trait]
+impl LezRefundPort for SqliteClaimPort {
+    type Error = TestPortError;
+
+    async fn observe_refund_eligibility(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<RefundEligibilityObservationV1, Self::Error> {
+        Ok(RefundEligibilityObservationV1::canonical(refund_position(
+            agreement,
+            RefundStepV1::Lez,
+        )))
+    }
+
+    async fn prepare_refund(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<PreparedRefundSubmissionV1, Self::Error> {
+        prepared_refund(RefundStepV1::Lez)
+    }
+
+    async fn observe_prepared_refund(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: &PreparedRefundSubmissionV1,
+    ) -> Result<RefundObservationV1, Self::Error> {
+        refund_observation(self, agreement, RefundStepV1::Lez, Some(prepared))
+    }
+
+    async fn observe_counterparty_refund(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    ) -> Result<RefundObservationV1, Self::Error> {
+        refund_observation(self, agreement, RefundStepV1::Lez, None)
+    }
+
+    async fn submit_refund(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: &PreparedRefundSubmissionV1,
+    ) -> Result<RefundSubmitOutcomeV1, Self::Error> {
+        submit_refund(self, RefundStepV1::Lez, prepared)
+    }
+}
+
+#[async_trait]
+impl ZcashRefundPort for SqliteClaimPort {
+    type Error = TestPortError;
+
+    async fn observe_refund_eligibility(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        _context: &ZcashFundingContextV1,
+    ) -> Result<RefundEligibilityObservationV1, Self::Error> {
+        Ok(RefundEligibilityObservationV1::canonical(refund_position(
+            agreement,
+            RefundStepV1::Zcash,
+        )))
+    }
+
+    async fn prepare_refund(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        _context: &ZcashFundingContextV1,
+    ) -> Result<PreparedRefundSubmissionV1, Self::Error> {
+        prepared_refund(RefundStepV1::Zcash)
+    }
+
+    async fn observe_prepared_refund(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        _context: &ZcashFundingContextV1,
+        prepared: &PreparedRefundSubmissionV1,
+    ) -> Result<RefundObservationV1, Self::Error> {
+        refund_observation(self, agreement, RefundStepV1::Zcash, Some(prepared))
+    }
+
+    async fn observe_counterparty_refund(
+        &self,
+        agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        _context: &ZcashFundingContextV1,
+    ) -> Result<RefundObservationV1, Self::Error> {
+        refund_observation(self, agreement, RefundStepV1::Zcash, None)
+    }
+
+    async fn submit_refund(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        _context: &ZcashFundingContextV1,
+        prepared: &PreparedRefundSubmissionV1,
+    ) -> Result<RefundSubmitOutcomeV1, Self::Error> {
+        submit_refund(self, RefundStepV1::Zcash, prepared)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("{0}")]
 struct TestPortError(&'static str);
@@ -779,6 +993,395 @@ struct TestPortError(&'static str);
 type TestSdk = ZecPairSdk<NoDiscovery, FixedNegotiation, NoChain, NoChain, SqliteZecRecoveryStore>;
 
 type ClaimActive = ActiveZecSwap<SqliteClaimPort, SqliteClaimPort, SqliteZecRecoveryStore>;
+
+async fn drive_refund_actor(
+    participant: Participant,
+    maker: &mut ClaimActive,
+    taker: &mut ClaimActive,
+) -> Result<RefundDriveOutcome, ZecSdkError> {
+    match participant {
+        Participant::Maker => maker.drive_refund().await,
+        Participant::Taker => taker.drive_refund().await,
+    }
+}
+
+fn role_path<'a>(
+    participant: Participant,
+    maker: &'a std::path::Path,
+    taker: &'a std::path::Path,
+) -> &'a std::path::Path {
+    match participant {
+        Participant::Maker => maker,
+        Participant::Taker => taker,
+    }
+}
+
+fn role_name(participant: Participant) -> &'static str {
+    match participant {
+        Participant::Maker => "maker",
+        Participant::Taker => "taker",
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn schema_v10_refund_journal_reaches_refunded_and_reopens_in_both_directions() {
+    for (id, direction) in [
+        (
+            "sqlite-v10-refund-forward",
+            SwapDirection::TakerSellsForeign,
+        ),
+        ("sqlite-v10-refund-reverse", SwapDirection::TakerSellsLez),
+    ] {
+        let data = TempDir::new().expect("isolated refund directory");
+        let maker_path = data.path().join("maker.sqlite3");
+        let taker_path = data.path().join("taker.sqlite3");
+        let wire =
+            agreement_wire_direction_with_digest(id, FixtureVariant::Local, direction, [0x44; 32]);
+        let port = SqliteClaimPort::default();
+        let maker_store = claim_store(&maker_path, Participant::Maker);
+        let taker_store = claim_store(&taker_path, Participant::Taker);
+        let maker_sdk = claim_sdk(Participant::Maker, port.clone(), maker_store.clone());
+        let taker_sdk = claim_sdk(Participant::Taker, port.clone(), taker_store.clone());
+        let mut maker = maker_sdk
+            .activate(accept(&wire, Participant::Maker))
+            .await
+            .expect("maker activation");
+        let mut taker = taker_sdk
+            .activate(accept(&wire, Participant::Taker))
+            .await
+            .expect("taker activation");
+        drive_sqlite_claim_locks(direction, &port, &mut maker, &mut taker).await;
+
+        let lez_owner = maker.agreement().lez_depositor();
+        let zcash_owner = maker.agreement().lez_claimant();
+        for (index, (step, owner)) in [
+            (RefundStepV1::Lez, lez_owner),
+            (RefundStepV1::Zcash, zcash_owner),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let predecessor = 2 + u64::try_from(index).expect("small refund index");
+            assert_eq!(
+                drive_refund_actor(owner, &mut maker, &mut taker)
+                    .await
+                    .expect("owner submits refund"),
+                RefundDriveOutcome::Submitted(step),
+            );
+            let owner_path = role_path(owner, &maker_path, &taker_path);
+            let owner_role = role_name(owner);
+            let raw = Connection::open(owner_path).expect("inspect staged refund");
+            let (staged, intent_json): (i64, String) = raw
+                .query_row(
+                    "SELECT staged_revision, payload_json
+                     FROM zec_sdk_refund_intents
+                     WHERE local_role=?1 AND swap_id=?2",
+                    params![owner_role, id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .expect("exact intent exists before broadcast confirmation");
+            assert_eq!(staged, i64::try_from(predecessor).expect("revision"));
+            let active: i64 = raw
+                .query_row(
+                    "SELECT active_revision FROM zec_sdk_agreements
+                     WHERE local_role=?1 AND swap_id=?2",
+                    params![owner_role, id],
+                    |row| row.get(0),
+                )
+                .expect("active revision");
+            assert_eq!(active, staged);
+
+            if direction == SwapDirection::TakerSellsForeign && step == RefundStepV1::Lez {
+                raw.execute_batch(
+                    "CREATE TRIGGER abort_refund_revision
+                     BEFORE UPDATE OF active_revision ON zec_sdk_agreements
+                     BEGIN SELECT RAISE(ABORT, 'forced refund rollback'); END;",
+                )
+                .expect("install rollback trigger");
+                assert!(
+                    drive_refund_actor(owner, &mut maker, &mut taker)
+                        .await
+                        .is_err()
+                );
+                let intent_count: i64 = raw
+                    .query_row(
+                        "SELECT COUNT(*) FROM zec_sdk_refund_intents
+                         WHERE local_role=?1 AND swap_id=?2",
+                        params![owner_role, id],
+                        |row| row.get(0),
+                    )
+                    .expect("intent count after rollback");
+                let transition_count: i64 = raw
+                    .query_row(
+                        "SELECT COUNT(*) FROM zec_sdk_refund_transitions
+                         WHERE local_role=?1 AND swap_id=?2 AND predecessor_revision=?3",
+                        params![owner_role, id, staged],
+                        |row| row.get(0),
+                    )
+                    .expect("transition count after rollback");
+                assert_eq!((intent_count, transition_count), (1, 0));
+                raw.execute_batch("DROP TRIGGER abort_refund_revision;")
+                    .expect("remove rollback trigger");
+            }
+            drop(raw);
+
+            let expected_projection = if step == RefundStepV1::Zcash {
+                RefundDriveOutcome::Refunded {
+                    revision: predecessor + 1,
+                }
+            } else {
+                RefundDriveOutcome::Projected {
+                    step,
+                    revision: predecessor + 1,
+                }
+            };
+            assert_eq!(
+                drive_refund_actor(owner, &mut maker, &mut taker)
+                    .await
+                    .expect("owner projects refund"),
+                expected_projection,
+            );
+            let owner_transition = match owner {
+                Participant::Maker => {
+                    maker_store
+                        .load_refund_transition(&SwapId::new(id).expect("swap id"), predecessor)
+                        .await
+                }
+                Participant::Taker => {
+                    taker_store
+                        .load_refund_transition(&SwapId::new(id).expect("swap id"), predecessor)
+                        .await
+                }
+            }
+            .expect("load owned transition")
+            .expect("owned transition");
+            let replay = match owner {
+                Participant::Maker => {
+                    maker_store
+                        .commit_refund_transition(&owner_transition)
+                        .await
+                }
+                Participant::Taker => {
+                    taker_store
+                        .commit_refund_transition(&owner_transition)
+                        .await
+                }
+            }
+            .expect("exact transition replay");
+            assert!(replay.was_replay());
+            assert_eq!(replay.revision(), predecessor + 1);
+
+            let raw = Connection::open(owner_path).expect("inject refund replay conflict");
+            let exact_transition_json: String = raw
+                .query_row(
+                    "SELECT payload_json FROM zec_sdk_refund_transitions
+                     WHERE local_role=?1 AND swap_id=?2 AND predecessor_revision=?3",
+                    params![owner_role, id, staged],
+                    |row| row.get(0),
+                )
+                .expect("exact transition JSON");
+            raw.execute(
+                "UPDATE zec_sdk_refund_transitions
+                 SET payload_json=json_set(
+                     payload_json,
+                     '$.evidence.transaction_id',
+                     'conflicting-refund-transaction'
+                 )
+                 WHERE local_role=?1 AND swap_id=?2 AND predecessor_revision=?3",
+                params![owner_role, id, staged],
+            )
+            .expect("inject valid different refund payload");
+            let conflict = match owner {
+                Participant::Maker => {
+                    maker_store
+                        .commit_refund_transition(&owner_transition)
+                        .await
+                }
+                Participant::Taker => {
+                    taker_store
+                        .commit_refund_transition(&owner_transition)
+                        .await
+                }
+            };
+            assert!(matches!(
+                conflict,
+                Err(StoreError::ConflictingZecRefundTransition)
+            ));
+            raw.execute(
+                "UPDATE zec_sdk_refund_transitions SET payload_json=?1
+                 WHERE local_role=?2 AND swap_id=?3 AND predecessor_revision=?4",
+                params![exact_transition_json, owner_role, id, staged],
+            )
+            .expect("restore exact transition JSON");
+            drop(raw);
+
+            let raw = Connection::open(owner_path).expect("inspect committed owner refund");
+            let (kind, retained, retained_json): (String, Option<i64>, Option<String>) = raw
+                .query_row(
+                    "SELECT transition_kind, retained_intent_version, retained_intent_json
+                     FROM zec_sdk_refund_transitions
+                     WHERE local_role=?1 AND swap_id=?2 AND predecessor_revision=?3",
+                    params![owner_role, id, staged],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("owner transition row");
+            assert_eq!(kind, "owned");
+            assert_eq!(retained, Some(1));
+            assert_eq!(retained_json.as_deref(), Some(intent_json.as_str()));
+            let pending: i64 = raw
+                .query_row(
+                    "SELECT COUNT(*) FROM zec_sdk_refund_intents
+                     WHERE local_role=?1 AND swap_id=?2",
+                    params![owner_role, id],
+                    |row| row.get(0),
+                )
+                .expect("pending owner intent count");
+            assert_eq!(pending, 0);
+            drop(raw);
+
+            let observer = if owner == Participant::Maker {
+                Participant::Taker
+            } else {
+                Participant::Maker
+            };
+            let expected_projection = if step == RefundStepV1::Zcash {
+                RefundDriveOutcome::Refunded {
+                    revision: predecessor + 1,
+                }
+            } else {
+                RefundDriveOutcome::Projected {
+                    step,
+                    revision: predecessor + 1,
+                }
+            };
+            assert_eq!(
+                drive_refund_actor(observer, &mut maker, &mut taker)
+                    .await
+                    .expect("observer projects refund"),
+                expected_projection,
+            );
+            let raw = Connection::open(role_path(observer, &maker_path, &taker_path))
+                .expect("inspect observer refund");
+            let (kind, retained_version, retained_json, staged): (
+                String,
+                Option<i64>,
+                Option<String>,
+                Option<i64>,
+            ) = raw
+                .query_row(
+                    "SELECT transition_kind, retained_intent_version,
+                            retained_intent_json, intent_staged_revision
+                     FROM zec_sdk_refund_transitions
+                     WHERE local_role=?1 AND swap_id=?2 AND predecessor_revision=?3",
+                    params![
+                        role_name(observer),
+                        id,
+                        i64::try_from(predecessor).expect("revision")
+                    ],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .expect("observer transition row");
+            assert_eq!(
+                (kind.as_str(), retained_version, retained_json, staged),
+                ("observed", None, None, None)
+            );
+        }
+        assert_eq!((maker.status(), maker.revision()), (Phase::Refunded, 4));
+        assert_eq!((taker.status(), taker.revision()), (Phase::Refunded, 4));
+        assert_eq!(
+            drive_refund_actor(Participant::Maker, &mut maker, &mut taker)
+                .await
+                .expect("terminal maker"),
+            RefundDriveOutcome::Refunded { revision: 4 }
+        );
+        assert_eq!(
+            drive_refund_actor(Participant::Taker, &mut maker, &mut taker)
+                .await
+                .expect("terminal taker"),
+            RefundDriveOutcome::Refunded { revision: 4 }
+        );
+
+        drop(maker);
+        drop(taker);
+        drop(maker_sdk);
+        drop(taker_sdk);
+        drop(maker_store);
+        drop(taker_store);
+        let swap_id = SwapId::new(id).expect("swap id");
+        let mut maker_reopen = claim_sdk(
+            Participant::Maker,
+            port.clone(),
+            claim_store(&maker_path, Participant::Maker),
+        )
+        .resume(&swap_id)
+        .await
+        .expect("maker refund replay")
+        .expect("maker agreement");
+        let mut taker_reopen = claim_sdk(
+            Participant::Taker,
+            port.clone(),
+            claim_store(&taker_path, Participant::Taker),
+        )
+        .resume(&swap_id)
+        .await
+        .expect("taker refund replay")
+        .expect("taker agreement");
+        assert_eq!(
+            maker_reopen
+                .drive_refund()
+                .await
+                .expect("maker replays durable refund journal"),
+            RefundDriveOutcome::Refunded { revision: 4 }
+        );
+        assert_eq!(
+            taker_reopen
+                .drive_refund()
+                .await
+                .expect("taker replays durable refund journal"),
+            RefundDriveOutcome::Refunded { revision: 4 }
+        );
+        assert_eq!(
+            (maker_reopen.status(), maker_reopen.revision()),
+            (Phase::Refunded, 4)
+        );
+        assert_eq!(
+            (taker_reopen.status(), taker_reopen.revision()),
+            (Phase::Refunded, 4)
+        );
+        drop(maker_reopen);
+        drop(taker_reopen);
+
+        let raw = Connection::open(&maker_path).expect("corrupt future refund fixture");
+        if direction == SwapDirection::TakerSellsForeign {
+            raw.execute(
+                "UPDATE zec_sdk_refund_transitions SET payload_version=2
+                 WHERE local_role='maker' AND swap_id=?1 AND predecessor_revision=2",
+                params![id],
+            )
+            .expect("inject future refund schema");
+        } else {
+            raw.execute(
+                "UPDATE zec_sdk_refund_transitions
+                 SET payload_json=json_set(payload_json, '$.unknown_field', 1)
+                 WHERE local_role='maker' AND swap_id=?1 AND predecessor_revision=2",
+                params![id],
+            )
+            .expect("inject unknown refund field");
+        }
+        drop(raw);
+        assert!(
+            claim_sdk(
+                Participant::Maker,
+                port,
+                claim_store(&maker_path, Participant::Maker),
+            )
+            .resume(&swap_id)
+            .await
+            .is_err()
+        );
+    }
+}
 
 #[tokio::test]
 async fn schema_v9_claim_journal_completes_and_reopens_independent_actors_in_both_directions() {
@@ -1088,7 +1691,7 @@ fn assert_schema_v9_journal(path: &std::path::Path, id: &str, role: &str, secret
     let version: i64 = raw
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("schema version");
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     let active_revision: i64 = raw
         .query_row(
             "SELECT active_revision FROM zec_sdk_agreements
