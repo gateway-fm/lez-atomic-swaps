@@ -19,6 +19,7 @@ must close or explicitly accept every open item.
 | LOGOS-008 | Official LEZ v0.1.2 `PrivateKey` | Upstream `Debug`/`Display` reveal raw key material and the type does not implement `Zeroize` | Never format the type; keep it behind a role-owned sidecar wrapper and capability boundary; prohibit secret-bearing diagnostics and retain leak tests | Upstream redacted formatting plus zeroization, or migration to a supported signer/HSM interface that never exposes raw key material |
 | LOGOS-009 | LEZ v0.1.2's pinned RISC Zero 3.0.5 graph resolves `rzup 0.5.1` to `rsa 0.9.10` with default, install, and publish features (`RUSTSEC-2023-0071`) | The vulnerable RSA implementation is present in the official compatibility graph. The Marvin advisory concerns RSA decryption; the sidecar executes no `rzup` operation and exposes no RSA encryption/decryption surface, but presence still prevents an unqualified production-security claim | Keep this graph in the isolated compatibility process, prohibit `rzup` APIs and RSA material in sidecar code, run a dedicated cargo-deny audit on every change, and disclose the exact exception rather than waiving repository-controlled findings | An upstream RISC Zero/LEZ release removes or patches the affected RSA line, or a formal review explicitly accepts the proven non-decryption call graph |
 | LOGOS-010 | LEZ v0.1.2's transitive Arkworks graph resolves `tracing-subscriber 0.2.25` (`RUSTSEC-2025-0055`) | The affected package is present, although the sidecar feature graph does not enable its `fmt` or ANSI formatting features and the process does not install a tracing subscriber | Keep application diagnostics on repository-owned redacted errors, assert the feature graph during release review, and retain the dedicated cargo-deny exception/audit | Upstream moves to a fixed tracing-subscriber release, or a reviewed dependency graph proves the affected formatter unreachable in the production binary |
+| LOGOS-011 | Official LEZ v0.2.0 local-stack documentation and bundled Bedrock composition | The tag contains a digest-selected Bedrock image and non-standalone sequencer/indexer sources, but its README labels the bundled Bedrock node outdated and provides no immutable source-commit or public-testnet parity attestation for that image | Before local M2 use, independently source-verify and record the exact Bedrock image digest, indexer/sequencer commits, configuration, RPC/event direction, and readiness facts. Treat the local stack as real pinned execution without claiming public Bedrock parity | Upstream publishes a supported immutable local-devnet manifest mapping every image to source and the public runtime, or a review accepts the recorded local pins and explicitly scopes the parity gap |
 
 ## Milestone use
 
@@ -26,4 +27,11 @@ An M2 evidence packet may list these items as open while certifying the exact
 repository-controlled implementation. It may not use them to waive canonical
 adapter validation, reorg/restart safety, complete role effects, independent
 actor tests, or the composed corridor. M7 production readiness revisits the
-entire table.
+entire table. Under ADR 0023 the M2 corridor is private and uses source-verified,
+immutable local LEZ and Zebra implementations; LOGOS-001 through LOGOS-005,
+LOGOS-011's public-parity gap, and public deployment/testnet evidence remain
+production-readiness work. That
+deferral does not permit a devnet-only code path: future public activation must
+reuse the same binaries, ports, builders, and validators with only signed
+configuration, funding/authentication, confirmation policy, and required LEZ
+deployment changes.

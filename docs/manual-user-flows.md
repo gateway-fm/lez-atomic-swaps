@@ -40,6 +40,15 @@ and Flow 3's LEZ runner when you need evidence from the actual pinned local
 nodes. Use a unique `RUN_ID` for every heavy run and never overlap those runners
 with another repository build.
 
+The terminal SDK replay used by the future actor `status` command is already
+offline by construction: it can instantiate the LEZ and Zcash ports as `()` and
+reads only the role-local recovery store. The schema-v2 actor configuration
+likewise loads status material from only the role store plus the external
+claim-recovery key; agreement bytes, sidecar capability, Zcash key, preimage,
+Zebra cookie, and both node endpoints may be unavailable. The current binary
+does not yet open the store or emit that status, so this is verified API and
+configuration evidence, not a user command advertised as complete.
+
 M2 will not be tagged until this guide also contains and has been checked from
 a fresh checkout for all of the following:
 
@@ -54,10 +63,21 @@ a fresh checkout for all of the following:
    collisions; and
 7. stop only resources owned by the chosen run and locate the retained evidence.
 
-The same section will identify every RPC, whether it is loopback or public, how
-funds are obtained, expected output without exposing secrets, and which public
-conditions can introduce flakiness. Until those exact commands exist here, use
-the narrower flows below and treat the full manual swap as unavailable.
+The M2 rehearsal uses one pinned public-compatible local LEZ v0.2 devnet and one
+pinned local Zcash Regtest devnet. The LEZ devnet must include the full Bedrock
+node, indexer, and non-standalone sequencer after their immutable pins and
+settlement wiring are source-verified; that check is currently RED. The
+standalone mock block publisher and v0.1.2 lane are lower-level checks only. Maker and taker
+use separate configs, keys, funds,
+stores, journals, sidecars, and processes. The guide will identify every local
+RPC, deterministic funding source, expected output without exposing secrets,
+and retained artifact. It must also show that the same binaries select a future
+public route only through signed configuration and provisioning: endpoints,
+authentication, chain identities, confirmation profile, keys/funds, and the
+deployed LEZ program ID. It will not require or publish a public transaction,
+address, faucet interaction, or recording for M2. Until those exact local
+commands exist here, use the narrower flows below and treat the full manual swap
+as unavailable.
 
 ## What this guide proves today
 
@@ -77,6 +97,16 @@ independent maker and taker processes, both ZEC trade directions through all
 CLI/daemon/chain boundaries, Delivery/Chat-loss and restart at those boundaries,
 recordings generated from that suite, and public-testnet deployment. Do not use
 the local fixtures below as evidence for those pending M2 exit criteria.
+
+The 23 reference-actor boundary cases additionally prove that one Unix-only
+schema-v2 configuration fixes exactly one role/run/swap, exact signed-agreement
+SHA-256, LEZ runtime and discovery window, Zebra network/branch/genesis, and a
+bounded exact-outpoint set. Existing private files must be regular, owner-only
+mode `0600`, single-link, and unchanged between validation and use; symlinks,
+hard-link aliases, late agreement/state aliasing, unsafe lexical paths,
+cross-role state reuse, and secret-bearing diagnostics fail closed. This
+hardening does not solve the remaining mutable SQLite path-to-descriptor race;
+the actual store-open composition must close and test that boundary.
 
 ## User and custody flow
 
@@ -306,11 +336,12 @@ transaction, validation, execution, and canonical-block boundaries:
   custom-deployment registry. Standalone does not prove LEZ testnet 0.2
   compatibility or public sequencing.
 
-The required evidence ladder is exact local vectors, actual isolated consensus
-nodes, a composed independent maker/taker local corridor, and then self-hosted
-plus public-route testnet corridors with real funded accounts. Local on-chain
-evidence cannot replace the latter two levels. Mainnet remains separately
-disabled pending calibration and formal review.
+The M2 evidence ladder is exact local vectors, public-compatible actual local
+chain implementations, a composed independent maker/taker local corridor, and
+locally tested dormant public-route configuration/adapters. Self-hosted and
+provider-backed public testnet execution with public funds is deferred to
+production readiness under ADR 0023 and remains visibly unproved. Mainnet
+remains separately disabled pending calibration and formal review.
 
 Cold setup and CI do use external software-distribution services:
 
@@ -319,9 +350,9 @@ Cold setup and CI do use external software-distribution services:
 | Rust toolchain distribution selected by `rustup` | Fresh toolchain install and CI | Exact Rust `1.96.0`; CI toolchain action is commit-pinned | DNS/CDN/proxy outage can block cold setup; warm installed toolchains avoid it |
 | crates.io index and crate downloads | Workspace build, `cargo install rzup`, cargo-deny installation | Cargo lockfiles, exact `rzup 0.5.1`, and crate checksums | Registry/CDN/rate-limit outage can block an uncached build; cached sources avoid most requests |
 | GitHub Git endpoints for Logos LEZ, SPEL, Overwatch, Jellyfish, and other locked Git dependencies | First LEZ compatibility build | Cargo lockfiles resolve exact commits; source policy allowlists exact repositories | GitHub/DNS/proxy outage can block an uncached checkout; it cannot silently substitute another locked commit |
-| `https://testnet.lez.logos.co` and its explorer | Future M2 v0.2 deployment/actor evidence; health audit only today | Official LEZ v0.2 endpoint; deployment must bind exact runtime, checked ELF, ProgramId, tx IDs, and blocks | Public service/rate-limit/reorg outage can make testnet evidence flaky; no SLA or self-hosted fallback is selected yet, so local standalone remains the deterministic lower lane |
-| Self-host Zebra 6.0.0 on public Testnet | Selected future M2 node route; not called by current flows | Exact stable tag/release; cookie-authenticated loopback RPC; query current `consensus.next_block` | Initial sync, disk, DNS/P2P, organic reorg, and epoch activation can delay/fail a run |
-| Tatum Testnet Zebrad JSON-RPC | Selected public-provider route; not called by current flows | `https://zcash-testnet-zebrad.gateway.tatum.io`; dedicated API key in sensitive `x-api-key`; require the exact actor method contract and chain/branch/genesis/stable-tip checks | Third-party authoritative node with account provisioning, quotas, outage, lag, method-policy, and provider-trust risk; HTTPS adapter and live rehearsal remain M2 work; no silent failover or submit retry |
+| `https://testnet.lez.logos.co` and its explorer | Deferred production-readiness v0.2 deployment/actor evidence; health audit only today | Official LEZ v0.2 endpoint; deployment must bind exact runtime, checked ELF, ProgramId, tx IDs, and blocks | Public service/rate-limit/reorg outage can make testnet evidence flaky; no SLA or self-hosted fallback is selected yet. M2 locally contract-tests the public-capable configuration without publishing a deployment |
+| Self-host Zebra 6.0.0 on public Testnet | Selected deferred production-readiness node route; not called by current flows | Exact stable tag/release; cookie-authenticated loopback RPC; query current `consensus.next_block` | Initial sync, disk, DNS/P2P, organic reorg, and epoch activation can delay/fail a public run; the private M2 corridor uses Regtest |
+| Tatum Testnet Zebrad JSON-RPC | Selected public-provider route; not called by current flows | `https://zcash-testnet-zebrad.gateway.tatum.io`; dedicated API key in sensitive `x-api-key`; require the exact actor method contract and chain/branch/genesis/stable-tip checks | Third-party authoritative node with account provisioning, quotas, outage, lag, method-policy, and provider-trust risk; HTTPS adapter contract remains an M2 portability gate, while live rehearsal is deferred to production readiness; no silent failover or submit retry |
 | Community Zcash faucet or Discord support | Optional future TAZ funding | External operator; verify any returned txid independently through self-hosted Zebra | No SLA/current rate or amount; faucet may time out or be depleted and is never a required CI gate |
 | Zallet v0.1.0-alpha.4 | Optional future funding wallet, never the HTLC signer | Exact alpha tag, loopback RPC, Zebra cookie; explicit transparent privacy policy | Alpha/epoch compatibility; cannot export derived transparent keys or sign arbitrary HTLC transactions |
 | Docker Hub `zfnd/zebra` and `risczero/risc0-guest-builder` | Cold Zebra image build and Risc0 guest build | Zebra `5.2.0` source image and guest builder are digest-pinned | Registry outage, throttling, or authentication policy can block a cold pull; local images reduce but do not guarantee offline BuildKit resolution |
@@ -437,11 +468,20 @@ funding directions, stable-tip block/mempool discovery, exact confirmed
 candidate outpoints and signed input-set commitment, transparent-only canonical
 V5 bytes and output/change policy, absence/ambiguity/horizon behavior, prior
 removal/replacement reconciliation, claims, and refunds. The actor package adds
-eight maker/taker config/CLI isolation cases. These commands use bounded in-memory
-or filesystem fixtures rather than an actual Zebra process; the separate isolated
+23 maker/taker schema-v2 configuration, credential, identity, offline-status,
+and filesystem-isolation cases. These commands use bounded in-memory or
+filesystem fixtures rather than an actual Zebra process; the separate isolated
 Zebra suite remains the consensus lane, and the actor commands do not yet drive it.
 
-For a direct manual launch, create the parent directory for the state file and
+The `zec-reference-actor` CLI spelling is
+`zec-reference-actor --config PRIVATE_JSON activate|drive|status`. Today each
+form validates the private configuration and exits; it does not open SQLite,
+connect to a sidecar or Zebra, activate an agreement, drive an effect, or emit a
+durable status snapshot. Do not provision real keys or funds for this binary
+until those command bodies and the descriptor-bound SQLite open are composed
+and covered by the actor-process corridor.
+
+For a direct **LEZ sidecar** launch, create the parent directory for the state file and
 supply the six required flags shown by the test fixture:
 `--node-endpoint`, `--run-id`, `--runtime-file`,
 `--capability-file`, `--signer-key-file`, and `--state-file`.

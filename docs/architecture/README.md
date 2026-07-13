@@ -49,6 +49,7 @@ flowchart TB
     FirstLock --> MakerLock["0020 Durable maker second lock"]
     MakerLock --> ClaimRecovery["0021 Protected claim recovery"]
     ClaimRecovery --> LezSidecar["0022 LEZ official-wire sidecar"]
+    LezSidecar --> LocalM2["0023 Private local M2 certification"]
     ZecPins --> LezSidecar
     LEZ --> LezSidecar
     ZecPins --> Agreement
@@ -61,6 +62,7 @@ flowchart TB
     Persistence --> RPC
     Persistence --> ClaimRecovery
     LezSidecar -.-> Upstream
+    LocalM2 -.-> Upstream
 ```
 
 | ADR | Decision | Status |
@@ -86,4 +88,5 @@ flowchart TB
 | [0019](0019-canonical-lez-observation.md) | Stable agreement-bound LEZ fund transaction, block, metadata, and custody evidence is replayed from primitive snapshots | Canonical/update/removal/replacement exact-head folding accepted in SDK/SQLite; official v0.1.2 owner/discovery decoder and main adapter GREEN, SDK-port composition pending |
 | [0020](0020-durable-maker-second-lock.md) | Fresh eligibility is consumed by a separately durable opposite-chain maker effect | Separate schema-v10 maker/taker stores replay `BothLegsLocked`; terminal journals continue under 0021 and production adapters remain pending |
 | [0021](0021-protected-claim-recovery.md) | Claim material and exact submissions use authenticated envelopes plus role-local schema-v10 claim/refund journals | Both directions, legacy-secret migration/scrub, corruption/rollback/unknown-outcome hardening, and independent replay at `Completed` or `Refunded` proven; key rotation and production adapters pending |
-| [0022](0022-isolate-lez-official-wire-sidecar.md) | Keep incompatible pinned LEZ official-wire and Zcash graphs in separate processes behind a bounded local protocol | Accepted for the M2 actual-node corridor; all eight sidecar methods, main LEZ/Zebra validation ports, crash-safe SDK ports, private fresh-client factory, exact-outpoint Zebra planner, checked all-trait Zebra composite, refund-aware full resume, secure one-shot actor/config boundary, and external-v0.1.2 schema-v2 canonical deployment handoff GREEN; actor command wiring and composed evidence remain |
+| [0022](0022-isolate-lez-official-wire-sidecar.md) | Keep incompatible pinned LEZ official-wire and Zcash graphs in separate processes behind a bounded local protocol | Process boundary accepted; all eight v0.1.2 sidecar methods, main validation ports, crash-safe SDK ports, runtime validator, exact-outpoint Zebra composite, store-only replay, schema-v2 actor/material boundary, and v0.1.2 deployment handoff GREEN. ADR 0023 makes these lower evidence; v0.2 sidecar, descriptor-bound SQLite open, actor wiring, and composition remain |
+| [0023](0023-private-local-m2-certification.md) | Certify M2 through a private fully functional actual-node corridor and defer public deployment/testnet publication | Accepted target; full Bedrock/indexer/non-standalone LEZ v0.2 devnet, official-wire v0.2 sidecar, config-only public portability, and local maker/taker happy/recovery evidence remain RED; public execution evidence stays visibly deferred to production readiness |

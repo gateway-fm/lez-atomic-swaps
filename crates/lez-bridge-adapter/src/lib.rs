@@ -535,26 +535,8 @@ impl<T: LezBridgeTransport> LezBridgeAdapter<T> {
         if self.local_participant != agreement.lez_depositor() {
             return Err(PrepareNativeFirstLockError::WrongDepositor);
         }
-        let signed_chain = agreement.lez_terms().chain();
-        if signed_chain.environment() != LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility {
-            return Err(PrepareNativeFirstLockError::IncompatibleEnvironment);
-        }
-        if self.runtime.channel_id != Hex32::from_bytes(*signed_chain.channel_id())
-            || self.runtime.genesis_block_hash
-                != Hex32::from_bytes(*signed_chain.genesis_block_hash())
-        {
-            return Err(PrepareNativeFirstLockError::ChainIdentityMismatch);
-        }
-        if self.runtime.escrow_program_id
-            != Hex32::from_bytes(program_id_bytes(agreement.lez_terms().escrow_program_id()))
-        {
-            return Err(PrepareNativeFirstLockError::EscrowProgramMismatch);
-        }
-        if self.runtime.signer_account_id
-            != Hex32::from_bytes(*agreement.lez_account(self.local_participant))
-        {
-            return Err(PrepareNativeFirstLockError::SignerAccountMismatch);
-        }
+        validate_runtime_binding(agreement, &self.runtime, self.local_participant)
+            .map_err(map_runtime_prepare_error)?;
         let authenticated_transfer_program_id = match agreement.lez_terms().asset() {
             LezAssetV1::Native {
                 authenticated_transfer_program_id,
@@ -638,7 +620,7 @@ impl<T: LezBridgeFirstLockTransport> LezBridgeAdapter<T> {
             return Err(ObserveNativeEscrowError::ExactTargetRequiresDepositor);
         }
         let (initialize, fund) = complete_lez_plan(plan, submission)?;
-        validate_runtime(agreement, &self.runtime, self.local_participant)
+        validate_runtime_binding(agreement, &self.runtime, self.local_participant)
             .map_err(map_runtime_observation_error)?;
         let terms = native_terms(agreement).map_err(|error| match error {
             NativeTermsError::UnsupportedAsset => ObserveNativeEscrowError::UnsupportedAsset,
@@ -778,7 +760,7 @@ impl<T: LezBridgeFirstLockTransport> LezBridgeAdapter<T> {
         if self.local_participant != agreement.lez_depositor() {
             return Err(PrepareNativeFirstLockError::WrongDepositor);
         }
-        validate_runtime(agreement, &self.runtime, self.local_participant)
+        validate_runtime_binding(agreement, &self.runtime, self.local_participant)
             .map_err(map_runtime_prepare_error)?;
         match native_terms(agreement) {
             Ok(_) => {}
@@ -948,7 +930,7 @@ impl<T: LezBridgeObservationTransport> LezBridgeAdapter<T> {
             EscrowObservationTarget::Exact { .. }
             | EscrowObservationTarget::DiscoverByTerms { .. } => {}
         }
-        validate_runtime(agreement, &self.runtime, self.local_participant)
+        validate_runtime_binding(agreement, &self.runtime, self.local_participant)
             .map_err(map_runtime_observation_error)?;
         let terms = native_terms(agreement).map_err(|error| match error {
             NativeTermsError::UnsupportedAsset => ObserveNativeEscrowError::UnsupportedAsset,
@@ -1483,74 +1465,100 @@ enum NativeTermsError {
     Protocol(ProtocolValueError),
 }
 
-#[derive(Clone, Copy, Debug)]
-enum RuntimeBindingError {
+/// Failure binding a signed agreement to one role-local LEZ runtime.
+///
+/// Variants intentionally carry no compared runtime or agreement values, so
+/// diagnostics can identify the failed policy without disclosing identities.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum LezRuntimeBindingError {
+    /// The signed environment or selected compatibility graph is unsupported.
+    #[error("signed LEZ environment is not compatible with this bridge")]
     IncompatibleEnvironment,
+    /// The signed channel or genesis identity differs from the selected runtime.
+    #[error("signed LEZ chain identity differs from the selected runtime")]
     ChainIdentityMismatch,
+    /// The signed escrow program differs from the selected runtime.
+    #[error("signed LEZ escrow program differs from the selected runtime")]
     EscrowProgramMismatch,
+    /// The role-local sidecar signer is not the account in the signed agreement.
+    #[error("LEZ sidecar signer differs from the signed local account")]
     SignerAccountMismatch,
 }
 
-fn validate_runtime(
+/// Validates signed agreement fields against an already role-checked runtime.
+///
+/// This is the reusable signed-terms check for callers that must reject a
+/// sidecar before constructing chain ports. It accepts the SDK's validated
+/// agreement, the sidecar's bounded runtime description, and the local actor
+/// role; no raw agreement or private sidecar wire messages cross this API. The
+/// caller must independently require `runtime.sidecar_role` to equal the local
+/// participant. [`LezBridgeAdapter::new`] performs that separate process-role
+/// binding for constructed adapters.
+///
+/// # Errors
+///
+/// Returns a payload-free category when environment/compatibility, chain,
+/// escrow-program, or local signer identity does not match.
+pub fn validate_runtime_binding(
     agreement: &ZecAgreementV1,
     runtime: &RuntimeDescriptor,
     local_participant: Participant,
-) -> Result<(), RuntimeBindingError> {
+) -> Result<(), LezRuntimeBindingError> {
     let signed_chain = agreement.lez_terms().chain();
     if signed_chain.environment() != LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility
         || runtime.compatibility != RuntimeCompatibility::NssaV0_1_2
     {
-        return Err(RuntimeBindingError::IncompatibleEnvironment);
+        return Err(LezRuntimeBindingError::IncompatibleEnvironment);
     }
     if runtime.channel_id != Hex32::from_bytes(*signed_chain.channel_id())
         || runtime.genesis_block_hash != Hex32::from_bytes(*signed_chain.genesis_block_hash())
     {
-        return Err(RuntimeBindingError::ChainIdentityMismatch);
+        return Err(LezRuntimeBindingError::ChainIdentityMismatch);
     }
     if runtime.escrow_program_id
         != Hex32::from_bytes(program_id_bytes(agreement.lez_terms().escrow_program_id()))
     {
-        return Err(RuntimeBindingError::EscrowProgramMismatch);
+        return Err(LezRuntimeBindingError::EscrowProgramMismatch);
     }
     if runtime.signer_account_id != Hex32::from_bytes(*agreement.lez_account(local_participant)) {
-        return Err(RuntimeBindingError::SignerAccountMismatch);
+        return Err(LezRuntimeBindingError::SignerAccountMismatch);
     }
     Ok(())
 }
 
 fn map_runtime_observation_error<E: std::error::Error + 'static>(
-    error: RuntimeBindingError,
+    error: LezRuntimeBindingError,
 ) -> ObserveNativeEscrowError<E> {
     match error {
-        RuntimeBindingError::IncompatibleEnvironment => {
+        LezRuntimeBindingError::IncompatibleEnvironment => {
             ObserveNativeEscrowError::IncompatibleEnvironment
         }
-        RuntimeBindingError::ChainIdentityMismatch => {
+        LezRuntimeBindingError::ChainIdentityMismatch => {
             ObserveNativeEscrowError::ChainIdentityMismatch
         }
-        RuntimeBindingError::EscrowProgramMismatch => {
+        LezRuntimeBindingError::EscrowProgramMismatch => {
             ObserveNativeEscrowError::EscrowProgramMismatch
         }
-        RuntimeBindingError::SignerAccountMismatch => {
+        LezRuntimeBindingError::SignerAccountMismatch => {
             ObserveNativeEscrowError::SignerAccountMismatch
         }
     }
 }
 
 fn map_runtime_prepare_error<E: std::error::Error + 'static>(
-    error: RuntimeBindingError,
+    error: LezRuntimeBindingError,
 ) -> PrepareNativeFirstLockError<E> {
     match error {
-        RuntimeBindingError::IncompatibleEnvironment => {
+        LezRuntimeBindingError::IncompatibleEnvironment => {
             PrepareNativeFirstLockError::IncompatibleEnvironment
         }
-        RuntimeBindingError::ChainIdentityMismatch => {
+        LezRuntimeBindingError::ChainIdentityMismatch => {
             PrepareNativeFirstLockError::ChainIdentityMismatch
         }
-        RuntimeBindingError::EscrowProgramMismatch => {
+        LezRuntimeBindingError::EscrowProgramMismatch => {
             PrepareNativeFirstLockError::EscrowProgramMismatch
         }
-        RuntimeBindingError::SignerAccountMismatch => {
+        LezRuntimeBindingError::SignerAccountMismatch => {
             PrepareNativeFirstLockError::SignerAccountMismatch
         }
     }
@@ -1712,20 +1720,22 @@ fn refund_terms<E: std::error::Error + 'static>(
     runtime: &RuntimeDescriptor,
     local_participant: Participant,
 ) -> Result<NativeEscrowTerms, NativeRefundAdapterError<E>> {
-    validate_runtime(agreement, runtime, local_participant).map_err(|error| match error {
-        RuntimeBindingError::IncompatibleEnvironment => {
-            NativeRefundAdapterError::IncompatibleEnvironment
-        }
-        RuntimeBindingError::ChainIdentityMismatch => {
-            NativeRefundAdapterError::ChainIdentityMismatch
-        }
-        RuntimeBindingError::EscrowProgramMismatch => {
-            NativeRefundAdapterError::EscrowProgramMismatch
-        }
-        RuntimeBindingError::SignerAccountMismatch => {
-            NativeRefundAdapterError::SignerAccountMismatch
-        }
-    })?;
+    validate_runtime_binding(agreement, runtime, local_participant).map_err(
+        |error| match error {
+            LezRuntimeBindingError::IncompatibleEnvironment => {
+                NativeRefundAdapterError::IncompatibleEnvironment
+            }
+            LezRuntimeBindingError::ChainIdentityMismatch => {
+                NativeRefundAdapterError::ChainIdentityMismatch
+            }
+            LezRuntimeBindingError::EscrowProgramMismatch => {
+                NativeRefundAdapterError::EscrowProgramMismatch
+            }
+            LezRuntimeBindingError::SignerAccountMismatch => {
+                NativeRefundAdapterError::SignerAccountMismatch
+            }
+        },
+    )?;
     native_terms(agreement).map_err(|error| match error {
         NativeTermsError::UnsupportedAsset => NativeRefundAdapterError::UnsupportedAsset,
         NativeTermsError::Protocol(source) => NativeRefundAdapterError::Protocol(source),
@@ -1737,20 +1747,22 @@ fn claim_terms<E: std::error::Error + 'static>(
     runtime: &RuntimeDescriptor,
     local_participant: Participant,
 ) -> Result<NativeEscrowTerms, NativeRevealingClaimAdapterError<E>> {
-    validate_runtime(agreement, runtime, local_participant).map_err(|error| match error {
-        RuntimeBindingError::IncompatibleEnvironment => {
-            NativeRevealingClaimAdapterError::IncompatibleEnvironment
-        }
-        RuntimeBindingError::ChainIdentityMismatch => {
-            NativeRevealingClaimAdapterError::ChainIdentityMismatch
-        }
-        RuntimeBindingError::EscrowProgramMismatch => {
-            NativeRevealingClaimAdapterError::EscrowProgramMismatch
-        }
-        RuntimeBindingError::SignerAccountMismatch => {
-            NativeRevealingClaimAdapterError::SignerAccountMismatch
-        }
-    })?;
+    validate_runtime_binding(agreement, runtime, local_participant).map_err(
+        |error| match error {
+            LezRuntimeBindingError::IncompatibleEnvironment => {
+                NativeRevealingClaimAdapterError::IncompatibleEnvironment
+            }
+            LezRuntimeBindingError::ChainIdentityMismatch => {
+                NativeRevealingClaimAdapterError::ChainIdentityMismatch
+            }
+            LezRuntimeBindingError::EscrowProgramMismatch => {
+                NativeRevealingClaimAdapterError::EscrowProgramMismatch
+            }
+            LezRuntimeBindingError::SignerAccountMismatch => {
+                NativeRevealingClaimAdapterError::SignerAccountMismatch
+            }
+        },
+    )?;
     native_terms(agreement).map_err(|error| match error {
         NativeTermsError::UnsupportedAsset => NativeRevealingClaimAdapterError::UnsupportedAsset,
         NativeTermsError::Protocol(source) => NativeRevealingClaimAdapterError::Protocol(source),

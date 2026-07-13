@@ -271,10 +271,11 @@ where
         Ok(Some(active))
     }
 
-    /// Resumes all lock and claim transitions for claim-capable chain/store adapters.
+    /// Resumes all lock and claim transitions from a claim-capable durable store.
     ///
-    /// Use this entry point when a restarted actor may already have durable claim transitions;
-    /// the base [`Self::resume`] remains available to narrower pre-claim adapter compositions.
+    /// This entry point performs no chain calls and imposes no LEZ or Zcash port capability.
+    /// Use it when a restarted actor may already have durable claim transitions; the base
+    /// [`Self::resume`] remains available to narrower pre-claim store compositions.
     ///
     /// # Errors
     ///
@@ -285,8 +286,6 @@ where
         swap_id: &SwapId,
     ) -> Result<Option<ActiveZecSwap<Lez, Zcash, Store>>, ZecSdkError>
     where
-        Lez: LezClaimPort,
-        Zcash: ZcashClaimPort,
         Store: ClaimRecoveryStore,
     {
         let Some(mut active) = self.resume(swap_id).await? else {
@@ -296,7 +295,7 @@ where
         Ok(Some(active))
     }
 
-    /// Resumes every lock, claim, and refund transition for truthful status projection.
+    /// Resumes every lock, claim, and refund transition for truthful offline status projection.
     ///
     /// This entry point performs no chain calls. It is intended for a restarted actor whose
     /// durable history may have reached either terminal claim completion or timeout recovery.
@@ -310,8 +309,6 @@ where
         swap_id: &SwapId,
     ) -> Result<Option<ActiveZecSwap<Lez, Zcash, Store>>, ZecSdkError>
     where
-        Lez: LezClaimPort + LezRefundPort,
-        Zcash: ZcashClaimPort + ZcashRefundPort,
         Store: ClaimRecoveryStore + RefundRecoveryStore,
     {
         let Some(mut active) = self.resume_claim_capable(swap_id).await? else {
@@ -1333,6 +1330,105 @@ where
 
 impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
 where
+    Store: ClaimRecoveryStore,
+{
+    async fn replay_claim_transitions(&mut self) -> Result<(), ZecSdkError> {
+        loop {
+            let advanced = match self.status() {
+                Phase::BothLegsLocked
+                    if self.local_participant() == self.agreement().lez_claimant() =>
+                {
+                    self.replay_owned_revealing_claim().await?
+                }
+                Phase::BothLegsLocked => self.replay_observed_revealing_claim().await?,
+                Phase::ClaimEvidenceAvailable
+                    if self.local_participant() == self.agreement().lez_claimant().other() =>
+                {
+                    self.replay_owned_followup_claim().await?
+                }
+                Phase::ClaimEvidenceAvailable => self.replay_observed_followup_claim().await?,
+                _ => false,
+            };
+            if !advanced {
+                return Ok(());
+            }
+        }
+    }
+
+    async fn replay_owned_revealing_claim(&mut self) -> Result<bool, ZecSdkError> {
+        let Some(transition) = self
+            .store
+            .load_revealing_claim_transition(self.coordinator.id(), self.revision)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Ok(false);
+        };
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        self.advance_claim_replay(next)?;
+        Ok(true)
+    }
+
+    async fn replay_observed_revealing_claim(&mut self) -> Result<bool, ZecSdkError> {
+        let Some(transition) = self
+            .store
+            .load_observed_revealing_claim_transition(self.coordinator.id(), self.revision)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Ok(false);
+        };
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        self.advance_claim_replay(next)?;
+        Ok(true)
+    }
+
+    async fn replay_owned_followup_claim(&mut self) -> Result<bool, ZecSdkError> {
+        let Some(transition) = self
+            .store
+            .load_followup_claim_transition(self.coordinator.id(), self.revision)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Ok(false);
+        };
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        self.advance_claim_replay(next)?;
+        Ok(true)
+    }
+
+    async fn replay_observed_followup_claim(&mut self) -> Result<bool, ZecSdkError> {
+        let Some(transition) = self
+            .store
+            .load_observed_followup_claim_transition(self.coordinator.id(), self.revision)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Ok(false);
+        };
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        self.advance_claim_replay(next)?;
+        Ok(true)
+    }
+
+    fn advance_claim_replay(&mut self, next: SwapCoordinator) -> Result<(), ZecSdkError> {
+        self.revision = self.checked_next_claim_revision()?;
+        self.coordinator = next;
+        Ok(())
+    }
+
+    fn checked_next_claim_revision(&self) -> Result<u64, ZecSdkError> {
+        self.revision
+            .checked_add(1)
+            .ok_or(ZecSdkError::InvalidProjectionRevision {
+                expected: u64::MAX,
+                actual: u64::MAX,
+            })
+    }
+}
+
+impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
+where
     Lez: LezClaimPort,
     Zcash: ZcashClaimPort,
     Store: ClaimRecoveryStore,
@@ -1616,100 +1712,6 @@ where
         }
     }
 
-    async fn replay_claim_transitions(&mut self) -> Result<(), ZecSdkError> {
-        loop {
-            let advanced = match self.status() {
-                Phase::BothLegsLocked
-                    if self.local_participant() == self.agreement().lez_claimant() =>
-                {
-                    self.replay_owned_revealing_claim().await?
-                }
-                Phase::BothLegsLocked => self.replay_observed_revealing_claim().await?,
-                Phase::ClaimEvidenceAvailable
-                    if self.local_participant() == self.agreement().lez_claimant().other() =>
-                {
-                    self.replay_owned_followup_claim().await?
-                }
-                Phase::ClaimEvidenceAvailable => self.replay_observed_followup_claim().await?,
-                _ => false,
-            };
-            if !advanced {
-                return Ok(());
-            }
-        }
-    }
-
-    async fn replay_owned_revealing_claim(&mut self) -> Result<bool, ZecSdkError> {
-        let Some(transition) = self
-            .store
-            .load_revealing_claim_transition(self.coordinator.id(), self.revision)
-            .await
-            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
-        else {
-            return Ok(false);
-        };
-        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
-        self.advance_claim_replay(next)?;
-        Ok(true)
-    }
-
-    async fn replay_observed_revealing_claim(&mut self) -> Result<bool, ZecSdkError> {
-        let Some(transition) = self
-            .store
-            .load_observed_revealing_claim_transition(self.coordinator.id(), self.revision)
-            .await
-            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
-        else {
-            return Ok(false);
-        };
-        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
-        self.advance_claim_replay(next)?;
-        Ok(true)
-    }
-
-    async fn replay_owned_followup_claim(&mut self) -> Result<bool, ZecSdkError> {
-        let Some(transition) = self
-            .store
-            .load_followup_claim_transition(self.coordinator.id(), self.revision)
-            .await
-            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
-        else {
-            return Ok(false);
-        };
-        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
-        self.advance_claim_replay(next)?;
-        Ok(true)
-    }
-
-    async fn replay_observed_followup_claim(&mut self) -> Result<bool, ZecSdkError> {
-        let Some(transition) = self
-            .store
-            .load_observed_followup_claim_transition(self.coordinator.id(), self.revision)
-            .await
-            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
-        else {
-            return Ok(false);
-        };
-        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
-        self.advance_claim_replay(next)?;
-        Ok(true)
-    }
-
-    fn advance_claim_replay(&mut self, next: SwapCoordinator) -> Result<(), ZecSdkError> {
-        self.revision = self.checked_next_claim_revision()?;
-        self.coordinator = next;
-        Ok(())
-    }
-
-    fn checked_next_claim_revision(&self) -> Result<u64, ZecSdkError> {
-        self.revision
-            .checked_add(1)
-            .ok_or(ZecSdkError::InvalidProjectionRevision {
-                expected: u64::MAX,
-                actual: u64::MAX,
-            })
-    }
-
     async fn commit_owned_revealing_claim(
         &mut self,
         transition: RevealingClaimTransitionV1,
@@ -1853,6 +1855,36 @@ where
             step,
             revision: self.revision,
         })
+    }
+}
+
+impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
+where
+    Store: RefundRecoveryStore,
+{
+    async fn replay_refund_transitions(&mut self) -> Result<(), ZecSdkError> {
+        loop {
+            let Some(transition) = self
+                .store
+                .load_refund_transition(self.coordinator.id(), self.revision)
+                .await
+                .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+            else {
+                return Ok(());
+            };
+            let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+            self.revision = self.checked_next_refund_revision()?;
+            self.coordinator = next;
+        }
+    }
+
+    fn checked_next_refund_revision(&self) -> Result<u64, ZecSdkError> {
+        self.revision
+            .checked_add(1)
+            .ok_or(ZecSdkError::InvalidProjectionRevision {
+                expected: u64::MAX,
+                actual: u64::MAX,
+            })
     }
 }
 
@@ -2119,31 +2151,6 @@ where
                 }
             }
         }
-    }
-
-    async fn replay_refund_transitions(&mut self) -> Result<(), ZecSdkError> {
-        loop {
-            let Some(transition) = self
-                .store
-                .load_refund_transition(self.coordinator.id(), self.revision)
-                .await
-                .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
-            else {
-                return Ok(());
-            };
-            let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
-            self.revision = self.checked_next_refund_revision()?;
-            self.coordinator = next;
-        }
-    }
-
-    fn checked_next_refund_revision(&self) -> Result<u64, ZecSdkError> {
-        self.revision
-            .checked_add(1)
-            .ok_or(ZecSdkError::InvalidProjectionRevision {
-                expected: u64::MAX,
-                actual: u64::MAX,
-            })
     }
 
     async fn commit_refund_transition(

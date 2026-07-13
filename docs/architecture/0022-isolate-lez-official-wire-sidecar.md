@@ -10,10 +10,19 @@ allocator, cloneable role-local shared operation journal, and reusable checked
 external v0.1.2 schema-v2 node handoff are GREEN. Store-derived canonical LEZ
 claim funding, the zeroizing role-keyed Zcash funding/claim/refund signer, the
 agreement-committed exact-outpoint planner, the checked all-trait Zebra SDK
-composite, refund-aware full-history resume, and the private path-isolated
-one-shot actor CLI/config boundary are also GREEN.
+composite and refund-aware full-history resume are also GREEN. The Unix-only
+schema-v2 actor configuration and command-scoped material boundary bind the
+exact agreement SHA-256 and complete role-local LEZ/Zebra runtime identity,
+while offline status omits effect credentials and chain ports.
 Full reference-actor command/port wiring and the composed proof remain RED --
 2026-07-13
+
+ADR 0023 retains this process-boundary decision but supersedes the final M2
+runtime target. The implemented v0.1.2 `/NSSA/` sidecar and standalone node are
+lower compatibility evidence; certification requires an equivalently isolated
+official-wire v0.2 `/LEE/` sidecar against the full local Bedrock, indexer, and
+non-standalone sequencer stack. The same v0.2 actor/sidecar binaries must later
+select the public route through signed configuration and provisioning only.
 
 ```mermaid
 flowchart LR
@@ -22,12 +31,16 @@ flowchart LR
         MakerLezAdapter["Context-owning LEZ SDK ports + adapter"]
         MakerZebraAdapter["Zebra adapter"]
         MakerState[("Maker SQLite")]
+        MakerConfig["Schema-v2 maker config"]
+        MakerStatus["Offline status material"]
     end
     subgraph TakerActor["Taker actor process"]
         TakerSDK["Role-fixed SDK"]
         TakerLezAdapter["Context-owning LEZ SDK ports + adapter"]
         TakerZebraAdapter["Zebra adapter"]
         TakerState[("Taker SQLite")]
+        TakerConfig["Schema-v2 taker config"]
+        TakerStatus["Offline status material"]
     end
     subgraph Sidecars["Pinned LEZ v0.1.2 sidecar processes"]
         MakerSidecar["Maker capability and signer"]
@@ -45,6 +58,12 @@ flowchart LR
     TakerSDK --> TakerState
     TakerSDK --> TakerLezAdapter
     TakerSDK --> TakerZebraAdapter
+    MakerConfig --> MakerStatus
+    TakerConfig --> TakerStatus
+    MakerConfig -.->|"Validated inputs; lifecycle wiring pending"| MakerSDK
+    TakerConfig -.->|"Validated inputs; lifecycle wiring pending"| TakerSDK
+    MakerStatus -.->|"Descriptor-bound store open pending; no chain port"| MakerState
+    TakerStatus -.->|"Descriptor-bound store open pending; no chain port"| TakerState
     MakerLezAdapter -->|"Bounded serde protocol and maker capability"| MakerSidecar
     TakerLezAdapter -->|"Bounded serde protocol and taker capability"| TakerSidecar
     MakerSidecar -->|"Official bytes and primitive facts"| LezNode
@@ -101,6 +120,18 @@ domain. The SDK derives all metadata, native-custody, and token accounts from
 that signed selector, and a separate compatibility test compares the local
 derivation source to the pinned official v0.1.2 types. Public v0.2 activation
 remains fail-closed and is tracked as upstream production work.
+
+The actor's unreleased schema-v2 file binds that runtime selector and the
+complete described sidecar/Zebra identities to a nonzero exact SHA-256 of the
+accepted signed-agreement bytes. Activation rehashes the agreement file before
+use. Paired maker/taker configs must carry the same agreement digest, runtime,
+Zebra chain identity, and discovery policy, while fixing distinct roles,
+signers, endpoints, stores, journals, and keys. The public
+`validate_runtime_binding` helper compares accepted signed terms with the
+sidecar environment, channel, genesis, escrow program, and local participant
+signer. The sidecar's process role is intentionally checked separately by
+`LezBridgeAdapter::new`, so a locally mislabelled role cannot create a port even
+when signed runtime terms otherwise match.
 
 For the deterministic M2 runner, the sidecar listener is ephemeral loopback,
 requires a high-entropy run-scoped capability, rejects a different `RUN_ID`,
@@ -232,8 +263,8 @@ strictly ordered timeout protocol:
 4. The LEZ refund deadline is earlier than the Zcash refund deadline by the
    signed safety margin. This gives an honest actor time to use a revealed
    preimage on Zcash before the later refund becomes valid. Local timing proves
-   protocol ordering; public-testnet latency calibration remains an explicit M2
-   evidence gate.
+   protocol ordering; public-testnet latency calibration is deferred to
+   production readiness under ADR 0023.
 5. Exact prepared bytes and their expected identities are persisted before any
    broadcast. After timeout, crash, or unknown submission outcome, a restarted
    actor observes that identity before any byte-identical rebroadcast. It never
@@ -306,6 +337,18 @@ responses, wrong run identity, unstable tips, unavailable signers, unknown
 submission outcomes, exact-hash mismatches, and node rejections must remain
 distinct errors and be exercised across restart.
 
+The reference-actor file boundary is intentionally Unix-only. Existing config,
+agreement, capability, signer, claim, preimage, cookie, state, and journal paths
+reject symlinks and non-regular objects; command secrets require exact mode
+`0600`, one link, bounded contents, and stable device/inode/length/mtime/ctime
+observations around open. Exact agreement hashing and cross-binding alias checks
+fail closed, and diagnostics omit paths and payloads. `status` loads only
+claim-recovery material plus the state location, so it neither requires
+sidecar/Zebra credentials nor opens chain ports. These guarantees currently end
+at validated command material: `activate`, `drive`, and `status` do not yet
+compose lifecycle ports, and mutable SQLite must next be opened from a checked
+descriptor with its identity revalidated rather than reopened by pathname.
+
 The implemented main-workspace bridge client exercises all eight typed protocol
 methods, accepts only literal loopback HTTP, sends a sensitive capability plus
 exact run and role headers, validates the echoed run/role/runtime context, and
@@ -338,7 +381,7 @@ distinct loopback LEZ-sidecar and Zebra endpoints, distinct role funding,
 separate maker/taker databases and claim keys, both signed directions, the
 fixed `locks -> LEZ reveal -> Zcash follow-up` order, and restart after every
 effect. The isolated claim/refund/funding adapters, exact-outpoint planner,
-context-owning SDK ports, secure actor configuration boundary, and external
+context-owning SDK ports, Unix-only schema-v2 actor configuration boundary, and external
 checked-node handoff are GREEN. The corridor remains RED until actor commands,
 post-lock revalidation, and actual composition satisfy the contract. No broken
 commit is published while this slice is being driven GREEN.

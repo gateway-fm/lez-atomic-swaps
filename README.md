@@ -163,9 +163,18 @@ current executable slices enforce:
   rechecked before corridor evidence or M2 certification. This completes the
   local node handoff, but not its consumption by independent corridor actors.
   Context-owning SDK-port composition is GREEN. The exact-outpoint Zebra
-  funding planner and secure one-shot maker/taker CLI/config boundary are also
-  GREEN; full actor command wiring and the completed LEZ-plus-Zebra corridor
-  remain.
+  funding planner is GREEN. The Unix-only one-shot maker/taker boundary now
+  loads a deny-unknown-fields schema-v2 private configuration that fixes the
+  run, swap, role, signed-agreement SHA-256, LEZ runtime, Zebra identity,
+  discovery window, exact funding outpoints, and every role-local persistence
+  and credential path. Twenty-three boundary tests reject unsafe permissions,
+  symlinks, hard-link/path aliases, same-inode rewrites, late alias creation,
+  wrong roles/identities, and secret-bearing diagnostics. `status` provisioning
+  is deliberately offline: terminal SDK replay has no LEZ/Zebra trait bound and
+  needs only the role store plus claim-recovery key; effect credentials and
+  chain endpoints may be unavailable. The binary still validates configuration
+  only, so secure SQLite descriptor-open composition, lifecycle command wiring,
+  and the completed LEZ-plus-Zebra corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),
@@ -176,6 +185,14 @@ the [architecture decision log](docs/architecture/README.md), the living
 [upstream Logos production-blocker register](docs/upstream-production-blockers.md)
 separates disclosed external release risks from repository-controlled milestone
 acceptance. The
+[private local M2 certification decision](docs/architecture/0023-private-local-m2-certification.md)
+requires one actual public-compatible local LEZ v0.2 devnet, one actual local
+Zcash Regtest devnet, and
+independent maker/taker processes while deferring public evidence without
+claiming it exists. LEZ certification targets the full Bedrock node, indexer,
+and non-standalone sequencer after their immutable pins and settlement wiring
+are source-verified; that verification is still RED. Standalone mock settlement
+and v0.1.2 are lower-level coverage. The
 [Zcash public-testnet setup guide](docs/zcash-testnet-setup.md) records the
 selected self-hosted and Tatum Testnet Zebrad routes, optional funding wallet,
 external dependencies, and the still-missing transparent signer/provider
@@ -225,8 +242,10 @@ canonical actor/custody state. Loopback supplies safe isolation while the real
 consensus/state-transition implementations supply fidelity. Regtest/standalone
 do not prove public peer
 propagation, fee markets, organic timing/reorg behavior, provider quirks, or LEZ
-testnet 0.2 compatibility. A composed local corridor and self-hosted/public
-testnet corridor with real funded accounts remain mandatory M2 evidence.
+testnet 0.2 compatibility. The composed private local corridor is mandatory M2
+evidence. Public deployment and public-testnet execution are explicitly deferred
+to production readiness under ADR 0023; the same binaries and adapters must
+switch routes through signed configuration/provisioning only.
 
 The in-memory and schema-v10 SQLite actor lifecycle tests are a separate,
 deterministic lower lane. They start no node or service and use no RPC, Docker,
@@ -245,7 +264,9 @@ Zcash Foundation endpoint, and its HTTPS adapter/method contract has not passed
 live evidence yet. Zcash funding may use a community faucet, Discord request,
 or controlled pre-funded wallet, all with explicit availability risk. The
 project-owned transparent testnet signer remains unimplemented. Provider limits,
-fallback routes, and funding assumptions remain an M2 evidence gate. See
+fallback routes, and funding assumptions remain production-readiness evidence;
+M2 still requires dormant public-capable configuration/adapter contracts but no
+live public execution under ADR 0023. See
 the [full resource/flakiness table](docs/manual-user-flows.md#external-resources-and-flakiness).
 
     cargo test --locked --workspace --all-targets
@@ -296,17 +317,19 @@ executes recursive native and two-definition token claim/refund lifecycles, and
 proves full rollback when a child transfer fails. Its exact-once official-RPC
 deployer accepts evidence only after immutable endpoint/channel/built-in,
 transaction-byte, transaction, block, and artifact checks. Public-testnet
-deployment, deployed-runtime costs, and the independent-actor corridor remain
-pending. PR #238 remains unmerged and unreviewed, so these passes are not M2
-completion or final production-release approval.
+deployment and deployed-runtime costs are deferred under ADR 0023. A
+public-compatible local v0.2 node corridor, independent actors, and dormant
+public configuration/adapters remain open M2 gates. PR #238 remains unmerged
+and unreviewed, so these passes are not M2 completion or final
+production-release approval.
 
 Cargo-deny reports that the exact official LEZ graph forces Hickory DNS
 `0.25.0-alpha.5` (`RUSTSEC-2026-0118` and `RUSTSEC-2026-0119`) through
 Logos-owned common/libp2p dependencies. Graph-local policy permits only those
 exact advisories; tests bind the pins, exclude the generated wallet graph, keep
 the sequencer future unpolled, and reject DNSSEC features. Under ADR 0018 this
-disclosed upstream exception does not block M2 testnet evidence, but it remains
-a production-release blocker pending an upstream fix or explicit security
+disclosed upstream exception does not block private local M2 certification, but
+it remains a production-release blocker pending an upstream fix or explicit security
 acceptance.
 
 `npm run test:mermaid` scans every tracked Markdown Mermaid block, rejects

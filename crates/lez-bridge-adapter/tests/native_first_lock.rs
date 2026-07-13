@@ -11,9 +11,10 @@ use lez_bridge_adapter::{
     BridgeRequestContextSource, CanonicalLezFundingSource, ContextOwningLezBridgePorts,
     ContextOwningLezPortError, FreshLezBridgeTransportFactory, LezBridgeAdapter,
     LezBridgeClaimTransport, LezBridgeFirstLockTransport, LezBridgeObservationTransport,
-    LezBridgeRefundTransport, LezBridgeTransport, NativeFirstLockSubmitOutcome,
-    NativeRefundAdapterError, NativeRevealingClaimAdapterError, ObserveNativeEscrowError,
-    PrepareNativeFirstLockError, RevealingClaimSubmitOutcome,
+    LezBridgeRefundTransport, LezBridgeTransport, LezRuntimeBindingError,
+    NativeFirstLockSubmitOutcome, NativeRefundAdapterError, NativeRevealingClaimAdapterError,
+    ObserveNativeEscrowError, PrepareNativeFirstLockError, RevealingClaimSubmitOutcome,
+    validate_runtime_binding,
 };
 use lez_bridge_protocol::{
     AccountIds, ChainClock, ChainPosition, ChainTip, DiscoveryWindow, EscrowMetadataFacts,
@@ -3720,6 +3721,86 @@ enum RuntimeMutation {
     Genesis,
     Program,
     Signer,
+}
+
+#[test]
+fn public_runtime_binding_validator_rejects_redacted_mismatches_for_both_roles() {
+    let agreement = agreement();
+
+    for participant in [Participant::Maker, Participant::Taker] {
+        let matching = runtime_for_participant(&agreement, participant);
+        validate_runtime_binding(&agreement, &matching, participant)
+            .expect("the signed agreement matches the pinned runtime compatibility");
+
+        let incompatible_agreement = agreement_for(LezEnvironmentV1::DeterministicLocalV0_2, false);
+        let incompatible_runtime = runtime_for_participant(&incompatible_agreement, participant);
+        assert_runtime_binding_error(
+            &incompatible_agreement,
+            &incompatible_runtime,
+            participant,
+            LezRuntimeBindingError::IncompatibleEnvironment,
+            "signed LEZ environment is not compatible with this bridge",
+        );
+
+        for (mutation, expected, display) in [
+            (
+                RuntimeMutation::Channel,
+                LezRuntimeBindingError::ChainIdentityMismatch,
+                "signed LEZ chain identity differs from the selected runtime",
+            ),
+            (
+                RuntimeMutation::Genesis,
+                LezRuntimeBindingError::ChainIdentityMismatch,
+                "signed LEZ chain identity differs from the selected runtime",
+            ),
+            (
+                RuntimeMutation::Program,
+                LezRuntimeBindingError::EscrowProgramMismatch,
+                "signed LEZ escrow program differs from the selected runtime",
+            ),
+            (
+                RuntimeMutation::Signer,
+                LezRuntimeBindingError::SignerAccountMismatch,
+                "LEZ sidecar signer differs from the signed local account",
+            ),
+        ] {
+            let mut runtime = matching.clone();
+            match mutation {
+                RuntimeMutation::Channel => {
+                    runtime.channel_id = Hex32::from_bytes([0xa1; 32]);
+                }
+                RuntimeMutation::Genesis => {
+                    runtime.genesis_block_hash = Hex32::from_bytes([0xa2; 32]);
+                }
+                RuntimeMutation::Program => {
+                    runtime.escrow_program_id = Hex32::from_bytes([0xa3; 32]);
+                }
+                RuntimeMutation::Signer => {
+                    runtime.signer_account_id = Hex32::from_bytes([0xa4; 32]);
+                }
+            }
+            assert_runtime_binding_error(&agreement, &runtime, participant, expected, display);
+        }
+    }
+}
+
+fn assert_runtime_binding_error(
+    agreement: &ZecAgreementV1,
+    runtime: &RuntimeDescriptor,
+    participant: Participant,
+    expected: LezRuntimeBindingError,
+    display: &str,
+) {
+    let error = validate_runtime_binding(agreement, runtime, participant)
+        .expect_err("the mismatched runtime must fail closed");
+    assert_eq!(error, expected);
+    assert_eq!(error.to_string(), display);
+    assert_eq!(format!("{error:?}"), format!("{expected:?}"));
+
+    for sensitive in ["a1a1a1a1", "a2a2a2a2", "a3a3a3a3", "a4a4a4a4"] {
+        assert!(!error.to_string().contains(sensitive));
+        assert!(!format!("{error:?}").contains(sensitive));
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

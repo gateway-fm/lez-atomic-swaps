@@ -5804,6 +5804,21 @@ async fn refund_contract_keeps_lez_before_zcash_in_both_directions() {
             fixture.taker.drive_refund().await.expect("taker replay"),
             RefundDriveOutcome::Refunded { revision: 4 }
         );
+
+        for (role, store) in [
+            (Participant::Maker, fixture.maker_store.clone()),
+            (Participant::Taker, fixture.taker_store.clone()),
+        ] {
+            let status_sdk: ZecPairSdk<(), (), (), (), MemoryStore> =
+                ZecPairSdk::new(role, (), (), (), (), store);
+            let replay = status_sdk
+                .resume_all_capable(&swap_id)
+                .await
+                .expect("offline terminal refund restart")
+                .expect("durable refunded swap");
+            assert_eq!(replay.status(), Phase::Refunded);
+            assert_eq!(replay.revision(), 4);
+        }
     }
 }
 
@@ -6465,30 +6480,24 @@ async fn drive_claim_actor_fixture(id: &str, fixture: &mut ClaimActorFixture) {
 
 async fn assert_claim_actor_restarts(id: &str, fixture: ClaimActorFixture) {
     let swap_id = SwapId::new(id).expect("swap ID");
-    let maker_replay = actor_sdk(
-        Participant::Maker,
-        fixture.wire.clone(),
-        fixture.lez.clone(),
-        fixture.zcash.clone(),
-        fixture.maker_store,
-    )
-    .resume_claim_capable(&swap_id)
-    .await
-    .expect("maker restart")
-    .expect("durable maker swap");
-    let taker_recovery = actor_sdk(
-        Participant::Taker,
-        fixture.wire,
-        fixture.lez,
-        fixture.zcash,
-        fixture.taker_store,
-    )
-    .resume_claim_capable(&swap_id)
-    .await
-    .expect("taker restart")
-    .expect("durable taker swap");
+    let maker_sdk: ZecPairSdk<(), (), (), (), MemoryStore> =
+        ZecPairSdk::new(Participant::Maker, (), (), (), (), fixture.maker_store);
+    let maker_replay = maker_sdk
+        .resume_all_capable(&swap_id)
+        .await
+        .expect("offline maker restart")
+        .expect("durable maker swap");
+    let taker_sdk: ZecPairSdk<(), (), (), (), MemoryStore> =
+        ZecPairSdk::new(Participant::Taker, (), (), (), (), fixture.taker_store);
+    let taker_recovery = taker_sdk
+        .resume_all_capable(&swap_id)
+        .await
+        .expect("offline taker restart")
+        .expect("durable taker swap");
     assert_eq!(maker_replay.status(), Phase::Completed);
+    assert_eq!(maker_replay.revision(), 4);
     assert_eq!(taker_recovery.status(), Phase::Completed);
+    assert_eq!(taker_recovery.revision(), 4);
 }
 
 async fn assert_independent_actors_reach_both_legs_locked(id: &str, direction: SwapDirection) {

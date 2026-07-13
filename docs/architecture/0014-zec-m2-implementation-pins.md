@@ -303,9 +303,10 @@ is permitted. The container is non-root, read-only, capability-free, and
 shell-free; readiness is checked from the host so the runtime does not carry
 `curl` merely for a healthcheck.
 
-The 5.x release line has a shortened support horizon ahead of NU7. Before any
-public-testnet evidence run or M2 tag, rerun the upstream security/release and
-final-image vulnerability audits.
+The 5.x release line has a shortened support horizon ahead of NU7. Before the
+M2 tag, rerun the final-image vulnerability audit against the private Regtest
+image. Before the deferred public-testnet evidence, also rerun the upstream
+security/release audit and select a currently supported public-compatible pin.
 An update receives the same script-vector, RPC, consensus, refund, and role-E2E
 suite; a moving `latest` tag is never used. Scheduled drift checks are diagnostic
 until a reviewed pin update makes them required.

@@ -2602,6 +2602,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -2913,10 +2914,17 @@ name = "zec-reference-actor"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "lez-bridge-client",
+ "lez-bridge-protocol",
+ "lez-swap-core",
+ "lez-zec-swap-sdk",
+ "secp256k1",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
+ "url",
  "zeroize",
 ]
 

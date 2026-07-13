@@ -60,6 +60,19 @@ flowchart TB
         LRR["Future reference-actor runner<br/>splits role-local endpoint and key files"]
     end
 
+    subgraph LezV02Sidecars["Required official LEZ v0.2 processes"]
+        MSL2["Maker v0.2 sidecar<br/>official LEE wire + signer"]
+        TLS2["Taker v0.2 sidecar<br/>official LEE wire + signer"]
+    end
+
+    subgraph LocalLezV02["Required public-compatible local LEZ v0.2 devnet"]
+        BR["Bedrock node<br/>immutable pin RED"]
+        IX["LEZ v0.2 indexer<br/>immutable pin RED"]
+        SQ["Non-standalone sequencer RPC<br/>immutable pin RED"]
+        V02R["Run-scoped full-v0.2 runner"]
+        V02Ready[("Private v0.2 readiness<br/>channel + deployment + actor funds")]
+    end
+
     subgraph OffChain["Untrusted, removable after lock"]
         DC["Delivery / Chat"]
     end
@@ -121,6 +134,18 @@ flowchart TB
     LRM -.->|"future private handoff"| LRR
     LRR -.->|"maker-only provisioning"| MSL
     LRR -.->|"taker-only provisioning"| TLS
+    MLB <-.->|"same bounded bridge; v0.2 selector"| MSL2
+    TLB <-.->|"same bounded bridge; v0.2 selector"| TLS2
+    MSL2 -.->|"official v0.2 JSON-RPC"| SQ
+    TLS2 -.->|"official v0.2 JSON-RPC"| SQ
+    V02R -.-> BR
+    V02R -.-> IX
+    V02R -.-> SQ
+    SQ -.->|"candidate publish path; verification RED"| BR
+    BR -.->|"candidate finalized-event path; verification RED"| IX
+    IX -.->|"candidate settlement path; verification RED"| SQ
+    V02R -.->|"verified no-clobber publish"| V02Ready
+    V02Ready -.->|"runtime and funding handoff"| LRR
 
     MD <-->|"discovery + negotiation only"| DC
     TS <-->|"discovery + negotiation only"| DC
@@ -141,12 +166,13 @@ flowchart TB
     TS --> XMR
     TS --> ZEC
     LEZ --> LN
+    SQ -.-> LN
     BTC --> BN
     XMR --> XN
     ZEC --> ZN
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class MM,LC,CA,TC,TM,LRR planned;
+    class MM,LC,CA,TC,TM,LRR,MSL2,TLS2,BR,IX,SQ,V02R,V02Ready planned;
 ```
 
 The maker operator owns maker policy, keys, node selection, and the daemon
@@ -178,8 +204,10 @@ Zcash lock. The role-keyed Zcash funding/claim/refund signer retains only
 zeroizing key bytes and uses the canonical SDK builders. The
 agreement-committed exact-outpoint planner, checked all-trait Zebra composite,
 refund-aware full-history resume, and the mode-0600, path-isolated one-shot
-maker/taker CLI boundary are GREEN. The remaining M2 work is full actor command/
-port wiring, composed both-direction execution, and post-lock hardening; chain
+maker/taker CLI boundary are GREEN. The remaining M2 work is descriptor-safe
+actor command/port wiring, the official-wire v0.2 sidecar, full local v0.2
+Bedrock/indexer/non-standalone orchestration, dormant public-route
+configuration/adapters, composed both-direction execution, and post-lock hardening; chain
 adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
 observation alone is non-authorizing: forward Zcash persists and revalidates
@@ -210,8 +238,10 @@ authority. The public Finalized/typed-finality policy is unit-tested but remains
 unreachable while public agreement activation is fail-closed. The official
 v0.1.2 node/escrow, revealing-claim, and native-refund owner/discovery ports,
 main escrow/claim/refund agreement conversion, and crash-safe context-owning
-SDK-port wiring are GREEN. Reviewed public deployment, actual-node maker fault
-evidence, and independent actor processes remain.
+SDK-port wiring are GREEN lower compatibility evidence. Public deployment is
+deferred under ADR 0023; the public-compatible local v0.2 stack, dormant public
+configuration contracts, actual-node maker fault evidence, and independent
+actor processes remain M2 work.
 
 The protected-claim module derives per-context keys with HKDF-SHA256 and encrypts
 preimages and bounded exact claim-submission bytes with XChaCha20-Poly1305 while
@@ -241,8 +271,9 @@ recursive cost evidence is machine-checked from production state transitions
 without Clock noise. The official ATA lifecycle also passes for two independent
 definitions with real owner roles and permissionless fixed refunds. Their
 escrow/ATA/Token recursion is also included in the machine-checked cost record.
-Public-testnet evidence, composed both-direction maker/taker processes,
-production adapter composition, cross-chain deadline composition, encrypted
+Public-testnet execution evidence is deferred to production readiness.
+Public-compatible local v0.2 evidence, composed both-direction maker/taker
+processes, production adapter composition, cross-chain deadline composition, encrypted
 state/outbox, and mini-apps remain milestone work and cannot yet be represented
 as production E2E.
 
@@ -260,7 +291,8 @@ deployment registry; custom guest authority comes from `getTransaction`, exact
 mode-0600 no-clobber readiness manifest includes those deterministic private
 keys and is therefore a run-local secret. The
 future actor edges are dashed because neither SDK actor consumes this handoff
-in a composed LEZ/Zebra swap yet. The upstream v0.1.2 server itself still binds
+in a composed LEZ/Zebra swap yet. This entire v0.1.2 boundary is retained as a
+lower lane and cannot replace ADR 0023's full v0.2 stack. The upstream v0.1.2 server itself still binds
 the allocated port on the host wildcard address.
 
 ## LEZ escrow custody components and actor flows
@@ -373,10 +405,12 @@ flowchart LR
     V02Guest --> V02Artifact["Checked v0.2 ELF<br/>SHA-256 + ImageID + ProgramId"]
     V02Artifact --> V02Local["Recursive native + two-definition token<br/>claim/refund + rollback tests"]
     V02Artifact --> V02Deployer["Exact-once fixed-URL<br/>official-RPC deployer"]
+    V02Artifact -.-> V02Sidecar["Official-wire v0.2 sidecar<br/>local/public profile"]
+    V02Sidecar -.-> V02FullLocal["Bedrock + indexer + non-standalone sequencer<br/>independent actor corridor"]
     V02Deployer -.-> Testnet["Official v0.2 testnet<br/>deployment + cost evidence"]
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Testnet,ActorRunner planned;
+    class Testnet,ActorRunner,V02Sidecar,V02FullLocal planned;
 ```
 
 The deployment proof uses port `0`, a fresh mode-0700 sequencer home,
@@ -404,8 +438,9 @@ tests. A child-transfer overflow regression proves the metadata and every
 touched account roll back together. The v0.2 deployer validates immutable
 endpoint/channel/built-ins/artifact identity, submits once, and accepts only the
 exact transaction in its containing block; ambiguity or timeout is never
-retried. The dashed public-testnet edge and deployed-runtime costs remain M2
-exit work. The v0.1.2 cost replay executes the same guest instructions through
+retried. The dashed v0.2 sidecar/full-local edge is M2 exit work. The dashed
+public-testnet edge and deployed-runtime costs are deferred to production
+readiness under ADR 0023. The v0.1.2 cost replay executes the same guest instructions through
 LEZ production state transitions, counts the escrow root and
 authenticated-transfer child, and compares generated JSON with the checked
 evidence artifact.
@@ -662,7 +697,8 @@ evidence, not present claims.
 | Crash-safe coordinator | Kill/restart/outbox/reorg matrix | M5 |
 | Maker CLI and Logos Core lifecycle | Authenticated operator journeys | M5 |
 | Maker/taker mini-apps | Same role suites through UI process boundaries | M6 |
-| ZEC public testnet and ZEC recordings | M2 happy/refund/concurrency evidence, then final regeneration | M2, M7 |
+| ZEC private public-compatible local devnets and private recording/evidence | Independent happy/refund/reorg/concurrency actors across full local LEZ v0.2 and Zebra Regtest | M2 |
+| ZEC public testnet/deployment and public recordings | Deferred proposal evidence plus final production rehearsal/remediation | Production readiness / M7 under ADR 0023 |
 | Other public testnets and final review | BTC/XMR evidence plus remediation packet | M3–M4, M7 |
 
 No milestone is complete merely because an internal API test passes. Its tag
