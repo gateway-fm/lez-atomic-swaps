@@ -7,6 +7,9 @@ use rusqlite::{Connection, params};
 use sha2::{Digest as _, Sha256};
 use tempfile::{TempDir, tempdir};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
+
 fn swap(id: &str, pair: Pair) -> SwapCoordinator {
     let direction = if pair == Pair::Monero {
         SwapDirection::TakerSellsLez
@@ -174,7 +177,17 @@ fn create_schema_v8_claim_fixture(path: &std::path::Path, id: &SwapId, state_jso
         )
         .expect("legacy plaintext claim row");
     drop(connection);
+    make_database_owner_private(path);
 }
+
+#[cfg(unix)]
+fn make_database_owner_private(path: &std::path::Path) {
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .expect("make legacy database owner-private");
+}
+
+#[cfg(not(unix))]
+fn make_database_owner_private(_path: &std::path::Path) {}
 
 fn assert_sqlite_files_contain(path: &std::path::Path, pattern: &[u8]) {
     assert!(

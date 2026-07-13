@@ -1,5 +1,11 @@
 use std::sync::{Arc, Mutex};
 
+#[cfg(unix)]
+use std::{
+    fs,
+    os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink},
+};
+
 use async_trait::async_trait;
 use lez_swap_core::{
     Chain, ChainPosition, LezUnixMilliseconds, Participant, Phase, SwapDirection, SwapId,
@@ -53,6 +59,96 @@ use zcash_transparent::{
 };
 
 const ACCEPTED_AT: UnixSeconds = UnixSeconds::new(10);
+
+#[cfg(unix)]
+#[test]
+fn claim_capable_open_rejects_terminal_symlink_without_touching_target() {
+    let temporary = TempDir::new().expect("temporary store");
+    let target = temporary.path().join("claim-target.sqlite");
+    let alias = temporary.path().join("claim-alias.sqlite");
+    drop(
+        SqliteZecRecoveryStore::open_claim_capable(
+            &target,
+            Participant::Maker,
+            claim_key("symlink-target-key", [0x31; 32]),
+        )
+        .expect("create safe claim target"),
+    );
+    let target_before = fs::read(&target).expect("snapshot target database");
+    symlink(&target, &alias).expect("create terminal database symlink");
+
+    let error = SqliteZecRecoveryStore::open_claim_capable(
+        &alias,
+        Participant::Maker,
+        claim_key("symlink-target-key", [0x31; 32]),
+    )
+    .expect_err("symlink must fail closed");
+
+    assert!(matches!(error, StoreError::UnsafeDatabaseFile));
+    assert_eq!(
+        fs::read(&target).expect("read untouched target database"),
+        target_before
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn claim_capable_open_creates_owner_private_regular_database() {
+    let temporary = TempDir::new().expect("temporary store");
+    let path = temporary.path().join("private-claim.sqlite");
+
+    drop(
+        SqliteZecRecoveryStore::open_claim_capable(
+            &path,
+            Participant::Taker,
+            claim_key("private-database-key", [0x42; 32]),
+        )
+        .expect("create private claim store"),
+    );
+
+    let metadata = fs::symlink_metadata(&path).expect("inspect claim database");
+    assert!(metadata.file_type().is_file());
+    assert_eq!(metadata.permissions().mode() & 0o7777, 0o600);
+    assert_eq!(metadata.nlink(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn claim_capable_open_rejects_nonprivate_or_multiply_linked_database() {
+    let temporary = TempDir::new().expect("temporary store");
+    let path = temporary.path().join("unsafe-claim.sqlite");
+    drop(
+        SqliteZecRecoveryStore::open_claim_capable(
+            &path,
+            Participant::Maker,
+            claim_key("unsafe-database-key", [0x53; 32]),
+        )
+        .expect("create claim store"),
+    );
+
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o604))
+        .expect("make claim store world-readable");
+    assert!(matches!(
+        SqliteZecRecoveryStore::open_claim_capable(
+            &path,
+            Participant::Maker,
+            claim_key("unsafe-database-key", [0x53; 32]),
+        ),
+        Err(StoreError::UnsafeDatabaseFile)
+    ));
+
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("restore private mode");
+    fs::hard_link(&path, temporary.path().join("claim-hardlink.sqlite"))
+        .expect("create second database link");
+    assert!(matches!(
+        SqliteZecRecoveryStore::open_claim_capable(
+            &path,
+            Participant::Maker,
+            claim_key("unsafe-database-key", [0x53; 32]),
+        ),
+        Err(StoreError::UnsafeDatabaseFile)
+    ));
+}
 
 #[tokio::test]
 async fn schema_v10_exposes_empty_refund_recovery_before_any_effect() {

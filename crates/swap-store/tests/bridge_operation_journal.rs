@@ -7,6 +7,12 @@ use lez_swap_store::{
 use rusqlite::Connection;
 use tempfile::tempdir;
 
+#[cfg(unix)]
+use std::{
+    fs,
+    os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink},
+};
+
 fn key(
     run: &str,
     swap: &str,
@@ -27,6 +33,62 @@ fn request(request_id: &str, window: Option<DiscoveryWindow>) -> BridgeRequestSp
 
 fn window(start_height: u64) -> DiscoveryWindow {
     DiscoveryWindow::new(start_height, 16).expect("bounded discovery window")
+}
+
+#[cfg(unix)]
+#[test]
+fn bridge_journal_open_rejects_terminal_symlink_without_touching_target() {
+    let directory = tempdir().expect("temporary directory");
+    let target = directory.path().join("journal-target.sqlite");
+    let alias = directory.path().join("journal-alias.sqlite");
+    drop(SqliteBridgeOperationJournal::open(&target).expect("create safe journal target"));
+    let target_before = fs::read(&target).expect("snapshot target database");
+    symlink(&target, &alias).expect("create terminal database symlink");
+
+    let error = SqliteBridgeOperationJournal::open(&alias).expect_err("symlink must fail closed");
+
+    assert!(matches!(error, StoreError::UnsafeDatabaseFile));
+    assert_eq!(
+        fs::read(&target).expect("read untouched target database"),
+        target_before
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn bridge_journal_open_creates_owner_private_regular_database() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("private-journal.sqlite");
+
+    drop(SqliteBridgeOperationJournal::open(&path).expect("create private journal"));
+
+    let metadata = fs::symlink_metadata(&path).expect("inspect journal database");
+    assert!(metadata.file_type().is_file());
+    assert_eq!(metadata.permissions().mode() & 0o7777, 0o600);
+    assert_eq!(metadata.nlink(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn bridge_journal_open_rejects_nonprivate_or_multiply_linked_database() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("unsafe-journal.sqlite");
+    drop(SqliteBridgeOperationJournal::open(&path).expect("create journal"));
+
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o640))
+        .expect("make journal group-readable");
+    assert!(matches!(
+        SqliteBridgeOperationJournal::open(&path),
+        Err(StoreError::UnsafeDatabaseFile)
+    ));
+
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("restore private mode");
+    fs::hard_link(&path, directory.path().join("journal-hardlink.sqlite"))
+        .expect("create second database link");
+    assert!(matches!(
+        SqliteBridgeOperationJournal::open(&path),
+        Err(StoreError::UnsafeDatabaseFile)
+    ));
 }
 
 #[test]

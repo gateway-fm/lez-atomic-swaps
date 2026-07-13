@@ -11,6 +11,9 @@ use lez_zec_swap_sdk::{
 use rusqlite::{Connection, params};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use tempfile::tempdir;
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use zcash_primitives::block::BlockHash;
 use zcash_protocol::{
     consensus::{BlockHeight, BranchId, NetworkType},
@@ -370,6 +373,7 @@ fn legacy_v1_table_migrates_and_future_versions_fail_explicitly() {
         )
         .unwrap();
     drop(connection);
+    make_database_owner_private(&legacy_path);
 
     let store = SqliteSwapStore::open(&legacy_path).unwrap();
     assert_eq!(store.revision(swap.id()).unwrap(), Some(0));
@@ -410,11 +414,21 @@ fn legacy_v1_table_migrates_and_future_versions_fail_explicitly() {
     let connection = Connection::open(&future_path).unwrap();
     connection.pragma_update(None, "user_version", 99).unwrap();
     drop(connection);
+    make_database_owner_private(&future_path);
     assert!(matches!(
         SqliteSwapStore::open(future_path),
         Err(StoreError::UnsupportedDatabaseVersion(99))
     ));
 }
+
+#[cfg(unix)]
+fn make_database_owner_private(path: &std::path::Path) {
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .expect("make fixture database owner-private");
+}
+
+#[cfg(not(unix))]
+fn make_database_owner_private(_path: &std::path::Path) {}
 
 #[test]
 fn schema_v8_sdk_recovery_tables_are_role_local_revisioned_and_referential() {

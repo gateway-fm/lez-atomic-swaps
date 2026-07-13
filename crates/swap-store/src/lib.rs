@@ -2,6 +2,13 @@
 
 use std::{path::Path, time::Duration};
 
+#[cfg(unix)]
+use std::{
+    fs::{self, File, OpenOptions},
+    io,
+    os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
+};
+
 mod bridge_operation_journal;
 mod zec_recovery;
 
@@ -18,7 +25,7 @@ use lez_zec_swap_sdk::{
     ProtectedClaimError, ZcashObservationEventRecordV1, ZecAgreementV1Error, ZecBindingRecordError,
     ZecSwapBinding, ZecSwapBindingRecordV1, revalidate_historical_event,
 };
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
@@ -255,6 +262,12 @@ impl OperatorAlert {
 /// Persistent-store failure.
 #[derive(Debug, Error)]
 pub enum StoreError {
+    /// The database path could not be inspected or created without disclosing it.
+    #[error("SQLite swap-store database file is unavailable")]
+    DatabaseFileUnavailable,
+    /// The database path was not one owner-private regular file with one link.
+    #[error("SQLite swap-store database file is unsafe")]
+    UnsafeDatabaseFile,
     /// `SQLite` operation failed.
     #[error("SQLite swap-store operation failed")]
     Sqlite(#[from] rusqlite::Error),
@@ -898,7 +911,17 @@ impl SqliteSwapStore {
 }
 
 fn open_configured_connection(path: impl AsRef<Path>) -> Result<Connection, StoreError> {
-    let mut connection = Connection::open(path)?;
+    let path = path.as_ref();
+    let prepared = prepare_database_file(path)?;
+    // SQLite's NOFOLLOW flag covers only the terminal database component. The
+    // identity checks detect a changed terminal inode before any PRAGMA/migration
+    // and again before return, but they cannot descriptor-bind SQLite's later
+    // pathname-based WAL/SHM opens or prevent replacement of a writable parent
+    // directory between checks. Deployments must keep every database parent
+    // directory private and non-writable by other principals.
+    let flags = OpenFlags::default() | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+    let mut connection = Connection::open_with_flags(path, flags)?;
+    verify_database_file(path, &prepared)?;
     connection.busy_timeout(Duration::from_secs(5))?;
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "synchronous", "FULL")?;
@@ -910,7 +933,112 @@ fn open_configured_connection(path: impl AsRef<Path>) -> Result<Connection, Stor
     if checkpoint_busy != 0 {
         return Err(StoreError::LegacyMigrationCheckpointBusy);
     }
+    verify_database_file(path, &prepared)?;
     Ok(connection)
+}
+
+#[cfg(unix)]
+struct PreparedDatabaseFile {
+    identity: DatabaseFileIdentity,
+    // Retaining a newly created descriptor prevents its inode from disappearing
+    // while SQLite opens the checked pathname. Existing files remain protected
+    // by pre/open/post identity checks and SQLite's terminal-symlink refusal.
+    _creation_guard: Option<File>,
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DatabaseFileIdentity {
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(unix)]
+fn prepare_database_file(path: &Path) -> Result<PreparedDatabaseFile, StoreError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(PreparedDatabaseFile {
+            identity: validate_private_database_metadata(&metadata)?,
+            _creation_guard: None,
+        }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => create_private_database_file(path),
+        Err(_) => Err(StoreError::DatabaseFileUnavailable),
+    }
+}
+
+#[cfg(unix)]
+fn create_private_database_file(path: &Path) -> Result<PreparedDatabaseFile, StoreError> {
+    match OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+    {
+        Ok(file) => {
+            let metadata = file
+                .metadata()
+                .map_err(|_| StoreError::DatabaseFileUnavailable)?;
+            Ok(PreparedDatabaseFile {
+                identity: validate_private_database_metadata(&metadata)?,
+                _creation_guard: Some(file),
+            })
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            let metadata =
+                fs::symlink_metadata(path).map_err(|_| StoreError::DatabaseFileUnavailable)?;
+            Ok(PreparedDatabaseFile {
+                identity: validate_private_database_metadata(&metadata)?,
+                _creation_guard: None,
+            })
+        }
+        Err(_) => Err(StoreError::DatabaseFileUnavailable),
+    }
+}
+
+#[cfg(unix)]
+fn verify_database_file(path: &Path, prepared: &PreparedDatabaseFile) -> Result<(), StoreError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            StoreError::UnsafeDatabaseFile
+        } else {
+            StoreError::DatabaseFileUnavailable
+        }
+    })?;
+    let current = validate_private_database_metadata(&metadata)?;
+    if current == prepared.identity {
+        Ok(())
+    } else {
+        Err(StoreError::UnsafeDatabaseFile)
+    }
+}
+
+#[cfg(unix)]
+fn validate_private_database_metadata(
+    metadata: &fs::Metadata,
+) -> Result<DatabaseFileIdentity, StoreError> {
+    if !metadata.file_type().is_file()
+        || metadata.nlink() != 1
+        || metadata.permissions().mode() & 0o7777 != 0o600
+    {
+        return Err(StoreError::UnsafeDatabaseFile);
+    }
+    Ok(DatabaseFileIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    })
+}
+
+#[cfg(not(unix))]
+struct PreparedDatabaseFile;
+
+#[cfg(not(unix))]
+fn prepare_database_file(_path: &Path) -> Result<PreparedDatabaseFile, StoreError> {
+    Ok(PreparedDatabaseFile)
+}
+
+#[cfg(not(unix))]
+fn verify_database_file(_path: &Path, _prepared: &PreparedDatabaseFile) -> Result<(), StoreError> {
+    Ok(())
 }
 
 struct AlertEventIds {
