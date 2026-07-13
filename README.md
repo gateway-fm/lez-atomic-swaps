@@ -193,7 +193,13 @@ claiming it exists. The
 [source-audited local-stack decision](docs/architecture/0024-source-audited-lez-v0-2-local-stack.md)
 now binds the exact Bedrock image/source labels, LEZ source, toolchain, native
 inputs, service flows, and service-binary hashes. The exact binaries and r0vm
-also pass restricted nonroot distroless CLI smoke. Container assembly,
+also pass restricted nonroot distroless CLI smoke. A separately locked Rust
+1.96.0 v0.2 sidecar foundation now uses the exact upstream `AccountId`,
+`PublicTransaction`, `LeeTransaction`, and sequencer RPC types; it proves
+literal-loopback health/channel binding, canonical signed-transaction decoding,
+and an authenticated run/role-bound describe server. Its effect-bearing
+prepare/observe/submit methods and executable role processes remain RED.
+Container assembly,
 three-service execution/finality, Vault Claim actor onboarding, escrow
 deployment, and actor consumption remain RED; standalone mock settlement and
 v0.1.2 remain lower-level coverage. The
@@ -209,7 +215,10 @@ suite, pinned Risc0 guest builder, and full local LEZ v0.2 lane; Docker Compose
 v2 is used by both local-chain suites. Building the exact upstream v0.2
 sequencer/indexer artifacts additionally uses upstream Rust 1.94.0 plus the
 hash-checked r0vm and Rapisnark inputs; the repository-owned sidecar remains on
-Rust 1.96.0. The [manual reproduction guide](docs/manual-user-flows.md) lists the complete
+Rust 1.96.0. Direct Cargo commands do not certify that v0.2 sidecar because the
+upstream Rapisnark build script can download native libraries even with Cargo
+offline; use the hash-attesting wrapper documented in the manual guide. The
+[manual reproduction guide](docs/manual-user-flows.md) lists the complete
 per-run prerequisites, isolation rules, commands, expected evidence, and
 cleanup behavior.
 

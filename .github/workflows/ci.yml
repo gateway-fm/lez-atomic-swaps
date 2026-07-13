@@ -30,8 +30,8 @@ jobs:
         run: npm run audit:licenses
       - name: Lint shell scripts
         run: |
-          bash -n scripts/*.sh
-          shellcheck scripts/*.sh
+          bash -n scripts/*.sh compat/lez-v0_2-sidecar/check-dependency-policy.sh
+          shellcheck scripts/*.sh compat/lez-v0_2-sidecar/check-dependency-policy.sh
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --locked --workspace --all-targets
@@ -89,6 +89,14 @@ jobs:
           manifest-path: compat/lez-v0_1_2-sidecar/Cargo.toml
           command: check
           command-arguments: --config compat/lez-v0_1_2-sidecar/deny.toml advisories bans licenses sources
+      - name: Audit official LEZ v0.2 sidecar graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-v0_2-sidecar/Cargo.toml
+          command: check
+          arguments: --all-features
+          command-arguments: --config compat/lez-v0_2-sidecar/deny.toml advisories bans licenses sources
       - name: Audit provisional LEZ v0.2 compatibility graph
         uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
         with:
@@ -154,6 +162,65 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --locked --manifest-path compat/lez-v0_1_2-sidecar/Cargo.toml --all-features --no-deps
+
+  lez-v02-sidecar:
+    name: isolated official LEZ v0.2 sidecar contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      BINDGEN_EXTRA_CLANG_ARGS: -I/usr/lib/gcc/x86_64-linux-gnu/13/include
+      CARGO_BUILD_JOBS: "2"
+      CARGO_DENY_ARCHIVE_SHA256: f1f8eedc2a3ac297c540873f93785d4104b102c0079506b2a6b3221b7ec956af
+      CARGO_DENY_ARCHIVE_URL: https://github.com/EmbarkStudios/cargo-deny/releases/download/0.19.9/cargo-deny-0.19.9-x86_64-unknown-linux-musl.tar.gz
+      CARGO_HOME: ${{ runner.temp }}/lez-v02-sidecar-cargo
+      CARGO_TARGET_DIR: ${{ runner.temp }}/lez-v02-sidecar-target
+      RAPIDSNARK_ARCHIVE_SHA256: 59bdd709eed96235de061f352893f4650c923b54b591052118593012bb1cd831
+      RAPIDSNARK_ARCHIVE_URL: https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark/releases/download/rapidsnark-pic-v0.0.8/rapidsnark-linux-x86_64-pic-v0.0.8.zip
+      RAPIDSNARK_LIB_DIR: ${{ runner.temp }}/lez-v02-rapidsnark/rapidsnark-linux-x86_64-pic-v0.0.8/lib
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+          components: clippy, rustfmt
+      - name: Provision checksum-verified sidecar native and audit inputs
+        run: |
+          set -euo pipefail
+          rapidsnark_archive="${RUNNER_TEMP}/rapidsnark-linux-x86_64-pic-v0.0.8.zip"
+          cargo_deny_archive="${RUNNER_TEMP}/cargo-deny-0.19.9-x86_64-unknown-linux-musl.tar.gz"
+          cargo_deny_dir="${RUNNER_TEMP}/cargo-deny-0.19.9"
+          mkdir -p "${RUNNER_TEMP}/lez-v02-rapidsnark" "${cargo_deny_dir}"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            --output "${rapidsnark_archive}" "${RAPIDSNARK_ARCHIVE_URL}"
+          printf '%s  %s\n' "${RAPIDSNARK_ARCHIVE_SHA256}" "${rapidsnark_archive}" \
+            | sha256sum --check --strict
+          unzip -q "${rapidsnark_archive}" -d "${RUNNER_TEMP}/lez-v02-rapidsnark"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            --output "${cargo_deny_archive}" "${CARGO_DENY_ARCHIVE_URL}"
+          printf '%s  %s\n' "${CARGO_DENY_ARCHIVE_SHA256}" "${cargo_deny_archive}" \
+            | sha256sum --check --strict
+          tar -xzf "${cargo_deny_archive}" -C "${cargo_deny_dir}" --strip-components=1
+          chmod 0555 "${cargo_deny_dir}/cargo-deny"
+          test -d "${RAPIDSNARK_LIB_DIR}"
+          test -d /usr/lib/gcc/x86_64-linux-gnu/13/include
+          printf '%s\n' "${cargo_deny_dir}" >>"${GITHUB_PATH}"
+      - name: Fetch exact locked sidecar sources and advisory database
+        run: |
+          set -euo pipefail
+          cargo +1.96.0 fetch \
+            --locked \
+            --manifest-path compat/lez-v0_2-sidecar/Cargo.toml
+          cargo-deny --version | rg -Fx 'cargo-deny 0.19.9'
+          cargo-deny \
+            --log-level error \
+            --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+            --locked \
+            --all-features \
+            check \
+            --config compat/lez-v0_2-sidecar/deny.toml \
+            advisories
+      - name: Verify LEZ v0.2 sidecar with Cargo offline
+        run: ./scripts/verify-lez-v02-sidecar.sh
 
   lez-v02-provisional:
     name: provisional LEZ v0.2 compatibility

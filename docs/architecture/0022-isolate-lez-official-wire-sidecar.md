@@ -24,6 +24,13 @@ official-wire v0.2 `/LEE/` sidecar against the full local Bedrock, indexer, and
 non-standalone sequencer stack. The same v0.2 actor/sidecar binaries must later
 select the public route through signed configuration and provisioning only.
 
+The separately locked v0.2 foundation is now GREEN for exact upstream LEE
+account/transaction types, canonical signed-transaction decoding, literal
+loopback sequencer health plus channel identity, and an authenticated
+run/role-bound describe-only server. Its signer/nonce ownership, durable
+effect cache, prepare/observe/submit methods, executable maker/taker processes,
+and public HTTPS configuration remain RED.
+
 ```mermaid
 flowchart LR
     subgraph MakerActor["Maker actor process"]
@@ -51,6 +58,11 @@ flowchart LR
     LezExternal["Reusable checked external node process"]
     LezReady[("Private schema-v2 readiness<br/>deployment tx/block + program/built-in + actor keys")]
     LezRunner["Future run-scoped actor runner"]
+    subgraph V02Foundation["LEZ v0.2 sidecar foundation"]
+        MakerV02["Maker describe + health + official decoder GREEN<br/>effect methods pending"]
+        TakerV02["Taker describe + health + official decoder GREEN<br/>effect methods pending"]
+    end
+    LezV02["Full local LEZ v0.2 sequencer"]
 
     MakerSDK --> MakerState
     MakerSDK --> MakerLezAdapter
@@ -78,6 +90,10 @@ flowchart LR
     TakerZebraAdapter -->|"Typed bounded JSON-RPC"| Zebra
     MakerLezAdapter -->|"Primitive facts"| MakerSDK
     TakerLezAdapter -->|"Primitive facts"| TakerSDK
+    MakerLezAdapter -.->|"v0.2 bounded protocol"| MakerV02
+    TakerLezAdapter -.->|"v0.2 bounded protocol"| TakerV02
+    MakerV02 -.->|"official v0.2 RPC"| LezV02
+    TakerV02 -.->|"official v0.2 RPC"| LezV02
 ```
 
 ## Context

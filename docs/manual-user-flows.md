@@ -94,6 +94,7 @@ as unavailable.
 | LEZ recursive execution costs | Exact checked guest replayed through production `V03State` transitions with nested authenticated-transfer and ATA/Token sessions | This measures deterministic local execution, not public-testnet fees or latency |
 | Provisional LEZ v0.2 executable lane | Exact SPEL PR #238 and LEZ v0.2.0 build a checked Risc0 escrow ELF, compile the generated typed client, and execute recursive native plus two-definition token claim/refund tests, including child-failure rollback. The fail-closed deployer is tested through the official RPC types against an ephemeral loopback server | Local ELF SHA-256 `40c9d37c...8021` and ImageID `f8385049...0fbe` are GREEN. No v0.2 public deployment, deployed-runtime CU evidence, independent maker/taker actor flow, composed LEZ/Zebra corridor, or maintainer approval is proved |
 | Full local LEZ v0.2 source/binary contract | Clean exact LEZ v0.2 source, Rust 1.94.0, Bedrock fixtures and OCI labels, Rapisnark/r0vm inputs, and both locked service binary hashes are checked by one command; the binaries plus r0vm have passed restricted distroless CLI smoke | This starts no service or container and proves no finality, Vault Claim, escrow deployment, actor process, or swap. Full-stack and corridor execution remain pending |
+| Official-wire LEZ v0.2 sidecar foundation | Exact upstream LEE account/transaction types and generated sequencer health/channel RPC are separately locked. Five tests cover runtime/role/signer/channel binding, canonical signed-transaction decoding, loopback endpoint policy, and an authenticated ephemeral describe-only server | The verifier is a local build/test/dependency gate, not a running actor flow. Prepare/observe/submit methods, durable effect recovery, executable maker/taker processes, and actual-node corridor use remain pending. It uses no public RPC, faucet, or Docker |
 
 The following are **not complete yet**: one composed LEZ↔ZEC run with
 independent maker and taker processes, both ZEC trade directions through all
@@ -322,6 +323,29 @@ Expected output ends with `status=stack-not-executed` and names OCI revision
 binary, wrong toolchain or native library, missing cached image, or changed OCI
 label fails closed. This command needs Docker metadata access but starts no
 container, uses no public chain RPC or faucet, and proves no swap execution.
+
+## Flow 0C: verify the official-wire v0.2 sidecar foundation
+
+Provision the exact four already-extracted Rapisnark libraries named in the
+local-stack contract, then run the fail-closed wrapper from the repository
+root:
+
+```sh
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+./scripts/verify-lez-v02-sidecar.sh
+```
+
+Expected output ends with `LEZ v0.2 sidecar verification: ok`. The wrapper
+attests all four static-library SHA-256 identities before invoking Cargo and
+then runs locked offline formatting, five all-target tests, strict Clippy,
+rustdoc warnings, and graph-local advisory/license/source policy. A missing,
+relative, or changed library directory fails before Cargo. Do not replace this
+with direct `cargo --offline`: the upstream build script can still attempt its
+own release-asset download. This command starts no node, sidecar process,
+container, faucet call, or public RPC and therefore proves no chain effect or
+swap. The full prerequisite and licensing boundary is recorded in
+`compat/lez-v0_2-sidecar/README.md`.
 
 ## External resources and flakiness
 

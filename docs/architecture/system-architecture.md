@@ -60,9 +60,9 @@ flowchart TB
         LRR["Future reference-actor runner<br/>splits role-local endpoint and key files"]
     end
 
-    subgraph LezV02Sidecars["Required official LEZ v0.2 processes"]
-        MSL2["Maker v0.2 sidecar<br/>official LEE wire + signer"]
-        TLS2["Taker v0.2 sidecar<br/>official LEE wire + signer"]
+    subgraph LezV02Sidecars["Official LEZ v0.2 sidecar boundary"]
+        MSL2["Maker v0.2 library<br/>describe + health + official decoder GREEN<br/>effects and process pending"]
+        TLS2["Taker v0.2 library<br/>describe + health + official decoder GREEN<br/>effects and process pending"]
     end
 
     subgraph LocalLezV02["Required public-compatible local LEZ v0.2 devnet"]
@@ -178,7 +178,7 @@ flowchart TB
     ZEC --> ZN
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class MM,LC,CA,TC,TM,LRR,MSL2,TLS2,BR,IX,SQ,V02R,V02Net,V02Ready,V02State planned;
+    class MM,LC,CA,TC,TM,LRR,BR,IX,SQ,V02R,V02Net,V02Ready,V02State planned;
 ```
 
 The maker operator owns maker policy, keys, node selection, and the daemon
@@ -213,8 +213,12 @@ refund-aware full-history resume, and the mode-0600, path-isolated one-shot
 maker/taker CLI boundary are GREEN. Offline `status` now opens only a
 pre-existing hardened role store, replays all durable lock/claim/refund state
 with chain ports impossible by type, and leaves missing state uncreated. The
-remaining M2 work is effect-bearing `activate`/`drive` command/port wiring, the
-official-wire v0.2 sidecar, containerized full local v0.2
+v0.2 sidecar foundation now binds the exact official LEE account and
+transaction types, canonical signed-transaction decoder, sequencer
+health/channel RPC, and an authenticated role/run-bound describe server. The
+remaining M2 work is its effect-bearing prepare/observe/submit methods and
+executable role processes, plus effect-bearing `activate`/`drive` command/port
+wiring, and the containerized full local v0.2
 Bedrock/indexer/non-standalone execution and readiness, dormant public-route
 configuration/adapters, composed both-direction execution, and post-lock hardening; chain
 adapters must
@@ -431,12 +435,12 @@ flowchart LR
     V02Guest --> V02Artifact["Checked v0.2 ELF<br/>SHA-256 + ImageID + ProgramId"]
     V02Artifact --> V02Local["Recursive native + two-definition token<br/>claim/refund + rollback tests"]
     V02Artifact --> V02Deployer["Exact-once fixed-URL<br/>official-RPC deployer"]
-    V02Artifact -.-> V02Sidecar["Official-wire v0.2 sidecar<br/>local/public profile"]
+    V02Artifact -.-> V02Sidecar["Official-wire v0.2 foundation GREEN<br/>effect methods and local/public profile pending"]
     V02Sidecar -.-> V02FullLocal["Bedrock + indexer + non-standalone sequencer<br/>independent actor corridor"]
     V02Deployer -.-> Testnet["Official v0.2 testnet<br/>deployment + cost evidence"]
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Testnet,ActorRunner,V02Sidecar,V02FullLocal planned;
+    class Testnet,ActorRunner,V02FullLocal planned;
 ```
 
 The deployment proof uses port `0`, a fresh mode-0700 sequencer home,
@@ -464,7 +468,7 @@ tests. A child-transfer overflow regression proves the metadata and every
 touched account roll back together. The v0.2 deployer validates immutable
 endpoint/channel/built-ins/artifact identity, submits once, and accepts only the
 exact transaction in its containing block; ambiguity or timeout is never
-retried. The dashed v0.2 sidecar/full-local edge is M2 exit work. The dashed
+retried. The solid v0.2 sidecar node represents only the tested describe/health/decoder foundation; its dashed effect/full-local edge remains M2 exit work. The dashed
 public-testnet edge and deployed-runtime costs are deferred to production
 readiness under ADR 0023. The v0.1.2 cost replay executes the same guest instructions through
 LEZ production state transitions, counts the escrow root and
