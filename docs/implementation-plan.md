@@ -488,9 +488,17 @@ outputs above.
   SQLite close/reopen. Its schema-aware historical decoder derives the old
   missing instruction kind from the signed asset and losslessly preserves
   `u128` amounts above `u64`; a single-field negative matrix covers chain,
-  transaction, metadata, and custody substitutions. The production RPC
-  adapter, official-wire transaction decoding, token-custody observation
-  matrix and refunds are remaining work. Commit `add5d98` now proves the SDK and
+  transaction, metadata, and custody substitutions. Commit `7001198` closes the
+  analogous revealing-claim evidence gap: live evidence is constructible only
+  from a stable primitive claim snapshot binding the node-reported identity to
+  the official-decoder hash, signed claimant, generated account order, exact
+  claim instruction and preimage, terminal metadata, empty custody, canonical
+  inclusion, and depth. New owner and observer rows use secret-free schema v2;
+  replay decrypts the separately protected preimage, reconstructs the snapshot,
+  and reruns the full validator. Legacy opaque v1 remains internal read-only
+  compatibility and cannot be emitted by a live adapter. The official-wire LEZ
+  transaction decoder/bridge, token-custody observation matrix and refunds are
+  remaining work. Commit `add5d98` now proves the SDK and
   production SQLite happy path after `BothLegsLocked`: the agreement-derived
   first claimant stages encrypted exact LEZ bytes before submission, both actors
   durably project the canonical reveal, the observer atomically protects the
@@ -514,8 +522,14 @@ outputs above.
   proved the Zcash `crypto-common = 0.2.0-rc.1` graph cannot coexist with the
   official LEZ graph's stable `crypto-common ^0.2` requirement. The next GREEN
   slice is a separately locked official-wire LEZ sidecar behind a capability-
-  and `RUN_ID`-bound typed local bridge, paired with an in-process typed Zebra
-  adapter and one isolated single-owner runner. Pin weakening, crypto patches,
+  and `RUN_ID`-bound typed local bridge plus one isolated single-owner runner.
+  Commit `cdb732e` supplies the in-process Zebra first-lock half: bounded private
+  DTOs, exact lowercase hash/transaction decoding, agreement/network/branch/
+  genesis binding, stable-tip canonical snapshots, exact V5 authorization-byte
+  checks, observe-before-rebroadcast, byte-exact submission, explicit
+  post-submit unknown outcomes, and sensitive cookie authentication on explicit
+  loopback HTTP only. Its 14 tests use SDK-built canonical V5 transactions; the
+  composed actual-node corridor is still RED. Pin weakening, crypto patches,
   and hand-copied LEZ wire/RPC types are prohibited.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
   nodes. The LEZ

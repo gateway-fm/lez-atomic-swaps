@@ -83,6 +83,12 @@ current executable slices enforce:
   suppression, monotonic Pending/Safe/Finalized updates, affirmative same-tip
   replacement, stale/tip-regressing evidence rejection, and fatal
   finalized-history changes.
+  Revealing LEZ claims now have the same primitive-evidence discipline: the SDK
+  binds the node-reported ID to the official-decoder hash, claimant signature,
+  generated accounts, exact claim/preimage, terminal metadata, empty custody,
+  canonical inclusion, and depth. New secret-free schema-v2 snapshots are fully
+  revalidated on SQLite replay with the separately protected preimage; legacy
+  opaque v1 rows are read-compatible but cannot be created by live adapters.
   The active SDK and schema-v9 SQLite journal now fold the agreement-selected
   LEZ tracker: exact duplicates write no row and same-inclusion finality/depth
   updates survive close/reopen. Affirmative nonfinal removal and atomic same-tip
@@ -90,6 +96,11 @@ current executable slices enforce:
   evidence, consume one revision, and replay through SQLite. The official-wire
   LEZ RPC adapter, production claim/refund effects, independent actor
   processes, and the completed real-node corridor remain.
+  A separate typed Zebra first-lock adapter is now implemented with bounded
+  private JSON-RPC DTOs, exact Regtest genesis/NU6.2 binding, stable-tip
+  canonical observation, full V5-byte verification, observe-before-rebroadcast,
+  byte-exact submission, loopback enforcement, and sensitive cookie auth. Its
+  actor-process integration and the composed LEZ-plus-Zebra corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),

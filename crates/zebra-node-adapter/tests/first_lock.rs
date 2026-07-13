@@ -250,6 +250,50 @@ async fn stable_confirmed_absent_mempool_and_moving_tip_are_distinct() {
 }
 
 #[tokio::test]
+async fn moving_tip_prevents_found_or_mempool_classification() {
+    let agreement = agreement(SwapDirection::TakerSellsForeign);
+    let prepared = prepared(&agreement);
+
+    let (found, identity) = FakeRpc::confirmed(&agreement, &prepared);
+    found.edit(|state| {
+        state.raw_transaction = Some(mutate_authorization(prepared.exact_submission()));
+        move_after_tip(state);
+    });
+    assert_eq!(
+        ZebraRpcSwapPort::new(found, identity)
+            .observe_first_lock(&agreement, &prepared)
+            .await
+            .expect("moving found snapshot is not classified"),
+        FirstLockObservation::Unstable
+    );
+
+    let (mempool, identity) = FakeRpc::confirmed(&agreement, &prepared);
+    mempool.edit(|state| {
+        state.transaction_state = Some(ZebraTransactionState::Mempool {
+            raw_transaction: prepared.exact_submission().to_vec(),
+        });
+        move_after_tip(state);
+    });
+    assert_eq!(
+        ZebraRpcSwapPort::new(mempool, identity)
+            .observe_first_lock(&agreement, &prepared)
+            .await
+            .expect("moving mempool snapshot is not classified"),
+        FirstLockObservation::Unstable
+    );
+}
+
+fn move_after_tip(state: &mut FakeState) {
+    let after = state.chain_infos[1];
+    state.chain_infos[1] = ZebraChainInfo::new(
+        after.rpc_chain(),
+        BlockHeight::from_u32(TIP_HEIGHT + 1),
+        BlockHash([0x44; 32]),
+        after.consensus_branch_id(),
+    );
+}
+
+#[tokio::test]
 async fn local_transaction_and_agreement_negative_matrix_precedes_every_rpc() {
     let agreement = agreement(SwapDirection::TakerSellsForeign);
     let valid = prepared(&agreement);
