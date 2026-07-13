@@ -162,8 +162,10 @@ current executable slices enforce:
   channel and its focused locked-graph suite is GREEN. The exact full runner is
   rechecked before corridor evidence or M2 certification. This completes the
   local node handoff, but not its consumption by independent corridor actors.
-  Context-owning SDK-port composition, independent reference actors, and the
-  completed LEZ-plus-Zebra corridor remain.
+  Context-owning SDK-port composition is GREEN. The exact-outpoint Zebra
+  funding planner and secure one-shot maker/taker CLI/config boundary are also
+  GREEN; full actor command wiring and the completed LEZ-plus-Zebra corridor
+  remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),

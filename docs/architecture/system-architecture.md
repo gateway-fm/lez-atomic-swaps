@@ -174,10 +174,12 @@ factory, actor-owned random request/window allocator, and cloneable shared
 role-local operation journal close the corresponding process-composition
 prerequisites. Reopened role-local SQLite is now the canonical LEZ claim-funding
 authority in both directions and reverse claims require the durable opposite
-Zcash lock. The role-keyed Zcash claim/refund signer retains only zeroizing key
-bytes and uses the canonical SDK builders. The remaining M2 work is the
-agreement-committed exact-outpoint Zebra funding planner, post-lock hardening,
-and independent actor integration; chain adapters must
+Zcash lock. The role-keyed Zcash funding/claim/refund signer retains only
+zeroizing key bytes and uses the canonical SDK builders. The
+agreement-committed exact-outpoint planner and the mode-0600, path-isolated
+one-shot maker/taker CLI boundary are GREEN. The remaining M2 work is full actor
+command/port wiring, composed both-direction execution, and post-lock hardening;
+chain adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
 observation alone is non-authorizing: forward Zcash persists and revalidates
 the complete canonical output type plus ordered canonical, depth, atomic

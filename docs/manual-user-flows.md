@@ -17,7 +17,7 @@ HTTPS provider transport, and actor adapter.
 | Flow | Boundary exercised | Current limitation |
 |---|---|---|
 | ZEC SDK agreement/activation/locks/claims/refunds | Canonical bounded dual-signed terms, separate role stores, exact lock recovery, and direction-fixed effects reach `BothLegsLocked`; LEZ reveal then Zcash follow-up reaches `Completed`; or exact owner intents plus observer-only transitions drive LEZ then Zcash refunds to `Refunded` in both directions | These commands still use deterministic contract doubles and no RPC, node, Docker, faucet, or external resource. Claims and refunds replay through schema-v10 SQLite with atomic owner/observer journals. Main LEZ/Zebra validation adapters, official LEZ refund execution, and crash-safe context-owning LEZ SDK ports are GREEN; the composed actor/node flow remains pending, so this is not yet the manual actual-node flow |
-| LEZ bridge and Zebra claim/refund contracts | The one-attempt authenticated loopback client and sidecar serve all eight bounded methods. The sidecar restores exact native, revealing-claim, and permissionless native-refund bytes and writes an unknown guard before submit. Official native escrow, claim, and refund observations decode exact-owner facts or bounded counterparty discovery; main escrow/claim/refund adapters independently validate the signed agreement, stable clock/tip, accounts, transactions, instructions, windows, deadlines, depth, and durable identity/bytes. Context-owning SDK ports journal caller-owned IDs/windows per logical operation, open fresh clients for exact retry, and preserve ambiguous prepare/refund contexts across restart. Two real sidecar processes run concurrently with distinct maker/taker roles, keys, capabilities, stores, runtimes, and ephemeral listeners. Typed Zebra ports validate owner claims/refunds, discover counterparty spends, and discover agreement-bound funding in both directions through bounded canonical scans | These are isolated adapter and process contract tests, not yet a composed consensus proof. The runner's describe/authentication path uses no chain call; official observation uses an ephemeral loopback RPC mock returning pinned node types. Independent actor processes and the composed corridor remain pending. No Docker, faucet, public endpoint, or fixed port is used |
+| LEZ bridge and Zebra funding/claim/refund contracts | The one-attempt authenticated loopback client and sidecar serve all eight bounded methods. The sidecar restores exact native, revealing-claim, and permissionless native-refund bytes and writes an unknown guard before submit. Official native escrow, claim, and refund observations decode exact-owner facts or bounded counterparty discovery; main escrow/claim/refund adapters independently validate the signed agreement, stable clock/tip, accounts, transactions, instructions, windows, deadlines, depth, and durable identity/bytes. Context-owning SDK ports journal caller-owned IDs/windows per logical operation, open fresh clients for exact retry, and preserve ambiguous prepare/refund contexts across restart. Two real sidecar processes run concurrently with distinct maker/taker roles, keys, capabilities, stores, runtimes, and ephemeral listeners. Typed Zebra ports validate exact-outpoint funding plans, owner claims/refunds, counterparty spends, and agreement-bound funding in both directions. A one-shot actor CLI now validates separate maker/taker private configs and rejects shared or config-overwriting paths | These are isolated adapter, planner, process, and actor-boundary contract tests, not yet a composed consensus proof. The actor currently validates `activate`/`drive`/`status` configuration but does not yet execute the lifecycle. The runner's describe/authentication path uses no chain call; official observation uses an ephemeral loopback RPC mock returning pinned node types. The composed corridor remains pending. No Docker, faucet, public endpoint, or fixed port is used |
 | Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
 | Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v10 SQLite journal/alerts plus the production role-fixed SDK recovery adapter, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The daemon polling loop, LEZ SDK-port/refund composition, and independent maker/taker processes remain pending |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
@@ -370,18 +370,25 @@ pinned generated LEZ RPC types; they prove source-correct conversion and
 fail-closed scanning, not public-testnet consensus.
 
 From the repository root, reproduce the agreement-bound Zebra funding/claim/
-refund adapter boundary:
+refund adapter and isolated actor-configuration boundaries:
 
 ```sh
-cargo test --offline --locked -p zebra-node-adapter --test first_lock -- --nocapture
+cargo test --offline --locked -p lez-zebra-node-adapter --test first_lock -- --nocapture
+cargo test --offline --locked -p lez-zebra-node-adapter \
+  --test exact_outpoint_funding_planner \
+  --test exact_outpoint_funding_planner_contract -- --nocapture
+cargo test --offline --locked -p zec-reference-actor --all-features -- --nocapture
 ```
 
-The 15 integration checks, together with the crate's 37 unit checks in a full
-crate test, cover both funding directions, stable-tip block/mempool discovery,
-exact V5 bytes and output policy, absence/ambiguity/horizon behavior, prior
-removal/replacement reconciliation, claims, and refunds. They use a bounded
-ephemeral loopback RPC fixture rather than an actual Zebra process; the separate
-isolated Zebra suite remains the consensus lane.
+The complete Zebra package has 62 checks: 37 unit, 15 first-lock, three signer,
+one planner-API, and six exhaustive planner-contract cases. They cover both
+funding directions, stable-tip block/mempool discovery, exact confirmed
+candidate outpoints and signed input-set commitment, transparent-only canonical
+V5 bytes and output/change policy, absence/ambiguity/horizon behavior, prior
+removal/replacement reconciliation, claims, and refunds. The actor package adds
+eight maker/taker config/CLI isolation cases. These commands use bounded in-memory
+or filesystem fixtures rather than an actual Zebra process; the separate isolated
+Zebra suite remains the consensus lane, and the actor commands do not yet drive it.
 
 For a direct manual launch, create the parent directory for the state file and
 supply the six required flags shown by the test fixture:

@@ -4,6 +4,7 @@
 
 mod claim;
 mod first_lock;
+mod funding_planner;
 mod rpc;
 mod signer;
 
@@ -12,6 +13,9 @@ pub use claim::{
     ZebraRpcRefundPort,
 };
 pub use first_lock::{ZebraFirstLockError, ZebraRpcSwapPort};
+pub use funding_planner::{
+    ExactOutpointZcashFundingPlanner, ExactOutpointZcashFundingPlannerError, ZebraFundingSigner,
+};
 pub use rpc::{
     HttpZebraRpc, HttpZebraRpcConfig, HttpZebraRpcError, ZebraCanonicalBlock, ZebraChainIdentity,
     ZebraChainInfo, ZebraIdentityError, ZebraRpc, ZebraRpcChain, ZebraSubmissionFailure,

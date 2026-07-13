@@ -8,9 +8,10 @@ adapters, Zebra funding/claim/refund ports, crash-safe context-owning SDK ports,
 the secure file-backed fresh-client factory, actor-owned random request/window
 allocator, cloneable role-local shared operation journal, and reusable checked
 external v0.1.2 schema-v2 node handoff are GREEN. Store-derived canonical LEZ
-claim funding and the zeroizing role-keyed Zcash claim/refund signer are also
-GREEN.
-Reference-actor wiring and the composed proof remain RED --
+claim funding, the zeroizing role-keyed Zcash funding/claim/refund signer, the
+agreement-committed exact-outpoint planner, and the private path-isolated
+one-shot actor CLI/config boundary are also GREEN.
+Full reference-actor command/port wiring and the composed proof remain RED --
 2026-07-13
 
 ```mermaid
@@ -335,10 +336,11 @@ test still requires
 distinct loopback LEZ-sidecar and Zebra endpoints, distinct role funding,
 separate maker/taker databases and claim keys, both signed directions, the
 fixed `locks -> LEZ reveal -> Zcash follow-up` order, and restart after every
-effect. The isolated claim/refund/funding adapters and context-owning SDK ports
-and external checked-node handoff are GREEN. The corridor remains RED until
-reference actors, post-lock revalidation, and actual composition satisfy the
-contract. No broken commit is published while this slice is being driven GREEN.
+effect. The isolated claim/refund/funding adapters, exact-outpoint planner,
+context-owning SDK ports, secure actor configuration boundary, and external
+checked-node handoff are GREEN. The corridor remains RED until actor commands,
+post-lock revalidation, and actual composition satisfy the contract. No broken
+commit is published while this slice is being driven GREEN.
 
 The official claim/refund observation boundaries and the main revealing-claim/
 refund adapters are source-correct and independently validated. The Zebra

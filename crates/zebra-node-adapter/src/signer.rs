@@ -5,13 +5,14 @@ use std::{fmt, io};
 use async_trait::async_trait;
 use lez_swap_core::Participant;
 use lez_zec_swap_sdk::{
-    Bip199Contract, ClaimPreimage, TransactionBuildError, TransparentSpendRequest,
-    build_claim_transaction, build_refund_transaction,
+    Bip199Contract, ClaimPreimage, FundingBuildError, TransactionBuildError,
+    TransparentFundingRequest, TransparentSpendRequest, build_claim_transaction,
+    build_funding_transaction, build_refund_transaction,
 };
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use zeroize::Zeroizing;
 
-use crate::{ZebraClaimSigner, ZebraRefundSigner};
+use crate::{ZebraClaimSigner, ZebraFundingSigner, ZebraRefundSigner};
 
 /// In-memory role-scoped key capability for the reference actor.
 ///
@@ -72,6 +73,19 @@ impl RoleKeyedZcashSigner {
             .map_err(RoleKeyedZcashSignerError::Serialization)?;
         Ok(exact)
     }
+
+    fn build_funding(
+        &self,
+        contract: &Bip199Contract,
+        request: &TransparentFundingRequest,
+    ) -> Result<Vec<u8>, RoleKeyedZcashSignerError> {
+        let mut secret_key = SecretKey::from_slice(self.secret_bytes.as_ref())
+            .map_err(|_| RoleKeyedZcashSignerError::InvalidStoredKey)?;
+        let transaction = build_funding_transaction(contract, request, &secret_key)
+            .map_err(RoleKeyedZcashSignerError::FundingBuild);
+        secret_key.non_secure_erase();
+        Self::serialize(&transaction?)
+    }
 }
 
 impl fmt::Debug for RoleKeyedZcashSigner {
@@ -94,9 +108,33 @@ pub enum RoleKeyedZcashSignerError {
     /// Canonical librustzcash transaction construction rejected the request.
     #[error("canonical Zcash transaction construction failed: {0}")]
     Build(#[source] TransactionBuildError),
+    /// Canonical funding construction rejected the signed agreement request.
+    #[error("canonical Zcash funding transaction construction failed: {0}")]
+    FundingBuild(#[source] FundingBuildError),
     /// Canonical transaction serialization failed.
     #[error("canonical Zcash transaction serialization failed: {0}")]
     Serialization(#[source] io::Error),
+}
+
+#[async_trait]
+impl ZebraFundingSigner for RoleKeyedZcashSigner {
+    type Error = RoleKeyedZcashSignerError;
+
+    fn participant(&self) -> Participant {
+        self.participant
+    }
+
+    fn public_key(&self) -> PublicKey {
+        self.public_key
+    }
+
+    async fn sign_funding(
+        &self,
+        contract: &Bip199Contract,
+        request: &TransparentFundingRequest,
+    ) -> Result<Vec<u8>, Self::Error> {
+        self.build_funding(contract, request)
+    }
 }
 
 #[async_trait]

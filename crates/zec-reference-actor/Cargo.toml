@@ -1,0 +1,21 @@
+[package]
+name = "zec-reference-actor"
+version = "0.1.0"
+description = "One-shot role-fixed reference actor for LEZ and Zcash atomic swaps"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { version = "4.6.0", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+thiserror = "2.0.18"
+zeroize = "1.9.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"
