@@ -82,6 +82,13 @@ jobs:
           manifest-path: compat/lez-standalone-e2e/Cargo.toml
           command: check
           command-arguments: --config compat/lez-standalone-e2e/deny.toml advisories bans licenses sources
+      - name: Audit official LEZ v0.1.2 sidecar graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-v0_1_2-sidecar/Cargo.toml
+          command: check
+          command-arguments: --config compat/lez-v0_1_2-sidecar/deny.toml advisories bans licenses sources
       - name: Audit provisional LEZ v0.2 compatibility graph
         uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
         with:
@@ -102,6 +109,27 @@ jobs:
         with:
           toolchain: 1.96.0
       - run: ./scripts/verify-spel-compatibility.sh
+
+  lez-v012-sidecar:
+    name: isolated official LEZ v0.1.2 sidecar contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_TARGET_DIR: ${{ runner.temp }}/lez-v012-sidecar-target
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+          components: clippy, rustfmt
+      - run: cargo fmt --manifest-path compat/lez-v0_1_2-sidecar/Cargo.toml --all --check
+      - run: cargo clippy --locked --manifest-path compat/lez-v0_1_2-sidecar/Cargo.toml --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --manifest-path compat/lez-v0_1_2-sidecar/Cargo.toml --all-targets --all-features
+      - name: Reject sidecar documentation warnings
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --manifest-path compat/lez-v0_1_2-sidecar/Cargo.toml --all-features --no-deps
 
   lez-v02-provisional:
     name: provisional LEZ v0.2 compatibility

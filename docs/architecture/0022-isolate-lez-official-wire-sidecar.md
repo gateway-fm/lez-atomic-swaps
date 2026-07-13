@@ -98,6 +98,17 @@ The sidecar retains its own lockfile, source allowlist, license/advisory policy,
 and exact LEZ/SPEL pins. It does not depend on the swap SDK. The main workspace
 does not import the LEZ standalone/sequencer/Risc0 server graph.
 
+The first implementation slice now provides the separately locked official
+transaction planner. It constructs native initialize/fund instructions with
+the official NSSA/SPEL APIs, reserves one checked consecutive nonce pair under
+an exclusive mutex, preserves the first randomized BIP340 signatures for exact
+retry, and accepts only its cached pair for submission. Construction binds the
+complete configured runtime descriptor; decoding checks canonical bytes,
+official hash, witness validity, signer, role, and escrow program. The local
+server, capability middleware, official nonce/submission/observation RPC
+implementations, and actor composition remain pending, so this slice is not a
+running sidecar or composed-chain proof.
+
 ## Atomicity preservation
 
 No implementation can make LEZ and Zcash commit in one shared database or
