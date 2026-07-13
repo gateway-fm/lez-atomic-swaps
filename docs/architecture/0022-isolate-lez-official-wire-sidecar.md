@@ -105,9 +105,15 @@ an exclusive mutex, preserves the first randomized BIP340 signatures for exact
 retry, and accepts only its cached pair for submission. Construction binds the
 complete configured runtime descriptor; decoding checks canonical bytes,
 official hash, witness validity, signer, role, and escrow program. The local
-server, capability middleware, official nonce/submission/observation RPC
-implementations, and actor composition remain pending, so this slice is not a
-running sidecar or composed-chain proof.
+official node adapter now implements nonce reads, exact cached-byte submission,
+and bounded exact-owner block-window scans through upstream generated RPC
+types. It brackets scans with validated tips, recomputes block hashes and links,
+checks genesis when covered, and never treats a bounded miss as global absence.
+Only the proven stateless invalid-params error is definitive; returned-hash,
+server, parse, timeout, and transport ambiguity remain unknown outcomes. The
+local server, capability middleware, revealing-claim planner, counterparty
+discovery, and actor composition remain pending, so this is not yet a running
+sidecar or composed-chain proof.
 
 ## Atomicity preservation
 

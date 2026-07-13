@@ -5,14 +5,19 @@
 
 #![forbid(unsafe_code)]
 
-use std::{fmt, sync::Arc};
+use std::{fmt, net::IpAddr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use common::transaction::NSSATransaction;
+use common::{
+    HashType,
+    block::{BedrockStatus, Block, HashableBlockData},
+    transaction::NSSATransaction,
+};
 use lez_bridge_protocol::{
-    ExactTransactionBytes, Hex32, Participant, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PreparedTransaction, ProtocolValueError, RuntimeDescriptor,
-    TransactionId,
+    AccountIds, ChainPosition, ChainTip, DiscoveryWindow, ExactTransactionBytes, Hex32,
+    ObservedTransactionFacts, Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
+    PreparedTransaction, ProtocolValueError, RuntimeDescriptor, SubmissionOutcome,
+    SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
 };
 use lez_zec_escrow_compat::Instruction as EscrowInstruction;
 use nssa::{
@@ -20,7 +25,13 @@ use nssa::{
     program::Program,
     public_transaction::{Message, WitnessSet},
 };
+use sequencer_service_rpc::{ClientError, RpcClient as _, SequencerClient, SequencerClientBuilder};
 use tokio::sync::Mutex;
+use url::{Host, Url};
+
+const MAX_NODE_REQUEST_BYTES: u32 = 2_800_000;
+const MAX_NODE_RESPONSE_BYTES: u32 = 8 * 1024 * 1024;
+const NODE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Fail-closed errors at the official transaction boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -55,6 +66,21 @@ pub enum SidecarError {
     /// The official node nonce could not be obtained.
     #[error("official signer nonce is unavailable")]
     NonceUnavailable,
+    /// Node RPC URL was not an explicit HTTP loopback IP and port.
+    #[error("official node endpoint must be an uncredentialed HTTP loopback IP and port")]
+    InvalidNodeEndpoint,
+    /// The pinned node proved a stateless invalid-params rejection.
+    #[error("official node definitively rejected the transaction")]
+    NodeRejected,
+    /// Submission may have reached the node, so observe the exact ID before retrying.
+    #[error("official node submission outcome is unknown")]
+    UnknownSubmissionOutcome,
+    /// Bounded block or tip facts could not be obtained from the node.
+    #[error("official node observation is unavailable")]
+    NodeObservationUnavailable,
+    /// Node block facts were incomplete, inconsistent, or not exact.
+    #[error("official node returned an invalid block response")]
+    InvalidNodeResponse,
     /// The consecutive funding nonce would exceed u128.
     #[error("official signer nonce cannot be incremented")]
     NonceOverflow,
@@ -86,6 +112,303 @@ impl From<ProtocolValueError> for SidecarError {
 pub trait NonceSource: Send + Sync {
     /// Returns the current u128 nonce for `account_id`.
     async fn account_nonce(&self, account_id: AccountId) -> Result<u128, SidecarError>;
+}
+
+/// Submits only a transaction that the planner has cached byte-for-byte.
+#[async_trait]
+pub trait ExactTransactionSubmitter: Send + Sync {
+    /// Decodes cached official bytes without reconstructing or re-signing and
+    /// checks the hash returned by the pinned node's `sendTransaction` call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for any identity/cache mismatch, proven invalid-params
+    /// rejection, uncertain outcome, or returned hash mismatch.
+    async fn submit_exact(
+        &self,
+        planner: &NativeEscrowPlanner,
+        request: &SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, SidecarError>;
+}
+
+/// Upstream settlement label attached to the block containing an exact transaction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OfficialSettlement {
+    /// The sequencer still reports the block as pending Bedrock settlement.
+    Pending,
+    /// The sequencer reports the block as safe.
+    Safe,
+    /// The sequencer reports the block as finalized.
+    Finalized,
+}
+
+/// Exact official transaction and its node-reported block settlement label.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OfficialExactFound {
+    /// Exact decoder, signer, bytes, and chain-position facts.
+    pub transaction: ObservedTransactionFacts,
+    /// Official `BedrockStatus` mapped without inferring confirmation depth.
+    pub settlement: OfficialSettlement,
+}
+
+/// Result of one explicit bounded exact-ID window scan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OfficialExactObservation {
+    /// The current tip has not reached the requested window's first height.
+    NotYetCovered,
+    /// Every available block in this declared window was scanned without a match.
+    NotFoundInWindow,
+    /// The exact persisted public transaction was present once in the linked range.
+    Found(OfficialExactFound),
+}
+
+/// Bracketed result of one bounded official block-range scan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OfficialExactScan {
+    /// Validated node tip immediately before the bounded range request.
+    pub tip_before: ChainTip,
+    /// Exact window result; this does not by itself claim canonical stability.
+    pub observation: OfficialExactObservation,
+    /// Validated node tip immediately after the bounded range request.
+    pub tip_after: ChainTip,
+}
+
+/// Bounded official v0.1.2 sequencer RPC client for one role and signer.
+///
+/// The endpoint must be an explicit loopback IP literal. The pinned
+/// `jsonrpsee` HTTP transport connects directly through Hyper: it does not
+/// consult environment proxy variables and does not implement redirects.
+#[derive(Clone)]
+pub struct OfficialNodeRpc {
+    role: Participant,
+    signer_account_id: AccountId,
+    runtime: RuntimeDescriptor,
+    client: SequencerClient,
+}
+
+impl fmt::Debug for OfficialNodeRpc {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OfficialNodeRpc")
+            .field("role", &self.role)
+            .field("signer_account_id", &self.signer_account_id)
+            .field("runtime", &self.runtime)
+            .finish_non_exhaustive()
+    }
+}
+
+impl OfficialNodeRpc {
+    /// Connects to one local pinned sequencer endpoint without proxy or redirects.
+    ///
+    /// This applies finite body bounds and timeout, permits one request at a
+    /// time, and configures no retry middleware.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `endpoint` is an uncredentialed `http` URL with
+    /// an explicit loopback IP and port, or role/signer/compatibility disagree.
+    pub fn connect(
+        endpoint: &str,
+        role: Participant,
+        signer_account_id: AccountId,
+        runtime: RuntimeDescriptor,
+    ) -> Result<Self, SidecarError> {
+        validate_node_endpoint(endpoint)?;
+        if runtime.sidecar_role != role {
+            return Err(SidecarError::WrongSidecarRole);
+        }
+        if runtime.compatibility != lez_bridge_protocol::RuntimeCompatibility::NssaV0_1_2 {
+            return Err(SidecarError::WrongRuntimeCompatibility);
+        }
+        if runtime.signer_account_id != Hex32::from_bytes(signer_account_id.into_value()) {
+            return Err(SidecarError::WrongSigner);
+        }
+        let client = SequencerClientBuilder::default()
+            .max_request_size(MAX_NODE_REQUEST_BYTES)
+            .max_response_size(MAX_NODE_RESPONSE_BYTES)
+            .request_timeout(NODE_REQUEST_TIMEOUT)
+            .max_concurrent_requests(1)
+            .build(endpoint)
+            .map_err(|_| SidecarError::InvalidNodeEndpoint)?;
+        Ok(Self {
+            role,
+            signer_account_id,
+            runtime,
+            client,
+        })
+    }
+
+    /// Scans one bounded official block window for an exact persisted transaction.
+    ///
+    /// Blocks must cover the requested available range exactly, have recomputable
+    /// official hashes, form a linked sequence, and contain the target at most
+    /// once. A matching hash with different public transaction bytes is rejected.
+    /// The caller must compare the returned tips before treating the result as a
+    /// stable-chain fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid persisted bytes/signature/signer, unavailable
+    /// bounded RPC facts, malformed block ranges, broken links, duplicate target
+    /// placement, or a hash match whose exact bytes differ.
+    pub async fn scan_exact(
+        &self,
+        expected: &PreparedTransaction,
+        window: DiscoveryWindow,
+    ) -> Result<OfficialExactScan, SidecarError> {
+        let target =
+            decode_prepared_for_role(expected, self.role, self.role, self.signer_account_id)?;
+        if target.message.program_id != program_id_from_hex(self.runtime.escrow_program_id) {
+            return Err(SidecarError::WrongEscrowProgram);
+        }
+        let tip_before = self.read_tip().await?;
+        if window.start_height() > tip_before.height {
+            return Ok(OfficialExactScan {
+                tip_before,
+                observation: OfficialExactObservation::NotYetCovered,
+                tip_after: self.read_tip().await?,
+            });
+        }
+
+        let declared_end = window
+            .start_height()
+            .checked_add(u64::from(window.max_blocks() - 1))
+            .ok_or(SidecarError::InvalidNodeResponse)?;
+        let end = declared_end.min(tip_before.height);
+        let anchor_start = window.start_height().saturating_sub(1);
+        let blocks = self
+            .client
+            .get_block_range(anchor_start, end)
+            .await
+            .map_err(|_| SidecarError::NodeObservationUnavailable)?;
+        validate_block_range(&blocks, anchor_start, end, self.runtime.genesis_block_hash)?;
+
+        let skip_anchor = usize::from(window.start_height() > 0);
+        let mut found = None;
+        for block in blocks.iter().skip(skip_anchor) {
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                if transaction.hash().0 != *expected.transaction_id.as_bytes() {
+                    continue;
+                }
+                if found.is_some() {
+                    return Err(SidecarError::InvalidNodeResponse);
+                }
+                let NSSATransaction::Public(public) = transaction else {
+                    return Err(SidecarError::InvalidNodeResponse);
+                };
+                let observed = prepared_from_transaction(public)?;
+                if observed != *expected {
+                    return Err(SidecarError::InvalidNodeResponse);
+                }
+                let signer_account_ids = public
+                    .witness_set()
+                    .signatures_and_public_keys()
+                    .iter()
+                    .map(|(_, key)| Hex32::from_bytes(AccountId::from(key).into_value()))
+                    .collect::<Vec<_>>();
+                let position = ChainPosition::new(
+                    Hex32::from_bytes(block.header.hash.0),
+                    block.header.block_id,
+                    u32::try_from(index).map_err(|_| SidecarError::InvalidNodeResponse)?,
+                );
+                found = Some(OfficialExactFound {
+                    transaction: ObservedTransactionFacts::new(
+                        observed.transaction_id,
+                        observed.exact_bytes,
+                        position,
+                        AccountIds::new(signer_account_ids)?,
+                        true,
+                    ),
+                    settlement: settlement(&block.bedrock_status),
+                });
+            }
+        }
+
+        Ok(OfficialExactScan {
+            tip_before,
+            observation: found.map_or(
+                OfficialExactObservation::NotFoundInWindow,
+                OfficialExactObservation::Found,
+            ),
+            tip_after: self.read_tip().await?,
+        })
+    }
+
+    async fn read_tip(&self) -> Result<ChainTip, SidecarError> {
+        let height = self
+            .client
+            .get_last_block_id()
+            .await
+            .map_err(|_| SidecarError::NodeObservationUnavailable)?;
+        let block = self
+            .client
+            .get_block(height)
+            .await
+            .map_err(|_| SidecarError::NodeObservationUnavailable)?
+            .ok_or(SidecarError::InvalidNodeResponse)?;
+        validate_block_hash(&block)?;
+        if block.header.block_id != height {
+            return Err(SidecarError::InvalidNodeResponse);
+        }
+        if height == 0 && Hex32::from_bytes(block.header.hash.0) != self.runtime.genesis_block_hash
+        {
+            return Err(SidecarError::InvalidNodeResponse);
+        }
+        Ok(ChainTip::new(
+            Hex32::from_bytes(block.header.hash.0),
+            height,
+        ))
+    }
+}
+
+#[async_trait]
+impl NonceSource for OfficialNodeRpc {
+    async fn account_nonce(&self, account_id: AccountId) -> Result<u128, SidecarError> {
+        if account_id != self.signer_account_id {
+            return Err(SidecarError::WrongSigner);
+        }
+        let nonces = self
+            .client
+            .get_accounts_nonces(vec![account_id])
+            .await
+            .map_err(|_| SidecarError::NonceUnavailable)?;
+        let [nonce] = nonces.as_slice() else {
+            return Err(SidecarError::NonceUnavailable);
+        };
+        Ok((*nonce).into())
+    }
+}
+
+#[async_trait]
+impl ExactTransactionSubmitter for OfficialNodeRpc {
+    async fn submit_exact(
+        &self,
+        planner: &NativeEscrowPlanner,
+        request: &SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, SidecarError> {
+        if request.context.sidecar_role != self.role {
+            return Err(SidecarError::WrongSidecarRole);
+        }
+        if request.runtime != self.runtime {
+            return Err(SidecarError::WrongRuntimeIdentity);
+        }
+        let transaction = planner
+            .decode_exact_for_submission(&request.transaction, request.context.sidecar_role)
+            .await?;
+        let returned_hash = self
+            .client
+            .send_transaction(transaction)
+            .await
+            .map_err(classify_submission_error)?;
+        if returned_hash != HashType(*request.transaction.transaction_id.as_bytes()) {
+            return Err(SidecarError::UnknownSubmissionOutcome);
+        }
+        Ok(SubmitTransactionResult::new(
+            request.context.clone(),
+            request.transaction.transaction_id,
+            SubmissionOutcome::Accepted,
+        ))
+    }
 }
 
 #[derive(Clone)]
@@ -402,4 +725,84 @@ fn program_id_from_hex(value: Hex32) -> [u32; 8] {
         *word = u32::from_le_bytes(chunk.try_into().expect("four-byte chunk"));
     }
     program_id
+}
+
+fn settlement(status: &BedrockStatus) -> OfficialSettlement {
+    match status {
+        BedrockStatus::Pending => OfficialSettlement::Pending,
+        BedrockStatus::Safe => OfficialSettlement::Safe,
+        BedrockStatus::Finalized => OfficialSettlement::Finalized,
+    }
+}
+
+fn validate_block_hash(block: &Block) -> Result<(), SidecarError> {
+    if HashableBlockData::from(block.clone()).block_hash() != block.header.hash {
+        return Err(SidecarError::InvalidNodeResponse);
+    }
+    Ok(())
+}
+
+fn validate_block_range(
+    blocks: &[Block],
+    start: u64,
+    end: u64,
+    genesis_block_hash: Hex32,
+) -> Result<(), SidecarError> {
+    let expected_len = end
+        .checked_sub(start)
+        .and_then(|distance| distance.checked_add(1))
+        .and_then(|length| usize::try_from(length).ok())
+        .ok_or(SidecarError::InvalidNodeResponse)?;
+    if blocks.len() != expected_len {
+        return Err(SidecarError::InvalidNodeResponse);
+    }
+    for (offset, block) in blocks.iter().enumerate() {
+        let offset = u64::try_from(offset).map_err(|_| SidecarError::InvalidNodeResponse)?;
+        if block.header.block_id != start + offset {
+            return Err(SidecarError::InvalidNodeResponse);
+        }
+        validate_block_hash(block)?;
+        if block.header.block_id == 0
+            && Hex32::from_bytes(block.header.hash.0) != genesis_block_hash
+        {
+            return Err(SidecarError::InvalidNodeResponse);
+        }
+        if let Some(previous) = offset
+            .checked_sub(1)
+            .and_then(|previous| usize::try_from(previous).ok())
+            .and_then(|previous| blocks.get(previous))
+            && block.header.prev_block_hash != previous.header.hash
+        {
+            return Err(SidecarError::InvalidNodeResponse);
+        }
+    }
+    Ok(())
+}
+
+fn validate_node_endpoint(endpoint: &str) -> Result<(), SidecarError> {
+    let parsed = Url::parse(endpoint).map_err(|_| SidecarError::InvalidNodeEndpoint)?;
+    let loopback = match parsed.host() {
+        Some(Host::Ipv4(address)) => IpAddr::V4(address).is_loopback(),
+        Some(Host::Ipv6(address)) => IpAddr::V6(address).is_loopback(),
+        Some(Host::Domain(_)) | None => false,
+    };
+    if parsed.scheme() != "http"
+        || !loopback
+        || parsed.port().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || parsed.path() != "/"
+    {
+        return Err(SidecarError::InvalidNodeEndpoint);
+    }
+    Ok(())
+}
+
+fn classify_submission_error(error: ClientError) -> SidecarError {
+    match error {
+        ClientError::Call(error) if error.code() == -32602 => SidecarError::NodeRejected,
+        _ => SidecarError::UnknownSubmissionOutcome,
+    }
 }
