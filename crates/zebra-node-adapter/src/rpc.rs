@@ -1,0 +1,796 @@
+use std::{error::Error, time::Duration};
+
+use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use jsonrpsee::{
+    core::{ClientError, client::ClientT},
+    rpc_params,
+};
+use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClient, HttpClientBuilder};
+use lez_zec_swap_sdk::MAX_FIRST_LOCK_SUBMISSION_BYTES;
+use serde::Deserialize;
+use zcash_encoding::ReverseHex;
+use zcash_primitives::block::BlockHash;
+use zcash_protocol::{
+    TxId,
+    consensus::{BlockHeight, BranchId, NetworkType},
+};
+
+const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_MAX_CONCURRENT_REQUESTS: usize = 8;
+const MAX_RPC_BODY_BYTES: u32 = 4_100_000;
+const TRANSACTION_NOT_FOUND_CODE: i32 = -5;
+
+/// Zebra's BIP-70-compatible chain spelling.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ZebraRpcChain {
+    /// Zcash mainnet.
+    Main,
+    /// Zcash testnet or Regtest. Regtest is distinguished by genesis hash.
+    Test,
+}
+
+impl ZebraRpcChain {
+    fn parse(value: &str) -> Result<Self, HttpZebraRpcError> {
+        match value {
+            "main" => Ok(Self::Main),
+            "test" => Ok(Self::Test),
+            _ => Err(HttpZebraRpcError::UnknownChain(value.to_owned())),
+        }
+    }
+}
+
+/// Invalid immutable Zebra chain configuration.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum ZebraIdentityError {
+    /// Mainnet must use main; testnet and Regtest must use test.
+    #[error("configured Zebra RPC chain does not match the Zcash network")]
+    RpcChainMismatch,
+    /// A zero genesis hash cannot identify a chain.
+    #[error("configured Zebra genesis hash is zero")]
+    ZeroGenesisHash,
+}
+
+/// Immutable network, RPC-chain, branch, and genesis binding for one adapter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ZebraChainIdentity {
+    network: NetworkType,
+    rpc_chain: ZebraRpcChain,
+    consensus_branch_id: BranchId,
+    genesis_hash: BlockHash,
+}
+
+impl ZebraChainIdentity {
+    /// Validates an explicit chain identity before any RPC is attempted.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a BIP-70 chain/network mismatch or zero genesis hash.
+    pub fn new(
+        network: NetworkType,
+        rpc_chain: ZebraRpcChain,
+        consensus_branch_id: BranchId,
+        genesis_hash: BlockHash,
+    ) -> Result<Self, ZebraIdentityError> {
+        let expected_rpc_chain = match network {
+            NetworkType::Main => ZebraRpcChain::Main,
+            NetworkType::Test | NetworkType::Regtest => ZebraRpcChain::Test,
+        };
+        if rpc_chain != expected_rpc_chain {
+            return Err(ZebraIdentityError::RpcChainMismatch);
+        }
+        if genesis_hash == BlockHash([0; 32]) {
+            return Err(ZebraIdentityError::ZeroGenesisHash);
+        }
+        Ok(Self {
+            network,
+            rpc_chain,
+            consensus_branch_id,
+            genesis_hash,
+        })
+    }
+
+    /// Exact identity of the pinned deterministic Zebra Regtest fixture.
+    #[must_use]
+    pub const fn deterministic_regtest_nu6_2() -> Self {
+        Self {
+            network: NetworkType::Regtest,
+            rpc_chain: ZebraRpcChain::Test,
+            consensus_branch_id: BranchId::Nu6_2,
+            genesis_hash: BlockHash([
+                0x27, 0xe3, 0x01, 0x34, 0xd6, 0x20, 0xe9, 0xfe, 0x61, 0xf7, 0x19, 0x93, 0x83, 0x20,
+                0xba, 0xb6, 0x3e, 0x7e, 0x72, 0xc9, 0x1b, 0x5e, 0x23, 0x02, 0x56, 0x76, 0xf9, 0x0e,
+                0xd8, 0x11, 0x9f, 0x02,
+            ]),
+        }
+    }
+
+    /// Configured Zcash network.
+    #[must_use]
+    pub const fn network(self) -> NetworkType {
+        self.network
+    }
+
+    /// Configured Zebra RPC chain spelling.
+    #[must_use]
+    pub const fn rpc_chain(self) -> ZebraRpcChain {
+        self.rpc_chain
+    }
+
+    /// Configured transaction consensus branch.
+    #[must_use]
+    pub const fn consensus_branch_id(self) -> BranchId {
+        self.consensus_branch_id
+    }
+
+    /// Configured network genesis block hash.
+    #[must_use]
+    pub const fn genesis_hash(self) -> BlockHash {
+        self.genesis_hash
+    }
+}
+
+/// One typed getblockchaininfo sample.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ZebraChainInfo {
+    rpc_chain: ZebraRpcChain,
+    tip_height: BlockHeight,
+    tip_hash: BlockHash,
+    consensus_branch_id: BranchId,
+}
+
+impl ZebraChainInfo {
+    /// Builds one primitive chain sample, primarily for typed RPC implementations.
+    #[must_use]
+    pub const fn new(
+        rpc_chain: ZebraRpcChain,
+        tip_height: BlockHeight,
+        tip_hash: BlockHash,
+        consensus_branch_id: BranchId,
+    ) -> Self {
+        Self {
+            rpc_chain,
+            tip_height,
+            tip_hash,
+            consensus_branch_id,
+        }
+    }
+
+    /// RPC chain spelling.
+    #[must_use]
+    pub const fn rpc_chain(self) -> ZebraRpcChain {
+        self.rpc_chain
+    }
+
+    /// Best-chain height.
+    #[must_use]
+    pub const fn tip_height(self) -> BlockHeight {
+        self.tip_height
+    }
+
+    /// Best-chain hash.
+    #[must_use]
+    pub const fn tip_hash(self) -> BlockHash {
+        self.tip_hash
+    }
+
+    /// Consensus branch Zebra reports at the tip.
+    #[must_use]
+    pub const fn consensus_branch_id(self) -> BranchId {
+        self.consensus_branch_id
+    }
+}
+
+/// Typed state of an RPC-visible transaction.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ZebraTransactionState {
+    /// Transaction is visible but has no complete canonical inclusion context.
+    Mempool {
+        /// Exact bytes returned by verbose transaction lookup.
+        raw_transaction: Vec<u8>,
+    },
+    /// Transaction has a complete claimed inclusion context for local validation.
+    Confirmed {
+        /// Exact bytes returned by verbose transaction lookup.
+        raw_transaction: Vec<u8>,
+        /// Claimed inclusion block hash.
+        block_hash: BlockHash,
+        /// Claimed inclusion height.
+        block_height: BlockHeight,
+        /// RPC-reported confirmation depth.
+        confirmations: u32,
+        /// RPC-reported active-chain flag.
+        in_active_chain: bool,
+    },
+}
+
+/// Narrow typed Zebra transport boundary used by production chain adapters.
+#[async_trait]
+pub trait ZebraRpc: Send + Sync {
+    /// Structured transport or decoding error.
+    type Error: Error + Send + Sync + 'static;
+
+    /// Samples network, branch, and best-chain tip.
+    async fn chain_info(&self) -> Result<ZebraChainInfo, Self::Error>;
+    /// Resolves the canonical block hash at one height.
+    async fn block_hash(&self, height: BlockHeight) -> Result<BlockHash, Self::Error>;
+    /// Fetches raw bytes, mapping only Zebra RPC code -5 to absence.
+    async fn raw_transaction(&self, transaction_id: TxId) -> Result<Option<Vec<u8>>, Self::Error>;
+    /// Fetches complete mempool or claimed canonical transaction context.
+    async fn transaction_state(
+        &self,
+        transaction_id: TxId,
+    ) -> Result<Option<ZebraTransactionState>, Self::Error>;
+    /// Broadcasts exact bytes and returns Zebra's parsed transaction identifier.
+    async fn send_raw_transaction(&self, transaction: &[u8]) -> Result<TxId, Self::Error>;
+}
+
+/// Finite transport bounds for a Zebra HTTP JSON-RPC client.
+#[derive(Clone, Eq, PartialEq)]
+pub struct HttpZebraRpcConfig {
+    endpoint: Box<str>,
+    request_timeout: Duration,
+    max_concurrent_requests: usize,
+    authorization: Option<HeaderValue>,
+}
+
+impl std::fmt::Debug for HttpZebraRpcConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HttpZebraRpcConfig")
+            .field("endpoint", &self.endpoint)
+            .field("request_timeout", &self.request_timeout)
+            .field("max_concurrent_requests", &self.max_concurrent_requests)
+            .field("cookie_auth_enabled", &self.authorization.is_some())
+            .finish()
+    }
+}
+
+impl HttpZebraRpcConfig {
+    /// Creates configuration with a 30-second timeout and eight concurrent requests.
+    #[must_use]
+    pub fn new(endpoint: impl Into<Box<str>>) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+            request_timeout: DEFAULT_RPC_TIMEOUT,
+            max_concurrent_requests: DEFAULT_MAX_CONCURRENT_REQUESTS,
+            authorization: None,
+        }
+    }
+
+    /// Adds Zebra cookie-file credentials as a sensitive HTTP Basic Authorization header.
+    ///
+    /// One trailing LF or CRLF from reading the cookie file is ignored. The credential
+    /// must otherwise be bounded visible ASCII in `username:password` form. Neither this
+    /// configuration's `Debug` implementation nor the client `Debug` prints the secret.
+    ///
+    /// # Errors
+    ///
+    /// Rejects empty, oversized, control-containing, or delimiter-incomplete credentials.
+    pub fn with_cookie_credentials(
+        mut self,
+        cookie_contents: impl AsRef<[u8]>,
+    ) -> Result<Self, HttpZebraRpcError> {
+        let raw = cookie_contents.as_ref();
+        let credential = raw
+            .strip_suffix(b"\r\n")
+            .or_else(|| raw.strip_suffix(b"\n"))
+            .unwrap_or(raw);
+        let delimiter = credential.iter().position(|byte| *byte == b':');
+        if credential.is_empty()
+            || credential.len() > 1_024
+            || delimiter.is_none_or(|index| index == 0 || index + 1 == credential.len())
+            || !credential.iter().all(|byte| (0x21..=0x7e).contains(byte))
+        {
+            return Err(HttpZebraRpcError::InvalidCookieCredentials);
+        }
+        let encoded = BASE64_STANDARD.encode(credential);
+        let mut authorization = HeaderValue::from_bytes(format!("Basic {encoded}").as_bytes())
+            .map_err(|_| HttpZebraRpcError::InvalidCookieCredentials)?;
+        authorization.set_sensitive(true);
+        self.authorization = Some(authorization);
+        Ok(self)
+    }
+
+    /// Replaces the finite request timeout.
+    #[must_use]
+    pub const fn with_request_timeout(mut self, timeout: Duration) -> Self {
+        self.request_timeout = timeout;
+        self
+    }
+
+    /// Replaces the finite concurrency bound.
+    #[must_use]
+    pub const fn with_max_concurrent_requests(mut self, maximum: usize) -> Self {
+        self.max_concurrent_requests = maximum;
+        self
+    }
+}
+
+/// Bounded production HTTP implementation of [`ZebraRpc`].
+#[derive(Clone)]
+pub struct HttpZebraRpc {
+    client: HttpClient,
+}
+
+impl std::fmt::Debug for HttpZebraRpc {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HttpZebraRpc")
+            .finish_non_exhaustive()
+    }
+}
+
+/// Structured HTTP transport, response-shape, or bounded-value failure.
+#[derive(Debug, thiserror::Error)]
+pub enum HttpZebraRpcError {
+    /// Endpoint or HTTP client construction failed.
+    #[error("failed to construct bounded Zebra HTTP client: {0}")]
+    Build(#[source] ClientError),
+    /// A JSON-RPC request failed.
+    #[error("Zebra JSON-RPC request failed: {0}")]
+    Request(#[source] ClientError),
+    /// Zebra returned a chain spelling outside its documented finite set.
+    #[error("Zebra returned unknown chain {0:?}")]
+    UnknownChain(String),
+    /// A response hash/transaction identifier was not exact lowercase 64-hex.
+    #[error("Zebra returned malformed {field}")]
+    MalformedHash {
+        /// Response field being decoded.
+        field: &'static str,
+    },
+    /// Zebra returned an unknown or malformed consensus branch identifier.
+    #[error("Zebra returned malformed consensus branch identifier")]
+    MalformedConsensusBranch,
+    /// A numeric response value exceeded the supported u32 domain.
+    #[error("Zebra returned out-of-range {field}")]
+    OutOfRange {
+        /// Response field being converted.
+        field: &'static str,
+    },
+    /// Raw transaction text violated exact lowercase/bounded hex requirements.
+    #[error("Zebra returned malformed or oversized raw transaction hex")]
+    MalformedTransactionHex,
+    /// Verbose transaction context was only partially populated.
+    #[error("Zebra returned partial transaction confirmation context")]
+    PartialConfirmationContext,
+    /// HTTP configuration disabled a required finite bound.
+    #[error("Zebra HTTP timeout and concurrency limits must be nonzero")]
+    InvalidTransportBounds,
+    /// Zebra cookie contents were not bounded `username:password` text.
+    #[error("Zebra cookie credentials are invalid")]
+    InvalidCookieCredentials,
+    /// Zebra RPC is intentionally restricted to an explicit loopback HTTP endpoint.
+    #[error("Zebra HTTP endpoint must be explicit nonzero-port loopback")]
+    NonLoopbackEndpoint,
+}
+
+impl HttpZebraRpc {
+    /// Connects a client with finite body, timeout, and concurrency limits.
+    ///
+    /// # Errors
+    ///
+    /// Rejects zero limits or an endpoint the HTTP client cannot parse.
+    pub fn connect(config: &HttpZebraRpcConfig) -> Result<Self, HttpZebraRpcError> {
+        if config.request_timeout.is_zero() || config.max_concurrent_requests == 0 {
+            return Err(HttpZebraRpcError::InvalidTransportBounds);
+        }
+        if !is_loopback_endpoint(&config.endpoint) {
+            return Err(HttpZebraRpcError::NonLoopbackEndpoint);
+        }
+        let mut headers = HeaderMap::new();
+        if let Some(authorization) = &config.authorization {
+            headers.insert("authorization", authorization.clone());
+        }
+        let client = HttpClientBuilder::default()
+            .max_request_size(MAX_RPC_BODY_BYTES)
+            .max_response_size(MAX_RPC_BODY_BYTES)
+            .request_timeout(config.request_timeout)
+            .max_concurrent_requests(config.max_concurrent_requests)
+            .set_headers(headers)
+            .build(&config.endpoint)
+            .map_err(HttpZebraRpcError::Build)?;
+        Ok(Self { client })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct BlockchainInfoDto {
+    chain: String,
+    blocks: u64,
+    bestblockhash: String,
+    consensus: ConsensusDto,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConsensusDto {
+    chaintip: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct VerboseRawTransactionDto {
+    hex: String,
+    height: Option<i64>,
+    blockhash: Option<String>,
+    confirmations: Option<u64>,
+    in_active_chain: Option<bool>,
+}
+
+#[async_trait]
+impl ZebraRpc for HttpZebraRpc {
+    type Error = HttpZebraRpcError;
+
+    async fn chain_info(&self) -> Result<ZebraChainInfo, Self::Error> {
+        let value: BlockchainInfoDto = self
+            .client
+            .request("getblockchaininfo", rpc_params![])
+            .await
+            .map_err(HttpZebraRpcError::Request)?;
+        Ok(ZebraChainInfo::new(
+            ZebraRpcChain::parse(&value.chain)?,
+            BlockHeight::from_u32(
+                u32::try_from(value.blocks)
+                    .map_err(|_| HttpZebraRpcError::OutOfRange { field: "blocks" })?,
+            ),
+            BlockHash(parse_reverse_hash("bestblockhash", &value.bestblockhash)?),
+            parse_branch(&value.consensus.chaintip)?,
+        ))
+    }
+
+    async fn block_hash(&self, height: BlockHeight) -> Result<BlockHash, Self::Error> {
+        let value: String = self
+            .client
+            .request("getblockhash", rpc_params![u32::from(height)])
+            .await
+            .map_err(HttpZebraRpcError::Request)?;
+        Ok(BlockHash(parse_reverse_hash("block hash", &value)?))
+    }
+
+    async fn raw_transaction(&self, transaction_id: TxId) -> Result<Option<Vec<u8>>, Self::Error> {
+        let response: Result<String, ClientError> = self
+            .client
+            .request(
+                "getrawtransaction",
+                rpc_params![transaction_id.to_string(), 0],
+            )
+            .await;
+        optional_call(response)?.map_or(Ok(None), |value| parse_transaction_hex(&value).map(Some))
+    }
+
+    async fn transaction_state(
+        &self,
+        transaction_id: TxId,
+    ) -> Result<Option<ZebraTransactionState>, Self::Error> {
+        let response: Result<VerboseRawTransactionDto, ClientError> = self
+            .client
+            .request(
+                "getrawtransaction",
+                rpc_params![transaction_id.to_string(), 1],
+            )
+            .await;
+        let Some(value) = optional_call(response)? else {
+            return Ok(None);
+        };
+        parse_transaction_state(value).map(Some)
+    }
+
+    async fn send_raw_transaction(&self, transaction: &[u8]) -> Result<TxId, Self::Error> {
+        if transaction.is_empty() || transaction.len() > MAX_FIRST_LOCK_SUBMISSION_BYTES {
+            return Err(HttpZebraRpcError::MalformedTransactionHex);
+        }
+        let value: String = self
+            .client
+            .request("sendrawtransaction", rpc_params![hex::encode(transaction)])
+            .await
+            .map_err(HttpZebraRpcError::Request)?;
+        Ok(TxId::from_bytes(parse_reverse_hash(
+            "submitted transaction id",
+            &value,
+        )?))
+    }
+}
+
+fn optional_call<T>(response: Result<T, ClientError>) -> Result<Option<T>, HttpZebraRpcError> {
+    match response {
+        Ok(value) => Ok(Some(value)),
+        Err(ClientError::Call(error)) if error.code() == TRANSACTION_NOT_FOUND_CODE => Ok(None),
+        Err(error) => Err(HttpZebraRpcError::Request(error)),
+    }
+}
+
+fn parse_transaction_state(
+    value: VerboseRawTransactionDto,
+) -> Result<ZebraTransactionState, HttpZebraRpcError> {
+    let raw_transaction = parse_transaction_hex(&value.hex)?;
+    match (
+        value.height,
+        value.blockhash,
+        value.confirmations,
+        value.in_active_chain,
+    ) {
+        (None, None, None, None) | (None, None, Some(0), None | Some(false)) => {
+            Ok(ZebraTransactionState::Mempool { raw_transaction })
+        }
+        (Some(height), Some(block_hash), Some(confirmations), Some(in_active_chain))
+            if height >= 0 && confirmations > 0 =>
+        {
+            Ok(ZebraTransactionState::Confirmed {
+                raw_transaction,
+                block_hash: BlockHash(parse_reverse_hash("transaction block hash", &block_hash)?),
+                block_height: BlockHeight::from_u32(u32::try_from(height).map_err(|_| {
+                    HttpZebraRpcError::OutOfRange {
+                        field: "transaction height",
+                    }
+                })?),
+                confirmations: u32::try_from(confirmations).map_err(|_| {
+                    HttpZebraRpcError::OutOfRange {
+                        field: "confirmations",
+                    }
+                })?,
+                in_active_chain,
+            })
+        }
+        _ => Err(HttpZebraRpcError::PartialConfirmationContext),
+    }
+}
+
+fn parse_branch(value: &str) -> Result<BranchId, HttpZebraRpcError> {
+    if value.len() != 8 || !is_exact_lower_hex(value) {
+        return Err(HttpZebraRpcError::MalformedConsensusBranch);
+    }
+    let raw =
+        u32::from_str_radix(value, 16).map_err(|_| HttpZebraRpcError::MalformedConsensusBranch)?;
+    BranchId::try_from(raw).map_err(|_| HttpZebraRpcError::MalformedConsensusBranch)
+}
+
+fn parse_reverse_hash(field: &'static str, value: &str) -> Result<[u8; 32], HttpZebraRpcError> {
+    if value.len() != 64 || !is_exact_lower_hex(value) {
+        return Err(HttpZebraRpcError::MalformedHash { field });
+    }
+    ReverseHex::decode(value).ok_or(HttpZebraRpcError::MalformedHash { field })
+}
+
+fn parse_transaction_hex(value: &str) -> Result<Vec<u8>, HttpZebraRpcError> {
+    if value.is_empty()
+        || value.len() > MAX_FIRST_LOCK_SUBMISSION_BYTES.saturating_mul(2)
+        || !value.len().is_multiple_of(2)
+        || !is_exact_lower_hex(value)
+    {
+        return Err(HttpZebraRpcError::MalformedTransactionHex);
+    }
+    hex::decode(value).map_err(|_| HttpZebraRpcError::MalformedTransactionHex)
+}
+
+fn is_exact_lower_hex(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn is_loopback_endpoint(endpoint: &str) -> bool {
+    endpoint
+        .strip_prefix("http://127.0.0.1:")
+        .or_else(|| endpoint.strip_prefix("http://[::1]:"))
+        .map(|authority| authority.strip_suffix('/').unwrap_or(authority))
+        .and_then(|port| port.parse::<u16>().ok())
+        .is_some_and(|port| port != 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use base64::Engine as _;
+    use jsonrpsee::core::ClientError;
+    use jsonrpsee_http_client::types::ErrorObjectOwned;
+    use zcash_encoding::ReverseHex;
+    use zcash_primitives::block::BlockHash;
+    use zcash_protocol::consensus::{BranchId, NetworkType};
+
+    use super::{
+        BASE64_STANDARD, BlockchainInfoDto, HttpZebraRpc, HttpZebraRpcConfig, HttpZebraRpcError,
+        MAX_FIRST_LOCK_SUBMISSION_BYTES, VerboseRawTransactionDto, ZebraChainIdentity,
+        ZebraIdentityError, ZebraRpcChain, ZebraTransactionState, optional_call, parse_branch,
+        parse_reverse_hash, parse_transaction_hex, parse_transaction_state,
+    };
+
+    const HASH: &str = "029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327";
+
+    #[test]
+    fn private_dtos_accept_documented_fields_and_harmless_extras() {
+        let info: BlockchainInfoDto = serde_json::from_str(&format!(
+            r#"{{"chain":"test","blocks":100,"bestblockhash":"{HASH}","consensus":{{"chaintip":"5437f330","nextblock":"ignored"}},"headers":101}}"#
+        ))
+        .expect("bounded documented response");
+        assert_eq!(info.chain, "test");
+        assert_eq!(info.blocks, 100);
+        assert_eq!(
+            parse_branch(&info.consensus.chaintip).expect("known branch ID"),
+            BranchId::Nu6_2
+        );
+        assert_eq!(
+            parse_reverse_hash("hash", &info.bestblockhash).expect("exact hash"),
+            ReverseHex::decode(HASH).expect("fixed exact hash")
+        );
+
+        let verbose: VerboseRawTransactionDto = serde_json::from_str(&format!(
+            r#"{{"hex":"0500","height":90,"blockhash":"{HASH}","confirmations":11,"in_active_chain":true,"size":2}}"#
+        ))
+        .expect("verbose response permits harmless additions");
+        assert!(matches!(
+            parse_transaction_state(verbose),
+            Ok(ZebraTransactionState::Confirmed {
+                block_height,
+                confirmations: 11,
+                in_active_chain: true,
+                ..
+            }) if u32::from(block_height) == 90
+        ));
+    }
+
+    #[test]
+    fn exact_hash_branch_and_transaction_hex_bounds_fail_closed() {
+        for value in ["00", &"a".repeat(63), &"g".repeat(64), &HASH.to_uppercase()] {
+            assert!(matches!(
+                parse_reverse_hash("hash", value),
+                Err(HttpZebraRpcError::MalformedHash { .. })
+            ));
+        }
+        for branch in ["5437f33", "5437F330", "zzzzzzzz", "ffffffff"] {
+            assert!(matches!(
+                parse_branch(branch),
+                Err(HttpZebraRpcError::MalformedConsensusBranch)
+            ));
+        }
+        for value in ["", "0", "GG", "aA"] {
+            assert!(matches!(
+                parse_transaction_hex(value),
+                Err(HttpZebraRpcError::MalformedTransactionHex)
+            ));
+        }
+        let oversized = "aa".repeat(MAX_FIRST_LOCK_SUBMISSION_BYTES + 1);
+        assert!(matches!(
+            parse_transaction_hex(&oversized),
+            Err(HttpZebraRpcError::MalformedTransactionHex)
+        ));
+    }
+
+    #[test]
+    fn verbose_state_rejects_every_partial_confirmation_shape() {
+        let partial = [
+            (Some(90), None, Some(11), Some(true)),
+            (None, Some(HASH.to_owned()), Some(11), Some(true)),
+            (Some(90), Some(HASH.to_owned()), None, Some(true)),
+            (Some(90), Some(HASH.to_owned()), Some(11), None),
+            (Some(-1), Some(HASH.to_owned()), Some(11), Some(true)),
+            (Some(90), Some(HASH.to_owned()), Some(0), Some(true)),
+        ];
+        for (height, blockhash, confirmations, in_active_chain) in partial {
+            let dto = VerboseRawTransactionDto {
+                hex: "0500".to_owned(),
+                height,
+                blockhash,
+                confirmations,
+                in_active_chain,
+            };
+            assert!(matches!(
+                parse_transaction_state(dto),
+                Err(HttpZebraRpcError::PartialConfirmationContext)
+            ));
+        }
+        for dto in [
+            VerboseRawTransactionDto {
+                hex: "0500".to_owned(),
+                height: None,
+                blockhash: None,
+                confirmations: None,
+                in_active_chain: None,
+            },
+            VerboseRawTransactionDto {
+                hex: "0500".to_owned(),
+                height: None,
+                blockhash: None,
+                confirmations: Some(0),
+                in_active_chain: Some(false),
+            },
+        ] {
+            assert!(matches!(
+                parse_transaction_state(dto),
+                Ok(ZebraTransactionState::Mempool { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn only_rpc_call_code_minus_five_is_absence() {
+        let missing: Result<(), ClientError> = Err(ClientError::Call(ErrorObjectOwned::owned(
+            -5, "missing", None::<()>,
+        )));
+        assert!(matches!(optional_call(missing), Ok(None)));
+
+        let other: Result<(), ClientError> = Err(ClientError::Call(ErrorObjectOwned::owned(
+            -8,
+            "not absence",
+            None::<()>,
+        )));
+        assert!(matches!(
+            optional_call(other),
+            Err(HttpZebraRpcError::Request(ClientError::Call(_)))
+        ));
+    }
+
+    #[test]
+    fn immutable_identity_rejects_zero_and_network_rpc_mismatch() {
+        assert_eq!(
+            ZebraChainIdentity::new(
+                NetworkType::Main,
+                ZebraRpcChain::Test,
+                BranchId::Nu6_2,
+                BlockHash([1; 32]),
+            ),
+            Err(ZebraIdentityError::RpcChainMismatch)
+        );
+        assert_eq!(
+            ZebraChainIdentity::new(
+                NetworkType::Regtest,
+                ZebraRpcChain::Test,
+                BranchId::Nu6_2,
+                BlockHash([0; 32]),
+            ),
+            Err(ZebraIdentityError::ZeroGenesisHash)
+        );
+        let deterministic = ZebraChainIdentity::deterministic_regtest_nu6_2();
+        assert_eq!(
+            deterministic.genesis_hash().0,
+            ReverseHex::decode(HASH).expect("fixed exact hash")
+        );
+    }
+
+    #[test]
+    fn cookie_auth_is_bounded_sensitive_and_absent_from_debug() {
+        let config = HttpZebraRpcConfig::new("http://127.0.0.1:18232")
+            .with_cookie_credentials(b"__cookie__:top-secret\n")
+            .expect("valid cookie-file line");
+        let authorization = config.authorization.as_ref().expect("header configured");
+        assert!(authorization.is_sensitive());
+        let debug = format!("{config:?}");
+        assert!(debug.contains("cookie_auth_enabled: true"));
+        assert!(!debug.contains("top-secret"));
+        assert!(!debug.contains(&BASE64_STANDARD.encode(b"__cookie__:top-secret")));
+
+        for invalid in [
+            b"".as_slice(),
+            b"missing-delimiter".as_slice(),
+            b":password".as_slice(),
+            b"username:".as_slice(),
+            b"user:has space".as_slice(),
+            b"user:secret\nextra".as_slice(),
+        ] {
+            assert!(matches!(
+                HttpZebraRpcConfig::new("http://127.0.0.1:18232").with_cookie_credentials(invalid),
+                Err(HttpZebraRpcError::InvalidCookieCredentials)
+            ));
+        }
+        assert!(matches!(
+            HttpZebraRpcConfig::new("http://127.0.0.1:18232")
+                .with_cookie_credentials(vec![b'a'; 1_025]),
+            Err(HttpZebraRpcError::InvalidCookieCredentials)
+        ));
+    }
+
+    #[test]
+    fn http_client_rejects_nonloopback_and_zero_port_without_connecting() {
+        for endpoint in [
+            "http://0.0.0.0:18232",
+            "http://example.test:18232",
+            "https://127.0.0.1:18232",
+            "http://127.0.0.1:0",
+            "http://127.0.0.1:18232/path",
+        ] {
+            assert!(matches!(
+                HttpZebraRpc::connect(&HttpZebraRpcConfig::new(endpoint)),
+                Err(HttpZebraRpcError::NonLoopbackEndpoint)
+            ));
+        }
+        HttpZebraRpc::connect(&HttpZebraRpcConfig::new("http://[::1]:18232/"))
+            .expect("explicit IPv6 loopback client construction is local and nonconnecting");
+    }
+}

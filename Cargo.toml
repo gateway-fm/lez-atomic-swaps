@@ -3,6 +3,7 @@ members = [
     "crates/maker-node",
     "crates/swap-core",
     "crates/swap-store",
+    "crates/zebra-node-adapter",
     "crates/zec-swap-sdk",
 ]
 resolver = "2"

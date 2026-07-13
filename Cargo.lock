@@ -1379,6 +1379,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "lez-zebra-node-adapter"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "hex",
+ "jsonrpsee",
+ "jsonrpsee-http-client",
+ "lez-swap-core",
+ "lez-zec-swap-sdk",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "zcash_encoding",
+ "zcash_primitives",
+ "zcash_protocol",
+ "zcash_transparent",
+]
+
+[[package]]
 name = "lez-zec-swap-sdk"
 version = "0.1.0"
 dependencies = [
