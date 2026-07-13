@@ -34,6 +34,11 @@ const MAKER_CAPABILITY: &str = "maker-capability-00000000000000000001";
 const TAKER_CAPABILITY: &str = "taker-capability-00000000000000000001";
 const TEST_RUN: &str = "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr";
 const MAX_TRANSACTION_BYTES: usize = 2_000_000;
+// Keep a wide scheduling margin so a loaded CI runner dispatches the request
+// before the client deadline while the handler still cannot complete in time.
+const TIMEOUT_TEST_CLIENT_DEADLINE: Duration = Duration::from_millis(100);
+const TIMEOUT_TEST_SERVER_DELAY: Duration = Duration::from_millis(500);
+const TIMEOUT_TEST_DRAIN: Duration = Duration::from_millis(520);
 
 #[derive(Clone, Copy, Debug, Default)]
 enum Behavior {
@@ -137,7 +142,7 @@ fn register_methods(module: &mut RpcModule<Fixture>) {
             let request: DescribeRuntimeRequest = params.one()?;
             fixture.record(METHOD_DESCRIBE_RUNTIME);
             if matches!(fixture.behavior, Behavior::SlowDescribe) {
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(TIMEOUT_TEST_SERVER_DELAY).await;
             }
             if matches!(fixture.behavior, Behavior::TypedRemoteError) {
                 let reply = ProtocolErrorReply::new(
@@ -176,7 +181,7 @@ fn register_existing_transaction_methods(module: &mut RpcModule<Fixture>) {
                 let request: PrepareNativeEscrowRequest = params.one()?;
                 fixture.record(METHOD_PREPARE_NATIVE_ESCROW);
                 if matches!(fixture.behavior, Behavior::SlowPrepare) {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    tokio::time::sleep(TIMEOUT_TEST_SERVER_DELAY).await;
                 }
                 let context = response_context(&request.context, fixture.behavior);
                 let initialization = if matches!(fixture.behavior, Behavior::MaximumPrepared) {
@@ -245,7 +250,7 @@ fn register_refund_methods(module: &mut RpcModule<Fixture>) {
                 let request: PrepareNativeRefundRequest = params.one()?;
                 fixture.record(METHOD_PREPARE_NATIVE_REFUND);
                 if matches!(fixture.behavior, Behavior::SlowRefundPrepare) {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    tokio::time::sleep(TIMEOUT_TEST_SERVER_DELAY).await;
                 }
                 if matches!(fixture.behavior, Behavior::TypedRemoteError) {
                     return Err(typed_remote_error(request.context));
@@ -269,7 +274,7 @@ fn register_refund_methods(module: &mut RpcModule<Fixture>) {
                 let request: ObserveNativeRefundRequest = params.one()?;
                 fixture.record(METHOD_OBSERVE_NATIVE_REFUND);
                 if matches!(fixture.behavior, Behavior::SlowRefundObserve) {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    tokio::time::sleep(TIMEOUT_TEST_SERVER_DELAY).await;
                 }
                 if matches!(fixture.behavior, Behavior::TypedRemoteError) {
                     return Err(typed_remote_error(request.context));
@@ -312,7 +317,7 @@ fn register_submit_method(module: &mut RpcModule<Fixture>) {
             let request: SubmitTransactionRequest = params.one()?;
             fixture.record(METHOD_SUBMIT_TRANSACTION);
             if matches!(fixture.behavior, Behavior::SlowSubmit) {
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(TIMEOUT_TEST_SERVER_DELAY).await;
             }
             let transaction_id = if matches!(fixture.behavior, Behavior::WrongSubmitId) {
                 txid(99)
@@ -992,7 +997,7 @@ async fn refund_timeouts_are_single_attempt() {
         MAKER_CAPABILITY,
         &run,
         expected_runtime.clone(),
-        Duration::from_millis(10),
+        TIMEOUT_TEST_CLIENT_DEADLINE,
     );
     assert!(matches!(
         slow_prepare_client
@@ -1006,7 +1011,7 @@ async fn refund_timeouts_are_single_attempt() {
             operation: BridgeOperation::PrepareNativeRefund,
         })
     ));
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    tokio::time::sleep(TIMEOUT_TEST_DRAIN).await;
     assert_eq!(slow_prepare.fixture.calls(METHOD_PREPARE_NATIVE_REFUND), 1);
 
     let slow_observe = spawn_sidecar(
@@ -1020,7 +1025,7 @@ async fn refund_timeouts_are_single_attempt() {
         MAKER_CAPABILITY,
         &run,
         expected_runtime.clone(),
-        Duration::from_millis(10),
+        TIMEOUT_TEST_CLIENT_DEADLINE,
     );
     assert!(matches!(
         slow_observe_client
@@ -1035,7 +1040,7 @@ async fn refund_timeouts_are_single_attempt() {
             operation: BridgeOperation::ObserveNativeRefund,
         })
     ));
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    tokio::time::sleep(TIMEOUT_TEST_DRAIN).await;
     assert_eq!(slow_observe.fixture.calls(METHOD_OBSERVE_NATIVE_REFUND), 1);
 }
 
@@ -1099,7 +1104,7 @@ async fn timeout_remote_error_and_unknown_submit_outcome_remain_distinct_without
         MAKER_CAPABILITY,
         &run,
         expected_runtime.clone(),
-        Duration::from_millis(10),
+        TIMEOUT_TEST_CLIENT_DEADLINE,
     );
     assert!(matches!(
         slow_client
@@ -1111,7 +1116,7 @@ async fn timeout_remote_error_and_unknown_submit_outcome_remain_distinct_without
             .await,
         Err(BridgeClientError::Timeout { .. })
     ));
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    tokio::time::sleep(TIMEOUT_TEST_DRAIN).await;
     assert_eq!(slow.fixture.calls(METHOD_DESCRIBE_RUNTIME), 1);
 
     let remote = spawn_sidecar(
@@ -1184,7 +1189,7 @@ async fn randomized_prepare_and_exact_submit_timeouts_are_single_attempt_unknown
         MAKER_CAPABILITY,
         &run,
         expected_runtime.clone(),
-        Duration::from_millis(10),
+        TIMEOUT_TEST_CLIENT_DEADLINE,
     );
     assert!(matches!(
         prepare_client
@@ -1196,7 +1201,7 @@ async fn randomized_prepare_and_exact_submit_timeouts_are_single_attempt_unknown
             .await,
         Err(BridgeClientError::Timeout { .. })
     ));
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    tokio::time::sleep(TIMEOUT_TEST_DRAIN).await;
     assert_eq!(slow_prepare.fixture.calls(METHOD_PREPARE_NATIVE_ESCROW), 1);
 
     let slow_submit = spawn_sidecar(
@@ -1210,7 +1215,7 @@ async fn randomized_prepare_and_exact_submit_timeouts_are_single_attempt_unknown
         MAKER_CAPABILITY,
         &run,
         expected_runtime.clone(),
-        Duration::from_millis(10),
+        TIMEOUT_TEST_CLIENT_DEADLINE,
     );
     assert!(matches!(
         submit_client
@@ -1222,7 +1227,7 @@ async fn randomized_prepare_and_exact_submit_timeouts_are_single_attempt_unknown
             .await,
         Err(BridgeClientError::Timeout { .. })
     ));
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    tokio::time::sleep(TIMEOUT_TEST_DRAIN).await;
     assert_eq!(slow_submit.fixture.calls(METHOD_SUBMIT_TRANSACTION), 1);
 }
 
