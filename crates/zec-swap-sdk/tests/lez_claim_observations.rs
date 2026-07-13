@@ -36,6 +36,12 @@ fn canonical_snapshot_constructs_evidence_only_after_every_node_fact_is_bound() 
     assert_eq!(evidence.observed_submission_id(), &CLAIM_ID);
     assert_eq!(evidence.confirmations(), 2);
     assert_eq!(evidence.preimage().expose_secret(), &PREIMAGE);
+
+    RevealingClaimEvidenceV1::from_lez_claim_snapshot(
+        &agreement,
+        claim_snapshot(&agreement, Mutation::Pending),
+    )
+    .expect("depth-qualified deterministic standalone inclusion may remain Bedrock Pending");
 }
 
 #[test]
@@ -116,10 +122,6 @@ fn negative_matrix_rejects_each_independent_node_or_agreement_deviation() {
         (
             Mutation::CanonicalHash,
             LezClaimObservationError::TransactionIdentityMismatch,
-        ),
-        (
-            Mutation::Pending,
-            LezClaimObservationError::UnstableInclusionStatus,
         ),
         (
             Mutation::NonPublic,

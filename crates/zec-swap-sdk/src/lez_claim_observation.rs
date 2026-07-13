@@ -415,9 +415,7 @@ fn validate_snapshot(
     {
         return Err(LezClaimObservationError::PreparedIdentityMismatch);
     }
-    if transaction.inclusion_status == LezInclusionStatusV1::Pending {
-        return Err(LezClaimObservationError::UnstableInclusionStatus);
-    }
+    validate_claim_inclusion_policy(snapshot.environment, transaction.inclusion_status)?;
     let expected = ExpectedAccountBinding::from_agreement(agreement);
     validate_transaction(agreement, transaction, &expected)?;
     validate_accounts(agreement, &snapshot, &expected)?;
@@ -432,6 +430,19 @@ fn validate_snapshot(
         record,
     )
     .map_err(LezClaimObservationError::Claim)
+}
+
+fn validate_claim_inclusion_policy(
+    environment: LezEnvironmentV1,
+    status: LezInclusionStatusV1,
+) -> Result<(), LezClaimObservationError> {
+    match (environment, status) {
+        (LezEnvironmentV1::DeterministicLocalV0_2, _)
+        | (LezEnvironmentV1::PublicTestnetV0_2, LezInclusionStatusV1::Finalized) => Ok(()),
+        (LezEnvironmentV1::PublicTestnetV0_2, _) => {
+            Err(LezClaimObservationError::UnstableInclusionStatus)
+        }
+    }
 }
 
 fn validate_transaction(
@@ -544,4 +555,39 @@ pub enum LezClaimObservationError {
     /// Claim depth or preimage validation failed.
     #[error(transparent)]
     Claim(#[from] ClaimError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LezClaimObservationError, validate_claim_inclusion_policy};
+    use crate::{LezEnvironmentV1, LezInclusionStatusV1};
+
+    #[test]
+    fn claim_finality_policy_separates_deterministic_standalone_from_public_bedrock() {
+        for status in [
+            LezInclusionStatusV1::Pending,
+            LezInclusionStatusV1::Safe,
+            LezInclusionStatusV1::Finalized,
+        ] {
+            assert_eq!(
+                validate_claim_inclusion_policy(LezEnvironmentV1::DeterministicLocalV0_2, status),
+                Ok(()),
+                "deterministic status {status:?}",
+            );
+        }
+        for status in [LezInclusionStatusV1::Pending, LezInclusionStatusV1::Safe] {
+            assert_eq!(
+                validate_claim_inclusion_policy(LezEnvironmentV1::PublicTestnetV0_2, status),
+                Err(LezClaimObservationError::UnstableInclusionStatus),
+                "public status {status:?}",
+            );
+        }
+        assert_eq!(
+            validate_claim_inclusion_policy(
+                LezEnvironmentV1::PublicTestnetV0_2,
+                LezInclusionStatusV1::Finalized,
+            ),
+            Ok(()),
+        );
+    }
 }
