@@ -1,7 +1,10 @@
 # ADR 0022: Isolate pinned LEZ official-wire code behind a sidecar
 
 Status: Accepted for the M2 actual-node corridor; implementation in progress --
-2026-07-13
+the official transaction planner and node-RPC core, authenticated main-workspace
+bridge client, and Zebra owner-claim port are GREEN. The authenticated bridge
+server, LEZ claim planner, counterparty-spend discovery, actor wiring, and
+composed proof remain RED -- 2026-07-13
 
 ```mermaid
 flowchart LR
@@ -195,6 +198,19 @@ failure mode to the actor corridor. Transport loss, malformed or oversized
 responses, wrong run identity, unstable tips, unavailable signers, unknown
 submission outcomes, exact-hash mismatches, and node rejections must remain
 distinct errors and be exercised across restart.
+
+The implemented main-workspace bridge client exercises all six typed protocol
+methods, accepts only literal loopback HTTP, sends a sensitive capability plus
+exact run and role headers, validates the echoed run/role/runtime context, and
+permits each request ID once per client instance. It makes one attempt with no
+redirect, proxy, or automatic retry. Durable replay protection and idempotent
+responses across client or sidecar restart are intentionally server-owned and
+remain required. The implemented Zebra owner-claim port independently derives
+the signed terms, delegates only transaction signing, validates exact retained
+V5 bytes and durable identity, samples stable chain facts, observes before
+byte-identical rebroadcast, and treats every post-send identity or chain drift
+as an unknown outcome. Its counterparty path fails closed until a bounded
+canonical outpoint-spend discovery mechanism exists.
 
 The initial failing composed test lives in the main workspace. It requires
 distinct loopback LEZ-sidecar and Zebra endpoints, distinct role funding,

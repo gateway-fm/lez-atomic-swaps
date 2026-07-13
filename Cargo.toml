@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/lez-bridge-client",
     "crates/lez-bridge-protocol",
     "crates/maker-node",
     "crates/swap-core",

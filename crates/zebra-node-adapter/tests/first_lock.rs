@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use lez_swap_core::{SwapDirection, UnixSeconds};
 use lez_zebra_node_adapter::{
     ZebraChainIdentity, ZebraChainInfo, ZebraFirstLockError, ZebraRpc, ZebraRpcChain,
-    ZebraRpcSwapPort, ZebraTransactionState,
+    ZebraRpcSwapPort, ZebraTransactionState, ZebraUnspentOutput,
 };
 use lez_zec_swap_sdk::{
     Bip199Contract, FirstLockConfirmedEvidenceV1, FirstLockObservation, FirstLockStepV1,
@@ -157,6 +157,13 @@ impl ZebraRpc for FakeRpc {
         let mut state = self.state.lock().expect("fake state lock");
         state.calls.push("transaction_state".to_owned());
         Ok(state.transaction_state.clone())
+    }
+
+    async fn unspent_output(
+        &self,
+        _outpoint: &OutPoint,
+    ) -> Result<Option<ZebraUnspentOutput>, Self::Error> {
+        panic!("first-lock tests never query the UTXO set")
     }
 
     async fn send_raw_transaction(&self, transaction: &[u8]) -> Result<TxId, Self::Error> {

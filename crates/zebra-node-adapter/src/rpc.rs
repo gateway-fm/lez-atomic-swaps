@@ -7,13 +7,19 @@ use jsonrpsee::{
     rpc_params,
 };
 use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClient, HttpClientBuilder};
-use lez_zec_swap_sdk::MAX_FIRST_LOCK_SUBMISSION_BYTES;
+use lez_zec_swap_sdk::{MAX_FIRST_LOCK_SUBMISSION_BYTES, ZCASH_MAX_SCRIPT_BYTES};
 use serde::Deserialize;
 use zcash_encoding::ReverseHex;
 use zcash_primitives::block::BlockHash;
 use zcash_protocol::{
     TxId,
     consensus::{BlockHeight, BranchId, NetworkType},
+    value::Zatoshis,
+};
+use zcash_script::script::Code;
+use zcash_transparent::{
+    address::Script,
+    bundle::{OutPoint, TxOut},
 };
 
 const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
@@ -204,6 +210,53 @@ pub enum ZebraTransactionState {
     },
 }
 
+/// One exact `gettxout` result and the node view against which it was answered.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ZebraUnspentOutput {
+    best_block: BlockHash,
+    confirmations: u32,
+    output: TxOut,
+}
+
+impl ZebraUnspentOutput {
+    /// Builds primitive untrusted UTXO facts, primarily for typed RPC implementations.
+    #[must_use]
+    pub const fn new(best_block: BlockHash, confirmations: u32, output: TxOut) -> Self {
+        Self {
+            best_block,
+            confirmations,
+            output,
+        }
+    }
+
+    /// Best-chain block against which Zebra answered `gettxout`.
+    #[must_use]
+    pub const fn best_block(&self) -> BlockHash {
+        self.best_block
+    }
+
+    /// Confirmation count reported for the unspent output.
+    #[must_use]
+    pub const fn confirmations(&self) -> u32 {
+        self.confirmations
+    }
+
+    /// Exact value and script returned for the requested outpoint.
+    #[must_use]
+    pub const fn output(&self) -> &TxOut {
+        &self.output
+    }
+}
+
+/// Whether a failed broadcast definitely rejected these bytes or left their fate unknown.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ZebraSubmissionFailure {
+    /// Zebra synchronously rejected the exact transaction as invalid or missing inputs.
+    DefinitiveRejection,
+    /// Transport, timeout, server, or already-known ambiguity requires observation before retry.
+    UnknownOutcome,
+}
+
 /// Narrow typed Zebra transport boundary used by production chain adapters.
 #[async_trait]
 pub trait ZebraRpc: Send + Sync {
@@ -221,8 +274,17 @@ pub trait ZebraRpc: Send + Sync {
         &self,
         transaction_id: TxId,
     ) -> Result<Option<ZebraTransactionState>, Self::Error>;
+    /// Fetches one exact UTXO, mapping JSON `null` only to current-set absence.
+    async fn unspent_output(
+        &self,
+        outpoint: &OutPoint,
+    ) -> Result<Option<ZebraUnspentOutput>, Self::Error>;
     /// Broadcasts exact bytes and returns Zebra's parsed transaction identifier.
     async fn send_raw_transaction(&self, transaction: &[u8]) -> Result<TxId, Self::Error>;
+    /// Conservatively classifies a broadcast failure without erasing its structured source.
+    fn classify_submission_failure(_error: &Self::Error) -> ZebraSubmissionFailure {
+        ZebraSubmissionFailure::UnknownOutcome
+    }
 }
 
 /// Finite transport bounds for a Zebra HTTP JSON-RPC client.
@@ -351,6 +413,12 @@ pub enum HttpZebraRpcError {
     /// Raw transaction text violated exact lowercase/bounded hex requirements.
     #[error("Zebra returned malformed or oversized raw transaction hex")]
     MalformedTransactionHex,
+    /// `gettxout` returned a non-exact, negative, exponential, or out-of-range amount.
+    #[error("Zebra returned malformed UTXO amount")]
+    MalformedUtxoAmount,
+    /// `gettxout` returned an empty, oversized, odd-length, or non-lowercase script.
+    #[error("Zebra returned malformed or oversized UTXO script")]
+    MalformedUtxoScript,
     /// Verbose transaction context was only partially populated.
     #[error("Zebra returned partial transaction confirmation context")]
     PartialConfirmationContext,
@@ -416,6 +484,20 @@ struct VerboseRawTransactionDto {
     in_active_chain: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+struct GetTxOutDto {
+    bestblock: String,
+    confirmations: u64,
+    value: serde_json::Number,
+    #[serde(rename = "scriptPubKey")]
+    script_pub_key: ScriptPubKeyDto,
+}
+
+#[derive(Debug, Deserialize)]
+struct ScriptPubKeyDto {
+    hex: String,
+}
+
 #[async_trait]
 impl ZebraRpc for HttpZebraRpc {
     type Error = HttpZebraRpcError;
@@ -474,6 +556,25 @@ impl ZebraRpc for HttpZebraRpc {
         parse_transaction_state(value).map(Some)
     }
 
+    async fn unspent_output(
+        &self,
+        outpoint: &OutPoint,
+    ) -> Result<Option<ZebraUnspentOutput>, Self::Error> {
+        let value: Option<GetTxOutDto> = self
+            .client
+            .request(
+                "gettxout",
+                rpc_params![
+                    TxId::from_bytes(*outpoint.hash()).to_string(),
+                    outpoint.n(),
+                    true
+                ],
+            )
+            .await
+            .map_err(HttpZebraRpcError::Request)?;
+        value.map(parse_unspent_output).transpose()
+    }
+
     async fn send_raw_transaction(&self, transaction: &[u8]) -> Result<TxId, Self::Error> {
         if transaction.is_empty() || transaction.len() > MAX_FIRST_LOCK_SUBMISSION_BYTES {
             return Err(HttpZebraRpcError::MalformedTransactionHex);
@@ -488,6 +589,82 @@ impl ZebraRpc for HttpZebraRpc {
             &value,
         )?))
     }
+
+    fn classify_submission_failure(error: &Self::Error) -> ZebraSubmissionFailure {
+        match error {
+            HttpZebraRpcError::Request(ClientError::Call(error))
+                if matches!(error.code(), -22 | -25 | -26) =>
+            {
+                ZebraSubmissionFailure::DefinitiveRejection
+            }
+            _ => ZebraSubmissionFailure::UnknownOutcome,
+        }
+    }
+}
+
+fn parse_unspent_output(value: GetTxOutDto) -> Result<ZebraUnspentOutput, HttpZebraRpcError> {
+    let confirmations =
+        u32::try_from(value.confirmations).map_err(|_| HttpZebraRpcError::OutOfRange {
+            field: "UTXO confirmations",
+        })?;
+    if confirmations == 0 {
+        return Err(HttpZebraRpcError::OutOfRange {
+            field: "UTXO confirmations",
+        });
+    }
+    let amount = parse_zec_amount(&value.value)?;
+    if value.script_pub_key.hex.is_empty()
+        || value.script_pub_key.hex.len() > ZCASH_MAX_SCRIPT_BYTES.saturating_mul(2)
+        || !value.script_pub_key.hex.len().is_multiple_of(2)
+        || !is_exact_lower_hex(&value.script_pub_key.hex)
+    {
+        return Err(HttpZebraRpcError::MalformedUtxoScript);
+    }
+    let script = hex::decode(value.script_pub_key.hex)
+        .map_err(|_| HttpZebraRpcError::MalformedUtxoScript)?;
+    Ok(ZebraUnspentOutput::new(
+        BlockHash(parse_reverse_hash("UTXO best block", &value.bestblock)?),
+        confirmations,
+        TxOut::new(amount, Script(Code(script))),
+    ))
+}
+
+fn parse_zec_amount(value: &serde_json::Number) -> Result<Zatoshis, HttpZebraRpcError> {
+    let rendered = value.to_string();
+    if rendered.starts_with('-') || rendered.contains(['e', 'E', '+']) {
+        return Err(HttpZebraRpcError::MalformedUtxoAmount);
+    }
+    let mut parts = rendered.split('.');
+    let whole = parts.next().ok_or(HttpZebraRpcError::MalformedUtxoAmount)?;
+    let fractional = parts.next().unwrap_or("");
+    if parts.next().is_some()
+        || whole.is_empty()
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || fractional.len() > 8
+        || !fractional.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(HttpZebraRpcError::MalformedUtxoAmount);
+    }
+    let whole = whole
+        .parse::<u64>()
+        .map_err(|_| HttpZebraRpcError::MalformedUtxoAmount)?;
+    let mut fractional_zatoshis = if fractional.is_empty() {
+        0
+    } else {
+        fractional
+            .parse::<u64>()
+            .map_err(|_| HttpZebraRpcError::MalformedUtxoAmount)?
+    };
+    for _ in fractional.len()..8 {
+        fractional_zatoshis = fractional_zatoshis
+            .checked_mul(10)
+            .ok_or(HttpZebraRpcError::MalformedUtxoAmount)?;
+    }
+    let zatoshis = whole
+        .checked_mul(100_000_000)
+        .and_then(|whole| whole.checked_add(fractional_zatoshis))
+        .ok_or(HttpZebraRpcError::MalformedUtxoAmount)?;
+    Zatoshis::from_u64(zatoshis).map_err(|_| HttpZebraRpcError::MalformedUtxoAmount)
 }
 
 fn optional_call<T>(response: Result<T, ClientError>) -> Result<Option<T>, HttpZebraRpcError> {
@@ -578,18 +755,25 @@ fn is_loopback_endpoint(endpoint: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use base64::Engine as _;
     use jsonrpsee::core::ClientError;
     use jsonrpsee_http_client::types::ErrorObjectOwned;
+    use jsonrpsee_server::{RpcModule, ServerBuilder};
+    use serde_json::{Value, json};
     use zcash_encoding::ReverseHex;
     use zcash_primitives::block::BlockHash;
+    use zcash_protocol::TxId;
     use zcash_protocol::consensus::{BranchId, NetworkType};
+    use zcash_transparent::bundle::OutPoint;
 
     use super::{
-        BASE64_STANDARD, BlockchainInfoDto, HttpZebraRpc, HttpZebraRpcConfig, HttpZebraRpcError,
-        MAX_FIRST_LOCK_SUBMISSION_BYTES, VerboseRawTransactionDto, ZebraChainIdentity,
-        ZebraIdentityError, ZebraRpcChain, ZebraTransactionState, optional_call, parse_branch,
-        parse_reverse_hash, parse_transaction_hex, parse_transaction_state,
+        BASE64_STANDARD, BlockchainInfoDto, GetTxOutDto, HttpZebraRpc, HttpZebraRpcConfig,
+        HttpZebraRpcError, MAX_FIRST_LOCK_SUBMISSION_BYTES, VerboseRawTransactionDto,
+        ZebraChainIdentity, ZebraIdentityError, ZebraRpc, ZebraRpcChain, ZebraSubmissionFailure,
+        ZebraTransactionState, optional_call, parse_branch, parse_reverse_hash,
+        parse_transaction_hex, parse_transaction_state, parse_unspent_output, parse_zec_amount,
     };
 
     const HASH: &str = "029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327";
@@ -651,6 +835,174 @@ mod tests {
             parse_transaction_hex(&oversized),
             Err(HttpZebraRpcError::MalformedTransactionHex)
         ));
+    }
+
+    #[test]
+    fn zec_amounts_are_exact_to_eight_decimals_and_integer_safe() {
+        for (wire, expected) in [
+            ("0", 0),
+            ("1", 100_000_000),
+            ("1.2", 120_000_000),
+            ("0.00000001", 1),
+            ("1.23456789", 123_456_789),
+        ] {
+            let number = serde_json::from_str(wire).expect("valid JSON number");
+            let amount = parse_zec_amount(&number).expect("exact bounded amount");
+            assert_eq!(u64::from(amount), expected, "wire amount {wire}");
+        }
+
+        for wire in ["-1", "1e2", "1.000000001", "18446744073709551615"] {
+            let number = serde_json::from_str(wire).expect("syntactically valid JSON number");
+            assert!(matches!(
+                parse_zec_amount(&number),
+                Err(HttpZebraRpcError::MalformedUtxoAmount)
+            ));
+        }
+    }
+
+    #[test]
+    fn gettxout_shape_is_bounded_and_preserves_exact_facts() {
+        let value: GetTxOutDto = serde_json::from_str(&format!(
+            r#"{{"bestblock":"{HASH}","confirmations":7,"value":1.23456789,"scriptPubKey":{{"hex":"51","type":"nonstandard"}},"coinbase":false}}"#
+        ))
+        .expect("documented UTXO response");
+        let parsed = parse_unspent_output(value).expect("bounded exact UTXO");
+        assert_eq!(
+            parsed.best_block().0,
+            ReverseHex::decode(HASH).expect("hash")
+        );
+        assert_eq!(parsed.confirmations(), 7);
+        assert_eq!(u64::from(parsed.output().value()), 123_456_789);
+        assert_eq!(parsed.output().script_pubkey().0.0, [0x51]);
+
+        for json in [
+            format!(
+                r#"{{"bestblock":"{HASH}","confirmations":0,"value":1,"scriptPubKey":{{"hex":"51"}}}}"#
+            ),
+            format!(
+                r#"{{"bestblock":"{HASH}","confirmations":1,"value":1,"scriptPubKey":{{"hex":""}}}}"#
+            ),
+            format!(
+                r#"{{"bestblock":"{HASH}","confirmations":1,"value":1,"scriptPubKey":{{"hex":"AA"}}}}"#
+            ),
+        ] {
+            let value: GetTxOutDto = serde_json::from_str(&json).expect("response shape");
+            assert!(parse_unspent_output(value).is_err());
+        }
+    }
+
+    #[test]
+    fn only_explicit_rejection_codes_are_definitive_broadcast_failures() {
+        for code in [-22, -25, -26] {
+            let error = HttpZebraRpcError::Request(ClientError::Call(ErrorObjectOwned::owned(
+                code, "rejected", None::<()>,
+            )));
+            assert_eq!(
+                <HttpZebraRpc as ZebraRpc>::classify_submission_failure(&error),
+                ZebraSubmissionFailure::DefinitiveRejection
+            );
+        }
+        for code in [-27, -28, -1] {
+            let error = HttpZebraRpcError::Request(ClientError::Call(ErrorObjectOwned::owned(
+                code,
+                "ambiguous",
+                None::<()>,
+            )));
+            assert_eq!(
+                <HttpZebraRpc as ZebraRpc>::classify_submission_failure(&error),
+                ZebraSubmissionFailure::UnknownOutcome
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn loopback_wire_observes_before_byte_exact_rebroadcast() {
+        let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+        let mut module = RpcModule::new(Arc::clone(&calls));
+        module
+            .register_method::<Result<Value, ErrorObjectOwned>, _>(
+                "getrawtransaction",
+                |params, calls, _| {
+                    let (transaction_id, verbose): (String, u8) = params.parse()?;
+                    calls
+                        .lock()
+                        .expect("call log")
+                        .push(format!("observe:{transaction_id}:{verbose}"));
+                    Err(ErrorObjectOwned::owned(-5, "not found", None::<()>))
+                },
+            )
+            .expect("register observation");
+        module
+            .register_method::<Result<Value, ErrorObjectOwned>, _>(
+                "gettxout",
+                |params, calls, _| {
+                    let (transaction_id, output_index, include_mempool): (String, u32, bool) =
+                        params.parse()?;
+                    calls.lock().expect("call log").push(format!(
+                        "utxo:{transaction_id}:{output_index}:{include_mempool}"
+                    ));
+                    Ok(json!({
+                        "bestblock": HASH,
+                        "confirmations": 7,
+                        "value": 1,
+                        "scriptPubKey": { "hex": "51" }
+                    }))
+                },
+            )
+            .expect("register UTXO lookup");
+        module
+            .register_method::<Result<Value, ErrorObjectOwned>, _>(
+                "sendrawtransaction",
+                |params, calls, _| {
+                    let exact_hex: String = params.one()?;
+                    calls
+                        .lock()
+                        .expect("call log")
+                        .push(format!("submit:{exact_hex}"));
+                    Ok(json!(TxId::from_bytes([0x42; 32]).to_string()))
+                },
+            )
+            .expect("register submission");
+
+        let server = ServerBuilder::default()
+            .build("127.0.0.1:0")
+            .await
+            .expect("bind isolated loopback server");
+        let address = server.local_addr().expect("loopback address");
+        let handle = server.start(module);
+        let rpc = HttpZebraRpc::connect(&HttpZebraRpcConfig::new(format!("http://{address}")))
+            .expect("bounded loopback client");
+        let transaction_id = TxId::from_bytes([0x42; 32]);
+        let outpoint = OutPoint::new([0x42; 32], 0);
+
+        assert_eq!(
+            rpc.transaction_state(transaction_id)
+                .await
+                .expect("exact identity observation"),
+            None
+        );
+        assert!(
+            rpc.unspent_output(&outpoint)
+                .await
+                .expect("exact UTXO lookup")
+                .is_some()
+        );
+        assert_eq!(
+            rpc.send_raw_transaction(&[0xde, 0xad, 0xbe, 0xef])
+                .await
+                .expect("byte-exact accepted submission"),
+            transaction_id
+        );
+        assert_eq!(
+            *calls.lock().expect("call log"),
+            [
+                format!("observe:{transaction_id}:1"),
+                format!("utxo:{transaction_id}:0:true"),
+                "submit:deadbeef".to_owned(),
+            ]
+        );
+        handle.stop().expect("stop loopback server");
+        handle.stopped().await;
     }
 
     #[test]

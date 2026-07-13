@@ -1320,6 +1320,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "lez-bridge-client"
+version = "0.1.0"
+dependencies = [
+ "jsonrpsee",
+ "jsonrpsee-http-client",
+ "lez-bridge-protocol",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tower-http",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "lez-bridge-protocol"
 version = "0.1.0"
 dependencies = [
@@ -1399,16 +1416,21 @@ dependencies = [
  "hex",
  "jsonrpsee",
  "jsonrpsee-http-client",
+ "jsonrpsee-server",
  "lez-swap-core",
+ "lez-swap-store",
  "lez-zec-swap-sdk",
  "secp256k1",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "zcash_encoding",
  "zcash_primitives",
  "zcash_protocol",
+ "zcash_script",
  "zcash_transparent",
 ]
 

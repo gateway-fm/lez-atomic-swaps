@@ -2,11 +2,14 @@
 
 #![forbid(unsafe_code)]
 
+mod claim;
 mod first_lock;
 mod rpc;
 
+pub use claim::{ZebraClaimError, ZebraClaimSigner, ZebraRpcClaimPort};
 pub use first_lock::{ZebraFirstLockError, ZebraRpcSwapPort};
 pub use rpc::{
     HttpZebraRpc, HttpZebraRpcConfig, HttpZebraRpcError, ZebraChainIdentity, ZebraChainInfo,
-    ZebraIdentityError, ZebraRpc, ZebraRpcChain, ZebraTransactionState,
+    ZebraIdentityError, ZebraRpc, ZebraRpcChain, ZebraSubmissionFailure, ZebraTransactionState,
+    ZebraUnspentOutput,
 };

@@ -96,11 +96,16 @@ current executable slices enforce:
   evidence, consume one revision, and replay through SQLite. The official-wire
   LEZ RPC adapter, production claim/refund effects, independent actor
   processes, and the completed real-node corridor remain.
-  A separate typed Zebra first-lock adapter is now implemented with bounded
-  private JSON-RPC DTOs, exact Regtest genesis/NU6.2 binding, stable-tip
-  canonical observation, full V5-byte verification, observe-before-rebroadcast,
-  byte-exact submission, loopback enforcement, and sensitive cookie auth. Its
-  actor-process integration and the composed LEZ-plus-Zebra corridor remain.
+  The main workspace now also has a bounded authenticated LEZ sidecar client
+  and a typed Zebra owner-claim adapter. The bridge client binds every request
+  and response to one run, role, runtime, and one-use request ID; the Zebra
+  adapter derives the exact follow-up claim from the accepted agreement,
+  delegates only signing to a role-local capability, revalidates stable
+  canonical funding, observes before byte-identical rebroadcast, and treats
+  ambiguous submission outcomes conservatively. These are isolated loopback
+  contract tests, not yet a composed maker/taker user flow. The sidecar server,
+  counterparty claim discovery, actor-process integration, and completed
+  LEZ-plus-Zebra corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),
