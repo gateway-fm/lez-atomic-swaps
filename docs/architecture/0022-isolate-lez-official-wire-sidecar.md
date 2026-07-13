@@ -110,10 +110,13 @@ strictly ordered timeout protocol:
 2. The taker submits the first lock. The maker cannot prepare or submit the
    second lock until fresh canonical evidence satisfies the signed identity,
    role, output/account state, depth, and environment-specific finality policy.
-3. Neither claim path starts before both locks are durably projected. The LEZ
-   claim is always the revealing action in both trade directions. The later
+3. Neither claim path starts before both locks are durably projected. As the
+   final awaited check before releasing the preimage, the LEZ claimant must
+   freshly prove that the exact agreement-bound Zcash output is still
+   canonical, unspent, sufficiently deep, and claimable before its CLTV. The
+   LEZ claim is always the revealing action in both trade directions. The later
    Zcash claimant learns the preimage only from canonical LEZ transaction
-   evidence and spends the exact agreement-bound Zcash outpoint.
+   evidence and spends that exact coordinator-pinned outpoint at vout zero.
 4. The LEZ refund deadline is earlier than the Zcash refund deadline by the
    signed safety margin. This gives an honest actor time to use a revealed
    preimage on Zcash before the later refund becomes valid. Local timing proves
@@ -128,9 +131,18 @@ strictly ordered timeout protocol:
    independently validates them against the dual-signed agreement before an
    atomic local state-and-journal commit.
 
-These invariants preserve safety while either actor is offline after both locks:
-claim and refund drivers require only protected local state plus their chain
-nodes, not a peer message. They do not guarantee liveness during indefinite
+The implemented claim lifecycle is designed to remain peer-independent after
+both locks: it uses protected local state plus chain observations, not a peer
+message. The exact follow-up Zcash outpoint is now restart-safe. Fresh
+pre-reveal Zcash-output revalidation, durable post-lock reorg ingestion, and
+the composed actual-node proof remain M2 gates, so this safety claim is not yet
+certified for the complete corridor.
+
+Refund ordering is proven in the core state machine and signed parameter math,
+but executable SDK refund ports, exact durable refund intents,
+observe-before-rebroadcast, and SQLite refund transitions are not implemented
+yet. Therefore peer-independent timeout recovery is an M2 target, not a current
+implementation claim. Neither path can guarantee liveness during indefinite
 node outage, censorship, or a reorganization deeper than the signed policy.
 The deterministic v0.1.2 lane also has only depth-qualified `Pending` blocks;
 that weaker upstream finality model is isolated to its explicitly named local

@@ -553,6 +553,23 @@ outputs above.
   after every external effect; and no peer dependency after both locks. Record
   the signed refund margin but keep public-latency calibration as a separate M2
   gate rather than treating Regtest timing as production proof.
+- [ ] Before the LEZ revealing submission, freshly revalidate the exact
+  coordinator-pinned Zcash outpoint as canonical, unspent, sufficiently deep,
+  and before CLTV. RED/GREEN this after restart in both directions with absent,
+  spent, unstable, replaced, under-depth, and expired-tip observations; none may
+  release the preimage, while the restored exact output submits the already
+  retained LEZ transaction once.
+- [ ] Keep observing both locks after `BothLegsLocked`: ingest durable removal
+  and replacement facts for taker and maker locks instead of treating the
+  projected phase as immutable. A stale local phase must never authorize a
+  revealing claim.
+- [ ] Recheck remaining LEZ/Zcash recovery horizon immediately before the maker
+  second-lock effect. Near-expiry or expired accepted terms must produce no
+  second-lock broadcast even when identity/depth/finality evidence is valid.
+- [ ] Implement peer-independent timeout recovery through public SDK ports:
+  exact durable LEZ/Zcash refund intents, observe-before-rebroadcast drivers,
+  canonical evidence, and atomic SQLite journal/revision commits. Core-only
+  refund transitions and deadline math are necessary but do not satisfy M2.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
   nodes. The LEZ
   Unix-millisecond/core Unix-second boundary is typed, checked, conservatively
