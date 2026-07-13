@@ -13,7 +13,8 @@ if [[ -z "${BINDGEN_EXTRA_CLANG_ARGS:-}" ]]; then
   exit 2
 fi
 
-readonly repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly repository_root
+repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly crate_dir="${repository_root}/compat/lez-v0_2-sidecar"
 readonly manifest="${crate_dir}/Cargo.toml"
 readonly dependency_policy="${crate_dir}/check-dependency-policy.sh"
