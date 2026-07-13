@@ -130,13 +130,13 @@ fn maker_daemon_restarts_after_each_durable_step_and_taker_can_complete() {
         .unwrap()
         .expect("both locks survive restart");
 
-    let claim_evidence = ClaimEvidence::new([9; 32]);
+    let claim_marker = ClaimEvidence::new([9; 32]);
     let first_claimant = recovered.first_claimant();
     recovered
         .observe_revealing_claim(
             first_claimant,
             ChainProof::new("btc-claim", 1).unwrap(),
-            claim_evidence.clone(),
+            claim_marker.clone(),
         )
         .unwrap();
     {
@@ -148,8 +148,9 @@ fn maker_daemon_restarts_after_each_durable_step_and_taker_can_complete() {
         .unwrap()
         .load(expected.id())
         .unwrap()
-        .expect("claim witness survives restart");
-    assert_eq!(recovered.claim_evidence(), Some(&claim_evidence));
+        .expect("claim marker survives restart");
+    assert_eq!(recovered.claim_evidence(), Some(&claim_marker));
+    assert_ne!(claim_marker.commitment(), &[9; 32]);
     recovered
         .observe_followup_claim(
             first_claimant.other(),

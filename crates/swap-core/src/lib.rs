@@ -686,9 +686,15 @@ const fn default_maker_confirmation_policy() -> ConfirmationPolicy {
     ConfirmationPolicy(1)
 }
 
-/// Witness made public by the maker's claim.
+/// One-way marker that revealing claim evidence was validated.
+///
+/// Construction consumes the public witness/preimage but retains only its SHA-256 commitment.
+/// The coordinator needs equality for idempotency and conflict detection, not secret recovery.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClaimEvidence([u8; 32]);
+#[serde(deny_unknown_fields)]
+pub struct ClaimEvidence {
+    commitment: [u8; 32],
+}
 
 impl std::fmt::Debug for ClaimEvidence {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -697,16 +703,20 @@ impl std::fmt::Debug for ClaimEvidence {
 }
 
 impl ClaimEvidence {
-    /// Creates pair-specific claim evidence represented as a 32-byte secret.
+    /// Creates a non-reversible marker from pair-specific 32-byte claim evidence.
     #[must_use]
-    pub const fn new(secret: [u8; 32]) -> Self {
-        Self(secret)
+    pub fn new(secret: [u8; 32]) -> Self {
+        use sha2::{Digest, Sha256};
+
+        Self {
+            commitment: Sha256::digest(secret).into(),
+        }
     }
 
-    /// Returns the adaptor secret or HTLC preimage.
+    /// Returns the one-way commitment retained for equality checks.
     #[must_use]
-    pub const fn secret(&self) -> &[u8; 32] {
-        &self.0
+    pub const fn commitment(&self) -> &[u8; 32] {
+        &self.commitment
     }
 }
 
