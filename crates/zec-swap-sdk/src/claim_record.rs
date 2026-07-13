@@ -7,14 +7,17 @@ use lez_swap_core::{SwapCoordinator, SwapId};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AcceptedZecAgreementV1, ClaimError, ClaimIntentV1, ClaimPreimage, ClaimStepV1,
-    FollowupClaimEvidenceV1, FollowupClaimTransitionV1, ObservedFollowupClaimTransitionV1,
+    AcceptedZecAgreementV1, CanonicalLezClaimSnapshotRecordV1, ClaimError, ClaimIntentV1,
+    ClaimPreimage, ClaimStepV1, FollowupClaimEvidenceV1, FollowupClaimTransitionV1,
+    LezClaimObservationError, ObservedFollowupClaimTransitionV1,
     ObservedRevealingClaimTransitionV1, RevealingClaimEvidenceV1, RevealingClaimTransitionV1,
     first_lock_record::{parse_participant, participant_name},
 };
 
 /// Stable payload version for claim records.
 pub const CLAIM_RECORD_SCHEMA_V1: u16 = 1;
+/// Canonical LEZ revealing records carrying a secret-free primitive node snapshot.
+pub const CLAIM_RECORD_SCHEMA_V2: u16 = 2;
 
 /// Primitive secret-free binding to a separately protected exact claim submission.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -106,12 +109,18 @@ pub struct RevealingClaimTransitionRecordV1 {
     observed_submission_id: [u8; 32],
     transaction_id: Box<str>,
     confirmations: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canonical_lez_snapshot: Option<CanonicalLezClaimSnapshotRecordV1>,
 }
 
 impl From<&RevealingClaimTransitionV1> for RevealingClaimTransitionRecordV1 {
     fn from(value: &RevealingClaimTransitionV1) -> Self {
         Self {
-            schema_version: value.schema_version(),
+            schema_version: if value.evidence().canonical_lez_snapshot().is_some() {
+                CLAIM_RECORD_SCHEMA_V2
+            } else {
+                CLAIM_RECORD_SCHEMA_V1
+            },
             transition_kind: "revealing_lez".into(),
             swap_id: value.swap_id().as_str().into(),
             agreement_commitment: *value.agreement_commitment(),
@@ -121,6 +130,7 @@ impl From<&RevealingClaimTransitionV1> for RevealingClaimTransitionRecordV1 {
             observed_submission_id: *value.evidence().observed_submission_id(),
             transaction_id: value.evidence().transaction_id().into(),
             confirmations: value.evidence().confirmations(),
+            canonical_lez_snapshot: value.evidence().canonical_lez_snapshot().cloned(),
         }
     }
 }
@@ -146,7 +156,7 @@ impl RevealingClaimTransitionRecordV1 {
         predecessor_revision: u64,
         preimage: ClaimPreimage,
     ) -> Result<RevealingClaimTransitionV1, ClaimRecordError> {
-        require_schema("revealing claim transition", self.schema_version)?;
+        require_revealing_schema("revealing claim transition", self.schema_version)?;
         if self.transition_kind.as_ref() != "revealing_lez"
             || self.predecessor_revision != predecessor_revision
             || self.intent_staged_revision > predecessor_revision
@@ -165,13 +175,24 @@ impl RevealingClaimTransitionRecordV1 {
         {
             return Err(ClaimRecordError::RevisionMismatch);
         }
-        let evidence = RevealingClaimEvidenceV1::new(
-            accepted.agreement(),
-            self.observed_submission_id,
-            self.transaction_id.clone(),
-            self.confirmations,
-            preimage,
-        )?;
+        let evidence = match (self.schema_version, &self.canonical_lez_snapshot) {
+            (CLAIM_RECORD_SCHEMA_V1, None) => RevealingClaimEvidenceV1::from_legacy_recovery_parts(
+                accepted.agreement(),
+                self.observed_submission_id,
+                self.transaction_id.clone(),
+                self.confirmations,
+                preimage,
+            )?,
+            (CLAIM_RECORD_SCHEMA_V2, Some(snapshot)) => {
+                RevealingClaimEvidenceV1::from_lez_claim_snapshot_record(
+                    accepted.agreement(),
+                    Some(intent.expected_submission_id()),
+                    snapshot,
+                    preimage,
+                )?
+            }
+            _ => return Err(ClaimRecordError::TransitionMismatch),
+        };
         let trusted = RevealingClaimTransitionV1::from_active(
             accepted.agreement(),
             coordinator,
@@ -199,12 +220,18 @@ pub struct ObservedRevealingClaimTransitionRecordV1 {
     observed_submission_id: [u8; 32],
     transaction_id: Box<str>,
     confirmations: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canonical_lez_snapshot: Option<CanonicalLezClaimSnapshotRecordV1>,
 }
 
 impl From<&ObservedRevealingClaimTransitionV1> for ObservedRevealingClaimTransitionRecordV1 {
     fn from(value: &ObservedRevealingClaimTransitionV1) -> Self {
         Self {
-            schema_version: value.schema_version(),
+            schema_version: if value.evidence().canonical_lez_snapshot().is_some() {
+                CLAIM_RECORD_SCHEMA_V2
+            } else {
+                CLAIM_RECORD_SCHEMA_V1
+            },
             transition_kind: "observed_revealing_lez".into(),
             swap_id: value.swap_id().as_str().into(),
             agreement_commitment: *value.agreement_commitment(),
@@ -213,6 +240,7 @@ impl From<&ObservedRevealingClaimTransitionV1> for ObservedRevealingClaimTransit
             observed_submission_id: *value.evidence().observed_submission_id(),
             transaction_id: value.evidence().transaction_id().into(),
             confirmations: value.evidence().confirmations(),
+            canonical_lez_snapshot: value.evidence().canonical_lez_snapshot().cloned(),
         }
     }
 }
@@ -226,8 +254,9 @@ impl ObservedRevealingClaimTransitionRecordV1 {
 
     /// Rebuilds observer-local LEZ evidence using separately decrypted extracted material.
     ///
-    /// The canonical adapter owns the relationship between its opaque observed identity and
-    /// transaction ID because an observer has no local exact-submission plan to compare.
+    /// The canonical adapter supplies both the node-reported identity and the official-decoder
+    /// hash. Replay requires those identities to agree even though an observer has no local
+    /// exact-submission plan to compare.
     ///
     /// # Errors
     ///
@@ -240,7 +269,7 @@ impl ObservedRevealingClaimTransitionRecordV1 {
         predecessor_revision: u64,
         preimage: ClaimPreimage,
     ) -> Result<ObservedRevealingClaimTransitionV1, ClaimRecordError> {
-        require_schema("observed revealing claim transition", self.schema_version)?;
+        require_revealing_schema("observed revealing claim transition", self.schema_version)?;
         if self.transition_kind.as_ref() != "observed_revealing_lez"
             || self.predecessor_revision != predecessor_revision
         {
@@ -252,13 +281,24 @@ impl ObservedRevealingClaimTransitionRecordV1 {
             &self.local_participant,
             accepted,
         )?;
-        let evidence = RevealingClaimEvidenceV1::new(
-            accepted.agreement(),
-            self.observed_submission_id,
-            self.transaction_id.clone(),
-            self.confirmations,
-            preimage,
-        )?;
+        let evidence = match (self.schema_version, &self.canonical_lez_snapshot) {
+            (CLAIM_RECORD_SCHEMA_V1, None) => RevealingClaimEvidenceV1::from_legacy_recovery_parts(
+                accepted.agreement(),
+                self.observed_submission_id,
+                self.transaction_id.clone(),
+                self.confirmations,
+                preimage,
+            )?,
+            (CLAIM_RECORD_SCHEMA_V2, Some(snapshot)) => {
+                RevealingClaimEvidenceV1::from_lez_claim_snapshot_record(
+                    accepted.agreement(),
+                    None,
+                    snapshot,
+                    preimage,
+                )?
+            }
+            _ => return Err(ClaimRecordError::TransitionMismatch),
+        };
         let trusted = ObservedRevealingClaimTransitionV1::from_active(
             accepted.agreement(),
             coordinator,
@@ -476,6 +516,9 @@ pub enum ClaimRecordError {
     /// Claim domain validation failed.
     #[error(transparent)]
     Claim(#[from] ClaimError),
+    /// Canonical LEZ primitive snapshot validation failed during v2 replay.
+    #[error(transparent)]
+    LezClaim(#[from] LezClaimObservationError),
     /// Primitive swap identity violates core bounds.
     #[error(transparent)]
     Core(lez_swap_core::Error),
@@ -502,6 +545,14 @@ fn validate_common_context(
 
 fn require_schema(record: &'static str, actual: u16) -> Result<(), ClaimRecordError> {
     if actual == CLAIM_RECORD_SCHEMA_V1 {
+        Ok(())
+    } else {
+        Err(ClaimRecordError::UnsupportedSchema { record, actual })
+    }
+}
+
+fn require_revealing_schema(record: &'static str, actual: u16) -> Result<(), ClaimRecordError> {
+    if matches!(actual, CLAIM_RECORD_SCHEMA_V1 | CLAIM_RECORD_SCHEMA_V2) {
         Ok(())
     } else {
         Err(ClaimRecordError::UnsupportedSchema { record, actual })
@@ -571,6 +622,7 @@ mod tests {
             observed_submission_id: [5; 32],
             transaction_id: "lez-claim-id".into(),
             confirmations: 2,
+            canonical_lez_snapshot: None,
         };
         let json = serde_json::to_string(&record).expect("record serializes");
         assert!(!json.contains("preimage"));
@@ -589,6 +641,7 @@ mod tests {
             observed_submission_id: [5; 32],
             transaction_id: "lez-claim-id".into(),
             confirmations: 2,
+            canonical_lez_snapshot: None,
         };
         let owned_followup = FollowupClaimTransitionRecordV1 {
             schema_version: CLAIM_RECORD_SCHEMA_V1,

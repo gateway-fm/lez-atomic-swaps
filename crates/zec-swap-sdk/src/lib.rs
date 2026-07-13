@@ -7,6 +7,7 @@ mod claim_record;
 mod first_lock;
 mod first_lock_record;
 mod funding;
+mod lez_claim_observation;
 mod lez_derivation;
 mod lez_observation;
 mod lifecycle;
@@ -48,9 +49,9 @@ pub use claim_material::{
     ProtectedClaimError, ProtectedClaimKey, ProtectedClaimPayloadEnvelope,
 };
 pub use claim_record::{
-    CLAIM_RECORD_SCHEMA_V1, ClaimIntentRecordV1, ClaimRecordError, FollowupClaimTransitionRecordV1,
-    ObservedFollowupClaimTransitionRecordV1, ObservedRevealingClaimTransitionRecordV1,
-    RevealingClaimTransitionRecordV1,
+    CLAIM_RECORD_SCHEMA_V1, CLAIM_RECORD_SCHEMA_V2, ClaimIntentRecordV1, ClaimRecordError,
+    FollowupClaimTransitionRecordV1, ObservedFollowupClaimTransitionRecordV1,
+    ObservedRevealingClaimTransitionRecordV1, RevealingClaimTransitionRecordV1,
 };
 
 pub use first_lock::{
@@ -66,6 +67,11 @@ pub use first_lock_record::{
 pub use funding::{
     FundingBuildError, FundingSelection, TransparentFundingRequest, TransparentUtxo,
     build_funding_transaction, select_funding_utxos,
+};
+pub use lez_claim_observation::{
+    CANONICAL_LEZ_CLAIM_SNAPSHOT_SCHEMA_V1, CanonicalLezClaimSnapshotRecordV1,
+    LezClaimInstructionKindV1, LezClaimInstructionV1, LezClaimNodeSnapshotV1,
+    LezClaimObservationError, LezClaimTransactionSnapshotV1,
 };
 pub use lez_derivation::{
     derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_public_pda_v1,

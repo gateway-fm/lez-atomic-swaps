@@ -356,19 +356,19 @@ impl CanonicalLezEscrowObservationV1 {
     }
 }
 
-struct ExpectedAccountBinding {
-    depositor: [u8; 32],
-    claimant: [u8; 32],
-    depositor_asset: [u8; 32],
-    claimant_asset: [u8; 32],
-    asset_program: [u32; 8],
-    custody_program: [u32; 8],
-    definition: [u8; 32],
-    transaction_accounts: Vec<[u8; 32]>,
+pub(crate) struct ExpectedAccountBinding {
+    pub(crate) depositor: [u8; 32],
+    pub(crate) claimant: [u8; 32],
+    pub(crate) depositor_asset: [u8; 32],
+    pub(crate) claimant_asset: [u8; 32],
+    pub(crate) asset_program: [u32; 8],
+    pub(crate) custody_program: [u32; 8],
+    pub(crate) definition: [u8; 32],
+    pub(crate) transaction_accounts: Vec<[u8; 32]>,
 }
 
 impl ExpectedAccountBinding {
-    fn from_agreement(agreement: &ZecAgreementV1) -> Self {
+    pub(crate) fn from_agreement(agreement: &ZecAgreementV1) -> Self {
         let terms = agreement.lez_terms();
         let depositor = *agreement.lez_account(agreement.lez_depositor());
         let claimant = *agreement.lez_account(agreement.lez_claimant());
@@ -418,26 +418,45 @@ fn validate_chain_position(
     agreement: &ZecAgreementV1,
     snapshot: &LezNodeSnapshotV1,
 ) -> Result<NonZeroU32, LezObservationError> {
+    validate_lez_chain_position_parts(
+        agreement,
+        snapshot.environment,
+        &snapshot.channel_id,
+        &snapshot.genesis_block_hash,
+        &snapshot.tip,
+        snapshot.transaction.inclusion_height,
+        &snapshot.transaction.inclusion_block_hash,
+        &snapshot.transaction.canonical_block_hash,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn validate_lez_chain_position_parts(
+    agreement: &ZecAgreementV1,
+    environment: LezEnvironmentV1,
+    channel_id: &[u8; 32],
+    genesis_block_hash: &[u8; 32],
+    tip: &LezStableTipV1,
+    inclusion_height: u64,
+    inclusion_block_hash: &[u8; 32],
+    canonical_block_hash: &[u8; 32],
+) -> Result<NonZeroU32, LezObservationError> {
     let terms = agreement.lez_terms();
-    if snapshot.environment != terms.chain().environment()
-        || snapshot.channel_id != *terms.chain().channel_id()
-        || snapshot.genesis_block_hash != *terms.chain().genesis_block_hash()
+    if environment != terms.chain().environment()
+        || channel_id != terms.chain().channel_id()
+        || genesis_block_hash != terms.chain().genesis_block_hash()
     {
         return Err(LezObservationError::ChainIdentityMismatch);
     }
-    let tip = snapshot.tip;
     if tip.before_hash != tip.after_hash || tip.before_height != tip.after_height {
         return Err(LezObservationError::UnstableTip);
     }
-    let transaction = &snapshot.transaction;
-    if transaction.inclusion_block_hash != transaction.canonical_block_hash
-        || transaction.inclusion_height > tip.after_height
-    {
+    if inclusion_block_hash != canonical_block_hash || inclusion_height > tip.after_height {
         return Err(LezObservationError::NoncanonicalInclusion);
     }
     let confirmations = tip
         .after_height
-        .checked_sub(transaction.inclusion_height)
+        .checked_sub(inclusion_height)
         .and_then(|depth| depth.checked_add(1))
         .and_then(|depth| u32::try_from(depth).ok())
         .and_then(NonZeroU32::new)
@@ -480,7 +499,33 @@ fn validate_escrow_accounts(
     expected: &ExpectedAccountBinding,
 ) -> Result<(), LezObservationError> {
     let terms = agreement.lez_terms();
-    let expected_metadata = LezEscrowMetadataSnapshotV1::new(
+    let expected_metadata =
+        expected_escrow_metadata(agreement, expected, LezEscrowStatusV1::Funded);
+    if snapshot.metadata_program_owner != *terms.escrow_program_id()
+        || snapshot.metadata_account != *terms.metadata_account()
+        || snapshot.metadata != expected_metadata
+    {
+        return Err(LezObservationError::MetadataBindingMismatch);
+    }
+    if custody_matches(
+        agreement,
+        &snapshot.custody_account,
+        snapshot.custody,
+        terms.amount(),
+    ) {
+        Ok(())
+    } else {
+        Err(LezObservationError::CustodyBindingMismatch)
+    }
+}
+
+pub(crate) fn expected_escrow_metadata(
+    agreement: &ZecAgreementV1,
+    expected: &ExpectedAccountBinding,
+    status: LezEscrowStatusV1,
+) -> LezEscrowMetadataSnapshotV1 {
+    let terms = agreement.lez_terms();
+    LezEscrowMetadataSnapshotV1::new(
         1,
         *agreement.onchain_swap_id(),
         *agreement.agreement_commitment(),
@@ -495,16 +540,19 @@ fn validate_escrow_accounts(
         expected.definition,
         terms.amount(),
         agreement.lez_refund_at_ms(),
-        LezEscrowStatusV1::Funded,
-    );
-    if snapshot.metadata_program_owner != *terms.escrow_program_id()
-        || snapshot.metadata_account != *terms.metadata_account()
-        || snapshot.metadata != expected_metadata
-    {
-        return Err(LezObservationError::MetadataBindingMismatch);
-    }
-    let custody_matches = snapshot.custody_account == *terms.custody_account()
-        && match (terms.asset(), snapshot.custody) {
+        status,
+    )
+}
+
+pub(crate) fn custody_matches(
+    agreement: &ZecAgreementV1,
+    custody_account: &[u8; 32],
+    custody: LezCustodySnapshotV1,
+    expected_balance: u128,
+) -> bool {
+    let terms = agreement.lez_terms();
+    custody_account == terms.custody_account()
+        && match (terms.asset(), custody) {
             (
                 LezAssetV1::Native {
                     authenticated_transfer_program_id,
@@ -513,7 +561,7 @@ fn validate_escrow_accounts(
                     program_owner,
                     balance,
                 },
-            ) => program_owner == *authenticated_transfer_program_id && balance == terms.amount(),
+            ) => program_owner == *authenticated_transfer_program_id && balance == expected_balance,
             (
                 LezAssetV1::FungibleToken {
                     definition_account,
@@ -528,15 +576,10 @@ fn validate_escrow_accounts(
             ) => {
                 program_owner == *token_program_id
                     && definition == *definition_account
-                    && balance == terms.amount()
+                    && balance == expected_balance
             }
             _ => false,
-        };
-    if custody_matches {
-        Ok(())
-    } else {
-        Err(LezObservationError::CustodyBindingMismatch)
-    }
+        }
 }
 
 /// Primitive stable proof that a prior LEZ inclusion block is no longer canonical.

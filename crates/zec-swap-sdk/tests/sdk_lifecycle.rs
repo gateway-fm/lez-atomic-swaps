@@ -17,7 +17,8 @@ use lez_zec_swap_sdk::{
     FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1, FirstLockProjectionCommit,
     FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1, FirstLockTransitionV1,
     FollowupClaimEvidenceV1, FollowupClaimObservationV1, FollowupClaimTransitionRecordV1,
-    FollowupClaimTransitionV1, LezAssetV1, LezChainIdentityV1, LezClaimPort, LezCustodySnapshotV1,
+    FollowupClaimTransitionV1, LezAssetV1, LezChainIdentityV1, LezClaimInstructionV1,
+    LezClaimNodeSnapshotV1, LezClaimPort, LezClaimTransactionSnapshotV1, LezCustodySnapshotV1,
     LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort,
     LezFundInstructionV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1,
     LezMakerLockObservationPort, LezNodeRemovalSnapshotV1, LezNodeSnapshotV1,
@@ -1447,7 +1448,20 @@ impl LezClaimPort for MemoryLezTakerLockObservation {
                 "unexpected prepared LEZ claim identity".to_owned(),
             ));
         }
-        self.observe_counterparty_revealing_claim(agreement).await
+        let preimage = *self
+            .4
+            .revealing_preimage
+            .lock()
+            .expect("revealing claim lock");
+        preimage.map_or(Ok(RevealingClaimObservationV1::Absent), |preimage| {
+            RevealingClaimEvidenceV1::from_prepared_lez_claim_snapshot(
+                agreement,
+                prepared,
+                canonical_lez_claim_snapshot(agreement, preimage),
+            )
+            .map(RevealingClaimObservationV1::Confirmed)
+            .map_err(|error| TestPortError(error.to_string()))
+        })
     }
 
     async fn observe_counterparty_revealing_claim(
@@ -1460,12 +1474,9 @@ impl LezClaimPort for MemoryLezTakerLockObservation {
             .lock()
             .expect("revealing claim lock");
         preimage.map_or(Ok(RevealingClaimObservationV1::Absent), |preimage| {
-            RevealingClaimEvidenceV1::new(
+            RevealingClaimEvidenceV1::from_lez_claim_snapshot(
                 agreement,
-                [0xc1; 32],
-                "actor-lez-revealing-claim",
-                100,
-                ClaimPreimage::new(preimage),
+                canonical_lez_claim_snapshot(agreement, preimage),
             )
             .map(RevealingClaimObservationV1::Confirmed)
             .map_err(|error| TestPortError(error.to_string()))
@@ -3614,6 +3625,73 @@ fn canonical_lez_taker_lock(
         &canonical_lez_snapshot(agreement, LezSnapshotMutation::Pending),
     )
     .expect("agreement-bound canonical LEZ observation")
+}
+
+fn canonical_lez_claim_snapshot(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    preimage: [u8; 32],
+) -> LezClaimNodeSnapshotV1 {
+    let terms = agreement.lez_terms();
+    let LezAssetV1::Native {
+        authenticated_transfer_program_id,
+    } = terms.asset()
+    else {
+        panic!("lifecycle fixture uses native LEZ")
+    };
+    let depositor = *agreement.lez_account(agreement.lez_depositor());
+    let claimant = *agreement.lez_account(agreement.lez_claimant());
+    let metadata = LezEscrowMetadataSnapshotV1::new(
+        1,
+        *agreement.onchain_swap_id(),
+        *agreement.agreement_commitment(),
+        *agreement.secret_digest(),
+        depositor,
+        depositor,
+        claimant,
+        claimant,
+        *terms.custody_account(),
+        *authenticated_transfer_program_id,
+        *authenticated_transfer_program_id,
+        [0; 32],
+        terms.amount(),
+        agreement.lez_refund_at_ms(),
+        LezEscrowStatusV1::Claimed,
+    );
+    LezClaimNodeSnapshotV1::new(
+        terms.chain().environment(),
+        *terms.chain().channel_id(),
+        *terms.chain().genesis_block_hash(),
+        LezStableTipV1::new([0xc3; 32], 199, [0xc3; 32], 199),
+        LezClaimTransactionSnapshotV1::new(
+            [0xc1; 32],
+            [0xc1; 32],
+            *terms.escrow_program_id(),
+            claimant,
+            vec![
+                *terms.metadata_account(),
+                *terms.custody_account(),
+                claimant,
+            ],
+            LezClaimInstructionV1::Native {
+                swap_id: *agreement.onchain_swap_id(),
+                preimage: ClaimPreimage::new(preimage),
+            },
+            true,
+            true,
+            100,
+            [0xc2; 32],
+            [0xc2; 32],
+            LezInclusionStatusV1::Finalized,
+        ),
+        *terms.escrow_program_id(),
+        *terms.metadata_account(),
+        metadata,
+        *terms.custody_account(),
+        LezCustodySnapshotV1::Native {
+            program_owner: *authenticated_transfer_program_id,
+            balance: 0,
+        },
+    )
 }
 
 fn deeper_finalized_lez(

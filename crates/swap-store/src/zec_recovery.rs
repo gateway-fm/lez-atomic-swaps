@@ -9,13 +9,13 @@ use async_trait::async_trait;
 use lez_swap_core::{Pair, Participant, SwapCoordinator, SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, CLAIM_RECORD_SCHEMA_V1,
-    ClaimIntentRecordV1, ClaimIntentV1, ClaimMaterialContext, ClaimMaterialPurpose, ClaimPreimage,
-    ClaimRecoveryStore, ClaimStepV1, ClaimSubmissionContext, CreateAgreementOutcome,
-    CreateFirstLockOutcome, FIRST_LOCK_RECORD_SCHEMA_V1, FirstLockIntentRecordV1,
-    FirstLockIntentV1, FirstLockProjectionCommit, FirstLockTransitionRecordV1,
-    FirstLockTransitionV1, FollowupClaimTransitionRecordV1, FollowupClaimTransitionV1, LezAssetV1,
-    LezObservationTrackerV1, MAKER_LOCK_RECORD_SCHEMA_V1, MakerLockIntentRecordV1,
-    MakerLockIntentV1, MakerLockTransitionRecordV1, MakerLockTransitionV1,
+    CLAIM_RECORD_SCHEMA_V2, ClaimIntentRecordV1, ClaimIntentV1, ClaimMaterialContext,
+    ClaimMaterialPurpose, ClaimPreimage, ClaimRecoveryStore, ClaimStepV1, ClaimSubmissionContext,
+    CreateAgreementOutcome, CreateFirstLockOutcome, FIRST_LOCK_RECORD_SCHEMA_V1,
+    FirstLockIntentRecordV1, FirstLockIntentV1, FirstLockProjectionCommit,
+    FirstLockTransitionRecordV1, FirstLockTransitionV1, FollowupClaimTransitionRecordV1,
+    FollowupClaimTransitionV1, LezAssetV1, LezObservationTrackerV1, MAKER_LOCK_RECORD_SCHEMA_V1,
+    MakerLockIntentRecordV1, MakerLockIntentV1, MakerLockTransitionRecordV1, MakerLockTransitionV1,
     OBSERVED_MAKER_LOCK_SCHEMA_V1, ObservedFollowupClaimTransitionRecordV1,
     ObservedFollowupClaimTransitionV1, ObservedMakerLockTransitionRecordV1,
     ObservedMakerLockTransitionV1, ObservedRevealingClaimTransitionRecordV1,
@@ -1341,11 +1341,7 @@ impl ClaimRecoveryStore for SqliteZecRecoveryStore {
         let material = load_claim_material_row(&connection, self.role_name(), swap_id)?
             .ok_or(StoreError::MissingZecClaimMaterial)?;
         let preimage = decrypt_claim_material(&material, &accepted, key)?;
-        require_payload(
-            "SDK revealing claim transition",
-            row.payload_version,
-            i64::from(CLAIM_RECORD_SCHEMA_V1),
-        )?;
+        require_revealing_payload("SDK revealing claim transition", row.payload_version)?;
         let record: RevealingClaimTransitionRecordV1 = serde_json::from_str(&row.payload_json)?;
         record
             .revalidate(
@@ -1505,10 +1501,9 @@ impl ClaimRecoveryStore for SqliteZecRecoveryStore {
             return Err(StoreError::InvalidZecRecoveryState);
         }
         let preimage = decrypt_claim_material(&material, &accepted, key)?;
-        require_payload(
+        require_revealing_payload(
             "SDK observed revealing claim transition",
             row.payload_version,
-            i64::from(CLAIM_RECORD_SCHEMA_V1),
         )?;
         let record: ObservedRevealingClaimTransitionRecordV1 =
             serde_json::from_str(&row.payload_json)?;
@@ -3053,10 +3048,9 @@ fn apply_claim_journal_slot(
             let _ = decrypt_claim_material(&linked_material, accepted, key)?;
             match row.transition_kind.as_str() {
                 "revealing_lez" => {
-                    require_payload(
+                    require_revealing_payload(
                         "SDK revealing claim transition",
                         row.payload_version,
-                        i64::from(CLAIM_RECORD_SCHEMA_V1),
                     )?;
                     let preimage = decrypt_claim_material(&linked_material, accepted, key)?;
                     let record: RevealingClaimTransitionRecordV1 =
@@ -3095,10 +3089,9 @@ fn apply_claim_journal_slot(
                     if row.material_created_revision != Some(committed_sql) {
                         return Err(StoreError::InvalidZecRecoveryState);
                     }
-                    require_payload(
+                    require_revealing_payload(
                         "SDK observed revealing claim transition",
                         row.payload_version,
-                        i64::from(CLAIM_RECORD_SCHEMA_V1),
                     )?;
                     let material = load_claim_material_row(connection, role, swap_id)?
                         .ok_or(StoreError::MissingZecClaimMaterial)?;
@@ -3142,6 +3135,18 @@ fn apply_claim_journal_slot(
 
 fn require_payload(kind: &'static str, version: i64, expected: i64) -> Result<(), StoreError> {
     if version == expected {
+        Ok(())
+    } else {
+        Err(StoreError::UnsupportedPayloadVersion { kind, version })
+    }
+}
+
+fn require_revealing_payload(kind: &'static str, version: i64) -> Result<(), StoreError> {
+    if matches!(
+        version,
+        value if value == i64::from(CLAIM_RECORD_SCHEMA_V1)
+            || value == i64::from(CLAIM_RECORD_SCHEMA_V2)
+    ) {
         Ok(())
     } else {
         Err(StoreError::UnsupportedPayloadVersion { kind, version })

@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use zeroize::Zeroize;
 
-use crate::{ClaimPreimage, ZecAgreementV1};
+use crate::{CanonicalLezClaimSnapshotRecordV1, ClaimPreimage, ZecAgreementV1};
 
 /// Maximum exact signed claim submission accepted before protected persistence.
 pub const MAX_CLAIM_SUBMISSION_BYTES: usize = 2_000_000;
@@ -322,15 +322,16 @@ pub struct RevealingClaimEvidenceV1 {
     transaction_id: Box<str>,
     confirmations: u32,
     preimage: ClaimPreimage,
+    canonical_lez_snapshot: Option<Box<CanonicalLezClaimSnapshotRecordV1>>,
 }
 
 impl RevealingClaimEvidenceV1 {
-    /// Validates canonical identity/depth and the agreement-bound SHA-256 preimage.
+    /// Reconstructs a pre-v2 recovery record that predates primitive LEZ snapshots.
     ///
-    /// # Errors
-    ///
-    /// Rejects malformed identities, insufficient depth, or a wrong preimage.
-    pub fn new(
+    /// This compatibility boundary is deliberately crate-private: live adapters cannot
+    /// create legacy opaque evidence, and every newly persisted transition carries a
+    /// canonical primitive snapshot.
+    pub(crate) fn from_legacy_recovery_parts(
         agreement: &ZecAgreementV1,
         observed_submission_id: [u8; 32],
         transaction_id: impl Into<Box<str>>,
@@ -349,7 +350,27 @@ impl RevealingClaimEvidenceV1 {
             transaction_id,
             confirmations,
             preimage,
+            canonical_lez_snapshot: None,
         })
+    }
+
+    pub(crate) fn from_validated_lez_snapshot_parts(
+        agreement: &ZecAgreementV1,
+        observed_submission_id: [u8; 32],
+        transaction_id: impl Into<Box<str>>,
+        confirmations: u32,
+        preimage: ClaimPreimage,
+        canonical_lez_snapshot: CanonicalLezClaimSnapshotRecordV1,
+    ) -> Result<Self, ClaimError> {
+        let mut evidence = Self::from_legacy_recovery_parts(
+            agreement,
+            observed_submission_id,
+            transaction_id,
+            confirmations,
+            preimage,
+        )?;
+        evidence.canonical_lez_snapshot = Some(Box::new(canonical_lez_snapshot));
+        Ok(evidence)
     }
 
     /// Canonical adapter-derived identity of the observed transaction.
@@ -375,6 +396,10 @@ impl RevealingClaimEvidenceV1 {
     pub const fn preimage(&self) -> &ClaimPreimage {
         &self.preimage
     }
+
+    pub(crate) fn canonical_lez_snapshot(&self) -> Option<&CanonicalLezClaimSnapshotRecordV1> {
+        self.canonical_lez_snapshot.as_deref()
+    }
 }
 
 impl std::fmt::Debug for RevealingClaimEvidenceV1 {
@@ -385,6 +410,10 @@ impl std::fmt::Debug for RevealingClaimEvidenceV1 {
             .field("transaction_id", &self.transaction_id)
             .field("confirmations", &self.confirmations)
             .field("preimage", &"[REDACTED]")
+            .field(
+                "canonical_lez_snapshot",
+                &self.canonical_lez_snapshot.is_some(),
+            )
             .finish()
     }
 }

@@ -2,12 +2,14 @@ use async_trait::async_trait;
 use lez_swap_core::{Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_swap_store::SqliteZecRecoveryStore;
 use lez_zec_swap_sdk::{
-    AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract, CanonicalLezEscrowObservationV1,
-    CanonicalLezEscrowRemovalV1, CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval,
-    ClaimPreimage, ClaimRecoveryStore, ClaimStepV1, CreateFirstLockOutcome, ExpectedBip199Output,
+    AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract, CLAIM_RECORD_SCHEMA_V1,
+    CLAIM_RECORD_SCHEMA_V2, CanonicalLezEscrowObservationV1, CanonicalLezEscrowRemovalV1,
+    CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval, ClaimPreimage,
+    ClaimRecoveryStore, ClaimStepV1, CreateFirstLockOutcome, ExpectedBip199Output,
     FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockObservation, FirstLockPlanV1,
     FirstLockProjectionCommit, FirstLockStepV1, FollowupClaimEvidenceV1,
-    FollowupClaimObservationV1, LezAssetV1, LezChainIdentityV1, LezClaimPort, LezCustodySnapshotV1,
+    FollowupClaimObservationV1, LezAssetV1, LezChainIdentityV1, LezClaimInstructionV1,
+    LezClaimNodeSnapshotV1, LezClaimPort, LezClaimTransactionSnapshotV1, LezCustodySnapshotV1,
     LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort,
     LezFundInstructionV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1,
     LezMakerLockObservationPort, LezNodeRemovalSnapshotV1, LezNodeSnapshotV1,
@@ -16,9 +18,10 @@ use lez_zec_swap_sdk::{
     NegotiationChannel, NegotiationTranscriptV1, ObserveMakerLockOutcome,
     ObserveTakerFirstLockOutcome, ObservedTakerFirstLockTransitionRecordV1, OfferDiscovery,
     PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1, ProtectedClaimKey, RecoveryStore,
-    RevealingClaimEvidenceV1, RevealingClaimObservationV1, TakerFirstLockObservationV1,
-    TransparentFundingRequest, TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimPort,
-    ZcashFirstLockPort, ZcashMakerLockObservationPort, ZcashNodeRemovalSnapshot, ZcashNodeSnapshot,
+    RevealingClaimEvidenceV1, RevealingClaimObservationV1, RevealingClaimTransitionRecordV1,
+    TakerFirstLockObservationV1, TransparentFundingRequest, TransparentUtxo,
+    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimPort, ZcashFirstLockPort,
+    ZcashMakerLockObservationPort, ZcashNodeRemovalSnapshot, ZcashNodeSnapshot,
     ZcashObservationEventRecordV1, ZcashStableTip, ZcashTakerFirstLockObservationPort,
     ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecLezTermsV1,
     ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1,
@@ -393,21 +396,23 @@ impl SqliteClaimPort {
     fn revealing_observation(
         &self,
         agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        prepared: Option<&PreparedClaimSubmissionV1>,
     ) -> Result<RevealingClaimObservationV1, TestPortError> {
         let preimage = *self
             .revealing_preimage
             .lock()
             .expect("revealing observation lock");
         preimage.map_or(Ok(RevealingClaimObservationV1::Absent), |preimage| {
-            RevealingClaimEvidenceV1::new(
-                agreement,
-                [0xc1; 32],
-                "sqlite-lez-revealing-claim",
-                100,
-                ClaimPreimage::new(preimage),
-            )
-            .map(RevealingClaimObservationV1::Confirmed)
-            .map_err(|_| TestPortError("invalid revealing claim fixture"))
+            let snapshot = canonical_lez_claim_snapshot(agreement, preimage);
+            let evidence = match prepared {
+                Some(prepared) => RevealingClaimEvidenceV1::from_prepared_lez_claim_snapshot(
+                    agreement, prepared, snapshot,
+                ),
+                None => RevealingClaimEvidenceV1::from_lez_claim_snapshot(agreement, snapshot),
+            };
+            evidence
+                .map(RevealingClaimObservationV1::Confirmed)
+                .map_err(|_| TestPortError("invalid revealing claim fixture"))
         })
     }
 
@@ -569,14 +574,14 @@ impl LezClaimPort for SqliteClaimPort {
                 ClaimStepV1::RevealingLez,
                 prepared.exact_submission().to_vec(),
             ));
-        self.revealing_observation(agreement)
+        self.revealing_observation(agreement, Some(prepared))
     }
 
     async fn observe_counterparty_revealing_claim(
         &self,
         agreement: &lez_zec_swap_sdk::ZecAgreementV1,
     ) -> Result<RevealingClaimObservationV1, Self::Error> {
-        self.revealing_observation(agreement)
+        self.revealing_observation(agreement, None)
     }
 
     async fn submit_revealing_claim(
@@ -761,8 +766,8 @@ async fn assert_schema_v9_claim_direction(
     .await;
     assert_eq!((maker.status(), maker.revision()), (Phase::Completed, 4));
     assert_eq!((taker.status(), taker.revision()), (Phase::Completed, 4));
-    assert_schema_v9_journal(&maker_path, id, "maker");
-    assert_schema_v9_journal(&taker_path, id, "taker");
+    assert_schema_v9_journal(&maker_path, id, "maker", secret);
+    assert_schema_v9_journal(&taker_path, id, "taker", secret);
     assert_claim_plaintext_absent(&maker_path, secret);
     assert_claim_plaintext_absent(&taker_path, secret);
 
@@ -955,7 +960,7 @@ async fn drive_sqlite_claims(
         .expect("taker observes completion");
 }
 
-fn assert_schema_v9_journal(path: &std::path::Path, id: &str, role: &str) {
+fn assert_schema_v9_journal(path: &std::path::Path, id: &str, role: &str, secret: [u8; 32]) {
     let raw = Connection::open(path).expect("inspect schema-v9 journal");
     let version: i64 = raw
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -1010,6 +1015,26 @@ fn assert_schema_v9_journal(path: &std::path::Path, id: &str, role: &str) {
         )
         .expect("unified revision journal");
     assert_eq!(revisions, "1,2,3,4");
+    let (revealing_version, revealing_payload): (i64, String) = raw
+        .query_row(
+            "SELECT payload_version, payload_json FROM (
+                SELECT payload_version, payload_json, transition_kind
+                  FROM zec_sdk_owned_claim_transitions
+                 WHERE local_role = ?1 AND swap_id = ?2
+                UNION ALL
+                SELECT payload_version, payload_json, transition_kind
+                  FROM zec_sdk_observed_claim_transitions
+                 WHERE local_role = ?1 AND swap_id = ?2
+             ) WHERE transition_kind IN ('revealing_lez', 'observed_revealing_lez')",
+            params![role, id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("one canonical revealing transition");
+    assert_eq!(revealing_version, i64::from(CLAIM_RECORD_SCHEMA_V2));
+    assert!(revealing_payload.contains("canonical_lez_snapshot"));
+    assert!(!revealing_payload.contains(
+        &serde_json::to_string(&secret).expect("serialize forbidden plaintext test value")
+    ));
 }
 
 fn assert_claim_plaintext_absent(path: &std::path::Path, secret: [u8; 32]) {
@@ -1607,6 +1632,116 @@ fn assert_exact_revealing_observations(port: &SqliteClaimPort, secret: [u8; 32])
     assert!(observations.iter().all(|(step, exact)| {
         *step == ClaimStepV1::RevealingLez && exact.as_slice() == expected.as_slice()
     }));
+}
+
+#[tokio::test]
+async fn canonical_revealing_v2_replay_rejects_one_tampered_primitive() {
+    let id = "sqlite-canonical-reveal-v2-tamper";
+    let mut fixture = locked_claim_fixture(id).await;
+    fixture
+        .taker
+        .drive_claim()
+        .await
+        .expect("stage revealing claim");
+    fixture.port.confirm_revealing_claim(fixture.secret);
+    fixture
+        .taker
+        .drive_claim()
+        .await
+        .expect("commit canonical revealing claim");
+
+    let connection = Connection::open(&fixture.taker_path).expect("open v2 claim row");
+    let (version, payload): (i64, String) = connection
+        .query_row(
+            "SELECT payload_version, payload_json
+               FROM zec_sdk_owned_claim_transitions
+              WHERE local_role = 'taker' AND swap_id = ?1
+                AND transition_kind = 'revealing_lez'",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("canonical v2 claim row");
+    assert_eq!(version, i64::from(CLAIM_RECORD_SCHEMA_V2));
+    let mut value: serde_json::Value = serde_json::from_str(&payload).expect("claim JSON");
+    value["canonical_lez_snapshot"]["program_id"][0] = serde_json::json!(99);
+    connection
+        .execute(
+            "UPDATE zec_sdk_owned_claim_transitions SET payload_json = ?1
+              WHERE local_role = 'taker' AND swap_id = ?2
+                AND transition_kind = 'revealing_lez'",
+            params![serde_json::to_string(&value).expect("tampered JSON"), id],
+        )
+        .expect("install one-field canonical snapshot substitution");
+    drop(connection);
+
+    assert!(
+        fixture
+            .taker_store
+            .load_revealing_claim_transition(&SwapId::new(id).expect("swap ID"), 2)
+            .await
+            .is_err(),
+        "restart replay must rerun the full canonical snapshot validator"
+    );
+}
+
+#[tokio::test]
+async fn legacy_revealing_v1_is_read_compatible_but_new_writes_are_v2() {
+    let id = "sqlite-legacy-reveal-v1-read-only";
+    let mut fixture = locked_claim_fixture(id).await;
+    fixture
+        .taker
+        .drive_claim()
+        .await
+        .expect("stage revealing claim");
+    fixture.port.confirm_revealing_claim(fixture.secret);
+    fixture
+        .taker
+        .drive_claim()
+        .await
+        .expect("commit new canonical revealing claim");
+
+    let connection = Connection::open(&fixture.taker_path).expect("open new v2 claim row");
+    let payload: String = connection
+        .query_row(
+            "SELECT payload_json FROM zec_sdk_owned_claim_transitions
+              WHERE local_role = 'taker' AND swap_id = ?1
+                AND transition_kind = 'revealing_lez' AND payload_version = ?2",
+            params![id, i64::from(CLAIM_RECORD_SCHEMA_V2)],
+            |row| row.get(0),
+        )
+        .expect("every new revealing write is v2");
+    let mut legacy: serde_json::Value = serde_json::from_str(&payload).expect("v2 JSON");
+    legacy["schema_version"] = serde_json::json!(CLAIM_RECORD_SCHEMA_V1);
+    legacy
+        .as_object_mut()
+        .expect("claim record object")
+        .remove("canonical_lez_snapshot");
+    connection
+        .execute(
+            "UPDATE zec_sdk_owned_claim_transitions
+                SET payload_version = ?1, payload_json = ?2
+              WHERE local_role = 'taker' AND swap_id = ?3
+                AND transition_kind = 'revealing_lez'",
+            params![
+                i64::from(CLAIM_RECORD_SCHEMA_V1),
+                serde_json::to_string(&legacy).expect("legacy JSON"),
+                id
+            ],
+        )
+        .expect("model a pre-v2 durable row");
+    drop(connection);
+
+    let recovered = fixture
+        .taker_store
+        .load_revealing_claim_transition(&SwapId::new(id).expect("swap ID"), 2)
+        .await
+        .expect("legacy v1 remains readable")
+        .expect("legacy revealing transition");
+    assert_eq!(
+        RevealingClaimTransitionRecordV1::from(&recovered).schema_version(),
+        CLAIM_RECORD_SCHEMA_V1,
+        "legacy compatibility remains internal and does not synthesize a v2 snapshot"
+    );
 }
 
 #[tokio::test]
@@ -3694,6 +3829,73 @@ fn canonical_lez_taker_lock(
     agreement: &lez_zec_swap_sdk::ZecAgreementV1,
 ) -> CanonicalLezEscrowObservationV1 {
     canonical_lez_taker_lock_at(agreement, LezInclusionStatusV1::Pending, [0x42; 32], 102)
+}
+
+fn canonical_lez_claim_snapshot(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    preimage: [u8; 32],
+) -> LezClaimNodeSnapshotV1 {
+    let terms = agreement.lez_terms();
+    let LezAssetV1::Native {
+        authenticated_transfer_program_id,
+    } = terms.asset()
+    else {
+        panic!("SQLite fixture uses native LEZ")
+    };
+    let depositor = *agreement.lez_account(agreement.lez_depositor());
+    let claimant = *agreement.lez_account(agreement.lez_claimant());
+    let metadata = LezEscrowMetadataSnapshotV1::new(
+        1,
+        *agreement.onchain_swap_id(),
+        *agreement.agreement_commitment(),
+        *agreement.secret_digest(),
+        depositor,
+        depositor,
+        claimant,
+        claimant,
+        *terms.custody_account(),
+        *authenticated_transfer_program_id,
+        *authenticated_transfer_program_id,
+        [0; 32],
+        terms.amount(),
+        agreement.lez_refund_at_ms(),
+        LezEscrowStatusV1::Claimed,
+    );
+    LezClaimNodeSnapshotV1::new(
+        terms.chain().environment(),
+        *terms.chain().channel_id(),
+        *terms.chain().genesis_block_hash(),
+        LezStableTipV1::new([0xc3; 32], 199, [0xc3; 32], 199),
+        LezClaimTransactionSnapshotV1::new(
+            [0xc1; 32],
+            [0xc1; 32],
+            *terms.escrow_program_id(),
+            claimant,
+            vec![
+                *terms.metadata_account(),
+                *terms.custody_account(),
+                claimant,
+            ],
+            LezClaimInstructionV1::Native {
+                swap_id: *agreement.onchain_swap_id(),
+                preimage: ClaimPreimage::new(preimage),
+            },
+            true,
+            true,
+            100,
+            [0xc2; 32],
+            [0xc2; 32],
+            LezInclusionStatusV1::Finalized,
+        ),
+        *terms.escrow_program_id(),
+        *terms.metadata_account(),
+        metadata,
+        *terms.custody_account(),
+        LezCustodySnapshotV1::Native {
+            program_owner: *authenticated_transfer_program_id,
+            balance: 0,
+        },
+    )
 }
 
 fn canonical_lez_taker_lock_at(
