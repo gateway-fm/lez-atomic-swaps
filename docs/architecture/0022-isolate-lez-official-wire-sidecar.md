@@ -2,11 +2,11 @@
 
 Status: Accepted for the M2 actual-node corridor; implementation in progress --
 the official native and revealing-claim planners, native escrow observation,
-node-RPC core, authenticated bridge server/client, executable role-isolated
-sidecars, signed-agreement first-lock/observation adapter, and Zebra
-owner/counterparty claim/refund ports are GREEN. Revealing-claim observation,
-refund bridging, SDK-port/actor wiring, and the composed proof remain RED --
-2026-07-13
+revealing-claim owner/discovery observation, node-RPC core, authenticated bridge
+server/client, executable role-isolated sidecars, signed-agreement
+first-lock/observation adapter, and Zebra owner/counterparty claim/refund ports
+are GREEN. Native refund sidecar/adapter composition, remaining SDK-port/actor
+wiring, and the composed proof remain RED -- 2026-07-13
 
 ```mermaid
 flowchart LR
@@ -119,8 +119,10 @@ server, parse, timeout, and transport ambiguity remain unknown outcomes. The
 local server library now authenticates capability, run, and role before parsing;
 uses an ephemeral literal-loopback listener; restores exact randomized prepare
 results through the official decoder; and persists a submission-in-flight
-marker before the node call so a crash cannot cause blind resubmission. All six
-bridge methods are registered. Revealing-claim preparation validates the exact
+marker before the node call so a crash cannot cause blind resubmission. The six
+implemented executable methods are registered; the shared protocol and client
+also define the two native-refund methods whose sidecar handlers remain RED.
+Revealing-claim preparation validates the exact
 claimant role, runtime, signer, signed terms, preimage, and request-bound funding
 transaction before nonce use; restart restores the exact randomized official
 bytes, and submission requires cache membership. The pinned guest ABI carries
@@ -134,7 +136,13 @@ limited to the latest 4,096 canonical blocks because the upstream transaction
 lookup has no chain position; an older miss is `UnknownOrPending`, never
 absence. The main adapter independently validates the primitive pair against
 the signed agreement and conservative local-depth policy. Revealing-claim
-observation still returns typed `Unavailable`.
+observation now decodes the official Risc0 instruction ABI and canonical
+message, witness, ordered accounts, transaction bytes, inclusion position,
+terminal metadata, and zero custody. The exact claimant path is cache-bound;
+the depositor discovers the counterparty claim by signed terms in a caller-owned
+window. Ambiguity and moving tips fail closed, incomplete scans remain
+`UnknownOrPending`, and only complete stable windows produce absence. Native
+and claim reservations coexist across restart while rejecting nonce reuse.
 
 The executable starts one sidecar with private capability/signer files, an
 exact runtime descriptor, a 0600 durable idempotency store, and a
@@ -227,11 +235,13 @@ responses, wrong run identity, unstable tips, unavailable signers, unknown
 submission outcomes, exact-hash mismatches, and node rejections must remain
 distinct errors and be exercised across restart.
 
-The implemented main-workspace bridge client exercises all six typed protocol
+The implemented main-workspace bridge client exercises all eight typed protocol
 methods, accepts only literal loopback HTTP, sends a sensitive capability plus
 exact run and role headers, validates the echoed run/role/runtime context, and
 permits each request ID once per client instance. It makes one attempt with no
-redirect, proxy, or automatic retry. The first main-process adapter accepts a
+redirect, proxy, or automatic retry. The sidecar currently serves six of those
+methods; native-refund handlers are the next TDD slice. The first main-process
+adapter accepts a
 caller-owned durable request ID, verifies the signed compatibility environment,
 channel, genesis, escrow program, role, and signer, and converts one official
 native prepare response into the exact two-step SDK first-lock plan. Its
@@ -256,8 +266,10 @@ effect. It remains RED until the remaining claim/refund/funding adapters and
 reference actors satisfy that contract. No broken commit is published while
 this slice is being driven GREEN.
 
-Before the claim ports can be certified, the SDK must validate canonical LEZ
-revealing-claim snapshots rather than constructing evidence from primitive
-assertions, and the Zcash observation port must receive its previous canonical
-head so removal/replacement can be assembled after process restart. Those are
-repository-controlled prerequisites, not Logos-owned production exceptions.
+The official claim observation boundary is now source-correct and independently
+decoded, but the main revealing-claim adapter, the native-refund sidecar and
+adapter, and composed post-lock actor evidence remain repository-controlled
+prerequisites. The Zcash taker-first observation path must still receive its
+previous canonical head so removal/replacement can be assembled after process
+restart; the maker-lock SDK boundary needs a later durable post-lock history
+extension rather than an invented adapter assertion.

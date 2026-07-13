@@ -99,7 +99,8 @@ current executable slices enforce:
   refund owner intents before broadcast and atomically commits owner/observer
   transitions through `Refunded` in both directions, including rollback,
   conflict, corruption, and close/reopen replay.
-  The main workspace now also has a bounded authenticated LEZ sidecar client,
+  The main workspace now also has a bounded authenticated eight-method LEZ
+  sidecar client,
   a signed-agreement native first-lock bridge adapter, typed Zebra
   owner/counterparty claim and refund ports, and the public crash-safe
   timeout-refund SDK contract. The bridge client binds every request
@@ -126,12 +127,16 @@ current executable slices enforce:
   links, genesis, and stable tip brackets for exact owners and bounded
   counterparty discovery; the main adapter independently revalidates those
   primitive facts against the signed agreement. Bounded or old misses remain
-  unknown, never false absence. The executable runner starts concurrent maker
-  and taker sidecars with separate private keys, capabilities, runtime
-  descriptors, durable stores, and ephemeral loopback listeners. Revealing-
-  claim observation, the production LEZ refund path, SDK-port composition,
-  independent reference actors, and the completed LEZ-plus-Zebra corridor
-  remain.
+  unknown, never false absence. Official revealing-claim observation now
+  validates the canonical Risc0 instruction, message, witness, ordered accounts,
+  transaction placement, terminal metadata, and zero custody for exact owners
+  or bounded counterparty discovery. Only a complete stable window is absent;
+  partial coverage is unknown and ambiguity or a moving tip fails closed. The
+  executable runner starts concurrent maker and taker sidecars with separate
+  private keys, capabilities, runtime descriptors, durable stores, and
+  ephemeral loopback listeners. The production LEZ refund path, main
+  claim/refund SDK-port composition, independent reference actors, and the
+  completed LEZ-plus-Zebra corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),

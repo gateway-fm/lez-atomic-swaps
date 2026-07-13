@@ -155,8 +155,8 @@ taker projection, maker-independent observation replay, confirmed maker funding,
 and the taker-local observed-maker transition. Schema-v10 claim and refund
 journals protect exact owner material, keep observer paths secret-free, and
 replay separate role stores to `Completed` or `Refunded` in both directions.
-The remaining M2 work is production port composition, post-lock hardening, and
-independent actor integration; chain adapters must
+The remaining M2 work is native-refund and remaining production-port
+composition, post-lock hardening, and independent actor integration; chain adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
 observation alone is non-authorizing: forward Zcash persists and revalidates
 the complete canonical output type plus ordered canonical, depth, atomic
@@ -184,10 +184,10 @@ replays and re-queries the exact head and checks signed depth; local Pending
 remains eligible when depth is sufficient, and no result is cached as
 authority. The public Finalized/typed-finality policy is unit-tested but remains
 unreachable while public agreement activation is fail-closed. The official
-v0.1.2 node/escrow observation port and main agreement conversion are GREEN;
-revealing-claim observation, LEZ refund, SDK-port composition, reviewed public
-deployment, actual-node maker fault evidence, and independent actor processes
-remain.
+v0.1.2 node/escrow and revealing-claim owner/discovery observation ports plus
+main escrow agreement conversion are GREEN. LEZ refund, main claim SDK-port
+composition, reviewed public deployment, actual-node maker fault evidence, and
+independent actor processes remain.
 
 The protected-claim module derives per-context keys with HKDF-SHA256 and encrypts
 preimages and bounded exact claim-submission bytes with XChaCha20-Poly1305 while
