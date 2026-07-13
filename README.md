@@ -18,6 +18,12 @@ current executable slices enforce:
 - claim completion after the first lock needs only on-chain evidence; and
 - pair-specific claim and recovery ordering, including LEZ-before-ZEC claim and
   refund in both ZEC trade directions;
+- independent fixed-role SDK actors with separate schema-v9 SQLite databases
+  now complete both ZEC directions through a preimage-revealing LEZ claim and
+  the counterparty's Zcash follow-up, then independently
+  `resume_claim_capable` at `Completed`. The same externally supplied claim key
+  is required when each role reopens its own database; neither plaintext
+  preimages nor plaintext exact claim bytes are stored in SQLite or its WAL;
 - immutable local/public-testnet ZEC profiles with network/branch binding,
   checked deadlines, required calibration, and exact margin enforcement;
 - typed ZEC observations that re-decode canonical transaction bytes and bind
@@ -42,7 +48,7 @@ current executable slices enforce:
   rebroadcast after restart, and separately recoverable LEZ initialize/fund
   steps; confirmed evidence is applied only after an atomic store commit or an
   exact unknown-outcome probe, and is replayed on resume. A role-fixed
-  schema-v7 SQLite adapter now proves exact replay, role isolation, retained
+  schema-v9 SQLite adapter now proves exact replay, role isolation, retained
   closed-intent validation, atomic rollback, corruption rejection, and
   close/reopen recovery. Its ordered maker journal durably replays canonical
   Zcash evidence, atomic reorg replacement, same-inclusion depth changes, and
@@ -63,7 +69,7 @@ current executable slices enforce:
   revision-bound result. The maker effect now consumes that result internally,
   persists the direction-fixed opposite-chain plan before submission, and
   atomically projects confirmed Maker funding. Both directions reach
-  `BothLegsLocked` and survive schema-v7 SQLite close/reopen; `next_action`
+  `BothLegsLocked` and survive schema-v9 SQLite close/reopen; `next_action`
   still caches no permission.
   Reverse deterministic-local LEZ accepts a depth-sufficient exact head.
   The public-v0.2 policy seam additionally defines and unit-tests typed
@@ -77,13 +83,13 @@ current executable slices enforce:
   suppression, monotonic Pending/Safe/Finalized updates, affirmative same-tip
   replacement, stale/tip-regressing evidence rejection, and fatal
   finalized-history changes.
-  The active SDK and schema-v7 SQLite journal now fold the agreement-selected
+  The active SDK and schema-v9 SQLite journal now fold the agreement-selected
   LEZ tracker: exact duplicates write no row and same-inclusion finality/depth
   updates survive close/reopen. Affirmative nonfinal removal and atomic same-tip
   replacement now use complete primitive records, reject stale old-head
   evidence, consume one revision, and replay through SQLite. The official-wire
-  LEZ RPC adapter, maker-effect hardening, claims/refunds, independent actors,
-  and the completed real-node corridor remain.
+  LEZ RPC adapter, production claim/refund effects, independent actor
+  processes, and the completed real-node corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),
@@ -134,6 +140,14 @@ propagation, fee markets, organic timing/reorg behavior, provider quirks, or LEZ
 testnet 0.2 compatibility. A composed local corridor and self-hosted/public
 testnet corridor with real funded accounts remain mandatory M2 evidence.
 
+The in-memory and schema-v9 SQLite actor claim tests are a separate,
+deterministic lower lane. They start no node or service and use no RPC, Docker,
+faucet, public endpoint, or network access. Their only runtime resources are
+temporary local maker/taker databases and an explicitly supplied deterministic
+test claim key. Consequently, public-chain availability cannot make those
+tests flaky; actual Zebra and LEZ node execution remains covered by the
+separate node suites and is not implied by the contract-double corridor.
+
 CI also refreshes RustSec and Trivy vulnerability data. A database outage may
 block scanning; a newly published advisory may deliberately turn a prior pass
 red. Do not bypass that failure as “flaky.” The LEZ v0.2 RPC and self-hosted
@@ -154,6 +168,24 @@ the [full resource/flakiness table](docs/manual-user-flows.md#external-resources
     npm run test:mermaid
     RUN_ID=local-lez-v02-a ./scripts/verify-lez-v02-provisional.sh
     RUN_ID=local-zebra-1 ./scripts/run-zebra-e2e.sh
+
+To repeat the proven ZEC claim happy path alone:
+
+```sh
+cargo build --locked -p lez-zec-swap-sdk -p lez-swap-store
+cargo test --locked -p lez-zec-swap-sdk --test sdk_lifecycle \
+  independent_actors_complete_lez_then_zcash_claims_in_both_directions \
+  -- --exact --nocapture
+cargo test --locked -p lez-swap-store --test zec_sdk_recovery \
+  schema_v9_claim_journal_completes_and_reopens_independent_actors_in_both_directions \
+  -- --exact --nocapture
+```
+
+The second test creates different temporary SQLite files for maker and taker.
+Each file is opened and reopened with the same external key ID and key material
+for that run; the key itself is never written to either database. The expected
+terminal evidence is LEZ reveal, Zcash follow-up, and both role-local journals
+replaying revision 4 as `Completed` via `resume_claim_capable`.
 
 The provisional LEZ v0.2 command compiles exact SPEL PR #238 head
 `df17acd98436be4f09c55877dae1fe2e73cbcdca` against official LEZ `v0.2.0`
