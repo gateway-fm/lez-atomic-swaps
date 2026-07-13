@@ -93,7 +93,7 @@ security databases, pins/checksums, availability risks, and fallback policy.
 | Taker-first happy path for BTC/XMR/ZEC | 2026-07-11 unresolved protocol API imports | 2026-07-11 `cargo test --workspace --all-targets`, 3 passed | Persist every fact and move from direct core calls to role harness |
 | Ordered timeout refund | Same acceptance test RED; later primary-source reconciliation exposed that generic maker/taker order contradicted ZEC's fixed chain order | BTC uses maker-funded then taker-funded recovery; ZEC uses LEZ then ZEC recovery in both directions; XMR remains event-gated | Exercise exact pair boundaries and fee/reorg stress on real nodes |
 | On-chain-only completion | Core API accepts only `ChainProof`/`ClaimEvidence` after lock | Happy path reaches `Completed` without a peer/transport handle | Prove through CLI/daemon black-box test with Delivery/Chat stopped |
-| Restart recovery and user isolation | 2026-07-11 unresolved `SqliteSwapStore` and later missing `claim_evidence`; the schema-v9 RED then exposed plaintext legacy evidence and missing claim journals | Schema v9 now closes/reopens two independent role stores through both claim directions to `Completed`. Core aggregate state retains only a SHA-256 evidence marker; preimages and exact submissions use context-bound XChaCha20-Poly1305 envelopes. Commit `5ed04ec` transactionally migrates and scrubs legacy plaintext from SQLite/WAL; `340bf10` proves wrong-key/corruption/orphan rejection, coupled rollback, and observe-before-rebroadcast after unknown outcomes or stale replay. | Replace deterministic claim ports with isolated actual-node adapters; retain broader process-kill coverage for the M5 coordinator and add rotation-aware production key provisioning |
+| Restart recovery and user isolation | 2026-07-11 unresolved `SqliteSwapStore` and later missing `claim_evidence`; the schema-v9 RED then exposed plaintext legacy evidence and missing claim journals; the schema-v10 RED exposed missing refund recovery | Schema v10 closes/reopens two independent role stores through both claim directions to `Completed` and both refund directions to `Refunded`. Core aggregate state retains only a SHA-256 evidence marker; preimages and exact submissions use context-bound XChaCha20-Poly1305 envelopes. Commit `5ed04ec` transactionally migrates and scrubs legacy plaintext from SQLite/WAL; `340bf10` proves claim corruption/rollback/replay hardening; `845ff89` adds atomic refund intent/transition/revision commits, exact conflict, forced rollback, corruption, and restart replay. | Replace deterministic LEZ observation/refund ports with isolated actual-node adapters; retain broader process-kill coverage for the M5 coordinator and add rotation-aware production key provisioning |
 | Maker abandonment/refund observation order | 2026-07-11 missing `TakerLegRefunded` and no direct taker recovery | 2026-07-11 taker-only refund and foreign-first observation pass | Add model tests over all legal event orderings and chain reorgs |
 | At-least-once chain observation replay | 2026-07-11 repeated confirmed lock failed with `InvalidPhase` | 2026-07-11 identical lock/claim events are idempotent; conflicting IDs/evidence are rejected | Extend to persisted outbox/event sequence numbers and refund transaction proofs |
 | Generated transition sequences | 2026-07-11 property oracles exposed both confirmation growth and regression cases and were corrected | 512 arbitrary sequences include confirmation regression and explicit removal/replacement; retained minimized reorg seed preserves the discovered case | Add pair-specific recovery triggers and compare against pair reference models |
@@ -108,9 +108,9 @@ security databases, pins/checksums, availability risks, and fallback policy.
 | RFP F4 ZEC chain ordering | 2026-07-11 M2 source reconciliation found M1's generic role-relative claim/refund prose allowed ZEC-before-LEZ in `TakerSellsLez` | RED required typed participants and chain-ordered bounds; GREEN adds 2 regressions and 23-test workspace pass: LEZ always reveals/refunds before later ZEC in both directions | Reprove all M1 gates, tag corrective commit `m1-complete.1`, then keep these vectors as M2 entry tests |
 | CI security and quality gates | 2026-07-11 workflow audit found the advisory scope implicit and a malformed `rzup` install command in the scheduled LEZ lane | CI hard-fails advisories, bans, licenses, sources, Rust format/clippy/test/docs, ShellCheck, traceability, Mermaid, Docker isolation, and SHA-pinned Trivy high/critical scanning of the Zebra image | Run the exact local equivalents, then require every GitHub job before each milestone tag |
 | ZEC full-lifecycle SDK boundary | 2026-07-12 `sdk_lifecycle` could not import discovery, negotiation, concrete agreement, active-swap, recovery-store, or secret types | Independent role-fixed SDKs receive bounded untrusted wire, validate the same dual-signed agreement, persist before activation, reject adversarial resume, expose no raw transport/store handles, drive lock, claim, and fixed LEZ-then-Zcash refund paths in both directions, and replay exact owner/observer transitions after restart. The package has 131 passing checks including one doctest plus the intentional ignored Zebra gate. Refund records are primitive, versioned, deny unknown fields, and reconstruct trusted domain state only after agreement/coordinator/revision revalidation. | Persist the refund contract through the SQLite role journals, then replace deterministic ports with actual-node adapters and independent reference-actor processes |
-| Crash-safe ZEC lock, claim, and refund intents | Initial active chain capabilities were inert; a naive RPC-success transition would lose unknown outcomes and combined LEZ initialize/fund into one unsafe effect | Fresh gating, noneligible zero-effect, intervening canonical revisions, stale instances, projection failure/unknown success, and SQLite lock/claim rollback pass. Two independent role-fixed SDK instances with separate stores complete both lock directions and restart at `BothLegsLocked`; claim paths continue to `Completed`. The refund SDK now observes before every rebroadcast, retains exact signed owner bytes, makes unknown submission explicit, requires fresh funding/deadline evidence, forbids observer signing, and reaches `Refunded` in both directions with restart and commit-then-error probes. | Add SQLite refund rows and coupled rollback/replay hardening, then compose production owner and observer adapters through independent processes. |
+| Crash-safe ZEC lock, claim, and refund intents | Initial active chain capabilities were inert; a naive RPC-success transition would lose unknown outcomes and combined LEZ initialize/fund into one unsafe effect | Fresh gating, noneligible zero-effect, intervening canonical revisions, stale instances, projection failure/unknown success, and SQLite lock/claim rollback pass. Two independent role-fixed SDK instances with separate stores complete both lock directions and restart at `BothLegsLocked`; claim paths continue to `Completed`. Refund now observes before every rebroadcast, retains exact signed owner bytes, makes unknown submission explicit, requires fresh funding/deadline evidence, forbids observer signing, and reaches `Refunded` in both directions. Schema v10 atomically retains/deletes owner intent, inserts owner/observer transition, and advances one revision; exact replay, changed-payload conflict, forced rollback, reopen, future-version, and unknown-field cases pass. | Compose the production Zebra refund port and remaining LEZ refund/observation adapters through independent actor processes. |
 | SQLite SDK-recovery schema | Schema v4 had no role-local accepted agreement, open/closed effect intent, separate active revision, or exact transition slot for the concrete SDK contract | Schema v9 retains the schema-v8 lock journal and adds encrypted claim material, protected exact claim intents, mandatory owner-intent transitions, observation-only counterparty transitions, atomic revision replay, and two-direction close/reopen to `Completed` (`add5d98`). Aggregate `ClaimEvidence` persists only a SHA-256 marker; payload AAD binds agreement, role, claim step, staged revision, and expected submission identity. Commit `5ed04ec` transactionally replaces legacy plaintext evidence with the marker, enables secure deletion, truncates the WAL, and scans for remnants. Commit `340bf10` proves exact observe-before-rebroadcast after an unknown outcome, stale replay, coupled rollback, wrong keys, corrupted/future protected payloads, and malformed unified journals. | Build the actual-node claim adapters and rotation-aware production keyring. Broader operating-system process-kill coverage remains M5. |
-| Composed actual-node LEZ/Zebra claim corridor | A failing composition attempt proved that the Zcash graph's `crypto-common = 0.2.0-rc.1` pin cannot coexist with the official LEZ v0.1.2 graph's stable `crypto-common ^0.2` requirement through `chacha20 0.10` and `cipher 0.5.1` | ADR 0022 accepts a separately locked official-LEZ sidecar behind a bounded typed local protocol plus an in-process typed Zebra adapter. The authenticated single-flight sidecar server now binds capability/run/role before parsing, durably restores official randomized prepare bytes, and persists an unknown-submission guard before node effects. All six methods are registered; escrow observation and revealing-claim prepare/observe deliberately return typed `Unavailable` until their official cores exist. The main workspace has the one-attempt client plus production owner/counterparty Zebra claim paths; unresolved bounded scans stay `Unstable`. Nine bridge-client, 16 sidecar, and 37 Zebra adapter tests pass. Existing actual LEZ and Zebra suites remain separate and are not claimed as a composed GREEN. | Implement the official LEZ observation and revealing-claim cores plus the sidecar runner; wire two actor processes; then drive the both-direction happy path GREEN with restart after every effect before refund/reorg/concurrency hardening |
+| Composed actual-node LEZ/Zebra claim corridor | A failing composition attempt proved that the Zcash graph's `crypto-common = 0.2.0-rc.1` pin cannot coexist with the official LEZ v0.1.2 graph's stable `crypto-common ^0.2` requirement through `chacha20 0.10` and `cipher 0.5.1` | ADR 0022 accepts a separately locked official-LEZ sidecar behind a bounded typed local protocol plus an in-process typed Zebra adapter. The authenticated single-flight sidecar server binds capability/run/role before parsing, durably restores official randomized native and revealing-claim bytes, and persists an unknown-submission guard before node effects. The claim planner validates role/runtime/signer/terms/preimage/funding before nonce use; the funding ID is request/cache-bound because the official guest ABI cannot embed it. All six methods are registered; escrow and revealing-claim observation deliberately return typed `Unavailable` until their official cores exist. The main workspace has the one-attempt client, exact signed-agreement native first-lock conversion, and production owner/counterparty Zebra claim/refund paths; unresolved bounded scans stay `Unstable`. Nine bridge-client, six bridge-adapter, 21 sidecar, and 43 Zebra adapter tests pass. Existing actual LEZ and Zebra suites remain separate and are not claimed as a composed GREEN. | Implement the official LEZ observation/refund cores plus the sidecar runner; wire two actor processes; then drive the both-direction happy path GREEN with restart after every effect before refund/reorg/concurrency hardening |
 | Zcash public-testnet route and funding research | M2 required self-hosted/public node, wallet, faucet, privacy, and flakiness guidance but no supported route was selected | Primary sources select self-host Zebra 6.0.0 with loopback cookie RPC and Tatum's documented API-key-authenticated Testnet Zebrad gateway as the public-provider route. Optional Zallet alpha.4 funding and faucet/Discord fallback remain documented. No Zcash Foundation-operated public Zebra RPC or Zallet arbitrary HTLC signer was found. | Implement project-owned disposable transparent signing and the fail-closed HTTPS provider adapter; smoke the exact method contract, rehearse both routes on a clean host, obtain TAZ, and retain live both-direction evidence; research alone does not satisfy U10 or M2 |
 | LEZ v0.2 public-runtime security route | Fresh 2026-07-12 audit found the official v0.2.0 runtime graph still carries Hickory 0.25 and upstream explicitly ignores RUSTSEC-2026-0118/0119; SPEL PR #238 remains open and unreviewed despite green CI | Pin LEZ v0.2.0 at `a58fbce...` and SPEL PR head `df17acd...` only for engineering; port the guest and advisory-free `V03State` semantics first; build a thin official-type deployment/query client that excludes the Logos/libp2p/Hickory path; bind channel, ELF, ImageID, ProgramId, transaction, and block in evidence | Add RED lock-graph gates proving Hickory and LGPL exceptions are absent, port the guest/client, deploy and exercise actor calls, and keep public-profile enablement/production readiness fail-closed until SPEL is reviewed/merged or explicitly accepted. Per ADR 0018, the exact Logos-owned item is disclosed but does not stop M2 certification once repository-controlled evidence is green. |
 | Concrete LEZ/ZEC agreement | Initial generic LEZ terms did not bind exact chain identities, custody, transaction destinations/fees, funding inputs, wire bounds, or both actor signatures | Seventeen focused tests prove bounded exact decoding, dual low-S signatures, both directions, fail-closed public deployment, actual LEZ/ZEC deadlines, exact PDA/ATA derivation, accepted-at resume, redacted diagnostics, and agreement-derived funding/claim/refund requests; the exact dependency-light derivation source also matches pinned upstream v0.2 `lee_core`, SPEL multi-seed, and ATA-core types | Independently recompute deployed chain-derived terms in effect adapters, retain public deployment fail-closed behavior until reviewed, and compose the accepted agreement through real actors and nodes |
@@ -467,7 +467,7 @@ outputs above.
   Maker-independent observation now selects only the agreement-derived maker
   node route, commits without taker intent, survives SQLite restart, and remains
   non-authorizing: SDK next action is `Wait`. Forward Zcash now requires and
-  persists complete canonical evidence. Its ordered schema-v9 journal now
+  persists complete canonical evidence. Its ordered schema-v10 journal now
   commits/replays depth changes, atomic replacements, and affirmative removals
   across restarts and rejects discontinuous or history-incompatible rows.
   The distinct fresh pre-second-lock call now replays and re-queries without
@@ -477,7 +477,7 @@ outputs above.
   Both deterministic-local directions now use separate maker and taker stores:
   each actor learns the other lock through its role-fixed chain-observation
   boundary, reaches `BothLegsLocked`, and independently replays there after
-  schema-v9 SQLite close/reopen. The expected maker submission ID is still
+  schema-v10 SQLite close/reopen. The expected maker submission ID is still
   asserted by the contract-double adapter, so production adapters must derive
   it from canonical node evidence. Reverse LEZ now rejects
   primitive transaction-ID/depth assertions and accepts only a stable canonical
@@ -520,7 +520,16 @@ outputs above.
   order in both directions, persists exact owner intent before broadcast,
   observes before rebroadcast, rejects early/unstable/reorged funding, and
   commits distinct owner/observer transitions through a versioned revalidation
-  boundary. SQLite refund rows and production LEZ/Zebra refund adapters remain.
+  boundary. Commit `845ff89` now persists refund intents/transitions in the
+  unified schema-v10 journal. Owner projection atomically retains the exact
+  intent, inserts the transition, advances the active revision once, and
+  deletes the pending intent; observer rows contain no signing intent. Both
+  directions close/reopen at `Refunded`, and exact conflict, forced rollback,
+  future-version, unknown-field, and journal-corruption cases fail closed.
+  Commit `8b16670` supplies the production Zebra owner/observer refund port
+  with exact signer role, outpoint, destination, fee, expiry, branch, bytes,
+  maturity, stable-tip, submit-outcome, reorg, and bounded spender-discovery
+  validation. The production LEZ refund adapter and composed actors remain.
   The actual-node implementation follows ADR 0022 because an executable RED
   proved the Zcash `crypto-common = 0.2.0-rc.1` graph cannot coexist with the
   official LEZ graph's stable `crypto-common ^0.2` requirement. Commit
@@ -542,9 +551,15 @@ outputs above.
   server library now binds capability, `RUN_ID`, role, and runtime before JSON
   parsing; restores exact randomized prepare results through the official
   decoder; and writes a durable unknown-submission guard before any node call.
-  All six methods are registered, but escrow observation and revealing-claim
-  prepare/observe remain typed `Unavailable`. Their official cores, the sidecar
-  executable/runner, client composition, and isolated actor processes remain.
+  All six methods are registered. Official revealing-claim preparation now
+  validates the exact claimant role, runtime, signer, agreement terms,
+  preimage, and funding binding, restores byte-identical randomized output
+  after restart, and restricts submission to the exact cached transaction.
+  Escrow and revealing-claim observation remain typed `Unavailable`. Their
+  official cores, the sidecar executable/runner, remaining observation/refund
+  composition, and isolated actor processes remain. Commit `8c92007` closes
+  official revealing-claim preparation and restart restoration with 21 locked
+  sidecar tests.
   Commit `cdb732e` supplies the in-process Zebra first-lock half: bounded private
   DTOs, exact lowercase hash/transaction decoding, agreement/network/branch/
   genesis binding, stable-tip canonical snapshots, exact V5 authorization-byte
@@ -554,8 +569,11 @@ outputs above.
   from the accepted agreement, delegates only signing to the role-local
   capability, validates the exact retained one-input/one-output claim, observes
   before byte-identical rebroadcast, and never advances from an ambiguous RPC
-  result. The adapter's 37 tests use SDK/SQLite-built authentic contexts and
-  now include bounded canonical counterparty outpoint-spend discovery. Zebra
+  result. The adapter's 43 tests use SDK/SQLite-built authentic contexts and
+  now include bounded canonical counterparty outpoint-spend discovery plus the
+  production refund port from `8b16670`. The refund path enforces role-local
+  signing, exact outpoint/destination/fee/expiry/branch/bytes, fresh stable
+  funding, CLTV maturity, conservative submit outcomes, and both directions. Zebra
   exposes no direct spender index, so older or unresolved spends remain
   `Unstable` rather than becoming false absence. Actor wiring remains. The
   composed actual-node corridor is still RED. Commit `b0d3b52` closes the
@@ -576,9 +594,14 @@ outputs above.
   `lez_bridge.v1.*` calls over literal loopback HTTP with a sensitive
   capability, exact run/role/runtime echoes, one-use request IDs, bounded
   bodies, no redirects/proxies/retries, and nine passing contract tests.
-  Server-side durable request idempotency remains mandatory before the client
-  can enter the composed runner. Pin weakening, crypto patches, and hand-copied LEZ wire/RPC types are
-  prohibited.
+  Commit `a2b01a9` adds the first main-process adapter: it accepts a
+  caller-owned request ID, rechecks the signed compatibility environment,
+  channel, genesis, escrow program, actor, and signer, then maps the exact
+  official initialize/fund result into one SDK first-lock plan. Six tests cover
+  the exact mapping, signed/runtime mutations, token rejection, response
+  mismatch, and unknown-outcome no-retry behavior. Server-side durable
+  idempotency is implemented; runner lifecycle integration remains. Pin
+  weakening, crypto patches, and hand-copied LEZ wire/RPC types are prohibited.
 - [ ] Prove the composed native happy path preserves the ADR 0022 atomicity
   invariants in both directions: separate role processes/stores/keys/sidecars;
   taker-first and maker-after-canonical-evidence ordering; both locks before
@@ -613,8 +636,9 @@ outputs above.
   intents precede broadcast, every retry observes first, fresh funding/deadline
   evidence gates resubmission, observer paths cannot sign, and canonical
   transitions replay in LEZ-before-Zcash order. Atomic SQLite journal/revision
-  commits and production LEZ/Zebra refund adapters remain before this gate can
-  close.
+  commits and the Zebra production refund adapter are now GREEN. The production
+  LEZ refund adapter plus composed independent actors remain before this gate
+  can close.
 - [ ] Compose cross-chain refund-margin cases through actual LEZ and Zebra
   nodes. The LEZ
   Unix-millisecond/core Unix-second boundary is typed, checked, conservatively

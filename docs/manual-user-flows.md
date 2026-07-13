@@ -16,10 +16,10 @@ HTTPS provider transport, and actor adapter.
 
 | Flow | Boundary exercised | Current limitation |
 |---|---|---|
-| ZEC SDK agreement/activation/locks/claims/refunds | Canonical bounded dual-signed terms, separate role stores, exact lock recovery, and direction-fixed effects reach `BothLegsLocked`; LEZ reveal then Zcash follow-up reaches `Completed`; or exact owner intents plus observer-only transitions drive LEZ then Zcash refunds to `Refunded` in both directions | These commands still use deterministic contract doubles and no RPC, node, Docker, faucet, or external resource. Claims replay through schema-v9 SQLite; refund SQLite rows and production refund ports remain pending, so this is not yet the manual actual-node flow |
-| LEZ bridge and Zebra claim contracts | One-attempt authenticated loopback client and server bind all six bounded methods. The server restores exact prepared bytes and writes an unknown guard before submit. The typed Zebra port validates owner claims and discovers counterparty spends through a bounded canonical scan | These are adapter contract tests against ephemeral loopback RPC mocks, not a manual end-user flow or consensus proof. The sidecar's escrow observation and revealing-claim cores return typed `Unavailable`; its executable runner, actor processes, production refunds, and composed corridor remain pending. No Docker, faucet, or public endpoint is used |
+| ZEC SDK agreement/activation/locks/claims/refunds | Canonical bounded dual-signed terms, separate role stores, exact lock recovery, and direction-fixed effects reach `BothLegsLocked`; LEZ reveal then Zcash follow-up reaches `Completed`; or exact owner intents plus observer-only transitions drive LEZ then Zcash refunds to `Refunded` in both directions | These commands still use deterministic contract doubles and no RPC, node, Docker, faucet, or external resource. Claims and refunds replay through schema-v10 SQLite with atomic owner/observer journals. The production LEZ refund port and composed actor/node flow remain pending, so this is not yet the manual actual-node flow |
+| LEZ bridge and Zebra claim/refund contracts | One-attempt authenticated loopback client and server bind all six bounded methods. The server restores exact native and revealing-claim bytes and writes an unknown guard before submit. The official claim planner binds role/runtime/signer/terms/preimage/funding before nonce use. The main-process adapter converts the signed compatibility agreement into exact LEZ initialize/fund SDK plans. Typed Zebra ports validate owner claims/refunds and discover counterparty spends through bounded canonical scans | These are adapter contract tests against ephemeral loopback RPC mocks, not a manual end-user flow or composed consensus proof. The sidecar's escrow and revealing-claim observation cores return typed `Unavailable`; its executable runner, actor processes, production LEZ refund port, and composed corridor remain pending. No Docker, faucet, or public endpoint is used |
 | Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
-| Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v9 SQLite journal/alerts plus the production role-fixed SDK recovery adapter, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The daemon polling loop, production claim/refund effects, and independent maker/taker processes remain pending |
+| Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v10 SQLite journal/alerts plus the production role-fixed SDK recovery adapter, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The daemon polling loop, production LEZ observation/refund conversion, and independent maker/taker processes remain pending |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
 | LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an in-process, ephemeral-port LEZ v0.1.2 standalone sequencer | This is a local compatibility proof, not the incompatible LEZ 0.2 public testnet |
 | LEZ recursive execution costs | Exact checked guest replayed through production `V03State` transitions with nested authenticated-transfer and ATA/Token sessions | This measures deterministic local execution, not public-testnet fees or latency |
@@ -181,7 +181,7 @@ ephemeral port. Actor funds come from deterministic local genesis or Regtest
 coinbase outputs. Therefore a public RPC outage, rate limit, faucet balance, or
 testnet reorg cannot affect the flows in this guide today.
 
-The SDK memory actor test and schema-v9 SQLite actor test in Flow 2 are the
+The SDK memory actor test and schema-v10 SQLite actor test in Flow 2 are the
 most isolated claim lane: they start no service, make no network request, and
 need no RPC, node, Docker image, faucet, or pre-funded chain account. The
 SQLite case creates different temporary database paths for maker and taker.
@@ -423,7 +423,7 @@ attempt to obtain raw LEZ, Zcash, or recovery-store handles from an active swap.
 The chain adapters are deterministic contract doubles; these commands require
 no RPC, node, Docker, faucet, or external resource. They do not prove real
 Logos Delivery/Chat, official-wire LEZ/Zebra lifecycle effects, or a
-process-level maker/taker E2E. The claim-capable activation and schema-v9 store
+process-level maker/taker E2E. The claim-capable activation and schema-v10 store
 atomically bind the direction-derived first claimant agreement to encrypted
 material, retain exact claim submissions only in protected envelopes, and
 separate owner and observer transition journals. The SDK first-lock cases
@@ -463,7 +463,7 @@ not increase. A taker removal after LEZ initialization holds the maker in
 validated replacement.
 The store command runs
 16 production-adapter cases over real temporary
-schema-v9 databases: exact replay/conflict, same-ID role isolation, retained
+schema-v10 databases: exact replay/conflict, same-ID role isolation, retained
 closed intent, taker and maker trigger-injected rollback,
 future/malformed/torn/orphan/holey-state rejection, poison-append rejection,
 exact and historical maker replay, stale-instance catch-up, and four-event
@@ -478,7 +478,7 @@ no duplicate, returns the durable revision, and leaves `next_action` at
 are not, and local Pending is depth-eligible. The public Pending/Safe typed
 awaiting-finality policy is unit-tested only because public agreement activation
 remains fail-closed pending reviewed deployment. Stable absence and unstable polls return no
-eligibility, write nothing, and preserve the revision. Its schema-v9 cases
+eligibility, write nothing, and preserve the revision. Its schema-v10 cases
 prove both directions stage at revision 1, commit an intervening canonical
 depth/finality update at revision 2 without another maker submission, then
 close the intent and maker transition at revision 3 before reopen at
@@ -571,7 +571,7 @@ Rust fixtures. It refuses a pre-existing manifest, database, WAL, or SHM before
 Compose starts. The maker runtime fixture runs first and:
 
 1. constructs and broadcasts canonical BIP-199 funding to the primary node;
-2. commits its immutable binding, event, and aggregate revision to schema-v9
+2. commits its immutable binding, event, and aggregate revision to schema-v10
    SQLite, closes the store, reopens it, replays the journal, and proves an
    unchanged fresh RPC requery creates no duplicate;
 3. mines a longer independent fork without the funding transaction, relays it

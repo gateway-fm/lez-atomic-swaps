@@ -1,10 +1,11 @@
 # ADR 0022: Isolate pinned LEZ official-wire code behind a sidecar
 
 Status: Accepted for the M2 actual-node corridor; implementation in progress --
-the official transaction planner and node-RPC core, authenticated main-workspace
-bridge client, and Zebra owner-claim port are GREEN. The authenticated bridge
-server, LEZ claim planner, counterparty-spend discovery, actor wiring, and
-composed proof remain RED -- 2026-07-13
+the official native and revealing-claim planners, node-RPC core, authenticated
+bridge server/client, signed-agreement first-lock adapter, and Zebra
+owner/counterparty claim/refund ports are GREEN.
+Escrow/claim observation, the executable runner, actor wiring, and the composed
+proof remain RED -- 2026-07-13
 
 ```mermaid
 flowchart LR
@@ -118,10 +119,15 @@ local server library now authenticates capability, run, and role before parsing;
 uses an ephemeral literal-loopback listener; restores exact randomized prepare
 results through the official decoder; and persists a submission-in-flight
 marker before the node call so a crash cannot cause blind resubmission. All six
-bridge methods are registered. Escrow observation and revealing-claim
-prepare/observe still return typed `Unavailable` until their official cores
-exist. The sidecar executable, actor composition, and composed-chain proof
-remain pending.
+bridge methods are registered. Revealing-claim preparation validates the exact
+claimant role, runtime, signer, signed terms, preimage, and request-bound funding
+transaction before nonce use; restart restores the exact randomized official
+bytes, and submission requires cache membership. The pinned guest ABI carries
+only swap ID and preimage, so the funding transaction identity is enforced by
+the request/cache boundary but cannot be embedded in the on-chain instruction
+without an upstream ABI change. Escrow and revealing-claim observation still
+return typed `Unavailable` until their official cores exist. The sidecar
+executable, actor composition, and composed-chain proof remain pending.
 
 ## Atomicity preservation
 
@@ -175,12 +181,15 @@ combines the narrowest available check-to-submit interval with conservative
 confirmation depth, ordered refunds, continued chain observation, and durable
 recovery rather than claiming impossible absolute atomicity.
 
-Refund ordering is proven in the core state machine and signed parameter math,
-but executable SDK refund ports, exact durable refund intents,
-observe-before-rebroadcast, and SQLite refund transitions are not implemented
-yet. Therefore peer-independent timeout recovery is an M2 target, not a current
-implementation claim. Neither path can guarantee liveness during indefinite
-node outage, censorship, or a reorganization deeper than the signed policy.
+Refund ordering, exact owner intents, observe-before-rebroadcast, and
+owner/observer transition contracts are implemented in the SDK. The Zebra
+refund port now revalidates canonical funding, maturity, exact signed policy,
+prepared bytes, and counterparty spends with conservative unknown outcomes.
+The schema-v10 SQLite refund journal is implemented with atomic owner/observer
+replay. The production LEZ refund port remains required before peer-independent
+timeout recovery is an M2 implementation claim. Neither path
+can guarantee liveness during indefinite node outage, censorship, or a
+reorganization deeper than the signed policy.
 The deterministic v0.1.2 lane also has only depth-qualified `Pending` blocks;
 that weaker upstream finality model is isolated to its explicitly named local
 compatibility environment and is not production-v0.2 evidence.
@@ -208,14 +217,18 @@ The implemented main-workspace bridge client exercises all six typed protocol
 methods, accepts only literal loopback HTTP, sends a sensitive capability plus
 exact run and role headers, validates the echoed run/role/runtime context, and
 permits each request ID once per client instance. It makes one attempt with no
-redirect, proxy, or automatic retry. Durable replay protection and idempotent
-responses across client or sidecar restart are intentionally server-owned and
-remain required. The implemented Zebra owner-claim port independently derives
-the signed terms, delegates only transaction signing, validates exact retained
-V5 bytes and durable identity, samples stable chain facts, observes before
-byte-identical rebroadcast, and treats every post-send identity or chain drift
-as an unknown outcome. Its counterparty path fails closed until a bounded
-canonical outpoint-spend discovery mechanism exists.
+redirect, proxy, or automatic retry. The first main-process adapter accepts a
+caller-owned durable request ID, verifies the signed compatibility environment,
+channel, genesis, escrow program, role, and signer, and converts one official
+native prepare response into the exact two-step SDK first-lock plan. Durable
+replay protection and idempotent responses across client or sidecar restart are
+server-owned. The implemented Zebra claim/refund ports independently derive
+signed terms, delegate only transaction signing, validate exact retained V5
+bytes and durable identity, sample stable chain facts, observe before
+byte-identical rebroadcast, and treat every post-send identity or chain drift as
+an unknown outcome. Bounded canonical block/mempool counterparty discovery
+returns `Unstable` for unresolved or exhausted searches rather than false
+absence.
 
 The initial failing composed test lives in the main workspace. It requires
 distinct loopback LEZ-sidecar and Zebra endpoints, distinct role funding,

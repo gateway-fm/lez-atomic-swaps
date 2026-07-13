@@ -18,7 +18,7 @@ current executable slices enforce:
 - claim completion after the first lock needs only on-chain evidence; and
 - pair-specific claim and recovery ordering, including LEZ-before-ZEC claim and
   refund in both ZEC trade directions;
-- independent fixed-role SDK actors with separate schema-v9 SQLite databases
+- independent fixed-role SDK actors with separate schema-v10 SQLite databases
   now complete both ZEC directions through a preimage-revealing LEZ claim and
   the counterparty's Zcash follow-up, then independently
   `resume_claim_capable` at `Completed`. The same externally supplied claim key
@@ -48,7 +48,7 @@ current executable slices enforce:
   rebroadcast after restart, and separately recoverable LEZ initialize/fund
   steps; confirmed evidence is applied only after an atomic store commit or an
   exact unknown-outcome probe, and is replayed on resume. A role-fixed
-  schema-v9 SQLite adapter now proves exact replay, role isolation, retained
+  schema-v10 SQLite adapter now proves exact replay, role isolation, retained
   closed-intent validation, atomic rollback, corruption rejection, and
   close/reopen recovery. Its ordered maker journal durably replays canonical
   Zcash evidence, atomic reorg replacement, same-inclusion depth changes, and
@@ -69,7 +69,7 @@ current executable slices enforce:
   revision-bound result. The maker effect now consumes that result internally,
   persists the direction-fixed opposite-chain plan before submission, and
   atomically projects confirmed Maker funding. Both directions reach
-  `BothLegsLocked` and survive schema-v9 SQLite close/reopen; `next_action`
+  `BothLegsLocked` and survive schema-v10 SQLite close/reopen; `next_action`
   still caches no permission.
   Reverse deterministic-local LEZ accepts a depth-sufficient exact head.
   The public-v0.2 policy seam additionally defines and unit-tests typed
@@ -89,32 +89,42 @@ current executable slices enforce:
   canonical inclusion, and depth. New secret-free schema-v2 snapshots are fully
   revalidated on SQLite replay with the separately protected preimage; legacy
   opaque v1 rows are read-compatible but cannot be created by live adapters.
-  The active SDK and schema-v9 SQLite journal now fold the agreement-selected
+  The active SDK and schema-v10 SQLite journal now fold the agreement-selected
   LEZ tracker: exact duplicates write no row and same-inclusion finality/depth
   updates survive close/reopen. Affirmative nonfinal removal and atomic same-tip
   replacement now use complete primitive records, reject stale old-head
   evidence, consume one revision, and replay through SQLite. The official-wire
-  LEZ RPC adapter, production refund effects, independent actor
-  processes, and the completed real-node corridor remain.
+  LEZ observation/refund conversion, independent actor processes, and the
+  completed real-node corridor remain. Schema-v10 now also persists exact
+  refund owner intents before broadcast and atomically commits owner/observer
+  transitions through `Refunded` in both directions, including rollback,
+  conflict, corruption, and close/reopen replay.
   The main workspace now also has a bounded authenticated LEZ sidecar client,
-  a typed Zebra owner/counterparty-claim adapter, and the public crash-safe
+  a signed-agreement native first-lock bridge adapter, typed Zebra
+  owner/counterparty claim and refund ports, and the public crash-safe
   timeout-refund SDK contract. The bridge client binds every request
   and response to one run, role, runtime, and one-use request ID; the Zebra
-  adapter derives the exact follow-up claim from the accepted agreement,
-  delegates only signing to a role-local capability, revalidates stable
-  canonical funding, observes before byte-identical rebroadcast, and treats
-  ambiguous submission outcomes conservatively. Counterparty discovery scans a
-  bounded canonical Zebra horizon and treats unresolved or older spends as
-  unstable, never absent. The refund driver fixes LEZ-before-Zcash order in both
-  directions, persists exact owner bytes before broadcast, distinguishes
-  unknown outcomes, and uses observation-only transitions for the other role.
+  adapter converts compatibility-selected signed native terms into exact
+  initialize/fund SDK bytes without retrying randomized preparation. The Zebra
+  adapter derives exact follow-up claims and refunds from the accepted
+  agreement, delegates only signing to a role-local capability, revalidates
+  stable canonical funding and signed transaction policy, observes before
+  byte-identical rebroadcast, and treats ambiguous submission outcomes
+  conservatively. Counterparty discovery scans a bounded canonical Zebra
+  horizon and treats unresolved or older spends as unstable, never absent. The
+  refund driver fixes LEZ-before-Zcash order in both directions, persists exact
+  owner bytes before broadcast, distinguishes unknown outcomes, and uses
+  observation-only transitions for the other role.
   These are isolated contract tests, not yet a composed maker/taker user flow.
   The sidecar server library now authenticates one run/role capability before
   parsing, restores exact official prepared bytes, and durably guards unknown
-  submissions before the node call. Its escrow observation and revealing-claim
-  methods still fail closed as unavailable. The sidecar executable/runner,
-  those official cores, production refund adapters, SQLite refund journal,
-  actor-process integration, and completed LEZ-plus-Zebra corridor remain.
+  submissions before the node call. Official revealing-claim preparation now
+  binds the signed role, runtime, signer, terms, preimage, and funding identity,
+  restores the exact randomized bytes after restart, and admits only that
+  cached transaction for submission. Escrow and revealing-claim observation
+  still fail closed as unavailable. The sidecar executable/runner, those
+  observation cores, actor-process integration, and completed LEZ-plus-Zebra
+  corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),
@@ -166,7 +176,7 @@ propagation, fee markets, organic timing/reorg behavior, provider quirks, or LEZ
 testnet 0.2 compatibility. A composed local corridor and self-hosted/public
 testnet corridor with real funded accounts remain mandatory M2 evidence.
 
-The in-memory and schema-v9 SQLite actor claim tests are a separate,
+The in-memory and schema-v10 SQLite actor lifecycle tests are a separate,
 deterministic lower lane. They start no node or service and use no RPC, Docker,
 faucet, public endpoint, or network access. Their only runtime resources are
 temporary local maker/taker databases and an explicitly supplied deterministic
