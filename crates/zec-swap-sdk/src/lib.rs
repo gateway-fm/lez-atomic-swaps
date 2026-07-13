@@ -43,9 +43,9 @@ pub use claim::{
     RevealingClaimTransitionV1,
 };
 pub use claim_material::{
-    ClaimMaterialContext, ClaimMaterialPurpose, MAX_PROTECTED_CLAIM_PAYLOAD_BYTES,
-    PROTECTED_CLAIM_SCHEMA_V1, ProtectedClaimEnvelope, ProtectedClaimError, ProtectedClaimKey,
-    ProtectedClaimPayloadEnvelope,
+    ClaimMaterialContext, ClaimMaterialPurpose, ClaimSubmissionContext,
+    MAX_PROTECTED_CLAIM_PAYLOAD_BYTES, PROTECTED_CLAIM_SCHEMA_V1, ProtectedClaimEnvelope,
+    ProtectedClaimError, ProtectedClaimKey, ProtectedClaimPayloadEnvelope,
 };
 pub use claim_record::{
     CLAIM_RECORD_SCHEMA_V1, ClaimIntentRecordV1, ClaimRecordError, FollowupClaimTransitionRecordV1,

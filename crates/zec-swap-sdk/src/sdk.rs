@@ -1461,7 +1461,12 @@ where
     ) -> Result<(), ZecSdkError> {
         let protected = self
             .store
-            .protect_claim_submission(self.agreement(), self.local_participant(), prepared)
+            .protect_claim_submission(
+                self.agreement(),
+                self.local_participant(),
+                self.revision,
+                prepared,
+            )
             .await
             .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
         let intent = ClaimIntentV1::from_active(

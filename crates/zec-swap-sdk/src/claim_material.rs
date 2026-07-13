@@ -19,7 +19,7 @@ use serde::{
 use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-use crate::ClaimPreimage;
+use crate::{ClaimPreimage, ClaimStepV1};
 
 /// Current protected-claim envelope schema.
 pub const PROTECTED_CLAIM_SCHEMA_V1: u16 = 1;
@@ -118,6 +118,47 @@ impl<'a> ClaimMaterialContext<'a> {
         encoded.push(participant_tag(self.local_role));
         encoded.push(self.purpose.tag());
         append_length_prefixed(&mut encoded, key_id.as_bytes());
+        encoded
+    }
+}
+
+/// Immutable AAD for one encrypted exact claim submission.
+///
+/// In addition to the complete agreement/role context, this binds ciphertext to the exact
+/// agreement-derived claim step, durable staging revision, and prepared transaction identity.
+#[derive(Clone, Copy, Debug)]
+pub struct ClaimSubmissionContext<'a> {
+    base: ClaimMaterialContext<'a>,
+    step: ClaimStepV1,
+    staged_revision: u64,
+    expected_submission_id: &'a [u8; 32],
+}
+
+impl<'a> ClaimSubmissionContext<'a> {
+    /// Creates the complete authenticated context for protected exact claim bytes.
+    #[must_use]
+    pub const fn new(
+        base: ClaimMaterialContext<'a>,
+        step: ClaimStepV1,
+        staged_revision: u64,
+        expected_submission_id: &'a [u8; 32],
+    ) -> Self {
+        Self {
+            base,
+            step,
+            staged_revision,
+            expected_submission_id,
+        }
+    }
+
+    fn encode(self, key_id: &str) -> Vec<u8> {
+        let mut encoded = self.base.encode(key_id);
+        encoded.push(match self.step {
+            ClaimStepV1::RevealingLez => 0,
+            ClaimStepV1::FollowupZcash => 1,
+        });
+        encoded.extend_from_slice(&self.staged_revision.to_be_bytes());
+        encoded.extend_from_slice(self.expected_submission_id);
         encoded
     }
 }
@@ -571,7 +612,7 @@ impl ProtectedClaimPayloadEnvelope {
         payload: &[u8],
         key: &ProtectedClaimKey,
         nonce: [u8; 24],
-        context: ClaimMaterialContext<'_>,
+        context: ClaimSubmissionContext<'_>,
     ) -> Result<Self, ProtectedClaimError> {
         validate_payload_plaintext_length(payload.len())?;
         let aad = context.encode(key.key_id());
@@ -634,7 +675,7 @@ impl ProtectedClaimPayloadEnvelope {
     pub fn decrypt(
         &self,
         key: &ProtectedClaimKey,
-        context: ClaimMaterialContext<'_>,
+        context: ClaimSubmissionContext<'_>,
     ) -> Result<Zeroizing<Vec<u8>>, ProtectedClaimError> {
         if self.key_id.as_ref() != key.key_id() {
             return Err(ProtectedClaimError::KeyIdMismatch);
@@ -821,6 +862,9 @@ mod tests {
     const SECRET: [u8; 32] = [0x42; 32];
     const COMMITMENT: [u8; 32] = [0x17; 32];
     const NONCE: [u8; 24] = [0x23; 24];
+    const PAYLOAD_SUBMISSION_ID: [u8; 32] = [0x81; 32];
+    const OTHER_COMMITMENT: [u8; 32] = [0x18; 32];
+    const OTHER_PAYLOAD_SUBMISSION_ID: [u8; 32] = [0x82; 32];
 
     fn swap_id() -> SwapId {
         SwapId::new("protected-claim-test").expect("valid test swap ID")
@@ -1023,15 +1067,27 @@ mod tests {
     fn payload_context(
         swap_id: &SwapId,
         purpose: ClaimMaterialPurpose,
-    ) -> ClaimMaterialContext<'_> {
-        ClaimMaterialContext::new(
-            PROTECTED_CLAIM_SCHEMA_V1,
-            swap_id,
-            Pair::Zcash,
-            SwapDirection::TakerSellsForeign,
-            &COMMITMENT,
-            Participant::Taker,
-            purpose,
+    ) -> ClaimSubmissionContext<'_> {
+        let step = match purpose {
+            ClaimMaterialPurpose::LezClaimSubmission => ClaimStepV1::RevealingLez,
+            ClaimMaterialPurpose::ZcashClaimSubmission => ClaimStepV1::FollowupZcash,
+            ClaimMaterialPurpose::LocalFirstClaim | ClaimMaterialPurpose::ObservedFollowUpClaim => {
+                panic!("preimage purpose is not a claim-submission payload")
+            }
+        };
+        ClaimSubmissionContext::new(
+            ClaimMaterialContext::new(
+                PROTECTED_CLAIM_SCHEMA_V1,
+                swap_id,
+                Pair::Zcash,
+                SwapDirection::TakerSellsForeign,
+                &COMMITMENT,
+                Participant::Taker,
+                purpose,
+            ),
+            step,
+            7,
+            &PAYLOAD_SUBMISSION_ID,
         )
     }
 
@@ -1121,38 +1177,74 @@ mod tests {
     }
 
     #[test]
-    fn protected_claim_payload_aad_and_purpose_tampering_fails_closed() {
+    fn every_payload_submission_aad_field_fails_authentication_when_changed() {
         let swap_id = swap_id();
+        let other_swap_id = SwapId::new("other-protected-claim").expect("valid swap ID");
         let key = key(0x53);
-        let envelope = ProtectedClaimPayloadEnvelope::encrypt(
-            &[1, 2, 3],
-            &key,
-            NONCE,
-            payload_context(&swap_id, ClaimMaterialPurpose::LezClaimSubmission),
-        )
-        .expect("payload encryption succeeds");
+        let canonical = payload_context(&swap_id, ClaimMaterialPurpose::LezClaimSubmission);
+        let envelope = ProtectedClaimPayloadEnvelope::encrypt(&[1, 2, 3], &key, NONCE, canonical)
+            .expect("payload encryption succeeds");
+        let assert_rejected = |context| {
+            assert_eq!(
+                envelope.decrypt(&key, context),
+                Err(ProtectedClaimError::Authentication)
+            );
+        };
 
-        assert_eq!(
-            envelope.decrypt(
-                &key,
-                payload_context(&swap_id, ClaimMaterialPurpose::ZcashClaimSubmission),
-            ),
-            Err(ProtectedClaimError::Authentication)
-        );
-
-        let changed_role = ClaimMaterialContext::new(
-            PROTECTED_CLAIM_SCHEMA_V1,
-            &swap_id,
-            Pair::Zcash,
-            SwapDirection::TakerSellsForeign,
-            &COMMITMENT,
-            Participant::Maker,
-            ClaimMaterialPurpose::LezClaimSubmission,
-        );
-        assert_eq!(
-            envelope.decrypt(&key, changed_role),
-            Err(ProtectedClaimError::Authentication)
-        );
+        assert_rejected(ClaimSubmissionContext {
+            base: ClaimMaterialContext {
+                schema: PROTECTED_CLAIM_SCHEMA_V1 + 1,
+                ..canonical.base
+            },
+            ..canonical
+        });
+        assert_rejected(ClaimSubmissionContext {
+            base: ClaimMaterialContext {
+                swap_id: &other_swap_id,
+                ..canonical.base
+            },
+            ..canonical
+        });
+        assert_rejected(ClaimSubmissionContext {
+            base: ClaimMaterialContext {
+                pair: Pair::Bitcoin,
+                ..canonical.base
+            },
+            ..canonical
+        });
+        assert_rejected(ClaimSubmissionContext {
+            base: ClaimMaterialContext {
+                direction: SwapDirection::TakerSellsLez,
+                ..canonical.base
+            },
+            ..canonical
+        });
+        assert_rejected(ClaimSubmissionContext {
+            base: ClaimMaterialContext {
+                agreement_commitment: &OTHER_COMMITMENT,
+                ..canonical.base
+            },
+            ..canonical
+        });
+        assert_rejected(ClaimSubmissionContext {
+            base: ClaimMaterialContext {
+                local_role: Participant::Maker,
+                ..canonical.base
+            },
+            ..canonical
+        });
+        assert_rejected(ClaimSubmissionContext {
+            step: ClaimStepV1::FollowupZcash,
+            ..canonical
+        });
+        assert_rejected(ClaimSubmissionContext {
+            staged_revision: canonical.staged_revision + 1,
+            ..canonical
+        });
+        assert_rejected(ClaimSubmissionContext {
+            expected_submission_id: &OTHER_PAYLOAD_SUBMISSION_ID,
+            ..canonical
+        });
     }
 
     #[test]

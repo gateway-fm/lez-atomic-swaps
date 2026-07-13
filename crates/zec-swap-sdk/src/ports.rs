@@ -379,6 +379,7 @@ pub trait ClaimRecoveryStore: RecoveryStore {
         &self,
         agreement: &ZecAgreementV1,
         local_participant: Participant,
+        staged_revision: u64,
         prepared: &PreparedClaimSubmissionV1,
     ) -> Result<ProtectedClaimPayloadEnvelope, Self::Error>;
 

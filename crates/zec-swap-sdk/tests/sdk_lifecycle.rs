@@ -12,7 +12,7 @@ use lez_zec_swap_sdk::{
     CanonicalLezEscrowObservationV1, CanonicalLezEscrowRemovalV1, CanonicalZcashOutputObservation,
     CanonicalZcashOutputRemoval, ClaimError, ClaimIntentRecordV1, ClaimIntentV1,
     ClaimMaterialContext, ClaimMaterialPurpose, ClaimPreimage, ClaimRecoveryStore, ClaimStepV1,
-    CreateAgreementOutcome, CreateFirstLockOutcome, ExpectedBip199Output,
+    ClaimSubmissionContext, CreateAgreementOutcome, CreateFirstLockOutcome, ExpectedBip199Output,
     FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentRecordV1,
     FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1, FirstLockProjectionCommit,
     FirstLockRecordError, FirstLockStepV1, FirstLockTransitionRecordV1, FirstLockTransitionV1,
@@ -424,22 +424,29 @@ fn claim_material_context_for(
     )
 }
 
-fn claim_submission_context(
-    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+fn claim_submission_context<'a>(
+    agreement: &'a lez_zec_swap_sdk::ZecAgreementV1,
     local: Participant,
     step: ClaimStepV1,
-) -> ClaimMaterialContext<'_> {
-    ClaimMaterialContext::new(
-        PROTECTED_CLAIM_SCHEMA_V1,
-        agreement.coordinator().id(),
-        Pair::Zcash,
-        agreement.direction(),
-        agreement.agreement_commitment(),
-        local,
-        match step {
-            ClaimStepV1::RevealingLez => ClaimMaterialPurpose::LezClaimSubmission,
-            ClaimStepV1::FollowupZcash => ClaimMaterialPurpose::ZcashClaimSubmission,
-        },
+    staged_revision: u64,
+    expected_submission_id: &'a [u8; 32],
+) -> ClaimSubmissionContext<'a> {
+    ClaimSubmissionContext::new(
+        ClaimMaterialContext::new(
+            PROTECTED_CLAIM_SCHEMA_V1,
+            agreement.coordinator().id(),
+            Pair::Zcash,
+            agreement.direction(),
+            agreement.agreement_commitment(),
+            local,
+            match step {
+                ClaimStepV1::RevealingLez => ClaimMaterialPurpose::LezClaimSubmission,
+                ClaimStepV1::FollowupZcash => ClaimMaterialPurpose::ZcashClaimSubmission,
+            },
+        ),
+        step,
+        staged_revision,
+        expected_submission_id,
     )
 }
 
@@ -858,13 +865,20 @@ impl ClaimRecoveryStore for MemoryStore {
         &self,
         agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         local_participant: Participant,
+        staged_revision: u64,
         prepared: &PreparedClaimSubmissionV1,
     ) -> Result<ProtectedClaimPayloadEnvelope, Self::Error> {
         ProtectedClaimPayloadEnvelope::encrypt(
             prepared.exact_submission(),
             &memory_claim_key(),
             self.next_claim_nonce(prepared.expected_submission_id()),
-            claim_submission_context(agreement, local_participant, prepared.step()),
+            claim_submission_context(
+                agreement,
+                local_participant,
+                prepared.step(),
+                staged_revision,
+                prepared.expected_submission_id(),
+            ),
         )
         .map_err(|error| TestPortError(error.to_string()))
     }
@@ -883,7 +897,13 @@ impl ClaimRecoveryStore for MemoryStore {
         let exact = protected
             .decrypt(
                 &memory_claim_key(),
-                claim_submission_context(agreement, intent.local_participant(), intent.step()),
+                claim_submission_context(
+                    agreement,
+                    intent.local_participant(),
+                    intent.step(),
+                    intent.staged_revision(),
+                    intent.expected_submission_id(),
+                ),
             )
             .map_err(|error| TestPortError(error.to_string()))?;
         PreparedClaimSubmissionV1::new(
