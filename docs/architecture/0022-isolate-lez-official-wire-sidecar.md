@@ -114,9 +114,14 @@ types. It brackets scans with validated tips, recomputes block hashes and links,
 checks genesis when covered, and never treats a bounded miss as global absence.
 Only the proven stateless invalid-params error is definitive; returned-hash,
 server, parse, timeout, and transport ambiguity remain unknown outcomes. The
-local server, capability middleware, revealing-claim planner, counterparty
-discovery, and actor composition remain pending, so this is not yet a running
-sidecar or composed-chain proof.
+local server library now authenticates capability, run, and role before parsing;
+uses an ephemeral literal-loopback listener; restores exact randomized prepare
+results through the official decoder; and persists a submission-in-flight
+marker before the node call so a crash cannot cause blind resubmission. All six
+bridge methods are registered. Escrow observation and revealing-claim
+prepare/observe still return typed `Unavailable` until their official cores
+exist. The sidecar executable, actor composition, and composed-chain proof
+remain pending.
 
 ## Atomicity preservation
 

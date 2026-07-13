@@ -11,21 +11,29 @@ rust-version = "1.96"
 [dependencies]
 async-trait = "=0.1.89"
 common = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2" }
+hex = "=0.4.3"
+jsonrpsee = { version = "=0.26.0", features = ["server"] }
 lez-bridge-protocol = { version = "=0.1.0", path = "../../crates/lez-bridge-protocol" }
 lez-zec-escrow-compat = { version = "=0.0.0", path = "../spel-zec-escrow" }
 nssa = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2" }
 sequencer_service_rpc = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2", default-features = false, features = ["client"] }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+sha2 = "=0.10.9"
 spel-framework-core = { version = "=0.5.0", git = "https://github.com/logos-co/spel.git", rev = "73fc462eb8f0a4d00f1a846437c627ec2e523f83" }
+tempfile = "=3.27.0"
 thiserror = "=2.0.18"
 tokio = { version = "=1.52.3", features = ["sync"] }
+tower = "=0.5.3"
+tower-http = { version = "=0.7.0", features = ["auth"] }
 url = "=2.5.8"
+zeroize = "=1.9.0"
 
 [dev-dependencies]
-jsonrpsee = { version = "=0.26.0", features = ["server"] }
+lez-bridge-client = { version = "=0.1.0", path = "../../crates/lez-bridge-client" }
 sequencer_service_protocol = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2" }
 sequencer_service_rpc = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2", default-features = false, features = ["server"] }
-sha2 = "=0.10.9"
-tokio = { version = "=1.52.3", features = ["macros", "rt-multi-thread", "sync"] }
+tokio = { version = "=1.52.3", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [lints.rust]
 missing_debug_implementations = "warn"

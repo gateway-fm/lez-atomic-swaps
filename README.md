@@ -109,7 +109,11 @@ current executable slices enforce:
   directions, persists exact owner bytes before broadcast, distinguishes
   unknown outcomes, and uses observation-only transitions for the other role.
   These are isolated contract tests, not yet a composed maker/taker user flow.
-  The sidecar server, production refund adapters, SQLite refund journal,
+  The sidecar server library now authenticates one run/role capability before
+  parsing, restores exact official prepared bytes, and durably guards unknown
+  submissions before the node call. Its escrow observation and revealing-claim
+  methods still fail closed as unavailable. The sidecar executable/runner,
+  those official cores, production refund adapters, SQLite refund journal,
   actor-process integration, and completed LEZ-plus-Zebra corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the

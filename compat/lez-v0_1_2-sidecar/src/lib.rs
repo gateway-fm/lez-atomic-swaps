@@ -5,6 +5,13 @@
 
 #![forbid(unsafe_code)]
 
+mod server;
+
+pub use server::{
+    BridgeServerCapability, BridgeServerCapabilityError, BridgeServerConfig, BridgeServerError,
+    BridgeServerHandle, start_bridge_server,
+};
+
 use std::{fmt, net::IpAddr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
@@ -526,6 +533,74 @@ impl NativeEscrowPlanner {
         Ok(result)
     }
 
+    /// Restores one durably cached native pair without obtaining a new nonce
+    /// or reconstructing either randomized signature.
+    ///
+    /// Both exact transactions are decoded through the official codec and
+    /// their signer, program, ordered accounts, instructions, and consecutive
+    /// nonces are checked against the original strict request before the pair
+    /// becomes eligible for submission.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for any request/result mismatch, invalid official
+    /// transaction, non-consecutive nonce pair, or distinct active preparation.
+    pub async fn restore_prepared(
+        &self,
+        request: PrepareNativeEscrowRequest,
+        result: PrepareNativeEscrowResult,
+    ) -> Result<(), SidecarError> {
+        self.validate_request(&request)?;
+        if result.context != request.context
+            || result.initialization == result.funding
+            || result.initialization.transaction_id == result.funding.transaction_id
+        {
+            return Err(SidecarError::ProtocolEncoding);
+        }
+        let initialization = decode_prepared_for_role(
+            &result.initialization,
+            self.role,
+            self.role,
+            self.signer_account_id,
+        )?;
+        let funding = decode_prepared_for_role(
+            &result.funding,
+            self.role,
+            self.role,
+            self.signer_account_id,
+        )?;
+        let [initialization_nonce] = initialization.message.nonces.as_slice() else {
+            return Err(SidecarError::InvalidTransactionBytes);
+        };
+        let [funding_nonce] = funding.message.nonces.as_slice() else {
+            return Err(SidecarError::InvalidTransactionBytes);
+        };
+        let initialization_nonce = u128::from(*initialization_nonce);
+        let expected_funding_nonce = initialization_nonce
+            .checked_add(1)
+            .ok_or(SidecarError::NonceOverflow)?;
+        if u128::from(*funding_nonce) != expected_funding_nonce {
+            return Err(SidecarError::InvalidTransactionBytes);
+        }
+        let (expected_initialization, expected_funding) =
+            self.plan_messages(&request, initialization_nonce, expected_funding_nonce)?;
+        if initialization.message != expected_initialization || funding.message != expected_funding
+        {
+            return Err(SidecarError::InvalidTransactionBytes);
+        }
+
+        let mut active = self.active.lock().await;
+        if let Some(active) = active.as_ref() {
+            return if active.request == request && active.result == result {
+                Ok(())
+            } else {
+                Err(SidecarError::ActivePrepare)
+            };
+        }
+        *active = Some(ActivePrepare { request, result });
+        Ok(())
+    }
+
     /// Wraps one exact cached transaction for the official submission RPC.
     ///
     /// Membership is checked before decoding, so this capability cannot act as
@@ -599,6 +674,24 @@ impl NativeEscrowPlanner {
         initialization_nonce: u128,
         funding_nonce: u128,
     ) -> Result<PrepareNativeEscrowResult, SidecarError> {
+        let (initialization_message, funding_message) =
+            self.plan_messages(request, initialization_nonce, funding_nonce)?;
+        let initialization = self.prepare_message(initialization_message)?;
+        let funding = self.prepare_message(funding_message)?;
+
+        Ok(PrepareNativeEscrowResult::new(
+            request.context.clone(),
+            initialization,
+            funding,
+        ))
+    }
+
+    fn plan_messages(
+        &self,
+        request: &PrepareNativeEscrowRequest,
+        initialization_nonce: u128,
+        funding_nonce: u128,
+    ) -> Result<(Message, Message), SidecarError> {
         let terms = &request.terms;
         let swap_id = *terms.swap_id().as_bytes();
         let metadata = spel_framework_core::pda::compute_pda(&self.escrow_program_id, &[&swap_id]);
@@ -612,9 +705,10 @@ impl NativeEscrowPlanner {
         let authenticated_transfer_program =
             program_id_from_hex(terms.authenticated_transfer_program_id());
 
-        let initialization = self.prepare_transaction(
+        let initialization = Message::try_new(
+            self.escrow_program_id,
             vec![metadata, custody, depositor, claimant],
-            initialization_nonce,
+            vec![initialization_nonce.into()],
             EscrowInstruction::InitializeNative {
                 swap_id,
                 terms_hash: *terms.terms_hash().as_bytes(),
@@ -623,33 +717,19 @@ impl NativeEscrowPlanner {
                 refund_at: terms.refund_at_ms(),
                 authenticated_transfer_program,
             },
-        )?;
-        let funding = self.prepare_transaction(
-            vec![metadata, custody, depositor],
-            funding_nonce,
-            EscrowInstruction::FundNative { swap_id },
-        )?;
-
-        Ok(PrepareNativeEscrowResult::new(
-            request.context.clone(),
-            initialization,
-            funding,
-        ))
-    }
-
-    fn prepare_transaction(
-        &self,
-        account_ids: Vec<AccountId>,
-        nonce: u128,
-        instruction: EscrowInstruction,
-    ) -> Result<PreparedTransaction, SidecarError> {
-        let message = Message::try_new(
-            self.escrow_program_id,
-            account_ids,
-            vec![nonce.into()],
-            instruction,
         )
         .map_err(|_| SidecarError::InstructionEncoding)?;
+        let funding = Message::try_new(
+            self.escrow_program_id,
+            vec![metadata, custody, depositor],
+            vec![funding_nonce.into()],
+            EscrowInstruction::FundNative { swap_id },
+        )
+        .map_err(|_| SidecarError::InstructionEncoding)?;
+        Ok((initialization, funding))
+    }
+
+    fn prepare_message(&self, message: Message) -> Result<PreparedTransaction, SidecarError> {
         let witnesses = WitnessSet::for_message(&message, &[&self.signer_key]);
         prepared_from_transaction(&PublicTransaction::new(message, witnesses))
     }

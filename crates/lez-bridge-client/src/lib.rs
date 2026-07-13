@@ -23,33 +23,16 @@ use lez_bridge_protocol::{
     PreparedTransaction, ProtocolErrorReply, RequestId, RunId, RuntimeDescriptor,
     SubmitTransactionRequest, SubmitTransactionResult,
 };
+pub use lez_bridge_protocol::{
+    MAX_RPC_BODY_BYTES, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW,
+    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_REVEALING_CLAIM,
+    METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+};
 use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use url::{Host, Url};
 use zeroize::Zeroize;
 
-/// Stable JSON-RPC method for runtime and signer identity discovery.
-pub const METHOD_DESCRIBE_RUNTIME: &str = "lez_bridge.v1.describe_runtime";
-/// Stable JSON-RPC method for preparing native initialization and funding.
-pub const METHOD_PREPARE_NATIVE_ESCROW: &str = "lez_bridge.v1.prepare_native_escrow";
-/// Stable JSON-RPC method for observing native initialization and funding.
-pub const METHOD_OBSERVE_ESCROW: &str = "lez_bridge.v1.observe_escrow";
-/// Stable JSON-RPC method for preparing a preimage-revealing claim.
-pub const METHOD_PREPARE_REVEALING_CLAIM: &str = "lez_bridge.v1.prepare_revealing_claim";
-/// Stable JSON-RPC method for observing a preimage-revealing claim.
-pub const METHOD_OBSERVE_REVEALING_CLAIM: &str = "lez_bridge.v1.observe_revealing_claim";
-/// Stable JSON-RPC method for submitting exact persisted transaction bytes.
-pub const METHOD_SUBMIT_TRANSACTION: &str = "lez_bridge.v1.submit_transaction";
-
-/// HTTP header that binds the transport to one composed run.
-pub const RUN_ID_HEADER: &str = "x-lez-bridge-run-id";
-/// HTTP header that binds the transport to one actor's dedicated sidecar.
-pub const SIDECAR_ROLE_HEADER: &str = "x-lez-bridge-sidecar-role";
-
-/// Maximum JSON request or response body accepted by the sidecar boundary.
-///
-/// This covers two base64-encoded 2 MB transactions plus bounded protocol metadata.
-pub const MAX_RPC_BODY_BYTES: u32 = 5_500_000;
 /// Longest request timeout accepted in client configuration.
 pub const MAX_REQUEST_TIMEOUT: Duration = Duration::from_mins(1);
 const MAX_EXACT_TRANSACTION_BYTES: usize = 2_000_000;
