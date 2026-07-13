@@ -1,4 +1,4 @@
-//! Bounded wire types for the LEZ v0.1.2 compatibility sidecar.
+//! Bounded wire types for pinned LEZ runtime compatibility sidecars.
 //!
 //! The protocol deliberately carries primitive facts. The main process remains
 //! responsible for deciding whether those facts prove a swap transition.

@@ -306,7 +306,7 @@ pub enum PrepareNativeFirstLockError<E: std::error::Error + 'static> {
     /// Only the agreement-bound LEZ depositor can prepare this actor's first lock.
     #[error("local participant is not the signed LEZ depositor")]
     WrongDepositor,
-    /// This adapter is intentionally pinned to the official v0.1.2 compatibility runtime.
+    /// This adapter accepts only supported pinned native compatibility runtimes.
     #[error("signed LEZ environment is not compatible with this bridge")]
     IncompatibleEnvironment,
     /// The signed channel or genesis identity differs from the selected runtime.
@@ -350,7 +350,7 @@ pub enum ObserveNativeEscrowError<E: std::error::Error + 'static> {
     /// Counterparty discovery may only be requested by the signed claimant.
     #[error("LEZ discovery requires the local signed claimant")]
     DiscoveryRequiresClaimant,
-    /// This adapter is intentionally pinned to the official v0.1.2 compatibility runtime.
+    /// This adapter accepts only supported pinned native compatibility runtimes.
     #[error("signed LEZ environment is not compatible with this bridge")]
     IncompatibleEnvironment,
     /// The signed channel or genesis identity differs from the selected runtime.
@@ -412,7 +412,7 @@ pub enum NativeRefundAdapterError<E: std::error::Error + 'static> {
     /// Terms discovery is reserved for the non-owner observing the refund.
     #[error("LEZ refund discovery requires the signed claimant")]
     DiscoveryRequiresClaimant,
-    /// This adapter is pinned to official v0.1.2 native compatibility.
+    /// This adapter accepts only supported pinned native compatibility runtimes.
     #[error("signed LEZ environment is not compatible with this refund bridge")]
     IncompatibleEnvironment,
     /// Signed channel or genesis differs from the selected runtime.
@@ -474,7 +474,7 @@ pub enum NativeRevealingClaimAdapterError<E: std::error::Error + 'static> {
     /// Counterparty discovery is reserved for the signed LEZ depositor.
     #[error("LEZ revealing-claim discovery requires the signed depositor")]
     DiscoveryRequiresDepositor,
-    /// This adapter is pinned to official v0.1.2 native compatibility.
+    /// This adapter accepts only supported pinned native compatibility runtimes.
     #[error("signed LEZ environment is not compatible with this claim bridge")]
     IncompatibleEnvironment,
     /// Signed channel or genesis differs from the selected runtime.
@@ -1505,9 +1505,9 @@ pub fn validate_runtime_binding(
     local_participant: Participant,
 ) -> Result<(), LezRuntimeBindingError> {
     let signed_chain = agreement.lez_terms().chain();
-    if signed_chain.environment() != LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility
-        || runtime.compatibility != RuntimeCompatibility::NssaV0_1_2
-    {
+    let compatible_generation =
+        runtime_generation_is_compatible(signed_chain.environment(), runtime.compatibility);
+    if !compatible_generation {
         return Err(LezRuntimeBindingError::IncompatibleEnvironment);
     }
     if runtime.channel_id != Hex32::from_bytes(*signed_chain.channel_id())
@@ -1881,7 +1881,7 @@ fn canonical_claim_snapshot(
             transaction.position.height,
             *transaction.position.block_hash.as_bytes(),
             *transaction.position.block_hash.as_bytes(),
-            // v0.1.2 exposes stable canonical placement but no Bedrock status.
+            // The compatibility bridge exposes stable placement but no settlement status.
             // Pending is the conservative projection accepted only by local compatibility.
             LezInclusionStatusV1::Pending,
         ),
@@ -2234,8 +2234,8 @@ fn canonical_snapshot(
             transaction.position.height,
             *transaction.position.block_hash.as_bytes(),
             *transaction.position.block_hash.as_bytes(),
-            // v0.1.2 has no Bedrock-finality primitive. Pending is the only
-            // conservative projection; deterministic compatibility policy uses depth.
+            // The compatibility bridge has no settlement-finality primitive. Pending is
+            // the conservative projection; deterministic compatibility policy uses depth.
             LezInclusionStatusV1::Pending,
         ),
         words_from_bytes(metadata.owner_program_id.as_bytes()),
@@ -2291,4 +2291,66 @@ fn words_from_bytes(bytes: &[u8; 32]) -> [u32; 8] {
         *word = u32::from_le_bytes(chunk.try_into().expect("four-byte chunk"));
     }
     words
+}
+
+const fn runtime_generation_is_compatible(
+    environment: LezEnvironmentV1,
+    compatibility: RuntimeCompatibility,
+) -> bool {
+    matches!(
+        (environment, compatibility),
+        (
+            LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility,
+            RuntimeCompatibility::NssaV0_1_2,
+        ) | (
+            LezEnvironmentV1::DeterministicLocalV0_2,
+            RuntimeCompatibility::LeeV0_2_0,
+        )
+    )
+}
+
+#[cfg(test)]
+mod runtime_generation_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_exact_local_generations_and_rejects_cross_pairs_and_public() {
+        for (environment, compatibility, expected) in [
+            (
+                LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility,
+                RuntimeCompatibility::NssaV0_1_2,
+                true,
+            ),
+            (
+                LezEnvironmentV1::DeterministicLocalV0_2,
+                RuntimeCompatibility::LeeV0_2_0,
+                true,
+            ),
+            (
+                LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility,
+                RuntimeCompatibility::LeeV0_2_0,
+                false,
+            ),
+            (
+                LezEnvironmentV1::DeterministicLocalV0_2,
+                RuntimeCompatibility::NssaV0_1_2,
+                false,
+            ),
+            (
+                LezEnvironmentV1::PublicTestnetV0_2,
+                RuntimeCompatibility::NssaV0_1_2,
+                false,
+            ),
+            (
+                LezEnvironmentV1::PublicTestnetV0_2,
+                RuntimeCompatibility::LeeV0_2_0,
+                false,
+            ),
+        ] {
+            assert_eq!(
+                runtime_generation_is_compatible(environment, compatibility),
+                expected
+            );
+        }
+    }
 }

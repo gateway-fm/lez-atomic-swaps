@@ -3724,62 +3724,85 @@ enum RuntimeMutation {
 }
 
 #[test]
-fn public_runtime_binding_validator_rejects_redacted_mismatches_for_both_roles() {
-    let agreement = agreement();
-
+fn runtime_binding_validator_accepts_only_exact_local_generations_and_redacts_both_roles() {
     for participant in [Participant::Maker, Participant::Taker] {
-        let matching = runtime_for_participant(&agreement, participant);
-        validate_runtime_binding(&agreement, &matching, participant)
-            .expect("the signed agreement matches the pinned runtime compatibility");
-
-        let incompatible_agreement = agreement_for(LezEnvironmentV1::DeterministicLocalV0_2, false);
-        let incompatible_runtime = runtime_for_participant(&incompatible_agreement, participant);
-        assert_runtime_binding_error(
-            &incompatible_agreement,
-            &incompatible_runtime,
-            participant,
-            LezRuntimeBindingError::IncompatibleEnvironment,
-            "signed LEZ environment is not compatible with this bridge",
-        );
-
-        for (mutation, expected, display) in [
+        for (environment, compatibility) in [
             (
-                RuntimeMutation::Channel,
-                LezRuntimeBindingError::ChainIdentityMismatch,
-                "signed LEZ chain identity differs from the selected runtime",
+                LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility,
+                RuntimeCompatibility::NssaV0_1_2,
             ),
             (
-                RuntimeMutation::Genesis,
-                LezRuntimeBindingError::ChainIdentityMismatch,
-                "signed LEZ chain identity differs from the selected runtime",
-            ),
-            (
-                RuntimeMutation::Program,
-                LezRuntimeBindingError::EscrowProgramMismatch,
-                "signed LEZ escrow program differs from the selected runtime",
-            ),
-            (
-                RuntimeMutation::Signer,
-                LezRuntimeBindingError::SignerAccountMismatch,
-                "LEZ sidecar signer differs from the signed local account",
+                LezEnvironmentV1::DeterministicLocalV0_2,
+                RuntimeCompatibility::LeeV0_2_0,
             ),
         ] {
-            let mut runtime = matching.clone();
-            match mutation {
-                RuntimeMutation::Channel => {
-                    runtime.channel_id = Hex32::from_bytes([0xa1; 32]);
+            let agreement = agreement_for(environment, false);
+            let mut matching = runtime_for_participant(&agreement, participant);
+            matching.compatibility = compatibility;
+            validate_runtime_binding(&agreement, &matching, participant)
+                .expect("the signed agreement matches the exact pinned runtime generation");
+
+            for (mutation, expected, display) in [
+                (
+                    RuntimeMutation::Channel,
+                    LezRuntimeBindingError::ChainIdentityMismatch,
+                    "signed LEZ chain identity differs from the selected runtime",
+                ),
+                (
+                    RuntimeMutation::Genesis,
+                    LezRuntimeBindingError::ChainIdentityMismatch,
+                    "signed LEZ chain identity differs from the selected runtime",
+                ),
+                (
+                    RuntimeMutation::Program,
+                    LezRuntimeBindingError::EscrowProgramMismatch,
+                    "signed LEZ escrow program differs from the selected runtime",
+                ),
+                (
+                    RuntimeMutation::Signer,
+                    LezRuntimeBindingError::SignerAccountMismatch,
+                    "LEZ sidecar signer differs from the signed local account",
+                ),
+            ] {
+                let mut runtime = matching.clone();
+                match mutation {
+                    RuntimeMutation::Channel => {
+                        runtime.channel_id = Hex32::from_bytes([0xa1; 32]);
+                    }
+                    RuntimeMutation::Genesis => {
+                        runtime.genesis_block_hash = Hex32::from_bytes([0xa2; 32]);
+                    }
+                    RuntimeMutation::Program => {
+                        runtime.escrow_program_id = Hex32::from_bytes([0xa3; 32]);
+                    }
+                    RuntimeMutation::Signer => {
+                        runtime.signer_account_id = Hex32::from_bytes([0xa4; 32]);
+                    }
                 }
-                RuntimeMutation::Genesis => {
-                    runtime.genesis_block_hash = Hex32::from_bytes([0xa2; 32]);
-                }
-                RuntimeMutation::Program => {
-                    runtime.escrow_program_id = Hex32::from_bytes([0xa3; 32]);
-                }
-                RuntimeMutation::Signer => {
-                    runtime.signer_account_id = Hex32::from_bytes([0xa4; 32]);
-                }
+                assert_runtime_binding_error(&agreement, &runtime, participant, expected, display);
             }
-            assert_runtime_binding_error(&agreement, &runtime, participant, expected, display);
+        }
+
+        for (environment, compatibility) in [
+            (
+                LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility,
+                RuntimeCompatibility::LeeV0_2_0,
+            ),
+            (
+                LezEnvironmentV1::DeterministicLocalV0_2,
+                RuntimeCompatibility::NssaV0_1_2,
+            ),
+        ] {
+            let agreement = agreement_for(environment, false);
+            let mut runtime = runtime_for_participant(&agreement, participant);
+            runtime.compatibility = compatibility;
+            assert_runtime_binding_error(
+                &agreement,
+                &runtime,
+                participant,
+                LezRuntimeBindingError::IncompatibleEnvironment,
+                "signed LEZ environment is not compatible with this bridge",
+            );
         }
     }
 }

@@ -271,7 +271,7 @@ impl TransactionId {
 
 /// Nonempty inner official `PublicTransaction::to_bytes()` with a 2 MB hard limit.
 ///
-/// This wrapper must never contain the outer `NSSATransaction` enum encoding.
+/// This wrapper must never contain an outer runtime transaction-enum encoding.
 #[derive(Clone, Eq, PartialEq)]
 #[must_use]
 pub struct ExactTransactionBytes(Vec<u8>);

@@ -13,6 +13,8 @@ use crate::{
 pub enum RuntimeCompatibility {
     /// Pinned NSSA/SPeL v0.1.2 compatibility graph.
     NssaV0_1_2,
+    /// Pinned LEE/SPeL LEZ v0.2.0 compatibility graph.
+    LeeV0_2_0,
 }
 
 /// Primitive identity reported by a dedicated official LEZ sidecar.
@@ -100,7 +102,7 @@ impl DescribeRuntimeResult {
 pub struct PreparedTransaction {
     /// Official-decoder transaction identity.
     pub transaction_id: TransactionId,
-    /// Inner official `PublicTransaction::to_bytes()`; never outer `NSSATransaction` bytes.
+    /// Inner official `PublicTransaction::to_bytes()`; never outer transaction-enum bytes.
     pub exact_bytes: ExactTransactionBytes,
 }
 
@@ -285,7 +287,7 @@ impl ObserveEscrowRequest {
 pub struct ObservedTransactionFacts {
     /// Official-decoder transaction identity.
     pub transaction_id: TransactionId,
-    /// Inner official `PublicTransaction::to_bytes()`; never outer `NSSATransaction` bytes.
+    /// Inner official `PublicTransaction::to_bytes()`; never outer transaction-enum bytes.
     pub exact_bytes: ExactTransactionBytes,
     /// Node-reported placement in the scanned chain.
     pub position: ChainPosition,
@@ -366,7 +368,7 @@ impl NativeFundInstructionFacts {
     }
 }
 
-/// Primitive escrow metadata states understood by v0.1.2.
+/// Primitive escrow metadata states shared by the supported runtime generations.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[must_use]

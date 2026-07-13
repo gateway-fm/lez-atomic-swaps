@@ -161,6 +161,29 @@ fn runtime() -> RuntimeDescriptor {
     )
 }
 
+#[test]
+fn runtime_compatibility_wire_is_additive_and_version_exact() {
+    for (compatibility, expected_wire) in [
+        (RuntimeCompatibility::NssaV0_1_2, "nssa_v0_1_2"),
+        (RuntimeCompatibility::LeeV0_2_0, "lee_v0_2_0"),
+    ] {
+        assert_eq!(
+            serde_json::to_string(&compatibility).unwrap(),
+            format!("\"{expected_wire}\"")
+        );
+        assert_eq!(
+            serde_json::from_str::<RuntimeCompatibility>(&format!("\"{expected_wire}\"")).unwrap(),
+            compatibility
+        );
+    }
+
+    for unsupported in ["lee_v0_2", "lee_v0_2_1", "nssa_v0_2_0"] {
+        assert!(
+            serde_json::from_str::<RuntimeCompatibility>(&format!("\"{unsupported}\"")).is_err()
+        );
+    }
+}
+
 fn terms_input() -> NativeEscrowTermsInput {
     NativeEscrowTermsInput {
         swap_id: h(6),
