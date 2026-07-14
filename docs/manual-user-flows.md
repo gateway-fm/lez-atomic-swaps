@@ -101,7 +101,7 @@ local runner now reproduces either direction through `POC_DIRECTION`.
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
 | LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an ephemeral-port LEZ v0.1.2 standalone sequencer. The last corrected full runner exited `0` after the reusable external process published a private schema-v2 handoff containing the exact deployment transaction and canonical block, the built-in-only `getProgramIds` result, and two funded deterministic actors | The native/two-definition lifecycle and corrected external-node handoff are GREEN with ELF SHA-256 `a324355c...7006` and ImageID `c14c978a...4483`. A later actor-contract RED replaced the agreement-invalid zero channel with one nonempty deterministic identity; its focused suite passes and the exact full runner must be repeated before using the handoff as current corridor evidence. No reference SDK actor consumes that handoff in a composed LEZ/Zebra flow yet, and this local v0.1.2 evidence is not LEZ v0.2 public-testnet evidence |
 | LEZ recursive execution costs | Exact checked guest replayed through production `V03State` transitions with nested authenticated-transfer and ATA/Token sessions | This measures deterministic local execution, not public-testnet fees or latency |
-| Provisional LEZ v0.2 executable lane | Exact SPEL PR #238 and LEZ v0.2.0 build a checked Risc0 escrow ELF, compile the generated typed client, and execute recursive native plus two-definition token claim/refund tests, including child-failure rollback. The fail-closed deployer is tested through the official RPC types against an ephemeral loopback server | Local ELF SHA-256 `40c9d37c...8021` and ImageID `f8385049...0fbe` are GREEN. No v0.2 public deployment, deployed-runtime CU evidence, independent maker/taker actor flow, composed LEZ/Zebra corridor, or maintainer approval is proved |
+| Provisional LEZ v0.2 executable lane | Exact SPEL PR #238 and LEZ v0.2.0 build a checked Risc0 escrow ELF in the digest-pinned Risc0 guest-builder, compile the generated typed client, and execute recursive native plus two-definition token claim/refund tests, including child-failure rollback. The fail-closed deployer submitted that exact artifact to the retained local v0.2 node | Canonical Docker ELF SHA-256 `c85055f6...c9d2e` and ImageID/ProgramId `5cf8c5a4...329c1` are GREEN and deployed in finalized local block 2582. Both independent corridor directions subsequently used only that ProgramId. No v0.2 public deployment, deployed-runtime CU evidence, cold clean-host replay, or maintainer approval is proved |
 | Full local LEZ v0.2 vertical slice | Clean exact source and artifacts run as digest-pinned Bedrock, non-standalone sequencer, and indexer on one unique no-masquerade bridge with dynamic loopback RPCs. Both actors claimed deterministic Vault allocations, the exact checked escrow deployed, maker initialized then funded 700 only after observing `Empty`, and taker claimed only after observing `Funded` | GREEN in retained run `m2poc-vertical-20260714a`: finalized Vault blocks 29/30, deployment block 51, native blocks 219/220/223, and terminal custody/maker/taker balances are recorded in `docs/evidence/m2-local-onboarding-20260714.json`. These PoC CLIs are not reference actors; no Zebra HTLC, cross-chain direction, restart proof, refund, or composed cleanup is claimed |
 | Official-wire LEZ v0.2 effect foundation | Exact upstream types and `lez-v02-bridge-poc` now serve live role-separated actor calls. Pushed `0861117` fixes exact claim absence; startup now uses bounded non-genesis finalized-tip readiness | 14o completed initialize/fund/revealing-claim and observation/submit. The bridge still asserts no finality itself; separate indexer evidence proves finalized blocks 264/265/266 |
 | Local reference-actor fixture readiness | `zec-local-poc-provision` queried retained Zebra, selected one stable mature maker output, built a dual-signed `TakerSellsLez` agreement, wrote separate `0700` maker/taker trees with `0600` files, reloaded both configs and activation material, and validated pair isolation | GREEN for fixture readiness only: `90819e4f...f76f:0`, 625000000 zatoshis, 104 confirmations at tip 104, agreement `b1291931...bb0ed`. The sidecars were not started or called; neither `activate` nor `drive` nor any HTLC/corridor effect ran. Its 1..256 LEZ discovery window is now stale and the retained files are not runnable corridor inputs |
@@ -280,11 +280,11 @@ A pass proves all of the following and nothing broader:
   `lee_core`, SPEL, and ATA-core types;
 - the generated typed client compiles against the checked escrow IDL and exact
   public ProgramId wire types;
-- the digest-pinned builder and the independently embedded methods build agree
-  on ELF SHA-256
-  `40c9d37c5dc3c8544bcb7c26916a5be1039b76cc862b2c9dcd34e0cf61468021`
-  and ImageID
-  `f8385049e93a319b44d868e0d0cf805b058eddcf92141a186ffd69e4596c0fbe`;
+- the digest-pinned direct Docker build and the Docker-backed methods embedding
+  agree on ELF SHA-256
+  `c85055f6fe85b71535a322ba84ffc612f5d093954a721ba3b529428814dc9d2e`
+  and ImageID/ProgramId
+  `5cf8c5a4eedb3c2873956cb7898eb33a495407c9746fb1a065c99638159329c1`;
 - recursive native claim/refund and two-definition token claim/refund execute
   through official `V03State`, authenticated-transfer, ATA, and Token paths;
 - child-transfer failure rolls back terminal metadata, custody, and actor state;
@@ -559,11 +559,13 @@ swap. The full prerequisite and licensing boundary is recorded in
 
 ## Flow 0D: run the role-separated native LEZ v0.2 slice
 
-This partial vertical flow starts after Flow 0B2 has retained a GREEN
-three-service stack, both actors have completed their Vault Claims, and the
-checked `f8385049...0fbe` escrow has been deployed. Those onboarding and deploy
-steps are not automated below. The exact retained prerequisite and completed
-example are in
+This is a **historical pre-canonical flow** retained for the immutable
+`f8385049...0fbe` onboarding evidence. It is not the current M2 certification
+path and must not be replayed against the canonical corridor configuration.
+The partial vertical flow starts after Flow 0B2 has retained a GREEN
+three-service stack, both actors have completed their Vault Claims, and that
+historical escrow has been deployed. Those onboarding and deploy steps are not
+automated below. The exact retained prerequisite and completed example are in
 [`docs/evidence/m2-local-onboarding-20260714.json`](evidence/m2-local-onboarding-20260714.json).
 Use a fresh chain or select a new unused `SWAP_ID`; deposit correctly rejects an
 already initialized swap.
@@ -590,7 +592,7 @@ LEZ_RUN_DIR="$PWD/.e2e/$RUN_ID/lez-v02"
 CHAIN_ID="$LEZ_V02_CHANNEL_PUBLIC_KEY"
 SEQUENCER_URL="$LEZ_SEQUENCER_RPC_URL"
 INDEXER_URL="$LEZ_INDEXER_RPC_URL"
-ESCROW_PROGRAM_ID=f8385049e93a319b44d868e0d0cf805b058eddcf92141a186ffd69e4596c0fbe
+ESCROW_PROGRAM_ID=f8385049e93a319b44d868e0d0cf805b058eddcf92141a186ffd69e4596c0fbe # historical evidence only
 ```
 
 Keep the roles physically separate. `SOURCE_MAKER_KEY_FILE` and
@@ -1089,6 +1091,40 @@ the four verified Rapisnark/GMP libraries from Flow 0C, libclang, and `awk`,
 `base64`, `curl`, `date`, `flock`, `jq`, `kill`, `od`, `perl`, `readlink`,
 `sha256sum`, `sleep`, `stat`, `tail`, `timeout`, `tr`, and `xxd`.
 
+On every fresh LEZ chain, first build and verify the canonical Docker artifact,
+then deploy that exact embedded artifact once. Use a unique target and evidence
+directory; `LEZ_CHANNEL_ID` comes from the fresh stack manifest. The verifier
+pins the Risc0 builder digest and fails unless its direct Docker ELF equals the
+Docker-backed methods ELF and the checked manifest identity.
+
+```bash
+export BUILD_RUN_ID=m2-canonical-build-unique-id
+export LEZ_V02_ARTIFACT_TARGET_DIR="${TMPDIR:-/tmp}/lez-v02-artifact-${BUILD_RUN_ID}"
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+export LEZ_SEQUENCER_URL=http://127.0.0.1:<sequencer-port>
+export LEZ_INDEXER_URL=http://127.0.0.1:<indexer-port>
+RUN_ID="$BUILD_RUN_ID" ./scripts/verify-lez-v02-provisional.sh
+
+DEPLOYER="$LEZ_V02_ARTIFACT_TARGET_DIR/debug/lez-zec-escrow-v02-deployer"
+DEPLOY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/lez-v02-deploy.XXXXXX")"
+chmod 0700 "$DEPLOY_DIR"
+export LEZ_CHANNEL_ID=<64-hex-channel-id-from-the-stack-manifest>
+"$DEPLOYER" deploy-local \
+  --rpc-url "$LEZ_SEQUENCER_URL" \
+  --channel-id "$LEZ_CHANNEL_ID" \
+  --timeout-seconds 300 >"$DEPLOY_DIR/deployment.json"
+chmod 0600 "$DEPLOY_DIR/deployment.json"
+```
+
+Verify that the evidence contains ELF `c85055f6...c9d2e`, ImageID/ProgramId
+`5cf8c5a4...329c1`, a nonempty transaction hash, and a non-genesis inclusion
+block. The deployer submits once and never retries an ambiguous submission.
+Independently confirm the transaction is present in the reported block through
+the indexer and that the block is finalized before starting either actor. The
+retained example is transaction `bd16808e...733f` in finalized local block
+2582; those values are evidence, never defaults.
+
 ```bash
 export RUN_ID=m2poc-corridor-unique-run-id
 export POC_DIRECTION=taker_sells_lez # or: taker_sells_foreign
@@ -1096,6 +1132,7 @@ export POC_OUTPUT_ROOT="${TMPDIR:-/tmp}/lez-atomic-swaps-${RUN_ID}"
 export LEZ_SEQUENCER_URL=http://127.0.0.1:<sequencer-port>
 export LEZ_INDEXER_URL=http://127.0.0.1:<indexer-port>
 export ZEBRA_RPC_URL=http://127.0.0.1:<zebra-port>
+export ESCROW_PROGRAM_ID=5cf8c5a4eedb3c2873956cb7898eb33a495407c9746fb1a065c99638159329c1
 export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
 export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
 ./scripts/run-m2-taker-sells-lez-poc.sh
@@ -1193,7 +1230,22 @@ The checked-in
 and
 [reverse secret-safe evidence](evidence/m2-taker-sells-foreign-corridor-20260714.json)
 contain exact block hashes and limitations. They contain no preimage, key,
-capability, private run root, or exact signed bytes.
+capability, private run root, or exact signed bytes. These are historical
+pre-canonical behavior records.
+
+The current certification examples are
+`m2cert-canonical-forward-bb53daf-20260714a` and
+`m2cert-canonical-reverse-bb53daf-20260714a`. They use only ProgramId
+`5cf8c5a4...329c1`, deployed in finalized block 2582. Canonical forward LEZ
+initialize/fund/claim finalized in blocks 2594/2595/2596; its Zcash
+`0d041be6...b64c:0` funding output reached its second confirmation at 123 and
+was spent by `8555c3d7...77d7` at 124. Canonical reverse LEZ effects finalized
+in 2605/2606/2607; Zcash `1cbb5923...4785:0` reached its second confirmation
+at 126 and was spent by `bfbd4379...9b2a` at 127. Both LEZ escrows are
+`Claimed` with custody 0, and all four actor stores are revision 4 `Completed`.
+The exact transactions, blocks, balance conservation, roles, retries, build
+identity, deployment, resource boundary, and limitations are in the
+[canonical certification packet](evidence/m2-canonical-local-certification-20260714.json).
 
 Fresh failed runs are part of the reproduction record. Attempts 14i, 14k, 14l,
 14m, and 14n stopped before any chain effect: respectively an incorrect

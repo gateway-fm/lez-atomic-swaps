@@ -19,6 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - run: ./scripts/test-ci-hardening-policy.sh
+      - run: ./scripts/test-spin-lock-remediation.sh
       - run: ./scripts/check-github-action-pins.sh
       - run: ./scripts/run-ci-quality-gates.sh
 
@@ -78,6 +79,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - run: ./scripts/check-spin-lock-remediation.sh
       - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
         with:
           rust-version: "1.96.0"

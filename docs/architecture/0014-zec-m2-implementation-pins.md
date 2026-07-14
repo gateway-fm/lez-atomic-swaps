@@ -1,6 +1,6 @@
 # ADR 0014: M2 ZEC implementation and compatibility pins
 
-Status: Accepted for M2 implementation — 2026-07-11
+Status: Accepted for M2 implementation -- 2026-07-11; canonical target reconciled 2026-07-14
 
 ```mermaid
 flowchart LR
@@ -47,13 +47,18 @@ flowchart LR
     TokenEvidence --> TokenCostReplay["Production token replay without setup/Clock noise"]
     TokenCostReplay --> TokenCostJson["Escrow + ATA + Token sessions + checked JSON"]
     Provisional["SPEL PR #238 exact head<br/>open + unreviewed"] --> V02Compat["Separate provisional v0.2<br/>compile/config/PDA lane"]
-    V02Compat -.-> Port["Rebuild SPEL guest for LEZ v0.2 PDA + ABI"]
-    Port -.-> StateProof["Advisory-free V03State lifecycle + cost proof"]
+    V02Compat --> Port["Rebuild SPEL guest for LEZ v0.2 PDA + ABI"]
+    DockerBuilder["Pinned Risc0 guest-builder<br/>Rust 1.94.1 + immutable digest"] --> CanonicalV02["Canonical Docker-built v0.2 guest<br/>ELF c85055...9d2e<br/>ProgramId 5cf8c5...29c1"]
+    Port --> CanonicalV02
+    CanonicalV02 --> StateProof["Advisory-free V03State lifecycle + cost proof"]
+    HostBuilt["Historical host-built v0.2 guest<br/>ELF 40c9d3...8021<br/>ProgramId f83850...0fbe"] -.-> Superseded["Superseded for deployment<br/>retained only as historical evidence"]
     OfficialTypes["Official LEZ v0.2 transaction and RPC types"] -.-> ThinClient["Thin deployment/query client"]
     Exclude["Exclude Logos node auth + libp2p + Hickory"] -.-> ThinClient
     ThinClient -.-> LezTest["LEZ testnet 0.2"]
-    StateProof -.-> LezTest
-    LezTest -.-> Manifest["Channel + ELF + ImageID + ProgramId<br/>transaction + canonical block"]
+    StateProof --> LezLocal["Private actual-node LEZ v0.2 devnet"]
+    CanonicalV02 --> LezLocal
+    LezLocal --> Manifest["Channel + canonical artifact + ProgramId<br/>deployment tx bd1680...733f<br/>finalized block 2582"]
+    LezTest -.-> Manifest
     Native["Reviewed SPEL/LEZ v0.2 compatibility pin"] -.-> Port
     Drift["LEZ dev + current Zebra scheduled drift lanes"] -.-> Tests
     Tests --> Roles["Independent maker/taker happy, refund, concurrency E2E"]
@@ -86,8 +91,10 @@ immutable source or image identity.
 | SPEL | stable `v0.5.0`, commit `73fc462eb8f0a4d00f1a846437c627ec2e523f83` | Repository carries MIT and Apache-2.0 files but omits Cargo license fields; fixture policy hash-locks both texts for all three used crates; use its macros, IDL, and client generator instead of recreating them |
 | LEZ compatibility | tag `v0.1.2`, commit `cf3639d8252040d13b3d4e933feb19b42c76e14a` | This is the exact LEZ dependency locked by SPEL v0.5.0; SPEL records it as equivalent to the earlier v0.2.0-rc3 compatibility point |
 | LEZ semantic drift | `dev` evidence pin `cac4921581b37e85ae25e940f3a62412cd22308e`, plus scheduled current `dev` | Keeps M1 validity/signature assumptions checked without pretending the newer development tree is SPEL-compatible |
-| Risc0 guest/runtime | `cargo-risczero` and `r0vm` 3.0.5; builder `r0.1.88.0@sha256:3e12f71bacd27527a61dea96fa0e53e468c99aa261d3a1019b593f6dbd943eb3` | Exact tool/runtime identity; `RISC0_DEV_MODE=1` is not treated as an executor substitute; CI builds in the pinned tool-managed image and executes with the exact isolated `r0vm` |
-| Guest artifact | ELF SHA-256 `a324355c6417f6ac7265ab8ba880287d0976e8c27a672917d293bddd80be7006`; ImageID `c14c978abbaedeffb54c71aa6a96275d1fdb66fcf79f7343bf6bf7aee04f4483` | Artifact bytes are generated, not committed; the tracked manifest and runner fail on byte or program-identity drift |
+| Risc0 v0.2 guest/runtime | `cargo-risczero` and `r0vm` 3.0.5; guest Rust 1.94.1; builder `r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be` | Exact tool/runtime identity aligned with Rust 1.94 MSRV; `RISC0_DEV_MODE=1` is not treated as an executor substitute; the methods build uses the supported Risc0 Docker embedding API and executes with the exact isolated `r0vm` |
+| v0.1.2 compatibility guest artifact | ELF SHA-256 `a324355c6417f6ac7265ab8ba880287d0976e8c27a672917d293bddd80be7006`; ImageID `c14c978abbaedeffb54c71aa6a96275d1fdb66fcf79f7343bf6bf7aee04f4483` | This identity belongs only to the lower v0.1.2 standalone compatibility lane; its tracked manifest and runner fail on byte or program-identity drift |
+| Canonical v0.2 guest artifact | ELF SHA-256 `c85055f6fe85b71535a322ba84ffc612f5d093954a721ba3b529428814dc9d2e`; ImageID and ProgramId `5cf8c5a4eedb3c2873956cb7898eb33a495407c9746fb1a065c99638159329c1`; words `[2764437596, 675077102, 3077346675, 984845961, 3372700745, 2695982964, 949406053, 3240727317]` | This Docker-built identity is the only trusted v0.2 deployment target. Artifact bytes are generated, not committed; manifest, verifier, deployer, actor configuration, and runner fail on drift |
+| Superseded v0.2 host artifact | ELF SHA-256 `40c9d37c5dc3c8544bcb7c26916a5be1039b76cc862b2c9dcd34e0cf61468021`; ImageID and ProgramId `f8385049e93a319b44d868e0d0cf805b058eddcf92141a186ffd69e4596c0fbe` | Retained only to interpret immutable earlier evidence. It is not accepted for new deployment or actor admission because host and container Cargo source paths changed crate disambiguators and therefore the ELF and ImageID |
 | BIP-199 script | `zcash_script = 0.4.3`, Apache-2.0 | Reuse its typed opcodes, push encodings, CLTV, branch, parser, and P2SH helpers; compose BIP-199's exact common `OP_EQUALVERIFY OP_CHECKSIG` tail |
 | Script bound type | transitive `bounded-vec = 0.9.0`, CC0-1.0 | Permissive public-domain dedication, scoped to this exact crate/version in `deny.toml`; CC0 is not added to the global license allowlist |
 | Script signature validation | `zcash_script`'s `signature-validation` feature with `secp256k1 = 0.29.1` and `secp256k1-sys = 0.10.1`, both CC0-1.0 | Use the maintained Rust Bitcoin/libsecp256k1 DER/pubkey/signature path; both licenses are exact-package exceptions; real signatures and sighashes remain canonical transaction-adapter work |
@@ -199,6 +206,35 @@ release](https://github.com/logos-blockchain/logos-execution-zone/releases/tag/v
 [RUSTSEC-2026-0118](https://rustsec.org/advisories/RUSTSEC-2026-0118.html) plus
 [RUSTSEC-2026-0119](https://rustsec.org/advisories/RUSTSEC-2026-0119.html).
 
+## Canonical v0.2 build and local deployment reconciliation -- 2026-07-14
+
+The v0.2 methods crate now invokes the supported Risc0 Docker embedding API with
+the exact guest-builder image and an isolated target directory. The resulting
+ELF SHA-256 is
+`c85055f6fe85b71535a322ba84ffc612f5d093954a721ba3b529428814dc9d2e`;
+its Risc0 ImageID and LEZ ProgramId are
+`5cf8c5a4eedb3c2873956cb7898eb33a495407c9746fb1a065c99638159329c1`,
+represented by words `[2764437596, 675077102, 3077346675, 984845961,
+3372700745, 2695982964, 949406053, 3240727317]`. The manifest, build
+verifier, deployer, and both actor configurations bind that one identity. An
+environment variable cannot select a different builder or program.
+
+An earlier host build produced ELF `40c9d37c...8021` and ProgramId
+`f8385049...0fbe`. The source and compiler identity matched, but host and
+container Cargo source paths produced different crate disambiguators, which
+changed the ELF and consequently the ImageID. Earlier evidence remains
+immutable and interpretable under that historical identity; it is not current
+deployment authority and cannot be admitted by a canonical actor run.
+
+The canonical Docker artifact was submitted to the retained private LEZ v0.2
+devnet as transaction
+`bd16808ee91c9860e860830e7437148b3f4f81c632fc1b6d40350e20cc47733f`.
+The indexer proved Finalized inclusion in LEZ block `2582`, hash
+`d2c4944a936347207be7030bb39f6b8f21dfc3dc75e95afedb58e22ed1f96860`.
+Both role-real local corridor directions then completed with only the canonical
+ProgramId. This private deployment proves local on-chain execution; it does not
+claim a public LEZ deployment, public propagation, or public service behavior.
+
 The local compatibility lane now uses the exact v0.1.2 `sequencer_service`
 standalone path in-process with port `0`, temporary state, and deterministic
 genesis keys. Exact Risc0 3.0.5 builds a canonical guest whose ELF SHA-256 and
@@ -261,8 +297,10 @@ the conflicting funder refund on a four-block branch. Raw fork blocks submitted
 to the primary replace all three old canonical hashes, and the primary reports
 the conflicting refund as active with four confirmations. Zebra 5.2.0 evicts
 the detached non-finalized headers, so the proof asserts canonical replacement
-rather than assuming side-chain RPC retention. This is consensus-node evidence,
-not the still-pending composed maker/taker cross-chain E2E.
+rather than assuming side-chain RPC retention. That evidence is a consensus-node fault lane and was not by itself a composed
+cross-chain E2E. The canonical private actual-node corridor now composes the
+happy path in both directions; actual-node restart, refund, and reorg remain
+later hardening.
 
 Use Zebra as the acceptance authority. Local parsing or interpreter success is
 useful unit evidence but never proves a transaction is consensus-valid or

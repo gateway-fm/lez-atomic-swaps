@@ -11,6 +11,73 @@ end-to-end boundary. A test
 is called end to end only when it crosses the same process, RPC, persistence,
 role, and chain boundaries shown here.
 
+## Canonical M2 build, deployment, and actor boundary
+
+```mermaid
+flowchart LR
+    Source["LEZ v0.2.0 + SPEL PR 238 source"]
+    Builder["Pinned Risc0 Docker builder<br/>r0.1.94.1 immutable digest"]
+    ELF["ELF c85055...9d2e"]
+    Program["ImageID and ProgramId<br/>5cf8c5...29c1"]
+    Deploy["ProgramDeployment<br/>tx bd1680...733f"]
+
+    subgraph LezDevnet["Private actual-node LEZ v0.2 devnet"]
+        Sequencer["Sequencer JSON-RPC 3040<br/>host proof port 32832"]
+        Bedrock["Bedrock HTTP 18080<br/>host proof port 32831"]
+        Indexer["Indexer JSON-RPC 8779<br/>host proof port 32833"]
+        Finalized["Finalized block 2582<br/>hash d2c494...6860"]
+    end
+
+    subgraph RoleProcesses["Independent actor boundaries"]
+        Maker["Maker actor + SQLite"]
+        MakerSidecar["Maker LEZ sidecar"]
+        Taker["Taker actor + SQLite"]
+        TakerSidecar["Taker LEZ sidecar"]
+    end
+
+    Zebra["Zebra 5.2.0 Regtest JSON-RPC 18232<br/>host proof port 32834"]
+    Forward["TakerSellsLez Completed"]
+    Reverse["TakerSellsForeign Completed"]
+
+    Source --> Builder
+    Builder --> ELF
+    ELF --> Program
+    Program --> Deploy
+    Deploy -->|"sendTransaction"| Sequencer
+    Sequencer -->|"publish signed blocks"| Bedrock
+    Indexer -->|"poll finalized channel"| Bedrock
+    Indexer -->|"getBlockById and getBlockByHash"| Finalized
+    Deploy --> Finalized
+    Maker --> MakerSidecar
+    Taker --> TakerSidecar
+    MakerSidecar -->|"official v0.2 RPC"| Sequencer
+    TakerSidecar -->|"official v0.2 RPC"| Sequencer
+    Maker -->|"typed Regtest RPC"| Zebra
+    Taker -->|"typed Regtest RPC"| Zebra
+    Finalized --> Forward
+    Finalized --> Reverse
+    Zebra --> Forward
+    Zebra --> Reverse
+```
+
+The canonical artifact above is the only current v0.2 deployment target: ELF
+SHA-256
+`c85055f6fe85b71535a322ba84ffc612f5d093954a721ba3b529428814dc9d2e`
+and ImageID and ProgramId
+`5cf8c5a4eedb3c2873956cb7898eb33a495407c9746fb1a065c99638159329c1`.
+Deployment transaction
+`bd16808ee91c9860e860830e7437148b3f4f81c632fc1b6d40350e20cc47733f`
+is Finalized in block `2582`, hash
+`d2c4944a936347207be7030bb39f6b8f21dfc3dc75e95afedb58e22ed1f96860`.
+The exact source, toolchain, actor, LEZ transaction, Zebra transaction, balance,
+and timing facts are retained in the
+[canonical M2 certification packet](../evidence/m2-canonical-local-certification-20260714.json).
+Earlier host-built ELF `40c9d37c...8021` and ProgramId `f8385049...0fbe`
+remain solely as immutable historical-evidence identities. They are not
+accepted by current manifests, actor configuration, or the corridor runner.
+All displayed host ports are retained-proof addresses for one isolated run,
+not defaults or reusable discovery values.
+
 ## Actors, runtime components, and trust boundaries
 
 ```mermaid
@@ -66,8 +133,8 @@ flowchart TB
         MSL2["Maker v0.2 PoC process<br/>Vault Claim + native deposit GREEN"]
         TLS2["Taker v0.2 PoC process<br/>Vault Claim + native claim GREEN"]
         V02J[("Separate role-bound state<br/>exact reservations + Vault attempt journals GREEN")]
-        MBR2["Maker lez-v02-bridge-poc<br/>both corridors complete in 14o and 14c"]
-        TBR2["Taker lez-v02-bridge-poc<br/>both corridors complete in 14o and 14c"]
+        MBR2["Maker lez-v02-bridge-poc<br/>canonical forward and reverse complete"]
+        TBR2["Taker lez-v02-bridge-poc<br/>canonical forward and reverse complete"]
         MBRJ[("Maker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         TBRJ[("Taker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         MSL2 --> V02J
@@ -82,11 +149,11 @@ flowchart TB
         SQ["LEZ v0.2 sequencer RPC 3040<br/>retained proof host 32832"]
         V02R["Host orchestrator<br/>exact-ID lifecycle and RPC probes"]
         V02Net["Unique no-masquerade Docker bridge<br/>dynamic loopback ports"]
-        V02Ready[("v0.2 services + Vault Claims + deploy GREEN")]
+        V02Ready[("v0.2 services + Vault Claims + canonical deploy GREEN<br/>ProgramId 5cf8c5...29c1")]
         V02Native[("Native init + fund + claim GREEN<br/>finalized blocks 219 220 223")]
         V02Fixture[("Fixture readiness GREEN<br/>isolated configs; saved window stale")]
-        V02Partial[("Historical partial evidence<br/>14d through 14n retained")]
-        V02Full[("Both ZEC corridor directions GREEN<br/>2 of 2 happy directions")]
+        V02Partial[("Historical host-built evidence retained<br/>14d through 14o and reverse 14c")]
+        V02Full[("Canonical ZEC corridor directions GREEN<br/>2 of 2 happy directions")]
         V02State[(".e2e/run_id/lez-v02")]
     end
 
@@ -115,7 +182,7 @@ flowchart TB
         V02Deploy["Exact-once v0.2 deployment client<br/>fixed official RPC"]
         V02AuthKey[("Separate owner-only 32-byte<br/>evidence authentication key")]
         V02Evidence[("Bounded HMAC-authenticated evidence<br/>channel + genesis + program + tx + block")]
-        V02Target["Immutable manifest + compiled<br/>ELF + ImageID + ProgramId"]
+        V02Target["Canonical Docker target<br/>ELF c85055...9d2e<br/>ProgramId 5cf8c5...29c1"]
         V02Provision["Offline provision-identity<br/>trusted target + no-clobber"]
         V02Runtime[("Exact public runtime identity")]
     end
@@ -170,12 +237,12 @@ flowchart TB
     LRM -.->|"future private handoff"| LRR
     LRR -.->|"maker-only provisioning"| MSL
     LRR -.->|"taker-only provisioning"| TLS
-    MLB <-->|"live bounded bridge; Completed in 14o and 14c"| MBR2
-    TLB <-->|"live bounded bridge; Completed in 14o and 14c"| TBR2
+    MLB <-->|"live bounded bridge; canonical runs Completed"| MBR2
+    TLB <-->|"live bounded bridge; canonical runs Completed"| TBR2
     MSL2 -->|"official v0.2 JSON-RPC"| SQ
     TLS2 -->|"official v0.2 JSON-RPC"| SQ
-    MBR2 -->|"reveal in 14o; initialize and fund in 14c"| SQ
-    TBR2 -->|"initialize and fund in 14o; reveal in 14c"| SQ
+    MBR2 -->|"reveal forward; initialize and fund reverse"| SQ
+    TBR2 -->|"initialize and fund forward; reveal reverse"| SQ
     MBR2 -->|"non-genesis finalized-tip readiness"| IX
     TBR2 -->|"non-genesis finalized-tip readiness"| IX
     MBR2 -->|"typed outbound profile"| LezProfile
@@ -208,7 +275,8 @@ flowchart TB
     ZEC -->|"stable mature Regtest UTXO query"| V02Fixture
     V02Native --> V02Partial
     V02Fixture --> V02Partial
-    V02Partial -->|"14o and reverse 14c completed"| V02Full
+    V02Ready -->|"canonical deployment finalized"| V02Full
+    V02Fixture -->|"fresh role provisioning"| V02Full
     V02Full -->|"direction-derived funding and exact spend on Zebra"| ZEC
     V02Full -.->|"runtime and funding handoff"| LRR
     ZA --> RouteGate
@@ -317,9 +385,8 @@ startup on the official sequencer and indexer health calls, replays successful
 PREPARE results, re-executes observations and transient PREPARE failures, and
 persists submit as unknown before node I/O. Refund calls are typed unavailable;
 sequencer observation is bounded inclusion plus same-tip accounts, and the
-bridge does not assert indexer finality. Historical partial runs 14d through
-14n remain failure and invariant evidence. Fresh run
-`m2poc-corridor-fresh-20260714o` completed `TakerSellsLez`: the taker
+bridge does not assert indexer finality. Historical runs 14d through 14n remain failure and invariant evidence. Fresh
+pre-canonical run `m2poc-corridor-fresh-20260714o` completed `TakerSellsLez`: the taker
 initialized and funded LEZ, the maker funded Zcash, waited for two
 confirmations, claimed LEZ and revealed the preimage, and the taker spent the
 Zcash HTLC. Both independent actors reached revision 4 `Completed` in 25.370
@@ -328,7 +395,7 @@ indexer audit found the LEZ effects in finalized blocks 264/265/266 and proved
 terminal `Claimed` metadata and zero custody; Zebra funding at height 106 was
 spent at height 108.
 
-Fresh reverse run `m2poc-corridor-reverse-fresh-20260714c` completed
+The pre-canonical reverse run `m2poc-corridor-reverse-fresh-20260714c` completed
 `TakerSellsForeign`: the taker funded Zcash, the maker initialized and funded
 LEZ after the two confirmations, the taker claimed LEZ and revealed the
 preimage, and the maker spent the Zcash HTLC. Both independent actors again
@@ -338,7 +405,21 @@ funding at height 113 was spent at height 115. Two earlier effect-bearing
 reverse attempts are retained and never reused; they exposed a canonical LEZ
 validator that was hard-coded to the forward taker depositor. The correction
 now validates the agreement-derived LEZ depositor and signer in both
-directions.
+directions. Those successful 14o and reverse 14c records used the host-built
+`f8385049...0fbe` program and remain immutable historical evidence, not current
+deployment authority.
+
+Canonical certification rebuilt the guest in the pinned Docker builder as ELF
+`c85055f6...9d2e`, ProgramId `5cf8c5a4...29c1`, deployed it in transaction
+`bd16808e...733f`, and proved Finalized inclusion in LEZ block `2582`. Run
+`m2cert-canonical-forward-bb53daf-20260714a` then completed
+`TakerSellsLez` in 25.580 seconds over 38 drive rounds with two bounded retries;
+Zebra advanced from height 121 to 124. Run
+`m2cert-canonical-reverse-bb53daf-20260714a` completed
+`TakerSellsForeign` in 28.790 seconds over 47 drive rounds without a retry;
+Zebra advanced from height 124 to 127. Both independent actor stores reached
+revision 4 `Completed`, both configs bound only the canonical ProgramId, and no
+public RPC or faucet was used.
 
 The development runner provisions fresh role inputs and executes independent
 `activate`/`drive` processes. Before effects it acquires a nonblocking advisory
@@ -490,17 +571,21 @@ the allocated port on the host wildcard address.
 The v0.2 service stack is source- and binary-attested and runs clean LEZ
 `v0.2.0` source `a58fbce2...`, Rust 1.94.0 service artifacts, the digest-pinned
 Bedrock image, exact Risc0/Rapisnark inputs, and dynamic loopback RPCs on a
-unique no-masquerade bridge. Run `m2poc-vertical-20260714a` retained that stack
+unique no-masquerade bridge. Historical pre-canonical run
+`m2poc-vertical-20260714a` retained that stack
 while Vault Claims finalized in blocks 29/30, the checked escrow deployed in
 block 51, and the native lifecycle finalized in blocks 219/220/223. Terminal
 custody/maker/taker balances were 0/99300/200700. A keyless process observed the
 same terminal state, and the actor-fixture provisioner selected a 625000000-zat
 maker-owned Zebra output at 104 confirmations. That retained vertical run was
-not itself a cross-chain swap. Subsequent runs 14o and reverse 14c composed the
-same LEZ services, role-isolated sidecars and actors, and Zebra HTLC
-funding/spend in both happy directions. Composed restart, refund, reorg, and
-fault recovery remain pending. PoC-to-hardening and milestone transitions are
-owner-controlled.
+not itself a cross-chain swap. Subsequent pre-canonical runs 14o and reverse
+14c composed the same services but used historical ProgramId `f8385049...0fbe`.
+The canonical Docker artifact `5cf8c5a4...29c1` was later deployed in finalized
+block 2582 and rerun through both corridors as
+`m2cert-canonical-forward-bb53daf-20260714a` and
+`m2cert-canonical-reverse-bb53daf-20260714a`. Composed restart, refund, reorg,
+and fault recovery remain pending. PoC-to-hardening and milestone transitions
+are owner-controlled.
 
 ## Verified M2 local actor and RPC flow
 
@@ -516,7 +601,7 @@ sequenceDiagram
     participant Zebra as Zebra Regtest 32834
 
     Note over Maker,Zebra: Endpoint-tuple flock is acquired before any effect
-    alt TakerSellsLez in run14o
+    alt TakerSellsLez in canonical forward run
         Taker->>TakerBridge: Initialize and fund LEZ escrow
         TakerBridge->>Sequencer: Submit signed native transactions
         Maker->>Zebra: Fund direction-derived BIP-199 HTLC
@@ -524,7 +609,7 @@ sequenceDiagram
         Maker->>MakerBridge: Claim LEZ and reveal preimage
         MakerBridge->>Sequencer: Submit signed revealing claim
         Taker->>Zebra: Spend exact HTLC with observed preimage
-    else TakerSellsForeign in reverse run14c
+    else TakerSellsForeign in canonical reverse run
         Taker->>Zebra: Fund direction-derived BIP-199 HTLC
         Zebra-->>Taker: Two canonical confirmations
         Maker->>MakerBridge: Initialize and fund LEZ escrow
@@ -541,7 +626,7 @@ sequenceDiagram
 ```
 
 The direction changes actor ownership, not the atomic reveal order. In both
-runs the Zcash funding is confirmed before the LEZ claim reveals the preimage,
+canonical runs the Zcash funding is confirmed before the LEZ claim reveals the preimage,
 and the exact Zcash follow-up spend occurs only after that reveal. The retained
 host ports above are evidence addresses from these isolated runs, not reusable
 service discovery values; every new run must receive an explicit fresh local
@@ -654,8 +739,12 @@ flowchart LR
     TokenState --> TokenCostReplay["Deterministic token replay<br/>Clock/setup excluded"]
     TokenCostReplay --> TokenCostEvidence["Escrow + ATA + Token sessions<br/>invariants + budgets + JSON"]
     V02Pins["LEZ v0.2.0 + exact SPEL PR head"] --> V02Guest["Risc0 v0.2 escrow guest"]
-    V02Guest --> V02Artifact["Checked v0.2 ELF<br/>SHA-256 + ImageID + ProgramId"]
+    V02Builder["Pinned Docker guest-builder<br/>Rust 1.94.1 + immutable digest"] --> V02Artifact["Canonical v0.2 ELF c85055...9d2e<br/>ImageID and ProgramId 5cf8c5...29c1"]
+    V02Guest --> V02Builder
     V02Artifact --> V02Local["Recursive native + two-definition token<br/>claim/refund + rollback tests"]
+    V02Artifact --> V02LocalDeployer["Checked local ProgramDeployment<br/>tx bd1680...733f"]
+    V02LocalDeployer --> V02DeployProof["Indexer Finalized proof<br/>block 2582"]
+    V02DeployProof --> V02FullLocal
     V02Artifact --> V02Deployer["Exact-once fixed-URL<br/>official-RPC deployer"]
     V02Artifact --> V02Sidecar["Official-wire prepare + one-attempt Claim GREEN<br/>actual-node effects GREEN"]
     V02Sidecar --> V02FullLocal["Bedrock + indexer + non-standalone sequencer<br/>both independent actor corridors GREEN"]
@@ -685,10 +774,12 @@ canonical block time, and asserts exact balances. The solid token lifecycle
 uses two definitions, owner-signed ATA funding/claim, permissionless custody and
 refund, and cross-definition substitution negatives. Token replay attributes
 the escrow/ATA/nested-Token recursion while excluding setup and Clock noise.
-The solid v0.2 branch builds an independently locked guest/generated client,
-binds ELF SHA-256 `40c9d37c...8021`, ImageID `f8385049...0fbe`, and
-ProgramId, and runs recursive native plus two-definition token claim/refund
-tests. A child-transfer overflow regression proves the metadata and every
+The solid v0.2 branch builds an independently locked guest/generated client
+through the pinned Risc0 Docker builder, binds ELF SHA-256
+`c85055f6...9d2e` and ImageID and ProgramId `5cf8c5a4...29c1`, and runs
+recursive native plus two-definition token claim/refund tests. Historical
+`40c9d37c...8021` and `f8385049...0fbe` identities remain only with the
+immutable pre-canonical evidence that produced them. A child-transfer overflow regression proves the metadata and every
 touched account roll back together. The v0.2 deployer validates immutable
 endpoint/channel/built-ins/artifact identity, submits once, and accepts only the
 exact transaction in its containing block; ambiguity or timeout is never
@@ -696,9 +787,9 @@ retried. The solid v0.2 sidecar node represents tested describe/health/decoder,
 native initialize/fund preparation, deterministic maker/taker Vault Claim
 preparation, hardened durable exact-byte restart, and the role-bound
 attempt-before-call Vault Claim submission state machine. The full-local edge
-is now solid because runs 14o and reverse 14c crossed the official sidecar,
-three-service LEZ stack, independent actor state, and Zebra in both happy
-directions. Actual-node restart, refund, reorg, and fault recovery remain open.
+is solid because the canonical forward and reverse runs crossed the official
+sidecar, three-service LEZ stack, independent actor state, and Zebra in both
+happy directions after the exact deployment was finalized. Actual-node restart, refund, reorg, and fault recovery remain open.
 The dashed public-testnet edge and deployed-runtime costs are deferred to production
 readiness under ADR 0023. The v0.1.2 cost replay executes the same guest instructions through
 LEZ production state transitions, counts the escrow root and
@@ -786,8 +877,8 @@ authority, conflicting replacement fails, and refunds remain available.
 Independent leg policies also make maker-depth regression suspend and depth
 recovery restore claims. The runtime event-to-participant path is now solid: the
 isolated two-Zebra fixture drives real canonical and removal evidence through schema-v10 SQLite
-close/reopen and exact replay. The composed local LEZ/ZEC happy-path corridor is
-solid for both directions in runs 14o and reverse 14c. Its actual-node
+close/reopen and exact replay. The composed local LEZ/ZEC happy-path corridor is solid for both directions in
+the canonical forward and reverse certification runs. Its actual-node
 restart/refund/reorg and recovery paths remain open. RPC errors or absence never imply removal: a detach event
 requires a stable replacement tip and a changed canonical hash at the prior
 inclusion height.
@@ -934,8 +1025,8 @@ replayed through `resume_all_capable`; the SDK is instantiated with unit LEZ and
 Zcash port types, so a chain call is impossible even if a later adapter changes.
 It loads neither the sidecar capability nor Zebra cookie, signing key,
 agreement file, or preimage. The separate `activate` and `drive` paths load
-their scoped effect material and completed the first real local v0.2/Zebra
-direction in run14o and the reverse direction in run14c; `status` keeps this
+their scoped effect material and completed both real local v0.2/Zebra directions again in the canonical
+forward and reverse certification runs; `status` keeps this
 no-chain design.
 
 ## Crash, restart, and at-least-once observation flow

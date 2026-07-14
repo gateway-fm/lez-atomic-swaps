@@ -8,7 +8,9 @@ actually run today from target components that do not yet have an implementation
 port, credential scheme, or selected provider. A dashed component or edge is
 planned; blue components are implemented and may have partial live exercise but
 have not completed this topology.
-No port is invented for an unimplemented integration.
+No port is invented for an unimplemented integration. Exact current artifact,
+deployment, transaction, balance, and run facts are retained in the
+[canonical M2 certification packet](../evidence/m2-canonical-local-certification-20260714.json).
 
 ## Current executable local topology
 
@@ -158,15 +160,18 @@ flowchart LR
     LezV02Runner["Host orchestrator<br/>exact-ID lifecycle and RPC probes"]
     LezNetwork["Unique no-masquerade bridge<br/>dynamic loopback publications"]
     LezState[(".e2e/run_id/lez-v02")]
-    LezReady[("Services + finalized Vault Claims + deploy GREEN")]
+    LezReady[("Services + finalized Vault Claims + canonical deploy GREEN<br/>ProgramId 5cf8c5...29c1")]
     MakerNative["Maker native PoC CLI<br/>initialize + fund GREEN"]
     TakerNative["Taker native PoC CLI<br/>revealing claim GREEN"]
     LezNative[("Native lifecycle GREEN<br/>finalized blocks 219 220 223")]
     ActorProvisioner["zec-local-poc-provision GREEN<br/>stable Zebra query + private pair output"]
     FixtureReady[("Fixture readiness GREEN<br/>isolated configs; saved window stale")]
-    LezFull[("Both ZEC corridor directions GREEN<br/>run14o and reverse run14c")]
+    LezFull[("Canonical ZEC corridor directions GREEN<br/>forward and reverse certification runs")]
     LezRunner["Direction-aware development runner<br/>2 of 2 happy directions GREEN"]
     EndpointLock[("Endpoint tuple advisory flock<br/>sequencer + indexer + Zebra URLs")]
+    CanonicalBuilder["Pinned Risc0 Docker guest-builder<br/>Rust 1.94.1 + immutable digest"]
+    CanonicalArtifact["ELF c85055...9d2e<br/>ProgramId 5cf8c5...29c1"]
+    CanonicalDeploy["Finalized deployment<br/>tx bd1680...733f / block 2582"]
 
     subgraph MakerProcess["Role-fixed maker reference actor process"]
         MakerSdk["LEZ/ZEC swap SDK and agreement validators"]
@@ -178,7 +183,7 @@ flowchart LR
     end
 
     subgraph MakerSidecarProcess["Run-scoped maker LEZ sidecar process"]
-        MakerCapability["lez-v02-bridge-poc<br/>14o and reverse 14c GREEN"]
+        MakerCapability["lez-v02-bridge-poc<br/>canonical forward and reverse GREEN"]
         MakerOfficial["Prepare + observe + claim + submit<br/>source GREEN"]
         MakerEffect[("Role/run/runtime request store<br/>PREPARE + submit durability GREEN")]
     end
@@ -193,7 +198,7 @@ flowchart LR
     end
 
     subgraph TakerSidecarProcess["Run-scoped taker LEZ sidecar process"]
-        TakerCapability["lez-v02-bridge-poc<br/>14o and reverse 14c GREEN"]
+        TakerCapability["lez-v02-bridge-poc<br/>canonical forward and reverse GREEN"]
         TakerOfficial["Prepare + observe + claim + submit<br/>source GREEN"]
         TakerEffect[("Role/run/runtime request store<br/>PREPARE + submit durability GREEN")]
     end
@@ -216,8 +221,8 @@ flowchart LR
     TakerCapability --> TakerOfficial
     MakerOfficial --> MakerEffect
     TakerOfficial --> TakerEffect
-    MakerEffect -->|"Reveal in 14o; initialize and fund in reverse 14c"| LezNode
-    TakerEffect -->|"Initialize and fund in 14o; reveal in reverse 14c"| LezNode
+    MakerEffect -->|"Reveal forward; initialize and fund reverse"| LezNode
+    TakerEffect -->|"Initialize and fund forward; reveal reverse"| LezNode
     MakerCapability -->|"Non-genesis finalized-tip readiness"| LezIndexer
     TakerCapability -->|"Non-genesis finalized-tip readiness"| LezIndexer
     MakerNative -->|"official JSON-RPC; maker key file"| LezNode
@@ -232,6 +237,11 @@ flowchart LR
     LezNetwork --> LezNode
     LezNode -->|"Zone SDK signed publish"| Bedrock
     LezIndexer -->|"Poll finalized LEZ channel"| Bedrock
+    CanonicalBuilder --> CanonicalArtifact
+    CanonicalArtifact -->|"ProgramDeployment through official RPC types"| LezNode
+    LezIndexer -->|"prove transaction in finalized block"| CanonicalDeploy
+    CanonicalArtifact --> CanonicalDeploy
+    CanonicalDeploy --> LezReady
     LezV02Runner -->|"Write run-scoped evidence"| LezReady
     MakerNative --> LezNative
     TakerNative --> LezNative
@@ -252,8 +262,8 @@ flowchart LR
     LezRunner -->|"Taker-only endpoint and key files"| TakerCapability
     MakerSdk -.->|"Typed requests and validated snapshots"| MakerZebra
     TakerSdk -.->|"Typed requests and validated snapshots"| TakerZebra
-    MakerZebra -->|"Fund in 14o; follow-up claim in reverse 14c"| Zebra
-    TakerZebra -->|"Follow-up claim in 14o; fund in reverse 14c"| Zebra
+    MakerZebra -->|"Fund forward; follow-up claim reverse"| Zebra
+    TakerZebra -->|"Follow-up claim forward; fund reverse"| Zebra
     ZebraFork -.->|"Explicit reorg relay in fault tests"| Zebra
     MakerCapability -.->|"Primitive facts only"| MakerBridge
     TakerCapability -.->|"Primitive facts only"| TakerBridge
@@ -263,7 +273,7 @@ flowchart LR
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
     classDef implemented fill:#ddf4ff,stroke:#0969da;
     classDef running fill:#e6ffec,stroke:#1a7f37;
-    class Bedrock,LezIndexer,LezNode,LezV02Runner,LezNetwork,LezState,LezReady,MakerNative,TakerNative,LezNative,ActorProvisioner,FixtureReady,Zebra,MakerConfig,TakerConfig,MakerCapability,MakerOfficial,MakerEffect,TakerCapability,TakerOfficial,TakerEffect,LezRunner,EndpointLock,LezFull,MakerSdk,MakerBridge,MakerZebra,TakerSdk,TakerBridge,TakerZebra running;
+    class CanonicalBuilder,CanonicalArtifact,CanonicalDeploy,Bedrock,LezIndexer,LezNode,LezV02Runner,LezNetwork,LezState,LezReady,MakerNative,TakerNative,LezNative,ActorProvisioner,FixtureReady,Zebra,MakerConfig,TakerConfig,MakerCapability,MakerOfficial,MakerEffect,TakerCapability,TakerOfficial,TakerEffect,LezRunner,EndpointLock,LezFull,MakerSdk,MakerBridge,MakerZebra,TakerSdk,TakerBridge,TakerZebra running;
     class Mailbox,ZebraFork planned;
 ```
 
@@ -303,17 +313,27 @@ sequencer/indexer and Zebra endpoint tuple. A different tuple can proceed; a
 runner using the same tuple fails closed without touching the node processes or
 unrelated Docker resources.
 
-Historical runs 14d through 14n retain partial and failure evidence. Fresh run
-14o completed `TakerSellsLez` in 25.370 seconds: the taker deposited LEZ, the
+Historical runs 14d through 14n retain partial and failure evidence. Historical
+pre-canonical run 14o completed `TakerSellsLez` in 25.370 seconds: the taker deposited LEZ, the
 maker funded Zcash and claimed LEZ after two confirmations, and the taker spent
 the revealed Zcash path. Both actors reached revision 4 `Completed`; one
 bounded `moving_tip` retry succeeded. LEZ effects finalized in blocks
 264/265/266, and the Zcash height-108 claim spent the height-106 funding output.
-Fresh reverse run 14c completed `TakerSellsForeign` in 26.960 seconds without a
+Historical pre-canonical reverse run 14c completed `TakerSellsForeign` in 26.960 seconds without a
 drive retry: the taker funded Zcash, the maker deposited LEZ, the taker claimed
 LEZ, and the maker spent Zcash. LEZ effects finalized in blocks 641/642/643,
 and the Zcash height-115 claim spent the height-113 funding output. Both actor
-processes and role stores again reached revision 4 `Completed`. The common live
+processes and role stores again reached revision 4 `Completed`. Those successful
+runs used host-built ProgramId `f8385049...0fbe` and remain immutable
+historical evidence rather than current deployment authority.
+
+The canonical Docker artifact has ELF `c85055f6...9d2e` and ProgramId
+`5cf8c5a4...29c1`. It was deployed in transaction `bd16808e...733f`, proved
+Finalized in block 2582, and then exercised by
+`m2cert-canonical-forward-bb53daf-20260714a` and
+`m2cert-canonical-reverse-bb53daf-20260714a`. Both actor pairs reached revision
+4 `Completed`; the forward run took 25.580 seconds with two bounded retries and
+the reverse took 28.790 seconds without a retry. The common live
 guard requires confirmed Zcash funding before the LEZ revealing claim and the
 LEZ reveal before the Zcash follow-up spend. Both required happy directions
 have separate indexer-finality and Zebra transaction evidence. The dormant
@@ -416,19 +436,20 @@ revalidation, propagation, and finality evidence before release.
 
 | Component | Status | Transport and bind | Authentication / authority | Methods exercised or required | Lifecycle and isolation |
 |---|---|---|---|---|---|
-| Full local LEZ v0.2 devnet | Services, both Vault Claims, checked deployment, native lifecycle, and both composed corridor directions GREEN | Unique no-masquerade bridge: Bedrock HTTP `bedrock:18080`, sequencer JSON-RPC `sequencer:3040`, indexer JSON-RPC `indexer:8779`; retained proof host publications were `127.0.0.1:32831/32832/32833` | Local RPCs are unauthenticated and limited to loopback/the run bridge. Actor signatures authorize Vault and escrow effects; the sequencer's accredited channel authorizes publication to Bedrock | Bedrock cryptarchia/channel reads; sequencer health/channel/program/block/transaction/account/nonce and submission calls; indexer finalized tip, transaction, block-by-ID/hash, and account-at-block reads | Forward run14o finalized initialize/fund/claim in blocks 264/265/266; reverse run14c finalized them in 641/642/643. Both ended claimed with zero custody. Restart, refund, reorg, and composed cleanup remain pending |
+| Canonical v0.2 guest and deployment | Docker build, exact artifact verification, and private local on-chain deployment GREEN | Guest build runs in pinned Risc0 builder; deployment uses the explicit loopback sequencer and is finalized through the explicit loopback indexer | Immutable builder digest, ELF SHA-256 `c85055...9d2e`, ImageID and ProgramId `5cf8c5...29c1`, source commits, channel, and genesis are fail-closed inputs | Supported Risc0 Docker embed; exact manifest/ELF/ImageID verification; official-type `ProgramDeployment`; sequencer transaction lookup; indexer block-by-ID/hash finality | Deployment tx `bd1680...733f` is Finalized in block 2582, hash `d2c494...6860`. Historical host-built ProgramId `f83850...0fbe` is evidence-only and rejected for current admission |
+| Full local LEZ v0.2 devnet | Services, both Vault Claims, canonical deployment, native lifecycle, and both canonical corridor directions GREEN | Unique no-masquerade bridge: Bedrock HTTP `bedrock:18080`, sequencer JSON-RPC `sequencer:3040`, indexer JSON-RPC `indexer:8779`; retained proof host publications were `127.0.0.1:32831/32832/32833` | Local RPCs are unauthenticated and limited to loopback and the run bridge. Actor signatures authorize Vault and escrow effects; the accredited channel authorizes publication to Bedrock | Bedrock cryptarchia/channel reads; sequencer health/channel/program/block/transaction/account/nonce and submission; indexer finalized tip, transaction, block-by-ID/hash, and account-at-block | Canonical deployment finalized in block 2582. Forward escrow initialize/fund/claim finalized in 2594/2595/2596; reverse finalized in 2605/2606/2607; both actor pairs ended revision 4 `Completed`. Restart, refund, reorg, and composed cleanup remain later hardening |
 | Official-wire LEZ v0.2 native PoC CLIs | Library gate plus actual-node `lez-v02-vault-claim-poc` and role-separated native `deposit`/`claim`/`observe` GREEN | PoC CLIs call the official sequencer at a dynamic literal-loopback URL | Maker and taker use separate key files and owner-only state directories; only the direction-derived Zcash funder and LEZ claimant receives the preimage. Exact official types bind runtime, role, signer, channel, program, terms, and accounts. Secrets are file inputs, never argv/evidence | Vault Claim submission; native initialize/fund/revealing claim; canonical sequencer inclusion and stable same-tip account reads. Separate sequential indexer calls proved finality; CLI output itself does not | Forty-two existing integration tests plus format/Clippy/rustdoc/dependency gates pass. Exact signed bytes and observe-before-submit are GREEN, but native output reports `crash_atomic_submission=false`; integrated finality/journal reconciliation remains later work |
-| Exact v0.2 PoC role bridge | Both role processes completed the full method sequence in forward run14o and reverse run14c; dormant exact-public construction is GREEN | Actor-facing listener is an explicitly provisioned nonzero literal-loopback URL. Sidecar outbound `local` accepts explicit loopback sequencer/indexer URLs; `official_public` accepts only `https://testnet.lez.logos.co/` for both. Mixed routes and generic remote URLs fail before client construction | File-backed capability and private key; exact bearer, run ID, role, runtime, derived signer, program, and private state binding. Middleware rejects identity before JSON parsing | Describe, native prepare, escrow observe, revealing-claim prepare/observe, and exact submit are implemented. Startup requires sequencer health/channel and a non-genesis finalized indexer tip. Refund methods return typed unavailable; bridge readiness does not assert effect finality | Local run14o finalized LEZ blocks 264/265/266 and reverse run14c finalized 641/642/643. No public call was made; official-origin finalized-tip method availability and actual-node refund remain open |
-| Local reference-actor fixture provisioner | Direction-aware private pairs provisioned and reloadable; retained successful pairs are evidence, not reusable fixtures | Reads retained Zebra at dynamic loopback and emits distinct configured sidecar URLs; the runner then binds fresh role bridges | Separate `0700` roots and `0600` files; distinct recovery keys, capabilities, signers, stores, and journals. The direction-derived Zcash funder alone receives the preimage and candidate | Validates real Regtest identity and a stable mature UTXO; emits and reloads configs/activation material; validates pair isolation | The old window 1..256 is stale and never reused. Runs 14o and 14c provisioned just in time with a 49-second completion cap against the 60-second LEZ delay. New effect-bearing runs require fresh nodes/funds or explicit owner recovery |
-| Reference actor configuration, status, activate, and drive | Unix-only schema-v3 configuration, paired-role validation, offline recovery, both local happy directions, and dormant Zebra route contracts GREEN | Bridge endpoint remains explicit loopback. Zebra route is typed as deterministic local loopback, self-hosted loopback with cookie, or exact `https://zcash-testnet-zebrad.gateway.tatum.io/` with `x-api-key` | Exact agreement/run/swap/role/runtime, Zebra network/branch/genesis/route, separate capability/signer/state/claim/Zcash keys, and owner-only credential files are validated before activation persistence/effects. Private-file and no-alias checks remain enforced | `status` remains chain-impossible by type. `activate`/`drive` use fresh role-bound bridge clients and the configured bounded Zebra client. Local run14o and reverse run14c reached revision 4 `Completed` | Public route/config construction is tested without network calls. Self-hosted/Tatum availability, actual-node restart/refund/reorg, and hardening remain open |
+| Exact v0.2 PoC role bridge | Both role processes completed the full method sequence in canonical forward and reverse runs; dormant exact-public construction is GREEN | Actor-facing listener is explicit nonzero loopback. Sidecar outbound `local` accepts explicit loopback sequencer/indexer URLs; `official_public` accepts only `https://testnet.lez.logos.co/` for both | File-backed capability and private key; bearer, run, role, runtime, signer, canonical program, and private state are bound before JSON parsing | Describe, native prepare, escrow observe, revealing-claim prepare/observe, and exact submit; startup requires sequencer health/channel and non-genesis finalized indexer tip | Both canonical runs used only ProgramId `5cf8c5...29c1`. No public call was made; official-origin finalized-tip availability and actual-node refund remain open |
+| Local reference-actor fixture provisioner | Direction-aware private pairs provisioned and reloadable; retained successful pairs are evidence, not reusable fixtures | Reads retained Zebra at dynamic loopback and emits distinct configured sidecar URLs; runner binds fresh role bridges | Separate `0700` roots and `0600` files; distinct recovery keys, capabilities, signers, stores, and journals. Only the direction-derived Zcash funder receives the preimage candidate | Validates Regtest identity and stable mature UTXO; emits and reloads configs and activation material; validates pair isolation | The old window 1..256 is never reused. Both canonical runs provisioned fresh inputs and bound only ProgramId `5cf8c5...29c1`; new effect-bearing runs require fresh funds or explicit owner recovery |
+| Reference actor configuration, status, activate, and drive | Unix schema-v3 configuration, paired-role validation, offline recovery, both canonical local directions, and dormant Zebra route contracts GREEN | Bridge endpoint remains explicit loopback. Zebra route is deterministic local loopback, self-hosted loopback with cookie, or exact Tatum Testnet HTTPS with `x-api-key` | Agreement, run, swap, role, runtime, network, branch, genesis, route, canonical ProgramId, separate capability/signer/state/claim/Zcash keys, and owner-only credentials validate before effects | `status` remains chain-impossible by type. `activate` and `drive` use fresh role-bound bridge and bounded Zebra clients; both canonical runs reached revision 4 `Completed` | Public construction is tested without calls. Self-hosted/Tatum availability, actual-node restart/refund/reorg, and hardening remain open |
 | `lez-maker-daemon` | Running prototype | HTTP JSON-RPC; default `127.0.0.1:0`; non-loopback rejected | Bearer token from hidden environment; minimum 24 bytes; header checked before JSON parsing | Actual: `swap_create`, `swap_status`, `swap_alerts`, `swap_alert_acknowledge` | Operator/test-owned process; caller-selected SQLite path; Ctrl-C shutdown |
 | `lez-maker` | Running prototype | HTTP client; default `127.0.0.1:9944`; explicit ready URL for ephemeral daemon | Authorization header marked sensitive | Actual CLI: `create-swap`, `status`, `alerts`, `acknowledge-alert` | Independent operator process |
 | SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority; SDK adapter fixes one local role per handle; claim key material is supplied externally and never stored | Aggregate, revision, ZEC journal, immutable binding, alerts, separate lock/claim/refund owner intents, protected claim material, owner/observer claim/refund transitions, and canonical observation transitions | WAL, `FULL` synchronous, foreign keys, immediate transactions; schema-v10 replay retains prior lock/claim journals, rejects inconsistent history, and closes/reopens both directions at revision 4 and `Completed` or `Refunded`. Owner refund commit copies the exact intent, inserts the transition, advances revision once, and deletes pending intent in one immediate transaction; observer rows retain no signing intent. The v8→v9 migration still replaces legacy plaintext claim evidence and scrubs SQLite/WAL remnants; 39 store tests pass; one process mutex remains |
 | Deterministic LEZ/ZEC SDK lifecycle | Running library/test boundary | No socket, RPC, node, Docker, faucet, or public endpoint; bounded Borsh schema-2 bytes enter from an untrusted negotiation adapter | Fixed maker/taker roles and the signed direction select observations/effects; separate role databases and external claim keys prevent shared claim-recovery authority; refund observers cannot sign | Exact agreement validation, protected activation, both lock directions, LEZ reveal, observer preimage extraction, Zcash follow-up, and fixed LEZ-then-Zcash refund driving with observe-before-rebroadcast and versioned durable records. After signed-wire acceptance, activation and resume require no discovery or negotiation capability. `resume_all_capable` replays lock, claim, and refund records without a chain call for truthful terminal status | 16 KiB agreement and 2,000,000-byte submission caps; 132 SDK checks plus 39 store tests pass, with one actual-Zebra SDK case intentionally ignored outside its isolated runner. Claims and refunds replay through SQLite with forced-rollback, exact-conflict, corruption, future-schema, and terminal full-resume checks. Chain evidence comes from deterministic port doubles, so this row is not an actual-node claim |
-| SDK-facing LEZ bridge client and adapter | Eight-method client, signed-agreement adapters, crash-safe context-owning SDK ports, and live actor wiring completed both happy directions | Literal-IP run-owned loopback HTTP; fresh client per attempt; no redirects or proxy settings | Capability plus exact run/role/runtime and caller-owned request IDs; role-local operation journal retains IDs/windows and ambiguous context | Run14o and reverse run14c crossed prepare/observe/submit through both actors without duplicate effects | Existing adapter gates remain GREEN. Actual-node refund and recovery composition remain open |
+| SDK-facing LEZ bridge client and adapter | Eight-method client, signed-agreement adapters, crash-safe context-owning SDK ports, and live actor wiring completed both canonical happy directions | Literal-IP run-owned loopback HTTP; fresh client per attempt; no redirects or proxy settings | Capability plus exact run/role/runtime/canonical ProgramId and caller-owned request IDs; role-local journal retains IDs, windows, and ambiguous context | Canonical forward and reverse runs crossed prepare, observe, and submit through both actors without duplicate effects | Existing adapter gates remain GREEN. Actual-node refund and recovery composition remain open |
 | Official-wire LEZ sidecar | Native/revealing-claim/native-refund planners and observations, node-RPC core, authenticated eight-method server, executable role runner, both local happy directions, and dormant exact-public client construction are implemented | Actor-facing server remains nonzero literal loopback with capability authentication. Outbound `local` is explicit uncredentialed loopback HTTP; `official_public` is only exact `https://testnet.lez.logos.co/` HTTPS for sequencer and indexer. One connection and bounded bodies; no automatic retry | Capability, exact `RUN_ID`, fixed role, signer, runtime, channel, genesis, and program are checked independently of transport. Route validation rejects credentials, alternate paths/ports, query, fragment, generic domain, remote HTTP, and mixed local/public endpoints | All eight local bridge methods register. Generated official RPC covers nonce, submit, health/channel, tip/block/account, bounded scans, and the required finalized-tip startup call. Local observations retain same-tip and canonical validation | Public construction was tested without I/O. Live endpoint method availability, especially indexer `getLastFinalizedBlockId`, is unknown upstream. `crash_atomic_submission=false`, actual-node refund/finality reconciliation, restart, and fault recovery remain open |
-| In-process typed Zebra adapter | Agreement-bound funding/claim/refund composite, role-keyed signer, both local happy directions, and schema-v3 dormant route construction implemented | Direct bounded JSON-RPC: deterministic Regtest loopback; self-hosted Main/Test Zebra on loopback with cookie; or only exact Tatum Testnet HTTPS with sensitive `x-api-key`. No bridge or sidecar | Role/key/network/branch/genesis/route, exact candidate commitment, stable tip, transaction policy, canonical bytes, and owner-only credential file remain independently checked | Local run14o funded `255b991f...dceab:0` at height 106 and claimed it at 108. Reverse run14c funded `181c4baa...14f0:0` at 113 and claimed it at 115 after height 114 supplied the second confirmation | Self-hosted/Tatum calls were not made. Provider method smoke, post-lock removal/replacement, actual-node restart/reorg composition, and later hardening remain open |
-| Development LEZ plus Zebra corridor runner | Run14o completed `TakerSellsLez` and reverse run14c completed `TakerSellsForeign`; 2 of 2 directions | Consumes already-running explicit local LEZ sequencer/indexer and Zebra loopback URLs; creates a fresh run-owned root and two ephemeral bridge listeners. It does not own or remove the nodes. A nonblocking `flock` serializes only the SHA-256-keyed endpoint tuple | Provisions distinct maker/taker capabilities, keys, state, request journals, funding, and databases; records secret-free outputs under the private run root | Prebuilds before provisioning; enforces pre-effect maximum 25 seconds, monotonic provision-to-completion cap 49 seconds versus the 60-second LEZ delay, per-call cap 20 seconds, fresh discovery headroom, maximum-eight same-run drive retries, and mines only after a reported Zcash effect. The live guard enforces confirmed Zcash funding, then LEZ reveal, then Zcash follow-up | Stops only bridge PIDs matching recorded start ticks and executable identity, retains private failure evidence, and refuses output-root reuse. Integrated terminal evidence was audited separately. Chain-fund recovery, restart/refund/reorg, and hardening remain open |
+| In-process typed Zebra adapter | Agreement-bound funding/claim/refund composite, role-keyed signer, both canonical local happy directions, and schema-v3 dormant route construction implemented | Direct bounded JSON-RPC: deterministic Regtest loopback; self-hosted Main/Test loopback with cookie; or exact Tatum Testnet HTTPS with sensitive `x-api-key` | Role/key/network/branch/genesis/route, exact candidate commitment, stable tip, transaction policy, canonical bytes, and owner-only credentials are independently checked | Canonical forward run advanced Zebra 121 to 124; canonical reverse advanced 124 to 127, each preserving confirmed funding before LEZ reveal and follow-up spend after reveal | Self-hosted/Tatum calls were not made. Provider smoke, post-lock replacement, actual-node restart/reorg, and hardening remain open |
+| Development LEZ plus Zebra corridor runner | Canonical forward completed `TakerSellsLez`; canonical reverse completed `TakerSellsForeign`; 2 of 2 directions | Consumes explicit local sequencer/indexer/Zebra loopback URLs; creates fresh run root and bridge listeners; does not own or remove nodes. Endpoint-tuple `flock` serializes only the same tuple | Distinct maker/taker capabilities, keys, state, journals, funding, and databases; secret-free outputs remain under the private run root | Prebuilds and provisions fresh, applies bounded calls/retries, mines only after a Zcash effect, and enforces confirmed funding then LEZ reveal then Zcash follow-up | Forward `m2cert-canonical-forward-bb53daf-20260714a` completed in 25.580s; reverse `m2cert-canonical-reverse-bb53daf-20260714a` in 28.790s. Cleanup is exact; recovery and hardening remain open |
 | Primary Zebra | Running in ignored E2E | Container `0.0.0.0:18232`; ephemeral host `127.0.0.1` mapping | Regtest fixture has no cookie auth; signed transactions and consensus remain authoritative | `getblockcount`, `generate`, `getblockhash`, `getblock`, `getblockheader`, `submitblock`, `getaddressutxos`, `getrawtransaction`, `sendrawtransaction`, `getblockchaininfo` | Unique Compose project and tmpfs state per `RUN_ID` |
 | Fork Zebra | Running in ignored E2E | Same container port; distinct ephemeral host-loopback mapping | Same Regtest-only policy | Same RPC set; produces independent higher-work branch | Separate tmpfs state; no initial peer; fixture-controlled block relay |
 | LEZ standalone v0.1.2 | Running in ignored E2E | Upstream server `0.0.0.0:0`; client uses `127.0.0.1:<assigned>` | No transport credential; actor signatures authorize transactions | `checkHealth`, `sendTransaction`, `getLastBlockId`, `getTransaction`, `getAccountsNonces`, `getAccount`, `getBlock`, and `getProgramIds` for static built-ins only | In-process handle, temporary state, deterministic genesis actors; not public v0.2 |
@@ -445,8 +466,8 @@ revalidation, propagation, and finality evidence before release.
 
 The deterministic SDK/schema-v10 corridor uses only local temporary files and
 process input. It cannot fail because a public RPC, faucet, chain peer, Docker
-registry, or testnet is unavailable. The composed runs 14o and reverse 14c
-crossed actual local LEZ v0.2 Bedrock/sequencer/indexer and Zebra Regtest
+registry, or testnet is unavailable. The canonical forward and reverse certification runs crossed actual local LEZ
+v0.2 Bedrock, sequencer, indexer, and Zebra Regtest
 consensus/state-transition boundaries in one swap. Regtest outputs and LEZ
 genesis allocations provided deterministic local funds. Separate ignored fault
 suites remain independent evidence and do not turn the two happy runs into

@@ -1,36 +1,57 @@
 # ADR 0024: Package and isolate the source-audited LEZ v0.2 local stack
 
-Status: Accepted architecture; isolated service readiness GREEN, full runtime tuple pending
+Status: Accepted architecture; service, canonical deployment, and both happy-path runtime tuples GREEN; recovery hardening pending -- 2026-07-14
 
 ```mermaid
-flowchart LR
+flowchart TB
     Operator["Local operator"]
     Orchestrator["Run-scoped host orchestrator"]
-    State[(".e2e RUN_ID lez-v02")]
-    Key["Deterministic local signing seed"]
+    State[("Run-owned state and evidence")]
 
-    subgraph Bridge["Unique run-owned Docker bridge; IP masquerade disabled"]
-        Bedrock["Bedrock node; HTTP 18080"]
-        Sequencer["LEZ v0.2 sequencer; JSON-RPC 3040"]
-        Indexer["LEZ v0.2 indexer; JSON-RPC 8779"]
+    subgraph BuildBoundary["Canonical guest build boundary"]
+        Source["LEZ v0.2.0 + SPEL PR 238 source"]
+        Builder["Risc0 guest-builder r0.1.94.1<br/>immutable image digest"]
+        Artifact["ELF c85055...9d2e<br/>ProgramId 5cf8c5...29c1"]
     end
 
-    Loopback["Dynamic 127.0.0.1 ports"]
-    Pending["Pending full tuple: Vault claims, escrow, actors, swaps, recovery"]
+    subgraph LocalLez["Unique run-owned Docker bridge"]
+        Bedrock["Bedrock HTTP 18080<br/>host proof port 32831"]
+        Sequencer["LEZ sequencer JSON-RPC 3040<br/>host proof port 32832"]
+        Indexer["LEZ indexer JSON-RPC 8779<br/>host proof port 32833"]
+    end
+
+    subgraph Actors["Independent role-local processes"]
+        Maker["Maker actor + maker sidecar + SQLite"]
+        Taker["Taker actor + taker sidecar + SQLite"]
+    end
+
+    Zebra["Zebra 5.2.0 Regtest JSON-RPC 18232<br/>host proof port 32834"]
+    Deploy["Official-type ProgramDeployment submission"]
+    Deployment["Finalized deployment proof<br/>tx bd1680...733f<br/>block 2582"]
+    Corridor["Both ZEC corridor directions Completed"]
 
     Operator --> Orchestrator
     Orchestrator --> State
-    Key --> Sequencer
+    Source --> Builder
+    Builder --> Artifact
+    Artifact --> Deploy
     Orchestrator -->|"start and cryptarchia probe"| Bedrock
-    Orchestrator -->|"start after exact missing-channel proof"| Sequencer
+    Orchestrator -->|"start after missing-channel proof"| Sequencer
     Sequencer -->|"signed channel onboarding and block publication"| Bedrock
     Orchestrator -->|"start after channel accreditation"| Indexer
     Indexer -->|"poll finalized channel messages"| Bedrock
-    Orchestrator -->|"health, channel, program, Borsh block RPC"| Sequencer
-    Orchestrator -->|"cryptarchia and channel HTTP"| Bedrock
-    Orchestrator -->|"finalized block by ID and hash RPC"| Indexer
-    Loopback --> Orchestrator
-    Orchestrator -.-> Pending
+    Deploy -->|"sendTransaction through loopback RPC"| Sequencer
+    Indexer -->|"getBlockById and getBlockByHash"| Deployment
+    Artifact --> Deployment
+    Maker -->|"official v0.2 RPC through maker sidecar"| Sequencer
+    Taker -->|"official v0.2 RPC through taker sidecar"| Sequencer
+    Maker -->|"typed Regtest RPC"| Zebra
+    Taker -->|"typed Regtest RPC"| Zebra
+    Deployment --> Corridor
+    Maker --> Corridor
+    Taker --> Corridor
+    Zebra --> Corridor
+    Orchestrator --> State
 ```
 
 ## Context
@@ -92,18 +113,39 @@ Startup is ordered Bedrock, then sequencer, then indexer. The sequencer starts o
 fresh signing key against an existing channel is not equivalent: it is not
 accredited and can leave block publication stalled.
 
-Bedrock genesis retains the source-required all-zero system channel. The upstream LEZ example all-`01` channel is a hashed observation, not a live identity. The local runtime channel is `b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748`, the Ed25519 public key derived from a deterministic local-only raw signing seed. Its key file SHA-256 is `8fd0d8a6423536c14b5d3979e5135bf37253f5dfbc8485b52202bbf963b8f02e`. The runner never rewrites the protected genesis channel; the real sequencer creates and accredits its own signed channel through the supported Bedrock inscription path. The immutable runtime
-identity tuple is:
+Bedrock genesis retains the source-required all-zero system channel. The upstream LEZ example all-`01` channel is a hashed observation, not a live identity. The local runtime channel is `b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748`, the Ed25519 public key derived from a deterministic local-only raw signing seed. Its key file SHA-256 is `8fd0d8a6423536c14b5d3979e5135bf37253f5dfbc8485b52202bbf963b8f02e`. The runner never rewrites the protected genesis channel; the real sequencer creates and accredits its own signed channel through the supported Bedrock inscription path. The immutable infrastructure and program identity tuple is:
 
-`(LEZ source commit, Bedrock image revision and digest, system channel,
-LEZ channel, sequencer binary digest, indexer binary digest, r0vm digest,
-runtime-image digest)`.
+`(LEZ source commit, SPEL source commit, Bedrock image revision and digest,
+system channel, LEZ channel, sequencer binary digest, indexer binary digest,
+r0vm digest, runtime-image digest, guest-builder digest, guest ELF SHA-256,
+ImageID and ProgramId)`.
 
-The currently certified service-readiness tuple is:
+For the canonical private certification, that tuple includes LEZ genesis
+`e24c5a4a2d08a747b96cebefa1304cbe80e42dac9ced3a52c2330b22797e10d9`,
+ELF `c85055f6fe85b71535a322ba84ffc612f5d093954a721ba3b529428814dc9d2e`,
+and ImageID and ProgramId
+`5cf8c5a4eedb3c2873956cb7898eb33a495407c9746fb1a065c99638159329c1`.
+The deployment extension is transaction
+`bd16808ee91c9860e860830e7437148b3f4f81c632fc1b6d40350e20cc47733f`
+in Finalized block `2582`, hash
+`d2c4944a936347207be7030bb39f6b8f21dfc3dc75e95afedb58e22ed1f96860`.
+Neither an endpoint nor an environment variable can replace these consensus
+and artifact identities.
 
-`(Bedrock cryptarchia advancement, exact missing-channel response, signed channel accreditation and advancement, sequencer health/channel/built-ins/genesis, finalized non-genesis block ID at least 2, indexer lookup by ID and hash, cross-RPC block-header identity)`.
+The certified service-readiness tuple is:
 
-The full runtime tuple additionally requires checked escrow deployment, actor Vault Claims and account state, both independent role processes, swap effects, and restart recovery; those items remain pending and are not implied by service readiness.
+`(Bedrock cryptarchia advancement, exact missing-channel response, signed
+channel accreditation and advancement, sequencer health, channel, built-ins
+and genesis, finalized non-genesis block ID, indexer lookup by ID and hash,
+cross-RPC block-header identity)`.
+
+The M2 PoC happy-path runtime tuple additionally binds finalized actor Vault
+Claims and account state, the checked canonical deployment, distinct maker and
+taker processes and stores, a dual-signed agreement, both direction-derived
+swap effect sequences, and terminal revision-4 `Completed` state. That tuple is
+GREEN in both directions. Restart, refund, reorg, chaos, and production
+hardening are separate progressive phases under ADR 0027 and are not implied by
+the PoC claim.
 
 Readiness is conjunctive and is evaluated by the host orchestrator against all
 three services:
@@ -128,7 +170,7 @@ runtime binding exist.
 
 ## Consequences
 
-- Source, binary, packaging, isolated service startup, signed channel onboarding, non-genesis cross-RPC finality, and distinct maker/taker owner/Vault pre-Claim state at exact finalized block 2 are GREEN in run `v02-actors-finalized-20260713b`. The full runtime tuple, including actual-node Claim RPC submission/inclusion/finality, checked escrow deployment, effect-bearing independent actors, swap effects, and restart recovery, remains pending.
+- Run `v02-actors-finalized-20260713b` remains historical service-readiness evidence. Current evidence additionally proves actual generated-RPC Vault Claims, the canonical Docker artifact deployment in finalized block 2582, and both role-real happy-path corridor directions. Restart, refund, reorg, chaos, and production hardening remain later progressive phases.
 - Wildcard upstream binds no longer expose fixed host ports or collide with
   unrelated Docker activity.
 - A healthy indexer cannot be mistaken for finality, and a transiently moving

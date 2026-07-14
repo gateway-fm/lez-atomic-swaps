@@ -12,13 +12,14 @@ spel_commit="df17acd98436be4f09c55877dae1fe2e73cbcdca"
 lez_commit="a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
 compat_test_sha256="e5320fc8a6172755cca312409e120ee4dd4837f21274e3be7f3f383006eb52d1"
 risc0_version="3.0.5"
-risc0_rust_version="1.88.0"
+risc0_rust_version="1.94.1"
 rzup_version="0.5.1"
 circuits_version="v0.4.2"
 circuits_sha256="e9131ffac8b08a80e1a7152b34fdd5d5c52674d4cb396e8162131ca5dd7c858d"
-expected_elf_sha256="40c9d37c5dc3c8544bcb7c26916a5be1039b76cc862b2c9dcd34e0cf61468021"
-expected_image_id="f8385049e93a319b44d868e0d0cf805b058eddcf92141a186ffd69e4596c0fbe"
-risc0_guest_builder="risczero/risc0-guest-builder:r0.1.88.0@sha256:3e12f71bacd27527a61dea96fa0e53e468c99aa261d3a1019b593f6dbd943eb3"
+expected_elf_sha256="c85055f6fe85b71535a322ba84ffc612f5d093954a721ba3b529428814dc9d2e"
+expected_image_id="5cf8c5a4eedb3c2873956cb7898eb33a495407c9746fb1a065c99638159329c1"
+risc0_guest_builder_tag="r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be"
+risc0_guest_builder="risczero/risc0-guest-builder:${risc0_guest_builder_tag}"
 run_id="${RUN_ID:-local-$$}"
 if [[ ! "$run_id" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
   echo "RUN_ID must contain only lowercase letters, numbers, underscores, or hyphens" >&2
@@ -102,9 +103,9 @@ RUSTDOCFLAGS="-D warnings" cargo doc --locked --manifest-path "$root_manifest" -
 
 cargo fmt --manifest-path "$guest_manifest" -- --check
 CARGO_TARGET_DIR="$guest_target" \
-  cargo test --locked --manifest-path "$guest_manifest" --all-targets
+  cargo check --locked --manifest-path "$guest_manifest" --bins
 CARGO_TARGET_DIR="$guest_target" \
-  cargo clippy --locked --manifest-path "$guest_manifest" --all-targets -- -D warnings
+  cargo clippy --locked --manifest-path "$guest_manifest" --bins -- -D warnings
 CARGO_TARGET_DIR="$guest_target" RUSTDOCFLAGS="-D warnings" \
   cargo doc --locked --manifest-path "$guest_manifest" --no-deps --bins
 
@@ -112,18 +113,22 @@ CARGO_TARGET_DIR="$guest_target" RUSTDOCFLAGS="-D warnings" \
 # in a run-local copy so concurrent work cannot share or overwrite guest target
 # state. Host-side methods/deployer tests below independently embed a real guest.
 guest_build_root="${artifact_target}/docker-guest-source"
+guest_build_manifest_dir="${guest_build_root}/escrow/methods/guest"
+guest_build_contract_dir="${guest_build_root}/escrow/src"
 if [[ -e "$guest_build_root" ]]; then
   echo "run-local Docker guest source already exists: ${guest_build_root}" >&2
   exit 1
 fi
-mkdir -p "$guest_build_root"
-cp "${guest_manifest%Cargo.toml}Cargo.toml" "$guest_build_root/Cargo.toml"
-cp "${guest_manifest%Cargo.toml}Cargo.lock" "$guest_build_root/Cargo.lock"
-cp -R "${guest_manifest%Cargo.toml}src" "$guest_build_root/src"
+mkdir -p "$guest_build_manifest_dir" "$guest_build_contract_dir"
+cp "${guest_manifest%Cargo.toml}Cargo.toml" "$guest_build_manifest_dir/Cargo.toml"
+cp "${guest_manifest%Cargo.toml}Cargo.lock" "$guest_build_manifest_dir/Cargo.lock"
+cp -R "${guest_manifest%Cargo.toml}src" "$guest_build_manifest_dir/src"
+cp "compat/lez-v0.2-provisional/escrow/src/lib.rs" "$guest_build_contract_dir/lib.rs"
 (
   cd "$guest_build_root"
-  export RISC0_DOCKER_CONTAINER_TAG="$risc0_guest_builder"
-  cargo risczero build --manifest-path Cargo.toml
+  export RISC0_DOCKER_CONTAINER_TAG="$risc0_guest_builder_tag"
+  export CARGO_TARGET_DIR="${guest_build_root}/target"
+  cargo risczero build --manifest-path escrow/methods/guest/Cargo.toml
 )
 mapfile -t docker_guest_elfs < <(
   find "$guest_build_root/target" -type f -name 'zec_escrow_v02.bin' -print

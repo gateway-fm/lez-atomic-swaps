@@ -1,49 +1,56 @@
 # ADR 0023: Certify M2 with a private actual-node corridor
 
-Status: Accepted by the repository owner on 2026-07-13
+Status: Accepted by the repository owner on 2026-07-13; canonical deployment reconciled 2026-07-14
 
 ```mermaid
-flowchart LR
-    Maker["Independent maker actor"]
-    Taker["Independent taker actor"]
+flowchart TB
+    Maker["Independent maker actor<br/>role-local config and SQLite"]
+    Taker["Independent taker actor<br/>role-local config and SQLite"]
+    MakerSidecar["Maker official-wire LEZ sidecar"]
+    TakerSidecar["Taker official-wire LEZ sidecar"]
 
-    subgraph LocalLez["Public-compatible local LEZ v0.2 devnet"]
-        Bedrock["Bedrock node<br/>isolated service GREEN"]
-        Indexer["LEZ v0.2 indexer<br/>finalized service GREEN"]
-        Sequencer["Non-standalone v0.2 sequencer RPC<br/>signed channel service GREEN"]
-        ServiceReady["Service readiness GREEN"]
-        FullRuntime["Vault claims, escrow, actors,<br/>swaps, and recovery pending"]
+    subgraph LocalLez["Private actual-node LEZ v0.2 devnet"]
+        Bedrock["Bedrock HTTP 18080<br/>host proof port 32831"]
+        Sequencer["Sequencer JSON-RPC 3040<br/>host proof port 32832"]
+        Indexer["Indexer JSON-RPC 8779<br/>host proof port 32833"]
+        Program["Canonical ProgramId 5cf8c5...29c1"]
     end
 
-    subgraph LocalZcash["Pinned local Zcash Regtest devnet"]
-        Zebra["Primary Zebra"]
-        ZebraFork["Temporary fork Zebra"]
-    end
+    Zebra["Zebra 5.2.0 Regtest JSON-RPC 18232<br/>host proof port 32834"]
+    Artifact["Docker-built ELF c85055...9d2e"]
+    Deploy["Deployment tx bd1680...733f<br/>Finalized block 2582"]
+    Forward["TakerSellsLez happy path Completed"]
+    Reverse["TakerSellsForeign happy path Completed"]
+    M2["M2 private local-functional certification"]
+    PublicLez["Deferred public LEZ deployment"]
+    PublicZec["Deferred public Zcash testnet run"]
+    Hardening["Later restart, refund, reorg,<br/>chaos and production phases"]
 
-    LocalEvidence["Private happy, restart, refund, reorg, and concurrency evidence"]
-    M2["M2 local-functional certification"]
-    PublicLez["Public LEZ v0.2 deployment"]
-    PublicZec["Public Zcash testnet run"]
-    Release["Production-readiness backlog"]
-
-    Maker -.->|"v0.2 official-wire sidecar pending"| Sequencer
-    Taker -.->|"v0.2 official-wire sidecar pending"| Sequencer
-    Maker -->|"Typed Zebra adapter"| Zebra
-    Taker -->|"Typed Zebra adapter"| Zebra
-    Sequencer -->|"Zone SDK block publish"| Bedrock
-    Indexer -->|"Poll finalized LEZ channel"| Bedrock
-    Bedrock --> ServiceReady
-    Sequencer --> ServiceReady
-    Indexer --> ServiceReady
-    ServiceReady -.-> FullRuntime
-    ZebraFork -.->|"Explicit reorg relay in fault tests"| Zebra
-    FullRuntime -.-> LocalEvidence
-    Zebra --> LocalEvidence
-    LocalEvidence --> M2
-    PublicLez -.-> Release
-    PublicZec -.-> Release
-    M2 -.->|"Does not assert public evidence"| PublicLez
-    M2 -.->|"Does not assert public evidence"| PublicZec
+    Artifact --> Deploy
+    Deploy --> Sequencer
+    Deploy --> Program
+    Sequencer -->|"publish signed LEZ blocks"| Bedrock
+    Indexer -->|"poll finalized LEZ channel"| Bedrock
+    Indexer -->|"prove deployment and effects"| Deploy
+    Maker --> MakerSidecar
+    Taker --> TakerSidecar
+    MakerSidecar -->|"official v0.2 RPC"| Sequencer
+    TakerSidecar -->|"official v0.2 RPC"| Sequencer
+    Maker -->|"typed Regtest RPC"| Zebra
+    Taker -->|"typed Regtest RPC"| Zebra
+    Program --> Forward
+    Program --> Reverse
+    Maker --> Forward
+    Taker --> Forward
+    Zebra --> Forward
+    Maker --> Reverse
+    Taker --> Reverse
+    Zebra --> Reverse
+    Forward --> M2
+    Reverse --> M2
+    M2 -.-> PublicLez
+    M2 -.-> PublicZec
+    M2 -.-> Hardening
 ```
 
 ## Context
@@ -64,12 +71,17 @@ atomicity and recovery boundaries.
 
 ## Decision
 
-M2 certification will require private actual-node evidence for both supported
-ZEC directions: taker-first ordering, both locks before reveal, canonical LEZ
-reveal before the exact Zcash spend, restart recovery, ordered refund, reorg
-handling, and concurrent isolation. All endpoints, funds, keys, databases,
-Compose projects, ports, and retained evidence remain run-local. Manual
-instructions must reproduce this corridor without a public RPC or faucet.
+The private evidence program covers both supported ZEC directions: taker-first
+ordering, both locks before reveal, canonical LEZ reveal before the exact Zcash
+spend, restart recovery, ordered refund, reorg handling, and concurrent
+isolation. ADR 0027 subsequently split delivery into progressive phases. The
+owner-selected M2 PoC/tag gate requires the reproducible two-direction happy
+path on actual local nodes; composed restart, refund, reorg, concurrency, chaos,
+and production hardening remain explicit later phases rather than being
+silently claimed or allowed to block the PoC tag. All endpoints, funds, keys,
+databases, Compose projects, ports, and retained evidence remain run-local.
+Manual instructions reproduce the current corridor without a public RPC or
+faucet.
 
 The normal corridor contains exactly two isolated local chain environments: one
 pinned public-compatible LEZ v0.2 local devnet and one pinned Zcash Regtest
@@ -87,17 +99,16 @@ fork/reorg cases; it is not a third swap leg or a shared actor. Maker and taker
 remain independent operating-system processes with different configs, keys,
 funds, stores, journals, sidecars, and restart lifecycles.
 
-ADR 0024 now attests the clean v0.2 source contract, Bedrock OCI source mapping,
+ADR 0024 attests the clean v0.2 source contract, Bedrock OCI source mapping,
 correct sequencer-to-Bedrock publication and indexer-to-Bedrock polling flows,
-and exact sequencer/indexer output hashes. Run `v02-actors-finalized-20260713b` proves
-isolated ordered service startup, signed channel onboarding, finalized
-non-genesis block identity across both RPCs, channel advancement, dynamic
-loopback publication, distinct maker/taker owner/Vault pre-Claim state at that
-exact finalized block, and exact fail-closed cleanup. Independent clean rebuild
-reproducibility, restart-state preservation, Vault Claim submission/finality, checked
-escrow deployment, independent actor use, swap effects, and recovery remain
-pending. This ADR makes a running-service and pre-Claim state claim, not a
-corridor claim.
+and exact sequencer/indexer output hashes. Run `v02-actors-finalized-20260713b`
+remains the historical service-readiness checkpoint: it proved ordered startup,
+signed channel onboarding, cross-RPC finality, dynamic loopback publication,
+distinct owner/Vault pre-Claim state, and fail-closed cleanup. Later evidence
+added actual generated-RPC Vault Claims, the checked canonical deployment,
+independent actor effects, and both swap directions. Independent second clean
+service rebuild reproducibility and composed restart/refund/reorg recovery
+remain later hardening; they do not invalidate the current PoC claim.
 
 The M2 implementation must produce local and future public routes in the same
 actor binaries, SDK state machine, chain-port traits, transaction builders, and
@@ -108,11 +119,12 @@ profiles, signer and funding material, and the deployed LEZ escrow program ID.
 Deploying that program on the selected public LEZ network is an expected
 on-chain provisioning action. A devnet-only protocol branch, fake evidence
 adapter, alternate transaction format, or code rebuild selected by environment
-does not satisfy M2 portability. This is an open implementation gate today:
-public LEZ activation still fails closed, the actor endpoint schema is
-loopback-only, and the public Zebra HTTPS/signing route is incomplete. Public
-execution evidence is deferred, but the dormant public-capable configuration
-and adapters must exist and be locally contract-tested before M2 is tagged.
+does not satisfy M2 portability. ADR 0028 records the now-GREEN local contract
+tests for exact dormant public LEZ and Zebra routes. Live public activation
+continues to fail closed until authorized provisioning, credentials, funds,
+deployment, and runtime evidence exist. Public execution evidence is deferred;
+the locally tested dormant route does not assert endpoint availability or a
+public transaction.
 
 Public LEZ v0.2 deployment, public Zcash-testnet execution, public transaction
 identifiers, and public recordings are deferred to the production-readiness
@@ -144,10 +156,23 @@ vulnerability, license, documentation, or actual-node gates.
 
 This append-only note records that both private local actual-node happy-path
 directions and the locally tested dormant public-portability contracts are now
-GREEN. The M2 PoC still certifies only the owner-approved local-functional
-scope: no public LEZ or Zcash service was called, no public deployment or
-transaction evidence is asserted, and restart, refund, reorg, chaos, and
-production hardening remain later phases under ADR 0027.
+GREEN. The canonical guest was built through the pinned Risc0 Docker builder as
+ELF `c85055f6fe85b71535a322ba84ffc612f5d093954a721ba3b529428814dc9d2e`,
+ImageID and ProgramId
+`5cf8c5a4eedb3c2873956cb7898eb33a495407c9746fb1a065c99638159329c1`.
+Local deployment transaction
+`bd16808ee91c9860e860830e7437148b3f4f81c632fc1b6d40350e20cc47733f`
+was proved Finalized in block `2582`, hash
+`d2c4944a936347207be7030bb39f6b8f21dfc3dc75e95afedb58e22ed1f96860`,
+before both canonical corridor reruns completed.
+
+Earlier host-built ELF `40c9d37c...8021`, ProgramId `f8385049...0fbe`, and
+their immutable evidence are historical pre-canonical records. They are not a
+trusted deployment target and are not used by current actor admission. The M2
+PoC still certifies only the owner-approved local-functional scope: no public
+LEZ or Zcash service was called, no public deployment or transaction evidence
+is asserted, and restart, refund, reorg, chaos, and production hardening remain
+later phases under ADR 0027.
 
 ADR 0028 is the authoritative portability decision. The same schema-v3 actors,
 agreement validators, SDK state machine, official-wire LEZ sidecars, and Zebra

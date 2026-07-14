@@ -215,7 +215,7 @@ confirmations and revealed the preimage by claiming LEZ, and the taker used that
 reveal to claim Zcash. Both independent actor stores reached `Completed`
 revision 4 after 39 drive rounds and 78 actor events in 25.370 seconds. One
 payload-free `moving_tip` observation failure was retried once within the
-maximum-three policy and then succeeded.
+maximum-eight same-run policy and then succeeded.
 
 LEZ initialize/fund/claim finalized in blocks 264/265/266 and ended `Claimed`
 with custody 0, depositor balance 100000, and claimant balance 150000. Zebra
@@ -253,6 +253,17 @@ the actual pinned local LEZ v0.2 and Zebra Regtest nodes. Both independent actor
 reached `completed`, the atomic effect order was observed, and no public RPC or
 faucet was used. The secret-safe aggregate is in the
 [schema-v3 corridor evidence](docs/evidence/m2-schema-v3-local-corridors-20260714.json).
+Those earlier runs are retained as historical behavior evidence. Final local
+certification rebuilt the guest through the exact digest-pinned Risc0 Docker
+builder, and the independently Docker-backed methods embedding produced the
+same ELF `c85055f6...c9d2e` and ImageID/ProgramId `5cf8c5a4...329c1`. That
+artifact was deployed once and finalized in local LEZ block 2582; canonical
+runs `m2cert-canonical-forward-bb53daf-20260714a` and
+`m2cert-canonical-reverse-bb53daf-20260714a` then completed both directions
+against that deployment and Zebra Regtest. The new immutable
+[canonical certification packet](docs/evidence/m2-canonical-local-certification-20260714.json)
+binds the builder, artifact, deployment, actors, exact chain effects, terminal
+states, and absence of public resources without rewriting earlier evidence.
 PoC-to-hardening and milestone
 transitions remain repository-owner decisions. The
 [Zcash public-testnet setup guide](docs/zcash-testnet-setup.md) records the
@@ -312,6 +323,7 @@ export POC_OUTPUT_ROOT="${TMPDIR:-/tmp}/lez-atomic-swaps-${RUN_ID}"
 export LEZ_SEQUENCER_URL=http://127.0.0.1:<sequencer-port>
 export LEZ_INDEXER_URL=http://127.0.0.1:<indexer-port>
 export ZEBRA_RPC_URL=http://127.0.0.1:<zebra-port>
+export ESCROW_PROGRAM_ID=5cf8c5a4eedb3c2873956cb7898eb33a495407c9746fb1a065c99638159329c1
 export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
 ./scripts/run-m2-taker-sells-lez-poc.sh
 ```
