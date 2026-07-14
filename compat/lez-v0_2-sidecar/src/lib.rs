@@ -26,12 +26,12 @@ pub use effect_submission::{
 pub use native_prepare::{
     NativeEscrowPlanner, NativePrepareError, NonceSource, ZecEscrowInstruction,
     compute_custody_pda, compute_metadata_pda, decode_prepared_for_signer,
-    prepared_from_transaction,
+    prepared_from_transaction, program_id_from_hex, program_id_to_hex,
 };
 
 pub use runtime::{
-    HealthProbe, OfficialNodeRpc, OfficialVaultClaimFacts, RuntimeBoundary, RuntimeBoundaryError,
-    RuntimeHealth, decode_official_public_transaction,
+    HealthProbe, OfficialNativeEscrowFacts, OfficialNodeRpc, OfficialVaultClaimFacts,
+    RuntimeBoundary, RuntimeBoundaryError, RuntimeHealth, decode_official_public_transaction,
 };
 pub use server::{
     DescribeServerCapability, DescribeServerCapabilityError, DescribeServerConfig,

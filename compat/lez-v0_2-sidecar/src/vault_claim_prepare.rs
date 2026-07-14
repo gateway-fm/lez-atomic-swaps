@@ -176,11 +176,15 @@ impl From<NativePrepareError> for VaultClaimPrepareError {
             NativePrepareError::WrongRole => Self::WrongRole,
             NativePrepareError::WrongRuntime => Self::WrongRuntime,
             NativePrepareError::WrongSigner => Self::WrongSigner,
-            NativePrepareError::ActivePrepare => Self::ActivePrepare,
+            NativePrepareError::ActivePrepare | NativePrepareError::ActiveClaimPrepare => {
+                Self::ActivePrepare
+            }
             NativePrepareError::NonceUnavailable => Self::NonceUnavailable,
             NativePrepareError::ProtocolEncoding => Self::ProtocolEncoding,
             NativePrepareError::InvalidTransactionBytes
             | NativePrepareError::WrongDepositorRole
+            | NativePrepareError::WrongClaimant
+            | NativePrepareError::WrongPreimage
             | NativePrepareError::WrongEscrowProgram
             | NativePrepareError::WrongAuthenticatedTransferProgram
             | NativePrepareError::NonceOverflow

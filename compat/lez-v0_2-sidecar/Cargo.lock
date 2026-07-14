@@ -3441,6 +3441,7 @@ dependencies = [
  "sequencer_service_rpc",
  "serde",
  "serde_json",
+ "sha2",
  "spel-client-gen",
  "spel-framework-core",
  "tempfile",

@@ -2,7 +2,9 @@ use std::{fmt, net::IpAddr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use common::{HashType, block::Block, transaction::LeeTransaction};
-use lez_bridge_protocol::{Hex32, Participant, RuntimeCompatibility, RuntimeDescriptor};
+use lez_bridge_protocol::{
+    Hex32, Participant, PreparedTransaction, RuntimeCompatibility, RuntimeDescriptor,
+};
 use nssa::{Account, AccountId, PublicTransaction};
 use sequencer_service_rpc::{RpcClient as _, SequencerClient, SequencerClientBuilder};
 use url::{Host, Url};
@@ -42,6 +44,12 @@ pub enum RuntimeBoundaryError {
     /// Exact bytes were not one canonical, signed official LEE public transaction.
     #[error("bytes are not a canonical signed official LEE v0.2 public transaction")]
     InvalidOfficialTransaction,
+    /// The sequencer returned a transaction identity other than the canonical prepared ID.
+    #[error("official sequencer returned a non-canonical transaction identity")]
+    WrongTransactionId,
+    /// The canonical lookup returned different transaction bytes for the prepared ID.
+    #[error("official sequencer returned substituted transaction bytes")]
+    WrongIncludedTransaction,
 }
 
 /// Source-correct facts returned by the official v0.2 sequencer health boundary.
@@ -171,6 +179,77 @@ pub struct OfficialVaultClaimFacts {
     sequencer_tip: u64,
 }
 
+/// Same-tip live facts for one checked native escrow lifecycle.
+#[derive(Clone, Debug)]
+#[must_use]
+pub struct OfficialNativeEscrowFacts {
+    channel_id: [u8; 32],
+    genesis_block_hash: [u8; 32],
+    tip_block_hash: [u8; 32],
+    tip_timestamp_ms: u64,
+    sequencer_tip: u64,
+    metadata_account: Account,
+    custody_account: Account,
+    depositor_account: Account,
+    claimant_account: Account,
+}
+
+impl OfficialNativeEscrowFacts {
+    /// Returns the exact official channel identity.
+    #[must_use]
+    pub const fn channel_id(&self) -> [u8; 32] {
+        self.channel_id
+    }
+
+    /// Returns the official genesis block hash.
+    #[must_use]
+    pub const fn genesis_block_hash(&self) -> [u8; 32] {
+        self.genesis_block_hash
+    }
+
+    /// Returns the same-tip block hash bracketing all account reads.
+    #[must_use]
+    pub const fn tip_block_hash(&self) -> [u8; 32] {
+        self.tip_block_hash
+    }
+
+    /// Returns the consensus-visible timestamp on that tip.
+    #[must_use]
+    pub const fn tip_timestamp_ms(&self) -> u64 {
+        self.tip_timestamp_ms
+    }
+
+    /// Returns the common sequencer tip bracketing all account reads.
+    #[must_use]
+    pub const fn sequencer_tip(&self) -> u64 {
+        self.sequencer_tip
+    }
+
+    /// Returns the metadata PDA account snapshot.
+    #[must_use]
+    pub const fn metadata_account(&self) -> &Account {
+        &self.metadata_account
+    }
+
+    /// Returns the custody PDA account snapshot.
+    #[must_use]
+    pub const fn custody_account(&self) -> &Account {
+        &self.custody_account
+    }
+
+    /// Returns the depositor account snapshot.
+    #[must_use]
+    pub const fn depositor_account(&self) -> &Account {
+        &self.depositor_account
+    }
+
+    /// Returns the claimant account snapshot.
+    #[must_use]
+    pub const fn claimant_account(&self) -> &Account {
+        &self.claimant_account
+    }
+}
+
 impl OfficialVaultClaimFacts {
     /// Returns the live official channel identity.
     #[must_use]
@@ -290,6 +369,143 @@ impl OfficialNodeRpc {
             sequencer_tip: tip_after,
         })
     }
+
+    /// Reads runtime identity, consensus clock, and four native escrow accounts
+    /// under one unchanged sequencer tip.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed when any official RPC is unavailable, genesis/tip blocks
+    /// are absent, or the tip advances during the account snapshot.
+    pub async fn native_escrow_facts(
+        &self,
+        metadata_account_id: AccountId,
+        custody_account_id: AccountId,
+        depositor_account_id: AccountId,
+        claimant_account_id: AccountId,
+    ) -> Result<OfficialNativeEscrowFacts, RuntimeBoundaryError> {
+        self.client
+            .check_health()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let channel = self
+            .client
+            .get_channel_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let genesis = self
+            .client
+            .get_block(nssa::GENESIS_BLOCK_ID)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?
+            .ok_or(RuntimeBoundaryError::NodeUnavailable)?;
+        let tip_before = self
+            .client
+            .get_last_block_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let tip_block = self
+            .client
+            .get_block(tip_before)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?
+            .ok_or(RuntimeBoundaryError::NodeUnavailable)?;
+        let metadata_account = self
+            .client
+            .get_account(metadata_account_id)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let custody_account = self
+            .client
+            .get_account(custody_account_id)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let depositor_account = self
+            .client
+            .get_account(depositor_account_id)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let claimant_account = self
+            .client
+            .get_account(claimant_account_id)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let tip_after = self
+            .client
+            .get_last_block_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        if tip_before != tip_after || tip_block.header.block_id != tip_before {
+            return Err(RuntimeBoundaryError::InconsistentSnapshot);
+        }
+        Ok(OfficialNativeEscrowFacts {
+            channel_id: channel.0,
+            genesis_block_hash: genesis.header.hash.0,
+            tip_block_hash: tip_block.header.hash.0,
+            tip_timestamp_ms: tip_block.header.timestamp,
+            sequencer_tip: tip_after,
+            metadata_account,
+            custody_account,
+            depositor_account,
+            claimant_account,
+        })
+    }
+
+    /// Submits one exact, signed, canonical prepared public transaction.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed bytes, a stored ID mismatch, node failure, or a
+    /// sequencer response that differs from the canonical transaction hash.
+    pub async fn submit_prepared_transaction(
+        &self,
+        prepared: &PreparedTransaction,
+    ) -> Result<(), RuntimeBoundaryError> {
+        let transaction = decode_official_public_transaction(prepared.exact_bytes.as_slice())?;
+        if transaction.hash() != *prepared.transaction_id.as_bytes() {
+            return Err(RuntimeBoundaryError::WrongTransactionId);
+        }
+        let expected = HashType(transaction.hash());
+        let submitted = self
+            .client
+            .send_transaction(LeeTransaction::Public(transaction))
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        if submitted != expected {
+            return Err(RuntimeBoundaryError::WrongTransactionId);
+        }
+        Ok(())
+    }
+
+    /// Queries canonical sequencer storage for one exact prepared transaction.
+    ///
+    /// `false` means only not-yet-observed; it does not prove rejection or
+    /// permanent absence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed prepared bytes, ID substitution, node failure, or
+    /// different canonical bytes under the requested hash.
+    pub async fn prepared_transaction_is_included(
+        &self,
+        prepared: &PreparedTransaction,
+    ) -> Result<bool, RuntimeBoundaryError> {
+        let transaction = decode_official_public_transaction(prepared.exact_bytes.as_slice())?;
+        if transaction.hash() != *prepared.transaction_id.as_bytes() {
+            return Err(RuntimeBoundaryError::WrongTransactionId);
+        }
+        let expected = LeeTransaction::Public(transaction);
+        let observed = self
+            .client
+            .get_transaction(HashType(*prepared.transaction_id.as_bytes()))
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        match observed {
+            None => Ok(false),
+            Some(observed) if observed == expected => Ok(true),
+            Some(_) => Err(RuntimeBoundaryError::WrongIncludedTransaction),
+        }
+    }
 }
 
 #[async_trait]
@@ -319,6 +535,20 @@ impl crate::vault_claim_prepare::VaultClaimNonceSource for OfficialNodeRpc {
             .await
             .map(|account| u128::from(account.nonce))
             .map_err(|_| crate::vault_claim_prepare::VaultClaimPrepareError::NonceUnavailable)
+    }
+}
+
+#[async_trait]
+impl crate::native_prepare::NonceSource for OfficialNodeRpc {
+    async fn account_nonce(
+        &self,
+        account_id: AccountId,
+    ) -> Result<u128, crate::native_prepare::NativePrepareError> {
+        self.client
+            .get_account(account_id)
+            .await
+            .map(|account| u128::from(account.nonce))
+            .map_err(|_| crate::native_prepare::NativePrepareError::NonceUnavailable)
     }
 }
 
