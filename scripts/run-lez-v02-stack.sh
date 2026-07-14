@@ -13,10 +13,24 @@ readonly bedrock_signing_key_hex="0ab865b8054be13810889714c1f1d82c3d8bb2e4510c26
 readonly expected_bedrock_signing_key_sha256="8fd0d8a6423536c14b5d3979e5135bf37253f5dfbc8485b52202bbf963b8f02e"
 readonly upstream_lez_channel_id="0101010101010101010101010101010101010101010101010101010101010101"
 readonly upstream_genesis_time_hex="2c04626900000000"
+readonly maker_account_id="B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd"
+readonly maker_vault_account_id="7Mzr43PK9VxpcvwdjgL8PeE4nb2aG9FqBKLfkoH8RBmQ"
+readonly maker_genesis_allocation="100000"
+readonly taker_account_id="34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib"
+readonly taker_vault_account_id="AXLjVw4tKTgieQoGRgXMVLVVaB4c5YnL1YTogZdX1cpH"
+readonly taker_genesis_allocation="200000"
 
 run_id="${RUN_ID:-local-$$}"
 if [[ ! "$run_id" =~ ^[a-z0-9][a-z0-9_-]{0,63}$ ]]; then
   echo "RUN_ID must match ^[a-z0-9][a-z0-9_-]{0,63}$" >&2
+  exit 1
+fi
+if [[ "$maker_account_id" == "$taker_account_id" ||
+      "$maker_vault_account_id" == "$taker_vault_account_id" ||
+      "$maker_account_id" == "$maker_vault_account_id" ||
+      "$taker_account_id" == "$taker_vault_account_id" ||
+      "$maker_genesis_allocation" == "$taker_genesis_allocation" ]]; then
+  echo "maker and taker genesis identities, Vaults, and allocations must remain distinct" >&2
   exit 1
 fi
 
@@ -141,16 +155,47 @@ jq --arg channel "$channel_id" \
   "${source_dir}/lez/indexer/service/configs/docker/indexer_config.json" \
   >"${run_dir}/config/indexer_config.json"
 jq --arg channel "$channel_id" \
+  --arg maker "$maker_account_id" \
+  --arg maker_amount "$maker_genesis_allocation" \
+  --arg taker "$taker_account_id" \
+  --arg taker_amount "$taker_genesis_allocation" \
   '.home = "/var/lib/sequencer_service"
     | .bedrock_config.node_url = "http://bedrock:18080"
     | .bedrock_config.channel_id = $channel
-    | del(.bedrock_config.backoff)' \
+    | del(.bedrock_config.backoff)
+    | .genesis = [
+        {"supply_account": {"account_id": $maker, "balance": ($maker_amount | tonumber)}},
+        {"supply_account": {"account_id": $taker, "balance": ($taker_amount | tonumber)}}
+      ]' \
   "${source_dir}/lez/sequencer/service/configs/docker/sequencer_config.json" \
   >"${run_dir}/config/sequencer_config.json"
 jq -e --arg channel "$channel_id" '.channel_id == $channel' \
   "${run_dir}/config/indexer_config.json" >/dev/null
 jq -e --arg channel "$channel_id" '.bedrock_config.channel_id == $channel' \
   "${run_dir}/config/sequencer_config.json" >/dev/null
+generated_actor_genesis_entries="$(jq -r '.genesis | length' \
+  "${run_dir}/config/sequencer_config.json")"
+if [[ "$generated_actor_genesis_entries" != "2" ]] ||
+   ! jq -e \
+     --arg maker "$maker_account_id" \
+     --argjson maker_amount "$maker_genesis_allocation" \
+     --arg taker "$taker_account_id" \
+     --argjson taker_amount "$taker_genesis_allocation" \
+     '(.genesis | length) == 2
+      and ([.genesis[] | select(
+        .supply_account.account_id == $maker
+        and .supply_account.balance == $maker_amount
+      )] | length) == 1
+      and ([.genesis[] | select(
+        .supply_account.account_id == $taker
+        and .supply_account.balance == $taker_amount
+      )] | length) == 1
+      and $maker != $taker
+      and $maker_amount != $taker_amount' \
+     "${run_dir}/config/sequencer_config.json" >/dev/null; then
+  echo "generated sequencer genesis must contain exactly the two distinct actor allocations" >&2
+  exit 1
+fi
 chmod 0400 "${run_dir}/config/"*
 
 printf '%s\n' \
@@ -168,6 +213,12 @@ printf "LEZ_V02_CHANNEL_PUBLIC_KEY=%s\n" "$channel_id" >>"$manifest"
 printf "LEZ_V02_BEDROCK_SIGNING_KEY_SHA256=%s\n" "$expected_bedrock_signing_key_sha256" >>"$manifest"
 printf "LEZ_V02_GENESIS_CHANNEL=%s\n" "$genesis_channel_id" >>"$manifest"
 printf "LEZ_V02_BEDROCK_GENESIS_TIME_EPOCH=%s\n" "$chain_start_epoch" >>"$manifest"
+printf "LEZ_V02_MAKER_ACCOUNT_ID=%s\n" "$maker_account_id" >>"$manifest"
+printf "LEZ_V02_MAKER_VAULT_ACCOUNT_ID=%s\n" "$maker_vault_account_id" >>"$manifest"
+printf "LEZ_V02_MAKER_GENESIS_ALLOCATION=%s\n" "$maker_genesis_allocation" >>"$manifest"
+printf "LEZ_V02_TAKER_ACCOUNT_ID=%s\n" "$taker_account_id" >>"$manifest"
+printf "LEZ_V02_TAKER_VAULT_ACCOUNT_ID=%s\n" "$taker_vault_account_id" >>"$manifest"
+printf "LEZ_V02_TAKER_GENESIS_ALLOCATION=%s\n" "$taker_genesis_allocation" >>"$manifest"
 chmod 0600 "$manifest"
 
 docker compose --project-name "$project" --file "$compose_file" config --quiet
@@ -386,6 +437,60 @@ rpc_call() {
     jq -e 'has("result") and (has("error") | not)' "$output" >/dev/null
 }
 
+assert_actor_preclaim_state() {
+  local rpc_url="$1"
+  local rpc_name="$2"
+  local role="$3"
+  local owner_id="$4"
+  local vault_id="$5"
+  local allocation="$6"
+  local finalized_block_id="${7:-}"
+  local owner_output
+  local vault_output
+  local nonces_output="${evidence_dir}/${rpc_name}-${role}-nonces-preclaim.json"
+  local owner_payload
+  local vault_payload
+  local nonces_payload
+
+  if [[ "$rpc_name" == "indexer" ]]; then
+    if [[ ! "$finalized_block_id" =~ ^[1-9][0-9]*$ ]]; then
+      echo "indexer actor readiness requires an exact finalized block ID" >&2
+      return 1
+    fi
+    owner_output="${evidence_dir}/${rpc_name}-${role}-owner-preclaim-at-block-${finalized_block_id}.json"
+    vault_output="${evidence_dir}/${rpc_name}-${role}-vault-preclaim-at-block-${finalized_block_id}.json"
+    owner_payload="$(printf \
+      '{"jsonrpc":"2.0","id":1,"method":"getAccountAtBlock","params":["%s",%s]}' \
+      "$owner_id" "$finalized_block_id")"
+    vault_payload="$(printf \
+      '{"jsonrpc":"2.0","id":1,"method":"getAccountAtBlock","params":["%s",%s]}' \
+      "$vault_id" "$finalized_block_id")"
+  else
+    owner_output="${evidence_dir}/${rpc_name}-${role}-owner-preclaim.json"
+    vault_output="${evidence_dir}/${rpc_name}-${role}-vault-preclaim.json"
+    owner_payload="$(printf \
+      '{"jsonrpc":"2.0","id":1,"method":"getAccount","params":["%s"]}' \
+      "$owner_id")"
+    vault_payload="$(printf \
+      '{"jsonrpc":"2.0","id":1,"method":"getAccount","params":["%s"]}' \
+      "$vault_id")"
+  fi
+  nonces_payload="$(printf \
+    '{"jsonrpc":"2.0","id":1,"method":"getAccountsNonces","params":[["%s","%s"]]}' \
+    "$owner_id" "$vault_id")"
+
+  rpc_call "$rpc_url" "$owner_payload" "$owner_output"
+  rpc_call "$rpc_url" "$vault_payload" "$vault_output"
+  jq -e '.result.balance == 0 and .result.nonce == 0' "$owner_output" >/dev/null
+  jq -e --argjson allocation "$allocation" \
+    '.result.balance == $allocation and .result.nonce == 0' "$vault_output" >/dev/null
+
+  if [[ "$rpc_name" == "sequencer" ]]; then
+    rpc_call "$rpc_url" "$nonces_payload" "$nonces_output"
+    jq -e '.result == [0, 0]' "$nonces_output" >/dev/null
+  fi
+}
+
 wait_for_bedrock() {
   local url="$1"
   local sample="$2"
@@ -513,6 +618,10 @@ wait_for_rpc "$sequencer_url" \
   "${evidence_dir}/sequencer-health.json" "Sequencer RPC"
 wait_for_bootstrap_channel "$bedrock_url" \
   "${evidence_dir}/bedrock-channel-after-bootstrap.json"
+assert_actor_preclaim_state "$sequencer_url" "sequencer" "maker" \
+  "$maker_account_id" "$maker_vault_account_id" "$maker_genesis_allocation"
+assert_actor_preclaim_state "$sequencer_url" "sequencer" "taker" \
+  "$taker_account_id" "$taker_vault_account_id" "$taker_genesis_allocation"
 
 docker start "${containers[indexer]}" >/dev/null
 indexer_url="$(published_url indexer 8779)"
@@ -554,6 +663,11 @@ if [[ ! "$finalized_id" =~ ^[1-9][0-9]*$ ]] || (( finalized_id < 2 )); then
   echo "Indexer did not expose a finalized non-genesis LEZ block within 240 seconds" >&2
   exit 1
 fi
+
+assert_actor_preclaim_state "$indexer_url" "indexer" "maker" \
+  "$maker_account_id" "$maker_vault_account_id" "$maker_genesis_allocation" "$finalized_id"
+assert_actor_preclaim_state "$indexer_url" "indexer" "taker" \
+  "$taker_account_id" "$taker_vault_account_id" "$taker_genesis_allocation" "$finalized_id"
 
 indexer_block_payload="$(printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getBlockById\",\"params\":[%s]}' "$finalized_id")"
 sequencer_block_payload="$(printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getBlock\",\"params\":[%s]}' "$finalized_id")"
@@ -606,6 +720,8 @@ printf '%s\n' \
   "LEZ_INDEXER_RPC_URL=${indexer_url}" \
   "LEZ_SEQUENCER_RPC_URL=${sequencer_url}" \
   "LEZ_FINALIZED_BLOCK_ID=${finalized_id}" \
-  "LEZ_V02_READINESS_SCOPE=service-onboarding-finality-non-genesis" >>"$manifest"
+  "LEZ_V02_ACTOR_GENESIS_FINALIZED_BLOCK_ID=${finalized_id}" \
+  "LEZ_V02_ACTOR_GENESIS_READINESS=sequencer-and-exact-finalized-indexer-preclaim-state" \
+  "LEZ_V02_READINESS_SCOPE=service-onboarding-finality-non-genesis-and-exact-finalized-actor-preclaim-state" >>"$manifest"
 
 printf 'LEZ v0.2 isolated service-readiness passed: finalized_block_id=%s\n' "$finalized_id"

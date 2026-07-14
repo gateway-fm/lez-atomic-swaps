@@ -27,7 +27,7 @@ required_runner_terms=(
   'docker start "${containers[indexer]}"'
   'LEZ_V02_CHANNEL_PUBLIC_KEY='
   'finalized_id >= 2'
-  'LEZ_V02_READINESS_SCOPE=service-onboarding-finality-non-genesis'
+  'LEZ_V02_READINESS_SCOPE=service-onboarding-finality-non-genesis-and-exact-finalized-actor-preclaim-state'
 )
 for term in "${required_runner_terms[@]}"; do
   if ! rg -Fq -- "$term" "$runner"; then

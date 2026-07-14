@@ -130,6 +130,31 @@ backoff_field_policy = "omitted_unsupported_upstream_example_field"
 fresh_state_policy = "refuse_preexisting_run_state"
 filesystem_policy = "private_run_scoped_paths"
 source_examples_status = "hashed_observations_only_not_copied_backoff_or_addresses"
+genesis_policy = "exact_two_public_supply_accounts_fresh_state_only"
+actor_genesis_status = "runtime_green_sequencer_and_exact_finalized_indexer_preclaim_state"
+indexer_preclaim_binding = "getAccountAtBlock_exact_last_finalized_block_id"
+
+[actors.maker]
+account_id = "B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd"
+vault_account_id = "7Mzr43PK9VxpcvwdjgL8PeE4nb2aG9FqBKLfkoH8RBmQ"
+genesis_allocation = 100000
+preclaim_readiness = "owner_balance_zero_nonce_zero_vault_balance_allocation_nonce_zero_on_sequencer_and_indexer_at_exact_finalized_block"
+
+[actors.taker]
+account_id = "34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib"
+vault_account_id = "AXLjVw4tKTgieQoGRgXMVLVVaB4c5YnL1YTogZdX1cpH"
+genesis_allocation = 200000
+preclaim_readiness = "owner_balance_zero_nonce_zero_vault_balance_allocation_nonce_zero_on_sequencer_and_indexer_at_exact_finalized_block"
+
+[generated_configuration.genesis_source]
+config_path = "lez/sequencer/core/src/config.rs"
+config_sha256 = "3ddeb4d9159cdd584dc9423deaac0897896edfd4cd27d2a509bec08077e1b49d"
+builder_path = "lez/sequencer/core/src/lib.rs"
+builder_sha256 = "7c72530e5ccdb72dda636511dd237b913e5865b18430f5920b50ffb4ade97df3"
+faucet_program_path = "lez/programs/faucet/src/main.rs"
+faucet_program_sha256 = "4cc6e9fbb404ea03468ccdd886c1d6426de736a5b7ac3564d39d04f58ed33936"
+vault_core_path = "lez/programs/vault/core/src/lib.rs"
+vault_core_sha256 = "36bdae7c0c2dafeea98f97d1964388f0a21203f312b230e603923760c5073846"
 
 [generated_configuration.source_examples.all_in_one_sequencer]
 path = "lez/configs/docker-all-in-one/sequencer_config.json"
@@ -198,6 +223,7 @@ readiness = [
   "rpc:getBlockById(last_finalized)_returns_decoded_block",
   "rpc:getBlockByHash(decoded_hash)_equals_getBlockById_semantically",
   "cross_check:indexer_header_id_prev_hash_hash_signature_match_sequencer_borsh_header_offsets",
+  "rpc:getAccountAtBlock_actor_owner_and_vault_state_bound_to_exact_last_finalized_block_id",
 ]
 upstream_source_path = "lez/indexer/service/Cargo.toml"
 upstream_source_sha256 = "2e8af720e109d7ea40580e4c1d5db71d47897c71c76405279b2c5c4f51d20b37"
@@ -219,6 +245,9 @@ container_port = 3040
 host_port = 0
 readiness = [
   "rpc:checkHealth",
+  "rpc:getAccount_actor_owners_balance_zero_nonce_zero",
+  "rpc:getAccount_actor_vaults_balance_exact_genesis_allocation_nonce_zero",
+  "rpc:getAccountsNonces_actor_owner_and_vault_are_zero",
   "rpc:getChannelId_matches_configured_bedrock_channel",
   "rpc:getProgramIds_contains_required_builtins",
   "rpc:getBlock(1)_returns_genesis",
@@ -231,8 +260,8 @@ upstream_bind_source_path = "lez/sequencer/service/src/lib.rs"
 upstream_bind_source_sha256 = "e9472ea5a15061c617257de849d19e90af213565c765c302515f97e265e357c3"
 
 [service_readiness]
-scope = "bedrock_cryptarchia_signed_channel_onboarding_non_genesis_finality_and_cross_rpc_block_identity"
-last_green_run_id = "v02-stack-20260713n"
+scope = "bedrock_cryptarchia_signed_channel_onboarding_non_genesis_finality_cross_rpc_block_identity_and_actor_vault_preclaim_state_at_exact_finalized_block"
+last_green_run_id = "v02-actors-finalized-20260713b"
 full_runtime_tuple_green = false
 pending = ["vault_claims", "checked_escrow_deployment", "maker_actor", "taker_actor", "swap_effects", "restart_recovery"]
 
