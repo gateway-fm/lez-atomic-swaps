@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-07-14",
+  "classification": "partial_m2_local_devnet_vertical_slice_not_corridor",
+  "run_id": "m2poc-vertical-20260714a",
+  "runtime": {
+    "lez_source_commit": "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+    "channel_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+    "genesis_block_hash": "e24c5a4a2d08a747b96cebefa1304cbe80e42dac9ced3a52c2330b22797e10d9",
+    "chain_id_source": "explicit_configuration_equal_to_local_channel_because_v0_2_has_no_chain_id_rpc",
+    "endpoints": {
+      "bedrock": "http://127.0.0.1:32827",
+      "sequencer": "http://127.0.0.1:32828",
+      "indexer": "http://127.0.0.1:32829",
+      "zebra": "http://127.0.0.1:32830"
+    },
+    "endpoint_scope": "ephemeral_loopback_urls_from_this_retained_run_only"
+  },
+  "vault_claims": [
+    {
+      "role": "maker",
+      "account_id": "B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd",
+      "vault_account_id": "7Mzr43PK9VxpcvwdjgL8PeE4nb2aG9FqBKLfkoH8RBmQ",
+      "allocation": 100000,
+      "transaction_id": "d0234365bcf32ee511132868b6c954dbaf79c662565deaa230e2bf245cc29226",
+      "journal": {
+        "state": "admitted",
+        "attempt_count": 1,
+        "revision": 2
+      },
+      "manual_indexer_observation": {
+        "block_id": 29,
+        "block_hash": "72e050bc0ca137237629d01f322d0cd6e3b333d58d5e19b1e924cc92385915ae",
+        "bedrock_status": "Finalized",
+        "owner_after": {
+          "balance": 100000,
+          "nonce": 1,
+          "program_owner": "FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg"
+        },
+        "vault_after": {
+          "balance": 0,
+          "nonce": 0,
+          "program_owner": "FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg"
+        }
+      }
+    },
+    {
+      "role": "taker",
+      "account_id": "34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib",
+      "vault_account_id": "AXLjVw4tKTgieQoGRgXMVLVVaB4c5YnL1YTogZdX1cpH",
+      "allocation": 200000,
+      "transaction_id": "c56f8708fc1dc4d982d5a3f62f19f912b82d4941eb21921b5fe30a508fb5f8e3",
+      "journal": {
+        "state": "admitted",
+        "attempt_count": 1,
+        "revision": 2
+      },
+      "manual_indexer_observation": {
+        "block_id": 30,
+        "block_hash": "2aade6aafac2611108a5cb5f17ff11086afd5533354b6a118dc18dde251bbf72",
+        "bedrock_status": "Finalized",
+        "owner_after": {
+          "balance": 200000,
+          "nonce": 1,
+          "program_owner": "FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg"
+        },
+        "vault_after": {
+          "balance": 0,
+          "nonce": 0,
+          "program_owner": "FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg"
+        }
+      }
+    }
+  ],
+  "checked_escrow_deployment": {
+    "elf_sha256": "40c9d37c5dc3c8544bcb7c26916a5be1039b76cc862b2c9dcd34e0cf61468021",
+    "image_id_and_program_id": "f8385049e93a319b44d868e0d0cf805b058eddcf92141a186ffd69e4596c0fbe",
+    "transaction_id": "f410f8865e3a1091d40f475d3ead7be024a83dec92237364b3d87080b10d06aa",
+    "manual_indexer_observation": {
+      "block_id": 51,
+      "block_hash": "ff66517d0a9af56d984b33ebfefca72c47a4af1f9f48ec418b306d9859e32b42",
+      "bedrock_status": "Finalized"
+    },
+    "initialize_fund_claim_or_refund_executed": false
+  },
+  "finality_boundary": {
+    "claim_cli_result": "not_observed_in_this_poc_slice",
+    "manual_indexer_reads": "exact transactions and post-state were subsequently read from finalized blocks",
+    "integrated_bounded_sequencer_and_indexer_query_proof": false,
+    "automatic_journal_transition_beyond_admitted": false
+  },
+  "latency_observation": {
+    "operation": "parallel_indexer_getAccountAtBlock",
+    "queries": 4,
+    "timeouts": 2,
+    "sequential_retries": 2,
+    "sequential_retry_successes": 2,
+    "classification": "observed_local_latency_or_serialization_flake_cause_not_yet_established"
+  },
+  "not_proved": [
+    "escrow_initialize_fund_claim_or_refund",
+    "zcash_htlc_effect",
+    "cross_chain_atomic_corridor",
+    "independent_reference_actor_activate_or_drive",
+    "restart_recovery_of_the_composed_corridor",
+    "m2_poc_completion"
+  ]
+}
