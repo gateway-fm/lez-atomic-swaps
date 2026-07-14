@@ -534,6 +534,11 @@ impl ActorConfig {
         &self.bridge.journal_db
     }
 
+    /// Role-local sidecar bearer-capability file.
+    pub(crate) fn bridge_capability_file(&self) -> &Path {
+        &self.bridge.capability_file
+    }
+
     /// Full immutable sidecar runtime identity.
     pub const fn bridge_runtime(&self) -> &RuntimeDescriptor {
         &self.bridge.runtime
@@ -880,6 +885,10 @@ impl ActivateMaterial {
     pub const fn sidecar_capability(&self) -> &SidecarCapability {
         &self.sidecar_capability
     }
+
+    pub(crate) fn into_claim_recovery_key(self) -> ProtectedClaimKey {
+        self.claim_recovery_key
+    }
 }
 
 impl fmt::Debug for ActivateMaterial {
@@ -933,6 +942,10 @@ impl DriveMaterial {
     #[must_use]
     pub fn zebra_cookie(&self) -> Option<&[u8]> {
         self.zebra_cookie.as_ref().map(|cookie| cookie.0.as_slice())
+    }
+
+    pub(crate) fn into_claim_recovery_key(self) -> ProtectedClaimKey {
+        self.claim_recovery_key
     }
 }
 

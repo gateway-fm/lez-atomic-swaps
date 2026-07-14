@@ -128,17 +128,44 @@ and integrated journal-to-finality transitions remain post-PoC hardening.
 Forty-two existing integration tests and the full wrapper gate stayed GREEN; no
 new PoC feature test is represented as a RED-GREEN-REFACTOR phase transition.
 
-Authenticated effect-server/reference-actor integration, bounded automatic
-inclusion/finality queries, Zebra HTLC effects, and the composed corridor remain
-work under ADR 0026. The live local slice proves one LEZ vertical, not
-cross-chain atomicity. PoC-to-hardening and milestone transitions remain an
+The crate now also contains the exact source-complete PoC bridge process,
+`lez-v02-bridge-poc`. It accepts only an explicitly provisioned nonzero
+literal-loopback listener, official sequencer and indexer loopback URLs, and
+file-backed runtime, capability, signer, and private state inputs. Before it
+binds, it verifies the runtime/signer relationship and both official node
+health gates. Bearer capability, exact run ID, fixed role, runtime, signer, and
+state identity are checked at the process boundary. The bounded bridge
+implements describe, native prepare, escrow observation, revealing-claim
+prepare/observation, and exact transaction submission. Refund methods are
+registered but return a typed unavailable result.
+
+Successful PREPARE results are durably replayed. Observation results and
+transient PREPARE failures re-execute instead of becoming stale facts. A submit
+request persists an unknown-outcome marker before node I/O, so restart cannot
+silently resubmit an ambiguous transaction. The sequencer observation contract
+is deliberately limited to bounded canonical inclusion plus stable same-tip
+account reads. Readiness requires a non-genesis finalized indexer tip, but this
+process does not itself assert effect finality. Both role processes completed
+the live `m2poc-corridor-fresh-20260714o` run: taker initialize/fund and maker
+revealing-claim effects were accepted exactly once, both actors reached
+`Completed`, and a separate indexer audit located those transactions in
+finalized blocks 264, 265, and 266 with claimed metadata and zero custody. The
+exact claim-absence bug exposed by 14d and the unbounded indexer startup wait
+were fixed in pushed commit `0861117`; the readiness gate now uses
+`getLastFinalizedBlockId` instead of upstream `checkHealth`, whose full-state
+recalculation was unsuitable for a bounded corridor startup check.
+
+Live authenticated reference-actor composition and Zebra HTLC effects are now
+GREEN for the first of two required directions. The reverse
+`TakerSellsForeign` corridor and integrated terminal-evidence collection remain
+PoC work under ADR 0026. PoC-to-hardening and milestone transitions remain an
 explicit repository-owner decision.
 
-This verification gate itself does not start Bedrock, the LEZ
-sequencer/indexer, Zcash Regtest, or Docker. The separate manual PoC consumed an
-already retained local stack. Neither activity proves a corridor swap,
-cross-chain atomicity, public-runtime parity, or public deployment; those claims
-require the composed actor-level end-to-end gate.
+This package verification gate itself does not start Bedrock, the LEZ
+sequencer/indexer, Zebra Regtest, or Docker. The separate run14o composed runner
+consumed explicitly configured isolated local nodes and proves one corridor
+direction only. It does not prove the reverse direction, public-runtime parity,
+public deployment, refund recovery, or post-PoC hardening.
 
 The native archive is outside Cargo license analysis. Upstream metadata
 identifies

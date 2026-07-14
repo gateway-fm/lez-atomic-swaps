@@ -5,9 +5,11 @@ Status: Living target architecture — 2026-07-14
 This is the canonical whole-system view. ADRs record why individual choices
 were made; this document shows how the choices compose into the product that
 operators and takers actually run. Dashed components are required final
-deliverables that are not implemented yet. A test is called end to end only
-when it crosses the same process, RPC, persistence, role, and chain boundaries
-shown here.
+deliverables that are not implemented yet. Blue components are implemented
+boundaries that may have partial live exercise but have not completed the shown
+end-to-end boundary. A test
+is called end to end only when it crosses the same process, RPC, persistence,
+role, and chain boundaries shown here.
 
 ## Actors, runtime components, and trust boundaries
 
@@ -64,8 +66,14 @@ flowchart TB
         MSL2["Maker v0.2 PoC process<br/>Vault Claim + native deposit GREEN"]
         TLS2["Taker v0.2 PoC process<br/>Vault Claim + native claim GREEN"]
         V02J[("Separate role-bound state<br/>exact reservations + Vault attempt journals GREEN")]
+        MBR2["Maker lez-v02-bridge-poc<br/>first corridor complete in 14o"]
+        TBR2["Taker lez-v02-bridge-poc<br/>first corridor complete in 14o"]
+        MBRJ[("Maker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
+        TBRJ[("Taker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         MSL2 --> V02J
         TLS2 --> V02J
+        MBR2 --> MBRJ
+        TBR2 --> TBRJ
     end
 
     subgraph LocalLezV02["Required public-compatible local LEZ v0.2 devnet"]
@@ -77,7 +85,8 @@ flowchart TB
         V02Ready[("v0.2 services + Vault Claims + deploy GREEN")]
         V02Native[("Native init + fund + claim GREEN<br/>finalized blocks 219 220 223")]
         V02Fixture[("Fixture readiness GREEN<br/>isolated configs; saved window stale")]
-        V02Full[("Cross-chain corridor pending<br/>sidecars + activate + drive + Zebra effects + recovery")]
+        V02Partial[("Historical partial evidence<br/>14d through 14n retained")]
+        V02Full[("TakerSellsLez corridor GREEN<br/>1 of 2 happy directions")]
         V02State[(".e2e/run_id/lez-v02")]
     end
 
@@ -142,10 +151,14 @@ flowchart TB
     LRM -.->|"future private handoff"| LRR
     LRR -.->|"maker-only provisioning"| MSL
     LRR -.->|"taker-only provisioning"| TLS
-    MLB <-.->|"same bounded bridge; v0.2 selector"| MSL2
-    TLB <-.->|"same bounded bridge; v0.2 selector"| TLS2
+    MLB <-->|"live bounded bridge; Completed in 14o"| MBR2
+    TLB <-->|"live bounded bridge; Completed in 14o"| TBR2
     MSL2 -->|"official v0.2 JSON-RPC"| SQ
     TLS2 -->|"official v0.2 JSON-RPC"| SQ
+    MBR2 -->|"revealing LEZ claim in 14o"| SQ
+    TBR2 -->|"LEZ initialize and fund in 14o"| SQ
+    MBR2 -->|"non-genesis finalized-tip readiness"| IX
+    TBR2 -->|"non-genesis finalized-tip readiness"| IX
     V02R -->|"start first; cryptarchia and channel HTTP"| BR
     V02R -->|"start after channel; finalized ID and hash RPC"| IX
     V02R -->|"start after exact missing proof; service RPC"| SQ
@@ -160,8 +173,10 @@ flowchart TB
     V02Ready --> V02Native
     V02Ready --> V02Fixture
     ZEC -->|"stable mature Regtest UTXO query"| V02Fixture
-    V02Native -.-> V02Full
-    V02Fixture -.-> V02Full
+    V02Native --> V02Partial
+    V02Fixture --> V02Partial
+    V02Partial -->|"14o completed after bounded retry"| V02Full
+    V02Full -->|"funding plus exact spend at heights 106 and 108"| ZEC
     V02Full -.->|"runtime and funding handoff"| LRR
 
     MD <-->|"discovery + negotiation only"| DC
@@ -189,8 +204,10 @@ flowchart TB
     ZEC --> ZN
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
+    classDef implemented fill:#ddf4ff,stroke:#0969da;
     classDef running fill:#e6ffec,stroke:#1a7f37;
-    class MM,LC,CA,TC,TM,LRR,V02Full planned;
+    class MM,LC,CA,TM,LRR,V02Full planned;
+    class TC,MBR2,TBR2,MBRJ,TBRJ,V02Partial implemented;
     class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02State,MSL2,TLS2,V02J running;
 ```
 
@@ -245,13 +262,26 @@ Vault Claims, checked deployment, and separate maker/taker PoC processes driving
 native initialize/fund/claim into finalized blocks 219/220/223. The native CLI
 itself proves sequencer inclusion and same-tip state; sequential indexer reads
 provide the distinct finality proof. It reports `crash_atomic_submission=false`.
-The same retained run provisions and reloads an isolated `TakerSellsLez`
-reference-actor pair from a stable mature real-Zebra UTXO, but its saved window
-1..256 is stale at later tip 389. It does not start the configured sidecars or
-execute `activate`/`drive`. Remaining M2 PoC work is
-effect-bearing reference-actor/sidecar composition, the Zcash HTLC effects, both
-directions, and one reproducible corridor runner; chain
-adapters must
+The exact `lez-v02-bridge-poc` source now provides the role/run/runtime/signer-
+bound process boundary for prepare, observe, revealing claim, and submit. It
+requires explicit nonzero loopback endpoints and private file inputs, gates
+startup on the official sequencer and indexer health calls, replays successful
+PREPARE results, re-executes observations and transient PREPARE failures, and
+persists submit as unknown before node I/O. Refund calls are typed unavailable;
+sequencer observation is bounded inclusion plus same-tip accounts, and the
+bridge does not assert indexer finality. Historical partial runs 14d through
+14n remain failure and invariant evidence. Fresh run
+`m2poc-corridor-fresh-20260714o` then completed `TakerSellsLez`: both
+independent actors reached revision 4 `Completed` after LEZ initialize/fund,
+two-confirmation Zcash funding, revealing LEZ claim, and the exact Zcash
+follow-up spend. One payload-free `moving_tip` observation was retried once
+within the maximum-three policy. A separate indexer audit found the LEZ effects
+in finalized blocks 264/265/266 and proved terminal `Claimed` metadata, zero
+custody, depositor 100000, and claimant 150000; Zebra funding at height 106 was
+spent at height 108. The saved early fixture window 1..256 remains stale and is
+not reused. The development runner provisions fresh role inputs and executes
+`activate`/`drive`; the reverse `TakerSellsForeign` direction and equivalent
+terminal evidence remain the M2 PoC gate. Chain adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
 observation alone is non-authorizing: forward Zcash persists and revalidates
 the complete canonical output type plus ordered canonical, depth, atomic
@@ -733,8 +763,9 @@ Existing state is opened with the existing-only hardened SQLite entry point and
 replayed through `resume_all_capable`; the SDK is instantiated with unit LEZ and
 Zcash port types, so a chain call is impossible even if a later adapter changes.
 It loads neither the sidecar capability nor Zebra cookie, signing key,
-agreement file, or preimage. `activate` and `drive` continue to fail closed
-until the real v0.2 sidecar and Zebra composition exists.
+agreement file, or preimage. The separate `activate` and `drive` paths load
+their scoped effect material and completed the first real local v0.2/Zebra
+direction in run14o; `status` keeps this no-chain design.
 
 ## Crash, restart, and at-least-once observation flow
 

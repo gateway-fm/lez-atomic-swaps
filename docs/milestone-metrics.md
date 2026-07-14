@@ -20,7 +20,7 @@ Status vocabulary:
 | Milestone | Active phase | Phase status | Completion tag | Owner transition |
 |---|---|---|---|---|
 | M1 | Historical completed milestone | Historical evidence predates ADR 0027; not retroactively reclassified | `m1-complete` and corrective tag `m1-complete.1` | No transition requested |
-| M2 | Reproducible PoC | In progress; composed local LEZ/ZEC happy path is not yet complete | None | Remain in PoC until the owner says to end or switch |
+| M2 | Reproducible PoC | In progress; `TakerSellsLez` is GREEN, 1 of 2 local LEZ/ZEC happy directions | None | Remain in PoC until the owner says to end or switch |
 | M3 | Not active | Awaiting owner transition | None | Not requested |
 | M4 | Not active | Awaiting owner transition | None | Not requested |
 | M5 | Not active | Awaiting owner transition | None | Not requested |
@@ -33,32 +33,38 @@ Status vocabulary:
 
 | Metric | Current measurement | Evidence or next measurement point |
 |---|---|---|
-| Full corridor reproductions | 0 successful; failed or partial historical attempts not baselined | No single command yet composes both real local networks and both actors |
-| Clean-host reproductions | 0 | Measure after the first composed runner is GREEN |
-| Setup duration | Not measured for the composed corridor | Record wall time and cache state for every PoC run |
-| Happy-path execution duration | Not measured | Record actor start through finalized terminal state |
-| Required local chain environments | 2: pinned LEZ v0.2 and pinned Zebra Regtest | LEZ services, onboarding, deployment, and one native lifecycle ran together; retained Zebra was not used for an HTLC effect, so composed cross-chain use remains 0 |
+| Full corridor reproductions | 1 successful direction: `m2poc-corridor-fresh-20260714o`; earlier 14d/14e/14f and fresh 14i through 14n remain failure evidence | Run 14o completed `TakerSellsLez`; the reverse `TakerSellsForeign` direction remains |
+| Clean-host reproductions | 0 | Run 14o used fresh isolated devnets and actor state on a host with verified caches; measure a cold clean-host repeat after both directions are GREEN |
+| Setup duration | Run 14o entered effects after 400 ms of provisioning; earlier baselines were 6 seconds in 14d, 17 seconds in 14e, and 5590 ms in 14f | Prebuild happens before the protocol clock; run 14o retained 48600 ms at the pre-effect budget check |
+| Happy-path execution duration | 25.370 seconds from provisioning through both terminal actor states | The cap is 49 seconds, preserving a true minimum 10-second margin against the 60-second LEZ delay despite whole-second deadline truncation |
+| Required local chain environments | 2: pinned LEZ v0.2 and pinned Zebra Regtest | Both were crossed by 14d; 14e crossed LEZ and queried Zebra at tip 105 but performed no Zcash effect |
 | LEZ processes in the target environment | 3: Bedrock, non-standalone sequencer, indexer | All three remained live while Vault onboarding, checked deployment, native initialize/fund/claim, same-tip state reads, and manual indexer finality completed |
-| Effect-bearing swap actors | 2 role-separated LEZ PoC processes; 2 reference-actor configs provisioned; 0 reference actors in a corridor | Maker owned initialize/fund and taker owned claim with distinct key/state files. Separate reference-actor roots, configs, recovery keys, capabilities, signers, and activation material now validate, but `activate`/`drive` and Zebra effects remain absent |
-| Supported happy directions | 0 of 2 composed | First visible pass is one direction; PoC gate is both directions unless owner revises it |
+| Effect-bearing swap actors | 2 independent reference actors and 2 role bridges completed one direction | Run 14o recorded 78 actor events across 39 rounds; maker and taker independently reached revision 4 `Completed` |
+| Exact v0.2 PoC role bridge | 1 executable; both role processes completed the full first-direction method sequence | Run 14o crossed initialize, fund, bounded observe, revealing claim, and exact submit. One payload-free `moving_tip` event occurred; no secret or request payload was logged |
+| Same-run retry evidence | 1 successful retry in run 14o; maximum is 3 exact retries | Taker round 2 retried `lez_bridge.v1.observe_escrow` once after `moving_tip`, then the same run completed |
+| Supported happy directions | 1 of 2 composed | `TakerSellsLez` is GREEN; reverse `TakerSellsForeign` is the remaining PoC direction |
 | Actual maker/taker Vault Claims | 2 of 2 finalized on the retained local LEZ run | Maker block 29 and taker block 30 are exact finalized indexer evidence; this onboards the LEZ actors but is not a swap corridor |
 | Checked LEZ escrow lifecycle | 1 local v0.2 initialize/fund/claim slice finalized | Checked ProgramId `f8385049...0fbe`; initialize block 219, fund block 220, claim block 223; maker deposited 700 and taker received exactly 700 |
 | Zcash/reference-actor fixture readiness | 1 pair provisioned; 0 currently runnable retained pairs | Stable Zebra tip/output proved provisioning; the saved LEZ window 1..256 was stale by audit tip 389, so it must be reprovisioned just in time |
-| Actual Zcash HTLC lifecycle | 0 composed funding/claim sequences | The provisioner queried a real mature UTXO but did not create an HTLC transaction or spend it |
-| Final state and balance proof | 1 terminal LEZ-only proof; 0 cross-chain proofs | `Absent -> Empty -> Funded -> Claimed`, custody `0 -> 700 -> 0`, maker `100000 -> 99300`, taker `200000 -> 200700`; no Zcash UTXO participated |
-| Public RPCs, faucets, or public funds used | 0 planned for PoC; full run absent | Local deterministic genesis/Regtest funding is required; cold artifact provisioning remains an external availability dependency |
-| Cleanup leaks | Not measured for composed runner | Existing LEZ/Zebra runners assert scoped cleanup separately; composed run must report exact containers, network, image, state, and leftovers |
-| Manual reproduction path | Native LEZ and actor-fixture component paths documented; full corridor unavailable | Manual guide separates native role effects/finality and `zec-local-poc-provision`; sidecars, `activate`/`drive`, HTLC effects, and a one-command corridor remain open |
+| Actual Zcash HTLC lifecycle | 1 terminal composed funding and claim | Funding `255b991f...dceab:0` entered height 106, had two confirmations before LEZ reveal, and was spent by claim `a2b41c5f...be16e` at height 108 |
+| Final state and balance proof | 1 cross-chain terminal proof plus the earlier terminal LEZ-only proof | LEZ initialize/fund/claim finalized in blocks 264/265/266; terminal status `Claimed`, custody 0, depositor 100000, claimant 150000; both actor stores are revision 4 `Completed` |
+| Public RPCs, faucets, or public funds used | 0 | Run 14o used only the isolated local LEZ and Zebra endpoints and deterministic local Vault/Regtest funds; cold artifact provisioning remains an external availability dependency |
+| Cleanup and retained state | Bridge processes are exact-PID/start-time/executable scoped; failure roots retained; chain funds are not rolled back | Run 14o stopped only its role bridges and retained private evidence. Failed 14j retains 50000 LEZ in a distinct swap; never reuse failed-run actor files, swap, or funding input |
+| Manual reproduction path | First-direction one-command runner and expected evidence documented | Requires already-running explicit fresh local nodes; allocate a new run ID, ports, and output root. Reverse-direction command/evidence remains unavailable |
 
-Open PoC implementation work is not an external blocker: wire the existing
-provisioned reference actors to live role sidecars and retained Zebra, implement
-and execute `activate`/`drive`, perform the actual Zcash HTLC funding/spend,
-complete one happy direction and then the second, and add one-command repetition
-plus exact composed cleanup. Vault Claims, checked deployment, a finalized
-native LEZ lifecycle, and isolated pair provisioning are GREEN but do not close
-those items. The runner must prebuild, sample a fresh LEZ tip, provision just in
-time, start explicit run-owned sidecar ports, mine only after Zcash effects, and
-fail fast if the 60-second LEZ or four-block Zcash refund headroom is absent.
+Open PoC work is not an external blocker. Run 14o live-proved the no-round-cap
+loop, 0.10-second polling, fail-closed millisecond clock, KILL-bounded calls, one
+of at most three exact retries, two-confirmation Zcash reveal gate, exact
+claim/follow-up, and terminal LEZ indexer/account evidence inside 25.370
+seconds. The runner prebuilds, provisions at a fresh tip, starts run-owned
+bridge ports, mines only after a reported Zcash effect, and fails on
+deadline/headroom. Fresh attempts 14i and 14k through 14n stopped before any
+chain effect; 14j proved the two-confirmation invariant by refusing the reveal
+after one block and retains 50000 LEZ in a nonretryable distinct swap. Cross-
+chain atomicity remains protocol ordering and recoverability rather than one
+database transaction. Implement and reproduce the reverse direction before the
+PoC gate can be met. Recovery/refund and ambiguity hardening remain after the
+owner ends PoC unless needed to avoid corrupting the happy-path evidence.
 Logos-owned production issues
 remain nonblocking for this local phase and stay in the upstream register.
 

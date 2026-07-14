@@ -123,10 +123,15 @@ async fn execute(arguments: Arguments) -> Result<()> {
         .max_concurrent_requests(1)
         .build(&arguments.indexer_url)
         .context("connect official indexer")?;
-    indexer
-        .healthcheck()
+    let finalized_block_id = indexer
+        .get_last_finalized_block_id()
         .await
-        .context("official indexer health is unavailable")?;
+        .context("official indexer finalized tip is unavailable")?
+        .context("official indexer has no finalized block")?;
+    ensure!(
+        finalized_block_id >= 2,
+        "official indexer has not finalized a non-genesis block"
+    );
     let planner = Arc::new(NativeEscrowPlanner::new_durable(
         runtime.sidecar_role,
         signer_key,
@@ -155,7 +160,7 @@ async fn execute(arguments: Arguments) -> Result<()> {
             run_id: run_id.as_str(),
             runtime: &runtime,
             sequencer_observation: "bounded_canonical_inclusion_and_same_tip_accounts",
-            indexer_health: "official_checkHealth",
+            indexer_health: "getLastFinalizedBlockId_non_genesis",
             finality: "not_observed_by_this_poc_bridge",
         },
     )

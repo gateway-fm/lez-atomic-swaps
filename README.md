@@ -200,17 +200,34 @@ claiming it exists. The
 [source-audited local-stack decision](docs/architecture/0024-source-audited-lez-v0-2-local-stack.md)
 binds the exact Bedrock image/source labels, LEZ source, toolchain, native
 inputs, service flows, and service-binary hashes. Retained run
-`m2poc-vertical-20260714a` now proves the three official local v0.2 services,
-both finalized actor Vault Claims, checked escrow deployment, and a
-role-separated native initialize/fund/claim lifecycle in finalized blocks
-219/220/223. It also provisions an isolated `TakerSellsLez` actor pair from a
-stable mature real-Zebra Regtest output. That saved pair is loadable evidence,
-not runnable now: its LEZ discovery window 1..256 is stale at later tip 389. The
-[exact evidence](docs/evidence/m2-local-onboarding-20260714.json) records all
-transactions, finality, balances, PDAs, agreement digest, UTXO, endpoints, and
-limitations. This is a partial vertical plus fixture readiness: reference
-actors have not called `activate`/`drive`, no Zcash HTLC effect or cross-chain
-corridor ran, and M2 is not complete. PoC-to-hardening and milestone
+`m2poc-vertical-20260714a` proves the three official local v0.2 services, both
+finalized actor Vault Claims, checked escrow deployment, and a role-separated
+native initialize/fund/claim lifecycle in finalized blocks 219/220/223. Fresh
+isolated chain runs `m2poc-fresh-lez-20260714a` and
+`m2poc-fresh-zebra-20260714a` then supported the first completed
+reference-actor corridor, `m2poc-corridor-fresh-20260714o`. In the
+`TakerSellsLez` role order, the taker initialized and funded LEZ, the maker
+observed it and funded the Zcash HTLC, the maker waited for two Zcash
+confirmations and revealed the preimage by claiming LEZ, and the taker used that
+reveal to claim Zcash. Both independent actor stores reached `Completed`
+revision 4 after 39 drive rounds and 78 actor events in 25.370 seconds. One
+payload-free `moving_tip` observation failure was retried once within the
+maximum-three policy and then succeeded.
+
+LEZ initialize/fund/claim finalized in blocks 264/265/266 and ended `Claimed`
+with custody 0, depositor balance 100000, and claimant balance 150000. Zebra
+funding transaction `255b991f...dceab` entered block 106, received the required
+second confirmation in block 107, and claim transaction `a2b41c5f...be16e`
+spent its `:0` HTLC output in block 108. No public RPC, faucet, or public funds
+were used. Exact secret-safe facts are in the
+[first-direction corridor evidence](docs/evidence/m2-taker-sells-lez-corridor-20260714.json);
+the earlier [local-onboarding evidence](docs/evidence/m2-local-onboarding-20260714.json)
+remains the component baseline. Failed fresh attempts 14i and 14k through 14n
+made no chain effect. Attempt 14j stopped after only one Zcash confirmation and
+retains 50000 LEZ in its distinct failed swap; its files and funds must never be
+reused. M2 remains in PoC at **1 of 2** happy directions, the reverse
+`TakerSellsForeign` direction remains, and no M2 tag exists. PoC-to-hardening
+and milestone
 transitions remain repository-owner decisions. The
 [Zcash public-testnet setup guide](docs/zcash-testnet-setup.md) records the
 selected self-hosted and Tatum Testnet Zebrad routes, optional funding wallet,
@@ -257,16 +274,16 @@ manual atomic-swap corridor.
 ### External dependencies and flakiness
 
 The current executable PoC flows use no public blockchain RPC, faucet, or
-public funds. The native slice used dynamic-loopback Bedrock, sequencer, and
-indexer services; the fixture provisioner queried the retained dynamic-loopback
-Zebra Regtest node and selected a deterministic maker-owned mature output. It
-configured two additional distinct loopback sidecar URLs but did not start or
-call those sidecars. The official LEZ v0.2 endpoint
+public funds. The successful corridor used dynamic-loopback Bedrock, sequencer,
+indexer, Zebra Regtest, and two independently authenticated role-sidecar
+processes. Its retained ports `32831` through `32834`, maker sidecar port
+`52289`, and taker sidecar port `49643` belong only to the named evidence
+runs; manual runs must allocate fresh dynamic ports and a fresh output root. The
+official LEZ v0.2 endpoint
 `https://testnet.lez.logos.co` is selected and its health/block/program methods
 were checked on 2026-07-12, but no repository user flow submits to it yet.
 Maker, Zebra-adapter, and sidecar host endpoints are ephemeral loopback
-services or, for the provisioned sidecars, configuration-only placeholders
-until the composed runner starts them. The LEZ
+services. The LEZ
 test client uses loopback, but pinned upstream v0.1.2 binds its ephemeral server
 to the host wildcard address; it is short-lived and collision-isolated, not
 loopback/network-namespace isolated. The reusable external node refuses an
@@ -295,8 +312,9 @@ canonical actor/custody state. Loopback supplies safe isolation while the real
 consensus/state-transition implementations supply fidelity. Regtest/standalone
 do not prove public peer
 propagation, fee markets, organic timing/reorg behavior, provider quirks, or LEZ
-testnet 0.2 compatibility. The composed private local corridor is mandatory M2
-evidence. Public deployment and public-testnet execution are explicitly deferred
+testnet 0.2 compatibility. One composed private local direction is now proved;
+the reverse direction remains mandatory M2 PoC evidence. Public deployment and
+public-testnet execution are explicitly deferred
 to production readiness under ADR 0023; the same binaries and adapters must
 switch routes through signed configuration/provisioning only.
 

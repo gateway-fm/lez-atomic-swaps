@@ -17,6 +17,7 @@ clap = { version = "4.6.0", features = ["derive"] }
 getrandom = "0.3.4"
 hex = "0.4.3"
 lez-bridge-client = { version = "0.1.0", path = "../lez-bridge-client" }
+lez-bridge-adapter = { version = "0.1.0", path = "../lez-bridge-adapter" }
 lez-bridge-protocol = { version = "0.1.0", path = "../lez-bridge-protocol" }
 lez-swap-core = { version = "0.1.0", path = "../swap-core" }
 lez-swap-store = { version = "0.1.0", path = "../swap-store" }

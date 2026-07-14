@@ -104,10 +104,15 @@ pub struct LocalPocProvisionSummary {
     direction: &'static str,
     agreement_file: PathBuf,
     signed_agreement_sha256: Hex32,
+    authenticated_transfer_program_id: Hex32,
+    authenticated_transfer_program_id_words: [u32; 8],
     maker: RolePaths,
     taker: RolePaths,
     zebra_tip_height: u32,
     zcash_candidate_owner: &'static str,
+    lez_native_amount: u128,
+    lez_depositor_role: &'static str,
+    lez_depositor_account_id_base58: String,
     private_material_disclosed: bool,
     actor_pair_validated: bool,
 }
@@ -116,6 +121,7 @@ pub struct LocalPocProvisionSummary {
 struct RolePaths {
     state_root: PathBuf,
     config_file: PathBuf,
+    runtime_file: PathBuf,
     lez_signer_key_file: PathBuf,
     sidecar_capability_file: PathBuf,
 }
@@ -250,6 +256,16 @@ pub async fn provision_local_v0_2_corridor(
         BridgeParticipant::Taker,
         Hex32::from_bytes(taker_lez_account),
     );
+    write_private_new(
+        &maker_paths.runtime,
+        &serde_json::to_vec_pretty(&maker_runtime)
+            .context("failed to encode maker runtime descriptor")?,
+    )?;
+    write_private_new(
+        &taker_paths.runtime,
+        &serde_json::to_vec_pretty(&taker_runtime)
+            .context("failed to encode taker runtime descriptor")?,
+    )?;
     let zebra_genesis = block_hash_display_hex(genesis_hash);
 
     let maker_config = encode_deterministic_local_v0_2_actor_config(actor_config_input(
@@ -306,10 +322,17 @@ pub async fn provision_local_v0_2_corridor(
         direction: "taker_sells_lez",
         agreement_file,
         signed_agreement_sha256: fixture.sha256,
+        authenticated_transfer_program_id: Hex32::from_bytes(authenticated_transfer),
+        authenticated_transfer_program_id_words: program_id_words(Hex32::from_bytes(
+            authenticated_transfer,
+        )),
         maker: role_summary(&maker_paths),
         taker: role_summary(&taker_paths),
         zebra_tip_height: tip_height,
         zcash_candidate_owner: "maker",
+        lez_native_amount: LEZ_NATIVE_AMOUNT,
+        lez_depositor_role: "taker",
+        lez_depositor_account_id_base58: spec.lez_runtime.taker_signer_account_id_base58.clone(),
         private_material_disclosed: false,
         actor_pair_validated: true,
     })
@@ -318,6 +341,7 @@ pub async fn provision_local_v0_2_corridor(
 struct MaterialPaths {
     state_root: PathBuf,
     config: PathBuf,
+    runtime: PathBuf,
     role_state_db: PathBuf,
     claim_recovery_key: PathBuf,
     claim_preimage: PathBuf,
@@ -331,6 +355,7 @@ fn material_paths(root: &Path, state_root: &Path) -> MaterialPaths {
     MaterialPaths {
         state_root: state_root.to_path_buf(),
         config: root.join("actor-config.json"),
+        runtime: root.join("lez-runtime.json"),
         role_state_db: state_root.join("actor.sqlite3"),
         claim_recovery_key: root.join("claim-recovery.key"),
         claim_preimage: root.join("claim-preimage.key"),
@@ -402,6 +427,7 @@ fn role_summary(paths: &MaterialPaths) -> RolePaths {
     RolePaths {
         state_root: paths.state_root.clone(),
         config_file: paths.config.clone(),
+        runtime_file: paths.runtime.clone(),
         lez_signer_key_file: paths.lez_signer_key.clone(),
         sidecar_capability_file: paths.capability.clone(),
     }

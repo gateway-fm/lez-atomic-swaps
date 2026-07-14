@@ -108,18 +108,29 @@ async fn status_failures_are_stable_and_payload_free() {
 }
 
 #[tokio::test]
-async fn effect_commands_fail_closed_until_real_composition_exists() {
-    for command in [ActorCommand::Activate, ActorCommand::Drive] {
-        let fixture = PairFixture::new();
-        let config = fixture.load("maker");
+async fn activate_rejects_an_invalid_agreement_without_live_chain_access() {
+    let fixture = PairFixture::new();
+    let config = fixture.load("maker");
 
-        assert_eq!(
-            execute_actor_command(&config, command).await,
-            Err(ActorCommandError::CommandUnavailable)
-        );
-        assert!(!fixture.path("maker-state").exists());
-        assert!(!fixture.path("maker-journal").exists());
-    }
+    assert_eq!(
+        execute_actor_command(&config, ActorCommand::Activate).await,
+        Err(ActorCommandError::ActivationUnavailable)
+    );
+    assert!(!fixture.path("maker-state").exists());
+    assert!(!fixture.path("maker-journal").exists());
+}
+
+#[tokio::test]
+async fn drive_without_activation_fails_closed_before_any_chain_effect() {
+    let fixture = PairFixture::new();
+    let config = fixture.load("maker");
+
+    assert_eq!(
+        execute_actor_command(&config, ActorCommand::Drive).await,
+        Err(ActorCommandError::NotActivated)
+    );
+    assert!(fixture.path("maker-state").is_file());
+    assert!(fixture.path("maker-journal").is_file());
 }
 
 #[test]

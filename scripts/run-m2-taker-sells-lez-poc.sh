@@ -1,0 +1,772 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+umask 077
+
+readonly LEZ_SEQUENCER_URL="${LEZ_SEQUENCER_URL:-http://127.0.0.1:32828}"
+readonly LEZ_INDEXER_URL="${LEZ_INDEXER_URL:-http://127.0.0.1:32829}"
+readonly ZEBRA_RPC_URL="${ZEBRA_RPC_URL:-http://127.0.0.1:32830}"
+readonly LEZ_CHAIN_ID="${LEZ_CHAIN_ID:-b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748}"
+readonly LEZ_GENESIS_HASH="${LEZ_GENESIS_HASH:-e24c5a4a2d08a747b96cebefa1304cbe80e42dac9ced3a52c2330b22797e10d9}"
+readonly ESCROW_PROGRAM_ID="${ESCROW_PROGRAM_ID:-f8385049e93a319b44d868e0d0cf805b058eddcf92141a186ffd69e4596c0fbe}"
+readonly AUTHENTICATED_TRANSFER_PROGRAM_HEX="${AUTHENTICATED_TRANSFER_PROGRAM_HEX:-dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71}"
+readonly AUTHENTICATED_TRANSFER_PROGRAM_BASE58="${AUTHENTICATED_TRANSFER_PROGRAM_BASE58:-FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg}"
+readonly MAKER_ACCOUNT_BASE58="${MAKER_ACCOUNT_BASE58:-B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd}"
+readonly TAKER_ACCOUNT_BASE58="${TAKER_ACCOUNT_BASE58:-34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib}"
+readonly DISCOVERY_BLOCKS=256
+readonly POLL_INTERVAL_SECONDS=0.10
+# Both ceilings start at provisioning. The 49-second completion cap retains at
+# least 10 seconds against the second-truncated 60-second LEZ delay.
+readonly MAX_PRE_EFFECT_SECONDS=25
+readonly MAX_CORRIDOR_SECONDS=49
+readonly MAX_ACTOR_CALL_SECONDS=20
+readonly MAX_DRIVE_RETRIES=3
+readonly DRIVE_RETRY_DELAY_SECONDS=0.05
+readonly SIDECAR_STARTUP_WORST_CASE_SECONDS=40
+readonly RAPIDSNARK_LIB_DIR="${RAPIDSNARK_LIB_DIR:-/tmp/lez-atomic-swaps-tools/rapidsnark-v0.0.8/d4133227}"
+readonly BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:--I/usr/lib/gcc/x86_64-linux-gnu/13/include}"
+export RAPIDSNARK_LIB_DIR BINDGEN_EXTRA_CLANG_ARGS
+export CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
+
+if [[ -n "${RUN_ID:-}" ]]; then
+  run_id="$RUN_ID"
+else
+  run_id="m2poc-corridor-$(date -u +%Y%m%d%H%M%S)-$$"
+fi
+if [[ ! "$run_id" =~ ^[a-z0-9][a-z0-9_-]{7,63}$ ]]; then
+  echo 'RUN_ID must be 8..=64 lowercase letters, numbers, underscores, or hyphens' >&2
+  exit 2
+fi
+readonly run_id
+readonly private_base="${POC_OUTPUT_ROOT:-/tmp/lez-atomic-swaps-${run_id}}"
+readonly spec_file="${private_base}/provision-spec.json"
+readonly actors_root="${private_base}/actors"
+readonly evidence_dir="${private_base}/evidence"
+
+for endpoint in "$LEZ_SEQUENCER_URL" "$LEZ_INDEXER_URL" "$ZEBRA_RPC_URL"; do
+  if [[ ! "$endpoint" =~ ^http://127\.0\.0\.1:[1-9][0-9]{0,4}/?$ ]]; then
+    echo "endpoint must be an explicit nonzero literal-loopback HTTP URL: ${endpoint}" >&2
+    exit 2
+  fi
+  endpoint_port="${endpoint##*:}"
+  endpoint_port="${endpoint_port%/}"
+  if (( 10#$endpoint_port > 65535 )); then
+    echo "endpoint port exceeds 65535: ${endpoint}" >&2
+    exit 2
+  fi
+done
+for value in \
+  "$LEZ_CHAIN_ID" \
+  "$LEZ_GENESIS_HASH" \
+  "$ESCROW_PROGRAM_ID" \
+  "$AUTHENTICATED_TRANSFER_PROGRAM_HEX"; do
+  if [[ ! "$value" =~ ^[0-9a-f]{64}$ || "$value" =~ ^0+$ ]]; then
+    echo 'LEZ chain, genesis, and program identities must be nonzero lowercase hex32 values' >&2
+    exit 2
+  fi
+done
+for value in \
+  "$AUTHENTICATED_TRANSFER_PROGRAM_BASE58" \
+  "$MAKER_ACCOUNT_BASE58" \
+  "$TAKER_ACCOUNT_BASE58"; do
+  if [[ ! "$value" =~ ^[1-9A-HJ-NP-Za-km-z]{32,64}$ ]]; then
+    echo 'LEZ base58 identities must be canonical-alphabet values of bounded length' >&2
+    exit 2
+  fi
+done
+if [[ "$MAKER_ACCOUNT_BASE58" == "$TAKER_ACCOUNT_BASE58" ]]; then
+  echo 'maker and taker LEZ identities must be distinct' >&2
+  exit 2
+fi
+if [[ -e "$private_base" ]]; then
+  echo "refusing to reuse PoC output root: ${private_base}" >&2
+  exit 2
+fi
+
+maker_pid=''
+taker_pid=''
+maker_start_ticks=''
+taker_start_ticks=''
+corridor_deadline_monotonic_ms=''
+
+process_start_ticks() {
+  local pid="$1"
+  awk '{print $22}' "/proc/${pid}/stat" 2>/dev/null
+}
+
+process_is_owned() {
+  local pid="$1"
+  local start_ticks="$2"
+  local expected_exe="$3"
+  [[ -n "$pid" && -n "$start_ticks" && -r "/proc/${pid}/stat" ]] || return 1
+  [[ "$(process_start_ticks "$pid")" == "$start_ticks" ]] || return 1
+  [[ "$(readlink -f "/proc/${pid}/exe" 2>/dev/null)" == "$expected_exe" ]]
+}
+
+stop_owned_process() {
+  local pid="$1"
+  local start_ticks="$2"
+  local expected_exe="$3"
+  if ! process_is_owned "$pid" "$start_ticks" "$expected_exe"; then
+    return 0
+  fi
+  kill -TERM "$pid" || true
+  for _ in {1..40}; do
+    if ! process_is_owned "$pid" "$start_ticks" "$expected_exe"; then
+      wait "$pid" 2>/dev/null || true
+      return 0
+    fi
+    sleep 0.05
+  done
+  if process_is_owned "$pid" "$start_ticks" "$expected_exe"; then
+    kill -KILL "$pid" || true
+  fi
+  wait "$pid" 2>/dev/null || true
+}
+
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  if [[ -n "${sidecar_bin:-}" ]]; then
+    stop_owned_process "$maker_pid" "$maker_start_ticks" "$sidecar_bin"
+    stop_owned_process "$taker_pid" "$taker_start_ticks" "$sidecar_bin"
+  fi
+  if (( status != 0 )); then
+    if [[ -d "$private_base" ]]; then
+      echo "M2 TakerSellsLez PoC failed; retained private evidence: ${private_base}" >&2
+    else
+      echo 'M2 TakerSellsLez PoC failed before its evidence root was created' >&2
+    fi
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+require_command() {
+  command -v "$1" >/dev/null || {
+    echo "required command is unavailable: $1" >&2
+    exit 2
+  }
+}
+for command in awk base64 cargo curl date jq kill od perl readlink sha256sum sleep stat tail timeout tr xxd; do
+  require_command "$command"
+done
+
+monotonic_milliseconds() {
+  [[ -r /proc/uptime ]] || {
+    echo 'monotonic /proc/uptime clock is unavailable' >&2
+    return 2
+  }
+  local uptime whole fraction
+  read -r uptime _ </proc/uptime
+  [[ "$uptime" =~ ^([0-9]+)\.([0-9]+)$ ]] || {
+    echo 'monotonic /proc/uptime clock has an invalid format' >&2
+    return 2
+  }
+  whole="${BASH_REMATCH[1]}"
+  fraction="${BASH_REMATCH[2]}000"
+  fraction="${fraction:0:3}"
+  printf '%s\n' "$((10#$whole * 1000 + 10#$fraction))"
+}
+
+remaining_budget_milliseconds() {
+  local stage="$1"
+  [[ -n "$corridor_deadline_monotonic_ms" ]] || {
+    echo "corridor deadline is unavailable at ${stage}" >&2
+    return 2
+  }
+  local now remaining
+  now="$(monotonic_milliseconds)" || return
+  remaining=$((corridor_deadline_monotonic_ms - now))
+  (( remaining > 0 )) || {
+    echo "corridor budget exhausted at ${stage}" >&2
+    return 1
+  }
+  printf '%s\n' "$remaining"
+}
+
+format_milliseconds() {
+  local milliseconds="$1"
+  printf '%d.%03d\n' "$((milliseconds / 1000))" "$((milliseconds % 1000))"
+}
+
+bounded_actor_timeout() {
+  local stage="$1"
+  local remaining maximum
+  remaining="$(remaining_budget_milliseconds "${stage}-before")" || return
+  maximum=$((MAX_ACTOR_CALL_SECONDS * 1000))
+  (( remaining <= maximum )) || remaining="$maximum"
+  format_milliseconds "$remaining"
+}
+
+verify_native_library() {
+  local filename="$1"
+  local expected="$2"
+  local path="${RAPIDSNARK_LIB_DIR}/${filename}"
+  [[ -f "$path" ]] || {
+    echo "missing contracted native library: ${path}" >&2
+    exit 2
+  }
+  local actual
+  actual="$(sha256sum -- "$path")"
+  actual="${actual%% *}"
+  [[ "$actual" == "$expected" ]] || {
+    echo "native-library identity drift for ${filename}" >&2
+    exit 2
+  }
+}
+[[ "$RAPIDSNARK_LIB_DIR" == /* && -d "$RAPIDSNARK_LIB_DIR" ]] || {
+  echo 'RAPIDSNARK_LIB_DIR must be an existing absolute directory' >&2
+  exit 2
+}
+[[ "$BINDGEN_EXTRA_CLANG_ARGS" == '-I/usr/lib/gcc/x86_64-linux-gnu/13/include' ]] || {
+  echo 'BINDGEN_EXTRA_CLANG_ARGS does not match the pinned sidecar contract' >&2
+  exit 2
+}
+verify_native_library librapidsnark.a d4133227f845ff5bfa3672eb5b9c018a6a086bfa164b176bdaf76949c7d1f423
+verify_native_library libgmp.a 0a910b420c3ad603c83c9dc2818c7ae05394c231ca23135c7b873e8e680ea41b
+verify_native_library libfq.a 797b5d24bb8e8b088f811bddfff35f33973af9c797fb3812489cd42ba6a957d0
+verify_native_library libfr.a 40f809394904682cb5517845cd3c2f936a5eb4609712534b573f552f2811fb82
+
+echo 'Prebuilding the provisioner, actor, and exact v0.2 bridge before provisioning'
+cargo +1.96.0 build --locked --offline -p zec-reference-actor --bins
+cargo +1.96.0 build \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --locked --offline --bin lez-v02-bridge-poc
+
+actor_bin="$(readlink -f target/debug/zec-reference-actor)"
+provisioner_bin="$(readlink -f target/debug/zec-local-poc-provision)"
+readonly actor_bin provisioner_bin
+sidecar_bin="$(readlink -f compat/lez-v0_2-sidecar/target/debug/lez-v02-bridge-poc)"
+readonly sidecar_bin
+for binary in "$actor_bin" "$provisioner_bin" "$sidecar_bin"; do
+  [[ -x "$binary" ]] || {
+    echo "prebuilt binary is unavailable: ${binary}" >&2
+    exit 2
+  }
+done
+
+rpc() {
+  local endpoint="$1"
+  local request="$2"
+  local connect_timeout_ms=2000
+  local request_timeout_ms=15000
+  local connect_timeout request_timeout remaining response
+  if [[ -n "$corridor_deadline_monotonic_ms" ]]; then
+    remaining="$(remaining_budget_milliseconds 'rpc-before')" || return
+    (( request_timeout_ms <= remaining )) || request_timeout_ms="$remaining"
+    (( connect_timeout_ms <= remaining )) || connect_timeout_ms="$remaining"
+  fi
+  connect_timeout="$(format_milliseconds "$connect_timeout_ms")"
+  request_timeout="$(format_milliseconds "$request_timeout_ms")"
+  response="$(curl --fail --silent --show-error --noproxy '*' \
+    --connect-timeout "$connect_timeout" --max-time "$request_timeout" \
+    -H 'content-type: application/json' --data "$request" "$endpoint")" || return
+  printf '%s\n' "$response"
+  if [[ -n "$corridor_deadline_monotonic_ms" ]]; then
+    remaining_budget_milliseconds 'rpc-after' >/dev/null || return
+  fi
+}
+
+allocate_port() {
+  perl -MIO::Socket::INET -e '
+    $socket = IO::Socket::INET->new(
+      LocalAddr => "127.0.0.1", LocalPort => 0, Proto => "tcp", Listen => 1
+    ) or die "loopback port allocation failed: $!\n";
+    print $socket->sockport, "\n";
+  '
+}
+
+sequencer_health="$(rpc "$LEZ_SEQUENCER_URL" '{"jsonrpc":"2.0","id":1,"method":"checkHealth","params":[]}')"
+indexer_readiness="$(rpc "$LEZ_INDEXER_URL" '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}')"
+channel_response="$(rpc "$LEZ_SEQUENCER_URL" '{"jsonrpc":"2.0","id":1,"method":"getChannelId","params":[]}')"
+genesis_response="$(rpc "$LEZ_SEQUENCER_URL" '{"jsonrpc":"2.0","id":1,"method":"getBlock","params":[1]}')"
+zebra_tip_response="$(rpc "$ZEBRA_RPC_URL" '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}')"
+jq -e '.error == null' <<<"$sequencer_health" >/dev/null
+jq -e '.error == null and (.result | numbers) >= 2' \
+  <<<"$indexer_readiness" >/dev/null
+jq -e --arg channel_id "$LEZ_CHAIN_ID" \
+  '.error == null and .result == $channel_id' <<<"$channel_response" >/dev/null
+jq -e '.error == null and (.result | type == "string")' \
+  <<<"$genesis_response" >/dev/null
+genesis_block_id="$(jq -er '.result' <<<"$genesis_response" \
+  | base64 --decode | od -An -tu8 -N8 | tr -d ' ')"
+genesis_block_hash="$(jq -er '.result' <<<"$genesis_response" \
+  | base64 --decode | xxd -p -s 40 -l 32 -c 32)"
+if [[ "$genesis_block_id" != 1 || "$genesis_block_hash" != "$LEZ_GENESIS_HASH" ]]; then
+  echo 'LEZ genesis block does not match the configured runtime identity' >&2
+  exit 2
+fi
+zebra_tip="$(jq -er 'select(.error == null) | .result | numbers' \
+  <<<"$zebra_tip_response")"
+(( zebra_tip >= 104 )) || {
+  echo "Zebra tip lacks deterministic mature funds: ${zebra_tip}" >&2
+  exit 2
+}
+
+mkdir -m 0700 "$private_base" "$evidence_dir"
+lez_tip_response="$(rpc "$LEZ_SEQUENCER_URL" '{"jsonrpc":"2.0","id":1,"method":"getLastBlockId","params":[]}')"
+lez_tip="$(jq -er '.result | numbers' <<<"$lez_tip_response")"
+discovery_start=$((lez_tip + 1))
+discovery_end=$((discovery_start + DISCOVERY_BLOCKS - 1))
+readonly lez_tip discovery_start discovery_end zebra_tip
+
+# The sidecar CLI cannot inherit a reserved listener. Allocate at the latest
+# pre-provision point; any intervening bind collision fails before activation/effects.
+maker_port="$(allocate_port)"
+taker_port="$(allocate_port)"
+while [[ "$taker_port" == "$maker_port" ]]; do
+  taker_port="$(allocate_port)"
+done
+readonly maker_port taker_port
+readonly maker_endpoint="http://127.0.0.1:${maker_port}/"
+readonly taker_endpoint="http://127.0.0.1:${taker_port}/"
+
+jq -n \
+  --arg run_id "$run_id" \
+  --arg swap_id "${run_id}-swap" \
+  --arg chain_id "$LEZ_CHAIN_ID" \
+  --arg genesis "$LEZ_GENESIS_HASH" \
+  --arg escrow "$ESCROW_PROGRAM_ID" \
+  --arg authenticated_transfer "$AUTHENTICATED_TRANSFER_PROGRAM_BASE58" \
+  --arg maker_account "$MAKER_ACCOUNT_BASE58" \
+  --arg taker_account "$TAKER_ACCOUNT_BASE58" \
+  --arg maker_endpoint "$maker_endpoint" \
+  --arg taker_endpoint "$taker_endpoint" \
+  --arg zebra_endpoint "$ZEBRA_RPC_URL" \
+  --argjson discovery_start "$discovery_start" \
+  --argjson discovery_blocks "$DISCOVERY_BLOCKS" '
+  {
+    schema_version: 1,
+    run_id: $run_id,
+    swap_id: $swap_id,
+    lez_runtime: {
+      chain_id: $chain_id,
+      channel_id: $chain_id,
+      genesis_block_hash: $genesis,
+      escrow_program_id: $escrow,
+      authenticated_transfer_program_id_base58: $authenticated_transfer,
+      maker_signer_account_id_base58: $maker_account,
+      taker_signer_account_id_base58: $taker_account
+    },
+    bridge: {
+      maker_endpoint: $maker_endpoint,
+      taker_endpoint: $taker_endpoint
+    },
+    zebra_endpoint: $zebra_endpoint,
+    lez_discovery_start_height: $discovery_start,
+    lez_discovery_max_blocks: $discovery_blocks
+  }' >"$spec_file"
+chmod 0600 "$spec_file"
+
+budget_clock_source='proc_uptime_monotonic_milliseconds'
+provision_started_monotonic_ms="$(monotonic_milliseconds)"
+corridor_deadline_monotonic_ms=$((
+  provision_started_monotonic_ms + MAX_CORRIDOR_SECONDS * 1000
+))
+readonly budget_clock_source provision_started_monotonic_ms corridor_deadline_monotonic_ms
+"$provisioner_bin" --spec-file "$spec_file" --output-root "$actors_root" \
+  >"${evidence_dir}/provision-summary.json"
+remaining_budget_milliseconds 'provisioning-after' >/dev/null
+jq -e '
+  .direction == "taker_sells_lez"
+  and .lez_native_amount > 0
+  and .lez_native_amount == (.lez_native_amount | floor)
+  and .lez_native_amount <= 9007199254740991
+  and .lez_depositor_role == "taker"
+  and (.authenticated_transfer_program_id_words | arrays | length) == 8
+  and all(.authenticated_transfer_program_id_words[];
+    . >= 0 and . == floor and . <= 4294967295)
+  and .private_material_disclosed == false
+  and .actor_pair_validated == true
+' "${evidence_dir}/provision-summary.json" >/dev/null
+jq -e \
+  --arg depositor "$TAKER_ACCOUNT_BASE58" \
+  --arg authenticated_transfer "$AUTHENTICATED_TRANSFER_PROGRAM_HEX" '
+  .lez_depositor_account_id_base58 == $depositor
+  and .authenticated_transfer_program_id == $authenticated_transfer
+' "${evidence_dir}/provision-summary.json" >/dev/null
+
+lez_native_amount="$(jq -er '.lez_native_amount | numbers' \
+  "${evidence_dir}/provision-summary.json")"
+lez_depositor_account="$(jq -er '.lez_depositor_account_id_base58 | strings' \
+  "${evidence_dir}/provision-summary.json")"
+readonly lez_native_amount lez_depositor_account
+lez_depositor_payload="$(jq -nc --arg account "$lez_depositor_account" '
+  {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "getAccount",
+    params: [$account]
+  }')"
+lez_balance_snapshot_stable=0
+for lez_balance_snapshot_attempt in 1 2 3; do
+  lez_balance_tip_before_file="${evidence_dir}/pre-effect-lez-balance-tip-before-attempt-${lez_balance_snapshot_attempt}.json"
+  lez_balance_account_file="${evidence_dir}/pre-effect-lez-depositor-account-attempt-${lez_balance_snapshot_attempt}.json"
+  lez_balance_tip_after_file="${evidence_dir}/pre-effect-lez-balance-tip-after-attempt-${lez_balance_snapshot_attempt}.json"
+  rpc "$LEZ_SEQUENCER_URL" \
+    '{"jsonrpc":"2.0","id":1,"method":"getLastBlockId","params":[]}' \
+    >"$lez_balance_tip_before_file"
+  rpc "$LEZ_SEQUENCER_URL" "$lez_depositor_payload" \
+    >"$lez_balance_account_file"
+  rpc "$LEZ_SEQUENCER_URL" \
+    '{"jsonrpc":"2.0","id":1,"method":"getLastBlockId","params":[]}' \
+    >"$lez_balance_tip_after_file"
+  lez_balance_tip_before="$(jq -er '.result | numbers' \
+    "$lez_balance_tip_before_file")"
+  lez_balance_tip_after="$(jq -er '.result | numbers' \
+    "$lez_balance_tip_after_file")"
+  if [[ "$lez_balance_tip_before" == "$lez_balance_tip_after" ]]; then
+    lez_balance_snapshot_stable=1
+    break
+  fi
+  remaining_budget_milliseconds \
+    "lez-depositor-preflight-retry-${lez_balance_snapshot_attempt}" >/dev/null
+done
+readonly lez_balance_snapshot_attempt lez_balance_tip_before lez_balance_tip_after
+readonly lez_balance_account_file lez_balance_snapshot_stable
+if (( lez_balance_snapshot_stable != 1 )); then
+  echo 'LEZ tip moved across all depositor balance preflight attempts' >&2
+  exit 2
+fi
+jq -e \
+  --slurpfile provision "${evidence_dir}/provision-summary.json" \
+  --argjson amount "$lez_native_amount" '
+  .error == null
+  and .result.program_owner == $provision[0].authenticated_transfer_program_id_words
+  and (.result.balance | numbers) >= 0
+  and .result.balance == (.result.balance | floor)
+  and .result.balance <= 9007199254740991
+  and .result.balance >= $amount
+' "$lez_balance_account_file" >/dev/null || {
+  echo 'LEZ depositor lacks the agreement-bound balance or expected owner before effects' >&2
+  exit 2
+}
+remaining_budget_milliseconds 'lez-depositor-preflight-after' >/dev/null
+
+readonly maker_config="${actors_root}/maker/actor-config.json"
+readonly taker_config="${actors_root}/taker/actor-config.json"
+readonly maker_log="${evidence_dir}/maker-sidecar.log"
+readonly taker_log="${evidence_dir}/taker-sidecar.log"
+
+startup_remaining_ms="$(remaining_budget_milliseconds 'sidecar-startup-before')"
+(( startup_remaining_ms >= SIDECAR_STARTUP_WORST_CASE_SECONDS * 1000 )) || {
+  echo "sidecar startup requires ${SIDECAR_STARTUP_WORST_CASE_SECONDS}s of bounded RPC headroom; ${startup_remaining_ms}ms remain" >&2
+  exit 2
+}
+
+"$sidecar_bin" \
+  --listen-address "127.0.0.1:${maker_port}" \
+  --sequencer-url "$LEZ_SEQUENCER_URL" \
+  --indexer-url "$LEZ_INDEXER_URL" \
+  --run-id "$run_id" \
+  --runtime-file "${actors_root}/maker/lez-runtime.json" \
+  --capability-file "${actors_root}/maker/sidecar.capability" \
+  --private-key-file "${actors_root}/maker/lez-signer.key" \
+  --state-directory "${actors_root}/maker/state" \
+  --authenticated-transfer-program-id "$AUTHENTICATED_TRANSFER_PROGRAM_HEX" \
+  >"$maker_log" 2>&1 &
+maker_pid=$!
+maker_start_ticks="$(process_start_ticks "$maker_pid")"
+
+"$sidecar_bin" \
+  --listen-address "127.0.0.1:${taker_port}" \
+  --sequencer-url "$LEZ_SEQUENCER_URL" \
+  --indexer-url "$LEZ_INDEXER_URL" \
+  --run-id "$run_id" \
+  --runtime-file "${actors_root}/taker/lez-runtime.json" \
+  --capability-file "${actors_root}/taker/sidecar.capability" \
+  --private-key-file "${actors_root}/taker/lez-signer.key" \
+  --state-directory "${actors_root}/taker/state" \
+  --authenticated-transfer-program-id "$AUTHENTICATED_TRANSFER_PROGRAM_HEX" \
+  >"$taker_log" 2>&1 &
+taker_pid=$!
+taker_start_ticks="$(process_start_ticks "$taker_pid")"
+
+wait_for_readiness() {
+  local role="$1"
+  local pid="$2"
+  local start_ticks="$3"
+  local log="$4"
+  for _ in {1..500}; do
+    remaining_budget_milliseconds "${role}-sidecar-readiness" >/dev/null || return
+    if [[ -s "$log" ]] && jq -e \
+      --arg role "$role" --arg run_id "$run_id" '
+        .event == "ready"
+        and .run_id == $run_id
+        and .runtime.sidecar_role == $role
+        and .indexer_health == "getLastFinalizedBlockId_non_genesis"
+        and .finality == "not_observed_by_this_poc_bridge"
+      ' "$log" >/dev/null 2>&1; then
+      return 0
+    fi
+    if ! process_is_owned "$pid" "$start_ticks" "$sidecar_bin"; then
+      echo "${role} sidecar exited before readiness" >&2
+      sed -n '1,40p' "$log" >&2
+      return 1
+    fi
+    sleep 0.05
+  done
+  echo "${role} sidecar did not become ready" >&2
+  if process_is_owned "$maker_pid" "$maker_start_ticks" "$sidecar_bin"; then
+    echo 'maker sidecar owned_process_alive=true' >&2
+  else
+    echo 'maker sidecar owned_process_alive=false' >&2
+  fi
+  tail -n 40 "$maker_log" >&2
+  if process_is_owned "$taker_pid" "$taker_start_ticks" "$sidecar_bin"; then
+    echo 'taker sidecar owned_process_alive=true' >&2
+  else
+    echo 'taker sidecar owned_process_alive=false' >&2
+  fi
+  tail -n 40 "$taker_log" >&2
+  return 1
+}
+wait_for_readiness maker "$maker_pid" "$maker_start_ticks" "$maker_log"
+wait_for_readiness taker "$taker_pid" "$taker_start_ticks" "$taker_log"
+remaining_budget_milliseconds 'sidecar-readiness-after' >/dev/null
+
+"$actor_bin" --config "$maker_config" status >"${evidence_dir}/maker-status-before.json"
+"$actor_bin" --config "$taker_config" status >"${evidence_dir}/taker-status-before.json"
+jq -e '.role == "maker" and .state == "not_activated"' \
+  "${evidence_dir}/maker-status-before.json" >/dev/null
+jq -e '.role == "taker" and .state == "not_activated"' \
+  "${evidence_dir}/taker-status-before.json" >/dev/null
+
+pre_effect_tip_response="$(rpc "$LEZ_SEQUENCER_URL" '{"jsonrpc":"2.0","id":1,"method":"getLastBlockId","params":[]}')"
+pre_effect_tip="$(jq -er '.result | numbers' <<<"$pre_effect_tip_response")"
+(( pre_effect_tip >= lez_tip && pre_effect_tip <= discovery_end \
+  && discovery_end - pre_effect_tip >= 128 )) || {
+  echo "LEZ discovery headroom is unsafe before effects: tip=${pre_effect_tip}, end=${discovery_end}" >&2
+  exit 2
+}
+pre_effect_remaining_ms="$(remaining_budget_milliseconds 'pre-effect-gate')"
+pre_effect_elapsed_ms=$((MAX_CORRIDOR_SECONDS * 1000 - pre_effect_remaining_ms))
+(( pre_effect_elapsed_ms <= MAX_PRE_EFFECT_SECONDS * 1000 )) || {
+  echo "JIT provisioning/readiness consumed ${pre_effect_elapsed_ms}ms; refusing effects outside the ${MAX_CORRIDOR_SECONDS}s provision-to-completion budget" >&2
+  exit 2
+}
+
+jq -n \
+  --arg run_id "$run_id" \
+  --arg maker_endpoint "$maker_endpoint" \
+  --arg taker_endpoint "$taker_endpoint" \
+  --argjson maker_pid "$maker_pid" \
+  --argjson taker_pid "$taker_pid" \
+  --arg maker_start_ticks "$maker_start_ticks" \
+  --arg taker_start_ticks "$taker_start_ticks" \
+  --argjson lez_tip "$lez_tip" \
+  --argjson discovery_start "$discovery_start" \
+  --argjson discovery_end "$discovery_end" \
+  --argjson pre_effect_elapsed_ms "$pre_effect_elapsed_ms" \
+  --argjson lez_balance_snapshot_attempt "$lez_balance_snapshot_attempt" \
+  --argjson lez_balance_tip "$lez_balance_tip_after" \
+  --arg budget_clock_source "$budget_clock_source" \
+  --argjson provision_started_monotonic_ms "$provision_started_monotonic_ms" \
+  --argjson corridor_deadline_monotonic_ms "$corridor_deadline_monotonic_ms" \
+  --argjson pre_effect_remaining_ms "$pre_effect_remaining_ms" \
+  --argjson zebra_tip "$zebra_tip" '
+  {
+    schema_version: 1,
+    run_id: $run_id,
+    direction: "taker_sells_lez",
+    sidecars: {
+      maker: {endpoint: $maker_endpoint, pid: $maker_pid, process_start_ticks: $maker_start_ticks},
+      taker: {endpoint: $taker_endpoint, pid: $taker_pid, process_start_ticks: $taker_start_ticks}
+    },
+    initial_lez_tip: $lez_tip,
+    discovery: {start: $discovery_start, end: $discovery_end},
+    pre_effect_elapsed_milliseconds: $pre_effect_elapsed_ms,
+    lez_balance_preflight: {
+      stable_tip: $lez_balance_tip,
+      successful_attempt: $lez_balance_snapshot_attempt
+    },
+    budget: {
+      clock_source: $budget_clock_source,
+      provision_started_milliseconds: $provision_started_monotonic_ms,
+      absolute_deadline_milliseconds: $corridor_deadline_monotonic_ms,
+      pre_effect_remaining_milliseconds: $pre_effect_remaining_ms,
+      provision_to_completion_cap_seconds: 49,
+      lez_delay_margin_seconds: 10
+    },
+    initial_zebra_tip: $zebra_tip,
+    public_rpc_or_faucet_used: false,
+    actor_outputs_secret_free: true
+  }' >"${evidence_dir}/run-identity.json"
+
+maker_activate_timeout="$(bounded_actor_timeout 'maker-activate')"
+timeout --signal=KILL "${maker_activate_timeout}s" \
+  "$actor_bin" --config "$maker_config" activate \
+  >"${evidence_dir}/maker-activate.json" 2>"${evidence_dir}/maker-activate.stderr"
+remaining_budget_milliseconds 'maker-activate-after' >/dev/null
+taker_activate_timeout="$(bounded_actor_timeout 'taker-activate')"
+timeout --signal=KILL "${taker_activate_timeout}s" \
+  "$actor_bin" --config "$taker_config" activate \
+  >"${evidence_dir}/taker-activate.json" 2>"${evidence_dir}/taker-activate.stderr"
+remaining_budget_milliseconds 'taker-activate-after' >/dev/null
+jq -e '.role == "maker" and .outcome == "activated" and .phase == "offered"' \
+  "${evidence_dir}/maker-activate.json" >/dev/null
+jq -e '.role == "taker" and .outcome == "activated" and .phase == "offered"' \
+  "${evidence_dir}/taker-activate.json" >/dev/null
+
+: >"${evidence_dir}/actor-drive.ndjson"
+: >"${evidence_dir}/drive-retries.ndjson"
+zcash_fund_mined=0
+zcash_claim_mined=0
+drive_actor() {
+  local role="$1"
+  local config="$2"
+  local round="$3"
+  local attempt=1 actor_status actor_timeout output stderr_file
+  while true; do
+    stderr_file="${evidence_dir}/${role}-drive-${round}-attempt-${attempt}.stderr"
+    actor_timeout="$(bounded_actor_timeout "${role}-drive-${round}-attempt-${attempt}")" \
+      || return
+    actor_status=0
+    if output="$(timeout --signal=KILL "${actor_timeout}s" \
+      "$actor_bin" --config "$config" drive 2>"$stderr_file")"; then
+      break
+    else
+      actor_status=$?
+    fi
+    if (( actor_status == 124 || actor_status == 137 || attempt > MAX_DRIVE_RETRIES )) \
+      || [[ "$(stat -c %s -- "$stderr_file")" != 27 ]] \
+      || [[ "$(<"$stderr_file")" != 'actor drive is unavailable' ]]; then
+      echo "${role} drive failed in round ${round}, attempt ${attempt}" >&2
+      sed -n '1,20p' "$stderr_file" >&2
+      return 1
+    fi
+    jq -nc \
+      --arg role "$role" \
+      --argjson round "$round" \
+      --argjson retry "$attempt" '
+      {
+        schema_version: 1,
+        event: "same_run_drive_retry",
+        role: $role,
+        round: $round,
+        retry: $retry,
+        error_class: "actor_drive_unavailable"
+      }' >>"${evidence_dir}/drive-retries.ndjson"
+    remaining_budget_milliseconds "${role}-drive-${round}-retry-${attempt}" >/dev/null || return
+    sleep "$DRIVE_RETRY_DELAY_SECONDS"
+    attempt=$((attempt + 1))
+  done
+  jq -e --arg role "$role" '
+    .schema_version == 1 and .role == $role and .command == "drive"
+  ' <<<"$output" >/dev/null
+  jq -c --argjson round "$round" '. + {round: $round}' <<<"$output" \
+    >>"${evidence_dir}/actor-drive.ndjson"
+  remaining_budget_milliseconds "${role}-drive-${round}-after" >/dev/null || return
+  printf '%s\n' "$output"
+}
+
+mine_blocks() {
+  local label="$1"
+  local count="$2"
+  local request response rpc_status=0
+  request="$(jq -nc --argjson count "$count" '
+    {jsonrpc: "2.0", id: 1, method: "generate", params: [$count]}')"
+  response="$(rpc "$ZEBRA_RPC_URL" "$request")" \
+    || rpc_status=$?
+  jq -e --argjson count "$count" \
+    '.error == null and (.result | arrays | length == $count)' \
+    <<<"$response" >/dev/null
+  jq . <<<"$response" >"${evidence_dir}/zebra-generate-${label}.json"
+  (( rpc_status == 0 ))
+}
+
+completed=0
+round=0
+while true; do
+  round=$((round + 1))
+  remaining_budget_milliseconds "round-${round}-before" >/dev/null
+
+  taker_output="$(drive_actor taker "$taker_config" "$round")"
+  if jq -e '.outcome == "submitted" and .operation == "zcash_followup_claim"' \
+    <<<"$taker_output" >/dev/null; then
+    (( zcash_claim_mined == 0 )) || {
+      echo 'Zcash followup claim was submitted more than once' >&2
+      exit 1
+    }
+    zcash_claim_mined=1
+    mine_blocks followup-claim 1
+  fi
+
+  maker_output="$(drive_actor maker "$maker_config" "$round")"
+  if jq -e '.outcome == "submitted" and .operation == "zcash_fund"' \
+    <<<"$maker_output" >/dev/null; then
+    (( zcash_fund_mined == 0 )) || {
+      echo 'Zcash funding was submitted more than once' >&2
+      exit 1
+    }
+    zcash_fund_mined=2
+    mine_blocks funding 2
+  fi
+
+  maker_phase="$(jq -r '.phase' <<<"$maker_output")"
+  taker_phase="$(jq -r '.phase' <<<"$taker_output")"
+  if [[ "$maker_phase" == completed && "$taker_phase" == completed ]]; then
+    completed=1
+    break
+  fi
+  remaining_budget_milliseconds "round-${round}-poll" >/dev/null
+  sleep "$POLL_INTERVAL_SECONDS"
+done
+
+(( completed == 1 && zcash_fund_mined == 2 && zcash_claim_mined == 1 )) || {
+  echo "corridor did not complete: completed=${completed}, funding_blocks=${zcash_fund_mined}, claim_blocks=${zcash_claim_mined}" >&2
+  exit 1
+}
+
+"$actor_bin" --config "$maker_config" status >"${evidence_dir}/maker-status-final.json"
+"$actor_bin" --config "$taker_config" status >"${evidence_dir}/taker-status-final.json"
+jq -e '.role == "maker" and .state == "active" and .phase == "completed"' \
+  "${evidence_dir}/maker-status-final.json" >/dev/null
+jq -e '.role == "taker" and .state == "active" and .phase == "completed"' \
+  "${evidence_dir}/taker-status-final.json" >/dev/null
+
+final_zebra_tip_response="$(rpc "$ZEBRA_RPC_URL" '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}')"
+final_zebra_tip="$(jq -er '.result | numbers' <<<"$final_zebra_tip_response")"
+(( final_zebra_tip == zebra_tip + 3 )) || {
+  echo "Zebra advanced by an unexpected count: initial=${zebra_tip}, final=${final_zebra_tip}" >&2
+  exit 1
+}
+
+jq -n \
+  --arg run_id "$run_id" \
+  --arg output_root "$private_base" \
+  --argjson initial_zebra_tip "$zebra_tip" \
+  --argjson final_zebra_tip "$final_zebra_tip" \
+  --argjson drive_rounds "$round" \
+  --argjson drive_retry_count "$(jq -s 'length' "${evidence_dir}/drive-retries.ndjson")" \
+  --argjson elapsed_ms "$((MAX_CORRIDOR_SECONDS * 1000 - $(remaining_budget_milliseconds 'result-before')))" '
+  {
+    schema_version: 1,
+    run_id: $run_id,
+    direction: "taker_sells_lez",
+    result: "completed",
+    maker_status: "completed",
+    taker_status: "completed",
+    zebra_generate_calls: {
+      after_zcash_fund_submitted: 1,
+      after_zcash_followup_claim_submitted: 1,
+      total: 2
+    },
+    zebra_generate_blocks: {
+      after_zcash_fund_submitted: 2,
+      after_zcash_followup_claim_submitted: 1,
+      total: 3
+    },
+    zebra_tip: {initial: $initial_zebra_tip, final: $final_zebra_tip},
+    drive_rounds: $drive_rounds,
+    same_run_drive_retries: $drive_retry_count,
+    elapsed_milliseconds_from_provisioning: $elapsed_ms,
+    public_rpc_or_faucet_used: false,
+    evidence_root: $output_root
+  }' >"${evidence_dir}/result.json"
+
+echo "M2 TakerSellsLez PoC completed: ${evidence_dir}/result.json"
