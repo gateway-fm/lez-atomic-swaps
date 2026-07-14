@@ -390,14 +390,34 @@ fn both_directions_derive_roles_deadlines_amounts_and_fresh_coordinator() {
 }
 
 #[test]
-fn public_profile_fails_closed_without_reviewed_lez_deployment_in_both_directions() {
+fn public_profile_accepts_exact_signed_deployment_identity_in_both_directions() {
     for direction in [
         SwapDirection::TakerSellsForeign,
         SwapDirection::TakerSellsLez,
     ] {
+        let fixture = Fixture::public(direction);
+        let agreement = fixture
+            .validate()
+            .expect("public profile accepts exact signed deployment terms");
         assert_eq!(
-            Fixture::public(direction).validate(),
-            Err(ZecAgreementV1Error::PublicTestnetDeploymentUnavailable)
+            agreement.binding().profile_id(),
+            ZecProfileId::PublicTestnetV1
+        );
+        assert_eq!(
+            agreement.lez_terms().chain().environment(),
+            LezEnvironmentV1::PublicTestnetV0_2
+        );
+        assert_eq!(
+            agreement.lez_terms().chain().channel_id(),
+            &fixture.channel_id
+        );
+        assert_eq!(
+            agreement.lez_terms().chain().genesis_block_hash(),
+            &fixture.genesis
+        );
+        assert_eq!(
+            agreement.lez_terms().escrow_program_id(),
+            &fixture.escrow_program
         );
     }
 }

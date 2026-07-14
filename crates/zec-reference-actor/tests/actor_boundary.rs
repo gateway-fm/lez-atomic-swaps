@@ -17,6 +17,7 @@ use zec_reference_actor::{
 
 const CAPABILITY: &[u8] = b"actor_capability_0123456789abcdef";
 const COOKIE: &[u8] = b"actor:private-cookie\n";
+const API_KEY: &[u8] = b"actor-private-api-key\n";
 
 #[test]
 fn cli_exposes_exact_one_shot_commands_and_requires_private_config() {
@@ -134,7 +135,7 @@ async fn drive_without_activation_fails_closed_before_any_chain_effect() {
 }
 
 #[test]
-fn schema_v2_binds_complete_typed_runtime_and_one_isolated_pair() {
+fn schema_v3_binds_complete_typed_runtime_routes_and_one_isolated_pair() {
     let fixture = PairFixture::new();
     let maker = fixture.load("maker");
     let taker = fixture.load("taker");
@@ -180,7 +181,7 @@ fn offline_status_allows_effect_paths_below_absent_parent_directories() {
         ("/zcash_key_file", "zcash/key"),
         ("/claim_preimage_file", "preimage/value"),
         ("/bridge/capability_file", "sidecar/capability"),
-        ("/zebra/cookie_file", "zebra/cookie"),
+        ("/zebra/route/cookie_file", "zebra/cookie"),
     ] {
         set(
             &fixture.maker_config,
@@ -199,6 +200,7 @@ fn offline_status_allows_effect_paths_below_absent_parent_directories() {
 fn config_rejects_schema_unknown_fields_and_invalid_typed_ids() {
     for (pointer, value) in [
         ("/schema_version", json!(1)),
+        ("/schema_version", json!(2)),
         ("/run_id", json!("bad run")),
         ("/swap_id", json!("")),
         ("/swap_id", json!("x".repeat(129))),
@@ -272,6 +274,124 @@ fn endpoints_are_explicit_distinct_literal_loopback_http_services() {
 }
 
 #[test]
+fn zebra_route_is_either_loopback_cookie_or_public_testnet_https_api_key() {
+    let fixture = PairFixture::new();
+    private_bytes(&fixture.path("maker-api-key"), API_KEY);
+    edit(&fixture.maker_config, |value| {
+        value["zebra"]["route"] = json!({
+            "kind": "tatum_testnet_x_api_key",
+            "endpoint": "https://zcash-testnet-zebrad.gateway.tatum.io",
+            "api_key_file": fixture.path("maker-api-key")
+        });
+        value["zebra"]["identity"]["network"] = json!("test");
+    });
+    let public = fixture.load("maker");
+    assert_eq!(
+        public.zebra_endpoint().as_str(),
+        "https://zcash-testnet-zebrad.gateway.tatum.io/"
+    );
+    let public_material = public
+        .load_drive_material()
+        .expect("public provider credential loads only for drive");
+    assert_eq!(
+        public_material.zebra_api_key(),
+        Some(API_KEY.strip_suffix(b"\n").unwrap())
+    );
+    assert!(public_material.zebra_cookie().is_none());
+    let debug = format!("{public_material:?}");
+    assert!(!debug.contains("actor-private-api-key"));
+
+    for endpoint in [
+        "http://zcash-testnet-zebrad.gateway.tatum.io",
+        "https://localhost",
+        "https://127.0.0.1",
+        "https://user@zcash-testnet-zebrad.gateway.tatum.io",
+        "https://zcash-testnet-zebrad.gateway.tatum.io/rpc",
+        "https://zcash-testnet-zebrad.gateway.tatum.io?key=secret",
+        "https://zcash-testnet-zebrad.gateway.tatum.io#fragment",
+    ] {
+        let fixture = PairFixture::new();
+        private_bytes(&fixture.path("maker-api-key"), API_KEY);
+        edit(&fixture.maker_config, |value| {
+            value["zebra"]["route"] = json!({
+                "kind": "tatum_testnet_x_api_key",
+                "endpoint": endpoint,
+                "api_key_file": fixture.path("maker-api-key")
+            });
+            value["zebra"]["identity"]["network"] = json!("test");
+        });
+        assert!(
+            ActorConfig::load_private(&fixture.maker_config).is_err(),
+            "endpoint {endpoint} must fail"
+        );
+    }
+
+    for (route, network) in [
+        (
+            json!({
+                "kind": "tatum_testnet_x_api_key",
+                "endpoint": "https://zcash-testnet-zebrad.gateway.tatum.io"
+            }),
+            "test",
+        ),
+        (
+            json!({
+                "kind": "tatum_testnet_x_api_key",
+                "endpoint": "https://zcash-testnet-zebrad.gateway.tatum.io",
+                "api_key_file": fixture.path("maker-api-key"),
+                "cookie_file": fixture.path("maker-cookie")
+            }),
+            "test",
+        ),
+        (
+            json!({
+                "kind": "tatum_testnet_x_api_key",
+                "endpoint": "https://zcash-testnet-zebrad.gateway.tatum.io",
+                "api_key_file": fixture.path("maker-api-key")
+            }),
+            "regtest",
+        ),
+    ] {
+        edit(&fixture.maker_config, |value| {
+            value["zebra"]["route"] = route;
+            value["zebra"]["identity"]["network"] = json!(network);
+        });
+        assert!(ActorConfig::load_private(&fixture.maker_config).is_err());
+    }
+
+    let fixture = PairFixture::new();
+    private_bytes(&fixture.path("maker-api-key"), API_KEY);
+    edit(&fixture.maker_config, |value| {
+        value["zebra"]["route"]["api_key_file"] = path_value(&fixture.path("maker-api-key"));
+    });
+    assert!(
+        ActorConfig::load_private(&fixture.maker_config).is_err(),
+        "loopback route must not accept provider API-key authentication"
+    );
+}
+
+#[test]
+fn self_hosted_public_zebra_uses_loopback_cookie_transport() {
+    let fixture = PairFixture::new();
+    edit(&fixture.maker_config, |value| {
+        value["zebra"]["route"] = json!({
+            "kind": "self_hosted_cookie",
+            "endpoint": "http://127.0.0.1:19101",
+            "cookie_file": fixture.path("maker-cookie")
+        });
+        value["zebra"]["identity"]["network"] = json!("test");
+    });
+    let config = fixture.load("maker");
+    assert!(
+        config
+            .load_drive_material()
+            .unwrap()
+            .zebra_cookie()
+            .is_some()
+    );
+}
+
+#[test]
 fn runtime_and_zebra_identity_are_role_correct_nonzero_and_immutable() {
     for pointer in [
         "/signed_agreement_sha256",
@@ -339,6 +459,7 @@ fn pair_requires_one_funder_and_matching_run_swap_chain_and_agreement() {
         ("/swap_id", json!("swap-002")),
         ("/bridge/runtime/channel_id", json!("88".repeat(32))),
         ("/zebra/identity/genesis_hash", json!("99".repeat(32))),
+        ("/zebra/route/endpoint", json!("http://127.0.0.1:19102")),
         ("/lez_discovery_window/start_height", json!(2)),
         ("/signed_agreement_sha256", json!("ab".repeat(32))),
     ] {
@@ -532,7 +653,7 @@ fn config_and_command_material_reject_permissions_and_symlinks_at_use_time() {
         ("/zcash_key_file", Material::Drive),
         ("/claim_preimage_file", Material::Drive),
         ("/bridge/capability_file", Material::Drive),
-        ("/zebra/cookie_file", Material::Drive),
+        ("/zebra/route/cookie_file", Material::Drive),
     ] {
         let fixture = PairFixture::new();
         let config = fixture.load("maker");
@@ -789,7 +910,7 @@ fn config_json(root: &Path, role: &str, funder: bool) -> Value {
         json!([])
     };
     json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "role": role,
         "run_id": "weekend-run",
         "swap_id": "swap-001",
@@ -818,8 +939,11 @@ fn config_json(root: &Path, role: &str, funder: bool) -> Value {
             "request_timeout_millis": 5000
         },
         "zebra": {
-            "endpoint": "http://127.0.0.1:19101",
-            "cookie_file": root.join(format!("{role}-cookie")),
+            "route": {
+                "kind": "deterministic_local",
+                "endpoint": "http://127.0.0.1:19101",
+                "cookie_file": root.join(format!("{role}-cookie"))
+            },
             "identity": {
                 "network": "regtest",
                 "rpc_chain": "test",
@@ -858,7 +982,7 @@ fn path_pointers(role: &str) -> Vec<&'static str> {
         "/zcash_key_file",
         "/bridge/journal_db",
         "/bridge/capability_file",
-        "/zebra/cookie_file",
+        "/zebra/route/cookie_file",
     ];
     if role == "maker" {
         pointers.push("/claim_preimage_file");

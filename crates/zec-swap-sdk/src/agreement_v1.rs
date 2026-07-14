@@ -1573,9 +1573,6 @@ pub enum ZecAgreementV1Error {
     /// Named profile and LEZ deployment family disagree.
     #[error("LEZ environment does not match the named profile")]
     LezEnvironmentMismatch,
-    /// Public LEZ v0.2 has no reviewed immutable escrow deployment identity yet.
-    #[error("public LEZ v0.2 escrow deployment identity is unavailable")]
-    PublicTestnetDeploymentUnavailable,
     /// A required LEZ account or program identifier is default/empty.
     #[error("LEZ account or program identity is empty")]
     EmptyLezIdentity,
@@ -1930,9 +1927,6 @@ fn validate_lez_chain_profile(
     }
     if terms.chain.genesis_block_hash == [0; 32] {
         return Err(ZecAgreementV1Error::EmptyLezGenesis);
-    }
-    if body.profile == ZecProfileRecordV1::PublicTestnetV1 {
-        return Err(ZecAgreementV1Error::PublicTestnetDeploymentUnavailable);
     }
     let environment_matches_profile = match body.profile {
         ZecProfileRecordV1::DeterministicLocalV1 => matches!(

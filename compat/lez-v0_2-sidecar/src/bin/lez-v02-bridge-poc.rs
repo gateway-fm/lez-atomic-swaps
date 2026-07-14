@@ -12,7 +12,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, bail, ensure};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use indexer_service_rpc::RpcClient as _;
 use lez_bridge_protocol::{Hex32, RunId, RuntimeDescriptor};
 use lez_v0_2_sidecar::{
@@ -31,19 +31,57 @@ const MAX_NODE_REQUEST_BYTES: u32 = 2_800_000;
 const MAX_NODE_RESPONSE_BYTES: u32 = 8 * 1024 * 1024;
 const INDEXER_STARTUP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Run one role-isolated exact-LEZ-v0.2 bridge for a local-devnet `PoC`.
+/// Selects one complete outbound node route without weakening the local listener.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum NodeRouteProfile {
+    /// Explicit literal-loopback HTTP sequencer and indexer endpoints.
+    Local,
+    /// Exact allowlisted official Testnet HTTPS origin for both clients.
+    #[value(name = "official_public")]
+    OfficialPublic,
+}
+
+impl NodeRouteProfile {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::OfficialPublic => "official_public",
+        }
+    }
+
+    fn validate_endpoint(self, endpoint: &str) -> Result<()> {
+        match self {
+            Self::Local => validate_loopback_http_endpoint(endpoint),
+            Self::OfficialPublic => OfficialNodeRpc::validate_official_public_endpoint(endpoint),
+        }
+        .map_err(anyhow::Error::from)
+    }
+
+    fn connect_sequencer(self, endpoint: &str) -> Result<OfficialNodeRpc> {
+        match self {
+            Self::Local => OfficialNodeRpc::connect_local(endpoint),
+            Self::OfficialPublic => OfficialNodeRpc::connect_official_public(endpoint),
+        }
+        .map_err(anyhow::Error::from)
+    }
+}
+
+/// Run one role-isolated exact-LEZ-v0.2 bridge against a selected node route.
 #[derive(Debug, Parser)]
 #[command(version, about)]
 struct Arguments {
     /// Run-allocated literal-loopback nonzero listen address.
     #[arg(long)]
     listen_address: SocketAddr,
-    /// Explicit literal-loopback official sequencer HTTP URL and port.
+    /// Outbound sequencer URL accepted by the selected node profile.
     #[arg(long)]
     sequencer_url: String,
-    /// Explicit literal-loopback official indexer HTTP URL and port.
+    /// Outbound indexer URL accepted by the selected node profile.
     #[arg(long)]
     indexer_url: String,
+    /// Complete outbound node route; the actor-facing listener stays loopback-only.
+    #[arg(long, value_enum, default_value_t = NodeRouteProfile::Local)]
+    node_profile: NodeRouteProfile,
     /// Composed run identity shared with this actor's bridge client.
     #[arg(long)]
     run_id: String,
@@ -74,6 +112,7 @@ struct Readiness<'a> {
     endpoint: &'a str,
     run_id: &'a str,
     runtime: &'a RuntimeDescriptor,
+    node_profile: &'static str,
     sequencer_observation: &'static str,
     indexer_health: &'static str,
     finality: &'static str,
@@ -113,7 +152,9 @@ async fn execute(arguments: Arguments) -> Result<()> {
         "escrow and authenticated-transfer programs must be distinct"
     );
     let node = Arc::new(
-        OfficialNodeRpc::connect(&arguments.sequencer_url)
+        arguments
+            .node_profile
+            .connect_sequencer(&arguments.sequencer_url)
             .context("invalid official sequencer endpoint")?,
     );
     let indexer = SequencerClientBuilder::default()
@@ -159,6 +200,7 @@ async fn execute(arguments: Arguments) -> Result<()> {
             endpoint: server.endpoint(),
             run_id: run_id.as_str(),
             runtime: &runtime,
+            node_profile: arguments.node_profile.as_str(),
             sequencer_observation: "bounded_canonical_inclusion_and_same_tip_accounts",
             indexer_health: "getLastFinalizedBlockId_non_genesis",
             finality: "not_observed_by_this_poc_bridge",
@@ -189,8 +231,11 @@ fn validate_arguments(arguments: &Arguments) -> Result<()> {
         arguments.listen_address.ip().is_loopback() && arguments.listen_address.port() != 0,
         "listen address must be a literal loopback IP and nonzero port"
     );
-    validate_loopback_http_endpoint(&arguments.sequencer_url).context("invalid sequencer URL")?;
-    validate_loopback_http_endpoint(&arguments.indexer_url).context("invalid indexer URL")?;
+    validate_node_routes(
+        arguments.node_profile,
+        &arguments.sequencer_url,
+        &arguments.indexer_url,
+    )?;
     ensure!(
         arguments.capability_file != arguments.private_key_file
             && arguments.runtime_file != arguments.capability_file
@@ -203,6 +248,20 @@ fn validate_arguments(arguments: &Arguments) -> Result<()> {
         state.is_dir() && state.permissions().mode() & 0o7777 == 0o700,
         "state directory must be a real owner-only 0700 directory"
     );
+    Ok(())
+}
+
+fn validate_node_routes(
+    profile: NodeRouteProfile,
+    sequencer_url: &str,
+    indexer_url: &str,
+) -> Result<()> {
+    profile
+        .validate_endpoint(sequencer_url)
+        .context("invalid sequencer URL")?;
+    profile
+        .validate_endpoint(indexer_url)
+        .context("invalid indexer URL")?;
     Ok(())
 }
 
@@ -258,4 +317,49 @@ fn parse_nonzero_hex(value: &str, name: &str) -> Result<Hex32> {
         bail!("{name} must be nonzero");
     }
     Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NodeRouteProfile, validate_node_routes};
+
+    const LOCAL_SEQUENCER: &str = "http://127.0.0.1:3040/";
+    const LOCAL_INDEXER: &str = "http://127.0.0.1:8779/";
+    const OFFICIAL_PUBLIC: &str = "https://testnet.lez.logos.co/";
+
+    #[test]
+    fn typed_node_profile_accepts_only_complete_local_or_official_public_routes() {
+        assert!(
+            validate_node_routes(NodeRouteProfile::Local, LOCAL_SEQUENCER, LOCAL_INDEXER).is_ok()
+        );
+        assert!(
+            validate_node_routes(
+                NodeRouteProfile::OfficialPublic,
+                OFFICIAL_PUBLIC,
+                OFFICIAL_PUBLIC,
+            )
+            .is_ok()
+        );
+
+        for (profile, sequencer, indexer) in [
+            (NodeRouteProfile::Local, LOCAL_SEQUENCER, OFFICIAL_PUBLIC),
+            (
+                NodeRouteProfile::OfficialPublic,
+                OFFICIAL_PUBLIC,
+                LOCAL_INDEXER,
+            ),
+            (
+                NodeRouteProfile::OfficialPublic,
+                "https://example.com/",
+                OFFICIAL_PUBLIC,
+            ),
+            (
+                NodeRouteProfile::OfficialPublic,
+                OFFICIAL_PUBLIC,
+                "https://testnet.lez.logos.co/path",
+            ),
+        ] {
+            assert!(validate_node_routes(profile, sequencer, indexer).is_err());
+        }
+    }
 }

@@ -22,7 +22,7 @@ use crate::secure_file::{
     FileLocation, FilePrivacy, SecureFileError, canonical_location, read_bounded_identified,
 };
 
-const CONFIG_SCHEMA_VERSION: u16 = 2;
+const CONFIG_SCHEMA_VERSION: u16 = 3;
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const CLAIM_KEY_BYTES: usize = 32;
 const ZCASH_KEY_BYTES: usize = 32;
@@ -30,8 +30,11 @@ const PREIMAGE_BYTES: usize = 32;
 const MAX_CAPABILITY_FILE_BYTES: usize = 130;
 const MAX_COOKIE_FILE_BYTES: usize = 1_026;
 const MAX_COOKIE_BYTES: usize = 1_024;
+const MAX_API_KEY_FILE_BYTES: usize = 1_026;
+const MAX_API_KEY_BYTES: usize = 1_024;
 const MAX_REQUEST_TIMEOUT_MILLIS: u64 = 60_000;
 const MAX_COUNTERPARTY_SCAN_BLOCKS: u32 = 50_000;
+const TATUM_TESTNET_ZEBRA_ENDPOINT: &str = "https://zcash-testnet-zebrad.gateway.tatum.io/";
 
 /// Role permanently bound to one actor configuration.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -171,6 +174,47 @@ impl Serialize for LoopbackHttpEndpoint {
     }
 }
 
+#[derive(Clone, Eq, PartialEq)]
+struct TatumTestnetHttpsEndpoint(Url);
+
+impl TatumTestnetHttpsEndpoint {
+    fn new(value: &str) -> Result<Self, &'static str> {
+        let url = Url::parse(value).map_err(|_| "invalid public Zebra endpoint")?;
+        if url.as_str() != TATUM_TESTNET_ZEBRA_ENDPOINT
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err("invalid public Zebra endpoint");
+        }
+        Ok(Self(url))
+    }
+
+    const fn as_url(&self) -> &Url {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for TatumTestnetHttpsEndpoint {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::new(&value).map_err(D::Error::custom)
+    }
+}
+
+impl Serialize for TatumTestnetHttpsEndpoint {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.0.as_str())
+    }
+}
+
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ClaimRecoveryConfig {
@@ -198,10 +242,86 @@ struct ZebraIdentityConfig {
 }
 
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum ZebraRouteConfig {
+    DeterministicLocal {
+        endpoint: LoopbackHttpEndpoint,
+        cookie_file: Option<PathBuf>,
+    },
+    SelfHostedCookie {
+        endpoint: LoopbackHttpEndpoint,
+        cookie_file: PathBuf,
+    },
+    TatumTestnetXApiKey {
+        endpoint: TatumTestnetHttpsEndpoint,
+        api_key_file: PathBuf,
+    },
+}
+
+impl ZebraRouteConfig {
+    const fn endpoint(&self) -> &Url {
+        match self {
+            Self::DeterministicLocal { endpoint, .. } | Self::SelfHostedCookie { endpoint, .. } => {
+                endpoint.as_url()
+            }
+            Self::TatumTestnetXApiKey { endpoint, .. } => endpoint.as_url(),
+        }
+    }
+
+    fn cookie_file(&self) -> Option<&PathBuf> {
+        match self {
+            Self::DeterministicLocal { cookie_file, .. } => cookie_file.as_ref(),
+            Self::SelfHostedCookie { cookie_file, .. } => Some(cookie_file),
+            Self::TatumTestnetXApiKey { .. } => None,
+        }
+    }
+
+    const fn api_key_file(&self) -> Option<&PathBuf> {
+        match self {
+            Self::TatumTestnetXApiKey { api_key_file, .. } => Some(api_key_file),
+            Self::DeterministicLocal { .. } | Self::SelfHostedCookie { .. } => None,
+        }
+    }
+
+    const fn matches_network(&self, network: ZcashNetworkConfig) -> bool {
+        matches!(
+            (self, network),
+            (Self::DeterministicLocal { .. }, ZcashNetworkConfig::Regtest)
+                | (
+                    Self::SelfHostedCookie { .. },
+                    ZcashNetworkConfig::Main | ZcashNetworkConfig::Test
+                )
+                | (Self::TatumTestnetXApiKey { .. }, ZcashNetworkConfig::Test)
+        )
+    }
+
+    fn same_route(&self, other: &Self) -> bool {
+        matches!(
+            (self, other),
+            (
+                Self::DeterministicLocal { endpoint: left, .. },
+                Self::DeterministicLocal { endpoint: right, .. }
+            ) if left == right
+        ) || matches!(
+            (self, other),
+            (
+                Self::SelfHostedCookie { endpoint: left, .. },
+                Self::SelfHostedCookie { endpoint: right, .. }
+            ) if left == right
+        ) || matches!(
+            (self, other),
+            (
+                Self::TatumTestnetXApiKey { endpoint: left, .. },
+                Self::TatumTestnetXApiKey { endpoint: right, .. }
+            ) if left == right
+        )
+    }
+}
+
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ZebraConfig {
-    endpoint: LoopbackHttpEndpoint,
-    cookie_file: Option<PathBuf>,
+    route: ZebraRouteConfig,
     identity: ZebraIdentityConfig,
     counterparty_scan_blocks: u32,
 }
@@ -246,6 +366,7 @@ struct PathBindings {
     bridge_journal: FileLocation,
     capability: FileLocation,
     cookie: Option<FileLocation>,
+    api_key: Option<FileLocation>,
 }
 
 impl PathBindings {
@@ -259,6 +380,7 @@ impl PathBindings {
         ];
         local.extend(self.preimage.iter());
         local.extend(self.cookie.iter());
+        local.extend(self.api_key.iter());
         local
     }
 
@@ -396,8 +518,10 @@ pub(crate) fn encode_deterministic_local_v0_2_actor_config(
             request_timeout_millis: 10_000,
         },
         zebra: ZebraConfig {
-            endpoint: zebra_endpoint,
-            cookie_file: None,
+            route: ZebraRouteConfig::DeterministicLocal {
+                endpoint: zebra_endpoint,
+                cookie_file: None,
+            },
             identity: ZebraIdentityConfig {
                 network: ZcashNetworkConfig::Regtest,
                 rpc_chain: ZebraRpcChainConfig::Test,
@@ -496,6 +620,7 @@ impl ActorConfig {
             claim_preimage: self.load_claim_preimage()?,
             sidecar_capability: self.load_sidecar_capability()?,
             zebra_cookie: self.load_zebra_cookie()?,
+            zebra_api_key: self.load_zebra_api_key()?,
         })
     }
 
@@ -553,7 +678,7 @@ impl ActorConfig {
     /// Zebra HTTP endpoint.
     #[must_use]
     pub const fn zebra_endpoint(&self) -> &Url {
-        self.zebra.endpoint.as_url()
+        self.zebra.route.endpoint()
     }
 
     /// Immutable Zcash consensus network.
@@ -607,11 +732,15 @@ impl ActorConfig {
             || SwapId::new(self.swap_id.as_str()).is_err()
             || is_zero(self.signed_agreement_sha256)
             || self.bridge.runtime.sidecar_role != self.role.bridge_participant()
-            || self.bridge.endpoint == self.zebra.endpoint
+            || self.bridge.endpoint.as_url() == self.zebra.route.endpoint()
             || self.bridge.request_timeout_millis == 0
             || self.bridge.request_timeout_millis > MAX_REQUEST_TIMEOUT_MILLIS
             || !runtime_identity_is_nonzero(&self.bridge.runtime)
             || !zebra_chain_matches_network(&self.zebra.identity)
+            || !self
+                .zebra
+                .route
+                .matches_network(self.zebra.identity.network)
             || is_zero(self.zebra.identity.genesis_hash)
             || self.zebra.counterparty_scan_blocks == 0
             || self.zebra.counterparty_scan_blocks > MAX_COUNTERPARTY_SCAN_BLOCKS
@@ -664,8 +793,14 @@ impl ActorConfig {
             capability: canonical_config_path(&self.bridge.capability_file)?,
             cookie: self
                 .zebra
-                .cookie_file
-                .as_ref()
+                .route
+                .cookie_file()
+                .map(|path| canonical_config_path(path))
+                .transpose()?,
+            api_key: self
+                .zebra
+                .route
+                .api_key_file()
                 .map(|path| canonical_config_path(path))
                 .transpose()?,
         })
@@ -723,8 +858,8 @@ impl ActorConfig {
 
     fn load_zebra_cookie(&self) -> Result<Option<ZebraCookie>, ActorConfigError> {
         self.zebra
-            .cookie_file
-            .as_ref()
+            .route
+            .cookie_file()
             .zip(self.bindings.cookie.as_ref())
             .map(|(path, expected)| {
                 let mut bytes = self.read_command_file(
@@ -742,6 +877,30 @@ impl ActorConfig {
                     return Err(ActorConfigError::InvalidCommandMaterial);
                 }
                 Ok(ZebraCookie(bytes))
+            })
+            .transpose()
+    }
+
+    fn load_zebra_api_key(&self) -> Result<Option<ZebraApiKey>, ActorConfigError> {
+        self.zebra
+            .route
+            .api_key_file()
+            .zip(self.bindings.api_key.as_ref())
+            .map(|(path, expected)| {
+                let mut bytes = self.read_command_file(
+                    path,
+                    MAX_API_KEY_FILE_BYTES,
+                    FilePrivacy::OwnerPrivate,
+                    expected,
+                )?;
+                trim_line_ending(bytes.as_mut());
+                if bytes.is_empty()
+                    || bytes.len() > MAX_API_KEY_BYTES
+                    || bytes.iter().any(|byte| !byte.is_ascii_graphic())
+                {
+                    return Err(ActorConfigError::InvalidCommandMaterial);
+                }
+                Ok(ZebraApiKey(bytes))
             })
             .transpose()
     }
@@ -911,6 +1070,7 @@ pub struct DriveMaterial {
     claim_preimage: Option<ClaimPreimage>,
     sidecar_capability: SidecarCapability,
     zebra_cookie: Option<ZebraCookie>,
+    zebra_api_key: Option<ZebraApiKey>,
 }
 
 impl DriveMaterial {
@@ -944,6 +1104,14 @@ impl DriveMaterial {
         self.zebra_cookie.as_ref().map(|cookie| cookie.0.as_slice())
     }
 
+    /// Optional Tatum `x-api-key` credential without the trailing line ending.
+    #[must_use]
+    pub fn zebra_api_key(&self) -> Option<&[u8]> {
+        self.zebra_api_key
+            .as_ref()
+            .map(|api_key| api_key.0.as_slice())
+    }
+
     pub(crate) fn into_claim_recovery_key(self) -> ProtectedClaimKey {
         self.claim_recovery_key
     }
@@ -958,11 +1126,14 @@ impl fmt::Debug for DriveMaterial {
             .field("claim_preimage", &"[REDACTED]")
             .field("sidecar_capability", &"[REDACTED]")
             .field("zebra_cookie", &"[REDACTED]")
+            .field("zebra_api_key", &"[REDACTED]")
             .finish()
     }
 }
 
 struct ZebraCookie(Zeroizing<Vec<u8>>);
+
+struct ZebraApiKey(Zeroizing<Vec<u8>>);
 
 /// A secret-safe configuration or actor-isolation failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
@@ -1009,6 +1180,7 @@ pub fn validate_actor_pair(
         || left.bridge.runtime.sidecar_role == right.bridge.runtime.sidecar_role
         || left.bridge.runtime.signer_account_id == right.bridge.runtime.signer_account_id
         || !same_runtime(&left.bridge.runtime, &right.bridge.runtime)
+        || !left.zebra.route.same_route(&right.zebra.route)
         || left.zebra.identity != right.zebra.identity
         || left.lez_discovery_window != right.lez_discovery_window
         || left.is_local_zcash_funder() == right.is_local_zcash_funder()

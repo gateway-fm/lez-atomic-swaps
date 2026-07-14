@@ -5429,7 +5429,7 @@ async fn activation_rejects_substituted_role_and_revision_before_store() {
 }
 
 #[tokio::test]
-async fn untrusted_negotiation_wire_is_bounded_and_public_profile_fails_closed() {
+async fn untrusted_negotiation_wire_is_bounded_and_accepts_signed_public_deployment() {
     let oversized = sdk(
         Participant::Maker,
         vec![0; MAX_ZEC_AGREEMENT_RECORD_BYTES + 1],
@@ -5453,12 +5453,18 @@ async fn untrusted_negotiation_wire_is_bounded_and_public_profile_fails_closed()
         ),
         MemoryStore::default(),
     );
-    assert!(matches!(
-        public.negotiate_at(&Offer(1), Proposal, ACCEPTED_AT).await,
-        Err(ZecSdkError::InvalidAgreement(
-            ZecAgreementV1Error::PublicTestnetDeploymentUnavailable
-        ))
-    ));
+    let accepted = public
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("SDK accepts a countersigned exact public deployment");
+    assert_eq!(
+        accepted.agreement().binding().profile_id(),
+        ZecProfileId::PublicTestnetV1
+    );
+    assert_eq!(
+        accepted.agreement().lez_terms().chain().environment(),
+        LezEnvironmentV1::PublicTestnetV0_2
+    );
 }
 
 #[tokio::test]

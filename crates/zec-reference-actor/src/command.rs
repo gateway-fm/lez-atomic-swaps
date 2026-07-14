@@ -7,7 +7,7 @@ use std::{
 use lez_bridge_adapter::{
     ActorBridgeRequestContextSource, BridgeDiscoveryWindowSource,
     CapabilityFileBridgeClientFactory, ContextOwningLezBridgePorts,
-    SqliteCanonicalLezFundingSource,
+    SqliteCanonicalLezFundingSource, validate_runtime_binding,
 };
 use lez_bridge_protocol::DiscoveryWindow;
 use lez_swap_core::{Participant, Phase, SwapDirection, UnixSeconds};
@@ -292,6 +292,15 @@ async fn activate(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorComm
         0,
     )
     .map_err(|_| ActorCommandError::ActivationUnavailable)?;
+    validate_runtime_binding(accepted.agreement(), config.bridge_runtime(), participant)
+        .map_err(|_| ActorCommandError::ActivationUnavailable)?;
+    let zebra = zebra_identity(config).map_err(|_| ActorCommandError::ActivationUnavailable)?;
+    let expected_zcash = accepted.agreement().binding().expected_output();
+    if zebra.network() != expected_zcash.network()
+        || zebra.consensus_branch_id() != expected_zcash.consensus_branch_id()
+    {
+        return Err(ActorCommandError::ActivationUnavailable);
+    }
     let preimage = material
         .claim_preimage()
         .map(|value| ClaimPreimage::new(*value.expose_secret()));
@@ -340,9 +349,15 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
         .map_err(|_| ActorCommandError::DriveMaterialUnavailable)?;
     let participant = config.role().sdk_participant();
     let identity = zebra_identity(config)?;
-    let mut rpc_config = HttpZebraRpcConfig::new(config.zebra_endpoint().as_str())
-        .with_request_timeout(Duration::from_secs(30))
-        .with_max_concurrent_requests(1);
+    let mut rpc_config = if let Some(api_key) = material.zebra_api_key() {
+        HttpZebraRpcConfig::public_https(config.zebra_endpoint().as_str())
+            .and_then(|route| route.with_public_api_key(api_key))
+            .map_err(|_| ActorCommandError::DriveConfigurationUnavailable)?
+    } else {
+        HttpZebraRpcConfig::new(config.zebra_endpoint().as_str())
+    }
+    .with_request_timeout(Duration::from_secs(30))
+    .with_max_concurrent_requests(1);
     if let Some(cookie) = material.zebra_cookie() {
         rpc_config = rpc_config
             .with_cookie_credentials(cookie)

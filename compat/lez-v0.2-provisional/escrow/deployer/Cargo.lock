@@ -3089,6 +3089,7 @@ dependencies = [
  "clap",
  "common",
  "hex",
+ "hmac",
  "jsonrpsee",
  "lee",
  "lez-zec-escrow-v02-methods",
@@ -3098,9 +3099,11 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "tokio",
  "toml",
  "url",
+ "zeroize",
 ]
 
 [[package]]

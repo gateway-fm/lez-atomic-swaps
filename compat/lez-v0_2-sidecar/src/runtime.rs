@@ -13,6 +13,7 @@ const MAX_EXACT_TRANSACTION_BYTES: usize = 2_000_000;
 const MAX_NODE_REQUEST_BYTES: u32 = 2_800_000;
 const MAX_NODE_RESPONSE_BYTES: u32 = 8 * 1024 * 1024;
 const NODE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const OFFICIAL_PUBLIC_NODE_ENDPOINT: &str = "https://testnet.lez.logos.co/";
 
 /// Fail-closed errors at the official LEZ v0.2 runtime boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -29,8 +30,8 @@ pub enum RuntimeBoundaryError {
     /// A required runtime identity is the impossible all-zero value.
     #[error("runtime descriptor contains an invalid zero identity")]
     InvalidRuntimeIdentity,
-    /// The official node endpoint is not an explicit loopback HTTP IP and port.
-    #[error("official node endpoint must be an uncredentialed HTTP loopback IP and port")]
+    /// The official node endpoint does not match its selected route profile.
+    #[error("official node endpoint does not match the selected route profile")]
     InvalidNodeEndpoint,
     /// The official sequencer health or channel RPC was unavailable.
     #[error("official LEZ v0.2 node health is unavailable")]
@@ -291,13 +292,62 @@ impl fmt::Debug for OfficialNodeRpc {
 }
 
 impl OfficialNodeRpc {
-    /// Connects to an explicit local sequencer without retries or proxy indirection.
+    /// Connects to an explicit local sequencer without retries.
+    ///
+    /// This compatibility constructor retains the pre-profile local behavior.
     ///
     /// # Errors
     ///
     /// Rejects any non-HTTP, non-loopback, credentialed, ambiguous, or portless URL.
     pub fn connect(endpoint: &str) -> Result<Self, RuntimeBoundaryError> {
-        validate_node_endpoint(endpoint)?;
+        Self::connect_local(endpoint)
+    }
+
+    /// Connects to a node selected by the local route profile.
+    ///
+    /// # Errors
+    ///
+    /// Rejects any non-HTTP, non-loopback, credentialed, ambiguous, or portless URL.
+    pub fn connect_local(endpoint: &str) -> Result<Self, RuntimeBoundaryError> {
+        validate_local_node_endpoint(endpoint)?;
+        Self::connect_validated(endpoint)
+    }
+
+    /// Connects to the one allowlisted official public node origin.
+    ///
+    /// # Errors
+    ///
+    /// Rejects every value except the exact uncredentialed root HTTPS URL
+    /// `https://testnet.lez.logos.co/`.
+    pub fn connect_official_public(endpoint: &str) -> Result<Self, RuntimeBoundaryError> {
+        Self::validate_official_public_endpoint(endpoint)?;
+        Self::connect_validated(endpoint)
+    }
+
+    /// Validates the one outbound official-public node origin without I/O.
+    ///
+    /// # Errors
+    ///
+    /// Rejects remote HTTP, generic domains, credentials, paths, queries,
+    /// fragments, alternate ports, and local endpoints.
+    pub fn validate_official_public_endpoint(endpoint: &str) -> Result<(), RuntimeBoundaryError> {
+        let parsed = Url::parse(endpoint).map_err(|_| RuntimeBoundaryError::InvalidNodeEndpoint)?;
+        if endpoint != OFFICIAL_PUBLIC_NODE_ENDPOINT
+            || parsed.scheme() != "https"
+            || parsed.host_str() != Some("testnet.lez.logos.co")
+            || parsed.port().is_some()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.path() != "/"
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(RuntimeBoundaryError::InvalidNodeEndpoint);
+        }
+        Ok(())
+    }
+
+    fn connect_validated(endpoint: &str) -> Result<Self, RuntimeBoundaryError> {
         let client = SequencerClientBuilder::default()
             .max_request_size(MAX_NODE_REQUEST_BYTES)
             .max_response_size(MAX_NODE_RESPONSE_BYTES)
@@ -622,7 +672,7 @@ pub fn decode_official_public_transaction(
     Ok(transaction)
 }
 
-fn validate_node_endpoint(endpoint: &str) -> Result<(), RuntimeBoundaryError> {
+fn validate_local_node_endpoint(endpoint: &str) -> Result<(), RuntimeBoundaryError> {
     let parsed = Url::parse(endpoint).map_err(|_| RuntimeBoundaryError::InvalidNodeEndpoint)?;
     let loopback = match parsed.host() {
         Some(Host::Ipv4(address)) => IpAddr::V4(address).is_loopback(),
@@ -650,5 +700,5 @@ fn validate_node_endpoint(endpoint: &str) -> Result<(), RuntimeBoundaryError> {
 /// Rejects domains, non-loopback IPs, HTTPS, credentials, missing ports, and
 /// any query, fragment, or non-root path.
 pub fn validate_loopback_http_endpoint(endpoint: &str) -> Result<(), RuntimeBoundaryError> {
-    validate_node_endpoint(endpoint)
+    validate_local_node_endpoint(endpoint)
 }

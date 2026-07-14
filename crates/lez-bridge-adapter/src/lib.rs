@@ -2303,7 +2303,7 @@ const fn runtime_generation_is_compatible(
             LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility,
             RuntimeCompatibility::NssaV0_1_2,
         ) | (
-            LezEnvironmentV1::DeterministicLocalV0_2,
+            LezEnvironmentV1::DeterministicLocalV0_2 | LezEnvironmentV1::PublicTestnetV0_2,
             RuntimeCompatibility::LeeV0_2_0,
         )
     )
@@ -2314,7 +2314,7 @@ mod runtime_generation_tests {
     use super::*;
 
     #[test]
-    fn accepts_exact_local_generations_and_rejects_cross_pairs_and_public() {
+    fn accepts_exact_local_and_public_v02_generations_and_rejects_cross_pairs() {
         for (environment, compatibility, expected) in [
             (
                 LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility,
@@ -2344,7 +2344,7 @@ mod runtime_generation_tests {
             (
                 LezEnvironmentV1::PublicTestnetV0_2,
                 RuntimeCompatibility::LeeV0_2_0,
-                false,
+                true,
             ),
         ] {
             assert_eq!(

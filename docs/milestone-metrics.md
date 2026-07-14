@@ -20,7 +20,7 @@ Status vocabulary:
 | Milestone | Active phase | Phase status | Completion tag | Owner transition |
 |---|---|---|---|---|
 | M1 | Historical completed milestone | Historical evidence predates ADR 0027; not retroactively reclassified | `m1-complete` and corrective tag `m1-complete.1` | No transition requested |
-| M2 | Reproducible PoC | Gate met; both local LEZ/ZEC happy directions are GREEN, while documentation and repository completion gates remain before the milestone tag | None | Await owner review; remain in PoC until the owner says to end or switch |
+| M2 | Reproducible PoC | Gate met; both local LEZ/ZEC happy directions and the dormant configuration-only public-portability contract are GREEN, while documentation and repository completion gates remain before the milestone tag | None | Await owner review; remain in PoC until the owner says to end or switch |
 | M3 | Not active | Awaiting owner transition | None | Not requested |
 | M4 | Not active | Awaiting owner transition | None | Not requested |
 | M5 | Not active | Awaiting owner transition | None | Not requested |
@@ -49,6 +49,7 @@ Status vocabulary:
 | Actual Zcash HTLC lifecycle | 2 terminal composed funding and claim lifecycles | Forward funding `255b991f...dceab:0` at height 106 was spent at height 108. Reverse funding `181c4baa...14f0:0` at height 113 was spent at height 115; both had two confirmations before LEZ reveal |
 | Final state and balance proof | 2 cross-chain terminal proofs plus the earlier terminal LEZ-only proof | Forward LEZ blocks 264/265/266 ended custody/depositor/claimant at 0/100000/150000. Reverse blocks 641/642/643 ended 0/0/150000. Both pairs of actor stores are revision 4 `Completed` |
 | Public RPCs, faucets, or public funds used | 0 | Both successes used only isolated local LEZ and Zebra endpoints and deterministic local Vault/Regtest funds; cold artifact provisioning remains an external availability dependency |
+| Dormant public route contract | 5 composed boundaries, 0 public calls | Signed public LEZ agreement activation, actor schema-v3 routes, Zebra HTTPS/API-key transport, the sidecar's exact official-public outbound profile, and the authenticated deployment-evidence-to-runtime-identity handoff pass local executable contract tests. The actor-facing sidecar listener stays loopback-only. Provisioning covers one happy case, no-clobber output, eight authenticated evidence mutations, unauthenticated chain-fact tampering, bounded/non-regular input, and exact owner-only key-file validation. Live LEZ finalized-tip availability and provider rate limits remain unmeasured |
 | Cleanup and retained state | Bridge processes are exact-PID/start-time/executable scoped; endpoint tuples are serialized; failure roots are retained; chain funds are not rolled back | Successful runs stopped only their role bridges. Failed 14j and reverse attempts 14a/14b retain effects in distinct nonretryable swaps; never reuse their actor files, swaps, candidates, or funds |
 | PoC defect evidence | 1 directionality defect reproduced in 2 effect-bearing reverse attempts, then corrected | Reverse attempts 14a/14b exposed a forward-only canonical LEZ validator. The correction binds validation to the agreement-derived LEZ depositor; its focused regression and all 35 SDK lifecycle tests passed before reverse 14c |
 | Manual reproduction path | One direction-aware runner and expected evidence for both directions are documented | Requires already-running explicit fresh local nodes, a unique run ID/output root per attempt, and serialized runs. The retained evidence endpoints and run IDs are examples, never defaults |
@@ -64,8 +65,9 @@ the exact shared endpoint tuple against concurrent corridor use, and fails on
 deadline/headroom. Forward failures 14i and 14k through 14n made no effect;
 14j and reverse 14a/14b retain effects in distinct nonretryable swaps. Cross-
 chain atomicity remains protocol ordering and recoverability rather than one
-database transaction. Documentation, configuration portability, and repository
-completion gates remain before an M2 tag. Recovery/refund, restart, reorg,
+database transaction. The configuration-portability contract is now locally
+GREEN without public I/O. Documentation and repository completion gates remain
+before an M2 tag. Recovery/refund, restart, reorg,
 ambiguity, concurrency, and broader hardening wait for owner transition unless
 needed to protect correctness. Logos-owned production issues remain nonblocking
 for this local phase and stay in the upstream register.
@@ -108,7 +110,7 @@ recorded when this phase is active.
 
 | Metric | Current measurement | Information-security phase target |
 |---|---|---|
-| Repository-controlled critical/high vulnerabilities | Not freshly baselined; no known open critical/high item is recorded | 0 unresolved |
+| Repository-controlled critical/high vulnerabilities | Focused root advisory/bans/licenses/sources gate is GREEN after moving the compatible root Zcash graph from yanked `spin 0.9.8` to non-yanked `0.9.9`; full final-image and separately locked graph revalidation remain | 0 unresolved |
 | Logos-owned advisory exceptions | Present and enumerated in the upstream production-blocker register | Exact, narrow, reviewed, and non-expanding for local evidence |
 | Threat-model findings | Not rebaselined for the composed corridor | Count by severity with disposition and regression evidence |
 | Secret exposure findings | No composed-run measurement | 0; logs, evidence, configs, stores, and process arguments included |
@@ -121,7 +123,7 @@ Status: awaiting owner transition.
 
 | Metric | Current measurement | Production-readiness target |
 |---|---|---|
-| Public configuration portability | Open | Same actor binaries, SDK, builders, and validators; route changes through signed configuration and provisioning only |
+| Public configuration portability | Locally contract-proven, including authenticated offline evidence provisioning and no-clobber exact identity output; not live-exercised | Same actor binaries, SDK, builders, and validators; route changes through signed configuration, credentials, funding, and verified LEZ deployment provisioning only |
 | Public deployment/execution | Intentionally absent under ADR 0023 | Remains explicit until owner authorizes evidence or scope changes |
 | Latency/resource envelope | Not measured for composed corridor | Report setup/runtime latency, CPU, memory, storage, chain compute/fees, and concurrency envelope |
 | Availability/recovery objectives | Not defined | Define and verify operator-facing objectives |

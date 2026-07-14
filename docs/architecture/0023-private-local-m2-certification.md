@@ -139,3 +139,22 @@ vulnerability, license, documentation, or actual-node gates.
   compatibility checks; it is not a later rewrite of the corridor.
 - Production readiness still requires an explicit decision to run and disclose
   the deferred public evidence or to obtain an accepted scope amendment.
+
+## 2026-07-14 certification status addendum
+
+This append-only note records that both private local actual-node happy-path
+directions and the locally tested dormant public-portability contracts are now
+GREEN. The M2 PoC still certifies only the owner-approved local-functional
+scope: no public LEZ or Zcash service was called, no public deployment or
+transaction evidence is asserted, and restart, refund, reorg, chaos, and
+production hardening remain later phases under ADR 0027.
+
+ADR 0028 is the authoritative portability decision. The same schema-v3 actors,
+agreement validators, SDK state machine, official-wire LEZ sidecars, and Zebra
+adapter select local or future-public node routes through signed configuration
+and provisioning. Actor-to-sidecar traffic remains role-isolated loopback with
+a capability. Agreement/runtime/chain/route identity is validated before
+persistence or effects. The exact public LEZ and Tatum routes are dormant
+configuration-and-client contracts only. Official LEZ finalized-tip method
+availability is an upstream production risk and does not block local M2
+certification under ADR 0018.

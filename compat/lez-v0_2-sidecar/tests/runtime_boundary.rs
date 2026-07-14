@@ -305,7 +305,7 @@ fn decodes_only_canonical_signed_official_lee_public_transactions() {
 }
 
 #[test]
-fn official_node_rpc_accepts_only_explicit_loopback_http_endpoints() {
+fn local_node_route_accepts_only_explicit_loopback_http_endpoints() {
     for endpoint in [
         "http://localhost:3040/",
         "https://127.0.0.1:3040/",
@@ -314,9 +314,29 @@ fn official_node_rpc_accepts_only_explicit_loopback_http_endpoints() {
         "http://127.0.0.1:3040/path",
     ] {
         assert_eq!(
-            OfficialNodeRpc::connect(endpoint).unwrap_err(),
+            OfficialNodeRpc::connect_local(endpoint).unwrap_err(),
             RuntimeBoundaryError::InvalidNodeEndpoint
         );
     }
-    assert!(OfficialNodeRpc::connect("http://127.0.0.1:1/").is_ok());
+    assert!(OfficialNodeRpc::connect_local("http://127.0.0.1:1/").is_ok());
+}
+
+#[test]
+fn official_public_node_route_accepts_only_the_exact_testnet_origin() {
+    assert!(OfficialNodeRpc::connect_official_public("https://testnet.lez.logos.co/").is_ok());
+    for endpoint in [
+        "https://testnet.lez.logos.co",
+        "http://testnet.lez.logos.co/",
+        "https://user@testnet.lez.logos.co/",
+        "https://testnet.lez.logos.co/path",
+        "https://testnet.lez.logos.co/?query=1",
+        "https://testnet.lez.logos.co/#fragment",
+        "https://example.com/",
+        "http://127.0.0.1:3040/",
+    ] {
+        assert_eq!(
+            OfficialNodeRpc::connect_official_public(endpoint).unwrap_err(),
+            RuntimeBoundaryError::InvalidNodeEndpoint
+        );
+    }
 }

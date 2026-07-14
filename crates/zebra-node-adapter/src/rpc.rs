@@ -25,6 +25,9 @@ use zcash_transparent::{
 const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_CONCURRENT_REQUESTS: usize = 8;
 const MAX_RPC_BODY_BYTES: u32 = 4_100_000;
+const MAX_RPC_ENDPOINT_BYTES: usize = 2_048;
+const MAX_PUBLIC_API_KEY_BYTES: usize = 1_024;
+const TATUM_TESTNET_ZEBRA_ENDPOINT: &str = "https://zcash-testnet-zebrad.gateway.tatum.io";
 const TRANSACTION_NOT_FOUND_CODE: i32 = -5;
 const MAX_DISCOVERY_TRANSACTION_IDS: usize = 50_000;
 
@@ -349,18 +352,27 @@ pub struct HttpZebraRpcConfig {
     endpoint: Box<str>,
     request_timeout: Duration,
     max_concurrent_requests: usize,
+    mode: HttpZebraRpcMode,
     authorization: Option<HeaderValue>,
+    api_key: Option<HeaderValue>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HttpZebraRpcMode {
+    LoopbackHttp,
+    PublicHttps,
 }
 
 impl std::fmt::Debug for HttpZebraRpcConfig {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("HttpZebraRpcConfig")
-            .field("endpoint", &self.endpoint)
             .field("request_timeout", &self.request_timeout)
             .field("max_concurrent_requests", &self.max_concurrent_requests)
+            .field("mode", &self.mode)
             .field("cookie_auth_enabled", &self.authorization.is_some())
-            .finish()
+            .field("api_key_auth_enabled", &self.api_key.is_some())
+            .finish_non_exhaustive()
     }
 }
 
@@ -372,8 +384,35 @@ impl HttpZebraRpcConfig {
             endpoint: endpoint.into(),
             request_timeout: DEFAULT_RPC_TIMEOUT,
             max_concurrent_requests: DEFAULT_MAX_CONCURRENT_REQUESTS,
+            mode: HttpZebraRpcMode::LoopbackHttp,
             authorization: None,
+            api_key: None,
         }
+    }
+
+    /// Creates public-provider configuration with finite default transport bounds.
+    ///
+    /// The endpoint must be the exact Tatum Testnet Zebrad HTTPS origin root.
+    /// URL credentials, paths, queries, fragments, alternate providers, and
+    /// explicit ports are rejected. A bounded API key must subsequently be installed with
+    /// [`Self::with_public_api_key`] before connecting.
+    ///
+    /// # Errors
+    ///
+    /// Rejects any endpoint other than the exact Tatum Testnet Zebrad origin.
+    pub fn public_https(endpoint: impl Into<Box<str>>) -> Result<Self, HttpZebraRpcError> {
+        let endpoint = endpoint.into();
+        if !is_public_https_endpoint(&endpoint) {
+            return Err(HttpZebraRpcError::InvalidPublicHttpsEndpoint);
+        }
+        Ok(Self {
+            endpoint,
+            request_timeout: DEFAULT_RPC_TIMEOUT,
+            max_concurrent_requests: DEFAULT_MAX_CONCURRENT_REQUESTS,
+            mode: HttpZebraRpcMode::PublicHttps,
+            authorization: None,
+            api_key: None,
+        })
     }
 
     /// Adds Zebra cookie-file credentials as a sensitive HTTP Basic Authorization header.
@@ -389,6 +428,9 @@ impl HttpZebraRpcConfig {
         mut self,
         cookie_contents: impl AsRef<[u8]>,
     ) -> Result<Self, HttpZebraRpcError> {
+        if self.mode != HttpZebraRpcMode::LoopbackHttp {
+            return Err(HttpZebraRpcError::CookieAuthOnPublicEndpoint);
+        }
         let raw = cookie_contents.as_ref();
         let credential = raw
             .strip_suffix(b"\r\n")
@@ -407,6 +449,36 @@ impl HttpZebraRpcConfig {
             .map_err(|_| HttpZebraRpcError::InvalidCookieCredentials)?;
         authorization.set_sensitive(true);
         self.authorization = Some(authorization);
+        Ok(self)
+    }
+
+    /// Adds a public-provider credential as the fixed sensitive `x-api-key` header.
+    ///
+    /// The key must be bounded visible ASCII and is never included in this
+    /// configuration's `Debug` output. This credential cannot be installed on the
+    /// fail-closed loopback HTTP mode created by [`Self::new`].
+    ///
+    /// # Errors
+    ///
+    /// Rejects loopback mode or an empty, oversized, or non-visible API key.
+    pub fn with_public_api_key(
+        mut self,
+        api_key: impl AsRef<[u8]>,
+    ) -> Result<Self, HttpZebraRpcError> {
+        if self.mode != HttpZebraRpcMode::PublicHttps {
+            return Err(HttpZebraRpcError::ApiKeyAuthOnLoopbackEndpoint);
+        }
+        let api_key = api_key.as_ref();
+        if api_key.is_empty()
+            || api_key.len() > MAX_PUBLIC_API_KEY_BYTES
+            || !api_key.iter().all(|byte| (0x21..=0x7e).contains(byte))
+        {
+            return Err(HttpZebraRpcError::InvalidPublicApiKey);
+        }
+        let mut header =
+            HeaderValue::from_bytes(api_key).map_err(|_| HttpZebraRpcError::InvalidPublicApiKey)?;
+        header.set_sensitive(true);
+        self.api_key = Some(header);
         Ok(self)
     }
 
@@ -493,6 +565,21 @@ pub enum HttpZebraRpcError {
     /// Zebra RPC is intentionally restricted to an explicit loopback HTTP endpoint.
     #[error("Zebra HTTP endpoint must be explicit nonzero-port loopback")]
     NonLoopbackEndpoint,
+    /// A public-provider endpoint was not an exact bounded remote HTTPS origin root.
+    #[error("public Zebra endpoint must be a bounded credential-free remote HTTPS root")]
+    InvalidPublicHttpsEndpoint,
+    /// A public-provider API key was not bounded visible ASCII.
+    #[error("public Zebra API key is invalid")]
+    InvalidPublicApiKey,
+    /// Public-provider mode cannot connect without its fixed API-key header.
+    #[error("public Zebra endpoint requires an x-api-key credential")]
+    MissingPublicApiKey,
+    /// Cookie-file Basic authentication belongs only to loopback mode.
+    #[error("Zebra cookie authentication is forbidden for public HTTPS endpoints")]
+    CookieAuthOnPublicEndpoint,
+    /// API-key authentication belongs only to public HTTPS mode.
+    #[error("Zebra x-api-key authentication is forbidden for loopback HTTP endpoints")]
+    ApiKeyAuthOnLoopbackEndpoint,
 }
 
 impl HttpZebraRpc {
@@ -505,12 +592,32 @@ impl HttpZebraRpc {
         if config.request_timeout.is_zero() || config.max_concurrent_requests == 0 {
             return Err(HttpZebraRpcError::InvalidTransportBounds);
         }
-        if !is_loopback_endpoint(&config.endpoint) {
-            return Err(HttpZebraRpcError::NonLoopbackEndpoint);
-        }
         let mut headers = HeaderMap::new();
-        if let Some(authorization) = &config.authorization {
-            headers.insert("authorization", authorization.clone());
+        match config.mode {
+            HttpZebraRpcMode::LoopbackHttp => {
+                if !is_loopback_endpoint(&config.endpoint) {
+                    return Err(HttpZebraRpcError::NonLoopbackEndpoint);
+                }
+                if config.api_key.is_some() {
+                    return Err(HttpZebraRpcError::ApiKeyAuthOnLoopbackEndpoint);
+                }
+                if let Some(authorization) = &config.authorization {
+                    headers.insert("authorization", authorization.clone());
+                }
+            }
+            HttpZebraRpcMode::PublicHttps => {
+                if !is_public_https_endpoint(&config.endpoint) {
+                    return Err(HttpZebraRpcError::InvalidPublicHttpsEndpoint);
+                }
+                if config.authorization.is_some() {
+                    return Err(HttpZebraRpcError::CookieAuthOnPublicEndpoint);
+                }
+                let api_key = config
+                    .api_key
+                    .as_ref()
+                    .ok_or(HttpZebraRpcError::MissingPublicApiKey)?;
+                headers.insert("x-api-key", api_key.clone());
+            }
         }
         let client = HttpClientBuilder::default()
             .max_request_size(MAX_RPC_BODY_BYTES)
@@ -879,18 +986,69 @@ fn is_exact_lower_hex(value: &str) -> bool {
         .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RootEndpoint<'a> {
+    host: &'a str,
+    port: Option<u16>,
+}
+
+fn parse_root_endpoint<'a>(endpoint: &'a str, scheme: &str) -> Option<RootEndpoint<'a>> {
+    if endpoint.is_empty()
+        || endpoint.len() > MAX_RPC_ENDPOINT_BYTES
+        || !endpoint.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
+    {
+        return None;
+    }
+    let authority = endpoint.strip_prefix(scheme)?;
+    let authority = authority.strip_suffix('/').unwrap_or(authority);
+    if authority.is_empty()
+        || authority
+            .bytes()
+            .any(|byte| matches!(byte, b'/' | b'?' | b'#' | b'@'))
+    {
+        return None;
+    }
+
+    let (host, port) = if let Some(bracketed) = authority.strip_prefix('[') {
+        let closing = bracketed.find(']')?;
+        let host = &bracketed[..closing];
+        let remainder = &bracketed[closing + 1..];
+        let port = if remainder.is_empty() {
+            None
+        } else {
+            Some(remainder.strip_prefix(':')?.parse::<u16>().ok()?)
+        };
+        (host, port)
+    } else if let Some((host, port)) = authority.rsplit_once(':') {
+        if host.contains(':') {
+            return None;
+        }
+        (host, Some(port.parse::<u16>().ok()?))
+    } else {
+        (authority, None)
+    };
+    if host.is_empty() || port == Some(0) {
+        return None;
+    }
+    Some(RootEndpoint { host, port })
+}
+
 fn is_loopback_endpoint(endpoint: &str) -> bool {
-    endpoint
-        .strip_prefix("http://127.0.0.1:")
-        .or_else(|| endpoint.strip_prefix("http://[::1]:"))
-        .map(|authority| authority.strip_suffix('/').unwrap_or(authority))
-        .and_then(|port| port.parse::<u16>().ok())
-        .is_some_and(|port| port != 0)
+    parse_root_endpoint(endpoint, "http://")
+        .is_some_and(|parsed| parsed.port.is_some() && matches!(parsed.host, "127.0.0.1" | "::1"))
+}
+
+fn is_public_https_endpoint(endpoint: &str) -> bool {
+    endpoint == TATUM_TESTNET_ZEBRA_ENDPOINT
+        || endpoint.strip_suffix('/') == Some(TATUM_TESTNET_ZEBRA_ENDPOINT)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
     use base64::Engine as _;
     use jsonrpsee::core::ClientError;
@@ -1387,6 +1545,124 @@ mod tests {
             HttpZebraRpcConfig::new("http://127.0.0.1:18232")
                 .with_cookie_credentials(vec![b'a'; 1_025]),
             Err(HttpZebraRpcError::InvalidCookieCredentials)
+        ));
+    }
+
+    #[test]
+    fn public_https_client_uses_a_bounded_sensitive_api_key_without_connecting() {
+        const TATUM_TESTNET_ZEBRAD: &str = "https://zcash-testnet-zebrad.gateway.tatum.io";
+        const SECRET: &[u8] = b"dedicated-test-key";
+
+        let config = HttpZebraRpcConfig::public_https(TATUM_TESTNET_ZEBRAD)
+            .expect("documented root HTTPS endpoint")
+            .with_public_api_key(SECRET)
+            .expect("bounded visible API key");
+        let api_key = config.api_key.as_ref().expect("API key header configured");
+        assert!(api_key.is_sensitive());
+        assert_eq!(api_key.as_bytes(), SECRET);
+
+        let debug = format!("{config:?}");
+        assert!(debug.contains("PublicHttps"));
+        assert!(debug.contains("api_key_auth_enabled: true"));
+        assert!(!debug.contains("dedicated-test-key"));
+
+        HttpZebraRpc::connect(&config)
+            .expect("Tatum root client construction is local and nonconnecting");
+    }
+
+    #[test]
+    fn public_api_key_is_bounded_and_mode_specific() {
+        const ENDPOINT: &str = "https://zcash-testnet-zebrad.gateway.tatum.io";
+
+        for invalid in [
+            b"".as_slice(),
+            b"has space".as_slice(),
+            b"has\nnewline".as_slice(),
+        ] {
+            assert!(matches!(
+                HttpZebraRpcConfig::public_https(ENDPOINT)
+                    .expect("valid public endpoint")
+                    .with_public_api_key(invalid),
+                Err(HttpZebraRpcError::InvalidPublicApiKey)
+            ));
+        }
+        assert!(matches!(
+            HttpZebraRpcConfig::public_https(ENDPOINT)
+                .expect("valid public endpoint")
+                .with_public_api_key(vec![b'a'; 1_025]),
+            Err(HttpZebraRpcError::InvalidPublicApiKey)
+        ));
+        assert!(matches!(
+            HttpZebraRpcConfig::new("http://127.0.0.1:18232")
+                .with_public_api_key(b"not-for-loopback"),
+            Err(HttpZebraRpcError::ApiKeyAuthOnLoopbackEndpoint)
+        ));
+        assert!(matches!(
+            HttpZebraRpcConfig::public_https(ENDPOINT)
+                .expect("valid public endpoint")
+                .with_public_api_key(b"public-key")
+                .expect("valid public API key")
+                .with_cookie_credentials(b"__cookie__:not-for-public"),
+            Err(HttpZebraRpcError::CookieAuthOnPublicEndpoint)
+        ));
+        assert!(matches!(
+            HttpZebraRpc::connect(
+                &HttpZebraRpcConfig::public_https(ENDPOINT).expect("valid public endpoint")
+            ),
+            Err(HttpZebraRpcError::MissingPublicApiKey)
+        ));
+    }
+
+    #[test]
+    fn public_https_endpoint_is_an_exact_bounded_credential_free_root() {
+        for endpoint in [
+            "http://zcash-testnet-zebrad.gateway.tatum.io",
+            "https://127.0.0.1",
+            "https://127.0.0.1:443",
+            "https://10.0.0.1",
+            "https://169.254.169.254",
+            "https://[::1]",
+            "https://localhost",
+            "https://example.test",
+            "https://user:secret@example.test",
+            "https://example.test/rpc",
+            "https://example.test/?api-key=secret",
+            "https://example.test/#secret",
+            "https://example.test:0",
+            "https://",
+        ] {
+            assert!(matches!(
+                HttpZebraRpcConfig::public_https(endpoint),
+                Err(HttpZebraRpcError::InvalidPublicHttpsEndpoint)
+            ));
+        }
+        assert!(matches!(
+            HttpZebraRpcConfig::public_https(format!("https://{}.example.test", "a".repeat(2_048))),
+            Err(HttpZebraRpcError::InvalidPublicHttpsEndpoint)
+        ));
+
+        let invalid = HttpZebraRpcConfig::public_https("https://user:secret@example.test");
+        assert!(!format!("{invalid:?}").contains("secret"));
+    }
+
+    #[test]
+    fn both_http_modes_reject_zero_transport_bounds() {
+        let loopback =
+            HttpZebraRpcConfig::new("http://127.0.0.1:18232").with_request_timeout(Duration::ZERO);
+        assert!(matches!(
+            HttpZebraRpc::connect(&loopback),
+            Err(HttpZebraRpcError::InvalidTransportBounds)
+        ));
+
+        let public =
+            HttpZebraRpcConfig::public_https("https://zcash-testnet-zebrad.gateway.tatum.io")
+                .expect("valid public endpoint")
+                .with_public_api_key(b"public-key")
+                .expect("valid public API key")
+                .with_max_concurrent_requests(0);
+        assert!(matches!(
+            HttpZebraRpc::connect(&public),
+            Err(HttpZebraRpcError::InvalidTransportBounds)
         ));
     }
 

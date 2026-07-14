@@ -164,17 +164,19 @@ current executable slices enforce:
   local node handoff, but not its consumption by independent corridor actors.
   Context-owning SDK-port composition is GREEN. The exact-outpoint Zebra
   funding planner is GREEN. The Unix-only one-shot maker/taker boundary now
-  loads a deny-unknown-fields schema-v2 private configuration that fixes the
+  loads a deny-unknown-fields schema-v3 private configuration that fixes the
   run, swap, role, signed-agreement SHA-256, LEZ runtime, Zebra identity,
-  discovery window, exact funding outpoints, and every role-local persistence
-  and credential path. Twenty-three boundary tests reject unsafe permissions,
-  symlinks, hard-link/path aliases, same-inode rewrites, late alias creation,
-  wrong roles/identities, and secret-bearing diagnostics. `status` provisioning
-  is deliberately offline: terminal SDK replay has no LEZ/Zebra trait bound and
-  needs only the role store plus claim-recovery key; effect credentials and
-  chain endpoints may be unavailable. The binary still validates configuration
-  only, so secure SQLite descriptor-open composition, lifecycle command wiring,
-  and the completed LEZ-plus-Zebra corridor remain.
+  typed Zebra route, discovery window, exact funding outpoints, and every
+  role-local persistence and credential path. Thirty boundary tests reject
+  unsafe permissions, symlinks, hard-link/path aliases, same-inode rewrites,
+  late alias creation, wrong roles/identities/routes, unsafe credential
+  combinations, and secret-bearing diagnostics. `status` remains deliberately offline: terminal
+  SDK replay has no LEZ/Zebra trait bound and needs only the role store plus
+  claim-recovery key; effect credentials and chain endpoints may be unavailable.
+  `activate` and `drive` now compose descriptor-bound SQLite, the authenticated
+  loopback role sidecar, and the selected local or public-capable Zebra
+  transport. Both local LEZ-plus-Zebra directions are completed evidence;
+  public execution is not.
 
 See the living [implementation plan](docs/implementation-plan.md), the
 [milestone delivery metrics](docs/milestone-metrics.md), the
@@ -239,14 +241,18 @@ exposed and reproduced a forward-only canonical LEZ validator, now corrected
 to bind the signer to the agreement-derived depositor. Exact secret-safe facts
 are in the
 [reverse-direction corridor evidence](docs/evidence/m2-taker-sells-foreign-corridor-20260714.json).
-The M2 PoC happy-path gate is now **2 of 2**. Documentation, portability, and
-repository completion gates still precede an M2 tag; no tag exists yet.
+The M2 PoC happy-path gate is now **2 of 2**. Documentation and repository
+completion gates still precede an M2 tag; no tag exists yet. The
+schema-v3 Zebra route selection, public HTTPS `x-api-key` transport, and LEZ
+`official_public` sidecar route are now locally verified portability contracts;
+they have not made a public call.
 PoC-to-hardening and milestone
 transitions remain repository-owner decisions. The
 [Zcash public-testnet setup guide](docs/zcash-testnet-setup.md) records the
 selected self-hosted and Tatum Testnet Zebrad routes, optional funding wallet,
-external dependencies, and the still-missing transparent signer/provider
-transport without claiming a completed testnet run.
+external dependencies, and the still-missing public credentials, funded
+accounts, deployment, and live method evidence without claiming a completed
+testnet run.
 
 ## Development
 
@@ -285,13 +291,92 @@ digest-pinned images and on GitHub/Rust/crates distribution while provisioning
 source and binaries. This proves LEZ service readiness only; it is not yet the
 manual atomic-swap corridor.
 
+### M2 corridor and route-selection quick start
+
+After provisioning fresh isolated LEZ v0.2 and Zebra Regtest nodes with the
+manual guide's Flow 0 prerequisites, build and run the same local user boundary
+used by the retained PoC:
+
+```sh
+cargo build --locked -p zec-reference-actor --bin zec-reference-actor
+export RUN_ID=manual-m2-corridor-001
+export POC_DIRECTION=taker_sells_lez # or: taker_sells_foreign
+export POC_OUTPUT_ROOT="${TMPDIR:-/tmp}/lez-atomic-swaps-${RUN_ID}"
+export LEZ_SEQUENCER_URL=http://127.0.0.1:<sequencer-port>
+export LEZ_INDEXER_URL=http://127.0.0.1:<indexer-port>
+export ZEBRA_RPC_URL=http://127.0.0.1:<zebra-port>
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+./scripts/run-m2-taker-sells-lez-poc.sh
+```
+
+The historical script name covers both directions. It refuses a reused output
+root, serializes access to the exact node tuple, and uses fresh local
+genesis/Regtest funds. See
+[Flow 0G](docs/manual-user-flows.md#flow-0g-run-either-development-m2-corridor-direction)
+for all prerequisites, evidence assertions, and cleanup rules.
+
+The role-private `zec-reference-actor` schema is version 3. Its `zebra.route`
+is exactly one of these deny-unknown-fields objects:
+
+```json
+{
+  "kind": "deterministic_local",
+  "endpoint": "http://127.0.0.1:18232",
+  "cookie_file": null
+}
+```
+
+```json
+{
+  "kind": "self_hosted_cookie",
+  "endpoint": "http://127.0.0.1:8232",
+  "cookie_file": "/absolute/private/run/maker-zebra.cookie"
+}
+```
+
+```json
+{
+  "kind": "tatum_testnet_x_api_key",
+  "endpoint": "https://zcash-testnet-zebrad.gateway.tatum.io",
+  "api_key_file": "/absolute/private/run/maker-tatum-api-key"
+}
+```
+
+`deterministic_local` requires the Regtest identity; `self_hosted_cookie`
+requires a matching public Mainnet or Testnet identity; and the exact Tatum
+route requires Testnet. The two role configs select the same route kind and
+endpoint. Any cookie or API-key file, each actor config, signer key, claim key,
+preimage, and sidecar capability must be a regular owner-only mode-`0600` file
+below a mode-`0700` role directory. Never put a credential in a URL, JSON
+value, command line, log, or committed file. The actor loads credentials only
+for `drive`; `status` remains offline.
+
+The LEZ v0.2 sidecar independently selects one complete outbound node profile.
+Local runs use `--node-profile local` with distinct literal-loopback sequencer
+and indexer URLs. The dormant public route uses
+`--node-profile official_public` and requires the exact URL
+`https://testnet.lez.logos.co/` for both `--sequencer-url` and `--indexer-url`.
+In either profile, `--listen-address` and each actor's `bridge.endpoint` remain
+dedicated `127.0.0.1:<role-port>` listeners protected by a role/run capability;
+the actor-to-sidecar hop is never public.
+
+Moving from the proved local route to public Testnet requires only route
+selection under the signed agreement/runtime configuration plus the expected
+on-chain deployment and account/key/fund provisioning. It does not require a
+different actor, sidecar, or chain adapter. No automated test, retained M2 run,
+or manual command in this repository has called either public chain endpoint,
+used a faucet, or spent public funds. Live public deployment and method evidence
+remain deliberately deferred under the progressive-PoC boundary.
+
 ### External dependencies and flakiness
 
-The current executable PoC flows use no public blockchain RPC, faucet, or
-public funds. The successful corridor used dynamic-loopback Bedrock, sequencer,
-indexer, Zebra Regtest, and two independently authenticated role-sidecar
-processes. Its retained ports `32831` through `32834`, maker sidecar port
-`52289`, and taker sidecar port `49643` belong only to the named evidence
+The current automated and retained local PoC flows use no public blockchain
+RPC, faucet, credential, or public funds. Public-route parsing, TLS client
+construction, credential loading/redaction, and strict LEZ profile selection
+are tested without connecting. The successful corridor used dynamic-loopback
+Bedrock, sequencer, indexer, Zebra Regtest, and two independently authenticated
+role-sidecar processes. Its retained ports `32831` through `32834`, maker
+sidecar port `52289`, and taker sidecar port `49643` belong only to the named evidence
 runs; manual runs must allocate fresh dynamic ports and a fresh output root. The
 official LEZ v0.2 endpoint
 `https://testnet.lez.logos.co` is selected and its health/block/program methods
@@ -345,13 +430,14 @@ block scanning; a newly published advisory may deliberately turn a prior pass
 red. Do not bypass that failure as “flaky.” The LEZ v0.2 RPC, self-hosted Zebra
 6.0.0, and Tatum's API-key-authenticated Testnet Zebrad gateway are selected.
 The Tatum route is a third-party authoritative-node service, not an official
-Zcash Foundation endpoint, and its HTTPS adapter/method contract has not passed
-live evidence yet. Zcash funding may use a community faucet, Discord request,
-or controlled pre-funded wallet, all with explicit availability risk. The
-project-owned transparent testnet signer remains unimplemented. Provider limits,
-fallback routes, and funding assumptions remain production-readiness evidence;
-M2 still requires dormant public-capable configuration/adapter contracts but no
-live public execution under ADR 0023. See
+Zcash Foundation endpoint. Its bounded HTTPS `x-api-key` adapter and schema-v3
+actor wiring are locally GREEN, while its live method contract has no evidence
+yet. Zcash funding may use a community faucet, Discord request, or controlled
+pre-funded wallet, all with explicit availability risk. The role-keyed signer
+is wired, but no public key, TAZ funding, broadcast, or confirmation has been
+exercised. Provider limits, fallback routes, and funding assumptions remain
+production-readiness evidence; M2 retains no live public-execution requirement
+under ADR 0023. See
 the [full resource/flakiness table](docs/manual-user-flows.md#external-resources-and-flakiness).
 
     cargo test --locked --workspace --all-targets
@@ -401,13 +487,22 @@ escrow guest and generated client, binds exact ELF SHA-256/ImageID/ProgramId,
 executes recursive native and two-definition token claim/refund lifecycles, and
 proves full rollback when a child transfer fails. Its exact-once official-RPC
 deployer accepts evidence only after immutable endpoint/channel/built-in,
-transaction-byte, transaction, block, and artifact checks. Public-testnet
+genesis, transaction-byte, transaction, block, and artifact checks. Before
+printing retained public evidence, `deploy` authenticates it with a separate
+owner-only 32-byte HMAC-SHA256 key. Its offline `provision-identity` command
+requires that same zeroized key, verifies the authentication tag and bounded
+evidence, then atomically writes a no-clobber public runtime identity in a
+non-shared-writable directory containing the exact
+chain/channel/genesis/program/deployment fields consumed by signed
+provisioning. Public-testnet
 deployment and deployed-runtime costs are deferred under ADR 0023. The
 public-compatible local v0.2 node corridor and independent actors are GREEN in
-both directions; dormant public configuration/adapters remain open M2 gates.
-PR #238 remains unmerged
-and unreviewed, so these passes are not M2 completion or final
-production-release approval.
+both directions. Dormant schema-v3 Zebra routes, the public HTTPS transport,
+and the LEZ `official_public` profile are locally GREEN; live deployment,
+credentials, funds, method smoke, and public transactions remain deferred.
+PR #238 remains unmerged and unreviewed. That status is a production-release
+blocker under ADR 0018, not a private M2 blocker; these component passes alone
+also do not replace the final M2 repository certification gate.
 
 Cargo-deny reports that the exact official LEZ graph forces Hickory DNS
 `0.25.0-alpha.5` (`RUSTSEC-2026-0118` and `RUSTSEC-2026-0119`) through

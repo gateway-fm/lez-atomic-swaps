@@ -414,3 +414,24 @@ remains a repository-controlled prerequisite. The Zcash taker-first observation
 path must still receive its previous canonical head so removal/replacement can
 be assembled after process restart; the maker-lock SDK boundary needs a later
 durable post-lock history extension rather than an invented adapter assertion.
+
+## 2026-07-14 implementation status addendum
+
+This append-only note records the later implementation state without rewriting
+the original decision history. The v0.2 official-wire sidecars, authenticated
+role-isolated loopback bridges, independent schema-v3 actors, and both private
+local happy-path directions are GREEN. ADR 0028 records the added dormant
+public-portability contract: the actor-facing sidecar transport remains
+literal-loopback and capability-protected; sidecar outbound LEZ access is typed
+as explicit local loopback HTTP or the exact official Testnet HTTPS origin; and
+the actor's Zebra access is typed as deterministic local, self-hosted loopback
+with an owner-only cookie, or the exact Tatum Testnet HTTPS origin with an
+owner-only `x-api-key` file.
+
+Activation validates the dual-signed agreement, runtime identity, role, signer,
+chain identity, route, credential files, and path isolation before persistence
+or effects. The dormant route constructors are locally contract-tested without
+public network I/O. Public execution and provider behavior remain deferred, and
+availability of the required official LEZ indexer
+`getLastFinalizedBlockId` method remains an explicit upstream
+production-release risk rather than an M2 local blocker.

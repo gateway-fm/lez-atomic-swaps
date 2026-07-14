@@ -95,10 +95,29 @@ flowchart TB
     end
 
     subgraph Nodes["Actor-selected node boundary"]
-        LEZ["LEZ sequencer<br/>dynamic port; loopback client URL<br/>upstream wildcard bind<br/>public v0.2 activation pending"]
+        LEZ["LEZ sequencer<br/>dynamic local port<br/>typed exact-public contract<br/>public live execution pending"]
         BTC["Bitcoin Core"]
         XMR["monerod + wallet RPC"]
         ZEC["Zebra 5.2.0 Regtest JSON-RPC<br/>retained proof host 32834"]
+    end
+
+    subgraph DormantRoutes["Dormant public route contracts; no public I/O evidence"]
+        RouteGate["Schema-v3 route + signed runtime<br/>pre-persistence validation"]
+        LezProfile{"Sidecar outbound LEZ profile"}
+        PublicLez["Exact HTTPS<br/>testnet.lez.logos.co"]
+        PublicLezRisk["Finalized-tip method<br/>availability unknown"]
+        ZebraProfile{"Actor Zebra route"}
+        SelfHostedZebra["Self-hosted loopback<br/>cookie authentication"]
+        TatumZebra["Exact Tatum Testnet HTTPS<br/>x-api-key authentication"]
+    end
+
+    subgraph PublicIdentity["Dormant public deployment identity handoff"]
+        V02Deploy["Exact-once v0.2 deployment client<br/>fixed official RPC"]
+        V02AuthKey[("Separate owner-only 32-byte<br/>evidence authentication key")]
+        V02Evidence[("Bounded HMAC-authenticated evidence<br/>channel + genesis + program + tx + block")]
+        V02Target["Immutable manifest + compiled<br/>ELF + ImageID + ProgramId"]
+        V02Provision["Offline provision-identity<br/>trusted target + no-clobber"]
+        V02Runtime[("Exact public runtime identity")]
     end
 
     subgraph Networks["Consensus networks"]
@@ -159,6 +178,20 @@ flowchart TB
     TBR2 -->|"initialize and fund in 14o; reveal in 14c"| SQ
     MBR2 -->|"non-genesis finalized-tip readiness"| IX
     TBR2 -->|"non-genesis finalized-tip readiness"| IX
+    MBR2 -->|"typed outbound profile"| LezProfile
+    TBR2 -->|"typed outbound profile"| LezProfile
+    LezProfile -->|"local explicit loopback"| SQ
+    LezProfile -->|"local explicit loopback"| IX
+    LezProfile -.->|"official_public"| PublicLez
+    PublicLez -.-> PublicLezRisk
+    V02Deploy -.->|"future owner-authorized deployment"| PublicLez
+    V02AuthKey -->|"authenticate observed facts"| V02Deploy
+    V02Deploy -->|"retain exact observed result"| V02Evidence
+    V02Evidence --> V02Provision
+    V02AuthKey -->|"verify before trust"| V02Provision
+    V02Target --> V02Provision
+    V02Provision --> V02Runtime
+    V02Runtime -.->|"future signing and role provisioning"| RouteGate
     V02R -->|"start first; cryptarchia and channel HTTP"| BR
     V02R -->|"start after channel; finalized ID and hash RPC"| IX
     V02R -->|"start after exact missing proof; service RPC"| SQ
@@ -178,6 +211,15 @@ flowchart TB
     V02Partial -->|"14o and reverse 14c completed"| V02Full
     V02Full -->|"direction-derived funding and exact spend on Zebra"| ZEC
     V02Full -.->|"runtime and funding handoff"| LRR
+    ZA --> RouteGate
+    TA --> RouteGate
+    RouteGate --> LezProfile
+    RouteGate --> ZebraProfile
+    PS --> ZebraProfile
+    TS --> ZebraProfile
+    ZebraProfile -->|"deterministic_local"| ZEC
+    ZebraProfile -.->|"self_hosted_cookie"| SelfHostedZebra
+    ZebraProfile -.->|"tatum_testnet_x_api_key"| TatumZebra
 
     MD <-->|"discovery + negotiation only"| DC
     TS <-->|"discovery + negotiation only"| DC
@@ -199,15 +241,18 @@ flowchart TB
     TS --> ZEC
     LEZ --> LN
     SQ -.-> LN
+    PublicLez -.-> LN
     BTC --> BN
     XMR --> XN
     ZEC --> ZN
+    SelfHostedZebra -.-> ZN
+    TatumZebra -.-> ZN
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
     classDef implemented fill:#ddf4ff,stroke:#0969da;
     classDef running fill:#e6ffec,stroke:#1a7f37;
-    class MM,LC,CA,TM,LRR planned;
-    class TC,MBRJ,TBRJ,V02Partial implemented;
+    class MM,LC,CA,TM,LRR,PublicLezRisk planned;
+    class TC,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
     class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02Full,V02State,MSL2,TLS2,V02J,MBR2,TBR2 running;
 ```
 
@@ -264,7 +309,10 @@ itself proves sequencer inclusion and same-tip state; sequential indexer reads
 provide the distinct finality proof. It reports `crash_atomic_submission=false`.
 The exact `lez-v02-bridge-poc` source now provides the role/run/runtime/signer-
 bound process boundary for prepare, observe, revealing claim, and submit. It
-requires explicit nonzero loopback endpoints and private file inputs, gates
+requires an explicit nonzero loopback actor listener and private file inputs.
+Its outbound node profile accepts either explicit loopback HTTP sequencer and
+indexer URLs or the exact `https://testnet.lez.logos.co/` origin for both;
+mixed or generic remote routes fail before client construction. It gates
 startup on the official sequencer and indexer health calls, replays successful
 PREPARE results, re-executes observations and transient PREPARE failures, and
 persists submit as unknown before node I/O. Refund calls are typed unavailable;
@@ -301,8 +349,9 @@ guard permits the revealing LEZ claim only after the Zcash funding has two
 confirmations, and permits the Zcash follow-up spend only after that LEZ reveal;
 it also rejects a wrong role or duplicate chain effect. The saved early fixture
 window 1..256 remains stale and is not reused. Both required local-devnet happy
-directions are now GREEN. Restart, refund, reorg, chaos, public-route
-portability, and production hardening remain explicit later gates. Chain
+directions are now GREEN. The dormant LEZ and Zebra public-route construction
+contracts are also GREEN without public I/O. Restart, refund, reorg, chaos,
+live-public behavior, and production hardening remain explicit later gates. Chain
 adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
 observation alone is non-authorizing: forward Zcash persists and revalidates
@@ -329,15 +378,61 @@ through the active SDK and SQLite, while stale old-head evidence fails without
 a row or revision change. Deterministic-local reverse fresh eligibility now
 replays and re-queries the exact head and checks signed depth; local Pending
 remains eligible when depth is sufficient, and no result is cached as
-authority. The public Finalized/typed-finality policy is unit-tested but remains
-unreachable while public agreement activation is fail-closed. The official
+authority. The public Finalized/typed-finality policy and exact route can now be
+constructed, but neither has been exercised against a public node. The official
+LEZ origin's availability of the required finalized-tip/indexer method remains
+an upstream release risk. The official
 v0.1.2 node/escrow, revealing-claim, and native-refund owner/discovery ports,
 main escrow/claim/refund agreement conversion, and crash-safe context-owning
 SDK-port wiring are GREEN lower compatibility evidence. Public deployment is
 deferred under ADR 0023. The full local v0.2 runtime tuple and independent actor
 processes are GREEN in both happy directions. Dormant public configuration
-contracts, actual-node restart/refund/reorg and maker-fault evidence, and
-production adapter composition remain open.
+contracts are GREEN; public live execution, actual-node restart/refund/reorg
+and maker-fault evidence, and production adapter composition remain open.
+
+## Dormant route admission and actor flow
+
+```mermaid
+flowchart LR
+    Evidence["HMAC-authenticated deployment evidence"]
+    AuthKey["Separate owner-only authentication key"]
+    TrustedTarget["Immutable manifest + compiled target"]
+    Provision["Offline provision-identity<br/>no RPC + no-clobber"]
+    RuntimeIdentity["Exact public runtime identity"]
+    Config["Untrusted schema-v3 actor config"]
+    Terms["Dual-signed agreement + runtime descriptor"]
+    Validate["Validate route, credentials, role, signer,<br/>network, branch, genesis, channel, and program"]
+    Reject["Reject before persistence or effects"]
+    Accept["Accepted role-local runtime"]
+
+    Evidence -.->|"future public provisioning"| Provision
+    AuthKey --> Provision
+    TrustedTarget --> Provision
+    Provision -.-> RuntimeIdentity
+    RuntimeIdentity -.->|"sign into both inputs"| Config
+    RuntimeIdentity -.->|"sign into both inputs"| Terms
+    Config --> Validate
+    Terms --> Validate
+    Validate -->|"invalid"| Reject
+    Validate -->|"valid"| Accept
+
+    Accept --> ZebraRoute{"Actor Zebra route"}
+    ZebraRoute -->|"deterministic_local"| Regtest["Loopback Zebra Regtest"]
+    ZebraRoute -.->|"self_hosted_cookie"| SelfHosted["Loopback Zebra + cookie"]
+    ZebraRoute -.->|"tatum_testnet_x_api_key"| Tatum["Exact Tatum HTTPS + x-api-key"]
+
+    Accept --> Bridge["Loopback bridge client + capability"]
+    Bridge --> Sidecar["Role-isolated official-wire sidecar"]
+    Sidecar --> LezRoute{"Outbound LEZ profile"}
+    LezRoute -->|"local"| LocalLez["Loopback sequencer + indexer"]
+    LezRoute -.->|"official_public"| PublicLez["Exact official LEZ HTTPS"]
+    PublicLez -.-> Risk["Finalized-tip method availability unknown"]
+```
+
+Solid route edges are the actual local evidence paths. Dashed edges are dormant
+configuration and client-construction contracts proven without public network
+calls. They do not claim endpoint availability, authentication success,
+funding, deployment, transaction propagation, finality, or provider behavior.
 
 The protected-claim module derives per-context keys with HKDF-SHA256 and encrypts
 preimages and bounded exact claim-submission bytes with XChaCha20-Poly1305 while
@@ -358,8 +453,8 @@ confirmation regression, exact rebroadcast, block reconsideration, and a
 two-node conflicting four-over-three-block fork replacement now exist as
 consensus-node proof. Source-correct authenticated-transfer/ATA custody and
 generated owner-role clients now exist as locally composed upstream-program
-evidence. The checked Risc0 guest now builds reproducibly, deploys through
-public RPC, and executes the complete native initialize/fund/claim/refund
+evidence. The checked Risc0 guest now builds reproducibly, deploys through the
+isolated standalone sequencer's JSON-RPC, and executes the complete native initialize/fund/claim/refund
 lifecycle with real funded actor keys in an isolated v0.1.2 standalone
 sequencer. Wrong-preimage, wrong-role, and early-refund transactions are
 excluded from canonical blocks without mutating nonce or custody. Native
@@ -821,7 +916,7 @@ canonical LEZ event rather than a fictitious Monero deadline.
 ```mermaid
 flowchart LR
     User["Maker or taker"] --> Command["One-shot status command"]
-    Command --> Config["Private role-fixed schema-v2 config"]
+    Command --> Config["Private role-fixed schema-v3 config"]
     Config --> Inspect["Inspect role-store path"]
     Inspect -->|"missing"| Missing["Versioned not_activated output"]
     Inspect -->|"exists"| Material["Load claim-recovery key only"]

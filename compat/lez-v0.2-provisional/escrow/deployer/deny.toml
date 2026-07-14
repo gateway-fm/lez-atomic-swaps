@@ -7,6 +7,7 @@ ignore = [
     { id = "RUSTSEC-2025-0055", reason = "The exact embedded Risc0 3.0.5 methods graph forces tracing-subscriber 0.2.25 through arkworks. The verifier proves vulnerable fmt and ansi features are absent. Re-audit on every Risc0 or LEZ pin change." },
     { id = "RUSTSEC-2026-0118", reason = "Official LEZ v0.2.0 RPC/transaction types pull the Logos libp2p graph and Hickory 0.25.0-alpha.5 into the locked deployer. The verifier proves DNSSEC features are absent, and deployer tests exercise only the bounded fixed-URL JSON-RPC client. This Logos-owned exception is an M2 disclosure and remains a production-release blocker." },
     { id = "RUSTSEC-2026-0119", reason = "Official LEZ v0.2.0 RPC/transaction types pull the Logos libp2p graph and Hickory 0.25.0-alpha.5 into the locked deployer. The deployer never starts a sequencer, libp2p service, or DNS listener; it submits once to one immutable HTTPS endpoint and observes by JSON-RPC. This Logos-owned exception is an M2 disclosure and remains a production-release blocker." },
+    { crate = "spin@0.9.8", reason = "Exact LEZ v0.2.0 forces this yanked version through lazy_static and the Logos proof graph. The deployer invokes no spin API and retains an exact inverse-dependency gate. Treat as a Logos-owned production blocker and re-audit on every pin or feature change." },
 ]
 
 [licenses]
