@@ -2913,11 +2913,16 @@ dependencies = [
 name = "zec-reference-actor"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "bs58",
  "clap",
+ "getrandom 0.3.4",
+ "hex",
  "lez-bridge-client",
  "lez-bridge-protocol",
  "lez-swap-core",
  "lez-swap-store",
+ "lez-zebra-node-adapter",
  "lez-zec-swap-sdk",
  "secp256k1",
  "serde",
@@ -2927,6 +2932,9 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "url",
+ "zcash_primitives",
+ "zcash_protocol",
+ "zcash_transparent",
  "zeroize",
 ]
 

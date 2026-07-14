@@ -9,6 +9,7 @@ use clap::{Parser, Subcommand};
 
 mod command;
 mod config;
+mod local_poc;
 mod secure_file;
 
 pub use command::{ActorCommandError, ActorCommandOutputV1, ActorStatusV1, execute_actor_command};
@@ -16,6 +17,7 @@ pub use config::{
     ActivateMaterial, ActorConfig, ActorConfigError, ActorRole, CandidateOutpoint, DriveMaterial,
     StatusMaterial, ZcashNetworkConfig, ZebraRpcChainConfig, validate_actor_pair,
 };
+pub use local_poc::{LocalPocProvisionSummary, provision_local_v0_2_corridor};
 
 /// Exactly one lifecycle action performed by an actor process.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Subcommand)]

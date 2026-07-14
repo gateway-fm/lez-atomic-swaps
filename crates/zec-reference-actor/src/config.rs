@@ -12,7 +12,7 @@ use lez_zec_swap_sdk::{
     ClaimPreimage, MAX_ZEC_AGREEMENT_RECORD_BYTES, MAX_ZEC_FUNDING_INPUTS, ProtectedClaimKey,
 };
 use secp256k1::SecretKey;
-use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use url::{Host, Url};
@@ -60,7 +60,7 @@ impl ActorRole {
 }
 
 /// Zcash consensus network selected for one actor.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ZcashNetworkConfig {
     /// Zcash main network.
@@ -72,7 +72,7 @@ pub enum ZcashNetworkConfig {
 }
 
 /// Zebra JSON-RPC chain spelling reported by the node.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ZebraRpcChainConfig {
     /// Main-chain RPC identity.
@@ -81,7 +81,7 @@ pub enum ZebraRpcChainConfig {
     Test,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 enum ConsensusBranchConfig {
     #[serde(rename = "00000000")]
     Sprout,
@@ -162,14 +162,23 @@ impl<'de> Deserialize<'de> for LoopbackHttpEndpoint {
     }
 }
 
-#[derive(Clone, Deserialize, Eq, PartialEq)]
+impl Serialize for LoopbackHttpEndpoint {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.0.as_str())
+    }
+}
+
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ClaimRecoveryConfig {
     key_id: Box<str>,
     key_file: PathBuf,
 }
 
-#[derive(Clone, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct BridgeConfig {
     endpoint: LoopbackHttpEndpoint,
@@ -179,7 +188,7 @@ struct BridgeConfig {
     request_timeout_millis: u64,
 }
 
-#[derive(Clone, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ZebraIdentityConfig {
     network: ZcashNetworkConfig,
@@ -188,7 +197,7 @@ struct ZebraIdentityConfig {
     genesis_hash: Hex32,
 }
 
-#[derive(Clone, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ZebraConfig {
     endpoint: LoopbackHttpEndpoint,
@@ -198,7 +207,7 @@ struct ZebraConfig {
 }
 
 /// Agreement-committed transparent output candidate inspected before funding.
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CandidateOutpoint {
     transaction_id: Hex32,
@@ -206,6 +215,15 @@ pub struct CandidateOutpoint {
 }
 
 impl CandidateOutpoint {
+    /// Creates one exact RPC-display-order transparent output candidate.
+    #[must_use]
+    pub const fn new(transaction_id: Hex32, output_index: u32) -> Self {
+        Self {
+            transaction_id,
+            output_index,
+        }
+    }
+
     /// Canonical RPC-display-order transaction identifier.
     pub const fn transaction_id(&self) -> Hex32 {
         self.transaction_id
@@ -276,7 +294,7 @@ pub struct ActorConfig {
     zcash_funding_outpoints: Vec<CandidateOutpoint>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RawActorConfig {
     schema_version: u16,
@@ -293,6 +311,105 @@ struct RawActorConfig {
     zebra: ZebraConfig,
     lez_discovery_window: DiscoveryWindow,
     zcash_funding_outpoints: Vec<CandidateOutpoint>,
+}
+
+/// Complete primitive inputs for one deterministic-local-v0.2 actor config.
+///
+/// This constructor exists so a local fixture provisioner can emit the exact
+/// private schema without duplicating the load-only wire representation. The
+/// resulting file must still pass [`ActorConfig::load_private`].
+#[derive(Clone, Debug)]
+pub(crate) struct DeterministicLocalV0_2ActorConfigInput {
+    /// Fixed role represented by this config.
+    pub(crate) role: ActorRole,
+    /// Shared isolated run identity.
+    pub(crate) run_id: RunId,
+    /// Shared application swap identity.
+    pub(crate) swap_id: SwapId,
+    /// Shared canonical countersigned agreement file.
+    pub(crate) signed_agreement_file: PathBuf,
+    /// SHA-256 of the exact countersigned agreement bytes.
+    pub(crate) signed_agreement_sha256: Hex32,
+    /// Role-local lifecycle database path.
+    pub(crate) role_state_db: PathBuf,
+    /// Role-local recovery-key identifier.
+    pub(crate) claim_recovery_key_id: Box<str>,
+    /// Role-local recovery-key file.
+    pub(crate) claim_recovery_key_file: PathBuf,
+    /// Role-local preimage file, present only for the Zcash funder.
+    pub(crate) claim_preimage_file: Option<PathBuf>,
+    /// Role-local transparent Zcash secret-key file.
+    pub(crate) zcash_key_file: PathBuf,
+    /// Dedicated role-local sidecar endpoint.
+    pub(crate) bridge_endpoint: Url,
+    /// Role-local sidecar operation journal.
+    pub(crate) bridge_journal_db: PathBuf,
+    /// Role-local sidecar bearer-capability file.
+    pub(crate) bridge_capability_file: PathBuf,
+    /// Exact role-specific v0.2 runtime descriptor.
+    pub(crate) bridge_runtime: RuntimeDescriptor,
+    /// Shared isolated Zebra Regtest endpoint.
+    pub(crate) zebra_endpoint: Url,
+    /// Exact pinned Regtest genesis hash.
+    pub(crate) zebra_genesis_hash: Hex32,
+    /// Finite counterparty observation horizon.
+    pub(crate) counterparty_scan_blocks: u32,
+    /// Bounded LEZ canonical discovery window.
+    pub(crate) lez_discovery_window: DiscoveryWindow,
+    /// Exact candidates disclosed only to the local Zcash funder.
+    pub(crate) zcash_funding_outpoints: Vec<CandidateOutpoint>,
+}
+
+/// Encodes the exact load-only actor schema for a deterministic local v0.2 run.
+///
+/// # Errors
+///
+/// Rejects a non-loopback endpoint or an unexpected in-memory serialization
+/// failure. The written file must still be reloaded with
+/// [`ActorConfig::load_private`] before use.
+pub(crate) fn encode_deterministic_local_v0_2_actor_config(
+    input: DeterministicLocalV0_2ActorConfigInput,
+) -> Result<Vec<u8>, ActorConfigError> {
+    let bridge_endpoint = LoopbackHttpEndpoint::new(input.bridge_endpoint.as_str())
+        .map_err(|_| ActorConfigError::InvalidConfiguration)?;
+    let zebra_endpoint = LoopbackHttpEndpoint::new(input.zebra_endpoint.as_str())
+        .map_err(|_| ActorConfigError::InvalidConfiguration)?;
+    let raw = RawActorConfig {
+        schema_version: CONFIG_SCHEMA_VERSION,
+        role: input.role,
+        run_id: input.run_id,
+        swap_id: input.swap_id,
+        signed_agreement_file: input.signed_agreement_file,
+        signed_agreement_sha256: input.signed_agreement_sha256,
+        role_state_db: input.role_state_db,
+        claim_recovery: ClaimRecoveryConfig {
+            key_id: input.claim_recovery_key_id,
+            key_file: input.claim_recovery_key_file,
+        },
+        claim_preimage_file: input.claim_preimage_file,
+        zcash_key_file: input.zcash_key_file,
+        bridge: BridgeConfig {
+            endpoint: bridge_endpoint,
+            journal_db: input.bridge_journal_db,
+            capability_file: input.bridge_capability_file,
+            runtime: input.bridge_runtime,
+            request_timeout_millis: 10_000,
+        },
+        zebra: ZebraConfig {
+            endpoint: zebra_endpoint,
+            cookie_file: None,
+            identity: ZebraIdentityConfig {
+                network: ZcashNetworkConfig::Regtest,
+                rpc_chain: ZebraRpcChainConfig::Test,
+                consensus_branch_id: ConsensusBranchConfig::Nu6_2,
+                genesis_hash: input.zebra_genesis_hash,
+            },
+            counterparty_scan_blocks: input.counterparty_scan_blocks,
+        },
+        lez_discovery_window: input.lez_discovery_window,
+        zcash_funding_outpoints: input.zcash_funding_outpoints,
+    };
+    serde_json::to_vec_pretty(&raw).map_err(|_| ActorConfigError::InvalidConfiguration)
 }
 
 impl ActorConfig {
