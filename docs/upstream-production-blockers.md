@@ -49,3 +49,9 @@ deferral does not permit a devnet-only code path: future public activation must
 reuse the same binaries, ports, builders, and validators with only signed
 configuration, funding/authentication, confirmation policy, and required LEZ
 deployment changes.
+
+Gateway proposal defects are not Logos-owned component exceptions and are
+tracked separately in
+[Accepted proposal errata and evidence substitutions](proposal-acceptance-errata.md).
+ADR 0018 cannot waive their acceptance or repository-controlled cryptographic
+interoperability.

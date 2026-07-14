@@ -11,6 +11,20 @@ The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 
 ## Current status
 
+M2 is certified at its private local-functional PoC boundary under
+`m2-complete`. M3 is not active: its authority, current-code gap, proposed
+Bitcoin Core 31.1 Regtest topology, dependency candidates, actor flows, and
+acceptance gate are entry-audited in
+[ADR 0029](docs/architecture/0029-m3-bitcoin-local-poc-entry.md). The
+nonexistent DLC Schnorr-vector reference is separately tracked as
+[Gateway erratum GW-M3-001](docs/proposal-acceptance-errata.md), with no accepted
+replacement yet. There is no executable BTC SDK or BTC swap command yet. The
+planned M3 PoC uses only
+run-owned local Core/LEZ nodes and deterministic local funds; it uses no public
+RPC, faucet, or public funds. Cold setup will still depend on checksum-verified
+Bitcoin Core release assets and locked Rust registries, so those availability
+and vulnerability-scan risks remain explicit.
+
 Development has started with protocol and real-node acceptance tests. The
 current executable slices enforce:
 

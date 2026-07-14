@@ -163,7 +163,7 @@ flowchart TB
 
     subgraph Nodes["Actor-selected node boundary"]
         LEZ["LEZ sequencer<br/>dynamic local port<br/>typed exact-public contract<br/>public live execution pending"]
-        BTC["Bitcoin Core"]
+        BTC["Bitcoin Core 31.1 Regtest candidate<br/>M3 not active"]
         XMR["monerod + wallet RPC"]
         ZEC["Zebra 5.2.0 Regtest JSON-RPC<br/>retained proof host 32834"]
     end
@@ -957,6 +957,14 @@ sequenceDiagram
 BTC and ZEC support both product directions; XMR is LEZ-first only. Claim and
 refund order is construction-specific, as fixed in ADR 0008 and ADR 0010.
 
+ADR 0029 concretizes the planned BTC branch: distinct two-party aggregate claim
+authorities protect the Bitcoin and LEZ legs. The first direction-specific
+canonical claim—finalized LEZ bytes or a Bitcoin witness canonical at the
+negotiated confirmation policy—reveals the agreed scalar, and the second
+claimant adapts the opposite-chain signature. No standalone actor claim key may
+bypass that transcript. This is an audited M3 entry design, not current
+executable behavior.
+
 ## Abandonment and autonomous recovery flow
 
 ```mermaid
@@ -1078,7 +1086,9 @@ evidence, not present claims.
 | Maker/taker mini-apps | Same role suites through UI process boundaries | M6 |
 | ZEC private public-compatible local devnets and private recording/evidence | Independent happy/refund/reorg/concurrency actors across full local LEZ v0.2 and Zebra Regtest | M2 |
 | ZEC public testnet/deployment and public recordings | Deferred proposal evidence plus final production rehearsal/remediation | Production readiness / M7 under ADR 0023 |
-| Other public testnets and final review | BTC/XMR evidence plus remediation packet | M3–M4, M7 |
+| BTC private public-compatible local devnets and evidence | Independent actors complete both directions across Bitcoin Core 31.1 Regtest and local LEZ v0.2, with exact key-path witness and scalar extraction | M3 |
+| BTC public Testnet4 route and final review | Self-host/public node, wallet, funds and flakiness guide in M3; live public execution/remediation may remain private/deferred | M3 documentation, production readiness / M7 live evidence |
+| XMR stagenet and final review | Independent actors, COMIT/DLEQ evidence, and remediation packet | M4, M7 |
 
 No milestone is complete merely because an internal API test passes. Its tag
 must point to the commit whose role-real evidence crosses every applicable

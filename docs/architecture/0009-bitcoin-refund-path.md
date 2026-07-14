@@ -1,6 +1,6 @@
 # ADR 0009: Bitcoin uses a Taproot script-path CSV refund
 
-Status: Accepted; Bitcoin Core validation pending — 2026-07-11
+Status: Accepted; M3 entry audited, Bitcoin Core validation pending — 2026-07-14
 
 ```mermaid
 flowchart TB
@@ -66,5 +66,9 @@ pre-signed failure mode.
 Bitcoin Core tests cover the taproot commitment/control block, cooperative
 key-path claim, correct refund key, exact CSV lower boundary, early/wrong-key
 failure, reorged confirmation, realistic fee changes, replacement/child fee bump,
-and both trade directions. DLC adaptor-signature vectors and the third-party
-reviews remain independent release gates.
+and both trade directions. ADR 0029 records the progressive local-node entry
+boundary and the missing DLC Schnorr-vector reference. Official BIP-340/BIP-327
+vectors, swap-specific adaptor vectors, an independent implementation
+cross-check, and Core consensus validation are M3 gates. Formal third-party
+cryptographic review remains an M7 production-release gate; the existing DLC
+ECDSA corpus is not relabeled as Schnorr evidence.

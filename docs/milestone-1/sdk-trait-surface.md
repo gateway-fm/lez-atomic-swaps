@@ -1,6 +1,6 @@
 # Per-pair SDK trait surface
 
-Status: review candidate for Logos — 2026-07-11
+Status: review candidate for Logos; M3 entry corrections — 2026-07-14
 
 ```mermaid
 flowchart TB
@@ -109,6 +109,16 @@ sequenceDiagram
     Taker->>C: negotiate versioned terms
     Maker->>C: countersign exact transcript
     C->>SDK: persist terms + all current recovery material
+    opt BTC before any lock
+        Taker->>C: nonce commitments then public nonces
+        Maker->>C: nonce commitments then public nonces
+        Taker->>Taker: atomically persist exact partial outbox, consume nonce, zeroize
+        Maker->>Maker: atomically persist exact partial outbox, consume nonce, zeroize
+        Taker->>C: send persisted message-bound partial
+        Maker->>C: send persisted message-bound partial
+        C->>SDK: persist verified dual-chain aggregate presignatures
+        SDK->>SDK: verify consumed nonce tombstones and prove recovery completeness
+    end
     Taker->>Chains: submit first lock
     SDK->>Chains: validate canonical confirmation policy
     Maker->>Chains: submit second lock
@@ -131,7 +141,7 @@ sequenceDiagram
 
 | SDK | First/second lock evidence | Claim material | Recovery model |
 |---|---|---|---|
-| BTC–LEZ | exact P2TR outpoint/value/internal key/tapleaf/control block or LEZ escrow PDA/terms hash | adaptor pre-signature plus canonical completed BIP-340 signature, or scalar checked against adaptor point | Taproot CSV script-path refund on a BTC-funded leg; LEZ timestamp refund on a LEZ-funded leg |
+| BTC–LEZ | exact P2TR outpoint/value, aggregate internal key, x-only/parity convention, tapleaf/version, Merkle root, BIP-341 tweak, output key `Q`, control block and sighash policy; or LEZ escrow PDA/terms hash plus distinct aggregate witnessed authority | two exact-message aggregate adaptor pre-signatures persisted before lock; completed BIP-340 signature verified under tweaked `Q` or finalized LEZ aggregate signature, with exact scalar extraction | Taproot CSV script-path refund on a BTC-funded leg; LEZ timestamp refund on a LEZ-funded leg; maker-funded recovery earlier and taker-funded recovery later by a typed conservative margin |
 | XMR–LEZ | LEZ-first escrow, DLEQ transcript, Monero address/amount/tx proof and 10-confirmation observation | canonical LEZ witnessed signature and typed Monero spend-key share | taker refunds LEZ; maker recovery of XMR is key-share/event-gated, not a Monero timelock |
 | transparent ZEC–LEZ | exact transparent outpoint/value/BIP-199 redeem script/branch ID/expiry plus LEZ escrow | 32-byte SHA-256 preimage from the canonical LEZ claim, followed by the ZEC claim | LEZ timestamp refund first; ZEC CLTV refund later by the RFP-required margin |
 
@@ -150,7 +160,11 @@ raw JSON-RPC values. `RecoveryStore::commit_transition` atomically writes the
 validated event, new aggregate, secret-envelope changes, and pending outbox
 commands before any externally visible follow-up action.
 
-Every command has a stable request ID and is safe under at-least-once retry.
+Every command has a stable request ID, durable intent, and an adapter-specific
+delivery contract. Bitcoin and other byte-stable broadcasts reconcile by exact
+transaction identity before retransmission. LEZ follows ADR 0026: after an
+ambiguous submission it reconciles exact chain evidence and never blindly
+retries. No boundary promises universal at-least-once safety.
 Adapters report chain identity and capability at startup, allowing one missing
 chain to degrade independently. After the first lock, the coordinator type no
 longer contains discovery or negotiation handles.
@@ -173,8 +187,10 @@ string-only errors are not an SDK boundary.
 Secrets use `secrecy` containers and `zeroize`/`Zeroizing`; they have redacted
 `Debug`, no `Display`, and no default `Serialize`. Explicit encrypted recovery
 envelopes are the only persistence representation. Cryptographic operations use
-reviewed upstream crates and published vectors; the SDK does not expose custom
-curve arithmetic.
+source-reviewed, policy-gated upstream candidates and published vectors;
+beta/unaudited candidates remain PoC-only until their documented review gate.
+Formal third-party cryptographic review remains M7. The SDK does not expose
+custom curve arithmetic.
 
 ## Compatibility and documentation policy
 

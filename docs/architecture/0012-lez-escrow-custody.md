@@ -10,8 +10,8 @@ flowchart LR
     Asset -->|"custom token"| ATA["ATA of metadata and definition"]
     Depositor["Direction-derived depositor"] -->|"signed fund"| Vault
     Depositor -->|"signed ATA transfer"| ATA
-    Claimant["Direction-derived claimant"] -->|"signed preimage claim"| Vault
-    Claimant -->|"signed preimage claim"| ATA
+    Claimant["Direction-derived claimant"] -->|"pair-specific valid claim"| Vault
+    Claimant -->|"pair-specific valid claim"| ATA
     Vault --> NativeProof["Canonical v0.2 actual-node native claim<br/>forward and reverse GREEN"]
     ATA --> TokenProof["Recursive two-definition claim and refund<br/>compatibility tests GREEN"]
     Refund["Permissionless fixed-destination refund"] -.-> Vault
@@ -40,8 +40,11 @@ Use a swap-program-owned public metadata PDA plus exactly one custody path:
 
 Initialization, claim, and refund verify derivation, owner, asset definition,
 exact balance, and fixed destinations. Refund is permissionless after the LEZ
-timestamp deadline. BTC/XMR witnessed claims use isolated per-swap claim
-authorities; secret/hash claims use reviewed library verification.
+timestamp deadline. ADR 0029 supersedes the BTC authority detail: both BTC
+directions use distinct two-party aggregate witnessed authorities bound to exact
+claim messages and adaptor sessions, with no actor-owned or direct-secret bypass.
+XMR retains its separately reviewed pair-specific witnessed authority; hash
+claims use reviewed library verification.
 
 The first ZEC compatibility fixture was narrower than this target: it directly
 mutated swap-program-owned native accounts and stored custom tokens at an escrow

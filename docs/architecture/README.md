@@ -37,6 +37,7 @@ flowchart TB
     Ports --> RPC["0007 Maker RPC"]
     Scope --> Direction["0008 Bidirectional ordering"]
     Direction --> Bitcoin["0009 Bitcoin refund"]
+    Bitcoin --> BitcoinEntry["0029 M3 Bitcoin entry"]
     Direction --> Deadlines["0010 Typed deadlines"]
     LEZ --> Deadlines
     Deadlines --> Recovery["0011 Recovery triggers"]
@@ -92,7 +93,7 @@ flowchart TB
 | [0006](0006-lez-upstream-semantics.md) | Pin LEZ behavior and verify source assumptions executablely | Accepted |
 | [0007](0007-maker-local-rpc.md) | Authenticated local JSON-RPC with a transport-hardening gate | Accepted, production transport pending |
 | [0008](0008-bidirectional-role-ordering.md) | Separate product direction from reviewed pair funding capability | Accepted; XMR is LEZ-first only |
-| [0009](0009-bitcoin-refund-path.md) | Taproot key-path cooperative claim with script-path CSV refund | Accepted, M3 validation pending |
+| [0009](0009-bitcoin-refund-path.md) | Taproot key-path cooperative claim with script-path CSV refund | Accepted; M3 entry audited, actual-node validation pending |
 | [0010](0010-typed-cross-chain-deadlines.md) | Typed consensus clocks plus conservative cross-chain safety bounds | Accepted for deadline legs; XMR superseded by 0011 |
 | [0011](0011-event-gated-recovery.md) | Recovery uses typed deadlines or canonical events; XMR has no native timelock | Accepted and represented in core/RPC/CLI |
 | [0012](0012-lez-escrow-custody.md) | Split metadata PDA from authenticated-transfer custody or required custom-token ATA | Native authenticated-transfer and recursive ATA compatibility paths are GREEN; canonical v0.2 native custody completed both local happy directions, while actual-node refund and token-corridor hardening remain deferred |
@@ -112,3 +113,4 @@ flowchart TB
 | [0026](0026-lez-v02-at-most-once-submission-and-query-finality.md) | Persist AttemptStarted before one v0.2 send and prove inclusion/finality through bounded sequencer and indexer queries | Architecture and durable one-call/restart tests are GREEN; actual generated-RPC admission and separate manual block/hash/account finality are evidenced for Vault onboarding and both happy corridors. Integrated bounded query/journal progression and ambiguous multi-effect restart reconciliation remain later hardening |
 | [0027](0027-progressive-jpeg-milestone-delivery.md) | Deliver a reproducible actual-local-devnet milestone PoC first, then owner-controlled QA, chaos, information-security, and production-readiness hardening | Accepted; M2 is certified at its local-functional PoC boundary under `m2-complete`. Accumulated hardening is carried evidence until the owner enters and revalidates its phase; no transition to QA or M3 is implied |
 | [0028](0028-dormant-public-route-portability.md) | Admit exact dormant public LEZ and Zebra routes without exposing the actor-sidecar boundary or weakening agreement-bound pre-effect validation | Canonical Docker target and finalized local deployment binding are GREEN; exact dormant public configuration and bounded-client construction are GREEN without public I/O. Live public execution and official LEZ finalized-tip availability remain production gates |
+| [0029](0029-m3-bitcoin-local-poc-entry.md) | Enter M3 through isolated Bitcoin Core Regtest and LEZ v0.2 actors with aggregate witnessed claim authorities | Proposed and entry-audited; milestone activation, dependency acceptance, and implementation await owner transition |

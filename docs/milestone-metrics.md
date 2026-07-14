@@ -21,11 +21,28 @@ Status vocabulary:
 |---|---|---|---|---|
 | M1 | Historical completed milestone | Historical evidence predates ADR 0027; not retroactively reclassified | `m1-complete` and corrective tag `m1-complete.1` | No transition requested |
 | M2 | Certified local-functional PoC | Canonical Docker-built/deployed artifact, both local LEZ/ZEC directions, and the exact-tree repository gates are GREEN; later hardening is deferred | `m2-complete` | M2 completion/tag directed; no QA or M3 transition requested |
-| M3 | Not active | Awaiting owner transition | None | Not requested |
+| M3 | Not active | Entry authority, code gap, topology, dependency candidates, PoC gate, and Gateway proposal/reference defect audited; no implementation evidence exists | None | Awaiting explicit owner transition |
 | M4 | Not active | Awaiting owner transition | None | Not requested |
 | M5 | Not active | Awaiting owner transition | None | Not requested |
 | M6 | Not active | Awaiting owner transition | None | Not requested |
 | M7 | Not active | Awaiting owner transition | None | Not requested |
+
+## M3 entry scorecard
+
+Status: entry-audited and awaiting owner transition. Counts below deliberately
+measure evidence instead of assigning a percentage to work that has not begun.
+
+| Metric | Current measurement | Evidence or next measurement point |
+|---|---|---|
+| Live authorities reconciled | 2 of 2 | RFP repository commit `969a76d`; accepted issue #112 body SHA-256 `49356263...f1c87`; issue #61 excluded |
+| Executable BTC-specific crates/components | 0 | No BTC SDK, Core adapter, actor, runner, or LEZ BTC guest path exists |
+| Dependency groups accepted | 0 | Core 31.1 plus four Rust library groups are source/license candidates only; resolved graph and interop gates precede acceptance |
+| Actual local M3 node compositions | 0 | First evidence is isolated Core 31.1 Regtest plus the pinned LEZ v0.2 stack |
+| Supported happy directions completed | 0 of 2 | `TakerSellsForeign` then `TakerSellsLez` against actual local nodes |
+| Runnable manual BTC flows | 0 | Manual guide explicitly says not runnable and adds commands only with executable implementation |
+| Gateway proposal acceptance errata | 1 open | GW-M3-001: nonexistent DLC Schnorr adaptor-vector path; proposed replacement evidence contract is not yet accepted |
+| QA / chaos / information security / production phases | Not active | Each phase begins only after its owner transition; continuous CI/security baselines remain enforced |
+| M3 completion tag | None | Created only on the exact pushed commit after every selected M3 gate is evidenced |
 
 ## M2 current scorecard
 

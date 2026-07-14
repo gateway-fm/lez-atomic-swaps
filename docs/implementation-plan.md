@@ -225,7 +225,7 @@ without weakening the tag evidence rule.
 |---|---|---|
 | M1 | Designs, threat model, LEZ verification, SDK surface, persistence/node decisions | Accepted proposal and current source reconciled |
 | M2 | ZEC transparent BIP-199/LEZ HTLC end to end | M1 HTLC/timelock design and Zebra test harness approved |
-| M3 | BTC Schnorr adaptor/Taproot end to end | DLC vectors and refund construction approved |
+| M3 | BTC Schnorr adaptor/Taproot end to end | Owner transition; ADR 0009 refund accepted; Gateway erratum GW-M3-001 tracked without claiming an accepted substitute |
 | M4 | XMR Ed25519 adaptor/cross-curve DLEQ end to end | COMIT vectors and key-share recovery design approved |
 | M5 | Persistent coordinator, daemon, CLIs, price plugins, fuzzing | At least one real pair adapter stable; RPC/persistence ADRs accepted |
 | M6 | Maker/taker Basecamp mini-apps | Daemon RPC stable and role E2E reusable |
@@ -1015,6 +1015,100 @@ outputs above.
   Logos production-blocker register; it does not claim actual-node recovery,
   chaos, public execution, or production readiness. Logos-owned release
   blockers follow ADR 0018 and are final-production gates rather than M2 stops.
+
+## Milestone 3 entry plan: BTC adaptor/Taproot end to end
+
+Status: **entry-audited, not active**. The current tree has no executable BTC
+leg. Generic `Pair::Bitcoin`, deadline, persistence, and transition tests are
+reusable scaffolding only; they do not prove a Bitcoin SDK, Bitcoin Core RPC,
+Taproot construction, adaptor exchange, LEZ BTC claim path, or actor journey.
+
+Authority was reread on 2026-07-14: live RFP repository commit `969a76d`
+(file blob `d0fa52b`) and accepted issue #112, whose newline-normalized body
+SHA-256 remains
+`49356263a762307abc0f8dd2863ac5af8fe13d9b17b674f242d025de655f1c87`.
+Issue #61 remains superseded.
+
+Accepted issue #112 names six explicit M3-specific outputs:
+
+1. update the LEZ escrow for the BTC adaptor/witness-gated claim;
+2. deliver the full-lifecycle LEZ/BTC SDK;
+3. supply conformance and swap-specific adaptor vectors;
+4. document self-hosted/public Bitcoin testnet, wallet, and funding setup;
+5. record happy, refund/timeout, and concurrent BTC demos; and
+6. explain the Aumayr and Fournier constructions inline.
+
+These six proposal outputs are not the complete acceptance checklist. The
+applicable live RFP contracts remain binding, including F2 and F5–F7, U1/U8,
+R1–R7, P1, S1–S8, and D1: native/custom assets, taker-first ordering, post-lock
+independence, persistence, concurrency, timelock/refund rationale, compute
+evidence, CI, tests for every hard requirement, docs, reference integration,
+write-up, SDK API documentation, and all three BTC demos.
+
+The proposal's named DLC `AdaptorSignature.md` Schnorr corpus does not exist;
+the live DLC corpus is ECDSA. M3 must not fake literal conformance.
+[GW-M3-001](proposal-acceptance-errata.md) proposes official BIP-340/BIP-327
+vectors, project-owned adaptor positive/negative fixtures, an independent
+implementation cross-check, and Bitcoin Core consensus. That substitute is not
+yet accepted, so no tag may present it as literal or accepted DLC conformance.
+
+### Progressive local PoC
+
+After the owner enters M3, implement the smallest complete vertical slice in
+this order:
+
+1. source/checksum-pin Bitcoin Core 31.1 and boot an isolated, run-owned Regtest
+   node with deterministic local funds, cookie RPC, allocated loopback ports,
+   exact cleanup, and immutable version/image evidence;
+2. construct the exact aggregate internal key, tapleaf/version, Merkle root,
+   BIP-341 tweak/parity, output key `Q`, control block, and CSV refund leaf,
+   then prove funding and a one-item cooperative key-path spend through Core;
+3. integrate a candidate MuSig2/BIP-340 adaptor library without custom curve
+   arithmetic; before funding, complete both exact-message adaptor sessions,
+   durably reserve/consume one-use nonces, verify and persist both aggregate
+   pre-signatures and refund material, and prove signatures under tweaked `Q`;
+4. update and deploy the pinned LEZ v0.2 guest with a distinct two-party
+   aggregate witnessed-claim authority in both directions—never an actor-owned
+   or direct-`claim_adaptor_secret` bypass;
+5. add a public, role-fixed BTC SDK, Core adapter, and independent maker/taker
+   reference actors with separate configs, keys, stores, and recovery material;
+6. run `TakerSellsForeign`, then `TakerSellsLez`, through actual local LEZ and
+   Bitcoin nodes and emit secret-safe evidence from both actors and chains.
+
+The PoC gate requires both actors terminal `Completed`, taker-first canonical
+at the negotiated policy before the maker effect, no scalar revelation before
+both locks, complete durable pre-lock presignature/recovery evidence, and exact
+scalar extraction from either finalized LEZ bytes or Bitcoin bytes canonical at
+the negotiated confirmation policy, according to direction. The BIP-341
+key-path witness is one signature under tweaked `Q` with no script/control
+block; the exact BTC outpoint is spent once, recipients are correct, terminal
+LEZ custody is zero, post-lock completion needs no counterparty/Delivery/Chat,
+and manual commands reproduce the evidence. The agreement commits the exact CSV
+refund tapleaf/control block plus maker-funded-shorter/taker-funded-longer typed
+recovery schedule even when the happy PoC does not execute it.
+
+### Later owner-selected hardening
+
+QA begins only after the working PoC and uses RED-GREEN-REFACTOR for malformed
+adaptor inputs, wrong message/key/point, nonce reuse, before/at/after CSV,
+wrong-key refund, restart, unknown submission, reorg/replacement, fee policy,
+concurrency, custom-token parity, post-lock outage, and every traced invariant.
+Chaos, information-security, public Testnet4, production RPC/client replacement,
+performance, formal review, and release packaging remain separately measured
+phases. Public routes must select Testnet4 explicitly; legacy `testnet` is not
+an acceptable ambiguous configuration value.
+
+Candidate pins are Bitcoin Core 31.1, `bitcoin` 0.32.101, `miniscript` 13.1.0,
+`corepc-client` 0.16.0/`corepc-types` 0.15.0, and `musig2` 0.4.1. They remain
+candidates until the exact resolved graph passes source, license, advisory,
+vulnerability, vector, interoperability, consensus, and secret-handling gates.
+`corepc-client` is test-oriented and `musig2` is beta/unaudited, so neither
+may be silently promoted to production readiness.
+
+ADR 0029 contains the component, pre-lock signing, actor-flow, atomicity,
+isolation, and evidence diagrams. This plan does not activate M3 or authorize an
+`m3-complete` tag. GW-M3-001 also requires an explicit disposition before any
+completion tag can describe the accepted proposal as satisfied.
 
 ## Docker isolation policy
 

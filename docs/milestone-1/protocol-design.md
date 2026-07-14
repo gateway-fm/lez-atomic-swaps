@@ -1,12 +1,16 @@
 # Per-leg protocol design and atomicity argument
 
-Status: review candidate; cryptographic vectors, calibrated parameters, and LEZ
-sequencer reproducers remain executable entry gates — 2026-07-11
+Status: review candidate; M3 authority entry-audited, while cryptographic
+vectors, calibrated parameters, and LEZ sequencer reproducers remain executable
+gates — 2026-07-14
 
 This design follows the live RFP-003 and accepted Gateway proposal #112. It uses
-published constructions rather than inventing cryptography: BIP-340/BIP-341 and
-DLC adaptor-signature vectors for BTC, the h4sh3d/COMIT construction for XMR,
-and BIP-199 plus ZIP-203 for transparent ZEC.
+published constructions rather than inventing cryptography: BIP-340/BIP-341,
+BIP-327, and a Schnorr adaptor candidate subject to executable review for BTC;
+the h4sh3d/COMIT
+construction for XMR; and BIP-199 plus ZIP-203 for transparent ZEC. The accepted
+proposal's named DLC Schnorr vector file does not exist; DLC's ECDSA adaptor
+corpus is not treated as BIP-340 evidence.
 
 ```mermaid
 flowchart TB
@@ -43,9 +47,20 @@ canonical at the negotiated policy.
 
 The Bitcoin output is P2TR. Its cooperative claim uses a BIP-340 adaptor
 signature and Taproot key path. ADR 0009 commits a CSV refund tapleaf for the
-Bitcoin funder. The completed signature and adaptor pre-signature satisfy the DLC
-witness-extraction relation; accepted signature bytes on LEZ remain protected by
-the sequencer reproducer gate.
+Bitcoin funder. ADR 0029 requires the aggregate internal key, exact tapleaf and
+Merkle root to derive output key `Q`, then applies that identical BIP-341 tweak
+and parity convention inside MuSig2/adaptor signing. Every final signature must
+verify under `Q` for the exact key-path sighash and pass Bitcoin Core consensus;
+verification under the raw aggregate internal key is insufficient. Accepted
+signature bytes on LEZ remain protected by the v0.2 sequencer reproducer gate.
+Both chain claim authorities are distinct two-party aggregate keys so neither
+actor can bypass extraction with a standalone claim key.
+
+Before the first lock, both roles freeze the exact BTC and LEZ claim messages,
+complete and verify the two domain-separated adaptor presignature transcripts,
+persist every public transcript/presignature/refund artifact, and consume and
+zeroize each one-use secret nonce. Funding is forbidden until either role can
+finish from local state plus chain nodes without another signing round.
 
 For `TakerSellsForeign`, the taker funds the longer Bitcoin output, then the maker
 funds shorter LEZ escrow. The taker claims LEZ first with the isolated
@@ -55,10 +70,13 @@ LEZ escrow and the maker funds shorter BTC. The taker completes the Bitcoin
 key-path claim first; its canonical signature reveals the witness with which the
 maker claims LEZ.
 
-Security claims rely on the reviewed adaptor construction's aEUF-CMA security,
-pre-signature adaptability, and witness extractability. A forged pre-signature,
-wrong sighash/output, non-canonical scalar, changed signature bytes, or mismatched
-Taproot commitment is terminal invalid evidence—not a retryable observation.
+The construction targets aEUF-CMA security, pre-signature adaptability, and
+witness extractability, but those properties are not yet implementation evidence.
+M3 must bind them to the exact-pinned candidate, vectors, independent cross-check,
+tweak/parity tests, and consensus results. A forged pre-signature, wrong
+sighash/output, non-canonical scalar, changed signature bytes, nonce reuse, or
+mismatched Taproot commitment is terminal invalid evidence—not a retryable
+observation.
 
 ## XMR–LEZ
 
@@ -131,8 +149,9 @@ hidden guarantees.
 
 ## Primary references and executable gates
 
-- [BIP-340](https://bips.dev/340/), [BIP-341](https://bips.dev/341/), and the
-  DLC adaptor-signature specifications/vectors;
+- [BIP-340](https://bips.dev/340/), [BIP-341](https://bips.dev/341/), and
+  [BIP-327](https://bips.dev/327/) vectors, plus exact-pinned swap-specific
+  Schnorr adaptor fixtures and an independent implementation cross-check;
 - [h4sh3d paper](https://eprint.iacr.org/2020/1126) and pinned
   [COMIT reference](https://github.com/comit-network/xmr-btc-swap/commit/dc6ba84bbb1fe5ecc69581fec7dd8529567c4e32);
 - [BIP-199](https://bips.dev/199/) and

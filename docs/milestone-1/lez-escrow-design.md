@@ -1,11 +1,11 @@
 # LEZ escrow and SPEL IDL design
 
-Status: source-correct local implementation and measured recursive costs proven;
-LEZ v0.2 deployment remains a Milestone 2 gate — 2026-07-12
+Status: M2 source-correct custody and local v0.2 deployment proven; BTC claim
+authority superseded for M3 entry by ADR 0029 — 2026-07-14
 
 ```mermaid
 flowchart TB
-    Terms["Signed terms + per-swap claim key"] --> Meta["Escrow metadata public PDA<br/>owned by swap program"]
+    Terms["Signed terms + pair claim commitment"] --> Meta["Escrow metadata public PDA<br/>owned by swap program"]
     Meta --> Native{"LEZ asset kind"}
     Native -->|native| Vault["Native vault public PDA<br/>owned by authenticated_transfer"]
     Native -->|custom fungible| ATA["ATA(metadata PDA, token definition) address<br/>owned by token program"]
@@ -19,9 +19,13 @@ flowchart TB
 
 ## Source-backed account model
 
-The design targets `logos-blockchain/logos-execution-zone` commit
+The historical source proof targeted
+`logos-blockchain/logos-execution-zone` commit
 `cac4921581b37e85ae25e940f3a62412cd22308e`, not the older `nssa` paths in
-current SPEL documentation.
+SPEL documentation. M2 then deployed the v0.2 target at
+`a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a`. Because BTC adaptor extraction
+depends on exact accepted signature bytes, M3 must rerun the transaction-equality
+and byte-preservation reproducer against that exact v0.2 target before funding.
 
 Each swap has a public metadata PDA derived by the generated SPEL client from
 the escrow program ID and the exact 32-byte `swap_id`. The checked guest declares
@@ -38,7 +42,8 @@ account and stores:
 - depositor and claimant destination account IDs;
 - native-vault PDA or custom-token definition plus ATA address;
 - claim mode and its SHA-256/adaptor-point commitment;
-- per-swap witnessed-claim authority where the direction requires it;
+- pair-specific witnessed-claim authority; BTC uses the distinct two-party
+  aggregate authority and exact-message commitment defined by ADR 0029;
 - LEZ timestamp refund deadline and foreign-lock commitment digest; and
 - `Empty | Funded | Claimed | Refunded`, plus terminal transaction hash.
 
@@ -90,16 +95,24 @@ destination.
 
 | Pair/direction | LEZ claim condition | Evidence made available to the other leg |
 |---|---|---|
-| BTC, taker sells BTC | `claim_witnessed`, authorized by an isolated per-swap taker claim account | The taker's accepted LEZ BIP-340 authorization signature lets the maker extract `t` and claim BTC |
-| BTC, taker sells LEZ | `claim_adaptor_secret(t)` and `xonly(tG) == adaptor_point` using the reviewed secp256k1 library | The taker's BTC key-path signature reveals `t`; maker supplies it to LEZ |
+| BTC, taker sells BTC | `claim_witnessed`, authorized only by a distinct two-party aggregate key bound to the exact LEZ claim message and adaptor session | The taker adapts the aggregate LEZ pre-signature; its finalized BIP-340 signature lets the maker extract `t` and adapt the BTC key-path claim |
+| BTC, taker sells LEZ | `claim_witnessed`, authorized only by a second distinct two-party aggregate key bound to the exact LEZ claim message and adaptor session | The taker's canonical BTC key-path signature reveals `t`; the maker uses it to adapt the already verified aggregate LEZ pre-signature |
 | XMR, taker sells LEZ only | `claim_witnessed`, authorized by an isolated per-swap maker claim account bound to the reviewed DLEQ transcript | The accepted LEZ signature reveals the share bound to the Monero spend-key recovery path |
 | ZEC, either direction | `claim_hashlock(preimage)` and `SHA256(preimage) == digest`; the fixed LEZ recipient is the revealing claimant | The canonical LEZ claim reveals the preimage used by the ZEC recipient |
 
-For witnessed claims, setup freezes the exact public transaction message and
-account nonce before either lock, and the authority is never reused. The guest
-checks the authority flag; LEZ state validation checks the BIP-340 signature;
-the included public transaction retains the witness bytes used for extraction.
-The pinned semantic verifier is a release gate for that final property.
+For BTC witnessed claims, setup freezes the exact public transaction message,
+account nonce, distinct aggregate authority, adaptor point, nonce transcript,
+and verified aggregate adaptor pre-signature before either lock. No actor owns a
+standalone key accepted by that authority, and the guest exposes no direct
+`claim_adaptor_secret` bypass. Each secret signing nonce is domain-separated,
+reserved durably and used for one exact message. Before send, one atomic write
+persists the exact partial-signature outbox bytes and its consumed tombstone;
+the nonce is then zeroized and only those persisted bytes may be retransmitted.
+The verified pre-signature, tombstone, and public transcript remain. The guest
+checks the aggregate authority binding; LEZ state validation checks the BIP-340
+signature; the included public transaction retains the exact witness bytes used
+for extraction. The pinned v0.2 semantic reproducer is a release gate for that
+final property.
 
 The XMR cross-curve DLEQ is verified with the reference construction before
 funding and its transcript hash is stored in metadata. The guest does not
@@ -114,7 +127,6 @@ wire JSON:
 Instruction =
   Initialize { terms: EscrowTerms }
   ClaimHashlock { swap_id: Bytes32, preimage: Bytes32 }
-  ClaimAdaptorSecret { swap_id: Bytes32, secret: Scalar32 }
   ClaimWitnessed { swap_id: Bytes32 }
   Refund { swap_id: Bytes32 }
 
@@ -123,8 +135,11 @@ EscrowTerms = {
   asset: Native | CustomFungible { definition_id },
   amount_u128, depositor, claimant, custody_account,
   claim: Hashlock { digest } |
-         AdaptorSecret { xonly_point } |
-         Witnessed { authority, transcript_hash },
+         Witnessed {
+           aggregate_authority,
+           transcript_hash,
+           exact_message_commitment
+         },
   refund_at_timestamp, foreign_lock_digest
 }
 

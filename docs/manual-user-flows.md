@@ -12,6 +12,29 @@ self-hosted Zebra route and Tatum's public-provider Testnet Zebrad route, but
 explicitly leaves live execution pending the project-owned transparent signer,
 HTTPS provider transport, and actor adapter.
 
+## M3 Bitcoin status: entry-audited, not runnable
+
+There is no executable LEZ/BTC flow in the current tree. Generic Bitcoin
+state-machine tests do not fund or spend a Bitcoin output, so this guide provides
+no placeholder command and makes no M3 completion claim. The proposed runnable
+boundary is documented in
+[ADR 0029](architecture/0029-m3-bitcoin-local-poc-entry.md): one run-owned
+Bitcoin Core 31.1 Regtest node, the pinned local LEZ v0.2 stack, independent
+maker/taker actors, exact aggregate-key P2TR funding/key-path claim, and both
+directions through the public BTC SDK boundary.
+
+The future PoC command must allocate a unique `RUN_ID`, loopback RPC port,
+provisioner-only full cookie, distinct maker/taker `rpcauth` plus
+`rpcwhitelist` credentials, Compose project/network/volumes, actors, stores,
+client-side keys, provisioner wallet, and evidence root. It must clean only
+resources labeled with that run. Regtest mining provides
+deterministic local funds; no public RPC, faucet, public funds, or public chain
+is part of this PoC. Cold setup will require checksum-verified Bitcoin Core
+release assets and locked Rust dependencies, whose registry/CDN availability and
+vulnerability scans can fail independently of protocol behavior. This section
+will gain the exact build, start, role-flow, evidence-inspection, and cleanup
+commands in the same commit that makes them executable.
+
 ## Can I run the complete swap myself?
 
 Yes, as a private development PoC against already-running isolated local

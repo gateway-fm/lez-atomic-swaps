@@ -73,15 +73,21 @@ and a supply-chain attacker.
 
 ## Bitcoin-specific threats
 
-- Adaptor pre-signature forgery or failed witness extraction: use a reviewed
-  construction and DLC vectors; prove aEUF-CMA, witness extractability, and
-  pre-signature adaptability assumptions.
+- Adaptor pre-signature forgery or failed witness extraction: subject the
+  exact-pinned Schnorr candidate to official BIP-340/BIP-327 vectors,
+  swap-specific positive/negative fixtures, an independent implementation
+  cross-check, and Core consensus; prove the claimed aEUF-CMA, witness
+  extractability, and pre-signature adaptability assumptions. DLC's ECDSA
+  adaptor corpus is not Schnorr evidence.
 - Refund fragility: ADR 0009 selects a consensus-enforced Taproot script-path CSV
   refund. Validate exact boundary, key backup, current-fee construction, RBF/CPFP,
   and reorg behavior against Bitcoin Core.
-- Signature byte mutation: extraction depends on the accepted BIP-340 scalar.
-  The pinned sequencer transaction-equality test is the byte-preservation gate;
-  the claim authority is isolated per swap so its message and nonce are frozen.
+- Signature byte mutation or signing bypass: extraction depends on the accepted
+  BIP-340 scalar. The pinned v0.2 sequencer transaction-equality test is the
+  byte-preservation gate; each BTC leg uses a distinct two-party aggregate
+  authority bound to one exact message. No standalone actor key or direct-secret
+  instruction is accepted, and each secret nonce is durably reserved, consumed
+  once, then zeroized.
 - UTXO replacement/fee starvation: bind exact outpoint/script/value and maintain a
   fee-bump path that cannot alter adaptor commitments.
 

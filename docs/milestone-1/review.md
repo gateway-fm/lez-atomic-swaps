@@ -86,8 +86,9 @@ moved.
 
 ### M2 — transparent ZEC
 
-- Start RED with native/custom-token PDA/ATA substitution, exact balance,
-  SHA-256 preimage, and claim/refund boundary vectors.
+- Under ADR 0027, first reproduce the actual-node happy PoC; after owner
+  transition to QA, start RED with native/custom-token PDA/ATA substitution,
+  exact balance, SHA-256 preimage, and claim/refund boundary vectors.
 - Prove one SPEL-generated program/IDL/client against the pinned LEZ commit.
 - Build Zebra plus local canonical Zcash construction in a uniquely named,
   ephemeral-port test harness; cover BIP-199 and ZIP-203 expiry recreation.
@@ -96,16 +97,23 @@ moved.
 
 ### M3 — BTC
 
-- Start RED from official DLC adaptor vectors and the exact BIP-340 witness
-  relation used by the isolated LEZ claim authority.
+- Under ADR 0027, first reproduce the actual-node happy PoC. After owner
+  transition to QA, start RED from official BIP-340/BIP-327 vectors,
+  swap-specific adaptor fixtures, and the exact witnessed aggregate-signature
+  relation used by each distinct two-party LEZ authority. The named DLC Schnorr
+  vector file does not exist, its ECDSA corpus is not substitute evidence, and
+  GW-M3-001's replacement contract remains acceptance-pending.
 - Exercise P2TR key-path claim plus CSV tapleaf refund at before/at/after heights,
-  RBF/CPFP fee stress, reorg, and lost-key recovery against Bitcoin Core.
+  RBF/CPFP fee stress, reorg, backup/restore, and explicit fail-closed refund-key
+  loss against Bitcoin Core.
 - Exit with both supported directions and real maker/taker role journeys.
 
 ### M4 — XMR
 
-- Start RED from pinned COMIT/cross-curve-DLEQ vectors and exact typed key-share
-  artefacts; do not retain the 32-byte placeholder evidence.
+- Under ADR 0027, first reproduce the actual-node happy PoC. After owner
+  transition to QA, start RED from pinned COMIT/cross-curve-DLEQ vectors and
+  exact typed key-share artefacts; do not retain the 32-byte placeholder
+  evidence.
 - Preserve LEZ-first-only capability and event-gated maker recovery through
   `monerod`/wallet RPC restart, scan lag, partial transcript loss, and reorg.
 - Exit with stagenet happy/refund/concurrent role E2E.
