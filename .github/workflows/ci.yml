@@ -22,6 +22,7 @@ jobs:
       - run: ./scripts/test-spin-lock-remediation.sh
       - run: ./scripts/check-github-action-pins.sh
       - run: ./scripts/run-ci-quality-gates.sh
+      - run: ./scripts/check-bitcoin-core-isolation.sh
 
   container-security:
     name: Repository-owned findings are fail-hard; Logos-owned findings remain visible

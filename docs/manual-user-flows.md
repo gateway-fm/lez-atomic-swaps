@@ -12,12 +12,13 @@ self-hosted Zebra route and Tatum's public-provider Testnet Zebrad route, but
 explicitly leaves live execution pending the project-owned transparent signer,
 HTTPS provider transport, and actor adapter.
 
-## M3 Bitcoin status: entry-audited, not runnable
+## M3 Bitcoin status: active, Core infrastructure underway
 
-There is no executable LEZ/BTC flow in the current tree. Generic Bitcoin
-state-machine tests do not fund or spend a Bitcoin output, so this guide provides
-no placeholder command and makes no M3 completion claim. The proposed runnable
-boundary is documented in
+There is no executable LEZ/BTC swap flow yet. The exact Core 31.1 release
+verifier and isolated minimal-image fixture are executable, while the role-aware
+Regtest smoke runner is the active slice. Generic Bitcoin state-machine tests do
+not fund or spend a Bitcoin output, so this guide provides no placeholder swap
+command and makes no M3 completion claim. The runnable boundary is documented in
 [ADR 0029](architecture/0029-m3-bitcoin-local-poc-entry.md): one run-owned
 Bitcoin Core 31.1 Regtest node, the pinned local LEZ v0.2 stack, independent
 maker/taker actors, exact aggregate-key P2TR funding/key-path claim, and both
@@ -32,7 +33,7 @@ deterministic local funds: the descriptor/key derivation, genesis, clock and
 transaction policy, maturity, values, and confirmation assertions repeat,
 while block hashes and transaction IDs may differ across run IDs and are
 recorded as evidence. No public RPC, faucet, public funds, or public chain is
-part of this PoC. Cold setup will require checksum-verified Bitcoin Core
+part of this PoC. Cold setup requires checksum-verified Bitcoin Core
 release assets and locked Rust dependencies, whose registry/CDN availability and
 vulnerability scans can fail independently of protocol behavior. This section
 will gain the exact build, start, role-flow, evidence-inspection, and cleanup

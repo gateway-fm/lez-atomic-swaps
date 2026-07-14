@@ -1,6 +1,6 @@
 # ADR 0029: M3 starts with an isolated Bitcoin actual-node PoC
 
-Status: Proposed entry boundary; milestone not active — 2026-07-14
+Status: Accepted entry boundary; M3 active — 2026-07-14
 
 ## Context
 
@@ -19,8 +19,8 @@ substituted or marked passing.
 
 ## Decision
 
-When the owner explicitly enters M3, the PoC target is a reproducible local
-happy path through a Bitcoin Core 31.1 Regtest node built from the signed,
+The owner entered M3 on 2026-07-14. The PoC target is a reproducible local happy
+path through a Bitcoin Core 31.1 Regtest node built from the signed,
 checksum-pinned official binary archive and bound to its exact source revision,
 plus the pinned local LEZ v0.2 stack. It uses independent maker and taker
 actors, separate keys and stores, actual signed transactions, and the same
@@ -234,6 +234,6 @@ through the Bitcoin library plus Bitcoin Core consensus. Gateway erratum
 clarification has not yet been posted. It does not permit ECDSA evidence to be
 mislabeled as Schnorr evidence.
 
-This ADR records a proposed entry boundary only. It does not activate M3, accept
-the candidate dependency graph, claim either direction works, or authorize an
+This ADR activates M3 and accepts only its entry boundary. It does not accept the
+candidate dependency graph, claim either direction works, or authorize an
 `m3-complete` tag.

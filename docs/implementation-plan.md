@@ -1018,8 +1018,10 @@ outputs above.
 
 ## Milestone 3 entry plan: BTC adaptor/Taproot end to end
 
-Status: **entry-audited, not active**. The current tree has no executable BTC
-leg. Generic `Pair::Bitcoin`, deadline, persistence, and transition tests are
+Status: **active; progressive local PoC in progress**. The exact Core 31.1
+release verifier and minimal isolated image fixture are GREEN; the role-aware
+Regtest runner is the active first slice. The current tree still has no
+executable BTC swap leg. Generic `Pair::Bitcoin`, deadline, persistence, and transition tests are
 reusable scaffolding only; they do not prove a Bitcoin SDK, Bitcoin Core RPC,
 Taproot construction, adaptor exchange, LEZ BTC claim path, or actor journey.
 
@@ -1054,8 +1056,8 @@ yet accepted, so no tag may present it as literal or accepted DLC conformance.
 
 ### Progressive local PoC
 
-After the owner enters M3, implement the smallest complete vertical slice in
-this order:
+The owner entered M3 on 2026-07-14. Implement the smallest complete vertical
+slice in this order:
 
 1. source/checksum-pin Bitcoin Core 31.1 and boot an isolated, run-owned Regtest
    node with deterministic local funds, cookie RPC, allocated loopback ports,
@@ -1139,8 +1141,8 @@ key/signature types or bypass completed-signature verification under tweaked
 CC0/Unlicense exceptions—never a global license allowance.
 
 ADR 0029 contains the component, pre-lock signing, actor-flow, atomicity,
-isolation, and evidence diagrams. This plan does not activate M3 or authorize an
-`m3-complete` tag. GW-M3-001 also requires an explicit disposition before any
+isolation, and evidence diagrams. This plan activates M3 but does not authorize
+an `m3-complete` tag. GW-M3-001 also requires an explicit disposition before any
 completion tag can describe the accepted proposal as satisfied.
 
 ## Docker isolation policy

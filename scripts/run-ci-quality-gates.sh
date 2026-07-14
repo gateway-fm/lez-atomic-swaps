@@ -105,6 +105,8 @@ for compose_file in "${compose_files[@]}"; do
   LEZ_V02_UID=65532 \
   LEZ_V02_GID=65532 \
   ZEBRA_IMAGE=lez-atomic-swaps-zebra:ci-quality \
+  BITCOIN_CORE_IMAGE=lez-atomic-swaps-bitcoin-core:ci-quality \
+  BITCOIN_CORE_CONFIG=/tmp/lez-bitcoin-core-ci-quality.conf \
     "$compose" --project-name "lez-ci-quality-${RANDOM}" \
       --file "$compose_file" config --quiet
 done
