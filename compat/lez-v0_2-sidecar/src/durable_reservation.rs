@@ -3,7 +3,7 @@ use std::{
     fs::File,
     io::{Read, Write},
     os::unix::fs::MetadataExt,
-    path::Path,
+    path::{Component, Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -81,8 +81,104 @@ struct ReservationEnvelope<Request, Output> {
     result: Output,
 }
 
+pub(crate) struct SecureStateDirectory {
+    descriptor: File,
+    path: PathBuf,
+    device: u64,
+    inode: u64,
+}
+
+impl fmt::Debug for SecureStateDirectory {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SecureStateDirectory")
+            .field("path", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
+}
+
+impl SecureStateDirectory {
+    pub(crate) fn open(path: &Path) -> Result<Self, DurableReservationError> {
+        let path =
+            std::path::absolute(path).map_err(|_| DurableReservationError::InsecureDirectory)?;
+        if path
+            .components()
+            .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+        {
+            return Err(DurableReservationError::InsecureDirectory);
+        }
+        validate_trusted_parent_chain(&path)?;
+        let descriptor = open_secure_directory(&path)?;
+        let metadata = validate_directory(&descriptor)?;
+        let directory = Self {
+            descriptor,
+            path,
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        };
+        directory.revalidate()?;
+        Ok(directory)
+    }
+
+    pub(crate) fn descriptor(&self) -> &File {
+        &self.descriptor
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn revalidate(&self) -> Result<(), DurableReservationError> {
+        validate_trusted_parent_chain(&self.path)?;
+        let held = validate_directory(&self.descriptor)?;
+        if held.dev() != self.device || held.ino() != self.inode {
+            return Err(DurableReservationError::InsecureDirectory);
+        }
+        let reopened = open_secure_directory(&self.path)?;
+        let current = validate_directory(&reopened)?;
+        if current.dev() != self.device || current.ino() != self.inode {
+            return Err(DurableReservationError::InsecureDirectory);
+        }
+        Ok(())
+    }
+}
+
+fn validate_trusted_parent_chain(path: &Path) -> Result<(), DurableReservationError> {
+    let parent = path
+        .parent()
+        .ok_or(DurableReservationError::InsecureDirectory)?;
+    let effective_uid = geteuid().as_raw();
+    for ancestor in parent.ancestors() {
+        let descriptor = open_secure_directory(ancestor)?;
+        let metadata = descriptor
+            .metadata()
+            .map_err(|_| DurableReservationError::InsecureDirectory)?;
+        let mode = metadata.mode();
+        let trusted_owner = metadata.uid() == 0 || metadata.uid() == effective_uid;
+        let group_or_other_writable = mode & 0o022 != 0;
+        let sticky = mode & 0o1000 != 0;
+        if !metadata.file_type().is_dir() || !trusted_owner || (group_or_other_writable && !sticky)
+        {
+            return Err(DurableReservationError::InsecureDirectory);
+        }
+    }
+    Ok(())
+}
+
+fn open_secure_directory(path: &Path) -> Result<File, DurableReservationError> {
+    openat2(
+        CWD,
+        path,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+        ResolveFlags::NO_SYMLINKS,
+    )
+    .map(File::from)
+    .map_err(|_| DurableReservationError::InsecureDirectory)
+}
+
 pub(crate) struct DurableReservationStore {
-    directory: File,
+    directory: SecureStateDirectory,
 }
 
 impl fmt::Debug for DurableReservationStore {
@@ -96,16 +192,7 @@ impl fmt::Debug for DurableReservationStore {
 
 impl DurableReservationStore {
     pub(crate) fn open(path: &Path) -> Result<Self, DurableReservationError> {
-        let directory = openat2(
-            CWD,
-            path,
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-            ResolveFlags::NO_SYMLINKS,
-        )
-        .map(File::from)
-        .map_err(|_| DurableReservationError::InsecureDirectory)?;
-        validate_directory(&directory)?;
+        let directory = SecureStateDirectory::open(path)?;
         Ok(Self { directory })
     }
 
@@ -117,10 +204,10 @@ impl DurableReservationStore {
         Request: DeserializeOwned,
         Output: DeserializeOwned,
     {
-        validate_directory(&self.directory)?;
+        self.directory.revalidate()?;
         self.reject_partial(expected_kind)?;
         let descriptor = match openat(
-            &self.directory,
+            self.directory.descriptor(),
             expected_kind.filename(),
             OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::empty(),
@@ -159,7 +246,7 @@ impl DurableReservationStore {
         if envelope.kind != expected_kind {
             return Err(DurableReservationError::CorruptReservation);
         }
-        validate_directory(&self.directory)?;
+        self.directory.revalidate()?;
         Ok(Some((envelope.request, envelope.result)))
     }
 
@@ -173,7 +260,7 @@ impl DurableReservationStore {
         Request: Serialize,
         Output: Serialize,
     {
-        validate_directory(&self.directory)?;
+        self.directory.revalidate()?;
         self.reject_partial(kind)?;
         let bytes = serde_json::to_vec(&ReservationEnvelope {
             schema_version: RESERVATION_SCHEMA_VERSION,
@@ -196,7 +283,7 @@ impl DurableReservationStore {
             sequence
         );
         let descriptor = openat(
-            &self.directory,
+            self.directory.descriptor(),
             temporary_name.as_str(),
             OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::RUSR | Mode::WUSR,
@@ -213,9 +300,9 @@ impl DurableReservationStore {
                 .map_err(|_| DurableReservationError::Filesystem)?;
             validate_state_file(&temporary_file)?;
             renameat_with(
-                &self.directory,
+                self.directory.descriptor(),
                 temporary_name.as_str(),
-                &self.directory,
+                self.directory.descriptor(),
                 kind.filename(),
                 RenameFlags::NOREPLACE,
             )
@@ -227,25 +314,30 @@ impl DurableReservationStore {
                 }
             })?;
             validate_state_file(&temporary_file)?;
-            validate_directory(&self.directory)?;
+            self.directory.revalidate()?;
             self.directory
+                .descriptor()
                 .sync_all()
                 .map_err(|_| DurableReservationError::Filesystem)?;
-            validate_directory(&self.directory)?;
+            self.directory.revalidate()?;
             Ok(())
         })();
 
         if write_result.is_err() {
-            let _ = unlinkat(&self.directory, temporary_name.as_str(), AtFlags::empty());
-            let _ = self.directory.sync_all();
+            let _ = unlinkat(
+                self.directory.descriptor(),
+                temporary_name.as_str(),
+                AtFlags::empty(),
+            );
+            let _ = self.directory.descriptor().sync_all();
         }
         write_result
     }
 
     fn reject_partial(&self, kind: ReservationKind) -> Result<(), DurableReservationError> {
         let prefix = kind.partial_prefix();
-        let entries =
-            Dir::read_from(&self.directory).map_err(|_| DurableReservationError::Filesystem)?;
+        let entries = Dir::read_from(self.directory.descriptor())
+            .map_err(|_| DurableReservationError::Filesystem)?;
         for entry in entries {
             let entry = entry.map_err(|_| DurableReservationError::Filesystem)?;
             if entry.file_name().to_bytes().starts_with(prefix.as_bytes()) {
@@ -256,7 +348,7 @@ impl DurableReservationStore {
     }
 }
 
-fn validate_directory(directory: &File) -> Result<(), DurableReservationError> {
+fn validate_directory(directory: &File) -> Result<std::fs::Metadata, DurableReservationError> {
     let metadata = directory
         .metadata()
         .map_err(|_| DurableReservationError::InsecureDirectory)?;
@@ -266,7 +358,7 @@ fn validate_directory(directory: &File) -> Result<(), DurableReservationError> {
     {
         return Err(DurableReservationError::InsecureDirectory);
     }
-    Ok(())
+    Ok(metadata)
 }
 
 fn validate_state_file(file: &File) -> Result<(), DurableReservationError> {

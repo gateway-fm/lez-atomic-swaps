@@ -76,10 +76,10 @@ the key and keeps its retained byte copy in `Zeroizing<[u8; 32]>`, but upstream
 constructor inputs and transient signing copies cannot be claimed fully
 zeroized. LOGOS-008 tracks replacement or an upstream fix before production.
 
-The prepare foundations expose no submission. On the Linux deployment target,
-each planner optionally binds one pre-existing owner-only `0700` actor state
-directory through `new_durable` using `openat2(NO_SYMLINKS)` and persists its
-single reservation as an owner-only `0600` fsynced create-exclusive file.
+The Linux foundation now includes a narrow Vault Claim submission state
+machine. Each planner optionally binds one pre-existing owner-only `0700` actor
+state directory through `new_durable` using `openat2(NO_SYMLINKS)` and persists
+its single reservation as an owner-only `0600` fsynced create-exclusive file.
 Restart recovers the originally signed exact bytes
 without calling the nonce source or re-signing; recovery revalidates the
 complete stored request and result and rejects role, runtime, signer,
@@ -87,10 +87,21 @@ allocation, program, transaction-ID, canonical-byte, and signature drift. A
 different request against an existing reservation fails closed, as do crash
 partials, corruption, unknown fields, future schemas, symlinked or foreign-owned
 directories, runtime directory/file permission drift, and hardlink aliases;
-diagnostics never reveal the store path. Concurrent-swap partitioning,
-authenticated server integration, official node nonce wiring, observation, and
-exact-byte submission remain future work under ADR 0026. Submission must not be
-enabled until the durable `AttemptStarted` boundary in that ADR is implemented.
+diagnostics never reveal the store path. The effect journal additionally binds
+one run, role, runtime, and signer to canonical typed preparation plus duplicate
+exact bytes in SQLite. It commits attempt one and revision one before the only
+`LeeTransaction::Public` call; reopen, crash, concurrency loss, transport
+ambiguity, or a returned-hash mismatch can never restore send permission.
+Unexpected schemas/triggers, binding drift, noncanonical revisions, unsafe
+ancestors, symlinks, hard links, inode replacement, and parent permission drift
+fail closed. The coordinator alone classifies raw official `jsonrpsee`
+`ClientError` values. Active same-UID/root writers are outside this filesystem
+boundary, so mutually untrusted roles require separate users or containers.
+
+Authenticated effect-server integration, the real generated sequencer client,
+bounded inclusion/finality queries, executable actors, and actual-node evidence
+remain work under ADR 0026. The local state machine is not itself proof that a
+Claim reached a node, block, or finalized account state.
 
 This gate does not start Bedrock, the LEZ sequencer/indexer, Zcash Regtest, or
 Docker; it

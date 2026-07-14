@@ -1,15 +1,17 @@
 # ADR 0025: Onboard independent LEZ v0.2 actors through Vault claims
 
-Status: Accepted architecture; exact Claim preparation and durable exact-byte recovery GREEN, submission and actor-readiness evidence pending
+Status: Accepted; Claim preparation, recovery, and local one-attempt guard GREEN; RPC finality and actor readiness pending
 
 ```mermaid
 flowchart LR
     Maker["Maker process"]
     MakerPrepare["Maker exact Claim prepare<br/>and durable recovery GREEN"]
+    MakerAttempt[("Maker role-bound effect journal<br/>AttemptStarted before call GREEN")]
     MakerSecret["Maker secret"]
     MakerStore["Maker store and journal"]
     Taker["Taker process"]
     TakerPrepare["Taker exact Claim prepare<br/>and durable recovery GREEN"]
+    TakerAttempt[("Taker role-bound effect journal<br/>AttemptStarted before call GREEN")]
     TakerSecret["Taker secret"]
     TakerStore["Taker store and journal"]
     Sequencer["LEZ v0.2 sequencer RPC"]
@@ -23,15 +25,17 @@ flowchart LR
     TakerStore --> Taker
     Maker --> MakerPrepare
     Taker --> TakerPrepare
-    MakerPrepare -.->|"effect submit pending"| Sequencer
-    TakerPrepare -.->|"effect submit pending"| Sequencer
+    MakerPrepare --> MakerAttempt
+    TakerPrepare --> TakerAttempt
+    MakerAttempt -.->|"generated RPC and query proof pending"| Sequencer
+    TakerAttempt -.->|"generated RPC and query proof pending"| Sequencer
     Sequencer -->|"publish LEZ blocks"| Bedrock
     Indexer -->|"observe finalized blocks"| Bedrock
     Sequencer -->|"inclusion evidence"| Evidence
     Indexer -->|"finality and account evidence"| Evidence
 
     classDef running fill:#e6ffec,stroke:#1a7f37;
-    class MakerPrepare,TakerPrepare running;
+    class MakerPrepare,TakerPrepare,MakerAttempt,TakerAttempt running;
 ```
 
 ## Context
@@ -236,8 +240,9 @@ two genesis Vault allocations, independent actor secrets and stores, exact
 signed claims, sequencer inclusion, indexer finality, expected post-state, and
 cross-role signing denial.
 
-The separately locked sidecar now completes the durable preparation portion of
-this boundary: 25 integration tests include exact maker/taker public-key, owner,
+The separately locked sidecar now completes durable preparation and the local
+attempt-before-call portion of this boundary: 42 integration tests include
+exact maker/taker public-key, owner,
 Vault, program, allocation, nonce, account-order, amount, canonical-byte, hash,
 signature, restart, stored-state mutation, filesystem-isolation, and redaction
 checks. Each planner confirms the request nonce through an injected
@@ -245,8 +250,11 @@ official-node source before signing and installs its reservation only after
 complete construction. On Linux it opens the actor directory with
 `openat2(NO_SYMLINKS)`, persists an fsynced create-exclusive owner-only file,
 and returns the exact stored bytes after restart without a nonce lookup or
-re-sign. This is durable preparation evidence, not actor readiness: there is
-still no RPC submission, inclusion/finality observation, or post-state proof.
+re-sign. Seventeen focused cases additionally bind separate role journals,
+commit `AttemptStarted` before one in-process official-type adapter call, and
+prove observe-only crash, replay, ambiguity, and forced concurrency behavior.
+This remains library evidence, not actor readiness: there is still no generated
+RPC composition, inclusion/finality observation, or post-state proof.
 
 Corridor readiness begins only after actor readiness is GREEN. It proves offer
 exchange, funding reservation, escrow or HTLC locks, counter-chain

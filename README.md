@@ -201,8 +201,14 @@ official types, node-confirmed nonces, canonical bytes, and fail-closed
 reservations. On Linux, durable preparation recovery is GREEN through
 owner-only directories opened with `openat2(NO_SYMLINKS)`, fsynced
 create-exclusive files, complete exact-byte revalidation, and runtime
-permission/alias checks. Authenticated effect-server integration, observation,
-one-attempt submission, and executable role processes remain pending. The
+permission/alias checks. Durable Vault Claim submission is now GREEN at the
+library boundary: one role-bound SQLite journal commits `AttemptStarted` before
+the only sequencer call, every reopen is observe-only, exact responses,
+`InvalidParams`, ambiguity, crashes, concurrent handles, schema tampering, and
+inode replacement fail closed under seventeen focused tests. The coordinator,
+not an adapter, classifies official `jsonrpsee` client errors. Authenticated
+effect-server integration, a real generated-RPC adapter, bounded
+inclusion/finality observation, and executable role processes remain pending. The
 service and exact pre-Claim actor state are GREEN. Finalized Vault Claim actor onboarding,
 checked escrow deployment, independent actor consumption, swap effects, and
 restart recovery remain pending; standalone mock settlement and
