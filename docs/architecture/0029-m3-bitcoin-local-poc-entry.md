@@ -38,9 +38,14 @@ flowchart LR
     TakerSdk --> LezPort
     MakerBtcPort --> MakerCoreAdapter["Maker Core adapter instance"]
     TakerBtcPort --> TakerCoreAdapter["Taker Core adapter instance"]
-    MakerCoreAdapter --> Core["Bitcoin Core 31.1 Regtest"]
-    TakerCoreAdapter --> Core
-    Provisioner["Run-owned miner and fund provisioner"] --> Core
+    MakerCoreAdapter --> MakerAuth["Maker rpcauth: read and broadcast RPC"]
+    TakerCoreAdapter --> TakerAuth["Taker rpcauth: read and broadcast RPC"]
+    Provisioner["Run-owned miner and fund provisioner"] --> CookieAuth["Cookie RPC: wallet, clock and mining"]
+    MakerAuth --> Loopback["Dynamic 127.0.0.1 JSON-RPC"]
+    TakerAuth --> Loopback
+    CookieAuth --> Loopback
+    Loopback --> Core["Bitcoin Core 31.1 Regtest"]
+    Core --> NoPeers["P2P disabled and zero peers"]
     LezPort --> RoleBridge["Role-local LEZ bridge"]
     RoleBridge --> Sequencer["LEZ v0.2 sequencer"]
     Sequencer --> Bedrock["Bedrock settlement"]
@@ -91,9 +96,10 @@ and release signatures/attestations verify, then records and vulnerability-scans
 the resulting immutable image digest. The existing unofficial Docker Hub image
 is not a supply-chain authority.
 
-This provenance is an audited candidate, not retained executable evidence. The
-runner must reproduce every verification before the dependency and image become
-accepted pins.
+The verifier and actual-node runner now reproduce this provenance and locally
+prove the Core-only fixture. The final M3 dependency graph remains unaccepted
+until the P2TR/adaptor packages and exact image scan evidence pass their stated
+gates.
 
 ## Pre-lock signing ceremony
 
@@ -191,12 +197,26 @@ not compared as raw numbers.
 
 ## Reproducibility and isolation
 
-- Every run owns a unique `RUN_ID`, Compose project, network, volumes, temporary
+- Every run owns a unique `RUN_ID`, Docker resource scope, network, volumes, temporary
   root, cookie file, wallets, actors, and evidence output.
 - Host listeners bind allocated loopback ports; no conventional host port is
   assumed. The provisioner alone holds the full node cookie and mining/wallet
   methods. Maker and taker adapters are separate instances with distinct
   `rpcauth` credentials and method allowlists for required read/broadcast calls;
+The Compose file is a statically linted deployment contract for image,
+filesystem, capabilities, resource limits, labels, volumes, and loopback RPC.
+The executable runner owns the same controls through exact-ID native Docker
+commands. Docker Compose 5.3 does not preserve the required dynamic loopback
+publication when that service consumes the precreated bridge, and Docker
+suppresses host publication entirely on an `internal` bridge. The runtime
+therefore uses a dedicated labeled bridge with IP masquerading disabled rather
+than setting Docker's `Internal` flag. Core itself additionally disables P2P
+listening, outbound connections, discovery, DNS seeds, fixed seeds, and network
+activity; runtime evidence inspects the Docker publication, bridge, config,
+`networkactive=false`, and zero peers. This preserves actor access through a
+host-loopback RPC while preventing the fixture from behaving like a public
+chain node.
+
   keys remain client-side and neither actor can access the other's wallet or
   provisioner methods.
 - Cleanup removes only resources carrying the exact run label. Global Docker

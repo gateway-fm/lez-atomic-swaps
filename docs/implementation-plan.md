@@ -110,8 +110,10 @@ security databases, pins/checksums, availability risks, and fallback policy.
 The table below is accumulated implementation and test evidence, much of it
 created under the previous test-first strategy. ADR 0027 carries it forward for
 later revalidation; it does not imply that the M2 QA, chaos, information-
-security, or production-readiness phase has been entered or completed. M2 is certified at the reproducible local-functional PoC boundary; no QA, M3,
-or later hardening phase is active. The final column is a post-M2 backlog, not
+security, or production-readiness phase has been entered or completed. M2 is
+certified at the reproducible local-functional PoC boundary; its QA and later
+hardening phases remain inactive, while the separately scoped M3 PoC is active.
+The final column is a post-M2 backlog, not
 an instruction to start every listed refactor now. Restart, refund, reorg,
 concurrency, broad negative testing, and new RED-GREEN-REFACTOR work wait for
 the repository owner to enter the applicable phase.
@@ -240,9 +242,9 @@ overlap the tail of M4, and M7 follows all implementation milestones.
 ## Milestone 2 plan: transparent ZEC end to end
 
 Certified boundary: **reproducible local-functional PoC** under
-`m2-complete`. The owner has not entered QA, chaos, information security,
-production readiness, or M3. Existing hardening evidence remains enforced and
-is carried forward, but no later phase begins without an explicit owner
+`m2-complete`. The owner has not entered M2 QA, chaos, information security, or
+production readiness; the separately scoped M3 PoC is active. Existing hardening
+evidence is carried forward, but no later phase begins without an explicit owner
 transition.
 
 The first progressive pass completes one real local LEZ/ZEC happy direction.
@@ -1019,8 +1021,11 @@ outputs above.
 ## Milestone 3 entry plan: BTC adaptor/Taproot end to end
 
 Status: **active; progressive local PoC in progress**. The exact Core 31.1
-release verifier and minimal isolated image fixture are GREEN; the role-aware
-Regtest runner is the active first slice. The current tree still has no
+release verifier, minimal isolated image fixture, role-aware Regtest smoke, and
+exact cleanup are locally GREEN. CI now repeats that runner and fail-hard scans
+its exact image for HIGH/CRITICAL vulnerabilities. Retained exact-commit
+evidence and remote private-CI visibility close this infrastructure slice; the
+aggregate-key P2TR/CSV transaction is active next. The current tree still has no
 executable BTC swap leg. Generic `Pair::Bitcoin`, deadline, persistence, and transition tests are
 reusable scaffolding only; they do not prove a Bitcoin SDK, Bitcoin Core RPC,
 Taproot construction, adaptor exchange, LEZ BTC claim path, or actor journey.
@@ -1086,6 +1091,15 @@ hardening policy, and CI with an actual-node smoke plus a fail-hard Trivy scan.
 The consumed artifact is the signed/checksum-verified official binary archive;
 the recorded source commit is provenance and must not be described as a local
 source build.
+
+Local run `m3-core-smoke-20260714f` reached GREEN on 2026-07-14. Its runtime
+packet proves Core 31.1 and exact Regtest genesis, height 101 under the fixed
+600-second mock-time policy, a mature deterministic 50 BTC Taproot fixture,
+separate maker/taker allow-and-deny RPC matrices, zero peers, no public runtime
+resource, and complete exact cleanup with a foreign sentinel surviving. This
+packet was produced before the runner commit and therefore is validation input,
+not retained exact-commit certification. The next checkpoint reruns the pushed
+commit and retains only secret-safe summarized evidence.
 
 That slice is GREEN only when retained, secret-safe evidence proves Core 31.1,
 Regtest genesis and an advancing tip, zero chain peers and zero public runtime

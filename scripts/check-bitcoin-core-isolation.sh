@@ -7,9 +7,10 @@ readonly compose_file="tests/e2e/bitcoin-core/compose.yml"
 readonly dockerfile="tests/e2e/bitcoin-core/Dockerfile"
 readonly provenance_file="tests/e2e/bitcoin-core/provenance.env"
 readonly verifier_file="scripts/verify-bitcoin-core-release.sh"
+readonly runner_file="scripts/run-bitcoin-core-e2e.sh"
 
 for required_file in \
-  "$compose_file" "$dockerfile" "$provenance_file" "$verifier_file"; do
+  "$compose_file" "$dockerfile" "$provenance_file" "$verifier_file" "$runner_file"; do
   if [[ ! -f "$required_file" ]]; then
     echo "missing isolated Bitcoin Core fixture: ${required_file}" >&2
     exit 1
@@ -19,6 +20,7 @@ done
 RUN_ID=policy-check \
 BITCOIN_CORE_IMAGE=lez-atomic-swaps-bitcoin-core:policy-check \
 BITCOIN_CORE_CONFIG=/tmp/lez-bitcoin-core-policy-check.conf \
+BITCOIN_CORE_NETWORK=lez-atomic-swaps-bitcoin-core-policy-check-network \
   docker compose \
     --project-name lez-atomic-swaps-bitcoin-core-policy-check \
     --file "$compose_file" config --quiet
@@ -27,7 +29,11 @@ required_compose_terms=(
   'bitcoin_core:'
   '${BITCOIN_CORE_IMAGE:?BITCOIN_CORE_IMAGE is required}'
   '${BITCOIN_CORE_CONFIG:?BITCOIN_CORE_CONFIG is required}:/run-config/bitcoin.conf:ro'
-  '127.0.0.1::18443'
+  'target: 18443'
+  'published: "0"'
+  'host_ip: 127.0.0.1'
+  'protocol: tcp'
+  'mode: host'
   'org.logos-co.atomic-swaps.run: "${RUN_ID:?RUN_ID is required}"'
   'core_data:/var/lib/bitcoin'
   'org.logos-co.atomic-swaps.scope: bitcoin-core-regtest-e2e'
@@ -39,13 +45,13 @@ required_compose_terms=(
   'user: "65532:65532"'
   'stop_grace_period: 30s'
   'read_only: true'
-  'com.docker.network.bridge.enable_ip_masquerade: "false"'
   'cap_drop: ["ALL"]'
   'security_opt: ["no-new-privileges:true"]'
-  'internal: true'
   'core_data:'
   'type: tmpfs'
   'o: "uid=65532,gid=65532,mode=0700,noexec,nosuid,nodev,size=1073741824"'
+  'name: "${BITCOIN_CORE_NETWORK:?BITCOIN_CORE_NETWORK is required}"'
+  'external: true'
 )
 
 for term in "${required_compose_terms[@]}"; do
@@ -60,7 +66,7 @@ if rg -q '^\s*container_name:' "$compose_file"; then
   exit 1
 fi
 
-if rg -q '127\.0\.0\.1:[0-9]+:18443' "$compose_file"; then
+if rg -q 'published: "?[1-9][0-9]*"?' "$compose_file"; then
   echo "fixed Bitcoin Core host RPC ports are forbidden" >&2
   exit 1
 fi
@@ -117,7 +123,7 @@ for term in "${required_provenance_terms[@]}"; do
   fi
 done
 
-for lifecycle_script in "$verifier_file" scripts/run-bitcoin-core-e2e.sh; do
+for lifecycle_script in "$verifier_file" "$runner_file"; do
   if [[ -f "$lifecycle_script" ]] && rg -n -q \
     'docker[[:space:]]+(system|container|image|volume|network)[[:space:]]+prune|(^|[;&|[:space:]])(pkill|killall)([;&|[:space:]]|$)' \
     "$lifecycle_script"; then
@@ -128,7 +134,46 @@ done
 
 run_label_count="$(rg -F -c 'org.logos-co.atomic-swaps.run:' "$compose_file")"
 scope_label_count="$(rg -F -c 'org.logos-co.atomic-swaps.scope:' "$compose_file")"
-if (( run_label_count != 3 || scope_label_count != 3 )); then
-  echo "service, private network, and data volume must all carry run/scope labels" >&2
+if (( run_label_count != 2 || scope_label_count != 2 )); then
+  echo "service and data volume must carry run/scope labels" >&2
   exit 1
 fi
+
+required_runner_network_terms=(
+  'docker network create'
+  '--opt com.docker.network.bridge.enable_ip_masquerade=false'
+  '--label "org.logos-co.atomic-swaps.run=${run_id}"'
+  "--label 'org.logos-co.atomic-swaps.scope=bitcoin-core-regtest-e2e'"
+  "--label 'org.logos-co.atomic-swaps.component=bitcoin-core-network'"
+  'docker network rm "$network"'
+)
+for term in "${required_runner_network_terms[@]}"; do
+  if ! rg -Fq -- "$term" "$runner_file"; then
+    echo "Bitcoin Core runner is missing run-network isolation control: ${term}" >&2
+    exit 1
+  fi
+done
+
+required_runner_runtime_terms=(
+  'docker volume create'
+  'container_id="$(docker create'
+  "--publish '127.0.0.1::18443'"
+  "--user '65532:65532'"
+  '--read-only'
+  '--cap-drop ALL'
+  '--security-opt no-new-privileges=true'
+  '--pids-limit 256'
+  '--memory 2g'
+  '--cpus 2'
+  'docker container rm --force "$container_id"'
+  'docker volume rm "$volume"'
+  'docker image rm "$image"'
+  'lifecycle: "exact_id_native_docker"'
+  'compose_contract_validated: true'
+)
+for term in "${required_runner_runtime_terms[@]}"; do
+  if ! rg -Fq -- "$term" "$runner_file"; then
+    echo "Bitcoin Core runner is missing direct-runtime isolation control: ${term}" >&2
+    exit 1
+  fi
+done

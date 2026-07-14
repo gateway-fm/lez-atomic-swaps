@@ -316,3 +316,43 @@ jobs:
           vuln-type: os,library
           severity: HIGH,CRITICAL
       - run: ./scripts/run-zebra-e2e.sh
+
+  bitcoin-core-regtest:
+    name: isolated Bitcoin Core 31.1 Regtest actor smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RUN_ID: github-btc-${{ github.run_id }}-${{ github.run_attempt }}
+      BITCOIN_CORE_E2E_KEEP_RUNNING: "1"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Verify release and run deterministic role-aware Core smoke
+        run: ./scripts/run-bitcoin-core-e2e.sh
+      - name: Scan exact Bitcoin Core image for high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: lez-atomic-swaps-bitcoin-core:github-btc-${{ github.run_id }}-${{ github.run_attempt }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Remove only the exact Core CI resources
+        if: always()
+        run: |
+          set -euo pipefail
+          project="lez-atomic-swaps-bitcoin-core-${RUN_ID}"
+          container="${project}-bitcoin-core"
+          volume="${project}_core_data"
+          network="${project}_bitcoin_core_private"
+          image="lez-atomic-swaps-bitcoin-core:${RUN_ID}"
+          docker container rm --force "${container}" >/dev/null 2>&1 || true
+          docker volume rm "${volume}" >/dev/null 2>&1 || true
+          docker network rm "${network}" >/dev/null 2>&1 || true
+          docker image rm "${image}" >/dev/null 2>&1 || true
+          test -z "$(docker container ls --all --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")"
+          test -z "$(docker network ls --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")"
+          test -z "$(docker volume ls --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")"

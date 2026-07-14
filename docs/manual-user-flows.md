@@ -12,32 +12,89 @@ self-hosted Zebra route and Tatum's public-provider Testnet Zebrad route, but
 explicitly leaves live execution pending the project-owned transparent signer,
 HTTPS provider transport, and actor adapter.
 
-## M3 Bitcoin status: active, Core infrastructure underway
+## M3 Bitcoin status: Core actor fixture runnable
 
-There is no executable LEZ/BTC swap flow yet. The exact Core 31.1 release
-verifier and isolated minimal-image fixture are executable, while the role-aware
-Regtest smoke runner is the active slice. Generic Bitcoin state-machine tests do
-not fund or spend a Bitcoin output, so this guide provides no placeholder swap
-command and makes no M3 completion claim. The runnable boundary is documented in
-[ADR 0029](architecture/0029-m3-bitcoin-local-poc-entry.md): one run-owned
-Bitcoin Core 31.1 Regtest node, the pinned local LEZ v0.2 stack, independent
-maker/taker actors, exact aggregate-key P2TR funding/key-path claim, and both
-directions through the public BTC SDK boundary.
+The isolated Core 31.1 infrastructure slice is runnable; the LEZ/BTC swap is not
+yet. This flow proves the exact release and image, a real Regtest daemon,
+provisioner-only cookie authority, distinct maker/taker RPC capabilities,
+deterministic mature local P2TR funding, secret-safe evidence, and exact cleanup.
+The fixed `rawtr` output is mining infrastructure, not the future aggregate-key
+swap output and not an M3 completion claim.
 
-The future PoC command must allocate a unique `RUN_ID`, loopback RPC port,
-provisioner-only full cookie, distinct maker/taker `rpcauth` plus
-`rpcwhitelist` credentials, Compose project/network/volumes, actors, stores,
-client-side keys, provisioner wallet, and evidence root. It must clean only
-resources labeled with that run. Regtest mining provides
-deterministic local funds: the descriptor/key derivation, genesis, clock and
-transaction policy, maturity, values, and confirmation assertions repeat,
-while block hashes and transaction IDs may differ across run IDs and are
-recorded as evidence. No public RPC, faucet, public funds, or public chain is
-part of this PoC. Cold setup requires checksum-verified Bitcoin Core
-release assets and locked Rust dependencies, whose registry/CDN availability and
-vulnerability scans can fail independently of protocol behavior. This section
-will gain the exact build, start, role-flow, evidence-inspection, and cleanup
-commands in the same commit that makes them executable.
+Prerequisites are Docker, Bash, curl, Git, GnuPG, jq, Python 3, ripgrep,
+SHA-256 tools, and tar. Use a fresh 8–64 character lowercase `RUN_ID`:
+
+```sh
+RUN_ID=m3-core-manual-20260714a ./scripts/run-bitcoin-core-e2e.sh
+```
+
+The runner downloads the official Core 31.1 archive, release manifest and
+signatures, exact source tag, Guix signature repository, and the digest-pinned
+distroless base. To avoid downloading the 90 MB archive again, point only to a
+previously downloaded candidate; the runner still verifies its exact hash,
+manifest, signers, source tag, and all 15 Guix attestations:
+
+```sh
+RUN_ID=m3-core-manual-20260714b \
+BITCOIN_CORE_ARCHIVE_PATH=/absolute/path/bitcoin-31.1-x86_64-linux-gnu.tar.gz \
+./scripts/run-bitcoin-core-e2e.sh
+```
+
+Normal success removes only the run's exact container, tmpfs-backed volume,
+no-masquerade bridge, image tag, and sentinel. Inspect the retained private
+evidence afterward:
+
+```sh
+RUN_ID=m3-core-manual-20260714a
+jq '{result, core, isolation, chain, deterministic_funding,
+  actor_rpc: {users: .actor_rpc.users, results: .actor_rpc.results},
+  external_dependencies}' \
+  ".e2e/${RUN_ID}/bitcoin-core/evidence/runtime.json"
+jq . ".e2e/${RUN_ID}/bitcoin-core/evidence/cleanup.json"
+```
+
+Expected facts are Core 31.1, Regtest genesis `0f9188...2206`, height 101,
+zero peers, `networkactive=false`, one dynamically allocated `127.0.0.1` RPC
+port, a mature 50 BTC witness-v1 Taproot output, successful maker/taker read and
+broadcast-method access, HTTP 403 for wallet/miner/clock/network/shutdown calls,
+HTTP 401 for crossed credentials, no public runtime dependency, and complete
+run-resource cleanup while the foreign sentinel survives.
+
+For manual role calls, retain the successful node only after the full smoke:
+
+```sh
+RUN_ID=m3-core-live-20260714a \
+BITCOIN_CORE_E2E_KEEP_RUNNING=1 \
+./scripts/run-bitcoin-core-e2e.sh
+
+curl --config \
+  ".e2e/${RUN_ID}/bitcoin-core/credentials/maker.curlrc" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"getblockchaininfo","params":[]}' \
+  | jq .
+curl --config \
+  ".e2e/${RUN_ID}/bitcoin-core/credentials/taker.curlrc" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"getnetworkinfo","params":[]}' \
+  | jq .
+```
+
+Those mode-`0600` curl configuration files contain plaintext local-only actor
+passwords under a mode-`0700` run root. Never copy, print, commit, or reuse them.
+The runner prints exact cleanup commands. Their equivalent is:
+
+```sh
+project="lez-atomic-swaps-bitcoin-core-${RUN_ID}"
+docker container rm --force "${project}-bitcoin-core"
+docker volume rm "${project}_core_data"
+docker network rm "${project}_bitcoin_core_private"
+docker image rm "lez-atomic-swaps-bitcoin-core:${RUN_ID}"
+```
+
+Runtime uses no public RPC, faucet, public funds, public peers, or public chain.
+Cold setup can still fail because bitcoincore.org, GitHub, the base-image
+registry, DNS/TLS, or vulnerability databases are unavailable or rate-limited;
+those are setup/CI flakes rather than chain-protocol behavior. The next M3 slice
+replaces the funding fixture with the exact aggregate-key P2TR output, CSV
+refund leaf, and cooperative key-path transaction through Core.
 
 ## Can I run the complete swap myself?
 
@@ -979,8 +1036,8 @@ deliberately not a finality proof. Manual completion must retain both readiness
 lines, accepted submissions, terminal actor state, Zcash effects, and separate
 indexer finality. The successful reverse initialize/fund/claim transactions are
 finalized in indexer blocks 641/642/643. M2 is certified at the
-local-functional PoC boundary. The owner has not entered QA or M3; later
-hardening remains outside this certification.
+local-functional PoC boundary. The owner has not entered M2 QA; M3 PoC work is
+active separately, and later M2 hardening remains outside this certification.
 
 The same binary has one separate dormant public profile. Do not run this form
 for M2 evidence; it is shown so the configuration change is exact:

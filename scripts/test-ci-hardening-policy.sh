@@ -12,6 +12,8 @@ provisional_methods_build="${repo_root}/compat/lez-v0.2-provisional/escrow/metho
 provisional_runner="${repo_root}/scripts/run-m2-taker-sells-lez-poc.sh"
 provisional_artifact_manifest="${repo_root}/compat/lez-v0.2-provisional/escrow/methods/guest/deployment-manifest.toml"
 canonical_evidence="${repo_root}/docs/evidence/m2-canonical-local-certification-20260714.json"
+core_runner="${repo_root}/scripts/run-bitcoin-core-e2e.sh"
+core_isolation="${repo_root}/scripts/check-bitcoin-core-isolation.sh"
 
 fail() {
   echo "CI hardening contract failed: $*" >&2
@@ -32,6 +34,8 @@ require_fixed() {
 [[ -f "$provisional_methods_build" ]] || fail "missing provisional methods build script"
 [[ -f "$provisional_runner" ]] || fail "missing M2 PoC runner"
 [[ -f "$provisional_artifact_manifest" ]] || fail "missing provisional artifact manifest"
+[[ -x "$core_runner" ]] || fail "missing executable Bitcoin Core E2E runner"
+[[ -x "$core_isolation" ]] || fail "missing executable Bitcoin Core isolation checker"
 [[ -f "$canonical_evidence" ]] || fail "missing canonical M2 evidence packet"
 
 require_fixed 'tags: ["m*-complete*"]' "$workflow"
@@ -40,6 +44,8 @@ require_fixed './scripts/test-spin-lock-remediation.sh' "$workflow"
 require_fixed './scripts/check-spin-lock-remediation.sh' "$workflow"
 require_fixed './scripts/check-github-action-pins.sh' "$workflow"
 
+require_fixed './scripts/check-bitcoin-core-isolation.sh' "$workflow"
+require_fixed './scripts/run-bitcoin-core-e2e.sh' "$workflow"
 require_fixed "git ls-files --cached --others --exclude-standard -z -- '*.sh'" "$quality_runner"
 require_fixed 'actionlint_1.7.12_linux_amd64.tar.gz' "$quality_runner"
 require_fixed '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$quality_runner"
@@ -61,6 +67,12 @@ require_fixed 'Repository-owned findings are fail-hard; Logos-owned findings rem
 require_fixed 'rapidsnark_root="${RAPIDSNARK_LIB_DIR%/rapidsnark-linux-x86_64-pic-v0.0.8/lib}"' "$workflow"
 require_fixed 'unzip -q "${rapidsnark_archive}" -d "${rapidsnark_root}"' "$workflow"
 
+require_fixed 'isolated Bitcoin Core 31.1 Regtest actor smoke' "$workflow"
+require_fixed 'BITCOIN_CORE_E2E_KEEP_RUNNING: "1"' "$workflow"
+require_fixed 'Scan exact Bitcoin Core image for high and critical vulnerabilities' "$workflow"
+require_fixed 'image-ref: lez-atomic-swaps-bitcoin-core:github-btc-${{ github.run_id }}-${{ github.run_attempt }}' "$workflow"
+require_fixed 'docker container rm --force "${container}"' "$workflow"
+require_fixed 'org.logos-co.atomic-swaps.run=${RUN_ID}' "$workflow"
 require_fixed 'cargo check --locked --manifest-path "$guest_manifest" --bins' "$provisional_verifier"
 require_fixed 'cargo clippy --locked --manifest-path "$guest_manifest" --bins -- -D warnings' "$provisional_verifier"
 require_fixed 'risc0_rust_version="1.94.1"' "$provisional_verifier"

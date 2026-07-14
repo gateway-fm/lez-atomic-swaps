@@ -21,11 +21,15 @@ nonexistent DLC Schnorr-vector reference is separately tracked as
 replacement yet. There is no executable BTC SDK or BTC swap command yet. The
 first M3 infrastructure slice now verifies the exact Core release manifest,
 source tag, release signers, and Guix attestations before building the pinned
-minimal image; the role-aware Regtest runner is in progress. The local PoC uses
-only run-owned Core/LEZ nodes and deterministic local funds; it uses no public
-RPC, faucet, or public funds. Cold setup still depends on checksum-verified Core
-release assets and locked Rust registries, so those availability and
-vulnerability-scan risks remain explicit.
+minimal image. Its role-separated actual-Core smoke is locally GREEN: Core
+31.1 Regtest, dynamic loopback RPC, distinct maker/taker `rpcauth` permissions,
+deterministic mature local P2TR funding, zero peers, and exact run-owned cleanup.
+CI repeats that smoke and fail-hard scans the exact image for HIGH/CRITICAL
+vulnerabilities. This is node infrastructure, not the aggregate-key P2TR swap
+leg. Runtime uses no public RPC, faucet, public funds, or public chain. Cold
+setup still depends on checksum-verified Core release assets, the pinned base
+image, vulnerability data, and locked Rust registries, so their availability
+and scan flakiness remain explicit.
 
 Development has started with protocol and real-node acceptance tests. The
 current executable slices enforce:
