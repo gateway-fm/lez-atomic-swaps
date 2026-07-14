@@ -105,16 +105,40 @@ fail closed. The coordinator alone classifies raw official `jsonrpsee`
 `ClientError` values. Active same-UID/root writers are outside this filesystem
 boundary, so mutually untrusted roles require separate users or containers.
 
-Authenticated effect-server integration, the real generated sequencer client,
-bounded inclusion/finality queries, executable actors, and actual-node evidence
-remain work under ADR 0026. The local state machine is not itself proof that a
-Claim reached a node, block, or finalized account state.
+The crate now also provides two narrow local-PoC executables. The
+`lez-v02-vault-claim-poc` command submitted the distinct maker and taker Vault
+Claims to the retained official v0.2 node. The
+`lez-v02-native-escrow-poc` `deposit`, `claim`, and keyless `observe`
+subcommands then drove the checked escrow through `Absent -> Empty -> Funded ->
+Claimed`: maker alone initialized/funded, taker alone supplied the revealing
+preimage and claimed, and each process used a different key file and owner-only
+state directory. The exact transactions, blocks, balances, PDAs, runtime, and
+limitations are in
+[`docs/evidence/m2-local-onboarding-20260714.json`](../../docs/evidence/m2-local-onboarding-20260714.json),
+with manual commands in
+[`docs/manual-user-flows.md`](../../docs/manual-user-flows.md#flow-0d-run-the-role-separated-native-lez-v02-slice).
 
-This gate does not start Bedrock, the LEZ sequencer/indexer, Zcash Regtest, or
-Docker; it
-does not prove a corridor swap, cross-chain atomicity, public-runtime parity,
-or a public deployment. Those claims require the separate local-stack and
-actor-level end-to-end gates.
+The native executable observes canonical sequencer inclusion and stable
+same-tip account facts. Separate sequential indexer reads established that the
+three exact transactions were in finalized blocks 219, 220, and 223; that
+manual proof does not make the CLI result an indexer-finality result. The CLI
+persists exact signed bytes and observes before submit, but honestly emits
+`crash_atomic_submission=false`: ambiguous multi-effect crash reconciliation
+and integrated journal-to-finality transitions remain post-PoC hardening.
+Forty-two existing integration tests and the full wrapper gate stayed GREEN; no
+new PoC feature test is represented as a RED-GREEN-REFACTOR phase transition.
+
+Authenticated effect-server/reference-actor integration, bounded automatic
+inclusion/finality queries, Zebra HTLC effects, and the composed corridor remain
+work under ADR 0026. The live local slice proves one LEZ vertical, not
+cross-chain atomicity. PoC-to-hardening and milestone transitions remain an
+explicit repository-owner decision.
+
+This verification gate itself does not start Bedrock, the LEZ
+sequencer/indexer, Zcash Regtest, or Docker. The separate manual PoC consumed an
+already retained local stack. Neither activity proves a corridor swap,
+cross-chain atomicity, public-runtime parity, or public deployment; those claims
+require the composed actor-level end-to-end gate.
 
 The native archive is outside Cargo license analysis. Upstream metadata
 identifies

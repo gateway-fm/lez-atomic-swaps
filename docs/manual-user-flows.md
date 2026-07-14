@@ -1,6 +1,6 @@
 # Manual reproduction guide
 
-Last verified: 2026-07-13
+Last verified: 2026-07-14
 
 This is the living operator guide for the user-visible flows that the repository
 currently proves. Update it in the same change whenever a runner, prerequisite,
@@ -49,24 +49,34 @@ Zebra cookie, and both node endpoints may be unavailable. The current binary
 does not yet open the store or emit that status, so this is verified API and
 configuration evidence, not a user command advertised as complete.
 
-M2 will not be tagged until this guide also contains and has been checked from
-a fresh checkout for all of the following:
+Before the M2 PoC is offered for owner review, this guide must contain and be
+checked from a fresh checkout for all of the following:
 
 1. build the independent reference actors and start their isolated local nodes;
 2. generate separate private maker/taker configurations and deterministic
    role-correct funds without printing capabilities or signing keys;
 3. execute and inspect both happy-path trade directions through canonical LEZ
    reveal followed by the exact Zcash spend;
-4. stop and restart either actor, then repeat the terminal status checks;
-5. execute pre-second-lock abandonment and post-lock peer-independent recovery;
-6. run concurrent swaps without fixed-port, database, Docker-project, or volume
-   collisions; and
-7. stop only resources owned by the chosen run and locate the retained evidence.
+4. reproduce the same flow with one command and the manual commands; and
+5. stop only resources owned by the chosen run and locate the retained evidence.
+
+Only after the repository owner ends the PoC phase does this guide add the
+hardening repetitions: actor restart/terminal recovery, abandonment/refund,
+reorg and ambiguity handling, and concurrent swaps. Existing lower-lane
+evidence remains carried, but none of those new matrices is an active PoC
+prerequisite.
 
 The M2 rehearsal uses one pinned public-compatible local LEZ v0.2 devnet and one
 pinned local Zcash Regtest devnet. The LEZ devnet must include the full Bedrock node, indexer, and
 non-standalone sequencer. Their exact source, image labels, service flow,
-toolchain, native inputs, and service-binary hashes are now attested. Container assembly, signed runtime-channel onboarding, three-service non-genesis finality, and distinct maker/taker owner/Vault pre-Claim state at exact finalized block 2 are GREEN in isolated run `v02-actors-finalized-20260713b`. Actual-node Vault Claim RPC submission/inclusion/finality, escrow deployment, actor use, swap effects, and restart recovery remain pending. The
+toolchain, native inputs, and service-binary hashes are now attested. Container
+assembly, signed runtime-channel onboarding, three-service non-genesis finality,
+both finalized maker/taker Vault Claims, checked deployment, and one
+role-separated native initialize/fund/claim slice are GREEN in retained run
+`m2poc-vertical-20260714a`. Its maker/taker PoC commands are not the SDK
+reference actors, and retained Zebra did not receive an HTLC effect. The
+reference-actor corridor, Zcash spend, and both directions remain active PoC
+work; restart recovery remains queued for owner-triggered hardening. The
 standalone mock block publisher and v0.1.2 lane are lower-level checks only. Maker and taker
 use separate configs, keys, funds,
 stores, journals, sidecars, and processes. The guide will identify every local
@@ -91,8 +101,9 @@ as unavailable.
 | LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an ephemeral-port LEZ v0.1.2 standalone sequencer. The last corrected full runner exited `0` after the reusable external process published a private schema-v2 handoff containing the exact deployment transaction and canonical block, the built-in-only `getProgramIds` result, and two funded deterministic actors | The native/two-definition lifecycle and corrected external-node handoff are GREEN with ELF SHA-256 `a324355c...7006` and ImageID `c14c978a...4483`. A later actor-contract RED replaced the agreement-invalid zero channel with one nonempty deterministic identity; its focused suite passes and the exact full runner must be repeated before using the handoff as current corridor evidence. No reference SDK actor consumes that handoff in a composed LEZ/Zebra flow yet, and this local v0.1.2 evidence is not LEZ v0.2 public-testnet evidence |
 | LEZ recursive execution costs | Exact checked guest replayed through production `V03State` transitions with nested authenticated-transfer and ATA/Token sessions | This measures deterministic local execution, not public-testnet fees or latency |
 | Provisional LEZ v0.2 executable lane | Exact SPEL PR #238 and LEZ v0.2.0 build a checked Risc0 escrow ELF, compile the generated typed client, and execute recursive native plus two-definition token claim/refund tests, including child-failure rollback. The fail-closed deployer is tested through the official RPC types against an ephemeral loopback server | Local ELF SHA-256 `40c9d37c...8021` and ImageID `f8385049...0fbe` are GREEN. No v0.2 public deployment, deployed-runtime CU evidence, independent maker/taker actor flow, composed LEZ/Zebra corridor, or maintainer approval is proved |
-| Full local LEZ v0.2 service and pre-Claim readiness | Clean exact source and artifacts are checked, then digest-pinned Bedrock, non-standalone sequencer, and indexer execute on one unique no-masquerade bridge with dynamic loopback RPCs. The real sequencer signs and onboards its key-derived channel; finalized block 2 is equal through indexer ID/hash lookup and sequencer Borsh identity; distinct maker/taker owners and Vaults have exact zero/allocated pre-Claim balances and zero nonces at that finalized block | GREEN in `v02-actors-finalized-20260713b`, including fail-closed exact cleanup. This does not prove actual-node Claim submission/inclusion/finality, checked escrow deployment, effect-bearing independent actors, swaps, restart recovery, or the composed LEZ/Zebra corridor |
-| Official-wire LEZ v0.2 effect foundation | Exact upstream LEE account/transaction, Vault, generated escrow/RPC, `jsonrpsee`, and SQLite types are separately locked. Forty-two tests cover the previous prepare/recovery boundary plus durable role-bound Vault Claim submission, attempt-before-call ordering, forced concurrency, crashes, ambiguity, strict revisions, malicious schema rejection, and filesystem substitution | The verifier is a local build/test/dependency gate, not a running actor flow. Durable preparation and the one-attempt library state machine are GREEN, but a real generated-RPC adapter, authenticated effect-server wiring, bounded inclusion/finality observation, executable maker/taker processes, finalized actor balances, and actual-node corridor use remain pending. Its sequencer is an in-process official-type test adapter; it uses no public RPC, faucet, node, or Docker |
+| Full local LEZ v0.2 vertical slice | Clean exact source and artifacts run as digest-pinned Bedrock, non-standalone sequencer, and indexer on one unique no-masquerade bridge with dynamic loopback RPCs. Both actors claimed deterministic Vault allocations, the exact checked escrow deployed, maker initialized then funded 700 only after observing `Empty`, and taker claimed only after observing `Funded` | GREEN in retained run `m2poc-vertical-20260714a`: finalized Vault blocks 29/30, deployment block 51, native blocks 219/220/223, and terminal custody/maker/taker balances are recorded in `docs/evidence/m2-local-onboarding-20260714.json`. These PoC CLIs are not reference actors; no Zebra HTLC, cross-chain direction, restart proof, refund, or composed cleanup is claimed |
+| Official-wire LEZ v0.2 effect foundation | Exact upstream LEE account/transaction, Vault, generated escrow/RPC, checked escrow state, `jsonrpsee`, and SQLite types are separately locked. Forty-two existing tests cover durable preparation and the Vault Claim attempt-before-call guard; the live native CLI adds maker deposit, taker claim, and keyless observation without introducing a PoC-phase TDD claim | The CLI proves exact sequencer inclusion and same-tip accounts, while separate sequential indexer reads prove finality. Native multi-effect submission reports `crash_atomic_submission=false`; integrated bounded finality/journal reconciliation, authenticated effect-server/reference-actor wiring, and the corridor remain pending |
+| Local reference-actor fixture readiness | `zec-local-poc-provision` queried retained Zebra, selected one stable mature maker output, built a dual-signed `TakerSellsLez` agreement, wrote separate `0700` maker/taker trees with `0600` files, reloaded both configs and activation material, and validated pair isolation | GREEN for fixture readiness only: `90819e4f...f76f:0`, 625000000 zatoshis, 104 confirmations at tip 104, agreement `b1291931...bb0ed`. The sidecars were not started or called; neither `activate` nor `drive` nor any HTLC/corridor effect ran. Its 1..256 LEZ discovery window is now stale and the retained files are not runnable corridor inputs |
 
 The following are **not complete yet**: one composed LEZ↔ZEC run with
 independent maker and taker processes, both ZEC trade directions through all
@@ -481,6 +492,303 @@ own release-asset download. This command starts no node, sidecar process,
 container, faucet call, or public RPC and therefore proves no chain effect or
 swap. The full prerequisite and licensing boundary is recorded in
 `compat/lez-v0_2-sidecar/README.md`.
+
+## Flow 0D: run the role-separated native LEZ v0.2 slice
+
+This partial vertical flow starts after Flow 0B2 has retained a GREEN
+three-service stack, both actors have completed their Vault Claims, and the
+checked `f8385049...0fbe` escrow has been deployed. Those onboarding and deploy
+steps are not automated below. The exact retained prerequisite and completed
+example are in
+[`docs/evidence/m2-local-onboarding-20260714.json`](evidence/m2-local-onboarding-20260714.json).
+Use a fresh chain or select a new unused `SWAP_ID`; deposit correctly rejects an
+already initialized swap.
+
+Build the PoC binary with the verified native libraries. Flow 0C remains the
+authoritative format/test/lint/rustdoc/dependency gate.
+
+```bash
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+CARGO_NET_OFFLINE=true cargo +1.96.0 build \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --locked --offline --bin lez-v02-native-escrow-poc
+NATIVE_CLI="$PWD/compat/lez-v0_2-sidecar/target/debug/lez-v02-native-escrow-poc"
+```
+
+Load the trusted, run-owned stack manifest. Its dynamic loopback URLs are valid
+only while that exact retained run is alive.
+
+```bash
+RUN_ID=your-retained-green-run
+LEZ_RUN_DIR="$PWD/.e2e/$RUN_ID/lez-v02"
+. "$LEZ_RUN_DIR/run.env"
+CHAIN_ID="$LEZ_V02_CHANNEL_PUBLIC_KEY"
+SEQUENCER_URL="$LEZ_SEQUENCER_RPC_URL"
+INDEXER_URL="$LEZ_INDEXER_RPC_URL"
+ESCROW_PROGRAM_ID=f8385049e93a319b44d868e0d0cf805b058eddcf92141a186ffd69e4596c0fbe
+```
+
+Keep the roles physically separate. `SOURCE_MAKER_KEY_FILE` and
+`SOURCE_TAKER_KEY_FILE` are the owner-private Vault-onboarding outputs. Never
+print them, put their contents in an environment variable, or pass their
+contents on the command line. The historical run used the audited deterministic
+local identities; this guide intentionally does not publish their keys.
+
+```bash
+umask 077
+PRIVATE_BASE="$(mktemp -d "${TMPDIR:-/tmp}/lez-native-${RUN_ID}.XXXXXX")"
+MAKER_STATE="$PRIVATE_BASE/maker"
+TAKER_STATE="$PRIVATE_BASE/taker"
+EVIDENCE_DIR="$PRIVATE_BASE/evidence"
+install -d -m 0700 "$MAKER_STATE" "$TAKER_STATE" "$EVIDENCE_DIR"
+install -m 0600 "$SOURCE_MAKER_KEY_FILE" "$MAKER_STATE/private-key.hex"
+install -m 0600 "$SOURCE_TAKER_KEY_FILE" "$TAKER_STATE/private-key.hex"
+openssl rand -hex 32 >"$TAKER_STATE/preimage.hex"
+chmod 0600 "$TAKER_STATE/preimage.hex"
+```
+
+The terms are public. The far-future refund time is only a happy-path fixture;
+the actual corridor must derive its digest, direction, and deadlines from the
+dual-signed agreement.
+
+```bash
+SWAP_ID="$(printf '%s' "${RUN_ID}:native-poc:1" | sha256sum | cut -d' ' -f1)"
+TERMS_HASH="$(printf '%s' "${RUN_ID}:native-terms:1" | sha256sum | cut -d' ' -f1)"
+SECRET_DIGEST="$(xxd -r -p <"$TAKER_STATE/preimage.hex" | sha256sum | cut -d' ' -f1)"
+MAKER_ACCOUNT=94b3cefdc7335256e802987a50f336cfed7053992c3bcc318054a0e3d8956166
+TAKER_ACCOUNT=1e916b03cf49c0e6a03feecf124536d867f45c5e7cf82a108d1377120ee28ccc
+AMOUNT=700
+REFUND_AT_MS=9999999999999
+common_terms=(
+  --sequencer-url "$SEQUENCER_URL"
+  --chain-id "$CHAIN_ID"
+  --escrow-program-id "$ESCROW_PROGRAM_ID"
+  --swap-id "$SWAP_ID"
+  --terms-hash "$TERMS_HASH"
+  --secret-digest "$SECRET_DIGEST"
+  --depositor-role maker
+  --depositor-account-id "$MAKER_ACCOUNT"
+  --claimant-role taker
+  --claimant-account-id "$TAKER_ACCOUNT"
+  --amount "$AMOUNT"
+  --refund-at-ms "$REFUND_AT_MS"
+)
+```
+
+Run effects in separate processes. Maker initializes, observes `Empty`, then
+funds. Taker starts only from observed `Funded` and receives the exact funding
+transaction ID. Evidence contains no private key or preimage.
+
+```bash
+"$NATIVE_CLI" deposit \
+  --role maker --run-id "$RUN_ID" --request-id maker-deposit-001 \
+  --state-directory "$MAKER_STATE" \
+  --private-key-file "$MAKER_STATE/private-key.hex" \
+  "${common_terms[@]}" | tee "$EVIDENCE_DIR/deposit.json"
+FUND_TX="$(jq -er \
+  '.transactions[] | select(.kind == "fund_native") | .transaction_id' \
+  "$EVIDENCE_DIR/deposit.json")"
+
+"$NATIVE_CLI" claim \
+  --role taker --run-id "$RUN_ID" --request-id taker-claim-001 \
+  --state-directory "$TAKER_STATE" \
+  --private-key-file "$TAKER_STATE/private-key.hex" \
+  --funding-transaction-id "$FUND_TX" \
+  --preimage-file "$TAKER_STATE/preimage.hex" \
+  "${common_terms[@]}" | tee "$EVIDENCE_DIR/claim.json"
+
+"$NATIVE_CLI" observe "${common_terms[@]}" | tee "$EVIDENCE_DIR/observe.json"
+jq -e '
+  .schema == "lez_v02_native_escrow_poc_v1"
+  and .action == "observe"
+  and .role == null
+  and .after.escrow_state == "claimed"
+  and .after.custody.balance == 0
+  and .after.claimant.balance == 200700
+  and .finality == "not_observed_in_this_poc_slice"
+  and .crash_atomic_submission == false
+' "$EVIDENCE_DIR/observe.json"
+```
+
+The CLI proves canonical sequencer inclusion plus same-tip account reads, not
+Bedrock finality. Query the indexer sequentially; the retained run observed
+intermittent timeouts when heavy block reads ran in parallel. This scan requires
+each exact transaction once in a `Finalized` block and equal ID/hash lookups.
+
+```bash
+rpc() {
+  curl --fail --silent --show-error --connect-timeout 2 --max-time 30 \
+    -H 'content-type: application/json' --data "$2" "$1"
+}
+START_BLOCK="$(( $(jq -r '.before.sequencer_tip' "$EVIDENCE_DIR/deposit.json") + 1 ))"
+rpc "$INDEXER_URL" \
+  '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' \
+  >"$EVIDENCE_DIR/indexer-finalized-tip.json"
+FINALIZED_BLOCK="$(jq -er '.result' "$EVIDENCE_DIR/indexer-finalized-tip.json")"
+
+find_finalized_tx() {
+  local label="$1" tx="$2" block count found hash
+  rpc "$INDEXER_URL" \
+    "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getTransaction\",\"params\":[\"$tx\"]}" \
+    >"$EVIDENCE_DIR/indexer-${label}-transaction.json"
+  jq -e --arg tx "$tx" '.result.Public.hash == $tx' \
+    "$EVIDENCE_DIR/indexer-${label}-transaction.json" >/dev/null
+  for ((block=START_BLOCK; block<=FINALIZED_BLOCK; block++)); do
+    rpc "$INDEXER_URL" \
+      "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getBlockById\",\"params\":[${block}]}" \
+      >"$EVIDENCE_DIR/indexer-${label}-block-${block}.json"
+    count="$(jq --arg tx "$tx" \
+      '[.result.body.transactions[]? | .Public.hash? | select(. == $tx)] | length' \
+      "$EVIDENCE_DIR/indexer-${label}-block-${block}.json")"
+    if [[ "$count" == 1 ]]; then
+      [[ -z "${found:-}" ]]
+      found="$block"
+    else
+      [[ "$count" == 0 ]]
+    fi
+  done
+  [[ -n "${found:-}" ]]
+  jq -e --arg tx "$tx" --argjson block "$found" '
+    .result.header.block_id == $block
+    and .result.bedrock_status == "Finalized"
+    and ([.result.body.transactions[]? | .Public.hash? | select(. == $tx)] | length) == 1
+  ' "$EVIDENCE_DIR/indexer-${label}-block-${found}.json" >/dev/null
+  hash="$(jq -er '.result.header.hash' \
+    "$EVIDENCE_DIR/indexer-${label}-block-${found}.json")"
+  rpc "$INDEXER_URL" \
+    "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getBlockByHash\",\"params\":[\"$hash\"]}" \
+    >"$EVIDENCE_DIR/indexer-${label}-block-by-hash.json"
+  diff \
+    <(jq -S '.result' "$EVIDENCE_DIR/indexer-${label}-block-${found}.json") \
+    <(jq -S '.result' "$EVIDENCE_DIR/indexer-${label}-block-by-hash.json")
+  printf '%s finalized in block %s (%s)\n' "$label" "$found" "$hash"
+}
+INIT_TX="$(jq -er '.transactions[] | select(.kind == "initialize_native") | .transaction_id' "$EVIDENCE_DIR/deposit.json")"
+CLAIM_TX="$(jq -er '.transactions[] | select(.kind == "claim_native") | .transaction_id' "$EVIDENCE_DIR/claim.json")"
+find_finalized_tx initialize "$INIT_TX"
+find_finalized_tx fund "$FUND_TX"
+find_finalized_tx claim "$CLAIM_TX"
+```
+
+The retained example finalized blocks 219/220/223 and ended with custody 0,
+maker 99300/nonce 3, and taker 200700/nonce 2. Exact transactions, hashes, PDAs,
+and the same-tip/finality boundary are in the evidence JSON. The CLI reports
+`crash_atomic_submission=false`: exact bytes are durable and every step observes
+before submit, but ambiguous multi-effect crash reconciliation is post-PoC
+hardening. This flow does not contact Zebra and is not a corridor. Use Flow
+0B2's exact retained-stack cleanup commands, then remove only
+`"$PRIVATE_BASE"`; never use a global Docker prune.
+
+## Flow 0E: provision the local Zebra/reference-actor fixture
+
+This fixture-readiness step consumes a live isolated Zebra Regtest node plus
+the observed LEZ runtime identity. It creates one dual-signed `TakerSellsLez`
+agreement and two owner-private actor trees. It does not start a sidecar, call
+`activate` or `drive`, fund an HTLC, spend Zcash, or prove a corridor.
+
+Create the non-secret spec inside an owner-private directory. The bridge URLs
+must be distinct literal-loopback endpoints assigned to future role sidecars;
+provisioning validates their shape but does not bind or call them. Use endpoints
+allocated by the composed runner before treating the configs as runnable.
+
+```bash
+umask 077
+PRIVATE_BASE="$(mktemp -d "${TMPDIR:-/tmp}/lez-corridor-fixture-${RUN_ID}.XXXXXX")"
+SPEC_FILE="$PRIVATE_BASE/provision-spec.json"
+OUTPUT_ROOT="$PRIVATE_BASE/actors"
+LEZ_TIP="$(curl --fail --silent --show-error --connect-timeout 2 --max-time 30 \
+  -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"getLastBlockId","params":[]}' \
+  "$SEQUENCER_URL" | jq -er '.result')"
+LEZ_DISCOVERY_START="$((LEZ_TIP + 1))"
+LEZ_DISCOVERY_MAX_BLOCKS=256
+jq -n \
+  --arg run_id "$RUN_ID" \
+  --arg chain_id "$CHAIN_ID" \
+  --arg genesis "e24c5a4a2d08a747b96cebefa1304cbe80e42dac9ced3a52c2330b22797e10d9" \
+  --arg program "$ESCROW_PROGRAM_ID" \
+  --arg zebra "$ZEBRA_RPC_URL" \
+  --arg maker_bridge "$MAKER_SIDECAR_URL" \
+  --arg taker_bridge "$TAKER_SIDECAR_URL" \
+  --argjson discovery_start "$LEZ_DISCOVERY_START" \
+  --argjson discovery_blocks "$LEZ_DISCOVERY_MAX_BLOCKS" '
+  {
+    schema_version: 1,
+    run_id: $run_id,
+    swap_id: "m2-poc-taker-sells-lez-001",
+    lez_runtime: {
+      chain_id: $chain_id,
+      channel_id: $chain_id,
+      genesis_block_hash: $genesis,
+      escrow_program_id: $program,
+      authenticated_transfer_program_id_base58: "FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg",
+      maker_signer_account_id_base58: "B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd",
+      taker_signer_account_id_base58: "34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib"
+    },
+    bridge: {
+      maker_endpoint: $maker_bridge,
+      taker_endpoint: $taker_bridge
+    },
+    zebra_endpoint: $zebra,
+    lez_discovery_start_height: $discovery_start,
+    lez_discovery_max_blocks: $discovery_blocks
+  }' >"$SPEC_FILE"
+chmod 0600 "$SPEC_FILE"
+
+CARGO_NET_OFFLINE=true cargo +1.96.0 run --locked --offline \
+  -p zec-reference-actor --bin zec-local-poc-provision -- \
+  --spec-file "$SPEC_FILE" --output-root "$OUTPUT_ROOT" \
+  | tee "$PRIVATE_BASE/provision-summary.json"
+chmod 0600 "$PRIVATE_BASE/provision-summary.json"
+```
+
+The output root must not exist beforehand. Success reloads both configs, loads
+both activation-material sets, validates pair isolation, and prints a
+secret-free summary. Inspect only public shape and modes:
+
+```bash
+jq -e '
+  .direction == "taker_sells_lez"
+  and .private_material_disclosed == false
+  and .actor_pair_validated == true
+' "$PRIVATE_BASE/provision-summary.json"
+test "$(stat -c %a "$OUTPUT_ROOT/maker")" = 700
+test "$(stat -c %a "$OUTPUT_ROOT/taker")" = 700
+test "$(stat -c %a "$OUTPUT_ROOT/maker/actor-config.json")" = 600
+test "$(stat -c %a "$OUTPUT_ROOT/taker/actor-config.json")" = 600
+jq -e '
+  .role == "maker"
+  and .claim_preimage_file != null
+  and (.zcash_funding_outpoints | length) == 1
+' "$OUTPUT_ROOT/maker/actor-config.json" >/dev/null
+jq -e '
+  .role == "taker"
+  and .claim_preimage_file == null
+  and (.zcash_funding_outpoints | length) == 0
+' "$OUTPUT_ROOT/taker/actor-config.json" >/dev/null
+```
+
+Run `m2poc-vertical-20260714a` selected mature maker-owned output
+`90819e4f...f76f:0`, worth 625000000 zatoshis with 104 confirmations at Zebra
+tip 104, and emitted agreement SHA-256 `b1291931...bb0ed`. The full values are
+in the M2 evidence JSON. That retained fixture used LEZ discovery window
+1..256; a later audit observed tip 389, so those files are no longer runnable
+corridor inputs even though their isolation/load checks remain evidence. This
+is reproducible only while the real Regtest node has a stable matching NU6.2
+identity and mature unspent deterministic-maker output.
+
+The final runner must prebuild every binary before the deadline clock starts,
+sample a fresh LEZ tip, provision just in time, start both sidecars on their
+explicit run-owned ports, and fail before any effect if the full window/deadline
+headroom is unavailable. `DeterministicLocalV1` currently permits only a
+60-second LEZ refund delay; its Zcash plan uses a four-block refund horizon and
+one confirmation. Mine the exact required Regtest blocks only after the Zcash
+effects, never while preparing binaries or configs. This provision-only flow
+does not prove those timing constraints. It uses no faucet, public RPC, or
+public funds; a moving tip or missing/spent candidate fails closed. Retain
+private output only until role processes consume it, then remove only
+`"$PRIVATE_BASE"`.
 
 ## External resources and flakiness
 

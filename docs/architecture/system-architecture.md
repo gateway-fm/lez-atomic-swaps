@@ -1,6 +1,6 @@
 # System architecture and actor flows
 
-Status: Living target architecture — 2026-07-13
+Status: Living target architecture — 2026-07-14
 
 This is the canonical whole-system view. ADRs record why individual choices
 were made; this document shows how the choices compose into the product that
@@ -61,9 +61,9 @@ flowchart TB
     end
 
     subgraph LezV02Sidecars["Official LEZ v0.2 sidecar boundary"]
-        MSL2["Maker v0.2 library<br/>prepare + one-attempt Claim GREEN<br/>query and process pending"]
-        TLS2["Taker v0.2 library<br/>prepare + one-attempt Claim GREEN<br/>query and process pending"]
-        V02J[("Separate role-bound SQLite journals<br/>exact bytes + AttemptStarted GREEN")]
+        MSL2["Maker v0.2 PoC process<br/>Vault Claim + native deposit GREEN"]
+        TLS2["Taker v0.2 PoC process<br/>Vault Claim + native claim GREEN"]
+        V02J[("Separate role-bound state<br/>exact reservations + Vault attempt journals GREEN")]
         MSL2 --> V02J
         TLS2 --> V02J
     end
@@ -74,8 +74,10 @@ flowchart TB
         SQ["Non-standalone sequencer RPC<br/>signed channel and Borsh block GREEN"]
         V02R["Host orchestrator<br/>exact-ID lifecycle and RPC probes"]
         V02Net["Unique no-masquerade Docker bridge<br/>dynamic loopback ports"]
-        V02Ready[("v0.2 service and pre-Claim state GREEN<br/>channel + finality + actor Vault allocations")]
-        V02Full[("Full runtime tuple pending<br/>finalized Claims + escrow + actors + swaps + recovery")]
+        V02Ready[("v0.2 services + Vault Claims + deploy GREEN")]
+        V02Native[("Native init + fund + claim GREEN<br/>finalized blocks 219 220 223")]
+        V02Fixture[("Fixture readiness GREEN<br/>isolated configs; saved window stale")]
+        V02Full[("Cross-chain corridor pending<br/>sidecars + activate + drive + Zebra effects + recovery")]
         V02State[(".e2e/run_id/lez-v02")]
     end
 
@@ -142,8 +144,8 @@ flowchart TB
     LRR -.->|"taker-only provisioning"| TLS
     MLB <-.->|"same bounded bridge; v0.2 selector"| MSL2
     TLB <-.->|"same bounded bridge; v0.2 selector"| TLS2
-    MSL2 -.->|"official v0.2 JSON-RPC"| SQ
-    TLS2 -.->|"official v0.2 JSON-RPC"| SQ
+    MSL2 -->|"official v0.2 JSON-RPC"| SQ
+    TLS2 -->|"official v0.2 JSON-RPC"| SQ
     V02R -->|"start first; cryptarchia and channel HTTP"| BR
     V02R -->|"start after channel; finalized ID and hash RPC"| IX
     V02R -->|"start after exact missing proof; service RPC"| SQ
@@ -155,7 +157,11 @@ flowchart TB
     SQ -->|"Zone SDK signed publish"| BR
     IX -->|"poll finalized LEZ channel"| BR
     V02R -->|"write run-scoped evidence"| V02Ready
-    V02Ready -.-> V02Full
+    V02Ready --> V02Native
+    V02Ready --> V02Fixture
+    ZEC -->|"stable mature Regtest UTXO query"| V02Fixture
+    V02Native -.-> V02Full
+    V02Fixture -.-> V02Full
     V02Full -.->|"runtime and funding handoff"| LRR
 
     MD <-->|"discovery + negotiation only"| DC
@@ -185,7 +191,7 @@ flowchart TB
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
     classDef running fill:#e6ffec,stroke:#1a7f37;
     class MM,LC,CA,TC,TM,LRR,V02Full planned;
-    class BR,IX,SQ,V02R,V02Net,V02Ready,V02State running;
+    class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02State,MSL2,TLS2,V02J running;
 ```
 
 The maker operator owns maker policy, keys, node selection, and the daemon
@@ -234,13 +240,17 @@ one-attempt state machine: it commits exact typed preparation and
 `AttemptStarted` before the only official-transaction call and makes every
 reopen observe-only. Forced races, crash windows, ambiguity, error
 classification, schema tampering, and filesystem substitution are GREEN in
-library tests; a real generated-client adapter and query proof are not. The
-local v0.2 Bedrock/indexer/non-standalone service
-slice plus distinct maker/taker pre-Claim Vault state at exact finalized block 2
-is also GREEN. Remaining M2 work is bounded inclusion/finality observation,
-executable role processes, effect-bearing `activate`/`drive` command/port
-wiring, dormant public-route configuration/adapters, composed both-direction
-execution, and post-lock hardening; chain
+library tests. The retained local v0.2 stack then proved both owner-authorized
+Vault Claims, checked deployment, and separate maker/taker PoC processes driving
+native initialize/fund/claim into finalized blocks 219/220/223. The native CLI
+itself proves sequencer inclusion and same-tip state; sequential indexer reads
+provide the distinct finality proof. It reports `crash_atomic_submission=false`.
+The same retained run provisions and reloads an isolated `TakerSellsLez`
+reference-actor pair from a stable mature real-Zebra UTXO, but its saved window
+1..256 is stale at later tip 389. It does not start the configured sidecars or
+execute `activate`/`drive`. Remaining M2 PoC work is
+effect-bearing reference-actor/sidecar composition, the Zcash HTLC effects, both
+directions, and one reproducible corridor runner; chain
 adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
 observation alone is non-authorizing: forward Zcash persists and revalidates
@@ -329,7 +339,18 @@ in a composed LEZ/Zebra swap yet. This entire v0.1.2 boundary is retained as a
 lower lane and cannot replace ADR 0023's full v0.2 stack. The upstream v0.1.2 server itself still binds
 the allocated port on the host wildcard address.
 
-The v0.2 service stack is now source- and binary-attested and has passed isolated execution in run `v02-actors-finalized-20260713b`. It binds clean LEZ `v0.2.0` source at `a58fbce2...`, Rust 1.94.0, the digest-pinned Bedrock image at OCI revision `d8711bbc...`, exact Risc0/Rapisnark inputs, non-standalone service binaries, and dynamic loopback RPC publication on a unique no-masquerade bridge. The real sequencer signs and onboards its key-derived runtime channel; the runner preserves the protected all-zero Bedrock genesis channel and does not use the upstream all-`01` example as runtime identity. Finalized block 2 passed indexer by-ID/by-hash equality and sequencer Borsh-header identity. At that exact finalized block, maker/taker owners have zero balance/nonce and their distinct Vaults contain 100000/200000 with nonce zero. The runner then proved its exact run containers, network, and image absent. This is service plus pre-Claim actor-state readiness only: actual-node Claim RPC submission/inclusion/finality, checked escrow deployment, effect-bearing independent actor processes, swap effects, and restart recovery remain pending under ADR 0024.
+The v0.2 service stack is source- and binary-attested and runs clean LEZ
+`v0.2.0` source `a58fbce2...`, Rust 1.94.0 service artifacts, the digest-pinned
+Bedrock image, exact Risc0/Rapisnark inputs, and dynamic loopback RPCs on a
+unique no-masquerade bridge. Run `m2poc-vertical-20260714a` retained that stack
+while Vault Claims finalized in blocks 29/30, the checked escrow deployed in
+block 51, and the native lifecycle finalized in blocks 219/220/223. Terminal
+custody/maker/taker balances were 0/99300/200700. A keyless process observed the
+same terminal state, and the actor-fixture provisioner selected a 625000000-zat
+maker-owned Zebra output at 104 confirmations. This is still not a cross-chain
+swap: sidecars, reference-actor effects, Zcash HTLC funding/spend, both
+directions, and composed recovery remain pending. PoC-to-hardening and milestone
+transitions are owner-controlled.
 
 ## LEZ escrow custody components and actor flows
 

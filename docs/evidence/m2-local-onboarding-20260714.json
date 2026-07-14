@@ -81,11 +81,195 @@
       "block_hash": "ff66517d0a9af56d984b33ebfefca72c47a4af1f9f48ec418b306d9859e32b42",
       "bedrock_status": "Finalized"
     },
-    "initialize_fund_claim_or_refund_executed": false
+    "initialize_fund_claim_or_refund_executed": true
+  },
+  "native_escrow_lifecycle": {
+    "classification": "partial_lez_vertical_slice_not_cross_chain_corridor",
+    "program_id": "f8385049e93a319b44d868e0d0cf805b058eddcf92141a186ffd69e4596c0fbe",
+    "authenticated_transfer_program_id": "dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71",
+    "terms": {
+      "swap_id": "4747474747474747474747474747474747474747474747474747474747474747",
+      "terms_hash": "3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d",
+      "public_preimage_digest": "544e62cee8033709e389e5b2755343d0d0fa8c4850215cfb6331717e80d1aea3",
+      "preimage_recorded": false,
+      "amount": 700,
+      "refund_at_ms": 9999999999999,
+      "depositor_role": "maker",
+      "depositor_account_id": "94b3cefdc7335256e802987a50f336cfed7053992c3bcc318054a0e3d8956166",
+      "claimant_role": "taker",
+      "claimant_account_id": "1e916b03cf49c0e6a03feecf124536d867f45c5e7cf82a108d1377120ee28ccc"
+    },
+    "accounts": {
+      "metadata_pda": "ad8ec588a4646b01cbe670b12710092f687e469693e5a81ed46e809145c8b977",
+      "custody_pda": "8fe895aad29a4648dc965786b41bea57f02a9579374984152426e684f9a0391f"
+    },
+    "transactions": [
+      {
+        "kind": "initialize_native",
+        "transaction_id": "7f5b3082f55794e6a0fa4e434cf50f0cd9f8c776dbab1b96e70a158dc9e203f6",
+        "sequencer_observation": "canonical_exact_transaction_inclusion",
+        "finalized_indexer_block_id": 219,
+        "finalized_indexer_block_hash": "b905ffd40bc1d40f952d6bec8c6a36af343419f59c0067f50ef1edd5b3e43e67",
+        "bedrock_status": "Finalized"
+      },
+      {
+        "kind": "fund_native",
+        "transaction_id": "e33e38df71002515b76efb43876eb496f86bd3e93489ff951ebc979bf65de906",
+        "sequencer_observation": "canonical_exact_transaction_inclusion",
+        "finalized_indexer_block_id": 220,
+        "finalized_indexer_block_hash": "8ce5b7a45b0950b558593e6c6e4a28ecc4361db147df5586ce6085e5d7ab3489",
+        "bedrock_status": "Finalized"
+      },
+      {
+        "kind": "claim_native",
+        "transaction_id": "a031b9cc25ebbbaba645a916c580446b1d2cf1e7bbba54ea075d861e9b088dda",
+        "sequencer_observation": "canonical_exact_transaction_inclusion",
+        "finalized_indexer_block_id": 223,
+        "finalized_indexer_block_hash": "d56081ea52fa34d52d95c6c9e0403fb78ad909c2e1841900db138665731d6b54",
+        "bedrock_status": "Finalized"
+      }
+    ],
+    "state_sequence": [
+      {
+        "point": "before_initialize",
+        "sequencer_tip": 218,
+        "metadata_state": "absent",
+        "custody_balance": 0,
+        "maker_balance": 100000,
+        "maker_nonce": 1,
+        "taker_balance": 200000,
+        "taker_nonce": 1
+      },
+      {
+        "point": "after_initialize",
+        "sequencer_tip": 219,
+        "metadata_state": "empty",
+        "custody_balance": 0,
+        "maker_balance": 100000,
+        "maker_nonce": 2,
+        "taker_balance": 200000,
+        "taker_nonce": 1
+      },
+      {
+        "point": "after_fund",
+        "sequencer_tip": 220,
+        "metadata_state": "funded",
+        "custody_balance": 700,
+        "maker_balance": 99300,
+        "maker_nonce": 3,
+        "taker_balance": 200000,
+        "taker_nonce": 1
+      },
+      {
+        "point": "after_claim",
+        "sequencer_tip": 223,
+        "metadata_state": "claimed",
+        "custody_balance": 0,
+        "maker_balance": 99300,
+        "maker_nonce": 3,
+        "taker_balance": 200700,
+        "taker_nonce": 2
+      }
+    ],
+    "keyless_observer": {
+      "sequencer_tip": 225,
+      "tip_block_hash": "6ad173929f6269f47127c7d5c273a3e7c3035c763ae3100692f3ad6dbac70e84",
+      "metadata_state": "claimed",
+      "custody_balance": 0,
+      "maker_balance": 99300,
+      "maker_nonce": 3,
+      "taker_balance": 200700,
+      "taker_nonce": 2,
+      "scope": "same_tip_sequencer_accounts_not_indexer_finality"
+    },
+    "role_and_secret_boundary": {
+      "deposit_process": "maker_key_file_and_owner_only_state_directory",
+      "claim_process": "taker_key_file_preimage_file_and_distinct_owner_only_state_directory",
+      "secret_on_command_line": false,
+      "evidence_contains_preimage": false
+    },
+    "submission_safety": {
+      "durable_exact_initialize_and_fund_bytes": true,
+      "durable_exact_claim_bytes": true,
+      "observe_before_submit": true,
+      "crash_atomic_submission": false,
+      "limitation": "native_multi_effect_attempt_state_and_ambiguous_crash_reconciliation_are_post_poc_hardening"
+    },
+    "verified_gate": "scripts/verify-lez-v02-sidecar.sh",
+    "existing_test_count": 42,
+    "new_tdd_cases_for_poc": 0
+  },
+  "reference_actor_fixture_readiness": {
+    "classification": "private_fixture_provisioned_not_activate_drive_or_corridor",
+    "source_commit": "f94585e089bdc21e27b2ae6a774435c42779f1ca",
+    "provisioner": "zec-local-poc-provision",
+    "direction": "taker_sells_lez",
+    "swap_id": "m2-poc-taker-sells-lez-001",
+    "signed_agreement_sha256": "b12919312162cdcdf91ca96ceae0a9c0c56c5548394216c93ceef9b5d07bb0ed",
+    "lez_binding": {
+      "chain_and_channel_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+      "genesis_block_hash": "e24c5a4a2d08a747b96cebefa1304cbe80e42dac9ced3a52c2330b22797e10d9",
+      "escrow_program_id": "f8385049e93a319b44d868e0d0cf805b058eddcf92141a186ffd69e4596c0fbe",
+      "maker_sidecar_url": "http://127.0.0.1:32831/",
+      "taker_sidecar_url": "http://127.0.0.1:32832/",
+      "endpoint_scope": "distinct_loopback_configuration_only_sidecars_not_started_or_called",
+      "discovery_start_height": 1,
+      "discovery_max_blocks": 256
+    },
+    "zebra_binding": {
+      "endpoint": "http://127.0.0.1:32830/",
+      "network": "regtest",
+      "rpc_chain": "test",
+      "consensus_branch_id": "5437f330",
+      "genesis_hash": "029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327",
+      "stable_tip_height": 104,
+      "stable_tip_hash": "952ca1a7f2f504b113c9afa7e2bd67d95568af3a1db5c48a42a7f2c37d257744",
+      "selected_candidate": {
+        "owner_role": "maker",
+        "transaction_id": "90819e4fc919449abe808b524fb92844bfcbe9d922cd892dba7b604b4536f76f",
+        "output_index": 0,
+        "value_zatoshis": 625000000,
+        "confirmations": 104,
+        "unspent": true
+      }
+    },
+    "role_and_secret_boundary": {
+      "output_root_mode": "0700",
+      "maker_root_mode": "0700",
+      "taker_root_mode": "0700",
+      "private_file_mode": "0600",
+      "maker_only_preimage": true,
+      "maker_only_zcash_candidate": true,
+      "distinct_recovery_keys": true,
+      "distinct_sidecar_capabilities": true,
+      "both_configs_reloaded": true,
+      "both_activation_material_sets_loaded": true,
+      "actor_pair_isolation_validated": true,
+      "private_material_in_summary": false
+    },
+    "executed": {
+      "zebra_identity_and_stable_candidate_query": true,
+      "agreement_and_private_actor_material_provision": true,
+      "reference_actor_activate": false,
+      "reference_actor_drive": false,
+      "zcash_htlc_fund_or_spend": false,
+      "cross_chain_corridor": false
+    },
+    "post_provision_audit": {
+      "lez_tip_observed": 389,
+      "discovery_window_stale": true,
+      "retained_fixture_runnable_now": false,
+      "lez_refund_delay_seconds": 60,
+      "zcash_refund_horizon_blocks": 4,
+      "zcash_required_confirmations": 1,
+      "runner_requirement": "prebuild_then_provision_just_in_time_at_fresh_tip_start_explicit_run_port_sidecars_mine_only_after_zcash_effects_and_fail_fast_on_deadline_or_window_headroom"
+    },
+    "new_tdd_cases_for_poc": 0
   },
   "finality_boundary": {
     "claim_cli_result": "not_observed_in_this_poc_slice",
-    "manual_indexer_reads": "exact transactions and post-state were subsequently read from finalized blocks",
+    "native_cli_result": "canonical_sequencer_inclusion_and_same_tip_accounts_not_finality",
+    "manual_indexer_reads": "Vault Claims, checked deployment, and all three native lifecycle transactions were subsequently read from exact finalized blocks",
     "integrated_bounded_sequencer_and_indexer_query_proof": false,
     "automatic_journal_transition_beyond_admitted": false
   },
@@ -98,7 +282,6 @@
     "classification": "observed_local_latency_or_serialization_flake_cause_not_yet_established"
   },
   "not_proved": [
-    "escrow_initialize_fund_claim_or_refund",
     "zcash_htlc_effect",
     "cross_chain_atomic_corridor",
     "independent_reference_actor_activate_or_drive",

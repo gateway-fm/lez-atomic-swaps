@@ -130,6 +130,18 @@ the actual Vault onboarding, checked escrow deployment/funding, Zcash HTLC
 funding, LEZ revealing claim, exact Zcash spend, and finalized balance/state
 checks.
 
+As of 2026-07-14, one retained partial vertical proves both Vault Claims,
+checked deployment, and role-separated native LEZ initialize/fund/claim with
+independent manual finality evidence. A separate provisioner also reloads an
+isolated `TakerSellsLez` actor pair bound to a stable mature real-Zebra Regtest
+UTXO. Its retained LEZ discovery window is already stale, so the final runner
+must prebuild then provision just in time from a fresh tip and fail fast on
+deadline/window headroom. No reference actor has executed `activate`/`drive`,
+no Zcash HTLC effect or cross-chain corridor has run, and zero new TDD cases are
+attributed to this PoC assembly. M2 remains in PoC until the repository owner
+explicitly changes the phase; neither this evidence nor later commits implicitly
+enter hardening or the next milestone.
+
 Restart, abandonment/refund, reorg, concurrency, corruption, broad fault
 matrices, and public-route readiness are later hardening layers. Existing tests
 for those behaviors remain valuable carried evidence, but they no longer delay

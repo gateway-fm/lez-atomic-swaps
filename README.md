@@ -198,28 +198,20 @@ Zcash Regtest devnet, and
 independent maker/taker processes while deferring public evidence without
 claiming it exists. The
 [source-audited local-stack decision](docs/architecture/0024-source-audited-lez-v0-2-local-stack.md)
-binds the exact Bedrock image/source labels, LEZ source, toolchain, native inputs, service flows, and service-binary hashes. Run `v02-actors-finalized-20260713b` additionally proves isolated Bedrock, real non-standalone sequencer, and indexer startup; signed key-derived channel onboarding; finalized non-genesis cross-RPC block identity; distinct maker/taker genesis Vault allocations at the same exact finalized block; channel advancement; and fail-closed exact cleanup. A separately locked Rust
-1.96.0 v0.2 sidecar foundation now uses the exact upstream `AccountId`,
-`PublicTransaction`, `LeeTransaction`, and sequencer RPC types; it proves
-literal-loopback health/channel binding, canonical signed-transaction decoding,
-and an authenticated run/role-bound describe server. Exact native
-initialize/fund and maker/taker Vault Claim preparation are GREEN using
-official types, node-confirmed nonces, canonical bytes, and fail-closed
-reservations. On Linux, durable preparation recovery is GREEN through
-owner-only directories opened with `openat2(NO_SYMLINKS)`, fsynced
-create-exclusive files, complete exact-byte revalidation, and runtime
-permission/alias checks. Durable Vault Claim submission is now GREEN at the
-library boundary: one role-bound SQLite journal commits `AttemptStarted` before
-the only sequencer call, every reopen is observe-only, exact responses,
-`InvalidParams`, ambiguity, crashes, concurrent handles, schema tampering, and
-inode replacement fail closed under seventeen focused tests. The coordinator,
-not an adapter, classifies official `jsonrpsee` client errors. Authenticated
-effect-server integration, a real generated-RPC adapter, bounded
-inclusion/finality observation, and executable role processes remain pending. The
-service and exact pre-Claim actor state are GREEN. Finalized Vault Claim actor onboarding,
-checked escrow deployment, independent actor consumption, swap effects, and
-restart recovery remain pending; standalone mock settlement and
-v0.1.2 remain lower-level coverage. The
+binds the exact Bedrock image/source labels, LEZ source, toolchain, native
+inputs, service flows, and service-binary hashes. Retained run
+`m2poc-vertical-20260714a` now proves the three official local v0.2 services,
+both finalized actor Vault Claims, checked escrow deployment, and a
+role-separated native initialize/fund/claim lifecycle in finalized blocks
+219/220/223. It also provisions an isolated `TakerSellsLez` actor pair from a
+stable mature real-Zebra Regtest output. That saved pair is loadable evidence,
+not runnable now: its LEZ discovery window 1..256 is stale at later tip 389. The
+[exact evidence](docs/evidence/m2-local-onboarding-20260714.json) records all
+transactions, finality, balances, PDAs, agreement digest, UTXO, endpoints, and
+limitations. This is a partial vertical plus fixture readiness: reference
+actors have not called `activate`/`drive`, no Zcash HTLC effect or cross-chain
+corridor ran, and M2 is not complete. PoC-to-hardening and milestone
+transitions remain repository-owner decisions. The
 [Zcash public-testnet setup guide](docs/zcash-testnet-setup.md) records the
 selected self-hosted and Tatum Testnet Zebrad routes, optional funding wallet,
 external dependencies, and the still-missing transparent signer/provider
@@ -264,12 +256,17 @@ manual atomic-swap corridor.
 
 ### External dependencies and flakiness
 
-The current executable operator, Zebra, and LEZ flows use no public blockchain
-RPC or faucet. The official LEZ v0.2 endpoint
+The current executable PoC flows use no public blockchain RPC, faucet, or
+public funds. The native slice used dynamic-loopback Bedrock, sequencer, and
+indexer services; the fixture provisioner queried the retained dynamic-loopback
+Zebra Regtest node and selected a deterministic maker-owned mature output. It
+configured two additional distinct loopback sidecar URLs but did not start or
+call those sidecars. The official LEZ v0.2 endpoint
 `https://testnet.lez.logos.co` is selected and its health/block/program methods
 were checked on 2026-07-12, but no repository user flow submits to it yet.
 Maker, Zebra-adapter, and sidecar host endpoints are ephemeral loopback
-services. The LEZ
+services or, for the provisioned sidecars, configuration-only placeholders
+until the composed runner starts them. The LEZ
 test client uses loopback, but pinned upstream v0.1.2 binds its ephemeral server
 to the host wildcard address; it is short-lived and collision-isolated, not
 loopback/network-namespace isolated. The reusable external node refuses an
