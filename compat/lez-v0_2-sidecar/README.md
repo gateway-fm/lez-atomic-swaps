@@ -70,6 +70,13 @@ bounded representation. A failed preparation exposes and caches no partial
 claim. This is local preparation atomicity only; finalized on-chain balance
 conservation remains an actor-level end-to-end property.
 
+The source-audited genesis pre-state is also part of effect eligibility. LEZ
+v0.2 genesis routes each supplied allocation through the Vault program into an
+owner-derived PDA controlled by the authenticated-transfer program; the owner
+account is still the default account. An indexer with no finalized tip is
+scanned from official `lee::GENESIS_BLOCK_ID` (block 1), never from block 0.
+These are executable upstream facts, not fixture conventions.
+
 Exact LEZ v0.2 still exposes a `PrivateKey` whose `Debug` and `Display` reveal
 raw material and which does not implement `Zeroize`. This planner never formats
 the key and keeps its retained byte copy in `Zeroizing<[u8; 32]>`, but upstream

@@ -136,6 +136,13 @@ stored request, signer, account order, allocation, nonce, canonical bytes,
 signature, official hash, runtime, and program identity with the same official
 Vault Claim planner used during preparation.
 
+For the pinned genesis path, `SupplyAccount` executes Faucet to Vault to
+authenticated-transfer. The pre-Claim owner is `Account::default()`; its
+derived Vault has the exact allocation, zero nonce and default data, and
+`program_owner == programs::authenticated_transfer().id()`. The official LEE
+genesis block ID is 1. Consequently, an indexer with no finalized tip starts its
+fixed discovery window at `lee::GENESIS_BLOCK_ID`, not at block 0.
+
 Before the first network call, the journal atomically advances the effect to
 `AttemptStarted` with attempt count exactly one and synchronously commits it.
 Only a newly committed `AttemptStarted` transition may authorize the single

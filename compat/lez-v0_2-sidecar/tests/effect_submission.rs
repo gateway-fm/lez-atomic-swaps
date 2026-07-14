@@ -116,7 +116,7 @@ async fn prepared_effect(
         Account::default(),
         owner_vault,
         Account {
-            program_owner: programs::vault().id(),
+            program_owner: programs::authenticated_transfer().id(),
             balance: amount,
             ..Account::default()
         },
@@ -260,7 +260,7 @@ async fn typed_before_state_substitutions_never_make_an_effect_eligible() {
             Account::default(),
             owner_vault,
             Account {
-                program_owner: programs::vault().id(),
+                program_owner: programs::authenticated_transfer().id(),
                 balance: amount,
                 ..Account::default()
             },
@@ -272,7 +272,7 @@ async fn typed_before_state_substitutions_never_make_an_effect_eligible() {
             Account::default(),
             wrong_owner,
             Account {
-                program_owner: programs::vault().id(),
+                program_owner: programs::authenticated_transfer().id(),
                 balance: amount,
                 ..Account::default()
             },
@@ -295,7 +295,7 @@ async fn typed_before_state_substitutions_never_make_an_effect_eligible() {
             Account::default(),
             owner_vault,
             Account {
-                program_owner: programs::vault().id(),
+                program_owner: programs::authenticated_transfer().id(),
                 balance: amount - 1,
                 ..Account::default()
             },
@@ -310,7 +310,7 @@ async fn typed_before_state_substitutions_never_make_an_effect_eligible() {
             },
             owner_vault,
             Account {
-                program_owner: programs::vault().id(),
+                program_owner: programs::authenticated_transfer().id(),
                 balance: amount,
                 ..Account::default()
             },
@@ -350,7 +350,7 @@ async fn empty_indexer_tip_binds_discovery_to_genesis_height() {
         Account::default(),
         owner_vault,
         Account {
-            program_owner: programs::vault().id(),
+            program_owner: programs::authenticated_transfer().id(),
             balance: 100_000,
             ..Account::default()
         },
@@ -368,8 +368,8 @@ async fn empty_indexer_tip_binds_discovery_to_genesis_height() {
             window,
         )
     };
-    assert!(prepare(DiscoveryWindow::new(0, 128).unwrap()).is_ok());
-    assert!(prepare(DiscoveryWindow::new(1, 128).unwrap()).is_err());
+    assert!(prepare(DiscoveryWindow::new(0, 128).unwrap()).is_err());
+    assert!(prepare(DiscoveryWindow::new(1, 128).unwrap()).is_ok());
 }
 
 #[tokio::test]

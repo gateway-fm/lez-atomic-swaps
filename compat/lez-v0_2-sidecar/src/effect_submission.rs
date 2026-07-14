@@ -231,7 +231,7 @@ impl PreparedVaultClaimEffect {
             Some(tip) => tip
                 .checked_add(1)
                 .ok_or(VaultClaimEffectPrepareError::InvalidBeforeState)?,
-            None => 0,
+            None => nssa::GENESIS_BLOCK_ID,
         };
         if request.context.sidecar_role != request.allocation.role()
             || request.runtime.sidecar_role != request.allocation.role()
@@ -239,7 +239,7 @@ impl PreparedVaultClaimEffect {
             || before_state.owner_account_id != owner_id
             || before_state.vault_account_id != vault_id
             || owner_nonce != request.owner_nonce
-            || before_state.vault_account.program_owner != programs::vault().id()
+            || before_state.vault_account.program_owner != programs::authenticated_transfer().id()
             || before_state.vault_account.balance != request.allocation.amount()
             || sequencer_window.start_height()
                 != before_state
