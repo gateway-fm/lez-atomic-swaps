@@ -14,6 +14,7 @@ readonly AUTHENTICATED_TRANSFER_PROGRAM_HEX="${AUTHENTICATED_TRANSFER_PROGRAM_HE
 readonly AUTHENTICATED_TRANSFER_PROGRAM_BASE58="${AUTHENTICATED_TRANSFER_PROGRAM_BASE58:-FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg}"
 readonly MAKER_ACCOUNT_BASE58="${MAKER_ACCOUNT_BASE58:-B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd}"
 readonly TAKER_ACCOUNT_BASE58="${TAKER_ACCOUNT_BASE58:-34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib}"
+readonly POC_DIRECTION="${POC_DIRECTION:-taker_sells_lez}"
 readonly DISCOVERY_BLOCKS=256
 readonly POLL_INTERVAL_SECONDS=0.10
 # Both ceilings start at provisioning. The 49-second completion cap retains at
@@ -21,8 +22,8 @@ readonly POLL_INTERVAL_SECONDS=0.10
 readonly MAX_PRE_EFFECT_SECONDS=25
 readonly MAX_CORRIDOR_SECONDS=49
 readonly MAX_ACTOR_CALL_SECONDS=20
-readonly MAX_DRIVE_RETRIES=3
-readonly DRIVE_RETRY_DELAY_SECONDS=0.05
+readonly MAX_DRIVE_RETRIES=8
+readonly DRIVE_RETRY_DELAY_SECONDS=0.15
 readonly SIDECAR_STARTUP_WORST_CASE_SECONDS=40
 readonly RAPIDSNARK_LIB_DIR="${RAPIDSNARK_LIB_DIR:-/tmp/lez-atomic-swaps-tools/rapidsnark-v0.0.8/d4133227}"
 readonly BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:--I/usr/lib/gcc/x86_64-linux-gnu/13/include}"
@@ -79,6 +80,26 @@ if [[ "$MAKER_ACCOUNT_BASE58" == "$TAKER_ACCOUNT_BASE58" ]]; then
   echo 'maker and taker LEZ identities must be distinct' >&2
   exit 2
 fi
+case "$POC_DIRECTION" in
+  taker_sells_lez)
+    expected_zcash_funder_role='maker'
+    expected_zcash_claimant_role='taker'
+    expected_lez_depositor_role='taker'
+    expected_lez_depositor_account="$TAKER_ACCOUNT_BASE58"
+    ;;
+  taker_sells_foreign)
+    expected_zcash_funder_role='taker'
+    expected_zcash_claimant_role='maker'
+    expected_lez_depositor_role='maker'
+    expected_lez_depositor_account="$MAKER_ACCOUNT_BASE58"
+    ;;
+  *)
+    echo 'POC_DIRECTION must be taker_sells_lez or taker_sells_foreign' >&2
+    exit 2
+    ;;
+esac
+readonly expected_zcash_funder_role expected_zcash_claimant_role
+readonly expected_lez_depositor_role expected_lez_depositor_account
 if [[ -e "$private_base" ]]; then
   echo "refusing to reuse PoC output root: ${private_base}" >&2
   exit 2
@@ -134,9 +155,9 @@ cleanup() {
   fi
   if (( status != 0 )); then
     if [[ -d "$private_base" ]]; then
-      echo "M2 TakerSellsLez PoC failed; retained private evidence: ${private_base}" >&2
+      echo "M2 ${POC_DIRECTION} PoC failed; retained private evidence: ${private_base}" >&2
     else
-      echo 'M2 TakerSellsLez PoC failed before its evidence root was created' >&2
+      echo "M2 ${POC_DIRECTION} PoC failed before its evidence root was created" >&2
     fi
   fi
   exit "$status"
@@ -151,9 +172,22 @@ require_command() {
     exit 2
   }
 }
-for command in awk base64 cargo curl date jq kill od perl readlink sha256sum sleep stat tail timeout tr xxd; do
+for command in awk base64 cargo curl date flock jq kill od perl readlink sha256sum sleep stat tail timeout tr xxd; do
   require_command "$command"
 done
+
+# A retained local node tuple may service only one effect-bearing corridor at a
+# time. The lock is scoped to the exact endpoints and does not touch unrelated
+# Docker resources or processes.
+endpoint_lock_key="$(printf '%s\n' \
+  "$LEZ_SEQUENCER_URL" "$LEZ_INDEXER_URL" "$ZEBRA_RPC_URL" | sha256sum)"
+endpoint_lock_file="/tmp/lez-atomic-swaps-corridor-${endpoint_lock_key%% *}.lock"
+readonly endpoint_lock_file
+exec 9>"$endpoint_lock_file"
+if ! flock -n 9; then
+  echo 'another corridor runner owns the configured local node endpoints' >&2
+  exit 2
+fi
 
 monotonic_milliseconds() {
   [[ -r /proc/uptime ]] || {
@@ -328,6 +362,7 @@ readonly taker_endpoint="http://127.0.0.1:${taker_port}/"
 jq -n \
   --arg run_id "$run_id" \
   --arg swap_id "${run_id}-swap" \
+  --arg direction "$POC_DIRECTION" \
   --arg chain_id "$LEZ_CHAIN_ID" \
   --arg genesis "$LEZ_GENESIS_HASH" \
   --arg escrow "$ESCROW_PROGRAM_ID" \
@@ -343,6 +378,7 @@ jq -n \
     schema_version: 1,
     run_id: $run_id,
     swap_id: $swap_id,
+    direction: $direction,
     lez_runtime: {
       chain_id: $chain_id,
       channel_id: $chain_id,
@@ -371,12 +407,16 @@ readonly budget_clock_source provision_started_monotonic_ms corridor_deadline_mo
 "$provisioner_bin" --spec-file "$spec_file" --output-root "$actors_root" \
   >"${evidence_dir}/provision-summary.json"
 remaining_budget_milliseconds 'provisioning-after' >/dev/null
-jq -e '
-  .direction == "taker_sells_lez"
+jq -e \
+  --arg direction "$POC_DIRECTION" \
+  --arg zcash_funder "$expected_zcash_funder_role" \
+  --arg lez_depositor "$expected_lez_depositor_role" '
+  .direction == $direction
+  and .zcash_candidate_owner == $zcash_funder
   and .lez_native_amount > 0
   and .lez_native_amount == (.lez_native_amount | floor)
   and .lez_native_amount <= 9007199254740991
-  and .lez_depositor_role == "taker"
+  and .lez_depositor_role == $lez_depositor
   and (.authenticated_transfer_program_id_words | arrays | length) == 8
   and all(.authenticated_transfer_program_id_words[];
     . >= 0 and . == floor and . <= 4294967295)
@@ -384,7 +424,7 @@ jq -e '
   and .actor_pair_validated == true
 ' "${evidence_dir}/provision-summary.json" >/dev/null
 jq -e \
-  --arg depositor "$TAKER_ACCOUNT_BASE58" \
+  --arg depositor "$expected_lez_depositor_account" \
   --arg authenticated_transfer "$AUTHENTICATED_TRANSFER_PROGRAM_HEX" '
   .lez_depositor_account_id_base58 == $depositor
   and .authenticated_transfer_program_id == $authenticated_transfer
@@ -552,6 +592,10 @@ pre_effect_elapsed_ms=$((MAX_CORRIDOR_SECONDS * 1000 - pre_effect_remaining_ms))
 
 jq -n \
   --arg run_id "$run_id" \
+  --arg direction "$POC_DIRECTION" \
+  --arg zcash_funder_role "$expected_zcash_funder_role" \
+  --arg zcash_claimant_role "$expected_zcash_claimant_role" \
+  --arg lez_depositor_role "$expected_lez_depositor_role" \
   --arg maker_endpoint "$maker_endpoint" \
   --arg taker_endpoint "$taker_endpoint" \
   --argjson maker_pid "$maker_pid" \
@@ -572,7 +616,12 @@ jq -n \
   {
     schema_version: 1,
     run_id: $run_id,
-    direction: "taker_sells_lez",
+    direction: $direction,
+    expected_effect_owners: {
+      zcash_funder: $zcash_funder_role,
+      zcash_claimant: $zcash_claimant_role,
+      lez_depositor: $lez_depositor_role
+    },
     sidecars: {
       maker: {endpoint: $maker_endpoint, pid: $maker_pid, process_start_ticks: $maker_start_ticks},
       taker: {endpoint: $taker_endpoint, pid: $taker_pid, process_start_ticks: $taker_start_ticks}
@@ -616,6 +665,10 @@ jq -e '.role == "taker" and .outcome == "activated" and .phase == "offered"' \
 : >"${evidence_dir}/drive-retries.ndjson"
 zcash_fund_mined=0
 zcash_claim_mined=0
+lez_revealing_claim_seen=0
+zcash_fund_submitter=''
+zcash_claim_submitter=''
+lez_revealing_claim_submitter=''
 drive_actor() {
   local role="$1"
   local config="$2"
@@ -679,6 +732,62 @@ mine_blocks() {
   (( rpc_status == 0 ))
 }
 
+handle_zcash_submission() {
+  local role="$1"
+  local output="$2"
+  if jq -e '.outcome == "submitted" and .operation == "zcash_fund"' \
+    <<<"$output" >/dev/null; then
+    [[ "$role" == "$expected_zcash_funder_role" ]] || {
+      echo "unexpected Zcash funder: expected=${expected_zcash_funder_role}, actual=${role}" >&2
+      return 1
+    }
+    (( zcash_fund_mined == 0 )) || {
+      echo 'Zcash funding was submitted more than once' >&2
+      return 1
+    }
+    zcash_fund_submitter="$role"
+    zcash_fund_mined=2
+    mine_blocks funding 2
+  fi
+  if jq -e '.outcome == "submitted" and .operation == "zcash_followup_claim"' \
+    <<<"$output" >/dev/null; then
+    (( lez_revealing_claim_seen == 1 )) || {
+      echo 'refusing a Zcash followup claim before the LEZ revealing claim' >&2
+      return 1
+    }
+    [[ "$role" == "$expected_zcash_claimant_role" ]] || {
+      echo "unexpected Zcash claimant: expected=${expected_zcash_claimant_role}, actual=${role}" >&2
+      return 1
+    }
+    (( zcash_claim_mined == 0 )) || {
+      echo 'Zcash followup claim was submitted more than once' >&2
+      return 1
+    }
+    zcash_claim_submitter="$role"
+    zcash_claim_mined=1
+    mine_blocks followup-claim 1
+  fi
+}
+
+handle_lez_revealing_claim() {
+  local role="$1"
+  local output="$2"
+  if ! jq -e '.outcome == "submitted" and .operation == "lez_revealing_claim"' \
+    <<<"$output" >/dev/null; then
+    return 0
+  fi
+  [[ "$role" == "$expected_zcash_funder_role" ]] || {
+    echo "unexpected LEZ claimant: expected=${expected_zcash_funder_role}, actual=${role}" >&2
+    return 1
+  }
+  (( zcash_fund_mined == 2 )) || {
+    echo 'refusing a LEZ revealing claim before confirmed Zcash funding' >&2
+    return 1
+  }
+  lez_revealing_claim_seen=1
+  lez_revealing_claim_submitter="$role"
+}
+
 completed=0
 round=0
 while true; do
@@ -686,26 +795,12 @@ while true; do
   remaining_budget_milliseconds "round-${round}-before" >/dev/null
 
   taker_output="$(drive_actor taker "$taker_config" "$round")"
-  if jq -e '.outcome == "submitted" and .operation == "zcash_followup_claim"' \
-    <<<"$taker_output" >/dev/null; then
-    (( zcash_claim_mined == 0 )) || {
-      echo 'Zcash followup claim was submitted more than once' >&2
-      exit 1
-    }
-    zcash_claim_mined=1
-    mine_blocks followup-claim 1
-  fi
+  handle_lez_revealing_claim taker "$taker_output"
+  handle_zcash_submission taker "$taker_output"
 
   maker_output="$(drive_actor maker "$maker_config" "$round")"
-  if jq -e '.outcome == "submitted" and .operation == "zcash_fund"' \
-    <<<"$maker_output" >/dev/null; then
-    (( zcash_fund_mined == 0 )) || {
-      echo 'Zcash funding was submitted more than once' >&2
-      exit 1
-    }
-    zcash_fund_mined=2
-    mine_blocks funding 2
-  fi
+  handle_lez_revealing_claim maker "$maker_output"
+  handle_zcash_submission maker "$maker_output"
 
   maker_phase="$(jq -r '.phase' <<<"$maker_output")"
   taker_phase="$(jq -r '.phase' <<<"$taker_output")"
@@ -717,8 +812,9 @@ while true; do
   sleep "$POLL_INTERVAL_SECONDS"
 done
 
-(( completed == 1 && zcash_fund_mined == 2 && zcash_claim_mined == 1 )) || {
-  echo "corridor did not complete: completed=${completed}, funding_blocks=${zcash_fund_mined}, claim_blocks=${zcash_claim_mined}" >&2
+(( completed == 1 && zcash_fund_mined == 2 && lez_revealing_claim_seen == 1 \
+  && zcash_claim_mined == 1 )) || {
+  echo "corridor did not complete atomically: completed=${completed}, funding_blocks=${zcash_fund_mined}, lez_reveal=${lez_revealing_claim_seen}, claim_blocks=${zcash_claim_mined}" >&2
   exit 1
 }
 
@@ -738,7 +834,11 @@ final_zebra_tip="$(jq -er '.result | numbers' <<<"$final_zebra_tip_response")"
 
 jq -n \
   --arg run_id "$run_id" \
+  --arg direction "$POC_DIRECTION" \
   --arg output_root "$private_base" \
+  --arg zcash_fund_submitter "$zcash_fund_submitter" \
+  --arg lez_revealing_claim_submitter "$lez_revealing_claim_submitter" \
+  --arg zcash_claim_submitter "$zcash_claim_submitter" \
   --argjson initial_zebra_tip "$zebra_tip" \
   --argjson final_zebra_tip "$final_zebra_tip" \
   --argjson drive_rounds "$round" \
@@ -747,7 +847,7 @@ jq -n \
   {
     schema_version: 1,
     run_id: $run_id,
-    direction: "taker_sells_lez",
+    direction: $direction,
     result: "completed",
     maker_status: "completed",
     taker_status: "completed",
@@ -762,6 +862,16 @@ jq -n \
       total: 3
     },
     zebra_tip: {initial: $initial_zebra_tip, final: $final_zebra_tip},
+    effect_owners: {
+      zcash_funder: $zcash_fund_submitter,
+      lez_claimant: $lez_revealing_claim_submitter,
+      zcash_claimant: $zcash_claim_submitter
+    },
+    atomic_order_observed: [
+      "zcash_funded_and_confirmed",
+      "lez_revealing_claim_submitted",
+      "zcash_followup_claim_submitted_and_confirmed"
+    ],
     drive_rounds: $drive_rounds,
     same_run_drive_retries: $drive_retry_count,
     elapsed_milliseconds_from_provisioning: $elapsed_ms,
@@ -769,4 +879,4 @@ jq -n \
     evidence_root: $output_root
   }' >"${evidence_dir}/result.json"
 
-echo "M2 TakerSellsLez PoC completed: ${evidence_dir}/result.json"
+echo "M2 ${POC_DIRECTION} PoC completed: ${evidence_dir}/result.json"

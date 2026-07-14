@@ -66,8 +66,8 @@ flowchart TB
         MSL2["Maker v0.2 PoC process<br/>Vault Claim + native deposit GREEN"]
         TLS2["Taker v0.2 PoC process<br/>Vault Claim + native claim GREEN"]
         V02J[("Separate role-bound state<br/>exact reservations + Vault attempt journals GREEN")]
-        MBR2["Maker lez-v02-bridge-poc<br/>first corridor complete in 14o"]
-        TBR2["Taker lez-v02-bridge-poc<br/>first corridor complete in 14o"]
+        MBR2["Maker lez-v02-bridge-poc<br/>both corridors complete in 14o and 14c"]
+        TBR2["Taker lez-v02-bridge-poc<br/>both corridors complete in 14o and 14c"]
         MBRJ[("Maker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         TBRJ[("Taker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         MSL2 --> V02J
@@ -77,16 +77,16 @@ flowchart TB
     end
 
     subgraph LocalLezV02["Required public-compatible local LEZ v0.2 devnet"]
-        BR["Bedrock node<br/>digest-pinned; isolated service GREEN"]
-        IX["LEZ v0.2 indexer<br/>finalized by-ID and by-hash GREEN"]
-        SQ["Non-standalone sequencer RPC<br/>signed channel and Borsh block GREEN"]
+        BR["Bedrock HTTP 18080<br/>retained proof host 32831"]
+        IX["LEZ v0.2 indexer RPC 8779<br/>retained proof host 32833"]
+        SQ["LEZ v0.2 sequencer RPC 3040<br/>retained proof host 32832"]
         V02R["Host orchestrator<br/>exact-ID lifecycle and RPC probes"]
         V02Net["Unique no-masquerade Docker bridge<br/>dynamic loopback ports"]
         V02Ready[("v0.2 services + Vault Claims + deploy GREEN")]
         V02Native[("Native init + fund + claim GREEN<br/>finalized blocks 219 220 223")]
         V02Fixture[("Fixture readiness GREEN<br/>isolated configs; saved window stale")]
         V02Partial[("Historical partial evidence<br/>14d through 14n retained")]
-        V02Full[("TakerSellsLez corridor GREEN<br/>1 of 2 happy directions")]
+        V02Full[("Both ZEC corridor directions GREEN<br/>2 of 2 happy directions")]
         V02State[(".e2e/run_id/lez-v02")]
     end
 
@@ -98,7 +98,7 @@ flowchart TB
         LEZ["LEZ sequencer<br/>dynamic port; loopback client URL<br/>upstream wildcard bind<br/>public v0.2 activation pending"]
         BTC["Bitcoin Core"]
         XMR["monerod + wallet RPC"]
-        ZEC["Minimal Zebra 5.2.0 + local Zcash construction"]
+        ZEC["Zebra 5.2.0 Regtest JSON-RPC<br/>retained proof host 32834"]
     end
 
     subgraph Networks["Consensus networks"]
@@ -151,12 +151,12 @@ flowchart TB
     LRM -.->|"future private handoff"| LRR
     LRR -.->|"maker-only provisioning"| MSL
     LRR -.->|"taker-only provisioning"| TLS
-    MLB <-->|"live bounded bridge; Completed in 14o"| MBR2
-    TLB <-->|"live bounded bridge; Completed in 14o"| TBR2
+    MLB <-->|"live bounded bridge; Completed in 14o and 14c"| MBR2
+    TLB <-->|"live bounded bridge; Completed in 14o and 14c"| TBR2
     MSL2 -->|"official v0.2 JSON-RPC"| SQ
     TLS2 -->|"official v0.2 JSON-RPC"| SQ
-    MBR2 -->|"revealing LEZ claim in 14o"| SQ
-    TBR2 -->|"LEZ initialize and fund in 14o"| SQ
+    MBR2 -->|"reveal in 14o; initialize and fund in 14c"| SQ
+    TBR2 -->|"initialize and fund in 14o; reveal in 14c"| SQ
     MBR2 -->|"non-genesis finalized-tip readiness"| IX
     TBR2 -->|"non-genesis finalized-tip readiness"| IX
     V02R -->|"start first; cryptarchia and channel HTTP"| BR
@@ -175,8 +175,8 @@ flowchart TB
     ZEC -->|"stable mature Regtest UTXO query"| V02Fixture
     V02Native --> V02Partial
     V02Fixture --> V02Partial
-    V02Partial -->|"14o completed after bounded retry"| V02Full
-    V02Full -->|"funding plus exact spend at heights 106 and 108"| ZEC
+    V02Partial -->|"14o and reverse 14c completed"| V02Full
+    V02Full -->|"direction-derived funding and exact spend on Zebra"| ZEC
     V02Full -.->|"runtime and funding handoff"| LRR
 
     MD <-->|"discovery + negotiation only"| DC
@@ -206,9 +206,9 @@ flowchart TB
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
     classDef implemented fill:#ddf4ff,stroke:#0969da;
     classDef running fill:#e6ffec,stroke:#1a7f37;
-    class MM,LC,CA,TM,LRR,V02Full planned;
-    class TC,MBR2,TBR2,MBRJ,TBRJ,V02Partial implemented;
-    class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02State,MSL2,TLS2,V02J running;
+    class MM,LC,CA,TM,LRR planned;
+    class TC,MBRJ,TBRJ,V02Partial implemented;
+    class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02Full,V02State,MSL2,TLS2,V02J,MBR2,TBR2 running;
 ```
 
 The maker operator owns maker policy, keys, node selection, and the daemon
@@ -271,17 +271,39 @@ persists submit as unknown before node I/O. Refund calls are typed unavailable;
 sequencer observation is bounded inclusion plus same-tip accounts, and the
 bridge does not assert indexer finality. Historical partial runs 14d through
 14n remain failure and invariant evidence. Fresh run
-`m2poc-corridor-fresh-20260714o` then completed `TakerSellsLez`: both
-independent actors reached revision 4 `Completed` after LEZ initialize/fund,
-two-confirmation Zcash funding, revealing LEZ claim, and the exact Zcash
-follow-up spend. One payload-free `moving_tip` observation was retried once
-within the maximum-three policy. A separate indexer audit found the LEZ effects
-in finalized blocks 264/265/266 and proved terminal `Claimed` metadata, zero
-custody, depositor 100000, and claimant 150000; Zebra funding at height 106 was
-spent at height 108. The saved early fixture window 1..256 remains stale and is
-not reused. The development runner provisions fresh role inputs and executes
-`activate`/`drive`; the reverse `TakerSellsForeign` direction and equivalent
-terminal evidence remain the M2 PoC gate. Chain adapters must
+`m2poc-corridor-fresh-20260714o` completed `TakerSellsLez`: the taker
+initialized and funded LEZ, the maker funded Zcash, waited for two
+confirmations, claimed LEZ and revealed the preimage, and the taker spent the
+Zcash HTLC. Both independent actors reached revision 4 `Completed` in 25.370
+seconds. One payload-free `moving_tip` observation was retried once. A separate
+indexer audit found the LEZ effects in finalized blocks 264/265/266 and proved
+terminal `Claimed` metadata and zero custody; Zebra funding at height 106 was
+spent at height 108.
+
+Fresh reverse run `m2poc-corridor-reverse-fresh-20260714c` completed
+`TakerSellsForeign`: the taker funded Zcash, the maker initialized and funded
+LEZ after the two confirmations, the taker claimed LEZ and revealed the
+preimage, and the maker spent the Zcash HTLC. Both independent actors again
+reached revision 4 `Completed`, this time in 26.960 seconds without a drive
+retry. LEZ initialize/fund/claim finalized in blocks 641/642/643, and Zebra
+funding at height 113 was spent at height 115. Two earlier effect-bearing
+reverse attempts are retained and never reused; they exposed a canonical LEZ
+validator that was hard-coded to the forward taker depositor. The correction
+now validates the agreement-derived LEZ depositor and signer in both
+directions.
+
+The development runner provisions fresh role inputs and executes independent
+`activate`/`drive` processes. Before effects it acquires a nonblocking advisory
+`flock` keyed by the SHA-256 of the configured sequencer, indexer, and Zebra
+endpoint tuple. That lock serializes only users of the same retained nodes and
+does not inspect, stop, or prune unrelated Docker resources. Its live atomic
+guard permits the revealing LEZ claim only after the Zcash funding has two
+confirmations, and permits the Zcash follow-up spend only after that LEZ reveal;
+it also rejects a wrong role or duplicate chain effect. The saved early fixture
+window 1..256 remains stale and is not reused. Both required local-devnet happy
+directions are now GREEN. Restart, refund, reorg, chaos, public-route
+portability, and production hardening remain explicit later gates. Chain
+adapters must
 independently recompute every chain-derived account, input, and deadline. Maker
 observation alone is non-authorizing: forward Zcash persists and revalidates
 the complete canonical output type plus ordered canonical, depth, atomic
@@ -312,10 +334,10 @@ unreachable while public agreement activation is fail-closed. The official
 v0.1.2 node/escrow, revealing-claim, and native-refund owner/discovery ports,
 main escrow/claim/refund agreement conversion, and crash-safe context-owning
 SDK-port wiring are GREEN lower compatibility evidence. Public deployment is
-deferred under ADR 0023; the full local v0.2 runtime tuple, dormant public
-configuration contracts, actual-node maker fault evidence, and independent
-actor processes remain M2 work. The underlying v0.2 three-service readiness
-slice is already GREEN.
+deferred under ADR 0023. The full local v0.2 runtime tuple and independent actor
+processes are GREEN in both happy directions. Dormant public configuration
+contracts, actual-node restart/refund/reorg and maker-fault evidence, and
+production adapter composition remain open.
 
 The protected-claim module derives per-context keys with HKDF-SHA256 and encrypts
 preimages and bounded exact claim-submission bytes with XChaCha20-Poly1305 while
@@ -345,11 +367,12 @@ recursive cost evidence is machine-checked from production state transitions
 without Clock noise. The official ATA lifecycle also passes for two independent
 definitions with real owner roles and permissionless fixed refunds. Their
 escrow/ATA/Token recursion is also included in the machine-checked cost record.
-Public-testnet execution evidence is deferred to production readiness.
-Full-runtime local v0.2 evidence, composed both-direction maker/taker processes,
-production adapter composition, cross-chain deadline composition, encrypted
-state/outbox, and mini-apps remain milestone work and cannot yet be represented
-as production E2E.
+Public-testnet execution evidence is deferred to production readiness. The
+full-runtime local v0.2 happy path and composed both-direction maker/taker
+processes are evidence-backed PoC boundaries. Production adapter composition,
+cross-chain deadline and refund composition, actual-node restart/reorg/chaos,
+encrypted state/outbox, and mini-apps remain milestone work and cannot yet be
+represented as production E2E.
 
 The reusable external local-node boundary is narrower than that composed E2E.
 It recomputes the tracked ELF SHA-256 and Risc0 ImageID before creating any
@@ -377,10 +400,57 @@ while Vault Claims finalized in blocks 29/30, the checked escrow deployed in
 block 51, and the native lifecycle finalized in blocks 219/220/223. Terminal
 custody/maker/taker balances were 0/99300/200700. A keyless process observed the
 same terminal state, and the actor-fixture provisioner selected a 625000000-zat
-maker-owned Zebra output at 104 confirmations. This is still not a cross-chain
-swap: sidecars, reference-actor effects, Zcash HTLC funding/spend, both
-directions, and composed recovery remain pending. PoC-to-hardening and milestone
-transitions are owner-controlled.
+maker-owned Zebra output at 104 confirmations. That retained vertical run was
+not itself a cross-chain swap. Subsequent runs 14o and reverse 14c composed the
+same LEZ services, role-isolated sidecars and actors, and Zebra HTLC
+funding/spend in both happy directions. Composed restart, refund, reorg, and
+fault recovery remain pending. PoC-to-hardening and milestone transitions are
+owner-controlled.
+
+## Verified M2 local actor and RPC flow
+
+```mermaid
+sequenceDiagram
+    actor Maker
+    actor Taker
+    participant MakerBridge as Maker LEZ bridge
+    participant TakerBridge as Taker LEZ bridge
+    participant Sequencer as LEZ sequencer 32832
+    participant Bedrock as Bedrock 32831
+    participant Indexer as LEZ indexer 32833
+    participant Zebra as Zebra Regtest 32834
+
+    Note over Maker,Zebra: Endpoint-tuple flock is acquired before any effect
+    alt TakerSellsLez in run14o
+        Taker->>TakerBridge: Initialize and fund LEZ escrow
+        TakerBridge->>Sequencer: Submit signed native transactions
+        Maker->>Zebra: Fund direction-derived BIP-199 HTLC
+        Zebra-->>Maker: Two canonical confirmations
+        Maker->>MakerBridge: Claim LEZ and reveal preimage
+        MakerBridge->>Sequencer: Submit signed revealing claim
+        Taker->>Zebra: Spend exact HTLC with observed preimage
+    else TakerSellsForeign in reverse run14c
+        Taker->>Zebra: Fund direction-derived BIP-199 HTLC
+        Zebra-->>Taker: Two canonical confirmations
+        Maker->>MakerBridge: Initialize and fund LEZ escrow
+        MakerBridge->>Sequencer: Submit signed native transactions
+        Taker->>TakerBridge: Claim LEZ and reveal preimage
+        TakerBridge->>Sequencer: Submit signed revealing claim
+        Maker->>Zebra: Spend exact HTLC with observed preimage
+    end
+    Sequencer->>Bedrock: Publish signed LEZ blocks
+    Indexer->>Bedrock: Read finalized LEZ channel
+    Indexer-->>Maker: Finalized transaction IDs and block hashes
+    Indexer-->>Taker: Finalized transaction IDs and block hashes
+    Note over Maker,Taker: Both independent stores finish revision 4 Completed
+```
+
+The direction changes actor ownership, not the atomic reveal order. In both
+runs the Zcash funding is confirmed before the LEZ claim reveals the preimage,
+and the exact Zcash follow-up spend occurs only after that reveal. The retained
+host ports above are evidence addresses from these isolated runs, not reusable
+service discovery values; every new run must receive an explicit fresh local
+tuple.
 
 ## LEZ escrow custody components and actor flows
 
@@ -492,12 +562,14 @@ flowchart LR
     V02Guest --> V02Artifact["Checked v0.2 ELF<br/>SHA-256 + ImageID + ProgramId"]
     V02Artifact --> V02Local["Recursive native + two-definition token<br/>claim/refund + rollback tests"]
     V02Artifact --> V02Deployer["Exact-once fixed-URL<br/>official-RPC deployer"]
-    V02Artifact --> V02Sidecar["Official-wire prepare + one-attempt Claim GREEN<br/>query + actual-node effects pending"]
-    V02Sidecar -.-> V02FullLocal["Bedrock + indexer + non-standalone sequencer<br/>independent actor corridor"]
+    V02Artifact --> V02Sidecar["Official-wire prepare + one-attempt Claim GREEN<br/>actual-node effects GREEN"]
+    V02Sidecar --> V02FullLocal["Bedrock + indexer + non-standalone sequencer<br/>both independent actor corridors GREEN"]
     V02Deployer -.-> Testnet["Official v0.2 testnet<br/>deployment + cost evidence"]
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Testnet,ActorRunner,V02FullLocal planned;
+    classDef running fill:#e6ffec,stroke:#1a7f37;
+    class Testnet,ActorRunner planned;
+    class V02FullLocal running;
 ```
 
 The deployment proof uses port `0`, a fresh mode-0700 sequencer home,
@@ -528,9 +600,11 @@ exact transaction in its containing block; ambiguity or timeout is never
 retried. The solid v0.2 sidecar node represents tested describe/health/decoder,
 native initialize/fund preparation, deterministic maker/taker Vault Claim
 preparation, hardened durable exact-byte restart, and the role-bound
-attempt-before-call Vault Claim submission state machine. Its dashed effect/full-local
-edge remains M2 exit work. The dashed
-public-testnet edge and deployed-runtime costs are deferred to production
+attempt-before-call Vault Claim submission state machine. The full-local edge
+is now solid because runs 14o and reverse 14c crossed the official sidecar,
+three-service LEZ stack, independent actor state, and Zebra in both happy
+directions. Actual-node restart, refund, reorg, and fault recovery remain open.
+The dashed public-testnet edge and deployed-runtime costs are deferred to production
 readiness under ADR 0023. The v0.1.2 cost replay executes the same guest instructions through
 LEZ production state transitions, counts the escrow root and
 authenticated-transfer child, and compares generated JSON with the checked
@@ -598,11 +672,11 @@ flowchart LR
     Validator --> Observe["Bound canonical/removal evidence"]
     LezDeadline --> Schedule
     ZecDeadline --> Schedule
-    Observe -.-> Composed["Composed standalone LEZ + Zebra corridor E2E"]
-    Schedule -.-> Composed
+    Observe --> Composed["Composed local LEZ v0.2 + Zebra<br/>both happy directions GREEN"]
+    Schedule --> Composed
 
-    classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Composed planned;
+    classDef running fill:#e6ffec,stroke:#1a7f37;
+    class Composed running;
 ```
 
 The solid profile, validator, stable-tip watcher, and actual Zebra E2E snapshot
@@ -617,8 +691,9 @@ authority, conflicting replacement fails, and refunds remain available.
 Independent leg policies also make maker-depth regression suspend and depth
 recovery restore claims. The runtime event-to-participant path is now solid: the
 isolated two-Zebra fixture drives real canonical and removal evidence through schema-v10 SQLite
-close/reopen and exact replay. The composed LEZ/ZEC actor corridor remains
-dashed M2 work. RPC errors or absence never imply removal: a detach event
+close/reopen and exact replay. The composed local LEZ/ZEC happy-path corridor is
+solid for both directions in runs 14o and reverse 14c. Its actual-node
+restart/refund/reorg and recovery paths remain open. RPC errors or absence never imply removal: a detach event
 requires a stable replacement tip and a changed canonical hash at the prior
 inclusion height.
 
@@ -765,7 +840,8 @@ Zcash port types, so a chain call is impossible even if a later adapter changes.
 It loads neither the sidecar capability nor Zebra cookie, signing key,
 agreement file, or preimage. The separate `activate` and `drive` paths load
 their scoped effect material and completed the first real local v0.2/Zebra
-direction in run14o; `status` keeps this no-chain design.
+direction in run14o and the reverse direction in run14c; `status` keeps this
+no-chain design.
 
 ## Crash, restart, and at-least-once observation flow
 

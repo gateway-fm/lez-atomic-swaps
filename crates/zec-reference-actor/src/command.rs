@@ -10,7 +10,7 @@ use lez_bridge_adapter::{
     SqliteCanonicalLezFundingSource,
 };
 use lez_bridge_protocol::DiscoveryWindow;
-use lez_swap_core::{Participant, Phase, UnixSeconds};
+use lez_swap_core::{Participant, Phase, SwapDirection, UnixSeconds};
 use lez_swap_store::{BridgeOperationKey, SqliteBridgeOperationJournal, SqliteZecRecoveryStore};
 use lez_zebra_node_adapter::{
     ExactOutpointZcashFundingPlanner, HttpZebraRpc, HttpZebraRpcConfig, RoleKeyedZcashSigner,
@@ -397,19 +397,23 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
 
     let outcome = match (participant, active.status()) {
         (Participant::Taker, Phase::Offered) => {
-            if active.next_action() != ZecLifecycleAction::CreateAndFundLez {
-                return Err(ActorCommandError::DriveConfigurationUnavailable);
-            }
             if store
                 .load_first_lock_intent(active.agreement().coordinator().id())
                 .await
                 .map_err(|_| ActorCommandError::DriveUnavailable)?
                 .is_none()
             {
-                let plan = lez
-                    .prepare_native_first_lock(active.agreement())
-                    .await
-                    .map_err(|_| ActorCommandError::DriveUnavailable)?;
+                let plan = match active.next_action() {
+                    ZecLifecycleAction::CreateAndFundLez => lez
+                        .prepare_native_first_lock(active.agreement())
+                        .await
+                        .map_err(|_| ActorCommandError::DriveUnavailable)?,
+                    ZecLifecycleAction::FundZcash => planner
+                        .plan(active.agreement(), funding_outpoints(config))
+                        .await
+                        .map_err(|_| ActorCommandError::DriveUnavailable)?,
+                    _ => return Err(ActorCommandError::DriveConfigurationUnavailable),
+                };
                 active
                     .stage_first_lock(plan)
                     .await
@@ -463,10 +467,16 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
                 .map_err(|_| ActorCommandError::DriveUnavailable)?
             {
                 Some(intent) => intent.plan().clone(),
-                None => planner
-                    .plan(active.agreement(), funding_outpoints(config))
-                    .await
-                    .map_err(|_| ActorCommandError::DriveUnavailable)?,
+                None => match active.agreement().direction() {
+                    SwapDirection::TakerSellsForeign => lez
+                        .prepare_native_first_lock(active.agreement())
+                        .await
+                        .map_err(|_| ActorCommandError::DriveUnavailable)?,
+                    SwapDirection::TakerSellsLez => planner
+                        .plan(active.agreement(), funding_outpoints(config))
+                        .await
+                        .map_err(|_| ActorCommandError::DriveUnavailable)?,
+                },
             };
             match active
                 .drive_maker_lock(plan)

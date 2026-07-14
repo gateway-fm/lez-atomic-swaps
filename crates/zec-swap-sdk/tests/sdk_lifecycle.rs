@@ -4555,6 +4555,38 @@ fn canonical_lez_snapshot(
 }
 
 #[test]
+fn canonical_lez_observation_uses_the_direction_derived_depositor() {
+    for (direction, swap_id) in [
+        (
+            SwapDirection::TakerSellsLez,
+            "canonical-lez-taker-depositor",
+        ),
+        (
+            SwapDirection::TakerSellsForeign,
+            "canonical-lez-maker-depositor",
+        ),
+    ] {
+        let agreement = lez_zec_swap_sdk::ZecAgreementV1::from_wire_at(
+            &agreement_wire(swap_id, direction, FixtureVariant::Local),
+            ACCEPTED_AT,
+        )
+        .expect("valid direction-specific agreement");
+        CanonicalLezEscrowObservationV1::validate(
+            &agreement,
+            &canonical_lez_snapshot(&agreement, LezSnapshotMutation::Pending),
+        )
+        .expect("agreement-derived depositor signs the canonical LEZ fund");
+        assert!(matches!(
+            CanonicalLezEscrowObservationV1::validate(
+                &agreement,
+                &canonical_lez_snapshot(&agreement, LezSnapshotMutation::Signer),
+            ),
+            Err(lez_zec_swap_sdk::LezObservationError::TransactionBindingMismatch)
+        ));
+    }
+}
+
+#[test]
 fn canonical_lez_observation_rejects_each_changed_chain_transaction_and_account_binding() {
     let agreement = lez_zec_swap_sdk::ZecAgreementV1::from_wire_at(
         &agreement_wire(

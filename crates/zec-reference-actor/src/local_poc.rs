@@ -51,8 +51,8 @@ const MAX_SPEC_BYTES: usize = 32 * 1024;
 const MAKER_LEZ_ACCOUNT: &str = "B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd";
 const TAKER_LEZ_ACCOUNT: &str = "34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib";
 const AUTHENTICATED_TRANSFER_PROGRAM: &str = "FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg";
-const MAKER_ZCASH_KEY_BYTE: u8 = 4;
-const TAKER_ZCASH_KEY_BYTE: u8 = 2;
+const FUNDED_ZCASH_KEY_BYTE: u8 = 4;
+const OTHER_ZCASH_KEY_BYTE: u8 = 2;
 const PREIMAGE_BYTE: u8 = 0x44;
 const LEZ_NATIVE_AMOUNT: u128 = 50_000;
 const ZCASH_PRINCIPAL_ZATOSHIS: u64 = 100_000_000;
@@ -70,11 +70,53 @@ struct ProvisionSpec {
     schema_version: u16,
     run_id: RunId,
     swap_id: String,
+    direction: LocalPocDirection,
     lez_runtime: LezRuntimeSpec,
     bridge: BridgeSpec,
     zebra_endpoint: Url,
     lez_discovery_start_height: u64,
     lez_discovery_max_blocks: u32,
+}
+
+#[derive(Clone, Copy, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum LocalPocDirection {
+    TakerSellsForeign,
+    TakerSellsLez,
+}
+
+impl LocalPocDirection {
+    const fn protocol(self) -> SwapDirection {
+        match self {
+            Self::TakerSellsForeign => SwapDirection::TakerSellsForeign,
+            Self::TakerSellsLez => SwapDirection::TakerSellsLez,
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::TakerSellsForeign => "taker_sells_foreign",
+            Self::TakerSellsLez => "taker_sells_lez",
+        }
+    }
+
+    const fn zcash_funder(self) -> ActorRole {
+        match self {
+            Self::TakerSellsForeign => ActorRole::Taker,
+            Self::TakerSellsLez => ActorRole::Maker,
+        }
+    }
+
+    const fn lez_depositor(self) -> ActorRole {
+        match self {
+            Self::TakerSellsForeign => ActorRole::Maker,
+            Self::TakerSellsLez => ActorRole::Taker,
+        }
+    }
+
+    const fn preimage_owner(self) -> ActorRole {
+        self.zcash_funder()
+    }
 }
 
 #[derive(Deserialize)]
@@ -143,10 +185,11 @@ struct AgreementFixture {
 
 /// Provisions a shared countersigned agreement and two isolated actor inputs.
 ///
-/// The fixed `PoC` direction is `TakerSellsLez`: the taker locks LEZ first, the
-/// maker funds Zcash second and exclusively receives the preimage plus exact
-/// mature Regtest candidate. Both local identities use the deterministic keys
-/// already funded by the retained v0.2 and Zebra fixtures.
+/// The spec selects either supported ZEC direction. The taker always funds the
+/// first leg; the participant funding Zcash exclusively receives the preimage
+/// and exact mature Regtest candidate, while the opposite participant funds
+/// LEZ. Both local identities use the deterministic keys already funded by the
+/// retained v0.2 and Zebra fixtures.
 ///
 /// # Errors
 ///
@@ -176,13 +219,13 @@ pub async fn provision_local_v0_2_corridor(
             .with_max_concurrent_requests(1),
     )
     .context("failed to connect bounded local Zebra RPC")?;
-    let mut maker_zcash_secret = SecretKey::from_slice(&[MAKER_ZCASH_KEY_BYTE; 32])
-        .context("invalid deterministic maker Zcash key")?;
-    let maker_zcash_public =
-        PublicKey::from_secret_key(&Secp256k1::signing_only(), &maker_zcash_secret);
-    maker_zcash_secret.non_secure_erase();
+    let mut funding_zcash_secret = SecretKey::from_slice(&[FUNDED_ZCASH_KEY_BYTE; 32])
+        .context("invalid deterministic Zcash funder key")?;
+    let funding_zcash_public =
+        PublicKey::from_secret_key(&Secp256k1::signing_only(), &funding_zcash_secret);
+    funding_zcash_secret.non_secure_erase();
     let (candidate, tip_height, genesis_hash) =
-        select_mature_regtest_candidate(&rpc, &maker_zcash_public).await?;
+        select_mature_regtest_candidate(&rpc, &funding_zcash_public).await?;
 
     let swap_id = SwapId::new(spec.swap_id.clone()).context("invalid swap ID")?;
     let fixture = build_agreement(
@@ -223,7 +266,14 @@ pub async fn provision_local_v0_2_corridor(
     write_private_new(&taker_paths.claim_recovery_key, taker_recovery.as_ref())?;
     write_private_new(&maker_paths.zcash_key, fixture.maker_zcash_key.as_ref())?;
     write_private_new(&taker_paths.zcash_key, fixture.taker_zcash_key.as_ref())?;
-    write_private_new(&maker_paths.claim_preimage, fixture.preimage.as_ref())?;
+    match spec.direction.preimage_owner() {
+        ActorRole::Maker => {
+            write_private_new(&maker_paths.claim_preimage, fixture.preimage.as_ref())?;
+        }
+        ActorRole::Taker => {
+            write_private_new(&taker_paths.claim_preimage, fixture.preimage.as_ref())?;
+        }
+    }
     write_private_new(
         &maker_paths.lez_signer_key,
         hex::encode([1_u8; 32]).as_bytes(),
@@ -267,6 +317,10 @@ pub async fn provision_local_v0_2_corridor(
             .context("failed to encode taker runtime descriptor")?,
     )?;
     let zebra_genesis = block_hash_display_hex(genesis_hash);
+    let (maker_candidates, taker_candidates) = match spec.direction.zcash_funder() {
+        ActorRole::Maker => (vec![fixture.zcash_candidate], Vec::new()),
+        ActorRole::Taker => (Vec::new(), vec![fixture.zcash_candidate]),
+    };
 
     let maker_config = encode_deterministic_local_v0_2_actor_config(actor_config_input(
         &spec,
@@ -275,11 +329,12 @@ pub async fn provision_local_v0_2_corridor(
         &agreement_file,
         fixture.sha256,
         &maker_paths,
-        Some(maker_paths.claim_preimage.clone()),
+        (spec.direction.preimage_owner() == ActorRole::Maker)
+            .then(|| maker_paths.claim_preimage.clone()),
         maker_runtime,
         zebra_genesis,
         discovery,
-        vec![fixture.zcash_candidate],
+        maker_candidates,
     ))
     .context("failed to encode maker actor config")?;
     let taker_config = encode_deterministic_local_v0_2_actor_config(actor_config_input(
@@ -289,11 +344,12 @@ pub async fn provision_local_v0_2_corridor(
         &agreement_file,
         fixture.sha256,
         &taker_paths,
-        None,
+        (spec.direction.preimage_owner() == ActorRole::Taker)
+            .then(|| taker_paths.claim_preimage.clone()),
         taker_runtime,
         zebra_genesis,
         discovery,
-        Vec::new(),
+        taker_candidates,
     ))
     .context("failed to encode taker actor config")?;
     write_private_new(&maker_paths.config, &maker_config)?;
@@ -319,7 +375,7 @@ pub async fn provision_local_v0_2_corridor(
     Ok(LocalPocProvisionSummary {
         schema_version: 1,
         run_id: spec.run_id,
-        direction: "taker_sells_lez",
+        direction: spec.direction.as_str(),
         agreement_file,
         signed_agreement_sha256: fixture.sha256,
         authenticated_transfer_program_id: Hex32::from_bytes(authenticated_transfer),
@@ -329,10 +385,19 @@ pub async fn provision_local_v0_2_corridor(
         maker: role_summary(&maker_paths),
         taker: role_summary(&taker_paths),
         zebra_tip_height: tip_height,
-        zcash_candidate_owner: "maker",
+        zcash_candidate_owner: match spec.direction.zcash_funder() {
+            ActorRole::Maker => "maker",
+            ActorRole::Taker => "taker",
+        },
         lez_native_amount: LEZ_NATIVE_AMOUNT,
-        lez_depositor_role: "taker",
-        lez_depositor_account_id_base58: spec.lez_runtime.taker_signer_account_id_base58.clone(),
+        lez_depositor_role: match spec.direction.lez_depositor() {
+            ActorRole::Maker => "maker",
+            ActorRole::Taker => "taker",
+        },
+        lez_depositor_account_id_base58: match spec.direction.lez_depositor() {
+            ActorRole::Maker => spec.lez_runtime.maker_signer_account_id_base58.clone(),
+            ActorRole::Taker => spec.lez_runtime.taker_signer_account_id_base58.clone(),
+        },
         private_material_disclosed: false,
         actor_pair_validated: true,
     })
@@ -601,7 +666,7 @@ async fn select_mature_regtest_candidate(
         before == after,
         "Zebra tip changed during candidate selection"
     );
-    let candidate = selected.context("no mature deterministic maker Zebra output is available")?;
+    let candidate = selected.context("no mature deterministic Zebra funder output is available")?;
     Ok((candidate, tip_height, genesis))
 }
 
@@ -639,8 +704,12 @@ fn build_agreement(
         .checked_add(AGREEMENT_LIFETIME_SECONDS)
         .context("agreement expiry overflow")?;
 
-    let maker_bytes = Zeroizing::new([MAKER_ZCASH_KEY_BYTE; 32]);
-    let taker_bytes = Zeroizing::new([TAKER_ZCASH_KEY_BYTE; 32]);
+    let (maker_key_byte, taker_key_byte) = match spec.direction.zcash_funder() {
+        ActorRole::Maker => (FUNDED_ZCASH_KEY_BYTE, OTHER_ZCASH_KEY_BYTE),
+        ActorRole::Taker => (OTHER_ZCASH_KEY_BYTE, FUNDED_ZCASH_KEY_BYTE),
+    };
+    let maker_bytes = Zeroizing::new([maker_key_byte; 32]);
+    let taker_bytes = Zeroizing::new([taker_key_byte; 32]);
     let mut maker_secret = SecretKey::from_slice(maker_bytes.as_ref())?;
     let mut taker_secret = SecretKey::from_slice(taker_bytes.as_ref())?;
     let secp = Secp256k1::signing_only();
@@ -650,7 +719,16 @@ fn build_agreement(
     let secret_digest: [u8; 32] = Sha256::digest(&preimage[..]).into();
     let maker_hash = public_key_hash(&maker_public);
     let taker_hash = public_key_hash(&taker_public);
-    let contract = Bip199Contract::new(zcash_refund_height, maker_hash, secret_digest, taker_hash);
+    let (zcash_funder_hash, zcash_claimant_hash) = match spec.direction.zcash_funder() {
+        ActorRole::Maker => (maker_hash, taker_hash),
+        ActorRole::Taker => (taker_hash, maker_hash),
+    };
+    let contract = Bip199Contract::new(
+        zcash_refund_height,
+        zcash_funder_hash,
+        secret_digest,
+        zcash_claimant_hash,
+    );
     let expected_output = ExpectedBip199Output::new(
         NetworkType::Regtest,
         BranchId::Nu6_2,
@@ -673,7 +751,7 @@ fn build_agreement(
     let custody_account = derive_lez_native_custody_account_v1(&escrow_program, &onchain_swap_id);
     let body = ZecAgreementBodyV1::new(
         swap_id.as_str(),
-        SwapDirection::TakerSellsLez,
+        spec.direction.protocol(),
         ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
         ZecParticipantsV1::new(
             ZecParticipantIdentityV1::new(maker_lez_account, maker_public.serialize()),
@@ -697,12 +775,12 @@ fn build_agreement(
         ZecSwapBindingRecordV1::from_binding(&binding),
         ZecTransactionPolicyV1::new(
             funding_inputs.commitment(),
-            ZcashTransparentDestinationV1::p2pkh(maker_hash),
+            ZcashTransparentDestinationV1::p2pkh(zcash_funder_hash),
             FUNDING_FEE_ZATOSHIS,
             MINIMUM_CHANGE_ZATOSHIS,
-            ZcashTransparentDestinationV1::p2pkh(taker_hash),
+            ZcashTransparentDestinationV1::p2pkh(zcash_claimant_hash),
             CLAIM_FEE_ZATOSHIS,
-            ZcashTransparentDestinationV1::p2pkh(maker_hash),
+            ZcashTransparentDestinationV1::p2pkh(zcash_funder_hash),
             REFUND_FEE_ZATOSHIS,
             profile.expiry_delta_blocks(),
         ),

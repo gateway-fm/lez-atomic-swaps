@@ -2,7 +2,6 @@
 
 use std::num::NonZeroU32;
 
-use lez_swap_core::{Participant, SwapDirection};
 use serde::{Deserialize, Serialize};
 
 use crate::{LezAssetV1, LezEnvironmentV1, ZecAgreementV1};
@@ -281,17 +280,14 @@ impl CanonicalLezEscrowObservationV1 {
     ///
     /// # Errors
     ///
-    /// Rejects the wrong direction, chain, unstable or noncanonical inclusion,
-    /// malformed transaction, wrong program/instruction/accounts/actor, or
-    /// mismatched metadata and custody state. Depth/finality policy is applied
-    /// later by the funding-eligibility boundary.
+    /// Rejects the wrong chain, unstable or noncanonical inclusion, malformed
+    /// transaction, wrong program/instruction/accounts/agreement-derived
+    /// depositor, or mismatched metadata and custody state. Depth/finality
+    /// policy is applied later by the funding-eligibility boundary.
     pub fn validate(
         agreement: &ZecAgreementV1,
         snapshot: &LezNodeSnapshotV1,
     ) -> Result<Self, LezObservationError> {
-        if agreement.direction() != SwapDirection::TakerSellsLez {
-            return Err(LezObservationError::WrongDirection);
-        }
         let confirmations = validate_chain_position(agreement, snapshot)?;
         let expected = ExpectedAccountBinding::from_agreement(agreement);
         validate_fund_transaction(agreement, snapshot, &expected)?;
@@ -473,7 +469,7 @@ fn validate_fund_transaction(
     if !transaction.is_public
         || !transaction.signature_valid
         || transaction.program_id != *agreement.lez_terms().escrow_program_id()
-        || transaction.signer != *agreement.lez_account(Participant::Taker)
+        || transaction.signer != *agreement.lez_account(agreement.lez_depositor())
         || !matches!(
             (agreement.lez_terms().asset(), transaction.instruction),
             (
@@ -867,9 +863,6 @@ fn same_lez_inclusion(
 /// Failure validating canonical LEZ escrow evidence.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum LezObservationError {
-    /// LEZ is not the taker's agreement-selected first lock.
-    #[error("agreement direction does not select a taker-funded LEZ first lock")]
-    WrongDirection,
     /// RPC chain environment or genesis differs from the signed agreement.
     #[error("LEZ chain identity does not match the signed agreement")]
     ChainIdentityMismatch,

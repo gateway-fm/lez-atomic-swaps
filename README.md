@@ -204,8 +204,9 @@ inputs, service flows, and service-binary hashes. Retained run
 finalized actor Vault Claims, checked escrow deployment, and a role-separated
 native initialize/fund/claim lifecycle in finalized blocks 219/220/223. Fresh
 isolated chain runs `m2poc-fresh-lez-20260714a` and
-`m2poc-fresh-zebra-20260714a` then supported the first completed
-reference-actor corridor, `m2poc-corridor-fresh-20260714o`. In the
+`m2poc-fresh-zebra-20260714a` then supported both completed
+reference-actor corridors. In the first run,
+`m2poc-corridor-fresh-20260714o`, the
 `TakerSellsLez` role order, the taker initialized and funded LEZ, the maker
 observed it and funded the Zcash HTLC, the maker waited for two Zcash
 confirmations and revealed the preimage by claiming LEZ, and the taker used that
@@ -225,9 +226,22 @@ the earlier [local-onboarding evidence](docs/evidence/m2-local-onboarding-202607
 remains the component baseline. Failed fresh attempts 14i and 14k through 14n
 made no chain effect. Attempt 14j stopped after only one Zcash confirmation and
 retains 50000 LEZ in its distinct failed swap; its files and funds must never be
-reused. M2 remains in PoC at **1 of 2** happy directions, the reverse
-`TakerSellsForeign` direction remains, and no M2 tag exists. PoC-to-hardening
-and milestone
+reused.
+
+Reverse run `m2poc-corridor-reverse-fresh-20260714c` then completed
+`TakerSellsForeign`. The taker funded Zcash at height 113, the maker funded LEZ
+in finalized blocks 641/642, the taker revealed by claiming LEZ in finalized
+block 643, and the maker spent the exact Zcash `:0` output at height 115. Both
+actors reached revision 4 `Completed` in 26.960 seconds. Terminal LEZ state was
+`Claimed` with custody 0, maker depositor balance 0, and taker claimant balance
+150000. Two prior fresh reverse attempts are retained and never reused; they
+exposed and reproduced a forward-only canonical LEZ validator, now corrected
+to bind the signer to the agreement-derived depositor. Exact secret-safe facts
+are in the
+[reverse-direction corridor evidence](docs/evidence/m2-taker-sells-foreign-corridor-20260714.json).
+The M2 PoC happy-path gate is now **2 of 2**. Documentation, portability, and
+repository completion gates still precede an M2 tag; no tag exists yet.
+PoC-to-hardening and milestone
 transitions remain repository-owner decisions. The
 [Zcash public-testnet setup guide](docs/zcash-testnet-setup.md) records the
 selected self-hosted and Tatum Testnet Zebrad routes, optional funding wallet,
@@ -312,8 +326,8 @@ canonical actor/custody state. Loopback supplies safe isolation while the real
 consensus/state-transition implementations supply fidelity. Regtest/standalone
 do not prove public peer
 propagation, fee markets, organic timing/reorg behavior, provider quirks, or LEZ
-testnet 0.2 compatibility. One composed private local direction is now proved;
-the reverse direction remains mandatory M2 PoC evidence. Public deployment and
+testnet 0.2 compatibility. Both composed private local directions are now
+proved through independent actor processes. Public deployment and
 public-testnet execution are explicitly deferred
 to production readiness under ADR 0023; the same binaries and adapters must
 switch routes through signed configuration/provisioning only.
@@ -388,9 +402,10 @@ executes recursive native and two-definition token claim/refund lifecycles, and
 proves full rollback when a child transfer fails. Its exact-once official-RPC
 deployer accepts evidence only after immutable endpoint/channel/built-in,
 transaction-byte, transaction, block, and artifact checks. Public-testnet
-deployment and deployed-runtime costs are deferred under ADR 0023. A
-public-compatible local v0.2 node corridor, independent actors, and dormant
-public configuration/adapters remain open M2 gates. PR #238 remains unmerged
+deployment and deployed-runtime costs are deferred under ADR 0023. The
+public-compatible local v0.2 node corridor and independent actors are GREEN in
+both directions; dormant public configuration/adapters remain open M2 gates.
+PR #238 remains unmerged
 and unreviewed, so these passes are not M2 completion or final
 production-release approval.
 
