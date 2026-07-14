@@ -451,6 +451,39 @@ impl OfficialNodeRpc {
         })
     }
 
+    /// Reads one bounded inclusive official sequencer block range for the
+    /// crate's higher-level canonical observation boundary.
+    pub(crate) async fn block_range(
+        &self,
+        start: u64,
+        end: u64,
+    ) -> Result<Vec<Block>, RuntimeBoundaryError> {
+        self.client
+            .get_block_range(start, end)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)
+    }
+
+    /// Reads the official sequencer's current tip block without exposing its
+    /// raw JSON-RPC client outside this runtime module.
+    pub(crate) async fn tip_block(&self) -> Result<Block, RuntimeBoundaryError> {
+        let height = self
+            .client
+            .get_last_block_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let block = self
+            .client
+            .get_block(height)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?
+            .ok_or(RuntimeBoundaryError::NodeUnavailable)?;
+        if block.header.block_id != height {
+            return Err(RuntimeBoundaryError::NodeUnavailable);
+        }
+        Ok(block)
+    }
+
     /// Submits one exact, signed, canonical prepared public transaction.
     ///
     /// # Errors
@@ -608,4 +641,14 @@ fn validate_node_endpoint(endpoint: &str) -> Result<(), RuntimeBoundaryError> {
         return Err(RuntimeBoundaryError::InvalidNodeEndpoint);
     }
     Ok(())
+}
+
+/// Validates the shared uncredentialed literal-loopback HTTP endpoint grammar.
+///
+/// # Errors
+///
+/// Rejects domains, non-loopback IPs, HTTPS, credentials, missing ports, and
+/// any query, fragment, or non-root path.
+pub fn validate_loopback_http_endpoint(endpoint: &str) -> Result<(), RuntimeBoundaryError> {
+    validate_node_endpoint(endpoint)
 }

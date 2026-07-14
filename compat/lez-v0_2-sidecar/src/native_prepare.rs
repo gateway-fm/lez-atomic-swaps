@@ -127,6 +127,9 @@ struct PlannerState {
 struct ActiveClaimPrepare {
     request_sha256: [u8; 32],
     result: PrepareRevealingClaimResult,
+    terms: lez_bridge_protocol::NativeEscrowTerms,
+    funding_transaction_id: TransactionId,
+    preimage: Zeroizing<[u8; 32]>,
 }
 
 /// One-role, one-signer official v0.2 native escrow planner.
@@ -365,6 +368,9 @@ impl NativeEscrowPlanner {
             state.active_claim = Some(ActiveClaimPrepare {
                 request_sha256,
                 result: recovered.clone(),
+                terms: request.terms.clone(),
+                funding_transaction_id: request.funding_transaction_id,
+                preimage: Zeroizing::new(*request.preimage().expose_secret()),
             });
             return Ok(recovered);
         }
@@ -389,6 +395,9 @@ impl NativeEscrowPlanner {
                 state.active_claim = Some(ActiveClaimPrepare {
                     request_sha256,
                     result: recovered.clone(),
+                    terms: request.terms.clone(),
+                    funding_transaction_id: request.funding_transaction_id,
+                    preimage: Zeroizing::new(*request.preimage().expose_secret()),
                 });
                 return Ok(recovered);
             }
@@ -397,8 +406,111 @@ impl NativeEscrowPlanner {
         state.active_claim = Some(ActiveClaimPrepare {
             request_sha256,
             result: result.clone(),
+            terms: request.terms.clone(),
+            funding_transaction_id: request.funding_transaction_id,
+            preimage: Zeroizing::new(*request.preimage().expose_secret()),
         });
         Ok(result)
+    }
+
+    /// Returns the exact owned initialization/funding pair after checking the
+    /// complete observation request and both persisted transaction identities.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role, runtime, terms, preparation, or transaction-ID drift.
+    pub async fn owned_native_pair(
+        &self,
+        request: &lez_bridge_protocol::ObserveEscrowRequest,
+        initialization_transaction_id: TransactionId,
+        funding_transaction_id: TransactionId,
+    ) -> Result<PrepareNativeEscrowResult, NativePrepareError> {
+        let state = self.state.lock().await;
+        let active = state
+            .active
+            .as_ref()
+            .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        if active.request.context.run_id != request.context.run_id
+            || active.request.context.sidecar_role != request.context.sidecar_role
+            || active.request.runtime != request.runtime
+            || active.request.terms != request.terms
+            || active.result.initialization.transaction_id != initialization_transaction_id
+            || active.result.funding.transaction_id != funding_transaction_id
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        self.validate_prepared(&active.request, &active.result)?;
+        Ok(active.result.clone())
+    }
+
+    /// Returns the exact owned revealing claim and its source request after
+    /// checking the complete observation identity.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role, runtime, terms, preparation, or transaction-ID drift.
+    pub async fn owned_revealing_claim(
+        &self,
+        request: &lez_bridge_protocol::ObserveRevealingClaimRequest,
+        claim_transaction_id: TransactionId,
+    ) -> Result<(PreparedTransaction, [u8; 32]), NativePrepareError> {
+        let state = self.state.lock().await;
+        let active = state
+            .active_claim
+            .as_ref()
+            .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        if active.result.context.run_id != request.context.run_id
+            || active.result.context.sidecar_role != request.context.sidecar_role
+            || request.runtime != self.expected_runtime
+            || active.terms != request.terms
+            || active.result.claim.transaction_id != claim_transaction_id
+            || active.funding_transaction_id.as_bytes() == &[0; 32]
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let source = PrepareRevealingClaimRequest::new(
+            active.result.context.clone(),
+            self.expected_runtime.clone(),
+            active.terms.clone(),
+            active.funding_transaction_id,
+            lez_bridge_protocol::RevealingPreimage::new(*active.preimage),
+        );
+        self.validate_prepared_claim(&source, &active.result)?;
+        Ok((active.result.claim.clone(), *active.preimage))
+    }
+
+    /// Checks that a generic submission is one of this actor's exact active
+    /// durable preparations, without reconstructing or re-signing it.
+    ///
+    /// # Errors
+    ///
+    /// Rejects every byte sequence not owned by the active escrow or claim
+    /// reservation and revalidates official canonical bytes and signatures.
+    pub async fn validate_owned_submission(
+        &self,
+        prepared: &PreparedTransaction,
+    ) -> Result<(), NativePrepareError> {
+        let state = self.state.lock().await;
+        if let Some(active) = state.active.as_ref()
+            && (&active.result.initialization == prepared || &active.result.funding == prepared)
+        {
+            self.validate_prepared(&active.request, &active.result)?;
+            return Ok(());
+        }
+        if let Some(active) = state.active_claim.as_ref()
+            && &active.result.claim == prepared
+        {
+            let source = PrepareRevealingClaimRequest::new(
+                active.result.context.clone(),
+                self.expected_runtime.clone(),
+                active.terms.clone(),
+                active.funding_transaction_id,
+                lez_bridge_protocol::RevealingPreimage::new(*active.preimage),
+            );
+            self.validate_prepared_claim(&source, &active.result)?;
+            return Ok(());
+        }
+        Err(NativePrepareError::InvalidTransactionBytes)
     }
 
     #[cfg(target_os = "linux")]

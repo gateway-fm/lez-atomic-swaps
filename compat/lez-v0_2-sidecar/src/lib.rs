@@ -2,6 +2,8 @@
 
 #![forbid(unsafe_code)]
 
+mod bridge_runtime;
+mod bridge_server;
 #[cfg(target_os = "linux")]
 mod durable_reservation;
 #[cfg(target_os = "linux")]
@@ -23,6 +25,11 @@ pub use effect_submission::{
     classify_sequencer_send_error,
 };
 
+pub use bridge_runtime::{BridgeRuntime, BridgeRuntimeError};
+pub use bridge_server::{
+    BridgeServerCapability, BridgeServerCapabilityError, BridgeServerConfig, BridgeServerError,
+    BridgeServerHandle, start_bridge_server,
+};
 pub use native_prepare::{
     NativeEscrowPlanner, NativePrepareError, NonceSource, ZecEscrowInstruction,
     compute_custody_pda, compute_metadata_pda, decode_prepared_for_signer,
@@ -32,6 +39,7 @@ pub use native_prepare::{
 pub use runtime::{
     HealthProbe, OfficialNativeEscrowFacts, OfficialNodeRpc, OfficialVaultClaimFacts,
     RuntimeBoundary, RuntimeBoundaryError, RuntimeHealth, decode_official_public_transaction,
+    validate_loopback_http_endpoint,
 };
 pub use server::{
     DescribeServerCapability, DescribeServerCapabilityError, DescribeServerConfig,
