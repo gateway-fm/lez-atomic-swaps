@@ -226,7 +226,10 @@ Final certification retained these exact results:
   advisory, ban, license, and source policy; and
 - all 69 tracked Mermaid diagrams rendered through the repository harness, and
   the local exact-tree formatting, test, documentation, traceability, and CI
-  policy gates passed. Checked-in evidence does not infer a remote GitHub result.
+  policy gates passed. This environment has SSH push access but no private
+  Actions API credential, so checked-in evidence does not infer a remote GitHub
+  result. The annotated tag records that limitation; any later visible failure
+  requires a corrective commit and tag.
 
 No public RPC, faucet, public funds, or external chain service participated. The
 pinned LEZ v0.2 Bedrock/sequencer/indexer and Zebra 5.2.0 Regtest endpoints were
