@@ -375,6 +375,7 @@ impl BridgeRuntime {
                 (window, None)
             }
         };
+        let exact = expected.is_some();
         let scan = self.scan_claim(request, window, expected.as_ref()).await?;
         let claim = match scan.claim {
             Some((found, preimage)) => {
@@ -394,7 +395,7 @@ impl BridgeRuntime {
                     custody,
                 ))
             }
-            None if scan.fully_covered => RevealingClaimObservation::Absent,
+            None if exact || scan.fully_covered => RevealingClaimObservation::Absent,
             None => RevealingClaimObservation::UnknownOrPending,
         };
         let tip_after = self.read_tip().await?;
