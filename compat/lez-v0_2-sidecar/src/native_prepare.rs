@@ -1,5 +1,8 @@
 use std::{fmt, sync::Arc};
 
+#[cfg(unix)]
+use std::path::Path;
+
 use async_trait::async_trait;
 use common::transaction::LeeTransaction;
 use lez_bridge_protocol::{
@@ -14,6 +17,11 @@ use nssa::{
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
 
+#[cfg(unix)]
+use crate::durable_reservation::{
+    DurableReservationError, DurableReservationStore, ReservationKind,
+};
+
 #[allow(dead_code, unused_imports, unused_mut)]
 mod generated_escrow_client {
     include!(concat!(env!("OUT_DIR"), "/zec_escrow_client_module.rs"));
@@ -26,6 +34,10 @@ pub use generated_escrow_client::{
 /// Fail-closed errors while preparing official v0.2 native escrow transactions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum NativePrepareError {
+    /// Owner-only durable reservation validation or persistence failed closed.
+    #[cfg(unix)]
+    #[error("durable native reservation failed: {0}")]
+    DurableReservation(#[from] DurableReservationError),
     /// The request or runtime targets a different actor process.
     #[error("request targets the wrong isolated sidecar role")]
     WrongRole,
@@ -112,6 +124,8 @@ pub struct NativeEscrowPlanner {
     authenticated_transfer_program_id: [u32; 8],
     expected_runtime: RuntimeDescriptor,
     nonce_source: Arc<dyn NonceSource>,
+    #[cfg(unix)]
+    durable_store: Option<DurableReservationStore>,
     state: Mutex<PlannerState>,
 }
 
@@ -131,6 +145,14 @@ impl fmt::Debug for NativeEscrowPlanner {
                 &program_id_to_hex(self.authenticated_transfer_program_id),
             )
             .field("expected_runtime", &self.expected_runtime)
+            .field(
+                "durable_store",
+                &if cfg!(unix) {
+                    "[REDACTED]"
+                } else {
+                    "unavailable"
+                },
+            )
             .finish_non_exhaustive()
     }
 }
@@ -187,8 +209,46 @@ impl NativeEscrowPlanner {
             authenticated_transfer_program_id,
             expected_runtime,
             nonce_source,
+            #[cfg(unix)]
+            durable_store: None,
             state: Mutex::new(PlannerState::default()),
         })
+    }
+
+    /// Binds this planner to one existing owner-only actor state directory.
+    ///
+    /// The held directory descriptor and fixed reservation filename prevent
+    /// path substitution after construction. Maker and taker processes must
+    /// pass distinct directories.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same configuration errors as [`Self::new`] and rejects a
+    /// symlinked, non-directory, foreign-owned, or non-`0700` state directory.
+    #[cfg(unix)]
+    pub fn new_durable<N, P>(
+        role: Participant,
+        signer_key: PrivateKey,
+        escrow_program_id: [u32; 8],
+        authenticated_transfer_program_id: [u32; 8],
+        expected_runtime: RuntimeDescriptor,
+        nonce_source: Arc<N>,
+        state_directory: P,
+    ) -> Result<Self, NativePrepareError>
+    where
+        N: NonceSource + 'static,
+        P: AsRef<Path>,
+    {
+        let mut planner = Self::new(
+            role,
+            signer_key,
+            escrow_program_id,
+            authenticated_transfer_program_id,
+            expected_runtime,
+            nonce_source,
+        )?;
+        planner.durable_store = Some(DurableReservationStore::open(state_directory.as_ref())?);
+        Ok(planner)
     }
 
     /// Prepares and caches one signed initialization/funding nonce pair.
@@ -217,6 +277,15 @@ impl NativeEscrowPlanner {
             };
         }
 
+        #[cfg(unix)]
+        if let Some(recovered) = self.recover_durable(&request)? {
+            state.active = Some(ActivePrepare {
+                request,
+                result: recovered.clone(),
+            });
+            return Ok(recovered);
+        }
+
         let initialization_nonce = self
             .nonce_source
             .account_nonce(self.signer_account_id)
@@ -225,11 +294,50 @@ impl NativeEscrowPlanner {
             .checked_add(1)
             .ok_or(NativePrepareError::NonceOverflow)?;
         let result = self.plan_pair(&request, initialization_nonce, funding_nonce)?;
+        #[cfg(unix)]
+        if let Some(store) = self.durable_store.as_ref()
+            && let Err(error) = store.create(ReservationKind::NativeEscrow, &request, &result)
+        {
+            if error == DurableReservationError::AlreadyReserved {
+                let recovered = self
+                    .recover_durable(&request)?
+                    .ok_or(DurableReservationError::Filesystem)?;
+                state.active = Some(ActivePrepare {
+                    request,
+                    result: recovered.clone(),
+                });
+                return Ok(recovered);
+            }
+            return Err(error.into());
+        }
         state.active = Some(ActivePrepare {
             request,
             result: result.clone(),
         });
         Ok(result)
+    }
+
+    #[cfg(unix)]
+    fn recover_durable(
+        &self,
+        request: &PrepareNativeEscrowRequest,
+    ) -> Result<Option<PrepareNativeEscrowResult>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some((stored_request, stored_result)) = store
+            .load::<PrepareNativeEscrowRequest, PrepareNativeEscrowResult>(
+                ReservationKind::NativeEscrow,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_request(&stored_request)?;
+        self.validate_prepared(&stored_request, &stored_result)?;
+        if &stored_request != request {
+            return Err(NativePrepareError::ActivePrepare);
+        }
+        Ok(Some(stored_result))
     }
 
     /// Validates a recovered exact pair against its original complete request.

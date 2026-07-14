@@ -51,6 +51,8 @@ flowchart TB
     ClaimRecovery --> LezSidecar["0022 LEZ official-wire sidecar"]
     LezSidecar --> LocalM2["0023 Private local M2 certification"]
     LocalM2 --> LocalStack["0024 Source-audited v0.2 local stack"]
+    LocalStack --> VaultActors["0025 Independent v0.2 Vault onboarding"]
+    VaultActors --> V02Effects["0026 At-most-once v0.2 effects"]
     ZecPins --> LezSidecar
     LEZ --> LezSidecar
     ZecPins --> Agreement
@@ -62,9 +64,11 @@ flowchart TB
     Persistence --> SDK
     Persistence --> RPC
     Persistence --> ClaimRecovery
+    Persistence --> V02Effects
     LezSidecar -.-> Upstream
     LocalM2 -.-> Upstream
     LocalStack -.-> Upstream
+    V02Effects -.-> Upstream
 ```
 
 | ADR | Decision | Status |
@@ -90,7 +94,8 @@ flowchart TB
 | [0019](0019-canonical-lez-observation.md) | Stable agreement-bound LEZ fund transaction, block, metadata, and custody evidence is replayed from primitive snapshots | Canonical/update/removal/replacement exact-head folding accepted in SDK/SQLite; official v0.1.2 owner/discovery decoder and main adapter GREEN, SDK-port composition pending |
 | [0020](0020-durable-maker-second-lock.md) | Fresh eligibility is consumed by a separately durable opposite-chain maker effect | Separate schema-v10 maker/taker stores replay `BothLegsLocked`; terminal journals continue under 0021 and production adapters remain pending |
 | [0021](0021-protected-claim-recovery.md) | Claim material and exact submissions use authenticated envelopes plus role-local schema-v10 claim/refund journals | Both directions, legacy-secret migration/scrub, corruption/rollback/unknown-outcome hardening, and independent replay at `Completed` or `Refunded` proven; key rotation and production adapters pending |
-| [0022](0022-isolate-lez-official-wire-sidecar.md) | Keep incompatible pinned LEZ official-wire and Zcash graphs in separate processes behind a bounded local protocol | Process boundary accepted; all eight v0.1.2 sidecar methods, main validation ports, crash-safe SDK ports, runtime validator, exact-outpoint Zebra composite, existing-only store replay, schema-v2 actor/material boundary, and v0.1.2 deployment handoff GREEN. The separately locked v0.2 foundation proves official types, health/channel identity, authenticated describe, and exact native plus Vault Claim preparation; durable effect recovery, actor wiring, and composition remain |
+| [0022](0022-isolate-lez-official-wire-sidecar.md) | Keep incompatible pinned LEZ official-wire and Zcash graphs in separate processes behind a bounded local protocol | Process boundary accepted; all eight v0.1.2 sidecar methods, main validation ports, crash-safe SDK ports, runtime validator, exact-outpoint Zebra composite, existing-only store replay, schema-v2 actor/material boundary, and v0.1.2 deployment handoff GREEN. The separately locked v0.2 foundation proves official types, health/channel identity, authenticated describe, exact native plus Vault Claim preparation, and durable per-actor reservation recovery with exact-byte restart; ADR-0026 effect states, actor wiring, and composition remain |
 | [0023](0023-private-local-m2-certification.md) | Certify M2 through a private fully functional actual-node corridor and defer public deployment/testnet publication | Accepted target; isolated LEZ v0.2 service readiness and exact local preparation are GREEN. Finalized Vault Claims, checked escrow deployment, official-wire effect processes, independent maker/taker swap/recovery, and configuration-only public portability remain; public execution evidence stays deferred to production readiness |
 | [0024](0024-source-audited-lez-v0-2-local-stack.md) | Build the source-audited LEZ v0.2 services into an isolated Bedrock-settled local stack | Architecture accepted; exact inputs and topology are attested. Run `v02-stack-20260713n` proves isolated three-service startup, signed key-derived channel onboarding, finalized non-genesis cross-RPC block identity, channel advancement, dynamic loopback publication, and fail-closed exact cleanup. Independent rebuild reproducibility and the full runtime tuple remain pending |
-| [0025](0025-independent-lez-v02-vault-onboarding.md) | Onboard independent v0.2 maker and taker funds through exact owner-authorized Vault Claims | Exact official maker/taker Claim preparation and mutation rejection are GREEN. Durable reservations, role processes, submission, inclusion, finalized balances, negative on-chain attempts, and restart reconciliation remain pending |
+| [0025](0025-independent-lez-v02-vault-onboarding.md) | Onboard independent v0.2 maker and taker funds through exact owner-authorized Vault Claims | Exact official maker/taker Claim preparation, mutation rejection, and durable per-actor reservation recovery with exact-byte restart and tamper/permission/alias refusal are GREEN. Role processes, submission, inclusion, finalized balances, negative on-chain attempts, and restart reconciliation remain pending under ADR 0026 |
+| [0026](0026-lez-v02-at-most-once-submission-and-query-finality.md) | Persist `AttemptStarted` before one v0.2 send and prove inclusion/finality through bounded sequencer and indexer queries | Architecture accepted; durable effect implementation, restart matrix, exact inclusion scan, indexer block/hash/account-at-block proof, and actual-node evidence remain pending |

@@ -76,13 +76,20 @@ the key and keeps its retained byte copy in `Zeroizing<[u8; 32]>`, but upstream
 constructor inputs and transient signing copies cannot be claimed fully
 zeroized. LOGOS-008 tracks replacement or an upstream fix before production.
 
-The prepare foundations expose no submission. Each single active reservation
-deliberately fails closed for the life of its one-actor signer instance. Durable
-per-operation reservation recovery, concurrent-swap partitioning, authenticated
-server integration, official node nonce wiring, observation, and exact-byte
-submission remain future work. Submission must not be enabled until a restart
-can recover the originally signed bytes without reconstructing or re-signing
-them.
+The prepare foundations expose no submission. Each planner optionally binds one
+pre-existing owner-only `0700` actor state directory through `new_durable` and
+persists its single reservation as an owner-only `0600` fsynced
+create-exclusive file. Restart recovers the originally signed exact bytes
+without calling the nonce source or re-signing; recovery revalidates the
+complete stored request and result and rejects role, runtime, signer,
+allocation, program, transaction-ID, canonical-byte, and signature drift. A
+different request against an existing reservation fails closed, as do crash
+partials, corruption, unknown fields, future schemas, symlinked or foreign-owned
+directories, permission drift, and hardlink aliases; diagnostics never reveal
+the store path. Concurrent-swap partitioning, authenticated server integration,
+official node nonce wiring, observation, and exact-byte submission remain
+future work under ADR 0026. Submission must not be enabled until the durable
+`AttemptStarted` boundary in that ADR is implemented.
 
 This gate does not start Bedrock, the LEZ sequencer/indexer, Zcash Regtest, or
 Docker; it

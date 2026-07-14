@@ -1,5 +1,8 @@
 use std::{fmt, sync::Arc};
 
+#[cfg(unix)]
+use std::path::Path;
+
 use async_trait::async_trait;
 use lez_bridge_protocol::{
     Hex32, MessageContext, Participant, PreparedTransaction, RuntimeCompatibility,
@@ -13,6 +16,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
 
+#[cfg(unix)]
+use crate::durable_reservation::{
+    DurableReservationError, DurableReservationStore, ReservationKind,
+};
 use crate::{NativePrepareError, decode_prepared_for_signer, prepared_from_transaction};
 
 /// One deterministic actor's public Vault allocation.
@@ -116,6 +123,10 @@ impl PrepareVaultClaimResult {
 /// Fail-closed errors while preparing an official v0.2 Vault Claim.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum VaultClaimPrepareError {
+    /// Owner-only durable reservation validation or persistence failed closed.
+    #[cfg(unix)]
+    #[error("durable Vault Claim reservation failed: {0}")]
+    DurableReservation(#[from] DurableReservationError),
     /// The request or runtime targets a different actor process.
     #[error("request targets the wrong isolated sidecar role")]
     WrongRole,
@@ -160,6 +171,8 @@ pub enum VaultClaimPrepareError {
 impl From<NativePrepareError> for VaultClaimPrepareError {
     fn from(value: NativePrepareError) -> Self {
         match value {
+            #[cfg(unix)]
+            NativePrepareError::DurableReservation(error) => Self::DurableReservation(error),
             NativePrepareError::WrongRole => Self::WrongRole,
             NativePrepareError::WrongRuntime => Self::WrongRuntime,
             NativePrepareError::WrongSigner => Self::WrongSigner,
@@ -213,6 +226,8 @@ pub struct VaultClaimPlanner {
     expected_runtime: RuntimeDescriptor,
     expected_allocation: VaultClaimAllocation,
     nonce_source: Arc<dyn VaultClaimNonceSource>,
+    #[cfg(unix)]
+    durable_store: Option<DurableReservationStore>,
     state: Mutex<PlannerState>,
 }
 
@@ -225,6 +240,14 @@ impl fmt::Debug for VaultClaimPlanner {
             .field("signer_account_id", &self.signer_account_id)
             .field("expected_runtime", &self.expected_runtime)
             .field("expected_allocation", &self.expected_allocation)
+            .field(
+                "durable_store",
+                &if cfg!(unix) {
+                    "[REDACTED]"
+                } else {
+                    "unavailable"
+                },
+            )
             .finish_non_exhaustive()
     }
 }
@@ -284,8 +307,44 @@ impl VaultClaimPlanner {
             expected_runtime,
             expected_allocation,
             nonce_source,
+            #[cfg(unix)]
+            durable_store: None,
             state: Mutex::new(PlannerState::default()),
         })
+    }
+
+    /// Binds this planner to one existing owner-only actor state directory.
+    ///
+    /// The held directory descriptor and fixed reservation filename prevent
+    /// path substitution after construction. Maker and taker processes must
+    /// pass distinct directories.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same configuration errors as [`Self::new`] and rejects a
+    /// symlinked, non-directory, foreign-owned, or non-`0700` state directory.
+    #[cfg(unix)]
+    pub fn new_durable<N, P>(
+        role: Participant,
+        signer_key: PrivateKey,
+        expected_runtime: RuntimeDescriptor,
+        expected_allocation: VaultClaimAllocation,
+        nonce_source: Arc<N>,
+        state_directory: P,
+    ) -> Result<Self, VaultClaimPrepareError>
+    where
+        N: VaultClaimNonceSource + 'static,
+        P: AsRef<Path>,
+    {
+        let mut planner = Self::new(
+            role,
+            signer_key,
+            expected_runtime,
+            expected_allocation,
+            nonce_source,
+        )?;
+        planner.durable_store = Some(DurableReservationStore::open(state_directory.as_ref())?);
+        Ok(planner)
     }
 
     /// Prepares and caches one exact signed public Vault Claim.
@@ -312,6 +371,15 @@ impl VaultClaimPlanner {
             };
         }
 
+        #[cfg(unix)]
+        if let Some(recovered) = self.recover_durable(&request)? {
+            state.active = Some(ActiveClaim {
+                request,
+                result: recovered.clone(),
+            });
+            return Ok(recovered);
+        }
+
         let owner_nonce = self
             .nonce_source
             .account_nonce(self.signer_account_id)
@@ -325,11 +393,50 @@ impl VaultClaimPlanner {
         let witnesses = WitnessSet::for_message(&message, &[&signer_key]);
         let claim = prepared_from_transaction(&PublicTransaction::new(message, witnesses))?;
         let result = PrepareVaultClaimResult::new(request.context.clone(), claim);
+        #[cfg(unix)]
+        if let Some(store) = self.durable_store.as_ref()
+            && let Err(error) = store.create(ReservationKind::VaultClaim, &request, &result)
+        {
+            if error == DurableReservationError::AlreadyReserved {
+                let recovered = self
+                    .recover_durable(&request)?
+                    .ok_or(DurableReservationError::Filesystem)?;
+                state.active = Some(ActiveClaim {
+                    request,
+                    result: recovered.clone(),
+                });
+                return Ok(recovered);
+            }
+            return Err(error.into());
+        }
         state.active = Some(ActiveClaim {
             request,
             result: result.clone(),
         });
         Ok(result)
+    }
+
+    #[cfg(unix)]
+    fn recover_durable(
+        &self,
+        request: &PrepareVaultClaimRequest,
+    ) -> Result<Option<PrepareVaultClaimResult>, VaultClaimPrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some((stored_request, stored_result)) = store
+            .load::<PrepareVaultClaimRequest, PrepareVaultClaimResult>(
+                ReservationKind::VaultClaim,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_request(&stored_request)?;
+        self.validate_prepared(&stored_request, &stored_result)?;
+        if &stored_request != request {
+            return Err(VaultClaimPrepareError::ActivePrepare);
+        }
+        Ok(Some(stored_result))
     }
 
     /// Validates recovered exact bytes against the complete original request.
