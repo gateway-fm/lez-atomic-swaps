@@ -1,15 +1,15 @@
 # ADR 0025: Onboard independent LEZ v0.2 actors through Vault claims
 
-Status: Accepted architecture; exact Claim preparation GREEN, submission and actor-readiness evidence pending
+Status: Accepted architecture; exact Claim preparation and durable exact-byte recovery GREEN, submission and actor-readiness evidence pending
 
 ```mermaid
 flowchart LR
     Maker["Maker process"]
-    MakerPrepare["Maker exact Claim prepare GREEN"]
+    MakerPrepare["Maker exact Claim prepare<br/>and durable recovery GREEN"]
     MakerSecret["Maker secret"]
     MakerStore["Maker store and journal"]
     Taker["Taker process"]
-    TakerPrepare["Taker exact Claim prepare GREEN"]
+    TakerPrepare["Taker exact Claim prepare<br/>and durable recovery GREEN"]
     TakerSecret["Taker secret"]
     TakerStore["Taker store and journal"]
     Sequencer["LEZ v0.2 sequencer RPC"]
@@ -23,8 +23,8 @@ flowchart LR
     TakerStore --> Taker
     Maker --> MakerPrepare
     Taker --> TakerPrepare
-    MakerPrepare -.->|"durable submit pending"| Sequencer
-    TakerPrepare -.->|"durable submit pending"| Sequencer
+    MakerPrepare -.->|"effect submit pending"| Sequencer
+    TakerPrepare -.->|"effect submit pending"| Sequencer
     Sequencer -->|"publish LEZ blocks"| Bedrock
     Indexer -->|"observe finalized blocks"| Bedrock
     Sequencer -->|"inclusion evidence"| Evidence
@@ -236,14 +236,17 @@ two genesis Vault allocations, independent actor secrets and stores, exact
 signed claims, sequencer inclusion, indexer finality, expected post-state, and
 cross-role signing denial.
 
-The separately locked sidecar now completes the stateless portion of this
-boundary: 17 integration tests include exact maker/taker public-key, owner,
+The separately locked sidecar now completes the durable preparation portion of
+this boundary: 25 integration tests include exact maker/taker public-key, owner,
 Vault, program, allocation, nonce, account-order, amount, canonical-byte, hash,
-signature, and redaction checks. Each planner confirms the request nonce
-through an injected official-node source before signing and installs its
-in-memory reservation only after complete construction. This is preparation
-evidence, not actor readiness: there is still no durable reservation, RPC
-submission, inclusion/finality observation, or post-state proof.
+signature, restart, stored-state mutation, filesystem-isolation, and redaction
+checks. Each planner confirms the request nonce through an injected
+official-node source before signing and installs its reservation only after
+complete construction. On Linux it opens the actor directory with
+`openat2(NO_SYMLINKS)`, persists an fsynced create-exclusive owner-only file,
+and returns the exact stored bytes after restart without a nonce lookup or
+re-sign. This is durable preparation evidence, not actor readiness: there is
+still no RPC submission, inclusion/finality observation, or post-state proof.
 
 Corridor readiness begins only after actor readiness is GREEN. It proves offer
 exchange, funding reservation, escrow or HTLC locks, counter-chain

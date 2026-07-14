@@ -34,7 +34,7 @@ vault_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/lo
 wallet = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
 zeroize = "=1.9.0"
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "=1.1.4", features = ["fs", "process"] }
 
 [dev-dependencies]

@@ -2,14 +2,14 @@
 
 #![forbid(unsafe_code)]
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 mod durable_reservation;
 mod native_prepare;
 mod runtime;
 mod server;
 mod vault_claim_prepare;
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub use durable_reservation::DurableReservationError;
 
 pub use native_prepare::{

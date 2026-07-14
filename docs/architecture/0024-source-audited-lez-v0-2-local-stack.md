@@ -128,7 +128,7 @@ runtime binding exist.
 
 ## Consequences
 
-- Source, binary, packaging, isolated service startup, signed channel onboarding, and non-genesis cross-RPC finality readiness are GREEN in run `v02-stack-20260713n`. The full runtime tuple, including Vault Claims, checked escrow deployment, independent actors, swap effects, and restart recovery, remains pending.
+- Source, binary, packaging, isolated service startup, signed channel onboarding, non-genesis cross-RPC finality, and distinct maker/taker owner/Vault pre-Claim state at exact finalized block 2 are GREEN in run `v02-actors-finalized-20260713b`. The full runtime tuple, including Claim submission/finality, checked escrow deployment, effect-bearing independent actors, swap effects, and restart recovery, remains pending.
 - Wildcard upstream binds no longer expose fixed host ports or collide with
   unrelated Docker activity.
 - A healthy indexer cannot be mistaken for finality, and a transiently moving

@@ -1,6 +1,6 @@
 use std::{fmt, sync::Arc};
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::path::Path;
 
 use async_trait::async_trait;
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use crate::durable_reservation::{
     DurableReservationError, DurableReservationStore, ReservationKind,
 };
@@ -124,7 +124,7 @@ impl PrepareVaultClaimResult {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum VaultClaimPrepareError {
     /// Owner-only durable reservation validation or persistence failed closed.
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[error("durable Vault Claim reservation failed: {0}")]
     DurableReservation(#[from] DurableReservationError),
     /// The request or runtime targets a different actor process.
@@ -171,7 +171,7 @@ pub enum VaultClaimPrepareError {
 impl From<NativePrepareError> for VaultClaimPrepareError {
     fn from(value: NativePrepareError) -> Self {
         match value {
-            #[cfg(unix)]
+            #[cfg(target_os = "linux")]
             NativePrepareError::DurableReservation(error) => Self::DurableReservation(error),
             NativePrepareError::WrongRole => Self::WrongRole,
             NativePrepareError::WrongRuntime => Self::WrongRuntime,
@@ -226,7 +226,7 @@ pub struct VaultClaimPlanner {
     expected_runtime: RuntimeDescriptor,
     expected_allocation: VaultClaimAllocation,
     nonce_source: Arc<dyn VaultClaimNonceSource>,
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     durable_store: Option<DurableReservationStore>,
     state: Mutex<PlannerState>,
 }
@@ -242,7 +242,7 @@ impl fmt::Debug for VaultClaimPlanner {
             .field("expected_allocation", &self.expected_allocation)
             .field(
                 "durable_store",
-                &if cfg!(unix) {
+                &if cfg!(target_os = "linux") {
                     "[REDACTED]"
                 } else {
                     "unavailable"
@@ -307,7 +307,7 @@ impl VaultClaimPlanner {
             expected_runtime,
             expected_allocation,
             nonce_source,
-            #[cfg(unix)]
+            #[cfg(target_os = "linux")]
             durable_store: None,
             state: Mutex::new(PlannerState::default()),
         })
@@ -323,7 +323,7 @@ impl VaultClaimPlanner {
     ///
     /// Returns the same configuration errors as [`Self::new`] and rejects a
     /// symlinked, non-directory, foreign-owned, or non-`0700` state directory.
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     pub fn new_durable<N, P>(
         role: Participant,
         signer_key: PrivateKey,
@@ -371,7 +371,7 @@ impl VaultClaimPlanner {
             };
         }
 
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
         if let Some(recovered) = self.recover_durable(&request)? {
             state.active = Some(ActiveClaim {
                 request,
@@ -393,7 +393,7 @@ impl VaultClaimPlanner {
         let witnesses = WitnessSet::for_message(&message, &[&signer_key]);
         let claim = prepared_from_transaction(&PublicTransaction::new(message, witnesses))?;
         let result = PrepareVaultClaimResult::new(request.context.clone(), claim);
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) = store.create(ReservationKind::VaultClaim, &request, &result)
         {
@@ -416,7 +416,7 @@ impl VaultClaimPlanner {
         Ok(result)
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     fn recover_durable(
         &self,
         request: &PrepareVaultClaimRequest,

@@ -8,7 +8,10 @@ use std::{
 };
 
 use rustix::{
-    fs::{AtFlags, Dir, Mode, OFlags, RenameFlags, open, openat, renameat_with, unlinkat},
+    fs::{
+        AtFlags, CWD, Dir, Mode, OFlags, RenameFlags, ResolveFlags, openat, openat2, renameat_with,
+        unlinkat,
+    },
     io::Errno,
     process::geteuid,
 };
@@ -93,10 +96,12 @@ impl fmt::Debug for DurableReservationStore {
 
 impl DurableReservationStore {
     pub(crate) fn open(path: &Path) -> Result<Self, DurableReservationError> {
-        let directory = open(
+        let directory = openat2(
+            CWD,
             path,
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::empty(),
+            ResolveFlags::NO_SYMLINKS,
         )
         .map(File::from)
         .map_err(|_| DurableReservationError::InsecureDirectory)?;
@@ -112,6 +117,7 @@ impl DurableReservationStore {
         Request: DeserializeOwned,
         Output: DeserializeOwned,
     {
+        validate_directory(&self.directory)?;
         self.reject_partial(expected_kind)?;
         let descriptor = match openat(
             &self.directory,
@@ -153,6 +159,7 @@ impl DurableReservationStore {
         if envelope.kind != expected_kind {
             return Err(DurableReservationError::CorruptReservation);
         }
+        validate_directory(&self.directory)?;
         Ok(Some((envelope.request, envelope.result)))
     }
 
@@ -166,6 +173,7 @@ impl DurableReservationStore {
         Request: Serialize,
         Output: Serialize,
     {
+        validate_directory(&self.directory)?;
         self.reject_partial(kind)?;
         let bytes = serde_json::to_vec(&ReservationEnvelope {
             schema_version: RESERVATION_SCHEMA_VERSION,
@@ -203,6 +211,7 @@ impl DurableReservationStore {
             temporary_file
                 .sync_all()
                 .map_err(|_| DurableReservationError::Filesystem)?;
+            validate_state_file(&temporary_file)?;
             renameat_with(
                 &self.directory,
                 temporary_name.as_str(),
@@ -217,9 +226,12 @@ impl DurableReservationStore {
                     DurableReservationError::Filesystem
                 }
             })?;
+            validate_state_file(&temporary_file)?;
+            validate_directory(&self.directory)?;
             self.directory
                 .sync_all()
                 .map_err(|_| DurableReservationError::Filesystem)?;
+            validate_directory(&self.directory)?;
             Ok(())
         })();
 

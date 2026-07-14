@@ -89,13 +89,15 @@ funds, stores, journals, sidecars, and restart lifecycles.
 
 ADR 0024 now attests the clean v0.2 source contract, Bedrock OCI source mapping,
 correct sequencer-to-Bedrock publication and indexer-to-Bedrock polling flows,
-and exact sequencer/indexer output hashes. Run `v02-stack-20260713n` proves
+and exact sequencer/indexer output hashes. Run `v02-actors-finalized-20260713b` proves
 isolated ordered service startup, signed channel onboarding, finalized
 non-genesis block identity across both RPCs, channel advancement, dynamic
-loopback publication, and exact fail-closed cleanup. Independent clean rebuild
-reproducibility, restart-state preservation, Vault Claim onboarding, checked
+loopback publication, distinct maker/taker owner/Vault pre-Claim state at that
+exact finalized block, and exact fail-closed cleanup. Independent clean rebuild
+reproducibility, restart-state preservation, Vault Claim submission/finality, checked
 escrow deployment, independent actor use, swap effects, and recovery remain
-pending. This ADR makes a running-service claim, not a corridor claim.
+pending. This ADR makes a running-service and pre-Claim state claim, not a
+corridor claim.
 
 The M2 implementation must produce local and future public routes in the same
 actor binaries, SDK state machine, chain-port traits, transaction builders, and

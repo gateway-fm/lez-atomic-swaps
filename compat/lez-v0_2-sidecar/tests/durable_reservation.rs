@@ -1,4 +1,4 @@
-#![cfg(unix)]
+#![cfg(target_os = "linux")]
 
 use std::{
     fs::{self, OpenOptions},
@@ -658,6 +658,72 @@ async fn rejects_insecure_directories_symlinks_permissions_and_hardlink_aliases(
         make_planner().prepare(request).await.unwrap_err(),
         NativePrepareError::DurableReservation(DurableReservationError::InsecureStateFile)
     );
+}
+
+#[tokio::test]
+async fn rejects_intermediate_symlinks_and_directory_permission_drift_after_open() {
+    let root = TestDirectory::secure("intermediate-symlink-root");
+    let real_parent = root.path().join("real-parent");
+    let state_directory = real_parent.join("state");
+    fs::create_dir(&real_parent).unwrap();
+    fs::set_permissions(&real_parent, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::create_dir(&state_directory).unwrap();
+    fs::set_permissions(&state_directory, fs::Permissions::from_mode(0o700)).unwrap();
+    let alias_parent = root.path().join("alias-parent");
+    symlink(&real_parent, &alias_parent).unwrap();
+
+    let (owner, owner_key) = keyed_account(21);
+    let error = NativeEscrowPlanner::new_durable(
+        Participant::Maker,
+        owner_key,
+        [31; 8],
+        [32; 8],
+        runtime(Participant::Maker, owner, [31; 8]),
+        Arc::new(FixedNativeNonce {
+            value: 41,
+            calls: AtomicUsize::new(0),
+        }),
+        alias_parent.join("state"),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error,
+        NativePrepareError::DurableReservation(DurableReservationError::InsecureDirectory)
+    );
+
+    let directory = TestDirectory::secure("post-open-directory-drift");
+    let (owner, owner_key) = keyed_account(21);
+    let (claimant, _) = keyed_account(22);
+    let nonce = Arc::new(FixedNativeNonce {
+        value: 41,
+        calls: AtomicUsize::new(0),
+    });
+    let planner = NativeEscrowPlanner::new_durable(
+        Participant::Maker,
+        owner_key,
+        [31; 8],
+        [32; 8],
+        runtime(Participant::Maker, owner, [31; 8]),
+        Arc::clone(&nonce),
+        directory.path(),
+    )
+    .unwrap();
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    let request = native_request(
+        Participant::Maker,
+        owner,
+        claimant,
+        [31; 8],
+        [32; 8],
+        "durable-native-run-0006",
+        "durable-native-request-0006",
+    );
+    assert_eq!(
+        planner.prepare(request).await.unwrap_err(),
+        NativePrepareError::DurableReservation(DurableReservationError::InsecureDirectory)
+    );
+    assert_eq!(nonce.calls.load(Ordering::SeqCst), 0);
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
 }
 
 #[test]

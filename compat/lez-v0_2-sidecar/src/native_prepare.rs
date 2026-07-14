@@ -1,6 +1,6 @@
 use std::{fmt, sync::Arc};
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::path::Path;
 
 use async_trait::async_trait;
@@ -17,7 +17,7 @@ use nssa::{
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use crate::durable_reservation::{
     DurableReservationError, DurableReservationStore, ReservationKind,
 };
@@ -35,7 +35,7 @@ pub use generated_escrow_client::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum NativePrepareError {
     /// Owner-only durable reservation validation or persistence failed closed.
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[error("durable native reservation failed: {0}")]
     DurableReservation(#[from] DurableReservationError),
     /// The request or runtime targets a different actor process.
@@ -124,7 +124,7 @@ pub struct NativeEscrowPlanner {
     authenticated_transfer_program_id: [u32; 8],
     expected_runtime: RuntimeDescriptor,
     nonce_source: Arc<dyn NonceSource>,
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     durable_store: Option<DurableReservationStore>,
     state: Mutex<PlannerState>,
 }
@@ -147,7 +147,7 @@ impl fmt::Debug for NativeEscrowPlanner {
             .field("expected_runtime", &self.expected_runtime)
             .field(
                 "durable_store",
-                &if cfg!(unix) {
+                &if cfg!(target_os = "linux") {
                     "[REDACTED]"
                 } else {
                     "unavailable"
@@ -209,7 +209,7 @@ impl NativeEscrowPlanner {
             authenticated_transfer_program_id,
             expected_runtime,
             nonce_source,
-            #[cfg(unix)]
+            #[cfg(target_os = "linux")]
             durable_store: None,
             state: Mutex::new(PlannerState::default()),
         })
@@ -225,7 +225,7 @@ impl NativeEscrowPlanner {
     ///
     /// Returns the same configuration errors as [`Self::new`] and rejects a
     /// symlinked, non-directory, foreign-owned, or non-`0700` state directory.
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     pub fn new_durable<N, P>(
         role: Participant,
         signer_key: PrivateKey,
@@ -277,7 +277,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
         if let Some(recovered) = self.recover_durable(&request)? {
             state.active = Some(ActivePrepare {
                 request,
@@ -294,7 +294,7 @@ impl NativeEscrowPlanner {
             .checked_add(1)
             .ok_or(NativePrepareError::NonceOverflow)?;
         let result = self.plan_pair(&request, initialization_nonce, funding_nonce)?;
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) = store.create(ReservationKind::NativeEscrow, &request, &result)
         {
@@ -317,7 +317,7 @@ impl NativeEscrowPlanner {
         Ok(result)
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     fn recover_durable(
         &self,
         request: &PrepareNativeEscrowRequest,

@@ -191,16 +191,19 @@ Zcash Regtest devnet, and
 independent maker/taker processes while deferring public evidence without
 claiming it exists. The
 [source-audited local-stack decision](docs/architecture/0024-source-audited-lez-v0-2-local-stack.md)
-binds the exact Bedrock image/source labels, LEZ source, toolchain, native inputs, service flows, and service-binary hashes. Run `v02-stack-20260713n` additionally proves isolated Bedrock, real non-standalone sequencer, and indexer startup; signed key-derived channel onboarding; finalized non-genesis cross-RPC block identity; channel advancement; and fail-closed exact cleanup. A separately locked Rust
+binds the exact Bedrock image/source labels, LEZ source, toolchain, native inputs, service flows, and service-binary hashes. Run `v02-actors-finalized-20260713b` additionally proves isolated Bedrock, real non-standalone sequencer, and indexer startup; signed key-derived channel onboarding; finalized non-genesis cross-RPC block identity; distinct maker/taker genesis Vault allocations at the same exact finalized block; channel advancement; and fail-closed exact cleanup. A separately locked Rust
 1.96.0 v0.2 sidecar foundation now uses the exact upstream `AccountId`,
 `PublicTransaction`, `LeeTransaction`, and sequencer RPC types; it proves
 literal-loopback health/channel binding, canonical signed-transaction decoding,
 and an authenticated run/role-bound describe server. Exact native
 initialize/fund and maker/taker Vault Claim preparation are GREEN using
 official types, node-confirmed nonces, canonical bytes, and fail-closed
-in-memory reservations. Durable recovery, authenticated server integration,
-observation, one-attempt submission, and executable role processes remain
-pending. The service stack is GREEN. Finalized Vault Claim actor onboarding,
+reservations. On Linux, durable preparation recovery is GREEN through
+owner-only directories opened with `openat2(NO_SYMLINKS)`, fsynced
+create-exclusive files, complete exact-byte revalidation, and runtime
+permission/alias checks. Authenticated effect-server integration, observation,
+one-attempt submission, and executable role processes remain pending. The
+service and exact pre-Claim actor state are GREEN. Finalized Vault Claim actor onboarding,
 checked escrow deployment, independent actor consumption, swap effects, and
 restart recovery remain pending; standalone mock settlement and
 v0.1.2 remain lower-level coverage. The

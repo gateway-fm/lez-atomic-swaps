@@ -61,8 +61,8 @@ flowchart TB
     end
 
     subgraph LezV02Sidecars["Official LEZ v0.2 sidecar boundary"]
-        MSL2["Maker v0.2 library<br/>native and Vault prepare GREEN<br/>durable effects and process pending"]
-        TLS2["Taker v0.2 library<br/>native and Vault prepare GREEN<br/>durable effects and process pending"]
+        MSL2["Maker v0.2 library<br/>prepare + durable recovery GREEN<br/>effects and process pending"]
+        TLS2["Taker v0.2 library<br/>prepare + durable recovery GREEN<br/>effects and process pending"]
     end
 
     subgraph LocalLezV02["Required public-compatible local LEZ v0.2 devnet"]
@@ -71,8 +71,8 @@ flowchart TB
         SQ["Non-standalone sequencer RPC<br/>signed channel and Borsh block GREEN"]
         V02R["Host orchestrator<br/>exact-ID lifecycle and RPC probes"]
         V02Net["Unique no-masquerade Docker bridge<br/>dynamic loopback ports"]
-        V02Ready[("v0.2 service readiness GREEN<br/>channel onboarding + non-genesis finality")]
-        V02Full[("Full runtime tuple pending<br/>Vault claims + escrow + actors + swaps + recovery")]
+        V02Ready[("v0.2 service and pre-Claim state GREEN<br/>channel + finality + actor Vault allocations")]
+        V02Full[("Full runtime tuple pending<br/>finalized Claims + escrow + actors + swaps + recovery")]
         V02State[(".e2e/run_id/lez-v02")]
     end
 
@@ -223,10 +223,12 @@ health/channel RPC, and an authenticated role/run-bound describe server. Its
 native escrow planner prepares and validates an exact signed initialize/fund
 pair using node-observed consecutive nonces. Its Vault planner prepares and
 validates the exact official maker/taker Claim transactions with role-specific
-allocations and an independently confirmed owner nonce. Both deliberately keep
-only an in-memory fail-closed reservation and expose no submission. The local
-v0.2 Bedrock/indexer/non-standalone service slice is also GREEN. Remaining M2
-work is durable reservation recovery, observation, one-attempt submission,
+allocations and an independently confirmed owner nonce. Both optionally persist
+their exact reservation in a Linux owner-only no-symlink directory and recover
+the same validated signed bytes after restart without another nonce lookup.
+They expose no submission. The local v0.2 Bedrock/indexer/non-standalone service
+slice plus distinct maker/taker pre-Claim Vault state at exact finalized block 2
+is also GREEN. Remaining M2 work is observation, one-attempt submission,
 executable role processes, effect-bearing `activate`/`drive` command/port
 wiring, dormant public-route configuration/adapters, composed both-direction
 execution, and post-lock hardening; chain
@@ -318,7 +320,7 @@ in a composed LEZ/Zebra swap yet. This entire v0.1.2 boundary is retained as a
 lower lane and cannot replace ADR 0023's full v0.2 stack. The upstream v0.1.2 server itself still binds
 the allocated port on the host wildcard address.
 
-The v0.2 service stack is now source- and binary-attested and has passed isolated execution in run `v02-stack-20260713n`. It binds clean LEZ `v0.2.0` source at `a58fbce2...`, Rust 1.94.0, the digest-pinned Bedrock image at OCI revision `d8711bbc...`, exact Risc0/Rapisnark inputs, non-standalone service binaries, and dynamic loopback RPC publication on a unique no-masquerade bridge. The real sequencer signs and onboards runtime channel `b6adb2d2...3748`; the runner preserves the protected all-zero Bedrock genesis channel and does not use the upstream all-`01` example as runtime identity. Finalized block 2 passed indexer by-ID/by-hash equality and sequencer Borsh-header identity, and the Bedrock channel advanced from slot 15 to 49. The runner then proved its exact run containers, network, and image absent. This is service readiness only: Vault Claims, checked escrow deployment, independent actor processes, swap effects, and restart recovery remain pending under ADR 0024.
+The v0.2 service stack is now source- and binary-attested and has passed isolated execution in run `v02-actors-finalized-20260713b`. It binds clean LEZ `v0.2.0` source at `a58fbce2...`, Rust 1.94.0, the digest-pinned Bedrock image at OCI revision `d8711bbc...`, exact Risc0/Rapisnark inputs, non-standalone service binaries, and dynamic loopback RPC publication on a unique no-masquerade bridge. The real sequencer signs and onboards its key-derived runtime channel; the runner preserves the protected all-zero Bedrock genesis channel and does not use the upstream all-`01` example as runtime identity. Finalized block 2 passed indexer by-ID/by-hash equality and sequencer Borsh-header identity. At that exact finalized block, maker/taker owners have zero balance/nonce and their distinct Vaults contain 100000/200000 with nonce zero. The runner then proved its exact run containers, network, and image absent. This is service plus pre-Claim actor-state readiness only: Claim submission/finality, checked escrow deployment, effect-bearing independent actor processes, swap effects, and restart recovery remain pending under ADR 0024.
 
 ## LEZ escrow custody components and actor flows
 
@@ -430,7 +432,7 @@ flowchart LR
     V02Guest --> V02Artifact["Checked v0.2 ELF<br/>SHA-256 + ImageID + ProgramId"]
     V02Artifact --> V02Local["Recursive native + two-definition token<br/>claim/refund + rollback tests"]
     V02Artifact --> V02Deployer["Exact-once fixed-URL<br/>official-RPC deployer"]
-    V02Artifact --> V02Sidecar["Official-wire native + Vault prepare GREEN<br/>durable effects and local/public profile pending"]
+    V02Artifact --> V02Sidecar["Official-wire prepare + durable recovery GREEN<br/>effects and local/public profile pending"]
     V02Sidecar -.-> V02FullLocal["Bedrock + indexer + non-standalone sequencer<br/>independent actor corridor"]
     V02Deployer -.-> Testnet["Official v0.2 testnet<br/>deployment + cost evidence"]
 
@@ -464,8 +466,9 @@ touched account roll back together. The v0.2 deployer validates immutable
 endpoint/channel/built-ins/artifact identity, submits once, and accepts only the
 exact transaction in its containing block; ambiguity or timeout is never
 retried. The solid v0.2 sidecar node represents tested describe/health/decoder,
-native initialize/fund preparation, and deterministic maker/taker Vault Claim
-preparation. Its dashed durable effect/full-local edge remains M2 exit work. The dashed
+native initialize/fund preparation, deterministic maker/taker Vault Claim
+preparation, and hardened durable exact-byte restart. Its dashed effect/full-local
+edge remains M2 exit work. The dashed
 public-testnet edge and deployed-runtime costs are deferred to production
 readiness under ADR 0023. The v0.1.2 cost replay executes the same guest instructions through
 LEZ production state transitions, counts the escrow root and
