@@ -197,6 +197,60 @@ restart, abandonment/refund, reorg, concurrency, corruption, ambiguity, chaos,
 information-security, and production-readiness campaigns remain owner-gated
 later phases unless a happy-path correctness defect requires immediate work.
 
+## M2 closure: certified at the local-functional PoC boundary — 2026-07-14
+
+The repository owner directed completion and tagging of M2 without entering QA
+or M3. The annotated `m2-complete` tag binds the exact closure tree to the
+canonical evidence packet and this decision record. It certifies the
+reproducible private local-functional PoC boundary, not the deferred hardening
+phases.
+
+Final certification retained these exact results:
+
+- canonical runs `m2cert-canonical-forward-bb53daf-20260714a` and
+  `m2cert-canonical-reverse-bb53daf-20260714a` completed both accepted
+  directions against Docker-built/deployed ProgramId
+  `5cf8c5a4eedb3c2873956cb7898eb33a495407c9746fb1a065c99638159329c1`;
+- all four actor stores reached revision 4 `Completed`, each confirmed Zcash
+  HTLC output was spent only after the LEZ reveal, and both terminal LEZ custody
+  accounts were zero;
+- the full pinned LEZ verifier passed compatibility, escrow, local-stack,
+  canonical-artifact, recursive lifecycle/rollback, deployer, dependency,
+  Clippy, and rustdoc gates;
+- fresh isolated Zebra run `m2cert-final-bc31373-zebra-20260714b` passed both
+  restart/requery/actual-fork removal and real actor-key fund/claim/refund
+  consensus E2E. The closure audit first exposed a stale schema-v5 test
+  expectation; it was corrected RED-to-GREEN against authoritative schema v10;
+- fail-hard Trivy 0.70.0 used a fresh vulnerability database and found zero
+  HIGH/CRITICAL findings in the exact Zebra image; all 11 Rust graphs passed
+  advisory, ban, license, and source policy; and
+- all 69 tracked Mermaid diagrams rendered through the repository harness, and
+  the local exact-tree formatting, test, documentation, traceability, and CI
+  policy gates passed. Checked-in evidence does not infer a remote GitHub result.
+
+No public RPC, faucet, public funds, or external chain service participated. The
+pinned LEZ v0.2 Bedrock/sequencer/indexer and Zebra 5.2.0 Regtest endpoints were
+ephemeral loopback services, while deterministic local genesis/Regtest funds
+provided inputs. Correctness comes from crossing the actual transaction-validation, execution, consensus, canonical-block, and account
+boundaries; loopback itself provides isolation only.
+
+Cross-chain atomicity is enforced by signed agreement constraints,
+direction-derived effect ownership, durable role-local state, a two-confirmation
+Zcash gate before LEZ reveal, and exact spend observation. It is not represented
+as one impossible cross-chain database transaction. The certified happy paths
+show both assets complete in the required order with no terminal LEZ custody.
+Refund/recovery is retained in lower test lanes, but composed actual-node
+refund, restart, reorg, ambiguity, concurrency, and chaos campaigns remain
+owner-gated hardening.
+
+Vault onboarding journals accurately stop at durable `Admitted`; separate
+manual indexer audits prove finalized inclusion and account state. Integrated
+actor-bound bounded-finality journal progression remains later hardening. Live
+public execution and recordings remain deferred under ADR 0023 and this ADR; a
+private recording is an optional external-demo artifact, not an M2 exit gate.
+Logos-owned upstream findings remain production-release items under ADR 0018
+and do not invalidate this private local certification.
+
 ## Consequences
 
 - The next implementation choice optimizes for a thin real user journey rather

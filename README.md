@@ -241,8 +241,10 @@ exposed and reproduced a forward-only canonical LEZ validator, now corrected
 to bind the signer to the agreement-derived depositor. Exact secret-safe facts
 are in the
 [reverse-direction corridor evidence](docs/evidence/m2-taker-sells-foreign-corridor-20260714.json).
-The M2 PoC happy-path gate is now **2 of 2**. Documentation and repository
-completion gates still precede an M2 tag; no tag exists yet. The
+The M2 local-functional PoC is certified **2 of 2** under the annotated
+`m2-complete` tag. The tag binds the exact closure tree to the canonical
+evidence packet; it does not claim that the owner has entered QA, M3, or the
+deferred recovery, chaos, public-execution, and production-readiness phases. The
 schema-v3 Zebra route selection, public HTTPS `x-api-key` transport, and LEZ
 `official_public` sidecar route are now locally verified portability contracts;
 they have not made a public call.
@@ -520,8 +522,9 @@ both directions. Dormant schema-v3 Zebra routes, the public HTTPS transport,
 and the LEZ `official_public` profile are locally GREEN; live deployment,
 credentials, funds, method smoke, and public transactions remain deferred.
 PR #238 remains unmerged and unreviewed. That status is a production-release
-blocker under ADR 0018, not a private M2 blocker; these component passes alone
-also do not replace the final M2 repository certification gate.
+blocker under ADR 0018, not a private M2 blocker. The final private M2
+repository certification gate is GREEN and bound by `m2-complete`; the public
+and production gates remain explicitly deferred.
 
 Cargo-deny reports that the exact official LEZ graph forces Hickory DNS
 `0.25.0-alpha.5` (`RUSTSEC-2026-0118` and `RUSTSEC-2026-0119`) through

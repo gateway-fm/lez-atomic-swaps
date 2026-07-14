@@ -951,8 +951,9 @@ deposits LEZ and the taker owns the revealing claim. Bridge readiness remains
 deliberately not a finality proof. Manual completion must retain both readiness
 lines, accepted submissions, terminal actor state, Zcash effects, and separate
 indexer finality. The successful reverse initialize/fund/claim transactions are
-finalized in indexer blocks 641/642/643. The owner keeps M2 in the PoC phase
-until explicitly changing phases.
+finalized in indexer blocks 641/642/643. M2 is certified at the
+local-functional PoC boundary. The owner has not entered QA or M3; later
+hardening remains outside this certification.
 
 The same binary has one separate dormant public profile. Do not run this form
 for M2 evidence; it is shown so the configuration change is exact:
@@ -1317,8 +1318,10 @@ completed `TakerSellsLez` after one bounded retry. Reverse run 14c completed
 `TakerSellsForeign` without a same-run retry. The current ceiling is eight
 exact same-run drive retries within the unchanged absolute deadline;
 exhausting it is a local failure, not permission to reuse an effect-bearing
-run. Both PoC directions are complete. Documentation, repository completion
-gates, and owner review remain before an M2 tag.
+run. Both PoC directions are complete and the exact closure tree is certified by
+`m2-complete`. This manual remains the reproduction contract; actual-node
+refund/restart/reorg/chaos, live public execution, and production readiness
+remain deferred and are not claims of the tag.
 
 Loopback is an isolation property, not a correctness claim. The chain evidence
 comes from running the real pinned implementations and crossing their actual
