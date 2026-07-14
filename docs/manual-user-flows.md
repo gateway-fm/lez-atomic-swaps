@@ -28,8 +28,11 @@ provisioner-only full cookie, distinct maker/taker `rpcauth` plus
 `rpcwhitelist` credentials, Compose project/network/volumes, actors, stores,
 client-side keys, provisioner wallet, and evidence root. It must clean only
 resources labeled with that run. Regtest mining provides
-deterministic local funds; no public RPC, faucet, public funds, or public chain
-is part of this PoC. Cold setup will require checksum-verified Bitcoin Core
+deterministic local funds: the descriptor/key derivation, genesis, clock and
+transaction policy, maturity, values, and confirmation assertions repeat,
+while block hashes and transaction IDs may differ across run IDs and are
+recorded as evidence. No public RPC, faucet, public funds, or public chain is
+part of this PoC. Cold setup will require checksum-verified Bitcoin Core
 release assets and locked Rust dependencies, whose registry/CDN availability and
 vulnerability scans can fail independently of protocol behavior. This section
 will gain the exact build, start, role-flow, evidence-inspection, and cleanup

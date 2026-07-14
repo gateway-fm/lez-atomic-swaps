@@ -1075,6 +1075,29 @@ this order:
 6. run `TakerSellsForeign`, then `TakerSellsLez`, through actual local LEZ and
    Bitcoin nodes and emit secret-safe evidence from both actors and chains.
 
+The first bisectable implementation slice is Core infrastructure only and adds
+zero Rust dependencies. It introduces
+`tests/e2e/bitcoin-core/{Dockerfile,compose.yml}`, a provenance contract,
+`scripts/check-bitcoin-core-isolation.sh`, and
+`scripts/run-bitcoin-core-e2e.sh`; then it extends Compose validation, the CI
+hardening policy, and CI with an actual-node smoke plus a fail-hard Trivy scan.
+The consumed artifact is the signed/checksum-verified official binary archive;
+the recorded source commit is provenance and must not be described as a local
+source build.
+
+That slice is GREEN only when retained, secret-safe evidence proves Core 31.1,
+Regtest genesis and an advancing tip, zero chain peers and zero public runtime
+RPC/faucet/funds dependencies, an
+allocated literal-loopback RPC port, provisioner-only cookie/wallet/mining
+authority, distinct maker/taker `rpcauth` credentials and method allow/deny
+matrices, deterministic descriptor-derived mature local funding, immutable
+image identity, and exact labeled cleanup while a foreign sentinel resource
+survives success and forced failure. Deterministic means the same derivation,
+clock/transaction policy, maturity, values, and confirmation assertions; it
+does not promise byte-identical blocks or transaction IDs across run IDs. This
+accepts only the Core infrastructure slice, not P2TR/adaptor behavior, either
+swap direction, U8 public-route execution, or M3 completion.
+
 The PoC gate requires both actors terminal `Completed`, taker-first canonical
 at the negotiated policy before the maker effect, no scalar revelation before
 both locks, complete durable pre-lock presignature/recovery evidence, and exact
@@ -1099,11 +1122,21 @@ phases. Public routes must select Testnet4 explicitly; legacy `testnet` is not
 an acceptable ambiguous configuration value.
 
 Candidate pins are Bitcoin Core 31.1, `bitcoin` 0.32.101, `miniscript` 13.1.0,
-`corepc-client` 0.16.0/`corepc-types` 0.15.0, and `musig2` 0.4.1. They remain
+`corepc-client` 0.16.0/`corepc-types` 0.15.0, and `musig2` 0.4.1. The Core-only
+slice deliberately adopts none of the Rust candidates. They remain
 candidates until the exact resolved graph passes source, license, advisory,
 vulnerability, vector, interoperability, consensus, and secret-handling gates.
 `corepc-client` is test-oriented and `musig2` is beta/unaudited, so neither
 may be silently promoted to production readiness.
+
+When the P2TR slice actually exercises them, start with exact-pinned
+`bitcoin` and `musig2`; defer `miniscript` and `corepc` until a concrete API
+needs them. The existing graph uses `secp256k1` 0.29 while `musig2` brings a
+0.31 line. Treat that duplicate as intentional and cross one audited boundary
+using canonical bytes that both sides reparse; never share incompatible Rust
+key/signature types or bypass completed-signature verification under tweaked
+`Q` and Core consensus. Resolve the lockfile first, then add only exact-package
+CC0/Unlicense exceptions—never a global license allowance.
 
 ADR 0029 contains the component, pre-lock signing, actor-flow, atomicity,
 isolation, and evidence diagrams. This plan does not activate M3 or authorize an

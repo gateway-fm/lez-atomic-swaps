@@ -19,9 +19,10 @@ substituted or marked passing.
 
 ## Decision
 
-When the owner explicitly enters M3, the first slice is a reproducible local
-happy-path PoC through a source- and checksum-pinned Bitcoin Core 31.1 Regtest
-node and the pinned local LEZ v0.2 stack. It uses independent maker and taker
+When the owner explicitly enters M3, the PoC target is a reproducible local
+happy path through a Bitcoin Core 31.1 Regtest node built from the signed,
+checksum-pinned official binary archive and bound to its exact source revision,
+plus the pinned local LEZ v0.2 stack. It uses independent maker and taker
 actors, separate keys and stores, actual signed transactions, and the same
 public SDK boundary intended for later routes. Public Testnet4 changes node
 configuration, credentials, funding, confirmation policy, and deployed LEZ
@@ -202,7 +203,11 @@ not compared as raw numbers.
   prune, shared volume removal, broad process kills, and foreign-container
   ownership are prohibited.
 - Regtest funds come from a run-local deterministic mining/provisioning actor.
-  No public RPC, faucet, public funds, or public chain is used by the PoC.
+  Reproducibility binds the fixed descriptor/key derivation, Regtest genesis,
+  block-time policy, maturity, transaction policy, exact values, and observed
+  outpoints/confirmations. It is a semantic contract; independently named runs
+  need not produce byte-identical block hashes or transaction IDs. No public
+  RPC, faucet, public funds, or public chain is used by the PoC.
 - Cold setup still depends on verified Bitcoin Core release assets and Rust
   registries; their checksums, availability, cache policy, and scan results are
   evidence, not hidden assumptions.
