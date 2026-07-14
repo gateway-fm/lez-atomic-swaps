@@ -1,41 +1,38 @@
 # ADR 0025: Onboard independent LEZ v0.2 actors through Vault claims
 
-Status: Accepted; Claim preparation, recovery, and local one-attempt guard GREEN; RPC finality and actor readiness pending
+Status: Accepted; exact maker/taker Vault preparation, durable one-attempt journals, generated-RPC submission, durable Admitted results, separately audited finalized block/account state, and subsequent spendability in both canonical actual-node corridors are GREEN; integrated actor-bound finality, negative/restart hardening, and public provisioning remain deferred -- reconciled 2026-07-14
 
 ```mermaid
 flowchart LR
-    Maker["Maker process"]
-    MakerPrepare["Maker exact Claim prepare<br/>and durable recovery GREEN"]
-    MakerAttempt[("Maker role-bound effect journal<br/>AttemptStarted before call GREEN")]
-    MakerSecret["Maker secret"]
-    MakerStore["Maker store and journal"]
-    Taker["Taker process"]
-    TakerPrepare["Taker exact Claim prepare<br/>and durable recovery GREEN"]
-    TakerAttempt[("Taker role-bound effect journal<br/>AttemptStarted before call GREEN")]
-    TakerSecret["Taker secret"]
-    TakerStore["Taker store and journal"]
+    Maker["Independent maker process"]
+    MakerSecret["Maker-only key"]
+    MakerJournal[("Maker Vault effect journal")]
+    Taker["Independent taker process"]
+    TakerSecret["Taker-only key"]
+    TakerJournal[("Taker Vault effect journal")]
     Sequencer["LEZ v0.2 sequencer RPC"]
     Bedrock["Bedrock node"]
     Indexer["LEZ v0.2 indexer RPC"]
-    Evidence["Run-local onboarding evidence"]
+    Admitted["Both role journals durably Admitted"]
+    Auditor["Separate post-run finality auditor"]
+    Ready["Finalized actor balances independently verified"]
+    Corridor["Canonical forward and reverse corridors Completed"]
+    Deferred["Negative/restart hardening<br/>and public provisioning deferred"]
 
     MakerSecret --> Maker
-    MakerStore --> Maker
     TakerSecret --> Taker
-    TakerStore --> Taker
-    Maker --> MakerPrepare
-    Taker --> TakerPrepare
-    MakerPrepare --> MakerAttempt
-    TakerPrepare --> TakerAttempt
-    MakerAttempt -.->|"generated RPC and query proof pending"| Sequencer
-    TakerAttempt -.->|"generated RPC and query proof pending"| Sequencer
-    Sequencer -->|"publish LEZ blocks"| Bedrock
-    Indexer -->|"observe finalized blocks"| Bedrock
-    Sequencer -->|"inclusion evidence"| Evidence
-    Indexer -->|"finality and account evidence"| Evidence
-
-    classDef running fill:#e6ffec,stroke:#1a7f37;
-    class MakerPrepare,TakerPrepare,MakerAttempt,TakerAttempt running;
+    Maker -->|"persist AttemptStarted before call"| MakerJournal
+    Taker -->|"persist AttemptStarted before call"| TakerJournal
+    MakerJournal -->|"official Claim via generated RPC"| Sequencer
+    TakerJournal -->|"official Claim via generated RPC"| Sequencer
+    Sequencer -->|"return accepted hashes"| Admitted
+    Sequencer -->|"publish signed blocks"| Bedrock
+    Indexer -->|"poll finalized channel"| Bedrock
+    Auditor -->|"exact finalized block and account queries"| Indexer
+    Auditor -->|"bind audited post-state"| Ready
+    Admitted --> Ready
+    Ready --> Corridor
+    Corridor -.-> Deferred
 ```
 
 ## Context
@@ -223,22 +220,25 @@ transfer that would perturb the deterministic corridor balances.
 ```mermaid
 flowchart LR
     Service["Service readiness"] --> Actor["Actor readiness"]
-    Actor --> Corridor["Corridor readiness"]
-    Corridor --> M2["M2 local-functional evidence"]
+    Actor --> Happy["Two-direction happy-path corridor"]
+    Happy --> M2["M2 local-functional PoC evidence"]
+    M2 -.-> Hardening["Restart, negative claims, refund,<br/>reorg and chaos hardening"]
 
-    ServiceNote["Bedrock progression<br/>channel accreditation<br/>sequencer publication<br/>indexer finality"] --> Service
-    ActorNote["separate actors<br/>Vault claims<br/>finalized balances<br/>role isolation"] --> Actor
-    CorridorNote["offers and locks<br/>redeem or refund<br/>restart and reorg<br/>atomicity"] --> Corridor
+    ServiceNote["Bedrock progression<br/>sequencer publication<br/>indexer finality"] --> Service
+    ActorNote["separate actors<br/>durable Admitted claims<br/>separate finalized-balance audit<br/>role isolation"] --> Actor
+    HappyNote["locks, canonical reveal,<br/>exact follow-up, terminal balances"] --> Happy
 ```
 
 Service readiness contains no user-funding claim. It proves Bedrock
 progression, matching and accredited channel identity, sequencer publication,
 and indexer finality as defined by ADR 0024.
 
-Actor readiness begins only after service readiness is GREEN. It proves the
-two genesis Vault allocations, independent actor secrets and stores, exact
-signed claims, sequencer inclusion, indexer finality, expected post-state, and
-cross-role signing denial.
+Actor readiness begins only after service readiness is GREEN. In the local
+PoC it is an aggregate boundary: separate actor processes prove the two genesis
+Vault allocations, independent secrets and stores, exact signed claims, durable
+Admitted results, and cross-role signing denial; a separate post-run auditor
+proves sequencer inclusion, indexer finality, and expected post-state. Integrated
+actor-journal progression through inclusion and finality remains deferred.
 
 The separately locked sidecar now completes durable preparation and the local
 attempt-before-call portion of this boundary: 42 integration tests include
@@ -253,20 +253,28 @@ and returns the exact stored bytes after restart without a nonce lookup or
 re-sign. Seventeen focused cases additionally bind separate role journals,
 commit `AttemptStarted` before one in-process official-type adapter call, and
 prove observe-only crash, replay, ambiguity, and forced concurrency behavior.
-This remains library evidence, not actor readiness: there is still no generated
-RPC composition, inclusion/finality observation, or post-state proof.
+That paragraph records the earlier library checkpoint. Current actor evidence
+adds generated-RPC submission and durable Admitted results. A separate manual
+indexer audit adds exact finalized inclusion and account post-state, and the
+later independent corridor processes prove both actor balances were spendable.
 
-Corridor readiness begins only after actor readiness is GREEN. It proves offer
-exchange, funding reservation, escrow or HTLC locks, counter-chain
-observations, canonical reveal, redeem and refund effects, restart recovery,
-reorg handling, concurrency isolation, and the full cross-chain atomicity
-invariants. A healthy service or an admitted Claim hash cannot satisfy actor or
-corridor readiness.
+Happy-path corridor readiness begins only after actor readiness is GREEN. It
+proves role-real offer terms, funding reservation, both locks, counter-chain
+observations, canonical reveal, exact follow-up spend, terminal balances, and
+the positive atomic ordering invariants. Restart, negative Claim submission,
+refund, reorg, concurrency fault, and chaos evidence are later hardening under
+ADR 0027. A healthy service or an admitted Claim hash cannot satisfy either
+actor readiness or the happy corridor.
 
-## TDD evidence plan
+## Historical TDD evidence plan and current reconciliation
 
-The implementation follows RED, GREEN, refactor without advancing the ADR
-status from pending evidence until the corresponding gates pass.
+The RED/GREEN list below records the original onboarding plan. Items 1 through 3
+were executed by the separate actor processes. Item 4 is satisfied only as
+aggregate PoC evidence through a separate manual indexer audit, not an integrated
+actor-bound query or journal transition. Both independently audited balances
+were subsequently spent by the canonical forward/reverse corridor actors. The
+process-restart reconciliation and negative on-chain Claim matrix in items 5 and
+6 remain later hardening; the happy-path milestone does not claim them.
 
 ### RED
 
@@ -303,6 +311,22 @@ status from pending evidence until the corresponding gates pass.
 Refactoring may share stateless code and official clients, but it may not merge
 actor runtimes, stores, secrets, authentication, or lifecycle ownership.
 
+## 2026-07-14 canonical actual-node reconciliation
+
+The canonical local actor topology submitted separate owner-authorized Vault
+Claims through generated official RPC types after persisting AttemptStarted;
+each role journal then reached durable Admitted. A separate manual indexer audit
+proved exact finalized inclusion and account post-state, after which the
+role-distinct funds were used in both corridor directions. Maker and taker retained
+separate processes,
+keys, configs, journals, sidecars, and SQLite stores. Both corridor pairs reached revision 4 Completed without a public RPC, public
+or external faucet, or external funds.
+
+This proves aggregate local actor readiness and spendability on the positive
+path. It does not prove integrated actor-bound finality/journal progression,
+public funding/provisioning, negative Claim finalization, process-kill
+reconciliation, actual-node refund/reorg, or chaos.
+
 ## Failure and atomicity properties
 
 - Genesis funding and each Claim are individual LEZ state transitions. A
@@ -311,15 +335,17 @@ actor runtimes, stores, secrets, authentication, or lifecycle ownership.
   role's Vault and enters only that role's owner account.
 - Maker and taker claims use distinct signers, nonces, accounts, and Vaults, so
   neither claim authorizes or consumes the other's state.
-- Mempool admission is not committed state. The actor journals the returned
-  hash before waiting and reconciles inclusion and finality after timeout or
-  restart instead of assuming failure or signing a blind duplicate.
+- Mempool admission is not committed state. The current PoC journals the
+  returned hash and ends in durable Admitted; a separate manual audit establishes
+  finality. An integrated actor must later reconcile inclusion and finality
+  after timeout or restart instead of assuming failure or signing a blind
+  duplicate.
 - A stale or duplicate nonce, wrong signer, reversed account order, or
   overclaim must remain absent from finalized indexer evidence and leave the
   last finalized balances unchanged.
-- Corridor commands remain unavailable until both actor claims are finalized.
-  No escrow lock, secret reveal, redeem, or refund may depend on a pending
-  onboarding transaction.
+- The PoC runner launched the corridor only after the separate audit proved
+  both actor claims finalized. A future integrated gate must make corridor
+  commands unavailable while onboarding remains pending.
 - Finality evidence comes from the indexer view of Bedrock-finalized LEZ
   blocks, not only from the sequencer's local pending store.
 

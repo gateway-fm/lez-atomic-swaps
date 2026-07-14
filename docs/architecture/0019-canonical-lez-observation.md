@@ -1,7 +1,6 @@
 # ADR 0019: Canonical LEZ funded-escrow observation
 
-Status: accepted for the M2 SDK/SQLite exact-head boundary; the production RPC
-adapter and post-funding escrow-state semantics remain open.
+Status: Accepted; SDK/schema-v10 exact-head validation, official-wire v0.2 RPC observation, and terminal funded/claimed escrow semantics crossed both canonical actual-node happy directions; actual-node removal/replacement/recovery and public execution deferred -- reconciled 2026-07-14
 
 ```mermaid
 flowchart LR
@@ -11,8 +10,11 @@ flowchart LR
     Block["Canonical inclusion block<br/>height, hash, finality"]
     Accounts["Metadata and custody accounts<br/>owner, decoded state, exact balance"]
     Validator["Canonical LEZ validator"]
-    Journal["Maker schema-v8 ordered journal<br/>primitive snapshot"]
-    Replay["Restart revalidation"]
+    Journal["Role-local schema-v10 ordered journal<br/>primitive snapshot"]
+    Replay["Lower evidence: store-level<br/>close/reopen replay GREEN"]
+    CanonicalProgram["Canonical ProgramId 5cf8c5...29c1"]
+    Completed["Both canonical directions Completed"]
+    Deferred["Composed actual-node restart/removal/replacement/recovery<br/>and public execution deferred"]
 
     Agreement --> Validator
     RPC --> Tx
@@ -22,8 +24,12 @@ flowchart LR
     Block --> Validator
     Accounts --> Validator
     Validator --> Journal
-    Journal --> Replay
-    Agreement --> Replay
+    Journal --> Completed
+    Journal -.-> Replay
+    Agreement -.-> Replay
+    CanonicalProgram --> Validator
+    Replay -.-> Deferred
+    Completed -.-> Deferred
 ```
 
 ## Context
@@ -111,11 +117,27 @@ awaiting-finality for Pending/Safe until Bedrock reports Finalized, but public
 agreement activation remains fail-closed pending a reviewed deployment. The
 boundary never changes `next_action` or caches authority.
 
-The next slice must use official LEZ wire types to decode and hash the public
-transaction and distinguish a still-canonical fund whose
-escrow has become Claimed or Refunded, and add native plus token standalone
-actor evidence. A finalized block changing is an operator-fatal finality
+The official-wire v0.2 sidecar now decodes and hashes the public transaction,
+validates initialization/funding and revealing-claim facts, and distinguishes
+terminal `Claimed` native escrow state. Both canonical actual-node directions
+ended with zero custody. Refund observation is implemented in lower sidecar/SDK
+tests but composed actual-node refund and token-corridor evidence remain
+deferred. A finalized block changing is an operator-fatal finality
 violation, not a routine reorg.
+
+## 2026-07-14 canonical actual-node reconciliation
+
+The forward and reverse certification runs exercised agreement-derived LEZ
+depositor, claimant, program, metadata, custody, transaction, inclusion, and
+terminal account validation through role-isolated official-wire sidecars. The
+validator correction removed the earlier forward-depositor assumption; each
+direction now derives role ownership from its signed agreement. Finalized LEZ
+initialize/fund/claim effects appear in blocks 2594/2595/2596 and
+2605/2606/2607, and both terminal snapshots report `Claimed` with zero custody.
+
+This proves the canonical positive observation path. It does not prove the
+composed actual-node removal/replacement, refund, restart, reorg, chaos, or
+public-finality paths.
 
 The missing independently verifiable sequencer/finality proof is recorded as
 LOGOS-004 under ADR 0018 and does not waive repository-controlled M2 work.

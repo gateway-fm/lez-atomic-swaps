@@ -1,19 +1,17 @@
 # ADR 0020: Fresh-gated durable maker second lock
 
-Status: Accepted; both deterministic-local directions and schema-v8 restart
-replay implemented, production node adapters and actor processes pending --
-2026-07-12
+Status: Accepted; both direction-derived maker second locks, schema-v10 replay, production-shaped LEZ/Zebra ports, and independent actor processes crossed both canonical actual-node happy directions; actual-node restart/refund/reorg/chaos and public execution deferred -- reconciled 2026-07-14
 
 ```mermaid
 flowchart TB
     Head["Maker aggregate at TakerLockConfirmed"] --> Fresh["Fresh agreement-selected taker-lock observation"]
     Fresh -->|"not eligible"| Wait["Return typed wait outcome; no maker effect"]
     Fresh -->|"eligible at current revision"| Plan{"Signed direction"}
-    Plan -->|"Taker sold Zcash"| Lez["Exact LEZ initialize and fund plan"]
+    Plan -->|"Taker sold Zcash"| LezPlan["Exact LEZ initialize and fund plan"]
     Plan -->|"Taker sold LEZ"| Zec["Exact Zcash funding plan"]
-    Lez --> Intent["Immutable maker intent"]
+    LezPlan --> Intent["Immutable maker intent"]
     Zec --> Intent
-    Intent --> Store[("SQLite schema v8 maker intent")]
+    Intent --> Store[("SQLite schema v10 maker intent")]
     Store --> Observe["Observe expected identity before submission"]
     Observe -->|"stable absence"| Submit["Submit byte-identical durable bytes"]
     Observe -->|"confirmed final step"| Project["Validate maker evidence"]
@@ -21,14 +19,17 @@ flowchart TB
     Project --> Atomic["Atomic transition insert, revision CAS, and intent close"]
     Atomic --> Journal["Union maker journal replay"]
     Journal --> Both["BothLegsLocked"]
-    Both --> Restart["Close and reopen without negotiation"]
+    Both -.-> StoreReplay["Lower evidence: store-level<br/>close/reopen replay GREEN"]
     Both --> Remote["Taker observes agreement-selected maker lock"]
-    Remote --> TakerJournal[("Taker schema v8 transition")]
+    Remote --> TakerJournal[("Taker schema v10 transition")]
     TakerJournal --> TakerBoth["Taker reaches BothLegsLocked"]
-    Restart --> Journal
+    StoreReplay -.-> Journal
 
-    classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Submit planned;
+    LezRpc["LEZ v0.2 sequencer and indexer RPC"] --> Observe
+    Zebra["Zebra 5.2.0 Regtest RPC"] --> Observe
+    Both --> Claim["LEZ reveal then exact Zcash follow-up"]
+    Claim --> Complete["Both canonical directions Completed"]
+    Complete -.-> Deferred["Actual-node restart/refund/reorg/chaos<br/>and public execution deferred"]
 ```
 
 ## Context
@@ -58,7 +59,8 @@ submission bytes before any submission port call. Exact retry is idempotent;
 changed material conflicts. Each chain step is observed before submission, and
 the LEZ initialize and fund steps remain independently recoverable.
 
-Schema v8 uses dedicated maker-intent and maker-transition tables. The intent
+Schema v8 introduced dedicated maker-intent and maker-transition tables; the
+current schema v10 retains those tables and invariants. The intent
 records `staged_revision`; the transition separately records its current
 `predecessor_revision` and exact `intent_staged_revision`. The database permits
 `closed_revision > staged_revision` while requiring
@@ -106,19 +108,34 @@ failure rolls back the transition insert, agreement revision CAS, and intent
 closure; removing the trigger permits an exact retry.
 
 Accept-then-transport-failure tests cover both LEZ steps and Zcash funding. Each
-restart uses the same schema-v8 intent, observes the accepted identity, and
+restart uses the same retained intent, introduced in schema v8 and preserved
+in current schema v10, observes the accepted identity, and
 never rebroadcasts. If the taker Zcash lock is removed after LEZ initialization,
 fresh eligibility returns to `Offered` and LEZ fund is withheld through stable
 absence; only a validated canonical replacement permits the exact fund step.
 Malformed retained maker intent JSON and a future transition schema both fail
 closed during reopen.
 
-The counterparty side now has a distinct taker-local schema-v8 observation
-transition. In both directions, separate maker and taker stores bind the remote
+The distinct taker-local observation transition introduced in schema v8 is
+retained in current schema v10. In both directions, separate maker and taker
+stores bind the remote
 maker evidence, advance independently to `BothLegsLocked`, and replay there.
 The deterministic adapter still asserts the remote expected-submission ID;
 production adapters must derive and validate that identity from canonical node
 evidence.
+
+## 2026-07-14 canonical actual-node reconciliation
+
+In `TakerSellsLez`, the maker observed the taker LEZ lock before funding Zcash.
+In `TakerSellsForeign`, the maker observed confirmed taker Zcash funding before
+initializing and funding LEZ. Each maker effect used an immutable role-local
+intent, and each counterparty independently observed the agreement-selected
+second lock. Both separate actor stores reached `BothLegsLocked` and later
+revision 4 `Completed` against the canonical local nodes.
+
+The composed positive path does not replace the deterministic accept-then-loss,
+rollback, stale-instance, or reorg tests. Equivalent faults, restarts, refunds,
+and chaos against the composed actual nodes remain later hardening.
 
 ## Consequences
 
@@ -127,8 +144,9 @@ longer merely advisory. `next_action` still does not cache permission. The same
 prepared-submission and typed chain-port contracts are reused instead of adding
 another RPC or serialization system.
 
-This proves the hardened SDK and SQLite lock boundary, not the complete M2
-corridor. Official LEZ v0.2 wire decoding, production Zebra/LEZ ports,
-independent maker/taker processes, claims, refunds, concurrency, public-testnet
-evidence, recordings, and repetition of transport/reorg faults against actual
-nodes remain required.
+This proves the hardened SDK/SQLite maker-lock boundary and the canonical local
+PoC composes it through both complete happy directions. Official LEZ v0.2 wire
+decoding, production-shaped Zebra/LEZ ports, independent maker/taker processes,
+and claim effects are GREEN in those runs. Actual-node restart, refund, reorg,
+concurrency faults, chaos, public-testnet execution, and recordings remain
+deferred.

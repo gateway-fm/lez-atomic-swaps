@@ -1,54 +1,29 @@
 # ADR 0017: Durable intent before first-lock effects
 
-Status: taker and maker lock intents/projections plus canonical observation and
-schema-v8 restart replay proven; production chain adapters and later claim/refund effects pending -- 2026-07-12
+Status: taker and maker lock intents/projections, schema-v10 replay, typed LEZ/Zebra chain adapters, and later claim effects crossed both canonical actual-node happy directions; actual-node restart/refund/reorg/chaos and public execution deferred -- reconciled 2026-07-14
 
 ```mermaid
 flowchart TB
-    Accepted["Validated role-fixed agreement"] --> Prepare["Prepare exact signed submissions"]
-    Prepare --> Stage["Atomically stage first-lock intent"]
-    Stage --> Durable["Role-local RecoveryStore"]
-    Stage --> Encode["Versioned primitive intent record"]
-    Encode --> Durable
-    Durable --> SQLite["Production SQLite adapter"]
-    SQLite --> Tables["Agreement + open or closed intent + transition"]
-    Durable --> Restart["Resume without Delivery or Chat"]
-    Restart --> Decode["Deserialize only primitive untrusted fields"]
-    Decode --> Revalidate["Revalidate agreement, role, revision, direction, and bytes"]
-    Revalidate --> Observe["Fresh chain observation before submission"]
-    Observe -->|"unstable"| Wait["Wait without node effect"]
-    Observe -->|"stable absence"| Submit["Submit byte-identical durable bytes"]
+    Agreement["Validated role-fixed agreement"] --> Prepare["Prepare exact signed first-lock submissions"]
+    Prepare --> Stage["Persist immutable intent before node call"]
+    Stage --> Store[("Role-local SQLite schema v10")]
+    Store --> Observe["Fresh exact-identity chain observation"]
+    Observe -->|"stable absence"| Submit["One byte-identical submission"]
     Submit --> Observe
-    Observe -->|"confirmed"| Next{"Another durable LEZ step?"}
-    Next -->|"fund pending"| Fund["Observe then submit LEZ fund step"]
-    Fund --> Observe
-    Next -->|"no"| Projection["Atomic evidence projection"]
-    Projection --> Transition["Versioned primitive transition record"]
-    Transition --> ClosedIntent["Revalidate with exact retained closed intent"]
-    ClosedIntent --> Core
-    Projection --> Core["Advance in-memory coordinator after durable proof"]
-
-    Maker["Independent maker SDK + store"] --> MakerObserve["Observe through agreement-selected node"]
-    MakerObserve -->|"absent, unstable, or RPC error"| MakerWait["Remain Offered; write nothing"]
-    MakerObserve -->|"canonical Zcash or LEZ assertion"| MakerProjection["Atomic maker-role transition + revision"]
-    MakerProjection --> Journal["Schema v8 contiguous role-local journal"]
-    Journal --> Tracker["Agreement-selected Zcash or LEZ exact tracker fold"]
-    Tracker --> Canonical["Canonical or same-inclusion depth event"]
-    Tracker --> Replaced["Atomic same-tip removal plus replacement event"]
-    Tracker --> Removed["Affirmative exact-head removal event"]
-    Canonical --> MakerCore["Replay exact coordinator phase"]
-    Replaced --> MakerCore
-    Removed --> MakerCore
-    MakerCore -->|"poll again after restart"| MakerObserve
-    MakerCore --> Gate["SDK next action remains Wait"]
-    Gate --> Fresh["Fresh non-cached exact-head eligibility requery"]
-    Fresh --> MakerEffect["Durable maker second-lock effect"]
-    MakerEffect --> MakerIntent["Separate schema-v8 maker intent"]
-    MakerIntent --> MakerTransition["Atomic Maker evidence transition"]
-    MakerTransition --> MakerBoth["BothLegsLocked and restart replay"]
-
-    classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Observe,Submit,Fund planned;
+    Observe -->|"confirmed"| Commit["Atomic evidence, revision, and intent closure"]
+    Commit --> First["TakerLockConfirmed"]
+    First --> MakerFresh["Maker fresh canonical eligibility query"]
+    MakerFresh --> MakerIntent["Persist opposite-chain maker intent"]
+    MakerIntent --> MakerSubmit["Observe then submit exact maker lock"]
+    MakerSubmit --> Both["BothLegsLocked"]
+    Both --> Reveal["LEZ revealing claim"]
+    Reveal --> Followup["Exact Zcash follow-up spend"]
+    Followup --> Complete["Both canonical directions Completed"]
+    Lez["LEZ v0.2 sequencer and indexer RPC"] --> Observe
+    Lez --> MakerFresh
+    Zebra["Zebra 5.2.0 Regtest RPC"] --> Observe
+    Zebra --> MakerFresh
+    Complete -.-> Deferred["Actual-node restart/refund/reorg/chaos<br/>and public execution deferred"]
 ```
 
 ## Context
@@ -136,17 +111,34 @@ stale-instance catch-up, four-event close/reopen recovery, rejection of a
 same-cardinality journal hole, and rejection of an individually valid
 different transaction that lacks atomic replacement evidence.
 
+## 2026-07-14 canonical actual-node reconciliation
+
+The canonical forward and reverse runs used separate schema-v3 actors and
+schema-v10 stores. Each direction persisted the direction-selected first lock,
+required fresh canonical evidence before the maker second lock, reached
+`BothLegsLocked`, then preserved the LEZ-reveal-before-Zcash-follow-up order
+through revision 4 `Completed`. LEZ effects crossed role-isolated v0.2 sidecars
+and Zebra effects crossed the typed Regtest adapter. No public route was called.
+
+The deterministic restart and unknown-outcome matrices remain valid lower
+hardening evidence. Their equivalent process-kill, refund, removal/replacement,
+and chaos injections have not yet been repeated inside the composed actual-node
+corridor.
+
 ## Consequences and remaining boundary
 
-The first-lock recovery boundary is now production SQLite durability, but it is
-not a completed corridor swap. The adapter uses WAL, `FULL` synchronous mode,
+The first-lock recovery boundary is production SQLite durability and its
+positive path now composes into both completed canonical corridor directions.
+That completion does not by itself prove process-kill or unknown-outcome
+recovery against actual nodes. The adapter uses WAL, `FULL` synchronous mode,
 foreign keys, immediate transactions, role-composite keys, primitive payloads,
 and full revalidation on every load. Forward Zcash now requires the existing
 complete canonical output type and persists its primitive event record; a
 production Zebra port must still assemble it from fresh stable RPC snapshots.
 The ordered SDK removal/replacement journal is implemented for maker-observed
-forward Zcash. Before every append/load, schema v8 proves the exact contiguous
-row range and folds all prior records through the agreement-selected exact
+forward Zcash. Before every append/load, the journal invariant introduced in
+schema v8 and retained in current schema v10 proves the exact contiguous row
+range and folds all prior records through the agreement-selected exact
 tracker and the coordinator. Zcash replacement halves must share the same stable tip;
 duplicate canonical polls write nothing; changed inclusion requires explicit
 replacement; and stale removal must match the exact tracker head. Replacement
@@ -157,12 +149,15 @@ exact duplicates write no row, and a historical payload-v1 `swap_id` record
 is upgraded according to the signed native/token asset before revalidation.
 Complete primitive LEZ removal/replacement records now survive restart, consume
 one predecessor slot, suppress exact duplicate replacement, and reject stale
-old-head removal without mutation. The official-wire node adapter remains. The
+old-head removal without mutation. The official-wire v0.2 sidecar and typed Zebra node adapter are composed for
+the canonical positive path. The
 maker second-lock method now replays and re-queries the exact tracker head
-internally, persists a separate schema-v8 intent whose staging revision may
+internally, persists a separate maker intent introduced in schema v8 and
+retained in current schema v10 whose staging revision may
 precede its transition predecessor, and reaches `BothLegsLocked` in both
 directions after atomic commit. Union journal replay reconstructs that phase
-after close/reopen without caching authority in `next_action`. Maker
-retry/reorg fault hardening and claim/refund
-effects, production adapters, and real independent actors remain M2 work;
-Logos-owned live-release dependencies are tracked separately under ADR 0018.
+after close/reopen without caching authority in `next_action`. Maker retry/reorg fault hardening, actual-node refund/restart recovery, chaos,
+public execution, and production operations remain deferred. Independent maker
+and taker actors, claim effects, and production-shaped local adapters are GREEN
+in both canonical happy directions. Logos-owned live-release dependencies are
+tracked separately under ADR 0018.

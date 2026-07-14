@@ -1,28 +1,30 @@
 # ADR 0016: Canonical dual-signed LEZ/ZEC agreement
 
-Status: validator, wire contract, and active lifecycle integration implemented;
-effect adapters pending — 2026-07-12
+Status: validator, wire contract, schema-v3 activation, typed LEZ/Zebra effect adapters, and both canonical actual-node happy directions implemented; encrypted production storage, actual-node recovery/chaos, and public execution deferred -- reconciled 2026-07-14
 
 ```mermaid
 flowchart LR
-    Maker["Maker transparent signing key"] --> Body["Canonical agreement body"]
-    Taker["Taker transparent signing key"] --> Body
+    MakerKey["Maker transparent signing key"] --> Body["Canonical agreement body"]
+    TakerKey["Taker transparent signing key"] --> Body
     Body --> Wire["Bounded Borsh schema-2 wire record"]
-    Wire --> Limits["16 KiB record and 128-byte ID preflight"]
-    Limits --> Hash["Domain-separated SHA-256 commitment"]
+    Wire --> Hash["Domain-separated SHA-256 commitment"]
     Hash --> Signatures["Dual compact low-S signatures"]
-    Signatures --> CrossBind["Profile, roles, deadlines, assets, destinations, fees, and transcript"]
-    CrossBind --> Trusted["Validated ZecAgreementV1"]
-    Trusted --> Accepted["Accepted time, fixed role, commitment, and revision"]
-    Accepted --> Store["RecoveryStore contract"]
-    Store --> Active["Revalidated transport-free active swap"]
-    Active --> Coordinator["Fresh deterministic coordinator"]
-    Trusted -.-> LezAdapter["LEZ adapter recomputes program, metadata, custody, and ATAs"]
-    Trusted -.-> ZecAdapter["Zebra adapter recomputes input set and exact transaction policy"]
-    Store -.-> ProductionStore["Encrypted production adapter"]
-
-    classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class LezAdapter,ZecAdapter,ProductionStore planned;
+    Signatures --> Trusted["Validated ZecAgreementV1"]
+    Trusted --> MakerConfig["Schema-v3 maker activation"]
+    Trusted --> TakerConfig["Schema-v3 taker activation"]
+    MakerConfig --> Maker["Independent maker actor + SQLite"]
+    TakerConfig --> Taker["Independent taker actor + SQLite"]
+    Maker --> LezAdapter["Maker agreement-bound LEZ bridge"]
+    Taker --> LezAdapter2["Taker agreement-bound LEZ bridge"]
+    Maker --> ZebraAdapter["Maker typed Zebra adapter"]
+    Taker --> ZebraAdapter2["Taker typed Zebra adapter"]
+    LezAdapter --> Lez["Canonical ProgramId 5cf8c5...29c1"]
+    LezAdapter2 --> Lez
+    ZebraAdapter --> Zebra["Zebra 5.2.0 Regtest"]
+    ZebraAdapter2 --> Zebra
+    Lez --> Complete["Both directions revision 4 Completed"]
+    Zebra --> Complete
+    Complete -.-> Deferred["Encrypted production store, actual-node<br/>recovery/chaos, public execution deferred"]
 ```
 
 ## Context
@@ -79,6 +81,21 @@ native/token PDA and ATA derivations, accepted-at resume, redacted diagnostics,
 and mutation of signed body fields. The full ZEC SDK suite, strict all-target
 Clippy, rustdoc, and formatting also pass.
 
+## 2026-07-14 canonical actual-node reconciliation
+
+The same dual-signed agreement family activated independent maker and taker
+actors in both canonical local runs. Pair validation proved the same runtime,
+Zebra identity, route, discovery bounds, ProgramId, digest, amounts, roles, and
+transaction policy while requiring distinct role, signer, sidecar, credential,
+key, store, and journal paths. The direction changed effect ownership but not
+the signed atomic order. Both actors completed at revision 4 against the
+canonical deployed ProgramId `5cf8c5...29c1`.
+
+This proves typed local effect-adapter and real actor orchestration for the M2
+PoC happy path. It does not assert public deployment, public endpoint behavior,
+actual-node restart/refund/reorg, chaos, or a production encrypted-store
+operating model.
+
 ## Consequences and remaining boundary
 
 The record contains public protocol terms, public keys, signatures, and a secret
@@ -91,8 +108,10 @@ and persists the accepted time, exact wire, commitment, and revision before an
 active value exists. Resume checks the requested swap ID, role, signed body,
 signatures, commitment, wire, and supported revision before rebuilding the
 coordinator. Exact retry is idempotent while a changed same-key record conflicts.
-The active API exposes no raw chain or storage handles. Production encrypted
-storage, typed effect adapters, and real actor orchestration remain pending.
+The active API exposes no raw chain or storage handles. Typed local LEZ/Zebra
+effect adapters and independent actor orchestration are GREEN in both canonical
+happy directions. Production encrypted storage beyond the protected claim
+envelopes, actual-node recovery/chaos, and public execution remain deferred.
 Public-testnet agreement validation deliberately fails until a reviewed escrow
 deployment fixes its genesis and program identities. The lightweight `/LEE/`
 PDA implementation has pinned golden vectors, and the provisional compatibility

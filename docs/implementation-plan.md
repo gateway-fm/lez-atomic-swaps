@@ -915,11 +915,12 @@ outputs above.
 - [x] Keep the stable Zebra/security pin and public-capable configuration under
   M2 contract tests; re-audit releases immediately before the deferred
   public-testnet evidence because the current release horizon ends ahead of NU7.
-- [ ] Re-audit the deployed SPEL/LEZ guest graph before testnet evidence and the
-  M2 tag. Under ADR 0018, exact Logos-owned advisories and upstream review
-  status are disclosed in the production-blocker register and do not block M2;
-  floating pins, undisclosed exceptions, or repository-controlled adapter
-  defects still block it.
+- [x] Re-audit the deployed SPEL/LEZ guest graph for the M2 tag. All eleven
+  independently locked Rust graphs pass the pinned offline advisories, bans,
+  licenses, and sources audit; exact Logos-owned advisories and upstream review
+  status remain disclosed in the production-blocker register under ADR 0018.
+  Re-audit again before public-testnet evidence. Floating pins, undisclosed
+  exceptions, or repository-controlled adapter defects still block release.
 
 ### Reference-actor delivery and M2 exit
 
@@ -984,8 +985,11 @@ outputs above.
   advisory/bans/licenses/sources audits pass with `yanked = "deny"` intact.
   `LOGOS-013` is therefore recorded as a resolved repository finding rather
   than an upstream production blocker.
-- [ ] Generate the private happy-path recording from the passing PoC actor suite;
-  add refund/concurrency recordings only after the owner starts hardening.
+- [x] Classify a private happy-path recording as an optional external-demo
+  artifact rather than an M2 PoC exit gate under ADR 0027. The reproducible
+  command, manual actor flow, and immutable machine evidence are the M2
+  reproduction contract; generate recordings before an external demonstration,
+  and add refund/concurrency recordings only after the owner starts hardening.
 - [ ] Re-run formatting, strict Clippy, all tests/docs, ShellCheck, traceability,
   Mermaid, advisories, bans, licenses, sources, isolated full-v0.2/Regtest E2E,
   dormant public-route contract smoke, and private final-image scanning. Live

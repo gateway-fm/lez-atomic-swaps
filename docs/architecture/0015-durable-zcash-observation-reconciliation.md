@@ -3,12 +3,13 @@
 ## Status
 
 Accepted at the tested runtime boundary. Stable canonical/removal validation,
-the two-phase tracker, the version-1 primitive event/binding records, atomic
-SQLite journal/alert commit, participant-aware projection, authenticated alert
+the two-phase tracker, primitive event/binding records, atomic SQLite
+journal/alert commit, participant-aware projection, authenticated alert
 operations, and actual two-Zebra close/reopen/requery/removal/replay are
-implemented. A daemon-integrated production polling loop and the composed
-LEZ/ZEC actor corridor remain M2 work. Bounded transparent spend recognition is
-implemented separately; durable claim/refund spend journaling remains open.
+implemented. Both canonical LEZ/ZEC actual-node happy directions now compose
+the typed Zebra adapter through revision-4 actor completion. A daemon-integrated
+production polling loop, actual-node post-lock removal/replacement composition,
+and durable claim/refund spend reorg journaling remain deferred.
 
 Taker- and maker-funded legs have independent immutable confirmation policies.
 This is required for reverse public-testnet ZEC, where maker-funded ZEC uses a
@@ -172,8 +173,30 @@ history is now revalidated and replayed into the exact tracker head, and an
 identical fresh requery is suppressed. Authenticated owner status/list/ack alert
 surfaces pass across daemon restart. The isolated actual-node fixture now proves
 the same runtime boundary against two Zebra consensus processes and schema-v8
-SQLite. The remaining gap is daemon-integrated polling and the composed actor
-corridor, not store/reconciliation semantics.
+SQLite. The remaining gaps are daemon-integrated polling and composed actual-node
+post-lock removal/replacement, refund, and restart handling, not the canonical
+happy-path actor corridor or store/reconciliation semantics.
+
+## 2026-07-14 canonical corridor reconciliation
+
+```mermaid
+flowchart LR
+    Maker["Maker typed Zebra adapter"] --> Stable["Stable canonical funding observation"]
+    Taker["Taker typed Zebra adapter"] --> Stable
+    Stable --> Journal["Role-local schema-v10 tracker journal"]
+    Journal --> Locks["Confirmed Zcash lock before LEZ reveal"]
+    Locks --> Reveal["Canonical LEZ revealing claim"]
+    Reveal --> Spend["Exact Zcash follow-up spend"]
+    Spend --> Complete["Both canonical directions Completed"]
+    Complete -.-> Deferred["Daemon polling and actual-node<br/>reorg/refund/restart deferred"]
+```
+
+The canonical forward run advanced Zebra from height 121 to 124 and the reverse
+run from 124 to 127. In each run, agreement-derived funding was confirmed before
+the LEZ reveal and the exact HTLC outpoint was spent only after that reveal.
+This proves the positive typed-adapter path through independent actors and
+stores. The separate two-Zebra fixture remains the consensus fault proof; those
+faults have not yet been injected into the composed corridor.
 
 The SDK now defines a version-1 primitive binding record for the reviewed
 profile, network, branch, value, BIP-199 source terms, and both derived scripts.

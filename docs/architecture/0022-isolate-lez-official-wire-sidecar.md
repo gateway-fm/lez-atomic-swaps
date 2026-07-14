@@ -1,110 +1,94 @@
 # ADR 0022: Isolate pinned LEZ official-wire code behind a sidecar
 
-Status: Accepted for the M2 actual-node corridor; implementation in progress --
-the official native, revealing-claim, and native-refund planners/observations,
-node-RPC core, authenticated eight-method bridge server/client, executable
-role-isolated sidecars, signed-agreement first-lock/claim/refund validation
-adapters, Zebra funding/claim/refund ports, crash-safe context-owning SDK ports,
-the secure file-backed fresh-client factory, actor-owned random request/window
-allocator, cloneable role-local shared operation journal, and reusable checked
-external v0.1.2 schema-v2 node handoff are GREEN. Store-derived canonical LEZ
-claim funding, the zeroizing role-keyed Zcash funding/claim/refund signer, the
-agreement-committed exact-outpoint planner, the checked all-trait Zebra SDK
-composite and refund-aware full-history resume are also GREEN. The Unix-only
-schema-v2 actor configuration and command-scoped material boundary bind the
-exact agreement SHA-256 and complete role-local LEZ/Zebra runtime identity,
-while offline status omits effect credentials and chain ports.
-Full reference-actor command/port wiring and the composed proof remain RED --
-2026-07-13
+Status: Accepted for the M2 actual-node corridor; official-wire v0.2 sidecars, authenticated eight-method bridges, schema-v3 activation/drive/status, typed LEZ and Zebra ports, separate schema-v10 actors, and both canonical actual-node happy directions are GREEN. Actual-node restart/refund/reorg/chaos and live public execution remain deferred -- reconciled 2026-07-14
 
 ADR 0023 retains this process-boundary decision but supersedes the final M2
 runtime target. The implemented v0.1.2 `/NSSA/` sidecar and standalone node are
 lower compatibility evidence; certification requires an equivalently isolated
 official-wire v0.2 `/LEE/` sidecar against the full local Bedrock, indexer, and
-non-standalone sequencer stack. The same v0.2 actor/sidecar binaries must later
-select the public route through signed configuration and provisioning only.
+non-standalone sequencer stack. The same v0.2 actor/sidecar binaries now select explicit local or exact dormant
+public routes through signed configuration and provisioning only. Public client
+construction is locally tested; live public execution remains deferred.
 
-The separately locked v0.2 foundation is now GREEN for exact upstream LEE
-account/transaction/Vault/escrow types, canonical signed-transaction decoding,
-literal-loopback sequencer health plus channel identity, and an authenticated
-run/role-bound describe server. Exact native initialize/fund and deterministic
-maker/taker Vault Claim preparation bind signer, role, runtime, programs,
-accounts, allocations, node-confirmed nonces, bytes, hashes, and signatures.
-Durable reservation recovery, authenticated effect-server integration,
-observation, one-attempt submission, executable maker/taker processes, and
-public HTTPS configuration remain pending.
+The separately locked v0.2 implementation is GREEN for exact upstream LEE
+account, transaction, Vault, and escrow types; canonical signed-transaction
+decoding; literal-loopback sequencer/indexer identity; authenticated role-bound
+servers; durable reservations and effect journals; observation; one-attempt
+submission; executable maker/taker processes; and exact dormant public HTTPS
+configuration. Both canonical local actor directions completed. Public network
+I/O and actual-node fault/recovery composition remain deferred.
 
 ```mermaid
-flowchart LR
-    subgraph MakerActor["Maker actor process"]
+flowchart TB
+    subgraph MakerActor["Independent maker process"]
+        MakerConfig["Schema-v3 config and scoped secrets"]
         MakerSDK["Role-fixed SDK"]
-        MakerLezAdapter["Context-owning LEZ SDK ports + adapter"]
-        MakerZebraAdapter["Zebra adapter"]
-        MakerState[("Maker SQLite")]
-        MakerConfig["Schema-v2 maker config"]
-        MakerStatus["Offline status material"]
+        MakerState[("Maker SQLite schema v10")]
+        MakerBridge["Context-owning LEZ bridge client"]
+        MakerZebra["Typed Zebra adapter"]
     end
-    subgraph TakerActor["Taker actor process"]
-        TakerSDK["Role-fixed SDK"]
-        TakerLezAdapter["Context-owning LEZ SDK ports + adapter"]
-        TakerZebraAdapter["Zebra adapter"]
-        TakerState[("Taker SQLite")]
-        TakerConfig["Schema-v2 taker config"]
-        TakerStatus["Offline status material"]
-    end
-    subgraph Sidecars["Pinned LEZ v0.1.2 sidecar processes"]
-        MakerSidecar["Maker capability and signer"]
-        TakerSidecar["Taker capability and signer"]
-    end
-    Zebra["Zebra Regtest JSON-RPC"]
-    LezNode["LEZ standalone JSON-RPC"]
-    LezExternal["Reusable checked external node process"]
-    LezReady[("Private schema-v2 readiness<br/>deployment tx/block + program/built-in + actor keys")]
-    LezRunner["Future run-scoped actor runner"]
-    subgraph V02Foundation["LEZ v0.2 sidecar foundation"]
-        MakerV02["Maker native + Vault prepare GREEN<br/>durable effects pending"]
-        TakerV02["Taker native + Vault prepare GREEN<br/>durable effects pending"]
-    end
-    LezV02["Local LEZ v0.2 services GREEN<br/>full runtime tuple pending"]
 
+    subgraph TakerActor["Independent taker process"]
+        TakerConfig["Schema-v3 config and scoped secrets"]
+        TakerSDK["Role-fixed SDK"]
+        TakerState[("Taker SQLite schema v10")]
+        TakerBridge["Context-owning LEZ bridge client"]
+        TakerZebra["Typed Zebra adapter"]
+    end
+
+    subgraph Sidecars["Role-isolated official-wire LEZ v0.2 sidecars"]
+        MakerSidecar["Maker capability, signer, request journal"]
+        TakerSidecar["Taker capability, signer, request journal"]
+    end
+
+    subgraph LocalLez["Private actual-node LEZ v0.2 devnet"]
+        Sequencer["Sequencer JSON-RPC<br/>container 3040; host ephemeral loopback"]
+        Indexer["Indexer JSON-RPC<br/>container 8779; host ephemeral loopback"]
+        Bedrock["Bedrock HTTP<br/>container 18080; host ephemeral loopback"]
+        Program["Canonical ProgramId 5cf8c5...29c1"]
+    end
+
+    Zebra["Zebra 5.2.0 Regtest JSON-RPC"]
+    Complete["Canonical actor pairs revision 4 Completed<br/>plus separately audited chain finality"]
+    Lower["Historical v0.1.2 NSSA sidecar/node lane<br/>not used by canonical corridor"]
+    Deferred["Actual-node restart/refund/reorg/chaos<br/>and public execution deferred"]
+    Auditor["Separate run evidence auditor"]
+
+    MakerConfig --> MakerSDK
+    TakerConfig --> TakerSDK
     MakerSDK --> MakerState
-    MakerSDK --> MakerLezAdapter
-    MakerSDK --> MakerZebraAdapter
     TakerSDK --> TakerState
-    TakerSDK --> TakerLezAdapter
-    TakerSDK --> TakerZebraAdapter
-    MakerConfig --> MakerStatus
-    TakerConfig --> TakerStatus
-    MakerConfig -.->|"Validated inputs; lifecycle wiring pending"| MakerSDK
-    TakerConfig -.->|"Validated inputs; lifecycle wiring pending"| TakerSDK
-    MakerStatus -.->|"Descriptor-bound store open pending; no chain port"| MakerState
-    TakerStatus -.->|"Descriptor-bound store open pending; no chain port"| TakerState
-    MakerLezAdapter -->|"Bounded serde protocol and maker capability"| MakerSidecar
-    TakerLezAdapter -->|"Bounded serde protocol and taker capability"| TakerSidecar
-    MakerSidecar -->|"Official bytes and primitive facts"| LezNode
-    TakerSidecar -->|"Official bytes and primitive facts"| LezNode
-    LezExternal -->|"Start exact upstream service on fresh mode-0700 home"| LezNode
-    LezNode -->|"Official health, tx/block, static built-in, account RPC"| LezExternal
-    LezExternal -->|"Atomic no-clobber mode-0600 publish"| LezReady
-    LezReady -.->|"Future private handoff"| LezRunner
-    LezRunner -.->|"Maker-only provisioning"| MakerSidecar
-    LezRunner -.->|"Taker-only provisioning"| TakerSidecar
-    MakerZebraAdapter -->|"Typed bounded JSON-RPC"| Zebra
-    TakerZebraAdapter -->|"Typed bounded JSON-RPC"| Zebra
-    MakerLezAdapter -->|"Primitive facts"| MakerSDK
-    TakerLezAdapter -->|"Primitive facts"| TakerSDK
-    MakerLezAdapter -.->|"v0.2 bounded protocol"| MakerV02
-    TakerLezAdapter -.->|"v0.2 bounded protocol"| TakerV02
-    MakerV02 -.->|"official v0.2 RPC"| LezV02
-    TakerV02 -.->|"official v0.2 RPC"| LezV02
+    MakerSDK --> MakerBridge
+    TakerSDK --> TakerBridge
+    MakerBridge -->|"loopback + maker capability"| MakerSidecar
+    TakerBridge -->|"loopback + taker capability"| TakerSidecar
+    MakerSidecar -->|"official v0.2 RPC"| Sequencer
+    TakerSidecar -->|"official v0.2 RPC"| Sequencer
+    MakerSidecar -->|"startup finalized-tip health"| Indexer
+    TakerSidecar -->|"startup finalized-tip health"| Indexer
+    Sequencer -->|"publish signed blocks"| Bedrock
+    Indexer -->|"poll finalized channel"| Bedrock
+    MakerSDK --> MakerZebra
+    TakerSDK --> TakerZebra
+    MakerZebra --> Zebra
+    TakerZebra --> Zebra
+    Auditor -->|"exact finalized tx, block, and account queries"| Indexer
+    Auditor -->|"bind audited facts"| Complete
+    Program --> Complete
+    MakerState --> Complete
+    TakerState --> Complete
+    Zebra --> Complete
+    Lower -.->|"separate compatibility evidence only"| Compatibility["Lower test lane only"]
+    Complete -.-> Deferred
 ```
 
 ## Context
 
 The M2 composed corridor must use the official pinned LEZ transaction/RPC types
-and the canonical `librustzcash`/Zebra stack. The existing LEZ standalone actor
-suite and actual Zebra suites prove each node independently, but they have not
-yet been composed through production chain ports.
+and the canonical `librustzcash`/Zebra stack. At the time of this decision, the LEZ standalone and Zebra suites proved each
+node independently but had not been composed. The canonical v0.2 forward and
+reverse runs now cross the production-shaped role bridges and chain ports; the
+historical dependency-resolution rationale below remains unchanged.
 
 An executable dependency-resolution RED proved that the two pinned stacks
 cannot inhabit one Cargo graph. The Zcash graph pins
@@ -131,8 +115,7 @@ declare a lock or claim canonical by assertion. The Zebra adapter similarly
 uses typed and bounded RPC DTOs, assembles stable snapshots from bracketing tip
 reads, and delegates transaction/output/spend validation to the existing SDK.
 
-The signed agreement names the runtime family exactly. The deterministic
-v0.1.2 corridor uses `DeterministicLocalV0_1_2Compatibility` and the official
+The signed agreement names the runtime family exactly. The lower deterministic v0.1.2 compatibility lane uses `DeterministicLocalV0_1_2Compatibility` and the official
 `/NSSA/v0.2/AccountId/PDA/` domain; it must never emit or be recorded as
 `DeterministicLocalV0_2`, whose deployed family uses the incompatible `/LEE/`
 domain. The SDK derives all metadata, native-custody, and token accounts from
@@ -140,8 +123,9 @@ that signed selector, and a separate compatibility test compares the local
 derivation source to the pinned official v0.1.2 types. Public v0.2 activation
 remains fail-closed and is tracked as upstream production work.
 
-The actor's unreleased schema-v2 file binds that runtime selector and the
-complete described sidecar/Zebra identities to a nonzero exact SHA-256 of the
+The historical v0.1.2 actor file used schema 2. The current v0.2 actor file uses
+schema 3 and binds the runtime selector, typed local or dormant-public routes,
+and the complete described sidecar/Zebra identities to a nonzero exact SHA-256 of the
 accepted signed-agreement bytes. Activation rehashes the agreement file before
 use. Paired maker/taker configs must carry the same agreement digest, runtime,
 Zebra chain identity, and discovery policy, while fixing distinct roles,
@@ -159,8 +143,9 @@ prefer an owner-restricted Unix socket. Neither endpoint nor authentication
 material is protocol authority; actor signatures, exact transaction identity,
 canonical node observations, and the accepted agreement remain authoritative.
 
-The selected local sequencer is provisioned by a separate reusable process in
-the exact v0.1.2 compatibility graph. Before creating state, that process
+The lower compatibility sequencer is provisioned by a separate reusable
+process in the exact v0.1.2 graph. It is retained historical/lower evidence and
+is not the canonical v0.2 M2 node topology. Before creating state, that process
 requires the supplied artifact manifest to equal the repository-embedded
 tracked manifest and recomputes both the ELF SHA-256 and Risc0 ImageID. It
 refuses an existing node home or readiness path, creates a mode-0700 home, asks
@@ -240,8 +225,9 @@ The executable starts one sidecar with private capability/signer files, an
 exact runtime descriptor, a 0600 durable idempotency store, and a
 `127.0.0.1:0` listener. Its process contract runs maker and taker
 concurrently with distinct identities and proves wrong capability, run, and
-role rejection plus graceful cleanup. Actor composition and the composed-chain
-proof remain pending.
+role rejection plus graceful cleanup. That process contract is now composed through distinct maker and taker actors in
+both canonical local happy directions. Process-kill, refund, reorg, and chaos
+composition remain deferred.
 
 The exact standalone lane now also starts that upstream sequencer as an
 external child suitable for later reference actors. Process tests reject a
@@ -256,9 +242,9 @@ Clippy, and byte-identical recursive costs. A later actor-contract RED proved
 that the previous all-zero local channel could not satisfy signed agreement
 validation. The sequencer configuration and readiness handoff now bind one
 nonempty deterministic channel; the focused locked-graph readiness suite is
-GREEN and the exact full runner must be rechecked before corridor evidence. No
-actor or sidecar is yet wired to consume this boundary in the cross-chain
-corridor.
+GREEN and the exact full runner must be rechecked before corridor evidence. No current actor consumes this lower v0.1.2 handoff in the canonical
+cross-chain corridor; the composed proof uses the separately locked v0.2
+sidecars and full three-service LEZ stack.
 
 ## Atomicity preservation
 
@@ -301,8 +287,10 @@ deep, pre-CLTV Zcash output the final awaited port call before a retained LEZ
 reveal is submitted. Its two-direction restart matrix proves that absent,
 spent, unstable, replaced, under-depth, expired, and field-mutated observations
 release nothing, while restoration submits the same retained bytes once.
-Durable post-lock reorg ingestion and the composed actual-node proof remain M2
-gates, so this safety claim is not yet certified for the complete corridor.
+The canonical composed actual-node happy paths now prove this ordering in both
+directions. Durable post-lock removal/replacement ingestion, refunds, process
+restart, reorg, and chaos inside that composed environment remain later
+hardening, so no broader recovery claim is made.
 
 This ordering minimizes but cannot eliminate the cross-chain time-of-check to
 time-of-use window: Zcash state can change after the final observation while
@@ -328,9 +316,9 @@ operation journal, so SDK activation cannot accidentally create a second
 in-memory owner for request reuse decisions. Each new logical operation gets a
 128-bit OS-random request ID; only the four protocol operations that perform
 bounded discovery receive a window from the injected chain authority. The
-durable journal remains the collision and exact-reuse authority. Independent
-actor composition remains required before
-peer-independent timeout recovery is an M2 implementation claim. Neither path
+durable journal remains the collision and exact-reuse authority. Independent actor composition is GREEN for the positive claim path. Equivalent
+composition through peer-independent timeout/refund recovery remains required
+before making that stronger implementation claim. Neither path
 can guarantee liveness during indefinite node outage, censorship, or a
 reorganization deeper than the signed policy.
 The deterministic v0.1.2 lane also has only depth-qualified `Pending` blocks;
@@ -343,8 +331,9 @@ compatibility environment and is not production-v0.2 evidence.
   already evidenced LEZ or Zcash stack and introduces an unaudited combination.
 - Copy LEZ wire structures into the main runtime: this can silently drift from
   upstream signing and hashing semantics.
-- Treat the current in-memory claim ports as node evidence: they prove SDK and
-  recovery ordering, not actual consensus execution.
+- Treat deterministic in-memory claim ports as node evidence: they prove SDK and
+  recovery ordering, not actual consensus execution. Canonical node claims come
+  only from the composed v0.2 sidecars and selected chain RPCs.
 - Let the sidecar return already trusted SDK evidence: this moves agreement and
   consensus policy outside the SDK and makes adapter assertions authoritative.
 
@@ -363,10 +352,11 @@ reject symlinks and non-regular objects; command secrets require exact mode
 observations around open. Exact agreement hashing and cross-binding alias checks
 fail closed, and diagnostics omit paths and payloads. `status` loads only
 claim-recovery material plus the state location, so it neither requires
-sidecar/Zebra credentials nor opens chain ports. These guarantees currently end
-at validated command material: `activate`, `drive`, and `status` do not yet
-compose lifecycle ports, and mutable SQLite must next be opened from a checked
-descriptor with its identity revalidated rather than reopened by pathname.
+sidecar/Zebra credentials nor opens chain ports. These guarantees now extend through schema-v3 `activate`, `drive`, and offline
+`status`: activation and drive compose the role-local lifecycle ports, while
+status remains chain-impossible by type. Both canonical happy runs exercised
+independent schema-v10 stores. Descriptor-bound mutable-open hardening beyond
+the existing no-symlink/identity checks remains a production filesystem item.
 
 The implemented main-workspace bridge client exercises all eight typed protocol
 methods, accepts only literal loopback HTTP, sends a sensitive capability plus
@@ -394,31 +384,36 @@ an unknown outcome. Bounded canonical block/mempool counterparty discovery
 returns `Unstable` for unresolved or exhausted searches rather than false
 absence.
 
-The executable sidecar process contract is GREEN, but the composed corridor
-test still requires
-distinct loopback LEZ-sidecar and Zebra endpoints, distinct role funding,
-separate maker/taker databases and claim keys, both signed directions, the
-fixed `locks -> LEZ reveal -> Zcash follow-up` order, and restart after every
-effect. The isolated claim/refund/funding adapters, exact-outpoint planner,
-context-owning SDK ports, Unix-only schema-v2 actor configuration boundary, and external
-checked-node handoff are GREEN. The corridor remains RED until actor commands,
-post-lock revalidation, and actual composition satisfy the contract. No broken
-commit is published while this slice is being driven GREEN.
+The executable sidecar process and composed canonical happy corridor are GREEN
+with distinct loopback sidecars and Zebra access, role funding, databases,
+claim keys, both signed directions, schema-v3 actor configuration, and the fixed
+`locks -> LEZ reveal -> Zcash follow-up` order. Restart-after-every-effect,
+actual-node refund, removal/replacement, reorg, and chaos remain deferred; the
+happy-path evidence does not imply those fault journeys.
 
 The official claim/refund observation boundaries and the main revealing-claim/
 refund adapters are source-correct and independently validated. The Zebra
 adapter also discovers agreement-bound unknown-ID funding for both role
 directions from a full signed anchor with stable block/mempool scans.
-Context-owning SDK-port composition is GREEN; composed post-lock actor evidence
-remains a repository-controlled prerequisite. The Zcash taker-first observation
+Context-owning SDK-port composition and positive post-lock actor evidence are
+GREEN in both canonical directions. The Zcash taker-first observation
 path must still receive its previous canonical head so removal/replacement can
 be assembled after process restart; the maker-lock SDK boundary needs a later
 durable post-lock history extension rather than an invented adapter assertion.
 
 ## 2026-07-14 implementation status addendum
 
-This append-only note records the later implementation state without rewriting
-the original decision history. The v0.2 official-wire sidecars, authenticated
+This dated reconciliation records the later implementation state. Canonical runs
+`m2cert-canonical-forward-bb53daf-20260714a` and
+`m2cert-canonical-reverse-bb53daf-20260714a` used deployed ProgramId
+`5cf8c5...29c1`; both actor stores reached revision 4 `Completed`. Exact public
+chain/effect facts are retained in the
+[canonical certification packet](../evidence/m2-canonical-local-certification-20260714.json).
+The sidecars themselves use the indexer only for non-genesis finalized-tip
+health at startup and report that transaction finality is not observed by the
+PoC bridge. A separate run evidence auditor collected and bound the exact
+finalized transaction, block, and account facts after the effects.
+The v0.2 official-wire sidecars, authenticated
 role-isolated loopback bridges, independent schema-v3 actors, and both private
 local happy-path directions are GREEN. ADR 0028 records the added dormant
 public-portability contract: the actor-facing sidecar transport remains

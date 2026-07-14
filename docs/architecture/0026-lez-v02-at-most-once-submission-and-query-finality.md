@@ -1,6 +1,6 @@
 # ADR 0026: Use at-most-once LEZ v0.2 submission and query-bound finality
 
-Status: Accepted; durable Vault Claim submission slice GREEN, query and actual-node evidence pending
+Status: Accepted; role-bound at-most-once Vault submission and durable Admitted state are GREEN; a separate manual audit proves exact sequencer inclusion plus indexer block/hash/account finality, and both canonical corridor effect sequences are independently audited. Integrated bounded Vault query/journal finality, ambiguous multi-effect restart/recovery, refunds/reorg/chaos, and public execution remain deferred -- reconciled 2026-07-14
 
 ```mermaid
 flowchart LR
@@ -10,25 +10,37 @@ flowchart LR
     Sequencer["LEZ v0.2 sequencer RPC"]
     Bedrock["Bedrock settlement node"]
     Indexer["LEZ v0.2 indexer RPC"]
-    Evidence[("Run-local effect evidence")]
+    Admitted["Durable Vault Admitted state"]
+    Auditor["Separate post-run finality auditor"]
+    Evidence[("Aggregate run evidence")]
 
     Actor --> Effect
     Effect -->|"persist exact request and bytes"| Journal
     Journal -->|"durable AttemptStarted"| Effect
     Effect -->|"one sendTransaction call"| Sequencer
-    Effect -->|"bounded inclusion queries"| Sequencer
+    Effect -.->|"integrated bounded inclusion query deferred"| Sequencer
     Sequencer -->|"publish LEZ block"| Bedrock
     Bedrock -->|"finalized channel block"| Indexer
-    Effect -->|"bounded finality queries"| Indexer
-    Effect --> Evidence
+    Effect -.->|"integrated bounded finality query deferred"| Indexer
+    Sequencer -->|"accepted hash"| Admitted
+    Effect -->|"persist Admitted"| Admitted
+    Auditor -->|"exact transaction and block queries"| Sequencer
+    Auditor -->|"exact finalized block and account queries"| Indexer
+    Admitted --> Evidence
+    Auditor --> Evidence
+    Evidence --> Complete["Durable Vault admission plus external finality audit<br/>and both canonical corridors GREEN"]
+    Complete -.-> Deferred["Integrated query/journal finality, ambiguous restart,<br/>refund/reorg/chaos, public execution deferred"]
 ```
 
 ## Context
 
-ADR 0025 defines independent maker and taker Vault Claim onboarding, but it
-deliberately leaves durable submission and finality observation pending. This
-decision fixes that boundary before any prepared v0.2 transaction becomes
-eligible for a node effect. It applies to Vault Claims, escrow deployment,
+ADR 0025 originally left durable submission and finality observation pending.
+This decision fixed that boundary before any prepared v0.2 transaction became
+eligible for a node effect. Current Vault actor evidence crosses durable
+submission and admission; a separate run audit proves exact inclusion, finality,
+and account state, and the canonical corridor effects are independently audited.
+Integrated bounded query and journal progression remain deferred. It applies to
+Vault Claims, escrow deployment,
 native escrow initialization and funding, claims, refunds, and every later
 official v0.2 transaction sent by a role process.
 
@@ -105,7 +117,8 @@ transaction identity. Scope is explicit rather than an optional or invented
 swap ID:
 
 - Vault onboarding uses `VaultOnboarding { owner, vault, allocation }`; and
-- corridor effects use `Swap { swap_id }` once that implementation exists.
+- corridor effects use `Swap { swap_id }`; the implementation now exists and is
+  exercised by both canonical local directions.
 
 Each journal is created with an immutable run, role, complete runtime, and
 signer binding. A maker journal cannot be opened as taker or with a different
@@ -282,7 +295,7 @@ sequenceDiagram
 
 ## Durable state contract
 
-The planned minimum state progression is:
+The monotonic minimum state progression is:
 
 ```mermaid
 stateDiagram-v2
@@ -317,11 +330,18 @@ conflict. A forced database failure rolls back the complete transition and
 cannot leave a completed request without its exact payload or a finality marker
 without its block and account proof.
 
-## TDD delivery plan
+## Historical TDD delivery plan and current reconciliation
 
-The architecture is accepted. The first durable-submission slice below is
-GREEN in the package gate; bounded inclusion/finality and actual-node evidence
-remain RED/pending and are not implied by this ADR.
+The architecture is accepted. The RED/GREEN list below records the original
+delivery plan. Items 1 and 2 are GREEN for the role-local Vault journal. The
+actual PoC adds generated-RPC submission and durable Admitted state; a separate
+manual audit supplies aggregate inclusion, indexer block/hash/account-at-block
+finality, and later spendability evidence toward items 3 and 4. The integrated
+bounded-query state machine and journal progression beyond Admitted are not
+implemented. Both canonical corridor directions were independently audited.
+Item 5 remains partial: positive actual-node ordering is GREEN, while integrated
+finality, ambiguous response, and restart injection across every composed effect
+remain later hardening.
 
 ### RED
 
@@ -361,15 +381,36 @@ remain RED/pending and are not implied by this ADR.
 5. Retain one actual-node happy path plus ambiguous-response and restart evidence
    before any actor-readiness, corridor, or milestone claim.
 
-As of 2026-07-14, items 1 and 2 are implemented for Vault Claim onboarding.
+The initial 2026-07-14 slice implemented items 1 and 2 for Vault onboarding.
 Seventeen focused tests prove typed owner/Vault/allocation/runtime binding,
 canonical exact-byte duplication checks, immutable role-local actor binding,
 durable attempt-before-call ordering, one-call replay, forced concurrent
 compare-and-swap, crash windows, wrong-hash and transport uncertainty,
 coordinator-owned JSON-RPC error classification, failed response persistence,
 malicious reset-trigger rejection, exact revision shapes, parent-chain and
-filesystem substitution rejection, and redacted diagnostics. Items 3 through 5 remain
-required before the ADR or M2 is complete.
+filesystem substitution rejection, and redacted diagnostics. Later actual-node
+evidence added real one-shot submission and durable Admitted state. The separate
+manual audit supplies aggregate evidence toward items 3 and 4 and proved the
+balances spendable; it does not complete the integrated query/journal path.
+Composed ambiguous-response, process-restart, refund, reorg, and chaos evidence
+remains required for the corresponding hardening claims, not for the
+owner-approved M2 local happy-path PoC.
+
+## 2026-07-14 canonical actual-node reconciliation
+
+Separate maker and taker Vault effects committed AttemptStarted before their
+only generated-RPC submission and each role journal reached durable Admitted. A
+separate manual auditor then proved unique sequencer inclusion, independent
+indexer finality, and finalized account state. The resulting funds were used by both canonical actor corridors. The same
+external audit located their initialize/fund/claim transactions in
+finalized LEZ blocks 2594/2595/2596 and 2605/2606/2607; both actor pairs ended
+revision 4 Completed.
+
+This proves aggregate positive effect plus external finality evidence. It does
+not prove integrated bounded finality/journal progression or that every corridor
+effect recovers from a crash-before-call, ambiguous response, process kill,
+refund, removal/replacement, reorg, or chaos. Public endpoint behavior also
+remains deferred.
 
 ## Consequences
 

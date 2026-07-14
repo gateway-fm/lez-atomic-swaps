@@ -1,41 +1,31 @@
 # ADR 0013: Deterministic SDK core with optional async orchestration
 
-Status: concrete ZEC negotiation, activation, both lock effects, and schema-v8
-observation/transition replay implemented; chain and transport adapters in
-progress -- 2026-07-12
+Status: canonical ZEC negotiation, schema-v3 actor activation, schema-v10 replay, both lock and claim effects, role-isolated LEZ sidecars, and Zebra adapters completed in both actual-node happy directions; actual-node recovery/chaos and public execution deferred -- reconciled 2026-07-14
 
 ```mermaid
 flowchart TB
-    Pair["Dedicated BTC/XMR/ZEC SDK"] --> Core["Deterministic protocol core"]
+    Pair["Dedicated LEZ/ZEC SDK"] --> Core["Deterministic protocol core"]
     Pair --> Facade["PairSdk pre-lock facade"]
-    Facade --> Discovery["Delivery discovery port"]
-    Facade --> Negotiation["Chat negotiation port returns untrusted bytes"]
-    Negotiation --> Validator["Bounded concrete agreement validator"]
+    Facade --> Validator["Bounded dual-signed agreement validator"]
     Validator --> Accepted["Role-fixed accepted envelope"]
-    Accepted --> Store["RecoveryStore contract"]
-    Store --> SQLite["Role-fixed schema-v8 SQLite adapter"]
-    Store --> Active["ActiveZecSwap without transport or raw adapter handles"]
-    Active --> Intent["Durable exact first-lock intent"]
-    Intent --> Observe["Observe before byte-identical submission"]
-    Observe --> Projection["Atomic transition + revision + intent close"]
-    Projection --> Active
-    Active --> MakerObserve["Maker-only observation of taker lock"]
-    MakerObserve --> MakerProjection["Role-local atomic observation projection"]
-    MakerProjection --> Journal["Contiguous schema v8 observation journal"]
-    Journal --> Reconcile["Exact tracker fold: canonical, depth, same-tip replacement, or removal"]
-    Reconcile --> Active
-    Reconcile --> Fresh["Fresh non-cached exact-head eligibility requery"]
-    Fresh --> MakerEffect["Durable maker second-lock effect"]
-    MakerEffect --> MakerIntent["Schema-v7 maker intent and transition"]
-    MakerIntent --> SQLite
-    Active -.-> Runtime["Reference async coordinator"]
-    Runtime -.-> Nodes["Typed chain ports"]
-    SQLite -.-> Encrypted["Encrypted later-effect secret storage"]
-    Core --> Runtime
-    Core --> Tests["Model/vector/replay tests"]
-
-    classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
-    class Runtime,Nodes,Encrypted planned;
+    Accepted --> Maker["Independent maker actor"]
+    Accepted --> Taker["Independent taker actor"]
+    Maker --> MakerStore[("Maker SQLite schema v10")]
+    Taker --> TakerStore[("Taker SQLite schema v10")]
+    Maker --> MakerBridge["Maker context-owning LEZ bridge"]
+    Taker --> TakerBridge["Taker context-owning LEZ bridge"]
+    MakerBridge --> MakerSidecar["Maker official-wire v0.2 sidecar"]
+    TakerBridge --> TakerSidecar["Taker official-wire v0.2 sidecar"]
+    MakerSidecar --> Lez["Local LEZ v0.2 sequencer and indexer RPC"]
+    TakerSidecar --> Lez
+    Maker --> Zebra["Typed Zebra 5.2.0 Regtest RPC"]
+    Taker --> Zebra
+    MakerStore --> Journal["Locks, observations, protected claims,<br/>refund intents and exact replay"]
+    TakerStore --> Journal
+    Journal --> Completed["Both canonical directions<br/>revision 4 Completed"]
+    Lez --> Completed
+    Zebra --> Completed
+    Completed -.-> Deferred["Actual-node restart/refund/reorg/chaos<br/>and public execution deferred"]
 ```
 
 ## Context
@@ -68,9 +58,10 @@ dual-signed agreement, reject wrong role, revision, profile, wire, and swap ID,
 persist to separate stores before activation, and resume the original accepted
 wire even after transcript expiry. Exact replay is idempotent and a changed
 same-key record conflicts. The claim preimage wrapper and active diagnostics are
-redacted; secret storage zeroizes on drop. The discovery, negotiation, and chain
-adapters prove the API/type boundary only; they are not Logos Delivery/Chat,
-production chain actions, or actor E2E.
+redacted; secret storage zeroizes on drop. At that initial checkpoint, the discovery, negotiation, and chain adapters
+proved only the API/type boundary; they were not Logos Delivery/Chat, production
+chain actions, or actor E2E. The canonical status addendum below records the
+later composed actor evidence.
 
 The implemented first-lock slice adds a bounded action/observation contract without
 exposing raw adapters: exact Zcash funding bytes, or separate exact LEZ
@@ -108,21 +99,36 @@ must still assemble fresh canonical snapshots. The dependency-free LEZ
 two-phase tracker now proves duplicate suppression, monotonic finality,
 affirmative removal/replacement, and finalized-history rejection. Complete
 primitive removal/replacement records are integrated with the ordered
-SDK/SQLite journal; the official-wire LEZ port remains open. The distinct
+SDK/SQLite journal. The official-wire LEZ v0.2 sidecar and context-owning port
+are now composed in the canonical local happy paths. The distinct
 fresh eligibility call replays and re-queries, but deliberately caches no
 authority. It now applies to both deterministic-local directions and checks
 signed depth explicitly. The public-policy unit seam distinguishes LEZ
 Pending/Safe from Finalized, but public activation remains fail-closed. It leaves
 `next_action` at `Wait` because permission is never cached. The implemented
 maker method consumes the fresh result internally, persists the exact
-opposite-chain plan, and atomically projects confirmed funding. Both directions
-replay from schema-v8 SQLite at `BothLegsLocked`; production node ports and
-actual-node transport/reorg repetition remain.
+opposite-chain plan, and atomically projects confirmed funding. Both directions replay from schema-v10 SQLite at `BothLegsLocked`. The canonical
+local actor runs then crossed production-shaped LEZ and Zebra ports through
+claim completion. Actual-node transport/reorg repetition remains deferred.
+
+## 2026-07-14 canonical actual-node reconciliation
+
+Independent schema-v3 maker and taker processes used separate configs, stores,
+claim keys, signers, sidecars, and request journals in
+`m2cert-canonical-forward-bb53daf-20260714a` and
+`m2cert-canonical-reverse-bb53daf-20260714a`. Both crossed the exact deployed
+ProgramId `5cf8c5...29c1`, the three-service LEZ v0.2 stack, and Zebra Regtest;
+both role-local stores reached revision 4 `Completed`. The same signed ordering
+held in both directions: confirmed Zcash funding, then LEZ revealing claim,
+then exact Zcash follow-up spend. This proves the M2 PoC happy-path adapter and
+actor composition, not actual-node restart/refund/reorg, chaos, public service
+behavior, or production transport hardening.
 
 ## Consequences
 
 Logos modules may use the complete facade or embed the deterministic engine with
-their own adapters. Every pair crate must document and compile the same real-role
-happy, refund, restart, concurrency, and post-lock transport-loss journeys used
-by black-box E2E tests. The workspace versions together until the first audited
+their own adapters. Every pair crate must document and compile the same real-role journeys used by
+black-box E2E tests. For M2, both actual-node happy directions are GREEN;
+refund, restart, concurrency fault injection, post-lock transport loss, reorg,
+and chaos remain explicit later phases. The workspace versions together until the first audited
 protocol version.

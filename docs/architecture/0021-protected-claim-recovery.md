@@ -1,8 +1,6 @@
 # ADR 0021: Protected role-local claim recovery
 
-Status: Accepted; schema-v9 two-direction SQLite happy path, legacy
-generic-state secret migration, and claim recovery hardening implemented;
-production key rotation and chain adapters pending -- 2026-07-13
+Status: Accepted; schema-v10 two-direction protected-claim replay, legacy secret migration, local LEZ/Zebra claim adapters, and independent actor happy paths GREEN; production key rotation and actual-node restart/refund/reorg/chaos deferred -- reconciled 2026-07-14
 
 ```mermaid
 flowchart TB
@@ -22,7 +20,7 @@ flowchart TB
     Intents --> Journal
     Owned --> Journal
     Observed --> Journal
-    Journal --> Database["SQLite schema v9 and WAL"]
+    Journal --> Database["SQLite schema v10 and WAL"]
 
     Intents --> LezReveal["Submit exact LEZ revealing claim"]
     LezReveal --> CanonicalLez["Canonical LEZ reveal evidence"]
@@ -35,9 +33,11 @@ flowchart TB
     CanonicalZec --> Observed
     Owned --> Complete["Both actors reach Completed"]
     Observed --> Complete
-    Database --> Restart["Close and reopen actor"]
-    Restart --> Journal
-    Journal --> Complete
+    Database -.-> StoreReplay["Lower evidence: store-level<br/>close/reopen replay GREEN"]
+    StoreReplay -.-> Journal
+    LezNode["LEZ v0.2 sequencer and indexer RPC"] --> CanonicalLez
+    Zebra["Zebra 5.2.0 Regtest RPC"] --> CanonicalZec
+    Complete -.-> Deferred["Key rotation and composed actual-node<br/>restart/refund/reorg/chaos deferred"]
 ```
 
 ## Context
@@ -140,6 +140,20 @@ effect. Unknown LEZ submission outcomes and stale instances observe the exact
 durable bytes before any possible rebroadcast. The committed swap-store suite
 contains 35 passing tests for the complete schema-v9 surface.
 
+## 2026-07-14 canonical actual-node reconciliation
+
+The canonical forward and reverse runs used separate claim-capable schema-v10
+stores and keys. The agreement-selected LEZ claimant submitted the revealing
+claim through its role-isolated sidecar; the counterparty observed that
+canonical reveal, retained protected material, and spent the exact Zcash HTLC
+through its typed adapter. Neither evidence packet discloses private material,
+and both role stores reached revision 4 `Completed`.
+
+This is positive-path evidence against the local actual nodes. The stronger
+claim that an actor can survive every process-kill window, perform refunds, or
+recover through a composed actual-node reorg remains deferred, as do key
+rotation and public operation.
+
 ## Consequences
 
 Crash recovery no longer requires plaintext claim material in the coordinator
@@ -152,8 +166,9 @@ Production hardening must add active-key selection plus lookup of retained old
 keys, migration or rewrapping policy, missing-key operator diagnostics, and
 tests proving old rows remain readable after rotation.
 
-Remaining production gates are rotation-aware key provisioning, canonical
-LEZ/Zcash claim adapters, independent actor processes, and repetition against
-actual nodes. Broader operating-system process-kill coverage remains an M5
-coordinator gate; it does not replace the transaction-level rollback and
-unknown-outcome evidence completed here.
+Remaining production gates are rotation-aware key provisioning and composed
+actual-node process-kill, restart, refund, removal/replacement, reorg, and chaos
+coverage. Canonical local LEZ/Zcash claim adapters and independent actor
+processes are GREEN in both happy directions. Broader operating-system
+process-kill coverage remains a later coordinator gate; it does not replace the
+transaction-level rollback and unknown-outcome evidence completed here.
