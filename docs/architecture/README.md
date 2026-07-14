@@ -53,6 +53,9 @@ flowchart TB
     LocalM2 --> LocalStack["0024 Source-audited v0.2 local stack"]
     LocalStack --> VaultActors["0025 Independent v0.2 Vault onboarding"]
     VaultActors --> V02Effects["0026 At-most-once v0.2 effects"]
+    Scope --> Progressive["0027 Progressive milestone delivery"]
+    Progressive -.-> LocalM2
+    Progressive -.-> V02Effects
     ZecPins --> LezSidecar
     LEZ --> LezSidecar
     ZecPins --> Agreement
@@ -99,3 +102,4 @@ flowchart TB
 | [0024](0024-source-audited-lez-v0-2-local-stack.md) | Build the source-audited LEZ v0.2 services into an isolated Bedrock-settled local stack | Architecture accepted; exact inputs and topology are attested. Run `v02-actors-finalized-20260713b` proves isolated three-service startup, signed key-derived channel onboarding, finalized non-genesis cross-RPC block identity, distinct maker/taker owner/Vault pre-Claim state at exact finalized block 2, dynamic loopback publication, and fail-closed exact cleanup. Independent rebuild reproducibility and the full runtime tuple remain pending |
 | [0025](0025-independent-lez-v02-vault-onboarding.md) | Onboard independent v0.2 maker and taker funds through exact owner-authorized Vault Claims | Exact maker/taker Claim preparation, mutation rejection, durable reservation recovery, and the role-bound attempt-before-call guard are GREEN. Generated-RPC processes, inclusion/finality, finalized balances, negative on-chain attempts, and restart reconciliation remain pending under ADR 0026 |
 | [0026](0026-lez-v02-at-most-once-submission-and-query-finality.md) | Persist `AttemptStarted` before one v0.2 send and prove inclusion/finality through bounded sequencer and indexer queries | Architecture plus the durable Vault Claim one-call/restart matrix are GREEN under seventeen focused tests. Exact inclusion scan, indexer block/hash/account-at-block proof, generated-RPC composition, and actual-node evidence remain pending |
+| [0027](0027-progressive-jpeg-milestone-delivery.md) | Deliver a reproducible actual-local-devnet milestone PoC first, then owner-controlled QA, chaos, information-security, and production-readiness hardening | Accepted; M2 is in PoC and accumulated hardening is carried evidence until its phase is entered and revalidated |

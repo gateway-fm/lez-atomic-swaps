@@ -177,6 +177,7 @@ current executable slices enforce:
   and the completed LEZ-plus-Zebra corridor remain.
 
 See the living [implementation plan](docs/implementation-plan.md), the
+[milestone delivery metrics](docs/milestone-metrics.md), the
 [whole-system actor and flow architecture](docs/architecture/system-architecture.md),
 the [deployment component and RPC inventory](docs/architecture/deployment-components-and-rpcs.md),
 the [architecture decision log](docs/architecture/README.md), the living
@@ -185,6 +186,12 @@ the [architecture decision log](docs/architecture/README.md), the living
 [upstream Logos production-blocker register](docs/upstream-production-blockers.md)
 separates disclosed external release risks from repository-controlled milestone
 acceptance. The
+[progressive milestone delivery decision](docs/architecture/0027-progressive-jpeg-milestone-delivery.md)
+puts the active milestone reproducible local-devnet happy path first, then
+enters QA with RED-GREEN-REFACTOR, chaos, information-security, and production-
+readiness hardening only when the repository owner ends each phase. M2 is
+currently in the PoC phase; earlier hardening remains carried evidence, not a
+claim that those later phases are complete. The
 [private local M2 certification decision](docs/architecture/0023-private-local-m2-certification.md)
 requires one actual public-compatible local LEZ v0.2 devnet, one actual local
 Zcash Regtest devnet, and

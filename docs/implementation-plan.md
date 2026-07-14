@@ -57,25 +57,44 @@ The system is split at durable and security-relevant boundaries:
 Off-chain Delivery/Chat adapters participate only in discovery and negotiation.
 They are not dependencies of post-lock transition commands.
 
-## Test-first delivery ladder
+## Progressive-JPEG delivery ladder
 
-Every slice follows RED, GREEN, REFACTOR and records the command/evidence below.
-The implementation order is vertical: first prove the smallest complete actor-realistic happy
-path through both chains, then add restart, transport, reorg, corruption, refund, and concurrency
-hardening around that same path. A hardening slice must not displace a missing end-to-end user
-flow; baseline secret protection and role/chain validation remain part of the happy path.
+ADR 0027 replaces the previous rule that every new slice must begin RED. Each
+milestone first produces the smallest reproducible, actor-realistic happy-path
+PoC through its exact isolated local devnets and real signed chain effects. Only
+after the repository owner ends that phase does hardening proceed through QA
+with RED-GREEN-REFACTOR, chaos engineering, information security, and production
+readiness. The owner explicitly controls every phase end and milestone switch;
+work does not advance or tag itself.
 
-1. Protocol acceptance tests with deterministic fake chain evidence.
-2. Persistence/restart and property tests over every transition/interleaving.
-3. Role-oriented black-box tests invoking maker CLI, daemon RPC, and taker CLI.
-4. Isolated Docker E2E with real regtest/stagenet-capable chain processes.
-5. LEZ standalone-sequencer integration in CI.
-6. Public testnet smoke suites, opt-in and credential-isolated.
-7. Recorded happy, refund, and concurrency demos generated from passing suites.
+1. Reconcile milestone scope, actual pinned source, versions, user roles, and
+   observable terminal outcome.
+2. Assemble a one-command, run-scoped local-devnet PoC with deterministic local
+   funds, separated actors, real chain effects/finality, manual repetition, and
+   exact no-clash cleanup.
+3. On owner direction, QA the working path using RED-GREEN-REFACTOR across
+   requirements, invariants, restart, boundaries, concurrency, and regressions.
+4. On owner direction, inject and measure process, RPC, node, network, reorg,
+   storage, and timing faults.
+5. On owner direction, perform the systematic information-security pass while
+   retaining continuous CI lint, vulnerability, license, source, secret, and
+   image gates.
+6. On owner direction, close observability, performance, runbooks, packaging,
+   deployment, configuration portability, and release risks.
+
+Existing regression tests and baseline build, provenance, isolation, secret-
+safety, and chain-reality checks stay GREEN during the PoC. New PoC feature work
+does not need a prewritten RED matrix. Defects and QA work after the PoC do.
+Evidence accumulated under the older test-first sequence is retained as carried
+evidence, not relabeled as completion of a new hardening phase.
 
 Tests map to hard requirement IDs in `docs/requirements-traceability.md`. Custom
 cryptography is prohibited: canonical libraries and published vectors are used,
 with dependency license/advisory checks in CI.
+
+The live [milestone delivery scorecard](milestone-metrics.md) records phase
+state, reproducibility, user-flow, QA, chaos, security, and production-readiness
+measurements without manufacturing percentage-complete estimates.
 
 The living [manual reproduction guide](manual-user-flows.md) records exact
 fresh-checkout prerequisites, isolated commands, actor boundaries, expected
@@ -87,6 +106,12 @@ inventory: public/local RPCs, faucets, registries, release assets, mutable
 security databases, pins/checksums, availability risks, and fallback policy.
 
 ## Current vertical slice
+
+The table below is accumulated implementation and test evidence, much of it
+created under the previous test-first strategy. ADR 0027 carries it forward for
+later revalidation; it does not imply that the M2 QA, chaos, information-
+security, or production-readiness phase has been entered or completed. The
+active phase is the reproducible M2 PoC.
 
 | Slice | RED evidence | GREEN evidence | Next refactor/gate |
 |---|---|---|---|
@@ -203,10 +228,27 @@ without weakening the tag evidence rule.
 | M6 | Maker/taker Basecamp mini-apps | Daemon RPC stable and role E2E reusable |
 | M7 | Third-party reviews, remediation, readiness packet | All hard-requirement tests and demos green |
 
-M2 and M3 may overlap after M1. M4 follows M3 for cryptography-lead capacity.
-M5/M6 may overlap the tail of M4. M7 follows all implementation milestones.
+These dependencies describe safe planning order only. The repository owner
+explicitly chooses when a phase ends and when work switches milestones. A switch
+does not imply completion or authorize a completion tag. When directed, M2 and
+M3 may overlap after M1; M4 follows M3 for cryptography-lead capacity, M5/M6 may
+overlap the tail of M4, and M7 follows all implementation milestones.
 
 ## Milestone 2 plan: transparent ZEC end to end
+
+Active phase: **reproducible PoC**. Do not begin the new QA, chaos,
+information-security, or production-readiness phase until the repository owner
+ends the PoC phase. Existing hardening evidence remains enforced and is carried
+forward.
+
+The first progressive pass completes one real local LEZ/ZEC happy direction.
+Before the M2 PoC gate is offered for owner review, the same run-scoped system
+must complete both accepted directions with independent maker/taker processes,
+actual local-v0.2 Vault Claims, checked escrow deployment/funding, exact Zebra
+Regtest HTLC funding and spend, finalized state/balance evidence, a one-command
+runner, manual repetition steps, and exact cleanup. Restart, refund, reorg,
+concurrency, corruption, broad negative matrices, and public-route readiness are
+subsequent hardening layers unless the owner revises the phase boundary.
 
 ### Accepted proposal authority and delivery boundary
 
