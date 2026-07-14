@@ -43,7 +43,7 @@ mkdir -p \
   "${LEZ_V02_TOOL_DIR}/bin" \
   "$isolated_cargo_home"
 
-for command in cargo cp curl cut docker find gcc mktemp rg sha256sum tar unzip; do
+for command in cargo cp curl cut docker find gcc mktemp rg sha256sum tar; do
   command -v "$command" >/dev/null || {
     echo "${command} is required by the provisional LEZ v0.2 verification" >&2
     exit 1
