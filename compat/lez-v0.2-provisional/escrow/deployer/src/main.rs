@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, net::IpAddr, time::Duration};
 
 use anyhow::{Context as _, Result, ensure};
 use clap::{Parser, Subcommand};
@@ -8,6 +8,7 @@ use nssa::{ProgramDeploymentTransaction, program::Program};
 use sequencer_service_rpc::{RpcClient as _, SequencerClient, SequencerClientBuilder};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use url::{Host, Url};
 
 const MANIFEST: &str = include_str!("../../methods/guest/deployment-manifest.toml");
 const OFFICIAL_RPC_URL: &str = "https://testnet.lez.logos.co";
@@ -59,6 +60,18 @@ enum Command {
     Inspect,
     /// Submit the checked deployment exactly once and observe canonical inclusion.
     Deploy {
+        /// Maximum wall time for observation after the one submission attempt.
+        #[arg(long, default_value_t = 300)]
+        timeout_seconds: u64,
+    },
+    /// Submit the same checked artifact to one explicit isolated local sequencer.
+    DeployLocal {
+        /// Dynamic loopback HTTP endpoint emitted by the local stack manifest.
+        #[arg(long)]
+        rpc_url: String,
+        /// Exact nonzero channel identity emitted by the local stack manifest.
+        #[arg(long)]
+        channel_id: String,
         /// Maximum wall time for observation after the one submission attempt.
         #[arg(long, default_value_t = 300)]
         timeout_seconds: u64,
@@ -117,14 +130,29 @@ async fn main() -> Result<()> {
     let arguments = Arguments::parse();
     let manifest: DeploymentManifest =
         toml::from_str(MANIFEST).context("parse checked deployment manifest")?;
-    let (client, preflight) = preflight(&manifest).await?;
 
     match arguments.command {
         Command::Inspect => {
+            let (_, preflight) = preflight(&manifest).await?;
             println!("{}", serde_json::to_string_pretty(&preflight)?);
         }
         Command::Deploy { timeout_seconds } => {
             ensure!(timeout_seconds > 0, "timeout-seconds must be non-zero");
+            let (client, preflight) = preflight(&manifest).await?;
+            let evidence = deploy_once_and_observe(client, preflight, timeout_seconds).await?;
+            println!("{}", serde_json::to_string_pretty(&evidence)?);
+        }
+        Command::DeployLocal {
+            rpc_url,
+            channel_id,
+            timeout_seconds,
+        } => {
+            ensure!(timeout_seconds > 0, "timeout-seconds must be non-zero");
+            validate_local_rpc_url(&rpc_url)?;
+            validate_channel_id(&channel_id)?;
+            let client = bounded_client(&rpc_url)?;
+            let preflight =
+                preflight_local_with_client(&manifest, &client, &rpc_url, &channel_id).await?;
             let evidence = deploy_once_and_observe(client, preflight, timeout_seconds).await?;
             println!("{}", serde_json::to_string_pretty(&evidence)?);
         }
@@ -147,15 +175,19 @@ fn checked_artifact() -> Result<(String, String)> {
 
 async fn preflight(manifest: &DeploymentManifest) -> Result<(SequencerClient, PreflightEvidence)> {
     validate_immutable_target(manifest)?;
-    let client = SequencerClientBuilder::default()
+    let client = bounded_client(OFFICIAL_RPC_URL)?;
+    let evidence = preflight_with_client(manifest, &client).await?;
+    Ok((client, evidence))
+}
+
+fn bounded_client(rpc_url: &str) -> Result<SequencerClient> {
+    SequencerClientBuilder::default()
         .max_request_size(16 * 1024 * 1024)
         .max_response_size(16 * 1024 * 1024)
         .request_timeout(Duration::from_secs(30))
         .max_concurrent_requests(1)
-        .build(OFFICIAL_RPC_URL)
-        .context("build bounded official LEZ RPC client")?;
-    let evidence = preflight_with_client(manifest, &client).await?;
-    Ok((client, evidence))
+        .build(rpc_url)
+        .context("build bounded LEZ RPC client")
 }
 
 fn validate_immutable_target(manifest: &DeploymentManifest) -> Result<(String, String)> {
@@ -210,19 +242,45 @@ async fn preflight_with_client(
     manifest: &DeploymentManifest,
     client: &SequencerClient,
 ) -> Result<PreflightEvidence> {
+    preflight_checked_target(
+        manifest,
+        client,
+        &manifest.target.rpc_url,
+        &manifest.target.channel_id,
+    )
+    .await
+}
+
+async fn preflight_local_with_client(
+    manifest: &DeploymentManifest,
+    client: &SequencerClient,
+    rpc_url: &str,
+    channel_id: &str,
+) -> Result<PreflightEvidence> {
+    validate_local_rpc_url(rpc_url)?;
+    validate_channel_id(channel_id)?;
+    preflight_checked_target(manifest, client, rpc_url, channel_id).await
+}
+
+async fn preflight_checked_target(
+    manifest: &DeploymentManifest,
+    client: &SequencerClient,
+    rpc_url: &str,
+    expected_channel_id: &str,
+) -> Result<PreflightEvidence> {
     let (elf_sha256, image_id) = validate_immutable_target(manifest)?;
     client
         .check_health()
         .await
-        .context("official LEZ health preflight")?;
+        .context("LEZ health preflight")?;
     let channel_id = client
         .get_channel_id()
         .await
-        .context("read official LEZ channel ID")?
+        .context("read LEZ channel ID")?
         .to_string();
     ensure!(
-        channel_id == manifest.target.channel_id,
-        "official LEZ channel ID differs from the immutable manifest"
+        channel_id == expected_channel_id,
+        "LEZ channel ID differs from the selected deployment target"
     );
     let program_ids = client
         .get_program_ids()
@@ -243,7 +301,7 @@ async fn preflight_with_client(
         .await
         .context("read preflight chain height")?;
     let evidence = PreflightEvidence {
-        rpc_url: manifest.target.rpc_url.clone(),
+        rpc_url: rpc_url.to_owned(),
         channel_id,
         elf_sha256,
         image_id,
@@ -259,6 +317,35 @@ async fn preflight_with_client(
         last_block_id,
     };
     Ok(evidence)
+}
+
+fn validate_local_rpc_url(rpc_url: &str) -> Result<()> {
+    let parsed = Url::parse(rpc_url).context("parse local LEZ RPC URL")?;
+    let loopback = match parsed.host() {
+        Some(Host::Ipv4(address)) => IpAddr::V4(address).is_loopback(),
+        Some(Host::Ipv6(address)) => IpAddr::V6(address).is_loopback(),
+        Some(Host::Domain(_)) | None => false,
+    };
+    ensure!(
+        parsed.scheme() == "http"
+            && loopback
+            && parsed.port().is_some()
+            && parsed.username().is_empty()
+            && parsed.password().is_none()
+            && parsed.query().is_none()
+            && parsed.fragment().is_none()
+            && parsed.path() == "/",
+        "local LEZ RPC URL must be an explicit uncredentialed loopback HTTP endpoint and port"
+    );
+    Ok(())
+}
+
+fn validate_channel_id(channel_id: &str) -> Result<()> {
+    let mut bytes = [0_u8; 32];
+    hex::decode_to_slice(channel_id, &mut bytes)
+        .context("local LEZ channel ID must be exactly 32 hex bytes")?;
+    ensure!(bytes != [0; 32], "local LEZ channel ID must be nonzero");
+    Ok(())
 }
 
 fn require_rpc_program(
