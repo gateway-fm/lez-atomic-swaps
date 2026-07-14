@@ -37,6 +37,7 @@ for document in "${documents[@]}"; do
       }
       in_mermaid = 1
       declaration_seen = 0
+      diagram_kind = ""
       blocks += 1
       next
     }
@@ -59,12 +60,17 @@ for document in "${documents[@]}"; do
       if ($0 ~ /^[[:space:]]*(click|href|callback|call)[[:space:]]/) {
         reject("interactive links or callbacks are disabled by GitHub")
       }
+      if (diagram_kind == "sequenceDiagram" &&
+          $0 ~ /^[[:space:]]*Note[[:space:]]+(over|right of|left of)[^:]*:.*;/) {
+        reject("semicolons terminate Mermaid sequence-note statements")
+      }
 
       if (!declaration_seen && $0 !~ /^[[:space:]]*$/ && $0 !~ /^[[:space:]]*%%/) {
         if ($0 !~ /^(flowchart|graph)[[:space:]]+(TB|TD|BT|RL|LR)[[:space:]]*$/ &&
             $0 !~ /^(sequenceDiagram|stateDiagram-v2|classDiagram|erDiagram)[[:space:]]*$/) {
           reject("unsupported or version-sensitive diagram declaration")
         }
+        diagram_kind = $1
         declaration_seen = 1
       }
       next

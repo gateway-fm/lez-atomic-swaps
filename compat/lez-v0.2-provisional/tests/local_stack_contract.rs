@@ -19,8 +19,10 @@ struct LocalStackContract {
     bedrock: BedrockSource,
     packaging: Packaging,
     generated_configuration: GeneratedConfiguration,
+    actors: BTreeMap<String, Actor>,
     isolation: Isolation,
     services: BTreeMap<String, Service>,
+    service_readiness: ServiceReadiness,
     flows: Vec<Flow>,
 }
 
@@ -65,6 +67,8 @@ struct BedrockSource {
 struct Isolation {
     run_id_pattern: String,
     compose_project_template: String,
+    container_group_template: String,
+    network_template: String,
     state_root_template: String,
     host_port_policy: String,
     container_name_policy: String,
@@ -78,12 +82,20 @@ struct GeneratedConfiguration {
     bedrock_node_url: String,
     channel_id: String,
     channel_id_source: String,
+    bedrock_genesis_channel_id: String,
+    upstream_example_channel_id: String,
+    bedrock_signing_key_file_sha256: String,
+    bedrock_signing_key_policy: String,
     sequencer_state_dir: String,
     indexer_state_dir: String,
     backoff_field_policy: String,
     fresh_state_policy: String,
     filesystem_policy: String,
     source_examples_status: String,
+    genesis_policy: String,
+    actor_genesis_status: String,
+    indexer_preclaim_binding: String,
+    genesis_source: GenesisSource,
     source_examples: BTreeMap<String, SourceIdentity>,
 }
 
@@ -107,7 +119,8 @@ struct Packaging {
     indexer_binary_version: String,
     binary_runtime_dependency_status: String,
     runtime_smoke_status: String,
-    runtime_smoke_security: Vec<String>,
+    cli_smoke_security: Vec<String>,
+    service_runtime_security: Vec<String>,
     upstream_dockerfiles_status: String,
     upstream_dockerfiles: BTreeMap<String, SourceIdentity>,
 }
@@ -132,6 +145,49 @@ struct RapidsnarkInput {
 struct SourceIdentity {
     path: String,
     sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GenesisSource {
+    config_path: String,
+    config_sha256: String,
+    builder_path: String,
+    builder_sha256: String,
+    faucet_program_path: String,
+    faucet_program_sha256: String,
+    vault_core_path: String,
+    vault_core_sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Actor {
+    account_id: String,
+    vault_account_id: String,
+    genesis_allocation: u64,
+    preclaim_readiness: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ServiceReadiness {
+    scope: String,
+    last_service_readiness_run_id: String,
+    full_runtime_tuple_scope: String,
+    full_runtime_tuple_green: bool,
+    corridor_run_ids: Vec<String>,
+    corridor_directions: Vec<String>,
+    corridor_evidence_files: Vec<String>,
+    corridor_actor_config_schema_version: u16,
+    current_actor_config_schema_version: u16,
+    current_schema_corridor_run_ids: Vec<String>,
+    current_schema_corridor_evidence_file: String,
+    current_schema_actual_node_smoke: bool,
+    completed: Vec<String>,
+    clean_host_reproductions: u16,
+    fresh_onboarding_and_deployment_automation: bool,
+    pending: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,7 +230,7 @@ fn immutable_contract_selects_exact_non_standalone_v02_stack() {
     assert_eq!(contract.schema_version, 1);
     assert_eq!(
         contract.contract_status,
-        "binaries_built_distroless_cli_smoked_stack_not_executed"
+        "private_local_two_direction_claim_happy_path_green_hardening_pending"
     );
     assert_eq!(contract.stack_kind, "bedrock_settled_non_standalone");
     assert_eq!(
@@ -226,11 +282,14 @@ fn immutable_contract_selects_exact_non_standalone_v02_stack() {
         sequencer.readiness,
         [
             "rpc:checkHealth",
+            "rpc:getAccount_actor_owners_balance_zero_nonce_zero",
+            "rpc:getAccount_actor_vaults_balance_exact_genesis_allocation_nonce_zero",
+            "rpc:getAccountsNonces_actor_owner_and_vault_are_zero",
             "rpc:getChannelId_matches_configured_bedrock_channel",
             "rpc:getProgramIds_contains_required_builtins",
             "rpc:getBlock(1)_returns_genesis",
             "rpc:getLastBlockId_at_or_after_genesis",
-            "rpc:getLastBlockId_advances_after_probe_transaction",
+            "rpc:getBlock(finalized_non_genesis_id)_returns_canonical_borsh_base64",
         ]
     );
 
@@ -246,9 +305,11 @@ fn immutable_contract_selects_exact_non_standalone_v02_stack() {
     assert_eq!(
         indexer.readiness,
         [
-            "rpc:getLastFinalizedBlockId_returns_some",
-            "rpc:getBlockById(last_finalized)_returns_same_block_id",
-            "cross_check:indexer_finalized_block_matches_sequencer_block_at_same_id",
+            "rpc:getLastFinalizedBlockId_returns_some_id_greater_than_or_equal_to_2",
+            "rpc:getBlockById(last_finalized)_returns_decoded_block",
+            "rpc:getBlockByHash(decoded_hash)_equals_getBlockById_semantically",
+            "cross_check:indexer_header_id_prev_hash_hash_signature_match_sequencer_borsh_header_offsets",
+            "rpc:getAccountAtBlock_actor_owner_and_vault_state_bound_to_exact_last_finalized_block_id",
         ]
     );
 
@@ -264,7 +325,9 @@ fn immutable_contract_selects_exact_non_standalone_v02_stack() {
         [
             "http:GET_/cryptarchia/info_tip_and_lib_present",
             "http:GET_/cryptarchia/info_tip_or_slot_advances",
-            "http:GET_/channel/0101010101010101010101010101010101010101010101010101010101010101_returns_200",
+            "http:GET_runtime_channel_before_sequencer_returns_404_or_500_with_exact_17_byte_channel_not_found_body",
+            "http:GET_runtime_channel_after_sequencer_returns_200_with_accredited_key_equal_channel_id",
+            "http:GET_runtime_channel_after_finality_tip_message_or_slot_advances",
         ]
     );
 
@@ -366,7 +429,7 @@ fn service_packaging_uses_locked_sources_and_a_digest_pinned_runtime() {
     );
     assert_eq!(
         packaging.binary_sha256_status,
-        "locked_source_build_hashes_bound_warm_rerun_stable_not_container_executed"
+        "locked_source_build_hashes_bound_and_executed_in_isolated_service_stack"
     );
     assert_eq!(
         packaging.sequencer_binary_sha256,
@@ -387,16 +450,29 @@ fn service_packaging_uses_locked_sources_and_a_digest_pinned_runtime() {
     );
     assert_eq!(
         packaging.runtime_smoke_status,
-        "distroless_cli_smoked_not_service_started"
+        "distroless_services_executed_isolated_service_readiness_green"
     );
     assert_eq!(
-        packaging.runtime_smoke_security,
+        packaging.cli_smoke_security,
         [
             "uid_65532",
             "network_none",
             "read_only_root",
             "cap_drop_all",
             "no_new_privileges",
+        ]
+    );
+    assert_eq!(
+        packaging.service_runtime_security,
+        [
+            "numeric_nonroot_host_uid_gid",
+            "unique_private_bridge",
+            "ip_masquerade_disabled",
+            "dynamic_loopback_publication",
+            "read_only_root",
+            "cap_drop_all",
+            "no_new_privileges",
+            "resource_limits",
         ]
     );
     assert_eq!(
@@ -480,7 +556,7 @@ fn bedrock_digest_and_oci_source_mapping_are_pinned_while_public_parity_stays_ex
     );
     assert_eq!(
         bedrock.runner_script_status,
-        "source_observation_only_runner_bypasses_timestamp_substitution"
+        "repository_runner_replaces_only_audited_genesis_timestamp_and_onboards_signed_runtime_channel"
     );
     assert_eq!(bedrock.runtime_fixtures.len(), 3);
     assert_source_identity(
@@ -511,11 +587,27 @@ fn local_stack_names_ports_and_cleanup_are_run_isolated() {
     assert_eq!(generated.bedrock_node_url, "http://bedrock:18080");
     assert_eq!(
         generated.channel_id,
-        "0101010101010101010101010101010101010101010101010101010101010101"
+        "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748"
     );
     assert_eq!(
         generated.channel_id_source,
-        "contracted_lez_zone_channel_01_repeated_32"
+        "ed25519_public_key_of_deterministic_local_bedrock_signing_seed"
+    );
+    assert_eq!(
+        generated.bedrock_genesis_channel_id,
+        "0000000000000000000000000000000000000000000000000000000000000000"
+    );
+    assert_eq!(
+        generated.upstream_example_channel_id,
+        "0101010101010101010101010101010101010101010101010101010101010101"
+    );
+    assert_eq!(
+        generated.bedrock_signing_key_file_sha256,
+        "8fd0d8a6423536c14b5d3979e5135bf37253f5dfbc8485b52202bbf963b8f02e"
+    );
+    assert_eq!(
+        generated.bedrock_signing_key_policy,
+        "deterministic_local_only_raw_32_byte_seed_never_production"
     );
     assert_eq!(
         generated.sequencer_state_dir,
@@ -531,6 +623,50 @@ fn local_stack_names_ports_and_cleanup_are_run_isolated() {
     assert_eq!(
         generated.source_examples_status,
         "hashed_observations_only_not_copied_backoff_or_addresses"
+    );
+    assert_eq!(
+        generated.genesis_policy,
+        "exact_two_public_supply_accounts_fresh_state_only"
+    );
+    assert_eq!(
+        generated.actor_genesis_status,
+        "runtime_green_sequencer_and_exact_finalized_indexer_preclaim_state"
+    );
+    assert_eq!(
+        generated.indexer_preclaim_binding,
+        "getAccountAtBlock_exact_last_finalized_block_id"
+    );
+    assert_eq!(
+        generated.genesis_source.config_path,
+        "lez/sequencer/core/src/config.rs"
+    );
+    assert_eq!(
+        generated.genesis_source.config_sha256,
+        "3ddeb4d9159cdd584dc9423deaac0897896edfd4cd27d2a509bec08077e1b49d"
+    );
+    assert_eq!(
+        generated.genesis_source.builder_path,
+        "lez/sequencer/core/src/lib.rs"
+    );
+    assert_eq!(
+        generated.genesis_source.builder_sha256,
+        "7c72530e5ccdb72dda636511dd237b913e5865b18430f5920b50ffb4ade97df3"
+    );
+    assert_eq!(
+        generated.genesis_source.faucet_program_path,
+        "lez/programs/faucet/src/main.rs"
+    );
+    assert_eq!(
+        generated.genesis_source.faucet_program_sha256,
+        "4cc6e9fbb404ea03468ccdd886c1d6426de736a5b7ac3564d39d04f58ed33936"
+    );
+    assert_eq!(
+        generated.genesis_source.vault_core_path,
+        "lez/programs/vault/core/src/lib.rs"
+    );
+    assert_eq!(
+        generated.genesis_source.vault_core_sha256,
+        "36bdae7c0c2dafeea98f97d1964388f0a21203f312b230e603923760c5073846"
     );
     assert_eq!(generated.source_examples.len(), 4);
     assert_source_identity(
@@ -559,12 +695,26 @@ fn local_stack_names_ports_and_cleanup_are_run_isolated() {
     assert_eq!(isolation.run_id_pattern, "^[a-z0-9][a-z0-9_-]{0,63}$");
     assert_eq!(
         isolation.compose_project_template,
+        "configuration_validation_only_lez-atomic-swaps-lez-v02-{run_id}"
+    );
+    assert_eq!(
+        isolation.container_group_template,
         "lez-atomic-swaps-lez-v02-{run_id}"
+    );
+    assert_eq!(
+        isolation.network_template,
+        "lez-atomic-swaps-lez-v02-{run_id}-private"
     );
     assert_eq!(isolation.state_root_template, ".e2e/{run_id}/lez-v02");
     assert_eq!(isolation.host_port_policy, "dynamic_zero_only");
-    assert_eq!(isolation.container_name_policy, "forbidden");
-    assert_eq!(isolation.cleanup_scope, "matching_run_id_only");
+    assert_eq!(
+        isolation.container_name_policy,
+        "no_fixed_or_global_names_exact_run_scoped_names_required"
+    );
+    assert_eq!(
+        isolation.cleanup_scope,
+        "captured_exact_container_ids_then_exact_network_and_image"
+    );
 
     let upstream_names = contract
         .services
@@ -632,8 +782,7 @@ fn event_directions_cover_submission_publication_and_finality() {
                 destination: "local_stack_orchestrator".to_owned(),
                 direction: "request_response".to_owned(),
                 protocol: "official_indexer_json_rpc".to_owned(),
-                semantics: "retrieve_finalized_block_and_match_sequencer_block_at_same_id"
-                    .to_owned(),
+                semantics: "retrieve_finalized_non_genesis_block_by_id_and_hash_then_match_id_prev_hash_hash_signature_to_sequencer_borsh_header".to_owned(),
                 upstream_source_path: "lez/indexer/service/rpc/src/lib.rs".to_owned(),
                 upstream_source_sha256:
                     "a7a2a3114e0b65a9f33decff79bb5ffe5c75c54507f5054560c4e1fef1e0af3e".to_owned(),
@@ -643,6 +792,110 @@ fn event_directions_cover_submission_publication_and_finality() {
     for flow in contract.flows {
         assert!(Path::new(&flow.upstream_source_path).is_relative());
         assert!(is_lower_hex(&flow.upstream_source_sha256, 64));
+    }
+}
+
+#[test]
+fn completed_corridors_and_reproducibility_limits_are_explicit() {
+    let contract = load_contract();
+    let readiness = contract.service_readiness;
+
+    assert_eq!(
+        readiness.scope,
+        "bedrock_cryptarchia_signed_channel_onboarding_non_genesis_finality_cross_rpc_block_identity_and_actor_vault_preclaim_state_at_exact_finalized_block"
+    );
+    assert_eq!(
+        readiness.last_service_readiness_run_id,
+        "v02-actors-finalized-20260713b"
+    );
+    assert_eq!(
+        readiness.full_runtime_tuple_scope,
+        "private_local_two_direction_claim_happy_path"
+    );
+    assert!(readiness.full_runtime_tuple_green);
+    assert_eq!(
+        readiness.corridor_run_ids,
+        [
+            "m2poc-corridor-fresh-20260714o",
+            "m2poc-corridor-reverse-fresh-20260714c",
+        ]
+    );
+    assert_eq!(
+        readiness.corridor_directions,
+        ["taker_sells_lez", "taker_sells_foreign"]
+    );
+    assert_eq!(
+        readiness.corridor_evidence_files,
+        [
+            "docs/evidence/m2-taker-sells-lez-corridor-20260714.json",
+            "docs/evidence/m2-taker-sells-foreign-corridor-20260714.json",
+        ]
+    );
+    assert_eq!(readiness.corridor_actor_config_schema_version, 2);
+    assert_eq!(readiness.current_actor_config_schema_version, 3);
+    assert_eq!(
+        readiness.current_schema_corridor_run_ids,
+        [
+            "m2cert-schema3-forward-2d09997-20260714a",
+            "m2cert-schema3-reverse-2d09997-20260714a",
+        ]
+    );
+    assert_eq!(
+        readiness.current_schema_corridor_evidence_file,
+        "docs/evidence/m2-schema-v3-local-corridors-20260714.json"
+    );
+    assert!(readiness.current_schema_actual_node_smoke);
+    assert_eq!(
+        readiness.completed,
+        [
+            "vault_claims",
+            "checked_escrow_deployment",
+            "maker_actor",
+            "taker_actor",
+            "two_direction_claim_swap_effects",
+            "current_schema_v3_two_direction_actual_node_smoke",
+        ]
+    );
+    assert_eq!(readiness.clean_host_reproductions, 0);
+    assert!(!readiness.fresh_onboarding_and_deployment_automation);
+    assert_eq!(
+        readiness.pending,
+        [
+            "clean_host_reproduction",
+            "fresh_vault_onboarding_automation",
+            "fresh_checked_escrow_deployment_automation",
+            "composed_restart_recovery",
+            "composed_refund",
+            "composed_reorg",
+            "composed_concurrency",
+        ]
+    );
+
+    let maker = &contract.actors["maker"];
+    let taker = &contract.actors["taker"];
+    assert_eq!(
+        maker.account_id,
+        "B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd"
+    );
+    assert_eq!(
+        maker.vault_account_id,
+        "7Mzr43PK9VxpcvwdjgL8PeE4nb2aG9FqBKLfkoH8RBmQ"
+    );
+    assert_eq!(maker.genesis_allocation, 100_000);
+    assert_eq!(
+        taker.account_id,
+        "34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib"
+    );
+    assert_eq!(
+        taker.vault_account_id,
+        "AXLjVw4tKTgieQoGRgXMVLVVaB4c5YnL1YTogZdX1cpH"
+    );
+    assert_eq!(taker.genesis_allocation, 200_000);
+    for actor in contract.actors.values() {
+        assert_eq!(
+            actor.preclaim_readiness,
+            "owner_balance_zero_nonce_zero_vault_balance_allocation_nonce_zero_on_sequencer_and_indexer_at_exact_finalized_block"
+        );
     }
 }
 

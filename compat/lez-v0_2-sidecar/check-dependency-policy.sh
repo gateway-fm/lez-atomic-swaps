@@ -39,15 +39,11 @@ rsa_features="$(dependency_features 'rsa@0.9.10')"
 [[ "$rsa_features" == *'rzup v0.5.1'* ]]
 [[ "$rsa_features" == *'risc0-build v3.0.5'* ]]
 
-spin_features="$(dependency_features 'spin@0.9.8')"
-[[ "$spin_features" == *'spin v0.9.8'* ]]
-[[ "$spin_features" == *'astro-float-num v0.3.6'* ]]
-
 # The reachability arguments for RUSTSEC-2023-0071 and RUSTSEC-2026-0119
 # depend on this isolated process never directly invoking RSA/rzup or the
 # transitive DNS/libp2p implementation. Fail if that boundary changes.
 if rg --line-number \
-  '\b(hickory|libp2p|rsa|rzup|spin|tracing_subscriber)\b' \
+  '\b(hickory|libp2p|rsa|rzup|tracing_subscriber)\b' \
   "$crate_dir/src" "$crate_dir/tests"; then
   echo 'sidecar source directly references an excepted upstream dependency' >&2
   exit 1

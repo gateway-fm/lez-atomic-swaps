@@ -5,7 +5,6 @@ unused-ignored-advisory = "deny"
 ignore = [
     { id = "RUSTSEC-2023-0071", reason = "Exact Risc0 3.0.5 methods build tooling forces rsa 0.9.10 through rzup. The verifier proves rzup publish/install features are absent; the methods tests execute only checked LEZ state transitions. Re-audit on every Risc0 or LEZ pin change." },
     { id = "RUSTSEC-2025-0055", reason = "Exact Risc0 3.0.5 methods tooling forces tracing-subscriber 0.2.25 through arkworks. The verifier proves vulnerable fmt and ansi features are absent. Re-audit on every Risc0 or LEZ pin change." },
-    { crate = "spin@0.9.8", reason = "Exact LEZ v0.2.0 and Risc0 tooling force this yanked version through lazy_static and the Logos proof graph. The methods lane invokes no spin API and retains an exact inverse-dependency gate. Treat as Logos-owned and re-audit on every pin change." },
 ]
 
 [licenses]

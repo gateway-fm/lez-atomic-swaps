@@ -7,7 +7,6 @@ ignore = [
     { id = "RUSTSEC-2025-0055", reason = "Exact LEZ v0.2.0 forces tracing-subscriber 0.2.25 through risc0/arkworks; CI proves its vulnerable fmt and ansi features are absent. Re-audit before deployment or pin changes." },
     { id = "RUSTSEC-2026-0118", reason = "Exact LEZ v0.2.0 forces hickory-proto 0.25.0-alpha.5 through Logos Blockchain/libp2p. CI proves DNSSEC features are absent and the compile-only test never polls the standalone future. This exception is invalid for an executable sequencer or deployment lane." },
     { id = "RUSTSEC-2026-0119", reason = "Exact LEZ v0.2.0 forces hickory-proto 0.25.0-alpha.5 through Logos Blockchain/libp2p. The fixture produces no runtime artifact; CI hash-locks the compile-only test and proves it never polls or starts the service, so DNS message encoding is unreachable. Remove this exception before any executable v0.2 lane." },
-    { crate = "spin@0.9.8", reason = "Exact LEZ v0.2.0 forces this yanked version through lazy_static and the Logos proof graph. This compile-only fixture invokes no spin API and retains an exact inverse-dependency gate. Treat as Logos-owned and re-audit on every pin change." },
 ]
 
 [licenses]

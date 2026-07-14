@@ -919,8 +919,9 @@ outputs above.
   no-clash and cleanup rules. This does not satisfy the independent composed
   maker/taker local corridor below; live public-testnet items are deferred under
   ADR 0023.
-- [x] Harden the unreleased reference-actor configuration as schema v3 before
-  lifecycle composition. A private raw JSON form cannot construct an
+- [x] Harden the unreleased reference-actor configuration as schema v3 after the
+  retained schema-v2 lifecycle PoC and before final exact-tree certification. A private raw JSON form cannot
+  construct an
   `ActorConfig` without validation; each role binds the exact run, swap,
   sidecar role/signer/endpoint, signed-agreement SHA-256, complete runtime
   descriptor, Zebra network/RPC chain/branch/genesis, finite discovery windows,
@@ -938,10 +939,16 @@ outputs above.
   `not_activated` without creating it. Create-capable and existing-only store
   opens use `SQLITE_OPEN_NOFOLLOW`, reject non-regular/hardlinked/wrong-mode
   files, and compare device/inode identity before and after mutable setup. The
-  `activate` and `drive` now compose the exact v0.2 role bridge, SDK, and Zebra
-  port in the development runner. Run 14o live-proves bounded payload-free
-  retry and terminal evidence for `TakerSellsLez`; reverse14c proves the
-  direction-derived actor/effect mapping for `TakerSellsForeign` with no retry.
+  `activate` and `drive` compose the exact v0.2 role bridge, SDK, and Zebra port
+  in the development runner. Retained schema-v2 run 14o live-proves bounded
+  payload-free retry and terminal evidence for `TakerSellsLez`; retained
+  schema-v2 reverse14c proves the direction-derived actor/effect mapping for
+  `TakerSellsForeign` with no retry. Current-schema certification runs
+  `m2cert-schema3-forward-2d09997-20260714a` and
+  `m2cert-schema3-reverse-2d09997-20260714a` then repeated both directions
+  against the actual local nodes; both independent actors reached `completed`,
+  the forward run used 46 drive rounds with no retry, and the reverse used 33
+  rounds with two bounded same-run retries.
   The schema additionally separates deterministic-local, self-hosted-cookie,
   and exact Tatum Testnet `x-api-key` Zebra routes, binds matching route kind
   and endpoint across roles without equating secret paths, and keeps every
@@ -961,6 +968,13 @@ outputs above.
 - [x] Publish exact local LEZ v0.2/Zebra setup and the configuration-only public
   migration matrix, transparent privacy warnings, and shield-after-swap journey.
   Clean-host public funding rehearsal remains deferred under ADR 0023.
+- [x] Resolve the yanked `spin 0.9.8` finding in every independently locked
+  graph. Exact offline resolution proved `0.9.9` compatible, all ten nested
+  lockfiles were updated without other package movement, five temporary
+  package exceptions were removed, and all eleven graph-local
+  advisory/bans/licenses/sources audits pass with `yanked = "deny"` intact.
+  `LOGOS-013` is therefore recorded as a resolved repository finding rather
+  than an upstream production blocker.
 - [ ] Generate the private happy-path recording from the passing PoC actor suite;
   add refund/concurrency recordings only after the owner starts hardening.
 - [ ] Re-run formatting, strict Clippy, all tests/docs, ShellCheck, traceability,

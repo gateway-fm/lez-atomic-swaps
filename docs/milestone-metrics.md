@@ -34,6 +34,7 @@ Status vocabulary:
 | Metric | Current measurement | Evidence or next measurement point |
 |---|---|---|
 | Full corridor reproductions | 2 successful directions: `m2poc-corridor-fresh-20260714o` and `m2poc-corridor-reverse-fresh-20260714c` | Run 14o completed `TakerSellsLez`; reverse run 14c completed `TakerSellsForeign`. The checked-in secret-safe evidence packets retain exact transactions, blocks, actors, and limitations |
+| Current-schema exact-tree replay | 2 of 2 actual-node directions GREEN: `m2cert-schema3-forward-2d09997-20260714a` and `m2cert-schema3-reverse-2d09997-20260714a` | Schema-v3 typed local routes crossed the retained pinned LEZ v0.2 and Zebra Regtest nodes. Forward completed in 46 rounds with 0 retries; reverse completed in 33 rounds with 2 bounded retries. Both actors reached `completed`, atomic order was observed, and no public RPC/faucet was used |
 | Clean-host reproductions | 0 | Both successes used fresh run-owned actor state and isolated retained devnets on a host with verified caches. A cold clean-host repeat remains not measured and is not inferred from the two successful directions |
 | Setup duration | Run 14o entered effects after 400 ms of provisioning; reverse 14c entered effects after 300 ms | Prebuild happens before the protocol clock. Earlier partial baselines were 6 seconds in 14d, 17 seconds in 14e, and 5590 ms in 14f |
 | Happy-path execution duration | 25.370 seconds for 14o; 26.960 seconds for reverse 14c, each measured from provisioning through both terminal actor states | The cap is 49 seconds, preserving a true minimum 10-second margin against the 60-second LEZ delay despite whole-second deadline truncation |
@@ -110,7 +111,7 @@ recorded when this phase is active.
 
 | Metric | Current measurement | Information-security phase target |
 |---|---|---|
-| Repository-controlled critical/high vulnerabilities | Focused root advisory/bans/licenses/sources gate is GREEN after moving the compatible root Zcash graph from yanked `spin 0.9.8` to non-yanked `0.9.9`; full final-image and separately locked graph revalidation remain | 0 unresolved |
+| Repository-controlled critical/high vulnerabilities | All eleven independently checked-in Rust lockfiles resolve non-yanked `spin 0.9.9`; exact advisory/bans/licenses/sources audits are GREEN for the root and all ten nested graphs with no `spin` exception. Final-image scanning remains in the exact-commit certification pass. | 0 unresolved |
 | Logos-owned advisory exceptions | Present and enumerated in the upstream production-blocker register | Exact, narrow, reviewed, and non-expanding for local evidence |
 | Threat-model findings | Not rebaselined for the composed corridor | Count by severity with disposition and regression evidence |
 | Secret exposure findings | No composed-run measurement | 0; logs, evidence, configs, stores, and process arguments included |

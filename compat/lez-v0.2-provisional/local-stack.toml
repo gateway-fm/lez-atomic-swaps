@@ -1,7 +1,8 @@
 # Immutable source and service-readiness contract for the local LEZ v0.2 stack.
-# Vault Claim, escrow deployment, actors, swaps, and restart recovery remain pending.
+# The two-direction private claim PoC is green. Clean-host reproduction,
+# automated onboarding/deployment, and recovery hardening remain pending.
 schema_version = 1
-contract_status = "isolated_service_readiness_green_full_runtime_tuple_pending"
+contract_status = "private_local_two_direction_claim_happy_path_green_hardening_pending"
 stack_kind = "bedrock_settled_non_standalone"
 public_transition = "configuration_plus_escrow_deployment"
 
@@ -261,9 +262,29 @@ upstream_bind_source_sha256 = "e9472ea5a15061c617257de849d19e90af213565c765c3025
 
 [service_readiness]
 scope = "bedrock_cryptarchia_signed_channel_onboarding_non_genesis_finality_cross_rpc_block_identity_and_actor_vault_preclaim_state_at_exact_finalized_block"
-last_green_run_id = "v02-actors-finalized-20260713b"
-full_runtime_tuple_green = false
-pending = ["vault_claims", "checked_escrow_deployment", "maker_actor", "taker_actor", "swap_effects", "restart_recovery"]
+last_service_readiness_run_id = "v02-actors-finalized-20260713b"
+# The complete happy-path tuple is evidenced by two later effect-bearing runs on
+# the same pinned local LEZ v0.2 and Zebra implementations. This flag does not
+# claim a clean-host rebuild, automated actor onboarding/deployment, or recovery
+# hardening.
+full_runtime_tuple_scope = "private_local_two_direction_claim_happy_path"
+full_runtime_tuple_green = true
+corridor_run_ids = ["m2poc-corridor-fresh-20260714o", "m2poc-corridor-reverse-fresh-20260714c"]
+corridor_directions = ["taker_sells_lez", "taker_sells_foreign"]
+corridor_evidence_files = ["docs/evidence/m2-taker-sells-lez-corridor-20260714.json", "docs/evidence/m2-taker-sells-foreign-corridor-20260714.json"]
+# The retained PoC inputs predate the configuration-only public-route schema.
+# Two later certification runs repeat both directions through actual nodes with
+# the current schema so configuration portability is not inferred from contract
+# tests alone.
+corridor_actor_config_schema_version = 2
+current_actor_config_schema_version = 3
+current_schema_corridor_run_ids = ["m2cert-schema3-forward-2d09997-20260714a", "m2cert-schema3-reverse-2d09997-20260714a"]
+current_schema_corridor_evidence_file = "docs/evidence/m2-schema-v3-local-corridors-20260714.json"
+current_schema_actual_node_smoke = true
+completed = ["vault_claims", "checked_escrow_deployment", "maker_actor", "taker_actor", "two_direction_claim_swap_effects", "current_schema_v3_two_direction_actual_node_smoke"]
+clean_host_reproductions = 0
+fresh_onboarding_and_deployment_automation = false
+pending = ["clean_host_reproduction", "fresh_vault_onboarding_automation", "fresh_checked_escrow_deployment_automation", "composed_restart_recovery", "composed_refund", "composed_reorg", "composed_concurrency"]
 
 [[flows]]
 name = "actor_submission"

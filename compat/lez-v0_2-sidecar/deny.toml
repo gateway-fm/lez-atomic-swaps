@@ -13,7 +13,6 @@ ignore = [
     { id = "RUSTSEC-2025-0055", reason = "Exact LEZ v0.2.0 forces tracing-subscriber 0.2.25 through ark-relations, but its vulnerable fmt and ansi features are not activated in this graph. Re-audit before deployment or any pin/feature change." },
     { id = "RUSTSEC-2026-0118", reason = "Exact LEZ v0.2.0 forces hickory-proto 0.25.0-alpha.5 through Logos libp2p. The vulnerable DNSSEC features are not activated, and this sidecar uses an explicit loopback IP HTTP sequencer endpoint rather than DNS/libp2p. Treat as a Logos-owned production blocker and re-audit before any transport/pin/feature change." },
     { id = "RUSTSEC-2026-0119", reason = "Exact LEZ v0.2.0 forces hickory-proto 0.25.0-alpha.5 through Logos libp2p. This sidecar does not instantiate the transitive DNS/libp2p stack or encode DNS messages; it uses an explicit loopback IP HTTP sequencer endpoint. Treat as a Logos-owned production blocker and re-audit before any transport/pin/feature change." },
-    { crate = "spin@0.9.8", reason = "Exact LEZ v0.2.0 forces this yanked version through the Logos proof graph. The sidecar invokes no spin API and retains an exact dependency-tree gate. Treat as a Logos-owned production blocker and re-audit before any pin or feature change." },
 ]
 
 [licenses]

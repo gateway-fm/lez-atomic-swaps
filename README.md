@@ -246,6 +246,13 @@ completion gates still precede an M2 tag; no tag exists yet. The
 schema-v3 Zebra route selection, public HTTPS `x-api-key` transport, and LEZ
 `official_public` sidecar route are now locally verified portability contracts;
 they have not made a public call.
+Current-schema certification runs
+`m2cert-schema3-forward-2d09997-20260714a` and
+`m2cert-schema3-reverse-2d09997-20260714a` also repeated both directions through
+the actual pinned local LEZ v0.2 and Zebra Regtest nodes. Both independent actors
+reached `completed`, the atomic effect order was observed, and no public RPC or
+faucet was used. The secret-safe aggregate is in the
+[schema-v3 corridor evidence](docs/evidence/m2-schema-v3-local-corridors-20260714.json).
 PoC-to-hardening and milestone
 transitions remain repository-owner decisions. The
 [Zcash public-testnet setup guide](docs/zcash-testnet-setup.md) records the

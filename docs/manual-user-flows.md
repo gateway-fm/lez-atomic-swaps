@@ -161,7 +161,7 @@ sequenceDiagram
         Operator->>V02: Permissionless fixed-destination refund
         V02-->>Operator: Exact nested state transition committed
     end
-    Note over V02,Z1: Public deployment remains deferred; the private local corridor is composed
+    Note over V02,Z1: Public deployment remains deferred while the private local corridor is composed
     Note over Operator,LEZ: Separate local component rehearsal initializes and funds custody
     alt TakerSellsForeign happy path
         Taker->>Z1: Taker funds Zcash HTLC
