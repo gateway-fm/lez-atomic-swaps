@@ -37,6 +37,7 @@ const MAX_STORE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_STORE_ENTRIES: usize = 4_096;
 const PROTOCOL_ERROR_NUMBER: i32 = -32_010;
 const PROTOCOL_ERROR_SUMMARY: &str = "LEZ bridge request failed";
+const MAX_REQUEST_ERROR_EVENT_BYTES: usize = 256;
 
 /// A bounded bearer capability dedicated to one local v0.2 sidecar.
 pub struct BridgeServerCapability(String);
@@ -453,6 +454,14 @@ struct OperationFailure {
     message: &'static str,
 }
 
+#[derive(Serialize)]
+struct RequestErrorEvent<'a> {
+    event: &'static str,
+    method: &'a str,
+    sidecar_role: Participant,
+    error_code: ErrorCode,
+}
+
 impl OperationFailure {
     const fn invalid_request(message: &'static str) -> Self {
         Self {
@@ -830,7 +839,10 @@ impl ServerState {
         }
         let outcome = match operation().await {
             Ok(value) => PersistedOutcome::Success(value),
-            Err(failure) => PersistedOutcome::Error(protocol_reply(context, failure)),
+            Err(failure) => {
+                report_request_error(method, self.runtime.descriptor().sidecar_role, failure.code);
+                PersistedOutcome::Error(protocol_reply(context, failure))
+            }
         };
         let prepare = matches!(
             method,
@@ -869,6 +881,20 @@ impl PersistedOutcome {
 
 fn to_value<T: Serialize>(value: T) -> Result<Value, OperationFailure> {
     serde_json::to_value(value).map_err(|_| OperationFailure::internal())
+}
+
+fn report_request_error(method: &'static str, sidecar_role: Participant, error_code: ErrorCode) {
+    let event = RequestErrorEvent {
+        event: "request_error",
+        method,
+        sidecar_role,
+        error_code,
+    };
+    if let Ok(line) = serde_json::to_string(&event)
+        && line.len() <= MAX_REQUEST_ERROR_EVENT_BYTES
+    {
+        let _ = writeln!(io::stderr().lock(), "{line}");
+    }
 }
 
 fn encode_request<Request: Serialize>(
