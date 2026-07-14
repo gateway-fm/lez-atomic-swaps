@@ -29,7 +29,7 @@ const MAX_PUBLIC_CONFIG_BYTES: u64 = 16 * 1024;
 const MAX_SECRET_FILE_BYTES: u64 = 256;
 const MAX_NODE_REQUEST_BYTES: u32 = 2_800_000;
 const MAX_NODE_RESPONSE_BYTES: u32 = 8 * 1024 * 1024;
-const NODE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const INDEXER_STARTUP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Run one role-isolated exact-LEZ-v0.2 bridge for a local-devnet `PoC`.
 #[derive(Debug, Parser)]
@@ -119,7 +119,7 @@ async fn execute(arguments: Arguments) -> Result<()> {
     let indexer = SequencerClientBuilder::default()
         .max_request_size(MAX_NODE_REQUEST_BYTES)
         .max_response_size(MAX_NODE_RESPONSE_BYTES)
-        .request_timeout(NODE_REQUEST_TIMEOUT)
+        .request_timeout(INDEXER_STARTUP_REQUEST_TIMEOUT)
         .max_concurrent_requests(1)
         .build(&arguments.indexer_url)
         .context("connect official indexer")?;

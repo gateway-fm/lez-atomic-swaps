@@ -341,7 +341,7 @@ impl BridgeRuntime {
         request: &ObserveRevealingClaimRequest,
     ) -> Result<ObserveRevealingClaimResult, BridgeRuntimeError> {
         let signer = self.runtime.signer_account_id;
-        let (window, expected, exact) = match request.target {
+        let (window, expected) = match request.target {
             RevealingClaimObservationTarget::Exact {
                 claim_transaction_id,
             } => {
@@ -363,7 +363,6 @@ impl BridgeRuntime {
                     DiscoveryWindow::new(start, MAX_DISCOVERY_BLOCKS)
                         .map_err(|_| BridgeRuntimeError::InvalidObservation)?,
                     Some((prepared, preimage)),
-                    true,
                 )
             }
             RevealingClaimObservationTarget::DiscoverByTerms { window } => {
@@ -373,7 +372,7 @@ impl BridgeRuntime {
                 {
                     return Err(BridgeRuntimeError::Planner);
                 }
-                (window, None, false)
+                (window, None)
             }
         };
         let scan = self.scan_claim(request, window, expected.as_ref()).await?;
@@ -395,7 +394,7 @@ impl BridgeRuntime {
                     custody,
                 ))
             }
-            None if !exact && scan.fully_covered => RevealingClaimObservation::Absent,
+            None if scan.fully_covered => RevealingClaimObservation::Absent,
             None => RevealingClaimObservation::UnknownOrPending,
         };
         let tip_after = self.read_tip().await?;
