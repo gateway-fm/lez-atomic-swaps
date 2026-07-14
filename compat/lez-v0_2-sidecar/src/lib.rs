@@ -30,8 +30,8 @@ pub use native_prepare::{
 };
 
 pub use runtime::{
-    HealthProbe, OfficialNodeRpc, RuntimeBoundary, RuntimeBoundaryError, RuntimeHealth,
-    decode_official_public_transaction,
+    HealthProbe, OfficialNodeRpc, OfficialVaultClaimFacts, RuntimeBoundary, RuntimeBoundaryError,
+    RuntimeHealth, decode_official_public_transaction,
 };
 pub use server::{
     DescribeServerCapability, DescribeServerCapabilityError, DescribeServerConfig,

@@ -3424,8 +3424,10 @@ dependencies = [
 name = "lez-v0-2-sidecar"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "borsh",
+ "clap",
  "common",
  "hex",
  "jsonrpsee",
