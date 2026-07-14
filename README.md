@@ -26,7 +26,9 @@ minimal image. Its role-separated actual-Core smoke is locally GREEN: Core
 deterministic mature local P2TR funding, zero peers, and exact run-owned cleanup.
 CI repeats that smoke and fail-hard scans the exact image for HIGH/CRITICAL
 vulnerabilities. This is node infrastructure, not the aggregate-key P2TR swap
-leg. Runtime uses no public RPC, faucet, public funds, or public chain. Cold
+leg. The clean pushed-commit run is retained as
+[secret-safe Core evidence](docs/evidence/m3-bitcoin-core-smoke-a7393df-20260714.json).
+Runtime uses no public RPC, faucet, public funds, or public chain. Cold
 setup still depends on checksum-verified Core release assets, the pinned base
 image, vulnerability data, and locked Rust registries, so their availability
 and scan flakiness remain explicit.

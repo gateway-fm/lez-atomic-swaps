@@ -1098,8 +1098,10 @@ packet proves Core 31.1 and exact Regtest genesis, height 101 under the fixed
 separate maker/taker allow-and-deny RPC matrices, zero peers, no public runtime
 resource, and complete exact cleanup with a foreign sentinel surviving. This
 packet was produced before the runner commit and therefore is validation input,
-not retained exact-commit certification. The next checkpoint reruns the pushed
-commit and retains only secret-safe summarized evidence.
+not retained exact-commit certification. Clean pushed commit `a7393dfb` then
+reproduced the smoke and exact cleanup as run `m3-core-exact-a7393df`;
+[its secret-safe retained summary](evidence/m3-bitcoin-core-smoke-a7393df-20260714.json)
+records the packet hashes and preserves the unobserved remote Trivy boundary.
 
 That slice is GREEN only when retained, secret-safe evidence proves Core 31.1,
 Regtest genesis and an advancing tip, zero chain peers and zero public runtime

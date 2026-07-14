@@ -15,6 +15,7 @@ canonical_evidence="${repo_root}/docs/evidence/m2-canonical-local-certification-
 core_runner="${repo_root}/scripts/run-bitcoin-core-e2e.sh"
 core_isolation="${repo_root}/scripts/check-bitcoin-core-isolation.sh"
 
+core_evidence="${repo_root}/docs/evidence/m3-bitcoin-core-smoke-a7393df-20260714.json"
 fail() {
   echo "CI hardening contract failed: $*" >&2
   exit 1
@@ -36,6 +37,7 @@ require_fixed() {
 [[ -f "$provisional_artifact_manifest" ]] || fail "missing provisional artifact manifest"
 [[ -x "$core_runner" ]] || fail "missing executable Bitcoin Core E2E runner"
 [[ -x "$core_isolation" ]] || fail "missing executable Bitcoin Core isolation checker"
+[[ -f "$core_evidence" ]] || fail "missing retained Bitcoin Core evidence"
 [[ -f "$canonical_evidence" ]] || fail "missing canonical M2 evidence packet"
 
 require_fixed 'tags: ["m*-complete*"]' "$workflow"
@@ -76,6 +78,38 @@ require_fixed 'org.logos-co.atomic-swaps.run=${RUN_ID}' "$workflow"
 require_fixed 'cargo check --locked --manifest-path "$guest_manifest" --bins' "$provisional_verifier"
 require_fixed 'cargo clippy --locked --manifest-path "$guest_manifest" --bins -- -D warnings' "$provisional_verifier"
 require_fixed 'risc0_rust_version="1.94.1"' "$provisional_verifier"
+
+jq -e '
+  .schema_version == 1
+  and .milestone == "M3"
+  and .scope == "bitcoin_core_infrastructure_only"
+  and .result == "passed"
+  and .tested_repository_commit == "a7393dfb74dc4113a0cb58a54528b3fd6268d0ef"
+  and .tested_origin_main_commit == .tested_repository_commit
+  and .worktree_clean_before_run == true
+  and .core.version == "31.1"
+  and .chain.network == "regtest"
+  and .chain.final_height == 101
+  and .isolation.rpc_publication == "dynamic_literal_loopback_only"
+  and .isolation.p2p_port_published == false
+  and .isolation.core_network_active == false
+  and .isolation.peers_before == 0
+  and .isolation.peers_after == 0
+  and .actor_rpc.credentials_distinct == true
+  and .actor_rpc.plaintext_credentials_disclosed == false
+  and .actor_rpc.forbidden_http_403_count > 0
+  and .actor_rpc.crossed_credentials_http_401_count == 2
+  and .external_dependencies.runtime_external_resources == []
+  and .external_dependencies.public_rpc_used == false
+  and .external_dependencies.faucet_used == false
+  and .external_dependencies.public_funds_used == false
+  and .cleanup.status == "passed"
+  and .cleanup.exact_run_resources_absent == true
+  and .cleanup.foreign_sentinel_survived_exact_cleanup == true
+  and (.security.ci_exact_image_trivy_fail_high_critical
+    | contains("remote_result_not_locally_observed"))
+' "$core_evidence" >/dev/null || fail "retained Bitcoin Core evidence invariants failed"
+
 require_fixed 'risc0_guest_builder_tag="r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be"' "$provisional_verifier"
 require_fixed 'risc0_guest_builder="risczero/risc0-guest-builder:${risc0_guest_builder_tag}"' "$provisional_verifier"
 require_fixed 'export RISC0_DOCKER_CONTAINER_TAG="$risc0_guest_builder_tag"' "$provisional_verifier"
