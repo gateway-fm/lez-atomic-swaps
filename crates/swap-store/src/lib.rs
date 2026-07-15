@@ -9,9 +9,17 @@ use std::{
     os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
 };
 
+mod adaptor_session_journal;
 mod bridge_operation_journal;
 mod zec_recovery;
 
+pub use adaptor_session_journal::{
+    AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
+    AdaptorSessionIdentity, AdaptorSessionJournalError, AdaptorSessionPhase,
+    AdaptorSessionReservation, AdaptorSessionRole, AdaptorSessionSnapshot, AdaptorTransitionCommit,
+    PartialSignatureCommit, ReservationCommit, SecretNonceBytes, SigningMaterial,
+    SqliteAdaptorSessionJournal,
+};
 pub use bridge_operation_journal::{
     BridgeContextCommit, BridgeObservationOutcome, BridgeOperationKey, BridgeOperationKind,
     BridgeRequestSpec, DurableBridgeRequestContext, SqliteBridgeOperationJournal,
