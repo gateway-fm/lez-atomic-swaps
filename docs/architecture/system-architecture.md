@@ -1101,9 +1101,13 @@ claimant receives the escrow. That retained component fixture still shares one
 process, but the 2026-07-15 composition crossed both actual local nodes through
 independent maker and taker role processes and stores. Both happy directions
 completed, and the recovered scalar matched the committed point without being
-retained in public evidence. The remaining edge is product integration: no
-cohesive coordinator yet owns the signed Bitcoin refund agreement and persists
-both actors through a terminal `Completed` lifecycle.
+retained in public evidence. The canonical version-one agreement is now
+implemented and reconstructs the exact aggregate key, P2TR/CSV contract,
+funding outpoint, cooperative transaction/sighash, Bitcoin chain policy, LEZ
+terms, and recovery schedule before accepting both role signatures. The
+remaining edge is product integration: no cohesive coordinator yet activates
+that validated record with typed chain adapters and persists both actors
+through a terminal `Completed` lifecycle.
 
 ## Abandonment and autonomous recovery flow
 

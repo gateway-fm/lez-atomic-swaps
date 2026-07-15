@@ -68,6 +68,15 @@ at height 102 and maker key-path claim at height 103, including the exact
 one-item witness and spent-once outpoint; the final mempool and peer set are
 empty and cleanup is exact.
 
+The public BTC SDK now also validates a bounded canonical agreement signed by
+both roles. It binds the exact LEZ runtime/program/accounts/amount/deadline and
+claim message, Bitcoin genesis and confirmation policy, ordered MuSig2 keys and
+adaptor point, reconstructed P2TR/CSV output, exact funding outpoint/value,
+cooperative transaction and BIP-341 sighash, and the direction-correct recovery
+schedule. Derived Taproot and transaction fields are reconstructed with the
+pinned libraries before either role signature is accepted. This closes the
+agreement primitive, not its still-pending activation by cohesive actors.
+
 Pushed commit `0177151` adds the next protocol slice behind canonical byte
 boundaries. Separate maker and taker signer-state objects create fresh
 OS-random nonces, exchange and verify transcript-bound commitments before nonce
@@ -135,7 +144,7 @@ The older retained actual-Core run remains a one-process public deterministic
 cryptographic and consensus fixture. The new composed run closes live witnessed
 submission, both happy directions, and the PoC atomicity/recovery order through
 separate role processes. It does **not** close the accepted proposal milestone:
-the full-lifecycle public BTC SDK/reference actor, native/custom-token parity,
+the cohesive full-lifecycle BTC reference actor, native/custom-token parity,
 refund/timeout and concurrent demos, Testnet4 setup/execution, production key
 custody/Core adapter, QA/chaos/infosec campaigns, and GW-M3-001 disposition
 remain. There is no `m3-complete` tag. CI runs the same P2TR funding/claim

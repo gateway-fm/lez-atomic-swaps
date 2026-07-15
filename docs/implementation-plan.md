@@ -1020,8 +1020,8 @@ outputs above.
 
 ## Milestone 3 entry plan: BTC adaptor/Taproot end to end
 
-Status: **active; operator-composed local-devnet happy path 2 of 2; PoC
-certification packaging in progress**. The exact Core 31.1
+Status: **active; operator-composed local-devnet happy path 2 of 2; canonical
+countersigned agreement GREEN; cohesive actor integration in progress**. The exact Core 31.1
 release verifier, minimal isolated image fixture, role-aware Regtest boundary,
 typed P2TR/CSV transaction library, and one-process public deterministic
 two-party MuSig2/adaptor/extraction funding/cooperative-claim composition are
@@ -1051,8 +1051,12 @@ transactions. Pushed `3d7386b` observes that exact pair without overstating
 absence/finality; `a3da09e` supplies its typed operator CLI; and `bf5bdbd` uses
 official `nssa` for aggregate-account mapping. Live submission, both reveal
 orders, and unilateral recovered-scalar completion are now proven at the
-operator-composed happy-path boundary. Refund execution, concurrency, a
-cohesive reference-actor terminal-state record, production key custody, and the
+operator-composed happy-path boundary. A bounded canonical agreement now binds
+both role signatures, exact chain identities and confirmation policy, LEZ
+runtime/custody/claim terms, the reconstructed P2TR/CSV contract, funding
+outpoint/value, cooperative transaction/sighash, and direction-correct recovery
+schedule. Typed finalized-claim/Core adapters, cohesive reference-actor
+terminal states, refund execution, concurrency, production key custody, and the
 accepted proposal's full SDK/demo surface remain pending.
 
 Authority was reread again on 2026-07-15: accepted replacement issue #112 is
@@ -1123,9 +1127,9 @@ independent signer processes/stores, but not a cohesive full-lifecycle public
 reference actor. Step 6 is 2 of 2 for actual chain execution. Pushed commit
 `a58ef96` adds the checked-in secret-safe packet, complete operator recipe,
 exact cleanup proof, synchronized architecture/traceability, and all 76 rendered
-Mermaid diagrams. Durable per-actor terminal status and one countersigned
-agreement binding the executable Bitcoin refund plan remain the local PoC
-certification work.
+Mermaid diagrams. The countersigned agreement binding the executable Bitcoin
+refund plan is now GREEN in six focused tests. Typed chain evidence plus durable
+per-actor terminal status remain the local PoC certification work.
 Exact-pinned `bitcoin` 0.32.101 constructs and verifies
 the P2TR/CSV transaction boundary. Exact-pinned `musig2` 0.4.1 aggregates the
 ordered maker/taker fixture keys, applies the Taproot tweak with matching `Q`
@@ -1349,11 +1353,14 @@ provides the operator guide, immutable secret-safe evidence, exact cleanup
 attestation, and current component/actor diagrams. Fresh official LEZ actor
 identity provisioning is now GREEN through an OS-random, owner-only,
 no-clobber helper whose public account IDs feed the run-owned genesis before
-Docker starts. Remaining local PoC work is a countersigned agreement that
-binds the exact executable BTC refund plan and recovery schedule, and a durable
-terminal `Completed` record for each cohesive reference actor rather than
-inferring completion only from terminal chain state and one-shot role
-processes. These are remaining deliverables, not external blockers.
+Docker starts. The canonical countersigned agreement now binds the exact
+executable BTC refund plan, chain identity/confirmation policy, and recovery
+schedule and reconstructs all derived Bitcoin fields before accepting either
+signature. Remaining local PoC work is typed finalized LEZ claim and Bitcoin
+Core evidence, then a durable terminal `Completed` record for each cohesive
+reference actor rather than inferring completion only from terminal chain state
+and one-shot role processes. These are remaining deliverables, not external
+blockers.
 
 ### Later owner-selected hardening
 

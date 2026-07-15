@@ -1,9 +1,10 @@
 # ADR 0029: M3 uses isolated Bitcoin and LEZ local devnets
 
 Status: Accepted. The operator-composed local functional PoC completed both
-happy directions on 2026-07-15. Cohesive lifecycle SDK composition, live
-refunds, concurrency, hardening, production readiness, and an M3 completion tag
-remain open.
+happy directions on 2026-07-15, and the canonical countersigned agreement is
+GREEN. Typed chain adapters, cohesive lifecycle SDK composition, live refunds,
+concurrency, hardening, production readiness, and an M3 completion tag remain
+open.
 
 ## Context
 
@@ -40,12 +41,15 @@ different protocol implementation.
 ```mermaid
 flowchart LR
     subgraph Actors["Independent actors"]
+        Agreement["Validated countersigned agreement v1"]
         Maker["Maker actor and store"]
         Taker["Taker actor and store"]
         MakerSigner["Maker signing journal"]
         TakerSigner["Taker signing journal"]
         Maker --> MakerSigner
         Taker --> TakerSigner
+        Agreement --> Maker
+        Agreement --> Taker
     end
 
     subgraph RoleServices["Role local services"]
@@ -97,6 +101,16 @@ well-known ports. The LEZ channel is
 `b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748`
 and its genesis block is
 `e24c5a4a2d08a747b96cebefa1304cbe80e42dac9ced3a52c2330b22797e10d9`.
+
+The implemented version-one agreement is canonical bounded Borsh committed by
+domain-separated SHA-256 and countersigned with each role's BIP-340 key. It
+binds the Bitcoin genesis and confirmation policy, ordered role keys and adaptor
+point, exact LEZ runtime/program/accounts/amount/deadline/claim message, complete
+P2TR and CSV fields, funding outpoint/value, cooperative output/fee/unsigned
+transaction/sighash, and conservative recovery anchors and margin. Validation
+reconstructs the aggregate key, Taproot output and claim transaction with the
+pinned libraries and rejects derived-field drift even when both signatures cover
+the drifted body. Actor activation of this record is still pending.
 
 ## Deployed LEZ guest and account onboarding
 
@@ -327,6 +341,8 @@ The following are deliberately not accepted by this ADR:
 
 - one cohesive lifecycle SDK or reference application that reproduces the
   operator-composed run with a single supported workflow;
+- typed finalized witnessed-claim and Bitcoin Core evidence integrated into
+  those actors;
 - live abandonment and both one-lock and two-lock refund execution at the CSV
   boundaries;
 - concurrent swaps, crash recovery, reorgs, chaos, denial-of-service, and

@@ -12,7 +12,11 @@ workspace = true
 
 [dependencies]
 bitcoin = { version = "=0.32.101", default-features = false, features = ["std"] }
+borsh = { version = "=1.7.0", features = ["derive"] }
 getrandom = "=0.3.4"
+lez-swap-core = { version = "0.1.0", path = "../swap-core" }
 musig2 = { version = "=0.4.1", default-features = false, features = ["secp256k1"] }
+sha2 = "=0.10.9"
+subtle = "=2.6.1"
 thiserror = "2.0.18"
 zeroize = "=1.9.0"
