@@ -57,8 +57,13 @@ Pushed `8a7ea55` bridges that durability boundary into the BTC SDK. Fresh
 MuSig2 material can be reserved before commitment exchange, reconstructed after
 restart, checked against the complete session and both role-bound nonce
 commitments, consumed once to produce a verified partial, and aggregated into a
-verified presignature. The remaining work is actor-process orchestration rather
-than a second signing implementation.
+verified presignature. Pushed `ca524ff` then moves every maker and taker phase
+into a fresh one-shot OS process with a separate owner-only SQLite journal and
+canonical public packets. Pushed `96f2a31` adds journal-bound adaptation and
+point-checked scalar extraction as separate processes with create-new `0600`
+scalar files. Four process journeys cover both the untweaked LEZ and tweaked
+Bitcoin domains, restart/replay, cross-wires, unsafe permissions, and
+secret-free output.
 
 Pushed `6935acd` adds the actual pinned LEZ v0.2 aggregate-witness guest. A
 distinct two-party aggregate authority signs the exact public transaction, but
@@ -76,14 +81,31 @@ existing one-shot submission boundary can accept it. Preparation survives a
 fresh process without rereading the authority nonce. Live local deployment and
 submission remain part of the composed runner, not this component claim.
 
+Pushed `3862dde` adds the other side of the witnessed LEZ lock: the depositor
+role prepares the exact generated `InitializeNativeWitnessed` account ordering
+and a separate `FundNative` transaction, signs only with the depositor key, and
+survives restart without combining preparation and submission. Pushed
+`f827dad` makes the Bitcoin transaction helper emit the exact public spend plan
+and canonical role-runner session, then verify an externally completed
+signature before emitting the broadcast-ready one-item-witness transaction.
+
+Pushed `3d7386b` adds conservative live observation of that witnessed LEZ
+initialize/fund pair. It validates canonical transaction bytes, signer/account
+order, aggregate authority/key, metadata/custody effects, and one stable tip;
+an exact miss remains `unknown_or_pending` instead of inventing absence or
+finality. Pushed `a3da09e` exposes the witnessed prepare, observe, submit, and
+complete calls through a strict typed one-shot operator CLI with a private
+capability file. Pushed `bf5bdbd` delegates x-only-key to LEZ-account mapping to
+the pinned official `nssa` implementation rather than duplicating it in shell.
+
 The retained actual-Core run is deliberately a one-process public deterministic
-cryptographic and consensus fixture, while the newer dual-session fixture uses
-fresh nonces and exchanged commitments in separate in-process role objects.
-Neither is a complete swap or production signing authority. There is no
-independent maker/taker process integration, witnessed submission through a
-live LEZ node, either complete direction, refund
-execution, or end-to-end atomicity. There is no executable full BTC swap
-command yet. CI runs the same P2TR funding/claim composition and
+cryptographic and consensus fixture; newer component tests now prove fresh
+nonces, exchanged commitments, durable separate maker/taker processes, and
+external Bitcoin transaction finalization. They are not yet one live corridor
+or a production signing authority. Witnessed submission through a live LEZ
+node, both complete directions, refund execution, and end-to-end atomicity
+remain unproven. There is no executable full BTC swap command yet. CI runs the
+same P2TR funding/claim composition and
 fail-hard scans
 the exact Core image for HIGH/CRITICAL vulnerabilities. The earlier clean
 infrastructure run remains available as

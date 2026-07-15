@@ -19,11 +19,12 @@ now reproduce a one-process, two-party `MuSig2` adaptor-signature Bitcoin-leg
 fixture. A second runnable fixture uses separate maker/taker signer-state
 objects, fresh OS-random nonces, commitment-before-reveal, and two
 domain-separated BTC/LEZ messages to prove both scalar-reveal orders. The
-role-local crash-safe journal and the checked LEZ aggregate-witness guest are
-also reproducible component gates. The complete M3 LEZ/BTC swap is **not
-available**: there is no journal-wired independent signer process, live LEZ
-witnessed submission, either complete actual-node direction, refund execution,
-or end-to-end atomicity proof.
+role-local crash-safe journal, fresh-process maker/taker runner, external
+adaptation/extraction, and checked LEZ aggregate-witness guest are also
+reproducible component gates. The complete M3 LEZ/BTC swap is **not available**:
+there is no live LEZ witnessed submission, complete reference actor, either
+complete actual-node direction, refund execution, or end-to-end atomicity
+proof.
 
 Start with the standalone cryptographic fixture. It needs Rust/Cargo and locked
 registry artifacts, but no Docker, node, RPC, faucet, public funds, or public
@@ -96,6 +97,7 @@ database for every test:
 cargo test --locked -p lez-swap-store --test adaptor_session_journal --no-fail-fast
 cargo test --locked -p lez-swap-store --no-fail-fast
 cargo test --locked -p lez-btc-swap-sdk --all-targets
+cargo test --locked -p lez-adaptor-role-runner
 ```
 
 Require 6 focused journal tests and all 60 package tests to pass. They prove
@@ -110,8 +112,12 @@ custody.
 Require all 12 BTC SDK tests to pass. The restart cases verify the full durable
 context, each role's own and peer nonce commitments, the secret/public nonce
 relation, partial signatures, and the aggregate presignature. These are exact
-library boundaries; the command does not start independent maker/taker actor
-processes.
+library boundaries. Require all 4 role-runner integration journeys to pass;
+they spawn fresh maker/taker OS processes with separate SQLite journals for
+both LEZ and Bitcoin sessions, replay exact partials after restart, adapt one
+signature, recover the point-checked scalar from the other, and reject
+session/role/message/packet cross-wires without printing secrets. They remain a
+signing component, not complete chain-connected reference actors.
 
 The official-wire witnessed sidecar boundary is reproduced separately. The
 first two commands need only the locked root graph; the third uses the pinned
@@ -317,10 +323,11 @@ archive reduces downloads but does not remove the other provenance checks.
 
 There is currently no manual command for a complete M3 LEZ/BTC swap. The
 runnable boundary includes the isolated `TakerSellsForeign`-shaped Bitcoin leg,
-the generic durable journal, and the recursively executed LEZ witnessed guest.
-SDK/journal wiring, independent signer processes, live two-node effects, both
-complete directions, refunds, and atomicity remain future slices. Commitment
-exchange and both in-memory reveal orders are runnable with
+the durable fresh-process role runner, external Bitcoin transaction finalizer,
+and the recursively executed LEZ witnessed guest plus prepare-only
+initialize/fund/claim boundaries. Live two-node composition, both complete
+directions, refunds, and atomicity remain future slices. Commitment exchange
+and both in-memory reveal orders are also runnable with
 `dual-chain-adaptor-poc` as described above.
 
 ## Can I run the complete swap myself?
