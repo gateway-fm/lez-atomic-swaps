@@ -1141,7 +1141,7 @@ async fn maker_lock_projects_in_both_directions_for_both_roles() {
             );
             assert_eq!(status["revision"], 2);
             assert_eq!(status["phase"], "both_legs_locked");
-            assert_eq!(status["next_action"], "later_revision_not_yet_composed");
+            assert_eq!(status["next_action"], "observe_revealing_claim");
         }
     }
 }
@@ -1433,4 +1433,263 @@ async fn contradictory_pending_chain_is_rejected_before_projection() {
             .expect("offline status after contradiction"),
     );
     assert_eq!(status["revision"], 0);
+}
+
+struct FixedClaimObserver {
+    observation: ActorClaimObservation,
+    calls: AtomicUsize,
+}
+
+impl FixedClaimObserver {
+    fn new(observation: ActorClaimObservation) -> Self {
+        Self {
+            observation,
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl ClaimObservationPort for FixedClaimObserver {
+    async fn observe(
+        &self,
+        _agreement: &BtcAgreementV1,
+        _transition: ClaimTransition,
+    ) -> Result<ActorClaimObservation, ActorCommandError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(self.observation.clone())
+    }
+}
+
+async fn activate_and_project_both_locks(fixture: &ActorFixture) {
+    activate_and_project_taker_lock(fixture).await;
+    let observer = FixedObserver::new(maker_lock_observation(&fixture.agreement, 1));
+    drive_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &observer,
+    )
+    .await
+    .expect("project maker lock");
+}
+
+fn revealing_signature(fixture: &ActorFixture) -> [u8; 64] {
+    let chain = fixture
+        .agreement
+        .coordinator()
+        .funded_chain(Participant::Maker);
+    let (domain, signing) = match chain {
+        Chain::Bitcoin => (
+            BtcAdaptorSessionDomain::Bitcoin,
+            &fixture.config.signing.bitcoin,
+        ),
+        Chain::Lez => (BtcAdaptorSessionDomain::Lez, &fixture.config.signing.lez),
+        Chain::Zcash | Chain::Monero => unreachable!("Bitcoin agreement chain set"),
+    };
+    let context = fixture
+        .agreement
+        .adaptor_session_context(domain, *signing.session_id.as_bytes())
+        .expect("agreement claim context");
+    let journal = SqliteAdaptorSessionJournal::open_existing(&signing.journal_db)
+        .expect("open signer journal");
+    let snapshot = journal
+        .load(signing.session_id.as_bytes())
+        .expect("load signer snapshot")
+        .expect("signer snapshot");
+    let presignature = snapshot.presignature().expect("durable presignature");
+    lez_btc_swap_sdk::adapt_presignature(&context, *presignature.bytes(), Zeroizing::new([7; 32]))
+        .expect("adapt revealing signature")
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn revealing_claim_projects_revision_three_for_both_roles_and_directions() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        for role in [ActorRole::Maker, ActorRole::Taker] {
+            let fixture = ActorFixture::for_direction(direction, role);
+            activate_and_project_both_locks(&fixture).await;
+            let chain = fixture
+                .agreement
+                .coordinator()
+                .funded_chain(Participant::Maker);
+            let observer = FixedClaimObserver::new(ActorClaimObservation::Ready {
+                chain,
+                transaction_id: "canonical-revealing-claim".into(),
+                confirmations: if chain == Chain::Bitcoin {
+                    support::REQUIRED_CONFIRMATIONS
+                } else {
+                    FINALIZED_LEZ_CONFIRMATION_UNITS
+                },
+                chain_evidence: b"canonical-revealing-claim-evidence".to_vec(),
+                revealing_public_signature: Some(revealing_signature(&fixture)),
+            });
+
+            let projected = output_json(
+                drive_claim_with_observer(
+                    &fixture.config,
+                    fixture.agreement.clone(),
+                    fixture.agreement_wire.clone(),
+                    &observer,
+                )
+                .await
+                .expect("project revealing claim"),
+            );
+            assert_eq!(projected["outcome"], "observed_then_projected");
+            assert_eq!(projected["revision"], 3);
+            assert_eq!(projected["phase"], "claim_evidence_available");
+            assert_eq!(observer.calls(), 1);
+
+            let status = output_json(
+                execute_actor_command(&fixture.config, ActorCommand::Status)
+                    .await
+                    .expect("offline revision-three status"),
+            );
+            assert_eq!(status["next_action"], "observe_followup_claim");
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn revealing_claim_requires_the_exact_related_public_signature() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Maker);
+    activate_and_project_both_locks(&fixture).await;
+    let chain = fixture
+        .agreement
+        .coordinator()
+        .funded_chain(Participant::Maker);
+    let mut signature = revealing_signature(&fixture);
+    signature[63] ^= 1;
+    let observer = FixedClaimObserver::new(ActorClaimObservation::Ready {
+        chain,
+        transaction_id: "canonical-revealing-claim".into(),
+        confirmations: support::REQUIRED_CONFIRMATIONS,
+        chain_evidence: b"canonical-revealing-claim-evidence".to_vec(),
+        revealing_public_signature: Some(signature),
+    });
+
+    let error = drive_claim_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &observer,
+    )
+    .await
+    .expect_err("unrelated public signature must fail closed");
+    assert_eq!(error, ActorCommandError::ObservationUnavailable);
+    let status = execute_actor_command(&fixture.config, ActorCommand::Status)
+        .await
+        .expect("offline status remains readable");
+    assert_eq!(output_json(status)["revision"], 2);
+}
+
+async fn project_revealing_claim(fixture: &ActorFixture) {
+    let chain = fixture
+        .agreement
+        .coordinator()
+        .funded_chain(Participant::Maker);
+    let observer = FixedClaimObserver::new(ActorClaimObservation::Ready {
+        chain,
+        transaction_id: "canonical-revealing-claim".into(),
+        confirmations: if chain == Chain::Bitcoin {
+            support::REQUIRED_CONFIRMATIONS
+        } else {
+            FINALIZED_LEZ_CONFIRMATION_UNITS
+        },
+        chain_evidence: b"canonical-revealing-claim-evidence".to_vec(),
+        revealing_public_signature: Some(revealing_signature(fixture)),
+    });
+    drive_claim_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &observer,
+    )
+    .await
+    .expect("project revealing claim");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn pending_revealing_claim_preserves_both_locks_without_secret_use() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_both_locks(&fixture).await;
+    let chain = fixture
+        .agreement
+        .coordinator()
+        .funded_chain(Participant::Maker);
+    let observer = FixedClaimObserver::new(ActorClaimObservation::Pending { chain });
+
+    let pending = output_json(
+        drive_claim_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &observer,
+        )
+        .await
+        .expect("revealing claim remains pending"),
+    );
+    assert_eq!(pending["outcome"], "awaiting_observation");
+    assert_eq!(pending["revision"], 2);
+    assert_eq!(pending["phase"], "both_legs_locked");
+    assert_eq!(observer.calls(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn followup_claim_completes_both_roles_and_directions() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        for role in [ActorRole::Maker, ActorRole::Taker] {
+            let fixture = ActorFixture::for_direction(direction, role);
+            activate_and_project_both_locks(&fixture).await;
+            project_revealing_claim(&fixture).await;
+            let chain = fixture
+                .agreement
+                .coordinator()
+                .funded_chain(Participant::Taker);
+            let observer = FixedClaimObserver::new(ActorClaimObservation::Ready {
+                chain,
+                transaction_id: "canonical-followup-claim".into(),
+                confirmations: if chain == Chain::Bitcoin {
+                    support::REQUIRED_CONFIRMATIONS
+                } else {
+                    FINALIZED_LEZ_CONFIRMATION_UNITS
+                },
+                chain_evidence: b"canonical-followup-claim-evidence".to_vec(),
+                revealing_public_signature: None,
+            });
+
+            let completed = output_json(
+                drive_claim_with_observer(
+                    &fixture.config,
+                    fixture.agreement.clone(),
+                    fixture.agreement_wire.clone(),
+                    &observer,
+                )
+                .await
+                .expect("project followup claim"),
+            );
+            assert_eq!(completed["outcome"], "observed_then_projected");
+            assert_eq!(completed["revision"], 4);
+            assert_eq!(completed["phase"], "completed");
+            assert_eq!(observer.calls(), 1);
+
+            let status = output_json(
+                execute_actor_command(&fixture.config, ActorCommand::Status)
+                    .await
+                    .expect("offline completed status"),
+            );
+            assert_eq!(status["revision"], 4);
+            assert_eq!(status["phase"], "completed");
+            assert_eq!(status["next_action"], "complete");
+        }
+    }
 }

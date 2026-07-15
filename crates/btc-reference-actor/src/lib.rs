@@ -24,14 +24,15 @@ use lez_bridge_protocol::{
     WitnessedEscrowMetadataFacts, WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
 };
 use lez_btc_core_adapter::{
-    BitcoinCoreAdapter, BitcoinCoreEvidenceV1, BitcoinCoreRpc, CoreConnectivityPolicy,
-    FundingObservation, HttpBitcoinCoreConfig, HttpBitcoinCoreRpc,
+    BitcoinCoreAdapter, BitcoinCoreEvidenceV1, BitcoinCoreRpc,
+    ClaimObservation as BitcoinClaimObservation, CoreConnectivityPolicy, FundingObservation,
+    HttpBitcoinCoreConfig, HttpBitcoinCoreRpc,
 };
 use lez_btc_swap_sdk::{
-    BtcAdaptorSessionDomain, BtcAgreementV1, MAX_BTC_AGREEMENT_RECORD_BYTES,
-    verify_adaptor_presignature, verify_adaptor_secret,
+    BtcAdaptorSessionDomain, BtcAgreementV1, MAX_BTC_AGREEMENT_RECORD_BYTES, adapt_presignature,
+    extract_adaptor_secret, verify_adaptor_presignature, verify_adaptor_secret,
 };
-use lez_swap_core::{Chain, Participant, Phase};
+use lez_swap_core::{Chain, ClaimEvidence, Participant, Phase};
 use lez_swap_store::{
     AdaptorSessionIdentity, AdaptorSessionPhase, AdaptorSessionRole, BtcAgreementAcceptance,
     BtcLifecycleEvidenceV1, BtcOfflineStatus, BtcRecoveryError, SqliteAdaptorSessionJournal,
@@ -390,6 +391,8 @@ enum ActorStateV1 {
 enum ActorNextActionV1 {
     ObserveTakerFirstLock,
     ObserveMakerSecondLock,
+    ObserveRevealingClaim,
+    ObserveFollowupClaim,
     LaterRevisionNotYetComposed,
     Complete,
 }
@@ -471,7 +474,7 @@ pub enum ActorCommandError {
     #[error("actor activation material is unavailable")]
     ActivationMaterialUnavailable,
     /// A chain observation was unavailable, malformed, or contradicted signed terms.
-    #[error("actor first-lock observation is unavailable")]
+    #[error("actor chain observation is unavailable")]
     ObservationUnavailable,
     /// Durable evidence projection failed or lost its predecessor CAS.
     #[error("actor evidence projection is unavailable")]
@@ -562,6 +565,71 @@ trait FundingObservationPort: Send + Sync {
         agreement: &BtcAgreementV1,
         transition: FundingTransition,
     ) -> Result<ActorFundingObservation, ActorCommandError>;
+}
+
+/// Claim transition selected only from the durable predecessor revision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ClaimTransition {
+    RevealingClaim,
+    FollowupClaim,
+}
+
+impl ClaimTransition {
+    const fn from_predecessor(revision: u64) -> Option<Self> {
+        match revision {
+            2 => Some(Self::RevealingClaim),
+            3 => Some(Self::FollowupClaim),
+            _ => None,
+        }
+    }
+
+    const fn funded_participant(self) -> Participant {
+        match self {
+            Self::RevealingClaim => Participant::Maker,
+            Self::FollowupClaim => Participant::Taker,
+        }
+    }
+
+    const fn revision(self) -> u64 {
+        match self {
+            Self::RevealingClaim => 3,
+            Self::FollowupClaim => 4,
+        }
+    }
+
+    const fn phase(self) -> Phase {
+        match self {
+            Self::RevealingClaim => Phase::ClaimEvidenceAvailable,
+            Self::FollowupClaim => Phase::Completed,
+        }
+    }
+}
+
+/// Affirmative or pending result returned by one agreement-aware claim observer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ActorClaimObservation {
+    /// The exact claim is not yet canonical at the signed policy.
+    Pending { chain: Chain },
+    /// Public exact evidence is ready for one local durable projection.
+    Ready {
+        chain: Chain,
+        transaction_id: Box<str>,
+        confirmations: u32,
+        chain_evidence: Vec<u8>,
+        /// Required only for the revealing claim.
+        revealing_public_signature: Option<[u8; 64]>,
+    },
+}
+
+/// Revision-aware claim seam used by deterministic actor tests and live adapters.
+#[async_trait]
+trait ClaimObservationPort: Send + Sync {
+    /// Performs one bounded read-only exact-claim observation.
+    async fn observe(
+        &self,
+        agreement: &BtcAgreementV1,
+        transition: ClaimTransition,
+    ) -> Result<ActorClaimObservation, ActorCommandError>;
 }
 
 /// Executes one disk-configured role-fixed command.
@@ -733,7 +801,38 @@ async fn drive_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCo
     let durable = store
         .status()
         .map_err(|_| ActorCommandError::StateUnavailable)?;
-    let Some(transition) = FundingTransition::from_predecessor(durable.revision()) else {
+    if let Some(transition) = FundingTransition::from_predecessor(durable.revision()) {
+        let expected_chain = agreement.coordinator().funded_chain(transition.funder());
+        return match expected_chain {
+            Chain::Bitcoin => {
+                let core_config = HttpBitcoinCoreConfig::new(config.bitcoin_core.endpoint.clone())
+                    .and_then(|value| value.with_cookie_file(&config.bitcoin_core.cookie_file))
+                    .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+                let rpc = HttpBitcoinCoreRpc::connect(&core_config)
+                    .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+                let observer = BitcoinFundingObserver {
+                    adapter: BitcoinCoreAdapter::new(rpc, config.bitcoin_core.connectivity.into()),
+                };
+                drive_with_observer(config, agreement, wire, &observer).await
+            }
+            Chain::Lez => {
+                let factory = CapabilityFileBridgeClientFactory::new(
+                    config.lez_bridge.endpoint.to_string(),
+                    config.lez_bridge.capability_file.clone(),
+                    config.lez_bridge.run_id.clone(),
+                    config.lez_bridge.runtime.clone(),
+                    Duration::from_millis(config.lez_bridge.request_timeout_millis),
+                );
+                let client = factory
+                    .fresh_transport()
+                    .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+                let observer = LezFundingObserver { config, client };
+                drive_with_observer(config, agreement, wire, &observer).await
+            }
+            Chain::Zcash | Chain::Monero => Err(ActorCommandError::AgreementBindingInvalid),
+        };
+    }
+    let Some(transition) = ClaimTransition::from_predecessor(durable.revision()) else {
         return Ok(effect_output(
             config,
             ActorEffectCommandV1::Drive,
@@ -743,7 +842,9 @@ async fn drive_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCo
             &durable,
         ));
     };
-    let expected_chain = agreement.coordinator().funded_chain(transition.funder());
+    let expected_chain = agreement
+        .coordinator()
+        .funded_chain(transition.funded_participant());
     match expected_chain {
         Chain::Bitcoin => {
             let core_config = HttpBitcoinCoreConfig::new(config.bitcoin_core.endpoint.clone())
@@ -751,25 +852,19 @@ async fn drive_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCo
                 .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
             let rpc = HttpBitcoinCoreRpc::connect(&core_config)
                 .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
-            let observer = BitcoinFundingObserver {
+            let observer = BitcoinClaimObserver {
                 adapter: BitcoinCoreAdapter::new(rpc, config.bitcoin_core.connectivity.into()),
             };
-            drive_with_observer(config, agreement, wire, &observer).await
+            drive_claim_with_observer(config, agreement, wire, &observer).await
         }
-        Chain::Lez => {
-            let factory = CapabilityFileBridgeClientFactory::new(
-                config.lez_bridge.endpoint.to_string(),
-                config.lez_bridge.capability_file.clone(),
-                config.lez_bridge.run_id.clone(),
-                config.lez_bridge.runtime.clone(),
-                Duration::from_millis(config.lez_bridge.request_timeout_millis),
-            );
-            let client = factory
-                .fresh_transport()
-                .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
-            let observer = LezFundingObserver { config, client };
-            drive_with_observer(config, agreement, wire, &observer).await
-        }
+        Chain::Lez => Ok(effect_output(
+            config,
+            ActorEffectCommandV1::Drive,
+            ActorEffectOutcomeV1::NotYetComposed {
+                durable_revision: durable.revision(),
+            },
+            &durable,
+        )),
         Chain::Zcash | Chain::Monero => Err(ActorCommandError::AgreementBindingInvalid),
     }
 }
@@ -884,6 +979,257 @@ async fn drive_with_observer(
     ))
 }
 
+/// Drives one claim revision from exact canonical public evidence.
+///
+/// The complete activation-material gate is rerun immediately before the
+/// observation. Revision three accepts only a final signature related to the
+/// agreement-derived presignature and adaptor point. Takers reproduce it from
+/// their private scalar; makers recover and point-check that scalar from the
+/// public signature. Only its one-way commitment enters durable lifecycle
+/// evidence.
+async fn drive_claim_with_observer(
+    config: &ActorConfig,
+    agreement: BtcAgreementV1,
+    agreement_wire: Vec<u8>,
+    observer: &dyn ClaimObservationPort,
+) -> Result<ActorEffectOutputV1, ActorCommandError> {
+    if !state_file_exists(&config.state_db)? {
+        return Err(ActorCommandError::NotActivated);
+    }
+    validate_actor_binding(config, &agreement)?;
+    validate_activation_material(config, &agreement)?;
+    let mut store = match open_existing_store(config, &agreement, agreement_wire) {
+        Ok(store) => store,
+        Err(BtcRecoveryError::MissingAgreementAcceptance) => {
+            return Err(ActorCommandError::NotActivated);
+        }
+        Err(_) => return Err(ActorCommandError::StateUnavailable),
+    };
+    let before = store
+        .status()
+        .map_err(|_| ActorCommandError::StateUnavailable)?;
+    let Some(transition) = ClaimTransition::from_predecessor(before.revision()) else {
+        return Ok(effect_output(
+            config,
+            ActorEffectCommandV1::Drive,
+            ActorEffectOutcomeV1::NotYetComposed {
+                durable_revision: before.revision(),
+            },
+            &before,
+        ));
+    };
+    let expected_chain = agreement
+        .coordinator()
+        .funded_chain(transition.funded_participant());
+    let observation = observer.observe(&agreement, transition).await?;
+    let (chain, transaction_id, confirmations, chain_evidence, public_signature) = match observation
+    {
+        ActorClaimObservation::Pending { chain } => {
+            if chain != expected_chain {
+                return Err(ActorCommandError::AgreementBindingInvalid);
+            }
+            return Ok(effect_output(
+                config,
+                ActorEffectCommandV1::Drive,
+                ActorEffectOutcomeV1::AwaitingObservation {
+                    chain: chain.into(),
+                },
+                &before,
+            ));
+        }
+        ActorClaimObservation::Ready {
+            chain,
+            transaction_id,
+            confirmations,
+            chain_evidence,
+            revealing_public_signature,
+        } => {
+            if chain != expected_chain
+                || !claim_confirmation_is_ready(&agreement, chain, confirmations)
+            {
+                return Err(ActorCommandError::AgreementBindingInvalid);
+            }
+            (
+                chain,
+                transaction_id,
+                confirmations,
+                chain_evidence,
+                revealing_public_signature,
+            )
+        }
+    };
+    let evidence = claim_lifecycle_evidence(
+        config,
+        &agreement,
+        transition,
+        chain,
+        transaction_id,
+        confirmations,
+        chain_evidence,
+        public_signature,
+    )?;
+    project_claim_transition(
+        config,
+        &mut store,
+        &before,
+        transition,
+        chain,
+        expected_chain,
+        &evidence,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn claim_lifecycle_evidence(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: ClaimTransition,
+    chain: Chain,
+    transaction_id: Box<str>,
+    confirmations: u32,
+    chain_evidence: Vec<u8>,
+    public_signature: Option<[u8; 64]>,
+) -> Result<BtcLifecycleEvidenceV1, ActorCommandError> {
+    match transition {
+        ClaimTransition::RevealingClaim => {
+            let signature = public_signature.ok_or(ActorCommandError::ObservationUnavailable)?;
+            let claim_evidence =
+                claim_evidence_from_signature(config, agreement, chain, signature)?;
+            BtcLifecycleEvidenceV1::revealing_claim(
+                chain,
+                transaction_id,
+                confirmations,
+                chain_evidence,
+                signature,
+                claim_evidence,
+            )
+        }
+        ClaimTransition::FollowupClaim => {
+            if public_signature.is_some() {
+                return Err(ActorCommandError::ObservationUnavailable);
+            }
+            BtcLifecycleEvidenceV1::followup_claim(
+                chain,
+                transaction_id,
+                confirmations,
+                chain_evidence,
+            )
+        }
+    }
+    .map_err(|_| ActorCommandError::ObservationUnavailable)
+}
+
+fn project_claim_transition(
+    config: &ActorConfig,
+    store: &mut SqliteBtcRecoveryStore,
+    before: &BtcOfflineStatus,
+    transition: ClaimTransition,
+    chain: Chain,
+    expected_chain: Chain,
+    evidence: &BtcLifecycleEvidenceV1,
+) -> Result<ActorEffectOutputV1, ActorCommandError> {
+    let (outcome, after) = match store.project(before.revision(), evidence) {
+        Ok(commit) => {
+            let after = store
+                .status()
+                .map_err(|_| ActorCommandError::StateUnavailable)?;
+            (
+                ActorEffectOutcomeV1::ObservedThenProjected {
+                    chain: chain.into(),
+                    was_replay: commit.was_replay(),
+                },
+                after,
+            )
+        }
+        Err(BtcRecoveryError::EvidenceConflict { revision })
+            if revision == transition.revision() =>
+        {
+            let winner = store
+                .status()
+                .map_err(|_| ActorCommandError::StateUnavailable)?;
+            if winner.revision() != transition.revision() || winner.phase() != transition.phase() {
+                return Err(ActorCommandError::ProjectionUnavailable);
+            }
+            (
+                ActorEffectOutcomeV1::ConvergedOnExistingProjection {
+                    chain: expected_chain.into(),
+                    durable_revision: winner.revision(),
+                },
+                winner,
+            )
+        }
+        Err(_) => return Err(ActorCommandError::ProjectionUnavailable),
+    };
+    Ok(effect_output(
+        config,
+        ActorEffectCommandV1::Drive,
+        outcome,
+        &after,
+    ))
+}
+
+fn claim_confirmation_is_ready(
+    agreement: &BtcAgreementV1,
+    chain: Chain,
+    confirmations: u32,
+) -> bool {
+    match chain {
+        Chain::Bitcoin => confirmations >= agreement.required_bitcoin_confirmations(),
+        Chain::Lez => confirmations == FINALIZED_LEZ_CONFIRMATION_UNITS,
+        Chain::Zcash | Chain::Monero => false,
+    }
+}
+
+fn claim_evidence_from_signature(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    chain: Chain,
+    public_signature: [u8; 64],
+) -> Result<ClaimEvidence, ActorCommandError> {
+    let (domain, signing) = match chain {
+        Chain::Bitcoin => (BtcAdaptorSessionDomain::Bitcoin, &config.signing.bitcoin),
+        Chain::Lez => (BtcAdaptorSessionDomain::Lez, &config.signing.lez),
+        Chain::Zcash | Chain::Monero => {
+            return Err(ActorCommandError::AgreementBindingInvalid);
+        }
+    };
+    let context = agreement
+        .adaptor_session_context(domain, *signing.session_id.as_bytes())
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+    let journal = SqliteAdaptorSessionJournal::open_existing(&signing.journal_db)
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+    let snapshot = journal
+        .load(signing.session_id.as_bytes())
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?
+        .ok_or(ActorCommandError::ActivationMaterialUnavailable)?;
+    let presignature = snapshot
+        .presignature()
+        .ok_or(ActorCommandError::ActivationMaterialUnavailable)?;
+    match config.role {
+        ActorRole::Taker => {
+            let secret_path = config
+                .signing
+                .adaptor_secret_file
+                .as_ref()
+                .ok_or(ActorCommandError::ActivationMaterialUnavailable)?;
+            let secret = read_private_adaptor_secret(secret_path)
+                .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?;
+            let claim_evidence = ClaimEvidence::new(*secret);
+            let expected = adapt_presignature(&context, *presignature.bytes(), secret)
+                .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+            if expected != public_signature {
+                return Err(ActorCommandError::ObservationUnavailable);
+            }
+            Ok(claim_evidence)
+        }
+        ActorRole::Maker => {
+            let secret = extract_adaptor_secret(&context, *presignature.bytes(), public_signature)
+                .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+            Ok(ClaimEvidence::new(*secret))
+        }
+    }
+}
+
 struct BitcoinFundingObserver<R> {
     adapter: BitcoinCoreAdapter<R>,
 }
@@ -920,6 +1266,48 @@ where
                 .into_boxed_str(),
             confirmations: observed.confirmations(),
             chain_evidence: evidence,
+        })
+    }
+}
+
+struct BitcoinClaimObserver<R> {
+    adapter: BitcoinCoreAdapter<R>,
+}
+
+#[async_trait]
+impl<R> ClaimObservationPort for BitcoinClaimObserver<R>
+where
+    R: BitcoinCoreRpc + Send + Sync,
+{
+    async fn observe(
+        &self,
+        agreement: &BtcAgreementV1,
+        transition: ClaimTransition,
+    ) -> Result<ActorClaimObservation, ActorCommandError> {
+        let observed = self
+            .adapter
+            .observe_claim(agreement)
+            .await
+            .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        let BitcoinClaimObservation::Finalized(claim) = &observed else {
+            return Ok(ActorClaimObservation::Pending {
+                chain: Chain::Bitcoin,
+            });
+        };
+        let evidence = BitcoinCoreEvidenceV1::claim(agreement, &observed)
+            .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        let public_signature = *evidence
+            .claim_public_witness()
+            .ok_or(ActorCommandError::ObservationUnavailable)?;
+        Ok(ActorClaimObservation::Ready {
+            chain: Chain::Bitcoin,
+            transaction_id: claim.transaction_id().to_string().into_boxed_str(),
+            confirmations: claim.confirmations(),
+            chain_evidence: evidence
+                .encode()
+                .map_err(|_| ActorCommandError::ObservationUnavailable)?,
+            revealing_public_signature: (transition == ClaimTransition::RevealingClaim)
+                .then_some(public_signature),
         })
     }
 }
@@ -1243,6 +1631,10 @@ fn status_output(config: &ActorConfig, status: &BtcOfflineStatus) -> ActorStatus
         ActorNextActionV1::ObserveTakerFirstLock
     } else if status.revision() == 1 {
         ActorNextActionV1::ObserveMakerSecondLock
+    } else if status.revision() == 2 {
+        ActorNextActionV1::ObserveRevealingClaim
+    } else if status.revision() == 3 {
+        ActorNextActionV1::ObserveFollowupClaim
     } else {
         ActorNextActionV1::LaterRevisionNotYetComposed
     };
