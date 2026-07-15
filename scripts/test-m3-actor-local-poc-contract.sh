@@ -43,6 +43,8 @@ jq -e '
   and .actor_owned_claim_effects == true
   and .secure_sidecar_state_root_required == true
   and .single_core_rpc_response_per_call == true
+  and .anchor_height_uses_allowed_blockchain_info == true
+  and .prelock_policy_response_retained == true
   and .submission_count_query == true
   and .owned_process_registry == true
   and .pre_lock_presignature_domains == ["bitcoin", "lez"]

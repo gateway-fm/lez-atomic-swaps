@@ -31,6 +31,8 @@ emit_contract() {
       actor_owned_claim_effects: true,
       secure_sidecar_state_root_required: true,
       single_core_rpc_response_per_call: true,
+      anchor_height_uses_allowed_blockchain_info: true,
+      prelock_policy_response_retained: true,
       submission_count_query: true,
       owned_process_registry: true,
       pre_lock_presignature_domains: ["bitcoin", "lez"],
@@ -342,7 +344,7 @@ prepare_stage_two_spec() {
   local depositor claimant amount now refund_seconds refund_at_ms swap_id terms_file
   local source_tx source_vout source_value source_script secret_hex secret_file
   local funding_spec funding_summary funding_hex funder mempool genesis height anchor first_summary
-  local funding_source_evidence
+  local funding_source_evidence funding_policy_evidence
   local pda_evidence metadata custody claim_hash earlier later
   public_spec="${M3_POC_DIRECTION_ROOT}/fixture/public-spec.json"
   stage1_sha="$(sha256sum "$public_spec" | sed 's/ .*//')"
@@ -451,10 +453,23 @@ prepare_stage_two_spec() {
     fail "offline signed funding summary is invalid"
   funding_hex="$(tr -d '\r\n' <"${M3_POC_DIRECTION_ROOT}/fixture/funding-transaction.hex")"
   case "$M3_POC_DIRECTION" in taker_sells_foreign) funder=taker ;; taker_sells_lez) funder=maker ;; esac
-  core_rpc "$funder" testmempoolaccept "[[\"${funding_hex}\"]]" |
-    jq -e '.result[0].allowed == true' >/dev/null || fail "actual Core policy rejected pre-lock funding"
+  funding_policy_evidence="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-funding-policy.json"
+  [[ ! -e "$funding_policy_evidence" && ! -L "$funding_policy_evidence" ]] ||
+    fail "refusing to overwrite Core funding-policy evidence"
+  core_rpc "$funder" testmempoolaccept "[[\"${funding_hex}\"]]" \
+    >"$funding_policy_evidence"
+  chmod 0600 "$funding_policy_evidence"
+  jq -se --arg tx "$(jq -er '.transaction_id' "$funding_summary")" '
+    length == 1
+    and .[0].error == null
+    and (.[0].result | type == "array" and length == 1)
+    and .[0].result[0].txid == $tx
+    and .[0].result[0].allowed == true
+  ' "$funding_policy_evidence" >/dev/null ||
+    fail "actual Core policy rejected pre-lock funding"
   genesis="$(core_rpc maker getblockhash '[0]' | jq -er '.result')"
-  height="$(core_rpc maker getblockcount '[]' | jq -er '.result | numbers')"
+  height="$(core_rpc maker getblockchaininfo '[]' |
+    jq -ser 'select(length == 1) | .[0].result.blocks | numbers')"
   anchor=$((height + 1))
 
   jq -n --arg stage1 "$stage1_sha" --arg swap "$swap_id" --arg direction "$M3_POC_DIRECTION" \
