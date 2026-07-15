@@ -46,6 +46,7 @@ jq -e '
   and .anchor_height_uses_allowed_blockchain_info == true
   and .prelock_policy_response_retained == true
   and .role_allowed_block_and_mempool_observation == true
+  and .bounded_read_only_observation_retries_never_resubmit == true
   and .submission_count_query == true
   and .owned_process_registry == true
   and .pre_lock_presignature_domains == ["bitcoin", "lez"]
@@ -85,6 +86,7 @@ jq -e '
 
 for behavior in prepare_final_transcript provision_signing_material run_signing_ceremony \
   write_actor_configs activate_actors submit_bitcoin_lock submit_lez_lock_pair \
+  actor_invoke_observation_retry \
   write_dual_lock_gate submit_actor_bitcoin_claim submit_actor_lez_claim \
   prove_lez_finalized_transaction write_actual_effect_manifest; do
   rg -Fq "${behavior}()" "$direction_driver" ||

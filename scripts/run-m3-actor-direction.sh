@@ -34,6 +34,7 @@ emit_contract() {
       anchor_height_uses_allowed_blockchain_info: true,
       prelock_policy_response_retained: true,
       role_allowed_block_and_mempool_observation: true,
+      bounded_read_only_observation_retries_never_resubmit: true,
       submission_count_query: true,
       owned_process_registry: true,
       pre_lock_presignature_domains: ["bitcoin", "lez"],
@@ -881,6 +882,31 @@ actor_invoke() {
   chmod 0600 "$actor_last_output"
 }
 
+actor_invoke_observation_retry() {
+  local role="$1" label="$2"
+  local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
+  local attempt attempt_output attempt_error error_text
+  actor_last_output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-${role}.json"
+  [[ ! -e "$actor_last_output" && ! -L "$actor_last_output" ]] ||
+    fail "refusing to overwrite actor evidence: ${label}/${role}"
+  for attempt in {1..120}; do
+    attempt_output="${actor_last_output%.json}-attempt-${attempt}.json"
+    attempt_error="${actor_last_output%.json}-attempt-${attempt}.stderr"
+    if "$M3_POC_ACTOR_BIN" --config "$config" drive \
+        >"$attempt_output" 2>"$attempt_error"; then
+      chmod 0600 "$attempt_output" "$attempt_error"
+      mv "$attempt_output" "$actor_last_output"
+      return 0
+    fi
+    chmod 0600 "$attempt_output" "$attempt_error"
+    error_text="$(tr -d '\r\n' <"$attempt_error")"
+    [[ "$error_text" == "actor chain observation is unavailable" ]] ||
+      fail "${role} actor observation failed with a non-retryable typed error"
+    sleep 0.25
+  done
+  fail "${role} actor observation remained unavailable after bounded read-only retries"
+}
+
 activate_actors() {
   local role
   for role in maker taker; do
@@ -897,7 +923,7 @@ project_both_to_revision() {
   local expected="$1" chain="$2" label="$3"
   local role
   for role in maker taker; do
-    actor_invoke "$role" drive "$label"
+    actor_invoke_observation_retry "$role" "$label"
     jq -e --arg role "$role" --arg chain "$chain" --argjson revision "$expected" '
       .schema_version == 1 and .role == $role and .command == "drive"
       and (.outcome == "observed_then_projected"
