@@ -105,6 +105,11 @@ crossed credentials, no public runtime dependency, exact cleanup while the
 foreign sentinel survives, and an attestation binding runtime, critical-file
 manifest, and cleanup hashes.
 
+The latest exact clean-commit example is
+`m3-p2tr-exact-4f7b6b3`; its packet hashes, non-secret chain facts, explicit
+security nonclaims, and cleanup result are retained in
+[`docs/evidence/m3-bitcoin-core-p2tr-4f7b6b3-20260715.json`](evidence/m3-bitcoin-core-p2tr-4f7b6b3-20260715.json).
+
 For manual role calls, retain the successful node only after the full P2TR flow:
 
 ```sh

@@ -140,6 +140,18 @@ exceptions, and source policy. The final M3 dependency graph remains unaccepted
 until the adaptor package and composed Core/LEZ evidence pass their stated
 gates.
 
+The 2026-07-15 read-only dependency audit recommends exact-pinned `musig2`
+0.4.1 for the PoC gate. Its final BIP-327 key aggregation, x-only Taproot tweak,
+adaptor-presignature, adaptation, verification, and extraction APIs cover the
+required happy-path primitive without project-owned curve arithmetic. It uses
+`secp256k1` 0.31 while rust-bitcoin uses 0.29, so only canonical key, scalar,
+65-byte presignature, and 64-byte final-signature encodings may cross the
+boundary. The crate is beta, has no published audit, is dominated by one
+maintainer, lacks nonce commitments, and its cloneable secret nonce does not
+zeroize. It remains an unaccepted candidate until exact lock/source/license/
+advisory gates plus project-owned commitment, durable nonce, zeroization,
+negative-vector, extraction, independent-verification, and Core gates pass.
+
 ## Pre-lock signing ceremony
 
 Both claim transactions and all recovery material are complete before the first

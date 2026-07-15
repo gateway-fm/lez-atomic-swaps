@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "milestone": "M3",
+  "scope": "bitcoin_core_known_key_p2tr_funding_claim",
+  "result": "passed",
+  "tested_repository_commit": "4f7b6b3e5bde8b740c28ad09eb37b46ea4114940",
+  "tested_origin_main_commit": "4f7b6b3e5bde8b740c28ad09eb37b46ea4114940",
+  "worktree_clean_before_run": true,
+  "clean_worktree_required": true,
+  "run_id": "m3-p2tr-exact-4f7b6b3",
+  "completed_at": "2026-07-15T07:06:23Z",
+  "runner": "scripts/run-bitcoin-core-e2e.sh",
+  "core": {
+    "version": "31.1",
+    "source_commit": "9be056a8a72b624dae9623b2f7bded92c2a21c91",
+    "archive_sha256": "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e",
+    "provenance_evidence_sha256": "3fe865769f3a3647ee7127f8113523c0f6042af305f6e1900a315299904a3fb2",
+    "image_id": "sha256:8630022da30f11c8f88ac210565d4feed05e574a8b265dc53f485436fd5568cc",
+    "fixture_helper_sha256": "f159d11cab20b4ef39385dc5a3e61ed4038a978211250eea9717dff6cccd46fe"
+  },
+  "isolation": {
+    "lifecycle": "exact_id_native_docker",
+    "compose_contract_validated": true,
+    "rpc_publication": "dynamic_literal_loopback_only",
+    "p2p_port_published": false,
+    "network_ip_masquerade": false,
+    "core_network_active": false,
+    "peers_before": 0,
+    "peers_after": 0
+  },
+  "chain": {
+    "network": "regtest",
+    "genesis": "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206",
+    "initial_height": 0,
+    "final_height": 103,
+    "mocktime_base": 1700000000,
+    "block_spacing_seconds": 600
+  },
+  "contract": {
+    "fixture_only": true,
+    "fixture_authority": "known_regtest_scalar_1_not_musig2",
+    "csv_blocks": 144,
+    "script_pubkey": "51205e72a3459cd78730ef1c4cbda846fb180c801df638f0b635b43722748919bd1b",
+    "address": "bcrt1ptee2x3vu67rnpmcufj76s3hmrqxgq80k8rctvdd5xu38fzgeh5dsr28qgv"
+  },
+  "funding": {
+    "submitted_by": "taker",
+    "observed_by": "maker",
+    "value_sat": 100000000,
+    "fee_sat": 1000,
+    "txid": "c131b09dbe58c6884cf161396fd3ed3bf5d34bcd39b6e470dcf2174be07227f1",
+    "wtxid": "584a89e69feefe7e08350306c3a5968cfbb998b0aa6c05169061cc9b837e7a61",
+    "block_height": 102,
+    "policy_accepted": true,
+    "consensus_accepted": true
+  },
+  "cooperative_key_path_claim": {
+    "submitted_by": "maker",
+    "observed_by": "taker",
+    "value_sat": 99999000,
+    "fee_sat": 1000,
+    "txid": "97799495430a2a6be931941c61f88ccb6aadbcbe91c03b30dd70b08c53a51bce",
+    "wtxid": "a451df34b616e08837cdf7a8b26fbd564f0b78f19c29b72fb4408cfe22619f08",
+    "block_height": 103,
+    "witness_items": 1,
+    "witness_bytes": 64,
+    "sighash_type": "DEFAULT",
+    "annex": false,
+    "policy_accepted": true,
+    "consensus_accepted": true,
+    "exact_contract_outpoint_spent_once": true
+  },
+  "actor_rpc": {
+    "roles": [
+      "maker",
+      "taker"
+    ],
+    "credentials_distinct": true,
+    "credentials_mode": "0600_under_0700_run_root",
+    "plaintext_credentials_disclosed": false,
+    "wallet_mining_clock_network_shutdown_calls_denied": true,
+    "crossed_credentials_rejected": true
+  },
+  "external_dependencies": {
+    "runtime_external_resources": [],
+    "public_rpc_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_peers_used": false,
+    "cold_setup_resources": [
+      "bitcoincore.org signed release assets",
+      "github.com/bitcoin/bitcoin source tag",
+      "github.com/bitcoin-core/guix.sigs attestations",
+      "digest-pinned gcr.io distroless runtime base",
+      "locked Rust registries"
+    ]
+  },
+  "cleanup": {
+    "status": "passed",
+    "exact_run_resources_absent": true,
+    "foreign_sentinel_survived_exact_cleanup": true,
+    "broad_cleanup_used": false
+  },
+  "source_packet_sha256": {
+    "runtime_json": "02a976944bc8d8de8fd6357bb3b03fdd1e3e5e08ad03c5971c227876ee758dcd",
+    "cleanup_json": "4cbfe8bfd7df2602a958f02402a17e7a0b29378210a8362f20b5bd58407ad6bb",
+    "critical_evidence_manifest": "57ed995077f479ee8ce38c919e6230a425d88ae8e627552a929d2eda2604e1dd",
+    "attestation_json": "a8e3562d4ae66fb88bcd8d273b50e59dea1f39bad47be5a68fab5b23fbf7a623"
+  },
+  "limitations": [
+    "This packet proves a direction-shaped known-key Bitcoin leg, not a complete swap direction.",
+    "The helper uses labeled public Regtest fixture keys, not production signing authority.",
+    "MuSig2, adaptor signatures, scalar extraction, independent actor processes and durable stores are not proven.",
+    "No LEZ effect, refund path, complete direction, or end-to-end atomicity is claimed.",
+    "Remote CI and exact-image Trivy outcomes are not claimed until independently observable."
+  ]
+}

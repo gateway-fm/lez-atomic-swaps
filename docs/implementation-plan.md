@@ -1096,6 +1096,15 @@ Hard-coded commitment, unsigned/signed transaction, txid, wtxid, mutation, and
 fail-closed money/key/delay gates pass tests, strict Clippy, rustdoc, and all
 four dependency-policy checks.
 
+A read-only dependency gate recommends exact-pinned `musig2` 0.4.1 as the
+step-3 PoC candidate because it implements final BIP-327 aggregation, Taproot
+tweaks, Schnorr adaptor signatures, and extraction. It remains unaccepted until
+the locked graph, source, license, advisory, vectors, and Core interoperability
+gates pass. Its beta/unaudited status, dominant-maintainer risk, non-zeroizing
+cloneable secret nonce, absent nonce-commitment round, and `secp256k1` 0.31
+versus rust-bitcoin's 0.29 require a byte-isolated project wrapper, explicit
+commit/reveal, durable nonce reservation/consumption, and zeroization.
+
 The isolated Core runner now uses the same library boundary to create a normal
 client-signed 1 BTC funding output and a 0.99999 BTC cooperative claim. In the
 `TakerSellsForeign` BTC-leg fixture, the taker policy-checks and submits the
@@ -1129,17 +1138,16 @@ reproduced the smoke and exact cleanup as run `m3-core-exact-a7393df`;
 [its secret-safe retained summary](evidence/m3-bitcoin-core-smoke-a7393df-20260714.json)
 records the packet hashes and preserves the unobserved remote Trivy boundary.
 
-Development run `m3-p2tr-dev-20260715e` then proved the new P2TR composition
-through actual Core: taker funding txid `c131b09d...227f1` confirmed at height
-102; maker cooperative txid `97799495...51bce` confirmed at height 103; exact
-contract address `bcrt1ptee2...r28qgv`; one 64-byte key-path witness; zero
-final mempool entries/peers/public resources; and exact cleanup. Because that
-run correctly records `repository.worktree_clean=false`, it is validation
-input rather than certification. The runner now offers
-`BITCOIN_CORE_E2E_REQUIRE_CLEAN=1`, hashes all critical source/policy/actor/
-block/final-state evidence, and emits a post-cleanup attestation binding the
-runtime, manifest, and cleanup packet. A fresh run after this slice is pushed
-will produce exact-commit certification evidence.
+Clean pushed commit `4f7b6b3e` reproduced the P2TR composition as
+`m3-p2tr-exact-4f7b6b3`: taker funding txid `c131b09d...227f1` confirmed at
+height 102; maker cooperative txid `97799495...51bce` confirmed at height 103;
+exact contract address `bcrt1ptee2...r28qgv`; one 64-byte key-path witness;
+zero final mempool entries/peers/public resources; and exact cleanup. The
+runner enforced `BITCOIN_CORE_E2E_REQUIRE_CLEAN=1`, hashed all critical
+source/policy/actor/block/final-state evidence, and emitted a post-cleanup
+attestation binding the runtime, manifest, and cleanup packet.
+[The secret-safe retained summary](evidence/m3-bitcoin-core-p2tr-4f7b6b3-20260715.json)
+records the exact packet hashes and nonclaims.
 
 That slice is GREEN only when retained, secret-safe evidence proves Core 31.1,
 Regtest genesis and an advancing tip, zero chain peers and zero public runtime

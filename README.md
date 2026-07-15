@@ -41,7 +41,8 @@ CI runs the same P2TR funding/claim composition and fail-hard scans the exact
 Core image for HIGH/CRITICAL vulnerabilities. The earlier clean infrastructure
 run remains available as
 [secret-safe Core evidence](docs/evidence/m3-bitcoin-core-smoke-a7393df-20260714.json);
-exact-commit P2TR evidence is produced after this slice is pushed. Runtime uses
+the clean pushed-commit P2TR run is retained as
+[secret-safe funding/claim evidence](docs/evidence/m3-bitcoin-core-p2tr-4f7b6b3-20260715.json). Runtime uses
 no public RPC, faucet, public funds, public peers, or public chain. Cold setup
 still depends on checksum-verified Core release assets, the pinned base image,
 vulnerability data, and locked Rust registries, so availability and scan
