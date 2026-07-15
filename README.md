@@ -53,6 +53,28 @@ chain observations. The secret-safe retained packet is
 No public RPC, faucet, peer, credential, public funds, or public deployment is
 used.
 
+The public `btc-reference-actor` now closes the first cohesive lifecycle slice.
+Each fresh role-fixed process accepts `activate`, `drive`, or `status` with an
+owner-private config. Only `activate` inserts agreement acceptance. Absent or
+empty/no-acceptance state remains `not_activated`, while corrupt or conflicting
+state fails closed; `status` may migrate an existing schema but creates no
+acceptance and performs no RPC. At revision zero, `drive`
+selects the taker-funded chain from the validated agreement, observes exact
+Bitcoin funding through the typed Core adapter or finalized witnessed LEZ
+funding through the role sidecar, binds LEZ accounts to the signed agreement,
+returns from the observation, and only then performs the SQLite predecessor-zero
+CAS. Finalized LEZ evidence retains its complete finalized tip. Before funding, LEZ
+finalized-observer errors are retryable unavailability, not proof of absence.
+Exact retries retain their deterministic request ID; a deliberate bounded-
+window change receives a distinct ID and remains evidence-bound. A
+valid concurrent revision-one winner is reconstructed without overwrite; other
+projection conflicts fail closed. This is a read-only-observation-to-local-
+projection boundary, not a cross-system atomic commit. The actor suite is 12/12, the focused BTC-recovery suite is 11/11,
+and the full store suite is 71/71. Revisions one through four and a
+two-direction actual-node run through
+this actor remain pending; see
+[ADR 0031](docs/architecture/0031-one-shot-btc-actor-observe-before-project.md).
+
 M3 now has an actual-Core, two-party MuSig2/adaptor P2TR vertical slice.
 Exact-pinned `bitcoin` 0.32.101 constructs the aggregate-internal-key plus
 CSV-refund commitment, while exact-pinned `musig2` 0.4.1 aggregates the ordered
@@ -159,13 +181,15 @@ The separate `observe-finalized-witnessed-funding` call is now GREEN. It keeps
 the earlier stable-tip progress observer intact, accepts an exact transaction
 ID or bounded unique discovery by signed terms, and proves canonical
 `FundNative` inclusion plus historical `Funded` metadata and exact custody at
-the containing finalized block. This is the evidence the cohesive coordinator
-must persist before permitting adaptor reveal; the read-only bridge method does
-not itself block the independent claim methods. The pinned sidecar is the canonical official-wire decoder and PDA
+the containing finalized block. The revision-zero reference actor now persists
+this evidence before its first
+local projection. The still-pending claim-gating revisions must require that
+projection before permitting adaptor reveal; the read-only bridge method does not itself block the independent claim methods. The pinned sidecar is the
+canonical official-wire decoder and PDA
 validator; the graph-isolated client validates the bounded result and role
-binding but does not claim an independent official LEZ decode. The cohesive
-actor must compare the returned accounts and transaction evidence with the
-signed agreement before durably advancing the lock state.
+binding but does not claim an independent official LEZ decode. The revision-zero actor compares the returned accounts and
+transaction evidence
+with the signed agreement before durably advancing the lock state.
 
 The next durable M3 component is now implemented locally as
 `SqliteBtcRecoveryStore`. Each maker or taker opens a different owner-private
@@ -176,10 +200,11 @@ IMMEDIATE`, predecessor CAS, and a versioned domain-separated SHA-256 evidence
 chain. Reopen recomputes the chain and reconstructs terminal `Completed`
 offline. The store retains the exact 64-byte public revealing witness but never
 the recovered scalar; focused mutation, rollback, replay, actor-separation,
-and scalar-absence checks are 8/8, and all 68 store tests pass. This is a GREEN
-persistence component, not yet a cohesive actor claim: the caller must first
-validate the canonical agreement and typed chain evidence, actor wiring is
-pending, chain and SQLite cannot commit atomically, and the hash chain detects
+and scalar-absence checks are 11/11, and all 71 store tests pass. This is a
+GREEN persistence component. The revision-zero reference actor now validates
+the canonical agreement and typed first-lock evidence before projecting into
+the store; later actor revisions remain pending. Chain and SQLite cannot commit
+atomically, and the hash chain detects
 accidental/tampered history but does not authenticate a database rewritten in
 full by its filesystem owner.
 
@@ -200,14 +225,14 @@ RPC mutation. The HTTP
 transport is literal-loopback, Basic-file authenticated, bounded, one-request
 concurrent, and rejects non-`0600`, symlinked, hard-linked, replaced, or changed
 credential files. Its 18 tests and strict dependency/lint/docs gates are GREEN.
-Actual-node actor wiring remains pending; current `Networked` still means
+Actual-node actor execution remains pending; current `Networked` still means
 network-enabled Regtest, not Testnet4 portability.
 
 The older retained actual-Core run remains a one-process public deterministic
 cryptographic and consensus fixture. The new composed run closes live witnessed
 submission, both happy directions, and the PoC atomicity/recovery order through
 separate role processes. It does **not** close the accepted proposal milestone:
-the cohesive full-lifecycle BTC reference actor, native/custom-token parity,
+actor revisions one through four, native/custom-token parity,
 refund/timeout and concurrent demos, Testnet4 setup/execution, production key
 custody/Core adapter, QA/chaos/infosec campaigns, and GW-M3-001 disposition
 remain. There is no `m3-complete` tag. CI runs the same P2TR funding/claim

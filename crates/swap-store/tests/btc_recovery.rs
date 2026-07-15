@@ -1,4 +1,8 @@
-use std::{fs, path::Path};
+use std::{
+    fs::{self, OpenOptions},
+    os::unix::fs::OpenOptionsExt as _,
+    path::Path,
+};
 
 use lez_swap_core::{
     Chain, ChainPosition, ClaimEvidence, ConfirmationPolicy, Pair, Participant, Phase,
@@ -6,7 +10,7 @@ use lez_swap_core::{
 };
 use lez_swap_store::{
     BtcAgreementAcceptance, BtcLifecycleEvidenceV1, BtcRecoveryError, BtcTerminalOutcome,
-    SqliteBtcRecoveryStore,
+    SqliteBtcRecoveryStore, StoreError,
 };
 use rusqlite::Connection;
 use tempfile::tempdir;
@@ -134,6 +138,132 @@ fn assert_scalar_absent(path: &Path) {
             "raw scalar sentinel reached SQLite storage"
         );
     }
+}
+
+#[test]
+fn existing_only_absent_store_does_not_create_activation() {
+    let directory = tempdir().expect("temporary actor store");
+    let path = directory.path().join("absent.sqlite");
+    let initial = coordinator("btc-existing-absent", SwapDirection::TakerSellsForeign);
+    let accepted = acceptance(&initial, Participant::Maker);
+
+    assert!(matches!(
+        SqliteBtcRecoveryStore::open_existing(&path, &accepted, &initial),
+        Err(BtcRecoveryError::Store(StoreError::DatabaseFileUnavailable))
+    ));
+    assert!(!path.exists(), "existing-only open must not create a file");
+}
+
+#[test]
+fn private_empty_database_is_not_activation_and_first_acceptance_is_not_a_replay() {
+    let directory = tempdir().expect("temporary actor store");
+    let path = directory.path().join("empty.sqlite");
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .expect("precreate private empty database");
+    let initial = coordinator("btc-existing-empty", SwapDirection::TakerSellsForeign);
+    let accepted = acceptance(&initial, Participant::Taker);
+
+    assert!(matches!(
+        SqliteBtcRecoveryStore::open_existing(&path, &accepted, &initial),
+        Err(BtcRecoveryError::MissingAgreementAcceptance)
+    ));
+    let connection = Connection::open(&path).expect("inspect migrated empty database");
+    let acceptances: i64 = connection
+        .query_row("SELECT COUNT(*) FROM btc_actor_agreements", [], |row| {
+            row.get(0)
+        })
+        .expect("acceptance count");
+    assert_eq!(acceptances, 0, "status-style open must not activate");
+    drop(connection);
+
+    let first = SqliteBtcRecoveryStore::open(&path, &accepted, &initial)
+        .expect("explicit first activation");
+    assert!(!first.acceptance_was_replay());
+    drop(first);
+    let replay =
+        SqliteBtcRecoveryStore::open(&path, &accepted, &initial).expect("exact activation replay");
+    assert!(replay.acceptance_was_replay());
+}
+
+#[test]
+fn interrupted_or_incomplete_existing_activation_fails_closed() {
+    let directory = tempdir().expect("temporary actor stores");
+    let initial = coordinator("btc-existing-orphan", SwapDirection::TakerSellsForeign);
+    let accepted = acceptance(&initial, Participant::Maker);
+    for orphan_kind in ["aggregate", "other_role_aggregate", "evidence"] {
+        let orphan_path = directory
+            .path()
+            .join(format!("orphan-{orphan_kind}.sqlite"));
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&orphan_path)
+            .expect("precreate private database");
+        assert!(matches!(
+            SqliteBtcRecoveryStore::open_existing(&orphan_path, &accepted, &initial),
+            Err(BtcRecoveryError::MissingAgreementAcceptance)
+        ));
+        let connection = Connection::open(&orphan_path).expect("open migrated database");
+        connection
+            .pragma_update(None, "foreign_keys", "OFF")
+            .expect("permit impossible interrupted fixture");
+        match orphan_kind {
+            "aggregate" | "other_role_aggregate" => {
+                let local_role = if orphan_kind == "aggregate" {
+                    "maker"
+                } else {
+                    "taker"
+                };
+                connection.execute(
+                    "INSERT INTO btc_actor_aggregates (
+                        swap_id, local_role, revision, snapshot_version, snapshot_json,
+                        evidence_chain_version, evidence_chain_head
+                    ) VALUES (?1, ?2, 0, 1, '{}', 1, ?3)",
+                    rusqlite::params![initial.id().as_str(), local_role, [1_u8; 32].as_slice()],
+                )
+            }
+            "evidence" => connection.execute(
+                "INSERT INTO btc_actor_evidence (
+                    swap_id, local_role, aggregate_revision, evidence_kind,
+                    payload_version, payload_json
+                ) VALUES (?1, 'maker', 1, 'taker_lock', 1, '{}')",
+                [initial.id().as_str()],
+            ),
+            _ => unreachable!("closed orphan fixture set"),
+        }
+        .expect("simulate interrupted orphan state");
+        drop(connection);
+        assert!(matches!(
+            SqliteBtcRecoveryStore::open_existing(&orphan_path, &accepted, &initial),
+            Err(BtcRecoveryError::AgreementConflict)
+        ));
+    }
+
+    let incomplete_path = directory.path().join("missing-aggregate.sqlite");
+    let activated = SqliteBtcRecoveryStore::open(&incomplete_path, &accepted, &initial)
+        .expect("create accepted store");
+    drop(activated);
+    let connection = Connection::open(&incomplete_path).expect("open accepted database");
+    connection
+        .execute(
+            "DELETE FROM btc_actor_aggregates WHERE swap_id = ?1",
+            [initial.id().as_str()],
+        )
+        .expect("simulate interrupted missing aggregate");
+    drop(connection);
+    let incomplete = SqliteBtcRecoveryStore::open_existing(&incomplete_path, &accepted, &initial);
+    assert!(
+        matches!(
+            incomplete,
+            Err(BtcRecoveryError::InvalidSequence { revision: 0 })
+        ),
+        "unexpected incomplete-store result: {incomplete:?}"
+    );
 }
 
 #[test]

@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-use crate::{StoreError, open_configured_connection, participant_name};
+use crate::{
+    StoreError, open_configured_connection, open_existing_configured_connection, participant_name,
+};
 
 const EVIDENCE_PAYLOAD_VERSION: i64 = 1;
 const EVIDENCE_CHAIN_VERSION: i64 = 1;
@@ -489,6 +491,9 @@ pub enum BtcRecoveryError {
     /// Caller-supplied agreement-derived initial state is not a fresh Bitcoin coordinator.
     #[error("initial Bitcoin coordinator does not match the accepted agreement identity")]
     InitialCoordinatorMismatch,
+    /// An existing database has no durable acceptance for this swap.
+    #[error("Bitcoin recovery database has no agreement acceptance")]
+    MissingAgreementAcceptance,
     /// The caller attempted a non-replay transition from a stale revision.
     #[error("Bitcoin recovery predecessor is stale: expected {expected}, actual {actual}")]
     StalePredecessor {
@@ -558,6 +563,13 @@ pub struct SqliteBtcRecoveryStore {
     connection: Connection,
     acceptance: BtcAgreementAcceptance,
     initial: SwapCoordinator,
+    acceptance_was_replay: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BtcStoreOpenMode {
+    Activate,
+    ExistingOnly,
 }
 
 impl SqliteBtcRecoveryStore {
@@ -577,8 +589,48 @@ impl SqliteBtcRecoveryStore {
         acceptance: &BtcAgreementAcceptance,
         initial: &SwapCoordinator,
     ) -> Result<Self, BtcRecoveryError> {
+        Self::open_with_mode(
+            path.as_ref(),
+            acceptance,
+            initial,
+            BtcStoreOpenMode::Activate,
+        )
+    }
+
+    /// Opens an existing actor store without creating an agreement acceptance.
+    ///
+    /// The database file must already exist and contain the exact matching acceptance and
+    /// aggregate row. Schema migration may run, but this method never inserts actor activation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BtcRecoveryError::MissingAgreementAcceptance`] only for a valid database with no
+    /// matching acceptance or actor aggregate/evidence rows. Unsafe, conflicting, incomplete, or
+    /// corrupt state fails closed under its existing error category.
+    pub fn open_existing(
+        path: impl AsRef<Path>,
+        acceptance: &BtcAgreementAcceptance,
+        initial: &SwapCoordinator,
+    ) -> Result<Self, BtcRecoveryError> {
+        Self::open_with_mode(
+            path.as_ref(),
+            acceptance,
+            initial,
+            BtcStoreOpenMode::ExistingOnly,
+        )
+    }
+
+    fn open_with_mode(
+        path: &Path,
+        acceptance: &BtcAgreementAcceptance,
+        initial: &SwapCoordinator,
+        mode: BtcStoreOpenMode,
+    ) -> Result<Self, BtcRecoveryError> {
         validate_initial(acceptance, initial)?;
-        let mut connection = open_configured_connection(path)?;
+        let mut connection = match mode {
+            BtcStoreOpenMode::Activate => open_configured_connection(path)?,
+            BtcStoreOpenMode::ExistingOnly => open_existing_configured_connection(path)?,
+        };
         migrate_btc_recovery(&connection)?;
 
         let initial_snapshot = serde_json::to_string(initial)?;
@@ -606,6 +658,7 @@ impl SqliteBtcRecoveryStore {
             )
             .optional()?;
 
+        let acceptance_was_replay = existing.is_some();
         if let Some((role, wire, commitment, initial_digest, durable_accepted_at)) = existing {
             if role != participant_name(acceptance.local_role) {
                 return Err(BtcRecoveryError::RolePathAlias);
@@ -617,6 +670,14 @@ impl SqliteBtcRecoveryStore {
             {
                 return Err(BtcRecoveryError::AgreementConflict);
             }
+        } else if mode == BtcStoreOpenMode::ExistingOnly {
+            return Err(
+                if has_actor_state_without_acceptance(&transaction, acceptance)? {
+                    BtcRecoveryError::AgreementConflict
+                } else {
+                    BtcRecoveryError::MissingAgreementAcceptance
+                },
+            );
         } else {
             transaction.execute(
                 "
@@ -657,9 +718,16 @@ impl SqliteBtcRecoveryStore {
             connection,
             acceptance: acceptance.clone(),
             initial: initial.clone(),
+            acceptance_was_replay,
         };
         reconstruct_checked(&store.connection, &store.acceptance, &store.initial)?;
         Ok(store)
+    }
+
+    /// Whether activation replayed an already matching exact durable acceptance.
+    #[must_use]
+    pub const fn acceptance_was_replay(&self) -> bool {
+        self.acceptance_was_replay
     }
 
     /// Projects one exact lifecycle record in an immediate transaction with predecessor CAS.
@@ -789,6 +857,23 @@ impl SqliteBtcRecoveryStore {
             revealing_public_witness: reconstructed.revealing_public_witness,
         })
     }
+}
+
+fn has_actor_state_without_acceptance(
+    connection: &Connection,
+    acceptance: &BtcAgreementAcceptance,
+) -> Result<bool, BtcRecoveryError> {
+    Ok(connection.query_row(
+        "
+        SELECT EXISTS (
+            SELECT 1 FROM btc_actor_aggregates WHERE swap_id = ?1
+        ) OR EXISTS (
+            SELECT 1 FROM btc_actor_evidence WHERE swap_id = ?1
+        )
+        ",
+        [acceptance.swap_id.as_str()],
+        |row| row.get(0),
+    )?)
 }
 
 struct ReconstructedState {

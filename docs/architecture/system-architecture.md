@@ -224,6 +224,7 @@ flowchart TB
         M3AJ[("M3 role-local adaptor journal<br/>reserve before commitment<br/>consume nonce with exact partial GREEN")]
         M3BR[("M3 BTC lifecycle recovery store<br/>four evidence revisions + hash chain<br/>offline Completed status GREEN")]
         M3BC["M3 typed Core 31.1 adapter<br/>stable-tip evidence + durable one-attempt submit<br/>GREEN component"]
+        M3RA["btc-reference-actor<br/>one-shot activate drive status<br/>revision zero GREEN"]
     end
 
     subgraph LezSidecars["Role-isolated official LEZ v0.1.2 processes"]
@@ -344,10 +345,11 @@ flowchart TB
     TS --> PCM
     PS --> M3AJ
     TS --> M3AJ
-    PS -. actor wiring pending .-> M3BR
-    TS -. actor wiring pending .-> M3BR
-    PS -. actor wiring pending .-> M3BC
-    TS -. actor wiring pending .-> M3BC
+    PS -->|"maker private config"| M3RA
+    TS -->|"taker private config"| M3RA
+    M3RA -->|"predecessor-zero projection"| M3BR
+    M3RA -->|"agreement-derived Bitcoin first-lock read"| M3BC
+    M3RA -->|"signed-account finalized LEZ first-lock read"| M3FF
     PCM -->|"encrypted envelope + journal"| DB
     PCM -->|"encrypted envelope + journal"| TDB
     TM -.-> TS
@@ -451,7 +453,7 @@ flowchart TB
     classDef implemented fill:#ddf4ff,stroke:#0969da;
     classDef running fill:#e6ffec,stroke:#1a7f37;
     class MM,LC,CA,TM,LRR,PublicLezRisk planned;
-    class TC,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
+    class TC,M3RA,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
     class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02Full,V02State,MSL2,TLS2,V02J,MBR2,TBR2,M3FF,M3FO running;
 ```
 
@@ -1107,6 +1109,24 @@ scalar. It is one process: commitments are not exchanged, nonce state is not
 journaled, and independent actors, LEZ effects, both complete directions, and
 atomicity remain the audited M3 target.
 
+ADR 0031 adds the current public revision-zero process boundary. Separate
+owner-private maker and taker configs invoke one fresh `btc-reference-actor`
+process for `activate`, `drive`, or `status`. Only activation inserts agreement
+acceptance. Absent or empty/no-acceptance state remains not activated; corrupt
+or conflicting state fails closed. Status may migrate an existing database
+schema but creates no acceptance, constructs no chain client, and performs no
+RPC. Revision-zero drive selects the taker-funded chain from the validated
+agreement, receives typed Core funding or finalized LEZ funding, binds LEZ
+accounts to the signed terms, and retains the finalized tip before projecting
+predecessor zero. Observation returns before the SQLite transaction. The gap is
+restartable but is not a cross-system atomic commit. Normal pre-funding LEZ
+observer errors are retryable unavailability, not false absence. Exact retries
+retain their deterministic ID/request, while a deliberate bounded-window change
+receives a distinct evidence-bound ID. A concurrent
+CAS loser may reconstruct a valid revision-one winner and report convergence
+without overwrite; other projection failures fail closed. Revisions one
+through four and both-direction actual-node actor evidence remain pending.
+
 Pushed `0177151` adds a production-shaped in-memory boundary alongside that
 retained Core fixture. Separate maker/taker state objects use fresh OS nonces,
 exchange transcript-bound commitments before reveal, verify peer partials, and
@@ -1126,10 +1146,12 @@ completed, and the recovered scalar matched the committed point without being
 retained in public evidence. The canonical version-one agreement is now
 implemented and reconstructs the exact aggregate key, P2TR/CSV contract,
 funding outpoint, cooperative transaction/sighash, Bitcoin chain policy, LEZ
-terms, and recovery schedule before accepting both role signatures. The
-remaining edge is product integration: no cohesive coordinator yet activates
-that validated record with typed chain adapters and persists both actors
-through a terminal `Completed` lifecycle.
+terms, and recovery schedule before accepting both role signatures. The public revision-zero actor now activates that validated record,
+observes the
+agreement-derived taker lock through a typed chain adapter, and persists the
+first transition for each role. Product integration still must compose actor
+revisions one through four and demonstrate both actors reaching terminal
+`Completed` through the public process surface.
 
 ## Abandonment and autonomous recovery flow
 

@@ -1128,18 +1128,31 @@ exact aggregate-account mapping, recursive state effect, durable witnessed
 initialize/fund preparation, durable claim preparation/completion, conservative
 pair observation, finalized same-block claim/state evidence, and a typed
 operator boundary are GREEN. The exact guest was
-deployed in finalized block 405 and used for both live directions. Step 5 has a
-public BTC transaction/session boundary, separate role sidecars, and
-independent signer processes/stores, but not a cohesive full-lifecycle public
-reference actor. Step 6 is 2 of 2 for actual chain execution. Pushed commit
+deployed in finalized block 405 and used for both live directions.
+Step 5 now also has a public one-shot, role-fixed reference actor. It
+activates the canonical agreement and composes revision zero through typed Core
+or finalized LEZ observation plus the actor-local store; revisions one through
+four are not yet composed. Only `activate` may insert the agreement acceptance.
+`status` reports absent or precreated-empty/no-acceptance state as
+`not_activated`; `drive` returns `NotActivated`. Status may migrate an existing
+database schema but creates no acceptance and performs no RPC. Corrupt or
+conflicting existing state fails closed. Pre-funding LEZ finalized-observer
+errors remain retryable `ObservationUnavailable`, not false absence. Exact
+retries keep the deterministic ID and request; a deliberate window change gets
+a distinct ID, and the request remains evidence-bound. Observation
+returns before the predecessor CAS; a valid concurrent revision-one winner is
+reconstructed without overwrite and other projection failures fail closed.
+Step 6 is
+2 of 2 for operator-composed actual chain execution, while actor E2E remains
+pending. Pushed commit
 `a58ef96` adds the checked-in secret-safe packet, complete operator recipe,
 exact cleanup proof, synchronized architecture/traceability, and all 76 rendered
 Mermaid diagrams. The countersigned agreement binding the executable Bitcoin
 refund plan is now GREEN in seven focused tests. Pushed commit `523c64d`
 additionally rejects oversized caller-constructed fields before total Borsh
-encoding and marks actor activation as planned in the component flow. Typed
-Bitcoin Core evidence plus durable per-actor terminal wiring remain the local
-PoC certification work.
+encoding. The revision-zero actor activation and typed first-lock projection are
+now implemented. Actor revisions one through four and actual-node actor E2E
+remain the local PoC certification work.
 Exact-pinned `bitcoin` 0.32.101 constructs and verifies
 the P2TR/CSV transaction boundary. Exact-pinned `musig2` 0.4.1 aggregates the
 ordered maker/taker fixture keys, applies the Taproot tweak with matching `Q`
@@ -1392,10 +1405,12 @@ now GREEN. The actor-local
 Bitcoin recovery component is GREEN in both directions: separate maker/taker
 databases replay the four lock/claim revisions to `Completed`, reject mutated
 or rolled-back evidence-chain state, and expose the public revealing witness
-without persisting the scalar. The Core component independently reconstructs
-and cross-checks exact funding/claim consensus bytes, confirmation/block/tip
-facts, and a canonical scalar-free evidence DTO; its actual-node actor wiring
-is still open. Peerless finalized LEZ claim discovery is now GREEN: either
+without persisting the scalar.
+The Core component independently reconstructs and cross-checks exact
+funding/claim consensus bytes, confirmation/block/tip facts, and a canonical
+scalar-free evidence DTO. The revision-zero actor now calls its exact funding
+observer; an actor-to-actual-Core run is still open.
+Peerless finalized LEZ claim discovery is now GREEN: either
 role can discover one unique canonical claim from the signed terms and exact
 prepared transcript without receiving a peer transaction ID, while absence,
 ambiguity, and a conflicting transcript remain distinct fail-closed results.
@@ -1404,14 +1419,14 @@ existing live-progress observer. The bounded finalized scan proves canonical
 funding plus historical `Funded` metadata and exact custody at the containing
 block, making finalized funding the explicit evidence input for the pending
 claim gate. Protocol 22/22, client
-2 unit plus 23 integration and 3 CLI tests, and sidecar 78/78 are GREEN. The
-pinned sidecar remains the official transaction decoder/PDA validator; the
-cohesive actor must bind its returned accounts and transaction evidence back
-to the signed agreement before the recovery-store CAS. The read-only sidecar
-does not retain a funding prerequisite across independent claim methods, so
-that enforcement remains cohesive-actor work. Remaining local PoC
-work is wiring both chain adapters plus the recovery component through each
-cohesive reference actor and repeating both live directions through that
+2 unit plus 23 integration and 3 CLI tests, and sidecar 78/78 are GREEN.
+The pinned sidecar remains the official transaction decoder and PDA
+validator. The revision-zero actor now binds returned funding accounts and
+transaction evidence to the signed agreement before predecessor-zero CAS and
+retains the finalized tip. The read-only sidecar still does not retain a
+funding prerequisite across independent claim methods, so revisions one through
+four must enforce the later claim gate. Remaining local PoC work is composing
+those revisions and repeating both live directions through the public actor
 surface. These are remaining deliverables, not external blockers.
 
 ### Later owner-selected hardening

@@ -9,11 +9,12 @@ independent maker and taker sidecars, separate signing journals, and actual
 transactions on both local chains.
 
 This is a functional PoC recipe, not an automated full-lifecycle application.
-There is not yet one cohesive maker/taker command with a durable swap status
-store that performs this whole recipe. The operator must compose the proven
-one-shot interfaces and retain the resulting private evidence. That manual
-composition is a production gap, not a reason to weaken any ordering check
-below.
+The public `btc-reference-actor` now provides one-shot, role-fixed activation,
+offline status, and revision-zero taker-lock observation/projection. It does not
+yet perform revisions one through four, so the operator must still compose the
+proven signing, second-lock, claim, and terminal interfaces and retain their
+private evidence. That remaining manual composition is a production gap, not a
+reason to weaken any ordering check below.
 
 The secret-safe result of the reference run is
 [m3-local-two-direction-poc-20260715.json](evidence/m3-local-two-direction-poc-20260715.json).
@@ -59,6 +60,20 @@ allocations. No public RPC, faucet, public peer, or public fund participates.
 
 ## Prerequisites and builds
 
+Repeat the revision-zero public actor boundary without Docker or chain nodes:
+
+~~~sh
+cargo test --locked -p btc-reference-actor --all-targets
+~~~
+
+All 12 focused tests invoke the public `activate`, `drive`, and `status` surface,
+use separate private maker/taker configs, prove offline status and idempotent
+activation, retain a finalized LEZ ancestry tip, and observe before projecting
+predecessor zero. Deterministic observers and loopback-only placeholder routes
+are used; no public RPC, faucet, public funds, chain peer, or external service
+participates. This component gate does not prove an actual-node actor run or
+revisions one through four.
+
 Before starting either node, the durable Bitcoin lifecycle component can be
 repeated independently:
 
@@ -66,7 +81,7 @@ repeated independently:
 cargo test --locked -p lez-swap-store --test btc_recovery -- --nocapture
 ~~~
 
-The eight cases create separate owner-private temporary SQLite databases for
+The eleven cases create separate owner-private temporary SQLite databases for
 maker and taker, project both directions through the four exact revisions,
 close/reopen and reconstruct `Completed`, exercise replay/CAS/rollback and
 mutation failures, and scan SQLite/WAL for the recovered-scalar sentinel. They
@@ -143,9 +158,11 @@ Build the root one-shot tools:
 
 ~~~sh
 cargo build --locked -p lez-adaptor-role-runner
+cargo build --locked -p btc-reference-actor
 cargo build --locked -p lez-btc-swap-sdk --example btc-core-p2tr-fixture
 cargo build --locked -p lez-bridge-client --example m3_witnessed_lez_operator
 export ROLE_RUNNER="$PWD/target/debug/lez-adaptor-role-runner"
+export BTC_ACTOR="$PWD/target/debug/btc-reference-actor"
 export BTC_FIXTURE="$PWD/target/debug/examples/btc-core-p2tr-fixture"
 export LEZ_OPERATOR="$PWD/target/debug/examples/m3_witnessed_lez_operator"
 ~~~
@@ -374,6 +391,155 @@ runtime match, whose indexer health is getLastFinalizedBlockId_non_genesis, and
 whose finality field is not_observed_by_this_poc_bridge. Sidecar observation
 proves bounded canonical inclusion and stable same-tip account effects. It does
 not prove Bedrock finality; the separate indexer audit remains mandatory.
+
+## Repeat the revision-zero reference-actor flow
+
+The actor consumes an already canonical countersigned Borsh agreement; it does
+not negotiate or create one. Retain that exact agreement as
+`$DIRECTION/agreement.borsh`, and require its Bitcoin genesis, confirmation
+policy, LEZ channel/genesis/program/accounts, direction, and swap terms to match
+the run artifacts below. Use different state databases, role Basic files,
+capabilities, runtimes, and configs for maker and taker.
+
+Create the configs only with normalized absolute paths. The field is named
+`cookie_file` in schema v1 but must point to the role's restricted Basic file,
+never the provisioner cookie or funding/mining credential:
+
+~~~sh
+: "${DIRECTION:?set the private direction root}"
+: "${ACTOR_DISCOVERY_START_HEIGHT:?inclusive finalized LEZ window start}"
+: "${ACTOR_DISCOVERY_MAX_BLOCKS:?complete covered window length}"
+test "$ACTOR_DISCOVERY_MAX_BLOCKS" -ge 1
+test "$ACTOR_DISCOVERY_MAX_BLOCKS" -le 4096
+export AGREEMENT_FILE="$(realpath "$DIRECTION/agreement.borsh")"
+export ACTOR_ACCEPTED_AT="$(date -u +%s)"
+
+write_actor_config() {
+  local role="$1"
+  local core_basic="$2"
+  local bridge_url="$3"
+  local runtime="$PRIVATE_ROOT/$role/runtime.json"
+  local capability="$PRIVATE_ROOT/$role/sidecar.capability"
+  local state_db="$DIRECTION/$role-btc-actor.sqlite3"
+  local config="$DIRECTION/$role-btc-actor.json"
+
+  test ! -e "$state_db"
+  jq -n \
+    --arg role "$role" \
+    --arg agreement "$AGREEMENT_FILE" \
+    --arg state "$(realpath -m "$state_db")" \
+    --argjson accepted "$ACTOR_ACCEPTED_AT" \
+    --arg core "$CORE_RPC_URL" \
+    --arg basic "$(realpath "$core_basic")" \
+    --arg bridge "$bridge_url" \
+    --arg capability "$(realpath "$capability")" \
+    --arg run "$M3_RUN_ID" \
+    --argjson timeout 10000 \
+    --argjson start "$ACTOR_DISCOVERY_START_HEIGHT" \
+    --argjson blocks "$ACTOR_DISCOVERY_MAX_BLOCKS" \
+    --slurpfile runtime "$runtime" \
+    '{
+      schema_version: 1,
+      role: $role,
+      agreement_file: $agreement,
+      state_db: $state,
+      accepted_at_unix_seconds: $accepted,
+      bitcoin_core: {
+        endpoint: $core,
+        cookie_file: $basic,
+        connectivity: "isolated_local"
+      },
+      lez_bridge: {
+        endpoint: $bridge,
+        capability_file: $capability,
+        run_id: $run,
+        runtime: $runtime[0],
+        request_timeout_millis: $timeout,
+        discovery_start_height: $start,
+        discovery_max_blocks: $blocks
+      }
+    }' >"$config"
+  chmod 0600 "$config"
+}
+
+write_actor_config maker "$MAKER_CORE_BASIC" "$MAKER_BRIDGE_URL"
+write_actor_config taker "$TAKER_CORE_BASIC" "$TAKER_BRIDGE_URL"
+export MAKER_BTC_ACTOR_CONFIG="$DIRECTION/maker-btc-actor.json"
+export TAKER_BTC_ACTOR_CONFIG="$DIRECTION/taker-btc-actor.json"
+~~~
+
+For a Bitcoin-first direction the LEZ discovery window is validated but unused
+by revision-zero `drive`. For a LEZ-first direction choose an inclusive window that the finalized tip
+can
+fully cover and that will contain the funding transaction. Before funding
+exists, the v0.2 finalized observer commonly returns an absence/window error;
+the actor reports `actor first-lock observation is unavailable`. Treat that as
+retryable local observation unavailability, not proof that funding is absent
+and never as authorization to submit a replacement effect.
+
+An exact retry uses the unchanged private config, deterministic observation ID,
+and request. If the chosen window already contains the funding height, wait for
+finality and invoke a fresh process without changing it. A deliberate bounded-
+window change produces a distinct deterministic observation ID because the ID
+binds the run, role, runtime, signed terms, target, and window. The complete
+request is also retained and revalidated in the evidence. Change the window
+only as an intentional new bounded observation, for example when the funded
+block is outside the earlier window; do not mutate it merely to retry the same
+request. Keep maker and taker configs on the same deliberate window.
+
+Only `activate` inserts the agreement acceptance. An absent state path or an
+empty/migrated database with no acceptance produces `not_activated` from
+`status` and `actor is not activated` from `drive`. `status` may migrate the
+schema of an existing SQLite file, but it performs no RPC and never creates an
+acceptance. A corrupt database or an acceptance conflicting with role,
+agreement, timestamp, or initial coordinator fails closed. Do not precreate the
+state database in the normal flow.
+
+Repeat each one-shot command and retain only its secret-free stdout:
+
+~~~sh
+for config in "$MAKER_BTC_ACTOR_CONFIG" "$TAKER_BTC_ACTOR_CONFIG"; do
+  "$BTC_ACTOR" --config "$config" status
+  "$BTC_ACTOR" --config "$config" activate
+  "$BTC_ACTOR" --config "$config" status
+done
+~~~
+
+The first status must be `not_activated`. Activation returns revision `0`,
+phase `offered`, and `was_replay:false`; exact repetition returns
+`was_replay:true`. Post-activation status is still revision `0` with next action
+`observe_taker_first_lock` and does not require either node.
+
+After the agreement-derived taker lock reaches the signed Bitcoin confirmation
+policy or finalized LEZ funding is inside the complete configured window, run
+one fresh process for each role:
+
+~~~sh
+"$BTC_ACTOR" --config "$MAKER_BTC_ACTOR_CONFIG" drive
+"$BTC_ACTOR" --config "$TAKER_BTC_ACTOR_CONFIG" drive
+"$BTC_ACTOR" --config "$MAKER_BTC_ACTOR_CONFIG" status
+"$BTC_ACTOR" --config "$TAKER_BTC_ACTOR_CONFIG" status
+~~~
+
+Affirmative output is `observed_then_projected`, revision `1`, phase
+`taker_lock_confirmed`, on the direction-correct `bitcoin` or `lez` chain.
+Bitcoin evidence is the typed, stable-tip agreement funding record at the
+signed depth. LEZ evidence contains the agreement commitment, complete
+finalized tip, canonical funding transaction, containing block, historical
+`Funded` metadata, and exact custody; the actor also compares metadata and
+custody accounts with the signed agreement. The RPC observation returns before
+SQLite begins the predecessor-zero projection. This is restartable local CAS,
+not cross-system atomicity. If concurrent drives
+race with different valid evidence, one projection wins and the other may
+return `converged_on_existing_projection` after reconstructing the valid
+revision-one winner; it never overwrites the winner. Other conflicts fail
+closed.
+
+A later `drive` returns `not_yet_composed` at durable revision `1` without RPC.
+Revisions one through four, claim adaptation/extraction/submission, terminal
+status, refunds, and live two-direction E2E through this actor are pending. Use
+the operator-composed flow below for those effects; do not interpret the
+revision-zero output as a complete swap.
 
 ## Strict witnessed operator requests
 

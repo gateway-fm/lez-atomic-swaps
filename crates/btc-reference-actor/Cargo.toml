@@ -1,0 +1,34 @@
+[package]
+name = "btc-reference-actor"
+version = "0.1.0"
+description = "One-shot role-fixed reference actor for LEZ and Bitcoin atomic swaps"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = "0.1.89"
+clap = { version = "4.6.0", features = ["derive"] }
+hex = "0.4.3"
+lez-btc-core-adapter = { version = "0.1.0", path = "../btc-core-adapter" }
+lez-bridge-adapter = { version = "0.1.0", path = "../lez-bridge-adapter" }
+lez-bridge-client = { version = "0.1.0", path = "../lez-bridge-client" }
+lez-bridge-protocol = { version = "0.1.0", path = "../lez-bridge-protocol" }
+lez-btc-swap-sdk = { version = "0.1.0", path = "../btc-swap-sdk" }
+lez-swap-core = { version = "0.1.0", path = "../swap-core" }
+lez-swap-store = { version = "0.1.0", path = "../swap-store" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+sha2 = "=0.10.9"
+thiserror = "2.0.18"
+tokio = { version = "1.48.0", features = ["macros", "rt", "sync"] }
+
+[dev-dependencies]
+bitcoin = { version = "=0.32.101", default-features = false, features = ["std"] }
+corepc-types = { version = "=0.15.0", default-features = false, features = ["std", "serde-deny-unknown-fields"] }
+tempfile = "3.27.0"
+zeroize = "=1.9.0"

@@ -39,6 +39,7 @@ flowchart TB
     Direction --> Bitcoin["0009 Bitcoin refund"]
     Bitcoin --> BitcoinEntry["0029 M3 Bitcoin entry"]
     BitcoinEntry --> FinalizedFunding["0030 Finalized LEZ funding before claim"]
+    FinalizedFunding --> BtcActor["0031 Revision-zero BTC actor"]
     Direction --> Deadlines["0010 Typed deadlines"]
     LEZ --> Deadlines
     Deadlines --> Recovery["0011 Recovery triggers"]
@@ -77,6 +78,7 @@ flowchart TB
     Persistence --> RPC
     Persistence --> ClaimRecovery
     Persistence --> V02Effects
+    Persistence --> BtcActor
     LezSidecar -.-> Upstream
     PublicRoutes -.-> Upstream
     LocalM2 -.-> Upstream
@@ -116,5 +118,6 @@ flowchart TB
 | [0026](0026-lez-v02-at-most-once-submission-and-query-finality.md) | Persist AttemptStarted before one v0.2 send and prove inclusion/finality through bounded sequencer and indexer queries | Architecture and durable one-call/restart tests are GREEN. The M3 witnessed-claim bridge now performs bounded finalized block ID/hash and same-containing-BlockId account observation for either participant with client BIP-340 revalidation. Vault query/journal progression, upstream account proofs, and ambiguous multi-effect restart reconciliation remain later hardening |
 | [0027](0027-progressive-jpeg-milestone-delivery.md) | Deliver a reproducible actual-local-devnet milestone PoC first, then owner-controlled QA, chaos, information-security, and production-readiness hardening | Accepted; M2 is certified at its local-functional PoC boundary under `m2-complete`. Accumulated hardening is carried evidence until the owner enters and revalidates its phase; no transition to QA or M3 is implied |
 | [0028](0028-dormant-public-route-portability.md) | Admit exact dormant public LEZ and Zebra routes without exposing the actor-sidecar boundary or weakening agreement-bound pre-effect validation | Canonical Docker target and finalized local deployment binding are GREEN; exact dormant public configuration and bounded-client construction are GREEN without public I/O. Live public execution and official LEZ finalized-tip availability remain production gates |
-| [0029](0029-m3-bitcoin-local-poc-entry.md) | Enter M3 through isolated Bitcoin Core Regtest and LEZ v0.2 actors with aggregate witnessed claim authorities | Accepted and active; actual-Core consensus, durable journals, fresh independent role processes, external adaptation/extraction, the checked witnessed guest, both complete local directions, atomicity evidence, the canonical countersigned agreement, typed finalized LEZ claim observation, typed Core adapter/evidence codec, and actor-local Bitcoin recovery-store component are GREEN. Cohesive terminal actors, refunds, concurrency, Testnet4 portability, and hardening remain |
-| [0030](0030-finalized-lez-funding-before-claim.md) | Preserve the live observer and require distinct finalized LEZ funding evidence before either claim can reveal adaptor material | Accepted; protocol/client/sidecar implementation is GREEN. Logos v0.2 end-of-block account reads require funding finality before claim submission and remain a disclosed production trust limitation; cohesive actor persistence remains open |
+| [0029](0029-m3-bitcoin-local-poc-entry.md) | Enter M3 through isolated Bitcoin Core Regtest and LEZ v0.2 actors with aggregate witnessed claim authorities | Accepted and active; actual-Core consensus, durable journals, fresh independent role processes, external adaptation/extraction, the checked witnessed guest, both complete operator-composed local directions, canonical agreement, typed observers, and recovery store are GREEN. The public reference actor now activates and projects the exact taker lock at revision zero; revisions one through four, live actor E2E, refunds, concurrency, Testnet4 portability, and hardening remain |
+| [0030](0030-finalized-lez-funding-before-claim.md) | Preserve the live observer and require distinct finalized LEZ funding evidence before either claim can reveal adaptor material | Accepted; protocol/client/sidecar implementation is GREEN. Logos v0.2 end-of-block account reads require funding finality before claim submission and remain a disclosed production trust limitation; revision-zero actor persistence is GREEN while the later claim gate remains open |
+| [0031](0031-one-shot-btc-actor-observe-before-project.md) | Use a public one-shot role-fixed actor that returns from the exact taker-lock observation before predecessor-CAS projection | Accepted for revision zero. `activate`, offline `status`, typed Core or finalized-LEZ `drive`, signed LEZ account binding, finalized-tip persistence, and local replay/CAS tests are GREEN. Revisions one through four and both-direction actual-node actor evidence remain pending |

@@ -3,8 +3,10 @@
 Status: Accepted. The operator-composed local functional PoC completed both
 happy directions on 2026-07-15, and the canonical countersigned agreement is
 GREEN. The typed finalized LEZ funding and claim observers and Bitcoin Core
-adapter are also GREEN. Cohesive lifecycle SDK composition, live refunds, concurrency,
-hardening, production readiness, and an M3 completion tag remain open.
+adapter are also GREEN. The public one-shot reference actor now activates that
+agreement and projects the exact taker lock at revision zero. Revisions one
+through four, live actor E2E, refunds, concurrency, hardening, production
+readiness, and an M3 completion tag remain open.
 
 ## Context
 
@@ -44,6 +46,7 @@ flowchart LR
         Agreement["Validated countersigned agreement v1"]
         Maker["Maker actor and store"]
         Taker["Taker actor and store"]
+        Actor["btc-reference-actor<br/>activate drive status<br/>revision zero GREEN"]
         MakerSigner["Maker signing journal"]
         TakerSigner["Taker signing journal"]
         Recovery["SqliteBtcRecoveryStore component GREEN"]
@@ -51,13 +54,13 @@ flowchart LR
         TakerRecovery[("Taker BTC recovery DB")]
         Maker --> MakerSigner
         Taker --> TakerSigner
+        Maker -->|"private maker config"| Actor
+        Taker -->|"private taker config"| Actor
+        Agreement --> Actor
         Agreement -->|"validated acceptance input"| Recovery
         Recovery --> MakerRecovery
         Recovery --> TakerRecovery
-        Maker -. planned lifecycle projection .-> MakerRecovery
-        Taker -. planned lifecycle projection .-> TakerRecovery
-        Agreement -. planned activation .-> Maker
-        Agreement -. planned activation .-> Taker
+        Actor -->|"role-selected predecessor-zero projection"| Recovery
     end
 
     subgraph RoleServices["Role local services"]
@@ -81,14 +84,13 @@ flowchart LR
         Bedrock --> Indexer
     end
 
-    Maker --> MakerSidecar
-    Taker --> TakerSidecar
+    Actor -->|"maker config"| MakerSidecar
+    Actor -->|"taker config"| TakerSidecar
     MakerSidecar --> Sequencer
     MakerSidecar -->|"finalized funding and claim reads by ID and hash"| Indexer
     TakerSidecar --> Sequencer
     TakerSidecar -->|"finalized funding and claim reads by ID and hash"| Indexer
-    Maker -. planned agreement-bound wiring .-> CoreAdapter
-    Taker -. planned agreement-bound wiring .-> CoreAdapter
+    Actor -->|"exact taker-funding read"| CoreAdapter
     CoreAdapter --> Core
     Miner --> Core
     Core --> Evidence["Secret safe evidence"]
@@ -120,7 +122,7 @@ P2TR and CSV fields, funding outpoint/value, cooperative output/fee/unsigned
 transaction/sighash, and conservative recovery anchors and margin. Validation
 reconstructs the aggregate key, Taproot output and claim transaction with the
 pinned libraries and rejects derived-field drift even when both signatures cover
-the drifted body. Actor activation of this record is still pending.
+the drifted body. Revision-zero actor activation now accepts only this record.
 
 The read-only finalized-claim adapter accepts either agreement participant's
 role-fixed sidecar, scans only a bounded window fully covered by the finalized
@@ -197,7 +199,7 @@ flowchart TD
     Ready --> Claim["Stable-tip exact spender and claim observation"]
     Funding --> Codec["Canonical agreement-bound public evidence"]
     Claim --> Codec
-    Codec -. actor projection pending .-> RecoveryStore["Actor-local BTC recovery store"]
+    Codec -->|"revision-zero actor projection"| RecoveryStore["Actor-local BTC recovery store"]
     Signed["Exact locally validated claim bytes"] --> Started["Durable Started CAS"]
     Started --> Policy["One testmempoolaccept"]
     Policy --> Broadcast["At most one sendrawtransaction"]
@@ -205,10 +207,36 @@ flowchart TD
 ```
 
 The 18-test component suite uses deterministic typed RPC responses and
-ephemeral authenticated loopback servers. Connecting this exact adapter to the
-run-owned Core service through each reference actor remains a composed PoC
-gate. The current network-enabled mode still requires Regtest; Testnet4
-admission is production-portability work.
+ephemeral authenticated loopback servers. The public reference actor now owns
+the agreement-derived revision-zero Core funding read, but an actor-to-actual-
+Core run remains a composed PoC gate. The current network-enabled mode still
+requires Regtest; Testnet4 admission is production-portability work.
+
+## Revision-zero reference actor
+
+`btc-reference-actor --config PRIVATE_JSON activate|drive|status` is a public
+one-shot, role-fixed surface. Its strict owner-private configuration binds the
+agreement, role-local database, Core route and credential, and LEZ sidecar
+route, capability, run, runtime, timeout, and finalized discovery window.
+`status` opens no RPC client. At revision zero, `drive` selects the taker-funded
+chain from the validated agreement, observes exact Bitcoin funding or finalized
+LEZ funding, returns from that read, and then performs the SQLite predecessor-
+zero CAS. The LEZ evidence retains the finalized tip and binds the returned
+accounts to the signed agreement. Only activation inserts acceptance; absent or
+empty/no-acceptance state is not activated, while corruption or conflicting
+acceptance fails closed. Pre-funding LEZ errors remain retryable
+unavailability. Exact retries retain
+the deterministic request ID; a deliberate window change receives a distinct
+ID and remains evidence-bound. A concurrent CAS loser may reconstruct a valid
+revision-one winner and return
+`converged_on_existing_projection` without overwriting it; other failures fail
+closed.
+
+This ordering is deliberately not a cross-system atomic commit. A crash after
+the read and before SQLite leaves revision zero and a new process re-observes.
+Revisions one through four return `not_yet_composed` without RPC. Claim/refund
+effects and a two-direction actual-node run through this actor remain pending;
+ADR 0031 records the exact decision and restart boundary.
 
 ## Deployed LEZ guest and account onboarding
 

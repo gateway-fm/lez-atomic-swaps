@@ -2,6 +2,7 @@
 members = [
     "crates/adaptor-role-runner",
     "crates/btc-core-adapter",
+    "crates/btc-reference-actor",
     "crates/btc-swap-sdk",
     "crates/lez-bridge-adapter",
     "crates/lez-bridge-client",

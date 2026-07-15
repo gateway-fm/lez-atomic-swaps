@@ -352,6 +352,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "btc-reference-actor"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bitcoin",
+ "clap",
+ "corepc-types",
+ "hex",
+ "lez-bridge-adapter",
+ "lez-bridge-client",
+ "lez-bridge-protocol",
+ "lez-btc-core-adapter",
+ "lez-btc-swap-sdk",
+ "lez-swap-core",
+ "lez-swap-store",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
