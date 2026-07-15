@@ -33,6 +33,7 @@ emit_contract() {
       single_core_rpc_response_per_call: true,
       anchor_height_uses_allowed_blockchain_info: true,
       prelock_policy_response_retained: true,
+      role_allowed_block_and_mempool_observation: true,
       submission_count_query: true,
       owned_process_registry: true,
       pre_lock_presignature_domains: ["bitcoin", "lez"],

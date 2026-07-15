@@ -45,6 +45,7 @@ jq -e '
   and .single_core_rpc_response_per_call == true
   and .anchor_height_uses_allowed_blockchain_info == true
   and .prelock_policy_response_retained == true
+  and .role_allowed_block_and_mempool_observation == true
   and .submission_count_query == true
   and .owned_process_registry == true
   and .pre_lock_presignature_domains == ["bitcoin", "lez"]

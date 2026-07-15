@@ -64,7 +64,7 @@ readonly funding_key="79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16
 readonly funding_descriptor="rawtr(${funding_key})#xsjqcczm"
 readonly funding_address="bcrt1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqc8gma6"
 readonly mocktime_base=1700000000
-readonly actor_allowlist="getblockchaininfo,getnetworkinfo,getblockhash,getblockheader,getrawtransaction,gettxout,gettxspendingprevout,getindexinfo,getmempoolinfo,getmempoolentry,testmempoolaccept,sendrawtransaction"
+readonly actor_allowlist="getblockchaininfo,getnetworkinfo,getblockhash,getblock,getblockheader,getrawtransaction,gettxout,gettxspendingprevout,getindexinfo,getmempoolinfo,getrawmempool,getmempoolentry,testmempoolaccept,sendrawtransaction"
 
 required_commands=(cargo chmod curl date docker git gpg jq mkdir mv python3 rg rm seq sha256sum sleep stat tar tr)
 for command_name in "${required_commands[@]}"; do
@@ -1054,6 +1054,8 @@ for role in maker taker; do
     allowed-getnetworkinfo
   expect_allowed_success "$role" "$role_config" getblockhash '[0]' \
     allowed-getblockhash
+  expect_allowed_success "$role" "$role_config" getblock \
+    "[\"${first_block_hash}\",1]" allowed-getblock
   expect_allowed_success "$role" "$role_config" getblockheader \
     "[\"${genesis_hash}\"]" allowed-getblockheader
   expect_allowed_success "$role" "$role_config" getrawtransaction \
@@ -1067,6 +1069,8 @@ for role in maker taker; do
     allowed-getindexinfo
   expect_allowed_success "$role" "$role_config" getmempoolinfo '[]' \
     allowed-getmempoolinfo
+  expect_allowed_success "$role" "$role_config" getrawmempool '[]' \
+    allowed-getrawmempool
   expect_allowed_method_error "$role" "$role_config" getmempoolentry \
     '["0000000000000000000000000000000000000000000000000000000000000000"]' \
     allowed-getmempoolentry-error
