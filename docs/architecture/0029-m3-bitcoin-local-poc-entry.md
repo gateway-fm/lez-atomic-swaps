@@ -1,6 +1,6 @@
 # ADR 0029: M3 starts with an isolated Bitcoin actual-node PoC
 
-Status: Accepted entry boundary; M3 active; actual-Core fixture and in-memory dual-domain commitment exchange GREEN — 2026-07-15
+Status: Accepted entry boundary; M3 active; actual-Core fixture, durable SDK/journal boundary, and checked LEZ witnessed guest/sidecar GREEN — 2026-07-15
 
 ## Context
 
@@ -14,14 +14,19 @@ maker and taker key shares with BIP-327, applies the Taproot tweak to `Q`, creat
 and verifies a 65-byte Schnorr adaptor presignature, adapts it with the public
 fixture scalar, verifies the resulting 64-byte signature under `Q`, spends it
 through Core policy and consensus, and extracts the same scalar. It still has no
-production Core swap adapter, independent Bitcoin actor processes/stores,
-crash-safe nonce journal, actual LEZ BTC guest submission, or composed swap
-evidence packet. Pushed `0177151` adds fresh OS nonces, exchanged
+production Core swap adapter, independent Bitcoin actor processes/stores, or
+composed swap evidence packet. Pushed `0177151` adds fresh OS nonces, exchanged
 transcript-bound commitments, separate maker/taker state objects, the exact BTC
 message plus a placeholder LEZ message domain, one-use phases, and both
-scalar-reveal orders in memory.
-Those state objects are not yet independent processes and their nonce/partial
-state is not durable.
+scalar-reveal orders in memory. Pushed `e3f2938` adds the role-local crash-safe
+nonce and partial-outbox journal; pushed `8a7ea55` makes the SDK generate,
+reconstruct, and revalidate those exact durable bytes. Pushed `6935acd` adds the actual digest-pinned
+LEZ aggregate-witness guest and recursively proves the authority-to-claimant
+effect. Pushed `79735dd` durably prepares and completes its official message
+through the sidecar while keeping submission separate. The SDK and journal
+boundaries are compatible but not yet orchestrated
+across independent processes, and the chain components have not crossed both
+live nodes.
 
 The accepted proposal names DLC-specs `AdaptorSignature.md` as a conformance
 source. No such file exists in the current DLC repository or its history. The
@@ -67,14 +72,28 @@ flowchart LR
         BtcSession --> RevealOrder["BTC-first and LEZ-first extraction"]
         LezSession --> RevealOrder
     end
+    subgraph Durable["Proven at e3f2938 and 6935acd: durable and on-chain components"]
+        MakerJournal[("Maker role-local journal")]
+        TakerJournal[("Taker role-local journal")]
+        DurableTranscript["Reserve before commitment; consume nonce with exact partial"]
+        LezGuest["Checked LEZ aggregate-witness guest"]
+        LezWitnessSidecar["Official-wire witnessed prepare and complete"]
+        ClaimantEffect["Aggregate authority signs; separate claimant receives"]
+        MakerJournal --> DurableTranscript
+        TakerJournal --> DurableTranscript
+        LezGuest --> ClaimantEffect
+        LezWitnessSidecar --> LezGuest
+    end
+    Session -->|"SDK bridge GREEN at 8a7ea55"| DurableTranscript
     subgraph Target["M3 composition target: pending"]
         Maker["Independent maker actor"] --> Exchange["Authenticated signing exchange"]
         Taker["Independent taker actor"] --> Exchange
-        Maker --> MakerStore["Maker nonce and recovery journal"]
-        Taker --> TakerStore["Taker nonce and recovery journal"]
+        Maker --> MakerStore["Maker SDK plus proven journal"]
+        Taker --> TakerStore["Taker SDK plus proven journal"]
         Exchange --> Sdk["Role-fixed public BTC SDK"]
         Sdk --> CoreTarget["Bitcoin Core adapter"]
         Sdk --> LezTarget["LEZ v0.2 witnessed-claim adapter"]
+        LezTarget -->|"prepare and complete GREEN; submit pending"| LezWitnessSidecar
         CoreTarget --> Atomicity["Both complete directions and atomicity"]
         LezTarget --> Atomicity
     end
@@ -185,14 +204,19 @@ gates now pass. It remains an unaccepted production candidate pending exchanged
 commitments, durable nonce reservation/consumption, zeroization, negative
 vectors, independent actor verification, and review.
 
-## Target pre-lock signing ceremony (in-memory boundary GREEN; durability pending)
+## Target pre-lock signing ceremony (SDK and journal GREEN; actor integration pending)
 
 The following is the required independent-actor ceremony. At `f5a9caa`
 role-tagged commitments are computed in one process but are not exchanged before
 nonce reveal. At `0177151`, separate maker/taker state objects exchange and
 verify those commitments before nonce reveal for both message domains, consume
-their retained nonce bytes once in memory, and verify both partials. No
-crash-safe nonce journal or independent-process transport is exercised yet.
+their retained nonce bytes once in memory, and verify both partials. At
+`e3f2938`, the generic role-local journal independently proves the required
+reserve, reveal, consume, outbox, restart, and concurrency ordering. At
+`8a7ea55`, the SDK produces and reconstructs the exact BIP-327 material,
+revalidates the complete context and both commitments, and verifies the
+resulting partials and presignature. No independent-process transport or actor
+adapter is exercised yet.
 
 Both claim transactions and all recovery material are complete before the first
 lock. Each chain/message uses a distinct domain-separated MuSig2 session and
@@ -228,6 +252,15 @@ sequenceDiagram
 Funding is forbidden unless both roles independently verify and durably retain
 the exact presignatures they need for either direction. Discovery/Chat may vanish
 after the taker submits the first lock without affecting claim or recovery.
+
+The LEZ half now has an executable authority boundary rather than a design-only
+box. The checked guest derives the official LEZ public account from the x-only
+MuSig2 aggregate key, requires that account's one aggregate BIP-340 witness for
+the exact public transaction, and sends custody only to a distinct immutable
+claimant. The old preimage instruction cannot claim a witnessed escrow. This is
+recursive checked-program evidence; deployment and submission through the
+sidecar is GREEN through durable completion. Deployment, submission, and local
+sequencer inclusion remain part of the pending actor flows below.
 
 ## Target actor flows (pending)
 
@@ -347,7 +380,8 @@ through the Bitcoin library plus Bitcoin Core consensus. Gateway erratum
 clarification has not yet been posted. It does not permit ECDSA evidence to be
 mislabeled as Schnorr evidence.
 
-This ADR activates M3 and accepts only its entry boundary plus the one-process
-public deterministic two-party MuSig2/adaptor/extraction Core interoperability
-fixture. It does not accept production signing authority or the final dependency
-graph, claim either complete direction works, or authorize an `m3-complete` tag.
+This ADR activates M3 and accepts its entry boundary, the one-process Core
+interoperability fixture, the role-local durable journal, and the checked LEZ
+aggregate-witness guest as separate proven components. It does not accept
+production signing authority or the final dependency graph, claim either
+complete direction works, or authorize an `m3-complete` tag.

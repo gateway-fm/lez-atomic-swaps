@@ -116,6 +116,7 @@ flowchart TB
 
     subgraph SharedSecurity["Shared SDK security boundary"]
         PCM["Protected preimage + exact claim payload<br/>XChaCha20-Poly1305 + HKDF<br/>schema-v10 envelope journal"]
+        M3AJ[("M3 role-local adaptor journal<br/>reserve before commitment<br/>consume nonce with exact partial GREEN")]
     end
 
     subgraph LezSidecars["Role-isolated official LEZ v0.1.2 processes"]
@@ -135,12 +136,16 @@ flowchart TB
         V02J[("Separate role-bound state<br/>exact reservations + Vault attempt journals GREEN")]
         MBR2["Maker lez-v02-bridge-poc<br/>canonical forward and reverse complete"]
         TBR2["Taker lez-v02-bridge-poc<br/>canonical forward and reverse complete"]
+        M3WB["M3 witnessed prepare and complete<br/>ten-method server GREEN; live submit pending"]
         MBRJ[("Maker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         TBRJ[("Taker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         MSL2 --> V02J
         TLS2 --> V02J
         MBR2 --> MBRJ
         TBR2 --> TBRJ
+        MBR2 --> M3WB
+        TBR2 --> M3WB
+        M3WB --> V02J
     end
 
     subgraph LocalLezV02["Required public-compatible local LEZ v0.2 devnet"]
@@ -154,6 +159,7 @@ flowchart TB
         V02Fixture[("Fixture readiness GREEN<br/>isolated configs; saved window stale")]
         V02Partial[("Historical host-built evidence retained<br/>14d through 14o and reverse 14c")]
         V02Full[("Canonical ZEC corridor directions GREEN<br/>2 of 2 happy directions")]
+        V02M3[("M3 aggregate-witness guest and sidecar GREEN<br/>ELF a199c5be...e293<br/>ProgramId 39b6a4db...4dec; live deployment pending")]
         V02State[(".e2e/run_id/lez-v02")]
     end
 
@@ -163,7 +169,7 @@ flowchart TB
 
     subgraph Nodes["Actor-selected node boundary"]
         LEZ["LEZ sequencer<br/>dynamic local port<br/>typed exact-public contract<br/>public live execution pending"]
-        BTC["Bitcoin Core 31.1 Regtest<br/>actual-Core MuSig2 adaptor claim GREEN<br/>dual-domain in-memory sessions GREEN"]
+        BTC["Bitcoin Core 31.1 Regtest<br/>actual-Core MuSig2 adaptor claim GREEN<br/>service mode and durable SDK/journal GREEN"]
         XMR["monerod + wallet RPC"]
         ZEC["Zebra 5.2.0 Regtest JSON-RPC<br/>retained proof host 32834"]
     end
@@ -223,6 +229,8 @@ flowchart TB
     TMO -->|"signed direction selects one node"| ZEC
     PS --> PCM
     TS --> PCM
+    PS --> M3AJ
+    TS --> M3AJ
     PCM -->|"encrypted envelope + journal"| DB
     PCM -->|"encrypted envelope + journal"| TDB
     TM -.-> TS
@@ -276,6 +284,9 @@ flowchart TB
     V02Native --> V02Partial
     V02Fixture --> V02Partial
     V02Ready -->|"canonical deployment finalized"| V02Full
+    V02R -->|"digest-pinned build, recursive execution, official-wire completion"| V02M3
+    M3WB --> V02M3
+    V02M3 -.->|"M3 deployment pending"| SQ
     V02Fixture -->|"fresh role provisioning"| V02Full
     V02Full -->|"direction-derived funding and exact spend on Zebra"| ZEC
     V02Full -.->|"runtime and funding handoff"| LRR
@@ -975,10 +986,17 @@ Pushed `0177151` adds a production-shaped in-memory boundary alongside that
 retained Core fixture. Separate maker/taker state objects use fresh OS nonces,
 exchange transcript-bound commitments before reveal, verify peer partials, and
 bind distinct BTC and LEZ messages to the same adaptor point. Either completed
-signature reveals the scalar needed to complete the other. The objects still
-share one process, the LEZ message remains a fixture rather than a submitted
-transaction, and nonce/partial state is not durable; those facts keep the
-independent-process and complete-corridor edges pending.
+signature reveals the scalar needed to complete the other. Pushed `e3f2938`
+adds the role-local SQLite journal that reserves the nonce before commitment,
+gates reveal on a durable peer commitment, and consumes the nonce atomically
+with the exact replayable partial. Pushed `8a7ea55` adds SDK generation and
+restart reconstruction for the exact journal material, complete-context and
+both-commitment checks, partial verification, and aggregate-presignature
+verification. Pushed `6935acd` adds the checked LEZ guest:
+the aggregate account authorizes the exact transaction while the distinct
+claimant receives the escrow. The actor orchestration still shares one process,
+and neither component has crossed both live nodes;
+those facts keep the independent-process and complete-corridor edges pending.
 
 ## Abandonment and autonomous recovery flow
 

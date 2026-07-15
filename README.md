@@ -36,23 +36,54 @@ one-item witness and spent-once outpoint; the final mempool and peer set are
 empty and cleanup is exact.
 
 Pushed commit `0177151` adds the next protocol slice behind canonical byte
-boundaries. Separate maker and taker signer-state objects now create fresh
+boundaries. Separate maker and taker signer-state objects create fresh
 OS-random nonces, exchange and verify transcript-bound commitments before nonce
 reveal, reject phase/reuse/message/adaptor mismatches, verify both partials, and
 derive the same aggregate presignature for the exact BTC message and a
 placeholder LEZ message domain. A runnable dual-session fixture proves that
 either domain's completed signature reveals the same scalar and completes the
-other signature. It does not yet build or submit the actual LEZ claim or persist
-nonce state.
+other signature.
+
+Pushed `e3f2938` adds a role-local SQLite adaptor-session journal. It reserves
+the exact one-use nonce before exposing its commitment, permits nonce reveal
+only after the peer commitment is durable, and atomically consumes the nonce
+with an exact replayable partial-signature outbox. Six focused restart,
+mutation, reuse, concurrency, and private-file tests plus the 60-test store
+suite pass. This PoC journal deliberately stores the nonce plaintext in an
+owner-only database until consumption; encryption or HSM custody remains a
+production-readiness requirement.
+
+Pushed `8a7ea55` bridges that durability boundary into the BTC SDK. Fresh
+MuSig2 material can be reserved before commitment exchange, reconstructed after
+restart, checked against the complete session and both role-bound nonce
+commitments, consumed once to produce a verified partial, and aggregated into a
+verified presignature. The remaining work is actor-process orchestration rather
+than a second signing implementation.
+
+Pushed `6935acd` adds the actual pinned LEZ v0.2 aggregate-witness guest. A
+distinct two-party aggregate authority signs the exact public transaction, but
+the escrowed asset is transferred only to the separately committed claimant.
+The digest-pinned Risc0 build reproduces ELF `a199c5be...e293` and
+ImageID/ProgramId `39b6a4db...4dec`; recursive execution proves the two-party
+claim and rejects one-share, wrong-message, mismatched-authority, and preimage
+bypass attempts without moving custody.
+
+Pushed `79735dd` exposes that path through the official-wire sidecar. The
+claimant role durably reserves the exact canonical LEZ message and official
+hash, external maker/taker signing supplies one aggregate signature, and the
+sidecar verifies and durably completes the canonical transaction before the
+existing one-shot submission boundary can accept it. Preparation survives a
+fresh process without rereading the authority nonce. Live local deployment and
+submission remain part of the composed runner, not this component claim.
 
 The retained actual-Core run is deliberately a one-process public deterministic
 cryptographic and consensus fixture, while the newer dual-session fixture uses
 fresh nonces and exchanged commitments in separate in-process role objects.
 Neither is a complete swap or production signing authority. There is no
-crash-safe nonce reservation/consumption journal, independent maker/taker
-processes or durable stores, LEZ BTC guest composition, second complete
-direction, refund execution, or end-to-end atomicity. There is no executable
-full BTC swap command yet. CI runs the same P2TR funding/claim composition and
+independent maker/taker process integration, witnessed submission through a
+live LEZ node, either complete direction, refund
+execution, or end-to-end atomicity. There is no executable full BTC swap
+command yet. CI runs the same P2TR funding/claim composition and
 fail-hard scans
 the exact Core image for HIGH/CRITICAL vulnerabilities. The earlier clean
 infrastructure run remains available as

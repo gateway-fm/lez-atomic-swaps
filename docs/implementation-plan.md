@@ -1037,10 +1037,15 @@ The current tree still has no complete LEZ/BTC swap corridor or user-facing BTC
 swap command. The actual-Core fixture holds both public deterministic signers
 in one process and computes commitments without exchanging them; the newer
 dual-session fixture exchanges commitments using distinct in-process role
-objects but does not submit to LEZ. Neither proves a crash-safe nonce
-reservation/consumption journal, independent actor processes and stores, the
-actual LEZ BTC claim path, either complete direction, refund execution,
-production signing authority, or atomicity.
+objects. Pushed `e3f2938` proves a role-local crash-safe nonce and exact-partial
+journal, pushed `8a7ea55` bridges exact MuSig2 signing material across restart,
+pushed `6935acd` proves the real checked LEZ aggregate-witness guest
+recursively, and pushed `79735dd` prepares and completes its canonical
+transaction through the official-wire sidecar. Those components are not yet
+wired into independent actor processes or a live two-node corridor. Witnessed
+live-node submission, both
+complete directions, refund execution, production key custody, and end-to-end
+atomicity remain pending.
 
 Authority was reread on 2026-07-14: live RFP repository commit `969a76d`
 (file blob `d0fa52b`) and accepted issue #112, whose newline-normalized body
@@ -1095,9 +1100,13 @@ slice in this order:
    Bitcoin nodes and emit secret-safe evidence from both actors and chains.
 
 Progress on 2026-07-15: steps 1 and 2 are closed. Step 3's one-process
-cryptographic/Core sub-slice and its fresh-nonce, commitment-exchanging,
-dual-domain in-memory boundary are GREEN; durable role-local signing state and
-independent processes remain active. Exact-pinned `bitcoin` 0.32.101 constructs and verifies
+cryptographic/Core sub-slice, fresh-nonce dual-domain boundary, generic
+role-local durable signing journal, and restart-safe BTC SDK bridge are GREEN;
+independent processes remain active. Step 4's guest source, digest-pinned
+artifact, exact aggregate-account mapping, recursive state effect, and durable
+sidecar preparation/completion are GREEN; local deployment and corridor
+composition remain.
+Exact-pinned `bitcoin` 0.32.101 constructs and verifies
 the P2TR/CSV transaction boundary. Exact-pinned `musig2` 0.4.1 aggregates the
 ordered maker/taker fixture keys, applies the Taproot tweak with matching `Q`
 and parity, creates and verifies both adaptor partials and the 65-byte aggregate
@@ -1111,11 +1120,16 @@ maintainer-concentrated, exposes cloneable non-zeroizing internal secret types,
 and provides no commitment round. The project wrapper now supplies a
 transcript-bound commitment round, fresh OS nonce seeds, one-use in-memory
 phases, zeroizing retained key/serialized-nonce bytes, and focused
-phase/commitment/message/point negatives. It must still durably reserve and
-consume nonces, atomically persist exact partial outboxes, prove independent
-process restart behavior, improve upstream-secret handling, and receive
-review. Its `secp256k1` 0.31 types remain byte-isolated from rust-bitcoin's
-0.29 types.
+phase/commitment/message/point negatives. The additive journal durably reserves
+and consumes serialized nonces and atomically persists exact partial outboxes
+with concurrent/restart replay. The SDK now produces and reconstructs those
+canonical bytes, revalidates the full context plus both commitments, checks the
+secret/public nonce relation, and verifies partials and aggregate
+presignatures. The actor adapter has not yet exercised the combined boundary
+across processes. The journal's plaintext nonce
+at rest is an explicit PoC nonclaim. Independent-process recovery, encrypted or
+hardware-backed secret custody, and review remain. Its `secp256k1` 0.31 types
+remain byte-isolated from rust-bitcoin's 0.29 types.
 
 In the `TakerSellsForeign` Bitcoin-leg fixture, the taker policy-checks and
 submits the normal 1 BTC funding transaction, Core mines it at height 102, the
@@ -1184,6 +1198,48 @@ reports `actual_lez_submission=false`, `durable_nonce_journal=false`, and
 `signer_separation=distinct_state_objects`; it is not actual-node corridor
 evidence.
 
+Pushed commit `e3f2938` adds the role-local `SqliteAdaptorSessionJournal`.
+Immutable session, role, chain domain, exact message, adaptor point, and ordered
+keys are fixed before a nonce commitment can leave the process. Peer
+commitment persistence gates public-nonce reveal; an immediate SQLite
+transaction invokes the pure signing callback once, clears the 97-byte nonce,
+and stores the exact partial before returning it. Restart and concurrent retries
+return those same bytes without invoking the signer. The store is owner-only
+and secret-free after consumption, but nonce encryption at rest and an
+enforceable narrow signer/HSM boundary remain production work.
+
+Pushed commit `8a7ea55` adds the restart-safe SDK half of the durable signing
+boundary. It generates canonical BIP-327 nonce material from OS entropy,
+domain-separates and binds the complete BTC or LEZ signing context, verifies
+the local and peer role-bound nonce commitments after reload, checks that the
+retained secret nonce derives the recorded public nonce, creates one partial,
+and verifies both partials plus the aggregate presignature. This reuses exact
+`musig2` 0.4.1 primitives; it introduces no custom curve arithmetic. The
+journal/SDK bytes are compatible, but the independent maker/taker process
+adapter and production key custody remain pending.
+
+Pushed commit `6935acd` adds `initialize_native_witnessed` and
+`claim_native_witnessed` to the checked LEZ v0.2 guest. The guest derives the
+official LEZ account from the MuSig2 x-only aggregate key, requires that exact
+aggregate account as the sole claim signer, keeps it distinct from the claimant,
+and transfers custody only to the claimant. Recursive execution with the
+official `lee` account mapping accepts an exact two-party signature and rejects
+one share, a signature for another message, a mismatched authority, and the
+legacy preimage path. The digest-pinned build reproduces ELF
+`a199c5be...e293` and ProgramId `39b6a4db...4dec`. No live LEZ deployment or
+cross-chain submission is claimed by this component test.
+
+Pushed commit `79735dd` adds the official-wire bridge from that checked guest
+to external aggregate signing. `prepare_witnessed_claim` durably fixes the
+official Borsh `Message`, authority nonce, and official hash before exposure;
+`complete_witnessed_claim` accepts only the same reservation and an externally
+completed 64-byte aggregate signature, verifies it with pinned official `nssa`,
+and durably retains the canonical `PublicTransaction`. The existing
+`submit_transaction` remains the sole effect boundary. Protocol 17/17, client
+16/16, and pinned sidecar 47/47 tests pass, including fresh-process completion,
+exact replay, conflicting completion, authority/account-order, and transcript
+drift. This slice does not claim live-node inclusion or a complete direction.
+
 That slice is GREEN only when retained, secret-safe evidence proves Core 31.1,
 Regtest genesis and an advancing tip, zero chain peers and zero public runtime
 RPC/faucet/funds dependencies, an
@@ -1226,8 +1282,9 @@ Accepted dependency groups remain Bitcoin Core 31.1 and `bitcoin` 0.32.101: 2
 of 5 entry candidates. The exact `musig2` 0.4.1 graph is locked, package-scoped
 for CC0/Unlicense, policy-gated, and exercised through Core plus the
 commitment-exchanging dual-domain wrapper, but remains an unaccepted
-beta/unaudited candidate until nonce durability, independent-process recovery,
-stronger secret handling, and review pass. `miniscript`
+beta/unaudited candidate until independent-process recovery, stronger secret
+handling, and review
+pass. `miniscript`
 13.1.0 and `corepc-client` 0.16.0/`corepc-types` 0.15.0 remain deferred until a
 concrete API requires them.
 

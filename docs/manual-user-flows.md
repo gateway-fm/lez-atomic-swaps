@@ -19,9 +19,11 @@ now reproduce a one-process, two-party `MuSig2` adaptor-signature Bitcoin-leg
 fixture. A second runnable fixture uses separate maker/taker signer-state
 objects, fresh OS-random nonces, commitment-before-reveal, and two
 domain-separated BTC/LEZ messages to prove both scalar-reveal orders. The
-complete M3 LEZ/BTC swap is **not available**: there is no actual LEZ submission,
-second actual-node direction, refund execution, independent signer process,
-durable signer store, or end-to-end atomicity proof.
+role-local crash-safe journal and the checked LEZ aggregate-witness guest are
+also reproducible component gates. The complete M3 LEZ/BTC swap is **not
+available**: there is no journal-wired independent signer process, live LEZ
+witnessed submission, either complete actual-node direction, refund execution,
+or end-to-end atomicity proof.
 
 Start with the standalone cryptographic fixture. It needs Rust/Cargo and locked
 registry artifacts, but no Docker, node, RPC, faucet, public funds, or public
@@ -84,6 +86,82 @@ policy/consensus evidence. Package tests cover deterministic Taproot and
 transaction construction plus rejection cases; they do not substitute for
 either executable fixture.
 
+### Repeat the durable signer and checked LEZ guest component gates
+
+The role-local journal and BTC SDK restart bridge need no Docker, chain endpoint,
+faucet, or public network. The journal uses a new temporary owner-only SQLite
+database for every test:
+
+```sh
+cargo test --locked -p lez-swap-store --test adaptor_session_journal --no-fail-fast
+cargo test --locked -p lez-swap-store --no-fail-fast
+cargo test --locked -p lez-btc-swap-sdk --all-targets
+```
+
+Require 6 focused journal tests and all 60 package tests to pass. They prove
+reserve-before-commitment, commitment-before-nonce reveal, exact-message and
+wire-byte immutability, one-use nonce fingerprints, atomic nonce consumption
+with an exact partial outbox, restart replay, and a single callback across two
+concurrent SQLite connections. They deliberately report
+`nonce_encrypted_at_rest=false`: the serialized nonce is plaintext in a mode
+`0600` database/WAL until consumption. Do not treat this as production key
+custody.
+
+Require all 12 BTC SDK tests to pass. The restart cases verify the full durable
+context, each role's own and peer nonce commitments, the secret/public nonce
+relation, partial signatures, and the aggregate presignature. These are exact
+library boundaries; the command does not start independent maker/taker actor
+processes.
+
+The official-wire witnessed sidecar boundary is reproduced separately. The
+first two commands need only the locked root graph; the third uses the pinned
+LEZ v0.2 graph and a locally cached, checksum-verified Rapidsnark build:
+
+```sh
+cargo test --locked -p lez-bridge-protocol
+cargo test --locked -p lez-bridge-client
+RAPIDSNARK_LIB_DIR=/tmp/lez-atomic-swaps-tools/rapidsnark-v0.0.8/d4133227 \
+BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include \
+cargo +1.96.0 test \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --locked --offline --test witnessed_claim_prepare
+```
+
+Require 17 protocol, 16 client, and 3 focused sidecar tests. They prove exact
+message/hash reservation, destination/aggregate-authority separation, official
+signature verification, fresh-process completion without rereading the nonce,
+exact replay, and conflicting-completion rejection. They do not start the LEZ
+node or submit a transaction. A cold environment must first populate the pinned
+git and circuit/tool caches through the full verifier below; that setup can be
+network-flaky, while the shown `--offline` sidecar test is not.
+
+The standard LEZ v0.2 closure verifier rebuilds the current guest with the
+digest-pinned Risc0 builder, runs the recursive checked-program tests, derives
+the ImageID, and exercises the repository's dependency and generated-client
+gates. Use a fresh run ID so all tool and target directories are isolated:
+
+```sh
+RUN_ID=m3-lez-witness-manual-20260715a \
+./scripts/verify-lez-v02-provisional.sh
+```
+
+On a warm verified cache, the focused recursive lifecycle can be repeated with
+the same pinned Risc0 3.0.5 toolchain used by that verifier. The full verifier
+is the portable entrypoint because it installs or validates the exact toolchain
+instead of assuming a host path. Require ELF SHA-256 `a199c5be...e293`,
+ImageID/ProgramId `39b6a4db...4dec`, seven contract tests, and four recursive
+methods tests. The witnessed test must transfer custody to the claimant while
+leaving the aggregate authority balance unchanged, and must reject a single
+share, wrong exact message, mismatched authority, and legacy preimage bypass.
+This rebuild executes the checked guest recursively; it does not deploy or
+submit that claim to the local sequencer.
+
+Cold execution may download checksum-pinned Risc0 tooling, the digest-pinned
+guest-builder image, locked Rust/git dependencies, and the hash-pinned Logos
+circuit archive. Their hosts, DNS/TLS, registries, and Docker availability can
+cause setup flakiness. The journal-only commands have no chain or Docker
+dependency after locked Rust artifacts are cached.
+
 ### Repeat the actual Bitcoin Core flow
 
 Prerequisites are Docker, Rust/Cargo 1.96, Bash, curl, Git, GnuPG, jq,
@@ -93,6 +171,24 @@ Python 3, ripgrep, SHA-256 tools, and tar. Use a fresh 8-64 character lowercase
 ```sh
 RUN_ID=m3-core-manual-20260715a ./scripts/run-bitcoin-core-e2e.sh
 ```
+
+For an external actor/composed runner, select service mode and retain only this
+run's resources temporarily:
+
+```sh
+RUN_ID=m3-core-service-20260715a \
+BITCOIN_CORE_E2E_MODE=service \
+BITCOIN_CORE_E2E_KEEP_RUNNING=1 \
+./scripts/run-bitcoin-core-e2e.sh
+```
+
+The command prints the dynamic RPC URL, separate mode-`0600` maker/taker curl
+configs, owner-only deterministic funding handoff, evidence path, and exact
+container/volume/network/image cleanup commands. The funding handoff contains a
+private Regtest key and must never be copied into evidence or logs. Service mode
+sets every P2TR/adaptor/LEZ/atomicity proof claim to false; those become true
+only in a composed run. Execute the printed exact cleanup commands when manual
+actor work ends—never use a broad project, label, or Docker prune.
 
 For certification, first commit or stash every change and require the runner to
 reject a dirty tree:
@@ -220,11 +316,12 @@ changing the deterministic local-chain assertions. Reusing a verified Core
 archive reduces downloads but does not remove the other provenance checks.
 
 There is currently no manual command for a complete M3 LEZ/BTC swap. The
-runnable boundary ends at the isolated `TakerSellsForeign`-shaped Bitcoin leg;
-durable nonce journaling, independent signer processes and stores, the actual
-LEZ leg, the opposite actual-node direction, refunds, and atomicity remain
-future slices. Commitment exchange and both in-memory reveal orders are
-runnable with `dual-chain-adaptor-poc` as described above.
+runnable boundary includes the isolated `TakerSellsForeign`-shaped Bitcoin leg,
+the generic durable journal, and the recursively executed LEZ witnessed guest.
+SDK/journal wiring, independent signer processes, live two-node effects, both
+complete directions, refunds, and atomicity remain future slices. Commitment
+exchange and both in-memory reveal orders are runnable with
+`dual-chain-adaptor-poc` as described above.
 
 ## Can I run the complete swap myself?
 
