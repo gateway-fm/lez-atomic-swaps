@@ -29,7 +29,7 @@ readonly private_dir="${run_root}/private"
 readonly identities_dir="${private_dir}/lez-identities"
 readonly directions_dir="${private_dir}/directions"
 readonly process_registry="${private_dir}/owned-processes.ndjson"
-readonly lez_bootstrap_root="${private_dir}/lez-bootstrap"
+readonly lez_bootstrap_root="/tmp/lez-atomic-swaps-m3-${run_id}-vault-state"
 readonly lez_bootstrap_manifest="${private_dir}/lez-bootstrap.env"
 readonly bitcoin_manifest="${repo_root}/.e2e/${bitcoin_run_id}/bitcoin-core/run.env"
 readonly lez_manifest="${repo_root}/.e2e/${lez_run_id}/lez-v02/run.env"
@@ -96,10 +96,12 @@ emit_contract() {
         compose_projects: "run_scoped",
         dynamic_literal_loopback_ports: true,
         private_e2e_roots: true,
+        secure_reservation_state: "exact_run_owned_tmp_root",
         foreign_resource_mutation: false
       },
       cleanup: {
         captured_exact_ids_only: true,
+        secure_reservation_state_root_removed: true,
         runs_on_success_and_failure: true,
         broad_cleanup_used: false
       },
@@ -137,7 +139,7 @@ fail() {
   exit 2
 }
 
-for command_name in cargo chmod curl date docker git jq kill mkdir mv readlink rg sed sha256sum sleep stat; do
+for command_name in cargo chmod curl date docker git id jq kill mkdir mv readlink rg rm sed sha256sum sleep stat; do
   command -v "$command_name" >/dev/null || fail "missing required tool: ${command_name}"
 done
 
@@ -182,7 +184,8 @@ validate_native_build_prerequisites() {
 
 validate_native_build_prerequisites
 
-for path in "$run_root" ".e2e/${bitcoin_run_id}" ".e2e/${lez_run_id}"; do
+for path in "$run_root" ".e2e/${bitcoin_run_id}" ".e2e/${lez_run_id}" \
+  "$lez_bootstrap_root"; do
   [[ ! -e "$path" && ! -L "$path" ]] || fail "refusing to reuse run state: ${path}"
 done
 
@@ -329,10 +332,23 @@ remove_exact_resource_file() {
   done <"$resources_file"
 }
 
+remove_secure_state_root() {
+  local expected="/tmp/lez-atomic-swaps-m3-${run_id}-vault-state"
+  [[ "$lez_bootstrap_root" == "$expected" ]] || return 1
+  if [[ ! -e "$lez_bootstrap_root" && ! -L "$lez_bootstrap_root" ]]; then
+    return 0
+  fi
+  [[ -d "$lez_bootstrap_root" && ! -L "$lez_bootstrap_root" ]] || return 1
+  [[ "$(stat -c '%u' "$lez_bootstrap_root")" == "$(id -u)" ]] || return 1
+  [[ "$(stat -c '%a' "$lez_bootstrap_root")" == 700 ]] || return 1
+  rm -rf --one-file-system -- "$lez_bootstrap_root" || return 1
+  [[ ! -e "$lez_bootstrap_root" && ! -L "$lez_bootstrap_root" ]]
+}
+
 write_cleanup_attestation() {
   local result="$1"
   local bitcoin_containers bitcoin_networks bitcoin_volumes bitcoin_images
-  local lez_containers lez_networks lez_volumes lez_images
+  local lez_containers lez_networks lez_volumes lez_images secure_state_absent
   bitcoin_containers="$(docker container ls --all --quiet \
     --filter "label=org.logos-co.atomic-swaps.run=${bitcoin_run_id}" || true)"
   bitcoin_networks="$(docker network ls --quiet \
@@ -349,6 +365,10 @@ write_cleanup_attestation() {
     --filter "label=org.logos-co.atomic-swaps.run=${lez_run_id}" || true)"
   lez_images="$(docker image ls --quiet \
     --filter "label=org.logos-co.atomic-swaps.run=${lez_run_id}" || true)"
+  secure_state_absent=false
+  if [[ ! -e "$lez_bootstrap_root" && ! -L "$lez_bootstrap_root" ]]; then
+    secure_state_absent=true
+  fi
   jq -n \
     --arg run_id "$run_id" \
     --arg result "$result" \
@@ -361,25 +381,28 @@ write_cleanup_attestation() {
     --arg lez_containers "$lez_containers" \
     --arg lez_networks "$lez_networks" \
     --arg lez_volumes "$lez_volumes" \
-    --arg lez_images "$lez_images" '
+    --arg lez_images "$lez_images" \
+    --argjson secure_state_absent "$secure_state_absent" '
     {
       schema_version: 1,
       run_id: $run_id,
       result: $result,
-      cleanup_scope: "captured_exact_container_ids_and_exact_named_resources",
+      cleanup_scope: "captured_exact_ids_names_and_secure_state_root",
       broad_cleanup_used: false,
       child_runs: [$bitcoin_run, $lez_run],
       exact_run_resources_absent: {
         containers: ($bitcoin_containers == "" and $lez_containers == ""),
         networks: ($bitcoin_networks == "" and $lez_networks == ""),
         volumes: ($bitcoin_volumes == "" and $lez_volumes == ""),
-        images: ($bitcoin_images == "" and $lez_images == "")
+        images: ($bitcoin_images == "" and $lez_images == ""),
+        secure_reservation_state: $secure_state_absent
       },
       all_exact_run_resources_absent:
         ($bitcoin_containers == "" and $lez_containers == ""
          and $bitcoin_networks == "" and $lez_networks == ""
          and $bitcoin_volumes == "" and $lez_volumes == ""
-         and $bitcoin_images == "" and $lez_images == ""),
+         and $bitcoin_images == "" and $lez_images == ""
+         and $secure_state_absent),
       foreign_resources_targeted: false
     }' >"${cleanup_attestation}.partial"
   chmod 0600 "${cleanup_attestation}.partial"
@@ -400,6 +423,7 @@ cleanup() {
   remove_exact_resource_file volume "$volume_resources" || cleanup_failed=1
   remove_exact_resource_file network "$network_resources" || cleanup_failed=1
   remove_exact_resource_file image "$image_resources" || cleanup_failed=1
+  remove_secure_state_root || cleanup_failed=1
 
   if [[ "$cleanup_failed" == "0" ]]; then
     write_cleanup_attestation passed || cleanup_failed=1

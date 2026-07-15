@@ -151,8 +151,10 @@ jq -e --arg run_id "$contract_run_id" '
   and .replay.restart_both_roles == true
   and .replay.resubmission_count == 0
   and .isolation.dynamic_literal_loopback_ports == true
+  and .isolation.secure_reservation_state == "exact_run_owned_tmp_root"
   and .isolation.foreign_resource_mutation == false
   and .cleanup.captured_exact_ids_only == true
+  and .cleanup.secure_reservation_state_root_removed == true
   and .cleanup.runs_on_success_and_failure == true
   and .evidence.secret_safe_json == true
   and .evidence.cleanup_attestation == true
@@ -190,6 +192,7 @@ required_terms=(
   'assert_terminal_and_replay'
   'write_cleanup_attestation'
   'capture_owned_resources'
+  'remove_secure_state_root'
   'remove_exact_resource_file'
   'all_exact_run_resources_absent'
   'verify_lez_bootstrap_contract'
