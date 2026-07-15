@@ -11,6 +11,7 @@ use std::{
 
 mod adaptor_session_journal;
 mod bridge_operation_journal;
+mod btc_recovery;
 mod zec_recovery;
 
 pub use adaptor_session_journal::{
@@ -23,6 +24,10 @@ pub use adaptor_session_journal::{
 pub use bridge_operation_journal::{
     BridgeContextCommit, BridgeObservationOutcome, BridgeOperationKey, BridgeOperationKind,
     BridgeRequestSpec, DurableBridgeRequestContext, SqliteBridgeOperationJournal,
+};
+pub use btc_recovery::{
+    BtcAgreementAcceptance, BtcLifecycleEvidenceKind, BtcLifecycleEvidenceV1, BtcOfflineStatus,
+    BtcProjectionCommit, BtcRecoveryError, BtcTerminalOutcome, SqliteBtcRecoveryStore,
 };
 pub use zec_recovery::SqliteZecRecoveryStore;
 

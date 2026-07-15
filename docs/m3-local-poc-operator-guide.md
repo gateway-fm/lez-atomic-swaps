@@ -59,6 +59,22 @@ allocations. No public RPC, faucet, public peer, or public fund participates.
 
 ## Prerequisites and builds
 
+Before starting either node, the durable Bitcoin lifecycle component can be
+repeated independently:
+
+~~~sh
+cargo test --locked -p lez-swap-store --test btc_recovery -- --nocapture
+~~~
+
+The eight cases create separate owner-private temporary SQLite databases for
+maker and taker, project both directions through the four exact revisions,
+close/reopen and reconstruct `Completed`, exercise replay/CAS/rollback and
+mutation failures, and scan SQLite/WAL for the recovered-scalar sentinel. They
+use synthetic evidence that represents already-validated chain-adapter output;
+there is no RPC, node, Docker container, faucet, public endpoint, or external
+availability dependency in this component gate. It does not substitute for
+the still-pending reference-actor run through actual nodes.
+
 Run from the repository root. Use a clean or intentionally reviewed worktree
 and a fresh composed identifier:
 

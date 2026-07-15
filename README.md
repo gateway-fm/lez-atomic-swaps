@@ -90,7 +90,7 @@ Pushed `e3f2938` adds a role-local SQLite adaptor-session journal. It reserves
 the exact one-use nonce before exposing its commitment, permits nonce reveal
 only after the peer commitment is durable, and atomically consumes the nonce
 with an exact replayable partial-signature outbox. Six focused restart,
-mutation, reuse, concurrency, and private-file tests plus the 60-test store
+mutation, reuse, concurrency, and private-file tests plus the 68-test store
 suite pass. This PoC journal deliberately stores the nonce plaintext in an
 owner-only database until consumption; encryption or HSM custody remains a
 production-readiness requirement.
@@ -152,6 +152,22 @@ account DTOs but no account proof or atomic multi-read snapshot token; that is
 recorded as an upstream production trust limitation, not hidden as local
 consensus proof. This closes typed LEZ claim evidence, not the pending Bitcoin
 Core adapter or cohesive actor wiring.
+
+The next durable M3 component is now implemented locally as
+`SqliteBtcRecoveryStore`. Each maker or taker opens a different owner-private
+database bound to its exact accepted agreement, role, and agreement-derived
+initial coordinator. Four exact public-evidence revisions project the taker
+lock, maker lock, revealing claim, and follow-up claim through `BEGIN
+IMMEDIATE`, predecessor CAS, and a versioned domain-separated SHA-256 evidence
+chain. Reopen recomputes the chain and reconstructs terminal `Completed`
+offline. The store retains the exact 64-byte public revealing witness but never
+the recovered scalar; focused mutation, rollback, replay, actor-separation,
+and scalar-absence checks are 8/8, and all 68 store tests pass. This is a GREEN
+persistence component, not yet a cohesive actor claim: the caller must first
+validate the canonical agreement and typed chain evidence, actor wiring is
+pending, chain and SQLite cannot commit atomically, and the hash chain detects
+accidental/tampered history but does not authenticate a database rewritten in
+full by its filesystem owner.
 
 The older retained actual-Core run remains a one-process public deterministic
 cryptographic and consensus fixture. The new composed run closes live witnessed

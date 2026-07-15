@@ -46,8 +46,16 @@ flowchart LR
         Taker["Taker actor and store"]
         MakerSigner["Maker signing journal"]
         TakerSigner["Taker signing journal"]
+        Recovery["SqliteBtcRecoveryStore component GREEN"]
+        MakerRecovery[("Maker BTC recovery DB")]
+        TakerRecovery[("Taker BTC recovery DB")]
         Maker --> MakerSigner
         Taker --> TakerSigner
+        Agreement -->|"validated acceptance input"| Recovery
+        Recovery --> MakerRecovery
+        Recovery --> TakerRecovery
+        Maker -. planned lifecycle projection .-> MakerRecovery
+        Taker -. planned lifecycle projection .-> TakerRecovery
         Agreement -. planned activation .-> Maker
         Agreement -. planned activation .-> Taker
     end
@@ -123,6 +131,36 @@ and exact claim hash. The official indexer does not expose an account proof or
 atomic multi-account snapshot token; stable finalized-tip bracketing and
 same-block reads are the current upstream-trust compensation and remain a
 production caveat.
+
+The durable Bitcoin lifecycle component is already executable independently of
+the planned actor wiring. The caller supplies an already-validated canonical
+agreement acceptance and typed public chain evidence. Each actor uses a
+different SQLite database. One immediate transaction inserts the next exact
+evidence record and CAS-advances the aggregate snapshot and versioned evidence
+chain. Reopen replays revisions one through four and compares both the
+reconstructed snapshot and chain head before exposing offline status. The exact
+64-byte public revealing witness is retained for peerless recovery; the
+recovered scalar crosses only the claim-signing boundary and is never stored.
+
+```mermaid
+flowchart TD
+    Validated["Validated agreement acceptance and public adapter DTO"] --> Begin["BEGIN IMMEDIATE"]
+    Begin --> Insert["Insert exact next evidence revision"]
+    Insert --> Cas["CAS snapshot revision and evidence chain head"]
+    Cas --> Commit["Commit actor-local database"]
+    Commit --> Reopen["Close and reopen"]
+    Reopen --> Replay["Replay revisions one through four"]
+    Replay --> Compare["Compare snapshot and evidence chain head"]
+    Compare --> Status["Offline Completed status"]
+    Witness["Exact public 64-byte revealing witness"] --> Insert
+    Scalar["Recovered scalar"] -. never stored .-> Signer["Claim signing boundary"]
+```
+
+The database transaction cannot atomically commit either chain effect. Exact
+replay, predecessor CAS, and the evidence chain make retries and local history
+corruption fail closed, but the hash chain is consistency evidence rather than
+authentication against a filesystem owner capable of rewriting the complete
+database.
 
 ## Deployed LEZ guest and account onboarding
 
@@ -353,8 +391,8 @@ The following are deliberately not accepted by this ADR:
 
 - one cohesive lifecycle SDK or reference application that reproduces the
   operator-composed run with a single supported workflow;
-- typed finalized witnessed-claim and Bitcoin Core evidence integrated into
-  those actors;
+- typed finalized witnessed-funding, peerless witnessed-claim, and Bitcoin Core
+  evidence integrated with the actor-local recovery component in those actors;
 - live abandonment and both one-lock and two-lock refund execution at the CSV
   boundaries;
 - concurrent swaps, crash recovery, reorgs, chaos, denial-of-service, and

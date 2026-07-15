@@ -1,6 +1,6 @@
 # Living implementation plan
 
-Last updated: 2026-07-14
+Last updated: 2026-07-15
 
 This file is the delivery control document. It must change whenever scope,
 architecture, sequencing, risks, or acceptance evidence changes.
@@ -1021,8 +1021,8 @@ outputs above.
 ## Milestone 3 entry plan: BTC adaptor/Taproot end to end
 
 Status: **active; operator-composed local-devnet happy path 2 of 2; canonical
-countersigned agreement and finalized LEZ claim adapter GREEN; cohesive actor
-integration in progress**. The
+countersigned agreement, finalized LEZ claim adapter, and actor-local Bitcoin
+recovery-store component GREEN; cohesive actor integration in progress**. The
 exact Core 31.1 release verifier, minimal isolated image fixture, role-aware Regtest boundary,
 typed P2TR/CSV transaction library, and one-process public deterministic
 two-party MuSig2/adaptor/extraction funding/cooperative-claim composition are
@@ -1056,8 +1056,10 @@ operator-composed happy-path boundary. A bounded canonical agreement now binds
 both role signatures, exact chain identities and confirmation policy, LEZ
 runtime/custody/claim terms, the reconstructed P2TR/CSV contract, funding
 outpoint/value, cooperative transaction/sighash, and direction-correct recovery
-schedule. The typed finalized witnessed-claim adapter is now GREEN. The Core
-adapter, cohesive reference-actor terminal states, refund execution,
+schedule. The typed finalized witnessed-claim adapter is now GREEN. The
+actor-local Bitcoin recovery store is also GREEN through revision four and
+offline `Completed` reconstruction, while chain-adapter/reference-actor wiring
+remains open. The Core adapter, cohesive reference-actor terminal states, refund execution,
 concurrency, production key custody, and the
 accepted proposal's full SDK/demo surface remain pending.
 
@@ -1376,11 +1378,14 @@ no-clobber helper whose public account IDs feed the run-owned genesis before
 Docker starts. The canonical countersigned agreement now binds the exact
 executable BTC refund plan, chain identity/confirmation policy, and recovery
 schedule and reconstructs all derived Bitcoin fields before accepting either
-signature. Typed finalized LEZ claim evidence is now GREEN. Remaining local PoC
-work is Bitcoin Core evidence, then a durable terminal `Completed` record for
-each cohesive
-reference actor rather than inferring completion only from terminal chain state
-and one-shot role processes. These are remaining deliverables, not external
+signature. Typed finalized LEZ claim evidence is now GREEN. The actor-local
+Bitcoin recovery component is GREEN in both directions: separate maker/taker
+databases replay the four lock/claim revisions to `Completed`, reject mutated
+or rolled-back evidence-chain state, and expose the public revealing witness
+without persisting the scalar. Remaining local PoC work is canonical Bitcoin
+Core evidence, finalized witnessed-funding observation, peerless finalized LEZ
+claim discovery, and wiring those adapters plus the recovery component through
+each cohesive reference actor. These are remaining deliverables, not external
 blockers.
 
 ### Later owner-selected hardening
