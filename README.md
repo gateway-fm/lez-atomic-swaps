@@ -145,7 +145,8 @@ The same operator/client/sidecar boundary now has an explicit read-only
 can scan one bounded window only after the indexer finalized tip covers it,
 using either an exact transaction ID or peerless discovery from the signed
 terms and prepared transcript. The sidecar requires equal block-by-ID and
-block-by-hash results, exactly one canonical public claim under the pinned
+block-by-hash results plus parent-hash continuity from the window start through
+the stable finalized tip, exactly one canonical public claim under the pinned
 program and derived accounts, the exact aggregate signature/message/authority, and
 `Claimed` metadata plus zero custody read at that containing numeric block ID.
 The client independently enforces the requested window and verifies BIP-340
@@ -158,8 +159,9 @@ The separate `observe-finalized-witnessed-funding` call is now GREEN. It keeps
 the earlier stable-tip progress observer intact, accepts an exact transaction
 ID or bounded unique discovery by signed terms, and proves canonical
 `FundNative` inclusion plus historical `Funded` metadata and exact custody at
-the containing finalized block before either claim may reveal adaptor
-material. The pinned sidecar is the canonical official-wire decoder and PDA
+the containing finalized block. This is the evidence the cohesive coordinator
+must persist before permitting adaptor reveal; the read-only bridge method does
+not itself block the independent claim methods. The pinned sidecar is the canonical official-wire decoder and PDA
 validator; the graph-isolated client validates the bounded result and role
 binding but does not claim an independent official LEZ decode. The cohesive
 actor must compare the returned accounts and transaction evidence with the

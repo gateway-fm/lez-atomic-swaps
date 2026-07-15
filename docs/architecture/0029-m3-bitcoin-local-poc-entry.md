@@ -124,8 +124,9 @@ the drifted body. Actor activation of this record is still pending.
 
 The read-only finalized-claim adapter accepts either agreement participant's
 role-fixed sidecar, scans only a bounded window fully covered by the finalized
-indexer tip, and requires every block to be `Finalized` and byte-equal by
-numeric ID and hash. It accepts the claim exactly once, reconstructs its
+indexer tip, and requires every block to be `Finalized`, byte-equal by numeric
+ID and hash, and parent-linked from window start through the stable tip. It
+accepts the claim exactly once and reconstructs its
 canonical public transaction and aggregate witness, and reads `Claimed`
 metadata plus zero custody at the exact containing `BlockId`. The client then
 rechecks the inclusive window and verifies BIP-340 against the agreement key
@@ -138,8 +139,10 @@ The distinct read-only finalized-funding adapter preserves the earlier
 stable-tip progress observer. It accepts an exact funding transaction ID or a
 bounded unique terms-derived discovery, requires canonical `FundNative`, and
 reads historical `Funded` metadata plus exact custody at the containing
-finalized block. This explicit gate keeps claims in a later block because LEZ
-v0.2 exposes end-of-block rather than transaction-position account state. The
+finalized block. The cohesive actor must use this explicit gate to keep claims
+in a later block because LEZ v0.2 exposes end-of-block rather than
+transaction-position account state; the read-only sidecar method does not
+retain a prerequisite across the independent claim methods. The
 pinned sidecar performs official decoding and PDA validation; cohesive actor
 wiring must compare its facts to the signed agreement before persistence.
 

@@ -106,7 +106,7 @@ and exact custody at its containing block before claim. Claim additionally
 binds the exact prepared transcript and signature. They prove unique success
 plus distinct absence, ambiguity, and conflicting-transcript failures through
 the authenticated server/runtime path. Protocol 22/22, client 2 unit plus 23
-integration and 3 CLI tests, and sidecar 76/76 are GREEN.
+integration and 3 CLI tests, and sidecar 78/78 are GREEN.
 The tests use deterministic in-process indexer doubles and ephemeral loopback
 servers; they do not contact the local devnet or any public resource. The
 manual flow below repeats the same request against the retained local indexer.
@@ -426,14 +426,23 @@ jq -n --arg run "$M3_RUN_ID" --arg req "$(new_request_id)" --arg role "$ROLE" --
 ~~~
 
 The stable live observation above is a progress/recovery hint, not the
-dual-lock finality gate. After the indexer finalized tip covers the funding
+dual-lock finality checkpoint. After the indexer finalized tip covers the funding
 window, either bound participant must run the distinct finalized funding
-observation. Peerless mode accepts no transaction ID from the counterparty:
+observation. The bridge returns evidence but does not retain a prerequisite
+across its independent claim methods; until cohesive actor wiring lands, the
+operator must persist this checkpoint before permitting claim. Peerless mode
+accepts no transaction ID from the counterparty:
 
 ~~~sh
 FUNDING_OBSERVER_ROLE=maker
 FUNDING_OBSERVER_RUNTIME="$PRIVATE_ROOT/$FUNDING_OBSERVER_ROLE/runtime.json"
 FUNDING_OBSERVER_ENDPOINT="$MAKER_BRIDGE_URL"
+: "${FUNDING_START_HEIGHT:?save the pre-funding finalized height here}"
+rpc "$INDEXER_URL" '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' >"$DIRECTION/funding-finalized-tip.json"
+FUNDING_FINALIZED_TIP="$(jq -er '.result' "$DIRECTION/funding-finalized-tip.json")"
+FUNDING_MAX_BLOCKS="$((FUNDING_FINALIZED_TIP - FUNDING_START_HEIGHT + 1))"
+test "$FUNDING_MAX_BLOCKS" -ge 1
+test "$FUNDING_MAX_BLOCKS" -le 4096
 jq -n --arg run "$M3_RUN_ID" --arg req "$(new_request_id)" --arg role "$FUNDING_OBSERVER_ROLE" --argjson start "$FUNDING_START_HEIGHT" --argjson blocks "$FUNDING_MAX_BLOCKS" --slurpfile runtime "$FUNDING_OBSERVER_RUNTIME" --slurpfile terms "$DIRECTION/terms.json" '{context:{schema_version:1,run_id:$run,request_id:$req,sidecar_role:$role},runtime:$runtime[0],terms:$terms[0],target:{mode:"discover_by_terms"},window:{start_height:$start,max_blocks:$blocks}}' >"$DIRECTION/observe-finalized-funding-request.json"
 "$LEZ_OPERATOR" observe-finalized-witnessed-funding --endpoint "$FUNDING_OBSERVER_ENDPOINT" --run-id "$M3_RUN_ID" --sidecar-role "$FUNDING_OBSERVER_ROLE" --capability-file "$PRIVATE_ROOT/$FUNDING_OBSERVER_ROLE/sidecar.capability" --runtime-file "$FUNDING_OBSERVER_RUNTIME" --request-file "$DIRECTION/observe-finalized-funding-request.json" >"$DIRECTION/finalized-funding.json"
 test "$(jq -er '.funding.metadata.status' "$DIRECTION/finalized-funding.json")" = funded
@@ -470,14 +479,21 @@ contains it; do not supply a peer transaction ID:
 OBSERVER_ROLE=maker
 OBSERVER_RUNTIME="$PRIVATE_ROOT/$OBSERVER_ROLE/runtime.json"
 OBSERVER_ENDPOINT="$MAKER_BRIDGE_URL"
+: "${CLAIM_START_HEIGHT:?save the pre-claim finalized height here}"
+rpc "$INDEXER_URL" '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' >"$DIRECTION/claim-finalized-tip.json"
+CLAIM_FINALIZED_TIP="$(jq -er '.result' "$DIRECTION/claim-finalized-tip.json")"
+CLAIM_MAX_BLOCKS="$((CLAIM_FINALIZED_TIP - CLAIM_START_HEIGHT + 1))"
+test "$CLAIM_MAX_BLOCKS" -ge 1
+test "$CLAIM_MAX_BLOCKS" -le 4096
 jq -n --arg run "$M3_RUN_ID" --arg req "$(new_request_id)" --arg role "$OBSERVER_ROLE" --argjson start "$CLAIM_START_HEIGHT" --argjson blocks "$CLAIM_MAX_BLOCKS" --slurpfile runtime "$OBSERVER_RUNTIME" --slurpfile terms "$DIRECTION/terms.json" --slurpfile prepared "$DIRECTION/prepared-claim.json" '{context:{schema_version:1,run_id:$run,request_id:$req,sidecar_role:$role},runtime:$runtime[0],terms:$terms[0],claim:$prepared[0].claim,target:{mode:"discover_by_terms"},window:{start_height:$start,max_blocks:$blocks}}' >"$DIRECTION/observe-finalized-claim-request.json"
 "$LEZ_OPERATOR" observe-finalized-witnessed-claim --endpoint "$OBSERVER_ENDPOINT" --run-id "$M3_RUN_ID" --sidecar-role "$OBSERVER_ROLE" --capability-file "$PRIVATE_ROOT/$OBSERVER_ROLE/sidecar.capability" --runtime-file "$OBSERVER_RUNTIME" --request-file "$DIRECTION/observe-finalized-claim-request.json" >"$DIRECTION/finalized-claim.json"
 ~~~
 
 Use the observer's matching maker or taker endpoint, capability, and runtime;
 the example endpoint is maker-specific. Success means the whole window was
-covered by one stable finalized tip, the containing block lies inside it and
-agrees by ID/hash, terminal metadata and zero custody were read at that exact
+covered by one stable finalized tip, the containing block lies inside it, all
+blocks agree by ID/hash and parent-link through that tip, and terminal metadata
+and zero custody were read at that exact
 numeric block ID, and the client independently verified the aggregate BIP-340
 signature. This call is read-only and never authorizes a replacement submit.
 Require the returned transaction ID to equal the locally retained

@@ -1327,17 +1327,19 @@ owner-private capability file and prints only result JSON. The public account
 helper derives the official LEZ authority account from the x-only aggregate key
 through pinned `nssa`; no custom curve or account arithmetic is introduced.
 
-The finalized-observation slice adds an eleventh bridge method and closes
-typed LEZ revealing-claim evidence. A bounded sequential indexer scan proceeds
-only when the complete requested window is finalized, requires immutable
-`Finalized` blocks to agree by numeric ID and hash, returns the canonical
-claim once by exact ID or peerless signed-terms/transcript discovery, and reads
-terminal metadata and custody at the exact containing
-`BlockId`. Either agreement participant may observe with its own role-bound
-sidecar; neither path submits. The client rechecks the inclusive window,
-terminal terms/accounts, and the aggregate BIP-340 signature with exact-pinned
-`secp256k1` 0.29.1. Protocol 21/21, client 2 unit plus 20 integration tests,
-and all 66 pinned-sidecar targets are GREEN under strict Clippy. The upstream
+The finalized-observation slices extend the bridge to fourteen methods and
+close typed LEZ funding and revealing-claim evidence. A bounded sequential
+indexer scan proceeds only when the complete requested window is finalized,
+requires immutable `Finalized` blocks to agree by numeric ID and hash and form
+one parent-linked ancestry from window start through the stable tip, returns
+the canonical transaction once by exact ID or peerless discovery, and reads
+historical metadata and custody at the exact containing `BlockId`. Either
+agreement participant may observe with its own role-bound sidecar; neither
+path submits. The client rechecks the inclusive window and terminal
+terms/accounts; claim observation also verifies the aggregate BIP-340 signature
+with exact-pinned `secp256k1` 0.29.1. Protocol 22/22, client 2 unit plus 23
+integration and 3 CLI tests, and all 78 pinned-sidecar targets are GREEN under
+strict Clippy. The upstream
 indexer exposes historical account DTOs without an account proof or atomic
 multi-read snapshot token, so stable finalized-tip bracketing and same-block
 reads are a disclosed trust compensation rather than a production proof.
@@ -1400,11 +1402,14 @@ ambiguity, and a conflicting transcript remain distinct fail-closed results.
 Finalized witnessed-funding observation is now GREEN without weakening the
 existing live-progress observer. The bounded finalized scan proves canonical
 funding plus historical `Funded` metadata and exact custody at the containing
-block, and makes finality-before-claim an explicit gate. Protocol 22/22, client
-2 unit plus 23 integration and 3 CLI tests, and sidecar 76/76 are GREEN. The
+block, making finalized funding the explicit evidence input for the pending
+claim gate. Protocol 22/22, client
+2 unit plus 23 integration and 3 CLI tests, and sidecar 78/78 are GREEN. The
 pinned sidecar remains the official transaction decoder/PDA validator; the
 cohesive actor must bind its returned accounts and transaction evidence back
-to the signed agreement before the recovery-store CAS. Remaining local PoC
+to the signed agreement before the recovery-store CAS. The read-only sidecar
+does not retain a funding prerequisite across independent claim methods, so
+that enforcement remains cohesive-actor work. Remaining local PoC
 work is wiring both chain adapters plus the recovery component through each
 cohesive reference actor and repeating both live directions through that
 surface. These are remaining deliverables, not external blockers.

@@ -13,10 +13,10 @@ use lez_bridge_protocol::{
     AccountIds, AggregateBip340Signature, ChainPosition, ChainTip, EscrowState,
     FinalizedBlockIdentity, FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
     FinalizedWitnessedFundingFacts, FinalizedWitnessedFundingObservationTarget, Hex32,
-    NativeCustodyFacts, NativeFundInstructionFacts, ObserveFinalizedWitnessedClaimRequest,
-    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
-    ObserveFinalizedWitnessedFundingResult, ObservedTransactionFacts,
-    WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
+    MAX_DISCOVERY_BLOCKS, NativeCustodyFacts, NativeFundInstructionFacts,
+    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
+    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
+    ObservedTransactionFacts, WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
 };
 use lez_zec_escrow_v02::{ClaimAuthority, EscrowMetadata, EscrowStatus};
 use nssa::{
@@ -189,14 +189,30 @@ impl FinalizedWitnessedClaimObserver {
             .start_height()
             .checked_add(u64::from(request.window.max_blocks() - 1))
             .ok_or(BridgeRuntimeError::InvalidObservation)?;
-        if window_end > finalized_before {
+        if window_end > finalized_before
+            || finalized_before
+                .checked_sub(request.window.start_height())
+                .and_then(|distance| distance.checked_add(1))
+                .is_none_or(|length| length > u64::from(MAX_DISCOVERY_BLOCKS))
+        {
             return Err(BridgeRuntimeError::Unavailable);
         }
         let finalized_tip_before = self.read_finalized_block(finalized_before).await?;
 
         let mut found = None;
-        for block_id in request.window.start_height()..=window_end {
+        let mut previous_hash = None;
+        for block_id in request.window.start_height()..=finalized_before {
             let block = self.read_finalized_block(block_id).await?;
+            if block_id == finalized_before && block != finalized_tip_before {
+                return Err(BridgeRuntimeError::MovingTip);
+            }
+            if previous_hash.is_some_and(|hash| block.header.prev_block_hash != hash) {
+                return Err(BridgeRuntimeError::InvalidObservation);
+            }
+            previous_hash = Some(block.header.hash);
+            if block_id > window_end {
+                continue;
+            }
             for (transaction_index, transaction) in block.body.transactions.iter().enumerate() {
                 let public = match request.target {
                     FinalizedWitnessedClaimObservationTarget::Exact {
@@ -602,14 +618,30 @@ impl FinalizedWitnessedFundingObserver {
             .start_height()
             .checked_add(u64::from(request.window.max_blocks() - 1))
             .ok_or(BridgeRuntimeError::InvalidObservation)?;
-        if window_end > finalized_before {
+        if window_end > finalized_before
+            || finalized_before
+                .checked_sub(request.window.start_height())
+                .and_then(|distance| distance.checked_add(1))
+                .is_none_or(|length| length > u64::from(MAX_DISCOVERY_BLOCKS))
+        {
             return Err(BridgeRuntimeError::Unavailable);
         }
         let finalized_tip_before = self.read_finalized_block(finalized_before).await?;
 
         let mut found = None;
-        for block_id in request.window.start_height()..=window_end {
+        let mut previous_hash = None;
+        for block_id in request.window.start_height()..=finalized_before {
             let block = self.read_finalized_block(block_id).await?;
+            if block_id == finalized_before && block != finalized_tip_before {
+                return Err(BridgeRuntimeError::MovingTip);
+            }
+            if previous_hash.is_some_and(|hash| block.header.prev_block_hash != hash) {
+                return Err(BridgeRuntimeError::InvalidObservation);
+            }
+            previous_hash = Some(block.header.hash);
+            if block_id > window_end {
+                continue;
+            }
             for (transaction_index, transaction) in block.body.transactions.iter().enumerate() {
                 let public = match request.target {
                     FinalizedWitnessedFundingObservationTarget::Exact {

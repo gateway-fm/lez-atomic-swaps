@@ -28,15 +28,16 @@ use lez_bridge_protocol::{
     ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
     ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
     ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
-    Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
-    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
-    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
-    RequestId, RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage,
-    RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
-    SubmitTransactionResult, TransactionId, WitnessedClaimInstructionFacts,
-    WitnessedEscrowMetadataFacts, WitnessedFundingObservation, WitnessedInitializationObservation,
-    WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
+    ObservedTransactionFacts, Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
+    PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
+    PrepareRevealingClaimResult, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
+    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
+    PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RevealingClaimObservation,
+    RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
+    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
+    TransactionId, WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
+    WitnessedFundingObservation, WitnessedInitializationObservation, WitnessedNativeEscrowTerms,
+    WitnessedNativeEscrowTermsInput,
 };
 use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
 use serde_json::json;
@@ -81,6 +82,11 @@ enum Behavior {
     MutatedFinalizedFundingMetadata,
     MutatedFinalizedFundingCustody,
     MutatedFinalizedFundingSigner,
+    MutatedFinalizedFundingTransactionId,
+    MutatedFinalizedFundingVisibility,
+    MutatedFinalizedFundingPositionHeight,
+    MutatedFinalizedFundingPositionHash,
+    FinalizedFundingTipBeforeWindowEnd,
 }
 
 #[derive(Clone, Debug)]
@@ -298,6 +304,139 @@ fn register_existing_transaction_methods(module: &mut RpcModule<Fixture>) {
         .expect("observe claim method");
 }
 
+fn finalized_witnessed_funding_block_id(
+    request: &ObserveFinalizedWitnessedFundingRequest,
+    behavior: Behavior,
+) -> u64 {
+    match behavior {
+        Behavior::FinalizedBeforeWindow => request.window.start_height() - 1,
+        Behavior::FinalizedAfterWindow => {
+            request.window.start_height() + u64::from(request.window.max_blocks())
+        }
+        _ => request.window.start_height(),
+    }
+}
+
+fn finalized_witnessed_funding_transaction(
+    request: &ObserveFinalizedWitnessedFundingRequest,
+    behavior: Behavior,
+    block_id: u64,
+) -> ObservedTransactionFacts {
+    let transaction_id = if matches!(behavior, Behavior::MutatedFinalizedFundingTransactionId) {
+        txid(99)
+    } else {
+        match request.target {
+            FinalizedWitnessedFundingObservationTarget::Exact {
+                funding_transaction_id,
+            } => funding_transaction_id,
+            FinalizedWitnessedFundingObservationTarget::DiscoverByTerms => txid(90),
+        }
+    };
+    let signer = if matches!(behavior, Behavior::MutatedFinalizedFundingSigner) {
+        request.terms.claimant_account_id()
+    } else {
+        request.terms.depositor_account_id()
+    };
+    let position_height = if matches!(behavior, Behavior::MutatedFinalizedFundingPositionHeight) {
+        block_id + 1
+    } else {
+        block_id
+    };
+    let position_hash = if matches!(behavior, Behavior::MutatedFinalizedFundingPositionHash) {
+        Hex32::from_bytes([94; 32])
+    } else {
+        Hex32::from_bytes([93; 32])
+    };
+    ObservedTransactionFacts::new(
+        transaction_id,
+        ExactTransactionBytes::new(vec![90; 128]).unwrap(),
+        ChainPosition::new(position_hash, position_height, 0),
+        AccountIds::new(vec![signer]).unwrap(),
+        !matches!(behavior, Behavior::MutatedFinalizedFundingVisibility),
+    )
+}
+
+fn finalized_witnessed_funding_escrow_facts(
+    request: &ObserveFinalizedWitnessedFundingRequest,
+    behavior: Behavior,
+    metadata_id: Hex32,
+    custody_id: Hex32,
+) -> (
+    NativeFundInstructionFacts,
+    WitnessedEscrowMetadataFacts,
+    NativeCustodyFacts,
+) {
+    let instruction_program = if matches!(behavior, Behavior::MutatedFinalizedFundingInstruction) {
+        Hex32::from_bytes([94; 32])
+    } else {
+        request.runtime.escrow_program_id
+    };
+    let instruction = NativeFundInstructionFacts::new(
+        instruction_program,
+        AccountIds::new(vec![
+            metadata_id,
+            custody_id,
+            request.terms.depositor_account_id(),
+        ])
+        .unwrap(),
+        request.terms.swap_id(),
+    );
+    let metadata_status = if matches!(behavior, Behavior::MutatedFinalizedFundingMetadata) {
+        EscrowState::Claimed
+    } else {
+        EscrowState::Funded
+    };
+    let metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+        metadata_id,
+        request.runtime.escrow_program_id,
+        custody_id,
+        &request.terms,
+        metadata_status,
+    );
+    let custody_balance = if matches!(behavior, Behavior::MutatedFinalizedFundingCustody) {
+        0
+    } else {
+        request.terms.amount().as_u128()
+    };
+    let custody = NativeCustodyFacts::new(
+        custody_id,
+        request.terms.authenticated_transfer_program_id(),
+        custody_balance,
+    );
+    (instruction, metadata, custody)
+}
+
+fn finalized_witnessed_funding_result(
+    request: &ObserveFinalizedWitnessedFundingRequest,
+    behavior: Behavior,
+) -> ObserveFinalizedWitnessedFundingResult {
+    let block_id = finalized_witnessed_funding_block_id(request, behavior);
+    let transaction = finalized_witnessed_funding_transaction(request, behavior, block_id);
+    let metadata_id = Hex32::from_bytes([91; 32]);
+    let custody_id = Hex32::from_bytes([92; 32]);
+    let (instruction, metadata, custody) =
+        finalized_witnessed_funding_escrow_facts(request, behavior, metadata_id, custody_id);
+    let (finalized_hash, finalized_height) = match behavior {
+        Behavior::FinalizedTipHashDisagreement => (Hex32::from_bytes([95; 32]), block_id),
+        Behavior::FinalizedFundingTipBeforeWindowEnd => (Hex32::from_bytes([93; 32]), block_id),
+        _ => (
+            Hex32::from_bytes([95; 32]),
+            request.window.start_height() + u64::from(request.window.max_blocks()),
+        ),
+    };
+    ObserveFinalizedWitnessedFundingResult::new(
+        response_context(&request.context, behavior),
+        ChainTip::new(finalized_hash, finalized_height),
+        FinalizedWitnessedFundingFacts::new(
+            transaction,
+            instruction,
+            FinalizedBlockIdentity::new(block_id, Hex32::from_bytes([93; 32]), 1_850_000_000_050),
+            metadata,
+            custody,
+        ),
+    )
+}
+
 fn register_finalized_witnessed_funding_method(module: &mut RpcModule<Fixture>) {
     module
         .register_method(
@@ -305,96 +444,9 @@ fn register_finalized_witnessed_funding_method(module: &mut RpcModule<Fixture>) 
             |params, fixture, _| {
                 let request: ObserveFinalizedWitnessedFundingRequest = params.one()?;
                 fixture.record(METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING);
-                let block_id = match fixture.behavior {
-                    Behavior::FinalizedBeforeWindow => request.window.start_height() - 1,
-                    Behavior::FinalizedAfterWindow => {
-                        request.window.start_height() + u64::from(request.window.max_blocks())
-                    }
-                    _ => request.window.start_height(),
-                };
-                let transaction_id = match request.target {
-                    FinalizedWitnessedFundingObservationTarget::Exact {
-                        funding_transaction_id,
-                    } => funding_transaction_id,
-                    FinalizedWitnessedFundingObservationTarget::DiscoverByTerms => txid(90),
-                };
-                let metadata_id = Hex32::from_bytes([91; 32]);
-                let custody_id = Hex32::from_bytes([92; 32]);
-                let signer = if matches!(fixture.behavior, Behavior::MutatedFinalizedFundingSigner)
-                {
-                    request.terms.claimant_account_id()
-                } else {
-                    request.terms.depositor_account_id()
-                };
-                let transaction = lez_bridge_protocol::ObservedTransactionFacts::new(
-                    transaction_id,
-                    ExactTransactionBytes::new(vec![90; 128]).unwrap(),
-                    ChainPosition::new(Hex32::from_bytes([93; 32]), block_id, 0),
-                    AccountIds::new(vec![signer]).unwrap(),
-                    true,
-                );
-                let instruction_program = if matches!(
+                Ok::<_, ErrorObjectOwned>(finalized_witnessed_funding_result(
+                    &request,
                     fixture.behavior,
-                    Behavior::MutatedFinalizedFundingInstruction
-                ) {
-                    Hex32::from_bytes([94; 32])
-                } else {
-                    request.runtime.escrow_program_id
-                };
-                let instruction = NativeFundInstructionFacts::new(
-                    instruction_program,
-                    AccountIds::new(vec![
-                        metadata_id,
-                        custody_id,
-                        request.terms.depositor_account_id(),
-                    ])
-                    .unwrap(),
-                    request.terms.swap_id(),
-                );
-                let metadata_status =
-                    if matches!(fixture.behavior, Behavior::MutatedFinalizedFundingMetadata) {
-                        EscrowState::Claimed
-                    } else {
-                        EscrowState::Funded
-                    };
-                let metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
-                    metadata_id,
-                    request.runtime.escrow_program_id,
-                    custody_id,
-                    &request.terms,
-                    metadata_status,
-                );
-                let custody_balance =
-                    if matches!(fixture.behavior, Behavior::MutatedFinalizedFundingCustody) {
-                        0
-                    } else {
-                        request.terms.amount().as_u128()
-                    };
-                let custody = NativeCustodyFacts::new(
-                    custody_id,
-                    request.terms.authenticated_transfer_program_id(),
-                    custody_balance,
-                );
-                let finalized_height =
-                    if matches!(fixture.behavior, Behavior::FinalizedTipHashDisagreement) {
-                        block_id
-                    } else {
-                        request.window.start_height() + u64::from(request.window.max_blocks())
-                    };
-                Ok::<_, ErrorObjectOwned>(ObserveFinalizedWitnessedFundingResult::new(
-                    response_context(&request.context, fixture.behavior),
-                    ChainTip::new(Hex32::from_bytes([95; 32]), finalized_height),
-                    FinalizedWitnessedFundingFacts::new(
-                        transaction,
-                        instruction,
-                        FinalizedBlockIdentity::new(
-                            block_id,
-                            Hex32::from_bytes([93; 32]),
-                            1_850_000_000_050,
-                        ),
-                        metadata,
-                        custody,
-                    ),
                 ))
             },
         )
@@ -990,13 +1042,18 @@ async fn assert_finalized_funding_rejected(behavior: Behavior, suffix: &str) {
         expected_runtime.clone(),
         Duration::from_secs(1),
     );
+    let max_blocks = if matches!(behavior, Behavior::FinalizedFundingTipBeforeWindowEnd) {
+        2
+    } else {
+        1
+    };
     let error = client
         .observe_finalized_witnessed_funding(ObserveFinalizedWitnessedFundingRequest::new(
             context(&run, Participant::Maker, suffix),
             expected_runtime.clone(),
             witnessed_deposit_terms(&expected_runtime),
             txid(90),
-            DiscoveryWindow::new(60, 1).unwrap(),
+            DiscoveryWindow::new(60, max_blocks).unwrap(),
         ))
         .await
         .unwrap_err();
@@ -1021,6 +1078,26 @@ async fn finalized_witnessed_funding_rejects_mutated_or_incoherent_facts() {
         ),
         (Behavior::MutatedFinalizedFundingCustody, "funding-custody"),
         (Behavior::MutatedFinalizedFundingSigner, "funding-signer"),
+        (
+            Behavior::MutatedFinalizedFundingTransactionId,
+            "funding-transaction-id",
+        ),
+        (
+            Behavior::MutatedFinalizedFundingVisibility,
+            "funding-visibility",
+        ),
+        (
+            Behavior::MutatedFinalizedFundingPositionHeight,
+            "funding-position-height",
+        ),
+        (
+            Behavior::MutatedFinalizedFundingPositionHash,
+            "funding-position-hash",
+        ),
+        (
+            Behavior::FinalizedFundingTipBeforeWindowEnd,
+            "funding-tip-before-window-end",
+        ),
         (Behavior::FinalizedBeforeWindow, "funding-before-window"),
         (Behavior::FinalizedAfterWindow, "funding-after-window"),
         (Behavior::FinalizedTipHashDisagreement, "funding-tip-hash"),

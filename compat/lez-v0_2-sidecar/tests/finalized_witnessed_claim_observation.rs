@@ -108,6 +108,8 @@ struct SameHeightMovingTipIndexer {
     changed_tip: Block,
     tip_id_reads: AtomicUsize,
     serving_changed_tip: AtomicBool,
+    change_from_read: usize,
+    restore_from_read: Option<usize>,
 }
 
 #[async_trait]
@@ -117,9 +119,15 @@ impl FinalizedIndexerApi for SameHeightMovingTipIndexer {
     }
 
     async fn block_by_id(&self, block_id: u64) -> Result<Option<Block>, BridgeRuntimeError> {
-        if block_id == self.changed_tip.header.block_id
-            && self.tip_id_reads.fetch_add(1, Ordering::SeqCst) >= 2
-        {
+        if block_id == self.changed_tip.header.block_id {
+            let read = self.tip_id_reads.fetch_add(1, Ordering::SeqCst);
+            let serve_changed = read >= self.change_from_read
+                && self.restore_from_read.is_none_or(|restore| read < restore);
+            self.serving_changed_tip
+                .store(serve_changed, Ordering::SeqCst);
+            if !serve_changed {
+                return self.base.block_by_id(block_id).await;
+            }
             self.serving_changed_tip.store(true, Ordering::SeqCst);
             self.base
                 .calls
@@ -615,20 +623,75 @@ async fn moved_tip_or_by_id_hash_disagreement_fails_closed() {
 }
 
 #[tokio::test]
+async fn finalized_claim_must_be_ancestral_to_the_stable_tip() {
+    let mut disconnected = fixture();
+    disconnected.blocks[1].header.prev_block_hash = HashType([99; 32]);
+    let observer = FinalizedWitnessedClaimObserver::new(
+        disconnected.runtime.clone(),
+        indexer(&disconnected, [Some(11), Some(11)]),
+    );
+
+    assert_eq!(
+        observer.observe(&disconnected.request).await.unwrap_err(),
+        BridgeRuntimeError::InvalidObservation
+    );
+
+    let mut unanchored = fixture();
+    unanchored.request.window = DiscoveryWindow::new(10, 1).unwrap();
+    let observer = FinalizedWitnessedClaimObserver::new(
+        unanchored.runtime.clone(),
+        indexer(&unanchored, [Some(11), Some(11)]),
+    );
+    let result = observer.observe(&unanchored.request).await.unwrap();
+    assert_eq!(result.finalized_tip.height, 11);
+    assert_eq!(result.claim.containing_block.block_id, 10);
+
+    let over_bound = fixture();
+    let observer = FinalizedWitnessedClaimObserver::new(
+        over_bound.runtime.clone(),
+        indexer(&over_bound, [Some(10 + 4_096)]),
+    );
+    assert_eq!(
+        observer.observe(&over_bound.request).await.unwrap_err(),
+        BridgeRuntimeError::Unavailable
+    );
+}
+
+#[tokio::test]
 async fn same_height_tip_with_changed_consistent_block_identity_fails_closed() {
     let fixture = fixture();
     let base = indexer(&fixture, [Some(11), Some(11)]);
     let mut changed_tip = fixture.blocks[1].clone();
     changed_tip.header.hash = HashType([12; 32]);
     changed_tip.header.timestamp += 1;
-    let indexer = Arc::new(SameHeightMovingTipIndexer {
+    let moving_indexer = Arc::new(SameHeightMovingTipIndexer {
         base,
         changed_tip,
         tip_id_reads: AtomicUsize::new(0),
         serving_changed_tip: AtomicBool::new(false),
+        change_from_read: 2,
+        restore_from_read: None,
     });
-    let observer = FinalizedWitnessedClaimObserver::new(fixture.runtime, indexer);
+    let observer = FinalizedWitnessedClaimObserver::new(fixture.runtime.clone(), moving_indexer);
 
+    assert_eq!(
+        observer.observe(&fixture.request).await.unwrap_err(),
+        BridgeRuntimeError::MovingTip
+    );
+
+    let base = indexer(&fixture, [Some(11), Some(11)]);
+    let mut changed_tip = fixture.blocks[1].clone();
+    changed_tip.header.hash = HashType([12; 32]);
+    changed_tip.header.timestamp += 1;
+    let aba = Arc::new(SameHeightMovingTipIndexer {
+        base,
+        changed_tip,
+        tip_id_reads: AtomicUsize::new(0),
+        serving_changed_tip: AtomicBool::new(false),
+        change_from_read: 1,
+        restore_from_read: Some(2),
+    });
+    let observer = FinalizedWitnessedClaimObserver::new(fixture.runtime, aba);
     assert_eq!(
         observer.observe(&fixture.request).await.unwrap_err(),
         BridgeRuntimeError::MovingTip

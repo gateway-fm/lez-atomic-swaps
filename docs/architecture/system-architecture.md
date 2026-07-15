@@ -244,8 +244,8 @@ flowchart TB
         MBR2["Maker lez-v02-bridge-poc<br/>canonical forward and reverse complete"]
         TBR2["Taker lez-v02-bridge-poc<br/>canonical forward and reverse complete"]
         M3WB["M3 witnessed prepare, complete, and submit<br/>both local happy directions GREEN"]
-        M3FF["M3 finalized witnessed-funding observer<br/>exact or peerless terms discovery<br/>historical Funded state GREEN"]
-        M3FO["M3 finalized witnessed-claim observer<br/>exact or peerless terms discovery<br/>same-block state + dual role + BIP340 GREEN"]
+        M3FF["M3 finalized witnessed-funding observer<br/>parent-linked stable-tip ancestry<br/>historical Funded state GREEN"]
+        M3FO["M3 finalized witnessed-claim observer<br/>parent-linked stable-tip ancestry<br/>dual role + BIP340 GREEN"]
         MBRJ[("Maker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         TBRJ[("Taker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         MSL2 --> V02J
@@ -370,8 +370,8 @@ flowchart TB
     TBR2 -->|"initialize and fund forward; reveal reverse"| SQ
     MBR2 -->|"non-genesis finalized-tip readiness"| IX
     TBR2 -->|"non-genesis finalized-tip readiness"| IX
-    M3FO -->|"bounded finalized blocks + unique terms and transcript match<br/>accounts at containing BlockId"| IX
-    M3FF -->|"bounded finalized blocks + canonical FundNative<br/>historical Funded accounts at containing BlockId"| IX
+    M3FO -->|"bounded ID and hash blocks parent-linked through stable tip<br/>unique transcript + accounts at containing BlockId"| IX
+    M3FF -->|"bounded ID and hash blocks parent-linked through stable tip<br/>canonical FundNative + historical Funded accounts"| IX
     MBR2 -->|"typed outbound profile"| LezProfile
     TBR2 -->|"typed outbound profile"| LezProfile
     LezProfile -->|"local explicit loopback"| SQ

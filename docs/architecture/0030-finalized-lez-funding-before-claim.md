@@ -10,8 +10,8 @@ from a stable sequencer tip and current account reads. It is useful for
 pre-finality recovery, but it cannot prove Bedrock finality and must not become
 a stronger method under the same wire contract.
 
-M3 releases adaptor material only after both chain locks satisfy the selected
-local policy. Bitcoin already has a typed stable-tip Core observation. LEZ
+The M3 cohesive coordinator must release adaptor material only after both chain
+locks satisfy the selected local policy. Bitcoin already has a typed stable-tip Core observation. LEZ
 therefore needs a distinct read-only result proving that the witnessed native
 funding transaction is in a finalized block and that the historical state at
 that containing block is exactly `Funded` with the full agreed amount in
@@ -24,6 +24,10 @@ bounded authenticated bridge. The request binds actor context, immutable
 runtime, exact witnessed terms, one inclusive bounded discovery window, and
 either an exact funding transaction ID or peerless discovery by terms. It
 never submits a transaction and does not change the live escrow observer.
+This slice supplies the read-only evidence primitive; the bridge does not
+retain it as a prerequisite for claim preparation or submission. Enforcing the
+gate belongs to the still-pending cohesive actor and is a manual PoC discipline
+until that actor wiring lands.
 
 ```mermaid
 sequenceDiagram
@@ -45,16 +49,19 @@ sequenceDiagram
     Bridge-->>Actor: Canonical finalized funding facts
     Actor->>Store: Persist validated LEZ lock evidence
     Store-->>Claim: Both locks final
+    Note over Store,Claim: Required cohesive actor gate, observer alone retains no prerequisite
     Claim->>Claim: Permit adaptor reveal or claim
 ```
 
 The observer must:
 
-- require the complete requested window to be covered by the numeric finalized
-  tip;
+- require the complete requested discovery window to be covered by the numeric
+  finalized tip, and keep the total ancestry span from window start through tip
+  within the same 4,096-block bound;
 - read each candidate block independently by ID and hash, require byte equality
-  and `Finalized` status, and bracket the scan with an unchanged numeric and
-  full block-identity tip;
+  and `Finalized` status, require consecutive parent-hash continuity from the
+  window start through the tip, and bracket the scan with an unchanged numeric
+  and full block-identity tip including an in-scan ABA comparison;
 - accept only the pinned escrow program, canonical public `FundNative`
   instruction, exact derived metadata/custody accounts, depositor account,
   sole depositor signer, canonical bytes, transaction hash, and official
@@ -84,18 +91,21 @@ flowchart TD
 
 ## Atomicity and recovery
 
-The indexer reads and actor database cannot commit atomically. The coordinator
-first obtains and validates an immutable public evidence DTO, then commits the
-next actor-local recovery revision with predecessor CAS. A crash before the
-database commit repeats only the read-only observation. A crash after commit
-replays the same canonical evidence and must not authorize another chain
-effect. Ambiguous or moving-tip observation produces no durable lock
-transition.
+The indexer reads and actor database cannot commit atomically. The required
+cohesive-coordinator flow first obtains and validates an immutable public
+evidence DTO, then commits the next actor-local recovery revision with
+predecessor CAS. A crash before the database commit repeats only the read-only
+observation. A crash after commit replays the same canonical evidence and must
+not authorize another chain effect. Ambiguous or moving-tip observation must
+produce no durable lock transition. This transaction ordering is not yet
+wired into the public actor command.
 
-This preserves the PoC atomicity envelope: no secret is revealed until both
-locks have affirmative chain evidence; after reveal, each role already holds
-the complete opposite-chain presignature and can finish without Delivery or
-Chat. It does not claim atomic cross-chain or chain-plus-database commit.
+The retained operator-composed PoC followed this atomicity envelope: no secret
+was revealed until both locks had affirmative chain evidence; after reveal,
+each role already held the complete opposite-chain presignature and could
+finish without Delivery or Chat. The observer enables the cohesive actor to
+enforce that ordering, but does not enforce it by itself. Neither boundary
+claims atomic cross-chain or chain-plus-database commit.
 
 ## Upstream limitation
 
