@@ -16,6 +16,8 @@ pub const METHOD_PREPARE_NATIVE_ESCROW: &str = "lez_bridge.v1.prepare_native_esc
 pub const METHOD_PREPARE_WITNESSED_ESCROW: &str = "lez_bridge.v1.prepare_witnessed_escrow";
 /// Stable JSON-RPC method for observing native initialization and funding.
 pub const METHOD_OBSERVE_ESCROW: &str = "lez_bridge.v1.observe_escrow";
+/// Stable JSON-RPC method for observing aggregate-witness initialization and funding.
+pub const METHOD_OBSERVE_WITNESSED_ESCROW: &str = "lez_bridge.v1.observe_witnessed_escrow";
 /// Stable JSON-RPC method for preparing a preimage-revealing claim.
 pub const METHOD_PREPARE_REVEALING_CLAIM: &str = "lez_bridge.v1.prepare_revealing_claim";
 /// Stable JSON-RPC method for reserving an unsigned aggregate-witness claim message.
@@ -47,13 +49,17 @@ pub use messages::{
     NativeRefundFoundFacts, NativeRefundInstructionFacts, NativeRefundObservation,
     NativeRefundObservationTarget, ObserveEscrowRequest, ObserveEscrowResult,
     ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
-    ObserveRevealingClaimResult, ObservedTransactionFacts, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
-    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
-    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
-    PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply, RevealingClaimFoundFacts,
+    ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
+    ObservedTransactionFacts, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
+    PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
+    PrepareRevealingClaimResult, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
+    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
+    PreparedWitnessedClaim, ProtocolErrorReply, RevealingClaimFoundFacts,
     RevealingClaimObservation, RevealingClaimObservationTarget, RuntimeCompatibility,
     RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
+    WitnessedEscrowMetadataFacts, WitnessedFundingFoundFacts, WitnessedFundingObservation,
+    WitnessedInitializationFoundFacts, WitnessedInitializationObservation,
+    WitnessedNativeInitializeInstructionFacts,
 };
 pub use primitives::{
     AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip, DiscoveryWindow,

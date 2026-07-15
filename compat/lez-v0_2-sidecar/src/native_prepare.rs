@@ -705,6 +705,36 @@ impl NativeEscrowPlanner {
         Ok(active.result.clone())
     }
 
+    /// Returns the exact owned witnessed initialization/funding pair after
+    /// checking complete observation identity and persisted transaction IDs.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role, runtime, witnessed terms, preparation, or transaction-ID drift.
+    pub async fn owned_witnessed_pair(
+        &self,
+        request: &lez_bridge_protocol::ObserveWitnessedEscrowRequest,
+        initialization_transaction_id: TransactionId,
+        funding_transaction_id: TransactionId,
+    ) -> Result<PrepareWitnessedEscrowResult, NativePrepareError> {
+        let state = self.state.lock().await;
+        let active = state
+            .active_witnessed_escrow
+            .as_ref()
+            .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        if active.request.context.run_id != request.context.run_id
+            || active.request.context.sidecar_role != request.context.sidecar_role
+            || active.request.runtime != request.runtime
+            || active.request.terms != request.terms
+            || active.result.initialization.transaction_id != initialization_transaction_id
+            || active.result.funding.transaction_id != funding_transaction_id
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        self.validate_prepared_witnessed_escrow(&active.request, &active.result)?;
+        Ok(active.result.clone())
+    }
+
     /// Returns the exact owned revealing claim and its source request after
     /// checking the complete observation identity.
     ///

@@ -13,8 +13,9 @@ use std::{
 
 use async_trait::async_trait;
 use lez_bridge_protocol::{
-    Hex32, MessageContext, Participant, PrepareWitnessedEscrowRequest, RequestId, RunId,
-    RuntimeCompatibility, RuntimeDescriptor, WitnessedNativeEscrowTerms,
+    EscrowObservationTarget, Hex32, MessageContext, ObserveWitnessedEscrowRequest, Participant,
+    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, RequestId, RunId,
+    RuntimeCompatibility, RuntimeDescriptor, TransactionId, WitnessedNativeEscrowTerms,
     WitnessedNativeEscrowTermsInput,
 };
 use lez_v0_2_sidecar::{
@@ -106,6 +107,48 @@ fn request(
     )
 }
 
+async fn assert_exact_owned_observation_pair(
+    planner: &NativeEscrowPlanner,
+    request: &PrepareWitnessedEscrowRequest,
+    prepared: &PrepareWitnessedEscrowResult,
+) {
+    let observation = ObserveWitnessedEscrowRequest::new(
+        MessageContext::new(
+            request.context.run_id.clone(),
+            RequestId::new("witnessed-escrow-observe-0001").unwrap(),
+            Participant::Maker,
+        ),
+        request.runtime.clone(),
+        request.terms.clone(),
+        EscrowObservationTarget::Exact {
+            initialization_transaction_id: prepared.initialization.transaction_id,
+            funding_transaction_id: prepared.funding.transaction_id,
+        },
+    );
+    assert_eq!(
+        planner
+            .owned_witnessed_pair(
+                &observation,
+                prepared.initialization.transaction_id,
+                prepared.funding.transaction_id,
+            )
+            .await
+            .unwrap(),
+        prepared.clone()
+    );
+    assert_eq!(
+        planner
+            .owned_witnessed_pair(
+                &observation,
+                TransactionId::from_bytes([99; 32]),
+                prepared.funding.transaction_id,
+            )
+            .await
+            .unwrap_err(),
+        NativePrepareError::InvalidTransactionBytes
+    );
+}
+
 #[tokio::test]
 async fn prepares_exact_generated_witnessed_initialization_and_funding_pair() {
     let (depositor, depositor_key, _) = account(21);
@@ -176,6 +219,8 @@ async fn prepares_exact_generated_witnessed_initialization_and_funding_pair() {
         .validate_owned_submission(&prepared.funding)
         .await
         .unwrap();
+
+    assert_exact_owned_observation_pair(&planner, &request, &prepared).await;
 }
 
 #[tokio::test]

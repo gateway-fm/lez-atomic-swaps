@@ -869,7 +869,9 @@ impl WitnessedNativeEscrowTerms {
         if input.depositor_account_id == input.claimant_account_id {
             return Err(ProtocolValueError::SameEscrowAccounts);
         }
-        if input.claimant_account_id == input.aggregate_authority_account_id {
+        if input.claimant_account_id == input.aggregate_authority_account_id
+            || input.depositor_account_id == input.aggregate_authority_account_id
+        {
             return Err(ProtocolValueError::SameWitnessedClaimAccounts);
         }
         if input.aggregate_x_only_public_key == Hex32::from_bytes([0; 32]) {

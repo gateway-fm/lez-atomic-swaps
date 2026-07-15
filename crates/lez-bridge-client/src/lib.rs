@@ -19,19 +19,20 @@ use lez_bridge_protocol::{
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
     DescribeRuntimeResult, ErrorCode, ErrorMessage, MessageContext, ObserveEscrowRequest,
     ObserveEscrowResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
-    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, Participant,
-    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
-    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
-    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
-    RequestId, RunId, RuntimeDescriptor, SubmitTransactionRequest, SubmitTransactionResult,
+    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
+    ObserveWitnessedEscrowResult, Participant, PrepareNativeEscrowRequest,
+    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
+    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
+    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
+    PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RunId,
+    RuntimeDescriptor, SubmitTransactionRequest, SubmitTransactionResult,
 };
 pub use lez_bridge_protocol::{
     MAX_RPC_BODY_BYTES, METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME,
     METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM,
-    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
-    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
-    RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+    METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND,
+    METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
+    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest as _, Sha256};
@@ -157,6 +158,8 @@ pub enum BridgeOperation {
     PrepareWitnessedEscrow,
     /// Native initialization and funding observation.
     ObserveEscrow,
+    /// Aggregate-witness initialization and funding observation.
+    ObserveWitnessedEscrow,
     /// Randomized revealing-claim preparation.
     PrepareRevealingClaim,
     /// Unsigned aggregate-witness message reservation.
@@ -469,6 +472,32 @@ impl BridgeClient {
         self.reserve_context(operation, &context)?;
         let result: ObserveEscrowResult = self
             .request(operation, METHOD_OBSERVE_ESCROW, request, &context)
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        Ok(result)
+    }
+
+    /// Observes aggregate-witness initialization, funding, and same-tip account effects once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime mismatch, unknown delivery, strict
+    /// decoding failure, or typed remote error.
+    pub async fn observe_witnessed_escrow(
+        &self,
+        request: ObserveWitnessedEscrowRequest,
+    ) -> Result<ObserveWitnessedEscrowResult, BridgeClientError> {
+        let operation = BridgeOperation::ObserveWitnessedEscrow;
+        let context = request.context.clone();
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        self.reserve_context(operation, &context)?;
+        let result: ObserveWitnessedEscrowResult = self
+            .request(
+                operation,
+                METHOD_OBSERVE_WITNESSED_ESCROW,
+                request,
+                &context,
+            )
             .await?;
         Self::validate_response_context(operation, &context, &result.context)?;
         Ok(result)

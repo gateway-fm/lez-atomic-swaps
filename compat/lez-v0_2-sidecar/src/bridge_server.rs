@@ -14,14 +14,15 @@ use lez_bridge_protocol::{
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
     DescribeRuntimeResult, ErrorCode, ErrorMessage, MAX_RPC_BODY_BYTES,
     METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW,
-    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_PREPARE_NATIVE_ESCROW,
-    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
-    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, MessageContext,
-    ObserveEscrowRequest, ObserveNativeRefundRequest, ObserveRevealingClaimRequest, Participant,
-    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
-    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
-    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
-    ProtocolErrorReply, RUN_ID_HEADER, RunId, SIDECAR_ROLE_HEADER, SubmitTransactionRequest,
+    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
+    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
+    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
+    MessageContext, ObserveEscrowRequest, ObserveNativeRefundRequest, ObserveRevealingClaimRequest,
+    ObserveWitnessedEscrowRequest, Participant, PrepareNativeEscrowRequest,
+    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareRevealingClaimRequest,
+    PrepareRevealingClaimResult, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
+    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, ProtocolErrorReply, RUN_ID_HEADER,
+    RunId, SIDECAR_ROLE_HEADER, SubmitTransactionRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -772,6 +773,29 @@ fn register_methods(
             .await
     })?;
     module.register_async_method(
+        METHOD_OBSERVE_WITNESSED_ESCROW,
+        |params, state, _| async move {
+            let request: ObserveWitnessedEscrowRequest = params.one()?;
+            state.validate_runtime(&request.context, &request.runtime)?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_OBSERVE_WITNESSED_ESCROW,
+                    &request.context,
+                    &request,
+                    || async move {
+                        runtime
+                            .observe_witnessed_escrow(&operation)
+                            .await
+                            .map_err(Into::into)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
+    module.register_async_method(
         METHOD_PREPARE_REVEALING_CLAIM,
         |params, state, _| async move {
             let request = Arc::new(params.one::<PrepareRevealingClaimRequest>()?);
@@ -1100,6 +1124,7 @@ fn valid_method(method: &str) -> bool {
             | METHOD_PREPARE_NATIVE_ESCROW
             | METHOD_PREPARE_WITNESSED_ESCROW
             | METHOD_OBSERVE_ESCROW
+            | METHOD_OBSERVE_WITNESSED_ESCROW
             | METHOD_PREPARE_REVEALING_CLAIM
             | METHOD_PREPARE_WITNESSED_CLAIM
             | METHOD_COMPLETE_WITNESSED_CLAIM

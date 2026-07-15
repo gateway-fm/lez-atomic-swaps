@@ -11,15 +11,18 @@ use lez_bridge_protocol::{
     NativeRefundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
     ObserveEscrowRequest, ObserveEscrowResult, ObserveNativeRefundRequest,
     ObserveNativeRefundResult, ObserveRevealingClaimRequest, ObserveRevealingClaimResult,
-    ObservedTransactionFacts, Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
-    PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
-    PrepareRevealingClaimResult, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
-    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
-    PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RevealingClaimFoundFacts,
-    RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage, RunId,
-    RuntimeCompatibility, RuntimeDescriptor, SchemaVersion, SubmissionOutcome,
-    SubmitTransactionRequest, SubmitTransactionResult, TransactionId, WitnessedNativeEscrowTerms,
-    WitnessedNativeEscrowTermsInput,
+    ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult, ObservedTransactionFacts,
+    Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
+    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
+    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
+    RequestId, RevealingClaimFoundFacts, RevealingClaimObservation,
+    RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
+    RuntimeDescriptor, SchemaVersion, SubmissionOutcome, SubmitTransactionRequest,
+    SubmitTransactionResult, TransactionId, WitnessedEscrowMetadataFacts,
+    WitnessedFundingFoundFacts, WitnessedFundingObservation, WitnessedInitializationFoundFacts,
+    WitnessedInitializationObservation, WitnessedNativeEscrowTerms,
+    WitnessedNativeEscrowTermsInput, WitnessedNativeInitializeInstructionFacts,
 };
 
 #[test]
@@ -60,6 +63,92 @@ fn witnessed_escrow_wire_preserves_exact_terms_and_pair() {
         .unwrap(),
         result
     );
+}
+
+#[test]
+fn witnessed_observation_binds_authority_transactions_accounts_effects_and_tip() {
+    let terms = WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
+        swap_id: h(40),
+        terms_hash: h(41),
+        depositor: Participant::Taker,
+        depositor_account_id: h(42),
+        claimant: Participant::Maker,
+        claimant_account_id: h(43),
+        aggregate_authority_account_id: h(44),
+        aggregate_x_only_public_key: h(45),
+        amount: 75,
+        refund_at_ms: 1_850_000_000_123,
+        authenticated_transfer_program_id: h(46),
+    })
+    .unwrap();
+    let request = ObserveWitnessedEscrowRequest::new(
+        context(),
+        runtime(),
+        terms.clone(),
+        EscrowObservationTarget::Exact {
+            initialization_transaction_id: TransactionId::from_bytes([47; 32]),
+            funding_transaction_id: TransactionId::from_bytes([48; 32]),
+        },
+    );
+    let initialization_transaction = ObservedTransactionFacts::new(
+        TransactionId::from_bytes([47; 32]),
+        ExactTransactionBytes::new(vec![47; 128]).unwrap(),
+        ChainPosition::new(h(49), 51, 0),
+        AccountIds::new(vec![h(42)]).unwrap(),
+        true,
+    );
+    let funding_transaction = ObservedTransactionFacts::new(
+        TransactionId::from_bytes([48; 32]),
+        ExactTransactionBytes::new(vec![48; 128]).unwrap(),
+        ChainPosition::new(h(49), 51, 1),
+        AccountIds::new(vec![h(42)]).unwrap(),
+        true,
+    );
+    let metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+        h(50),
+        h(4),
+        h(52),
+        &terms,
+        EscrowState::Funded,
+    );
+    let result = ObserveWitnessedEscrowResult::new(
+        context(),
+        ChainTip::new(h(49), 51),
+        WitnessedInitializationObservation::found(WitnessedInitializationFoundFacts::new(
+            initialization_transaction,
+            WitnessedNativeInitializeInstructionFacts::new(
+                h(4),
+                AccountIds::new(vec![h(50), h(52), h(42), h(43), h(44)]).unwrap(),
+                terms.clone(),
+            ),
+            metadata.clone(),
+        )),
+        WitnessedFundingObservation::found(WitnessedFundingFoundFacts::new(
+            funding_transaction,
+            NativeFundInstructionFacts::new(
+                h(4),
+                AccountIds::new(vec![h(50), h(52), h(42)]).unwrap(),
+                terms.swap_id(),
+            ),
+            metadata,
+            NativeCustodyFacts::new(h(52), h(46), 75),
+        )),
+        ChainTip::new(h(49), 51),
+    );
+
+    assert_eq!(
+        serde_json::from_str::<ObserveWitnessedEscrowRequest>(
+            &serde_json::to_string(&request).unwrap()
+        )
+        .unwrap(),
+        request
+    );
+    let encoded = serde_json::to_string(&result).unwrap();
+    let decoded: ObserveWitnessedEscrowResult = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(decoded, result);
+    assert!(encoded.contains("aggregate_authority_account_id"));
+    assert!(encoded.contains("aggregate_x_only_public_key"));
+    assert!(encoded.contains("exact_bytes"));
 }
 
 #[test]
@@ -150,22 +239,24 @@ fn witnessed_claim_wire_keeps_destination_authority_and_preparation_identity_dis
 
 #[test]
 fn witnessed_claim_wire_rejects_aliases_noncanonical_signature_and_unknown_fields() {
-    assert!(
-        WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
-            swap_id: h(60),
-            terms_hash: h(61),
-            depositor: Participant::Taker,
-            depositor_account_id: h(62),
-            claimant: Participant::Maker,
-            claimant_account_id: h(63),
-            aggregate_authority_account_id: h(63),
-            aggregate_x_only_public_key: h(65),
-            amount: 75,
-            refund_at_ms: 99,
-            authenticated_transfer_program_id: h(66),
-        })
-        .is_err()
-    );
+    for aliased_authority in [h(62), h(63)] {
+        assert!(
+            WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
+                swap_id: h(60),
+                terms_hash: h(61),
+                depositor: Participant::Taker,
+                depositor_account_id: h(62),
+                claimant: Participant::Maker,
+                claimant_account_id: h(63),
+                aggregate_authority_account_id: aliased_authority,
+                aggregate_x_only_public_key: h(65),
+                amount: 75,
+                refund_at_ms: 99,
+                authenticated_transfer_program_id: h(66),
+            })
+            .is_err()
+        );
+    }
     for signature in ["00".repeat(63), "AA".repeat(64), "gg".repeat(64)] {
         assert!(
             serde_json::from_value::<AggregateBip340Signature>(serde_json::json!(signature))

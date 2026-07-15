@@ -8,10 +8,10 @@ use jsonrpsee::{RpcModule, types::ErrorObjectOwned};
 use lez_bridge_client::{
     BridgeClient, BridgeClientConfig, BridgeClientError, BridgeOperation, MAX_RPC_BODY_BYTES,
     METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW,
-    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_PREPARE_NATIVE_ESCROW,
-    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
-    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
-    SidecarCapability,
+    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
+    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
+    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
+    RUN_ID_HEADER, SIDECAR_ROLE_HEADER, SidecarCapability,
 };
 use lez_bridge_protocol::{
     AggregateBip340Signature, ChainClock, ChainTip, CompleteWitnessedClaimRequest,
@@ -21,14 +21,16 @@ use lez_bridge_protocol::{
     NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
     NativeRefundObservation, NativeRefundObservationTarget, ObserveEscrowRequest,
     ObserveEscrowResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
-    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, Participant,
-    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
-    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
-    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
-    RequestId, RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage,
-    RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
-    SubmitTransactionResult, TransactionId, WitnessedNativeEscrowTerms,
+    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
+    ObserveWitnessedEscrowResult, Participant, PrepareNativeEscrowRequest,
+    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
+    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
+    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
+    PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply, RequestId,
+    RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage, RunId,
+    RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
+    SubmitTransactionResult, TransactionId, WitnessedFundingObservation,
+    WitnessedInitializationObservation, WitnessedNativeEscrowTerms,
     WitnessedNativeEscrowTermsInput,
 };
 use serde_json::json;
@@ -289,6 +291,19 @@ fn register_witnessed_escrow_method(module: &mut RpcModule<Fixture>) {
             ))
         })
         .expect("prepare witnessed escrow method");
+    module
+        .register_method(METHOD_OBSERVE_WITNESSED_ESCROW, |params, fixture, _| {
+            let request: ObserveWitnessedEscrowRequest = params.one()?;
+            fixture.record(METHOD_OBSERVE_WITNESSED_ESCROW);
+            Ok::<_, ErrorObjectOwned>(ObserveWitnessedEscrowResult::new(
+                response_context(&request.context, fixture.behavior),
+                tip(52),
+                WitnessedInitializationObservation::UnknownOrPending,
+                WitnessedFundingObservation::UnknownOrPending,
+                tip(52),
+            ))
+        })
+        .expect("observe witnessed escrow method");
 }
 
 fn register_refund_methods(module: &mut RpcModule<Fixture>) {
@@ -593,6 +608,22 @@ async fn witnessed_escrow_prepare_is_role_correct_typed_and_does_not_submit() {
         prepared.funding.transaction_id
     );
     assert_eq!(sidecar.fixture.calls(METHOD_PREPARE_WITNESSED_ESCROW), 1);
+    assert_eq!(sidecar.fixture.calls(METHOD_SUBMIT_TRANSACTION), 0);
+
+    let observed = client
+        .observe_witnessed_escrow(ObserveWitnessedEscrowRequest::new(
+            context(&run, Participant::Maker, "observe-witnessed-escrow"),
+            expected_runtime.clone(),
+            witnessed_deposit_terms(&expected_runtime),
+            EscrowObservationTarget::Exact {
+                initialization_transaction_id: prepared.initialization.transaction_id,
+                funding_transaction_id: prepared.funding.transaction_id,
+            },
+        ))
+        .await
+        .expect("observe witnessed escrow");
+    assert_eq!(observed.tip_before, observed.tip_after);
+    assert_eq!(sidecar.fixture.calls(METHOD_OBSERVE_WITNESSED_ESCROW), 1);
     assert_eq!(sidecar.fixture.calls(METHOD_SUBMIT_TRANSACTION), 0);
 }
 

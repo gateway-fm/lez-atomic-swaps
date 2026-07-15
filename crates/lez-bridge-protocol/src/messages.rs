@@ -337,6 +337,38 @@ impl ObserveEscrowRequest {
     }
 }
 
+/// Requests primitive observations for an aggregate-witness initialization/funding pair.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ObserveWitnessedEscrowRequest {
+    /// Version, isolation, correlation, and role fields.
+    pub context: MessageContext,
+    /// Expected pinned LEZ v0.2 runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// Exact witnessed escrow values, including aggregate claim authority.
+    pub terms: WitnessedNativeEscrowTerms,
+    /// Exact-ID lookup or terms-based counterparty discovery.
+    pub target: EscrowObservationTarget,
+}
+
+impl ObserveWitnessedEscrowRequest {
+    /// Creates an aggregate-witness escrow observation request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedNativeEscrowTerms,
+        target: EscrowObservationTarget,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+            target,
+        }
+    }
+}
+
 /// Primitive transaction facts from the official decoder and node scan.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -392,6 +424,34 @@ impl NativeInitializeInstructionFacts {
         program_id: Hex32,
         ordered_account_ids: AccountIds,
         terms: NativeEscrowTerms,
+    ) -> Self {
+        Self {
+            program_id,
+            ordered_account_ids,
+            terms,
+        }
+    }
+}
+
+/// Primitive fields of the pinned guest's `InitializeNativeWitnessed` instruction.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct WitnessedNativeInitializeInstructionFacts {
+    /// Runtime escrow program targeted by the instruction.
+    pub program_id: Hex32,
+    /// Exact `[metadata, custody, depositor, claimant, aggregate_authority]` order.
+    pub ordered_account_ids: AccountIds,
+    /// Every decoded `InitializeNativeWitnessed` argument and role binding.
+    pub terms: WitnessedNativeEscrowTerms,
+}
+
+impl WitnessedNativeInitializeInstructionFacts {
+    /// Creates primitive `InitializeNativeWitnessed` instruction facts.
+    pub const fn new(
+        program_id: Hex32,
+        ordered_account_ids: AccountIds,
+        terms: WitnessedNativeEscrowTerms,
     ) -> Self {
         Self {
             program_id,
@@ -497,6 +557,81 @@ impl EscrowMetadataFacts {
             swap_id: terms.swap_id(),
             terms_hash: terms.terms_hash(),
             secret_digest: terms.secret_digest(),
+            depositor_account_id: terms.depositor_account_id(),
+            depositor_asset_account_id: terms.depositor_account_id(),
+            claimant_account_id: terms.claimant_account_id(),
+            claimant_asset_account_id: terms.claimant_account_id(),
+            custody_account_id,
+            asset_program_id: terms.authenticated_transfer_program_id(),
+            custody_program_id: terms.authenticated_transfer_program_id(),
+            asset_definition: Hex32::from_bytes([0; 32]),
+            amount: terms.amount(),
+            refund_at_ms: terms.refund_at_ms(),
+            status,
+        }
+    }
+}
+
+/// Primitive decoded metadata for an aggregate-witness native escrow.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct WitnessedEscrowMetadataFacts {
+    /// Metadata account identity read from the node.
+    pub account_id: Hex32,
+    /// Node-reported metadata account owner.
+    pub owner_program_id: Hex32,
+    /// Exact pinned metadata schema version.
+    pub version: u8,
+    /// Swap identifier stored by the guest.
+    pub swap_id: Hex32,
+    /// Exact signed agreement commitment stored as `terms_hash`.
+    pub terms_hash: Hex32,
+    /// Aggregate authority account stored by the guest.
+    pub aggregate_authority_account_id: Hex32,
+    /// Aggregate x-only BIP340 public key stored by the guest.
+    pub aggregate_x_only_public_key: Hex32,
+    /// Native depositor account stored by the guest.
+    pub depositor_account_id: Hex32,
+    /// Native depositor asset account; equal to `depositor_account_id` for native swaps.
+    pub depositor_asset_account_id: Hex32,
+    /// Native claimant account stored by the guest.
+    pub claimant_account_id: Hex32,
+    /// Native claimant asset account; equal to `claimant_account_id` for native swaps.
+    pub claimant_asset_account_id: Hex32,
+    /// Custody account stored by the guest.
+    pub custody_account_id: Hex32,
+    /// Asset program stored by the guest.
+    pub asset_program_id: Hex32,
+    /// Custody program stored by the guest.
+    pub custody_program_id: Hex32,
+    /// Exact asset-definition sentinel; all zeroes for native swaps.
+    pub asset_definition: Hex32,
+    /// Full-width amount stored by the guest.
+    pub amount: NativeAmount,
+    /// Guest `refund_at` expressed explicitly as Unix milliseconds at this boundary.
+    pub refund_at_ms: u64,
+    /// Exact upstream escrow status.
+    pub status: EscrowState,
+}
+
+impl WitnessedEscrowMetadataFacts {
+    /// Builds the exact witnessed-native metadata shape emitted by the pinned guest.
+    pub const fn from_witnessed_native_terms(
+        account_id: Hex32,
+        owner_program_id: Hex32,
+        custody_account_id: Hex32,
+        terms: &WitnessedNativeEscrowTerms,
+        status: EscrowState,
+    ) -> Self {
+        Self {
+            account_id,
+            owner_program_id,
+            version: 2,
+            swap_id: terms.swap_id(),
+            terms_hash: terms.terms_hash(),
+            aggregate_authority_account_id: terms.aggregate_authority_account_id(),
+            aggregate_x_only_public_key: terms.aggregate_x_only_public_key(),
             depositor_account_id: terms.depositor_account_id(),
             depositor_asset_account_id: terms.depositor_account_id(),
             claimant_account_id: terms.claimant_account_id(),
@@ -733,6 +868,166 @@ impl<'de> Deserialize<'de> for FundingObservation {
     }
 }
 
+/// Complete primitive facts for a found aggregate-witness initialization.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct WitnessedInitializationFoundFacts {
+    /// Primitive transaction and placement facts.
+    pub transaction: ObservedTransactionFacts,
+    /// Primitive official-decoder witnessed initialization fields.
+    pub instruction: WitnessedNativeInitializeInstructionFacts,
+    /// Current witnessed metadata read at the bracketed stable tip.
+    pub metadata: WitnessedEscrowMetadataFacts,
+}
+
+impl WitnessedInitializationFoundFacts {
+    /// Creates complete witnessed initialization facts.
+    pub const fn new(
+        transaction: ObservedTransactionFacts,
+        instruction: WitnessedNativeInitializeInstructionFacts,
+        metadata: WitnessedEscrowMetadataFacts,
+    ) -> Self {
+        Self {
+            transaction,
+            instruction,
+            metadata,
+        }
+    }
+}
+
+/// Witnessed initialization lookup without overstating upstream finality or absence.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", content = "facts", rename_all = "snake_case")]
+#[must_use]
+pub enum WitnessedInitializationObservation {
+    /// Stable tips fully covered the declared window, or durable state proves no submission.
+    Absent,
+    /// Upstream cannot distinguish pending from absent, including an exact-ID canonical miss.
+    UnknownOrPending,
+    /// The sidecar found and decoded one aggregate-witness initialization.
+    Found(Box<WitnessedInitializationFoundFacts>),
+}
+
+impl WitnessedInitializationObservation {
+    /// Wraps complete found facts without inflating absent results.
+    pub fn found(facts: WitnessedInitializationFoundFacts) -> Self {
+        Self::Found(Box::new(facts))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum WitnessedInitializationObservationWire {
+    Absent(AbsentObservationWire),
+    UnknownOrPending(UnknownOrPendingObservationWire),
+    Found(Box<FoundObservationWire<WitnessedInitializationFoundFacts>>),
+}
+
+impl<'de> Deserialize<'de> for WitnessedInitializationObservation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match WitnessedInitializationObservationWire::deserialize(deserializer)? {
+            WitnessedInitializationObservationWire::Absent(wire) => {
+                let AbsentStatus::Absent = wire.status;
+                Ok(Self::Absent)
+            }
+            WitnessedInitializationObservationWire::UnknownOrPending(wire) => {
+                let UnknownOrPendingStatus::UnknownOrPending = wire.status;
+                Ok(Self::UnknownOrPending)
+            }
+            WitnessedInitializationObservationWire::Found(wire) => {
+                let FoundStatus::Found = wire.status;
+                Ok(Self::found(wire.facts))
+            }
+        }
+    }
+}
+
+/// Complete primitive facts for a found funding transaction of a witnessed escrow.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct WitnessedFundingFoundFacts {
+    /// Primitive transaction and placement facts.
+    pub transaction: ObservedTransactionFacts,
+    /// Primitive official-decoder funding fields.
+    pub instruction: NativeFundInstructionFacts,
+    /// Current witnessed metadata read at the bracketed stable tip.
+    pub metadata: WitnessedEscrowMetadataFacts,
+    /// Primitive funded custody account fields.
+    pub custody: NativeCustodyFacts,
+}
+
+impl WitnessedFundingFoundFacts {
+    /// Creates complete witnessed funding facts.
+    pub const fn new(
+        transaction: ObservedTransactionFacts,
+        instruction: NativeFundInstructionFacts,
+        metadata: WitnessedEscrowMetadataFacts,
+        custody: NativeCustodyFacts,
+    ) -> Self {
+        Self {
+            transaction,
+            instruction,
+            metadata,
+            custody,
+        }
+    }
+}
+
+/// Witnessed funding lookup without overstating upstream finality or absence.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", content = "facts", rename_all = "snake_case")]
+#[must_use]
+pub enum WitnessedFundingObservation {
+    /// Stable tips fully covered the declared window, or durable state proves no submission.
+    Absent,
+    /// Upstream cannot distinguish pending from absent, including an exact-ID canonical miss.
+    UnknownOrPending,
+    /// The sidecar found and decoded one funding transaction.
+    Found(Box<WitnessedFundingFoundFacts>),
+}
+
+impl WitnessedFundingObservation {
+    /// Wraps complete found facts without inflating absent results.
+    pub fn found(facts: WitnessedFundingFoundFacts) -> Self {
+        Self::Found(Box::new(facts))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum WitnessedFundingObservationWire {
+    Absent(AbsentObservationWire),
+    UnknownOrPending(UnknownOrPendingObservationWire),
+    Found(Box<FoundObservationWire<WitnessedFundingFoundFacts>>),
+}
+
+impl<'de> Deserialize<'de> for WitnessedFundingObservation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match WitnessedFundingObservationWire::deserialize(deserializer)? {
+            WitnessedFundingObservationWire::Absent(wire) => {
+                let AbsentStatus::Absent = wire.status;
+                Ok(Self::Absent)
+            }
+            WitnessedFundingObservationWire::UnknownOrPending(wire) => {
+                let UnknownOrPendingStatus::UnknownOrPending = wire.status;
+                Ok(Self::UnknownOrPending)
+            }
+            WitnessedFundingObservationWire::Found(wire) => {
+                let FoundStatus::Found = wire.status;
+                Ok(Self::found(wire.facts))
+            }
+        }
+    }
+}
+
 /// Primitive escrow observations bracketed by node tips.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -757,6 +1052,42 @@ impl ObserveEscrowResult {
         tip_before: ChainTip,
         initialization: InitializationObservation,
         funding: FundingObservation,
+        tip_after: ChainTip,
+    ) -> Self {
+        Self {
+            context,
+            tip_before,
+            initialization,
+            funding,
+            tip_after,
+        }
+    }
+}
+
+/// Aggregate-witness escrow observations bracketed by the same canonical node tip.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ObserveWitnessedEscrowResult {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Tip immediately before the canonical scan and account reads.
+    pub tip_before: ChainTip,
+    /// Explicit witnessed initialization lookup state and complete found facts.
+    pub initialization: WitnessedInitializationObservation,
+    /// Explicit funding lookup state and complete found facts.
+    pub funding: WitnessedFundingObservation,
+    /// Tip immediately after all canonical scan and account reads.
+    pub tip_after: ChainTip,
+}
+
+impl ObserveWitnessedEscrowResult {
+    /// Creates primitive aggregate-witness escrow observation facts.
+    pub const fn new(
+        context: MessageContext,
+        tip_before: ChainTip,
+        initialization: WitnessedInitializationObservation,
+        funding: WitnessedFundingObservation,
         tip_after: ChainTip,
     ) -> Self {
         Self {

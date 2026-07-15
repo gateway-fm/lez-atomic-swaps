@@ -9,14 +9,16 @@ use lez_bridge_protocol::{
     InitializationObservation, MAX_DISCOVERY_BLOCKS, NativeClaimInstructionFacts,
     NativeCustodyFacts, NativeFundInstructionFacts, NativeInitializeInstructionFacts,
     ObserveEscrowRequest, ObserveEscrowResult, ObserveRevealingClaimRequest,
-    ObserveRevealingClaimResult, ObservedTransactionFacts, PrepareWitnessedClaimRequest,
-    PrepareWitnessedClaimResult, PreparedTransaction, RevealingClaimFoundFacts,
-    RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage,
-    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
-    TransactionId,
+    ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
+    ObservedTransactionFacts, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
+    PreparedTransaction, RevealingClaimFoundFacts, RevealingClaimObservation,
+    RevealingClaimObservationTarget, RevealingPreimage, RuntimeDescriptor, SubmissionOutcome,
+    SubmitTransactionRequest, SubmitTransactionResult, TransactionId, WitnessedEscrowMetadataFacts,
+    WitnessedFundingFoundFacts, WitnessedFundingObservation, WitnessedInitializationFoundFacts,
+    WitnessedInitializationObservation, WitnessedNativeInitializeInstructionFacts,
 };
 use lez_zec_escrow_v02::{ClaimAuthority, EscrowMetadata, EscrowStatus};
-use nssa::{AccountId, PublicTransaction};
+use nssa::{AccountId, PublicKey, PublicTransaction};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
@@ -378,6 +380,135 @@ impl BridgeRuntime {
         ))
     }
 
+    /// Observes an exact owned witnessed pair or discovers a counterparty pair by terms.
+    ///
+    /// Canonical transaction bytes, generated instruction accounts, aggregate
+    /// authority metadata, custody effects, and all account reads are bound to
+    /// one unchanged upstream tip. Inclusion does not overstate Bedrock finality.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on role/runtime/authority drift, moving tips, unavailable
+    /// node facts, invalid canonical facts, or ambiguous terms discovery.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the witnessed pair and same-tip account effects remain auditable together"
+    )]
+    pub async fn observe_witnessed_escrow(
+        &self,
+        request: &ObserveWitnessedEscrowRequest,
+    ) -> Result<ObserveWitnessedEscrowResult, BridgeRuntimeError> {
+        validate_witnessed_authority(&request.terms)?;
+        let signer = self.runtime.signer_account_id;
+        let (window, expected, exact) = match request.target {
+            EscrowObservationTarget::Exact {
+                initialization_transaction_id,
+                funding_transaction_id,
+            } => {
+                if request.terms.depositor() != self.runtime.sidecar_role
+                    || request.terms.depositor_account_id() != signer
+                {
+                    return Err(BridgeRuntimeError::Planner);
+                }
+                let expected = self
+                    .planner
+                    .owned_witnessed_pair(
+                        request,
+                        initialization_transaction_id,
+                        funding_transaction_id,
+                    )
+                    .await?;
+                let tip = self.read_tip().await?;
+                let start = tip
+                    .height
+                    .saturating_sub(u64::from(MAX_DISCOVERY_BLOCKS - 1))
+                    .max(nssa::GENESIS_BLOCK_ID);
+                (
+                    DiscoveryWindow::new(start, MAX_DISCOVERY_BLOCKS)
+                        .map_err(|_| BridgeRuntimeError::InvalidObservation)?,
+                    Some(expected),
+                    true,
+                )
+            }
+            EscrowObservationTarget::DiscoverByTerms { window } => {
+                if request.terms.claimant() != self.runtime.sidecar_role
+                    || request.terms.claimant_account_id() != signer
+                    || request.terms.depositor() == self.runtime.sidecar_role
+                {
+                    return Err(BridgeRuntimeError::Planner);
+                }
+                (window, None, false)
+            }
+        };
+        let scan = self
+            .scan_witnessed_pair(request, window, expected.as_ref())
+            .await?;
+        if let (Some(initialization), Some(funding)) =
+            (scan.initialization.as_ref(), scan.funding.as_ref())
+            && position_key(&initialization.facts.position) >= position_key(&funding.facts.position)
+        {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+        let snapshot = if scan.initialization.is_some() || scan.funding.is_some() {
+            Some(self.read_witnessed_snapshot(&request.terms).await?)
+        } else {
+            None
+        };
+        let tip_after = self.read_tip().await?;
+        if tip_after != scan.tip
+            || snapshot
+                .as_ref()
+                .is_some_and(|(_, _, tip)| *tip != scan.tip)
+        {
+            return Err(BridgeRuntimeError::MovingTip);
+        }
+        let missing_is_absent = !exact && scan.fully_covered;
+        let initialization = match scan.initialization {
+            Some(found) => {
+                let (metadata, _, _) = snapshot
+                    .as_ref()
+                    .ok_or(BridgeRuntimeError::InvalidObservation)?;
+                WitnessedInitializationObservation::found(WitnessedInitializationFoundFacts::new(
+                    found.facts,
+                    WitnessedNativeInitializeInstructionFacts::new(
+                        self.runtime.escrow_program_id,
+                        found.ordered_account_ids,
+                        request.terms.clone(),
+                    ),
+                    metadata.clone(),
+                ))
+            }
+            None if missing_is_absent => WitnessedInitializationObservation::Absent,
+            None => WitnessedInitializationObservation::UnknownOrPending,
+        };
+        let funding = match scan.funding {
+            Some(found) => {
+                let (metadata, custody, _) = snapshot
+                    .as_ref()
+                    .ok_or(BridgeRuntimeError::InvalidObservation)?;
+                WitnessedFundingObservation::found(WitnessedFundingFoundFacts::new(
+                    found.facts,
+                    NativeFundInstructionFacts::new(
+                        self.runtime.escrow_program_id,
+                        found.ordered_account_ids,
+                        request.terms.swap_id(),
+                    ),
+                    metadata.clone(),
+                    custody.clone(),
+                ))
+            }
+            None if missing_is_absent => WitnessedFundingObservation::Absent,
+            None => WitnessedFundingObservation::UnknownOrPending,
+        };
+        Ok(ObserveWitnessedEscrowResult::new(
+            request.context.clone(),
+            scan.tip,
+            initialization,
+            funding,
+            tip_after,
+        ))
+    }
+
     /// Observes an exact owned revealing claim or discovers one by terms.
     ///
     /// # Errors
@@ -546,6 +677,119 @@ impl BridgeRuntime {
                             expected.is_some(),
                         )?;
                         let expected_accounts = native_account_ids(
+                            &request.terms,
+                            self.runtime.escrow_program_id,
+                            false,
+                        );
+                        if found.ordered_account_ids != expected_accounts {
+                            return Err(BridgeRuntimeError::InvalidObservation);
+                        }
+                        replace_unique(&mut funding, found, expected.is_some())?;
+                    }
+                    _ if expected.is_some() => {
+                        return Err(BridgeRuntimeError::InvalidObservation);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(PairScan {
+            tip,
+            initialization,
+            funding,
+            fully_covered,
+        })
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "both exact witnessed instructions are decoded in one bounded canonical scan"
+    )]
+    async fn scan_witnessed_pair(
+        &self,
+        request: &ObserveWitnessedEscrowRequest,
+        window: DiscoveryWindow,
+        expected: Option<&lez_bridge_protocol::PrepareWitnessedEscrowResult>,
+    ) -> Result<PairScan, BridgeRuntimeError> {
+        let (tip, blocks, fully_covered) = self.blocks_in_window(window).await?;
+        let mut initialization = None;
+        let mut funding = None;
+        for block in &blocks {
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                let LeeTransaction::Public(public) = transaction else {
+                    continue;
+                };
+                if public.message().program_id
+                    != program_id_from_hex(self.runtime.escrow_program_id)
+                {
+                    continue;
+                }
+                let transaction_id = TransactionId::from_bytes(public.hash());
+                let exact_initialization = expected
+                    .filter(|pair| pair.initialization.transaction_id == transaction_id)
+                    .map(|pair| &pair.initialization);
+                let exact_funding = expected
+                    .filter(|pair| pair.funding.transaction_id == transaction_id)
+                    .map(|pair| &pair.funding);
+                if expected.is_some() && exact_initialization.is_none() && exact_funding.is_none() {
+                    continue;
+                }
+                let instruction = decode_instruction(public).map_err(|_| {
+                    if expected.is_some() {
+                        BridgeRuntimeError::InvalidObservation
+                    } else {
+                        BridgeRuntimeError::Unavailable
+                    }
+                })?;
+                match instruction {
+                    ZecEscrowInstruction::InitializeNativeWitnessed {
+                        swap_id,
+                        terms_hash,
+                        aggregate_x_only_public_key,
+                        amount,
+                        refund_at,
+                        authenticated_transfer_program,
+                    } if swap_id == *request.terms.swap_id().as_bytes()
+                        && terms_hash == *request.terms.terms_hash().as_bytes()
+                        && aggregate_x_only_public_key
+                            == *request.terms.aggregate_x_only_public_key().as_bytes()
+                        && amount == request.terms.amount().as_u128()
+                        && refund_at == request.terms.refund_at_ms()
+                        && authenticated_transfer_program
+                            == program_id_from_hex(
+                                request.terms.authenticated_transfer_program_id(),
+                            ) =>
+                    {
+                        let found = Self::found_transaction(
+                            public,
+                            block,
+                            index,
+                            request.terms.depositor_account_id(),
+                            expected.map(|pair| &pair.initialization),
+                            expected.is_some(),
+                        )?;
+                        let expected_accounts = witnessed_account_ids(
+                            &request.terms,
+                            self.runtime.escrow_program_id,
+                            true,
+                        );
+                        if found.ordered_account_ids != expected_accounts {
+                            return Err(BridgeRuntimeError::InvalidObservation);
+                        }
+                        replace_unique(&mut initialization, found, expected.is_some())?;
+                    }
+                    ZecEscrowInstruction::FundNative { swap_id }
+                        if swap_id == *request.terms.swap_id().as_bytes() =>
+                    {
+                        let found = Self::found_transaction(
+                            public,
+                            block,
+                            index,
+                            request.terms.depositor_account_id(),
+                            expected.map(|pair| &pair.funding),
+                            expected.is_some(),
+                        )?;
+                        let expected_accounts = witnessed_account_ids(
                             &request.terms,
                             self.runtime.escrow_program_id,
                             false,
@@ -754,6 +998,106 @@ impl BridgeRuntime {
         self.snapshot_facts(terms, metadata_id, custody_id, &facts)
     }
 
+    async fn read_witnessed_snapshot(
+        &self,
+        terms: &lez_bridge_protocol::WitnessedNativeEscrowTerms,
+    ) -> Result<(WitnessedEscrowMetadataFacts, NativeCustodyFacts, ChainTip), BridgeRuntimeError>
+    {
+        let escrow_program = program_id_from_hex(self.runtime.escrow_program_id);
+        let swap_id = *terms.swap_id().as_bytes();
+        let metadata_id = compute_metadata_pda(&escrow_program, &swap_id);
+        let custody_id = compute_custody_pda(&escrow_program, &swap_id);
+        let depositor = AccountId::new(*terms.depositor_account_id().as_bytes());
+        let claimant = AccountId::new(*terms.claimant_account_id().as_bytes());
+        let facts = self
+            .node
+            .native_escrow_facts(metadata_id, custody_id, depositor, claimant)
+            .await?;
+        self.witnessed_snapshot_facts(terms, metadata_id, custody_id, &facts)
+    }
+
+    fn witnessed_snapshot_facts(
+        &self,
+        terms: &lez_bridge_protocol::WitnessedNativeEscrowTerms,
+        metadata_id: AccountId,
+        custody_id: AccountId,
+        facts: &OfficialNativeEscrowFacts,
+    ) -> Result<(WitnessedEscrowMetadataFacts, NativeCustodyFacts, ChainTip), BridgeRuntimeError>
+    {
+        if facts.channel_id() != *self.runtime.channel_id.as_bytes()
+            || facts.genesis_block_hash() != *self.runtime.genesis_block_hash.as_bytes()
+        {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+        let metadata = EscrowMetadata::try_from_slice(facts.metadata_account().data.as_ref())
+            .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
+        let state = match metadata.status {
+            EscrowStatus::Empty => EscrowState::Empty,
+            EscrowStatus::Funded => EscrowState::Funded,
+            EscrowStatus::Claimed => EscrowState::Claimed,
+            EscrowStatus::Refunded => EscrowState::Refunded,
+        };
+        let expected_transfer = program_id_from_hex(terms.authenticated_transfer_program_id());
+        let ClaimAuthority::AggregateWitness {
+            x_only_public_key,
+            account_id,
+        } = metadata.claim_authority
+        else {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        };
+        if facts.metadata_account().program_owner
+            != program_id_from_hex(self.runtime.escrow_program_id)
+            || metadata.version != 2
+            || metadata.swap_id != *terms.swap_id().as_bytes()
+            || metadata.terms_hash != *terms.terms_hash().as_bytes()
+            || x_only_public_key != *terms.aggregate_x_only_public_key().as_bytes()
+            || account_id.into_value() != *terms.aggregate_authority_account_id().as_bytes()
+            || metadata.depositor.into_value() != *terms.depositor_account_id().as_bytes()
+            || metadata.depositor_asset != metadata.depositor
+            || metadata.claimant.into_value() != *terms.claimant_account_id().as_bytes()
+            || metadata.claimant_asset != metadata.claimant
+            || metadata.custody != custody_id
+            || metadata.asset_program != expected_transfer
+            || metadata.custody_program != expected_transfer
+            || metadata.asset_definition != [0; 32]
+            || metadata.amount != terms.amount().as_u128()
+            || metadata.refund_at != terms.refund_at_ms()
+            || facts.custody_account().program_owner != expected_transfer
+            || facts.depositor_account().program_owner != expected_transfer
+            || facts.claimant_account().program_owner != expected_transfer
+        {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+        let expected_balance = if state == EscrowState::Funded {
+            terms.amount().as_u128()
+        } else {
+            0
+        };
+        if facts.custody_account().balance != expected_balance {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+        let metadata_facts = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+            Hex32::from_bytes(metadata_id.into_value()),
+            self.runtime.escrow_program_id,
+            Hex32::from_bytes(custody_id.into_value()),
+            terms,
+            state,
+        );
+        let custody_facts = NativeCustodyFacts::new(
+            Hex32::from_bytes(custody_id.into_value()),
+            program_id_to_hex(facts.custody_account().program_owner),
+            facts.custody_account().balance,
+        );
+        Ok((
+            metadata_facts,
+            custody_facts,
+            ChainTip::new(
+                Hex32::from_bytes(facts.tip_block_hash()),
+                facts.sequencer_tip(),
+            ),
+        ))
+    }
+
     fn snapshot_facts(
         &self,
         terms: &lez_bridge_protocol::NativeEscrowTerms,
@@ -859,6 +1203,45 @@ fn native_account_ids(
         vec![metadata, custody, terms.depositor_account_id()]
     })
     .expect("native account count is protocol bounded")
+}
+
+fn validate_witnessed_authority(
+    terms: &lez_bridge_protocol::WitnessedNativeEscrowTerms,
+) -> Result<(), BridgeRuntimeError> {
+    let key = PublicKey::try_new(*terms.aggregate_x_only_public_key().as_bytes())
+        .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
+    let authority = AccountId::from(&key);
+    if authority.into_value() != *terms.aggregate_authority_account_id().as_bytes()
+        || terms.aggregate_authority_account_id() == terms.claimant_account_id()
+        || terms.aggregate_authority_account_id() == terms.depositor_account_id()
+    {
+        return Err(BridgeRuntimeError::InvalidObservation);
+    }
+    Ok(())
+}
+
+fn witnessed_account_ids(
+    terms: &lez_bridge_protocol::WitnessedNativeEscrowTerms,
+    escrow_program_id: Hex32,
+    initialization: bool,
+) -> AccountIds {
+    let escrow_program = program_id_from_hex(escrow_program_id);
+    let swap_id = terms.swap_id();
+    let swap_id = swap_id.as_bytes();
+    let metadata = Hex32::from_bytes(compute_metadata_pda(&escrow_program, swap_id).into_value());
+    let custody = Hex32::from_bytes(compute_custody_pda(&escrow_program, swap_id).into_value());
+    AccountIds::new(if initialization {
+        vec![
+            metadata,
+            custody,
+            terms.depositor_account_id(),
+            terms.claimant_account_id(),
+            terms.aggregate_authority_account_id(),
+        ]
+    } else {
+        vec![metadata, custody, terms.depositor_account_id()]
+    })
+    .expect("witnessed native account count is protocol bounded")
 }
 
 fn claim_account_ids(
