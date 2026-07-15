@@ -14,6 +14,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use bitcoin::{Txid, consensus::serialize};
 use clap::{Parser, Subcommand};
 use lez_bridge_adapter::{CapabilityFileBridgeClientFactory, FreshLezBridgeTransportFactory};
 use lez_bridge_client::{BridgeClient, validate_prepared_witnessed_claim};
@@ -24,19 +25,21 @@ use lez_bridge_protocol::{
     WitnessedEscrowMetadataFacts, WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
 };
 use lez_btc_core_adapter::{
-    BitcoinCoreAdapter, BitcoinCoreEvidenceV1, BitcoinCoreRpc,
+    AuthorizedClaimSubmission, BitcoinCoreAdapter, BitcoinCoreEvidenceV1, BitcoinCoreRpc,
     ClaimObservation as BitcoinClaimObservation, CoreConnectivityPolicy, FundingObservation,
     HttpBitcoinCoreConfig, HttpBitcoinCoreRpc,
 };
 use lez_btc_swap_sdk::{
-    BtcAdaptorSessionDomain, BtcAgreementV1, MAX_BTC_AGREEMENT_RECORD_BYTES, adapt_presignature,
-    extract_adaptor_secret, verify_adaptor_presignature, verify_adaptor_secret,
+    AdaptorSessionContext, BtcAdaptorSessionDomain, BtcAgreementV1, MAX_BTC_AGREEMENT_RECORD_BYTES,
+    adapt_presignature, extract_adaptor_secret, verify_adaptor_presignature, verify_adaptor_secret,
 };
-use lez_swap_core::{Chain, ClaimEvidence, Participant, Phase};
+use lez_swap_core::{Chain, ClaimEvidence, Participant, Phase, SwapId};
 use lez_swap_store::{
     AdaptorSessionIdentity, AdaptorSessionPhase, AdaptorSessionRole, BtcAgreementAcceptance,
-    BtcLifecycleEvidenceV1, BtcOfflineStatus, BtcRecoveryError, SqliteAdaptorSessionJournal,
-    SqliteBtcRecoveryStore,
+    BtcLifecycleEvidenceV1, BtcOfflineStatus, BtcRecoveryError, PreparedPublicEffect,
+    PublicEffectChain, PublicEffectDecision, PublicEffectKey, PublicEffectObservation,
+    PublicEffectOperation, PublicEffectSubmissionResult, SqliteAdaptorSessionJournal,
+    SqliteBtcRecoveryStore, SqlitePublicEffectJournal,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest as _, Sha256};
@@ -603,6 +606,17 @@ impl ClaimTransition {
             Self::FollowupClaim => Phase::Completed,
         }
     }
+
+    const fn predecessor_revision(self) -> u64 {
+        self.revision() - 1
+    }
+
+    const fn submitter(self) -> Participant {
+        match self {
+            Self::RevealingClaim => Participant::Taker,
+            Self::FollowupClaim => Participant::Maker,
+        }
+    }
 }
 
 /// Affirmative or pending result returned by one agreement-aware claim observer.
@@ -630,6 +644,50 @@ trait ClaimObservationPort: Send + Sync {
         agreement: &BtcAgreementV1,
         transition: ClaimTransition,
     ) -> Result<ActorClaimObservation, ActorCommandError>;
+}
+
+/// One stable Bitcoin claim scan reduced to facts needed by actor policy.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum BitcoinClaimScan {
+    /// A stable-tip spender-index scan proved the signed outpoint unspent.
+    Unspent,
+    /// The exact agreement claim was found and independently validated.
+    Exact(BitcoinExactClaim),
+    /// Node, tip, index, or exact-byte ambiguity proved neither state.
+    Uncertain,
+}
+
+/// Exact public Bitcoin claim material returned by the typed adapter boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BitcoinExactClaim {
+    transaction_bytes: Vec<u8>,
+    transaction_id: Box<str>,
+    confirmations: u32,
+    chain_evidence: Vec<u8>,
+    public_signature: [u8; 64],
+    finalized: bool,
+}
+
+/// Adapter seam keeping durable send authority in the actor, not the RPC layer.
+#[async_trait]
+trait BitcoinClaimChainPort: Send + Sync {
+    /// Performs one stable bounded scan. All ambiguous failures become `Uncertain`.
+    async fn observe_claim(&self, agreement: &BtcAgreementV1) -> BitcoinClaimScan;
+
+    /// Consumes authority already durably committed by the caller.
+    async fn submit_authorized_claim(
+        &self,
+        agreement: &BtcAgreementV1,
+        transaction_bytes: &[u8],
+        expected_transaction_id: Txid,
+    ) -> Result<AuthorizedClaimSubmission, ActorCommandError>;
+}
+
+/// Fully signed exact public claim bytes, prepared before any send authorization.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreparedBitcoinClaimEffect {
+    effect: PreparedPublicEffect,
+    expected_transaction_id: Txid,
 }
 
 /// Executes one disk-configured role-fixed command.
@@ -801,6 +859,7 @@ async fn drive_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCo
     let durable = store
         .status()
         .map_err(|_| ActorCommandError::StateUnavailable)?;
+    drop(store);
     if let Some(transition) = FundingTransition::from_predecessor(durable.revision()) {
         let expected_chain = agreement.coordinator().funded_chain(transition.funder());
         return match expected_chain {
@@ -847,13 +906,17 @@ async fn drive_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCo
         .funded_chain(transition.funded_participant());
     match expected_chain {
         Chain::Bitcoin => {
+            validate_activation_material(config, &agreement)?;
+            let effect = prepare_bitcoin_claim_effect(config, &agreement, transition, &durable)?;
             let core_config = HttpBitcoinCoreConfig::new(config.bitcoin_core.endpoint.clone())
                 .and_then(|value| value.with_cookie_file(&config.bitcoin_core.cookie_file))
                 .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
             let rpc = HttpBitcoinCoreRpc::connect(&core_config)
                 .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
             let observer = BitcoinClaimObserver {
-                adapter: BitcoinCoreAdapter::new(rpc, config.bitcoin_core.connectivity.into()),
+                chain: BitcoinCoreAdapter::new(rpc, config.bitcoin_core.connectivity.into()),
+                effect,
+                state_db: config.state_db.clone(),
             };
             drive_claim_with_observer(config, agreement, wire, &observer).await
         }
@@ -1230,6 +1293,111 @@ fn claim_evidence_from_signature(
     }
 }
 
+fn prepare_bitcoin_claim_effect(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: ClaimTransition,
+    before: &BtcOfflineStatus,
+) -> Result<Option<PreparedBitcoinClaimEffect>, ActorCommandError> {
+    if before.revision() != transition.predecessor_revision()
+        || agreement
+            .coordinator()
+            .funded_chain(transition.funded_participant())
+            != Chain::Bitcoin
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    if config.role.sdk() != transition.submitter() {
+        return Ok(None);
+    }
+
+    let secret = match transition {
+        ClaimTransition::RevealingClaim => {
+            let path = config
+                .signing
+                .adaptor_secret_file
+                .as_ref()
+                .ok_or(ActorCommandError::ActivationMaterialUnavailable)?;
+            read_private_adaptor_secret(path)
+                .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?
+        }
+        ClaimTransition::FollowupClaim => {
+            let public_signature: [u8; 64] = before
+                .revealing_public_witness()
+                .and_then(|bytes| bytes.try_into().ok())
+                .ok_or(ActorCommandError::ActivationMaterialUnavailable)?;
+            let revealing_chain = agreement
+                .coordinator()
+                .funded_chain(ClaimTransition::RevealingClaim.funded_participant());
+            if revealing_chain == Chain::Bitcoin {
+                return Err(ActorCommandError::AgreementBindingInvalid);
+            }
+            let (context, presignature) =
+                verified_chain_presignature(config, agreement, revealing_chain)?;
+            extract_adaptor_secret(&context, presignature, public_signature)
+                .map_err(|_| ActorCommandError::ObservationUnavailable)?
+        }
+    };
+    let (context, presignature) = verified_chain_presignature(config, agreement, Chain::Bitcoin)?;
+    let public_signature = adapt_presignature(&context, presignature, secret)
+        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    let transaction = agreement
+        .cooperative_claim()
+        .clone()
+        .finalize(public_signature)
+        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    let expected_transaction_id = transaction.compute_txid();
+    let exact_transaction_bytes = serialize(&transaction);
+    let swap_id = SwapId::new(hex::encode(agreement.body().swap_id()))
+        .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    let key = PublicEffectKey::new(
+        swap_id,
+        config.role.sdk(),
+        PublicEffectChain::Bitcoin,
+        PublicEffectOperation::Claim,
+        transition.predecessor_revision(),
+    );
+    let effect = PreparedPublicEffect::new(
+        key,
+        *agreement.agreement_commitment(),
+        expected_transaction_id.to_string(),
+        exact_transaction_bytes,
+    )
+    .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    Ok(Some(PreparedBitcoinClaimEffect {
+        effect,
+        expected_transaction_id,
+    }))
+}
+
+fn verified_chain_presignature(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    chain: Chain,
+) -> Result<(AdaptorSessionContext, [u8; 65]), ActorCommandError> {
+    let (domain, signing) = match chain {
+        Chain::Bitcoin => (BtcAdaptorSessionDomain::Bitcoin, &config.signing.bitcoin),
+        Chain::Lez => (BtcAdaptorSessionDomain::Lez, &config.signing.lez),
+        Chain::Zcash | Chain::Monero => {
+            return Err(ActorCommandError::AgreementBindingInvalid);
+        }
+    };
+    validate_signer_journal(config, agreement, domain, signing)?;
+    let context = agreement
+        .adaptor_session_context(domain, *signing.session_id.as_bytes())
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+    let journal = SqliteAdaptorSessionJournal::open_existing(&signing.journal_db)
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+    let snapshot = journal
+        .load(signing.session_id.as_bytes())
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?
+        .ok_or(ActorCommandError::ActivationMaterialUnavailable)?;
+    let presignature = snapshot
+        .presignature()
+        .ok_or(ActorCommandError::ActivationMaterialUnavailable)?;
+    Ok((context, *presignature.bytes()))
+}
+
 struct BitcoinFundingObserver<R> {
     adapter: BitcoinCoreAdapter<R>,
 }
@@ -1270,45 +1438,183 @@ where
     }
 }
 
-struct BitcoinClaimObserver<R> {
-    adapter: BitcoinCoreAdapter<R>,
+#[async_trait]
+impl<R> BitcoinClaimChainPort for BitcoinCoreAdapter<R>
+where
+    R: BitcoinCoreRpc + Send + Sync,
+{
+    async fn observe_claim(&self, agreement: &BtcAgreementV1) -> BitcoinClaimScan {
+        let Ok(observation) = BitcoinCoreAdapter::observe_claim(self, agreement).await else {
+            return BitcoinClaimScan::Uncertain;
+        };
+        let (claim, finalized) = match &observation {
+            BitcoinClaimObservation::Unspent => return BitcoinClaimScan::Unspent,
+            BitcoinClaimObservation::Revealed(claim)
+            | BitcoinClaimObservation::Confirming(claim) => (claim, false),
+            BitcoinClaimObservation::Finalized(claim) => (claim, true),
+        };
+        let Ok(evidence) = BitcoinCoreEvidenceV1::claim(agreement, &observation) else {
+            return BitcoinClaimScan::Uncertain;
+        };
+        let Some(public_signature) = evidence.claim_public_witness().copied() else {
+            return BitcoinClaimScan::Uncertain;
+        };
+        let Ok(chain_evidence) = evidence.encode() else {
+            return BitcoinClaimScan::Uncertain;
+        };
+        BitcoinClaimScan::Exact(BitcoinExactClaim {
+            transaction_bytes: serialize(claim.transaction()),
+            transaction_id: claim.transaction_id().to_string().into_boxed_str(),
+            confirmations: claim.confirmations(),
+            chain_evidence,
+            public_signature,
+            finalized,
+        })
+    }
+
+    async fn submit_authorized_claim(
+        &self,
+        agreement: &BtcAgreementV1,
+        transaction_bytes: &[u8],
+        expected_transaction_id: Txid,
+    ) -> Result<AuthorizedClaimSubmission, ActorCommandError> {
+        BitcoinCoreAdapter::submit_authorized_claim(
+            self,
+            agreement,
+            transaction_bytes,
+            expected_transaction_id,
+        )
+        .await
+        .map_err(|_| ActorCommandError::ObservationUnavailable)
+    }
+}
+
+struct BitcoinClaimObserver<P> {
+    chain: P,
+    effect: Option<PreparedBitcoinClaimEffect>,
+    state_db: PathBuf,
 }
 
 #[async_trait]
-impl<R> ClaimObservationPort for BitcoinClaimObserver<R>
+impl<P> ClaimObservationPort for BitcoinClaimObserver<P>
 where
-    R: BitcoinCoreRpc + Send + Sync,
+    P: BitcoinClaimChainPort,
 {
     async fn observe(
         &self,
         agreement: &BtcAgreementV1,
         transition: ClaimTransition,
     ) -> Result<ActorClaimObservation, ActorCommandError> {
-        let observed = self
-            .adapter
-            .observe_claim(agreement)
-            .await
-            .map_err(|_| ActorCommandError::ObservationUnavailable)?;
-        let BitcoinClaimObservation::Finalized(claim) = &observed else {
+        if let Some(effect) = &self.effect
+            && (effect.effect.key().local_role() != transition.submitter()
+                || effect.effect.key().chain() != PublicEffectChain::Bitcoin
+                || effect.effect.key().operation() != PublicEffectOperation::Claim
+                || effect.effect.key().predecessor_revision() != transition.predecessor_revision()
+                || effect.effect.expected_effect_id() != effect.expected_transaction_id.to_string())
+        {
+            return Err(ActorCommandError::AgreementBindingInvalid);
+        }
+
+        let scan = self.chain.observe_claim(agreement).await;
+        if let Some(effect) = &self.effect {
+            self.reconcile_and_maybe_submit(agreement, effect, &scan)
+                .await?;
+        }
+
+        let BitcoinClaimScan::Exact(exact) = scan else {
             return Ok(ActorClaimObservation::Pending {
                 chain: Chain::Bitcoin,
             });
         };
-        let evidence = BitcoinCoreEvidenceV1::claim(agreement, &observed)
-            .map_err(|_| ActorCommandError::ObservationUnavailable)?;
-        let public_signature = *evidence
-            .claim_public_witness()
-            .ok_or(ActorCommandError::ObservationUnavailable)?;
+        if !exact.finalized
+            || self.effect.as_ref().is_some_and(|effect| {
+                exact.transaction_bytes.as_slice() != effect.effect.exact_public_bytes()
+            })
+        {
+            return Ok(ActorClaimObservation::Pending {
+                chain: Chain::Bitcoin,
+            });
+        }
         Ok(ActorClaimObservation::Ready {
             chain: Chain::Bitcoin,
-            transaction_id: claim.transaction_id().to_string().into_boxed_str(),
-            confirmations: claim.confirmations(),
-            chain_evidence: evidence
-                .encode()
-                .map_err(|_| ActorCommandError::ObservationUnavailable)?,
+            transaction_id: exact.transaction_id,
+            confirmations: exact.confirmations,
+            chain_evidence: exact.chain_evidence,
             revealing_public_signature: (transition == ClaimTransition::RevealingClaim)
-                .then_some(public_signature),
+                .then_some(exact.public_signature),
         })
+    }
+}
+
+impl<P> BitcoinClaimObserver<P>
+where
+    P: BitcoinClaimChainPort,
+{
+    async fn reconcile_and_maybe_submit(
+        &self,
+        agreement: &BtcAgreementV1,
+        effect: &PreparedBitcoinClaimEffect,
+        scan: &BitcoinClaimScan,
+    ) -> Result<(), ActorCommandError> {
+        let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        let _ = journal
+            .record_prepared(&effect.effect)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        let observation = match scan {
+            BitcoinClaimScan::Unspent => PublicEffectObservation::Absent,
+            BitcoinClaimScan::Exact(exact)
+                if exact.transaction_bytes.as_slice() == effect.effect.exact_public_bytes() =>
+            {
+                PublicEffectObservation::PresentExact(exact.transaction_bytes.clone())
+            }
+            BitcoinClaimScan::Exact(_) | BitcoinClaimScan::Uncertain => {
+                PublicEffectObservation::Uncertain
+            }
+        };
+        let decision = journal
+            .reconcile(effect.effect.key(), observation)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        let PublicEffectDecision::SubmitOnce(_) = decision else {
+            return Ok(());
+        };
+
+        let submission = self
+            .chain
+            .submit_authorized_claim(
+                agreement,
+                effect.effect.exact_public_bytes(),
+                effect.expected_transaction_id,
+            )
+            .await;
+        let (result, deferred_error) = match submission {
+            Ok(AuthorizedClaimSubmission::Accepted { transaction_id })
+                if transaction_id == effect.expected_transaction_id =>
+            {
+                (
+                    PublicEffectSubmissionResult::Accepted(
+                        transaction_id.to_string().into_boxed_str(),
+                    ),
+                    None,
+                )
+            }
+            Ok(AuthorizedClaimSubmission::Accepted { .. }) => (
+                PublicEffectSubmissionResult::Unknown,
+                Some(ActorCommandError::AgreementBindingInvalid),
+            ),
+            Ok(AuthorizedClaimSubmission::Rejected) => {
+                (PublicEffectSubmissionResult::Rejected, None)
+            }
+            Ok(AuthorizedClaimSubmission::Unknown) => (PublicEffectSubmissionResult::Unknown, None),
+            Err(error) => (PublicEffectSubmissionResult::Unknown, Some(error)),
+        };
+        let _ = journal
+            .record_submission_result(effect.effect.key(), &result)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        if let Some(error) = deferred_error {
+            return Err(error);
+        }
+        Ok(())
     }
 }
 

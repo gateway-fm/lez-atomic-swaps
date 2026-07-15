@@ -1693,3 +1693,362 @@ async fn followup_claim_completes_both_roles_and_directions() {
         }
     }
 }
+
+#[derive(Clone)]
+struct FixedBitcoinClaimPort {
+    scan: BitcoinClaimScan,
+    submission: Result<AuthorizedClaimSubmission, ActorCommandError>,
+    observe_calls: Arc<AtomicUsize>,
+    submit_calls: Arc<AtomicUsize>,
+}
+
+impl FixedBitcoinClaimPort {
+    fn new(
+        scan: BitcoinClaimScan,
+        submission: Result<AuthorizedClaimSubmission, ActorCommandError>,
+    ) -> Self {
+        Self {
+            scan,
+            submission,
+            observe_calls: Arc::new(AtomicUsize::new(0)),
+            submit_calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn submit_calls(&self) -> usize {
+        self.submit_calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl BitcoinClaimChainPort for FixedBitcoinClaimPort {
+    async fn observe_claim(&self, _agreement: &BtcAgreementV1) -> BitcoinClaimScan {
+        self.observe_calls.fetch_add(1, Ordering::SeqCst);
+        self.scan.clone()
+    }
+
+    async fn submit_authorized_claim(
+        &self,
+        _agreement: &BtcAgreementV1,
+        _transaction_bytes: &[u8],
+        _expected_transaction_id: bitcoin::Txid,
+    ) -> Result<AuthorizedClaimSubmission, ActorCommandError> {
+        self.submit_calls.fetch_add(1, Ordering::SeqCst);
+        self.submission.clone()
+    }
+}
+
+fn durable_status(fixture: &ActorFixture) -> BtcOfflineStatus {
+    open_existing_store(
+        &fixture.config,
+        &fixture.agreement,
+        fixture.agreement_wire.clone(),
+    )
+    .expect("open actor state")
+    .status()
+    .expect("replay actor state")
+}
+
+fn exact_finalized_scan(
+    effect: &PreparedBitcoinClaimEffect,
+    public_signature: [u8; 64],
+) -> BitcoinClaimScan {
+    BitcoinClaimScan::Exact(BitcoinExactClaim {
+        transaction_bytes: effect.effect.exact_public_bytes().to_vec(),
+        transaction_id: effect.expected_transaction_id.to_string().into_boxed_str(),
+        confirmations: support::REQUIRED_CONFIRMATIONS,
+        chain_evidence: b"exact-finalized-bitcoin-claim".to_vec(),
+        public_signature,
+        finalized: true,
+    })
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[allow(clippy::similar_names)] // Parallel role names make the authority matrix explicit.
+async fn bitcoin_claim_effect_is_role_and_revision_ordered() {
+    let revealing_taker =
+        ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Taker);
+    activate_and_project_both_locks(&revealing_taker).await;
+    assert!(
+        prepare_bitcoin_claim_effect(
+            &revealing_taker.config,
+            &revealing_taker.agreement,
+            ClaimTransition::RevealingClaim,
+            &durable_status(&revealing_taker),
+        )
+        .expect("prepare taker revealing claim")
+        .is_some()
+    );
+
+    let revealing_maker =
+        ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Maker);
+    activate_and_project_both_locks(&revealing_maker).await;
+    assert!(
+        prepare_bitcoin_claim_effect(
+            &revealing_maker.config,
+            &revealing_maker.agreement,
+            ClaimTransition::RevealingClaim,
+            &durable_status(&revealing_maker),
+        )
+        .expect("maker only observes revealing claim")
+        .is_none()
+    );
+
+    let followup_maker =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    activate_and_project_both_locks(&followup_maker).await;
+    project_revealing_claim(&followup_maker).await;
+    assert!(
+        prepare_bitcoin_claim_effect(
+            &followup_maker.config,
+            &followup_maker.agreement,
+            ClaimTransition::FollowupClaim,
+            &durable_status(&followup_maker),
+        )
+        .expect("prepare maker followup claim")
+        .is_some()
+    );
+
+    let followup_taker =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_both_locks(&followup_taker).await;
+    project_revealing_claim(&followup_taker).await;
+    assert!(
+        prepare_bitcoin_claim_effect(
+            &followup_taker.config,
+            &followup_taker.agreement,
+            ClaimTransition::FollowupClaim,
+            &durable_status(&followup_taker),
+        )
+        .expect("taker only observes followup claim")
+        .is_none()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn bitcoin_claim_effect_persists_before_one_send_then_projects_only_when_finalized() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Taker);
+    activate_and_project_both_locks(&fixture).await;
+    let transition = ClaimTransition::RevealingClaim;
+    let effect = prepare_bitcoin_claim_effect(
+        &fixture.config,
+        &fixture.agreement,
+        transition,
+        &durable_status(&fixture),
+    )
+    .expect("prepare revealing effect")
+    .expect("taker owns revealing effect");
+    let first_port = FixedBitcoinClaimPort::new(
+        BitcoinClaimScan::Unspent,
+        Ok(AuthorizedClaimSubmission::Accepted {
+            transaction_id: effect.expected_transaction_id,
+        }),
+    );
+    let first_observer = BitcoinClaimObserver {
+        chain: first_port.clone(),
+        effect: Some(effect.clone()),
+        state_db: fixture.config.state_db.clone(),
+    };
+
+    let first = output_json(
+        drive_claim_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &first_observer,
+        )
+        .await
+        .expect("submit exact revealing claim"),
+    );
+    assert_eq!(first["outcome"], "awaiting_observation");
+    assert_eq!(first["revision"], 2);
+    assert_eq!(first_port.submit_calls(), 1);
+
+    let finalized_port = FixedBitcoinClaimPort::new(
+        exact_finalized_scan(&effect, revealing_signature(&fixture)),
+        Err(ActorCommandError::ObservationUnavailable),
+    );
+    let finalized_observer = BitcoinClaimObserver {
+        chain: finalized_port.clone(),
+        effect: Some(effect),
+        state_db: fixture.config.state_db.clone(),
+    };
+    let finalized = output_json(
+        drive_claim_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &finalized_observer,
+        )
+        .await
+        .expect("project only finalized exact claim"),
+    );
+    assert_eq!(finalized["outcome"], "observed_then_projected");
+    assert_eq!(finalized["revision"], 3);
+    assert_eq!(finalized_port.submit_calls(), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn bitcoin_claim_unknown_never_rearms_after_restart() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Taker);
+    activate_and_project_both_locks(&fixture).await;
+    let effect = prepare_bitcoin_claim_effect(
+        &fixture.config,
+        &fixture.agreement,
+        ClaimTransition::RevealingClaim,
+        &durable_status(&fixture),
+    )
+    .expect("prepare revealing effect")
+    .expect("taker owns revealing effect");
+    let failing_port = FixedBitcoinClaimPort::new(
+        BitcoinClaimScan::Unspent,
+        Err(ActorCommandError::ObservationUnavailable),
+    );
+    let failing_observer = BitcoinClaimObserver {
+        chain: failing_port.clone(),
+        effect: Some(effect.clone()),
+        state_db: fixture.config.state_db.clone(),
+    };
+    assert_eq!(
+        drive_claim_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &failing_observer,
+        )
+        .await
+        .expect_err("post-authority error is surfaced after recording Unknown"),
+        ActorCommandError::ObservationUnavailable
+    );
+    assert_eq!(failing_port.submit_calls(), 1);
+
+    let restarted_port = FixedBitcoinClaimPort::new(
+        BitcoinClaimScan::Unspent,
+        Ok(AuthorizedClaimSubmission::Accepted {
+            transaction_id: effect.expected_transaction_id,
+        }),
+    );
+    let restarted_observer = BitcoinClaimObserver {
+        chain: restarted_port.clone(),
+        effect: Some(effect),
+        state_db: fixture.config.state_db.clone(),
+    };
+    drive_claim_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &restarted_observer,
+    )
+    .await
+    .expect("Unknown restart remains observe-only");
+    assert_eq!(restarted_port.submit_calls(), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn bitcoin_claim_started_never_rearms_after_restart() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Taker);
+    activate_and_project_both_locks(&fixture).await;
+    let effect = prepare_bitcoin_claim_effect(
+        &fixture.config,
+        &fixture.agreement,
+        ClaimTransition::RevealingClaim,
+        &durable_status(&fixture),
+    )
+    .expect("prepare revealing effect")
+    .expect("taker owns revealing effect");
+    let mut journal =
+        SqlitePublicEffectJournal::open(&fixture.config.state_db).expect("open effect journal");
+    let _ = journal
+        .record_prepared(&effect.effect)
+        .expect("persist exact public bytes");
+    assert!(matches!(
+        journal
+            .reconcile(effect.effect.key(), PublicEffectObservation::Absent)
+            .expect("consume send authority before simulated crash"),
+        PublicEffectDecision::SubmitOnce(_)
+    ));
+    drop(journal);
+
+    let restarted_port = FixedBitcoinClaimPort::new(
+        BitcoinClaimScan::Unspent,
+        Ok(AuthorizedClaimSubmission::Accepted {
+            transaction_id: effect.expected_transaction_id,
+        }),
+    );
+    let restarted_observer = BitcoinClaimObserver {
+        chain: restarted_port.clone(),
+        effect: Some(effect),
+        state_db: fixture.config.state_db.clone(),
+    };
+    drive_claim_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &restarted_observer,
+    )
+    .await
+    .expect("Started restart remains observe-only");
+    assert_eq!(restarted_port.submit_calls(), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn bitcoin_claim_wrong_bytes_and_missing_secret_never_gain_send_authority() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Taker);
+    activate_and_project_both_locks(&fixture).await;
+    let effect = prepare_bitcoin_claim_effect(
+        &fixture.config,
+        &fixture.agreement,
+        ClaimTransition::RevealingClaim,
+        &durable_status(&fixture),
+    )
+    .expect("prepare revealing effect")
+    .expect("taker owns revealing effect");
+    let mut wrong = exact_finalized_scan(&effect, revealing_signature(&fixture));
+    let BitcoinClaimScan::Exact(exact) = &mut wrong else {
+        unreachable!("exact scan")
+    };
+    exact.transaction_bytes.push(0);
+    let wrong_port = FixedBitcoinClaimPort::new(
+        wrong,
+        Ok(AuthorizedClaimSubmission::Accepted {
+            transaction_id: effect.expected_transaction_id,
+        }),
+    );
+    let wrong_observer = BitcoinClaimObserver {
+        chain: wrong_port.clone(),
+        effect: Some(effect),
+        state_db: fixture.config.state_db.clone(),
+    };
+    let pending = output_json(
+        drive_claim_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &wrong_observer,
+        )
+        .await
+        .expect("wrong exact bytes are uncertain"),
+    );
+    assert_eq!(pending["revision"], 2);
+    assert_eq!(wrong_port.submit_calls(), 0);
+
+    fs::remove_file(
+        fixture
+            .config
+            .signing
+            .adaptor_secret_file
+            .as_ref()
+            .expect("taker secret path"),
+    )
+    .expect("remove owner secret");
+    assert_eq!(
+        prepare_bitcoin_claim_effect(
+            &fixture.config,
+            &fixture.agreement,
+            ClaimTransition::RevealingClaim,
+            &durable_status(&fixture),
+        )
+        .expect_err("missing secret fails before effect preparation"),
+        ActorCommandError::ActivationMaterialUnavailable
+    );
+}
