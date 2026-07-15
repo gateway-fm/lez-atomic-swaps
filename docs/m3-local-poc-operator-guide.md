@@ -75,6 +75,20 @@ there is no RPC, node, Docker container, faucet, public endpoint, or external
 availability dependency in this component gate. It does not substitute for
 the still-pending reference-actor run through actual nodes.
 
+Repeat the typed Bitcoin Core boundary independently:
+
+~~~sh
+cargo test --locked -p lez-btc-core-adapter --all-targets
+~~~
+
+These 18 tests exercise the exact Core 31.1 typed DTOs, consensus-byte
+cross-checks, stable-tip funding/claim observation, canonical scalar-free
+evidence, wtxid/raw-byte-bound one-attempt submission semantics, already-known
+and conflicting-witness outcomes, and a bounded authenticated
+loopback HTTP server. They use deterministic RPC doubles and ephemeral loopback
+servers, not the Dockerized Core service, a faucet, a public RPC, or public
+funds. Actual service-mode actor integration remains a separate composed gate.
+
 Run from the repository root. Use a clean or intentionally reviewed worktree
 and a fresh composed identifier:
 
@@ -187,6 +201,8 @@ test -f "$LEZ_RUN_DIR/run.env"
 export CORE_RPC_URL="$BITCOIN_CORE_RPC_URL"
 export MAKER_CORE_CONFIG="$BITCOIN_CORE_MAKER_CURL_CONFIG"
 export TAKER_CORE_CONFIG="$BITCOIN_CORE_TAKER_CURL_CONFIG"
+export MAKER_CORE_BASIC="$BITCOIN_CORE_MAKER_BASIC_CREDENTIALS"
+export TAKER_CORE_BASIC="$BITCOIN_CORE_TAKER_BASIC_CREDENTIALS"
 export CORE_FUNDING_FILE="$BITCOIN_CORE_FUNDING_CREDENTIALS"
 . "$LEZ_RUN_DIR/run.env"
 export SEQUENCER_URL="$LEZ_SEQUENCER_RPC_URL"
@@ -197,7 +213,11 @@ test "$LEZ_V02_MAKER_ACCOUNT_ID" = "$(jq -er '.account_id' "$PRIVATE_ROOT/maker/
 test "$LEZ_V02_TAKER_ACCOUNT_ID" = "$(jq -er '.account_id' "$PRIVATE_ROOT/taker/identity.json")"
 ~~~
 
-Never print or commit either curl config or the Core funding credential file.
+Never print or commit either curl config, Basic credential file, or the Core
+funding credential file. The typed adapter consumes the role's Basic file and
+never the provisioner's cookie or funding authority. Both Basic files must be
+distinct owner-private regular files; the adapter rejects permissions other
+than `0600`, hard links, symlinks, and file replacement or change while reading.
 Read only the public txid, vout, value, and mining address fields needed by the
 fixture. The same file also contains a local test secret.
 

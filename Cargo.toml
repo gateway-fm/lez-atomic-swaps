@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/adaptor-role-runner",
+    "crates/btc-core-adapter",
     "crates/btc-swap-sdk",
     "crates/lez-bridge-adapter",
     "crates/lez-bridge-client",

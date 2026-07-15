@@ -169,6 +169,26 @@ pending, chain and SQLite cannot commit atomically, and the hash chain detects
 accidental/tampered history but does not authenticate a database rewritten in
 full by its filesystem owner.
 
+The typed `lez-btc-core-adapter` component now validates the other public
+evidence source. It requires exact Bitcoin Core 31.1, Regtest genesis from the
+countersigned agreement, an unpruned synced tip, and synced `txindex` plus
+`txospenderindex`. The selected readiness policy distinguishes the fully
+disconnected local node from an explicitly network-enabled Regtest node. Exact
+funding and key-path claim observations are reconstructed from consensus bytes
+and cross-checked against Core's typed vin, vout, identity, size, weight,
+confirmation, block, spender, and stable-tip facts. Canonical bounded evidence
+records bind the agreement, transaction bytes/IDs, block/tip context, and exact
+64-byte public claim witness without a scalar. Submission is one-attempt only:
+an owner-provided durable CAS binds txid, wtxid, and the exact raw-byte digest
+before mempool policy and one broadcast. Already-known or ambiguous results
+become terminal `Unknown`, while conflicting witness bytes fail before another
+RPC mutation. The HTTP
+transport is literal-loopback, Basic-file authenticated, bounded, one-request
+concurrent, and rejects non-`0600`, symlinked, hard-linked, replaced, or changed
+credential files. Its 18 tests and strict dependency/lint/docs gates are GREEN.
+Actual-node actor wiring remains pending; current `Networked` still means
+network-enabled Regtest, not Testnet4 portability.
+
 The older retained actual-Core run remains a one-process public deterministic
 cryptographic and consensus fixture. The new composed run closes live witnessed
 submission, both happy directions, and the PoC atomicity/recovery order through

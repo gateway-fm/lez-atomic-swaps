@@ -140,6 +140,12 @@ dependencies = [
 
 [[package]]
 name = "base64"
+version = "0.21.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
+
+[[package]]
+name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
@@ -173,6 +179,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed8ccb78a9ff7a6fbb90e2fb9b8588b4a9928d49d8af3cb789108a84ea6b0ce"
 dependencies = [
  "base58ck",
+ "base64 0.21.7",
  "bech32",
  "bitcoin-io",
  "bitcoin-units",
@@ -180,6 +187,7 @@ dependencies = [
  "hex-conservative 0.2.2",
  "hex_lit",
  "secp256k1 0.29.1",
+ "serde",
 ]
 
 [[package]]
@@ -216,6 +224,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9cb95693f371d089a4b5b6fc41c6f3ea6e01ee8c15388335dfac8ea685173b51"
 dependencies = [
  "bitcoin-consensus-encoding",
+ "serde",
 ]
 
 [[package]]
@@ -226,6 +235,7 @@ checksum = "bca4c7abb40c8817d77403c880988cfd484f23ab2365726afb2f798363e2c4a2"
 dependencies = [
  "bitcoin-io",
  "hex-conservative 0.2.2",
+ "serde",
 ]
 
 [[package]]
@@ -523,6 +533,17 @@ name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
+
+[[package]]
+name = "corepc-types"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86c274042a89391a324ab313b5210680969d02a9fa977733c3354aea4d7a4883"
+dependencies = [
+ "bitcoin",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "corez"
@@ -1430,7 +1451,7 @@ version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790bedefcec85321e007ff3af84b4e417540d5c87b3c9779b9e247d1bcc3dab8"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "http-body",
  "hyper",
  "hyper-rustls",
@@ -1568,11 +1589,34 @@ dependencies = [
 name = "lez-bridge-protocol"
 version = "0.1.0"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "hex",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "zeroize",
+]
+
+[[package]]
+name = "lez-btc-core-adapter"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "bitcoin",
+ "corepc-types",
+ "hex",
+ "jsonrpsee",
+ "jsonrpsee-http-client",
+ "jsonrpsee-server",
+ "lez-btc-swap-sdk",
+ "lez-swap-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "url",
  "zeroize",
 ]
 
@@ -1657,7 +1701,7 @@ name = "lez-zebra-node-adapter"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "base64",
+ "base64 0.22.1",
  "hex",
  "jsonrpsee",
  "jsonrpsee-http-client",
@@ -2438,6 +2482,7 @@ checksum = "9465315bc9d4566e1724f0fffcbcc446268cb522e60f9a27bcded6b19c108113"
 dependencies = [
  "bitcoin_hashes",
  "secp256k1-sys 0.10.1",
+ "serde",
 ]
 
 [[package]]
@@ -2639,7 +2684,7 @@ version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e859df029d160cb88608f5d7df7fb4753fd20fdfb4de5644f3d8b8440841721"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures",
  "http",
@@ -2919,7 +2964,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b11f75e912b0c2be01b63d8cf8057b8c3f97cf34abb3d431a3a4c8675498e233"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bitflags",
  "bytes",
  "http",

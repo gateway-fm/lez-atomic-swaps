@@ -63,6 +63,7 @@ flowchart LR
     subgraph RoleServices["Role local services"]
         MakerSidecar["Maker sidecar 127.0.0.1 port 32857"]
         TakerSidecar["Taker sidecar 127.0.0.1 port 32858"]
+        CoreAdapter["Typed Core 31.1 adapter and canonical evidence GREEN"]
     end
 
     subgraph Bitcoin["Bitcoin local devnet"]
@@ -86,8 +87,9 @@ flowchart LR
     MakerSidecar -->|"finalized claim read by ID and hash"| Indexer
     TakerSidecar --> Sequencer
     TakerSidecar -->|"finalized claim read by ID and hash"| Indexer
-    Maker --> Core
-    Taker --> Core
+    Maker -. planned agreement-bound wiring .-> CoreAdapter
+    Taker -. planned agreement-bound wiring .-> CoreAdapter
+    CoreAdapter --> Core
     Miner --> Core
     Core --> Evidence["Secret safe evidence"]
     Indexer --> Evidence
@@ -161,6 +163,40 @@ replay, predecessor CAS, and the evidence chain make retries and local history
 corruption fail closed, but the hash chain is consistency evidence rather than
 authentication against a filesystem owner capable of rewriting the complete
 database.
+
+The typed Bitcoin adapter is the matching public-evidence boundary for Core.
+It first checks the exact Core 31.1 version/subversion, agreement Regtest
+genesis, unpruned synchronized tip, selected disconnected or network-enabled
+Regtest policy, and synchronized `txindex` plus `txospenderindex`. Funding and
+claim reads are stable-tip bracketed. Consensus transaction bytes are decoded
+canonically and compared with Core's typed identities, vin/vout, size, weight,
+confirmation, block, and spender facts before a bounded agreement-bound record
+can enter the recovery store. The claim record retains the exact public
+64-byte witness and no scalar. Submission requires a durable `Started` CAS
+binding txid, wtxid, and the exact raw-byte digest before policy preflight and
+one broadcast. Already-known or ambiguous outcomes become terminal `Unknown`;
+conflicting witness payloads never authorize a second broadcast.
+
+```mermaid
+flowchart TD
+    Basic["Role-local 0600 Basic credential file"] --> Http["Bounded literal-loopback HTTP"]
+    Http --> Ready["Core 31.1 Regtest and index readiness"]
+    Ready --> Funding["Stable-tip exact funding observation"]
+    Ready --> Claim["Stable-tip exact spender and claim observation"]
+    Funding --> Codec["Canonical agreement-bound public evidence"]
+    Claim --> Codec
+    Codec -. actor projection pending .-> RecoveryStore["Actor-local BTC recovery store"]
+    Signed["Exact locally validated claim bytes"] --> Started["Durable Started CAS"]
+    Started --> Policy["One testmempoolaccept"]
+    Policy --> Broadcast["At most one sendrawtransaction"]
+    Broadcast --> Outcome["Accepted, Rejected, or Unknown"]
+```
+
+The 18-test component suite uses deterministic typed RPC responses and
+ephemeral authenticated loopback servers. Connecting this exact adapter to the
+run-owned Core service through each reference actor remains a composed PoC
+gate. The current network-enabled mode still requires Regtest; Testnet4
+admission is production-portability work.
 
 ## Deployed LEZ guest and account onboarding
 

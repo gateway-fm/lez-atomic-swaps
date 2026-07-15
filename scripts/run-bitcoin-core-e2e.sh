@@ -64,7 +64,7 @@ readonly funding_key="79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16
 readonly funding_descriptor="rawtr(${funding_key})#xsjqcczm"
 readonly funding_address="bcrt1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqc8gma6"
 readonly mocktime_base=1700000000
-readonly actor_allowlist="getblockchaininfo,getnetworkinfo,getblockhash,getblockheader,getrawtransaction,gettxout,gettxspendingprevout,getmempoolinfo,getmempoolentry,testmempoolaccept,sendrawtransaction"
+readonly actor_allowlist="getblockchaininfo,getnetworkinfo,getblockhash,getblockheader,getrawtransaction,gettxout,gettxspendingprevout,getindexinfo,getmempoolinfo,getmempoolentry,testmempoolaccept,sendrawtransaction"
 
 required_commands=(cargo chmod curl date docker git gpg jq mkdir mv python3 rg rm seq sha256sum sleep stat tar tr)
 for command_name in "${required_commands[@]}"; do
@@ -336,6 +336,16 @@ create_curl_config() {
   chmod 0600 "$path"
 }
 
+create_basic_credentials() {
+  local path="$1"
+  local username="$2"
+  local password="$3"
+  local partial="${path}.partial"
+  printf '%s:%s' "$username" "$password" >"$partial"
+  chmod 0600 "$partial"
+  mv "$partial" "$path"
+}
+
 core_cli() {
   docker exec -i "$container_id" /usr/local/bin/bitcoin-cli \
     -conf=/run-config/bitcoin.conf \
@@ -551,6 +561,8 @@ finish_service_mode() {
     --arg rpc_url "$rpc_url" \
     --arg maker_credentials "${credentials_dir}/maker.curlrc" \
     --arg taker_credentials "${credentials_dir}/taker.curlrc" \
+    --arg maker_basic_credentials "${credentials_dir}/maker.basic" \
+    --arg taker_basic_credentials "${credentials_dir}/taker.basic" \
     --arg funding_credentials "$funding_credentials" \
     --arg source_commit "$BITCOIN_CORE_SOURCE_COMMIT" \
     --arg archive_sha256 "$BITCOIN_CORE_ARCHIVE_SHA256" \
@@ -642,10 +654,12 @@ finish_service_mode() {
       actor_rpc: {
         users: ["maker", "taker"],
         credentials_distinct: true,
-        credentials_mode: "0600_under_0700_run_root",
+        credentials_mode: "separate_0600_basic_and_curl_files_under_0700_run_root",
         plaintext_credentials_disclosed: false,
         maker_curl_config: $maker_credentials,
         taker_curl_config: $taker_credentials,
+        maker_basic_file: $maker_basic_credentials,
+        taker_basic_file: $taker_basic_credentials,
         results: $actor_matrix
       },
       external_dependencies: {
@@ -687,6 +701,8 @@ finish_service_mode() {
     printf 'BITCOIN_CORE_RPC_URL=%s\n' "$rpc_url"
     printf 'BITCOIN_CORE_MAKER_CURL_CONFIG=%s\n' "${credentials_dir}/maker.curlrc"
     printf 'BITCOIN_CORE_TAKER_CURL_CONFIG=%s\n' "${credentials_dir}/taker.curlrc"
+    printf 'BITCOIN_CORE_MAKER_BASIC_CREDENTIALS=%s\n' "${credentials_dir}/maker.basic"
+    printf 'BITCOIN_CORE_TAKER_BASIC_CREDENTIALS=%s\n' "${credentials_dir}/taker.basic"
     printf 'BITCOIN_CORE_FUNDING_CREDENTIALS=%s\n' "$funding_credentials"
     printf 'BITCOIN_CORE_RUNTIME_EVIDENCE=%s\n' "$runtime_evidence"
   } >"$manifest"
@@ -698,6 +714,8 @@ finish_service_mode() {
   echo "RPC endpoint: ${rpc_url}"
   echo "Maker credential file: ${credentials_dir}/maker.curlrc"
   echo "Taker credential file: ${credentials_dir}/taker.curlrc"
+  echo "Maker Basic credential file: ${credentials_dir}/maker.basic"
+  echo "Taker Basic credential file: ${credentials_dir}/taker.basic"
   echo "Funding credential file: ${funding_credentials}"
   echo "Evidence: ${runtime_evidence}"
   echo "Run manifest: ${manifest}"
@@ -901,6 +919,8 @@ create_curl_config "${credentials_dir}/maker.curlrc" maker "$maker_password" "$r
 create_curl_config "${credentials_dir}/taker.curlrc" taker "$taker_password" "$rpc_url"
 create_curl_config "${credentials_dir}/maker-with-taker-secret.curlrc" maker "$taker_password" "$rpc_url"
 create_curl_config "${credentials_dir}/taker-with-maker-secret.curlrc" taker "$maker_password" "$rpc_url"
+create_basic_credentials "${credentials_dir}/maker.basic" maker "$maker_password"
+create_basic_credentials "${credentials_dir}/taker.basic" taker "$taker_password"
 
 core_cli getnetworkinfo >"${evidence_dir}/initial-network.json"
 core_cli getblockhash 0 >"${evidence_dir}/genesis.txt"
@@ -1043,6 +1063,8 @@ for role in maker taker; do
   expect_allowed_success "$role" "$role_config" gettxspendingprevout \
     "[[{\"txid\":\"${coinbase_txid}\",\"vout\":${coinbase_vout}}]]" \
     allowed-gettxspendingprevout
+  expect_allowed_success "$role" "$role_config" getindexinfo '[]' \
+    allowed-getindexinfo
   expect_allowed_success "$role" "$role_config" getmempoolinfo '[]' \
     allowed-getmempoolinfo
   expect_allowed_method_error "$role" "$role_config" getmempoolentry \

@@ -221,6 +221,7 @@ flowchart TB
         PCM["Protected preimage + exact claim payload<br/>XChaCha20-Poly1305 + HKDF<br/>schema-v10 envelope journal"]
         M3AJ[("M3 role-local adaptor journal<br/>reserve before commitment<br/>consume nonce with exact partial GREEN")]
         M3BR[("M3 BTC lifecycle recovery store<br/>four evidence revisions + hash chain<br/>offline Completed status GREEN")]
+        M3BC["M3 typed Core 31.1 adapter<br/>stable-tip evidence + durable one-attempt submit<br/>GREEN component"]
     end
 
     subgraph LezSidecars["Role-isolated official LEZ v0.1.2 processes"]
@@ -340,6 +341,8 @@ flowchart TB
     TS --> M3AJ
     PS -. actor wiring pending .-> M3BR
     TS -. actor wiring pending .-> M3BR
+    PS -. actor wiring pending .-> M3BC
+    TS -. actor wiring pending .-> M3BC
     PCM -->|"encrypted envelope + journal"| DB
     PCM -->|"encrypted envelope + journal"| TDB
     TM -.-> TS
@@ -414,6 +417,7 @@ flowchart TB
     TS <-->|"discovery + negotiation only"| DC
     CA --> LEZ
     CA --> BTC
+    M3BC --> BTC
     CA --> XMR
     CA --> ZEC
     MOA -->|"signed direction selects one node"| LEZ

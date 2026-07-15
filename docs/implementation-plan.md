@@ -1021,8 +1021,9 @@ outputs above.
 ## Milestone 3 entry plan: BTC adaptor/Taproot end to end
 
 Status: **active; operator-composed local-devnet happy path 2 of 2; canonical
-countersigned agreement, finalized LEZ claim adapter, and actor-local Bitcoin
-recovery-store component GREEN; cohesive actor integration in progress**. The
+countersigned agreement, finalized LEZ claim adapter, typed Core adapter, and
+actor-local Bitcoin recovery-store components GREEN; cohesive actor integration
+in progress**. The
 exact Core 31.1 release verifier, minimal isolated image fixture, role-aware Regtest boundary,
 typed P2TR/CSV transaction library, and one-process public deterministic
 two-party MuSig2/adaptor/extraction funding/cooperative-claim composition are
@@ -1059,7 +1060,8 @@ outpoint/value, cooperative transaction/sighash, and direction-correct recovery
 schedule. The typed finalized witnessed-claim adapter is now GREEN. The
 actor-local Bitcoin recovery store is also GREEN through revision four and
 offline `Completed` reconstruction, while chain-adapter/reference-actor wiring
-remains open. The Core adapter, cohesive reference-actor terminal states, refund execution,
+remains open. The typed Core 31.1 adapter and canonical bounded public evidence
+codec are GREEN as components. Cohesive reference-actor terminal states and refund execution,
 concurrency, production key custody, and the
 accepted proposal's full SDK/demo surface remain pending.
 
@@ -1382,11 +1384,13 @@ signature. Typed finalized LEZ claim evidence is now GREEN. The actor-local
 Bitcoin recovery component is GREEN in both directions: separate maker/taker
 databases replay the four lock/claim revisions to `Completed`, reject mutated
 or rolled-back evidence-chain state, and expose the public revealing witness
-without persisting the scalar. Remaining local PoC work is canonical Bitcoin
-Core evidence, finalized witnessed-funding observation, peerless finalized LEZ
-claim discovery, and wiring those adapters plus the recovery component through
-each cohesive reference actor. These are remaining deliverables, not external
-blockers.
+without persisting the scalar. The Core component independently reconstructs
+and cross-checks exact funding/claim consensus bytes, confirmation/block/tip
+facts, and a canonical scalar-free evidence DTO; its actual-node actor wiring
+is still open. Remaining local PoC work is finalized witnessed-funding
+observation, peerless finalized LEZ claim discovery, and wiring both chain
+adapters plus the recovery component through each cohesive reference actor.
+These are remaining deliverables, not external blockers.
 
 ### Later owner-selected hardening
 
