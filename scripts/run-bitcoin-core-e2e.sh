@@ -457,24 +457,31 @@ jq -e '
   .schema_version == 1
   and .kind == "p2tr_contract"
   and .fixture_only == true
-  and .fixture_authority == "known_regtest_scalar_1_not_musig2"
+  and .fixture_authority == "two_party_musig2_adaptor_public_regtest_vector"
+  and .signing_protocol == "BIP327_MUSIG2_SCHNORR_ADAPTOR"
+  and .musig2_version == "0.4.1"
+  and .signer_order == ["maker", "taker"]
+  and .maker_public_key == "036930f46dd0b16d866d59d1054aa63298b357499cd1862ef16f3f55f1cafceb82"
+  and .taker_public_key == "0324653eac434488002cc06bbfb7f10fe18991e35f9fe4302dbea6d2353dc0ab1c"
+  and .adaptor_point == "031428f3a3532ff4f1cac70f7292bfad06d1037f800ee8839b56ebba917a22e900"
   and .network == "regtest"
-  and .internal_key == "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+  and .internal_key == "8f85903b3c8dbc1bae36d0b7974c24a75a8581dd4054013f11214e2431b151cf"
   and .refund_key == "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
   and .csv_blocks == 144
   and .refund_script == "029000b27520c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5ac"
   and .leaf_version == 192
   and .tapleaf_hash == "49b170c98e175f70e07e8d33734f8a2d8f3763529ce2a67aeca952038925299c"
   and .tapleaf_hash == .merkle_root
-  and .tap_tweak_hash == "390cd14e59b19bcdd5bbf5b4063a41cb66630b336c2e2729a2b7119992e83bda"
-  and .output_key == "5e72a3459cd78730ef1c4cbda846fb180c801df638f0b635b43722748919bd1b"
-  and .output_key_parity == "odd"
-  and .control_block == "c179be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+  and .tap_tweak_hash == "201e5d59953059209dbfe733c0c88b2788bf831eebdaf00b3678b481368afe5e"
+  and .output_key == "e077de917e5cff6c4055f07ef4676f3d0df57dc2ff66036824d917e1937c8a3a"
+  and .output_key_parity == "even"
+  and .control_block == "c08f85903b3c8dbc1bae36d0b7974c24a75a8581dd4054013f11214e2431b151cf"
   and .script_pubkey == ("5120" + .output_key)
-  and .address == "bcrt1ptee2x3vu67rnpmcufj76s3hmrqxgq80k8rctvdd5xu38fzgeh5dsr28qgv"
+  and .address == "bcrt1pupmaayt7tnlkcsz47pl0gem085xl2lwzlanqx6pymyt7rymu3gaq6psr5y"
 ' "$contract_evidence" >/dev/null
 contract_address="$(jq -er '.address' "$contract_evidence")"
 contract_script_pubkey="$(jq -er '.script_pubkey' "$contract_evidence")"
+contract_adaptor_point="$(jq -er '.adaptor_point' "$contract_evidence")"
 
 export BITCOIN_CORE_CACHE_DIR="$cache_dir"
 export BITCOIN_CORE_PROVENANCE_EVIDENCE="$provenance_evidence"
@@ -939,10 +946,28 @@ jq -e --arg address "$contract_address" --arg script "$contract_script_pubkey" '
 chmod 0600 "$cooperative_spend_evidence"
 jq -e \
   --arg funding_txid "$funding_txid" \
-  --arg destination "$funding_address" '
+  --arg destination "$funding_address" \
+  --arg adaptor_point "$contract_adaptor_point" '
   .schema_version == 1
   and .kind == "p2tr_cooperative_spend"
   and .fixture_only == true
+  and .fixture_authority == "two_party_musig2_adaptor_public_regtest_vector"
+  and .signing_protocol == "BIP327_MUSIG2_SCHNORR_ADAPTOR"
+  and .musig2_version == "0.4.1"
+  and .signer_order == ["maker", "taker"]
+  and .nonce_commitment_scheme == "SHA256_domain_role_session_message_pubnonce"
+  and (.maker_nonce_commitment | test("^[0-9a-f]{64}$"))
+  and (.taker_nonce_commitment | test("^[0-9a-f]{64}$"))
+  and .maker_nonce_commitment != .taker_nonce_commitment
+  and .adaptor_point == $adaptor_point
+  and (.adaptor_presignature | test("^[0-9a-f]{130}$"))
+  and .adaptor_presignature_bytes == 65
+  and .adaptor_presignature_verified == true
+  and (.final_signature | test("^[0-9a-f]{128}$"))
+  and .final_signature_verified_under_q == true
+  and .extracted_scalar == "5353535353535353535353535353535353535353535353535353535353535353"
+  and .extracted_scalar_public_fixture == true
+  and .extracted_point_matches == true
   and .network == "regtest"
   and .funding_txid == $funding_txid
   and .funding_vout == 0
@@ -1093,10 +1118,12 @@ core_cli setmocktime 0
 sha256sum \
   scripts/run-bitcoin-core-e2e.sh \
   Cargo.lock \
+  deny.toml \
   crates/btc-swap-sdk/Cargo.toml \
   crates/btc-swap-sdk/src/lib.rs \
   crates/btc-swap-sdk/src/p2tr.rs \
   crates/btc-swap-sdk/examples/btc-core-p2tr-fixture.rs \
+  crates/btc-swap-sdk/examples/musig2-adaptor-poc.rs \
   "$config_file" \
   "$provenance_evidence" \
   "$contract_evidence" \
@@ -1257,7 +1284,7 @@ jq -n \
     },
     p2tr_contract: ($contract + {
       evidence_sha256: $contract_evidence_sha256,
-      authority_scope: "known_fixture_key_not_musig2"
+      authority_scope: "two_party_musig2_adaptor_public_fixture"
     }),
     p2tr_funding: ($funding + {
       evidence_sha256: $funding_evidence_sha256,
@@ -1285,9 +1312,11 @@ jq -n \
       production_signing_authority_proven: false,
       independent_actor_processes_proven: false,
       durable_actor_stores_proven: false,
-      musig2_proven: false,
-      adaptor_signature_proven: false,
-      scalar_extraction_proven: false,
+      musig2_taproot_fixture_proven: true,
+      adaptor_signature_fixture_proven: true,
+      scalar_extraction_fixture_proven: true,
+      nonce_commitment_exchange_proven: false,
+      crash_safe_nonce_journal_proven: false,
       lez_composition_proven: false,
       atomicity_proven: false
     },
@@ -1319,7 +1348,7 @@ jq -e '
   and .chain.final_height == 103
   and (.repository.critical_evidence_manifest_sha256 | test("^[0-9a-f]{64}$"))
   and (.repository.clean_required == false or .repository.worktree_clean == true)
-  and .p2tr_contract.output_key == "5e72a3459cd78730ef1c4cbda846fb180c801df638f0b635b43722748919bd1b"
+  and .p2tr_contract.output_key == "e077de917e5cff6c4055f07ef4676f3d0df57dc2ff66036824d917e1937c8a3a"
   and .p2tr_funding.submitted_by == "taker"
   and .p2tr_funding.consensus_accepted == true
   and .cooperative_key_path_claim.submitted_by == "maker"
@@ -1331,8 +1360,12 @@ jq -e '
   and .security_claims.production_signing_authority_proven == false
   and .security_claims.independent_actor_processes_proven == false
   and .security_claims.durable_actor_stores_proven == false
-  and .security_claims.musig2_proven == false
-  and .security_claims.adaptor_signature_proven == false
+  and .security_claims.musig2_taproot_fixture_proven == true
+  and .security_claims.adaptor_signature_fixture_proven == true
+  and .security_claims.scalar_extraction_fixture_proven == true
+  and .security_claims.nonce_commitment_exchange_proven == false
+  and .security_claims.crash_safe_nonce_journal_proven == false
+  and .security_claims.lez_composition_proven == false
   and .security_claims.atomicity_proven == false
   and .actor_rpc.credentials_distinct == true
   and .external_dependencies.runtime_external_resources == []
@@ -1353,4 +1386,4 @@ chmod 0600 "$manifest"
 
 unset maker_password taker_password maker_auth taker_auth
 runtime_complete=1
-echo "Bitcoin Core 31.1 isolated actor smoke passed: ${runtime_evidence}"
+echo "Bitcoin Core 31.1 isolated MuSig2 adaptor P2TR flow passed: ${runtime_evidence}"

@@ -32,6 +32,13 @@ exceptions = [
     { crate = "hex_lit@0.1.1", allow = ["MITNFA"] },
     { crate = "secp256k1@0.29.1", allow = ["CC0-1.0"] },
     { crate = "secp256k1-sys@0.10.1", allow = ["CC0-1.0"] },
+    # Exact MuSig2 PoC graph. Unlicense and CC0 are permissive but remain
+    # package/version scoped; production acceptance still requires legal and
+    # cryptographic review recorded by ADR 0029.
+    { crate = "musig2@0.4.1", allow = ["Unlicense"] },
+    { crate = "secp@0.7.0", allow = ["Unlicense"] },
+    { crate = "secp256k1@0.31.1", allow = ["CC0-1.0"] },
+    { crate = "secp256k1-sys@0.11.0", allow = ["CC0-1.0"] },
     # These exact rustls-platform-verifier dependencies contain Mozilla CA
     # certificate data under the permissive, non-copyleft CDLA-Permissive-2.0.
     { crate = "webpki-root-certs@0.26.11", allow = ["CDLA-Permissive-2.0"] },

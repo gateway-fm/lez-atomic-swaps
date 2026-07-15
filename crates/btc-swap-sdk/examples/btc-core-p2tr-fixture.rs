@@ -4,12 +4,12 @@ use std::str::FromStr;
 
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::consensus::encode::serialize_hex;
-use bitcoin::hashes::Hash;
+use bitcoin::hashes::{Hash, sha256};
 use bitcoin::hex::DisplayHex;
-use bitcoin::key::{Keypair, TapTweak, TweakedPublicKey};
+use bitcoin::key::{Keypair, TweakedPublicKey};
 use bitcoin::secp256k1::{Message, Secp256k1, SecretKey};
 use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
-use bitcoin::taproot::{self, TapNodeHash};
+use bitcoin::taproot;
 use bitcoin::{
     Address, Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid,
     Witness, absolute, transaction,
@@ -18,10 +18,35 @@ use lez_btc_swap_sdk::{
     CooperativeKeyPathSpend, CsvBlockDelay, OutputKeyParity, P2trSwapOutput, RefundXOnlyKey,
     TwoPartyAggregateKey,
 };
+use musig2::secp::{MaybeScalar, Point, Scalar};
+use musig2::{
+    AdaptorSignature, FirstRound, KeyAggContext, LiftedSignature, PartialSignature, SecNonceSpices,
+};
+use zeroize::Zeroize;
 
 const CONTRACT_VALUE_SAT: u64 = 100_000_000;
 const FIXED_FEE_SAT: u64 = 1_000;
 const REFUND_DELAY_BLOCKS: u32 = 144;
+const MAKER_INDEX: usize = 0;
+const TAKER_INDEX: usize = 1;
+const ADAPTOR_DOMAIN_TAG: &[u8] = b"lez-atomic-swaps/m3/btc-claim/v1";
+const MAKER_ROLE_TAG: u8 = 0;
+const TAKER_ROLE_TAG: u8 = 1;
+
+struct NonceRounds {
+    maker: FirstRound,
+    taker: FirstRound,
+    maker_commitment: [u8; 32],
+    taker_commitment: [u8; 32],
+}
+
+struct AdaptorTranscript {
+    maker_nonce_commitment: [u8; 32],
+    taker_nonce_commitment: [u8; 32],
+    presignature: AdaptorSignature,
+    final_signature: [u8; 64],
+    extracted_scalar: [u8; 32],
+}
 
 fn fixture_secret(scalar: u8) -> Result<SecretKey, String> {
     let mut bytes = [0_u8; 32];
@@ -29,20 +54,51 @@ fn fixture_secret(scalar: u8) -> Result<SecretKey, String> {
     SecretKey::from_slice(&bytes).map_err(|error| format!("invalid fixture scalar: {error}"))
 }
 
-fn fixture_contract() -> Result<(P2trSwapOutput, Keypair), String> {
+fn fixture_musig_secret(byte: u8) -> Result<Scalar, String> {
+    let mut bytes = [byte; 32];
+    let secret = Scalar::from_slice(&bytes)
+        .map_err(|error| format!("invalid MuSig2 fixture scalar: {error}"))?;
+    bytes.zeroize();
+    Ok(secret)
+}
+
+fn fixture_contract() -> Result<(P2trSwapOutput, KeyAggContext, Scalar, Scalar, Point), String> {
+    let maker_secret = fixture_musig_secret(0x31)?;
+    let taker_secret = fixture_musig_secret(0x42)?;
+    let maker_public = maker_secret.base_point_mul();
+    let taker_public = taker_secret.base_point_mul();
+    let untweaked_context = KeyAggContext::new([maker_public, taker_public])
+        .map_err(|error| format!("MuSig2 key aggregation failed: {error}"))?;
+    let internal_point: Point = untweaked_context.aggregated_pubkey_untweaked();
+
     let secp = Secp256k1::new();
-    let internal_keypair = Keypair::from_secret_key(&secp, &fixture_secret(1)?);
     let refund_keypair = Keypair::from_secret_key(&secp, &fixture_secret(2)?);
-    let (internal_key, _) = internal_keypair.x_only_public_key();
     let (refund_key, _) = refund_keypair.x_only_public_key();
     let contract = P2trSwapOutput::new(
-        TwoPartyAggregateKey::from_bytes(internal_key.serialize())
+        TwoPartyAggregateKey::from_bytes(internal_point.serialize_xonly())
             .map_err(|error| error.to_string())?,
         RefundXOnlyKey::from_bytes(refund_key.serialize()).map_err(|error| error.to_string())?,
         CsvBlockDelay::new(REFUND_DELAY_BLOCKS).map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())?;
-    Ok((contract, internal_keypair))
+    let signing_context = untweaked_context
+        .with_taproot_tweak(&contract.merkle_root_bytes())
+        .map_err(|error| format!("MuSig2 Taproot tweak failed: {error}"))?;
+    let output_point: Point = signing_context.aggregated_pubkey();
+    if output_point.serialize_xonly() != contract.output_key_bytes()
+        || output_point.has_even_y()
+            != matches!(contract.output_key_parity(), OutputKeyParity::Even)
+    {
+        return Err("MuSig2 Taproot output does not match rust-bitcoin".to_owned());
+    }
+    let adaptor_point = fixture_musig_secret(0x53)?.base_point_mul();
+    Ok((
+        contract,
+        signing_context,
+        maker_secret,
+        taker_secret,
+        adaptor_point,
+    ))
 }
 
 fn contract_script(contract: &P2trSwapOutput) -> ScriptBuf {
@@ -71,7 +127,7 @@ fn parse_u64(label: &str, value: &str) -> Result<u64, String> {
 }
 
 fn contract_command() -> Result<(), String> {
-    let (contract, _) = fixture_contract()?;
+    let (contract, _, maker_secret, taker_secret, adaptor_point) = fixture_contract()?;
     let script_pubkey = contract_script(&contract);
     let address = Address::from_script(&script_pubkey, Network::Regtest)
         .map_err(|error| format!("contract address encoding failed: {error}"))?;
@@ -80,7 +136,16 @@ fn contract_command() -> Result<(), String> {
         OutputKeyParity::Odd => "odd",
     };
     println!(
-        r#"{{"schema_version":1,"kind":"p2tr_contract","fixture_only":true,"fixture_authority":"known_regtest_scalar_1_not_musig2","network":"regtest","internal_key":"{internal_key}","refund_key":"{refund_key}","csv_blocks":{csv_blocks},"refund_script":"{refund_script}","leaf_version":{leaf_version},"tapleaf_hash":"{tapleaf_hash}","merkle_root":"{merkle_root}","tap_tweak_hash":"{tap_tweak_hash}","output_key":"{output_key}","output_key_parity":"{parity}","control_block":"{control_block}","script_pubkey":"{script_pubkey_hex}","address":"{address}"}}"#,
+        r#"{{"schema_version":1,"kind":"p2tr_contract","fixture_only":true,"fixture_authority":"two_party_musig2_adaptor_public_regtest_vector","signing_protocol":"BIP327_MUSIG2_SCHNORR_ADAPTOR","musig2_version":"0.4.1","signer_order":["maker","taker"],"maker_public_key":"{maker_public_key}","taker_public_key":"{taker_public_key}","adaptor_point":"{adaptor_point}","network":"regtest","internal_key":"{internal_key}","refund_key":"{refund_key}","csv_blocks":{csv_blocks},"refund_script":"{refund_script}","leaf_version":{leaf_version},"tapleaf_hash":"{tapleaf_hash}","merkle_root":"{merkle_root}","tap_tweak_hash":"{tap_tweak_hash}","output_key":"{output_key}","output_key_parity":"{parity}","control_block":"{control_block}","script_pubkey":"{script_pubkey_hex}","address":"{address}"}}"#,
+        maker_public_key = maker_secret
+            .base_point_mul()
+            .serialize()
+            .to_lower_hex_string(),
+        taker_public_key = taker_secret
+            .base_point_mul()
+            .serialize()
+            .to_lower_hex_string(),
+        adaptor_point = adaptor_point.serialize().to_lower_hex_string(),
         internal_key = contract
             .aggregate_internal_key_bytes()
             .to_lower_hex_string(),
@@ -115,7 +180,7 @@ fn funding_command(txid: Txid, vout: u32, funding_value_sat: u64) -> Result<(), 
     let secp = Secp256k1::new();
     let funding_keypair = Keypair::from_secret_key(&secp, &fixture_secret(1)?);
     let funding_script = direct_output_script(&funding_keypair);
-    let (contract, _) = fixture_contract()?;
+    let (contract, ..) = fixture_contract()?;
     let mut transaction = Transaction {
         version: transaction::Version::TWO,
         lock_time: absolute::LockTime::ZERO,
@@ -166,6 +231,166 @@ fn funding_command(txid: Txid, vout: u32, funding_value_sat: u64) -> Result<(), 
     Ok(())
 }
 
+fn nonce_commitment(
+    role: u8,
+    session_domain: &[u8; 32],
+    message: &[u8; 32],
+    public_nonce: &[u8; 66],
+) -> [u8; 32] {
+    let mut preimage = Vec::with_capacity(
+        ADAPTOR_DOMAIN_TAG.len() + 1 + session_domain.len() + message.len() + 66,
+    );
+    preimage.extend_from_slice(ADAPTOR_DOMAIN_TAG);
+    preimage.push(role);
+    preimage.extend_from_slice(session_domain);
+    preimage.extend_from_slice(message);
+    preimage.extend_from_slice(public_nonce);
+    sha256::Hash::hash(&preimage).to_byte_array()
+}
+fn adaptor_session_domain(contract: &P2trSwapOutput, sighash: &[u8; 32]) -> [u8; 32] {
+    sha256::Hash::hash(
+        &[
+            ADAPTOR_DOMAIN_TAG,
+            &contract.aggregate_internal_key_bytes(),
+            &contract.merkle_root_bytes(),
+            &contract.output_key_bytes(),
+            sighash,
+        ]
+        .concat(),
+    )
+    .to_byte_array()
+}
+
+fn begin_nonce_rounds(
+    signing_context: &KeyAggContext,
+    maker_secret: Scalar,
+    taker_secret: Scalar,
+    sighash: &[u8; 32],
+    session_domain: &[u8; 32],
+) -> Result<NonceRounds, String> {
+    let maker_spices = SecNonceSpices::new()
+        .with_seckey(maker_secret)
+        .with_message(sighash)
+        .with_extra_input(session_domain);
+    let taker_spices = SecNonceSpices::new()
+        .with_seckey(taker_secret)
+        .with_message(sighash)
+        .with_extra_input(session_domain);
+    let mut maker_nonce_seed = [0x71; 32];
+    let mut taker_nonce_seed = [0x82; 32];
+    let mut maker = FirstRound::new(
+        signing_context.clone(),
+        maker_nonce_seed,
+        MAKER_INDEX,
+        maker_spices,
+    )
+    .map_err(|error| format!("maker MuSig2 first round failed: {error}"))?;
+    let mut taker = FirstRound::new(
+        signing_context.clone(),
+        taker_nonce_seed,
+        TAKER_INDEX,
+        taker_spices,
+    )
+    .map_err(|error| format!("taker MuSig2 first round failed: {error}"))?;
+    maker_nonce_seed.zeroize();
+    taker_nonce_seed.zeroize();
+
+    let maker_nonce = maker.our_public_nonce();
+    let taker_nonce = taker.our_public_nonce();
+    let maker_commitment = nonce_commitment(
+        MAKER_ROLE_TAG,
+        session_domain,
+        sighash,
+        &maker_nonce.serialize(),
+    );
+    let taker_commitment = nonce_commitment(
+        TAKER_ROLE_TAG,
+        session_domain,
+        sighash,
+        &taker_nonce.serialize(),
+    );
+    maker
+        .receive_nonce(TAKER_INDEX, taker_nonce)
+        .map_err(|error| format!("maker rejected taker public nonce: {error}"))?;
+    taker
+        .receive_nonce(MAKER_INDEX, maker_nonce)
+        .map_err(|error| format!("taker rejected maker public nonce: {error}"))?;
+
+    Ok(NonceRounds {
+        maker,
+        taker,
+        maker_commitment,
+        taker_commitment,
+    })
+}
+
+fn complete_adaptor_transcript(
+    rounds: NonceRounds,
+    signing_context: &KeyAggContext,
+    maker_secret: Scalar,
+    taker_secret: Scalar,
+    adaptor_point: Point,
+    sighash: [u8; 32],
+) -> Result<AdaptorTranscript, String> {
+    let mut maker = rounds
+        .maker
+        .finalize_adaptor(maker_secret, adaptor_point, sighash)
+        .map_err(|error| format!("maker adaptor partial failed: {error}"))?;
+    let mut taker = rounds
+        .taker
+        .finalize_adaptor(taker_secret, adaptor_point, sighash)
+        .map_err(|error| format!("taker adaptor partial failed: {error}"))?;
+    let maker_partial: PartialSignature = maker.our_signature();
+    let taker_partial: PartialSignature = taker.our_signature();
+    maker
+        .receive_signature(TAKER_INDEX, taker_partial)
+        .map_err(|error| format!("maker rejected taker partial: {error}"))?;
+    taker
+        .receive_signature(MAKER_INDEX, maker_partial)
+        .map_err(|error| format!("taker rejected maker partial: {error}"))?;
+    let maker_presignature = maker
+        .finalize_adaptor::<AdaptorSignature>()
+        .map_err(|error| format!("maker adaptor aggregation failed: {error}"))?;
+    let taker_presignature = taker
+        .finalize_adaptor::<AdaptorSignature>()
+        .map_err(|error| format!("taker adaptor aggregation failed: {error}"))?;
+    if maker_presignature != taker_presignature {
+        return Err("actors derived different adaptor presignatures".to_owned());
+    }
+
+    let output_point: Point = signing_context.aggregated_pubkey();
+    musig2::adaptor::verify_single(output_point, &maker_presignature, sighash, adaptor_point)
+        .map_err(|error| format!("aggregate adaptor verification failed: {error}"))?;
+    let final_signature: LiftedSignature = maker_presignature
+        .adapt(fixture_musig_secret(0x53)?)
+        .ok_or_else(|| "adaptor secret produced an invalid final nonce".to_owned())?;
+    musig2::verify_single(output_point, final_signature, sighash)
+        .map_err(|error| format!("final MuSig2 signature verification failed: {error}"))?;
+    let extracted: MaybeScalar = maker_presignature
+        .reveal_secret(&final_signature)
+        .ok_or_else(|| "failed to extract adaptor scalar".to_owned())?;
+    let expected_adaptor_secret = fixture_musig_secret(0x53)?;
+    if extracted != MaybeScalar::Valid(expected_adaptor_secret) {
+        return Err("extracted adaptor scalar differs from fixture".to_owned());
+    }
+    let extracted_scalar: [u8; 32] = extracted.into();
+    if Scalar::from_slice(&extracted_scalar)
+        .map_err(|error| format!("invalid extracted scalar: {error}"))?
+        .base_point_mul()
+        != adaptor_point
+    {
+        return Err("extracted scalar does not match adaptor point".to_owned());
+    }
+
+    Ok(AdaptorTranscript {
+        maker_nonce_commitment: rounds.maker_commitment,
+        taker_nonce_commitment: rounds.taker_commitment,
+        presignature: maker_presignature,
+        final_signature: final_signature.serialize(),
+        extracted_scalar,
+    })
+}
+
 fn spend_command(
     funding_txid: Txid,
     funding_vout: u32,
@@ -180,7 +405,8 @@ fn spend_command(
     let output_value_sat = funding_value_sat
         .checked_sub(FIXED_FEE_SAT)
         .ok_or_else(|| "contract value cannot cover cooperative fee".to_owned())?;
-    let (contract, internal_keypair) = fixture_contract()?;
+    let (contract, signing_context, maker_secret, taker_secret, adaptor_point) =
+        fixture_contract()?;
     let spend = CooperativeKeyPathSpend::new(
         &contract,
         OutPoint {
@@ -196,17 +422,34 @@ fn spend_command(
     .map_err(|error| error.to_string())?;
     let sighash = spend.sighash_bytes();
     let unsigned_transaction = serialize_hex(spend.unsigned_transaction());
-    let secp = Secp256k1::new();
-    let merkle_root = TapNodeHash::from_byte_array(contract.merkle_root_bytes());
-    let tweaked_keypair = internal_keypair.tap_tweak(&secp, Some(merkle_root));
-    let signature =
-        secp.sign_schnorr_no_aux_rand(&Message::from_digest(sighash), tweaked_keypair.as_keypair());
+    let session_domain = adaptor_session_domain(&contract, &sighash);
+    let nonce_rounds = begin_nonce_rounds(
+        &signing_context,
+        maker_secret,
+        taker_secret,
+        &sighash,
+        &session_domain,
+    )?;
+    let transcript = complete_adaptor_transcript(
+        nonce_rounds,
+        &signing_context,
+        maker_secret,
+        taker_secret,
+        adaptor_point,
+        sighash,
+    )?;
     let transaction = spend
-        .finalize(signature.serialize())
+        .finalize(transcript.final_signature)
         .map_err(|error| error.to_string())?;
 
     println!(
-        r#"{{"schema_version":1,"kind":"p2tr_cooperative_spend","fixture_only":true,"network":"regtest","funding_txid":"{funding_txid}","funding_vout":{funding_vout},"funding_value_sat":{funding_value_sat},"destination":"{destination}","output_value_sat":{output_value_sat},"fee_sat":{fee_sat},"sighash":"{sighash}","unsigned_transaction":"{unsigned_transaction}","raw_transaction":"{raw_transaction}","txid":"{txid}","wtxid":"{wtxid}","witness_items":1,"witness_bytes":64,"sighash_type":"DEFAULT","annex":false}}"#,
+        r#"{{"schema_version":1,"kind":"p2tr_cooperative_spend","fixture_only":true,"fixture_authority":"two_party_musig2_adaptor_public_regtest_vector","signing_protocol":"BIP327_MUSIG2_SCHNORR_ADAPTOR","musig2_version":"0.4.1","signer_order":["maker","taker"],"nonce_commitment_scheme":"SHA256_domain_role_session_message_pubnonce","maker_nonce_commitment":"{maker_nonce_commitment}","taker_nonce_commitment":"{taker_nonce_commitment}","adaptor_point":"{adaptor_point}","adaptor_presignature":"{adaptor_presignature}","adaptor_presignature_bytes":65,"adaptor_presignature_verified":true,"final_signature":"{final_signature}","final_signature_verified_under_q":true,"extracted_scalar":"{extracted_scalar}","extracted_scalar_public_fixture":true,"extracted_point_matches":true,"network":"regtest","funding_txid":"{funding_txid}","funding_vout":{funding_vout},"funding_value_sat":{funding_value_sat},"destination":"{destination}","output_value_sat":{output_value_sat},"fee_sat":{fee_sat},"sighash":"{sighash}","unsigned_transaction":"{unsigned_transaction}","raw_transaction":"{raw_transaction}","txid":"{txid}","wtxid":"{wtxid}","witness_items":1,"witness_bytes":64,"sighash_type":"DEFAULT","annex":false}}"#,
+        maker_nonce_commitment = transcript.maker_nonce_commitment.to_lower_hex_string(),
+        taker_nonce_commitment = transcript.taker_nonce_commitment.to_lower_hex_string(),
+        adaptor_point = adaptor_point.serialize().to_lower_hex_string(),
+        adaptor_presignature = transcript.presignature.serialize().to_lower_hex_string(),
+        final_signature = transcript.final_signature.to_lower_hex_string(),
+        extracted_scalar = transcript.extracted_scalar.to_lower_hex_string(),
         fee_sat = FIXED_FEE_SAT,
         sighash = sighash.to_lower_hex_string(),
         raw_transaction = serialize_hex(&transaction),

@@ -12,3 +12,5 @@ workspace = true
 
 [dependencies]
 bitcoin = { version = "=0.32.101", default-features = false, features = ["std"] }
+musig2 = { version = "=0.4.1", default-features = false, features = ["secp256k1"] }
+zeroize = "=1.9.0"
