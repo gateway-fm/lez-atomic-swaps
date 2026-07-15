@@ -7,9 +7,10 @@ Status: Accepted entry boundary; M3 active — 2026-07-14
 The live RFP and accepted proposal #112 require a complete LEZ/BTC lifecycle,
 BIP-340 Schnorr adaptor signatures, a BIP-341 cooperative key-path claim, a
 Bitcoin Core setup guide, both role directions, and reproducible evidence. The
-current tree has generic Bitcoin state-machine vocabulary only. It has no
-Bitcoin SDK, Core adapter, P2TR transaction builder, adaptor implementation,
-Bitcoin actor, actual-node runner, or Bitcoin evidence packet.
+entry tree had generic Bitcoin state-machine vocabulary only. The current tree
+now has the exact Core runner/evidence and a typed P2TR/CSV transaction builder;
+it still has no Core swap adapter, adaptor implementation, Bitcoin actor, LEZ
+BTC guest path, or composed swap evidence packet.
 
 The accepted proposal names DLC-specs `AdaptorSignature.md` as a conformance
 source. No such file exists in the current DLC repository or its history. The
@@ -81,8 +82,10 @@ No project-owned elliptic-curve arithmetic is permitted. Candidate libraries
 must be exact-pinned, source-reviewed, license/advisory/source gated, and proved
 interoperable with Bitcoin Core consensus before acceptance. The entry audit
 selects Bitcoin Core 31.1 as the node candidate and `rust-bitcoin`, `miniscript`,
-`corepc`, and `musig2` as candidates, not accepted dependencies. The final
-feature graph and cryptographic evidence decide adoption.
+`corepc`, and `musig2` as candidates. Core 31.1 and exact-pinned `bitcoin`
+0.32.101 have now passed their applicable provenance/source/license/advisory
+gates; `miniscript`, `corepc`, and `musig2` remain unaccepted. Core consensus
+interoperability for the new transaction slice is the next gate.
 
 ## Candidate provenance
 
@@ -97,9 +100,12 @@ the resulting immutable image digest. The existing unofficial Docker Hub image
 is not a supply-chain authority.
 
 The verifier and actual-node runner now reproduce this provenance and locally
-prove the Core-only fixture. The final M3 dependency graph remains unaccepted
-until the P2TR/adaptor packages and exact image scan evidence pass their stated
-gates.
+prove the Core-only fixture. The typed transaction slice separately uses
+`bitcoin` 0.32.101 with default features disabled and only `std`, behind
+canonical byte boundaries intended for the later MuSig2 graph. Its resolved
+graph passes advisories, bans, exact-version license exceptions, and source
+policy. The final M3 dependency graph remains unaccepted until the adaptor
+package and composed consensus evidence pass their stated gates.
 
 ## Pre-lock signing ceremony
 

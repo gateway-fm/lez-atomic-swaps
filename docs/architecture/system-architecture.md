@@ -163,7 +163,7 @@ flowchart TB
 
     subgraph Nodes["Actor-selected node boundary"]
         LEZ["LEZ sequencer<br/>dynamic local port<br/>typed exact-public contract<br/>public live execution pending"]
-        BTC["Bitcoin Core 31.1 Regtest candidate<br/>M3 not active"]
+        BTC["Bitcoin Core 31.1 Regtest<br/>role fixture GREEN; P2TR SDK GREEN<br/>actual swap spend pending"]
         XMR["monerod + wallet RPC"]
         ZEC["Zebra 5.2.0 Regtest JSON-RPC<br/>retained proof host 32834"]
     end

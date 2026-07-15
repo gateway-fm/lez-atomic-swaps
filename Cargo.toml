@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/btc-swap-sdk",
     "crates/lez-bridge-adapter",
     "crates/lez-bridge-client",
     "crates/lez-bridge-protocol",

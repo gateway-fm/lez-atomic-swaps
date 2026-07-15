@@ -1,6 +1,6 @@
 # Manual reproduction guide
 
-Last verified: 2026-07-14
+Last verified: 2026-07-15
 
 This is the living operator guide for the user-visible flows that the repository
 currently proves. Update it in the same change whenever a runner, prerequisite,
@@ -12,14 +12,33 @@ self-hosted Zebra route and Tatum's public-provider Testnet Zebrad route, but
 explicitly leaves live execution pending the project-owned transparent signer,
 HTTPS provider transport, and actor adapter.
 
-## M3 Bitcoin status: Core actor fixture runnable
+## M3 Bitcoin status: Core actor fixture and P2TR vector runnable
 
-The isolated Core 31.1 infrastructure slice is runnable; the LEZ/BTC swap is not
-yet. This flow proves the exact release and image, a real Regtest daemon,
+The isolated Core 31.1 infrastructure and typed P2TR transaction slices are
+runnable; the LEZ/BTC swap is not yet. The Core flow proves the exact release
+and image, a real Regtest daemon,
 provisioner-only cookie authority, distinct maker/taker RPC capabilities,
 deterministic mature local P2TR funding, secret-safe evidence, and exact cleanup.
 The fixed `rawtr` output is mining infrastructure, not the future aggregate-key
 swap output and not an M3 completion claim.
+
+The dependency-light transaction slice can be repeated without Docker or a
+network connection:
+
+```sh
+cargo test --locked -p lez-btc-swap-sdk --all-targets
+cargo clippy --locked -p lez-btc-swap-sdk --all-targets --all-features -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --locked -p lez-btc-swap-sdk --no-deps
+```
+
+Expected are four passing tests. They pin the exact refund script, leaf/root,
+TapTweak hash, tweaked output key and parity, control block, scriptPubKey,
+unsigned transaction, BIP-341 sighash, completed transaction, txid, wtxid, and
+one-item key-path witness, while rejecting invalid keys, delays, money range,
+transaction values, mutations, and signatures. This proves deterministic
+construction and local signature verification only: it does not prove MuSig2
+aggregation/adaptation, Core consensus acceptance, a refund execution, or
+either LEZ/BTC actor journey.
 
 Prerequisites are Docker, Bash, curl, Git, GnuPG, jq, Python 3, ripgrep,
 SHA-256 tools, and tar. Use a fresh 8–64 character lowercase `RUN_ID`:
@@ -93,8 +112,8 @@ Runtime uses no public RPC, faucet, public funds, public peers, or public chain.
 Cold setup can still fail because bitcoincore.org, GitHub, the base-image
 registry, DNS/TLS, or vulnerability databases are unavailable or rate-limited;
 those are setup/CI flakes rather than chain-protocol behavior. The next M3 slice
-replaces the funding fixture with the exact aggregate-key P2TR output, CSV
-refund leaf, and cooperative key-path transaction through Core.
+funds the now-implemented aggregate-key P2TR output and submits its cooperative
+key-path transaction through this exact Core fixture.
 
 ## Can I run the complete swap myself?
 

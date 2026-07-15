@@ -1,6 +1,6 @@
 # ADR 0009: Bitcoin uses a Taproot script-path CSV refund
 
-Status: Accepted; M3 entry audited, Bitcoin Core validation pending — 2026-07-14
+Status: Accepted; typed commitment and cooperative transaction GREEN, Bitcoin Core spend pending — 2026-07-15
 
 ```mermaid
 flowchart TB
@@ -72,3 +72,13 @@ vectors, swap-specific adaptor vectors, an independent implementation
 cross-check, and Core consensus validation are M3 gates. Formal third-party
 cryptographic review remains an M7 production-release gate; the existing DLC
 ECDSA corpus is not relabeled as Schnorr evidence.
+
+The first executable slice uses exact-pinned `bitcoin` 0.32.101 rather than
+project-owned curve or Taproot arithmetic. It has hard-coded vectors for the
+refund script, leaf/root, TapTweak hash, tweaked `Q`, parity, control block,
+scriptPubKey, unsigned transaction, sighash, completed transaction, txid, and
+wtxid. It verifies a completed default-sighash signature under `Q` before
+creating a one-item key-path witness and rejects a valid signature on a changed
+transaction. That library evidence does not yet prove a two-party
+aggregation/adaptor transcript, a Core-accepted spend, or the refund boundary
+matrix.

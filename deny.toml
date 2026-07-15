@@ -16,7 +16,20 @@ allow = [
 ]
 confidence-threshold = 0.93
 exceptions = [
+    # Exact rust-bitcoin graph adopted by the M3 P2TR transaction slice. These
+    # are permissive upstream licenses, kept version-scoped so graph drift
+    # cannot silently broaden the workspace policy.
+    { crate = "base58ck@0.1.101", allow = ["CC0-1.0"] },
+    { crate = "bitcoin@0.32.101", allow = ["CC0-1.0"] },
+    { crate = "bitcoin-consensus-encoding@1.0.0", allow = ["CC0-1.0"] },
+    { crate = "bitcoin-internals@0.5.0", allow = ["CC0-1.0"] },
+    { crate = "bitcoin-io@0.1.101", allow = ["CC0-1.0"] },
+    { crate = "bitcoin-units@0.1.101", allow = ["CC0-1.0"] },
+    { crate = "bitcoin_hashes@0.14.101", allow = ["CC0-1.0"] },
     { crate = "bounded-vec@0.9.0", allow = ["CC0-1.0"] },
+    { crate = "hex-conservative@0.2.2", allow = ["CC0-1.0"] },
+    { crate = "hex-conservative@0.3.2", allow = ["CC0-1.0"] },
+    { crate = "hex_lit@0.1.1", allow = ["MITNFA"] },
     { crate = "secp256k1@0.29.1", allow = ["CC0-1.0"] },
     { crate = "secp256k1-sys@0.10.1", allow = ["CC0-1.0"] },
     # These exact rustls-platform-verifier dependencies contain Mozilla CA

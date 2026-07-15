@@ -1024,9 +1024,11 @@ Status: **active; progressive local PoC in progress**. The exact Core 31.1
 release verifier, minimal isolated image fixture, role-aware Regtest smoke, and
 exact cleanup are locally GREEN. CI now repeats that runner and fail-hard scans
 its exact image for HIGH/CRITICAL vulnerabilities. Retained exact-commit
-evidence and remote private-CI visibility close this infrastructure slice; the
-aggregate-key P2TR/CSV transaction is active next. The current tree still has no
-executable BTC swap leg. Generic `Pair::Bitcoin`, deadline, persistence, and transition tests are
+evidence closes this infrastructure slice; remote private-CI status remains
+unobservable without credentials. The exact-pinned typed P2TR/CSV transaction
+library is locally GREEN against hard-coded commitment and witness vectors; its
+actual Core funding/spend integration is active next. The current tree still
+has no executable BTC swap leg. Generic `Pair::Bitcoin`, deadline, persistence, and transition tests are
 reusable scaffolding only; they do not prove a Bitcoin SDK, Bitcoin Core RPC,
 Taproot construction, adaptor exchange, LEZ BTC claim path, or actor journey.
 
@@ -1081,6 +1083,16 @@ slice in this order:
    reference actors with separate configs, keys, stores, and recovery material;
 6. run `TakerSellsForeign`, then `TakerSellsLez`, through actual local LEZ and
    Bitcoin nodes and emit secret-safe evidence from both actors and chains.
+
+Progress on 2026-07-15: step 1 is closed. Step 2's typed library boundary is
+GREEN: exact-pinned `bitcoin` 0.32.101 constructs and internally verifies the
+supplied aggregate key, CSV refund leaf, Merkle root, TapTweak hash, output
+parity, control block, scriptPubKey, BIP-341 default sighash, and completed
+one-item key-path witness. Hard-coded commitment, unsigned/signed transaction,
+txid, wtxid, and mutation vectors plus fail-closed money/key/delay boundaries
+pass tests, strict Clippy, rustdoc, and all four dependency-policy checks.
+Funding and broadcast through the actual Core fixture remain before step 2
+closes.
 
 The first bisectable implementation slice is Core infrastructure only and adds
 zero Rust dependencies. It introduces
@@ -1139,10 +1151,10 @@ performance, formal review, and release packaging remain separately measured
 phases. Public routes must select Testnet4 explicitly; legacy `testnet` is not
 an acceptable ambiguous configuration value.
 
-Candidate pins are Bitcoin Core 31.1, `bitcoin` 0.32.101, `miniscript` 13.1.0,
-`corepc-client` 0.16.0/`corepc-types` 0.15.0, and `musig2` 0.4.1. The Core-only
-slice deliberately adopts none of the Rust candidates. They remain
-candidates until the exact resolved graph passes source, license, advisory,
+Accepted pins so far are Bitcoin Core 31.1 and `bitcoin` 0.32.101. Remaining
+candidates are `miniscript` 13.1.0, `corepc-client` 0.16.0/`corepc-types`
+0.15.0, and `musig2` 0.4.1. They remain candidates until each exact resolved
+graph passes source, license, advisory,
 vulnerability, vector, interoperability, consensus, and secret-handling gates.
 `corepc-client` is test-oriented and `musig2` is beta/unaudited, so neither
 may be silently promoted to production readiness.

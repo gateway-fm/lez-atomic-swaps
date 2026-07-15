@@ -18,15 +18,20 @@ entry-audited in
 [ADR 0029](docs/architecture/0029-m3-bitcoin-local-poc-entry.md). The
 nonexistent DLC Schnorr-vector reference is separately tracked as
 [Gateway erratum GW-M3-001](docs/proposal-acceptance-errata.md), with no accepted
-replacement yet. There is no executable BTC SDK or BTC swap command yet. The
+replacement yet. There is no executable BTC swap command yet. A first typed
+BTC transaction SDK slice now constructs the exact aggregate-internal-key plus
+CSV-refund P2TR commitment and a one-input cooperative key-path spend using
+exact-pinned `bitcoin` 0.32.101. It verifies the completed signature under the
+tweaked output key `Q` before emitting the one-item witness and retains a
+hard-coded Taproot vector. This is not yet MuSig2/adaptor signing or an
+actual-Core swap spend. The
 first M3 infrastructure slice now verifies the exact Core release manifest,
 source tag, release signers, and Guix attestations before building the pinned
 minimal image. Its role-separated actual-Core smoke is locally GREEN: Core
 31.1 Regtest, dynamic loopback RPC, distinct maker/taker `rpcauth` permissions,
 deterministic mature local P2TR funding, zero peers, and exact run-owned cleanup.
 CI repeats that smoke and fail-hard scans the exact image for HIGH/CRITICAL
-vulnerabilities. This is node infrastructure, not the aggregate-key P2TR swap
-leg. The clean pushed-commit run is retained as
+vulnerabilities. The clean pushed-commit run is retained as
 [secret-safe Core evidence](docs/evidence/m3-bitcoin-core-smoke-a7393df-20260714.json).
 Runtime uses no public RPC, faucet, public funds, or public chain. Cold
 setup still depends on checksum-verified Core release assets, the pinned base

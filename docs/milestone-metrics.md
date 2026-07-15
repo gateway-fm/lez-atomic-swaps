@@ -1,6 +1,6 @@
 # Milestone delivery metrics
 
-Last updated: 2026-07-14
+Last updated: 2026-07-15
 
 This is the live evidence scorecard for ADR 0027's progressive milestone
 delivery. It tracks measurements and explicit unknowns; it does not infer a
@@ -21,25 +21,25 @@ Status vocabulary:
 |---|---|---|---|---|
 | M1 | Historical completed milestone | Historical evidence predates ADR 0027; not retroactively reclassified | `m1-complete` and corrective tag `m1-complete.1` | No transition requested |
 | M2 | Certified local-functional PoC | Canonical Docker-built/deployed artifact, both local LEZ/ZEC directions, and the exact-tree repository gates are GREEN; later hardening is deferred | `m2-complete` | M2 completion/tag directed; no QA or M3 transition requested |
-| M3 | Not active | Entry authority, code gap, topology, dependency candidates, PoC gate, and Gateway proposal/reference defect audited; no implementation evidence exists | None | Awaiting explicit owner transition |
+| M3 | Progressive local PoC | Core 31.1 infrastructure is GREEN and retained; the exact-pinned typed P2TR/CSV transaction slice is locally GREEN, while the actual aggregate/adaptor swap corridor remains in progress | None | Owner entered M3 on 2026-07-14 |
 | M4 | Not active | Awaiting owner transition | None | Not requested |
 | M5 | Not active | Awaiting owner transition | None | Not requested |
 | M6 | Not active | Awaiting owner transition | None | Not requested |
 | M7 | Not active | Awaiting owner transition | None | Not requested |
 
-## M3 entry scorecard
+## M3 PoC scorecard
 
-Status: entry-audited and awaiting owner transition. Counts below deliberately
-measure evidence instead of assigning a percentage to work that has not begun.
+Status: active progressive local PoC. Counts below deliberately measure
+evidence instead of assigning a percentage to unlike work items.
 
 | Metric | Current measurement | Evidence or next measurement point |
 |---|---|---|
 | Live authorities reconciled | 2 of 2 | RFP repository commit `969a76d`; accepted issue #112 body SHA-256 `49356263...f1c87`; issue #61 excluded |
-| Executable BTC-specific crates/components | 0 | No BTC SDK, Core adapter, actor, runner, or LEZ BTC guest path exists |
-| Dependency groups accepted | 0 | Core 31.1 plus four Rust library groups are source/license candidates only; resolved graph and interop gates precede acceptance |
-| Actual local M3 node compositions | 0 | First evidence is isolated Core 31.1 Regtest plus the pinned LEZ v0.2 stack |
+| Executable BTC-specific crates/components | 1 crate plus 1 actual-node runner | `lez-btc-swap-sdk` constructs and verifies the P2TR/CSV commitment and cooperative transaction; the isolated Core runner proves role RPC and deterministic Regtest infrastructure. Core adapter, actors, adaptor protocol, and LEZ BTC guest remain |
+| Dependency groups accepted | 2 of 5 entry candidates | Core 31.1 and exact-pinned `bitcoin` 0.32.101 graphs passed provenance/source/license/advisory gates. `miniscript`, `corepc`, and `musig2` remain unaccepted candidates |
+| Actual local M3 node compositions | 1 infrastructure composition; 0 swap compositions | Isolated Core 31.1 Regtest is retained exact-commit evidence. The P2TR transaction is not yet broadcast through it or composed with pinned LEZ v0.2 |
 | Supported happy directions completed | 0 of 2 | `TakerSellsForeign` then `TakerSellsLez` against actual local nodes |
-| Runnable manual BTC flows | 0 | Manual guide explicitly says not runnable and adds commands only with executable implementation |
+| Runnable manual BTC flows | 2 partial flows; 0 complete swaps | Manual Core actor fixture and focused P2TR library vector are runnable. The complete role-fixed swap remains unavailable |
 | Gateway proposal acceptance errata | 1 open | GW-M3-001: nonexistent DLC Schnorr adaptor-vector path; proposed replacement evidence contract is not yet accepted |
 | QA / chaos / information security / production phases | Not active | Each phase begins only after its owner transition; continuous CI/security baselines remain enforced |
 | M3 completion tag | None | Created only on the exact pushed commit after every selected M3 gate is evidenced |

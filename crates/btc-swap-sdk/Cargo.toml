@@ -1,0 +1,14 @@
+[package]
+name = "lez-btc-swap-sdk"
+version = "0.1.0"
+description = "Bitcoin Taproot protocol adapter for LEZ atomic swaps"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bitcoin = { version = "=0.32.101", default-features = false, features = ["std"] }
