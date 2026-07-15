@@ -1,11 +1,11 @@
 # ADR 0009: Bitcoin uses a Taproot script-path CSV refund
 
-Status: Accepted; known-key cooperative Core spend GREEN, MuSig2/adaptor and refund matrix pending — 2026-07-15
+Status: Accepted; one-process public deterministic two-party MuSig2/adaptor/extraction Core spend GREEN; refund matrix and production protocol pending — 2026-07-15
 
 ```mermaid
 flowchart TB
     Funding["P2TR funding output"] --> KeyPath{"Cooperative claim available?"}
-    KeyPath -->|"yes"| Adaptor["Complete BIP-340 adaptor signature"]
+    KeyPath -->|"yes"| Adaptor["Complete BIP-340 adaptor signature<br/>fixture GREEN; production pending"]
     Adaptor --> Claim["Taproot key-path spend"]
     KeyPath -->|"no / timeout"| Delay["Wait relative CSV delay"]
     Delay --> Tapleaf["CSV + funder refund key tapleaf"]
@@ -79,13 +79,20 @@ refund script, leaf/root, TapTweak hash, tweaked `Q`, parity, control block,
 scriptPubKey, unsigned transaction, sighash, completed transaction, txid, and
 wtxid. It verifies a completed default-sighash signature under `Q` before
 creating a one-item key-path witness and rejects a valid signature on a changed
-transaction. That library evidence alone does not prove a two-party
-aggregation/adaptor transcript or the refund boundary matrix; the composed Core evidence is recorded
-below.
+transaction. That library evidence alone does not prove the refund boundary
+matrix; the composed one-process two-party Core fixture is recorded below.
 
-The isolated Core fixture now funds that exact output and mines a tweaked-output
-key-path claim at Regtest heights 102 and 103. Core accepts the normal funding
-transaction and the one-item 64-byte Schnorr witness through both policy and
-consensus. This closes known-key transaction interoperability only. It does not
-prove two-party MuSig2/adaptor signing, scalar extraction, the CSV script-path
-refund, fee replacement, or either complete LEZ/BTC direction.
+The isolated Core fixture now uses public deterministic maker and taker key
+shares with exact-pinned `musig2` 0.4.1. It performs BIP-327 aggregation and the
+Taproot tweak to `Q`, computes role-tagged nonce commitments in process,
+produces both partial signatures, verifies a 65-byte adaptor presignature,
+adapts it with the public fixture scalar, and verifies the resulting 64-byte
+signature under `Q`. Core accepts and mines the funding and one-item key-path
+claim through policy and consensus at Regtest heights 102 and 103; extraction
+recovers the public fixture scalar and matches its adaptor point.
+
+This closes only the one-process cooperative fixture boundary. The nonce
+commitments are not exchanged before reveal, no crash-safe nonce journal or
+independent maker/taker signer process is proven, and the CSV script-path
+refund, fee replacement, LEZ effect, both complete directions, and atomicity
+remain pending.

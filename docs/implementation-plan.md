@@ -1022,18 +1022,20 @@ outputs above.
 
 Status: **active; progressive local PoC in progress**. The exact Core 31.1
 release verifier, minimal isolated image fixture, role-aware Regtest boundary,
-typed P2TR/CSV transaction library, and known-key funding/cooperative-claim
-composition are locally GREEN. CI runs that composition and fail-hard scans its
-exact image for HIGH/CRITICAL vulnerabilities. Retained exact-commit evidence
-closes the earlier infrastructure slice; the P2TR slice has passed dirty-tree
-development validation and is awaiting its clean pushed-commit certification
-run. Remote private-CI status remains unobservable without credentials.
+typed P2TR/CSV transaction library, and one-process public deterministic
+two-party MuSig2/adaptor/extraction funding/cooperative-claim composition are
+GREEN. CI runs that composition and fail-hard scans its exact image for
+HIGH/CRITICAL vulnerabilities. Strict clean pushed-commit evidence on
+`f5a9caa66b04b0bec1a86cb732f5a64f63852e6e` closes this cryptographic/Core
+fixture sub-slice. Remote private-CI status remains unobservable without
+credentials.
 
 The current tree still has no complete LEZ/BTC swap corridor or user-facing BTC
-swap command. Generic `Pair::Bitcoin`, deadline, persistence, and transition
-tests are reusable scaffolding only; they do not prove MuSig2/adaptor exchange,
-durable signing sessions, the LEZ BTC claim path, independent actor processes
-and stores, either complete direction, or atomicity.
+swap command. The fixture holds both public deterministic signers in one
+process and computes nonce commitments without exchanging them. It does not
+prove a crash-safe nonce reservation/consumption journal, independent actor
+processes and stores, the LEZ BTC claim path, either complete direction, refund
+execution, production signing authority, or atomicity.
 
 Authority was reread on 2026-07-14: live RFP repository commit `969a76d`
 (file blob `d0fa52b`) and accepted issue #112, whose newline-normalized body
@@ -1087,35 +1089,34 @@ slice in this order:
 6. run `TakerSellsForeign`, then `TakerSellsLez`, through actual local LEZ and
    Bitcoin nodes and emit secret-safe evidence from both actors and chains.
 
-Progress on 2026-07-15: steps 1 and 2 are closed at the known-key
-interoperability boundary; step 3 is active next. Exact-pinned `bitcoin`
-0.32.101 constructs and internally verifies the supplied aggregate key, CSV
-refund leaf, Merkle root, TapTweak hash, output parity, control block,
-scriptPubKey, BIP-341 default sighash, and completed one-item key-path witness.
-Hard-coded commitment, unsigned/signed transaction, txid, wtxid, mutation, and
-fail-closed money/key/delay gates pass tests, strict Clippy, rustdoc, and all
-four dependency-policy checks.
+Progress on 2026-07-15: steps 1 and 2 are closed, and step 3's one-process
+cryptographic/Core sub-slice is GREEN; its actor-separated durable signing
+portion remains active. Exact-pinned `bitcoin` 0.32.101 constructs and verifies
+the P2TR/CSV transaction boundary. Exact-pinned `musig2` 0.4.1 aggregates the
+ordered maker/taker fixture keys, applies the Taproot tweak with matching `Q`
+and parity, creates and verifies both adaptor partials and the 65-byte aggregate
+presignature, adapts a final 64-byte signature under `Q`, and re-extracts and
+point-checks the labeled public Regtest scalar.
 
-A read-only dependency gate recommends exact-pinned `musig2` 0.4.1 as the
-step-3 PoC candidate because it implements final BIP-327 aggregation, Taproot
-tweaks, Schnorr adaptor signatures, and extraction. It remains unaccepted until
-the locked graph, source, license, advisory, vectors, and Core interoperability
-gates pass. Its beta/unaudited status, dominant-maintainer risk, non-zeroizing
-cloneable secret nonce, absent nonce-commitment round, and `secp256k1` 0.31
-versus rust-bitcoin's 0.29 require a byte-isolated project wrapper, explicit
-commit/reveal, durable nonce reservation/consumption, and zeroization.
+The exact MuSig2 graph is now locked with package-scoped license exceptions and
+exercised through rust-bitcoin verification and Core policy/consensus. It
+remains an unaccepted dependency candidate: the crate is beta/unaudited,
+maintainer-concentrated, exposes a cloneable non-zeroizing secret nonce, and
+provides no commitment round. The production-shaped wrapper must still exchange
+commitments before reveal, durably reserve and consume fresh nonces, atomically
+persist exact partial outboxes, zeroize secret state, and add negative vectors
+and review. Its `secp256k1` 0.31 types remain byte-isolated from rust-bitcoin's
+0.29 types.
 
-The isolated Core runner now uses the same library boundary to create a normal
-client-signed 1 BTC funding output and a 0.99999 BTC cooperative claim. In the
-`TakerSellsForeign` BTC-leg fixture, the taker policy-checks and submits the
-funding transaction, Core mines it at height 102, the maker observes the exact
-aggregate-key/CSV output, then the maker policy-checks and submits the tweaked-Q
-one-item claim and Core mines it at height 103. The taker observes the exact
-outpoint spent once. Both actor credentials re-read exact bytes, txid/wtxid,
-scripts, values, blocks, and the 64-byte witness; the final mempool is empty,
-runtime public resources are zero, and cleanup is exact. This closes Core
-interoperability only: the known scalar is fixture authority, not MuSig2,
-adaptor extraction, production signing authority, a LEZ effect, or atomicity.
+In the `TakerSellsForeign` Bitcoin-leg fixture, the taker policy-checks and
+submits the normal 1 BTC funding transaction, Core mines it at height 102, the
+maker observes the exact aggregate-key/CSV output, then submits the adapted
+0.99999 BTC tweaked-`Q` one-item claim, which Core mines at height 103. The
+taker observes the outpoint spent once. This proves MuSig2/adaptor/extraction
+and Core interoperability only for one process using public deterministic
+fixture secrets. Commitments are computed but not exchanged; no crash-safe
+nonce journal, independent signer processes/stores, production authority, LEZ
+effect, complete direction, refund, or atomicity is proven.
 
 The first bisectable implementation slice is Core infrastructure only and adds
 zero Rust dependencies. It introduces
@@ -1149,6 +1150,19 @@ attestation binding the runtime, manifest, and cleanup packet.
 [The secret-safe retained summary](evidence/m3-bitcoin-core-p2tr-4f7b6b3-20260715.json)
 records the exact packet hashes and nonclaims.
 
+Strict clean pushed commit `f5a9caa66b04b0bec1a86cb732f5a64f63852e6e`
+then reproduced the one-process two-party fixture as
+`m3-musig-exact-f5a9caa`: taker funding `7393db97...54ae3f` confirmed at
+height 102 and maker MuSig2/adaptor claim `46ba3858...4300ac` confirmed at
+height 103. The helper verified the Taproot-tweaked aggregate key, both adaptor
+partials, the 65-byte presignature, the adapted 64-byte signature under `Q`, and
+the re-extracted public fixture scalar/point before Core accepted the witness.
+The clean-worktree requirement, exact cleanup, foreign-sentinel survival, and
+hash-bound attestation passed. The
+[retained secret-safe summary](evidence/m3-bitcoin-core-musig2-f5a9caa-20260715.json)
+records those facts and the one-process, nonce-exchange, durability, LEZ, and
+atomicity nonclaims.
+
 That slice is GREEN only when retained, secret-safe evidence proves Core 31.1,
 Regtest genesis and an advancing tip, zero chain peers and zero public runtime
 RPC/faucet/funds dependencies, an
@@ -1158,9 +1172,11 @@ matrices, deterministic descriptor-derived mature local funding, immutable
 image identity, and exact labeled cleanup while a foreign sentinel resource
 survives success and forced failure. Deterministic means the same derivation,
 clock/transaction policy, maturity, values, and confirmation assertions; it
-does not promise byte-identical blocks or transaction IDs across run IDs. This
-accepts only the Core infrastructure slice, not P2TR/adaptor behavior, either
-swap direction, U8 public-route execution, or M3 completion.
+does not promise byte-identical blocks or transaction IDs across run IDs. This accepts the Core infrastructure plus the one-process
+MuSig2/adaptor/extraction fixture only; it does not accept commitment
+exchange, crash-safe nonce state, independent actors, LEZ composition, either
+complete swap direction, U8 public-route execution, atomicity, or M3
+completion.
 
 The PoC gate requires both actors terminal `Completed`, taker-first canonical
 at the negotiated policy before the maker effect, no scalar revelation before
@@ -1185,22 +1201,19 @@ performance, formal review, and release packaging remain separately measured
 phases. Public routes must select Testnet4 explicitly; legacy `testnet` is not
 an acceptable ambiguous configuration value.
 
-Accepted pins so far are Bitcoin Core 31.1 and `bitcoin` 0.32.101. Remaining
-candidates are `miniscript` 13.1.0, `corepc-client` 0.16.0/`corepc-types`
-0.15.0, and `musig2` 0.4.1. They remain candidates until each exact resolved
-graph passes source, license, advisory,
-vulnerability, vector, interoperability, consensus, and secret-handling gates.
-`corepc-client` is test-oriented and `musig2` is beta/unaudited, so neither
-may be silently promoted to production readiness.
+Accepted dependency groups remain Bitcoin Core 31.1 and `bitcoin` 0.32.101: 2
+of 5 entry candidates. The exact `musig2` 0.4.1 graph is locked, package-scoped
+for CC0/Unlicense, policy-gated, and exercised through Core, but remains an
+unaccepted beta/unaudited candidate until commitment exchange, nonce durability
+and zeroization, negative vectors, secret handling, and review pass. `miniscript`
+13.1.0 and `corepc-client` 0.16.0/`corepc-types` 0.15.0 remain deferred until a
+concrete API requires them.
 
-When the P2TR slice actually exercises them, start with exact-pinned
-`bitcoin` and `musig2`; defer `miniscript` and `corepc` until a concrete API
-needs them. The existing graph uses `secp256k1` 0.29 while `musig2` brings a
-0.31 line. Treat that duplicate as intentional and cross one audited boundary
-using canonical bytes that both sides reparse; never share incompatible Rust
-key/signature types or bypass completed-signature verification under tweaked
-`Q` and Core consensus. Resolve the lockfile first, then add only exact-package
-CC0/Unlicense exceptions—never a global license allowance.
+The P2TR slice now exercises exact-pinned `bitcoin` and `musig2`. The graph
+intentionally contains `secp256k1` 0.29 and 0.31; canonical key and signature
+bytes cross that boundary and each side reparses them. Completed signatures
+must still verify under tweaked `Q` and Core consensus. No global license
+allowance or incompatible Rust curve type crosses the boundary.
 
 ADR 0029 contains the component, pre-lock signing, actor-flow, atomicity,
 isolation, and evidence diagrams. This plan activates M3 but does not authorize

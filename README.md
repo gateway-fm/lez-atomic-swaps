@@ -20,33 +20,40 @@ nonexistent DLC Schnorr-vector reference is separately tracked as
 [Gateway erratum GW-M3-001](docs/proposal-acceptance-errata.md), with no accepted
 replacement yet.
 
-M3 now has an actual-Core P2TR vertical slice. Exact-pinned `bitcoin` 0.32.101
-constructs the aggregate-internal-key plus CSV-refund commitment, signs a
-one-input cooperative key-path spend under tweaked output key `Q`, and emits
-the exact one-item witness. The isolated runner verifies the official Core
-release/signers/Guix attestations, then executes the `TakerSellsForeign`
-Bitcoin-leg ordering: the taker client signs and submits a normal funding
-transaction to the exact contract, the maker observes its confirmation, the
-maker submits the cooperative claim, and the taker observes the exact outpoint
-spent once. Core independently policy-checks, decodes, mines, and re-reads both
-transactions through distinct actor `rpcauth` capabilities. The successful
-local validation reached height 103, an empty final mempool, zero peers, and
-exact run-owned cleanup.
+M3 now has an actual-Core, two-party MuSig2/adaptor P2TR vertical slice.
+Exact-pinned `bitcoin` 0.32.101 constructs the aggregate-internal-key plus
+CSV-refund commitment, while exact-pinned `musig2` 0.4.1 aggregates the ordered
+maker/taker public fixture keys, applies the Taproot tweak, and matches the
+rust-bitcoin output key `Q` and parity. One helper process computes two
+role-bound nonce commitments, creates and verifies both partial adaptor
+signatures and their 65-byte aggregate presignature, adapts it with a labeled
+public Regtest scalar, verifies the resulting 64-byte signature under `Q`, and
+re-extracts the scalar and checks its point. The isolated runner then executes
+the `TakerSellsForeign` Bitcoin-leg ordering through distinct actor `rpcauth`
+capabilities. Core policy-checks, decodes, mines, and re-reads the taker funding
+at height 102 and maker key-path claim at height 103, including the exact
+one-item witness and spent-once outpoint; the final mempool and peer set are
+empty and cleanup is exact.
 
-This is deliberately a transaction/consensus fixture, not a complete swap:
-the known Regtest key is labeled fixture-only, and MuSig2/adaptor sessions,
-durable nonces, scalar extraction, the LEZ BTC guest, the second direction, and
-end-to-end atomicity remain. There is no executable full BTC swap command yet.
-CI runs the same P2TR funding/claim composition and fail-hard scans the exact
-Core image for HIGH/CRITICAL vulnerabilities. The earlier clean infrastructure
-run remains available as
+This is deliberately a one-process public deterministic cryptographic and
+consensus fixture, not a complete swap or production signing authority. The
+nonce commitments are computed but not exchanged before nonce reveal; there is
+no crash-safe nonce reservation/consumption journal, independent maker/taker
+signer processes or durable stores, LEZ BTC guest composition, second direction,
+refund execution, or end-to-end atomicity. There is no executable full BTC swap
+command yet. CI runs the same P2TR funding/claim composition and fail-hard scans
+the exact Core image for HIGH/CRITICAL vulnerabilities. The earlier clean
+infrastructure run remains available as
 [secret-safe Core evidence](docs/evidence/m3-bitcoin-core-smoke-a7393df-20260714.json);
-the clean pushed-commit P2TR run is retained as
-[secret-safe funding/claim evidence](docs/evidence/m3-bitcoin-core-p2tr-4f7b6b3-20260715.json). Runtime uses
-no public RPC, faucet, public funds, public peers, or public chain. Cold setup
-still depends on checksum-verified Core release assets, the pinned base image,
-vulnerability data, and locked Rust registries, so availability and scan
-flakiness remain explicit.
+the historical clean known-key P2TR run remains as
+[secret-safe funding/claim evidence](docs/evidence/m3-bitcoin-core-p2tr-4f7b6b3-20260715.json),
+and strict clean run `m3-musig-exact-f5a9caa` on pushed commit `f5a9caa` is
+retained as
+[MuSig2/adaptor/extraction Core evidence](docs/evidence/m3-bitcoin-core-musig2-f5a9caa-20260715.json).
+Runtime uses no public RPC, faucet, public funds, public peers, or public chain.
+Cold setup still depends on checksum-verified Core release assets, the pinned
+base image, vulnerability data, and locked Rust registries, so availability and
+scan flakiness remain explicit.
 
 Development has started with protocol and real-node acceptance tests. The
 current executable slices enforce:

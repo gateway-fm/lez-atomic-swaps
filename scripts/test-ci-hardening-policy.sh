@@ -16,6 +16,7 @@ core_runner="${repo_root}/scripts/run-bitcoin-core-e2e.sh"
 core_isolation="${repo_root}/scripts/check-bitcoin-core-isolation.sh"
 
 core_evidence="${repo_root}/docs/evidence/m3-bitcoin-core-smoke-a7393df-20260714.json"
+core_musig_evidence="${repo_root}/docs/evidence/m3-bitcoin-core-musig2-f5a9caa-20260715.json"
 fail() {
   echo "CI hardening contract failed: $*" >&2
   exit 1
@@ -38,6 +39,7 @@ require_fixed() {
 [[ -x "$core_runner" ]] || fail "missing executable Bitcoin Core E2E runner"
 [[ -x "$core_isolation" ]] || fail "missing executable Bitcoin Core isolation checker"
 [[ -f "$core_evidence" ]] || fail "missing retained Bitcoin Core evidence"
+[[ -f "$core_musig_evidence" ]] || fail "missing retained Bitcoin Core MuSig2 evidence"
 [[ -f "$canonical_evidence" ]] || fail "missing canonical M2 evidence packet"
 
 require_fixed 'tags: ["m*-complete*"]' "$workflow"
@@ -111,6 +113,33 @@ jq -e '
   and (.security.ci_exact_image_trivy_fail_high_critical
     | contains("remote_result_not_locally_observed"))
 ' "$core_evidence" >/dev/null || fail "retained Bitcoin Core evidence invariants failed"
+
+jq -e '
+  .schema_version == 1
+  and .milestone == "M3"
+  and .scope == "bitcoin_core_musig2_adaptor_p2tr_fixture"
+  and .result == "passed"
+  and .tested_repository_commit == "f5a9caa66b04b0bec1a86cb732f5a64f63852e6e"
+  and .tested_origin_main_commit == .tested_repository_commit
+  and .worktree_clean_before_run == true
+  and .clean_worktree_required == true
+  and .contract.signing_protocol == "BIP327_MUSIG2_SCHNORR_ADAPTOR"
+  and .contract.signer_order == ["maker", "taker"]
+  and .cooperative_key_path_claim.adaptor_presignature_bytes == 65
+  and .cooperative_key_path_claim.adaptor_presignature_verified == true
+  and .cooperative_key_path_claim.final_signature_verified_under_q == true
+  and .cooperative_key_path_claim.extracted_point_matches == true
+  and .security_claims.musig2_taproot_fixture_proven == true
+  and .security_claims.adaptor_signature_fixture_proven == true
+  and .security_claims.scalar_extraction_fixture_proven == true
+  and .security_claims.nonce_commitment_exchange_proven == false
+  and .security_claims.crash_safe_nonce_journal_proven == false
+  and .security_claims.lez_composition_proven == false
+  and .security_claims.atomicity_proven == false
+  and .external_dependencies.runtime_external_resources == []
+  and .cleanup.exact_run_resources_absent == true
+  and .cleanup.foreign_sentinel_survived_exact_cleanup == true
+' "$core_musig_evidence" >/dev/null || fail "retained Bitcoin Core MuSig2 evidence invariants failed"
 
 require_fixed 'risc0_guest_builder_tag="r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be"' "$provisional_verifier"
 require_fixed 'risc0_guest_builder="risczero/risc0-guest-builder:${risc0_guest_builder_tag}"' "$provisional_verifier"

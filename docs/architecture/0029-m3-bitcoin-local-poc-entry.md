@@ -1,6 +1,6 @@
 # ADR 0029: M3 starts with an isolated Bitcoin actual-node PoC
 
-Status: Accepted entry boundary; M3 active; known-key Core funding/claim slice GREEN — 2026-07-15
+Status: Accepted entry boundary; M3 active; one-process public deterministic two-party MuSig2/adaptor/Core fixture GREEN — 2026-07-15
 
 ## Context
 
@@ -9,10 +9,14 @@ BIP-340 Schnorr adaptor signatures, a BIP-341 cooperative key-path claim, a
 Bitcoin Core setup guide, both role directions, and reproducible evidence. The
 entry tree had generic Bitcoin state-machine vocabulary only. The current tree
 now has the exact Core runner/evidence, a typed P2TR/CSV transaction builder,
-and a direction-shaped known-key fixture in which the taker funds and the maker
-claims through Core policy and consensus. It still has no production Core swap
-adapter, independent Bitcoin actor processes/stores, adaptor implementation,
-LEZ BTC guest path, or composed swap evidence packet.
+and a one-process public deterministic fixture. That fixture aggregates distinct
+maker and taker key shares with BIP-327, applies the Taproot tweak to `Q`, creates
+and verifies a 65-byte Schnorr adaptor presignature, adapts it with the public
+fixture scalar, verifies the resulting 64-byte signature under `Q`, spends it
+through Core policy and consensus, and extracts the same scalar. It still has no
+production Core swap adapter, independent Bitcoin actor processes/stores,
+network exchange of nonce commitments, crash-safe nonce journal, LEZ BTC guest
+path, or composed swap evidence packet.
 
 The accepted proposal names DLC-specs `AdaptorSignature.md` as a conformance
 source. No such file exists in the current DLC repository or its history. The
@@ -33,61 +37,72 @@ identity; it does not select a different protocol implementation.
 
 ```mermaid
 flowchart LR
-    Maker["Maker actor"] --> MakerSdk["Role-fixed BTC SDK"]
-    Taker["Taker actor"] --> TakerSdk["Role-fixed BTC SDK"]
-    MakerSdk --> MakerBtcPort["Maker Bitcoin chain port"]
-    TakerSdk --> TakerBtcPort["Taker Bitcoin chain port"]
-    MakerSdk --> LezPort["Role-local LEZ chain ports"]
-    TakerSdk --> LezPort
-    MakerBtcPort --> MakerCoreAdapter["Maker Core adapter instance"]
-    TakerBtcPort --> TakerCoreAdapter["Taker Core adapter instance"]
-    MakerCoreAdapter --> MakerAuth["Maker rpcauth: read and broadcast RPC"]
-    TakerCoreAdapter --> TakerAuth["Taker rpcauth: read and broadcast RPC"]
-    Provisioner["Run-owned miner and fund provisioner"] --> CookieAuth["Cookie RPC: wallet, clock and mining"]
-    MakerAuth --> Loopback["Dynamic 127.0.0.1 JSON-RPC"]
-    TakerAuth --> Loopback
-    CookieAuth --> Loopback
-    Loopback --> Core["Bitcoin Core 31.1 Regtest"]
-    Core --> NoPeers["P2P disabled and zero peers"]
-    LezPort --> RoleBridge["Role-local LEZ bridge"]
-    RoleBridge --> Sequencer["LEZ v0.2 sequencer"]
-    Sequencer --> Bedrock["Bedrock settlement"]
-    Sequencer --> Indexer["LEZ v0.2 indexer"]
-    MakerSdk --> MakerStore["Maker store and keys"]
-    TakerSdk --> TakerStore["Taker store and keys"]
-    Core --> Evidence["Secret-safe evidence auditor"]
-    Indexer --> Evidence
-    MakerStore --> Evidence
-    TakerStore --> Evidence
-    Fixture["Current known-key Regtest helper"] --> TakerAuth
-    Fixture --> MakerAuth
+    subgraph Proven["Proven at f5a9caa: one-process public fixture"]
+        MakerShare["Maker key share"] --> KeyAgg["BIP-327 aggregate key P"]
+        TakerShare["Taker key share"] --> KeyAgg
+        KeyAgg --> Tweak["Taproot tweak to output key Q"]
+        Tweak --> Commit["Role-tagged nonce commitments computed locally"]
+        Commit --> Partials["Maker and taker partial signatures"]
+        Partials --> PreSig["Verify 65-byte adaptor presignature"]
+        PreSig --> Adapt["Adapt with public fixture scalar"]
+        Adapt --> FinalSig["Verify 64-byte signature under Q"]
+        FinalSig --> MakerAuth["Maker rpcauth"]
+        TakerAuth["Taker rpcauth"] --> Core["Bitcoin Core 31.1 Regtest"]
+        MakerAuth --> Core
+        Core --> Extract["Extract scalar and match adaptor point"]
+        Core --> Evidence["Secret-safe evidence"]
+    end
+    Provisioner["Run-owned miner and fund provisioner"] --> CookieAuth["Cookie RPC"]
+    CookieAuth --> Core
+    subgraph Target["M3 composition target: pending"]
+        Maker["Independent maker actor"] --> Exchange["Authenticated signing exchange"]
+        Taker["Independent taker actor"] --> Exchange
+        Maker --> MakerStore["Maker nonce and recovery journal"]
+        Taker --> TakerStore["Taker nonce and recovery journal"]
+        Exchange --> Sdk["Role-fixed public BTC SDK"]
+        Sdk --> CoreTarget["Bitcoin Core adapter"]
+        Sdk --> LezTarget["LEZ v0.2 witnessed-claim adapter"]
+        CoreTarget --> Atomicity["Both complete directions and atomicity"]
+        LezTarget --> Atomicity
+    end
 ```
 
 The target graph above remains the M3 composition boundary. The currently
 executable Core slice reaches the same role-restricted RPC surface with a
-known-key helper and proves the following exact ordering. The helper is test
-infrastructure, not a production signing authority or a substitute for the
-two-party protocol.
+one-process helper and proves the following exact ordering. The maker/taker
+shares and adaptor scalar are public deterministic Regtest fixture values. The
+helper is test infrastructure, not a production signing authority or a
+substitute for independent actors and a transport protocol.
 
 ```mermaid
 sequenceDiagram
     participant P as Cookie provisioner
-    participant H as Known-key Regtest helper
+    participant H as One-process public fixture
     participant T as Taker rpcauth
     participant C as Bitcoin Core 31.1 Regtest
     participant M as Maker rpcauth
     participant E as Evidence auditor
     P->>C: Mine blocks 1 through 101 to rawtr G
+    H->>H: Derive maker and taker key shares
+    H->>H: BIP-327 aggregate P and Taproot tweak to Q
     H-->>T: Signed 1 BTC P2TR funding bytes
     T->>C: Policy check and submit funding
     P->>C: Mine funding in block 102
     C-->>M: Confirm aggregate-key plus CSV output
+    H->>H: Compute role-tagged nonce commitments locally
+    Note right of H: Commitments are not exchanged before nonce reveal
+    H->>H: Produce maker and taker partial signatures
+    H->>H: Aggregate and verify 65-byte adaptor presignature
+    H->>H: Adapt with the public fixture scalar
+    H->>H: Verify 64-byte final signature under Q
     H-->>M: Signed tweaked-Q key-path claim bytes
     M->>C: Policy check and submit claim
     P->>C: Mine claim in block 103
     C-->>T: Confirm one-item witness and spent outpoint
+    C-->>H: Return canonical final signature bytes
+    H->>H: Extract scalar and match adaptor point
     C-->>E: Blocks, tx bytes, mempool and spender evidence
-    Note over H,E: No MuSig2, adaptor, extraction, LEZ effect, independent stores, or atomicity yet
+    Note over H,E: Independent actors, commitment exchange, journals, LEZ, complete directions and atomicity are pending
 ```
 
 Bitcoin funding commits a two-party aggregate internal key `P` and the ADR
@@ -113,11 +128,14 @@ No project-owned elliptic-curve arithmetic is permitted. Candidate libraries
 must be exact-pinned, source-reviewed, license/advisory/source gated, and proved
 interoperable with Bitcoin Core consensus before acceptance. The entry audit
 selects Bitcoin Core 31.1 as the node candidate and `rust-bitcoin`, `miniscript`,
-`corepc`, and `musig2` as candidates. Core 31.1 and exact-pinned `bitcoin`
-0.32.101 have now passed their applicable provenance/source/license/advisory
-gates. Known-key funding and the tweaked-Q one-item claim pass Core policy and
-consensus at heights 102/103; `miniscript`, `corepc`, and `musig2` remain
-unaccepted. Two-party MuSig2/adaptor interoperability is the next gate.
+`corepc`, and `musig2` as candidates. Core 31.1, exact-pinned `bitcoin`
+0.32.101, and exact-pinned `musig2` 0.4.1 have now passed their applicable
+fixture-level provenance, resolved-graph, source, license, advisory, and
+Core-interoperability gates. The public deterministic two-party fixture passes
+BIP-327 aggregation, Taproot tweaking, adaptor verification/adaptation, final
+verification under `Q`, Core policy and consensus at heights 102/103, and
+scalar extraction. `miniscript` and `corepc` remain candidates; `musig2`
+remains a PoC candidate rather than accepted production authority.
 
 ## Candidate provenance
 
@@ -131,14 +149,15 @@ and release signatures/attestations verify, then records and vulnerability-scans
 the resulting immutable image digest. The existing unofficial Docker Hub image
 is not a supply-chain authority.
 
-The verifier and actual-node runner reproduce this provenance and locally
-prove the Core infrastructure plus the known-key P2TR funding/claim slice. The
-typed transaction slice uses `bitcoin` 0.32.101 with default features disabled
-and only `std`, behind canonical byte boundaries intended for the later MuSig2
-graph. Its resolved graph passes advisories, bans, exact-version license
+The verifier and actual-node runner reproduce this provenance and locally prove
+the Core infrastructure plus the one-process two-party MuSig2/adaptor P2TR
+funding/claim fixture. The typed transaction slice uses `bitcoin` 0.32.101 with
+default features disabled and only `std`; canonical bytes cross into
+`musig2` 0.4.1 and are reparsed and verified before Core submission. The
+resolved fixture graph passes advisories, bans, exact-version license
 exceptions, and source policy. The final M3 dependency graph remains unaccepted
-until the adaptor package and composed Core/LEZ evidence pass their stated
-gates.
+until independent signing sessions and composed Core/LEZ evidence pass their
+stated gates.
 
 The 2026-07-15 read-only dependency audit recommends exact-pinned `musig2`
 0.4.1 for the PoC gate. Its final BIP-327 key aggregation, x-only Taproot tweak,
@@ -148,11 +167,17 @@ required happy-path primitive without project-owned curve arithmetic. It uses
 65-byte presignature, and 64-byte final-signature encodings may cross the
 boundary. The crate is beta, has no published audit, is dominated by one
 maintainer, lacks nonce commitments, and its cloneable secret nonce does not
-zeroize. It remains an unaccepted candidate until exact lock/source/license/
-advisory gates plus project-owned commitment, durable nonce, zeroization,
-negative-vector, extraction, independent-verification, and Core gates pass.
+zeroize. Exact lock/source/license/advisory and public-fixture extraction/Core
+gates now pass. It remains an unaccepted production candidate pending exchanged
+commitments, durable nonce reservation/consumption, zeroization, negative
+vectors, independent actor verification, and review.
 
-## Pre-lock signing ceremony
+## Target pre-lock signing ceremony (pending)
+
+The following is the required independent-actor ceremony, not a claim about the
+current one-process fixture. At `f5a9caa` role-tagged commitments are computed
+in process but are not exchanged before nonce reveal, and no crash-safe nonce
+journal is exercised.
 
 Both claim transactions and all recovery material are complete before the first
 lock. Each chain/message uses a distinct domain-separated MuSig2 session and
@@ -189,7 +214,10 @@ Funding is forbidden unless both roles independently verify and durably retain
 the exact presignatures they need for either direction. Discovery/Chat may vanish
 after the taker submits the first lock without affecting claim or recovery.
 
-## Actor flows
+## Target actor flows (pending)
+
+Neither complete direction below is implemented by the current Bitcoin fixture;
+the diagrams define the LEZ/BTC atomicity target.
 
 In `TakerSellsForeign`, the taker locks BTC first. The maker locks LEZ only
 after the negotiated Bitcoin confirmation depth. The taker adapts and submits
@@ -304,7 +332,7 @@ through the Bitcoin library plus Bitcoin Core consensus. Gateway erratum
 clarification has not yet been posted. It does not permit ECDSA evidence to be
 mislabeled as Schnorr evidence.
 
-This ADR activates M3 and accepts only its entry boundary plus the known-key
-Core interoperability slice. It does not accept the candidate dependency
-graph, claim either complete direction works, or authorize an `m3-complete`
-tag.
+This ADR activates M3 and accepts only its entry boundary plus the one-process
+public deterministic two-party MuSig2/adaptor/extraction Core interoperability
+fixture. It does not accept production signing authority or the final dependency
+graph, claim either complete direction works, or authorize an `m3-complete` tag.
