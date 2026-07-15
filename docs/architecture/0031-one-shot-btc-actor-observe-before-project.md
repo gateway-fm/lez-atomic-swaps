@@ -4,6 +4,11 @@ Status: Accepted for the M3 taker- and maker-funding reference-actor slices.
 Claim revisions three and four and a two-direction actual-node actor run remain
 pending.
 
+Reconciled 2026-07-15: ADR 0034 migrates the private config to strict schema 2
+and requires the full prepared LEZ claim plus both completed agreement-derived
+signer journals before activation may create revision zero. Output schema stays
+version 1 and the funding observe-before-project decision below is unchanged.
+
 ## Context
 
 M3 already had a canonical countersigned LEZ/BTC agreement, a typed Bitcoin
@@ -28,12 +33,17 @@ btc-reference-actor --config PRIVATE_JSON drive
 btc-reference-actor --config PRIVATE_JSON status
 ~~~
 
-The strict schema-v1 configuration is owner-private and permanently binds one
+The strict schema-v2 configuration is owner-private and permanently binds one
 maker or taker role, canonical agreement file, role-local state database,
-acceptance time, Bitcoin Core loopback route and credential file, and one LEZ
-sidecar loopback route, capability, run identity, runtime, timeout, and bounded
-discovery window. The runtime role, LEZ v0.2 compatibility, channel, genesis,
-escrow program, signer account, and the agreement's signed terms must agree.
+acceptance time, Bitcoin Core loopback route and credential file, one LEZ
+sidecar loopback route, capability, run identity, runtime, timeout and bounded
+discovery window, two distinct agreement-derived signing sessions with
+role-local journal paths, and the full prepared witnessed-claim result. Taker
+configs also bind one owner-private adaptor-secret file while maker configs are
+forbidden from carrying that authority. The runtime role, LEZ v0.2
+compatibility, channel, genesis, escrow program, signer account, and the
+agreement's signed terms must agree. ADR 0034 defines the additional activation
+gate and explicit schema-1 rejection.
 For a LEZ funding read, the deterministic observation ID hashes the complete
 request identity, including run, role, runtime, signed terms, target, and
 window. An exact retry retains the same ID and request; a deliberate bounded-

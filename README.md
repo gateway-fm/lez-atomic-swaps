@@ -54,8 +54,15 @@ No public RPC, faucet, peer, credential, public funds, or public deployment is
 used.
 
 The public `btc-reference-actor` now closes the first cohesive lifecycle slice.
-Each fresh role-fixed process accepts `activate`, `drive`, or `status` with an
-owner-private config. Only `activate` inserts agreement acceptance. Absent or
+Each fresh role-fixed process accepts `activate`, `drive`, or `status` with a
+strict owner-private schema-2 config. Before `activate` may insert agreement
+acceptance or create revision zero, it binds the complete prepared LEZ claim
+result plus two distinct completed role-local signer journals to contexts
+rederived from the countersigned agreement. The taker must also provide an
+owner-only adaptor scalar that is point-checked without creating a signature;
+maker configs are forbidden from naming that secret. Missing, cross-wired,
+incomplete, unsafe, or changed authority fails without creating actor state.
+Absent or
 empty/no-acceptance state remains `not_activated`, while corrupt or conflicting
 state fails closed; `status` may migrate an existing schema but creates no
 acceptance and performs no RPC. At revision zero or one, `drive`
@@ -69,16 +76,19 @@ Exact retries retain their deterministic request ID; a deliberate bounded-
 window change receives a distinct ID and remains evidence-bound. A
 valid concurrent revision-one or revision-two winner is reconstructed without overwrite; other
 projection conflicts fail closed. This is a read-only-observation-to-local-
-projection boundary, not a cross-system atomic commit. The actor suite is 18/18, the focused BTC-recovery suite is 11/11,
+projection boundary, not a cross-system atomic commit. The actor suite is
+24/24, the focused BTC-recovery suite is 11/11,
 and the full store suite is 84/84. The next GREEN component boundary persists
 complete public Bitcoin or LEZ transaction bytes before consuming the only
 fresh send authority. Ambiguous outcomes are observe-only and can be accepted
 later only by exact-byte evidence; signer journals open existing-only and the
-public LEZ prepared-message validator reuses the official hash domain. These
-seams are not yet actor claim integration. Claim revisions three and four and a
+public LEZ prepared-message validator reuses the official hash domain. Signer
+and prepared-result validation now gate activation; the public-effect journal
+is not yet actor claim integration. Claim revisions three and four and a
 two-direction actual-node run through
 this actor remain pending; see
-[ADR 0031](docs/architecture/0031-one-shot-btc-actor-observe-before-project.md).
+[ADR 0031](docs/architecture/0031-one-shot-btc-actor-observe-before-project.md)
+and [ADR 0034](docs/architecture/0034-gate-actor-activation-on-signing-material.md).
 
 M3 now has an actual-Core, two-party MuSig2/adaptor P2TR vertical slice.
 Exact-pinned `bitcoin` 0.32.101 constructs the aggregate-internal-key plus

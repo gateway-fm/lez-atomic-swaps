@@ -222,9 +222,11 @@ flowchart TB
     subgraph SharedSecurity["Shared SDK security boundary"]
         PCM["Protected preimage + exact claim payload<br/>XChaCha20-Poly1305 + HKDF<br/>schema-v10 envelope journal"]
         M3AJ[("M3 role-local adaptor journal<br/>reserve before commitment<br/>consume nonce with exact partial GREEN")]
+        M3AS[("M3 taker-only adaptor scalar<br/>owner-private file; point check only at activation<br/>maker authority forbidden")]
+        M3PE[("M3 role-local public-effect journal<br/>complete public bytes before one send CAS<br/>GREEN component; actor integration pending")]
         M3BR[("M3 BTC lifecycle recovery store<br/>four evidence revisions + hash chain<br/>offline Completed status GREEN")]
         M3BC["M3 typed Core 31.1 adapter<br/>stable-tip evidence + durable one-attempt submit<br/>GREEN component"]
-        M3RA["btc-reference-actor<br/>one-shot activate drive status<br/>funding revisions one and two GREEN"]
+        M3RA["btc-reference-actor<br/>schema 2 complete claim-authority activation GREEN<br/>funding revisions one and two GREEN"]
     end
 
     subgraph LezSidecars["Role-isolated official LEZ v0.1.2 processes"]
@@ -345,11 +347,16 @@ flowchart TB
     TS --> PCM
     PS --> M3AJ
     TS --> M3AJ
+    TS -->|"taker only owner-private authority"| M3AS
     PS -->|"maker private config"| M3RA
     TS -->|"taker private config"| M3RA
+    M3AJ -->|"existing exact-role Bitcoin and LEZ journals"| M3RA
+    M3AS -->|"stable read and agreement point check"| M3RA
+    M3WB -->|"full prepared claim result"| M3RA
     M3RA -->|"predecessor-zero or one projection"| M3BR
     M3RA -->|"agreement-derived Bitcoin funding read"| M3BC
     M3RA -->|"signed-account finalized LEZ funding read"| M3FF
+    M3RA -.->|"claim revisions three and four pending"| M3PE
     PCM -->|"encrypted envelope + journal"| DB
     PCM -->|"encrypted envelope + journal"| TDB
     TM -.-> TS
@@ -453,7 +460,7 @@ flowchart TB
     classDef implemented fill:#ddf4ff,stroke:#0969da;
     classDef running fill:#e6ffec,stroke:#1a7f37;
     class MM,LC,CA,TM,LRR,PublicLezRisk planned;
-    class TC,M3RA,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
+    class TC,M3RA,M3AS,M3PE,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
     class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02Full,V02State,MSL2,TLS2,V02J,MBR2,TBR2,M3FF,M3FO running;
 ```
 

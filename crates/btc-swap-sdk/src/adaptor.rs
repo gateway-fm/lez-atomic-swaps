@@ -792,6 +792,19 @@ pub fn verify_adaptor_presignature(
     verified_presignature(context, &presignature).map(|_| ())
 }
 
+/// Point-checks a private adaptor scalar without creating a final signature.
+///
+/// # Errors
+///
+/// Rejects a zero, out-of-range, or differently committed scalar. The caller's
+/// byte buffer is zeroized before this function returns.
+pub fn verify_adaptor_secret(
+    context: &AdaptorSessionContext,
+    adaptor_secret: Zeroizing<[u8; 32]>,
+) -> Result<(), AdaptorSessionError> {
+    checked_adaptor_secret(context, adaptor_secret).map(drop)
+}
+
 /// Adapts a verified presignature with the committed scalar.
 ///
 /// # Errors
@@ -803,18 +816,26 @@ pub fn adapt_presignature(
     adaptor_secret: Zeroizing<[u8; 32]>,
 ) -> Result<[u8; 64], AdaptorSessionError> {
     let presignature = verified_presignature(context, &presignature)?;
-    let secret = Scalar::from_slice(adaptor_secret.as_ref())
-        .map_err(|_| AdaptorSessionError::InvalidAdaptorSecret)?;
-    drop(adaptor_secret);
-    if secret.base_point_mul() != context.adaptor_point_value()? {
-        return Err(AdaptorSessionError::AdaptorSecretPointMismatch);
-    }
+    let secret = checked_adaptor_secret(context, adaptor_secret)?;
     let final_signature: LiftedSignature = presignature
         .adapt(secret)
         .ok_or(AdaptorSessionError::AdaptationFailed)?;
     let bytes = final_signature.serialize();
     verify_final_signature(context, bytes)?;
     Ok(bytes)
+}
+
+fn checked_adaptor_secret(
+    context: &AdaptorSessionContext,
+    adaptor_secret: Zeroizing<[u8; 32]>,
+) -> Result<Scalar, AdaptorSessionError> {
+    let secret = Scalar::from_slice(adaptor_secret.as_ref())
+        .map_err(|_| AdaptorSessionError::InvalidAdaptorSecret)?;
+    drop(adaptor_secret);
+    if secret.base_point_mul() != context.adaptor_point_value()? {
+        return Err(AdaptorSessionError::AdaptorSecretPointMismatch);
+    }
+    Ok(secret)
 }
 
 /// Extracts and point-checks the adaptor scalar from a related final signature.
@@ -1081,6 +1102,20 @@ mod tests {
         assert_eq!(
             *extract_adaptor_secret(&context, presignature, final_signature).unwrap(),
             ADAPTOR_SECRET
+        );
+    }
+
+    #[test]
+    fn adaptor_secret_is_point_checked_without_creating_a_signature() {
+        let context = context([0x96; 32]);
+        verify_adaptor_secret(&context, Zeroizing::new(ADAPTOR_SECRET)).unwrap();
+        assert_eq!(
+            verify_adaptor_secret(&context, Zeroizing::new([0x54; 32])),
+            Err(AdaptorSessionError::AdaptorSecretPointMismatch)
+        );
+        assert_eq!(
+            verify_adaptor_secret(&context, Zeroizing::new([0; 32])),
+            Err(AdaptorSessionError::InvalidAdaptorSecret)
         );
     }
 

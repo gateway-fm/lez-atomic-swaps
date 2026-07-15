@@ -23,9 +23,25 @@ pub const REGTEST_GENESIS: &str =
 pub const REQUIRED_CONFIRMATIONS: u32 = 6;
 const FUNDING_VALUE_SAT: u64 = 100_000;
 const CLAIM_VALUE_SAT: u64 = 99_000;
-const MAKER_SECRET: [u8; 32] = [0x31; 32];
-const TAKER_SECRET: [u8; 32] = [0x42; 32];
-const ADAPTOR_SECRET: [u8; 32] = [0x53; 32];
+pub const MAKER_SECRET: [u8; 32] = [0x31; 32];
+pub const TAKER_SECRET: [u8; 32] = [0x42; 32];
+pub const ADAPTOR_SECRET: [u8; 32] = [0x53; 32];
+pub const LEZ_PREPARED_MESSAGE_BYTES: &[u8] = b"m3-actor-prepared-witnessed-claim";
+
+#[allow(clippy::missing_panics_doc, clippy::must_use_candidate)]
+pub fn lez_claim_message_hash() -> [u8; 32] {
+    lez_message_hash(LEZ_PREPARED_MESSAGE_BYTES)
+}
+
+#[allow(clippy::missing_panics_doc, clippy::must_use_candidate)]
+pub fn lez_message_hash(exact_message: &[u8]) -> [u8; 32] {
+    let bytes = [
+        b"/LEE/v0.3/Message/Public/\0\0\0\0\0\0\0".as_slice(),
+        exact_message,
+    ]
+    .concat();
+    bitcoin::hashes::sha256::Hash::hash(&bytes).to_byte_array()
+}
 
 #[derive(Debug)]
 pub struct SwapFixture {
@@ -258,7 +274,7 @@ pub fn swap_fixture() -> SwapFixture {
             [11; 32],
             5_000,
             1_700_000_100_000,
-            [19; 32],
+            lez_claim_message_hash(),
         ),
         BtcP2trTermsV1::from_contract(&contract),
         funding_terms,

@@ -69,5 +69,6 @@ flowchart LR
   transcript identity.
 - Existing-only journal opening, public prepared witnessed-LEZ validation, and
   the durable public-effect journal are now GREEN component seams under ADR
-  0033. Reference-actor composition of those seams, exact chain observation,
-  and revisions three and four remain to be certified.
+  0033. ADR 0034 now composes their exact identities and independently verified
+  presignatures into actor activation. Revalidation immediately before use,
+  exact chain observation, and revisions three and four remain to be certified.

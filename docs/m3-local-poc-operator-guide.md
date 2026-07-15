@@ -158,6 +158,27 @@ The tests use deterministic in-process indexer doubles and ephemeral loopback
 servers; they do not contact the local devnet or any public resource. The
 manual flow below repeats the same request against the retained local indexer.
 
+Repeat the agreement-to-signer and crash-safe public-effect boundaries without
+any node, Docker service, faucet, peer, or network:
+
+~~~sh
+cargo test --locked -p lez-btc-swap-sdk --test agreement_v1 \
+  validated_agreement_derives_both_fresh_adaptor_session_contexts -- --exact
+cargo test --locked -p lez-swap-store --test adaptor_session_journal \
+  existing_only_open_never_creates_a_missing_signer_database -- --exact
+cargo test --locked -p lez-swap-store --test public_effect_journal -- --nocapture
+~~~
+
+The first two gates prove that the actor can reconstruct both exact signing
+contexts from the countersigned agreement and cannot manufacture a missing
+signer database. The public-effect tests use temporary SQLite only. They prove
+durable complete public transaction bytes, one send authorization, and
+observe-only ambiguous recovery as a component boundary; they do not prove an
+actor RPC submission. `public` here means node-disclosable Bitcoin or LEZ
+transaction bytes, not a public endpoint. Secret-bearing Zcash material is
+excluded by type, and callers must still prevent other secrets from entering
+the journal because its byte field is intentionally not a secret scanner.
+
 Run from the repository root. Use a clean or intentionally reviewed worktree
 and a fresh composed identifier:
 
@@ -433,9 +454,20 @@ policy, LEZ channel/genesis/program/accounts, direction, and swap terms to match
 the run artifacts below. Use different state databases, role Basic files,
 capabilities, runtimes, and configs for maker and taker.
 
-Create the configs only with normalized absolute paths. The field is named
-`cookie_file` in schema v1 but must point to the role's restricted Basic file,
-never the provisioner cookie or funding/mining credential:
+This recipe is chronological only after the exact LEZ claim has been prepared
+and both fresh-process signing ceremonies below have reached verified
+presignatures, but still before the first chain submission. Preparation uses
+the deterministic planned LEZ funding transaction ID, so it need not wait for
+that transaction to be submitted. Return here after completing direction step
+4 for `TakerSellsForeign` or step 3 for `TakerSellsLez`.
+
+Create strict private schema-2 configs only with normalized absolute paths.
+`cookie_file` must point to the role's restricted Basic file, never the
+provisioner cookie or funding/mining credential. Each config binds its own
+existing Bitcoin and LEZ signer journal, the two distinct nonzero session IDs,
+and the complete persisted `{context,claim}` prepare result—not only its
+`.claim` member. The taker config additionally requires the owner-only adaptor
+scalar; the maker config must omit it:
 
 ~~~sh
 : "${DIRECTION:?set the private direction root}"
@@ -445,6 +477,12 @@ test "$ACTOR_DISCOVERY_MAX_BLOCKS" -ge 1
 test "$ACTOR_DISCOVERY_MAX_BLOCKS" -le 4096
 export AGREEMENT_FILE="$(realpath "$DIRECTION/agreement.borsh")"
 export ACTOR_ACCEPTED_AT="$(date -u +%s)"
+: "${BTC_SESSION_ID:?retain the 64-hex Bitcoin session ID}"
+: "${LEZ_SESSION_ID:?retain the 64-hex LEZ session ID}"
+test "${#BTC_SESSION_ID}" -eq 64
+test "${#LEZ_SESSION_ID}" -eq 64
+test "$BTC_SESSION_ID" != "$LEZ_SESSION_ID"
+test -s "$DIRECTION/prepared-claim.json"
 
 write_actor_config() {
   local role="$1"
@@ -454,8 +492,25 @@ write_actor_config() {
   local capability="$PRIVATE_ROOT/$role/sidecar.capability"
   local state_db="$DIRECTION/$role-btc-actor.sqlite3"
   local config="$DIRECTION/$role-btc-actor.json"
+  local btc_journal="$DIRECTION/$role/btc-journal.sqlite"
+  local lez_journal="$DIRECTION/$role/lez-journal.sqlite"
+  local prepared_result="$DIRECTION/prepared-claim.json"
+  local adaptor_secret=""
 
   test ! -e "$state_db"
+  test -s "$btc_journal"
+  test -s "$lez_journal"
+  test -s "$prepared_result"
+  case "$role" in
+    taker)
+      test -s "$DIRECTION/taker/adaptor-secret.key"
+      adaptor_secret="$(realpath "$DIRECTION/taker/adaptor-secret.key")"
+      ;;
+    maker)
+      test ! -e "$DIRECTION/maker/adaptor-secret.key"
+      ;;
+    *) return 2 ;;
+  esac
   jq -n \
     --arg role "$role" \
     --arg agreement "$AGREEMENT_FILE" \
@@ -469,9 +524,15 @@ write_actor_config() {
     --argjson timeout 10000 \
     --argjson start "$ACTOR_DISCOVERY_START_HEIGHT" \
     --argjson blocks "$ACTOR_DISCOVERY_MAX_BLOCKS" \
+    --arg btc_session "$BTC_SESSION_ID" \
+    --arg btc_journal "$(realpath "$btc_journal")" \
+    --arg lez_session "$LEZ_SESSION_ID" \
+    --arg lez_journal "$(realpath "$lez_journal")" \
+    --arg prepared_result "$(realpath "$prepared_result")" \
+    --arg adaptor_secret "$adaptor_secret" \
     --slurpfile runtime "$runtime" \
     '{
-      schema_version: 1,
+      schema_version: 2,
       role: $role,
       agreement_file: $agreement,
       state_db: $state,
@@ -489,7 +550,21 @@ write_actor_config() {
         request_timeout_millis: $timeout,
         discovery_start_height: $start,
         discovery_max_blocks: $blocks
-      }
+      },
+      signing: ({
+          bitcoin: {
+            session_id: $btc_session,
+            journal_db: $btc_journal
+          },
+          lez: {
+            session_id: $lez_session,
+            journal_db: $lez_journal
+          },
+          prepared_witnessed_claim_result_file: $prepared_result
+        } + (if $role == "taker"
+             then {adaptor_secret_file: $adaptor_secret}
+             else {}
+             end))
     }' >"$config"
   chmod 0600 "$config"
 }
@@ -519,7 +594,19 @@ only as an intentional new bounded observation, for example when the funded
 block is outside the earlier window; do not mutate it merely to retry the same
 request. Keep maker and taker configs on the same deliberate window.
 
-Only `activate` inserts the agreement acceptance. An absent state path or an
+Only `activate` inserts the agreement acceptance. Before creating revision
+zero, it strict-decodes the complete prepared result, binds its run, claimant,
+request, and official message hash to the agreement, opens both signer journals
+existing-only, derives both contexts from the agreement and configured session
+IDs, and independently verifies their local-role identities and retained
+presignatures. For the taker only, it stable-reads an exact lowercase 32-byte
+hex scalar from a mode-0600, single-link regular file and point-checks it against
+the agreement without producing a signature. Maker configs carrying a secret
+path and taker configs missing one are rejected. Missing, cross-wired,
+incomplete, unsafe, or changed material fails without creating the actor
+database. Private schema-1 configs are rejected.
+
+An absent state path or an
 empty/migrated database with no acceptance produces `not_activated` from
 `status` and `actor is not activated` from `drive`. `status` may migrate the
 schema of an existing SQLite file, but it performs no RPC and never creates an
@@ -540,7 +627,8 @@ done
 The first status must be `not_activated`. Activation returns revision `0`,
 phase `offered`, and `was_replay:false`; exact repetition returns
 `was_replay:true`. Post-activation status is still revision `0` with next action
-`observe_taker_first_lock` and does not require either node.
+`observe_taker_first_lock` and does not require either node. `status` does not
+open signer journals or the prepared-result file; activation does.
 
 After the agreement-derived taker lock reaches the signed Bitcoin confirmation
 policy or finalized LEZ funding is inside the complete configured window, run
@@ -768,7 +856,11 @@ Repeat all ten lines for both sessions before the first chain effect. Require
 owner-only journal permissions, two distinct context bindings, commitment
 acceptance before nonce reveal, both exact partials persisted, and identical
 verified presignatures. Retain hashes of public packets, not their complete
-contents, in publishable evidence.
+contents, in publishable evidence. Retain the exact `BTC_SESSION_ID` and
+`LEZ_SESSION_ID`; the actor schema-2 config names them and the role-local
+journals. Role-runner session JSON and packet files remain ceremony transport,
+not actor authority. The actor rederives keys, role order, exact messages,
+adaptor point, and the Bitcoin Taproot tweak from the countersigned agreement.
 
 ## Restricted Bitcoin actor RPC and mining
 

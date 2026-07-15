@@ -1,11 +1,28 @@
-use std::{fs, os::unix::fs::PermissionsExt as _, path::Path, process::Command as ProcessCommand};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt as _,
+    path::{Path, PathBuf},
+    process::Command as ProcessCommand,
+};
 
 use btc_reference_actor::{
     ActorCli, ActorCommand, ActorCommandError, ActorConfig, ActorConfigError, execute_actor_command,
 };
 use clap::Parser as _;
 use lez_bridge_protocol::{
-    Hex32, Participant as BridgeParticipant, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    ExactMessageBytes, Hex32, MessageContext, Participant as BridgeParticipant,
+    PrepareWitnessedClaimResult, PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility,
+    RuntimeDescriptor,
+};
+use lez_btc_swap_sdk::{
+    BtcAdaptorSessionDomain, BtcAgreementV1, FreshAdaptorNonce, PersistedAdaptorSigningMaterial,
+    SigningRole, aggregate_adaptor_presignature, sign_persisted_adaptor_partial,
+    verify_adaptor_partial_signature, verify_nonce_commitment,
+};
+use lez_swap_store::{
+    AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
+    AdaptorSessionIdentity, AdaptorSessionReservation, AdaptorSessionRole, SecretNonceBytes,
+    SqliteAdaptorSessionJournal,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -36,8 +53,21 @@ impl ActorFixture {
         let state_path = directory.path().join("actor.sqlite3");
         let cookie_path = directory.path().join("bitcoin.cookie");
         let capability_path = directory.path().join("lez.capability");
+        let bitcoin_journal_path = directory.path().join("bitcoin-adaptor.sqlite3");
+        let lez_journal_path = directory.path().join("lez-adaptor.sqlite3");
+        let prepared_claim_path = directory.path().join("prepared-witnessed-claim.json");
+        let adaptor_secret_path = directory.path().join("adaptor-secret.key");
         let config_path = directory.path().join("actor-private.json");
         fs::write(&agreement_path, &agreement_wire).expect("write agreement");
+        let run_id = RunId::new("m3-actor-test-run").expect("run id");
+        seed_activation_material(
+            &swap.agreement,
+            role,
+            &run_id,
+            &bitcoin_journal_path,
+            &lez_journal_path,
+            &prepared_claim_path,
+        );
 
         let runtime = RuntimeDescriptor::new(
             runtime_role,
@@ -51,10 +81,26 @@ impl ActorFixture {
                 BridgeParticipant::Taker => [11; 32],
             }),
         );
+        let mut signing = json!({
+            "bitcoin": {
+                "session_id": hex::encode([41; 32]),
+                "journal_db": bitcoin_journal_path
+            },
+            "lez": {
+                "session_id": hex::encode([42; 32]),
+                "journal_db": lez_journal_path
+            },
+            "prepared_witnessed_claim_result_file": prepared_claim_path
+        });
+        if role == BridgeParticipant::Taker {
+            write_private_scalar(&adaptor_secret_path, support::ADAPTOR_SECRET);
+            signing["adaptor_secret_file"] =
+                Value::from(adaptor_secret_path.to_string_lossy().into_owned());
+        }
         write_private_json(
             &config_path,
             &json!({
-                "schema_version": 1,
+                "schema_version": 2,
                 "role": match role {
                     BridgeParticipant::Maker => "maker",
                     BridgeParticipant::Taker => "taker",
@@ -70,12 +116,13 @@ impl ActorFixture {
                 "lez_bridge": {
                     "endpoint": "http://127.0.0.1:2",
                     "capability_file": capability_path,
-                    "run_id": RunId::new("m3-actor-test-run").expect("run id"),
+                    "run_id": run_id,
                     "runtime": runtime,
                     "request_timeout_millis": 1_000,
                     "discovery_start_height": 1,
                     "discovery_max_blocks": 10
-                }
+                },
+                "signing": signing
             }),
         );
         let config = ActorConfig::load_private(&config_path)?;
@@ -87,9 +134,201 @@ impl ActorFixture {
     }
 }
 
+fn seed_activation_material(
+    agreement: &BtcAgreementV1,
+    role: BridgeParticipant,
+    run_id: &RunId,
+    bitcoin_journal: &Path,
+    lez_journal: &Path,
+    prepared_claim: &Path,
+) {
+    let request_id = RequestId::new("prepared-claim-001").expect("request ID");
+    let claimant = match agreement.lez_claimant() {
+        lez_swap_core::Participant::Maker => BridgeParticipant::Maker,
+        lez_swap_core::Participant::Taker => BridgeParticipant::Taker,
+    };
+    let result = PrepareWitnessedClaimResult::new(
+        MessageContext::new(run_id.clone(), request_id.clone(), claimant),
+        PreparedWitnessedClaim::new(
+            request_id,
+            Hex32::from_bytes(support::lez_claim_message_hash()),
+            ExactMessageBytes::new(support::LEZ_PREPARED_MESSAGE_BYTES.to_vec())
+                .expect("prepared message"),
+        ),
+    );
+    fs::write(
+        prepared_claim,
+        serde_json::to_vec(&result).expect("prepared result JSON"),
+    )
+    .expect("write prepared result");
+    seed_signing_journal(
+        agreement,
+        role,
+        BtcAdaptorSessionDomain::Bitcoin,
+        [41; 32],
+        bitcoin_journal,
+    );
+    seed_signing_journal(
+        agreement,
+        role,
+        BtcAdaptorSessionDomain::Lez,
+        [42; 32],
+        lez_journal,
+    );
+}
+
+#[allow(clippy::too_many_lines)] // The fixture spells out every durable ceremony transition.
+fn seed_signing_journal(
+    agreement: &BtcAgreementV1,
+    role: BridgeParticipant,
+    domain: BtcAdaptorSessionDomain,
+    session_id: [u8; 32],
+    journal_path: &Path,
+) {
+    let context = agreement
+        .adaptor_session_context(domain, session_id)
+        .expect("agreement signing context");
+    let maker_nonce =
+        FreshAdaptorNonce::generate(&context, SigningRole::Maker, support::MAKER_SECRET)
+            .expect("maker nonce");
+    let taker_nonce =
+        FreshAdaptorNonce::generate(&context, SigningRole::Taker, support::TAKER_SECRET)
+            .expect("taker nonce");
+    let (local_role, local_store_role, local_secret, local_nonce) = match role {
+        BridgeParticipant::Maker => (
+            SigningRole::Maker,
+            AdaptorSessionRole::Maker,
+            support::MAKER_SECRET,
+            &maker_nonce,
+        ),
+        BridgeParticipant::Taker => (
+            SigningRole::Taker,
+            AdaptorSessionRole::Taker,
+            support::TAKER_SECRET,
+            &taker_nonce,
+        ),
+    };
+    let (peer_role, peer_secret, peer_nonce) = match role {
+        BridgeParticipant::Maker => (SigningRole::Taker, support::TAKER_SECRET, &taker_nonce),
+        BridgeParticipant::Taker => (SigningRole::Maker, support::MAKER_SECRET, &maker_nonce),
+    };
+    let identity = AdaptorSessionIdentity::new(
+        session_id,
+        local_store_role,
+        context.durable_context_binding(),
+        context.message(),
+        context.adaptor_point(),
+        context.ordered_public_keys(),
+    );
+    let mut journal =
+        SqliteAdaptorSessionJournal::open(journal_path).expect("create signing journal");
+    let _ = journal
+        .reserve(AdaptorSessionReservation::new(
+            identity.clone(),
+            SecretNonceBytes::new(*local_nonce.secret_nonce()),
+            AdaptorPublicNonce::new(local_nonce.public_nonce()),
+            AdaptorNonceCommitment::new(local_nonce.commitment()),
+        ))
+        .expect("reserve nonce");
+    let _ = journal
+        .record_peer_commitment(
+            &identity,
+            AdaptorNonceCommitment::new(peer_nonce.commitment()),
+        )
+        .expect("peer commitment");
+    verify_nonce_commitment(
+        &context,
+        peer_role,
+        peer_nonce.commitment(),
+        peer_nonce.public_nonce(),
+    )
+    .expect("verify peer nonce");
+    let _ = journal
+        .record_verified_peer_public_nonce(
+            &identity,
+            AdaptorPublicNonce::new(peer_nonce.public_nonce()),
+        )
+        .expect("peer nonce");
+    let own_partial = journal
+        .sign_and_persist_partial(&identity, |material| {
+            sign_persisted_adaptor_partial(
+                &context,
+                local_role,
+                local_secret,
+                PersistedAdaptorSigningMaterial::new(
+                    *material.identity().signing_domain(),
+                    material.secret_nonce(),
+                    *material.own_public_nonce().bytes(),
+                    local_nonce.commitment(),
+                    peer_nonce.commitment(),
+                    *material.peer_public_nonce().bytes(),
+                ),
+            )
+            .map(AdaptorPartialSignature::new)
+            .map_err(|_| ())
+        })
+        .expect("local partial")
+        .partial();
+    let peer_partial = sign_persisted_adaptor_partial(
+        &context,
+        peer_role,
+        peer_secret,
+        PersistedAdaptorSigningMaterial::new(
+            context.durable_context_binding(),
+            peer_nonce.secret_nonce(),
+            peer_nonce.public_nonce(),
+            peer_nonce.commitment(),
+            local_nonce.commitment(),
+            local_nonce.public_nonce(),
+        ),
+    )
+    .expect("peer partial");
+    let (maker_nonce_bytes, taker_nonce_bytes, maker_partial, taker_partial) = match role {
+        BridgeParticipant::Maker => (
+            local_nonce.public_nonce(),
+            peer_nonce.public_nonce(),
+            *own_partial.bytes(),
+            peer_partial,
+        ),
+        BridgeParticipant::Taker => (
+            peer_nonce.public_nonce(),
+            local_nonce.public_nonce(),
+            peer_partial,
+            *own_partial.bytes(),
+        ),
+    };
+    verify_adaptor_partial_signature(
+        &context,
+        peer_role,
+        maker_nonce_bytes,
+        taker_nonce_bytes,
+        peer_partial,
+    )
+    .expect("verify peer partial");
+    let _ = journal
+        .record_verified_peer_partial(&identity, AdaptorPartialSignature::new(peer_partial))
+        .expect("record peer partial");
+    let presignature = aggregate_adaptor_presignature(
+        &context,
+        maker_nonce_bytes,
+        taker_nonce_bytes,
+        maker_partial,
+        taker_partial,
+    )
+    .expect("aggregate presignature");
+    let _ = journal
+        .record_verified_presignature(&identity, AdaptorPresignature::new(presignature))
+        .expect("record presignature");
+}
+
 fn write_private_json(path: &Path, value: &Value) {
     fs::write(path, serde_json::to_vec(value).expect("config JSON")).expect("write config");
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).expect("private config mode");
+}
+
+fn write_private_scalar(path: &Path, scalar: [u8; 32]) {
+    fs::write(path, format!("{}\n", hex::encode(scalar))).expect("write private scalar");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).expect("private scalar mode");
 }
 
 fn output_json(output: impl serde::Serialize) -> Value {
@@ -132,6 +371,13 @@ fn binary_repeats_offline_status_and_idempotent_activation_from_disk() {
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(output.stderr.is_empty());
+        let secret_hex = hex::encode(support::ADAPTOR_SECRET);
+        assert!(
+            !output
+                .stdout
+                .windows(secret_hex.len())
+                .any(|window| window == secret_hex.as_bytes())
+        );
         serde_json::from_slice::<Value>(&output.stdout).expect("one JSON actor response")
     };
 
@@ -141,6 +387,28 @@ fn binary_repeats_offline_status_and_idempotent_activation_from_disk() {
     let status = invoke("status");
     assert_eq!(status["state"], "active");
     assert_eq!(status["revision"], 0);
+
+    let config: Value =
+        serde_json::from_slice(&fs::read(&fixture.config_path).expect("config bytes"))
+            .expect("config JSON");
+    let state = config["state_db"].as_str().expect("state path");
+    let secret_hex = hex::encode(support::ADAPTOR_SECRET);
+    for suffix in ["", "-wal", "-shm"] {
+        let path = PathBuf::from(format!("{state}{suffix}"));
+        if path.exists() {
+            let bytes = fs::read(path).expect("read actor state artifact");
+            assert!(
+                !bytes
+                    .windows(support::ADAPTOR_SECRET.len())
+                    .any(|window| { window == support::ADAPTOR_SECRET })
+            );
+            assert!(
+                !bytes
+                    .windows(secret_hex.len())
+                    .any(|window| window == secret_hex.as_bytes())
+            );
+        }
+    }
 }
 
 #[test]
@@ -155,6 +423,34 @@ fn private_config_rejects_world_readability_and_role_runtime_drift() {
     assert!(
         ActorFixture::try_new(BridgeParticipant::Maker, BridgeParticipant::Taker).is_err(),
         "private configuration must reject role/runtime drift"
+    );
+}
+
+#[test]
+fn strict_schema_one_config_is_rejected_after_signing_gate_migration() {
+    let fixture = ActorFixture::new(BridgeParticipant::Taker, BridgeParticipant::Taker);
+    let mut config: Value =
+        serde_json::from_slice(&fs::read(&fixture.config_path).expect("config bytes"))
+            .expect("config JSON");
+    config["schema_version"] = Value::from(1);
+    write_private_json(&fixture.config_path, &config);
+    assert_eq!(
+        ActorConfig::load_private(&fixture.config_path),
+        Err(ActorConfigError::Invalid)
+    );
+}
+
+#[test]
+fn maker_config_rejects_an_explicit_null_adaptor_secret_field() {
+    let fixture = ActorFixture::new(BridgeParticipant::Maker, BridgeParticipant::Maker);
+    let mut config: Value =
+        serde_json::from_slice(&fs::read(&fixture.config_path).expect("config bytes"))
+            .expect("config JSON");
+    config["signing"]["adaptor_secret_file"] = Value::Null;
+    write_private_json(&fixture.config_path, &config);
+    assert_eq!(
+        ActorConfig::load_private(&fixture.config_path),
+        Err(ActorConfigError::Invalid)
     );
 }
 

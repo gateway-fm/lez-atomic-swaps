@@ -1133,23 +1133,23 @@ Step 5 now also has a public one-shot, role-fixed reference actor. It
 activates the canonical agreement and composes predecessor zero and one through
 typed Core or finalized LEZ funding observation plus the actor-local store.
 Both roles and both directions reach revision two `BothLegsLocked` in focused
-tests; claim revisions three and four are not yet composed. Only `activate` may insert the agreement acceptance.
+tests; claim revisions three and four are not yet composed. Only `activate` may
+insert the agreement acceptance. Strict private config schema 2 now requires
+the complete prepared-claim result and distinct Bitcoin/LEZ session IDs plus
+role-local journals. Activation rederives both exact contexts from the signed
+agreement, opens journals existing-only, verifies local identities, phases, and
+presignatures, requires and point-checks a private taker-only adaptor scalar
+without creating a signature, forbids that authority in maker configs, and
+refuses any state creation on run, claimant, request, message, journal, secret,
+or context drift. The actor suite is 24/24; fresh-process coverage also rejects
+an explicit null maker authority and scans stdout plus SQLite/WAL artifacts for
+raw or hex-encoded scalar disclosure.
 The SDK now reconstructs the Bitcoin and LEZ adaptor contexts from the validated
 agreement plus caller-supplied fresh session IDs. Ten agreement tests cover both
 directions and both domains. This keeps role-runner session JSON outside actor
-authority; the claim actor must compare the resulting context binding with each
-role-local durable journal before extraction or adaptation.
-The next RED-GREEN seam batch is now complete. Signer journals open existing-
-only, so a mistyped claim configuration cannot create empty signing authority.
-The LEZ bridge publicly reuses its official-domain prepared witnessed-message
-validator. A new additive SQLite public-effect journal persists the complete
-public Bitcoin or LEZ bytes, agreement commitment, and expected effect ID before
-a one-winner `Prepared` to `Started` CAS grants the only fresh send. Ambiguous
-`Started` or `Unknown` recovery is observation-only, and exact accepted IDs plus
-complete observed bytes are required. Seven signer-journal, twelve public-
-effect, eleven BTC-recovery, and all 84 store tests pass; the bridge-client graph
-is 28/28. This is the persistence boundary for revisions three and four, not yet
-their actor integration or actual-node evidence.
+authority. The same material gate must run immediately before revision-three or
+revision-four use because activation alone cannot prevent later file
+replacement.
 The next RED-GREEN seam batch is now complete. Signer journals open existing-
 only, so a mistyped claim configuration cannot create empty signing authority.
 The LEZ bridge publicly reuses its official-domain prepared witnessed-message

@@ -1,6 +1,6 @@
 use std::{
     fs::{self, OpenOptions},
-    os::unix::fs::OpenOptionsExt as _,
+    os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _, symlink},
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -14,17 +14,24 @@ use bitcoin::{
     secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey},
 };
 use lez_bridge_protocol::{
-    AccountIds, ChainPosition, EscrowState, ExactTransactionBytes, FinalizedBlockIdentity,
-    FinalizedWitnessedFundingFacts, NativeCustodyFacts, NativeFundInstructionFacts,
-    ObservedTransactionFacts, TransactionId, WitnessedEscrowMetadataFacts,
+    AccountIds, ChainPosition, EscrowState, ExactMessageBytes, ExactTransactionBytes,
+    FinalizedBlockIdentity, FinalizedWitnessedFundingFacts, NativeCustodyFacts,
+    NativeFundInstructionFacts, ObservedTransactionFacts, PrepareWitnessedClaimResult,
+    PreparedWitnessedClaim, TransactionId, WitnessedEscrowMetadataFacts,
 };
 use lez_btc_swap_sdk::{
     AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BtcAgreementBodyV1, BtcAgreementRecordV1,
     BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1, BtcLezTermsV1, BtcP2trTermsV1,
-    BtcParticipantIdentityV1, BtcParticipantsV1, BtcRecoveryPlanV1, CsvBlockDelay, P2trSwapOutput,
-    RefundXOnlyKey, TwoPartyAggregateKey,
+    BtcParticipantIdentityV1, BtcParticipantsV1, BtcRecoveryPlanV1, CsvBlockDelay,
+    FreshAdaptorNonce, P2trSwapOutput, PersistedAdaptorSigningMaterial, RefundXOnlyKey,
+    SigningRole, TwoPartyAggregateKey, aggregate_adaptor_presignature,
+    sign_persisted_adaptor_partial, verify_adaptor_partial_signature, verify_nonce_commitment,
 };
 use lez_swap_core::SwapDirection;
+use lez_swap_store::{
+    AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
+    AdaptorSessionReservation, SecretNonceBytes,
+};
 use serde_json::Value;
 use tempfile::TempDir;
 use tokio::sync::Barrier;
@@ -34,7 +41,7 @@ use tokio::sync::Barrier;
 mod support;
 
 struct ActorFixture {
-    _directory: TempDir,
+    directory: TempDir,
     config: ActorConfig,
     agreement: BtcAgreementV1,
     agreement_wire: Vec<u8>,
@@ -42,14 +49,46 @@ struct ActorFixture {
 
 impl ActorFixture {
     fn new() -> Self {
-        Self::with_agreement(support::swap_fixture().agreement, ActorRole::Taker)
+        Self::with_agreement(
+            support::swap_fixture().agreement,
+            ActorRole::Taker,
+            support::MAKER_SECRET,
+            support::TAKER_SECRET,
+            support::ADAPTOR_SECRET,
+            true,
+        )
+    }
+
+    fn without_activation_material() -> Self {
+        Self::with_agreement(
+            support::swap_fixture().agreement,
+            ActorRole::Taker,
+            support::MAKER_SECRET,
+            support::TAKER_SECRET,
+            support::ADAPTOR_SECRET,
+            false,
+        )
     }
 
     fn for_direction(direction: SwapDirection, role: ActorRole) -> Self {
-        Self::with_agreement(directional_agreement(direction), role)
+        Self::with_agreement(
+            directional_agreement(direction),
+            role,
+            [1; 32],
+            [2; 32],
+            [7; 32],
+            true,
+        )
     }
 
-    fn with_agreement(agreement: BtcAgreementV1, role: ActorRole) -> Self {
+    fn with_agreement(
+        agreement: BtcAgreementV1,
+        role: ActorRole,
+        maker_secret: [u8; 32],
+        taker_secret: [u8; 32],
+        adaptor_secret: [u8; 32],
+        seed_material: bool,
+    ) -> Self {
         let directory = tempfile::tempdir().expect("actor tempdir");
         let agreement_wire = agreement.encode_wire().expect("agreement wire");
         let agreement_file = directory.path().join("agreement.json");
@@ -85,15 +124,232 @@ impl ActorFixture {
                 discovery_start_height: 1,
                 discovery_max_blocks: 10,
             },
+            signing: ClaimRecoveryConfig {
+                bitcoin: SigningSessionConfig {
+                    session_id: Hex32::from_bytes([41; 32]),
+                    journal_db: directory.path().join("bitcoin-adaptor.sqlite3"),
+                },
+                lez: SigningSessionConfig {
+                    session_id: Hex32::from_bytes([42; 32]),
+                    journal_db: directory.path().join("lez-adaptor.sqlite3"),
+                },
+                prepared_witnessed_claim_result_file: directory
+                    .path()
+                    .join("prepared-witnessed-claim.json"),
+                adaptor_secret_file: (role == ActorRole::Taker)
+                    .then(|| directory.path().join("adaptor-secret.key")),
+            },
         };
         config.validate().expect("valid test config");
+        if seed_material {
+            if let Some(path) = &config.signing.adaptor_secret_file {
+                write_private_secret(path, adaptor_secret);
+            }
+            seed_activation_material(&config, &agreement, maker_secret, taker_secret);
+        }
         Self {
-            _directory: directory,
+            directory,
             config,
             agreement,
             agreement_wire,
         }
     }
+}
+
+fn write_private_secret(path: &Path, secret: [u8; 32]) {
+    fs::write(path, format!("{}\n", hex::encode(secret))).expect("write adaptor secret");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .expect("owner-only adaptor secret");
+}
+
+fn seed_activation_material(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    maker_secret: [u8; 32],
+    taker_secret: [u8; 32],
+) {
+    let preparation_request_id =
+        RequestId::new("prepared-claim-001").expect("preparation request ID");
+    let prepared = PrepareWitnessedClaimResult::new(
+        MessageContext::new(
+            config.lez_bridge.run_id.clone(),
+            preparation_request_id.clone(),
+            bridge_participant(agreement.lez_claimant()),
+        ),
+        PreparedWitnessedClaim::new(
+            preparation_request_id,
+            Hex32::from_bytes(support::lez_claim_message_hash()),
+            ExactMessageBytes::new(support::LEZ_PREPARED_MESSAGE_BYTES.to_vec())
+                .expect("prepared message bytes"),
+        ),
+    );
+    fs::write(
+        &config.signing.prepared_witnessed_claim_result_file,
+        serde_json::to_vec(&prepared).expect("prepared claim JSON"),
+    )
+    .expect("write prepared claim");
+
+    seed_signing_journal(
+        config,
+        agreement,
+        BtcAdaptorSessionDomain::Bitcoin,
+        &config.signing.bitcoin,
+        maker_secret,
+        taker_secret,
+    );
+    seed_signing_journal(
+        config,
+        agreement,
+        BtcAdaptorSessionDomain::Lez,
+        &config.signing.lez,
+        maker_secret,
+        taker_secret,
+    );
+}
+
+#[allow(clippy::too_many_lines)] // The fixture spells out every durable ceremony transition.
+fn seed_signing_journal(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    domain: BtcAdaptorSessionDomain,
+    signing: &SigningSessionConfig,
+    maker_secret: [u8; 32],
+    taker_secret: [u8; 32],
+) {
+    let session_id = *signing.session_id.as_bytes();
+    let context = agreement
+        .adaptor_session_context(domain, session_id)
+        .expect("agreement-derived signing context");
+    let maker_nonce = FreshAdaptorNonce::generate(&context, SigningRole::Maker, maker_secret)
+        .expect("maker fresh nonce");
+    let taker_nonce = FreshAdaptorNonce::generate(&context, SigningRole::Taker, taker_secret)
+        .expect("taker fresh nonce");
+    let (local_role, local_secret, local_nonce, peer_role, peer_secret, peer_nonce) =
+        match config.role {
+            ActorRole::Maker => (
+                SigningRole::Maker,
+                maker_secret,
+                &maker_nonce,
+                SigningRole::Taker,
+                taker_secret,
+                &taker_nonce,
+            ),
+            ActorRole::Taker => (
+                SigningRole::Taker,
+                taker_secret,
+                &taker_nonce,
+                SigningRole::Maker,
+                maker_secret,
+                &maker_nonce,
+            ),
+        };
+    let identity = AdaptorSessionIdentity::new(
+        session_id,
+        config.role.signer(),
+        context.durable_context_binding(),
+        context.message(),
+        context.adaptor_point(),
+        context.ordered_public_keys(),
+    );
+    let mut journal =
+        SqliteAdaptorSessionJournal::open(&signing.journal_db).expect("create signer journal");
+    let _ = journal
+        .reserve(AdaptorSessionReservation::new(
+            identity.clone(),
+            SecretNonceBytes::new(*local_nonce.secret_nonce()),
+            AdaptorPublicNonce::new(local_nonce.public_nonce()),
+            AdaptorNonceCommitment::new(local_nonce.commitment()),
+        ))
+        .expect("reserve local nonce");
+    let _ = journal
+        .record_peer_commitment(
+            &identity,
+            AdaptorNonceCommitment::new(peer_nonce.commitment()),
+        )
+        .expect("record peer commitment");
+    verify_nonce_commitment(
+        &context,
+        peer_role,
+        peer_nonce.commitment(),
+        peer_nonce.public_nonce(),
+    )
+    .expect("verify peer nonce");
+    let _ = journal
+        .record_verified_peer_public_nonce(
+            &identity,
+            AdaptorPublicNonce::new(peer_nonce.public_nonce()),
+        )
+        .expect("record peer nonce");
+    let own_partial = journal
+        .sign_and_persist_partial(&identity, |material| {
+            sign_persisted_adaptor_partial(
+                &context,
+                local_role,
+                local_secret,
+                PersistedAdaptorSigningMaterial::new(
+                    *material.identity().signing_domain(),
+                    material.secret_nonce(),
+                    *material.own_public_nonce().bytes(),
+                    local_nonce.commitment(),
+                    peer_nonce.commitment(),
+                    *material.peer_public_nonce().bytes(),
+                ),
+            )
+            .map(AdaptorPartialSignature::new)
+            .map_err(|_| ())
+        })
+        .expect("persist local partial")
+        .partial();
+    let peer_partial = sign_persisted_adaptor_partial(
+        &context,
+        peer_role,
+        peer_secret,
+        PersistedAdaptorSigningMaterial::new(
+            context.durable_context_binding(),
+            peer_nonce.secret_nonce(),
+            peer_nonce.public_nonce(),
+            peer_nonce.commitment(),
+            local_nonce.commitment(),
+            local_nonce.public_nonce(),
+        ),
+    )
+    .expect("peer partial");
+    let (maker_public_nonce, taker_public_nonce, maker_partial, taker_partial) = match config.role {
+        ActorRole::Maker => (
+            local_nonce.public_nonce(),
+            peer_nonce.public_nonce(),
+            *own_partial.bytes(),
+            peer_partial,
+        ),
+        ActorRole::Taker => (
+            peer_nonce.public_nonce(),
+            local_nonce.public_nonce(),
+            peer_partial,
+            *own_partial.bytes(),
+        ),
+    };
+    verify_adaptor_partial_signature(
+        &context,
+        peer_role,
+        maker_public_nonce,
+        taker_public_nonce,
+        peer_partial,
+    )
+    .expect("verify peer partial");
+    let _ = journal
+        .record_verified_peer_partial(&identity, AdaptorPartialSignature::new(peer_partial))
+        .expect("record peer partial");
+    let presignature = aggregate_adaptor_presignature(
+        &context,
+        maker_public_nonce,
+        taker_public_nonce,
+        maker_partial,
+        taker_partial,
+    )
+    .expect("aggregate presignature");
+    let _ = journal
+        .record_verified_presignature(&identity, AdaptorPresignature::new(presignature))
+        .expect("record presignature");
 }
 
 fn test_secret(byte: u8) -> SecretKey {
@@ -225,7 +481,7 @@ fn directional_agreement(direction: SwapDirection) -> BtcAgreementV1 {
                 SwapDirection::TakerSellsForeign => 1_700_000_100_000,
                 SwapDirection::TakerSellsLez => 1_700_000_500_000,
             },
-            [19; 32],
+            support::lez_claim_message_hash(),
         ),
         BtcP2trTermsV1::from_contract(&contract),
         funding,
@@ -353,6 +609,191 @@ fn maker_lock_observation(
             FINALIZED_LEZ_CONFIRMATION_UNITS
         },
         chain_evidence: vec![b'm', b'a', b'k', b'e', b'r', evidence_suffix],
+    }
+}
+
+#[test]
+fn claim_recovery_config_requires_distinct_sessions_and_paths() {
+    let fixture = ActorFixture::new();
+    let mut config = fixture.config.clone();
+    let valid = config.signing.clone();
+    config
+        .validate()
+        .expect("distinct claim recovery authority");
+
+    let mut zero = valid.clone();
+    zero.bitcoin.session_id = Hex32::from_bytes([0; 32]);
+    config.signing = zero;
+    assert_eq!(config.validate(), Err(ActorConfigError::Invalid));
+
+    let mut reused_id = valid.clone();
+    reused_id.lez.session_id = reused_id.bitcoin.session_id;
+    config.signing = reused_id;
+    assert_eq!(config.validate(), Err(ActorConfigError::Invalid));
+
+    let mut missing_taker_secret = valid.clone();
+    missing_taker_secret.adaptor_secret_file = None;
+    config.signing = missing_taker_secret;
+    assert_eq!(config.validate(), Err(ActorConfigError::Invalid));
+
+    let mut aliased_path = valid.clone();
+    aliased_path.lez.journal_db = aliased_path.bitcoin.journal_db.clone();
+    config.signing = aliased_path;
+    assert_eq!(config.validate(), Err(ActorConfigError::Invalid));
+
+    let mut aliased_secret = valid;
+    aliased_secret.adaptor_secret_file = Some(aliased_secret.bitcoin.journal_db.clone());
+    config.signing = aliased_secret;
+    assert_eq!(config.validate(), Err(ActorConfigError::Invalid));
+
+    let mut maker = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    assert_eq!(maker.config.signing.adaptor_secret_file, None);
+    maker.config.signing.adaptor_secret_file =
+        Some(maker.directory.path().join("unexpected-maker-secret"));
+    assert_eq!(maker.config.validate(), Err(ActorConfigError::Invalid));
+
+    let debug = format!("{:?}", fixture.config);
+    assert!(!debug.contains("adaptor-secret.key"));
+    assert!(!debug.contains(&hex::encode(support::ADAPTOR_SECRET)));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn activation_requires_a_private_point_matching_taker_adaptor_secret() {
+    for mutation in [
+        "missing",
+        "short",
+        "wrong",
+        "world_readable",
+        "symlink",
+        "hardlink",
+    ] {
+        let fixture = ActorFixture::new();
+        let secret_path = fixture
+            .config
+            .signing
+            .adaptor_secret_file
+            .as_ref()
+            .expect("taker secret path");
+        match mutation {
+            "missing" => fs::remove_file(secret_path).expect("remove secret"),
+            "short" => {
+                fs::write(secret_path, b"53\n").expect("write short secret");
+            }
+            "wrong" => write_private_secret(secret_path, [0x54; 32]),
+            "world_readable" => {
+                fs::set_permissions(secret_path, fs::Permissions::from_mode(0o644))
+                    .expect("loosen secret permissions");
+            }
+            "symlink" => {
+                let target = fixture.directory.path().join("secret-target");
+                write_private_secret(&target, support::ADAPTOR_SECRET);
+                fs::remove_file(secret_path).expect("remove original secret");
+                symlink(&target, secret_path).expect("replace with symlink");
+            }
+            "hardlink" => {
+                let alias = fixture.directory.path().join("secret-hardlink");
+                fs::hard_link(secret_path, alias).expect("create hard-link alias");
+            }
+            _ => unreachable!("fixed mutation"),
+        }
+        let error = execute_actor_command(&fixture.config, ActorCommand::Activate)
+            .await
+            .expect_err("unsafe or mismatched secret must fail closed");
+        assert_eq!(
+            error,
+            ActorCommandError::ActivationMaterialUnavailable,
+            "mutation: {mutation}"
+        );
+        assert!(!fixture.config.state_db.exists(), "mutation: {mutation}");
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn activation_requires_existing_signing_material_before_state_creation() {
+    let fixture = ActorFixture::without_activation_material();
+    assert!(!fixture.config.state_db.exists());
+
+    let error = execute_actor_command(&fixture.config, ActorCommand::Activate)
+        .await
+        .expect_err("missing signer journals and prepared claim must fail closed");
+    assert_eq!(error, ActorCommandError::ActivationMaterialUnavailable);
+    assert!(
+        !fixture.config.state_db.exists(),
+        "failed pre-lock validation must not create actor state"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn activation_rejects_crosswired_journals_and_prepared_result_drift() {
+    for mutation in [
+        "journal_domain",
+        "run",
+        "claimant",
+        "request",
+        "invalid_hash",
+        "valid_other_message",
+    ] {
+        let mut fixture = ActorFixture::new();
+        match mutation {
+            "journal_domain" => {
+                std::mem::swap(
+                    &mut fixture.config.signing.bitcoin.journal_db,
+                    &mut fixture.config.signing.lez.journal_db,
+                );
+            }
+            "run" | "claimant" | "request" | "invalid_hash" | "valid_other_message" => {
+                let bytes = fs::read(&fixture.config.signing.prepared_witnessed_claim_result_file)
+                    .expect("prepared");
+                let mut prepared: PrepareWitnessedClaimResult =
+                    serde_json::from_slice(&bytes).expect("prepared result");
+                match mutation {
+                    "run" => {
+                        prepared.context.run_id =
+                            RunId::new("different-run").expect("different run");
+                    }
+                    "claimant" => {
+                        prepared.context.sidecar_role = match prepared.context.sidecar_role {
+                            BridgeParticipant::Maker => BridgeParticipant::Taker,
+                            BridgeParticipant::Taker => BridgeParticipant::Maker,
+                        };
+                    }
+                    "request" => {
+                        prepared.context.request_id =
+                            RequestId::new("different-request").expect("different request");
+                    }
+                    "invalid_hash" => {
+                        prepared.claim.message_hash = Hex32::from_bytes([1; 32]);
+                    }
+                    "valid_other_message" => {
+                        let other = b"internally-valid-but-not-agreement-bound".to_vec();
+                        prepared.claim.message_hash =
+                            Hex32::from_bytes(support::lez_message_hash(&other));
+                        prepared.claim.exact_message_bytes =
+                            ExactMessageBytes::new(other).expect("other message");
+                    }
+                    _ => unreachable!("fixed mutation"),
+                }
+                fs::write(
+                    &fixture.config.signing.prepared_witnessed_claim_result_file,
+                    serde_json::to_vec(&prepared).expect("mutated result"),
+                )
+                .expect("rewrite prepared result");
+            }
+            _ => unreachable!("fixed mutation"),
+        }
+        fixture
+            .config
+            .validate()
+            .expect("structurally valid config");
+        let error = execute_actor_command(&fixture.config, ActorCommand::Activate)
+            .await
+            .expect_err("crosswired activation material must fail closed");
+        assert_eq!(
+            error,
+            ActorCommandError::ActivationMaterialUnavailable,
+            "mutation: {mutation}"
+        );
+        assert!(!fixture.config.state_db.exists(), "mutation: {mutation}");
     }
 }
 

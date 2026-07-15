@@ -16,30 +16,37 @@ use std::{
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use lez_bridge_adapter::{CapabilityFileBridgeClientFactory, FreshLezBridgeTransportFactory};
-use lez_bridge_client::BridgeClient;
+use lez_bridge_client::{BridgeClient, validate_prepared_witnessed_claim};
 use lez_bridge_protocol::{
     ChainTip, DiscoveryWindow, EscrowState, Hex32, MessageContext,
-    ObserveFinalizedWitnessedFundingRequest, Participant as BridgeParticipant, RequestId, RunId,
-    RuntimeCompatibility, RuntimeDescriptor, WitnessedEscrowMetadataFacts,
-    WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
+    ObserveFinalizedWitnessedFundingRequest, Participant as BridgeParticipant,
+    PrepareWitnessedClaimResult, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    WitnessedEscrowMetadataFacts, WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
 };
 use lez_btc_core_adapter::{
     BitcoinCoreAdapter, BitcoinCoreEvidenceV1, BitcoinCoreRpc, CoreConnectivityPolicy,
     FundingObservation, HttpBitcoinCoreConfig, HttpBitcoinCoreRpc,
 };
-use lez_btc_swap_sdk::{BtcAgreementV1, MAX_BTC_AGREEMENT_RECORD_BYTES};
+use lez_btc_swap_sdk::{
+    BtcAdaptorSessionDomain, BtcAgreementV1, MAX_BTC_AGREEMENT_RECORD_BYTES,
+    verify_adaptor_presignature, verify_adaptor_secret,
+};
 use lez_swap_core::{Chain, Participant, Phase};
 use lez_swap_store::{
-    BtcAgreementAcceptance, BtcLifecycleEvidenceV1, BtcOfflineStatus, BtcRecoveryError,
+    AdaptorSessionIdentity, AdaptorSessionPhase, AdaptorSessionRole, BtcAgreementAcceptance,
+    BtcLifecycleEvidenceV1, BtcOfflineStatus, BtcRecoveryError, SqliteAdaptorSessionJournal,
     SqliteBtcRecoveryStore,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
+use zeroize::Zeroizing;
 
-const CONFIG_SCHEMA_VERSION: u16 = 1;
+const CONFIG_SCHEMA_VERSION: u16 = 2;
 const OUTPUT_SCHEMA_VERSION: u16 = 1;
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
+const MAX_PREPARED_CLAIM_RESULT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_ADAPTOR_SECRET_FILE_BYTES: usize = 65;
 const MAX_REQUEST_TIMEOUT_MILLIS: u64 = 60_000;
 const FINALIZED_LEZ_CONFIRMATION_UNITS: u32 = 1;
 
@@ -100,6 +107,13 @@ impl ActorRole {
             Self::Taker => BridgeParticipant::Taker,
         }
     }
+
+    const fn signer(self) -> AdaptorSessionRole {
+        match self {
+            Self::Maker => AdaptorSessionRole::Maker,
+            Self::Taker => AdaptorSessionRole::Taker,
+        }
+    }
 }
 
 /// Explicit Bitcoin Core connectivity posture.
@@ -141,6 +155,36 @@ struct LezBridgeConfig {
     discovery_max_blocks: u32,
 }
 
+/// One agreement-derived durable adaptor-signing session.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SigningSessionConfig {
+    session_id: Hex32,
+    journal_db: PathBuf,
+}
+
+/// Claim-recovery authority required before activation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ClaimRecoveryConfig {
+    bitcoin: SigningSessionConfig,
+    lez: SigningSessionConfig,
+    prepared_witnessed_claim_result_file: PathBuf,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_path",
+        skip_serializing_if = "Option::is_none"
+    )]
+    adaptor_secret_file: Option<PathBuf>,
+}
+
+fn deserialize_present_path<'de, D>(deserializer: D) -> Result<Option<PathBuf>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    PathBuf::deserialize(deserializer).map(Some)
+}
+
 /// Owner-private, role-fixed disk configuration for one actor.
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -152,6 +196,7 @@ pub struct ActorConfig {
     accepted_at_unix_seconds: u64,
     bitcoin_core: BitcoinCoreConfig,
     lez_bridge: LezBridgeConfig,
+    signing: ClaimRecoveryConfig,
 }
 
 impl fmt::Debug for ActorConfig {
@@ -165,6 +210,7 @@ impl fmt::Debug for ActorConfig {
             .field("accepted_at_unix_seconds", &self.accepted_at_unix_seconds)
             .field("bitcoin_core", &"[REDACTED]")
             .field("lez_bridge", &"[REDACTED]")
+            .field("signing", &"[REDACTED]")
             .finish()
     }
 }
@@ -199,12 +245,44 @@ impl ActorConfig {
         {
             return Err(ActorConfigError::Invalid);
         }
-        let paths = [
+        let mut paths = vec![
             &self.agreement_file,
             &self.state_db,
             &self.bitcoin_core.cookie_file,
             &self.lez_bridge.capability_file,
         ];
+        if self
+            .signing
+            .bitcoin
+            .session_id
+            .as_bytes()
+            .iter()
+            .all(|byte| *byte == 0)
+            || self
+                .signing
+                .lez
+                .session_id
+                .as_bytes()
+                .iter()
+                .all(|byte| *byte == 0)
+            || self.signing.bitcoin.session_id == self.signing.lez.session_id
+        {
+            return Err(ActorConfigError::Invalid);
+        }
+        match (self.role, &self.signing.adaptor_secret_file) {
+            (ActorRole::Taker, Some(_)) | (ActorRole::Maker, None) => {}
+            (ActorRole::Taker, None) | (ActorRole::Maker, Some(_)) => {
+                return Err(ActorConfigError::Invalid);
+            }
+        }
+        paths.extend([
+            &self.signing.bitcoin.journal_db,
+            &self.signing.lez.journal_db,
+            &self.signing.prepared_witnessed_claim_result_file,
+        ]);
+        if let Some(path) = &self.signing.adaptor_secret_file {
+            paths.push(path);
+        }
         if paths.iter().any(|path| !is_normalized_absolute(path)) {
             return Err(ActorConfigError::Invalid);
         }
@@ -389,6 +467,9 @@ pub enum ActorCommandError {
     /// No activated role-local state exists.
     #[error("actor is not activated")]
     NotActivated,
+    /// Required pre-lock signer journals or prepared claim material are unavailable.
+    #[error("actor activation material is unavailable")]
+    ActivationMaterialUnavailable,
     /// A chain observation was unavailable, malformed, or contradicted signed terms.
     #[error("actor first-lock observation is unavailable")]
     ObservationUnavailable,
@@ -506,6 +587,7 @@ pub async fn execute_actor_command(
 
 fn activate(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommandError> {
     let (agreement, wire) = load_agreement(config)?;
+    validate_activation_material(config, &agreement)?;
     let store = open_store(config, &agreement, wire)?;
     let was_replay = store.acceptance_was_replay();
     let status = store
@@ -517,6 +599,105 @@ fn activate(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommandErr
         ActorEffectOutcomeV1::Activated { was_replay },
         &status,
     ))
+}
+
+fn validate_activation_material(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+) -> Result<(), ActorCommandError> {
+    let bytes = read_stable_file(
+        &config.signing.prepared_witnessed_claim_result_file,
+        MAX_PREPARED_CLAIM_RESULT_BYTES,
+        false,
+    )
+    .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?;
+    let mut deserializer = serde_json::Deserializer::from_slice(&bytes);
+    let prepared = PrepareWitnessedClaimResult::deserialize(&mut deserializer)
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+    deserializer
+        .end()
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+    if prepared.context.run_id != config.lez_bridge.run_id
+        || prepared.context.sidecar_role != bridge_participant(agreement.lez_claimant())
+        || prepared.context.request_id != prepared.claim.preparation_request_id
+        || validate_prepared_witnessed_claim(&prepared.claim).is_err()
+        || prepared.claim.message_hash.as_bytes() != agreement.lez_terms().claim_message_hash()
+    {
+        return Err(ActorCommandError::ActivationMaterialUnavailable);
+    }
+    validate_signer_journal(
+        config,
+        agreement,
+        BtcAdaptorSessionDomain::Bitcoin,
+        &config.signing.bitcoin,
+    )?;
+    validate_signer_journal(
+        config,
+        agreement,
+        BtcAdaptorSessionDomain::Lez,
+        &config.signing.lez,
+    )?;
+    validate_taker_adaptor_secret(config, agreement)
+}
+
+fn validate_taker_adaptor_secret(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+) -> Result<(), ActorCommandError> {
+    if config.role == ActorRole::Maker {
+        return Ok(());
+    }
+    let path = config
+        .signing
+        .adaptor_secret_file
+        .as_ref()
+        .ok_or(ActorCommandError::ActivationMaterialUnavailable)?;
+    let secret = read_private_adaptor_secret(path)
+        .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?;
+    let context = agreement
+        .adaptor_session_context(
+            BtcAdaptorSessionDomain::Bitcoin,
+            *config.signing.bitcoin.session_id.as_bytes(),
+        )
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+    verify_adaptor_secret(&context, secret)
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)
+}
+
+fn validate_signer_journal(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    domain: BtcAdaptorSessionDomain,
+    signing: &SigningSessionConfig,
+) -> Result<(), ActorCommandError> {
+    let session_id = *signing.session_id.as_bytes();
+    let context = agreement
+        .adaptor_session_context(domain, session_id)
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+    let expected_identity = AdaptorSessionIdentity::new(
+        session_id,
+        config.role.signer(),
+        context.durable_context_binding(),
+        context.message(),
+        context.adaptor_point(),
+        context.ordered_public_keys(),
+    );
+    let journal = SqliteAdaptorSessionJournal::open_existing(&signing.journal_db)
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+    let snapshot = journal
+        .load(&session_id)
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?
+        .ok_or(ActorCommandError::ActivationMaterialUnavailable)?;
+    let presignature = snapshot
+        .presignature()
+        .ok_or(ActorCommandError::ActivationMaterialUnavailable)?;
+    if snapshot.identity() != &expected_identity
+        || snapshot.phase() != AdaptorSessionPhase::PresignatureVerified
+        || verify_adaptor_presignature(&context, *presignature.bytes()).is_err()
+    {
+        return Err(ActorCommandError::ActivationMaterialUnavailable);
+    }
+    Ok(())
 }
 
 fn status(config: &ActorConfig) -> Result<ActorStatusV1, ActorCommandError> {
@@ -1114,6 +1295,41 @@ fn read_stable_file(path: &Path, maximum: usize, owner_private: bool) -> Result<
         .map_err(|_| ())?;
     let after = fs::symlink_metadata(path).map_err(|_| ())?;
     validate_file_metadata(&after, maximum, owner_private)?;
+    if !same_file(&opened, &after) || bytes.is_empty() || bytes.len() > maximum {
+        return Err(());
+    }
+    Ok(bytes)
+}
+
+fn read_private_adaptor_secret(path: &Path) -> Result<Zeroizing<[u8; 32]>, ()> {
+    let bytes = read_stable_private_file(path, MAX_ADAPTOR_SECRET_FILE_BYTES)?;
+    let encoded = bytes.strip_suffix(b"\n").unwrap_or(bytes.as_slice());
+    if encoded.len() != 64
+        || !encoded.iter().all(u8::is_ascii_hexdigit)
+        || encoded.iter().any(u8::is_ascii_uppercase)
+    {
+        return Err(());
+    }
+    let mut secret = Zeroizing::new([0_u8; 32]);
+    hex::decode_to_slice(encoded, &mut secret[..]).map_err(|_| ())?;
+    Ok(secret)
+}
+
+fn read_stable_private_file(path: &Path, maximum: usize) -> Result<Zeroizing<Vec<u8>>, ()> {
+    let before = fs::symlink_metadata(path).map_err(|_| ())?;
+    validate_file_metadata(&before, maximum, true)?;
+    let file = File::open(path).map_err(|_| ())?;
+    let opened = file.metadata().map_err(|_| ())?;
+    validate_file_metadata(&opened, maximum, true)?;
+    if !same_file(&before, &opened) {
+        return Err(());
+    }
+    let mut bytes = Zeroizing::new(Vec::with_capacity(maximum.saturating_add(1)));
+    file.take(u64::try_from(maximum).map_err(|_| ())?.saturating_add(1))
+        .read_to_end(bytes.as_mut())
+        .map_err(|_| ())?;
+    let after = fs::symlink_metadata(path).map_err(|_| ())?;
+    validate_file_metadata(&after, maximum, true)?;
     if !same_file(&opened, &after) || bytes.is_empty() || bytes.len() > maximum {
         return Err(());
     }

@@ -15,8 +15,8 @@ pub use adaptor::{
     AdaptorSessionContext, AdaptorSessionError, AdaptorSigner, FreshAdaptorNonce,
     PersistedAdaptorSigningMaterial, SigningRole, adapt_presignature,
     aggregate_adaptor_presignature, extract_adaptor_secret, sign_persisted_adaptor_partial,
-    verify_adaptor_partial_signature, verify_adaptor_presignature, verify_final_signature,
-    verify_nonce_commitment,
+    verify_adaptor_partial_signature, verify_adaptor_presignature, verify_adaptor_secret,
+    verify_final_signature, verify_nonce_commitment,
 };
 pub use agreement_v1::{
     BTC_AGREEMENT_SCHEMA_V1, BtcAdaptorSessionDomain, BtcAgreementBodyV1, BtcAgreementRecordV1,
