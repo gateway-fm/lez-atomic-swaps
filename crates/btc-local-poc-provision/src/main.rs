@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result};
-use btc_local_poc_provision::{finalize_stage2, generate_stage1};
+use btc_local_poc_provision::{finalize_stage2, generate_stage1, prepare_funding};
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 
@@ -26,6 +26,15 @@ enum Action {
         #[arg(long)]
         planning_file: PathBuf,
         /// New normalized absolute owner-private fixture root.
+        #[arg(long)]
+        output_root: PathBuf,
+    },
+    /// Offline-sign an exact funding transaction from one actual rawtr service UTXO.
+    PrepareFunding {
+        /// Strict owner-private funding-preparation JSON.
+        #[arg(long)]
+        spec_file: PathBuf,
+        /// Existing stage-one normalized absolute fixture root.
         #[arg(long)]
         output_root: PathBuf,
     },
@@ -56,6 +65,10 @@ fn execute(arguments: Arguments) -> Result<()> {
             planning_file,
             output_root,
         } => print_json(&generate_stage1(&planning_file, &output_root)?),
+        Action::PrepareFunding {
+            spec_file,
+            output_root,
+        } => print_json(&prepare_funding(&spec_file, &output_root)?),
         Action::Finalize {
             spec_file,
             output_root,

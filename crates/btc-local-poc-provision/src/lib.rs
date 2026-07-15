@@ -19,9 +19,14 @@ use std::{
 
 use anyhow::{Context as _, Result, bail, ensure};
 use bitcoin::{
-    Amount, BlockHash, OutPoint, ScriptBuf, TxOut, Txid,
+    Amount, BlockHash, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
+    absolute,
+    consensus::{deserialize, serialize},
     hashes::Hash as _,
-    secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey},
+    key::TweakedPublicKey,
+    secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey, XOnlyPublicKey},
+    sighash::{Prevouts, SighashCache, TapSighashType},
+    taproot, transaction,
 };
 use lez_btc_swap_sdk::{
     AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BtcAgreementBodyV1, BtcAgreementRecordV1,
@@ -39,6 +44,8 @@ const MAX_JSON_BYTES: usize = 64 * 1024;
 const PUBLIC_SPEC_FILE: &str = "public-spec.json";
 const AGREEMENT_FILE: &str = "agreement.borsh";
 const SUMMARY_FILE: &str = "agreement-summary.json";
+const FUNDING_TRANSACTION_FILE: &str = "funding-transaction.hex";
+const FUNDING_SUMMARY_FILE: &str = "funding-transaction-summary.json";
 const PRIVATE_DIRECTORY: &str = "private";
 const MAKER_SIGNING_FILE: &str = "maker-signing.key";
 const TAKER_SIGNING_FILE: &str = "taker-signing.key";
@@ -97,7 +104,11 @@ pub struct Stage2Summary {
     agreement_commitment: String,
     bitcoin_funding_transaction_id: String,
     bitcoin_funding_output_index: u32,
-    bitcoin_observed_confirmations: u32,
+    bitcoin_funding_transaction_file: PathBuf,
+    bitcoin_funding_transaction_sha256: String,
+    bitcoin_funding_authorization: AuthorizationStatus,
+    bitcoin_node_state: NodeStateStatus,
+    planned_bitcoin_funding_anchor_height: u32,
     bitcoin_contract_script_pubkey: String,
     bitcoin_claim_unsigned_transaction: String,
     bitcoin_claim_bip341_sighash: String,
@@ -105,6 +116,53 @@ pub struct Stage2Summary {
     lez_aggregate_authority_account: String,
     private_material_disclosed: bool,
     agreement_revalidated: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum AuthorizationStatus {
+    Verified,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum NodeStateStatus {
+    NotAsserted,
+}
+
+/// Secret-free evidence for one exact offline-signed funding transaction.
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FundingPreparationSummary {
+    schema_version: u16,
+    direction: Direction,
+    signed_transaction_file: PathBuf,
+    summary_file: PathBuf,
+    signed_transaction_sha256: String,
+    transaction_id: String,
+    witness_transaction_id: String,
+    input_transaction_id: String,
+    input_output_index: u32,
+    input_value_sat: u64,
+    input_script_pubkey: String,
+    contract_output_index: u32,
+    contract_value_sat: u64,
+    contract_script_pubkey: String,
+    contract_merkle_root: String,
+    change_output_index: u32,
+    change_value_sat: u64,
+    fee_sat: u64,
+    bip341_sighash: String,
+    private_material_disclosed: bool,
+    node_state_asserted: bool,
+}
+
+impl FundingPreparationSummary {
+    /// Owner-only file containing the exact signed transaction as lowercase hex.
+    #[must_use]
+    pub fn signed_transaction_file(&self) -> &Path {
+        &self.signed_transaction_file
+    }
 }
 
 impl Stage2Summary {
@@ -228,15 +286,37 @@ struct FinalizeSpec {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct FundingPreparationSpec {
+    schema_version: u16,
+    stage1_public_sha256: String,
+    direction: Direction,
+    service_input: ServiceInput,
+    contract_value_sat: u64,
+    fee_sat: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ServiceInput {
+    transaction_id: String,
+    output_index: u32,
+    value_sat: u64,
+    script_pubkey: String,
+    signing_secret_key_file: PathBuf,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct BitcoinFacts {
     genesis_block_hash: String,
     required_confirmations: u32,
-    observed_confirmations: u32,
+    funding_signed_transaction: String,
+    funding_signed_transaction_sha256: String,
+    funding_input_value_sat: u64,
+    funding_input_script_pubkey: String,
     funding_transaction_id: String,
     funding_output_index: u32,
     funding_value_sat: u64,
-    funding_anchor_height: u32,
-    funding_script_pubkey: String,
     claim_value_sat: u64,
 }
 
@@ -283,6 +363,7 @@ struct AuthorityMapping {
 #[serde(deny_unknown_fields)]
 struct RecoveryPolicy {
     refund_csv_blocks: u32,
+    planned_bitcoin_funding_anchor_height: u32,
     bitcoin_refund_height: u32,
     earlier_refund_latest_unix_seconds: u64,
     later_refund_earliest_unix_seconds: u64,
@@ -379,6 +460,199 @@ pub fn generate_stage1(planning_file: &Path, output_root: &Path) -> Result<Stage
     })
 }
 
+/// Creates and signs the exact Bitcoin funding transaction without broadcasting it.
+///
+/// The caller supplies one `rawtr` service-output candidate obtained from local
+/// Core. Its owner-only key file is used only for one BIP-341 key-path signature.
+/// The resulting exact transaction and secret-free summary are persisted
+/// create-new. This function proves construction and authorization, but neither
+/// contacts Core nor claims that the input is unspent, policy-accepted,
+/// broadcast, mined, or final.
+///
+/// # Errors
+///
+/// Rejects malformed/cross-wired stage-one material, an unsafe or mismatched
+/// service key, invalid input/value/fee facts, or existing output evidence.
+#[allow(clippy::too_many_lines)]
+pub fn prepare_funding(spec_file: &Path, output_root: &Path) -> Result<FundingPreparationSummary> {
+    validate_existing_output_root(output_root)?;
+    let spec: FundingPreparationSpec = read_strict_json(spec_file)?;
+    ensure!(
+        spec.schema_version == SCHEMA_VERSION,
+        "unsupported funding-preparation schema"
+    );
+
+    let public_path = output_root.join(PUBLIC_SPEC_FILE);
+    let public_bytes = read_stable_file(&public_path, MAX_JSON_BYTES, true)?;
+    ensure!(
+        canonical_hex(&spec.stage1_public_sha256, 32, "stage-one public SHA-256")?
+            == sha256_hex(&public_bytes),
+        "stage-one public document hash mismatch"
+    );
+    let public: PublicSpec =
+        serde_json::from_slice(&public_bytes).context("invalid public spec")?;
+    ensure!(
+        public.schema_version == SCHEMA_VERSION,
+        "unsupported public schema"
+    );
+    let secrets = Secrets::load(&output_root.join(PRIVATE_DIRECTORY))?;
+    let reconstructed = public_spec(
+        &secrets,
+        parse_hex32(&public.maker.lez_owner_account, "maker LEZ account")?,
+        parse_hex32(&public.taker.lez_owner_account, "taker LEZ account")?,
+        public.refund_csv_blocks,
+    )?;
+    ensure!(
+        public == reconstructed,
+        "stage-one public and private material mismatch"
+    );
+
+    let contract_public = match spec.direction {
+        Direction::TakerSellsForeign => &public.contracts.taker_sells_foreign,
+        Direction::TakerSellsLez => &public.contracts.taker_sells_lez,
+    };
+    let contract = contract_from_public(&public, spec.direction)?;
+    let contract_script = ScriptBuf::from_bytes(contract.script_pubkey_bytes().to_vec());
+    ensure!(
+        hex::encode(contract.script_pubkey_bytes()) == contract_public.script_pubkey,
+        "reconstructed P2TR contract mismatch"
+    );
+
+    ensure_normalized_absolute(&spec.service_input.signing_secret_key_file)?;
+    let signing_bytes = read_secret(&spec.service_input.signing_secret_key_file)?;
+    let signing_secret = secret_key(&signing_bytes, "service input signing key")?;
+    let secp = Secp256k1::new();
+    let signing_keypair = Keypair::from_secret_key(&secp, &signing_secret);
+    let input_script = ScriptBuf::from_bytes(parse_hex(
+        &spec.service_input.script_pubkey,
+        34,
+        "service input scriptPubKey",
+    )?);
+    let expected_input_script = ScriptBuf::new_p2tr_tweaked(
+        TweakedPublicKey::dangerous_assume_tweaked(signing_keypair.x_only_public_key().0),
+    );
+    ensure!(
+        input_script == expected_input_script,
+        "service input scriptPubKey does not belong to the signing key"
+    );
+    let input_txid = Txid::from_str(&spec.service_input.transaction_id)
+        .context("invalid service input transaction ID")?;
+    ensure!(
+        input_txid.to_byte_array() != [0; 32],
+        "zero service input transaction ID"
+    );
+    ensure!(
+        spec.service_input.value_sat <= Amount::MAX_MONEY.to_sat()
+            && spec.contract_value_sat > 0
+            && spec.fee_sat > 0,
+        "invalid Bitcoin funding values"
+    );
+    let change_value_sat = spec
+        .service_input
+        .value_sat
+        .checked_sub(spec.contract_value_sat)
+        .and_then(|remaining| remaining.checked_sub(spec.fee_sat))
+        .context("service input cannot cover the contract output and fee")?;
+    ensure!(
+        change_value_sat > 0,
+        "offline funding requires a nonzero rawtr change output"
+    );
+
+    let mut transaction = Transaction {
+        version: transaction::Version::TWO,
+        lock_time: absolute::LockTime::ZERO,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: input_txid,
+                vout: spec.service_input.output_index,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+            witness: Witness::new(),
+        }],
+        output: vec![
+            TxOut {
+                value: Amount::from_sat(spec.contract_value_sat),
+                script_pubkey: contract_script.clone(),
+            },
+            TxOut {
+                value: Amount::from_sat(change_value_sat),
+                script_pubkey: input_script.clone(),
+            },
+        ],
+    };
+    let prevouts = [TxOut {
+        value: Amount::from_sat(spec.service_input.value_sat),
+        script_pubkey: input_script.clone(),
+    }];
+    let sighash = SighashCache::new(&transaction)
+        .taproot_key_spend_signature_hash(0, &Prevouts::All(&prevouts), TapSighashType::Default)
+        .context("compute service input BIP-341 sighash")?;
+    let signature = secp.sign_schnorr_no_aux_rand(
+        &Message::from_digest(sighash.to_byte_array()),
+        &signing_keypair,
+    );
+    let taproot_signature = taproot::Signature::from_slice(&signature.serialize())
+        .context("encode service input signature")?;
+    transaction.input[0].witness = Witness::p2tr_key_spend(&taproot_signature);
+    Secp256k1::verification_only()
+        .verify_schnorr(
+            &taproot_signature.signature,
+            &Message::from_digest(sighash.to_byte_array()),
+            &signing_keypair.x_only_public_key().0,
+        )
+        .context("verify service input signature")?;
+
+    let raw = serialize(&transaction);
+    let raw_hex = hex::encode(&raw);
+    let transaction_id = transaction.compute_txid();
+    let _ = validate_signed_funding_transaction(
+        &raw_hex,
+        transaction_id,
+        0,
+        spec.contract_value_sat,
+        &contract_script,
+        spec.service_input.value_sat,
+        &input_script,
+    )?;
+
+    let transaction_file = output_root.join(FUNDING_TRANSACTION_FILE);
+    let summary_file = output_root.join(FUNDING_SUMMARY_FILE);
+    ensure_new_file_path(&transaction_file)?;
+    ensure_new_file_path(&summary_file)?;
+    let summary = FundingPreparationSummary {
+        schema_version: SCHEMA_VERSION,
+        direction: spec.direction,
+        signed_transaction_file: transaction_file.clone(),
+        summary_file: summary_file.clone(),
+        signed_transaction_sha256: sha256_hex(&raw),
+        transaction_id: transaction_id.to_string(),
+        witness_transaction_id: transaction.compute_wtxid().to_string(),
+        input_transaction_id: input_txid.to_string(),
+        input_output_index: spec.service_input.output_index,
+        input_value_sat: spec.service_input.value_sat,
+        input_script_pubkey: hex::encode(input_script.as_bytes()),
+        contract_output_index: 0,
+        contract_value_sat: spec.contract_value_sat,
+        contract_script_pubkey: hex::encode(contract.script_pubkey_bytes()),
+        contract_merkle_root: hex::encode(contract.merkle_root_bytes()),
+        change_output_index: 1,
+        change_value_sat,
+        fee_sat: spec.fee_sat,
+        bip341_sighash: hex::encode(sighash.to_byte_array()),
+        private_material_disclosed: false,
+        node_state_asserted: false,
+    };
+    let mut transaction_file_bytes = raw_hex.into_bytes();
+    transaction_file_bytes.push(b'\n');
+    let mut summary_bytes =
+        serde_json::to_vec_pretty(&summary).context("encode funding summary")?;
+    summary_bytes.push(b'\n');
+    write_private_new(&transaction_file, &transaction_file_bytes)?;
+    write_private_new(&summary_file, &summary_bytes)?;
+    Ok(summary)
+}
+
 /// Constructs, countersigns, validates, and writes the canonical agreement.
 ///
 /// # Errors
@@ -429,52 +703,49 @@ pub fn finalize_stage2(spec_file: &Path, output_root: &Path) -> Result<Stage2Sum
         Direction::TakerSellsLez => &public.contracts.taker_sells_lez,
     };
     ensure!(
-        spec.bitcoin.observed_confirmations >= spec.bitcoin.required_confirmations,
-        "Core funding has fewer confirmations than the signed policy"
-    );
-    ensure!(
-        canonical_hex(
-            &spec.bitcoin.funding_script_pubkey,
-            contract_public.script_pubkey.len() / 2,
-            "Core funding scriptPubKey"
-        )? == contract_public.script_pubkey,
-        "Core funding output does not use the planned P2TR script"
-    );
-    ensure!(
         spec.recovery.refund_csv_blocks == public.refund_csv_blocks,
         "recovery CSV differs from stage-one planning"
     );
-    let aggregate = parse_hex32(&public.aggregate_internal_key, "aggregate internal key")?;
-    let refund_key = match direction.bitcoin_funder() {
-        Participant::Maker => parse_hex32(
-            &public.maker.bitcoin_refund_x_only_public_key,
-            "maker refund key",
-        )?,
-        Participant::Taker => parse_hex32(
-            &public.taker.bitcoin_refund_x_only_public_key,
-            "taker refund key",
-        )?,
-    };
-    let contract = P2trSwapOutput::new(
-        TwoPartyAggregateKey::from_bytes(aggregate).context("invalid aggregate key")?,
-        RefundXOnlyKey::from_bytes(refund_key).context("invalid refund key")?,
-        CsvBlockDelay::new(public.refund_csv_blocks).context("invalid refund CSV")?,
-    )
-    .context("invalid P2TR contract")?;
+    let contract = contract_from_public(&public, direction)?;
+    let contract_script = ScriptBuf::from_bytes(contract.script_pubkey_bytes().to_vec());
     ensure!(
         hex::encode(contract.script_pubkey_bytes()) == contract_public.script_pubkey,
         "reconstructed P2TR contract mismatch"
     );
 
+    let funding_txid = Txid::from_str(&spec.bitcoin.funding_transaction_id)
+        .context("invalid prepared funding transaction ID")?;
+    let funding_input_script = ScriptBuf::from_bytes(parse_hex(
+        &spec.bitcoin.funding_input_script_pubkey,
+        34,
+        "prepared funding input scriptPubKey",
+    )?);
+    let funding_transaction = validate_signed_funding_transaction(
+        &spec.bitcoin.funding_signed_transaction,
+        funding_txid,
+        spec.bitcoin.funding_output_index,
+        spec.bitcoin.funding_value_sat,
+        &contract_script,
+        spec.bitcoin.funding_input_value_sat,
+        &funding_input_script,
+    )?;
+    let funding_raw = serialize(&funding_transaction);
+    ensure!(
+        canonical_hex(
+            &spec.bitcoin.funding_signed_transaction_sha256,
+            32,
+            "prepared funding transaction SHA-256"
+        )? == sha256_hex(&funding_raw),
+        "prepared funding transaction hash mismatch"
+    );
+    let funding_transaction_file = output_root.join(FUNDING_TRANSACTION_FILE);
+    let mut funding_file_bytes = spec.bitcoin.funding_signed_transaction.as_bytes().to_vec();
+    funding_file_bytes.push(b'\n');
+    persist_or_match_private(&funding_transaction_file, &funding_file_bytes)?;
+
     let maker_identity = participant_identity(&public.maker)?;
     let taker_identity = participant_identity(&public.taker)?;
     let participants = BtcParticipantsV1::new(maker_identity, taker_identity);
-    let funding_txid = Txid::from_str(&spec.bitcoin.funding_transaction_id)
-        .context("invalid Core funding transaction ID")?;
-    ensure!(
-        funding_txid.to_byte_array() != [0; 32],
-        "zero funding transaction ID"
-    );
     let funding = BtcFundingTermsV1::new(
         funding_txid.to_byte_array(),
         spec.bitcoin.funding_output_index,
@@ -576,14 +847,14 @@ pub fn finalize_stage2(spec_file: &Path, output_root: &Path) -> Result<Stage2Sum
     ensure!(
         spec.recovery.bitcoin_refund_height
             == spec
-                .bitcoin
-                .funding_anchor_height
+                .recovery
+                .planned_bitcoin_funding_anchor_height
                 .checked_add(spec.recovery.refund_csv_blocks)
                 .context("Bitcoin refund height overflow")?,
-        "Bitcoin refund height does not equal funding anchor plus CSV"
+        "Bitcoin refund height does not equal the planned funding anchor plus CSV"
     );
     let recovery = BtcRecoveryPlanV1::new(
-        spec.bitcoin.funding_anchor_height,
+        spec.recovery.planned_bitcoin_funding_anchor_height,
         spec.recovery.bitcoin_refund_height,
         spec.recovery.earlier_refund_latest_unix_seconds,
         spec.recovery.later_refund_earliest_unix_seconds,
@@ -648,7 +919,11 @@ pub fn finalize_stage2(spec_file: &Path, output_root: &Path) -> Result<Stage2Sum
         agreement_commitment: hex::encode(replay.agreement_commitment()),
         bitcoin_funding_transaction_id: funding_txid.to_string(),
         bitcoin_funding_output_index: spec.bitcoin.funding_output_index,
-        bitcoin_observed_confirmations: spec.bitcoin.observed_confirmations,
+        bitcoin_funding_transaction_file: funding_transaction_file,
+        bitcoin_funding_transaction_sha256: sha256_hex(&funding_raw),
+        bitcoin_funding_authorization: AuthorizationStatus::Verified,
+        bitcoin_node_state: NodeStateStatus::NotAsserted,
+        planned_bitcoin_funding_anchor_height: spec.recovery.planned_bitcoin_funding_anchor_height,
         bitcoin_contract_script_pubkey: hex::encode(replay.p2tr_contract().script_pubkey_bytes()),
         bitcoin_claim_unsigned_transaction: hex::encode(
             replay.cooperative_claim().unsigned_transaction_bytes(),
@@ -810,6 +1085,29 @@ fn contract_public(
     })
 }
 
+fn contract_from_public(public: &PublicSpec, direction: Direction) -> Result<P2trSwapOutput> {
+    let refund_key = match direction.bitcoin_funder() {
+        Participant::Maker => parse_hex32(
+            &public.maker.bitcoin_refund_x_only_public_key,
+            "maker refund key",
+        )?,
+        Participant::Taker => parse_hex32(
+            &public.taker.bitcoin_refund_x_only_public_key,
+            "taker refund key",
+        )?,
+    };
+    P2trSwapOutput::new(
+        TwoPartyAggregateKey::from_bytes(parse_hex32(
+            &public.aggregate_internal_key,
+            "aggregate internal key",
+        )?)
+        .context("invalid aggregate key")?,
+        RefundXOnlyKey::from_bytes(refund_key).context("invalid refund key")?,
+        CsvBlockDelay::new(public.refund_csv_blocks).context("invalid refund CSV")?,
+    )
+    .context("invalid P2TR contract")
+}
+
 fn participant_identity(public: &PublicParticipant) -> Result<BtcParticipantIdentityV1> {
     Ok(BtcParticipantIdentityV1::new(
         parse_hex32(&public.lez_owner_account, "participant LEZ account")?,
@@ -824,6 +1122,125 @@ fn participant_identity(public: &PublicParticipant) -> Result<BtcParticipantIden
             "claim destination",
         )?,
     ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_signed_funding_transaction(
+    raw_hex: &str,
+    expected_txid: Txid,
+    contract_output_index: u32,
+    contract_value_sat: u64,
+    contract_script: &ScriptBuf,
+    input_value_sat: u64,
+    input_script: &ScriptBuf,
+) -> Result<Transaction> {
+    ensure!(
+        !raw_hex.is_empty()
+            && raw_hex.len().is_multiple_of(2)
+            && raw_hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        "prepared funding transaction must be canonical lowercase hex"
+    );
+    let raw = hex::decode(raw_hex).context("decode prepared funding transaction")?;
+    let transaction: Transaction =
+        deserialize(&raw).context("decode prepared Bitcoin funding transaction")?;
+    ensure!(
+        serialize(&transaction) == raw,
+        "prepared funding transaction is not canonically encoded"
+    );
+    ensure!(
+        transaction.version == transaction::Version::TWO
+            && transaction.lock_time == absolute::LockTime::ZERO,
+        "prepared funding transaction has unexpected version or locktime"
+    );
+    let [input] = transaction.input.as_slice() else {
+        bail!("prepared funding transaction must have exactly one service input")
+    };
+    ensure!(
+        !input.previous_output.is_null()
+            && input.script_sig.is_empty()
+            && input.sequence == Sequence::ENABLE_RBF_NO_LOCKTIME,
+        "prepared funding transaction has invalid rawtr input semantics"
+    );
+    let witness_items = input.witness.iter().collect::<Vec<_>>();
+    let [signature_bytes] = witness_items.as_slice() else {
+        bail!("prepared funding input must have exactly one key-path witness item")
+    };
+    ensure!(
+        signature_bytes.len() == 64,
+        "prepared funding input must use BIP-341 SIGHASH_DEFAULT"
+    );
+    let signature = taproot::Signature::from_slice(signature_bytes)
+        .context("invalid prepared funding Taproot signature")?;
+    ensure!(
+        input_value_sat > 0 && input_value_sat <= Amount::MAX_MONEY.to_sat(),
+        "prepared funding input value is invalid"
+    );
+    let input_script_bytes = input_script.as_bytes();
+    ensure!(
+        input_script_bytes.len() == 34
+            && input_script_bytes[0] == 0x51
+            && input_script_bytes[1] == 0x20,
+        "prepared funding input is not a canonical rawtr scriptPubKey"
+    );
+    let input_key = XOnlyPublicKey::from_slice(&input_script_bytes[2..])
+        .context("invalid prepared funding rawtr key")?;
+    let prevouts = [TxOut {
+        value: Amount::from_sat(input_value_sat),
+        script_pubkey: input_script.clone(),
+    }];
+    let sighash = SighashCache::new(&transaction)
+        .taproot_key_spend_signature_hash(0, &Prevouts::All(&prevouts), TapSighashType::Default)
+        .context("compute prepared funding BIP-341 sighash")?;
+    Secp256k1::verification_only()
+        .verify_schnorr(
+            &signature.signature,
+            &Message::from_digest(sighash.to_byte_array()),
+            &input_key,
+        )
+        .context("prepared funding signature does not authorize the exact transaction")?;
+
+    ensure!(
+        expected_txid.to_byte_array() != [0; 32] && transaction.compute_txid() == expected_txid,
+        "prepared funding transaction ID mismatch"
+    );
+    let output_index = usize::try_from(contract_output_index)
+        .context("prepared funding output index is not representable")?;
+    let output = transaction
+        .output
+        .get(output_index)
+        .context("prepared funding output index is absent")?;
+    ensure!(
+        contract_value_sat > 0
+            && contract_value_sat <= Amount::MAX_MONEY.to_sat()
+            && output.value.to_sat() == contract_value_sat,
+        "prepared funding output value mismatch"
+    );
+    ensure!(
+        &output.script_pubkey == contract_script,
+        "prepared funding output does not use the planned P2TR script"
+    );
+    let total_output = transaction.output.iter().try_fold(0_u64, |sum, candidate| {
+        sum.checked_add(candidate.value.to_sat())
+    });
+    ensure!(
+        total_output.is_some_and(|value| value < input_value_sat),
+        "prepared funding outputs do not leave a positive bounded fee"
+    );
+    Ok(transaction)
+}
+
+fn persist_or_match_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    if path.exists() {
+        ensure!(
+            read_stable_file(path, MAX_JSON_BYTES, true)? == bytes,
+            "persisted funding transaction differs from the validated exact bytes"
+        );
+        Ok(())
+    } else {
+        write_private_new(path, bytes)
+    }
 }
 
 fn random_secret() -> Result<Zeroizing<[u8; 32]>> {
