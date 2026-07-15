@@ -7,6 +7,7 @@ use lez_swap_store::{
     AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
     AdaptorSessionIdentity, AdaptorSessionJournalError, AdaptorSessionPhase,
     AdaptorSessionReservation, AdaptorSessionRole, SecretNonceBytes, SqliteAdaptorSessionJournal,
+    StoreError,
 };
 use tempfile::tempdir;
 
@@ -40,6 +41,42 @@ fn reservation(identity: AdaptorSessionIdentity, secret: u8) -> AdaptorSessionRe
         AdaptorPublicNonce::new([OWN_NONCE; 66]),
         AdaptorNonceCommitment::new([OWN_COMMITMENT; 32]),
     )
+}
+
+#[test]
+fn existing_only_open_never_creates_a_missing_signer_database() {
+    let directory = tempdir().expect("temporary directory");
+    let missing = directory.path().join("missing-adaptor.sqlite");
+    assert!(matches!(
+        SqliteAdaptorSessionJournal::open_existing(&missing),
+        Err(AdaptorSessionJournalError::Store(
+            StoreError::DatabaseFileUnavailable
+        ))
+    ));
+    assert!(
+        !missing.exists(),
+        "existing-only open must not create a file"
+    );
+
+    let existing = directory.path().join("existing-adaptor.sqlite");
+    let expected = identity(0x19, AdaptorSessionRole::Maker);
+    {
+        let mut journal =
+            SqliteAdaptorSessionJournal::open(&existing).expect("create signer journal");
+        let _ = journal
+            .reserve(reservation(expected.clone(), SECRET))
+            .expect("persist exact signer transcript");
+    }
+    let reopened = SqliteAdaptorSessionJournal::open_existing(&existing)
+        .expect("reopen only the existing signer journal");
+    assert_eq!(
+        reopened
+            .load(expected.session_id())
+            .expect("load exact transcript")
+            .expect("persisted transcript")
+            .identity(),
+        &expected
+    );
 }
 
 fn exchange_nonces(journal: &mut SqliteAdaptorSessionJournal, identity: &AdaptorSessionIdentity) {

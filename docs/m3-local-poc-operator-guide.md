@@ -91,6 +91,33 @@ there is no RPC, node, Docker container, faucet, public endpoint, or external
 availability dependency in this component gate. It does not substitute for
 the still-pending reference-actor run through actual nodes.
 
+Repeat the agreement-derived signing context and the new recovery seams:
+
+~~~sh
+cargo test --locked -p lez-btc-swap-sdk --test agreement_v1 \
+  validated_agreement_derives_both_fresh_adaptor_session_contexts -- --exact
+cargo test --locked -p lez-swap-store --test adaptor_session_journal \
+  existing_only_open_never_creates_a_missing_signer_database -- --exact
+cargo test --locked -p lez-swap-store --test public_effect_journal -- --nocapture
+~~~
+
+The future claim actor retains distinct nonzero Bitcoin and LEZ session IDs and
+role-local journal paths. It rederives keys, role order, messages, adaptor point,
+and the Bitcoin Taproot tweak from the countersigned agreement, then requires
+the existing journal identities to match. The role-runner session JSON is
+manual ceremony input, not actor authority. Claim composition is still pending.
+
+The twelve public-effect tests persist complete node-disclosable Bitcoin or LEZ
+transaction bytes before authorization. Only definitive `Absent + Prepared`
+commits `Started` and grants one send. A crash before or after that RPC never
+re-arms `Started`; `Uncertain` and `Unknown` are observation-only. Exact
+presence may reconcile `Prepared`, `Started`, or `Unknown` to `Accepted`.
+Byte or effect-ID drift and contradictory terminal evidence fail closed. This
+is a temporary-SQLite component gate with no RPC, Docker, faucet, peer, or
+network, not an actor/submission E2E. “Public” describes node-disclosable bytes,
+not an endpoint. Zcash is excluded by the typed chain enum, but raw bytes are not
+secret-scanned; callers must never put secret-bearing material in this journal.
+
 Repeat the typed Bitcoin Core boundary independently:
 
 ~~~sh
@@ -123,6 +150,10 @@ binds the exact prepared transcript and signature. They prove unique success
 plus distinct absence, ambiguity, and conflicting-transcript failures through
 the authenticated server/runtime path. Protocol 22/22, client 2 unit plus 23
 integration and 3 CLI tests, and sidecar 78/78 are GREEN.
+The public `validate_prepared_witnessed_claim` unit boundary checks only that
+the message is nonempty and its bytes match the official domain-separated hash.
+It performs no RPC and does not prove the signature, accounts, transcript,
+inclusion, finality, or other chain truth.
 The tests use deterministic in-process indexer doubles and ephemeral loopback
 servers; they do not contact the local devnet or any public resource. The
 manual flow below repeats the same request against the retained local indexer.

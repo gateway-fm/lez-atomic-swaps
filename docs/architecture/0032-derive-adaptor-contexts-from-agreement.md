@@ -67,6 +67,7 @@ flowchart LR
 - Session-ID freshness and distinctness remain actor-configuration checks; the
   SDK constructor is also useful to deterministic callers that supply their own
   transcript identity.
-- Claim recovery still needs read-only journal opening, prepared witnessed-LEZ
-  artifact validation, exact chain observation, and the durable public-effect
-  journal before revisions three and four can be certified.
+- Existing-only journal opening, public prepared witnessed-LEZ validation, and
+  the durable public-effect journal are now GREEN component seams under ADR
+  0033. Reference-actor composition of those seams, exact chain observation,
+  and revisions three and four remain to be certified.

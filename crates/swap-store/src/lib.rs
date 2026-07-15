@@ -12,6 +12,7 @@ use std::{
 mod adaptor_session_journal;
 mod bridge_operation_journal;
 mod btc_recovery;
+mod public_effect_journal;
 mod zec_recovery;
 
 pub use adaptor_session_journal::{
@@ -28,6 +29,11 @@ pub use bridge_operation_journal::{
 pub use btc_recovery::{
     BtcAgreementAcceptance, BtcLifecycleEvidenceKind, BtcLifecycleEvidenceV1, BtcOfflineStatus,
     BtcProjectionCommit, BtcRecoveryError, BtcTerminalOutcome, SqliteBtcRecoveryStore,
+};
+pub use public_effect_journal::{
+    PreparedPublicEffect, PublicEffectChain, PublicEffectCommit, PublicEffectDecision,
+    PublicEffectKey, PublicEffectObservation, PublicEffectOperation, PublicEffectSnapshot,
+    PublicEffectState, PublicEffectSubmissionResult, SqlitePublicEffectJournal,
 };
 pub use zec_recovery::SqliteZecRecoveryStore;
 
@@ -299,6 +305,18 @@ pub enum StoreError {
     /// Bridge operation kind and request/window shape are inconsistent.
     #[error("bridge operation context is internally inconsistent")]
     InvalidBridgeOperationContext,
+    /// Exact public effect material is empty, oversized, or otherwise invalid.
+    #[error("public effect material is invalid for plaintext durable storage")]
+    InvalidPublicEffect,
+    /// Immutable public effect material or requested transition conflicts.
+    #[error("public effect conflicts with durable one-attempt authority")]
+    PublicEffectConflict,
+    /// No public effect exists for the complete authority key.
+    #[error("public effect has not been prepared")]
+    MissingPublicEffect,
+    /// Public effect bytes, digest, counters, or transition state are malformed.
+    #[error("public effect journal state is corrupt")]
+    CorruptPublicEffectState,
     /// A bridge poll sequence cannot be represented durably.
     #[error("bridge operation poll sequence overflowed")]
     BridgePollSequenceOverflow,

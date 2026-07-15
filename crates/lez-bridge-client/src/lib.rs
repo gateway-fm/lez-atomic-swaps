@@ -188,6 +188,11 @@ pub enum BridgeOperation {
     SubmitTransaction,
 }
 
+/// A persisted witnessed-claim artifact is not the exact official message it names.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[error("prepared witnessed claim does not bind its exact official message bytes")]
+pub struct PreparedWitnessedClaimValidationError;
+
 /// A validated remote error whose free-form message is redacted by formatting.
 pub struct RemoteProtocolError(ProtocolErrorReply);
 
@@ -968,13 +973,31 @@ fn validate_witnessed_preparation(
     operation: BridgeOperation,
     claim: &PreparedWitnessedClaim,
 ) -> Result<(), BridgeClientError> {
+    validate_prepared_witnessed_claim(claim)
+        .map_err(|_| BridgeClientError::MalformedPreparedTransaction { operation })
+}
+
+/// Validates a persisted unsigned witnessed-claim artifact without transport.
+///
+/// This is the same pure official-message hash and nonempty-byte check used by
+/// preparation, completion, and finalized observation. It lets a fresh actor
+/// reject a changed public artifact before opening a chain client without
+/// copying the pinned LEZ message-domain constant.
+///
+/// # Errors
+///
+/// Returns [`PreparedWitnessedClaimValidationError`] when the exact official
+/// message bytes are empty or do not hash to the retained message identity.
+pub fn validate_prepared_witnessed_claim(
+    claim: &PreparedWitnessedClaim,
+) -> Result<(), PreparedWitnessedClaimValidationError> {
     let mut hasher = Sha256::new();
     hasher.update(OFFICIAL_PUBLIC_MESSAGE_HASH_PREFIX);
     hasher.update(claim.exact_message_bytes.as_slice());
     let computed: [u8; 32] = hasher.finalize().into();
     if claim.message_hash.as_bytes() != &computed || claim.exact_message_bytes.as_slice().is_empty()
     {
-        Err(BridgeClientError::MalformedPreparedTransaction { operation })
+        Err(PreparedWitnessedClaimValidationError)
     } else {
         Ok(())
     }
@@ -1058,26 +1081,15 @@ mod tests {
         hasher.update(bytes);
         let message_hash = hasher.finalize().into();
 
-        validate_witnessed_preparation(
-            BridgeOperation::PrepareWitnessedClaim,
-            &prepared_message(bytes, message_hash),
-        )
-        .unwrap();
+        validate_prepared_witnessed_claim(&prepared_message(bytes, message_hash)).unwrap();
     }
 
     #[test]
     fn witnessed_preparation_rejects_message_bytes_not_bound_by_returned_hash() {
-        let error = validate_witnessed_preparation(
-            BridgeOperation::PrepareWitnessedClaim,
-            &prepared_message(b"mutated-message", [9; 32]),
-        )
-        .unwrap_err();
+        let error =
+            validate_prepared_witnessed_claim(&prepared_message(b"mutated-message", [9; 32]))
+                .unwrap_err();
 
-        assert!(matches!(
-            error,
-            BridgeClientError::MalformedPreparedTransaction {
-                operation: BridgeOperation::PrepareWitnessedClaim
-            }
-        ));
+        assert_eq!(error, PreparedWitnessedClaimValidationError);
     }
 }

@@ -1,0 +1,474 @@
+use std::{sync::Arc, thread};
+
+use lez_swap_core::{Participant, SwapId};
+use lez_swap_store::{
+    PreparedPublicEffect, PublicEffectChain, PublicEffectDecision, PublicEffectKey,
+    PublicEffectObservation, PublicEffectOperation, PublicEffectState,
+    PublicEffectSubmissionResult, SqlitePublicEffectJournal, StoreError,
+};
+use rusqlite::Connection;
+use sha2::{Digest as _, Sha256};
+use tempfile::tempdir;
+
+fn key() -> PublicEffectKey {
+    PublicEffectKey::new(
+        SwapId::new("m3-public-effect").unwrap(),
+        Participant::Maker,
+        PublicEffectChain::Bitcoin,
+        PublicEffectOperation::Claim,
+        2,
+    )
+}
+
+fn prepared() -> PreparedPublicEffect {
+    PreparedPublicEffect::new(
+        key(),
+        [0xa1; 32],
+        "btc-claim-transaction-0001",
+        vec![0x01, 0x02, 0x03, 0x04],
+    )
+    .unwrap()
+}
+
+#[test]
+fn prepared_effect_is_exactly_replayable_and_conflicts_on_any_immutable_drift() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("effects.sqlite3");
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+    let candidate = prepared();
+
+    assert!(!journal.record_prepared(&candidate).unwrap().was_replay());
+    assert!(journal.record_prepared(&candidate).unwrap().was_replay());
+    let durable = journal.current(candidate.key()).unwrap().unwrap();
+    assert_eq!(durable.state(), PublicEffectState::Prepared);
+    assert_eq!(durable.attempt_count(), 0);
+    assert_eq!(durable.revision(), 0);
+    assert_eq!(durable.effect(), &candidate);
+    assert_eq!(
+        candidate.public_bytes_sha256(),
+        <[u8; 32]>::from(Sha256::digest(candidate.exact_public_bytes()))
+    );
+
+    for changed in [
+        PreparedPublicEffect::new(
+            key(),
+            [0xa2; 32],
+            candidate.expected_effect_id(),
+            candidate.exact_public_bytes().to_vec(),
+        )
+        .unwrap(),
+        PreparedPublicEffect::new(
+            key(),
+            [0xa1; 32],
+            "different-effect-id",
+            candidate.exact_public_bytes().to_vec(),
+        )
+        .unwrap(),
+        PreparedPublicEffect::new(
+            key(),
+            [0xa1; 32],
+            candidate.expected_effect_id(),
+            vec![0x01, 0x02, 0x03, 0xff],
+        )
+        .unwrap(),
+    ] {
+        assert!(matches!(
+            journal.record_prepared(&changed),
+            Err(StoreError::PublicEffectConflict)
+        ));
+    }
+}
+
+#[test]
+fn absent_observation_commits_started_before_granting_the_only_send_authorization() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("effects.sqlite3");
+    let candidate = prepared();
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+    let _ = journal.record_prepared(&candidate).unwrap();
+
+    let decision = journal
+        .reconcile(candidate.key(), PublicEffectObservation::Absent)
+        .unwrap();
+    let PublicEffectDecision::SubmitOnce(started) = decision else {
+        panic!("prepared and absent must grant the sole send authorization");
+    };
+    assert_eq!(started.state(), PublicEffectState::Started);
+    assert_eq!(started.attempt_count(), 1);
+    assert_eq!(started.revision(), 1);
+
+    drop(journal);
+    let mut restarted = SqlitePublicEffectJournal::open(&path).unwrap();
+    for observation in [
+        PublicEffectObservation::Absent,
+        PublicEffectObservation::Uncertain,
+    ] {
+        let PublicEffectDecision::ObserveOnly(durable) =
+            restarted.reconcile(candidate.key(), observation).unwrap()
+        else {
+            panic!("started or uncertain work must never rearm submission");
+        };
+        assert_eq!(durable.state(), PublicEffectState::Started);
+    }
+}
+
+#[test]
+fn exact_present_bytes_reconcile_prepared_started_or_unknown_to_accepted() {
+    for prior_state in [
+        PublicEffectState::Prepared,
+        PublicEffectState::Started,
+        PublicEffectState::Unknown,
+    ] {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("effects.sqlite3");
+        let candidate = prepared();
+        let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+        let _ = journal.record_prepared(&candidate).unwrap();
+        if prior_state != PublicEffectState::Prepared {
+            assert!(matches!(
+                journal
+                    .reconcile(candidate.key(), PublicEffectObservation::Absent)
+                    .unwrap(),
+                PublicEffectDecision::SubmitOnce(_)
+            ));
+        }
+        if prior_state == PublicEffectState::Unknown {
+            let _ = journal
+                .record_submission_result(candidate.key(), &PublicEffectSubmissionResult::Unknown)
+                .unwrap();
+        }
+
+        let PublicEffectDecision::ObserveOnly(accepted) = journal
+            .reconcile(
+                candidate.key(),
+                PublicEffectObservation::PresentExact(candidate.exact_public_bytes().to_vec()),
+            )
+            .unwrap()
+        else {
+            panic!("chain presence is evidence, never send authority");
+        };
+        assert_eq!(accepted.state(), PublicEffectState::Accepted);
+    }
+
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("effects.sqlite3");
+    let candidate = prepared();
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+    let _ = journal.record_prepared(&candidate).unwrap();
+    let error = journal.reconcile(
+        candidate.key(),
+        PublicEffectObservation::PresentExact(vec![0x01, 0x02, 0x03, 0x05]),
+    );
+    assert!(matches!(error, Err(StoreError::PublicEffectConflict)));
+    assert_eq!(
+        journal.current(candidate.key()).unwrap().unwrap().state(),
+        PublicEffectState::Prepared
+    );
+}
+
+#[test]
+fn only_started_records_a_fresh_result_and_exact_terminal_replay_is_idempotent() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("effects.sqlite3");
+    let candidate = prepared();
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+    let _ = journal.record_prepared(&candidate).unwrap();
+
+    assert!(matches!(
+        journal.record_submission_result(candidate.key(), &PublicEffectSubmissionResult::Rejected),
+        Err(StoreError::PublicEffectConflict)
+    ));
+    let _ = journal
+        .reconcile(candidate.key(), PublicEffectObservation::Absent)
+        .unwrap();
+    let committed = journal
+        .record_submission_result(candidate.key(), &PublicEffectSubmissionResult::Unknown)
+        .unwrap();
+    assert!(!committed.was_replay());
+    assert_eq!(committed.snapshot().state(), PublicEffectState::Unknown);
+    let replay = journal
+        .record_submission_result(candidate.key(), &PublicEffectSubmissionResult::Unknown)
+        .unwrap();
+    assert!(replay.was_replay());
+    assert!(matches!(
+        journal.record_submission_result(
+            candidate.key(),
+            &PublicEffectSubmissionResult::Accepted("wrong-effect-id".into())
+        ),
+        Err(StoreError::PublicEffectConflict)
+    ));
+
+    let PublicEffectDecision::ObserveOnly(snapshot) = journal
+        .reconcile(candidate.key(), PublicEffectObservation::Absent)
+        .unwrap()
+    else {
+        panic!("unknown must remain observe-only");
+    };
+    assert_eq!(snapshot.state(), PublicEffectState::Unknown);
+}
+
+#[test]
+fn accepted_result_requires_and_replays_the_exact_expected_effect_id() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("effects.sqlite3");
+    let candidate = prepared();
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+    let _ = journal.record_prepared(&candidate).unwrap();
+    let _ = journal
+        .reconcile(candidate.key(), PublicEffectObservation::Absent)
+        .unwrap();
+
+    assert!(matches!(
+        journal.record_submission_result(
+            candidate.key(),
+            &PublicEffectSubmissionResult::Accepted("wrong-effect-id".into())
+        ),
+        Err(StoreError::PublicEffectConflict)
+    ));
+    assert_eq!(
+        journal.current(candidate.key()).unwrap().unwrap().state(),
+        PublicEffectState::Started
+    );
+
+    let accepted = PublicEffectSubmissionResult::Accepted(
+        candidate.expected_effect_id().to_owned().into_boxed_str(),
+    );
+    let committed = journal
+        .record_submission_result(candidate.key(), &accepted)
+        .unwrap();
+    assert_eq!(committed.snapshot().state(), PublicEffectState::Accepted);
+    assert!(!committed.was_replay());
+    assert!(
+        journal
+            .record_submission_result(candidate.key(), &accepted)
+            .unwrap()
+            .was_replay()
+    );
+}
+
+#[test]
+fn competing_processes_receive_exactly_one_submit_once_decision() {
+    let directory = tempdir().unwrap();
+    let path = Arc::new(directory.path().join("effects.sqlite3"));
+    let candidate = prepared();
+    let _ = SqlitePublicEffectJournal::open(path.as_ref())
+        .unwrap()
+        .record_prepared(&candidate)
+        .unwrap();
+
+    let workers = (0..8)
+        .map(|_| {
+            let path = Arc::clone(&path);
+            let key = candidate.key().clone();
+            thread::spawn(move || {
+                let mut journal = SqlitePublicEffectJournal::open(path.as_ref()).unwrap();
+                journal
+                    .reconcile(&key, PublicEffectObservation::Absent)
+                    .unwrap()
+            })
+        })
+        .collect::<Vec<_>>();
+    let decisions = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        decisions
+            .iter()
+            .filter(|decision| matches!(decision, PublicEffectDecision::SubmitOnce(_)))
+            .count(),
+        1
+    );
+    assert_eq!(
+        decisions
+            .iter()
+            .filter(|decision| matches!(decision, PublicEffectDecision::ObserveOnly(_)))
+            .count(),
+        7
+    );
+}
+
+#[test]
+fn composite_identity_isolates_every_authority_dimension() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("effects.sqlite3");
+    let base = prepared();
+    let keys = [
+        base.key().clone(),
+        PublicEffectKey::new(
+            SwapId::new("other-swap").unwrap(),
+            Participant::Maker,
+            PublicEffectChain::Bitcoin,
+            PublicEffectOperation::Claim,
+            2,
+        ),
+        PublicEffectKey::new(
+            base.key().swap_id().clone(),
+            Participant::Taker,
+            PublicEffectChain::Bitcoin,
+            PublicEffectOperation::Claim,
+            2,
+        ),
+        PublicEffectKey::new(
+            base.key().swap_id().clone(),
+            Participant::Maker,
+            PublicEffectChain::Lez,
+            PublicEffectOperation::Claim,
+            2,
+        ),
+        PublicEffectKey::new(
+            base.key().swap_id().clone(),
+            Participant::Maker,
+            PublicEffectChain::Bitcoin,
+            PublicEffectOperation::Funding,
+            2,
+        ),
+        PublicEffectKey::new(
+            base.key().swap_id().clone(),
+            Participant::Maker,
+            PublicEffectChain::Bitcoin,
+            PublicEffectOperation::Claim,
+            3,
+        ),
+    ];
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+    for (index, key) in keys.iter().enumerate() {
+        let _ = journal
+            .record_prepared(
+                &PreparedPublicEffect::new(
+                    key.clone(),
+                    [0xa1; 32],
+                    format!("effect-{index}"),
+                    vec![u8::try_from(index).unwrap().saturating_add(1)],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    for key in &keys {
+        assert!(journal.current(key).unwrap().is_some());
+    }
+}
+
+#[test]
+fn one_chain_effect_id_cannot_be_crosswired_to_another_authority_key() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("effects.sqlite3");
+    let candidate = prepared();
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+    let _ = journal.record_prepared(&candidate).unwrap();
+    let crosswired = PreparedPublicEffect::new(
+        PublicEffectKey::new(
+            SwapId::new("crosswired-swap").unwrap(),
+            Participant::Taker,
+            candidate.key().chain(),
+            PublicEffectOperation::Refund,
+            9,
+        ),
+        [0xb2; 32],
+        candidate.expected_effect_id(),
+        candidate.exact_public_bytes().to_vec(),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        journal.record_prepared(&crosswired),
+        Err(StoreError::PublicEffectConflict)
+    ));
+}
+
+#[test]
+fn failed_started_cas_rolls_back_without_leaking_send_authority() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("effects.sqlite3");
+    let candidate = prepared();
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+    let _ = journal.record_prepared(&candidate).unwrap();
+    let control = Connection::open(&path).unwrap();
+    control
+        .execute_batch(
+            "CREATE TRIGGER reject_public_effect_start
+             BEFORE UPDATE ON public_effect_journal
+             WHEN NEW.state = 'started'
+             BEGIN SELECT RAISE(ABORT, 'injected start failure'); END;",
+        )
+        .unwrap();
+
+    assert!(matches!(
+        journal.reconcile(candidate.key(), PublicEffectObservation::Absent),
+        Err(StoreError::Sqlite(_))
+    ));
+    assert_eq!(
+        journal.current(candidate.key()).unwrap().unwrap().state(),
+        PublicEffectState::Prepared
+    );
+}
+
+#[test]
+fn malformed_digest_and_transition_shape_fail_closed_as_corrupt() {
+    for mutation in [
+        "UPDATE public_effect_journal SET public_bytes_sha256 = zeroblob(32)",
+        "UPDATE public_effect_journal SET state = 'started', attempt_count = 0, revision = 0",
+    ] {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("effects.sqlite3");
+        let candidate = prepared();
+        let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+        let _ = journal.record_prepared(&candidate).unwrap();
+        drop(journal);
+        let control = Connection::open(&path).unwrap();
+        control
+            .pragma_update(None, "ignore_check_constraints", true)
+            .unwrap();
+        control.execute(mutation, []).unwrap();
+        drop(control);
+
+        let journal = SqlitePublicEffectJournal::open(&path).unwrap();
+        assert!(matches!(
+            journal.current(candidate.key()),
+            Err(StoreError::CorruptPublicEffectState)
+        ));
+    }
+}
+
+#[test]
+fn malformed_or_triggered_public_effect_schema_is_rejected_on_open() {
+    for mutation in [
+        "DROP TABLE public_effect_journal;
+         CREATE TABLE public_effect_journal (swap_id TEXT)",
+        "CREATE TRIGGER unexpected_public_effect_trigger
+         AFTER INSERT ON public_effect_journal BEGIN SELECT 1; END",
+    ] {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("effects.sqlite3");
+        drop(SqlitePublicEffectJournal::open(&path).unwrap());
+        let control = Connection::open(&path).unwrap();
+        control.execute_batch(mutation).unwrap();
+        drop(control);
+
+        assert!(matches!(
+            SqlitePublicEffectJournal::open(&path),
+            Err(StoreError::CorruptPublicEffectState)
+        ));
+    }
+}
+
+#[test]
+fn invalid_public_material_shapes_are_rejected_before_persistence() {
+    assert!(matches!(
+        PreparedPublicEffect::new(key(), [0; 32], "effect", vec![1]),
+        Err(StoreError::InvalidPublicEffect)
+    ));
+    assert!(matches!(
+        PreparedPublicEffect::new(key(), [0xa1; 32], "", vec![1]),
+        Err(StoreError::InvalidPublicEffect)
+    ));
+    assert!(matches!(
+        PreparedPublicEffect::new(key(), [0xa1; 32], "effect", Vec::new()),
+        Err(StoreError::InvalidPublicEffect)
+    ));
+    assert!(matches!(
+        PreparedPublicEffect::new(key(), [0xa1; 32], "contains whitespace", vec![1]),
+        Err(StoreError::InvalidPublicEffect)
+    ));
+}

@@ -70,7 +70,12 @@ window change receives a distinct ID and remains evidence-bound. A
 valid concurrent revision-one or revision-two winner is reconstructed without overwrite; other
 projection conflicts fail closed. This is a read-only-observation-to-local-
 projection boundary, not a cross-system atomic commit. The actor suite is 18/18, the focused BTC-recovery suite is 11/11,
-and the full store suite is 71/71. Claim revisions three and four and a
+and the full store suite is 84/84. The next GREEN component boundary persists
+complete public Bitcoin or LEZ transaction bytes before consuming the only
+fresh send authority. Ambiguous outcomes are observe-only and can be accepted
+later only by exact-byte evidence; signer journals open existing-only and the
+public LEZ prepared-message validator reuses the official hash domain. These
+seams are not yet actor claim integration. Claim revisions three and four and a
 two-direction actual-node run through
 this actor remain pending; see
 [ADR 0031](docs/architecture/0031-one-shot-btc-actor-observe-before-project.md).
@@ -201,7 +206,7 @@ IMMEDIATE`, predecessor CAS, and a versioned domain-separated SHA-256 evidence
 chain. Reopen recomputes the chain and reconstructs terminal `Completed`
 offline. The store retains the exact 64-byte public revealing witness but never
 the recovered scalar; focused mutation, rollback, replay, actor-separation,
-and scalar-absence checks are 11/11, and all 71 store tests pass. This is a
+and scalar-absence checks are 11/11, and all 84 store tests pass. This is a
 GREEN persistence component. The reference actor now validates
 the canonical agreement and both typed funding observations before projecting
 revisions one and two into the store; claim revisions three and four remain

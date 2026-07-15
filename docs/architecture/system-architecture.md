@@ -1128,6 +1128,72 @@ report convergence without overwrite; other projection failures fail closed.
 Claim revisions three and four and both-direction actual-node actor evidence
 remain pending.
 
+ADR 0033 closes the reusable persistence seams immediately below those claim
+revisions. Both adaptor session databases can now be reopened existing-only;
+missing paths never create empty signer state. The LEZ client exposes the same
+official-domain prepared-message validator used internally. Complete public
+Bitcoin or LEZ transaction bytes are persisted with their signed-agreement
+authority before a one-winner `Prepared` to `Started` CAS permits the only
+fresh RPC submission. `Started` or `Unknown` recovery performs exact observation
+only. These component guarantees do not yet claim actor revision-three/four
+composition or cross-system atomicity.
+
+```mermaid
+flowchart LR
+    Agreement["Validated countersigned agreement"]
+    Signers[("Existing maker and taker signer journals")]
+    Prepared["Complete public Bitcoin or LEZ transaction"]
+    Effects[("Role local public effect journal")]
+    Observe["Exact chain observation"]
+    Core["Bitcoin Core loopback RPC"]
+    Sidecar["Role LEZ sidecar loopback RPC"]
+    Lifecycle[("BTC recovery revisions")]
+
+    Agreement --> Prepared
+    Signers --> Prepared
+    Prepared --> Effects
+    Effects --> Observe
+    Observe --> Core
+    Observe --> Sidecar
+    Effects -->|"single Started winner"| Core
+    Effects -->|"single Started winner"| Sidecar
+    Core -->|"confirmed exact bytes"| Lifecycle
+    Sidecar -->|"finalized exact bytes"| Lifecycle
+```
+
+ADR 0033 closes the reusable persistence seams immediately below those claim
+revisions. Both adaptor session databases can now be reopened existing-only;
+missing paths never create empty signer state. The LEZ client exposes the same
+official-domain prepared-message validator used internally. Complete public
+Bitcoin or LEZ transaction bytes are persisted with their signed-agreement
+authority before a one-winner `Prepared` to `Started` CAS permits the only
+fresh RPC submission. `Started` or `Unknown` recovery performs exact observation
+only. These component guarantees do not yet claim actor revision-three/four
+composition or cross-system atomicity.
+
+```mermaid
+flowchart LR
+    Agreement["Validated countersigned agreement"]
+    Signers[("Existing maker and taker signer journals")]
+    Prepared["Complete public Bitcoin or LEZ transaction"]
+    Effects[("Role local public effect journal")]
+    Observe["Exact chain observation"]
+    Core["Bitcoin Core loopback RPC"]
+    Sidecar["Role LEZ sidecar loopback RPC"]
+    Lifecycle[("BTC recovery revisions")]
+
+    Agreement --> Prepared
+    Signers --> Prepared
+    Prepared --> Effects
+    Effects --> Observe
+    Observe --> Core
+    Observe --> Sidecar
+    Effects -->|"single Started winner"| Core
+    Effects -->|"single Started winner"| Sidecar
+    Core -->|"confirmed exact bytes"| Lifecycle
+    Sidecar -->|"finalized exact bytes"| Lifecycle
+```
+
 Pushed `0177151` adds a production-shaped in-memory boundary alongside that
 retained Core fixture. Separate maker/taker state objects use fresh OS nonces,
 exchange transcript-bound commitments before reveal, verify peer partials, and

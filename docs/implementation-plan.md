@@ -1139,6 +1139,28 @@ agreement plus caller-supplied fresh session IDs. Ten agreement tests cover both
 directions and both domains. This keeps role-runner session JSON outside actor
 authority; the claim actor must compare the resulting context binding with each
 role-local durable journal before extraction or adaptation.
+The next RED-GREEN seam batch is now complete. Signer journals open existing-
+only, so a mistyped claim configuration cannot create empty signing authority.
+The LEZ bridge publicly reuses its official-domain prepared witnessed-message
+validator. A new additive SQLite public-effect journal persists the complete
+public Bitcoin or LEZ bytes, agreement commitment, and expected effect ID before
+a one-winner `Prepared` to `Started` CAS grants the only fresh send. Ambiguous
+`Started` or `Unknown` recovery is observation-only, and exact accepted IDs plus
+complete observed bytes are required. Seven signer-journal, twelve public-
+effect, eleven BTC-recovery, and all 84 store tests pass; the bridge-client graph
+is 28/28. This is the persistence boundary for revisions three and four, not yet
+their actor integration or actual-node evidence.
+The next RED-GREEN seam batch is now complete. Signer journals open existing-
+only, so a mistyped claim configuration cannot create empty signing authority.
+The LEZ bridge publicly reuses its official-domain prepared witnessed-message
+validator. A new additive SQLite public-effect journal persists the complete
+public Bitcoin or LEZ bytes, agreement commitment, and expected effect ID before
+a one-winner `Prepared` to `Started` CAS grants the only fresh send. Ambiguous
+`Started` or `Unknown` recovery is observation-only, and exact accepted IDs plus
+complete observed bytes are required. Seven signer-journal, twelve public-
+effect, eleven BTC-recovery, and all 84 store tests pass; the bridge-client graph
+is 28/28. This is the persistence boundary for revisions three and four, not yet
+their actor integration or actual-node evidence.
 `status` reports absent or precreated-empty/no-acceptance state as
 `not_activated`; `drive` returns `NotActivated`. Status may migrate an existing
 database schema but creates no acceptance and performs no RPC. Corrupt or

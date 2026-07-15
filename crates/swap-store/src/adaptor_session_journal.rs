@@ -16,7 +16,7 @@ use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use zeroize::{Zeroize as _, Zeroizing};
 
-use crate::{StoreError, open_configured_connection};
+use crate::{StoreError, open_configured_connection, open_existing_configured_connection};
 
 const SECRET_NONCE_FINGERPRINT_DOMAIN: &[u8] =
     b"lez-atomic-swaps/adaptor-secret-nonce-fingerprint/v1";
@@ -517,6 +517,22 @@ impl SqliteAdaptorSessionJournal {
     /// Returns an error when the private database cannot be opened, configured, or migrated.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, AdaptorSessionJournalError> {
         let mut connection = open_configured_connection(path)?;
+        migrate_adaptor_session_journal(&mut connection)?;
+        Ok(Self { connection })
+    }
+
+    /// Opens an existing journal without creating a missing signer database.
+    ///
+    /// Schema migration may run for an existing owner-private database, but a
+    /// missing, unsafe, or invalid path fails closed. Callers must still load
+    /// and compare the expected session identity before using a presignature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the private database does not already exist or
+    /// cannot be configured or migrated safely.
+    pub fn open_existing(path: impl AsRef<Path>) -> Result<Self, AdaptorSessionJournalError> {
+        let mut connection = open_existing_configured_connection(path)?;
         migrate_adaptor_session_journal(&mut connection)?;
         Ok(Self { connection })
     }
