@@ -10,9 +10,10 @@ transactions on both local chains.
 
 This is a functional PoC recipe, not an automated full-lifecycle application.
 The public `btc-reference-actor` now provides one-shot, role-fixed activation,
-offline status, and revision-zero taker-lock observation/projection. It does not
-yet perform revisions one through four, so the operator must still compose the
-proven signing, second-lock, claim, and terminal interfaces and retain their
+offline status, and direction-derived taker- and maker-lock observation/projection
+through revision two. It does not yet perform claim revisions three and four,
+so the operator must still compose the proven signing, lock submission, claim,
+and terminal interfaces and retain their
 private evidence. That remaining manual composition is a production gap, not a
 reason to weaken any ordering check below.
 
@@ -60,19 +61,19 @@ allocations. No public RPC, faucet, public peer, or public fund participates.
 
 ## Prerequisites and builds
 
-Repeat the revision-zero public actor boundary without Docker or chain nodes:
+Repeat both public actor funding transitions without Docker or chain nodes:
 
 ~~~sh
 cargo test --locked -p btc-reference-actor --all-targets
 ~~~
 
-All 12 focused tests invoke the public `activate`, `drive`, and `status` surface,
+All 18 focused tests invoke the public `activate`, `drive`, and `status` surface,
 use separate private maker/taker configs, prove offline status and idempotent
 activation, retain a finalized LEZ ancestry tip, and observe before projecting
-predecessor zero. Deterministic observers and loopback-only placeholder routes
+predecessors zero and one in both directions and roles. Deterministic observers and loopback-only placeholder routes
 are used; no public RPC, faucet, public funds, chain peer, or external service
 participates. This component gate does not prove an actual-node actor run or
-revisions one through four.
+claim revisions three and four.
 
 Before starting either node, the durable Bitcoin lifecycle component can be
 repeated independently:
@@ -392,7 +393,7 @@ whose finality field is not_observed_by_this_poc_bridge. Sidecar observation
 proves bounded canonical inclusion and stable same-tip account effects. It does
 not prove Bedrock finality; the separate indexer audit remains mandatory.
 
-## Repeat the revision-zero reference-actor flow
+## Repeat the two-lock reference-actor flow
 
 The actor consumes an already canonical countersigned Borsh agreement; it does
 not negotiate or create one. Retain that exact agreement as
@@ -468,8 +469,8 @@ export MAKER_BTC_ACTOR_CONFIG="$DIRECTION/maker-btc-actor.json"
 export TAKER_BTC_ACTOR_CONFIG="$DIRECTION/taker-btc-actor.json"
 ~~~
 
-For a Bitcoin-first direction the LEZ discovery window is validated but unused
-by revision-zero `drive`. For a LEZ-first direction choose an inclusive window that the finalized tip
+The single LEZ discovery window is used by whichever direction-derived funding
+transition observes LEZ. Choose an inclusive window that the finalized tip
 can
 fully cover and that will contain the funding transaction. Before funding
 exists, the v0.2 finalized observer commonly returns an absence/window error;
@@ -535,11 +536,28 @@ return `converged_on_existing_projection` after reconstructing the valid
 revision-one winner; it never overwrites the winner. Other conflicts fail
 closed.
 
-A later `drive` returns `not_yet_composed` at durable revision `1` without RPC.
-Revisions one through four, claim adaptation/extraction/submission, terminal
+Status now reports next action `observe_maker_second_lock`. Use the operator
+flow below to submit and confirm/finalize the agreement-derived maker lock, then
+run one fresh process for each role again:
+
+~~~sh
+"$BTC_ACTOR" --config "$MAKER_BTC_ACTOR_CONFIG" drive
+"$BTC_ACTOR" --config "$TAKER_BTC_ACTOR_CONFIG" drive
+"$BTC_ACTOR" --config "$MAKER_BTC_ACTOR_CONFIG" status
+"$BTC_ACTOR" --config "$TAKER_BTC_ACTOR_CONFIG" status
+~~~
+
+Affirmative output is `observed_then_projected`, revision `2`, phase
+`both_legs_locked`, on the opposite direction-correct chain. Observation again
+returns before the predecessor-one SQLite CAS. Exact replay is idempotent;
+different concurrent valid observations may only converge on an already valid
+revision-two winner and never overwrite it.
+
+A later `drive` returns `not_yet_composed` at durable revision `2` without RPC.
+Claim revisions three and four, adaptation/extraction/submission, terminal
 status, refunds, and live two-direction E2E through this actor are pending. Use
-the operator-composed flow below for those effects; do not interpret the
-revision-zero output as a complete swap.
+the operator-composed flow below for those effects; do not interpret revision
+two as a complete swap.
 
 ## Strict witnessed operator requests
 

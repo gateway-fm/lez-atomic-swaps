@@ -4,8 +4,8 @@ Status: Accepted. The operator-composed local functional PoC completed both
 happy directions on 2026-07-15, and the canonical countersigned agreement is
 GREEN. The typed finalized LEZ funding and claim observers and Bitcoin Core
 adapter are also GREEN. The public one-shot reference actor now activates that
-agreement and projects the exact taker lock at revision zero. Revisions one
-through four, live actor E2E, refunds, concurrency, hardening, production
+agreement and projects the exact taker and maker locks through revision two.
+Claim revisions three and four, live actor E2E, refunds, concurrency, hardening, production
 readiness, and an M3 completion tag remain open.
 
 ## Context
@@ -46,7 +46,7 @@ flowchart LR
         Agreement["Validated countersigned agreement v1"]
         Maker["Maker actor and store"]
         Taker["Taker actor and store"]
-        Actor["btc-reference-actor<br/>activate drive status<br/>revision zero GREEN"]
+        Actor["btc-reference-actor<br/>activate drive status<br/>funding revisions one and two GREEN"]
         MakerSigner["Maker signing journal"]
         TakerSigner["Taker signing journal"]
         Recovery["SqliteBtcRecoveryStore component GREEN"]
@@ -60,7 +60,7 @@ flowchart LR
         Agreement -->|"validated acceptance input"| Recovery
         Recovery --> MakerRecovery
         Recovery --> TakerRecovery
-        Actor -->|"role-selected predecessor-zero projection"| Recovery
+        Actor -->|"role-selected predecessor-zero or one projection"| Recovery
     end
 
     subgraph RoleServices["Role local services"]
@@ -199,42 +199,44 @@ flowchart TD
     Ready --> Claim["Stable-tip exact spender and claim observation"]
     Funding --> Codec["Canonical agreement-bound public evidence"]
     Claim --> Codec
-    Codec -->|"revision-zero actor projection"| RecoveryStore["Actor-local BTC recovery store"]
+    Codec -->|"revision-one or two actor projection"| RecoveryStore["Actor-local BTC recovery store"]
     Signed["Exact locally validated claim bytes"] --> Started["Durable Started CAS"]
     Started --> Policy["One testmempoolaccept"]
     Policy --> Broadcast["At most one sendrawtransaction"]
     Broadcast --> Outcome["Accepted, Rejected, or Unknown"]
 ```
 
-The 18-test component suite uses deterministic typed RPC responses and
+The 18-test Core-adapter component suite uses deterministic typed RPC responses and
 ephemeral authenticated loopback servers. The public reference actor now owns
-the agreement-derived revision-zero Core funding read, but an actor-to-actual-
+both agreement-derived Core funding reads when Bitcoin is the applicable leg,
+but an actor-to-actual-
 Core run remains a composed PoC gate. The current network-enabled mode still
 requires Regtest; Testnet4 admission is production-portability work.
 
-## Revision-zero reference actor
+## Two-lock reference actor
 
 `btc-reference-actor --config PRIVATE_JSON activate|drive|status` is a public
 one-shot, role-fixed surface. Its strict owner-private configuration binds the
 agreement, role-local database, Core route and credential, and LEZ sidecar
 route, capability, run, runtime, timeout, and finalized discovery window.
-`status` opens no RPC client. At revision zero, `drive` selects the taker-funded
-chain from the validated agreement, observes exact Bitcoin funding or finalized
-LEZ funding, returns from that read, and then performs the SQLite predecessor-
-zero CAS. The LEZ evidence retains the finalized tip and binds the returned
+`status` opens no RPC client. At revision zero or one, `drive` selects the
+taker-funded or maker-funded chain from the validated agreement, observes exact
+Bitcoin funding or finalized LEZ funding, returns from that read, and then
+performs the SQLite predecessor CAS. The LEZ evidence retains the finalized tip and binds the returned
 accounts to the signed agreement. Only activation inserts acceptance; absent or
 empty/no-acceptance state is not activated, while corruption or conflicting
 acceptance fails closed. Pre-funding LEZ errors remain retryable
 unavailability. Exact retries retain
 the deterministic request ID; a deliberate window change receives a distinct
 ID and remains evidence-bound. A concurrent CAS loser may reconstruct a valid
-revision-one winner and return
+revision-one or revision-two winner and return
 `converged_on_existing_projection` without overwriting it; other failures fail
 closed.
 
 This ordering is deliberately not a cross-system atomic commit. A crash after
-the read and before SQLite leaves revision zero and a new process re-observes.
-Revisions one through four return `not_yet_composed` without RPC. Claim/refund
+the read and before SQLite leaves the predecessor revision and a new process
+re-observes. Revision two returns `not_yet_composed` without RPC. Claim revisions
+three and four and refund
 effects and a two-direction actual-node run through this actor remain pending;
 ADR 0031 records the exact decision and restart boundary.
 

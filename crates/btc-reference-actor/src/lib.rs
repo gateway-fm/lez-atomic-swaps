@@ -311,6 +311,7 @@ enum ActorStateV1 {
 #[serde(rename_all = "snake_case")]
 enum ActorNextActionV1 {
     ObserveTakerFirstLock,
+    ObserveMakerSecondLock,
     LaterRevisionNotYetComposed,
     Complete,
 }
@@ -396,9 +397,70 @@ pub enum ActorCommandError {
     ProjectionUnavailable,
 }
 
-/// Affirmative or pending result returned by one agreement-aware first-lock observer.
+/// Funding transition selected only from the durable predecessor revision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FundingTransition {
+    TakerLock,
+    MakerLock,
+}
+
+impl FundingTransition {
+    const fn from_predecessor(revision: u64) -> Option<Self> {
+        match revision {
+            0 => Some(Self::TakerLock),
+            1 => Some(Self::MakerLock),
+            _ => None,
+        }
+    }
+
+    const fn funder(self) -> Participant {
+        match self {
+            Self::TakerLock => Participant::Taker,
+            Self::MakerLock => Participant::Maker,
+        }
+    }
+
+    const fn revision(self) -> u64 {
+        match self {
+            Self::TakerLock => 1,
+            Self::MakerLock => 2,
+        }
+    }
+
+    const fn phase(self) -> Phase {
+        match self {
+            Self::TakerLock => Phase::TakerLockConfirmed,
+            Self::MakerLock => Phase::BothLegsLocked,
+        }
+    }
+
+    fn evidence(
+        self,
+        chain: Chain,
+        transaction_id: Box<str>,
+        confirmations: u32,
+        chain_evidence: Vec<u8>,
+    ) -> Result<BtcLifecycleEvidenceV1, BtcRecoveryError> {
+        match self {
+            Self::TakerLock => BtcLifecycleEvidenceV1::taker_lock(
+                chain,
+                transaction_id,
+                confirmations,
+                chain_evidence,
+            ),
+            Self::MakerLock => BtcLifecycleEvidenceV1::maker_lock(
+                chain,
+                transaction_id,
+                confirmations,
+                chain_evidence,
+            ),
+        }
+    }
+}
+
+/// Affirmative or pending result returned by one agreement-aware funding observer.
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum FirstLockObservation {
+enum ActorFundingObservation {
     /// The exact agreement lock is not yet ready.
     Pending { chain: Chain },
     /// Public exact evidence is ready for one local durable projection.
@@ -410,14 +472,15 @@ enum FirstLockObservation {
     },
 }
 
-/// Agreement-aware observation seam used by deterministic actor tests and live adapters.
+/// Revision-aware observation seam used by deterministic actor tests and live adapters.
 #[async_trait]
-trait FirstLockObservationPort: Send + Sync {
+trait FundingObservationPort: Send + Sync {
     /// Performs one bounded read-only observation.
     async fn observe(
         &self,
         agreement: &BtcAgreementV1,
-    ) -> Result<FirstLockObservation, ActorCommandError>;
+        transition: FundingTransition,
+    ) -> Result<ActorFundingObservation, ActorCommandError>;
 }
 
 /// Executes one disk-configured role-fixed command.
@@ -489,7 +552,7 @@ async fn drive_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCo
     let durable = store
         .status()
         .map_err(|_| ActorCommandError::StateUnavailable)?;
-    if durable.revision() != 0 {
+    let Some(transition) = FundingTransition::from_predecessor(durable.revision()) else {
         return Ok(effect_output(
             config,
             ActorEffectCommandV1::Drive,
@@ -498,8 +561,8 @@ async fn drive_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCo
             },
             &durable,
         ));
-    }
-    let expected_chain = agreement.coordinator().funded_chain(Participant::Taker);
+    };
+    let expected_chain = agreement.coordinator().funded_chain(transition.funder());
     match expected_chain {
         Chain::Bitcoin => {
             let core_config = HttpBitcoinCoreConfig::new(config.bitcoin_core.endpoint.clone())
@@ -507,7 +570,7 @@ async fn drive_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCo
                 .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
             let rpc = HttpBitcoinCoreRpc::connect(&core_config)
                 .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
-            let observer = BitcoinFirstLockObserver {
+            let observer = BitcoinFundingObserver {
                 adapter: BitcoinCoreAdapter::new(rpc, config.bitcoin_core.connectivity.into()),
             };
             drive_with_observer(config, agreement, wire, &observer).await
@@ -523,14 +586,14 @@ async fn drive_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCo
             let client = factory
                 .fresh_transport()
                 .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
-            let observer = LezFirstLockObserver { config, client };
+            let observer = LezFundingObserver { config, client };
             drive_with_observer(config, agreement, wire, &observer).await
         }
         Chain::Zcash | Chain::Monero => Err(ActorCommandError::AgreementBindingInvalid),
     }
 }
 
-/// Drives revision zero with an injected agreement-aware observer.
+/// Drives one composed funding revision with an injected agreement-aware observer.
 ///
 /// This is the deterministic TDD seam for the exact same durable projection used
 /// by the disk-configured command.
@@ -543,7 +606,7 @@ async fn drive_with_observer(
     config: &ActorConfig,
     agreement: BtcAgreementV1,
     agreement_wire: Vec<u8>,
-    observer: &dyn FirstLockObservationPort,
+    observer: &dyn FundingObservationPort,
 ) -> Result<ActorEffectOutputV1, ActorCommandError> {
     if !state_file_exists(&config.state_db)? {
         return Err(ActorCommandError::NotActivated);
@@ -559,7 +622,7 @@ async fn drive_with_observer(
     let before = store
         .status()
         .map_err(|_| ActorCommandError::StateUnavailable)?;
-    if before.revision() != 0 {
+    let Some(transition) = FundingTransition::from_predecessor(before.revision()) else {
         return Ok(effect_output(
             config,
             ActorEffectCommandV1::Drive,
@@ -568,11 +631,11 @@ async fn drive_with_observer(
             },
             &before,
         ));
-    }
-    let expected_chain = agreement.coordinator().funded_chain(Participant::Taker);
-    let observation = observer.observe(&agreement).await?;
+    };
+    let expected_chain = agreement.coordinator().funded_chain(transition.funder());
+    let observation = observer.observe(&agreement, transition).await?;
     let (chain, transaction_id, confirmations, chain_evidence) = match observation {
-        FirstLockObservation::Pending { chain } => {
+        ActorFundingObservation::Pending { chain } => {
             if chain != expected_chain {
                 return Err(ActorCommandError::AgreementBindingInvalid);
             }
@@ -585,7 +648,7 @@ async fn drive_with_observer(
                 &before,
             ));
         }
-        FirstLockObservation::Ready {
+        ActorFundingObservation::Ready {
             chain,
             transaction_id,
             confirmations,
@@ -597,10 +660,10 @@ async fn drive_with_observer(
             (chain, transaction_id, confirmations, chain_evidence)
         }
     };
-    let evidence =
-        BtcLifecycleEvidenceV1::taker_lock(chain, transaction_id, confirmations, chain_evidence)
-            .map_err(|_| ActorCommandError::ObservationUnavailable)?;
-    let (outcome, after) = match store.project(0, &evidence) {
+    let evidence = transition
+        .evidence(chain, transaction_id, confirmations, chain_evidence)
+        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    let (outcome, after) = match store.project(before.revision(), &evidence) {
         Ok(commit) => {
             let after = store
                 .status()
@@ -613,11 +676,13 @@ async fn drive_with_observer(
                 after,
             )
         }
-        Err(BtcRecoveryError::EvidenceConflict { revision: 1 }) => {
+        Err(BtcRecoveryError::EvidenceConflict { revision })
+            if revision == transition.revision() =>
+        {
             let winner = store
                 .status()
                 .map_err(|_| ActorCommandError::StateUnavailable)?;
-            if winner.revision() != 1 || winner.phase() != Phase::TakerLockConfirmed {
+            if winner.revision() != transition.revision() || winner.phase() != transition.phase() {
                 return Err(ActorCommandError::ProjectionUnavailable);
             }
             (
@@ -638,33 +703,34 @@ async fn drive_with_observer(
     ))
 }
 
-struct BitcoinFirstLockObserver<R> {
+struct BitcoinFundingObserver<R> {
     adapter: BitcoinCoreAdapter<R>,
 }
 
 #[async_trait]
-impl<R> FirstLockObservationPort for BitcoinFirstLockObserver<R>
+impl<R> FundingObservationPort for BitcoinFundingObserver<R>
 where
     R: BitcoinCoreRpc + Send + Sync,
 {
     async fn observe(
         &self,
         agreement: &BtcAgreementV1,
-    ) -> Result<FirstLockObservation, ActorCommandError> {
+        _transition: FundingTransition,
+    ) -> Result<ActorFundingObservation, ActorCommandError> {
         let observed = self
             .adapter
             .observe_funding(agreement)
             .await
             .map_err(|_| ActorCommandError::ObservationUnavailable)?;
         let FundingObservation::Ready(observed) = observed else {
-            return Ok(FirstLockObservation::Pending {
+            return Ok(ActorFundingObservation::Pending {
                 chain: Chain::Bitcoin,
             });
         };
         let evidence = BitcoinCoreEvidenceV1::funding_ready(agreement, &observed)
             .and_then(|value| value.encode())
             .map_err(|_| ActorCommandError::ObservationUnavailable)?;
-        Ok(FirstLockObservation::Ready {
+        Ok(ActorFundingObservation::Ready {
             chain: Chain::Bitcoin,
             transaction_id: observed
                 .transaction()
@@ -677,7 +743,7 @@ where
     }
 }
 
-struct LezFirstLockObserver<'a> {
+struct LezFundingObserver<'a> {
     config: &'a ActorConfig,
     client: BridgeClient,
 }
@@ -693,11 +759,12 @@ struct FinalizedLezFundingEvidenceV1 {
 }
 
 #[async_trait]
-impl FirstLockObservationPort for LezFirstLockObserver<'_> {
+impl FundingObservationPort for LezFundingObserver<'_> {
     async fn observe(
         &self,
         agreement: &BtcAgreementV1,
-    ) -> Result<FirstLockObservation, ActorCommandError> {
+        _transition: FundingTransition,
+    ) -> Result<ActorFundingObservation, ActorCommandError> {
         let request = finalized_lez_funding_request(self.config, agreement)?;
         let durable_request = request.clone();
         let result = self
@@ -718,7 +785,7 @@ impl FirstLockObservationPort for LezFirstLockObserver<'_> {
             result.finalized_tip,
             &result.funding,
         )?;
-        Ok(FirstLockObservation::Ready {
+        Ok(ActorFundingObservation::Ready {
             chain: Chain::Lez,
             transaction_id: hex::encode(result.funding.transaction.transaction_id.as_bytes())
                 .into_boxed_str(),
@@ -993,6 +1060,8 @@ fn status_output(config: &ActorConfig, status: &BtcOfflineStatus) -> ActorStatus
         ActorNextActionV1::Complete
     } else if status.revision() == 0 {
         ActorNextActionV1::ObserveTakerFirstLock
+    } else if status.revision() == 1 {
+        ActorNextActionV1::ObserveMakerSecondLock
     } else {
         ActorNextActionV1::LaterRevisionNotYetComposed
     };

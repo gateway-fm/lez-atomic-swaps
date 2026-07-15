@@ -224,7 +224,7 @@ flowchart TB
         M3AJ[("M3 role-local adaptor journal<br/>reserve before commitment<br/>consume nonce with exact partial GREEN")]
         M3BR[("M3 BTC lifecycle recovery store<br/>four evidence revisions + hash chain<br/>offline Completed status GREEN")]
         M3BC["M3 typed Core 31.1 adapter<br/>stable-tip evidence + durable one-attempt submit<br/>GREEN component"]
-        M3RA["btc-reference-actor<br/>one-shot activate drive status<br/>revision zero GREEN"]
+        M3RA["btc-reference-actor<br/>one-shot activate drive status<br/>funding revisions one and two GREEN"]
     end
 
     subgraph LezSidecars["Role-isolated official LEZ v0.1.2 processes"]
@@ -347,9 +347,9 @@ flowchart TB
     TS --> M3AJ
     PS -->|"maker private config"| M3RA
     TS -->|"taker private config"| M3RA
-    M3RA -->|"predecessor-zero projection"| M3BR
-    M3RA -->|"agreement-derived Bitcoin first-lock read"| M3BC
-    M3RA -->|"signed-account finalized LEZ first-lock read"| M3FF
+    M3RA -->|"predecessor-zero or one projection"| M3BR
+    M3RA -->|"agreement-derived Bitcoin funding read"| M3BC
+    M3RA -->|"signed-account finalized LEZ funding read"| M3FF
     PCM -->|"encrypted envelope + journal"| DB
     PCM -->|"encrypted envelope + journal"| TDB
     TM -.-> TS
@@ -1109,23 +1109,24 @@ scalar. It is one process: commitments are not exchanged, nonce state is not
 journaled, and independent actors, LEZ effects, both complete directions, and
 atomicity remain the audited M3 target.
 
-ADR 0031 adds the current public revision-zero process boundary. Separate
+ADR 0031 adds the current public two-lock process boundary. Separate
 owner-private maker and taker configs invoke one fresh `btc-reference-actor`
 process for `activate`, `drive`, or `status`. Only activation inserts agreement
 acceptance. Absent or empty/no-acceptance state remains not activated; corrupt
 or conflicting state fails closed. Status may migrate an existing database
 schema but creates no acceptance, constructs no chain client, and performs no
-RPC. Revision-zero drive selects the taker-funded chain from the validated
-agreement, receives typed Core funding or finalized LEZ funding, binds LEZ
-accounts to the signed terms, and retains the finalized tip before projecting
-predecessor zero. Observation returns before the SQLite transaction. The gap is
+RPC. At predecessors zero and one, drive selects respectively the taker- and
+maker-funded chain from the validated agreement, receives typed Core funding or
+finalized LEZ funding, binds LEZ accounts to the signed terms, and retains the
+finalized tip before projecting the next revision. Observation returns before the SQLite transaction. The gap is
 restartable but is not a cross-system atomic commit. Normal pre-funding LEZ
 observer errors are retryable unavailability, not false absence. Exact retries
 retain their deterministic ID/request, while a deliberate bounded-window change
 receives a distinct evidence-bound ID. A concurrent
-CAS loser may reconstruct a valid revision-one winner and report convergence
-without overwrite; other projection failures fail closed. Revisions one
-through four and both-direction actual-node actor evidence remain pending.
+CAS loser may reconstruct a valid revision-one or revision-two winner and
+report convergence without overwrite; other projection failures fail closed.
+Claim revisions three and four and both-direction actual-node actor evidence
+remain pending.
 
 Pushed `0177151` adds a production-shaped in-memory boundary alongside that
 retained Core fixture. Separate maker/taker state objects use fresh OS nonces,
@@ -1146,11 +1147,11 @@ completed, and the recovered scalar matched the committed point without being
 retained in public evidence. The canonical version-one agreement is now
 implemented and reconstructs the exact aggregate key, P2TR/CSV contract,
 funding outpoint, cooperative transaction/sighash, Bitcoin chain policy, LEZ
-terms, and recovery schedule before accepting both role signatures. The public revision-zero actor now activates that validated record,
-observes the
-agreement-derived taker lock through a typed chain adapter, and persists the
-first transition for each role. Product integration still must compose actor
-revisions one through four and demonstrate both actors reaching terminal
+terms, and recovery schedule before accepting both role signatures. The public
+actor now activates that validated record, observes the agreement-derived taker
+and maker locks through typed chain adapters, and persists the first two
+transitions for each role. Product integration still must compose actor claim
+revisions three and four and demonstrate both actors reaching terminal
 `Completed` through the public process surface.
 
 ## Abandonment and autonomous recovery flow

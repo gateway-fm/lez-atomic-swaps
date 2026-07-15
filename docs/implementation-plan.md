@@ -1130,9 +1130,10 @@ pair observation, finalized same-block claim/state evidence, and a typed
 operator boundary are GREEN. The exact guest was
 deployed in finalized block 405 and used for both live directions.
 Step 5 now also has a public one-shot, role-fixed reference actor. It
-activates the canonical agreement and composes revision zero through typed Core
-or finalized LEZ observation plus the actor-local store; revisions one through
-four are not yet composed. Only `activate` may insert the agreement acceptance.
+activates the canonical agreement and composes predecessor zero and one through
+typed Core or finalized LEZ funding observation plus the actor-local store.
+Both roles and both directions reach revision two `BothLegsLocked` in focused
+tests; claim revisions three and four are not yet composed. Only `activate` may insert the agreement acceptance.
 `status` reports absent or precreated-empty/no-acceptance state as
 `not_activated`; `drive` returns `NotActivated`. Status may migrate an existing
 database schema but creates no acceptance and performs no RPC. Corrupt or
@@ -1140,8 +1141,9 @@ conflicting existing state fails closed. Pre-funding LEZ finalized-observer
 errors remain retryable `ObservationUnavailable`, not false absence. Exact
 retries keep the deterministic ID and request; a deliberate window change gets
 a distinct ID, and the request remains evidence-bound. Observation
-returns before the predecessor CAS; a valid concurrent revision-one winner is
-reconstructed without overwrite and other projection failures fail closed.
+returns before the predecessor CAS; valid concurrent revision-one or
+revision-two winners are reconstructed without overwrite and other projection
+failures fail closed.
 The first full-workspace gate exposed an earlier shared metadata constructor
 that relabelled genuine NSSA v0.1.2 schema-1 facts as LEE v0.2 schema-2 facts.
 The correction makes metadata construction generation-explicit in both
@@ -1155,8 +1157,8 @@ exact cleanup proof, synchronized architecture/traceability, and all 76 rendered
 Mermaid diagrams. The countersigned agreement binding the executable Bitcoin
 refund plan is now GREEN in seven focused tests. Pushed commit `523c64d`
 additionally rejects oversized caller-constructed fields before total Borsh
-encoding. The revision-zero actor activation and typed first-lock projection are
-now implemented. Actor revisions one through four and actual-node actor E2E
+encoding. Actor activation and both typed funding projections are now
+implemented. Claim revisions three and four and actual-node actor E2E
 remain the local PoC certification work.
 Exact-pinned `bitcoin` 0.32.101 constructs and verifies
 the P2TR/CSV transaction boundary. Exact-pinned `musig2` 0.4.1 aggregates the
@@ -1413,7 +1415,7 @@ or rolled-back evidence-chain state, and expose the public revealing witness
 without persisting the scalar.
 The Core component independently reconstructs and cross-checks exact
 funding/claim consensus bytes, confirmation/block/tip facts, and a canonical
-scalar-free evidence DTO. The revision-zero actor now calls its exact funding
+scalar-free evidence DTO. The actor now calls its exact funding
 observer; an actor-to-actual-Core run is still open.
 Peerless finalized LEZ claim discovery is now GREEN: either
 role can discover one unique canonical claim from the signed terms and exact
@@ -1426,12 +1428,12 @@ block, making finalized funding the explicit evidence input for the pending
 claim gate. Protocol 22/22, client
 2 unit plus 23 integration and 3 CLI tests, and sidecar 78/78 are GREEN.
 The pinned sidecar remains the official transaction decoder and PDA
-validator. The revision-zero actor now binds returned funding accounts and
-transaction evidence to the signed agreement before predecessor-zero CAS and
-retains the finalized tip. The read-only sidecar still does not retain a
-funding prerequisite across independent claim methods, so revisions one through
-four must enforce the later claim gate. Remaining local PoC work is composing
-those revisions and repeating both live directions through the public actor
+validator. The actor now binds returned funding accounts and transaction
+evidence to the signed agreement before the applicable predecessor-zero or
+predecessor-one CAS and retains the finalized tip. The read-only sidecar still does not retain a
+funding prerequisite across independent claim methods, so claim revisions three
+and four must enforce the later claim gate. Remaining local PoC work is composing
+claim revisions three and four and repeating both live directions through the public actor
 surface. Certification also requires a combined run-owned harness that creates
 the actual-node countersigned agreement, safely owns the host-sidecar listener
 lifecycle without the current free-port bind race, invokes a fresh public actor

@@ -1,7 +1,7 @@
-# ADR 0031: The revision-zero Bitcoin actor observes before local projection
+# ADR 0031: Bitcoin funding revisions observe before local projection
 
-Status: Accepted for the M3 revision-zero reference-actor slice. Lifecycle
-revisions one through four and a two-direction actual-node actor run remain
+Status: Accepted for the M3 taker- and maker-funding reference-actor slices.
+Claim revisions three and four and a two-direction actual-node actor run remain
 pending.
 
 ## Context
@@ -13,7 +13,7 @@ would permit direction, role, account, confirmation, or persistence ordering to
 drift between callers.
 
 An RPC observation and a SQLite transaction cannot be one atomic transaction.
-The revision-zero operation is read-only at the chain boundary, so the actor
+Both funding operations are read-only at the actor chain boundary, so the actor
 must state the actual failure boundary rather than imply cross-system
 atomicity.
 
@@ -52,10 +52,11 @@ acceptance. It reads the agreement and role-local SQLite store only, constructs
 no Bitcoin or LEZ client, and performs no RPC. Corrupt state or acceptance that
 conflicts with the agreement, role, timestamp, or coordinator fails closed.
 
-At durable revision zero, one `drive` invocation:
+At durable revision zero or one, one `drive` invocation:
 
 1. reconstructs the exact accepted agreement and store;
-2. selects the taker-funded chain from the agreement-derived coordinator;
+2. selects the taker-funded chain at predecessor zero or maker-funded chain at
+   predecessor one from the agreement-derived coordinator;
 3. observes either the exact Bitcoin funding through the typed Core adapter at
    the signed confirmation policy or witnessed LEZ funding through the distinct
    finalized observer;
@@ -63,16 +64,17 @@ At durable revision zero, one `drive` invocation:
    claimant, aggregate authority, and program identities to the signed
    agreement and retains the complete finalized tip with the funding facts;
 5. returns completely from the asynchronous observation; and only then
-6. projects `TakerLock` from predecessor zero through the recovery store's
-   `BEGIN IMMEDIATE` and predecessor CAS.
+6. projects `TakerLock` from predecessor zero or `MakerLock` from predecessor
+   one through the recovery store's `BEGIN IMMEDIATE` and predecessor CAS.
 
 A typed Bitcoin pending result returns `awaiting_observation` without changing
 revision. The LEZ v0.2 finalized observer currently reports ordinary pre-funding
 absence or incomplete-window conditions as retryable `ObservationUnavailable`,
 not as affirmative absence. Affirmative evidence returns
-`observed_then_projected` at revision one. A later `drive` returns
-`not_yet_composed` without constructing a chain client because revisions one
-through four are not part of this slice.
+`observed_then_projected` at revision one or two. At revision one, offline
+status reports `observe_maker_second_lock`; at revision two, a later `drive`
+returns `not_yet_composed` without constructing a chain client because claim
+revisions three and four are not part of this slice.
 
 ```mermaid
 sequenceDiagram
@@ -82,20 +84,20 @@ sequenceDiagram
     participant S as Role local SQLite
     O->>A: drive with private config
     A->>S: Reconstruct durable revision
-    S-->>A: Revision zero
-    A->>C: Read exact agreement derived taker lock
+    S-->>A: Revision zero or one
+    A->>C: Read exact agreement derived taker or maker lock
     alt Bitcoin evidence is pending
         C-->>A: Pending
-        A-->>O: awaiting_observation revision zero
+        A-->>O: awaiting_observation at predecessor
     else LEZ observation is unavailable
         C-->>A: Pre-funding or incomplete-window error
-        A-->>O: Retryable error at revision zero
+        A-->>O: Retryable error at predecessor
     else Evidence is affirmative
         C-->>A: Typed evidence and stable or finalized tip
         Note over A,C: Observation has returned before SQLite projection
-        A->>S: Project predecessor zero
-        S-->>A: Commit revision one or expose concurrent winner
-        A-->>O: projected or converged at revision one
+        A->>S: Project predecessor zero or one
+        S-->>A: Commit next revision or expose concurrent winner
+        A-->>O: projected or converged at revision one or two
     end
 ```
 
@@ -103,13 +105,13 @@ sequenceDiagram
 
 The actor makes no cross-system atomicity claim. The chain observation is
 read-only and precedes the local transaction. A crash after observation but
-before projection leaves revision zero; a later fresh process repeats the
-bounded observation and attempts the same predecessor-zero projection. A crash
-after the SQLite commit is recovered from revision one, and a later `drive`
-does not re-observe. Exact evidence replay is governed by the store. If a
-concurrent driver commits
-non-identical evidence for a valid revision-one `TakerLockConfirmed` winner, the
-CAS loser reconstructs that winner and returns
+before projection leaves the predecessor revision; a later fresh process
+repeats the bounded observation and attempts the same predecessor projection.
+A crash after the SQLite commit is recovered from revision one or two, and a
+later `drive` does not re-observe that funding transition. Exact evidence replay
+is governed by the store. If a concurrent driver commits non-identical evidence
+for a valid next `TakerLockConfirmed` or `BothLegsLocked` winner, the CAS loser
+reconstructs that winner and returns
 `converged_on_existing_projection` without overwriting it. Any other evidence
 conflict, predecessor state, corruption, or store failure fails closed.
 
@@ -119,22 +121,22 @@ flowchart TD
     Load --> Accepted{"Acceptance exists and is valid"}
     Accepted -->|No acceptance| NotActivated["Return NotActivated"]
     Accepted -->|Corrupt or conflicting| Closed["Fail closed"]
-    Accepted -->|Yes| Revision{"Durable revision is zero"}
-    Revision -->|No| Later["Return not_yet_composed without RPC"]
-    Revision -->|Yes| Observe["Perform one bounded read-only observation"]
-    Observe -->|Bitcoin pending| Pending["Return awaiting observation at revision zero"]
-    Observe -->|LEZ unavailable| Retry["Return retryable error at revision zero"]
+    Accepted -->|Yes| Revision{"Durable revision is zero or one"}
+    Revision -->|Other| Later["Return not_yet_composed without RPC"]
+    Revision -->|Zero or one| Observe["Select funder and perform one bounded read-only observation"]
+    Observe -->|Bitcoin pending| Pending["Return awaiting observation at predecessor"]
+    Observe -->|LEZ unavailable| Retry["Return retryable error at predecessor"]
     Observe -->|Affirmative| Returned["Observation future has returned"]
-    Returned --> Project["BEGIN IMMEDIATE and predecessor-zero CAS"]
-    Project -->|Commit| One["Return observed then projected at revision one"]
+    Returned --> Project["BEGIN IMMEDIATE and predecessor CAS"]
+    Project -->|Commit| One["Return observed then projected at next revision"]
     Project -->|CAS loser| Inspect["Reconstruct durable winner"]
-    Inspect -->|Valid revision one| Converged["Return converged on existing projection"]
+    Inspect -->|Valid expected next revision| Converged["Return converged on existing projection"]
     Inspect -->|Other conflict| Closed["Fail closed"]
     Project -->|Other failure| Closed
 ```
 
-The revision-zero slice does not submit funding, prepare or adapt a claim,
-extract a scalar, execute a refund, or advance revisions two through four. It
+The funding-observation slices do not submit funding, prepare or adapt a claim,
+extract a scalar, execute a refund, or advance claim revisions three and four. They
 does not prove a complete actor lifecycle or replace the already retained
 operator-composed two-direction chain evidence.
 
@@ -151,9 +153,9 @@ chain evidence.
 ## Consequences
 
 Direction and role mapping, the Bitcoin confirmation policy, finalized LEZ
-funding semantics, signed account binding, and the first durable transition now
-have one supported executable owner. Status remains useful during node outage.
+funding semantics, signed account binding, and both durable lock transitions now
+have one supported executable observer/projector. Status remains useful during node outage.
 The deliberate observation-to-SQLite gap is visible and restartable, not
-hidden. Full claim atomicity still depends on composing revisions one through
+hidden. Full claim atomicity still depends on composing revisions three and
 four, durable effect intent, both signing sessions, final claim observation,
 and both-direction actual-node actor evidence in later slices.
