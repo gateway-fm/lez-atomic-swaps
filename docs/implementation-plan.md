@@ -1021,9 +1021,9 @@ outputs above.
 ## Milestone 3 entry plan: BTC adaptor/Taproot end to end
 
 Status: **active; operator-composed local-devnet happy path 2 of 2; canonical
-countersigned agreement, finalized LEZ claim adapter, typed Core adapter, and
-actor-local Bitcoin recovery-store components GREEN; cohesive actor integration
-in progress**. The
+countersigned agreement, finalized LEZ funding and claim adapters, typed Core
+adapter, and actor-local Bitcoin recovery-store components GREEN; cohesive
+actor integration in progress**. The
 exact Core 31.1 release verifier, minimal isolated image fixture, role-aware Regtest boundary,
 typed P2TR/CSV transaction library, and one-process public deterministic
 two-party MuSig2/adaptor/extraction funding/cooperative-claim composition are
@@ -1397,9 +1397,17 @@ is still open. Peerless finalized LEZ claim discovery is now GREEN: either
 role can discover one unique canonical claim from the signed terms and exact
 prepared transcript without receiving a peer transaction ID, while absence,
 ambiguity, and a conflicting transcript remain distinct fail-closed results.
-Remaining local PoC work is finalized witnessed-funding observation and wiring
-both chain adapters plus the recovery component through each cohesive
-reference actor. These are remaining deliverables, not external blockers.
+Finalized witnessed-funding observation is now GREEN without weakening the
+existing live-progress observer. The bounded finalized scan proves canonical
+funding plus historical `Funded` metadata and exact custody at the containing
+block, and makes finality-before-claim an explicit gate. Protocol 22/22, client
+2 unit plus 23 integration and 3 CLI tests, and sidecar 76/76 are GREEN. The
+pinned sidecar remains the official transaction decoder/PDA validator; the
+cohesive actor must bind its returned accounts and transaction evidence back
+to the signed agreement before the recovery-store CAS. Remaining local PoC
+work is wiring both chain adapters plus the recovery component through each
+cohesive reference actor and repeating both live directions through that
+surface. These are remaining deliverables, not external blockers.
 
 ### Later owner-selected hardening
 

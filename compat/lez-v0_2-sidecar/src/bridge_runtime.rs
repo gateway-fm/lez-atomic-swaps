@@ -9,7 +9,8 @@ use lez_bridge_protocol::{
     InitializationObservation, MAX_DISCOVERY_BLOCKS, NativeClaimInstructionFacts,
     NativeCustodyFacts, NativeFundInstructionFacts, NativeInitializeInstructionFacts,
     ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
-    ObserveFinalizedWitnessedClaimResult, ObserveRevealingClaimRequest,
+    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
+    ObserveFinalizedWitnessedFundingResult, ObserveRevealingClaimRequest,
     ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
     ObservedTransactionFacts, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
     PreparedTransaction, RevealingClaimFoundFacts, RevealingClaimObservation,
@@ -23,10 +24,11 @@ use nssa::{AccountId, PublicKey, PublicTransaction};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
-    FinalizedIndexerApi, FinalizedWitnessedClaimObserver, HealthProbe, NativeEscrowPlanner,
-    NativePrepareError, OfficialNativeEscrowFacts, OfficialNodeRpc, RuntimeBoundaryError,
-    ZecEscrowInstruction, compute_custody_pda, compute_metadata_pda, decode_prepared_for_signer,
-    prepared_from_transaction, program_id_from_hex, program_id_to_hex,
+    FinalizedIndexerApi, FinalizedWitnessedClaimObserver, FinalizedWitnessedFundingObserver,
+    HealthProbe, NativeEscrowPlanner, NativePrepareError, OfficialNativeEscrowFacts,
+    OfficialNodeRpc, RuntimeBoundaryError, ZecEscrowInstruction, compute_custody_pda,
+    compute_metadata_pda, decode_prepared_for_signer, prepared_from_transaction,
+    program_id_from_hex, program_id_to_hex,
 };
 
 /// Fail-closed failures at the `PoC` bridge observation and submission boundary.
@@ -107,6 +109,7 @@ pub struct BridgeRuntime {
     planner: Arc<NativeEscrowPlanner>,
     node: Arc<OfficialNodeRpc>,
     finalized_claim_observer: FinalizedWitnessedClaimObserver,
+    finalized_funding_observer: FinalizedWitnessedFundingObserver,
 }
 
 impl std::fmt::Debug for BridgeRuntime {
@@ -128,12 +131,15 @@ impl BridgeRuntime {
         indexer: Arc<dyn FinalizedIndexerApi>,
     ) -> Self {
         let finalized_claim_observer =
-            FinalizedWitnessedClaimObserver::new(runtime.clone(), indexer);
+            FinalizedWitnessedClaimObserver::new(runtime.clone(), Arc::clone(&indexer));
+        let finalized_funding_observer =
+            FinalizedWitnessedFundingObserver::new(runtime.clone(), indexer);
         Self {
             runtime,
             planner,
             node,
             finalized_claim_observer,
+            finalized_funding_observer,
         }
     }
 
@@ -239,6 +245,20 @@ impl BridgeRuntime {
         request: &ObserveFinalizedWitnessedClaimRequest,
     ) -> Result<ObserveFinalizedWitnessedClaimResult, BridgeRuntimeError> {
         self.finalized_claim_observer.observe(request).await
+    }
+
+    /// Observes one witnessed funding effect in a stable, fully finalized indexer window.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on role/runtime/terms drift, incomplete finality, missing or
+    /// contradictory indexer facts, duplicate occurrence, invalid historical funded
+    /// state, or tip movement.
+    pub async fn observe_finalized_witnessed_funding(
+        &self,
+        request: &ObserveFinalizedWitnessedFundingRequest,
+    ) -> Result<ObserveFinalizedWitnessedFundingResult, BridgeRuntimeError> {
+        self.finalized_funding_observer.observe(request).await
     }
 
     /// Submits only exact bytes owned by this actor's active durable planner.

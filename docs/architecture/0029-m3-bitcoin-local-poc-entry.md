@@ -2,8 +2,8 @@
 
 Status: Accepted. The operator-composed local functional PoC completed both
 happy directions on 2026-07-15, and the canonical countersigned agreement is
-GREEN. The typed finalized LEZ claim observer is also GREEN. The Bitcoin Core
-adapter, cohesive lifecycle SDK composition, live refunds, concurrency,
+GREEN. The typed finalized LEZ funding and claim observers and Bitcoin Core
+adapter are also GREEN. Cohesive lifecycle SDK composition, live refunds, concurrency,
 hardening, production readiness, and an M3 completion tag remain open.
 
 ## Context
@@ -84,9 +84,9 @@ flowchart LR
     Maker --> MakerSidecar
     Taker --> TakerSidecar
     MakerSidecar --> Sequencer
-    MakerSidecar -->|"finalized claim read by ID and hash"| Indexer
+    MakerSidecar -->|"finalized funding and claim reads by ID and hash"| Indexer
     TakerSidecar --> Sequencer
-    TakerSidecar -->|"finalized claim read by ID and hash"| Indexer
+    TakerSidecar -->|"finalized funding and claim reads by ID and hash"| Indexer
     Maker -. planned agreement-bound wiring .-> CoreAdapter
     Taker -. planned agreement-bound wiring .-> CoreAdapter
     CoreAdapter --> Core
@@ -133,6 +133,15 @@ and exact claim hash. The official indexer does not expose an account proof or
 atomic multi-account snapshot token; stable finalized-tip bracketing and
 same-block reads are the current upstream-trust compensation and remain a
 production caveat.
+
+The distinct read-only finalized-funding adapter preserves the earlier
+stable-tip progress observer. It accepts an exact funding transaction ID or a
+bounded unique terms-derived discovery, requires canonical `FundNative`, and
+reads historical `Funded` metadata plus exact custody at the containing
+finalized block. This explicit gate keeps claims in a later block because LEZ
+v0.2 exposes end-of-block rather than transaction-position account state. The
+pinned sidecar performs official decoding and PDA validation; cohesive actor
+wiring must compare its facts to the signed agreement before persistence.
 
 The durable Bitcoin lifecycle component is already executable independently of
 the planned actor wiring. The caller supplies an already-validated canonical
@@ -427,8 +436,8 @@ The following are deliberately not accepted by this ADR:
 
 - one cohesive lifecycle SDK or reference application that reproduces the
   operator-composed run with a single supported workflow;
-- typed finalized witnessed-funding, peerless witnessed-claim, and Bitcoin Core
-  evidence integrated with the actor-local recovery component in those actors;
+- finalized LEZ funding/claim and Bitcoin Core evidence integrated with the
+  actor-local recovery component in those actors;
 - live abandonment and both one-lock and two-lock refund execution at the CSV
   boundaries;
 - concurrent swaps, crash recovery, reorgs, chaos, denial-of-service, and

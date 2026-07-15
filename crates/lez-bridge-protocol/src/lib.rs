@@ -24,6 +24,9 @@ pub const METHOD_PREPARE_REVEALING_CLAIM: &str = "lez_bridge.v1.prepare_revealin
 pub const METHOD_PREPARE_WITNESSED_CLAIM: &str = "lez_bridge.v1.prepare_witnessed_claim";
 /// Stable JSON-RPC method for completing a reservation with an aggregate signature.
 pub const METHOD_COMPLETE_WITNESSED_CLAIM: &str = "lez_bridge.v1.complete_witnessed_claim";
+/// Stable JSON-RPC method for observing one finalized aggregate-witness funding transaction.
+pub const METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING: &str =
+    "lez_bridge.v1.observe_finalized_witnessed_funding";
 /// Stable JSON-RPC method for observing one exact finalized aggregate-witness claim.
 pub const METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM: &str =
     "lez_bridge.v1.observe_finalized_witnessed_claim";
@@ -47,12 +50,14 @@ pub use messages::{
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
     DescribeRuntimeResult, EscrowMetadataFacts, EscrowObservationTarget, EscrowState,
     FinalizedBlockIdentity, FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
-    FundingFoundFacts, FundingObservation, InitializationFoundFacts, InitializationObservation,
+    FinalizedWitnessedFundingFacts, FinalizedWitnessedFundingObservationTarget, FundingFoundFacts,
+    FundingObservation, InitializationFoundFacts, InitializationObservation,
     NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
     NativeEscrowAccountObservation, NativeFundInstructionFacts, NativeInitializeInstructionFacts,
     NativeRefundFoundFacts, NativeRefundInstructionFacts, NativeRefundObservation,
     NativeRefundObservationTarget, ObserveEscrowRequest, ObserveEscrowResult,
     ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
+    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
     ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
     ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
     ObservedTransactionFacts, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,

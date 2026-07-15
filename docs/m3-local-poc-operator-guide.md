@@ -89,7 +89,8 @@ loopback HTTP server. They use deterministic RPC doubles and ephemeral loopback
 servers, not the Dockerized Core service, a faucet, a public RPC, or public
 funds. Actual service-mode actor integration remains a separate composed gate.
 
-Repeat exact-ID and peerless finalized LEZ claim observation independently:
+Repeat exact-ID and peerless finalized LEZ funding and claim observation
+independently:
 
 ~~~sh
 cargo test --locked -p lez-bridge-protocol --all-targets
@@ -97,11 +98,15 @@ cargo test --locked -p lez-bridge-client --all-targets
 cargo +1.96.0 test --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml --all-targets
 ~~~
 
-The peerless cases omit the completed claim transaction ID and discover one
-canonical public transaction from the pinned program, terms-derived accounts,
-claimant, aggregate authority, exact prepared transcript, and bounded finalized
-window. They prove unique success plus distinct absence, ambiguity, and
-conflicting-transcript failures through the authenticated server/runtime path.
+The peerless cases omit the funding or completed-claim transaction ID and
+discover one canonical public transaction from the pinned program,
+terms-derived accounts, roles, aggregate authority, and bounded finalized
+window. Funding requires canonical `FundNative`, historical `Funded` metadata,
+and exact custody at its containing block before claim. Claim additionally
+binds the exact prepared transcript and signature. They prove unique success
+plus distinct absence, ambiguity, and conflicting-transcript failures through
+the authenticated server/runtime path. Protocol 22/22, client 2 unit plus 23
+integration and 3 CLI tests, and sidecar 76/76 are GREEN.
 The tests use deterministic in-process indexer doubles and ephemeral loopback
 servers; they do not contact the local devnet or any public resource. The
 manual flow below repeats the same request against the retained local indexer.
@@ -380,9 +385,10 @@ capability file, matching runtime file, and request file:
 "$LEZ_OPERATOR" <command> --endpoint "$MAKER_BRIDGE_URL" --run-id "$M3_RUN_ID" --sidecar-role maker --capability-file "$PRIVATE_ROOT/maker/sidecar.capability" --runtime-file "$PRIVATE_ROOT/maker/runtime.json" --request-file <request.json>
 ~~~
 
-Use the taker endpoint and files for taker calls. The seven commands are
+Use the taker endpoint and files for taker calls. The eight commands are
 describe-runtime, prepare-witnessed-escrow, observe-witnessed-escrow,
-submit-transaction, prepare-witnessed-claim, complete-witnessed-claim, and
+observe-finalized-witnessed-funding, submit-transaction,
+prepare-witnessed-claim, complete-witnessed-claim, and
 observe-finalized-witnessed-claim.
 
 Each context has exactly schema_version, run_id, request_id, and sidecar_role.
@@ -418,6 +424,27 @@ containing start_height and max_blocks:
 jq -n --arg run "$M3_RUN_ID" --arg req "$(new_request_id)" --arg role "$ROLE" --arg init "$LEZ_INIT_TX" --arg fund "$LEZ_FUND_TX" --slurpfile runtime "$RUNTIME" --slurpfile terms "$DIRECTION/terms.json" '{context:{schema_version:1,run_id:$run,request_id:$req,sidecar_role:$role},runtime:$runtime[0],terms:$terms[0],target:{mode:"exact",initialization_transaction_id:$init,funding_transaction_id:$fund}}' >"$DIRECTION/observe-exact-request.json"
 jq -n --arg run "$M3_RUN_ID" --arg req "$(new_request_id)" --arg role "$ROLE" --argjson start "$START_HEIGHT" --argjson blocks "$MAX_BLOCKS" --slurpfile runtime "$RUNTIME" --slurpfile terms "$DIRECTION/terms.json" '{context:{schema_version:1,run_id:$run,request_id:$req,sidecar_role:$role},runtime:$runtime[0],terms:$terms[0],target:{mode:"discover_by_terms",window:{start_height:$start,max_blocks:$blocks}}}' >"$DIRECTION/observe-discover-request.json"
 ~~~
+
+The stable live observation above is a progress/recovery hint, not the
+dual-lock finality gate. After the indexer finalized tip covers the funding
+window, either bound participant must run the distinct finalized funding
+observation. Peerless mode accepts no transaction ID from the counterparty:
+
+~~~sh
+FUNDING_OBSERVER_ROLE=maker
+FUNDING_OBSERVER_RUNTIME="$PRIVATE_ROOT/$FUNDING_OBSERVER_ROLE/runtime.json"
+FUNDING_OBSERVER_ENDPOINT="$MAKER_BRIDGE_URL"
+jq -n --arg run "$M3_RUN_ID" --arg req "$(new_request_id)" --arg role "$FUNDING_OBSERVER_ROLE" --argjson start "$FUNDING_START_HEIGHT" --argjson blocks "$FUNDING_MAX_BLOCKS" --slurpfile runtime "$FUNDING_OBSERVER_RUNTIME" --slurpfile terms "$DIRECTION/terms.json" '{context:{schema_version:1,run_id:$run,request_id:$req,sidecar_role:$role},runtime:$runtime[0],terms:$terms[0],target:{mode:"discover_by_terms"},window:{start_height:$start,max_blocks:$blocks}}' >"$DIRECTION/observe-finalized-funding-request.json"
+"$LEZ_OPERATOR" observe-finalized-witnessed-funding --endpoint "$FUNDING_OBSERVER_ENDPOINT" --run-id "$M3_RUN_ID" --sidecar-role "$FUNDING_OBSERVER_ROLE" --capability-file "$PRIVATE_ROOT/$FUNDING_OBSERVER_ROLE/sidecar.capability" --runtime-file "$FUNDING_OBSERVER_RUNTIME" --request-file "$DIRECTION/observe-finalized-funding-request.json" >"$DIRECTION/finalized-funding.json"
+test "$(jq -er '.funding.metadata.status' "$DIRECTION/finalized-funding.json")" = funded
+test "$(jq -er '.funding.custody.balance' "$DIRECTION/finalized-funding.json")" = "$(jq -er '.amount' "$DIRECTION/terms.json")"
+test "$(jq -er '.funding.transaction.transaction_id' "$DIRECTION/finalized-funding.json")" = "$LEZ_FUND_TX"
+~~~
+
+The last transaction-ID comparison uses the locally retained submission result
+after peerless discovery; it is not discovery input. Persist this complete
+result before claim completion. No adaptor reveal, claim completion, or claim
+submission is eligible from `observe-witnessed-escrow` alone.
 
 submit-transaction adds exactly transaction, containing transaction_id and
 exact_bytes copied unchanged from a prepared result:
@@ -575,8 +602,10 @@ and ultimately receives BTC.
    it with a fresh request ID. Then submit funding once and observe exact IDs
    as maker and discover-by-terms as taker, each with a fresh request ID.
 7. Sequentially prove initialize and funding each occur exactly once in a
-   Finalized indexer block whose ID/hash lookups agree. Require the stable
-   observed metadata status Funded and exact custody amount.
+   Finalized indexer block whose ID/hash lookups agree. Run
+   `observe-finalized-witnessed-funding` through either bound role, persist its
+   result, and require status Funded plus the exact custody amount at the
+   funding-containing block.
 8. Only now is the dual-lock gate open: BTC lock confirmed and LEZ funding
    finalized. Before this point, no process may read or adapt with the adaptor
    scalar.
@@ -628,7 +657,8 @@ and ultimately receives LEZ.
 3. Complete both full signing ceremonies before any new chain effect.
 4. Through the taker sidecar submit LEZ initialization and then funding,
    observing exact IDs as taker and discover-by-terms as maker. Prove both
-   Finalized sequentially and require stable Funded custody.
+   Finalized sequentially, persist `observe-finalized-witnessed-funding`, and
+   require exact Funded custody before continuing.
 5. Under maker rpcauth broadcast the BTC lock, have the taker observe the exact
    contract, mine one block, and require one confirmation.
 6. Only after LEZ funding finality and BTC confirmation may the taker adapt the
@@ -673,6 +703,13 @@ An empty result means not proved, not safe to continue. A moving finalized tip
 is normal; a moving sequencer tip during a multi-read sidecar observation may
 return Unknown. Retry only the observation with a fresh request ID. Never turn
 an uncertain submit into a second send.
+
+`getAccountAtBlock` exposes end-of-block state, not a transaction-index
+snapshot. Funding and claim in one block would therefore expose only terminal
+Claimed state and cannot prove the intermediate Funded lock. Always complete
+and persist finalized funding observation before submitting the claim; the
+claim must finalize in a later block. This is deterministic local ordering, and
+the missing proof/snapshot API remains `LOGOS-016` in the production register.
 
 ## Exact witness and terminal checks
 

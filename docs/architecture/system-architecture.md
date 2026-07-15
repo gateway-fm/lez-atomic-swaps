@@ -155,7 +155,8 @@ sequenceDiagram
         Taker->>Core: Lock Bitcoin
         Core-->>Maker: One local confirmation
         Maker->>Lez: Initialize and fund LEZ
-        Indexer-->>Taker: LEZ funding finalized
+        Indexer-->>Taker: Typed finalized LEZ funding facts
+        Taker->>TakerStore: Bind agreement accounts and persist LEZ lock
         Note over Core,Indexer: Both locks final under local policy
         Taker->>Lez: Claim LEZ and reveal adaptor material
         Indexer-->>Maker: Discover unique finalized claim from terms and transcript
@@ -163,7 +164,8 @@ sequenceDiagram
         Core-->>Taker: Bitcoin output spent once
     else TakerSellsLez
         Taker->>Lez: Initialize and fund LEZ
-        Indexer-->>Maker: LEZ funding finalized
+        Indexer-->>Maker: Typed finalized LEZ funding facts
+        Maker->>MakerStore: Bind agreement accounts and persist LEZ lock
         Maker->>Core: Lock Bitcoin
         Core-->>Taker: One local confirmation
         Note over Core,Indexer: Both locks final under local policy
@@ -242,6 +244,7 @@ flowchart TB
         MBR2["Maker lez-v02-bridge-poc<br/>canonical forward and reverse complete"]
         TBR2["Taker lez-v02-bridge-poc<br/>canonical forward and reverse complete"]
         M3WB["M3 witnessed prepare, complete, and submit<br/>both local happy directions GREEN"]
+        M3FF["M3 finalized witnessed-funding observer<br/>exact or peerless terms discovery<br/>historical Funded state GREEN"]
         M3FO["M3 finalized witnessed-claim observer<br/>exact or peerless terms discovery<br/>same-block state + dual role + BIP340 GREEN"]
         MBRJ[("Maker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         TBRJ[("Taker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
@@ -252,6 +255,8 @@ flowchart TB
         MBR2 --> M3WB
         TBR2 --> M3WB
         M3WB --> V02J
+        MBR2 --> M3FF
+        TBR2 --> M3FF
         MBR2 --> M3FO
         TBR2 --> M3FO
     end
@@ -366,6 +371,7 @@ flowchart TB
     MBR2 -->|"non-genesis finalized-tip readiness"| IX
     TBR2 -->|"non-genesis finalized-tip readiness"| IX
     M3FO -->|"bounded finalized blocks + unique terms and transcript match<br/>accounts at containing BlockId"| IX
+    M3FF -->|"bounded finalized blocks + canonical FundNative<br/>historical Funded accounts at containing BlockId"| IX
     MBR2 -->|"typed outbound profile"| LezProfile
     TBR2 -->|"typed outbound profile"| LezProfile
     LezProfile -->|"local explicit loopback"| SQ
@@ -446,7 +452,7 @@ flowchart TB
     classDef running fill:#e6ffec,stroke:#1a7f37;
     class MM,LC,CA,TM,LRR,PublicLezRisk planned;
     class TC,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
-    class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02Full,V02State,MSL2,TLS2,V02J,MBR2,TBR2,M3FO running;
+    class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02Full,V02State,MSL2,TLS2,V02J,MBR2,TBR2,M3FF,M3FO running;
 ```
 
 The maker operator owns maker policy, keys, node selection, and the daemon

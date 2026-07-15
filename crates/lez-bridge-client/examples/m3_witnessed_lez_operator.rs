@@ -15,8 +15,9 @@ use std::{
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, MAX_RPC_BODY_BYTES, SidecarCapability};
 use lez_bridge_protocol::{
     CompleteWitnessedClaimRequest, DescribeRuntimeRequest, ObserveFinalizedWitnessedClaimRequest,
-    ObserveWitnessedEscrowRequest, Participant, PrepareWitnessedClaimRequest,
-    PrepareWitnessedEscrowRequest, RunId, RuntimeDescriptor, SubmitTransactionRequest,
+    ObserveFinalizedWitnessedFundingRequest, ObserveWitnessedEscrowRequest, Participant,
+    PrepareWitnessedClaimRequest, PrepareWitnessedEscrowRequest, RunId, RuntimeDescriptor,
+    SubmitTransactionRequest,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use zeroize::Zeroize as _;
@@ -25,13 +26,14 @@ const REQUEST_TIMEOUT: Duration = Duration::from_mins(1);
 const MAX_RUNTIME_FILE_BYTES: usize = 16 * 1024;
 const MAX_CAPABILITY_FILE_BYTES: usize = 130;
 const MAX_CAPABILITY_FILE_BYTES_U64: u64 = 130;
-const USAGE: &str = "usage: m3_witnessed_lez_operator <describe-runtime|prepare-witnessed-escrow|observe-witnessed-escrow|submit-transaction|prepare-witnessed-claim|complete-witnessed-claim|observe-finalized-witnessed-claim> --endpoint <http://loopback:port/> --run-id <id> --sidecar-role <maker|taker> --capability-file <private-file> --runtime-file <json-file> --request-file <json-file>";
+const USAGE: &str = "usage: m3_witnessed_lez_operator <describe-runtime|prepare-witnessed-escrow|observe-witnessed-escrow|observe-finalized-witnessed-funding|submit-transaction|prepare-witnessed-claim|complete-witnessed-claim|observe-finalized-witnessed-claim> --endpoint <http://loopback:port/> --run-id <id> --sidecar-role <maker|taker> --capability-file <private-file> --runtime-file <json-file> --request-file <json-file>";
 
 #[derive(Clone, Copy)]
 enum Command {
     DescribeRuntime,
     PrepareWitnessedEscrow,
     ObserveWitnessedEscrow,
+    ObserveFinalizedWitnessedFunding,
     SubmitTransaction,
     PrepareWitnessedClaim,
     CompleteWitnessedClaim,
@@ -44,6 +46,7 @@ impl Command {
             "describe-runtime" => Ok(Self::DescribeRuntime),
             "prepare-witnessed-escrow" => Ok(Self::PrepareWitnessedEscrow),
             "observe-witnessed-escrow" => Ok(Self::ObserveWitnessedEscrow),
+            "observe-finalized-witnessed-funding" => Ok(Self::ObserveFinalizedWitnessedFunding),
             "submit-transaction" => Ok(Self::SubmitTransaction),
             "prepare-witnessed-claim" => Ok(Self::PrepareWitnessedClaim),
             "complete-witnessed-claim" => Ok(Self::CompleteWitnessedClaim),
@@ -159,6 +162,15 @@ async fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), CliErr
             let request = read_request::<ObserveWitnessedEscrowRequest>(&cli.request_file)?;
             let result = client
                 .observe_witnessed_escrow(request)
+                .await
+                .map_err(|_| CliError::BridgeOperationFailed)?;
+            print_result(&result)
+        }
+        Command::ObserveFinalizedWitnessedFunding => {
+            let request =
+                read_request::<ObserveFinalizedWitnessedFundingRequest>(&cli.request_file)?;
+            let result = client
+                .observe_finalized_witnessed_funding(request)
                 .await
                 .map_err(|_| CliError::BridgeOperationFailed)?;
             print_result(&result)
@@ -425,6 +437,10 @@ mod tests {
         assert_eq!(parsed.endpoint, "http://127.0.0.1:31415/");
         assert_eq!(parsed.run_id.as_str(), "operator-test-run");
         assert_eq!(parsed.sidecar_role, Participant::Maker);
+
+        let mut finalized_funding = valid.clone();
+        finalized_funding[1] = OsString::from("observe-finalized-witnessed-funding");
+        parse_arguments(finalized_funding).expect("finalized funding command");
 
         let mut trailing = valid.clone();
         trailing.push(OsString::from("unexpected"));

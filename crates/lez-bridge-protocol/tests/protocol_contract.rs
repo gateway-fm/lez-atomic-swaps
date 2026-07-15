@@ -4,14 +4,16 @@ use lez_bridge_protocol::{
     DescribeRuntimeResult, DiscoveryWindow, ErrorCode, ErrorMessage, EscrowMetadataFacts,
     EscrowObservationTarget, EscrowState, ExactMessageBytes, ExactTransactionBytes,
     FinalizedBlockIdentity, FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
-    FundingFoundFacts, FundingObservation, Hex32, InitializationFoundFacts,
-    InitializationObservation, MAX_DISCOVERY_BLOCKS, MessageContext, NativeAmount,
-    NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
-    NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
-    NativeFundInstructionFacts, NativeInitializeInstructionFacts, NativeRefundFoundFacts,
-    NativeRefundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
-    ObserveFinalizedWitnessedClaimResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
+    FinalizedWitnessedFundingFacts, FinalizedWitnessedFundingObservationTarget, FundingFoundFacts,
+    FundingObservation, Hex32, InitializationFoundFacts, InitializationObservation,
+    MAX_DISCOVERY_BLOCKS, MessageContext, NativeAmount, NativeClaimInstructionFacts,
+    NativeCustodyFacts, NativeEscrowAccountFacts, NativeEscrowAccountObservation,
+    NativeEscrowTerms, NativeEscrowTermsInput, NativeFundInstructionFacts,
+    NativeInitializeInstructionFacts, NativeRefundFoundFacts, NativeRefundInstructionFacts,
+    NativeRefundObservation, NativeRefundObservationTarget, ObserveEscrowRequest,
+    ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
+    ObserveFinalizedWitnessedFundingResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
     ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
     ObserveWitnessedEscrowResult, ObservedTransactionFacts, Participant,
     PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
@@ -27,6 +29,130 @@ use lez_bridge_protocol::{
     WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
     WitnessedNativeInitializeInstructionFacts,
 };
+
+#[test]
+fn finalized_witnessed_funding_wire_is_strict_bounded_and_complete() {
+    let terms = WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
+        swap_id: h(60),
+        terms_hash: h(61),
+        depositor: Participant::Maker,
+        depositor_account_id: h(62),
+        claimant: Participant::Taker,
+        claimant_account_id: h(63),
+        aggregate_authority_account_id: h(64),
+        aggregate_x_only_public_key: h(65),
+        amount: 125,
+        refund_at_ms: 1_850_000_001_123,
+        authenticated_transfer_program_id: h(66),
+    })
+    .unwrap();
+    let request = ObserveFinalizedWitnessedFundingRequest::new(
+        context(),
+        runtime(),
+        terms.clone(),
+        TransactionId::from_bytes([67; 32]),
+        DiscoveryWindow::new(68, 3).unwrap(),
+    );
+    assert_eq!(
+        request.target,
+        FinalizedWitnessedFundingObservationTarget::Exact {
+            funding_transaction_id: TransactionId::from_bytes([67; 32])
+        }
+    );
+    let funding = finalized_witnessed_funding_facts(&terms);
+    let result =
+        ObserveFinalizedWitnessedFundingResult::new(context(), ChainTip::new(h(73), 70), funding);
+
+    let request_json = serde_json::to_value(&request).unwrap();
+    assert_eq!(
+        serde_json::from_value::<ObserveFinalizedWitnessedFundingRequest>(request_json.clone())
+            .unwrap(),
+        request
+    );
+    assert_eq!(
+        serde_json::from_value::<ObserveFinalizedWitnessedFundingResult>(
+            serde_json::to_value(&result).unwrap()
+        )
+        .unwrap(),
+        result
+    );
+
+    let discovery = ObserveFinalizedWitnessedFundingRequest::discover_by_terms(
+        context(),
+        runtime(),
+        terms,
+        DiscoveryWindow::new(68, MAX_DISCOVERY_BLOCKS).unwrap(),
+    );
+    assert_eq!(
+        discovery.target,
+        FinalizedWitnessedFundingObservationTarget::DiscoverByTerms
+    );
+    assert_eq!(
+        serde_json::to_value(&discovery).unwrap()["target"],
+        serde_json::json!({"mode": "discover_by_terms"})
+    );
+
+    for invalid_target in [
+        serde_json::json!({
+            "mode": "discover_by_terms",
+            "funding_transaction_id": "43".repeat(32)
+        }),
+        serde_json::json!({"mode": "exact"}),
+        serde_json::json!({
+            "mode": "exact",
+            "funding_transaction_id": "43".repeat(32),
+            "unexpected": true
+        }),
+    ] {
+        let mut invalid = request_json.clone();
+        invalid["target"] = invalid_target;
+        assert!(
+            serde_json::from_value::<ObserveFinalizedWitnessedFundingRequest>(invalid).is_err()
+        );
+    }
+
+    for max_blocks in [0, MAX_DISCOVERY_BLOCKS + 1] {
+        let mut invalid = request_json.clone();
+        invalid["window"]["max_blocks"] = serde_json::json!(max_blocks);
+        assert!(
+            serde_json::from_value::<ObserveFinalizedWitnessedFundingRequest>(invalid).is_err()
+        );
+    }
+
+    let mut unknown_result = serde_json::to_value(result).unwrap();
+    unknown_result["funding"]["unexpected"] = serde_json::json!(true);
+    assert!(
+        serde_json::from_value::<ObserveFinalizedWitnessedFundingResult>(unknown_result).is_err()
+    );
+}
+
+fn finalized_witnessed_funding_facts(
+    terms: &WitnessedNativeEscrowTerms,
+) -> FinalizedWitnessedFundingFacts {
+    FinalizedWitnessedFundingFacts::new(
+        ObservedTransactionFacts::new(
+            TransactionId::from_bytes([67; 32]),
+            ExactTransactionBytes::new(vec![69; 128]).unwrap(),
+            ChainPosition::new(h(70), 69, 2),
+            AccountIds::new(vec![h(62)]).unwrap(),
+            true,
+        ),
+        NativeFundInstructionFacts::new(
+            h(4),
+            AccountIds::new(vec![h(71), h(72), h(62)]).unwrap(),
+            h(60),
+        ),
+        FinalizedBlockIdentity::new(69, h(70), 1_850_000_001_456),
+        WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+            h(71),
+            h(4),
+            h(72),
+            terms,
+            EscrowState::Funded,
+        ),
+        NativeCustodyFacts::new(h(72), h(66), 125),
+    )
+}
 
 #[test]
 fn finalized_witnessed_claim_wire_binds_exact_transcript_witness_and_block() {

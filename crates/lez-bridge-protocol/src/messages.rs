@@ -1657,6 +1657,178 @@ impl CompleteWitnessedClaimResult {
     }
 }
 
+/// Selects an exact funding ID or peerless discovery by witnessed agreement terms.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+#[must_use]
+pub enum FinalizedWitnessedFundingObservationTarget {
+    /// Require the one exact witnessed funding transaction identity.
+    Exact {
+        /// Exact completed witnessed funding transaction ID.
+        funding_transaction_id: TransactionId,
+    },
+    /// Discover the unique canonical funding transaction from the signed terms.
+    DiscoverByTerms,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExactFinalizedWitnessedFundingObservationTargetWire {
+    mode: ExactMode,
+    funding_transaction_id: TransactionId,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiscoverFinalizedWitnessedFundingObservationTargetWire {
+    mode: DiscoverByTermsMode,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum FinalizedWitnessedFundingObservationTargetWire {
+    Exact(ExactFinalizedWitnessedFundingObservationTargetWire),
+    DiscoverByTerms(DiscoverFinalizedWitnessedFundingObservationTargetWire),
+}
+
+impl<'de> Deserialize<'de> for FinalizedWitnessedFundingObservationTarget {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match FinalizedWitnessedFundingObservationTargetWire::deserialize(deserializer)? {
+            FinalizedWitnessedFundingObservationTargetWire::Exact(wire) => {
+                let ExactMode::Exact = wire.mode;
+                Ok(Self::Exact {
+                    funding_transaction_id: wire.funding_transaction_id,
+                })
+            }
+            FinalizedWitnessedFundingObservationTargetWire::DiscoverByTerms(wire) => {
+                let DiscoverByTermsMode::DiscoverByTerms = wire.mode;
+                Ok(Self::DiscoverByTerms)
+            }
+        }
+    }
+}
+
+/// Requests proof that one witnessed funding transaction occurs in a finalized window.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ObserveFinalizedWitnessedFundingRequest {
+    /// Version, run, request, and destination-role binding.
+    pub context: MessageContext,
+    /// Expected pinned LEZ runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// Complete witnessed agreement terms, including aggregate claim authority.
+    pub terms: WitnessedNativeEscrowTerms,
+    /// Exact-ID lookup or peerless canonical discovery.
+    pub target: FinalizedWitnessedFundingObservationTarget,
+    /// Inclusive bounded range that must be entirely finalized and scanned.
+    pub window: DiscoveryWindow,
+}
+
+impl ObserveFinalizedWitnessedFundingRequest {
+    /// Creates one exact, bounded finalized witnessed-funding observation request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedNativeEscrowTerms,
+        funding_transaction_id: TransactionId,
+        window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+            target: FinalizedWitnessedFundingObservationTarget::Exact {
+                funding_transaction_id,
+            },
+            window,
+        }
+    }
+
+    /// Creates one bounded terms-based peerless discovery request.
+    pub const fn discover_by_terms(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedNativeEscrowTerms,
+        window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+            target: FinalizedWitnessedFundingObservationTarget::DiscoverByTerms,
+            window,
+        }
+    }
+}
+
+/// Complete exact facts proving one witnessed funding effect in a finalized block.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct FinalizedWitnessedFundingFacts {
+    /// Canonical transaction bytes, hash, depositor signer, and block position.
+    pub transaction: ObservedTransactionFacts,
+    /// Exact decoded `FundNative` program, accounts, and swap identifier.
+    pub instruction: NativeFundInstructionFacts,
+    /// Identity and consensus timestamp of the containing finalized block.
+    pub containing_block: FinalizedBlockIdentity,
+    /// Funded witnessed metadata read at the exact containing finalized block.
+    pub metadata: WitnessedEscrowMetadataFacts,
+    /// Funded native custody read at the exact containing finalized block.
+    pub custody: NativeCustodyFacts,
+}
+
+impl FinalizedWitnessedFundingFacts {
+    /// Creates one complete finalized witnessed-funding proof bundle.
+    pub const fn new(
+        transaction: ObservedTransactionFacts,
+        instruction: NativeFundInstructionFacts,
+        containing_block: FinalizedBlockIdentity,
+        metadata: WitnessedEscrowMetadataFacts,
+        custody: NativeCustodyFacts,
+    ) -> Self {
+        Self {
+            transaction,
+            instruction,
+            containing_block,
+            metadata,
+            custody,
+        }
+    }
+}
+
+/// Returns one exact witnessed funding effect only after its window is finalized.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ObserveFinalizedWitnessedFundingResult {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Stable finalized indexer tip that completely covers the requested window.
+    pub finalized_tip: ChainTip,
+    /// Exact finalized witnessed funding facts.
+    pub funding: FinalizedWitnessedFundingFacts,
+}
+
+impl ObserveFinalizedWitnessedFundingResult {
+    /// Creates one exact finalized witnessed-funding result.
+    pub const fn new(
+        context: MessageContext,
+        finalized_tip: ChainTip,
+        funding: FinalizedWitnessedFundingFacts,
+    ) -> Self {
+        Self {
+            context,
+            finalized_tip,
+            funding,
+        }
+    }
+}
+
 /// Selects an exact completed claim ID or peerless discovery by agreement terms.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]

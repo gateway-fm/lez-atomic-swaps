@@ -8,30 +8,32 @@ use jsonrpsee::{RpcModule, types::ErrorObjectOwned};
 use lez_bridge_client::{
     BridgeClient, BridgeClientConfig, BridgeClientError, BridgeOperation, MAX_RPC_BODY_BYTES,
     METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW,
-    METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_NATIVE_REFUND,
-    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW,
-    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
-    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
-    SidecarCapability,
+    METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
+    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
+    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
+    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
+    RUN_ID_HEADER, SIDECAR_ROLE_HEADER, SidecarCapability,
 };
 use lez_bridge_protocol::{
     AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip,
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
     DescribeRuntimeResult, DiscoveryWindow, ErrorCode, ErrorMessage, EscrowObservationTarget,
     EscrowState, ExactMessageBytes, ExactTransactionBytes, FinalizedBlockIdentity,
-    FinalizedWitnessedClaimFacts, FundingObservation, Hex32, InitializationObservation,
-    MessageContext, NativeCustodyFacts, NativeEscrowAccountObservation, NativeEscrowTerms,
-    NativeEscrowTermsInput, NativeRefundObservation, NativeRefundObservationTarget,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
-    ObserveFinalizedWitnessedClaimResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
-    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
-    ObserveWitnessedEscrowResult, Participant, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
-    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
-    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
-    PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply, RequestId,
-    RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage, RunId,
-    RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
+    FinalizedWitnessedClaimFacts, FinalizedWitnessedFundingFacts,
+    FinalizedWitnessedFundingObservationTarget, FundingObservation, Hex32,
+    InitializationObservation, MessageContext, NativeCustodyFacts, NativeEscrowAccountObservation,
+    NativeEscrowTerms, NativeEscrowTermsInput, NativeFundInstructionFacts, NativeRefundObservation,
+    NativeRefundObservationTarget, ObserveEscrowRequest, ObserveEscrowResult,
+    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
+    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
+    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
+    ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
+    Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
+    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
+    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
+    RequestId, RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage,
+    RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
     SubmitTransactionResult, TransactionId, WitnessedClaimInstructionFacts,
     WitnessedEscrowMetadataFacts, WitnessedFundingObservation, WitnessedInitializationObservation,
     WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
@@ -75,6 +77,10 @@ enum Behavior {
     MutatedFinalizedSignature,
     DifferentFinalizedSigningKey,
     MutatedFinalizedSignatureMessage,
+    MutatedFinalizedFundingInstruction,
+    MutatedFinalizedFundingMetadata,
+    MutatedFinalizedFundingCustody,
+    MutatedFinalizedFundingSigner,
 }
 
 #[derive(Clone, Debug)]
@@ -194,6 +200,7 @@ fn register_methods(module: &mut RpcModule<Fixture>) {
 
 fn register_existing_transaction_methods(module: &mut RpcModule<Fixture>) {
     register_witnessed_escrow_method(module);
+    register_finalized_witnessed_funding_method(module);
     register_finalized_witnessed_claim_method(module);
     module
         .register_async_method(
@@ -289,6 +296,109 @@ fn register_existing_transaction_methods(module: &mut RpcModule<Fixture>) {
             Ok::<_, ErrorObjectOwned>(serde_json::to_value(result).expect("serializable result"))
         })
         .expect("observe claim method");
+}
+
+fn register_finalized_witnessed_funding_method(module: &mut RpcModule<Fixture>) {
+    module
+        .register_method(
+            METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
+            |params, fixture, _| {
+                let request: ObserveFinalizedWitnessedFundingRequest = params.one()?;
+                fixture.record(METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING);
+                let block_id = match fixture.behavior {
+                    Behavior::FinalizedBeforeWindow => request.window.start_height() - 1,
+                    Behavior::FinalizedAfterWindow => {
+                        request.window.start_height() + u64::from(request.window.max_blocks())
+                    }
+                    _ => request.window.start_height(),
+                };
+                let transaction_id = match request.target {
+                    FinalizedWitnessedFundingObservationTarget::Exact {
+                        funding_transaction_id,
+                    } => funding_transaction_id,
+                    FinalizedWitnessedFundingObservationTarget::DiscoverByTerms => txid(90),
+                };
+                let metadata_id = Hex32::from_bytes([91; 32]);
+                let custody_id = Hex32::from_bytes([92; 32]);
+                let signer = if matches!(fixture.behavior, Behavior::MutatedFinalizedFundingSigner)
+                {
+                    request.terms.claimant_account_id()
+                } else {
+                    request.terms.depositor_account_id()
+                };
+                let transaction = lez_bridge_protocol::ObservedTransactionFacts::new(
+                    transaction_id,
+                    ExactTransactionBytes::new(vec![90; 128]).unwrap(),
+                    ChainPosition::new(Hex32::from_bytes([93; 32]), block_id, 0),
+                    AccountIds::new(vec![signer]).unwrap(),
+                    true,
+                );
+                let instruction_program = if matches!(
+                    fixture.behavior,
+                    Behavior::MutatedFinalizedFundingInstruction
+                ) {
+                    Hex32::from_bytes([94; 32])
+                } else {
+                    request.runtime.escrow_program_id
+                };
+                let instruction = NativeFundInstructionFacts::new(
+                    instruction_program,
+                    AccountIds::new(vec![
+                        metadata_id,
+                        custody_id,
+                        request.terms.depositor_account_id(),
+                    ])
+                    .unwrap(),
+                    request.terms.swap_id(),
+                );
+                let metadata_status =
+                    if matches!(fixture.behavior, Behavior::MutatedFinalizedFundingMetadata) {
+                        EscrowState::Claimed
+                    } else {
+                        EscrowState::Funded
+                    };
+                let metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+                    metadata_id,
+                    request.runtime.escrow_program_id,
+                    custody_id,
+                    &request.terms,
+                    metadata_status,
+                );
+                let custody_balance =
+                    if matches!(fixture.behavior, Behavior::MutatedFinalizedFundingCustody) {
+                        0
+                    } else {
+                        request.terms.amount().as_u128()
+                    };
+                let custody = NativeCustodyFacts::new(
+                    custody_id,
+                    request.terms.authenticated_transfer_program_id(),
+                    custody_balance,
+                );
+                let finalized_height =
+                    if matches!(fixture.behavior, Behavior::FinalizedTipHashDisagreement) {
+                        block_id
+                    } else {
+                        request.window.start_height() + u64::from(request.window.max_blocks())
+                    };
+                Ok::<_, ErrorObjectOwned>(ObserveFinalizedWitnessedFundingResult::new(
+                    response_context(&request.context, fixture.behavior),
+                    ChainTip::new(Hex32::from_bytes([95; 32]), finalized_height),
+                    FinalizedWitnessedFundingFacts::new(
+                        transaction,
+                        instruction,
+                        FinalizedBlockIdentity::new(
+                            block_id,
+                            Hex32::from_bytes([93; 32]),
+                            1_850_000_000_050,
+                        ),
+                        metadata,
+                        custody,
+                    ),
+                ))
+            },
+        )
+        .expect("observe finalized witnessed funding method");
 }
 
 fn register_finalized_witnessed_claim_method(module: &mut RpcModule<Fixture>) {
@@ -730,6 +840,53 @@ async fn round_trip_finalized_witnessed_claim(
     );
 }
 
+async fn round_trip_finalized_witnessed_funding(
+    client: &BridgeClient,
+    run: &RunId,
+    expected_runtime: &RuntimeDescriptor,
+) {
+    let finalized = client
+        .observe_finalized_witnessed_funding(ObserveFinalizedWitnessedFundingRequest::new(
+            context(run, Participant::Maker, "observe-finalized-funding"),
+            expected_runtime.clone(),
+            witnessed_deposit_terms(expected_runtime),
+            txid(90),
+            DiscoveryWindow::new(60, 1).unwrap(),
+        ))
+        .await
+        .expect("observe finalized funding");
+    assert_eq!(finalized.funding.transaction.transaction_id, txid(90));
+}
+
+async fn round_trip_witnessed_escrow(
+    client: &BridgeClient,
+    run: &RunId,
+    expected_runtime: &RuntimeDescriptor,
+) -> PrepareWitnessedEscrowResult {
+    let prepared = client
+        .prepare_witnessed_escrow(PrepareWitnessedEscrowRequest::new(
+            context(run, Participant::Maker, "prepare-witnessed-escrow"),
+            expected_runtime.clone(),
+            witnessed_deposit_terms(expected_runtime),
+        ))
+        .await
+        .expect("prepare witnessed escrow");
+    let observed = client
+        .observe_witnessed_escrow(ObserveWitnessedEscrowRequest::new(
+            context(run, Participant::Maker, "observe-witnessed-escrow"),
+            expected_runtime.clone(),
+            witnessed_deposit_terms(expected_runtime),
+            EscrowObservationTarget::Exact {
+                initialization_transaction_id: prepared.initialization.transaction_id,
+                funding_transaction_id: prepared.funding.transaction_id,
+            },
+        ))
+        .await
+        .expect("observe witnessed escrow");
+    assert_eq!(observed.tip_before, observed.tip_after);
+    prepared
+}
+
 #[tokio::test]
 async fn finalized_witnessed_claim_discovers_by_terms_without_peer_transaction_id() {
     let expected_runtime = runtime(Participant::Maker, 31);
@@ -773,6 +930,147 @@ async fn finalized_witnessed_claim_discovers_by_terms_without_peer_transaction_i
 }
 
 #[tokio::test]
+async fn finalized_witnessed_funding_validates_exact_and_peerless_results_without_submission() {
+    let expected_runtime = runtime(Participant::Maker, 32);
+    let sidecar = spawn_sidecar(expected_runtime.clone(), MAKER_CAPABILITY, Behavior::Happy).await;
+    let run = RunId::new(TEST_RUN).expect("run id");
+    let client = client(
+        &sidecar.endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        expected_runtime.clone(),
+        Duration::from_secs(1),
+    );
+    let terms = witnessed_deposit_terms(&expected_runtime);
+    let exact = client
+        .observe_finalized_witnessed_funding(ObserveFinalizedWitnessedFundingRequest::new(
+            context(&run, Participant::Maker, "observe-finalized-funding-exact"),
+            expected_runtime.clone(),
+            terms.clone(),
+            txid(90),
+            DiscoveryWindow::new(60, 1).unwrap(),
+        ))
+        .await
+        .expect("exact finalized funding");
+    assert_eq!(exact.funding.transaction.transaction_id, txid(90));
+
+    let discovered = client
+        .observe_finalized_witnessed_funding(
+            ObserveFinalizedWitnessedFundingRequest::discover_by_terms(
+                context(
+                    &run,
+                    Participant::Maker,
+                    "observe-finalized-funding-discover",
+                ),
+                expected_runtime,
+                terms,
+                DiscoveryWindow::new(60, 1).unwrap(),
+            ),
+        )
+        .await
+        .expect("peerless finalized funding");
+    assert_eq!(discovered.funding.transaction.transaction_id, txid(90));
+    assert_eq!(
+        sidecar
+            .fixture
+            .calls(METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING),
+        2
+    );
+    assert_eq!(sidecar.fixture.calls(METHOD_SUBMIT_TRANSACTION), 0);
+}
+
+async fn assert_finalized_funding_rejected(behavior: Behavior, suffix: &str) {
+    let expected_runtime = runtime(Participant::Maker, 32);
+    let sidecar = spawn_sidecar(expected_runtime.clone(), MAKER_CAPABILITY, behavior).await;
+    let run = RunId::new(TEST_RUN).expect("run id");
+    let client = client(
+        &sidecar.endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        expected_runtime.clone(),
+        Duration::from_secs(1),
+    );
+    let error = client
+        .observe_finalized_witnessed_funding(ObserveFinalizedWitnessedFundingRequest::new(
+            context(&run, Participant::Maker, suffix),
+            expected_runtime.clone(),
+            witnessed_deposit_terms(&expected_runtime),
+            txid(90),
+            DiscoveryWindow::new(60, 1).unwrap(),
+        ))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        BridgeClientError::MalformedObservation {
+            operation: BridgeOperation::ObserveFinalizedWitnessedFunding,
+        }
+    ));
+}
+
+#[tokio::test]
+async fn finalized_witnessed_funding_rejects_mutated_or_incoherent_facts() {
+    for (behavior, suffix) in [
+        (
+            Behavior::MutatedFinalizedFundingInstruction,
+            "funding-instruction",
+        ),
+        (
+            Behavior::MutatedFinalizedFundingMetadata,
+            "funding-metadata",
+        ),
+        (Behavior::MutatedFinalizedFundingCustody, "funding-custody"),
+        (Behavior::MutatedFinalizedFundingSigner, "funding-signer"),
+        (Behavior::FinalizedBeforeWindow, "funding-before-window"),
+        (Behavior::FinalizedAfterWindow, "funding-after-window"),
+        (Behavior::FinalizedTipHashDisagreement, "funding-tip-hash"),
+    ] {
+        assert_finalized_funding_rejected(behavior, suffix).await;
+    }
+}
+
+#[tokio::test]
+async fn finalized_witnessed_funding_rejects_cross_wired_observer_before_transport() {
+    let expected_runtime = runtime(Participant::Maker, 32);
+    let terms = witnessed_deposit_terms(&expected_runtime);
+    let sidecar = spawn_sidecar(expected_runtime, MAKER_CAPABILITY, Behavior::Happy).await;
+    let mut cross_wired_runtime = sidecar.fixture.runtime.clone();
+    cross_wired_runtime.signer_account_id = terms.claimant_account_id();
+    let run = RunId::new(TEST_RUN).expect("run id");
+    let client = client(
+        &sidecar.endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        cross_wired_runtime.clone(),
+        Duration::from_secs(1),
+    );
+
+    let error = client
+        .observe_finalized_witnessed_funding(ObserveFinalizedWitnessedFundingRequest::new(
+            context(&run, Participant::Maker, "funding-cross-wired-observer"),
+            cross_wired_runtime,
+            terms,
+            txid(90),
+            DiscoveryWindow::new(60, 1).unwrap(),
+        ))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        BridgeClientError::MalformedObservation {
+            operation: BridgeOperation::ObserveFinalizedWitnessedFunding,
+        }
+    ));
+    assert_eq!(
+        sidecar
+            .fixture
+            .calls(METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING),
+        0
+    );
+}
+
+#[tokio::test]
 async fn witnessed_escrow_prepare_is_role_correct_typed_and_does_not_submit() {
     let expected_runtime = runtime(Participant::Maker, 30);
     let sidecar = spawn_sidecar(expected_runtime.clone(), MAKER_CAPABILITY, Behavior::Happy).await;
@@ -785,14 +1083,7 @@ async fn witnessed_escrow_prepare_is_role_correct_typed_and_does_not_submit() {
         Duration::from_secs(1),
     );
 
-    let prepared = client
-        .prepare_witnessed_escrow(PrepareWitnessedEscrowRequest::new(
-            context(&run, Participant::Maker, "prepare-witnessed-escrow"),
-            expected_runtime.clone(),
-            witnessed_deposit_terms(&expected_runtime),
-        ))
-        .await
-        .expect("prepare witnessed escrow");
+    let prepared = round_trip_witnessed_escrow(&client, &run, &expected_runtime).await;
 
     assert_ne!(
         prepared.initialization.transaction_id,
@@ -801,19 +1092,6 @@ async fn witnessed_escrow_prepare_is_role_correct_typed_and_does_not_submit() {
     assert_eq!(sidecar.fixture.calls(METHOD_PREPARE_WITNESSED_ESCROW), 1);
     assert_eq!(sidecar.fixture.calls(METHOD_SUBMIT_TRANSACTION), 0);
 
-    let observed = client
-        .observe_witnessed_escrow(ObserveWitnessedEscrowRequest::new(
-            context(&run, Participant::Maker, "observe-witnessed-escrow"),
-            expected_runtime.clone(),
-            witnessed_deposit_terms(&expected_runtime),
-            EscrowObservationTarget::Exact {
-                initialization_transaction_id: prepared.initialization.transaction_id,
-                funding_transaction_id: prepared.funding.transaction_id,
-            },
-        ))
-        .await
-        .expect("observe witnessed escrow");
-    assert_eq!(observed.tip_before, observed.tip_after);
     assert_eq!(sidecar.fixture.calls(METHOD_OBSERVE_WITNESSED_ESCROW), 1);
     assert_eq!(sidecar.fixture.calls(METHOD_SUBMIT_TRANSACTION), 0);
 }
@@ -900,11 +1178,14 @@ fn assert_all_method_calls(fixture: &Fixture) {
     for method in [
         METHOD_DESCRIBE_RUNTIME,
         METHOD_PREPARE_NATIVE_ESCROW,
+        METHOD_PREPARE_WITNESSED_ESCROW,
         METHOD_OBSERVE_ESCROW,
+        METHOD_OBSERVE_WITNESSED_ESCROW,
         METHOD_PREPARE_REVEALING_CLAIM,
         METHOD_OBSERVE_REVEALING_CLAIM,
         METHOD_PREPARE_WITNESSED_CLAIM,
         METHOD_COMPLETE_WITNESSED_CLAIM,
+        METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
         METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
         METHOD_PREPARE_NATIVE_REFUND,
         METHOD_OBSERVE_NATIVE_REFUND,
@@ -964,6 +1245,8 @@ async fn all_versioned_methods_round_trip_typed_protocol_values_once() {
         .await
         .expect("observe escrow");
 
+    let _ = round_trip_witnessed_escrow(&client, &run, &expected_runtime).await;
+
     let claim = client
         .prepare_revealing_claim(PrepareRevealingClaimRequest::new(
             context(&run, Participant::Maker, "prepare-claim"),
@@ -994,6 +1277,8 @@ async fn all_versioned_methods_round_trip_typed_protocol_values_once() {
         escrow.funding.transaction_id,
     )
     .await;
+
+    round_trip_finalized_witnessed_funding(&client, &run, &expected_runtime).await;
 
     round_trip_finalized_witnessed_claim(
         &client,

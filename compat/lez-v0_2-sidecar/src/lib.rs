@@ -34,7 +34,8 @@ pub use bridge_server::{
     BridgeServerHandle, start_bridge_server,
 };
 pub use finalized_claim_observation::{
-    FinalizedIndexerApi, FinalizedWitnessedClaimObserver, OfficialIndexerRpc,
+    FinalizedIndexerApi, FinalizedWitnessedClaimObserver, FinalizedWitnessedFundingObserver,
+    OfficialIndexerRpc,
 };
 pub use native_prepare::{
     NativeEscrowPlanner, NativePrepareError, NonceSource, ZecEscrowInstruction,

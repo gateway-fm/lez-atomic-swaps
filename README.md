@@ -152,8 +152,18 @@ The client independently enforces the requested window and verifies BIP-340
 with exact-pinned `secp256k1` 0.29.1. The official indexer supplies historical
 account DTOs but no account proof or atomic multi-read snapshot token; that is
 recorded as an upstream production trust limitation, not hidden as local
-consensus proof. This closes peer-independent typed LEZ claim evidence, not
-finalized funding observation or cohesive actor wiring.
+consensus proof. This closes peer-independent typed LEZ claim evidence.
+
+The separate `observe-finalized-witnessed-funding` call is now GREEN. It keeps
+the earlier stable-tip progress observer intact, accepts an exact transaction
+ID or bounded unique discovery by signed terms, and proves canonical
+`FundNative` inclusion plus historical `Funded` metadata and exact custody at
+the containing finalized block before either claim may reveal adaptor
+material. The pinned sidecar is the canonical official-wire decoder and PDA
+validator; the graph-isolated client validates the bounded result and role
+binding but does not claim an independent official LEZ decode. The cohesive
+actor must compare the returned accounts and transaction evidence with the
+signed agreement before durably advancing the lock state.
 
 The next durable M3 component is now implemented locally as
 `SqliteBtcRecoveryStore`. Each maker or taker opens a different owner-private
@@ -304,7 +314,7 @@ current executable slices enforce:
   transitions through `Refunded` in both directions, including rollback,
   conflict, corruption, and close/reopen replay.
   The M2 lane introduced a bounded authenticated eight-method LEZ sidecar
-  client; the current M3 lane extends the same protocol to eleven methods,
+  client; the current M3 lane extends the same protocol to fourteen methods,
   a signed-agreement native first-lock bridge adapter, typed Zebra
   owner/counterparty claim and refund ports, and the public crash-safe
   timeout-refund SDK contract. The bridge client binds every request
@@ -338,8 +348,9 @@ current executable slices enforce:
   partial coverage is unknown and ambiguity or a moving tip fails closed. The
   executable runner starts concurrent maker and taker sidecars with separate
   private keys, capabilities, runtime descriptors, durable stores, and
-  ephemeral loopback listeners. All eight M2 methods execute, and the three M3
-  witnessed-claim methods are separately covered. Native
+  ephemeral loopback listeners. All eight M2 methods execute, and the six M3
+  witnessed preparation, finalized-funding, and finalized-claim methods are
+  separately covered. Native
   refunds are official permissionless `RefundNative` transactions with no
   nonce or witness; exact-owner and bounded counterparty observations require
   a stable clock, terminal refunded accounts, zero custody, canonical bytes,

@@ -38,6 +38,7 @@ flowchart TB
     Scope --> Direction["0008 Bidirectional ordering"]
     Direction --> Bitcoin["0009 Bitcoin refund"]
     Bitcoin --> BitcoinEntry["0029 M3 Bitcoin entry"]
+    BitcoinEntry --> FinalizedFunding["0030 Finalized LEZ funding before claim"]
     Direction --> Deadlines["0010 Typed deadlines"]
     LEZ --> Deadlines
     Deadlines --> Recovery["0011 Recovery triggers"]
@@ -80,6 +81,8 @@ flowchart TB
     PublicRoutes -.-> Upstream
     LocalM2 -.-> Upstream
     LocalStack -.-> Upstream
+    V02Effects --> FinalizedFunding
+    FinalizedFunding -.-> Upstream
     V02Effects -.-> Upstream
 ```
 
@@ -114,3 +117,4 @@ flowchart TB
 | [0027](0027-progressive-jpeg-milestone-delivery.md) | Deliver a reproducible actual-local-devnet milestone PoC first, then owner-controlled QA, chaos, information-security, and production-readiness hardening | Accepted; M2 is certified at its local-functional PoC boundary under `m2-complete`. Accumulated hardening is carried evidence until the owner enters and revalidates its phase; no transition to QA or M3 is implied |
 | [0028](0028-dormant-public-route-portability.md) | Admit exact dormant public LEZ and Zebra routes without exposing the actor-sidecar boundary or weakening agreement-bound pre-effect validation | Canonical Docker target and finalized local deployment binding are GREEN; exact dormant public configuration and bounded-client construction are GREEN without public I/O. Live public execution and official LEZ finalized-tip availability remain production gates |
 | [0029](0029-m3-bitcoin-local-poc-entry.md) | Enter M3 through isolated Bitcoin Core Regtest and LEZ v0.2 actors with aggregate witnessed claim authorities | Accepted and active; actual-Core consensus, durable journals, fresh independent role processes, external adaptation/extraction, the checked witnessed guest, both complete local directions, atomicity evidence, the canonical countersigned agreement, typed finalized LEZ claim observation, typed Core adapter/evidence codec, and actor-local Bitcoin recovery-store component are GREEN. Cohesive terminal actors, refunds, concurrency, Testnet4 portability, and hardening remain |
+| [0030](0030-finalized-lez-funding-before-claim.md) | Preserve the live observer and require distinct finalized LEZ funding evidence before either claim can reveal adaptor material | Accepted; protocol/client/sidecar implementation is GREEN. Logos v0.2 end-of-block account reads require funding finality before claim submission and remain a disclosed production trust limitation; cohesive actor persistence remains open |
