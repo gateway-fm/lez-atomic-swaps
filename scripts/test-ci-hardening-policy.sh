@@ -106,6 +106,8 @@ require_fixed 'f9ebc6ebdb19d769b793c245a736caaeb198c62587f13b25c660c13b4987f959'
 require_fixed 'shellcheck-v0.11.0.linux.x86_64.tar.gz' "$quality_runner"
 require_fixed 'b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6' "$quality_runner"
 require_fixed '"$shellcheck" --severity=warning' "$quality_runner"
+require_fixed 'M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.sh' \
+  "$quality_runner"
 require_fixed 'git ls-files --cached --others --exclude-standard -z' "$quality_runner"
 require_fixed 'config --quiet' "$quality_runner"
 

@@ -64,6 +64,7 @@ if (( ${#shell_files[@]} == 0 )); then
 fi
 bash -n "${shell_files[@]}"
 "$shellcheck" --severity=warning "${shell_files[@]}"
+M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.sh
 
 mapfile -d '' workflow_files < <(
   git ls-files --cached --others --exclude-standard -z -- \
