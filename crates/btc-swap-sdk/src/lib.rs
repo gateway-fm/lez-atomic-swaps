@@ -11,8 +11,11 @@ mod p2tr;
 mod transaction;
 
 pub use adaptor::{
-    AdaptorSessionContext, AdaptorSessionError, AdaptorSigner, SigningRole, adapt_presignature,
-    extract_adaptor_secret, verify_final_signature,
+    AdaptorSessionContext, AdaptorSessionError, AdaptorSigner, FreshAdaptorNonce,
+    PersistedAdaptorSigningMaterial, SigningRole, adapt_presignature,
+    aggregate_adaptor_presignature, extract_adaptor_secret, sign_persisted_adaptor_partial,
+    verify_adaptor_partial_signature, verify_adaptor_presignature, verify_final_signature,
+    verify_nonce_commitment,
 };
 pub use p2tr::{
     CsvBlockDelay, CsvBlockDelayError, InvalidXOnlyKey, OutputKeyParity, P2trSwapOutput,
