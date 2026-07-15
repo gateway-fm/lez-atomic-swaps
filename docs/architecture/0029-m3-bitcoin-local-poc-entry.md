@@ -48,8 +48,8 @@ flowchart LR
         TakerSigner["Taker signing journal"]
         Maker --> MakerSigner
         Taker --> TakerSigner
-        Agreement --> Maker
-        Agreement --> Taker
+        Agreement -. planned activation .-> Maker
+        Agreement -. planned activation .-> Taker
     end
 
     subgraph RoleServices["Role local services"]

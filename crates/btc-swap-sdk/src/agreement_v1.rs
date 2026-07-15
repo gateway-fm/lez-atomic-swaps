@@ -789,10 +789,12 @@ impl BtcAgreementV1 {
                 record.schema_version,
             ));
         }
-        // Keep direct in-memory validation subject to the same total bound as
-        // records received over the wire.
-        let _ = record.encode_wire()?;
         validate_fixed_body(&record.body)?;
+        // Keep direct in-memory validation subject to the same total bound as
+        // records received over the wire. Validate every variable-length field
+        // first so a caller-constructed record cannot force an oversized Borsh
+        // allocation before it is rejected.
+        let _ = record.encode_wire()?;
         let expected_commitment = record.body.commitment();
         if record
             .agreement_commitment

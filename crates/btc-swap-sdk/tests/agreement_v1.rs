@@ -28,6 +28,7 @@ struct FixtureOptions {
     drift_contract_script: bool,
     drift_claim_sighash: bool,
     wrong_refund_height: bool,
+    maker_destination_length: Option<usize>,
     bitcoin_genesis_hash: [u8; 32],
     required_confirmations: u32,
 }
@@ -39,6 +40,7 @@ impl Default for FixtureOptions {
             drift_contract_script: false,
             drift_claim_sighash: false,
             wrong_refund_height: false,
+            maker_destination_length: None,
             bitcoin_genesis_hash: BITCOIN_GENESIS_HASH,
             required_confirmations: REQUIRED_CONFIRMATIONS,
         }
@@ -91,7 +93,11 @@ fn fixture(direction: SwapDirection, options: FixtureOptions) -> Fixture {
         [10; 32],
         compressed_public_key(&maker_secret),
         x_only_public_key(&maker_refund_secret),
-        claim_destination(&maker_claim_secret),
+        if let Some(length) = options.maker_destination_length {
+            vec![0x51; length]
+        } else {
+            claim_destination(&maker_claim_secret)
+        },
     );
     let taker = BtcParticipantIdentityV1::new(
         [11; 32],
@@ -526,6 +532,24 @@ fn schema_trailing_and_oversized_wire_fail_before_acceptance() {
     assert_eq!(
         BtcAgreementV1::from_wire(&hostile_length),
         Err(BtcAgreementV1Error::MalformedWireRecord)
+    );
+}
+
+#[test]
+fn caller_constructed_oversized_field_fails_before_total_wire_encoding() {
+    // In this direction the taker is the Bitcoin claimant, so fixture
+    // construction never needs to interpret the hostile maker destination.
+    let hostile = fixture(
+        SwapDirection::TakerSellsLez,
+        FixtureOptions {
+            maker_destination_length: Some(MAX_BTC_AGREEMENT_RECORD_BYTES + 1),
+            ..FixtureOptions::default()
+        },
+    );
+
+    assert_eq!(
+        BtcAgreementV1::validate(signed_record(&hostile)),
+        Err(BtcAgreementV1Error::InvalidIdentity)
     );
 }
 
