@@ -47,6 +47,7 @@ jq -e '
   and .prelock_policy_response_retained == true
   and .role_allowed_block_and_mempool_observation == true
   and .bounded_read_only_observation_retries_never_resubmit == true
+  and .bounded_pending_observation_retries == true
   and .submission_count_query == true
   and .owned_process_registry == true
   and .pre_lock_presignature_domains == ["bitcoin", "lez"]

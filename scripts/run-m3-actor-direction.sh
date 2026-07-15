@@ -35,6 +35,7 @@ emit_contract() {
       prelock_policy_response_retained: true,
       role_allowed_block_and_mempool_observation: true,
       bounded_read_only_observation_retries_never_resubmit: true,
+      bounded_pending_observation_retries: true,
       submission_count_query: true,
       owned_process_registry: true,
       pre_lock_presignature_domains: ["bitcoin", "lez"],
@@ -883,7 +884,7 @@ actor_invoke() {
 }
 
 actor_invoke_observation_retry() {
-  local role="$1" label="$2"
+  local role="$1" expected="$2" chain="$3" label="$4"
   local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
   local attempt attempt_output attempt_error error_text
   actor_last_output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-${role}.json"
@@ -895,8 +896,25 @@ actor_invoke_observation_retry() {
     if "$M3_POC_ACTOR_BIN" --config "$config" drive \
         >"$attempt_output" 2>"$attempt_error"; then
       chmod 0600 "$attempt_output" "$attempt_error"
-      mv "$attempt_output" "$actor_last_output"
-      return 0
+      if jq -e --arg role "$role" --arg chain "$chain" \
+          --argjson revision "$expected" '
+        .schema_version == 1 and .role == $role and .command == "drive"
+        and (.outcome == "observed_then_projected"
+             or .outcome == "converged_on_existing_projection")
+        and .chain == $chain and .revision == $revision
+      ' "$attempt_output" >/dev/null; then
+        mv "$attempt_output" "$actor_last_output"
+        return 0
+      fi
+      jq -e --arg role "$role" --arg chain "$chain" \
+        --argjson revision "$((expected - 1))" '
+        .schema_version == 1 and .role == $role and .command == "drive"
+        and .outcome == "awaiting_observation" and .chain == $chain
+        and .revision == $revision
+      ' "$attempt_output" >/dev/null ||
+        fail "${role} actor returned an unexpected successful observation state"
+      sleep 0.25
+      continue
     fi
     chmod 0600 "$attempt_output" "$attempt_error"
     error_text="$(tr -d '\r\n' <"$attempt_error")"
@@ -923,7 +941,7 @@ project_both_to_revision() {
   local expected="$1" chain="$2" label="$3"
   local role
   for role in maker taker; do
-    actor_invoke_observation_retry "$role" "$label"
+    actor_invoke_observation_retry "$role" "$expected" "$chain" "$label"
     jq -e --arg role "$role" --arg chain "$chain" --argjson revision "$expected" '
       .schema_version == 1 and .role == $role and .command == "drive"
       and (.outcome == "observed_then_projected"
