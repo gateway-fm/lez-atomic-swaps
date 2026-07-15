@@ -1381,7 +1381,12 @@ no-clobber helper whose public account IDs feed the run-owned genesis before
 Docker starts. The canonical countersigned agreement now binds the exact
 executable BTC refund plan, chain identity/confirmation policy, and recovery
 schedule and reconstructs all derived Bitcoin fields before accepting either
-signature. Typed finalized LEZ claim evidence is now GREEN. The actor-local
+signature. Agreement validation now also derives and retains the one fresh
+role-neutral `SwapCoordinator`: canonical swap ID, pair, direction, recovery
+schedule, direction-correct funded chains, signed Bitcoin confirmation depth,
+one finalized-LEZ policy unit, and empty `Offered` state come from the signed
+record rather than actor-local mapping. Typed finalized LEZ claim evidence is
+now GREEN. The actor-local
 Bitcoin recovery component is GREEN in both directions: separate maker/taker
 databases replay the four lock/claim revisions to `Completed`, reject mutated
 or rolled-back evidence-chain state, and expose the public revealing witness

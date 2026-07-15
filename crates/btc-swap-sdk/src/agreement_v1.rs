@@ -6,11 +6,13 @@
 //! recovery schedule with pinned libraries.
 
 use bitcoin::hashes::Hash as _;
+use bitcoin::hex::DisplayHex as _;
 use bitcoin::secp256k1::{Message, PublicKey, Secp256k1, XOnlyPublicKey, schnorr::Signature};
 use bitcoin::{Amount, OutPoint, ScriptBuf, TxOut, Txid};
 use borsh::BorshSerialize;
 use lez_swap_core::{
-    Chain, ChainPosition, Pair, Participant, RecoverySchedule, SwapDirection, TimelockSafety,
+    Chain, ChainPosition, ConfirmationPolicy, Pair, Participant, RecoverySchedule, SwapCoordinator,
+    SwapDirection, SwapId, TimelockSafety,
 };
 use musig2::KeyAggContext;
 use musig2::secp::Point;
@@ -31,6 +33,9 @@ pub const BTC_AGREEMENT_SCHEMA_V1: u16 = 1;
 
 /// Maximum canonical agreement record size accepted from a peer.
 pub const MAX_BTC_AGREEMENT_RECORD_BYTES: usize = 16 * 1024;
+
+/// One affirmative finalized LEZ observation projected into the chain-independent coordinator.
+const FINALIZED_LEZ_CONFIRMATION_UNITS: u32 = 1;
 
 /// Largest confirmation policy accepted by version one: one difficulty period.
 ///
@@ -773,7 +778,7 @@ pub struct BtcAgreementV1 {
     record: BtcAgreementRecordV1,
     contract: P2trSwapOutput,
     cooperative_claim: CooperativeKeyPathSpend,
-    recovery_schedule: RecoverySchedule,
+    coordinator: SwapCoordinator,
 }
 
 impl BtcAgreementV1 {
@@ -836,11 +841,12 @@ impl BtcAgreementV1 {
         let contract = reconstruct_contract(&record.body.p2tr)?;
         let cooperative_claim = reconstruct_claim(&record.body, &contract)?;
         let recovery_schedule = reconstruct_recovery(&record.body)?;
+        let coordinator = derive_initial_coordinator(&record.body, recovery_schedule)?;
         Ok(Self {
             record,
             contract,
             cooperative_claim,
-            recovery_schedule,
+            coordinator,
         })
     }
 
@@ -1018,7 +1024,13 @@ impl BtcAgreementV1 {
     /// Reconstructed direction-correct recovery schedule.
     #[must_use]
     pub const fn recovery_schedule(&self) -> RecoverySchedule {
-        self.recovery_schedule
+        self.coordinator.recovery_schedule()
+    }
+
+    /// Deterministic fresh coordinator derived from the validated signed terms.
+    #[must_use]
+    pub const fn coordinator(&self) -> &SwapCoordinator {
+        &self.coordinator
     }
 
     /// Role funding Bitcoin.
@@ -1376,6 +1388,39 @@ fn reconstruct_recovery(
         safety,
     )
     .map_err(|_| BtcAgreementV1Error::RecoveryScheduleMismatch)
+}
+
+fn derive_initial_coordinator(
+    body: &BtcAgreementBodyV1,
+    recovery_schedule: RecoverySchedule,
+) -> Result<SwapCoordinator, BtcAgreementV1Error> {
+    let swap_id = SwapId::new(body.swap_id.to_lower_hex_string())
+        .map_err(|_| BtcAgreementV1Error::InvalidIdentity)?;
+    let bitcoin_policy = ConfirmationPolicy::new(body.bitcoin_chain_policy.required_confirmations)
+        .map_err(|_| BtcAgreementV1Error::InvalidBitcoinChainPolicy)?;
+    let lez_policy = ConfirmationPolicy::new(FINALIZED_LEZ_CONFIRMATION_UNITS)
+        .map_err(|_| BtcAgreementV1Error::InvalidBitcoinChainPolicy)?;
+    let (taker_policy, maker_policy) = match body.direction() {
+        SwapDirection::TakerSellsForeign => (bitcoin_policy, lez_policy),
+        SwapDirection::TakerSellsLez => (lez_policy, bitcoin_policy),
+    };
+    let coordinator = SwapCoordinator::new_with_confirmation_policies(
+        swap_id,
+        Pair::Bitcoin,
+        body.direction(),
+        taker_policy,
+        maker_policy,
+        recovery_schedule,
+    );
+    debug_assert_eq!(
+        coordinator.funded_chain(bitcoin_funder(body.direction())),
+        Chain::Bitcoin
+    );
+    debug_assert_eq!(
+        coordinator.funded_chain(lez_depositor(body.direction())),
+        Chain::Lez
+    );
+    Ok(coordinator)
 }
 
 const fn bitcoin_funder(direction: SwapDirection) -> Participant {

@@ -1,4 +1,5 @@
 use bitcoin::hashes::Hash as _;
+use bitcoin::hex::DisplayHex as _;
 use bitcoin::secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use bitcoin::{Amount, OutPoint, ScriptBuf, TxOut, Txid};
 use lez_btc_swap_sdk::{
@@ -8,7 +9,7 @@ use lez_btc_swap_sdk::{
     CsvBlockDelay, MAX_BITCOIN_REQUIRED_CONFIRMATIONS, MAX_BTC_AGREEMENT_RECORD_BYTES,
     P2trSwapOutput, RefundXOnlyKey, TwoPartyAggregateKey,
 };
-use lez_swap_core::{Chain, MakerRecoveryTrigger, Participant, SwapDirection};
+use lez_swap_core::{Chain, MakerRecoveryTrigger, Pair, Participant, Phase, SwapDirection};
 
 const FUNDING_VALUE_SAT: u64 = 100_000;
 const CLAIM_VALUE_SAT: u64 = 99_000;
@@ -397,6 +398,108 @@ fn canonical_countersigned_agreement_reconstructs_both_directions() {
             agreement.lez_terms().refund_at_ms() / 1_000
         );
     }
+}
+
+#[test]
+fn validated_agreement_derives_exact_role_neutral_initial_coordinator() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let fixture = fixture(direction, FixtureOptions::default());
+        let agreement =
+            BtcAgreementV1::validate(signed_record(&fixture)).expect("validated agreement");
+        let coordinator = agreement.coordinator();
+
+        assert_eq!(
+            coordinator.id().as_str(),
+            agreement.body().swap_id().to_lower_hex_string()
+        );
+        assert_eq!(coordinator.pair(), Pair::Bitcoin);
+        assert_eq!(coordinator.direction(), direction);
+        assert_eq!(coordinator.phase(), Phase::Offered);
+        assert_eq!(
+            coordinator.recovery_schedule(),
+            agreement.recovery_schedule()
+        );
+
+        for role in [Participant::Taker, Participant::Maker] {
+            let expected_chain = match (direction, role) {
+                (SwapDirection::TakerSellsForeign, Participant::Taker)
+                | (SwapDirection::TakerSellsLez, Participant::Maker) => Chain::Bitcoin,
+                (SwapDirection::TakerSellsForeign, Participant::Maker)
+                | (SwapDirection::TakerSellsLez, Participant::Taker) => Chain::Lez,
+            };
+            assert_eq!(coordinator.funded_chain(role), expected_chain);
+            assert_eq!(
+                coordinator.required_confirmations(role),
+                if expected_chain == Chain::Bitcoin {
+                    REQUIRED_CONFIRMATIONS
+                } else {
+                    1
+                }
+            );
+            assert_eq!(coordinator.funding_transaction_id(role), None);
+        }
+
+        assert_eq!(
+            coordinator.funded_chain(Participant::Taker),
+            match direction {
+                SwapDirection::TakerSellsForeign => Chain::Bitcoin,
+                SwapDirection::TakerSellsLez => Chain::Lez,
+            }
+        );
+        assert_eq!(
+            coordinator.funded_chain(Participant::Maker),
+            match direction {
+                SwapDirection::TakerSellsForeign => Chain::Lez,
+                SwapDirection::TakerSellsLez => Chain::Bitcoin,
+            }
+        );
+    }
+}
+
+#[test]
+fn invalid_or_locally_unsupported_bitcoin_policy_never_derives_a_coordinator() {
+    let expected = BtcChainPolicyV1::new(BITCOIN_GENESIS_HASH, REQUIRED_CONFIRMATIONS);
+    let unsupported = fixture(
+        SwapDirection::TakerSellsForeign,
+        FixtureOptions {
+            required_confirmations: REQUIRED_CONFIRMATIONS + 1,
+            ..FixtureOptions::default()
+        },
+    );
+    let unsupported_wire = signed_record(&unsupported).encode_wire().expect("wire");
+    assert_eq!(
+        BtcAgreementV1::from_wire_for_bitcoin_policy(&unsupported_wire, &expected),
+        Err(BtcAgreementV1Error::BitcoinChainPolicyMismatch)
+    );
+
+    let valid = fixture(SwapDirection::TakerSellsForeign, FixtureOptions::default());
+    let signed = signed_record(&valid);
+    let corrupted = BtcAgreementRecordV1::from_parts(
+        BTC_AGREEMENT_SCHEMA_V1,
+        unsupported.body,
+        *signed.agreement_commitment(),
+        *signed.signature(Participant::Maker),
+        *signed.signature(Participant::Taker),
+    );
+    assert_eq!(
+        BtcAgreementV1::validate(corrupted),
+        Err(BtcAgreementV1Error::CommitmentMismatch)
+    );
+
+    let invalid = fixture(
+        SwapDirection::TakerSellsLez,
+        FixtureOptions {
+            required_confirmations: 0,
+            ..FixtureOptions::default()
+        },
+    );
+    assert_eq!(
+        BtcAgreementV1::validate(signed_record(&invalid)),
+        Err(BtcAgreementV1Error::InvalidBitcoinChainPolicy)
+    );
 }
 
 #[test]
