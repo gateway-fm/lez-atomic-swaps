@@ -12,15 +12,21 @@ self-hosted Zebra route and Tatum's public-provider Testnet Zebrad route, but
 explicitly leaves live execution pending the project-owned transparent signer,
 HTTPS provider transport, and actor adapter.
 
-## M3 Bitcoin status: Core actor fixture and P2TR vector runnable
+## M3 Bitcoin status: actual-Core TakerSellsForeign BTC-leg fixture runnable
 
-The isolated Core 31.1 infrastructure and typed P2TR transaction slices are
-runnable; the LEZ/BTC swap is not yet. The Core flow proves the exact release
-and image, a real Regtest daemon,
-provisioner-only cookie authority, distinct maker/taker RPC capabilities,
-deterministic mature local P2TR funding, secret-safe evidence, and exact cleanup.
-The fixed `rawtr` output is mining infrastructure, not the future aggregate-key
-swap output and not an M3 completion claim.
+The isolated Core 31.1 infrastructure, typed P2TR transaction slice, and their
+combined actual-node flow are runnable; the complete LEZ/BTC swap is not yet.
+The runner proves the exact release/image, a real Regtest daemon,
+provisioner-only cookie authority, distinct maker/taker RPC capabilities, exact
+policy and consensus acceptance, secret-safe evidence, and exact cleanup. The
+fixed `rawtr(G)` 50 BTC output is only the mature mining source. A normal
+client-signed taker transaction creates the exact 1 BTC aggregate-key plus CSV
+contract; after confirmation the maker submits its 0.99999 BTC one-item
+key-path claim and the taker observes the contract outpoint spent once.
+
+The signing scalar is a labeled known Regtest fixture, not MuSig2/adaptor or
+production authority. No scalar extraction, LEZ effect, independent actor
+process/store, complete direction, refund, or atomicity is claimed.
 
 The dependency-light transaction slice can be repeated without Docker or a
 network connection:
@@ -38,13 +44,25 @@ one-item key-path witness, while rejecting invalid keys, delays, money range,
 transaction values, mutations, and signatures. This proves deterministic
 construction and local signature verification only: it does not prove MuSig2
 aggregation/adaptation, Core consensus acceptance, a refund execution, or
-either LEZ/BTC actor journey.
+either LEZ/BTC actor journey. The combined runner below separately adds Core
+policy/consensus proof for those same known-key funding and claim bytes; it
+does not expand the signing-authority claim.
 
-Prerequisites are Docker, Bash, curl, Git, GnuPG, jq, Python 3, ripgrep,
-SHA-256 tools, and tar. Use a fresh 8–64 character lowercase `RUN_ID`:
+Prerequisites are Docker, Rust/Cargo 1.96, Bash, curl, Git, GnuPG, jq,
+Python 3, ripgrep, SHA-256 tools, and tar. Use a fresh 8–64 character lowercase
+`RUN_ID`:
 
 ```sh
-RUN_ID=m3-core-manual-20260714a ./scripts/run-bitcoin-core-e2e.sh
+RUN_ID=m3-core-manual-20260715a ./scripts/run-bitcoin-core-e2e.sh
+```
+
+For certification rather than exploratory development, first commit or stash
+every change and require the runner to reject a dirty tree:
+
+```sh
+RUN_ID=m3-core-cert-20260715a \
+BITCOIN_CORE_E2E_REQUIRE_CLEAN=1 \
+./scripts/run-bitcoin-core-e2e.sh
 ```
 
 The runner downloads the official Core 31.1 archive, release manifest and
@@ -64,22 +82,30 @@ no-masquerade bridge, image tag, and sentinel. Inspect the retained private
 evidence afterward:
 
 ```sh
-RUN_ID=m3-core-manual-20260714a
-jq '{result, core, isolation, chain, deterministic_funding,
+RUN_ID=m3-core-manual-20260715a
+jq '{result, repository, core, isolation, chain, mining_source,
+  p2tr_contract, p2tr_funding, cooperative_key_path_claim,
+  security_claims,
   actor_rpc: {users: .actor_rpc.users, results: .actor_rpc.results},
   external_dependencies}' \
   ".e2e/${RUN_ID}/bitcoin-core/evidence/runtime.json"
 jq . ".e2e/${RUN_ID}/bitcoin-core/evidence/cleanup.json"
+jq . ".e2e/${RUN_ID}/bitcoin-core/evidence/attestation.json"
 ```
 
-Expected facts are Core 31.1, Regtest genesis `0f9188...2206`, height 101,
-zero peers, `networkactive=false`, one dynamically allocated `127.0.0.1` RPC
-port, a mature 50 BTC witness-v1 Taproot output, successful maker/taker read and
-broadcast-method access, HTTP 403 for wallet/miner/clock/network/shutdown calls,
-HTTP 401 for crossed credentials, no public runtime dependency, and complete
-run-resource cleanup while the foreign sentinel survives.
+Expected facts are Core 31.1, Regtest genesis `0f9188...2206`, and final
+height 103: blocks 1–101 mature the 50 BTC `rawtr(G)` source, the taker funding
+transaction enters block 102, and the maker cooperative claim enters block 103.
+Both actor credentials re-read exact raw bytes, txid/wtxid, scripts, values,
+blocks, and the single 64-byte witness. The contract is unspent after 102 and
+spent exactly once after 103; the final mempool is empty. Also require zero
+peers, `networkactive=false`, one dynamically allocated `127.0.0.1` RPC
+port, HTTP 403 for wallet/miner/clock/network/shutdown calls, HTTP 401 for
+crossed credentials, no public runtime dependency, exact cleanup while the
+foreign sentinel survives, and an attestation binding runtime, critical-file
+manifest, and cleanup hashes.
 
-For manual role calls, retain the successful node only after the full smoke:
+For manual role calls, retain the successful node only after the full P2TR flow:
 
 ```sh
 RUN_ID=m3-core-live-20260714a \
@@ -109,11 +135,13 @@ docker image rm "lez-atomic-swaps-bitcoin-core:${RUN_ID}"
 ```
 
 Runtime uses no public RPC, faucet, public funds, public peers, or public chain.
-Cold setup can still fail because bitcoincore.org, GitHub, the base-image
-registry, DNS/TLS, or vulnerability databases are unavailable or rate-limited;
-those are setup/CI flakes rather than chain-protocol behavior. The next M3 slice
-funds the now-implemented aggregate-key P2TR output and submits its cooperative
-key-path transaction through this exact Core fixture.
+Cold setup uses the Core archive/signatures/source/Guix attestations, the
+digest-pinned base image, and locked Cargo registry artifacts; CI additionally
+uses vulnerability databases. DNS/TLS, registry availability, rate limits, or
+scan outages can therefore fail setup without changing the local-chain
+assertions. The next M3 slice replaces the known scalar with reviewed
+MuSig2/BIP-340 adaptor sessions and durable one-use nonce/recovery state before
+the first lock.
 
 ## Can I run the complete swap myself?
 

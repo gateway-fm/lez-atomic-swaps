@@ -318,15 +318,19 @@ jobs:
       - run: ./scripts/run-zebra-e2e.sh
 
   bitcoin-core-regtest:
-    name: isolated Bitcoin Core 31.1 Regtest actor smoke
+    name: isolated Bitcoin Core 31.1 Regtest P2TR spend
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       RUN_ID: github-btc-${{ github.run_id }}-${{ github.run_attempt }}
       BITCOIN_CORE_E2E_KEEP_RUNNING: "1"
+      BITCOIN_CORE_E2E_REQUIRE_CLEAN: "1"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Verify release and run deterministic role-aware Core smoke
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+      - name: Verify release and run role-aware P2TR funding and claim
         run: ./scripts/run-bitcoin-core-e2e.sh
       - name: Scan exact Bitcoin Core image for high and critical vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

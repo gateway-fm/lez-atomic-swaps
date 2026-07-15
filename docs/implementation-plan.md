@@ -1021,16 +1021,19 @@ outputs above.
 ## Milestone 3 entry plan: BTC adaptor/Taproot end to end
 
 Status: **active; progressive local PoC in progress**. The exact Core 31.1
-release verifier, minimal isolated image fixture, role-aware Regtest smoke, and
-exact cleanup are locally GREEN. CI now repeats that runner and fail-hard scans
-its exact image for HIGH/CRITICAL vulnerabilities. Retained exact-commit
-evidence closes this infrastructure slice; remote private-CI status remains
-unobservable without credentials. The exact-pinned typed P2TR/CSV transaction
-library is locally GREEN against hard-coded commitment and witness vectors; its
-actual Core funding/spend integration is active next. The current tree still
-has no executable BTC swap leg. Generic `Pair::Bitcoin`, deadline, persistence, and transition tests are
-reusable scaffolding only; they do not prove a Bitcoin SDK, Bitcoin Core RPC,
-Taproot construction, adaptor exchange, LEZ BTC claim path, or actor journey.
+release verifier, minimal isolated image fixture, role-aware Regtest boundary,
+typed P2TR/CSV transaction library, and known-key funding/cooperative-claim
+composition are locally GREEN. CI runs that composition and fail-hard scans its
+exact image for HIGH/CRITICAL vulnerabilities. Retained exact-commit evidence
+closes the earlier infrastructure slice; the P2TR slice has passed dirty-tree
+development validation and is awaiting its clean pushed-commit certification
+run. Remote private-CI status remains unobservable without credentials.
+
+The current tree still has no complete LEZ/BTC swap corridor or user-facing BTC
+swap command. Generic `Pair::Bitcoin`, deadline, persistence, and transition
+tests are reusable scaffolding only; they do not prove MuSig2/adaptor exchange,
+durable signing sessions, the LEZ BTC claim path, independent actor processes
+and stores, either complete direction, or atomicity.
 
 Authority was reread on 2026-07-14: live RFP repository commit `969a76d`
 (file blob `d0fa52b`) and accepted issue #112, whose newline-normalized body
@@ -1084,15 +1087,26 @@ slice in this order:
 6. run `TakerSellsForeign`, then `TakerSellsLez`, through actual local LEZ and
    Bitcoin nodes and emit secret-safe evidence from both actors and chains.
 
-Progress on 2026-07-15: step 1 is closed. Step 2's typed library boundary is
-GREEN: exact-pinned `bitcoin` 0.32.101 constructs and internally verifies the
-supplied aggregate key, CSV refund leaf, Merkle root, TapTweak hash, output
-parity, control block, scriptPubKey, BIP-341 default sighash, and completed
-one-item key-path witness. Hard-coded commitment, unsigned/signed transaction,
-txid, wtxid, and mutation vectors plus fail-closed money/key/delay boundaries
-pass tests, strict Clippy, rustdoc, and all four dependency-policy checks.
-Funding and broadcast through the actual Core fixture remain before step 2
-closes.
+Progress on 2026-07-15: steps 1 and 2 are closed at the known-key
+interoperability boundary; step 3 is active next. Exact-pinned `bitcoin`
+0.32.101 constructs and internally verifies the supplied aggregate key, CSV
+refund leaf, Merkle root, TapTweak hash, output parity, control block,
+scriptPubKey, BIP-341 default sighash, and completed one-item key-path witness.
+Hard-coded commitment, unsigned/signed transaction, txid, wtxid, mutation, and
+fail-closed money/key/delay gates pass tests, strict Clippy, rustdoc, and all
+four dependency-policy checks.
+
+The isolated Core runner now uses the same library boundary to create a normal
+client-signed 1 BTC funding output and a 0.99999 BTC cooperative claim. In the
+`TakerSellsForeign` BTC-leg fixture, the taker policy-checks and submits the
+funding transaction, Core mines it at height 102, the maker observes the exact
+aggregate-key/CSV output, then the maker policy-checks and submits the tweaked-Q
+one-item claim and Core mines it at height 103. The taker observes the exact
+outpoint spent once. Both actor credentials re-read exact bytes, txid/wtxid,
+scripts, values, blocks, and the 64-byte witness; the final mempool is empty,
+runtime public resources are zero, and cleanup is exact. This closes Core
+interoperability only: the known scalar is fixture authority, not MuSig2,
+adaptor extraction, production signing authority, a LEZ effect, or atomicity.
 
 The first bisectable implementation slice is Core infrastructure only and adds
 zero Rust dependencies. It introduces
@@ -1114,6 +1128,18 @@ not retained exact-commit certification. Clean pushed commit `a7393dfb` then
 reproduced the smoke and exact cleanup as run `m3-core-exact-a7393df`;
 [its secret-safe retained summary](evidence/m3-bitcoin-core-smoke-a7393df-20260714.json)
 records the packet hashes and preserves the unobserved remote Trivy boundary.
+
+Development run `m3-p2tr-dev-20260715e` then proved the new P2TR composition
+through actual Core: taker funding txid `c131b09d...227f1` confirmed at height
+102; maker cooperative txid `97799495...51bce` confirmed at height 103; exact
+contract address `bcrt1ptee2...r28qgv`; one 64-byte key-path witness; zero
+final mempool entries/peers/public resources; and exact cleanup. Because that
+run correctly records `repository.worktree_clean=false`, it is validation
+input rather than certification. The runner now offers
+`BITCOIN_CORE_E2E_REQUIRE_CLEAN=1`, hashes all critical source/policy/actor/
+block/final-state evidence, and emits a post-cleanup attestation binding the
+runtime, manifest, and cleanup packet. A fresh run after this slice is pushed
+will produce exact-commit certification evidence.
 
 That slice is GREEN only when retained, secret-safe evidence proves Core 31.1,
 Regtest genesis and an advancing tip, zero chain peers and zero public runtime

@@ -21,7 +21,7 @@ Status vocabulary:
 |---|---|---|---|---|
 | M1 | Historical completed milestone | Historical evidence predates ADR 0027; not retroactively reclassified | `m1-complete` and corrective tag `m1-complete.1` | No transition requested |
 | M2 | Certified local-functional PoC | Canonical Docker-built/deployed artifact, both local LEZ/ZEC directions, and the exact-tree repository gates are GREEN; later hardening is deferred | `m2-complete` | M2 completion/tag directed; no QA or M3 transition requested |
-| M3 | Progressive local PoC | Core 31.1 infrastructure is GREEN and retained; the exact-pinned typed P2TR/CSV transaction slice is locally GREEN, while the actual aggregate/adaptor swap corridor remains in progress | None | Owner entered M3 on 2026-07-14 |
+| M3 | Progressive local PoC | Core 31.1 infrastructure, the typed P2TR/CSV library, and a known-key actual-Core funding/cooperative-claim composition are GREEN; MuSig2/adaptor and the complete LEZ/BTC corridor remain in progress | None | Owner entered M3 on 2026-07-14 |
 | M4 | Not active | Awaiting owner transition | None | Not requested |
 | M5 | Not active | Awaiting owner transition | None | Not requested |
 | M6 | Not active | Awaiting owner transition | None | Not requested |
@@ -35,11 +35,11 @@ evidence instead of assigning a percentage to unlike work items.
 | Metric | Current measurement | Evidence or next measurement point |
 |---|---|---|
 | Live authorities reconciled | 2 of 2 | RFP repository commit `969a76d`; accepted issue #112 body SHA-256 `49356263...f1c87`; issue #61 excluded |
-| Executable BTC-specific crates/components | 1 crate plus 1 actual-node runner | `lez-btc-swap-sdk` constructs and verifies the P2TR/CSV commitment and cooperative transaction; the isolated Core runner proves role RPC and deterministic Regtest infrastructure. Core adapter, actors, adaptor protocol, and LEZ BTC guest remain |
+| Executable BTC-specific crates/components | 1 crate plus 1 actual-node runner and fixture example | `lez-btc-swap-sdk` constructs the exact P2TR/CSV funding and one-item claim; the isolated runner now proves policy, consensus, actor RPC ordering, and spent-once observation. Production Core adapter, independent actors/stores, adaptor protocol, and LEZ BTC guest remain |
 | Dependency groups accepted | 2 of 5 entry candidates | Core 31.1 and exact-pinned `bitcoin` 0.32.101 graphs passed provenance/source/license/advisory gates. `miniscript`, `corepc`, and `musig2` remain unaccepted candidates |
-| Actual local M3 node compositions | 1 infrastructure composition; 0 swap compositions | Isolated Core 31.1 Regtest is retained exact-commit evidence. The P2TR transaction is not yet broadcast through it or composed with pinned LEZ v0.2 |
+| Actual local M3 node compositions | 1 actual Core BTC-leg composition; 0 complete swap compositions | Dirty-tree development run `m3-p2tr-dev-20260715e` reached heights 102/103 with taker funding, maker known-key claim, one 64-byte witness, spent-once proof, zero peers/public resources, and exact cleanup. Clean pushed-commit certification is next; pinned LEZ v0.2 is not yet composed |
 | Supported happy directions completed | 0 of 2 | `TakerSellsForeign` then `TakerSellsLez` against actual local nodes |
-| Runnable manual BTC flows | 2 partial flows; 0 complete swaps | Manual Core actor fixture and focused P2TR library vector are runnable. The complete role-fixed swap remains unavailable |
+| Runnable manual BTC flows | 2 partial flows; 0 complete swaps | Focused P2TR vectors and the combined actual-Core `TakerSellsForeign` BTC-leg fixture are runnable. The complete role-fixed LEZ/BTC swap remains unavailable |
 | Gateway proposal acceptance errata | 1 open | GW-M3-001: nonexistent DLC Schnorr adaptor-vector path; proposed replacement evidence contract is not yet accepted |
 | QA / chaos / information security / production phases | Not active | Each phase begins only after its owner transition; continuous CI/security baselines remain enforced |
 | M3 completion tag | None | Created only on the exact pushed commit after every selected M3 gate is evidenced |

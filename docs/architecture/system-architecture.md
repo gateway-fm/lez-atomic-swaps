@@ -1,6 +1,6 @@
 # System architecture and actor flows
 
-Status: Living target architecture — 2026-07-14
+Status: Living target architecture — 2026-07-15
 
 This is the canonical whole-system view. ADRs record why individual choices
 were made; this document shows how the choices compose into the product that
@@ -163,7 +163,7 @@ flowchart TB
 
     subgraph Nodes["Actor-selected node boundary"]
         LEZ["LEZ sequencer<br/>dynamic local port<br/>typed exact-public contract<br/>public live execution pending"]
-        BTC["Bitcoin Core 31.1 Regtest<br/>role fixture GREEN; P2TR SDK GREEN<br/>actual swap spend pending"]
+        BTC["Bitcoin Core 31.1 Regtest<br/>known-key P2TR funding and claim GREEN<br/>MuSig2, adaptor and LEZ composition pending"]
         XMR["monerod + wallet RPC"]
         ZEC["Zebra 5.2.0 Regtest JSON-RPC<br/>retained proof host 32834"]
     end
@@ -962,8 +962,10 @@ authorities protect the Bitcoin and LEZ legs. The first direction-specific
 canonical claim—finalized LEZ bytes or a Bitcoin witness canonical at the
 negotiated confirmation policy—reveals the agreed scalar, and the second
 claimant adapts the opposite-chain signature. No standalone actor claim key may
-bypass that transcript. This is an audited M3 entry design, not current
-executable behavior.
+bypass that transcript. The known-key Core fixture now executes the funding and
+cooperative claim transaction shape through policy and consensus, but it does
+not execute this two-party/adaptor transcript, reveal or extract its scalar, or
+cause a LEZ effect. The complete flow therefore remains an audited M3 target.
 
 ## Abandonment and autonomous recovery flow
 

@@ -1,6 +1,6 @@
 # ADR 0029: M3 starts with an isolated Bitcoin actual-node PoC
 
-Status: Accepted entry boundary; M3 active — 2026-07-14
+Status: Accepted entry boundary; M3 active; known-key Core funding/claim slice GREEN — 2026-07-15
 
 ## Context
 
@@ -8,9 +8,11 @@ The live RFP and accepted proposal #112 require a complete LEZ/BTC lifecycle,
 BIP-340 Schnorr adaptor signatures, a BIP-341 cooperative key-path claim, a
 Bitcoin Core setup guide, both role directions, and reproducible evidence. The
 entry tree had generic Bitcoin state-machine vocabulary only. The current tree
-now has the exact Core runner/evidence and a typed P2TR/CSV transaction builder;
-it still has no Core swap adapter, adaptor implementation, Bitcoin actor, LEZ
-BTC guest path, or composed swap evidence packet.
+now has the exact Core runner/evidence, a typed P2TR/CSV transaction builder,
+and a direction-shaped known-key fixture in which the taker funds and the maker
+claims through Core policy and consensus. It still has no production Core swap
+adapter, independent Bitcoin actor processes/stores, adaptor implementation,
+LEZ BTC guest path, or composed swap evidence packet.
 
 The accepted proposal names DLC-specs `AdaptorSignature.md` as a conformance
 source. No such file exists in the current DLC repository or its history. The
@@ -57,6 +59,35 @@ flowchart LR
     Indexer --> Evidence
     MakerStore --> Evidence
     TakerStore --> Evidence
+    Fixture["Current known-key Regtest helper"] --> TakerAuth
+    Fixture --> MakerAuth
+```
+
+The target graph above remains the M3 composition boundary. The currently
+executable Core slice reaches the same role-restricted RPC surface with a
+known-key helper and proves the following exact ordering. The helper is test
+infrastructure, not a production signing authority or a substitute for the
+two-party protocol.
+
+```mermaid
+sequenceDiagram
+    participant P as Cookie provisioner
+    participant H as Known-key Regtest helper
+    participant T as Taker rpcauth
+    participant C as Bitcoin Core 31.1 Regtest
+    participant M as Maker rpcauth
+    participant E as Evidence auditor
+    P->>C: Mine blocks 1 through 101 to rawtr G
+    H-->>T: Signed 1 BTC P2TR funding bytes
+    T->>C: Policy check and submit funding
+    P->>C: Mine funding in block 102
+    C-->>M: Confirm aggregate-key plus CSV output
+    H-->>M: Signed tweaked-Q key-path claim bytes
+    M->>C: Policy check and submit claim
+    P->>C: Mine claim in block 103
+    C-->>T: Confirm one-item witness and spent outpoint
+    C-->>E: Blocks, tx bytes, mempool and spender evidence
+    Note over H,E: No MuSig2, adaptor, extraction, LEZ effect, independent stores, or atomicity yet
 ```
 
 Bitcoin funding commits a two-party aggregate internal key `P` and the ADR
@@ -84,8 +115,9 @@ interoperable with Bitcoin Core consensus before acceptance. The entry audit
 selects Bitcoin Core 31.1 as the node candidate and `rust-bitcoin`, `miniscript`,
 `corepc`, and `musig2` as candidates. Core 31.1 and exact-pinned `bitcoin`
 0.32.101 have now passed their applicable provenance/source/license/advisory
-gates; `miniscript`, `corepc`, and `musig2` remain unaccepted. Core consensus
-interoperability for the new transaction slice is the next gate.
+gates. Known-key funding and the tweaked-Q one-item claim pass Core policy and
+consensus at heights 102/103; `miniscript`, `corepc`, and `musig2` remain
+unaccepted. Two-party MuSig2/adaptor interoperability is the next gate.
 
 ## Candidate provenance
 
@@ -99,13 +131,14 @@ and release signatures/attestations verify, then records and vulnerability-scans
 the resulting immutable image digest. The existing unofficial Docker Hub image
 is not a supply-chain authority.
 
-The verifier and actual-node runner now reproduce this provenance and locally
-prove the Core-only fixture. The typed transaction slice separately uses
-`bitcoin` 0.32.101 with default features disabled and only `std`, behind
-canonical byte boundaries intended for the later MuSig2 graph. Its resolved
-graph passes advisories, bans, exact-version license exceptions, and source
-policy. The final M3 dependency graph remains unaccepted until the adaptor
-package and composed consensus evidence pass their stated gates.
+The verifier and actual-node runner reproduce this provenance and locally
+prove the Core infrastructure plus the known-key P2TR funding/claim slice. The
+typed transaction slice uses `bitcoin` 0.32.101 with default features disabled
+and only `std`, behind canonical byte boundaries intended for the later MuSig2
+graph. Its resolved graph passes advisories, bans, exact-version license
+exceptions, and source policy. The final M3 dependency graph remains unaccepted
+until the adaptor package and composed Core/LEZ evidence pass their stated
+gates.
 
 ## Pre-lock signing ceremony
 
@@ -209,22 +242,21 @@ not compared as raw numbers.
   assumed. The provisioner alone holds the full node cookie and mining/wallet
   methods. Maker and taker adapters are separate instances with distinct
   `rpcauth` credentials and method allowlists for required read/broadcast calls;
-The Compose file is a statically linted deployment contract for image,
-filesystem, capabilities, resource limits, labels, volumes, and loopback RPC.
-The executable runner owns the same controls through exact-ID native Docker
-commands. Docker Compose 5.3 does not preserve the required dynamic loopback
-publication when that service consumes the precreated bridge, and Docker
-suppresses host publication entirely on an `internal` bridge. The runtime
-therefore uses a dedicated labeled bridge with IP masquerading disabled rather
-than setting Docker's `Internal` flag. Core itself additionally disables P2P
-listening, outbound connections, discovery, DNS seeds, fixed seeds, and network
-activity; runtime evidence inspects the Docker publication, bridge, config,
-`networkactive=false`, and zero peers. This preserves actor access through a
-host-loopback RPC while preventing the fixture from behaving like a public
-chain node.
-
   keys remain client-side and neither actor can access the other's wallet or
   provisioner methods.
+- The Compose file is a statically linted deployment contract for image,
+  filesystem, capabilities, resource limits, labels, volumes, and loopback RPC.
+  The executable runner owns the same controls through exact-ID native Docker
+  commands. Docker Compose 5.3 does not preserve the required dynamic loopback
+  publication when that service consumes the precreated bridge, and Docker
+  suppresses host publication entirely on an `internal` bridge. The runtime
+  therefore uses a dedicated labeled bridge with IP masquerading disabled rather
+  than setting Docker's `Internal` flag. Core itself additionally disables P2P
+  listening, outbound connections, discovery, DNS seeds, fixed seeds, and network
+  activity; runtime evidence inspects the Docker publication, bridge, config,
+  `networkactive=false`, and zero peers. This preserves actor access through a
+  host-loopback RPC while preventing the fixture from behaving like a public
+  chain node.
 - Cleanup removes only resources carrying the exact run label. Global Docker
   prune, shared volume removal, broad process kills, and foreign-container
   ownership are prohibited.
@@ -260,6 +292,7 @@ through the Bitcoin library plus Bitcoin Core consensus. Gateway erratum
 clarification has not yet been posted. It does not permit ECDSA evidence to be
 mislabeled as Schnorr evidence.
 
-This ADR activates M3 and accepts only its entry boundary. It does not accept the
-candidate dependency graph, claim either direction works, or authorize an
-`m3-complete` tag.
+This ADR activates M3 and accepts only its entry boundary plus the known-key
+Core interoperability slice. It does not accept the candidate dependency
+graph, claim either complete direction works, or authorize an `m3-complete`
+tag.

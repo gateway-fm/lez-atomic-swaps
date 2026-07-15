@@ -12,31 +12,40 @@ The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 ## Current status
 
 M2 is certified at its private local-functional PoC boundary under
-`m2-complete`. M3 is active. Its authority, current-code gap, Bitcoin Core 31.1
-Regtest topology, dependency candidates, actor flows, and acceptance gate are
+`m2-complete`. M3 is active. Its authority, Bitcoin Core 31.1 Regtest
+topology, dependency candidates, actor flows, and acceptance gate are
 entry-audited in
 [ADR 0029](docs/architecture/0029-m3-bitcoin-local-poc-entry.md). The
 nonexistent DLC Schnorr-vector reference is separately tracked as
 [Gateway erratum GW-M3-001](docs/proposal-acceptance-errata.md), with no accepted
-replacement yet. There is no executable BTC swap command yet. A first typed
-BTC transaction SDK slice now constructs the exact aggregate-internal-key plus
-CSV-refund P2TR commitment and a one-input cooperative key-path spend using
-exact-pinned `bitcoin` 0.32.101. It verifies the completed signature under the
-tweaked output key `Q` before emitting the one-item witness and retains a
-hard-coded Taproot vector. This is not yet MuSig2/adaptor signing or an
-actual-Core swap spend. The
-first M3 infrastructure slice now verifies the exact Core release manifest,
-source tag, release signers, and Guix attestations before building the pinned
-minimal image. Its role-separated actual-Core smoke is locally GREEN: Core
-31.1 Regtest, dynamic loopback RPC, distinct maker/taker `rpcauth` permissions,
-deterministic mature local P2TR funding, zero peers, and exact run-owned cleanup.
-CI repeats that smoke and fail-hard scans the exact image for HIGH/CRITICAL
-vulnerabilities. The clean pushed-commit run is retained as
-[secret-safe Core evidence](docs/evidence/m3-bitcoin-core-smoke-a7393df-20260714.json).
-Runtime uses no public RPC, faucet, public funds, or public chain. Cold
-setup still depends on checksum-verified Core release assets, the pinned base
-image, vulnerability data, and locked Rust registries, so their availability
-and scan flakiness remain explicit.
+replacement yet.
+
+M3 now has an actual-Core P2TR vertical slice. Exact-pinned `bitcoin` 0.32.101
+constructs the aggregate-internal-key plus CSV-refund commitment, signs a
+one-input cooperative key-path spend under tweaked output key `Q`, and emits
+the exact one-item witness. The isolated runner verifies the official Core
+release/signers/Guix attestations, then executes the `TakerSellsForeign`
+Bitcoin-leg ordering: the taker client signs and submits a normal funding
+transaction to the exact contract, the maker observes its confirmation, the
+maker submits the cooperative claim, and the taker observes the exact outpoint
+spent once. Core independently policy-checks, decodes, mines, and re-reads both
+transactions through distinct actor `rpcauth` capabilities. The successful
+local validation reached height 103, an empty final mempool, zero peers, and
+exact run-owned cleanup.
+
+This is deliberately a transaction/consensus fixture, not a complete swap:
+the known Regtest key is labeled fixture-only, and MuSig2/adaptor sessions,
+durable nonces, scalar extraction, the LEZ BTC guest, the second direction, and
+end-to-end atomicity remain. There is no executable full BTC swap command yet.
+CI runs the same P2TR funding/claim composition and fail-hard scans the exact
+Core image for HIGH/CRITICAL vulnerabilities. The earlier clean infrastructure
+run remains available as
+[secret-safe Core evidence](docs/evidence/m3-bitcoin-core-smoke-a7393df-20260714.json);
+exact-commit P2TR evidence is produced after this slice is pushed. Runtime uses
+no public RPC, faucet, public funds, public peers, or public chain. Cold setup
+still depends on checksum-verified Core release assets, the pinned base image,
+vulnerability data, and locked Rust registries, so availability and scan
+flakiness remain explicit.
 
 Development has started with protocol and real-node acceptance tests. The
 current executable slices enforce:

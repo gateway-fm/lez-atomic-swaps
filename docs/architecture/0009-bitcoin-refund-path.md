@@ -1,6 +1,6 @@
 # ADR 0009: Bitcoin uses a Taproot script-path CSV refund
 
-Status: Accepted; typed commitment and cooperative transaction GREEN, Bitcoin Core spend pending — 2026-07-15
+Status: Accepted; known-key cooperative Core spend GREEN, MuSig2/adaptor and refund matrix pending — 2026-07-15
 
 ```mermaid
 flowchart TB
@@ -79,6 +79,13 @@ refund script, leaf/root, TapTweak hash, tweaked `Q`, parity, control block,
 scriptPubKey, unsigned transaction, sighash, completed transaction, txid, and
 wtxid. It verifies a completed default-sighash signature under `Q` before
 creating a one-item key-path witness and rejects a valid signature on a changed
-transaction. That library evidence does not yet prove a two-party
-aggregation/adaptor transcript, a Core-accepted spend, or the refund boundary
-matrix.
+transaction. That library evidence alone does not prove a two-party
+aggregation/adaptor transcript or the refund boundary matrix; the composed Core evidence is recorded
+below.
+
+The isolated Core fixture now funds that exact output and mines a tweaked-output
+key-path claim at Regtest heights 102 and 103. Core accepts the normal funding
+transaction and the one-item 64-byte Schnorr witness through both policy and
+consensus. This closes known-key transaction interoperability only. It does not
+prove two-party MuSig2/adaptor signing, scalar extraction, the CSV script-path
+refund, fee replacement, or either complete LEZ/BTC direction.

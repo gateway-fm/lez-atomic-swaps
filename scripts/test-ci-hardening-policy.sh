@@ -69,8 +69,10 @@ require_fixed 'Repository-owned findings are fail-hard; Logos-owned findings rem
 require_fixed 'rapidsnark_root="${RAPIDSNARK_LIB_DIR%/rapidsnark-linux-x86_64-pic-v0.0.8/lib}"' "$workflow"
 require_fixed 'unzip -q "${rapidsnark_archive}" -d "${rapidsnark_root}"' "$workflow"
 
-require_fixed 'isolated Bitcoin Core 31.1 Regtest actor smoke' "$workflow"
+require_fixed 'isolated Bitcoin Core 31.1 Regtest P2TR spend' "$workflow"
+require_fixed 'Verify release and run role-aware P2TR funding and claim' "$workflow"
 require_fixed 'BITCOIN_CORE_E2E_KEEP_RUNNING: "1"' "$workflow"
+require_fixed 'BITCOIN_CORE_E2E_REQUIRE_CLEAN: "1"' "$workflow"
 require_fixed 'Scan exact Bitcoin Core image for high and critical vulnerabilities' "$workflow"
 require_fixed 'image-ref: lez-atomic-swaps-bitcoin-core:github-btc-${{ github.run_id }}-${{ github.run_attempt }}' "$workflow"
 require_fixed 'docker container rm --force "${container}"' "$workflow"
