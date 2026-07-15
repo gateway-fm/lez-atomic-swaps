@@ -151,11 +151,11 @@ require_fixed 'export CARGO_TARGET_DIR="${guest_build_root}/target"' "$provision
 require_fixed 'risc0_build::embed_methods_with_options' "$provisional_methods_build"
 require_fixed 'r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be' "$provisional_methods_build"
 require_fixed '.root_dir("../..")' "$provisional_methods_build"
-require_fixed 'expected_elf_sha256="c85055f6fe85b71535a322ba84ffc612f5d093954a721ba3b529428814dc9d2e"' "$provisional_verifier"
-require_fixed 'expected_image_id="5cf8c5a4eedb3c2873956cb7898eb33a495407c9746fb1a065c99638159329c1"' "$provisional_verifier"
-require_fixed 'ESCROW_PROGRAM_ID="${ESCROW_PROGRAM_ID:-5cf8c5a4eedb3c2873956cb7898eb33a495407c9746fb1a065c99638159329c1}"' "$provisional_runner"
-require_fixed 'elf_sha256 = "c85055f6fe85b71535a322ba84ffc612f5d093954a721ba3b529428814dc9d2e"' "$provisional_artifact_manifest"
-require_fixed 'image_id = "5cf8c5a4eedb3c2873956cb7898eb33a495407c9746fb1a065c99638159329c1"' "$provisional_artifact_manifest"
+require_fixed 'expected_elf_sha256="a199c5be062adcb27cf63c62d9f5688b37058b4699ce7e1767fd26eeceb5e293"' "$provisional_verifier"
+require_fixed 'expected_image_id="39b6a4db85374de9359ea82164ef415019919475f656d597c5ab2231bc104dec"' "$provisional_verifier"
+require_fixed 'ESCROW_PROGRAM_ID="${ESCROW_PROGRAM_ID:-39b6a4db85374de9359ea82164ef415019919475f656d597c5ab2231bc104dec}"' "$provisional_runner"
+require_fixed 'elf_sha256 = "a199c5be062adcb27cf63c62d9f5688b37058b4699ce7e1767fd26eeceb5e293"' "$provisional_artifact_manifest"
+require_fixed 'image_id = "39b6a4db85374de9359ea82164ef415019919475f656d597c5ab2231bc104dec"' "$provisional_artifact_manifest"
 
 jq -e '
   .schema_version == 1

@@ -25,12 +25,24 @@ pub enum EscrowStatus {
 }
 
 #[account_type]
+/// Immutable authority required to claim a funded escrow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub enum ClaimAuthority {
+    /// Existing ZEC path: reveal the SHA-256 preimage in the instruction.
+    Sha256Preimage { secret_digest: [u8; 32] },
+    /// M3 BTC path: authorize the exact transaction as one aggregate LEZ account.
+    AggregateWitness {
+        x_only_public_key: [u8; 32],
+        account_id: AccountId,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct EscrowMetadata {
     pub version: u8,
     pub swap_id: [u8; 32],
     pub terms_hash: [u8; 32],
-    pub secret_digest: [u8; 32],
+    pub claim_authority: ClaimAuthority,
     pub depositor: AccountId,
     pub depositor_asset: AccountId,
     pub claimant: AccountId,
@@ -49,11 +61,81 @@ pub struct EscrowMetadata {
 const ERROR_INVALID_TERMS: u32 = 1;
 const ERROR_NOT_FUNDED: u32 = 2;
 const ERROR_ACCOUNT_BINDING: u32 = 3;
+const ESCROW_METADATA_VERSION: u8 = 2;
 const ERROR_WRONG_PREIMAGE: u32 = 4;
 const ERROR_UNSUPPORTED_VERSION: u32 = 5;
+const ERROR_WRONG_CLAIM_AUTHORITY: u32 = 6;
+// lee_core exposes AccountId but not the public signing-key type. Pulling the
+// full host-oriented lee state machine into the guest solely for this hash
+// would expand the on-chain graph. Keep the exact mapping pinned to LEZ v0.2.0
+// commit a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a:
+// lee/state_machine/src/signature/public_key.rs. The recursive witnessed-claim
+// test cross-checks it against lee::AccountId::from(&lee::PublicKey).
+const PUBLIC_ACCOUNT_ID_PREFIX: &[u8; 32] = b"/LEE/v0.3/AccountId/Public/\x00\x00\x00\x00\x00";
 
 fn custom_error(code: u32, message: impl Into<String>) -> SpelError {
     SpelError::custom(code, message)
+}
+
+fn witnessed_account_id(x_only_public_key: &[u8; 32]) -> AccountId {
+    let mut hasher = Sha256::new();
+    hasher.update(PUBLIC_ACCOUNT_ID_PREFIX);
+    hasher.update(x_only_public_key);
+    AccountId::new(hasher.finalize().into())
+}
+
+fn valid_claim_authority(authority: ClaimAuthority, claimant: AccountId) -> bool {
+    match authority {
+        ClaimAuthority::Sha256Preimage { secret_digest } => secret_digest != [0; 32],
+        ClaimAuthority::AggregateWitness {
+            x_only_public_key,
+            account_id,
+        } => {
+            x_only_public_key != [0; 32]
+                && witnessed_account_id(&x_only_public_key) == account_id
+                && account_id != claimant
+        }
+    }
+}
+
+fn require_preimage_authority(state: &EscrowMetadata, preimage: [u8; 32]) -> Result<(), SpelError> {
+    let ClaimAuthority::Sha256Preimage { secret_digest } = state.claim_authority else {
+        return Err(custom_error(
+            ERROR_WRONG_CLAIM_AUTHORITY,
+            "escrow requires an aggregate transaction witness",
+        ));
+    };
+    let digest: [u8; 32] = Sha256::digest(preimage).into();
+    if digest != secret_digest {
+        return Err(custom_error(ERROR_WRONG_PREIMAGE, "wrong preimage"));
+    }
+    Ok(())
+}
+
+fn require_aggregate_witness_authority(
+    state: &EscrowMetadata,
+    aggregate_authority: AccountId,
+) -> Result<(), SpelError> {
+    let ClaimAuthority::AggregateWitness {
+        x_only_public_key,
+        account_id,
+    } = state.claim_authority
+    else {
+        return Err(custom_error(
+            ERROR_WRONG_CLAIM_AUTHORITY,
+            "escrow requires a SHA-256 preimage",
+        ));
+    };
+    if witnessed_account_id(&x_only_public_key) != account_id
+        || account_id != aggregate_authority
+        || account_id == state.claimant
+    {
+        return Err(custom_error(
+            ERROR_ACCOUNT_BINDING,
+            "aggregate witness account binding mismatch",
+        ));
+    }
+    Ok(())
 }
 
 fn write_metadata(
@@ -156,6 +238,97 @@ fn native_initialize_call(
     .with_pda_seeds(vec![custody_pda_seed(swap_id)])
 }
 
+#[allow(clippy::too_many_arguments)]
+fn native_initial_state(
+    ctx: &ProgramContext,
+    custody: &AccountWithMetadata,
+    depositor: &AccountWithMetadata,
+    claimant: &AccountWithMetadata,
+    swap_id: [u8; 32],
+    terms_hash: [u8; 32],
+    claim_authority: ClaimAuthority,
+    amount: u128,
+    refund_at: u64,
+    authenticated_transfer_program: ProgramId,
+) -> Result<EscrowMetadata, SpelError> {
+    if amount == 0
+        || refund_at == 0
+        || terms_hash == [0; 32]
+        || !valid_claim_authority(claim_authority, claimant.account_id)
+        || authenticated_transfer_program == DEFAULT_PROGRAM_ID
+        || authenticated_transfer_program == ctx.self_program_id
+    {
+        return Err(custom_error(ERROR_INVALID_TERMS, "invalid native terms"));
+    }
+    if custody.account != Account::default()
+        || depositor.account.program_owner != authenticated_transfer_program
+        || claimant.account.program_owner != authenticated_transfer_program
+    {
+        return Err(custom_error(
+            ERROR_ACCOUNT_BINDING,
+            "native custody or actor owner mismatch",
+        ));
+    }
+
+    Ok(EscrowMetadata {
+        version: ESCROW_METADATA_VERSION,
+        swap_id,
+        terms_hash,
+        claim_authority,
+        depositor: depositor.account_id,
+        depositor_asset: depositor.account_id,
+        claimant: claimant.account_id,
+        claimant_asset: claimant.account_id,
+        custody: custody.account_id,
+        asset_program: authenticated_transfer_program,
+        custody_program: authenticated_transfer_program,
+        asset_definition: [0; 32],
+        amount,
+        refund_at,
+        status: EscrowStatus::Empty,
+    })
+}
+
+enum NativeClaimProof {
+    Sha256Preimage([u8; 32]),
+    AggregateWitness(AccountId),
+}
+
+fn validated_native_claim_state(
+    metadata: &AccountWithMetadata,
+    custody: &AccountWithMetadata,
+    claimant: &AccountWithMetadata,
+    swap_id: [u8; 32],
+    proof: NativeClaimProof,
+) -> Result<EscrowMetadata, SpelError> {
+    let mut state = read_metadata(metadata)?;
+    require_funded(&state)?;
+    if state.swap_id != swap_id
+        || state.asset_definition != [0; 32]
+        || state.asset_program != state.custody_program
+        || state.claimant != claimant.account_id
+        || state.custody != custody.account_id
+        || claimant.account.program_owner != state.asset_program
+        || custody.account.program_owner != state.asset_program
+        || custody.account.balance != state.amount
+    {
+        return Err(custom_error(
+            ERROR_ACCOUNT_BINDING,
+            "native claim account binding mismatch",
+        ));
+    }
+    match proof {
+        NativeClaimProof::Sha256Preimage(preimage) => {
+            require_preimage_authority(&state, preimage)?;
+        }
+        NativeClaimProof::AggregateWitness(aggregate_authority) => {
+            require_aggregate_witness_authority(&state, aggregate_authority)?;
+        }
+    }
+    state.status = EscrowStatus::Claimed;
+    Ok(state)
+}
+
 fn native_transfer_call(
     authenticated_transfer_program: ProgramId,
     mut sender: AccountWithMetadata,
@@ -207,7 +380,7 @@ fn ata_transfer_call(
 }
 
 fn require_supported(state: &EscrowMetadata) -> Result<(), SpelError> {
-    if state.version != 1 {
+    if state.version != ESCROW_METADATA_VERSION {
         return Err(custom_error(
             ERROR_UNSUPPORTED_VERSION,
             "unsupported escrow metadata version",
@@ -244,48 +417,66 @@ mod zec_escrow {
         refund_at: u64,
         authenticated_transfer_program: [u32; 8],
     ) -> SpelResult {
-        if amount == 0
-            || refund_at == 0
-            || terms_hash == [0; 32]
-            || secret_digest == [0; 32]
-            || authenticated_transfer_program == DEFAULT_PROGRAM_ID
-            || authenticated_transfer_program == ctx.self_program_id
-        {
-            return Err(custom_error(ERROR_INVALID_TERMS, "invalid native terms"));
-        }
-        if custody.account != Account::default()
-            || depositor.account.program_owner != authenticated_transfer_program
-            || claimant.account.program_owner != authenticated_transfer_program
-        {
-            return Err(custom_error(
-                ERROR_ACCOUNT_BINDING,
-                "native custody or actor owner mismatch",
-            ));
-        }
-
-        let mut metadata = metadata;
-        let state = EscrowMetadata {
-            version: 1,
+        let state = native_initial_state(
+            &ctx,
+            &custody,
+            &depositor,
+            &claimant,
             swap_id,
             terms_hash,
-            secret_digest,
-            depositor: depositor.account_id,
-            depositor_asset: depositor.account_id,
-            claimant: claimant.account_id,
-            claimant_asset: claimant.account_id,
-            custody: custody.account_id,
-            asset_program: authenticated_transfer_program,
-            custody_program: authenticated_transfer_program,
-            asset_definition: [0; 32],
+            ClaimAuthority::Sha256Preimage { secret_digest },
             amount,
             refund_at,
-            status: EscrowStatus::Empty,
-        };
+            authenticated_transfer_program,
+        )?;
+        let mut metadata = metadata;
         write_metadata(&mut metadata, &state)?;
         let initialize =
             native_initialize_call(authenticated_transfer_program, custody.clone(), &swap_id);
         Ok(SpelOutput::execute(
             vec![metadata, custody, depositor, claimant],
+            vec![initialize],
+        )
+        .with_timestamp_validity_window(..refund_at))
+    }
+
+    #[instruction]
+    #[allow(clippy::too_many_arguments)]
+    pub fn initialize_native_witnessed(
+        ctx: ProgramContext,
+        #[account(init, pda = arg("swap_id"))] metadata: AccountWithMetadata,
+        #[account(mut, pda = [literal("custody"), arg("swap_id")])] custody: AccountWithMetadata,
+        #[account(signer)] depositor: AccountWithMetadata,
+        claimant: AccountWithMetadata,
+        aggregate_authority: AccountWithMetadata,
+        swap_id: [u8; 32],
+        terms_hash: [u8; 32],
+        aggregate_x_only_public_key: [u8; 32],
+        amount: u128,
+        refund_at: u64,
+        authenticated_transfer_program: [u32; 8],
+    ) -> SpelResult {
+        let state = native_initial_state(
+            &ctx,
+            &custody,
+            &depositor,
+            &claimant,
+            swap_id,
+            terms_hash,
+            ClaimAuthority::AggregateWitness {
+                x_only_public_key: aggregate_x_only_public_key,
+                account_id: aggregate_authority.account_id,
+            },
+            amount,
+            refund_at,
+            authenticated_transfer_program,
+        )?;
+        let mut metadata = metadata;
+        write_metadata(&mut metadata, &state)?;
+        let initialize =
+            native_initialize_call(authenticated_transfer_program, custody.clone(), &swap_id);
+        Ok(SpelOutput::execute(
+            vec![metadata, custody, depositor, claimant, aggregate_authority],
             vec![initialize],
         )
         .with_timestamp_validity_window(..refund_at))
@@ -348,28 +539,13 @@ mod zec_escrow {
         swap_id: [u8; 32],
         preimage: [u8; 32],
     ) -> SpelResult {
-        let mut metadata = metadata;
-        let mut state = read_metadata(&metadata)?;
-        require_funded(&state)?;
-        if state.swap_id != swap_id
-            || state.asset_definition != [0; 32]
-            || state.asset_program != state.custody_program
-            || state.claimant != claimant.account_id
-            || state.custody != custody.account_id
-            || claimant.account.program_owner != state.asset_program
-            || custody.account.program_owner != state.asset_program
-            || custody.account.balance != state.amount
-        {
-            return Err(custom_error(
-                ERROR_ACCOUNT_BINDING,
-                "native claim account binding mismatch",
-            ));
-        }
-        let digest: [u8; 32] = Sha256::digest(preimage).into();
-        if digest != state.secret_digest {
-            return Err(custom_error(ERROR_WRONG_PREIMAGE, "wrong preimage"));
-        }
-
+        let state = validated_native_claim_state(
+            &metadata,
+            &custody,
+            &claimant,
+            swap_id,
+            NativeClaimProof::Sha256Preimage(preimage),
+        )?;
         let transfer = native_transfer_call(
             state.asset_program,
             custody.clone(),
@@ -378,12 +554,46 @@ mod zec_escrow {
             true,
             &swap_id,
         );
-        state.status = EscrowStatus::Claimed;
+        let mut metadata = metadata;
         write_metadata(&mut metadata, &state)?;
         Ok(
             SpelOutput::execute(vec![metadata, custody, claimant], vec![transfer])
                 .with_timestamp_validity_window(..state.refund_at),
         )
+    }
+
+    #[instruction]
+    pub fn claim_native_witnessed(
+        _ctx: ProgramContext,
+        #[account(mut, owner = self_program_id, pda = arg("swap_id"))]
+        metadata: AccountWithMetadata,
+        #[account(mut, pda = [literal("custody"), arg("swap_id")])] custody: AccountWithMetadata,
+        #[account(mut)] claimant: AccountWithMetadata,
+        #[account(signer)] aggregate_authority: AccountWithMetadata,
+        swap_id: [u8; 32],
+    ) -> SpelResult {
+        let state = validated_native_claim_state(
+            &metadata,
+            &custody,
+            &claimant,
+            swap_id,
+            NativeClaimProof::AggregateWitness(aggregate_authority.account_id),
+        )?;
+        let transfer = native_transfer_call(
+            state.asset_program,
+            custody.clone(),
+            claimant.clone(),
+            state.amount,
+            true,
+            &swap_id,
+        );
+        let mut metadata = metadata;
+        write_metadata(&mut metadata, &state)?;
+        Ok(SpelOutput::execute(
+            vec![metadata, custody, claimant, aggregate_authority],
+            vec![transfer],
+        )
+        .with_timestamp_validity_window(..state.refund_at))
     }
 
     #[instruction]
@@ -467,10 +677,10 @@ mod zec_escrow {
         let claimant_asset =
             associated_token_account(ata_program, claimant_owner.account_id, definition);
         let state = EscrowMetadata {
-            version: 1,
+            version: ESCROW_METADATA_VERSION,
             swap_id,
             terms_hash,
-            secret_digest,
+            claim_authority: ClaimAuthority::Sha256Preimage { secret_digest },
             depositor: depositor_owner.account_id,
             depositor_asset,
             claimant: claimant_owner.account_id,
@@ -613,10 +823,7 @@ mod zec_escrow {
                 "token claim account binding mismatch",
             ));
         }
-        let digest: [u8; 32] = Sha256::digest(preimage).into();
-        if digest != state.secret_digest {
-            return Err(custom_error(ERROR_WRONG_PREIMAGE, "wrong preimage"));
-        }
+        require_preimage_authority(&state, preimage)?;
 
         state.status = EscrowStatus::Claimed;
         write_metadata(&mut metadata, &state)?;
@@ -867,6 +1074,33 @@ mod tests {
     }
 
     #[test]
+    fn witnessed_initialization_rejects_an_account_not_derived_from_the_aggregate_key() {
+        let aggregate_x_only_public_key = [44; 32];
+        let aggregate_authority = witnessed_account_id(&aggregate_x_only_public_key);
+        let claimant = account([2; 32], AUTHENTICATED_TRANSFER, 10, false);
+        assert_ne!(aggregate_authority, claimant.account_id);
+
+        let result = zec_escrow::initialize_native_witnessed(
+            context(),
+            empty_account(metadata_id()),
+            empty_account(custody_id()),
+            account([1; 32], AUTHENTICATED_TRANSFER, 200, true),
+            claimant,
+            account([99; 32], DEFAULT_PROGRAM_ID, 0, false),
+            SWAP_ID,
+            [31; 32],
+            aggregate_x_only_public_key,
+            AMOUNT,
+            REFUND_AT,
+            AUTHENTICATED_TRANSFER,
+        );
+        assert!(
+            result.is_err(),
+            "mismatched aggregate authority must be rejected"
+        );
+    }
+
+    #[test]
     fn lee_pdas_and_official_authenticated_transfer_abi_are_exact() {
         let official_program_id: ProgramId = AUTHENTICATED_TRANSFER;
         let public_abi_words: [u32; 8] = official_program_id;
@@ -880,6 +1114,10 @@ mod tests {
         assert_eq!(state.custody_program, AUTHENTICATED_TRANSFER);
         assert_eq!(state.asset_definition, [0; 32]);
         assert_eq!(state.status, EscrowStatus::Empty);
+        assert!(matches!(
+            state.claim_authority,
+            ClaimAuthority::Sha256Preimage { .. }
+        ));
         assert_eq!(
             metadata_id(),
             AccountId::for_public_pda(&ESCROW_PROGRAM, &PdaSeed::new(SWAP_ID))
@@ -990,8 +1228,10 @@ mod tests {
             names,
             [
                 "initialize_native",
+                "initialize_native_witnessed",
                 "fund_native",
                 "claim_native",
+                "claim_native_witnessed",
                 "refund_native",
                 "initialize_token",
                 "create_token_custody",

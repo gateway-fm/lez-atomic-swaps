@@ -51,8 +51,10 @@ fn v02_escrow_guest_generated_client_and_deployment_inputs_exist() {
         names,
         [
             "initialize_native",
+            "initialize_native_witnessed",
             "fund_native",
             "claim_native",
+            "claim_native_witnessed",
             "refund_native",
             "initialize_token",
             "create_token_custody",
@@ -75,6 +77,14 @@ fn v02_escrow_guest_generated_client_and_deployment_inputs_exist() {
         "let signer_ids: Vec<AccountId> = vec![\n            accounts.claimant_owner,\n        ];"
     ));
     assert!(!claim.contains("accounts.claimant_asset,\n        ];\n        let nonces"));
+    let witnessed_claim =
+        generated_method(&generated, "claim_native_witnessed", Some("refund_native"));
+    assert!(witnessed_claim.contains(
+        "let signer_ids: Vec<AccountId> = vec![\n            accounts.aggregate_authority,\n        ];"
+    ));
+    assert!(
+        witnessed_claim.contains("accounts.claimant,\n            accounts.aggregate_authority,")
+    );
     let no_signers = "let signer_ids: Vec<AccountId> = vec![\n        ];";
     assert!(
         generated_method(&generated, "refund_native", Some("initialize_token"))
@@ -151,11 +161,11 @@ fn v02_escrow_guest_generated_client_and_deployment_inputs_exist() {
     );
     assert_eq!(
         manifest["artifact"]["elf_sha256"].as_str(),
-        Some("c85055f6fe85b71535a322ba84ffc612f5d093954a721ba3b529428814dc9d2e")
+        Some("a199c5be062adcb27cf63c62d9f5688b37058b4699ce7e1767fd26eeceb5e293")
     );
     assert_eq!(
         manifest["artifact"]["image_id"].as_str(),
-        Some("5cf8c5a4eedb3c2873956cb7898eb33a495407c9746fb1a065c99638159329c1")
+        Some("39b6a4db85374de9359ea82164ef415019919475f656d597c5ab2231bc104dec")
     );
     assert_eq!(
         manifest["artifact"]["program_id_words"]
@@ -165,14 +175,14 @@ fn v02_escrow_guest_generated_client_and_deployment_inputs_exist() {
             .map(|word| word.as_integer().expect("ProgramId word"))
             .collect::<Vec<_>>(),
         vec![
-            2_764_437_596,
-            675_077_102,
-            3_077_346_675,
-            984_845_961,
-            3_372_700_745,
-            2_695_982_964,
-            949_406_053,
-            3_240_727_317,
+            3_685_004_857,
+            3_914_151_813,
+            564_698_677,
+            1_346_498_404,
+            1_972_670_745,
+            2_547_341_046,
+            824_355_781,
+            3_964_473_532,
         ]
     );
     assert!(
