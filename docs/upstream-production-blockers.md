@@ -1,11 +1,12 @@
-# Upstream Logos blockers to production
+# Upstream blockers to production
 
-Last rechecked: 2026-07-14
+Last rechecked: 2026-07-15
 
-This register contains live-release blockers owned by Logos upstream projects
-or services. Under ADR 0018 they are disclosed exceptions, not substitutes for
-repository-controlled milestone work. The final production-readiness milestone
-must close or explicitly accept every open item.
+This register contains live-release blockers owned by upstream projects or
+services. Logos-owned items follow ADR 0018; other third-party items remain
+explicitly classified and do not inherit that Logos exception. None substitutes
+for repository-controlled milestone work. The final production-readiness
+milestone must close or explicitly accept every open item.
 
 | ID | Upstream owner and immutable input | Production impact | Current compensating control | Exit evidence |
 |---|---|---|---|---|
@@ -23,6 +24,12 @@ must close or explicitly accept every open item.
 | LOGOS-012 | Logos `rust-rapidsnark` v0.0.8 PIC release archive used by the exact LEZ v0.2 graph; upstream identifies Rapisnark as LGPL-3.0-or-later and its bundled GMP as LGPLv3-or-GPLv2 | Cargo license analysis does not cover the prebuilt static archive. Distributing a statically linked sidecar/service binary or image without a reviewed source, relinking, and notice plan could violate release obligations | Local and CI gates publish no artifact, reject implicit build-script downloads, and attest the archive plus four extracted library hashes. Record the boundary without making an unreviewed legal conclusion | Before any binary/image distribution, complete release counsel/maintainer review and ship the required notices, corresponding source and relinking mechanism, or replace the static input with a supported packaging route whose obligations are satisfied |
 | LOGOS-014 | Official LEZ v0.2.0 sequencer submission, mempool, and transaction-query contract at commit `a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a` | `sendTransaction` has no caller idempotency or `AlreadyKnown` contract, returns before stateful execution, and queues into a volatile mempool with no lookup. Stateful rejection is log-only. Sequencer and indexer transaction queries expose no receipt, execution outcome, containing position, or finality. A transport ambiguity therefore cannot distinguish never sent, queued, lost, rejected during execution, included, or finalized | ADR 0026 requires exact bytes and fixed query bounds to be durable, commits `AttemptStarted` before exactly one send, makes reopen observe-only, and keeps unresolved outcomes explicit. Inclusion requires a unique exact bounded sequencer block match; finality requires matching indexer transaction, finalized block ID/hash, and effect-specific `getAccountAtBlock` proof. Subscription notification and default-valued account responses are never sufficient | A supported immutable LEZ release provides idempotent submission plus an authenticated transaction receipt covering mempool/admission, execution rejection, block ID/hash/index, and Bedrock finality, or release review explicitly accepts the documented at-most-once/liveness tradeoff and authoritative query model |
 | LOGOS-015 | Official LEZ v0.2 endpoint/indexer method surface at `https://testnet.lez.logos.co/` | The dormant sidecar's public profile requires `getLastFinalizedBlockId` at startup, but retained upstream/public evidence does not prove that the official origin currently exposes that indexer method. A missing or differently routed method would prevent live readiness even though the exact configuration contract is valid. | Keep the actor listener loopback-only; permit only the exact official HTTPS origin for both outbound clients; contract-test the method name, bounds, mixed-route rejection, and fail-closed startup without turning a live outage into a pass. Private M2 uses the actual local indexer where the method is proven. | Upstream documents and supports the finalized-tip method at the official origin, or a fresh authorized rehearsal records the exact successful response and immutable service/runtime identity |
+
+## Non-Logos upstream build blockers
+
+| ID | Upstream owner and immutable input | Production impact | Current compensating control | Exit evidence |
+|---|---|---|---|---|
+| TOOLCHAIN-001 | RISC Zero guest-builder `r0.1.94.1`, exact image digest `sha256:c2f63fdd...617be` | A local Trivy scan on 2026-07-15 reported 232 HIGH/CRITICAL Ubuntu package findings: 213 high and 19 critical. The image executes during the checked guest build, so an unqualified production supply-chain claim is blocked even though it is not shipped as the swap runtime | CI visibly scans the exact digest on every run. The builder is used only for an isolated build, consumes pinned source/tool inputs, and must reproduce ELF `a199c5be...e293` plus ProgramId `39b6a4db...4dec`; runtime images remain fail-hard. This report-only build-tool classification keeps the progressive local PoC testable but does not waive production review | Upstream publishes a compatible builder with an acceptable scan and the repository reproduces the required checked artifact, or an independently patched, reproducibly pinned builder plus formal security review closes every reachable finding |
 
 ## Resolved repository finding
 

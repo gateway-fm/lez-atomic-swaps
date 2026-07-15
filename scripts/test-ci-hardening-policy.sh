@@ -113,18 +113,18 @@ require_fixed 'Scan repository-owned runtime base for high and critical vulnerab
 require_fixed 'gcr.io/distroless/cc-debian13:nonroot@sha256:aded2458d026e046cb68199db0e5793e1028ffa143f7258f3c4278253e20add7' "$workflow"
 require_fixed 'Report high and critical vulnerabilities in exact Logos Bedrock dependency' "$workflow"
 require_fixed 'ghcr.io/logos-blockchain/logos-blockchain@sha256:91d6c5bf07e07fcfba5e7cf07d21ee686a6bc4b9f6210f2d28bffbcad9a3729f' "$workflow"
-require_fixed 'Repository-owned findings are fail-hard; Logos-owned findings remain visible' "$workflow"
+require_fixed 'Runtime findings fail-hard; classified upstream findings remain visible' "$workflow"
 require_fixed 'rapidsnark_root="${RAPIDSNARK_LIB_DIR%/rapidsnark-linux-x86_64-pic-v0.0.8/lib}"' "$workflow"
 require_fixed 'unzip -q "${rapidsnark_archive}" -d "${rapidsnark_root}"' "$workflow"
 
 assert_trivy_step 'Scan repository-owned runtime base for high and critical vulnerabilities' 'gcr.io/distroless/cc-debian13:nonroot@sha256:aded2458d026e046cb68199db0e5793e1028ffa143f7258f3c4278253e20add7' 1
-assert_trivy_step 'Scan pinned Risc0 guest builder for high and critical vulnerabilities' 'risczero/risc0-guest-builder:r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be' 1
+assert_trivy_step 'Report pinned Risc0 guest builder high and critical vulnerabilities' 'risczero/risc0-guest-builder:r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be' 0
 assert_trivy_step 'Report high and critical vulnerabilities in exact Logos Bedrock dependency' 'ghcr.io/logos-blockchain/logos-blockchain@sha256:91d6c5bf07e07fcfba5e7cf07d21ee686a6bc4b9f6210f2d28bffbcad9a3729f' 0
 assert_trivy_step 'Scan minimal Zebra image for high and critical vulnerabilities' '${{ env.ZEBRA_IMAGE }}' 1
 assert_trivy_step 'Scan exact Bitcoin Core image for high and critical vulnerabilities' 'lez-atomic-swaps-bitcoin-core:github-btc-${{ github.run_id }}-${{ github.run_attempt }}' 1
 report_only_scans="$(rg -Fc -- 'exit-code: "0"' "$workflow")"
-[[ "$report_only_scans" == "1" ]] \
-  || fail "exactly one explicit report-only vulnerability scan is allowed"
+[[ "$report_only_scans" == "2" ]] \
+  || fail "exactly two classified report-only vulnerability scans are allowed"
 
 require_fixed 'isolated Bitcoin Core 31.1 Regtest MuSig2 adaptor P2TR spend' "$workflow"
 require_fixed 'Verify release and run role-aware MuSig2 adaptor P2TR funding and claim' "$workflow"
