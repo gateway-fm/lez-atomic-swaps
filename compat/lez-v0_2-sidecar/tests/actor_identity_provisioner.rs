@@ -15,6 +15,8 @@ struct IdentityFile {
     version: u8,
     account_id: String,
     account_id_hex: String,
+    vault_account_id: String,
+    vault_account_id_hex: String,
     x_only_public_key: String,
 }
 
@@ -45,14 +47,21 @@ fn generates_official_identity_in_owner_only_files() {
     let identity: IdentityFile =
         serde_json::from_slice(&fs::read(&identity_path).unwrap()).unwrap();
     assert_eq!(identity.schema, "lez-v0.2-local-actor-identity");
-    assert_eq!(identity.version, 1);
+    assert_eq!(identity.version, 2);
     assert_eq!(identity.account_id, account_id.to_string());
     assert_eq!(
         identity.account_id_hex,
         hex::encode(account_id.into_value())
     );
+    let vault_account_id = vault_core::compute_vault_account_id(programs::vault().id(), account_id);
+    assert_eq!(identity.vault_account_id, vault_account_id.to_string());
+    assert_eq!(
+        identity.vault_account_id_hex,
+        hex::encode(vault_account_id.into_value())
+    );
     assert_eq!(identity.x_only_public_key, hex::encode(public_key.value()));
     assert_eq!(public.account_id(), identity.account_id);
+    assert_eq!(public.vault_account_id(), identity.vault_account_id);
 
     let serialized_public = serde_json::to_string(&public).unwrap();
     assert!(!serialized_public.contains(private_text.trim_end()));
@@ -97,6 +106,7 @@ fn independently_provisioned_actors_have_distinct_identities() {
     let taker = provision_local_actor_identity(&parent.path().join("taker")).unwrap();
 
     assert_ne!(maker.account_id(), taker.account_id());
+    assert_ne!(maker.vault_account_id(), taker.vault_account_id());
     assert_ne!(maker.x_only_public_key(), taker.x_only_public_key());
     assert_ne!(
         fs::read(parent.path().join("maker").join(PRIVATE_KEY_FILE_NAME)).unwrap(),

@@ -18,7 +18,7 @@ pub const PRIVATE_KEY_FILE_NAME: &str = "lez-signer.key";
 pub const IDENTITY_FILE_NAME: &str = "identity.json";
 
 const SCHEMA: &str = "lez-v0.2-local-actor-identity";
-const VERSION: u8 = 1;
+const VERSION: u8 = 2;
 
 /// Public output produced for a newly provisioned local LEZ actor.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -27,6 +27,8 @@ pub struct PublicActorIdentity {
     version: u8,
     account_id: String,
     account_id_hex: String,
+    vault_account_id: String,
+    vault_account_id_hex: String,
     x_only_public_key: String,
 }
 
@@ -35,6 +37,12 @@ impl PublicActorIdentity {
     #[must_use]
     pub fn account_id(&self) -> &str {
         &self.account_id
+    }
+
+    /// Returns the canonical base58 Vault account derived by official LEZ v0.2 code.
+    #[must_use]
+    pub fn vault_account_id(&self) -> &str {
+        &self.vault_account_id
     }
 
     /// Returns the official x-only public key in lowercase hexadecimal form.
@@ -113,11 +121,14 @@ fn provision_in_new_directory(
     let private_key = PrivateKey::new_os_random();
     let public_key = PublicKey::new_from_private_key(&private_key);
     let account_id = AccountId::from(&public_key);
+    let vault_account_id = vault_core::compute_vault_account_id(programs::vault().id(), account_id);
     let identity = PublicActorIdentity {
         schema: SCHEMA,
         version: VERSION,
         account_id: account_id.to_string(),
         account_id_hex: hex::encode(account_id.into_value()),
+        vault_account_id: vault_account_id.to_string(),
+        vault_account_id_hex: hex::encode(vault_account_id.into_value()),
         x_only_public_key: hex::encode(public_key.value()),
     };
 

@@ -14,15 +14,27 @@ readonly expected_bedrock_signing_key_sha256="8fd0d8a6423536c14b5d3979e5135bf372
 readonly upstream_lez_channel_id="0101010101010101010101010101010101010101010101010101010101010101"
 readonly upstream_genesis_time_hex="2c04626900000000"
 readonly default_maker_account_id="B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd"
-readonly maker_vault_account_id="7Mzr43PK9VxpcvwdjgL8PeE4nb2aG9FqBKLfkoH8RBmQ"
+readonly default_maker_vault_account_id="7Mzr43PK9VxpcvwdjgL8PeE4nb2aG9FqBKLfkoH8RBmQ"
 readonly maker_genesis_allocation="100000"
 readonly default_taker_account_id="34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib"
-readonly taker_vault_account_id="AXLjVw4tKTgieQoGRgXMVLVVaB4c5YnL1YTogZdX1cpH"
+readonly default_taker_vault_account_id="AXLjVw4tKTgieQoGRgXMVLVVaB4c5YnL1YTogZdX1cpH"
 readonly taker_genesis_allocation="200000"
 
+if [[ "${LEZ_V02_MAKER_ACCOUNT_ID+x}" != \
+      "${LEZ_V02_MAKER_VAULT_ACCOUNT_ID+x}" ]]; then
+  echo "maker owner and Vault overrides must be supplied together" >&2
+  exit 1
+fi
+if [[ "${LEZ_V02_TAKER_ACCOUNT_ID+x}" != \
+      "${LEZ_V02_TAKER_VAULT_ACCOUNT_ID+x}" ]]; then
+  echo "taker owner and Vault overrides must be supplied together" >&2
+  exit 1
+fi
 maker_account_id="${LEZ_V02_MAKER_ACCOUNT_ID:-$default_maker_account_id}"
+maker_vault_account_id="${LEZ_V02_MAKER_VAULT_ACCOUNT_ID:-$default_maker_vault_account_id}"
 taker_account_id="${LEZ_V02_TAKER_ACCOUNT_ID:-$default_taker_account_id}"
-readonly maker_account_id taker_account_id
+taker_vault_account_id="${LEZ_V02_TAKER_VAULT_ACCOUNT_ID:-$default_taker_vault_account_id}"
+readonly maker_account_id maker_vault_account_id taker_account_id taker_vault_account_id
 
 validate_actor_account_id() {
   local account_id="$1"
@@ -34,7 +46,9 @@ validate_actor_account_id() {
 }
 
 validate_actor_account_id "$maker_account_id" "maker"
+validate_actor_account_id "$maker_vault_account_id" "maker Vault"
 validate_actor_account_id "$taker_account_id" "taker"
+validate_actor_account_id "$taker_vault_account_id" "taker Vault"
 
 run_id="${RUN_ID:-local-$$}"
 if [[ ! "$run_id" =~ ^[a-z0-9][a-z0-9_-]{0,63}$ ]]; then
@@ -44,6 +58,8 @@ fi
 if [[ "$maker_account_id" == "$taker_account_id" ||
       "$maker_vault_account_id" == "$taker_vault_account_id" ||
       "$maker_account_id" == "$maker_vault_account_id" ||
+      "$maker_account_id" == "$taker_vault_account_id" ||
+      "$taker_account_id" == "$maker_vault_account_id" ||
       "$taker_account_id" == "$taker_vault_account_id" ||
       "$maker_genesis_allocation" == "$taker_genesis_allocation" ]]; then
   echo "maker and taker genesis identities, Vaults, and allocations must remain distinct" >&2
