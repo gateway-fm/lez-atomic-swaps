@@ -508,6 +508,21 @@ wait_for_bedrock() {
   return 1
 }
 
+wait_for_bedrock_advance() {
+  local url="$1"
+  local before="$2"
+  local after="$3"
+  for _ in {1..30}; do
+    if curl -fsS --max-time 5 "${url}/cryptarchia/info" >"$after" &&
+       jq -e --slurp -f "$cryptarchia_policy" "$before" "$after" >/dev/null; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "Bedrock cryptarchia did not advance after readiness within 60 seconds" >&2
+  return 1
+}
+
 wait_for_rpc() {
   local url="$1"
   local payload="$2"
@@ -597,12 +612,9 @@ published_url() {
 docker start "${containers[bedrock]}" >/dev/null
 bedrock_url="$(published_url bedrock 18080)"
 wait_for_bedrock "$bedrock_url" "${evidence_dir}/bedrock-cryptarchia-1.json"
-sleep 2
-curl -fsS --max-time 5 "${bedrock_url}/cryptarchia/info" \
-  >"${evidence_dir}/bedrock-cryptarchia-2.json"
-jq -e --slurp -f "$cryptarchia_policy" \
+wait_for_bedrock_advance "$bedrock_url" \
   "${evidence_dir}/bedrock-cryptarchia-1.json" \
-  "${evidence_dir}/bedrock-cryptarchia-2.json" >/dev/null
+  "${evidence_dir}/bedrock-cryptarchia-2.json"
 missing_channel_body="${evidence_dir}/bedrock-channel-before-bootstrap.txt"
 channel_status="$(curl -sS --max-time 5 -o "$missing_channel_body" \
   -w "%{http_code}" "${bedrock_url}/channel/${channel_id}")"

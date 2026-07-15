@@ -98,6 +98,8 @@ required_runner_terms=(
   '${service}-effective-ports.json'
   'cryptarchia_policy="tests/e2e/lez-v02/cryptarchia-advanced.jq"'
   '-f "$cryptarchia_policy"'
+  'wait_for_bedrock_advance "$bedrock_url"'
+  'Bedrock cryptarchia did not advance after readiness within 60 seconds'
   'docker network create'
   '--opt com.docker.network.bridge.enable_ip_masquerade=false'
   '--publish "127.0.0.1::18080"'
