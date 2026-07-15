@@ -1137,6 +1137,23 @@ deployed in finalized block 405 and used for both live directions.
 Step 5 now also has a public one-shot, role-fixed reference actor. It
 activates the canonical agreement and composes predecessor zero and one through
 typed Core or finalized LEZ funding observation plus the actor-local store.
+Its local-input boundary now includes a two-stage, fixture-only provisioner.
+Stage one creates fresh OS-random maker/taker signing, refund, claim-destination,
+and adaptor material in owner-only, create-new files and emits only the public
+planning document plus the exact pinned `lez-v02-account-id` helper invocation.
+After the operator has obtained actual Core funding and LEZ deployment facts,
+stage two reconstructs every public key and contract from those private files,
+binds the helper's schema/key/account result, Core genesis and confirmation
+evidence, LEZ chain/genesis/program/custody identities, prepared claim hash, and
+recovery schedule, then countersigns and canonically revalidates the agreement.
+The root graph deliberately does not reimplement the Logos `nssa` account
+derivation: the isolated pinned helper derives it, and the live pinned LEZ
+prepare path independently rejects a wrong authority account. Six all-target
+tests cover both directions, public/private crosswires, immature funding,
+authority/key and recovery drift, strict JSON, no-clobber, file modes, hard
+links/symlinks, and stdout secret scanning; strict Clippy, formatting, and the
+workspace advisory/license/source policy pass. The combined harness still has
+to invoke both stages around its actual-node observations.
 Both roles and both directions reach revision two `BothLegsLocked` in focused
 tests. Both claim revisions now project through terminal `Completed` in
 focused role/direction tests: revision three reruns the complete activation
@@ -1479,7 +1496,8 @@ checking, one-way claim evidence, signed Bitcoin confirmation policy, finalized
 LEZ policy units in the injected seam, and predecessor CAS convergence. The
 typed live Core finalized observer and durable one-attempt Bitcoin claim path
 are wired. Remaining local PoC work is composing the equivalent finalized LEZ
-claim path and repeating both directions through the public actor surface.
+claim path, wiring the verified two-stage provisioner into the run-owned
+orchestrator, and repeating both directions through the public actor surface.
 Certification also requires a combined run-owned harness that creates
 the actual-node countersigned agreement, safely owns the host-sidecar listener
 lifecycle without the current free-port bind race, invokes a fresh public actor
