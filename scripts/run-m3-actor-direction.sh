@@ -30,6 +30,7 @@ emit_contract() {
       lez_exact_finalized_ancestry: true,
       actor_owned_claim_effects: true,
       secure_sidecar_state_root_required: true,
+      single_core_rpc_response_per_call: true,
       submission_count_query: true,
       owned_process_registry: true,
       pre_lock_presignature_domains: ["bitcoin", "lez"],
@@ -153,15 +154,20 @@ core_rpc() {
   local method="$2"
   local params="$3"
   local config
+  local -a config_urls=()
   case "$role" in
     maker) config="$M3_POC_BITCOIN_MAKER_CURL_CONFIG" ;;
     taker) config="$M3_POC_BITCOIN_TAKER_CURL_CONFIG" ;;
     *) fail "invalid Core role: ${role}" ;;
   esac
+  mapfile -t config_urls < <(sed -n -E \
+    's/^url[[:space:]]*=[[:space:]]*"([^"]+)"[[:space:]]*$/\1/p' "$config")
+  [[ "${#config_urls[@]}" == 1 && "${config_urls[0]}" == "$M3_POC_BITCOIN_RPC_URL" ]] ||
+    fail "Core role curl config does not own the exact run endpoint"
   curl --fail --silent --show-error --noproxy '*' --config "$config" \
     --connect-timeout 2 --max-time 30 -H 'content-type: application/json' \
     --data "$(jq -cn --arg method "$method" --argjson params "$params" \
-      '{jsonrpc:"2.0",id:1,method:$method,params:$params}')" "$M3_POC_BITCOIN_RPC_URL"
+      '{jsonrpc:"2.0",id:1,method:$method,params:$params}')"
 }
 
 allocate_port() {
@@ -336,6 +342,7 @@ prepare_stage_two_spec() {
   local depositor claimant amount now refund_seconds refund_at_ms swap_id terms_file
   local source_tx source_vout source_value source_script secret_hex secret_file
   local funding_spec funding_summary funding_hex funder mempool genesis height anchor first_summary
+  local funding_source_evidence
   local pda_evidence metadata custody claim_hash earlier later
   public_spec="${M3_POC_DIRECTION_ROOT}/fixture/public-spec.json"
   stage1_sha="$(sha256sum "$public_spec" | sed 's/ .*//')"
@@ -398,7 +405,6 @@ prepare_stage_two_spec() {
     source_tx="$(file_value "$M3_POC_BITCOIN_FUNDING_CREDENTIALS" BITCOIN_CORE_FUNDING_TXID)"
     source_vout="$(file_value "$M3_POC_BITCOIN_FUNDING_CREDENTIALS" BITCOIN_CORE_FUNDING_VOUT)"
     source_value="$(file_value "$M3_POC_BITCOIN_FUNDING_CREDENTIALS" BITCOIN_CORE_FUNDING_VALUE_SAT)"
-    source_script="$(core_rpc maker gettxout "[\"${source_tx}\",${source_vout},true]" | jq -er '.result.scriptPubKey.hex')"
   else
     first_summary="${M3_POC_EVIDENCE_DIR}/taker_sells_foreign-funding-prepared.json"
     source_tx="$(jq -er '.transaction_id' "$first_summary")"
@@ -406,10 +412,24 @@ prepare_stage_two_spec() {
     source_value="$(jq -er '.change_value_sat' "$first_summary")"
     source_script="$(jq -er '.input_script_pubkey' "$first_summary")"
   fi
-  core_rpc maker gettxout "[\"${source_tx}\",${source_vout},true]" |
-    jq -e --argjson value "$source_value" --arg script "$source_script" \
-      '.result != null and ((.result.value * 100000000 | round) == $value) and .result.scriptPubKey.hex == $script' \
-      >/dev/null || fail "actual Core funding source is not exact and unspent"
+  funding_source_evidence="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-funding-source-gettxout.json"
+  [[ ! -e "$funding_source_evidence" && ! -L "$funding_source_evidence" ]] ||
+    fail "refusing to overwrite Core funding-source evidence"
+  core_rpc maker gettxout "[\"${source_tx}\",${source_vout},true]" \
+    >"$funding_source_evidence"
+  chmod 0600 "$funding_source_evidence"
+  if [[ "$M3_POC_DIRECTION" == "taker_sells_foreign" ]]; then
+    source_script="$(jq -ser \
+      'select(length == 1) | .[0].result.scriptPubKey.hex' "$funding_source_evidence")"
+  fi
+  jq -se --argjson value "$source_value" --arg script "$source_script" '
+    length == 1
+    and .[0].error == null
+    and .[0].result != null
+    and ((.[0].result.value * 100000000 | round) == $value)
+    and .[0].result.scriptPubKey.hex == $script
+  ' "$funding_source_evidence" >/dev/null ||
+    fail "actual Core funding source is not exact and unspent"
 
   funding_spec="${M3_POC_DIRECTION_ROOT}/funding-spec.json"
   funding_summary="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-funding-prepared.json"

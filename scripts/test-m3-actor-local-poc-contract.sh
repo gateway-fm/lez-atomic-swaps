@@ -42,6 +42,7 @@ jq -e '
   and .lez_exact_finalized_ancestry == true
   and .actor_owned_claim_effects == true
   and .secure_sidecar_state_root_required == true
+  and .single_core_rpc_response_per_call == true
   and .submission_count_query == true
   and .owned_process_registry == true
   and .pre_lock_presignature_domains == ["bitcoin", "lez"]
@@ -156,6 +157,7 @@ jq -e --arg run_id "$contract_run_id" '
   and .isolation.foreign_resource_mutation == false
   and .cleanup.captured_exact_ids_only == true
   and .cleanup.secure_reservation_state_root_removed == true
+  and .cleanup.process_exit_race_silent == true
   and .cleanup.runs_on_success_and_failure == true
   and .evidence.secret_safe_json == true
   and .evidence.cleanup_attestation == true

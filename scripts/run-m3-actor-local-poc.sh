@@ -103,6 +103,7 @@ emit_contract() {
       cleanup: {
         captured_exact_ids_only: true,
         secure_reservation_state_root_removed: true,
+        process_exit_race_silent: true,
         runs_on_success_and_failure: true,
         broad_cleanup_used: false
       },
@@ -216,7 +217,8 @@ process_matches_registry() {
   local expected_executable="$3"
   local actual_start actual_executable
   [[ "$pid" =~ ^[1-9][0-9]*$ && -r "/proc/${pid}/stat" ]] || return 1
-  actual_start="$(sed -E 's/^[^(]*\([^)]*\) [^ ]+( [^ ]+){18} ([^ ]+).*/\2/' "/proc/${pid}/stat")"
+  actual_start="$(sed -E 's/^[^(]*\([^)]*\) [^ ]+( [^ ]+){18} ([^ ]+).*/\2/' \
+    "/proc/${pid}/stat" 2>/dev/null || true)"
   actual_executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
   [[ "$actual_start" == "$expected_start" && "$actual_executable" == "$expected_executable" ]]
 }
