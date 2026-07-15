@@ -2,6 +2,8 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(target_os = "linux")]
+pub mod actor_identity;
 mod bridge_runtime;
 mod bridge_server;
 #[cfg(target_os = "linux")]

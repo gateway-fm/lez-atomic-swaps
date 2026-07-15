@@ -105,14 +105,33 @@ Use the same verified Rapidsnark directory used by the full verifier:
 export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
 export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
 export SIDECAR_TARGET="${TMPDIR:-/tmp}/lez-v02-sidecar-${BUILD_RUN_ID}"
-CARGO_TARGET_DIR="$SIDECAR_TARGET" CARGO_NET_OFFLINE=true cargo +1.96.0 build --locked --offline --manifest-path compat/lez-v0_2-sidecar/Cargo.toml --bin lez-v02-bridge-poc --bin lez-v02-vault-claim-poc
+CARGO_TARGET_DIR="$SIDECAR_TARGET" CARGO_NET_OFFLINE=true cargo +1.96.0 build --locked --offline --manifest-path compat/lez-v0_2-sidecar/Cargo.toml --bin lez-v02-bridge-poc --bin lez-v02-vault-claim-poc --example lez-v02-local-actor-identity
 export BRIDGE_BIN="$SIDECAR_TARGET/debug/lez-v02-bridge-poc"
 export VAULT_BIN="$SIDECAR_TARGET/debug/lez-v02-vault-claim-poc"
+export IDENTITY_PROVISIONER="$SIDECAR_TARGET/debug/examples/lez-v02-local-actor-identity"
 ~~~
 
 If the offline build reports a missing crate, git source, circuit, or native
 library, populate it through the full pinned verifier rather than removing
 locked/offline flags.
+
+Provision fresh official LEZ actor identities before creating the LEZ genesis.
+The helper accepts only new output directories, sources keys from the OS random
+generator, writes `lez-signer.key` and `identity.json` under owner-only
+permissions, and prints only the public descriptor:
+
+~~~sh
+"$IDENTITY_PROVISIONER" --output-directory "$PRIVATE_ROOT/maker" >"$PRIVATE_ROOT/evidence/maker-public-identity.json"
+"$IDENTITY_PROVISIONER" --output-directory "$PRIVATE_ROOT/taker" >"$PRIVATE_ROOT/evidence/taker-public-identity.json"
+chmod 0600 "$PRIVATE_ROOT/evidence/"*-public-identity.json
+export LEZ_V02_MAKER_ACCOUNT_ID="$(jq -er '.account_id' "$PRIVATE_ROOT/maker/identity.json")"
+export LEZ_V02_TAKER_ACCOUNT_ID="$(jq -er '.account_id' "$PRIVATE_ROOT/taker/identity.json")"
+test "$LEZ_V02_MAKER_ACCOUNT_ID" != "$LEZ_V02_TAKER_ACCOUNT_ID"
+~~~
+
+Never print either signer file. The provisioner refuses an existing output
+path instead of reusing or overwriting an identity. Its account IDs are public
+and are the exact values that the stack must place in genesis.
 
 ## Start both retained local chains
 
@@ -130,7 +149,10 @@ literal-loopback RPC.
 Start and retain the exact LEZ v0.2 stack:
 
 ~~~sh
-RUN_ID="$LEZ_RUN_ID" LEZ_V02_KEEP_RUNNING=1 ./scripts/run-lez-v02-stack.sh
+RUN_ID="$LEZ_RUN_ID" LEZ_V02_KEEP_RUNNING=1 \
+  LEZ_V02_MAKER_ACCOUNT_ID="$LEZ_V02_MAKER_ACCOUNT_ID" \
+  LEZ_V02_TAKER_ACCOUNT_ID="$LEZ_V02_TAKER_ACCOUNT_ID" \
+  ./scripts/run-lez-v02-stack.sh
 ~~~
 
 Require three run-owned services, an advancing signed channel, a non-genesis
@@ -155,6 +177,8 @@ export SEQUENCER_URL="$LEZ_SEQUENCER_RPC_URL"
 export INDEXER_URL="$LEZ_INDEXER_RPC_URL"
 export BEDROCK_URL="$BEDROCK_RPC_URL"
 export LEZ_CHAIN_ID="$LEZ_V02_CHANNEL_PUBLIC_KEY"
+test "$LEZ_V02_MAKER_ACCOUNT_ID" = "$(jq -er '.account_id' "$PRIVATE_ROOT/maker/identity.json")"
+test "$LEZ_V02_TAKER_ACCOUNT_ID" = "$(jq -er '.account_id' "$PRIVATE_ROOT/taker/identity.json")"
 ~~~
 
 Never print or commit either curl config or the Core funding credential file.
@@ -220,21 +244,14 @@ The stack allocates funds to each actor's Vault, not directly to its owner
 account. Both Vault Claims must be finalized before preparing either swap
 transcript.
 
-Provision two source key files corresponding exactly to the deterministic local
-maker and taker account IDs emitted in the LEZ run manifest. The retained run
-used its audited local fixture key generator. This guide intentionally does not
-print those private values. The current stack runner emits public account IDs
-and allocations but does not emit private keys; obtaining the matching two
-owner-only fixture files from the local provisioner is therefore a prerequisite
-and a known automation gap.
+The fresh identities provisioned before stack startup already match the maker
+and taker account IDs emitted in the LEZ run manifest. Keep those signer files
+inside the private run root and create only the role-local state directories:
 
 ~~~sh
-export SOURCE_MAKER_LEZ_KEY=/absolute/private/path/maker-lez-signer.key
-export SOURCE_TAKER_LEZ_KEY=/absolute/private/path/taker-lez-signer.key
-install -d -m 0700 "$PRIVATE_ROOT/maker" "$PRIVATE_ROOT/taker"
-install -m 0600 "$SOURCE_MAKER_LEZ_KEY" "$PRIVATE_ROOT/maker/lez-signer.key"
-install -m 0600 "$SOURCE_TAKER_LEZ_KEY" "$PRIVATE_ROOT/taker/lez-signer.key"
 install -d -m 0700 "$PRIVATE_ROOT/maker/vault-state" "$PRIVATE_ROOT/taker/vault-state"
+test "$(stat -c '%a' "$PRIVATE_ROOT/maker/lez-signer.key")" = 600
+test "$(stat -c '%a' "$PRIVATE_ROOT/taker/lez-signer.key")" = 600
 ~~~
 
 Run each Claim in a separate role process. The CLI durably records

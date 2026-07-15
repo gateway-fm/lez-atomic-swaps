@@ -405,10 +405,11 @@
     "shared_upstream_image_removed": false,
     "broad_prune_or_wildcard_cleanup_used": false,
     "unrelated_docker_resources_touched": false,
-    "post_cleanup_exact_resource_inspection": "not_found"
+    "post_cleanup_exact_resource_inspection": "not_found",
+    "private_tmp_and_e2e_run_roots_removed_after_public_packet_push": true
   },
   "evidence_limitations": [
-    "The underlying runtime packet was retained in private local storage and intentionally is not committed because it contains signed bytes and secret-bearing role state.",
+    "The underlying runtime packet was retained for local audit, intentionally not committed because it contained signed bytes and secret-bearing role state, and removed after this secret-safe packet was pushed.",
     "This secret-safe record contains exact transaction and block identifiers plus signature and packet hashes, but intentionally omits the bytes needed for a third party to recompute every equality assertion from this file alone.",
     "Pre-effect signing order was checked from the operator sequence, retained packet hashes, and local file metadata; it is not a trusted external timestamp attestation.",
     "The run was operator-composed across real local node RPCs and independent role processes rather than executed by a production reference application.",

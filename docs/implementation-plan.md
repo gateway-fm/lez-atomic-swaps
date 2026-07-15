@@ -1120,9 +1120,12 @@ pair observation, and a typed operator boundary are GREEN. The exact guest was
 deployed in finalized block 405 and used for both live directions. Step 5 has a
 public BTC transaction/session boundary, separate role sidecars, and
 independent signer processes/stores, but not a cohesive full-lifecycle public
-reference actor. Step 6 is 2 of 2 for actual chain execution; the checked-in
-secret-safe packet, complete operator recipe, exact cleanup proof, and durable
-per-actor terminal status are the remaining local PoC certification packaging.
+reference actor. Step 6 is 2 of 2 for actual chain execution. Pushed commit
+`a58ef96` adds the checked-in secret-safe packet, complete operator recipe,
+exact cleanup proof, synchronized architecture/traceability, and all 76 rendered
+Mermaid diagrams. Durable per-actor terminal status and one countersigned
+agreement binding the executable Bitcoin refund plan remain the local PoC
+certification work.
 Exact-pinned `bitcoin` 0.32.101 constructs and verifies
 the P2TR/CSV transaction boundary. Exact-pinned `musig2` 0.4.1 aggregates the
 ordered maker/taker fixture keys, applies the Taproot tweak with matching `Q`
@@ -1341,11 +1344,15 @@ and manual commands reproduce the evidence. The agreement commits the exact CSV
 refund tapleaf/control block plus maker-funded-shorter/taker-funded-longer typed
 recovery schedule even when the happy PoC does not execute it.
 
-The live chain portion of that gate is met in both directions. Packaging still
-must provide a reproducible operator entrypoint/guide, immutable secret-safe
-evidence on the pushed commit, exact run-scoped cleanup evidence, and a durable
+The live chain portion of that gate is met in both directions. Commit `a58ef96`
+provides the operator guide, immutable secret-safe evidence, exact cleanup
+attestation, and current component/actor diagrams. Fresh official LEZ actor
+identity provisioning is now GREEN through an OS-random, owner-only,
+no-clobber helper whose public account IDs feed the run-owned genesis before
+Docker starts. Remaining local PoC work is a countersigned agreement that
+binds the exact executable BTC refund plan and recovery schedule, and a durable
 terminal `Completed` record for each cohesive reference actor rather than
-inferring actor completion only from terminal chain state and one-shot role
+inferring completion only from terminal chain state and one-shot role
 processes. These are remaining deliverables, not external blockers.
 
 ### Later owner-selected hardening

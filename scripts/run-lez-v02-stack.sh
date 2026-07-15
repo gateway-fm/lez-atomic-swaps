@@ -13,12 +13,28 @@ readonly bedrock_signing_key_hex="0ab865b8054be13810889714c1f1d82c3d8bb2e4510c26
 readonly expected_bedrock_signing_key_sha256="8fd0d8a6423536c14b5d3979e5135bf37253f5dfbc8485b52202bbf963b8f02e"
 readonly upstream_lez_channel_id="0101010101010101010101010101010101010101010101010101010101010101"
 readonly upstream_genesis_time_hex="2c04626900000000"
-readonly maker_account_id="B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd"
+readonly default_maker_account_id="B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd"
 readonly maker_vault_account_id="7Mzr43PK9VxpcvwdjgL8PeE4nb2aG9FqBKLfkoH8RBmQ"
 readonly maker_genesis_allocation="100000"
-readonly taker_account_id="34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib"
+readonly default_taker_account_id="34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib"
 readonly taker_vault_account_id="AXLjVw4tKTgieQoGRgXMVLVVaB4c5YnL1YTogZdX1cpH"
 readonly taker_genesis_allocation="200000"
+
+maker_account_id="${LEZ_V02_MAKER_ACCOUNT_ID:-$default_maker_account_id}"
+taker_account_id="${LEZ_V02_TAKER_ACCOUNT_ID:-$default_taker_account_id}"
+readonly maker_account_id taker_account_id
+
+validate_actor_account_id() {
+  local account_id="$1"
+  local role="$2"
+  if [[ ! "$account_id" =~ ^[1-9A-HJ-NP-Za-km-z]{43,44}$ ]]; then
+    echo "${role} account ID must be a canonical base58 public AccountId" >&2
+    exit 1
+  fi
+}
+
+validate_actor_account_id "$maker_account_id" "maker"
+validate_actor_account_id "$taker_account_id" "taker"
 
 run_id="${RUN_ID:-local-$$}"
 if [[ ! "$run_id" =~ ^[a-z0-9][a-z0-9_-]{0,63}$ ]]; then
