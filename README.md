@@ -12,13 +12,46 @@ The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 ## Current status
 
 M2 is certified at its private local-functional PoC boundary under
-`m2-complete`. M3 is active. Its authority, Bitcoin Core 31.1 Regtest
-topology, dependency candidates, actor flows, and acceptance gate are
-entry-audited in
+`m2-complete`. M3 is active and its operator-composed local-devnet happy-path
+PoC is now **2 of 2 directions complete**. Its authority, Bitcoin Core 31.1
+Regtest topology, dependency candidates, actor flows, and acceptance gate are
+audited in
 [ADR 0029](docs/architecture/0029-m3-bitcoin-local-poc-entry.md). The
 nonexistent DLC Schnorr-vector reference is separately tracked as
 [Gateway erratum GW-M3-001](docs/proposal-acceptance-errata.md), with no accepted
 replacement yet.
+
+Run `m3poc-live2-20260715a` used one isolated Bitcoin Core 31.1 Regtest node,
+one exact local LEZ v0.2 Bedrock/sequencer/indexer stack, and separate
+capability-authenticated maker/taker sidecars, signing processes, keys,
+SQLite journals, and state roots. The digest-pinned aggregate-witness guest
+ELF `a199c5be...e293` / ProgramId `39b6a4db...4dec` was deployed and finalized
+before either direction. Both actor Vault allocations were independently
+claimed and re-read at finalized tips before swap preparation.
+
+`TakerSellsForeign` confirmed the taker Bitcoin lock `ca0ae641...a4c75`, then
+finalized maker LEZ initialize/fund transactions in blocks 540/544. Only after
+both locks were proven did the taker finalize LEZ claim
+`ef77099e...2cde3` in block 570. The maker matched the exact finalized LEZ
+witness, extracted and point-checked the committed adaptor scalar from its own
+persisted session, and confirmed Bitcoin claim `0ee99753...6a5aa` with exactly
+one 64-byte key-path witness. `TakerSellsLez` finalized taker LEZ
+initialize/fund transactions in blocks 617/620, then confirmed maker Bitcoin
+lock `c5dd0f85...752a3`. The taker confirmed Bitcoin claim
+`66255398...054f4`; the maker matched that exact Core witness, recovered the
+scalar from its own persisted session, and finalized LEZ claim
+`834c67e9...d3033` in block 644. Both terminal LEZ custody accounts are zero,
+and both Bitcoin contract outpoints are spent exactly once to the
+direction-correct recipient.
+
+The PoC uses a declared one-confirmation Regtest policy and independently
+requires LEZ indexer `Finalized` membership, exact-once bounded block
+membership, and equal by-ID/by-hash block bodies. No scalar is used before both
+locks, and after reveal the opposite claim uses only persisted local state and
+chain observations. The secret-safe retained packet is
+[M3 local two-direction evidence](docs/evidence/m3-local-two-direction-poc-20260715.json).
+No public RPC, faucet, peer, credential, public funds, or public deployment is
+used.
 
 M3 now has an actual-Core, two-party MuSig2/adaptor P2TR vertical slice.
 Exact-pinned `bitcoin` 0.32.101 constructs the aggregate-internal-key plus
@@ -98,14 +131,15 @@ complete calls through a strict typed one-shot operator CLI with a private
 capability file. Pushed `bf5bdbd` delegates x-only-key to LEZ-account mapping to
 the pinned official `nssa` implementation rather than duplicating it in shell.
 
-The retained actual-Core run is deliberately a one-process public deterministic
-cryptographic and consensus fixture; newer component tests now prove fresh
-nonces, exchanged commitments, durable separate maker/taker processes, and
-external Bitcoin transaction finalization. They are not yet one live corridor
-or a production signing authority. Witnessed submission through a live LEZ
-node, both complete directions, refund execution, and end-to-end atomicity
-remain unproven. There is no executable full BTC swap command yet. CI runs the
-same P2TR funding/claim composition and
+The older retained actual-Core run remains a one-process public deterministic
+cryptographic and consensus fixture. The new composed run closes live witnessed
+submission, both happy directions, and the PoC atomicity/recovery order through
+separate role processes. It does **not** close the accepted proposal milestone:
+the full-lifecycle public BTC SDK/reference actor, native/custom-token parity,
+refund/timeout and concurrent demos, Testnet4 setup/execution, production key
+custody/Core adapter, QA/chaos/infosec campaigns, and GW-M3-001 disposition
+remain. There is no `m3-complete` tag. CI runs the same P2TR funding/claim
+composition and
 fail-hard scans
 the exact Core image for HIGH/CRITICAL vulnerabilities. The earlier clean
 infrastructure run remains available as

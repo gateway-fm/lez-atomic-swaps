@@ -1,402 +1,350 @@
-# ADR 0029: M3 starts with an isolated Bitcoin actual-node PoC
+# ADR 0029: M3 uses isolated Bitcoin and LEZ local devnets
 
-Status: Accepted entry boundary; M3 active; actual-Core fixture, durable independent role signing, and checked LEZ witnessed prepare/observe/complete boundaries GREEN — 2026-07-15
+Status: Accepted. The operator-composed local functional PoC completed both
+happy directions on 2026-07-15. Cohesive lifecycle SDK composition, live
+refunds, concurrency, hardening, production readiness, and an M3 completion tag
+remain open.
 
 ## Context
 
-The live RFP and accepted proposal #112 require a complete LEZ/BTC lifecycle,
-BIP-340 Schnorr adaptor signatures, a BIP-341 cooperative key-path claim, a
-Bitcoin Core setup guide, both role directions, and reproducible evidence. The
-entry tree had generic Bitcoin state-machine vocabulary only. The current tree
-now has the exact Core runner/evidence, a typed P2TR/CSV transaction builder,
-and a one-process public deterministic fixture. That fixture aggregates distinct
-maker and taker key shares with BIP-327, applies the Taproot tweak to `Q`, creates
-and verifies a 65-byte Schnorr adaptor presignature, adapts it with the public
-fixture scalar, verifies the resulting 64-byte signature under `Q`, spends it
-through Core policy and consensus, and extracts the same scalar. It still has no
-production Core swap adapter, independent Bitcoin actor processes/stores, or
-composed swap evidence packet. Pushed `0177151` adds fresh OS nonces, exchanged
-transcript-bound commitments, separate maker/taker state objects, the exact BTC
-message plus a placeholder LEZ message domain, one-use phases, and both
-scalar-reveal orders in memory. Pushed `e3f2938` adds the role-local crash-safe
-nonce and partial-outbox journal; pushed `8a7ea55` makes the SDK generate,
-reconstruct, and revalidate those exact durable bytes. Pushed `6935acd` adds the actual digest-pinned
-LEZ aggregate-witness guest and recursively proves the authority-to-claimant
-effect. Pushed `79735dd` durably prepares and completes its official message
-through the sidecar while keeping submission separate. Pushed `ca524ff` and
-`96f2a31` orchestrate those exact SDK/journal bytes across fresh role-fixed
-processes, including external adaptation and extraction. Pushed `3862dde`
-prepares the witnessed initialize/fund pair; `3d7386b` observes its canonical
-chain facts and effects conservatively; `a3da09e` exposes strict typed
-operations; and `bf5bdbd` delegates aggregate-account mapping to official
-`nssa`. The chain components have not yet crossed both live nodes in one swap
-corridor.
+The live RFP and accepted Gateway proposal require a complete LEZ and BTC
+lifecycle, BIP-340 Schnorr adaptor signatures, a BIP-341 cooperative key-path
+claim, a Bitcoin Core setup guide, both role directions, and reproducible
+evidence. M3 entered with isolated component proofs: exact Bitcoin Core
+provenance, a typed P2TR and CSV builder, MuSig2 adaptor signing, crash-safe
+role journals, and a checked LEZ aggregate-witness guest.
 
-The accepted proposal names DLC-specs `AdaptorSignature.md` as a conformance
-source. No such file exists in the current DLC repository or its history. The
-published DLC adaptor corpus is ECDSA, while M3 requires BIP-340 Schnorr. This
-is a Gateway proposal/reference defect, not evidence that may be silently
-substituted or marked passing.
+Run `m3poc-live2-20260715a` joined those components across actual private
+local nodes. Independent maker and taker processes used separate stores,
+signing journals, sidecars, and role-restricted Bitcoin RPC credentials. The
+operator completed both `TakerSellsForeign` and `TakerSellsLez` with real
+local chain effects. This is a progressive local happy-path PoC. It is not a
+claim that the project already has one cohesive end-user lifecycle command or
+production signing authority.
+
+The accepted Gateway proposal names DLC-specs `AdaptorSignature.md` as a
+conformance source. No such file exists in the current DLC repository or its
+history. The published DLC adaptor corpus is ECDSA, while M3 requires BIP-340
+Schnorr. [GW-M3-001](../proposal-acceptance-errata.md) tracks that upstream
+reference defect. It does not invalidate this local functional PoC and must not
+be silently represented as passing literal DLC conformance.
 
 ## Decision
 
-The owner entered M3 on 2026-07-14. The PoC target is a reproducible local happy
-path through a Bitcoin Core 31.1 Regtest node built from the signed,
-checksum-pinned official binary archive and bound to its exact source revision,
-plus the pinned local LEZ v0.2 stack. It uses independent maker and taker
-actors, separate keys and stores, actual signed transactions, and the same
-public SDK boundary intended for later routes. Public Testnet4 changes node
-configuration, credentials, funding, confirmation policy, and deployed LEZ
-identity; it does not select a different protocol implementation.
+The M3 local PoC uses Bitcoin Core 31.1 Regtest and the pinned LEZ v0.2.0 local
+stack. All runtime chain and actor endpoints are literal loopback services.
+The run uses no public RPC, faucet, public peer, public funds, or public chain.
+Changing to a public route is a configuration and deployment concern, not a
+different protocol implementation.
 
 ```mermaid
 flowchart LR
-    subgraph Proven["Proven at f5a9caa: one-process public fixture"]
-        MakerShare["Maker key share"] --> KeyAgg["BIP-327 aggregate key P"]
-        TakerShare["Taker key share"] --> KeyAgg
-        KeyAgg --> Tweak["Taproot tweak to output key Q"]
-        Tweak --> Commit["Role-tagged nonce commitments computed locally"]
-        Commit --> Partials["Maker and taker partial signatures"]
-        Partials --> PreSig["Verify 65-byte adaptor presignature"]
-        PreSig --> Adapt["Adapt with public fixture scalar"]
-        Adapt --> FinalSig["Verify 64-byte signature under Q"]
-        FinalSig --> MakerAuth["Maker rpcauth"]
-        TakerAuth["Taker rpcauth"] --> Core["Bitcoin Core 31.1 Regtest"]
-        MakerAuth --> Core
-        Core --> Extract["Extract scalar and match adaptor point"]
-        Core --> Evidence["Secret-safe evidence"]
+    subgraph Actors["Independent actors"]
+        Maker["Maker actor and store"]
+        Taker["Taker actor and store"]
+        MakerSigner["Maker signing journal"]
+        TakerSigner["Taker signing journal"]
+        Maker --> MakerSigner
+        Taker --> TakerSigner
     end
-    Provisioner["Run-owned miner and fund provisioner"] --> CookieAuth["Cookie RPC"]
-    CookieAuth --> Core
-    subgraph Session["Proven at 0177151: in-memory dual-domain boundary"]
-        MakerState["Maker signer state"] --> Commitment["Commitment before nonce reveal"]
-        TakerState["Taker signer state"] --> Commitment
-        Commitment --> BtcSession["Exact BTC message session"]
-        Commitment --> LezSession["Exact LEZ message session"]
-        BtcSession --> RevealOrder["BTC-first and LEZ-first extraction"]
-        LezSession --> RevealOrder
+
+    subgraph RoleServices["Role local services"]
+        MakerSidecar["Maker sidecar 127.0.0.1 port 32857"]
+        TakerSidecar["Taker sidecar 127.0.0.1 port 32858"]
     end
-    subgraph Durable["Proven durable signing and witnessed LEZ components"]
-        MakerJournal[("Maker role-local journal")]
-        TakerJournal[("Taker role-local journal")]
-        DurableTranscript["Reserve before commitment; consume nonce with exact partial"]
-        RoleRunner["Fresh role processes; aggregate, adapt, extract"]
-        LezGuest["Checked LEZ aggregate-witness guest"]
-        LezWitnessSidecar["Official-wire prepare, observe, and complete"]
-        LezOperator["Typed one-shot operator CLI"]
-        AccountMap["Official NSSA aggregate account mapping"]
-        ClaimantEffect["Aggregate authority signs; separate claimant receives"]
-        MakerJournal --> DurableTranscript
-        TakerJournal --> DurableTranscript
-        DurableTranscript --> RoleRunner
-        LezGuest --> ClaimantEffect
-        LezWitnessSidecar --> LezGuest
-        LezOperator --> LezWitnessSidecar
-        AccountMap --> LezWitnessSidecar
+
+    subgraph Bitcoin["Bitcoin local devnet"]
+        Core["Bitcoin Core 31.1 Regtest 127.0.0.1 port 32853"]
+        Miner["Run provisioner and miner"]
     end
-    Session -->|"SDK bridge GREEN at 8a7ea55"| DurableTranscript
-    subgraph Target["M3 composition target: pending"]
-        Maker["Independent maker actor"] --> Exchange["Authenticated signing exchange"]
-        Taker["Independent taker actor"] --> Exchange
-        Maker --> MakerStore["Maker SDK plus proven journal"]
-        Taker --> TakerStore["Taker SDK plus proven journal"]
-        Exchange --> RoleRunner
-        RoleRunner --> Sdk["Role-fixed public BTC SDK"]
-        Sdk --> CoreTarget["Bitcoin Core adapter"]
-        Sdk --> LezTarget["LEZ v0.2 witnessed-claim adapter"]
-        LezTarget -->|"prepare and observe GREEN; live submit pending"| LezOperator
-        CoreTarget --> Atomicity["Both complete directions and atomicity"]
-        LezTarget --> Atomicity
+
+    subgraph Lez["LEZ v0.2.0 local devnet"]
+        Sequencer["Sequencer 127.0.0.1 port 32855"]
+        Indexer["Indexer 127.0.0.1 port 32856"]
+        Bedrock["Bedrock 127.0.0.1 port 32854"]
+        Guest["Witnessed escrow program 39b6a4db"]
+        Sequencer --> Guest
+        Guest --> Bedrock
+        Bedrock --> Indexer
     end
+
+    Maker --> MakerSidecar
+    Taker --> TakerSidecar
+    MakerSidecar --> Sequencer
+    MakerSidecar --> Indexer
+    TakerSidecar --> Sequencer
+    TakerSidecar --> Indexer
+    Maker --> Core
+    Taker --> Core
+    Miner --> Core
+    Core --> Evidence["Secret safe evidence"]
+    Indexer --> Evidence
 ```
 
-The target graph above remains the M3 composition boundary. The currently
-executable Core slice reaches the same role-restricted RPC surface with a
-one-process helper and proves the following exact ordering. The maker/taker
-shares and adaptor scalar are public deterministic Regtest fixture values. The
-helper is test infrastructure, not a production signing authority or a
-substitute for independent actors and a transport protocol.
+The exact retained topology is:
+
+| Component | Version or identity | Retained endpoint | Trust boundary |
+| --- | --- | --- | --- |
+| Bitcoin Core | 31.1 on Regtest | `http://127.0.0.1:32853` | Provisioner owns mining and full RPC. Maker and taker have distinct restricted RPC identities |
+| LEZ Bedrock | v0.2.0 | `http://127.0.0.1:32854` | Run-owned private local service |
+| LEZ sequencer | v0.2.0 | `http://127.0.0.1:32855` | Signed transaction submission and local inclusion |
+| LEZ indexer | v0.2.0 | `http://127.0.0.1:32856` | Independent finalized block and transaction audit |
+| Maker sidecar | Role fixed | `http://127.0.0.1:32857` | Maker capability, signer, state, and journal only |
+| Taker sidecar | Role fixed | `http://127.0.0.1:32858` | Taker capability, signer, state, and journal only |
+
+These are evidence endpoints from an ephemeral retained run, not stable
+well-known ports. The LEZ channel is
+`b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748`
+and its genesis block is
+`e24c5a4a2d08a747b96cebefa1304cbe80e42dac9ced3a52c2330b22797e10d9`.
+
+## Deployed LEZ guest and account onboarding
+
+The exact guest ELF SHA-256 is
+`a199c5be062adcb27cf63c62d9f5688b37058b4699ce7e1767fd26eeceb5e293`.
+Its ImageID and ProgramId are both
+`39b6a4db85374de9359ea82164ef415019919475f656d597c5ab2231bc104dec`.
+Deployment transaction
+`94a49583a5fd5d6a749fd227f38fe99b002866921a9b77e956623ee6f36e76d3`
+was finalized in LEZ block 405 with hash
+`dfe017c8167c09bf098935afd8585c928e99c6405c1f662e4ce087b465ad73fc`.
+Independent lookup by block ID and hash agreed at finalized tip 407.
+
+LEZ genesis allocations begin in Vault accounts. The owner accounts must be
+onboarded before preparing a swap transcript. Maker Vault claim transaction
+`e41cf042b058aa258fcd19d8ce2384f2635f5c4dfc0c2b64b59a2d588804d1f9`
+finalized in block 456. Taker Vault claim transaction
+`aa19763d19ce3849b1b0e955e2c049fa31cd357c1f0151a3b1f52ec03428c15b`
+finalized in block 457. At independently checked finalized tip 459, both Vault
+balances were zero and the maker and taker owner balances were 100000 and
+200000 respectively.
+
+Onboarding is a precondition, not a repair that may be inserted after the first
+lock. The retained diagnostic run proved why: Bitcoin lock
+`7393db97def6fa567db9ea8a125361371ee31d96062562ddc94b20d67f54ae3f`
+confirmed, but the unonboarded LEZ initialize transaction was dropped with
+program error 6003. Funding was not submitted and the adaptor secret was not
+revealed. The operator refused to repair that swap because onboarding and
+preparing a new LEZ transcript after the first effect would violate the
+pre-lock signing invariant. Both accounts were onboarded and a completely
+fresh swap was used for certification.
+
+## Signing and atomicity invariants
+
+Both exact claim messages and both aggregate adaptor presignatures exist before
+the first chain effect. Bitcoin and LEZ use distinct domain-separated signing
+sessions and fresh nonces. Each actor reserves a nonce before exposing its
+commitment and persists an exact partial-signature outbox while consuming that
+nonce. Only persisted public transcript material is exchanged.
+
+No adaptor secret is released until both chain locks meet the local PoC gate.
+After the first adapted claim becomes canonical, the opposite claimant observes
+the exact final witness, extracts the value, checks it against the committed
+point, and completes the second claim from its persisted role state. No further
+counterparty signing interaction is required.
 
 ```mermaid
 sequenceDiagram
-    participant P as Cookie provisioner
-    participant H as One-process public fixture
-    participant T as Taker rpcauth
-    participant C as Bitcoin Core 31.1 Regtest
-    participant M as Maker rpcauth
-    participant E as Evidence auditor
-    P->>C: Mine blocks 1 through 101 to rawtr G
-    H->>H: Derive maker and taker key shares
-    H->>H: BIP-327 aggregate P and Taproot tweak to Q
-    H-->>T: Signed 1 BTC P2TR funding bytes
-    T->>C: Policy check and submit funding
-    P->>C: Mine funding in block 102
-    C-->>M: Confirm aggregate-key plus CSV output
-    H->>H: Compute role-tagged nonce commitments locally
-    Note right of H: Commitments are not exchanged before nonce reveal
-    H->>H: Produce maker and taker partial signatures
-    H->>H: Aggregate and verify 65-byte adaptor presignature
-    H->>H: Adapt with the public fixture scalar
-    H->>H: Verify 64-byte final signature under Q
-    H-->>M: Signed tweaked-Q key-path claim bytes
-    M->>C: Policy check and submit claim
-    P->>C: Mine claim in block 103
-    C-->>T: Confirm one-item witness and spent outpoint
-    C-->>H: Return canonical final signature bytes
-    H->>H: Extract scalar and match adaptor point
-    C-->>E: Blocks, tx bytes, mempool and spender evidence
-    Note over H,E: This retained Core run predates the separate role runner; LEZ, complete directions and atomicity are pending
+    participant T as Taker actor and journal
+    participant M as Maker actor and journal
+    T->>M: Exchange exact terms and claim message hashes
+    M->>T: Confirm contract identities and recovery terms
+    T->>T: Reserve fresh Bitcoin and LEZ nonces
+    M->>M: Reserve fresh Bitcoin and LEZ nonces
+    T->>M: Send commitments then public nonces
+    M->>T: Send commitments then public nonces
+    T->>T: Persist partial outbox and consume nonces
+    M->>M: Persist partial outbox and consume nonces
+    T->>M: Send persisted partial signatures
+    M->>T: Send persisted partial signatures
+    T->>T: Verify and retain both presignatures
+    M->>M: Verify and retain both presignatures
+    Note over T,M: All signing gates pass before the first chain effect
 ```
 
-Bitcoin funding commits a two-party aggregate internal key `P` and the ADR
-0009 CSV refund tapleaf. Both the Bitcoin claim authority and the LEZ
-witnessed-claim authority are distinct two-party aggregate keys. Neither actor
-receives a standalone claim key. Otherwise that actor could bypass the adaptor
-transcript, claim one leg without revealing the agreed scalar, and destroy
-atomicity.
+Bitcoin funding commits a two-party aggregate internal key and the ADR 0009
+CSV refund tapleaf. The cooperative claim signs the exact BIP-341 key-path
+sighash under the tweaked output key. The completed transaction must have one
+64-byte key-path witness, verify under the output key, and pass Bitcoin Core
+policy and consensus. Verification only under the untweaked aggregate key is
+not spend evidence.
 
-The Bitcoin signing session is Taproot-tweak aware. It derives the even-Y x-only
-internal key `P`, exact tapleaf and leaf version, Merkle root, tweak
-`h = TapTweak(P || merkle_root)`, and output key `Q = P + hG`; it binds the
-output-key parity carried by the control block. MuSig2/adaptor signing applies
-the identical tweak and parity convention and signs the exact BIP-341 key-path
-sighash under `Q`, with the annex presence/absence and sighash type fixed in
-the agreement. The agreement commits `P`, its x-only/parity convention, the
-tapleaf/script/version, Merkle root, `Q`, control block, input/outpoint/value,
-destinations, transaction message, and sighash policy. Library verification
-under the raw untweaked `P` is never spend evidence; the completed signature
-must verify under `Q` and pass Bitcoin Core consensus.
+The LEZ guest derives the aggregate authority account from the aggregate
+x-only key. That authority is distinct from the immutable claimant account.
+The guest accepts one aggregate BIP-340 witness over the exact public claim
+transaction and transfers custody only to the claimant.
 
-No project-owned elliptic-curve arithmetic is permitted. Candidate libraries
-must be exact-pinned, source-reviewed, license/advisory/source gated, and proved
-interoperable with Bitcoin Core consensus before acceptance. The entry audit
-selects Bitcoin Core 31.1 as the node candidate and `rust-bitcoin`, `miniscript`,
-`corepc`, and `musig2` as candidates. Core 31.1, exact-pinned `bitcoin`
-0.32.101, and exact-pinned `musig2` 0.4.1 have now passed their applicable
-fixture-level provenance, resolved-graph, source, license, advisory, and
-Core-interoperability gates. The public deterministic two-party fixture passes
-BIP-327 aggregation, Taproot tweaking, adaptor verification/adaptation, final
-verification under `Q`, Core policy and consensus at heights 102/103, and
-scalar extraction. `miniscript` and `corepc` remain candidates; `musig2`
-remains a PoC candidate rather than accepted production authority.
+## Completed direction TakerSellsForeign
 
-## Candidate provenance
-
-The 2026-07-14 entry audit selected Bitcoin Core 31.1 source commit
-`9be056a8a72b624dae9623b2f7bded92c2a21c91`. The official x86_64 Linux
-archive candidate has SHA-256
-`b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e`.
-Bitcoin Core publishes no endorsed container image. The PoC therefore builds a
-repository-owned minimal image from the official archive only after its checksum
-and release signatures/attestations verify, then records and vulnerability-scans
-the resulting immutable image digest. The existing unofficial Docker Hub image
-is not a supply-chain authority.
-
-The verifier and actual-node runner reproduce this provenance and locally prove
-the Core infrastructure plus the one-process two-party MuSig2/adaptor P2TR
-funding/claim fixture. The typed transaction slice uses `bitcoin` 0.32.101 with
-default features disabled and only `std`; canonical bytes cross into
-`musig2` 0.4.1 and are reparsed and verified before Core submission. The
-resolved fixture graph passes advisories, bans, exact-version license
-exceptions, and source policy. The final M3 dependency graph remains unaccepted
-until composed Core/LEZ evidence and the later production review pass their
-stated gates.
-
-The 2026-07-15 read-only dependency audit recommends exact-pinned `musig2`
-0.4.1 for the PoC gate. Its final BIP-327 key aggregation, x-only Taproot tweak,
-adaptor-presignature, adaptation, verification, and extraction APIs cover the
-required happy-path primitive without project-owned curve arithmetic. It uses
-`secp256k1` 0.31 while rust-bitcoin uses 0.29, so only canonical key, scalar,
-65-byte presignature, and 64-byte final-signature encodings may cross the
-boundary. The crate is beta, has no published audit, is dominated by one
-maintainer, lacks nonce commitments, and its cloneable secret nonce does not
-zeroize. Exact lock/source/license/advisory and public-fixture extraction/Core
-gates now pass. Exchanged commitments, durable nonce reservation/consumption,
-and independent role processes pass at the component boundary. It remains an
-unaccepted production candidate pending stronger zeroization/key custody,
-composed-actor verification, negative hardening, and review.
-
-## Target pre-lock signing ceremony (component role runner GREEN; reference actor pending)
-
-The following is the required independent-actor ceremony. At `f5a9caa`
-role-tagged commitments are computed in one process but are not exchanged before
-nonce reveal. At `0177151`, separate maker/taker state objects exchange and
-verify those commitments before nonce reveal for both message domains, consume
-their retained nonce bytes once in memory, and verify both partials. At
-`e3f2938`, the generic role-local journal independently proves the required
-reserve, reveal, consume, outbox, restart, and concurrency ordering. At
-`8a7ea55`, the SDK produces and reconstructs the exact BIP-327 material,
-revalidates the complete context and both commitments, and verifies the
-resulting partials and presignature. At `ca524ff` and `96f2a31`, fresh
-role-fixed processes with separate journals exchange canonical public files,
-aggregate, adapt, and point-check extraction across restarts. The full
-authenticated reference-actor transport is not exercised yet.
-
-Both claim transactions and all recovery material are complete before the first
-lock. Each chain/message uses a distinct domain-separated MuSig2 session and
-fresh nonce. A crash-safe journal reserves the secret nonce before its public
-commitment is exposed and forbids reuse across messages/swaps/chains. Before any
-partial-signature network send, one atomic local transaction stores the exact
-outbox bytes and marks that nonce consumed. The secret nonce is then zeroized;
-delivery may only send or retransmit the already-persisted bytes. Only the
-verified aggregate adaptor pre-signatures, public transcripts, exact messages,
-refund material, and recovery state remain after the ceremony.
+The taker sold BTC and locked the Bitcoin leg first. After one local Regtest
+confirmation, the maker initialized and funded the LEZ witnessed escrow. Only
+after the Bitcoin lock was confirmed and LEZ funding was finalized did the
+taker reveal through the LEZ claim. The maker extracted from the exact
+finalized LEZ signature and completed the Bitcoin claim.
 
 ```mermaid
 sequenceDiagram
-    participant T as Taker SDK and store
-    participant M as Maker SDK and store
-    T->>M: Dual-signed terms and exact BTC/LEZ claim messages
-    M->>T: Confirm tweaked Q, LEZ authority, adaptor point and refunds
-    T->>T: Reserve fresh BTC and LEZ secret nonces durably
-    M->>M: Reserve fresh BTC and LEZ secret nonces durably
-    T->>M: Nonce commitments then public nonces
-    M->>T: Nonce commitments then public nonces
-    T->>T: Atomically persist exact partial outbox and consume nonces
-    M->>M: Atomically persist exact partial outbox and consume nonces
-    T->>T: Zeroize secret nonces
-    M->>M: Zeroize secret nonces
-    T->>M: Send persisted message-bound partial/adaptor signatures
-    M->>T: Send persisted message-bound partial/adaptor signatures
-    T->>T: Verify both aggregate pre-signatures and persist recovery
-    M->>M: Verify both aggregate pre-signatures and persist recovery
-    Note over T,M: No counterparty signing interaction is needed after first lock
-```
-
-Funding is forbidden unless both roles independently verify and durably retain
-the exact presignatures they need for either direction. Discovery/Chat may vanish
-after the taker submits the first lock without affecting claim or recovery.
-
-The LEZ half now has an executable authority boundary rather than a design-only
-box. The checked guest derives the official LEZ public account from the x-only
-MuSig2 aggregate key, requires that account's one aggregate BIP-340 witness for
-the exact public transaction, and sends custody only to a distinct immutable
-claimant. The old preimage instruction cannot claim a witnessed escrow. This is
-recursive checked-program evidence; sidecar preparation, external-signature
-completion, conservative observation, and typed operator calls are GREEN.
-Deployment, live submission, and local sequencer inclusion remain part of the
-pending actor flows below.
-
-## Target actor flows (pending)
-
-Neither complete direction below is implemented by the current Bitcoin fixture;
-the diagrams define the LEZ/BTC atomicity target.
-
-In `TakerSellsForeign`, the taker locks BTC first. The maker locks LEZ only
-after the negotiated Bitcoin confirmation depth. The taker adapts and submits
-the aggregate LEZ witnessed claim, revealing the agreed scalar in its finalized
-signature. The maker extracts that scalar from those exact finalized LEZ bytes
-and adapts the Bitcoin key-path claim.
-
-```mermaid
-sequenceDiagram
-    participant T as Taker sells BTC
+    participant T as Taker
     participant B as Bitcoin Core
     participant M as Maker
-    participant L as LEZ v0.2
-    T->>B: Fund exact P2TR output
-    B-->>M: Canonical confirmed outpoint
-    M->>L: Fund witnessed BTC escrow
-    L-->>T: Canonical finalized escrow
-    T->>L: Adapt and submit aggregate claim
-    L-->>M: Exact finalized revealing signature
-    M->>B: Extract scalar and key-path claim
-    B-->>T: Canonical confirmed spend
+    participant L as LEZ sequencer
+    participant I as LEZ indexer
+    Note over T,M: Both presignatures complete before effects
+    T->>B: Submit Bitcoin lock ca0ae641
+    B-->>M: Confirm lock in block 6ed356e7
+    M->>L: Submit LEZ initialize a0ddd342
+    I-->>M: Finalized block 540
+    M->>L: Submit LEZ funding fcf484a8
+    I-->>T: Finalized block 544 and custody 1000
+    Note over T,M: Dual lock gate is now open
+    T->>L: Submit witnessed LEZ claim ef77099e
+    I-->>M: Finalized block 570 and exact witness
+    M->>M: Extract and check committed point
+    M->>B: Submit Bitcoin claim 0ee99753
+    B-->>T: Confirm claim in block 5346b095
 ```
 
-In `TakerSellsLez`, the taker locks LEZ first. The maker locks BTC only after
-LEZ finality. The taker adapts the Bitcoin key-path claim; the maker extracts
-the scalar from the exact Bitcoin witness and adapts the LEZ witnessed claim.
+| Effect | Actor | Exact transaction | Final block |
+| --- | --- | --- | --- |
+| Bitcoin lock | Taker submits and maker observes | `ca0ae6418c3cfe28c114e1acd8d50c25b39f8ab63b62e480d31d5005e94a4c75` | `6ed356e7cc00c6fd796cc5fcfbbb72b598d912cc9729e37c0426464e606355d8` with one confirmation |
+| LEZ initialize | Maker | `a0ddd3427fc278d0ae4d42cce0dd6f07d6e52d102a17bbe31342b6ff1bb85a5c` | LEZ 540 `065b8f0e80de2e29cd26aad78f5b133455f9e205811b86da40ede98ccc4b0382` Finalized |
+| LEZ fund | Maker | `fcf484a8a21e8fd83d456a4bc6e98e84230d171351d68362c71e68aa0eb988a9` | LEZ 544 `801d38735e33d156c6c3d5b33bf1779c2838f965717cd16491ac0c620cc4a1b7` Finalized |
+| LEZ claim | Taker receives LEZ | `ef77099ea877b562dd5192fd6feb929bcfd31b18ea1bd5e58e65a9af3232cde3` | LEZ 570 `582f94f320beb69d0e5fa4417a4daa2ade671d5b1c2ccd0c8b361a431466bdf1` Finalized |
+| Bitcoin claim | Maker receives BTC and taker observes | `0ee99753bf35ae3d122e5887fb42ec19e95ea26bf43f3d4897efa9dbd116a5aa` | `5346b095231564e9a6fe2017b5e4ce2681523cd37d4bef14919bbeefddbc0a7c` with one confirmation |
+
+The finalized LEZ witness matched the completed signature exactly. Extraction
+matched the committed point. The Bitcoin claim had one exact final-signature
+witness, spent the contract output, and left LEZ custody at zero.
+
+## Completed direction TakerSellsLez
+
+The taker sold LEZ and initialized and funded that leg first. After LEZ
+finality, the maker locked BTC. Only after both locks passed did the taker
+reveal through the Bitcoin claim. The maker extracted from the exact confirmed
+Bitcoin witness and completed the LEZ claim.
 
 ```mermaid
-flowchart TD
-    Agreement["Dual-signed immutable agreement"] --> First{"Direction-derived taker lock"}
-    First --> TakerLez["Taker locks LEZ"]
-    First --> TakerBtc["Taker locks BTC"]
-    TakerLez --> MakerBtc["Maker locks BTC after LEZ finality"]
-    TakerBtc --> MakerLez["Maker locks LEZ after BTC depth"]
-    MakerBtc --> RevealBtc["Taker key-path claim reveals scalar"]
-    MakerLez --> RevealLez["Taker witnessed LEZ claim reveals scalar"]
-    RevealBtc --> FinishLez["Maker adapts LEZ claim"]
-    RevealLez --> FinishBtc["Maker adapts BTC claim"]
-    FinishLez --> Complete["Both actors Completed"]
-    FinishBtc --> Complete
-    MakerBtc -. both locked then abandoned .-> MakerRefund["Maker recovers shorter maker-funded leg"]
-    MakerLez -. both locked then abandoned .-> MakerRefund
-    MakerRefund --> SafetyMargin["Wait typed cross-chain safety margin"]
-    SafetyMargin --> TakerRefund["Taker recovers longer taker-funded leg"]
-    TakerRefund --> Recovered["Both actors Recovered"]
+sequenceDiagram
+    participant T as Taker
+    participant L as LEZ sequencer
+    participant I as LEZ indexer
+    participant M as Maker
+    participant B as Bitcoin Core
+    Note over T,M: Both presignatures complete before effects
+    T->>L: Submit LEZ initialize 64e8df3b
+    I-->>M: Finalized block 617
+    T->>L: Submit LEZ funding 80bc74d4
+    I-->>M: Finalized block 620 and custody 2000
+    M->>B: Submit Bitcoin lock c5dd0f85
+    B-->>T: Confirm lock in block 0a6570f4
+    Note over T,M: Dual lock gate is now open
+    T->>B: Submit Bitcoin claim 66255398
+    B-->>M: Confirm exact witness in block 302e1724
+    M->>M: Extract and check committed point
+    M->>L: Submit witnessed LEZ claim 834c67e9
+    I-->>T: Finalized block 644 and zero custody
 ```
 
-If the maker never submits the second lock, the taker eventually recovers the
-first leg directly. If both legs are locked and claims do not complete, the
-maker-funded shorter recovery happens first and the taker-funded longer recovery
-happens only after the conservative cross-chain margin. For
-`TakerSellsForeign` this maps earlier recovery to maker-funded LEZ and later
-recovery to taker-funded BTC; for `TakerSellsLez` it maps earlier recovery to
-maker-funded BTC and later recovery to taker-funded LEZ. Typed chain clocks are
-not compared as raw numbers.
+| Effect | Actor | Exact transaction | Final block |
+| --- | --- | --- | --- |
+| LEZ initialize | Taker | `64e8df3bb9aa83d1eb96ae81d5485f9a980cb3398c9e733af5523303240351a4` | LEZ 617 `cf136b7a26c98a6a1b086bb55c1a82f38d4186f88c7da6a2d1d2de00f24cebf4` Finalized |
+| LEZ fund | Taker | `80bc74d43c3be658f296ff3f604c47632ac02301bbc35f5b4501c958e8a1daa6` | LEZ 620 `8b7b01138e054089be86d6edba5e0692c3745da4b3e696862f003dff9ead14f6` Finalized |
+| Bitcoin lock | Maker submits and taker observes | `c5dd0f85e0569a553716c0f908707f7039e0436f451d938df15cf1fb303752a3` | `0a6570f428ad4a69f2e237673f6bdd9b59dc1f34f2ddfec25e8f35fa2e9e9740` with one confirmation |
+| Bitcoin claim | Taker receives BTC and maker observes | `66255398761bccc89b3e44e79ea1ca4822939f99f8054c08560ea594840054f4` | `302e17248a0110472377b10227d97af4be0e3a362b19a279e901b6cf3fe54524` with one confirmation |
+| LEZ claim | Maker receives LEZ | `834c67e9130f8a92a8875053f5c08ba7f768f59ad5bb761c10be341d6e9d3033` | LEZ 644 `88e22483ee2f145f3b7945446e8dd65e183de1b91c040f45f6123d7e60127a44` Finalized |
+
+The confirmed Bitcoin witness matched the final signature exactly. Extraction
+matched the committed point and completed the opposite LEZ signature. The
+finalized LEZ claim matched that signature and left LEZ custody at zero.
 
 ## Reproducibility and isolation
 
-- Every run owns a unique `RUN_ID`, Docker resource scope, network, volumes, temporary
-  root, cookie file, wallets, actors, and evidence output.
-- Host listeners bind allocated loopback ports; no conventional host port is
-  assumed. The provisioner alone holds the full node cookie and mining/wallet
-  methods. Maker and taker adapters are separate instances with distinct
-  `rpcauth` credentials and method allowlists for required read/broadcast calls;
-  keys remain client-side and neither actor can access the other's wallet or
-  provisioner methods.
-- The Compose file is a statically linted deployment contract for image,
-  filesystem, capabilities, resource limits, labels, volumes, and loopback RPC.
-  The executable runner owns the same controls through exact-ID native Docker
-  commands. Docker Compose 5.3 does not preserve the required dynamic loopback
-  publication when that service consumes the precreated bridge, and Docker
-  suppresses host publication entirely on an `internal` bridge. The runtime
-  therefore uses a dedicated labeled bridge with IP masquerading disabled rather
-  than setting Docker's `Internal` flag. Core itself additionally disables P2P
-  listening, outbound connections, discovery, DNS seeds, fixed seeds, and network
-  activity; runtime evidence inspects the Docker publication, bridge, config,
-  `networkactive=false`, and zero peers. This preserves actor access through a
-  host-loopback RPC while preventing the fixture from behaving like a public
-  chain node.
-- Cleanup removes only resources carrying the exact run label. Global Docker
-  prune, shared volume removal, broad process kills, and foreign-container
-  ownership are prohibited.
-- Regtest funds come from a run-local deterministic mining/provisioning actor.
-  Reproducibility binds the fixed descriptor/key derivation, Regtest genesis,
-  block-time policy, maturity, transaction policy, exact values, and observed
-  outpoints/confirmations. It is a semantic contract; independently named runs
-  need not produce byte-identical block hashes or transaction IDs. No public
-  RPC, faucet, public funds, or public chain is used by the PoC.
-- Cold setup still depends on verified Bitcoin Core release assets and Rust
-  registries; their checksums, availability, cache policy, and scan results are
-  evidence, not hidden assumptions.
+- Docker resources, local processes, temporary state, credentials, and evidence
+  are owned by a unique run identity. Cleanup is exact and must never use global
+  prune, broad process kills, shared volume removal, or foreign-container
+  ownership.
+- Core binds only the loopback RPC publication. P2P publication is disabled and
+  the retained run had zero public peers. The provisioner alone owns mining,
+  wallet, and full node authority.
+- Maker and taker use distinct restricted Core RPC identities. Each role has a
+  separate sidecar, signer, journal, and state tree.
+- Bitcoin funds come from deterministic local Regtest coinbase outputs. LEZ
+  funds come from deterministic local genesis Vault allocations. No public RPC,
+  faucet, public funds, or public peers participate in runtime.
+- Bitcoin blocks are mined deterministically by the local provisioner. The PoC
+  opens its Bitcoin gates after one confirmation. This is a declared Regtest
+  happy-path policy, not a production confirmation policy.
+- LEZ effects require an independent indexer-finalized block, lookup agreement
+  by block ID and hash, and exactly one occurrence of each transaction in the
+  audited scan.
+- Fresh observation request identities are required for moving-tip reads because
+  a role sidecar journals request identities for exact replay. Reusing a request
+  identity can correctly replay an earlier pending result.
+- Remaining local flakiness sources are process scheduling, a moving LEZ tip
+  during multi-read observation, sequencer or indexer readiness, and manual
+  operator orchestration. There is no public-service runtime flakiness in this
+  evidence.
+- Cold setup still depends on checksum and signature verified Bitcoin Core
+  release assets, the pinned LEZ source and images, and locked Rust registries.
+  Their availability and scan results remain explicit build concerns.
 
-## PoC gate
+## Dependency and cryptographic boundary
 
-The PoC is not complete until both directions run through actual local Core and
-LEZ nodes, with taker-first confirmation ordering, distinct actors and stores,
-the complete pre-lock signing ceremony durably proven, no off-chain dependency
-after the first lock, tweak-aware aggregate-signature/adaptor verification, a
-one-item BIP-341 key-path witness under `Q`, correct recipients, the BTC
-outpoint spent once, zero terminal LEZ custody, both actors `Completed`, and a
-secret-safe immutable evidence packet. The agreement must also commit the exact
-refund tapleaf/control block and direction-correct two-stage recovery schedule,
-even though before/at/after CSV execution belongs to the owner-selected QA
-phase.
+The Bitcoin Core 31.1 source revision is
+`9be056a8a72b624dae9623b2f7bded92c2a21c91`. The official x86_64 Linux archive
+SHA-256 is
+`b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e`.
+Bitcoin Core publishes no endorsed container image, so the repository builds a
+minimal image from verified official release material and scans its immutable
+result.
 
-Literal DLC Schnorr-vector conformance remains unclaimable because the named
-file does not exist. The honest proposed replacement gate is official BIP-340
-and BIP-327 vectors, project-owned adaptor positive/negative fixtures, an
-independent implementation cross-check, and completed-signature verification
-through the Bitcoin library plus Bitcoin Core consensus. Gateway erratum
-[GW-M3-001](../proposal-acceptance-errata.md) records the mismatch; an accepted
-clarification has not yet been posted. It does not permit ECDSA evidence to be
-mislabeled as Schnorr evidence.
+No project-owned elliptic-curve arithmetic is permitted. The PoC exact-pins
+`bitcoin` 0.32.101 and `musig2` 0.4.1. Canonical public key, scalar,
+presignature, and final-signature encodings cross the library boundary and are
+reparsed before use. `musig2` remains a beta PoC dependency with no published
+audit, incomplete zeroization properties, and concentrated maintenance. It is
+not accepted as production signing authority.
 
-This ADR activates M3 and accepts its entry boundary, the one-process Core
-interoperability fixture, the role-local durable journal, and the checked LEZ
-aggregate-witness guest as separate proven components. It does not accept
-production signing authority or the final dependency graph, claim either
-complete direction works, or authorize an `m3-complete` tag.
+The local component and composed-flow gates prove BIP-327 aggregation, Taproot
+tweak handling, adaptor verification and adaptation, final verification under
+the exact output key, Bitcoin Core policy and consensus, extraction with
+committed-point checking, and exact LEZ aggregate-witness completion. Formal
+cryptographic audit and production key custody are not claimed.
+
+## PoC result and remaining work
+
+The secret-safe evidence packet is
+[M3 local two-direction PoC](../evidence/m3-local-two-direction-poc-20260715.json).
+It binds the exact source commit used for the run, node topology, guest
+deployment, account onboarding, transactions, final blocks, role ownership,
+presignature gates, witness equality, terminal recipients, zero LEZ custody,
+resource boundary, and limitations. Secret keys, capabilities, credentials,
+raw transactions, exact transaction bytes, full signatures, and scalar
+material are intentionally excluded.
+
+The local functional happy-path boundary is complete at two of two directions.
+The following are deliberately not accepted by this ADR:
+
+- one cohesive lifecycle SDK or reference application that reproduces the
+  operator-composed run with a single supported workflow;
+- live abandonment and both one-lock and two-lock refund execution at the CSV
+  boundaries;
+- concurrent swaps, crash recovery, reorgs, chaos, denial-of-service, and
+  adversarial security campaigns;
+- production key custody, fee management, confirmation policy, public routing,
+  public LEZ deployment, monitoring, and operational readiness;
+- a formal cryptographic audit or final production acceptance of `musig2`;
+- literal conformance to the nonexistent DLC Schnorr adaptor vector file;
+- an `m3-complete` tag.
+
+Refund ordering remains the ADR 0009 design. If the maker never submits the
+second lock, the taker eventually recovers the first leg. If both legs are
+locked and claims do not complete, the maker-funded shorter recovery occurs
+before the taker-funded longer recovery after the conservative cross-chain
+margin. That design has not yet been exercised against both live local nodes.
+
+This ADR certifies the operator-composed private local M3 happy path only.
+Post-PoC QA, chaos, information-security, and production-readiness work starts
+only under the progressive delivery transition selected by the owner. The
+absence of public deployment evidence is intentional and does not reduce the
+local functional result.

@@ -78,6 +78,109 @@ accepted by current manifests, actor configuration, or the corridor runner.
 All displayed host ports are retained-proof addresses for one isolated run,
 not defaults or reusable discovery values.
 
+## Certified M3 local PoC topology and actor flows
+
+The 2026-07-15 operator-composed M3 run used separate run-owned Core and LEZ
+stacks plus independent maker and taker role processes. The ports below are
+evidence identities for that one run, not stable defaults. Every service bound
+only to literal loopback, Bitcoin published no P2P port and had zero peers, and
+no public RPC, faucet, public funds, or public network participated.
+
+```mermaid
+flowchart LR
+    subgraph MakerHost["Maker role boundary"]
+        Maker["Maker operator"]
+        MakerRunner["Maker role runner"]
+        MakerStore[("Maker store and signing journal")]
+        MakerSidecar["Maker sidecar 127.0.0.1:32857"]
+        Maker --> MakerRunner
+        MakerRunner --> MakerStore
+        MakerRunner --> MakerSidecar
+    end
+
+    subgraph TakerHost["Taker role boundary"]
+        Taker["Taker operator"]
+        TakerRunner["Taker role runner"]
+        TakerStore[("Taker store and signing journal")]
+        TakerSidecar["Taker sidecar 127.0.0.1:32858"]
+        Taker --> TakerRunner
+        TakerRunner --> TakerStore
+        TakerRunner --> TakerSidecar
+    end
+
+    subgraph BitcoinStack["Run-owned Bitcoin Core 31.1 Regtest"]
+        Core["JSON-RPC 127.0.0.1:32853"]
+        CoreState[("Run-owned chain and wallets")]
+        Core --> CoreState
+    end
+
+    subgraph LezStack["Run-owned LEZ v0.2 private devnet"]
+        Sequencer["Sequencer RPC 127.0.0.1:32855"]
+        Bedrock["Bedrock HTTP 127.0.0.1:32854"]
+        Indexer["Indexer RPC 127.0.0.1:32856"]
+        Guest["Witness guest 39b6a4db...4dec"]
+        Sequencer --> Bedrock
+        Indexer --> Bedrock
+        Sequencer --> Guest
+    end
+
+    MakerRunner -->|"role-scoped RPC"| Core
+    TakerRunner -->|"role-scoped RPC"| Core
+    MakerSidecar -->|"signed transactions"| Sequencer
+    TakerSidecar -->|"signed transactions"| Sequencer
+    MakerSidecar -->|"finalized observations"| Indexer
+    TakerSidecar -->|"finalized observations"| Indexer
+```
+
+Both flows complete all Bitcoin and LEZ signing ceremonies before the first
+chain effect. The direction-derived taker effect is observed before the maker
+effect, and scalar reveal remains closed until the Bitcoin lock has one local
+Regtest confirmation and LEZ funding is finalized by the indexer. That
+one-confirmation rule is a deterministic PoC policy, not a production policy.
+
+```mermaid
+sequenceDiagram
+    actor Maker
+    participant MakerStore as Maker store
+    participant Core as Bitcoin Core
+    participant Lez as LEZ sequencer
+    participant Indexer as LEZ indexer
+    participant TakerStore as Taker store
+    actor Taker
+
+    Maker->>MakerStore: Persist BTC and LEZ presignatures
+    Taker->>TakerStore: Persist BTC and LEZ presignatures
+    Note over MakerStore,TakerStore: Both ceremonies complete before first effect
+    alt TakerSellsForeign
+        Taker->>Core: Lock Bitcoin
+        Core-->>Maker: One local confirmation
+        Maker->>Lez: Initialize and fund LEZ
+        Indexer-->>Taker: LEZ funding finalized
+        Note over Core,Indexer: Both locks final under local policy
+        Taker->>Lez: Claim LEZ and reveal adaptor material
+        Indexer-->>Maker: Exact finalized claim witness
+        Maker->>Core: Recover scalar and claim Bitcoin
+        Core-->>Taker: Bitcoin output spent once
+    else TakerSellsLez
+        Taker->>Lez: Initialize and fund LEZ
+        Indexer-->>Maker: LEZ funding finalized
+        Maker->>Core: Lock Bitcoin
+        Core-->>Taker: One local confirmation
+        Note over Core,Indexer: Both locks final under local policy
+        Taker->>Core: Claim Bitcoin and reveal adaptor material
+        Core-->>Maker: Exact confirmed key path witness
+        Maker->>Lez: Recover scalar and claim LEZ
+        Indexer-->>Taker: LEZ claim finalized once
+    end
+    Note over Maker,Taker: Delivery and Chat are absent after lock
+```
+
+The secret-safe identities and limitations are retained in the
+[M3 local evidence packet](../evidence/m3-local-two-direction-poc-20260715.json).
+The current composition is operator-driven: it does not yet prove a cohesive
+full-lifecycle reference application, independent coordinator terminal states,
+refund or concurrent journeys, production key custody, or public deployment.
+
 ## Actors, runtime components, and trust boundaries
 
 ```mermaid
@@ -136,7 +239,7 @@ flowchart TB
         V02J[("Separate role-bound state<br/>exact reservations + Vault attempt journals GREEN")]
         MBR2["Maker lez-v02-bridge-poc<br/>canonical forward and reverse complete"]
         TBR2["Taker lez-v02-bridge-poc<br/>canonical forward and reverse complete"]
-        M3WB["M3 witnessed prepare and complete<br/>ten-method server GREEN; live submit pending"]
+        M3WB["M3 witnessed prepare, complete, and submit<br/>both local happy directions GREEN"]
         MBRJ[("Maker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         TBRJ[("Taker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         MSL2 --> V02J
@@ -159,7 +262,7 @@ flowchart TB
         V02Fixture[("Fixture readiness GREEN<br/>isolated configs; saved window stale")]
         V02Partial[("Historical host-built evidence retained<br/>14d through 14o and reverse 14c")]
         V02Full[("Canonical ZEC corridor directions GREEN<br/>2 of 2 happy directions")]
-        V02M3[("M3 aggregate-witness guest and sidecar GREEN<br/>ELF a199c5be...e293<br/>ProgramId 39b6a4db...4dec; live deployment pending")]
+        V02M3[("M3 aggregate-witness guest deployed<br/>ELF a199c5be...e293<br/>ProgramId 39b6a4db...4dec; two claims finalized")]
         V02State[(".e2e/run_id/lez-v02")]
     end
 
@@ -168,8 +271,8 @@ flowchart TB
     end
 
     subgraph Nodes["Actor-selected node boundary"]
-        LEZ["LEZ sequencer<br/>dynamic local port<br/>typed exact-public contract<br/>public live execution pending"]
-        BTC["Bitcoin Core 31.1 Regtest<br/>actual-Core MuSig2 adaptor claim GREEN<br/>service mode and durable SDK/journal GREEN"]
+        LEZ["LEZ sequencer<br/>dynamic local port<br/>private v0.2 execution GREEN<br/>public live execution deferred"]
+        BTC["Bitcoin Core 31.1 Regtest<br/>both adaptor claim directions GREEN<br/>service mode and durable SDK/journal GREEN"]
         XMR["monerod + wallet RPC"]
         ZEC["Zebra 5.2.0 Regtest JSON-RPC<br/>retained proof host 32834"]
     end
@@ -286,7 +389,7 @@ flowchart TB
     V02Ready -->|"canonical deployment finalized"| V02Full
     V02R -->|"digest-pinned build, recursive execution, official-wire completion"| V02M3
     M3WB --> V02M3
-    V02M3 -.->|"M3 deployment pending"| SQ
+    V02M3 -->|"deployment and witnessed claims finalized"| SQ
     V02Fixture -->|"fresh role provisioning"| V02Full
     V02Full -->|"direction-derived funding and exact spend on Zebra"| ZEC
     V02Full -.->|"runtime and funding handoff"| LRR
@@ -994,9 +1097,13 @@ restart reconstruction for the exact journal material, complete-context and
 both-commitment checks, partial verification, and aggregate-presignature
 verification. Pushed `6935acd` adds the checked LEZ guest:
 the aggregate account authorizes the exact transaction while the distinct
-claimant receives the escrow. The actor orchestration still shares one process,
-and neither component has crossed both live nodes;
-those facts keep the independent-process and complete-corridor edges pending.
+claimant receives the escrow. That retained component fixture still shares one
+process, but the 2026-07-15 composition crossed both actual local nodes through
+independent maker and taker role processes and stores. Both happy directions
+completed, and the recovered scalar matched the committed point without being
+retained in public evidence. The remaining edge is product integration: no
+cohesive coordinator yet owns the signed Bitcoin refund agreement and persists
+both actors through a terminal `Completed` lifecycle.
 
 ## Abandonment and autonomous recovery flow
 

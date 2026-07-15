@@ -12,7 +12,28 @@ self-hosted Zebra route and Tatum's public-provider Testnet Zebrad route, but
 explicitly leaves live execution pending the project-owned transparent signer,
 HTTPS provider transport, and actor adapter.
 
-## M3 Bitcoin status: actual-Core two-party MuSig2 adaptor BTC-leg fixture runnable
+## M3 status: private two-direction local-devnet happy path reproduced
+
+The operator-composed M3 PoC has completed both `TakerSellsForeign` and
+`TakerSellsLez` against Bitcoin Core 31.1 Regtest and the exact local LEZ v0.2
+guest. Maker and taker ran as separate role processes with separate stores and
+signing journals. In each direction both chain presignatures existed before the
+first effect, scalar reveal waited for both locks, and the opposite claim used
+only persisted role state and chain RPCs.
+
+Follow the [M3 local PoC operator guide](m3-local-poc-operator-guide.md) to
+build the components, start collision-safe isolated services, repeat both
+directions, inspect evidence, and clean only those resources. The secret-safe
+retained result is
+[m3-local-two-direction-poc-20260715.json](evidence/m3-local-two-direction-poc-20260715.json).
+No public RPC, faucet, peer, or public funds were used.
+
+This proves a private local happy path, not the whole accepted M3 submission or
+production readiness. The cohesive lifecycle SDK, exact refund binding,
+refund/concurrent demos, public-node guidance, and upstream DLC vector
+clarification remain.
+
+### Component-level Bitcoin and signing rehearsals
 
 The isolated Bitcoin Core 31.1 infrastructure and typed P2TR transaction slice
 now reproduce a one-process, two-party `MuSig2` adaptor-signature Bitcoin-leg
@@ -21,10 +42,8 @@ objects, fresh OS-random nonces, commitment-before-reveal, and two
 domain-separated BTC/LEZ messages to prove both scalar-reveal orders. The
 role-local crash-safe journal, fresh-process maker/taker runner, external
 adaptation/extraction, and checked LEZ aggregate-witness guest are also
-reproducible component gates. The complete M3 LEZ/BTC swap is **not available**:
-there is no live LEZ witnessed submission, complete reference actor, either
-complete actual-node direction, refund execution, or end-to-end atomicity
-proof.
+reproducible component gates. They do not by themselves reproduce the composed
+local-chain result above.
 
 Start with the standalone cryptographic fixture. It needs Rust/Cargo and locked
 registry artifacts, but no Docker, node, RPC, faucet, public funds, or public
@@ -321,16 +340,22 @@ database outages in CI can therefore make setup or scanning flaky without
 changing the deterministic local-chain assertions. Reusing a verified Core
 archive reduces downloads but does not remove the other provenance checks.
 
-There is currently no manual command for a complete M3 LEZ/BTC swap. The
-runnable boundary includes the isolated `TakerSellsForeign`-shaped Bitcoin leg,
-the durable fresh-process role runner, external Bitcoin transaction finalizer,
-and the recursively executed LEZ witnessed guest plus prepare-only
-initialize/fund/claim boundaries. Live two-node composition, both complete
-directions, refunds, and atomicity remain future slices. Commitment exchange
-and both in-memory reveal orders are also runnable with
-`dual-chain-adaptor-poc` as described above.
+The complete operator sequence for both M3 happy directions is now in the
+[dedicated M3 guide](m3-local-poc-operator-guide.md). It composes the durable
+fresh-process role runner, Bitcoin helper, Bitcoin Core 31.1, the witnessed LEZ
+guest, and local LEZ v0.2 sequencer and indexer. It is deliberately an
+operator-driven recipe rather than one released application command. Refund,
+concurrent-swap, crash/chaos, and adversarial journeys remain post-PoC work.
 
-## Can I run the complete swap myself?
+## Can I run the complete M3 happy path myself?
+
+Yes. Follow the [M3 local PoC operator guide](m3-local-poc-operator-guide.md).
+It requires Docker and Rust/Cargo, assigns distinct run IDs to the Core and LEZ
+stacks so collision guards remain effective, uses literal loopback RPCs and
+deterministic local funds, and gives chain and journal checks for both
+directions. It is a manual operator recipe today.
+
+## Can I run the complete M2 ZEC swap myself?
 
 Yes, as a private development PoC against already-running isolated local
 devnets. The direction-aware runner now composes two independent reference-

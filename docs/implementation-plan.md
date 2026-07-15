@@ -1020,7 +1020,8 @@ outputs above.
 
 ## Milestone 3 entry plan: BTC adaptor/Taproot end to end
 
-Status: **active; progressive local PoC in progress**. The exact Core 31.1
+Status: **active; operator-composed local-devnet happy path 2 of 2; PoC
+certification packaging in progress**. The exact Core 31.1
 release verifier, minimal isolated image fixture, role-aware Regtest boundary,
 typed P2TR/CSV transaction library, and one-process public deterministic
 two-party MuSig2/adaptor/extraction funding/cooperative-claim composition are
@@ -1033,22 +1034,30 @@ commitment-before-reveal, exact BTC/LEZ message binding, one-use phases, peer
 partial verification, adaptation, extraction, and both scalar-reveal orders.
 Remote private-CI status remains unobservable without credentials.
 
-The current tree still has no complete LEZ/BTC swap corridor or user-facing BTC
-swap command. The retained actual-Core fixture holds both public deterministic
-signers in one process, but the current component boundary no longer does:
+Run `m3poc-live2-20260715a` now composes the exact local LEZ v0.2
+Bedrock/sequencer/indexer and Bitcoin Core 31.1 Regtest through separate
+maker/taker sidecars, restricted Core `rpcauth` users, signing processes, keys,
+SQLite journals, and state roots. It completes both happy directions with
+actual finalized/confirmed effects. The current tree still lacks a single
+full-lifecycle public BTC SDK/reference-actor command and production signing
+authority, but its component boundary no longer holds both signers in one
+process:
 `ca524ff` runs every maker/taker commitment, nonce, partial, and aggregate phase
 in fresh role-fixed processes with separate journals; `96f2a31` externalizes
 adaptation and scalar recovery; and `f827dad` verifies the resulting external
 Bitcoin signature before emitting the exact broadcast-ready transaction.
 Pushed `3862dde` also prepares the separate witnessed LEZ initialize/fund
-transactions. These components are not yet wired into a live two-node
-corridor. Pushed `3d7386b` observes that exact pair without overstating
+transactions. Pushed `3d7386b` observes that exact pair without overstating
 absence/finality; `a3da09e` supplies its typed operator CLI; and `bf5bdbd` uses
-official `nssa` for aggregate-account mapping. Live submission, both complete
-directions, refund execution, production key custody, and end-to-end atomicity
-remain pending.
+official `nssa` for aggregate-account mapping. Live submission, both reveal
+orders, and unilateral recovered-scalar completion are now proven at the
+operator-composed happy-path boundary. Refund execution, concurrency, a
+cohesive reference-actor terminal-state record, production key custody, and the
+accepted proposal's full SDK/demo surface remain pending.
 
-Authority was reread on 2026-07-14: live RFP repository commit `969a76d`
+Authority was reread again on 2026-07-15: accepted replacement issue #112 is
+closed with the `accepted` label and explicitly supersedes issue #61. The live
+RFP repository baseline remains commit `969a76d`
 (file blob `d0fa52b`) and accepted issue #112, whose newline-normalized body
 SHA-256 remains
 `49356263a762307abc0f8dd2863ac5af8fe13d9b17b674f242d025de655f1c87`.
@@ -1100,22 +1109,39 @@ slice in this order:
 6. run `TakerSellsForeign`, then `TakerSellsLez`, through actual local LEZ and
    Bitcoin nodes and emit secret-safe evidence from both actors and chains.
 
-Progress on 2026-07-15: steps 1 and 2 are closed. Step 3's cryptographic/Core
+Progress on 2026-07-15: steps 1 through 4 are closed at the local PoC boundary.
+Step 3's cryptographic/Core
 sub-slice, fresh-nonce dual-domain boundary, role-local durable signing journal,
 restart-safe SDK bridge, independent one-shot role processes, and external
 adaptation/extraction are GREEN. Step 4's guest source, digest-pinned artifact,
 exact aggregate-account mapping, recursive state effect, durable witnessed
 initialize/fund preparation, durable claim preparation/completion, conservative
-pair observation, and a typed operator boundary are GREEN; exact local
-deployment, submission, and corridor composition remain. Step 5 has a public
-BTC transaction/session boundary and independent signer processes, but not a
-complete reference actor. Step 6 remains 0 of 2 live directions.
+pair observation, and a typed operator boundary are GREEN. The exact guest was
+deployed in finalized block 405 and used for both live directions. Step 5 has a
+public BTC transaction/session boundary, separate role sidecars, and
+independent signer processes/stores, but not a cohesive full-lifecycle public
+reference actor. Step 6 is 2 of 2 for actual chain execution; the checked-in
+secret-safe packet, complete operator recipe, exact cleanup proof, and durable
+per-actor terminal status are the remaining local PoC certification packaging.
 Exact-pinned `bitcoin` 0.32.101 constructs and verifies
 the P2TR/CSV transaction boundary. Exact-pinned `musig2` 0.4.1 aggregates the
 ordered maker/taker fixture keys, applies the Taproot tweak with matching `Q`
 and parity, creates and verifies both adaptor partials and the 65-byte aggregate
 presignature, adapts a final 64-byte signature under `Q`, and re-extracts and
 point-checks the labeled public Regtest scalar.
+
+`TakerSellsForeign` confirmed taker Bitcoin lock
+`ca0ae641...a4c75`, finalized maker LEZ init/fund in blocks 540/544,
+finalized taker LEZ reveal claim `ef77099e...2cde3` in block 570, and
+confirmed the maker's recovered-scalar Bitcoin claim
+`0ee99753...6a5aa`. `TakerSellsLez` finalized taker LEZ init/fund in
+blocks 617/620, confirmed maker Bitcoin lock `c5dd0f85...752a3`, confirmed
+taker reveal claim `66255398...054f4`, and finalized the maker's
+recovered-scalar LEZ claim `834c67e9...d3033` in block 644. Both exact
+Bitcoin outpoints are spent once, both key-path witnesses contain exactly the
+expected 64-byte signature, both LEZ custody accounts end at zero, and both
+indexer scans prove exact-once `Finalized` membership plus equal by-ID/by-hash
+blocks.
 
 The exact MuSig2 graph is now locked with package-scoped license exceptions and
 exercised through rust-bitcoin verification and Core policy/consensus. It
@@ -1284,7 +1310,8 @@ owner-private capability file and prints only result JSON. The public account
 helper derives the official LEZ authority account from the x-only aggregate key
 through pinned `nssa`; no custom curve or account arithmetic is introduced.
 
-That slice is GREEN only when retained, secret-safe evidence proves Core 31.1,
+The complete operator-composed slice is GREEN only when retained, secret-safe
+evidence proves Core 31.1,
 Regtest genesis and an advancing tip, zero chain peers and zero public runtime
 RPC/faucet/funds dependencies, an
 allocated literal-loopback RPC port, provisioner-only cookie/wallet/mining
@@ -1293,11 +1320,14 @@ matrices, deterministic descriptor-derived mature local funding, immutable
 image identity, and exact labeled cleanup while a foreign sentinel resource
 survives success and forced failure. Deterministic means the same derivation,
 clock/transaction policy, maturity, values, and confirmation assertions; it
-does not promise byte-identical blocks or transaction IDs across run IDs. This accepts the Core infrastructure plus the one-process
-MuSig2/adaptor/extraction fixture only; it does not accept commitment
-exchange, crash-safe nonce state, independent actors, LEZ composition, either
-complete swap direction, U8 public-route execution, atomicity, or M3
-completion.
+does not promise byte-identical blocks or transaction IDs across run IDs. The
+new run additionally requires exact LEZ guest deployment/finality, independent
+Vault onboarding, both role views of each lock, both complete presignatures
+before the first effect, no scalar use before dual locks, exact finalized or
+confirmed reveal bytes, point-checked recovery, opposite-chain completion from
+persisted state, spent-once Bitcoin outputs, and zero LEZ custody. This accepts
+the local happy-path execution, not U8 public-route execution, refund/concurrent
+demos, production authority, or accepted-proposal M3 completion.
 
 The PoC gate requires both actors terminal `Completed`, taker-first canonical
 at the negotiated policy before the maker effect, no scalar revelation before
@@ -1310,6 +1340,13 @@ LEZ custody is zero, post-lock completion needs no counterparty/Delivery/Chat,
 and manual commands reproduce the evidence. The agreement commits the exact CSV
 refund tapleaf/control block plus maker-funded-shorter/taker-funded-longer typed
 recovery schedule even when the happy PoC does not execute it.
+
+The live chain portion of that gate is met in both directions. Packaging still
+must provide a reproducible operator entrypoint/guide, immutable secret-safe
+evidence on the pushed commit, exact run-scoped cleanup evidence, and a durable
+terminal `Completed` record for each cohesive reference actor rather than
+inferring actor completion only from terminal chain state and one-shot role
+processes. These are remaining deliverables, not external blockers.
 
 ### Later owner-selected hardening
 
