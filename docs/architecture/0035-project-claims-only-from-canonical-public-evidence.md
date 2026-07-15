@@ -1,8 +1,8 @@
 # ADR 0035: Project claims only from canonical public evidence
 
-Status: Accepted for the M3 reference-actor claim-projection boundary. Live
-claim submission, production chain adapters, and actual-node actor evidence
-remain pending.
+Status: Accepted and implemented for the M3 reference-actor claim-projection
+and one-attempt submission boundary in pushed commit `66d352f`. Reproducible
+actual-node execution through the public actor processes remains pending.
 
 ## Context
 
@@ -33,6 +33,16 @@ agreement's signed confirmation policy. LEZ evidence must be the exact
 finalized observation. Pending evidence preserves the predecessor and grants no
 projection authority.
 
+For a locally owned claim, the live actor completes the exact public
+transaction from the agreement-bound presignature and the role-appropriate
+scalar source, persists its complete bytes and expected ID in the public-effect
+journal, and then classifies chain presence. Only a stable bounded absence plus
+the journal's one-winner compare-and-swap permits one submission. An accepted
+submission remains at the predecessor revision; only later canonical public
+evidence can project. A non-submitting role never completes or submits its
+peer's claim: it uses terms-and-transcript discovery without receiving a peer
+transaction ID.
+
 Immediately before either claim observation, the actor reruns the complete
 activation-authority gate from ADR 0034. For revision three, the observation
 must include the exact public 64-byte revealing signature. The actor reopens
@@ -54,7 +64,9 @@ flowchart TB
     Config["Role fixed actor config"]
     Signer[("Existing signer journal")]
     Gate["Rerun complete activation authority"]
-    Observer["Exact chain observation port"]
+    Completion["Role owned exact claim completion"]
+    Effect[("Public effect journal")]
+    Observer["Exact or peerless chain observation"]
     Core["Bitcoin Core confirmed evidence"]
     Lez["LEZ finalized evidence"]
     Relation["Taker reproduce or maker extract and point check"]
@@ -64,6 +76,10 @@ flowchart TB
     Agreement --> Gate
     Config --> Gate
     Signer --> Gate
+    Gate --> Completion
+    Signer --> Completion
+    Completion --> Effect
+    Effect --> Observer
     Core --> Observer
     Lez --> Observer
     Gate --> Observer
@@ -82,17 +98,28 @@ convergence. Any other conflict fails closed.
 sequenceDiagram
     participant Actor as Role fixed actor
     participant Authority as Agreement and signer authority
-    participant Chain as Bitcoin Core or LEZ observer
+    participant Effect as Public effect journal
+    participant Chain as Bitcoin Core or LEZ adapter
     participant Store as Role local recovery store
 
     Actor->>Store: Read durable predecessor
     Store-->>Actor: Revision 2 or revision 3
     Actor->>Authority: Rerun complete activation gate
     Authority-->>Actor: Exact role and session authority
-    Actor->>Chain: Observe agreement-derived claim
+    opt Actor owns this claim transition
+        Actor->>Actor: Complete exact public claim
+        Actor->>Effect: Persist exact bytes and expected ID
+    end
+    Actor->>Chain: Classify exact or peerless claim presence
     alt Evidence pending or uncertain
         Chain-->>Actor: No canonical exact claim
         Actor-->>Actor: Return with predecessor unchanged
+    else Stable bounded absence and owned claim
+        Chain-->>Actor: Definitive NotFound
+        Actor->>Effect: CAS Prepared to Started
+        Effect-->>Actor: SubmitOnce or ObserveOnly
+        Actor->>Chain: Submit only after SubmitOnce
+        Actor-->>Actor: Keep predecessor until canonical presence
     else Revealing claim at revision 2
         Chain-->>Actor: Confirmed or finalized exact evidence and signature
         Actor->>Authority: Reproduce or extract and point check scalar
@@ -114,17 +141,26 @@ after projection replays the committed revision. The separate public-effect
 journal in ADR 0033 owns one-attempt submission authority and exact public
 bytes. This boundary neither weakens nor replaces that journal.
 
+A chain response that claims presence but conflicts with the durable exact
+public effect consumes still-fresh authority as `ConflictingPresence`, moving
+it to observation-only `Unknown` without a transport call. Later absence cannot
+rearm it. Ordinary finality, history, timeout, and transport uncertainty remain
+retryable while the effect is still `Prepared`.
+
 ## Consequences
 
-- Deterministic actor tests cover both roles and both swap directions through
-  revisions three and four.
+- Thirty-four deterministic actor library tests and seven CLI integration tests
+  are GREEN. Eight focused LEZ claim tests cover both owner directions, both
+  peerless observers, deterministic request identity, a later discovery window,
+  activation reruns, finalized-only projection, and no-rearm restart states.
 - An unrelated revealing signature, the wrong chain, insufficient Bitcoin
   confirmations, non-finalized LEZ evidence, or an unexpected signature on the
   follow-up leg fails before projection.
 - Offline status can now name `ObserveRevealingClaim`,
   `ObserveFollowupClaim`, and `Complete` from durable revisions two, three, and
   four.
-- The projection seam is read-only with respect to chains. Composing exact
-  transaction construction, ADR 0033 submission/reconciliation, and concrete
-  Bitcoin and LEZ observation adapters remains required for the reproducible
-  actual-node M3 actor PoC.
+- Exact transaction construction, ADR 0033 submission/reconciliation, and the
+  concrete Bitcoin and LEZ actor adapters are composed in source. A fresh
+  run-owned harness must still execute both directions through actual local
+  Bitcoin and LEZ nodes using the public actor processes and retain terminal
+  revision-four evidence before the M3 actor PoC is certified.

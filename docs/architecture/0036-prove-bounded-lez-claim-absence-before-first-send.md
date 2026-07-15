@@ -1,7 +1,8 @@
 # ADR 0036: Prove bounded LEZ claim absence before the first send
 
-Status: Accepted for the M3 finalized witnessed-claim presence boundary.
-Actor public-effect composition and actual-node actor evidence remain pending.
+Status: Accepted and implemented through the reference actor in pushed commit
+`66d352f`. Reproducible actual-node execution through the public actor processes
+remains pending.
 
 ## Context
 
@@ -44,6 +45,8 @@ flowchart TB
     Sidecar["Authenticated local LEZ v0.2 sidecar"]
     Indexer["Pinned finalized indexer API"]
     Present["PresentExact with complete claim facts"]
+    Identity["Compare durable ID, exact bytes, and signature"]
+    Conflict["ConflictingPresence"]
     Absent["NotFound with stable complete scan"]
     Unavailable["Unavailable"]
     Uncertain["Uncertain"]
@@ -57,7 +60,10 @@ flowchart TB
     Sidecar --> Absent
     Sidecar --> Unavailable
     Sidecar --> Uncertain
-    Present --> Journal
+    Present --> Identity
+    Identity -->|"Match"| Journal
+    Identity -->|"Conflict"| Conflict
+    Conflict --> Journal
     Absent --> Journal
     Unavailable -.-> Actor
     Uncertain -.-> Actor
@@ -68,6 +74,14 @@ to `Absent` reconciliation. Unavailable and uncertain states map to
 `Uncertain` reconciliation and can never consume send authority. A later
 poll may use a fresh request identity and a deliberately selected later
 window; durable `Started` or `Unknown` state still cannot rearm.
+
+`PresentExact` is reconciled against the complete durable public identity. An
+exact match advances monotonically to accepted observation-only state. A
+different transaction ID, exact byte sequence, or aggregate signature maps to
+`ConflictingPresence`: `Prepared` becomes `Unknown` atomically without
+returning `SubmitOnce` or calling transport. This deliberately sacrifices
+liveness after contradictory positive chain evidence so a later `NotFound`
+cannot turn an RPC or witness contradiction into a duplicate send.
 
 ```mermaid
 sequenceDiagram
@@ -83,7 +97,12 @@ sequenceDiagram
     Sidecar->>Indexer: Reread finalized tip
     alt Exact claim present
         Sidecar-->>Actor: PresentExact
-        Actor->>Journal: Reconcile exact public bytes
+        alt ID, exact bytes, and signature match durable effect
+            Actor->>Journal: Reconcile PresentExact
+        else Positive evidence conflicts with durable effect
+            Actor->>Journal: Burn authority as ConflictingPresence
+            Journal-->>Actor: Unknown and ObserveOnly
+        end
     else Complete stable scan has no claim
         Sidecar-->>Actor: NotFound
         Actor->>Journal: CAS Prepared to Started
@@ -109,6 +128,10 @@ lifecycle projection atomic. Exact public bytes become durable first. Only one
 caller can consume send authority. A crash or ambiguous result after that
 point leaves observation-only recovery.
 
+An accepted submission is not lifecycle evidence. The actor remains at its
+predecessor revision until a later `PresentExact` response passes the complete
+finalized evidence binding and the recovery-store predecessor CAS.
+
 ## Consequences
 
 - Protocol, client, adapter, and pinned-sidecar tests distinguish exact
@@ -116,7 +139,14 @@ point leaves observation-only recovery.
   timeouts, and transport failures.
 - The legacy affirmative finalized observer remains externally compatible; a
   definitive absence maps back to its legacy unavailable result.
-- The actor can safely compose LEZ submission without treating upstream
-  flakiness as absence or retry authority.
-- Public-effect actor wiring, final claim projection, and actual-node restart
-  evidence remain required before M3 local-PoC certification.
+- The actor now composes LEZ completion, persist-before-presence, bounded
+  classification, one-attempt submission, peerless observation, and revisions
+  three and four without treating upstream flakiness as absence or retry
+  authority.
+- Eight focused LEZ actor tests cover both owned directions, both peer roles,
+  stable absence, later-window finalized presence, unavailable/uncertain
+  classes, `Started`/`Unknown` restart, activation reruns, contradictory
+  bytes/signatures, and out-of-window evidence. The complete actor gate is 34
+  library tests plus seven CLI integration tests.
+- Actual local-node actor execution and retained terminal evidence remain
+  required before M3 local-PoC certification.
