@@ -21,8 +21,8 @@ use subtle::ConstantTimeEq as _;
 use thiserror::Error;
 
 use crate::{
-    CooperativeKeyPathSpend, CsvBlockDelay, OutputKeyParity, P2trSwapOutput, RefundXOnlyKey,
-    TwoPartyAggregateKey,
+    AdaptorSessionContext, AdaptorSessionError, CooperativeKeyPathSpend, CsvBlockDelay,
+    OutputKeyParity, P2trSwapOutput, RefundXOnlyKey, TwoPartyAggregateKey,
 };
 
 /// Domain separator for canonical version-1 LEZ/BTC agreement commitments.
@@ -46,6 +46,15 @@ pub const MAX_BITCOIN_REQUIRED_CONFIRMATIONS: u32 = 2_016;
 const MAX_SCRIPT_BYTES: usize = 520;
 const MAX_CONTROL_BLOCK_BYTES: usize = 4_129;
 const MAX_UNSIGNED_TRANSACTION_BYTES: usize = 4 * 1024;
+
+/// Chain-specific signing domain reconstructed from one validated agreement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BtcAdaptorSessionDomain {
+    /// Tweaked BIP-341 cooperative Bitcoin claim under the exact P2TR output key.
+    Bitcoin,
+    /// Untweaked official LEZ witnessed-claim message under the aggregate authority.
+    Lez,
+}
 
 #[derive(BorshSerialize, Clone, Copy, Debug, Eq, PartialEq)]
 enum BtcAgreementDirectionRecordV1 {
@@ -985,6 +994,44 @@ impl BtcAgreementV1 {
     #[must_use]
     pub const fn adaptor_point(&self) -> &[u8; 33] {
         &self.record.body.adaptor_point
+    }
+
+    /// Reconstructs one fresh adaptor-signing context from countersigned terms.
+    ///
+    /// Only the caller-generated session ID is external to the agreement. The
+    /// role order, public keys, adaptor point, exact chain message, and Bitcoin
+    /// Taproot tweak are derived from the already validated record, so a durable
+    /// journal can compare the resulting context binding after restart without
+    /// accepting a second session-description format.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AdaptorSessionError`] if the validated public inputs cannot be
+    /// reconstructed into the requested cryptographic context.
+    pub fn adaptor_session_context(
+        &self,
+        domain: BtcAdaptorSessionDomain,
+        session_id: [u8; 32],
+    ) -> Result<AdaptorSessionContext, AdaptorSessionError> {
+        let ordered_public_keys = [
+            *self.participant(Participant::Maker).musig2_public_key(),
+            *self.participant(Participant::Taker).musig2_public_key(),
+        ];
+        match domain {
+            BtcAdaptorSessionDomain::Bitcoin => AdaptorSessionContext::taproot(
+                ordered_public_keys,
+                self.p2tr_contract().merkle_root_bytes(),
+                self.cooperative_claim().sighash_bytes(),
+                *self.adaptor_point(),
+                session_id,
+            ),
+            BtcAdaptorSessionDomain::Lez => AdaptorSessionContext::untweaked(
+                ordered_public_keys,
+                *self.lez_terms().claim_message_hash(),
+                *self.adaptor_point(),
+                session_id,
+            ),
+        }
     }
 
     /// Exact signed Bitcoin funding outpoint and amount.

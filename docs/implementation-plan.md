@@ -1134,6 +1134,11 @@ activates the canonical agreement and composes predecessor zero and one through
 typed Core or finalized LEZ funding observation plus the actor-local store.
 Both roles and both directions reach revision two `BothLegsLocked` in focused
 tests; claim revisions three and four are not yet composed. Only `activate` may insert the agreement acceptance.
+The SDK now reconstructs the Bitcoin and LEZ adaptor contexts from the validated
+agreement plus caller-supplied fresh session IDs. Ten agreement tests cover both
+directions and both domains. This keeps role-runner session JSON outside actor
+authority; the claim actor must compare the resulting context binding with each
+role-local durable journal before extraction or adaptation.
 `status` reports absent or precreated-empty/no-acceptance state as
 `not_activated`; `drive` returns `NotActivated`. Status may migrate an existing
 database schema but creates no acceptance and performs no RPC. Corrupt or

@@ -3,11 +3,11 @@ use bitcoin::hex::DisplayHex as _;
 use bitcoin::secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use bitcoin::{Amount, OutPoint, ScriptBuf, TxOut, Txid};
 use lez_btc_swap_sdk::{
-    AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BtcAgreementBodyV1, BtcAgreementRecordV1,
-    BtcAgreementV1, BtcAgreementV1Error, BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1,
-    BtcLezTermsV1, BtcP2trTermsV1, BtcParticipantIdentityV1, BtcParticipantsV1, BtcRecoveryPlanV1,
-    CsvBlockDelay, MAX_BITCOIN_REQUIRED_CONFIRMATIONS, MAX_BTC_AGREEMENT_RECORD_BYTES,
-    P2trSwapOutput, RefundXOnlyKey, TwoPartyAggregateKey,
+    AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BtcAdaptorSessionDomain, BtcAgreementBodyV1,
+    BtcAgreementRecordV1, BtcAgreementV1, BtcAgreementV1Error, BtcChainPolicyV1, BtcClaimTermsV1,
+    BtcFundingTermsV1, BtcLezTermsV1, BtcP2trTermsV1, BtcParticipantIdentityV1, BtcParticipantsV1,
+    BtcRecoveryPlanV1, CsvBlockDelay, MAX_BITCOIN_REQUIRED_CONFIRMATIONS,
+    MAX_BTC_AGREEMENT_RECORD_BYTES, P2trSwapOutput, RefundXOnlyKey, TwoPartyAggregateKey,
 };
 use lez_swap_core::{Chain, MakerRecoveryTrigger, Pair, Participant, Phase, SwapDirection};
 
@@ -396,6 +396,68 @@ fn canonical_countersigned_agreement_reconstructs_both_directions() {
                 .expect("LEZ refund")
                 .value(),
             agreement.lez_terms().refund_at_ms() / 1_000
+        );
+    }
+}
+
+#[test]
+fn validated_agreement_derives_both_fresh_adaptor_session_contexts() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let fixture = fixture(direction, FixtureOptions::default());
+        let agreement = BtcAgreementV1::from_wire(
+            &signed_record(&fixture)
+                .encode_wire()
+                .expect("agreement wire"),
+        )
+        .expect("validated agreement");
+        let ordered_keys = [
+            *agreement
+                .participant(Participant::Maker)
+                .musig2_public_key(),
+            *agreement
+                .participant(Participant::Taker)
+                .musig2_public_key(),
+        ];
+
+        let bitcoin_session_id = [0xb1; 32];
+        let bitcoin = agreement
+            .adaptor_session_context(BtcAdaptorSessionDomain::Bitcoin, bitcoin_session_id)
+            .expect("agreement-derived Bitcoin context");
+        let expected_bitcoin = AdaptorSessionContext::taproot(
+            ordered_keys,
+            agreement.p2tr_contract().merkle_root_bytes(),
+            agreement.cooperative_claim().sighash_bytes(),
+            *agreement.adaptor_point(),
+            bitcoin_session_id,
+        )
+        .expect("manual Bitcoin context");
+        assert_eq!(
+            bitcoin.durable_context_binding(),
+            expected_bitcoin.durable_context_binding()
+        );
+
+        let lez_session_id = [0xc2; 32];
+        let lez = agreement
+            .adaptor_session_context(BtcAdaptorSessionDomain::Lez, lez_session_id)
+            .expect("agreement-derived LEZ context");
+        let expected_lez = AdaptorSessionContext::untweaked(
+            ordered_keys,
+            *agreement.lez_terms().claim_message_hash(),
+            *agreement.adaptor_point(),
+            lez_session_id,
+        )
+        .expect("manual LEZ context");
+        assert_eq!(
+            lez.durable_context_binding(),
+            expected_lez.durable_context_binding()
+        );
+        assert_ne!(
+            bitcoin.durable_context_binding(),
+            lez.durable_context_binding(),
+            "chain sessions must remain domain-separated"
         );
     }
 }

@@ -19,10 +19,11 @@ pub use adaptor::{
     verify_nonce_commitment,
 };
 pub use agreement_v1::{
-    BTC_AGREEMENT_SCHEMA_V1, BtcAgreementBodyV1, BtcAgreementRecordV1, BtcAgreementV1,
-    BtcAgreementV1Error, BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1, BtcLezTermsV1,
-    BtcOutputKeyParityV1, BtcP2trTermsV1, BtcParticipantIdentityV1, BtcParticipantsV1,
-    BtcRecoveryPlanV1, MAX_BITCOIN_REQUIRED_CONFIRMATIONS, MAX_BTC_AGREEMENT_RECORD_BYTES,
+    BTC_AGREEMENT_SCHEMA_V1, BtcAdaptorSessionDomain, BtcAgreementBodyV1, BtcAgreementRecordV1,
+    BtcAgreementV1, BtcAgreementV1Error, BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1,
+    BtcLezTermsV1, BtcOutputKeyParityV1, BtcP2trTermsV1, BtcParticipantIdentityV1,
+    BtcParticipantsV1, BtcRecoveryPlanV1, MAX_BITCOIN_REQUIRED_CONFIRMATIONS,
+    MAX_BTC_AGREEMENT_RECORD_BYTES,
 };
 pub use p2tr::{
     CsvBlockDelay, CsvBlockDelayError, InvalidXOnlyKey, OutputKeyParity, P2trSwapOutput,
