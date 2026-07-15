@@ -10,9 +10,9 @@ use lez_bridge_protocol::{
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, ExactMessageBytes,
     ExactTransactionBytes, Hex32, Participant, PrepareNativeEscrowRequest,
     PrepareNativeEscrowResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PreparedTransaction,
-    PreparedWitnessedClaim, ProtocolValueError, RuntimeCompatibility, RuntimeDescriptor,
-    TransactionId,
+    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
+    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolValueError,
+    RuntimeCompatibility, RuntimeDescriptor, TransactionId,
 };
 use nssa::{
     AccountId, PrivateKey, PublicKey, PublicTransaction, Signature,
@@ -64,6 +64,9 @@ pub enum NativePrepareError {
     /// Another request already owns this signer's active nonce pair.
     #[error("a distinct native escrow preparation already owns the nonce reservation")]
     ActivePrepare,
+    /// Another request already owns this signer's witnessed escrow nonce pair.
+    #[error("a distinct witnessed escrow preparation already owns the nonce reservation")]
+    ActiveWitnessedEscrowPrepare,
     /// Another revealing claim already owns this signer's active nonce.
     #[error("a distinct native revealing claim already owns the nonce reservation")]
     ActiveClaimPrepare,
@@ -132,9 +135,16 @@ struct ActivePrepare {
 #[derive(Default)]
 struct PlannerState {
     active: Option<ActivePrepare>,
+    active_witnessed_escrow: Option<ActiveWitnessedEscrowPrepare>,
     active_claim: Option<ActiveClaimPrepare>,
     active_witnessed_claim: Option<ActiveWitnessedClaimPrepare>,
     completed_witnessed_claim: Option<ActiveWitnessedClaimCompletion>,
+}
+
+#[derive(Clone)]
+struct ActiveWitnessedEscrowPrepare {
+    request: PrepareWitnessedEscrowRequest,
+    result: PrepareWitnessedEscrowResult,
 }
 
 #[derive(Clone)]
@@ -316,6 +326,9 @@ impl NativeEscrowPlanner {
     ) -> Result<PrepareNativeEscrowResult, NativePrepareError> {
         self.validate_request(&request)?;
         let mut state = self.state.lock().await;
+        if state.active_witnessed_escrow.is_some() {
+            return Err(NativePrepareError::ActivePrepare);
+        }
         if let Some(active) = state.active.as_ref() {
             return if active.request == request {
                 Ok(active.result.clone())
@@ -359,6 +372,76 @@ impl NativeEscrowPlanner {
         }
         state.active = Some(ActivePrepare {
             request,
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
+    /// Prepares and durably reserves one witnessed initialization/funding pair.
+    ///
+    /// The generated `InitializeNativeWitnessed` ABI fixes the ordered
+    /// metadata, custody, depositor, claimant, and aggregate-authority accounts.
+    /// The isolated depositor signs both consecutive-nonce transactions.
+    /// Identical replay returns the original exact bytes; submission remains a
+    /// separate operation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role, runtime, program, signer, authority, nonce, canonical
+    /// encoding, durable-state, or active-reservation drift.
+    pub async fn prepare_witnessed_escrow(
+        &self,
+        request: &PrepareWitnessedEscrowRequest,
+    ) -> Result<PrepareWitnessedEscrowResult, NativePrepareError> {
+        self.validate_witnessed_escrow_request(request)?;
+        let mut state = self.state.lock().await;
+        if state.active.is_some() {
+            return Err(NativePrepareError::ActiveWitnessedEscrowPrepare);
+        }
+        if let Some(active) = state.active_witnessed_escrow.as_ref() {
+            return if active.request == *request {
+                self.validate_prepared_witnessed_escrow(&active.request, &active.result)?;
+                Ok(active.result.clone())
+            } else {
+                Err(NativePrepareError::ActiveWitnessedEscrowPrepare)
+            };
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(recovered) = self.recover_durable_witnessed_escrow(request)? {
+            state.active_witnessed_escrow = Some(ActiveWitnessedEscrowPrepare {
+                request: request.clone(),
+                result: recovered.clone(),
+            });
+            return Ok(recovered);
+        }
+
+        let initialization_nonce = self
+            .nonce_source
+            .account_nonce(self.signer_account_id)
+            .await?;
+        let funding_nonce = initialization_nonce
+            .checked_add(1)
+            .ok_or(NativePrepareError::NonceOverflow)?;
+        let result = self.plan_witnessed_pair(request, initialization_nonce, funding_nonce)?;
+        #[cfg(target_os = "linux")]
+        if let Some(store) = self.durable_store.as_ref()
+            && let Err(error) = store.create(ReservationKind::WitnessedEscrow, request, &result)
+        {
+            if error == DurableReservationError::AlreadyReserved {
+                let recovered = self
+                    .recover_durable_witnessed_escrow(request)?
+                    .ok_or(DurableReservationError::Filesystem)?;
+                state.active_witnessed_escrow = Some(ActiveWitnessedEscrowPrepare {
+                    request: request.clone(),
+                    result: recovered.clone(),
+                });
+                return Ok(recovered);
+            }
+            return Err(error.into());
+        }
+        state.active_witnessed_escrow = Some(ActiveWitnessedEscrowPrepare {
+            request: request.clone(),
             result: result.clone(),
         });
         Ok(result)
@@ -676,6 +759,12 @@ impl NativeEscrowPlanner {
             self.validate_prepared(&active.request, &active.result)?;
             return Ok(());
         }
+        if let Some(active) = state.active_witnessed_escrow.as_ref()
+            && (&active.result.initialization == prepared || &active.result.funding == prepared)
+        {
+            self.validate_prepared_witnessed_escrow(&active.request, &active.result)?;
+            return Ok(());
+        }
         if let Some(active) = state.active_claim.as_ref()
             && &active.result.claim == prepared
         {
@@ -708,6 +797,14 @@ impl NativeEscrowPlanner {
         let Some(store) = self.durable_store.as_ref() else {
             return Ok(None);
         };
+        if store
+            .load::<PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult>(
+                ReservationKind::WitnessedEscrow,
+            )?
+            .is_some()
+        {
+            return Err(NativePrepareError::ActivePrepare);
+        }
         let Some((stored_request, stored_result)) = store
             .load::<PrepareNativeEscrowRequest, PrepareNativeEscrowResult>(
                 ReservationKind::NativeEscrow,
@@ -719,6 +816,36 @@ impl NativeEscrowPlanner {
         self.validate_prepared(&stored_request, &stored_result)?;
         if &stored_request != request {
             return Err(NativePrepareError::ActivePrepare);
+        }
+        Ok(Some(stored_result))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn recover_durable_witnessed_escrow(
+        &self,
+        request: &PrepareWitnessedEscrowRequest,
+    ) -> Result<Option<PrepareWitnessedEscrowResult>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        if store
+            .load::<PrepareNativeEscrowRequest, PrepareNativeEscrowResult>(
+                ReservationKind::NativeEscrow,
+            )?
+            .is_some()
+        {
+            return Err(NativePrepareError::ActiveWitnessedEscrowPrepare);
+        }
+        let Some((stored_request, stored_result)) = store
+            .load::<PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult>(
+                ReservationKind::WitnessedEscrow,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_prepared_witnessed_escrow(&stored_request, &stored_result)?;
+        if &stored_request != request {
+            return Err(NativePrepareError::ActiveWitnessedEscrowPrepare);
         }
         Ok(Some(stored_result))
     }
@@ -862,6 +989,50 @@ impl NativeEscrowPlanner {
         }
         let (expected_initialization, expected_funding) =
             self.plan_messages(request, initialization_nonce, expected_funding_nonce)?;
+        if initialization.message() != &expected_initialization
+            || funding.message() != &expected_funding
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
+    }
+
+    /// Validates one recovered witnessed pair against its complete request.
+    ///
+    /// # Errors
+    ///
+    /// Rejects request identity, role, runtime, authority, ordered accounts,
+    /// consecutive nonces, canonical bytes, IDs, signatures, or instruction drift.
+    pub fn validate_prepared_witnessed_escrow(
+        &self,
+        request: &PrepareWitnessedEscrowRequest,
+        result: &PrepareWitnessedEscrowResult,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_witnessed_escrow_request(request)?;
+        if result.context != request.context
+            || result.initialization == result.funding
+            || result.initialization.transaction_id == result.funding.transaction_id
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let initialization =
+            decode_prepared_for_signer(&result.initialization, self.signer_account_id)?;
+        let funding = decode_prepared_for_signer(&result.funding, self.signer_account_id)?;
+        let [initialization_nonce] = initialization.message().nonces.as_slice() else {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        };
+        let initialization_nonce = u128::from(*initialization_nonce);
+        let funding_nonce = initialization_nonce
+            .checked_add(1)
+            .ok_or(NativePrepareError::NonceOverflow)?;
+        let [observed_funding_nonce] = funding.message().nonces.as_slice() else {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        };
+        if u128::from(*observed_funding_nonce) != funding_nonce {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let (expected_initialization, expected_funding) =
+            self.plan_witnessed_messages(request, initialization_nonce, funding_nonce)?;
         if initialization.message() != &expected_initialization
             || funding.message() != &expected_funding
         {
@@ -1088,6 +1259,45 @@ impl NativeEscrowPlanner {
         Ok(authority)
     }
 
+    fn validate_witnessed_escrow_request(
+        &self,
+        request: &PrepareWitnessedEscrowRequest,
+    ) -> Result<AccountId, NativePrepareError> {
+        if request.context.sidecar_role != self.role || request.runtime.sidecar_role != self.role {
+            return Err(NativePrepareError::WrongRole);
+        }
+        if request.runtime != self.expected_runtime
+            || request.runtime.compatibility != RuntimeCompatibility::LeeV0_2_0
+        {
+            return Err(NativePrepareError::WrongRuntime);
+        }
+        let signer = Hex32::from_bytes(self.signer_account_id.into_value());
+        if request.terms.depositor() != self.role
+            || request.runtime.signer_account_id != signer
+            || request.terms.depositor_account_id() != signer
+        {
+            return Err(NativePrepareError::WrongSigner);
+        }
+        if request.runtime.escrow_program_id != program_id_to_hex(self.escrow_program_id) {
+            return Err(NativePrepareError::WrongEscrowProgram);
+        }
+        if request.terms.authenticated_transfer_program_id()
+            != program_id_to_hex(self.authenticated_transfer_program_id)
+        {
+            return Err(NativePrepareError::WrongAuthenticatedTransferProgram);
+        }
+        let aggregate_key =
+            PublicKey::try_new(*request.terms.aggregate_x_only_public_key().as_bytes())
+                .map_err(|_| NativePrepareError::WrongAggregateAuthority)?;
+        let authority = AccountId::from(&aggregate_key);
+        if authority == self.signer_account_id
+            || authority.into_value() != *request.terms.aggregate_authority_account_id().as_bytes()
+        {
+            return Err(NativePrepareError::WrongAggregateAuthority);
+        }
+        Ok(authority)
+    }
+
     fn witnessed_claim_message(
         &self,
         request: &PrepareWitnessedClaimRequest,
@@ -1123,6 +1333,59 @@ impl NativeEscrowPlanner {
             initialization,
             funding,
         ))
+    }
+
+    fn plan_witnessed_pair(
+        &self,
+        request: &PrepareWitnessedEscrowRequest,
+        initialization_nonce: u128,
+        funding_nonce: u128,
+    ) -> Result<PrepareWitnessedEscrowResult, NativePrepareError> {
+        let (initialization, funding) =
+            self.plan_witnessed_messages(request, initialization_nonce, funding_nonce)?;
+        Ok(PrepareWitnessedEscrowResult::new(
+            request.context.clone(),
+            self.prepare_message(initialization)?,
+            self.prepare_message(funding)?,
+        ))
+    }
+
+    fn plan_witnessed_messages(
+        &self,
+        request: &PrepareWitnessedEscrowRequest,
+        initialization_nonce: u128,
+        funding_nonce: u128,
+    ) -> Result<(Message, Message), NativePrepareError> {
+        let terms = &request.terms;
+        let swap_id = *terms.swap_id().as_bytes();
+        let metadata = compute_metadata_pda(&self.escrow_program_id, &swap_id);
+        let custody = compute_custody_pda(&self.escrow_program_id, &swap_id);
+        let depositor = AccountId::new(*terms.depositor_account_id().as_bytes());
+        let claimant = AccountId::new(*terms.claimant_account_id().as_bytes());
+        let aggregate_authority =
+            AccountId::new(*terms.aggregate_authority_account_id().as_bytes());
+        let initialization = Message::try_new(
+            self.escrow_program_id,
+            vec![metadata, custody, depositor, claimant, aggregate_authority],
+            vec![initialization_nonce.into()],
+            ZecEscrowInstruction::InitializeNativeWitnessed {
+                swap_id,
+                terms_hash: *terms.terms_hash().as_bytes(),
+                aggregate_x_only_public_key: *terms.aggregate_x_only_public_key().as_bytes(),
+                amount: terms.amount().as_u128(),
+                refund_at: terms.refund_at_ms(),
+                authenticated_transfer_program: self.authenticated_transfer_program_id,
+            },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)?;
+        let funding = Message::try_new(
+            self.escrow_program_id,
+            vec![metadata, custody, depositor],
+            vec![funding_nonce.into()],
+            ZecEscrowInstruction::FundNative { swap_id },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)?;
+        Ok((initialization, funding))
     }
 
     fn plan_messages(

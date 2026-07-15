@@ -12,6 +12,8 @@ mod primitives;
 pub const METHOD_DESCRIBE_RUNTIME: &str = "lez_bridge.v1.describe_runtime";
 /// Stable JSON-RPC method for preparing native initialization and funding.
 pub const METHOD_PREPARE_NATIVE_ESCROW: &str = "lez_bridge.v1.prepare_native_escrow";
+/// Stable JSON-RPC method for preparing aggregate-witness initialization and funding.
+pub const METHOD_PREPARE_WITNESSED_ESCROW: &str = "lez_bridge.v1.prepare_witnessed_escrow";
 /// Stable JSON-RPC method for observing native initialization and funding.
 pub const METHOD_OBSERVE_ESCROW: &str = "lez_bridge.v1.observe_escrow";
 /// Stable JSON-RPC method for preparing a preimage-revealing claim.
@@ -48,10 +50,10 @@ pub use messages::{
     ObserveRevealingClaimResult, ObservedTransactionFacts, PrepareNativeEscrowRequest,
     PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
     PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
-    PrepareWitnessedClaimResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
-    RevealingClaimFoundFacts, RevealingClaimObservation, RevealingClaimObservationTarget,
-    RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
-    SubmitTransactionResult,
+    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
+    PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply, RevealingClaimFoundFacts,
+    RevealingClaimObservation, RevealingClaimObservationTarget, RuntimeCompatibility,
+    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
 };
 pub use primitives::{
     AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip, DiscoveryWindow,

@@ -10,7 +10,8 @@ use lez_bridge_client::{
     METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW,
     METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_PREPARE_NATIVE_ESCROW,
     METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
-    METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER, SidecarCapability,
+    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+    SidecarCapability,
 };
 use lez_bridge_protocol::{
     AggregateBip340Signature, ChainClock, ChainTip, CompleteWitnessedClaimRequest,
@@ -23,11 +24,12 @@ use lez_bridge_protocol::{
     ObserveRevealingClaimRequest, ObserveRevealingClaimResult, Participant,
     PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
     PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PreparedTransaction,
-    PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RevealingClaimObservation,
-    RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
-    TransactionId, WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
+    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
+    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
+    RequestId, RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage,
+    RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
+    SubmitTransactionResult, TransactionId, WitnessedNativeEscrowTerms,
+    WitnessedNativeEscrowTermsInput,
 };
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
@@ -178,6 +180,7 @@ fn register_methods(module: &mut RpcModule<Fixture>) {
 }
 
 fn register_existing_transaction_methods(module: &mut RpcModule<Fixture>) {
+    register_witnessed_escrow_method(module);
     module
         .register_async_method(
             METHOD_PREPARE_NATIVE_ESCROW,
@@ -272,6 +275,20 @@ fn register_existing_transaction_methods(module: &mut RpcModule<Fixture>) {
             Ok::<_, ErrorObjectOwned>(serde_json::to_value(result).expect("serializable result"))
         })
         .expect("observe claim method");
+}
+
+fn register_witnessed_escrow_method(module: &mut RpcModule<Fixture>) {
+    module
+        .register_method(METHOD_PREPARE_WITNESSED_ESCROW, |params, fixture, _| {
+            let request: PrepareWitnessedEscrowRequest = params.one()?;
+            fixture.record(METHOD_PREPARE_WITNESSED_ESCROW);
+            Ok::<_, ErrorObjectOwned>(PrepareWitnessedEscrowResult::new(
+                response_context(&request.context, fixture.behavior),
+                prepared(46, 16),
+                prepared(47, 17),
+            ))
+        })
+        .expect("prepare witnessed escrow method");
 }
 
 fn register_refund_methods(module: &mut RpcModule<Fixture>) {
@@ -453,6 +470,23 @@ fn witnessed_terms(runtime: &RuntimeDescriptor) -> WitnessedNativeEscrowTerms {
     .expect("valid witnessed terms")
 }
 
+fn witnessed_deposit_terms(runtime: &RuntimeDescriptor) -> WitnessedNativeEscrowTerms {
+    WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
+        swap_id: hex32(17),
+        terms_hash: hex32(18),
+        depositor: Participant::Maker,
+        depositor_account_id: runtime.signer_account_id,
+        claimant: Participant::Taker,
+        claimant_account_id: hex32(19),
+        aggregate_authority_account_id: hex32(20),
+        aggregate_x_only_public_key: hex32(21),
+        amount: 30,
+        refund_at_ms: 1_800_000_000_002,
+        authenticated_transfer_program_id: hex32(22),
+    })
+    .expect("valid witnessed deposit terms")
+}
+
 fn context(run: &RunId, role: Participant, suffix: &str) -> MessageContext {
     MessageContext::new(
         run.clone(),
@@ -530,6 +564,36 @@ async fn round_trip_witnessed_claim(
         .await
         .expect("complete witnessed claim")
         .claim
+}
+
+#[tokio::test]
+async fn witnessed_escrow_prepare_is_role_correct_typed_and_does_not_submit() {
+    let expected_runtime = runtime(Participant::Maker, 30);
+    let sidecar = spawn_sidecar(expected_runtime.clone(), MAKER_CAPABILITY, Behavior::Happy).await;
+    let run = RunId::new(TEST_RUN).expect("run id");
+    let client = client(
+        &sidecar.endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        expected_runtime.clone(),
+        Duration::from_secs(1),
+    );
+
+    let prepared = client
+        .prepare_witnessed_escrow(PrepareWitnessedEscrowRequest::new(
+            context(&run, Participant::Maker, "prepare-witnessed-escrow"),
+            expected_runtime.clone(),
+            witnessed_deposit_terms(&expected_runtime),
+        ))
+        .await
+        .expect("prepare witnessed escrow");
+
+    assert_ne!(
+        prepared.initialization.transaction_id,
+        prepared.funding.transaction_id
+    );
+    assert_eq!(sidecar.fixture.calls(METHOD_PREPARE_WITNESSED_ESCROW), 1);
+    assert_eq!(sidecar.fixture.calls(METHOD_SUBMIT_TRANSACTION), 0);
 }
 
 #[tokio::test]

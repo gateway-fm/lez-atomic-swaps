@@ -14,12 +14,53 @@ use lez_bridge_protocol::{
     ObservedTransactionFacts, Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
     PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
     PrepareRevealingClaimResult, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
-    PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply, RequestId,
-    RevealingClaimFoundFacts, RevealingClaimObservation, RevealingClaimObservationTarget,
-    RevealingPreimage, RunId, RuntimeCompatibility, RuntimeDescriptor, SchemaVersion,
-    SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
-    WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
+    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
+    PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RevealingClaimFoundFacts,
+    RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage, RunId,
+    RuntimeCompatibility, RuntimeDescriptor, SchemaVersion, SubmissionOutcome,
+    SubmitTransactionRequest, SubmitTransactionResult, TransactionId, WitnessedNativeEscrowTerms,
+    WitnessedNativeEscrowTermsInput,
 };
+
+#[test]
+fn witnessed_escrow_wire_preserves_exact_terms_and_pair() {
+    let terms = WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
+        swap_id: h(40),
+        terms_hash: h(41),
+        depositor: Participant::Taker,
+        depositor_account_id: h(42),
+        claimant: Participant::Maker,
+        claimant_account_id: h(43),
+        aggregate_authority_account_id: h(44),
+        aggregate_x_only_public_key: h(45),
+        amount: 75,
+        refund_at_ms: 1_850_000_000_123,
+        authenticated_transfer_program_id: h(46),
+    })
+    .unwrap();
+    let context = MessageContext::new(
+        RunId::new("witnessed-escrow-run-0001").unwrap(),
+        RequestId::new("witnessed-escrow-prepare-0001").unwrap(),
+        Participant::Taker,
+    );
+    let request = PrepareWitnessedEscrowRequest::new(context.clone(), runtime(), terms);
+    let result = PrepareWitnessedEscrowResult::new(context, tx(47), tx(48));
+
+    assert_eq!(
+        serde_json::from_str::<PrepareWitnessedEscrowRequest>(
+            &serde_json::to_string(&request).unwrap()
+        )
+        .unwrap(),
+        request
+    );
+    assert_eq!(
+        serde_json::from_str::<PrepareWitnessedEscrowResult>(
+            &serde_json::to_string(&result).unwrap()
+        )
+        .unwrap(),
+        result
+    );
+}
 
 #[test]
 fn witnessed_claim_wire_keeps_destination_authority_and_preparation_identity_distinct() {

@@ -16,10 +16,11 @@ use lez_bridge_protocol::{
     METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW,
     METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_PREPARE_NATIVE_ESCROW,
     METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
-    METHOD_SUBMIT_TRANSACTION, MessageContext, ObserveEscrowRequest, ObserveNativeRefundRequest,
-    ObserveRevealingClaimRequest, Participant, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareRevealingClaimRequest,
-    PrepareRevealingClaimResult, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
+    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, MessageContext,
+    ObserveEscrowRequest, ObserveNativeRefundRequest, ObserveRevealingClaimRequest, Participant,
+    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
+    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
     ProtocolErrorReply, RUN_ID_HEADER, RunId, SIDECAR_ROLE_HEADER, SubmitTransactionRequest,
 };
 use serde::{Deserialize, Serialize};
@@ -227,6 +228,7 @@ struct DurableStore {
 
 type RestoredRequests = (
     Option<(PrepareNativeEscrowRequest, PrepareNativeEscrowResult)>,
+    Option<(PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult)>,
     Option<(PrepareRevealingClaimRequest, PrepareRevealingClaimResult)>,
     Option<(PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult)>,
     Option<(CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult)>,
@@ -280,6 +282,7 @@ impl DurableStore {
                         matches!(
                             entry.method.as_str(),
                             METHOD_PREPARE_NATIVE_ESCROW
+                                | METHOD_PREPARE_WITNESSED_ESCROW
                                 | METHOD_PREPARE_REVEALING_CLAIM
                                 | METHOD_PREPARE_WITNESSED_CLAIM
                                 | METHOD_COMPLETE_WITNESSED_CLAIM
@@ -414,6 +417,7 @@ impl DurableStore {
 
     fn restore_requests(&self) -> Result<RestoredRequests, BridgeServerError> {
         let mut prepare = None;
+        let mut witnessed_escrow = None;
         let mut claim = None;
         let mut witnessed = None;
         let mut completed_witnessed = None;
@@ -433,6 +437,14 @@ impl DurableStore {
             match entry.method.as_str() {
                 METHOD_PREPARE_NATIVE_ESCROW if prepare.is_none() => {
                     prepare = Some((
+                        serde_json::from_value(request)
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                        serde_json::from_value(value.clone())
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                    ));
+                }
+                METHOD_PREPARE_WITNESSED_ESCROW if witnessed_escrow.is_none() => {
+                    witnessed_escrow = Some((
                         serde_json::from_value(request)
                             .map_err(|_| BridgeServerError::InvalidDurableState)?,
                         serde_json::from_value(value.clone())
@@ -464,6 +476,7 @@ impl DurableStore {
                     ));
                 }
                 METHOD_PREPARE_NATIVE_ESCROW
+                | METHOD_PREPARE_WITNESSED_ESCROW
                 | METHOD_PREPARE_REVEALING_CLAIM
                 | METHOD_PREPARE_WITNESSED_CLAIM
                 | METHOD_COMPLETE_WITNESSED_CLAIM => {
@@ -472,7 +485,13 @@ impl DurableStore {
                 _ => {}
             }
         }
-        Ok((prepare, claim, witnessed, completed_witnessed))
+        Ok((
+            prepare,
+            witnessed_escrow,
+            claim,
+            witnessed,
+            completed_witnessed,
+        ))
     }
 }
 
@@ -555,44 +574,7 @@ pub async fn start_bridge_server(
         &config.run_id,
         runtime.descriptor(),
     )?;
-    let (restored_prepare, restored_claim, restored_witnessed, restored_completion) =
-        store.restore_requests()?;
-    if let Some((request, expected)) = restored_prepare {
-        let observed = runtime
-            .prepare_native_escrow(request)
-            .await
-            .map_err(|_| BridgeServerError::InvalidDurableState)?;
-        if observed != expected {
-            return Err(BridgeServerError::InvalidDurableState);
-        }
-    }
-    if let Some((request, expected)) = restored_claim {
-        let observed = runtime
-            .prepare_revealing_claim(&request)
-            .await
-            .map_err(|_| BridgeServerError::InvalidDurableState)?;
-        if observed != expected {
-            return Err(BridgeServerError::InvalidDurableState);
-        }
-    }
-    if let Some((request, expected)) = restored_witnessed {
-        let observed = runtime
-            .prepare_witnessed_claim(&request)
-            .await
-            .map_err(|_| BridgeServerError::InvalidDurableState)?;
-        if observed != expected {
-            return Err(BridgeServerError::InvalidDurableState);
-        }
-    }
-    if let Some((request, expected)) = restored_completion {
-        let observed = runtime
-            .complete_witnessed_claim(&request)
-            .await
-            .map_err(|_| BridgeServerError::InvalidDurableState)?;
-        if observed != expected {
-            return Err(BridgeServerError::InvalidDurableState);
-        }
-    }
+    restore_runtime_requests(&runtime, store.restore_requests()?).await?;
 
     let role = match runtime.descriptor().sidecar_role {
         Participant::Maker => "maker",
@@ -644,9 +626,68 @@ pub async fn start_bridge_server(
     })
 }
 
+async fn restore_runtime_requests(
+    runtime: &Arc<BridgeRuntime>,
+    restored: RestoredRequests,
+) -> Result<(), BridgeServerError> {
+    let (
+        restored_prepare,
+        restored_witnessed_escrow,
+        restored_claim,
+        restored_witnessed,
+        restored_completion,
+    ) = restored;
+    if let Some((request, expected)) = restored_prepare {
+        let observed = runtime
+            .prepare_native_escrow(request)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+        if observed != expected {
+            return Err(BridgeServerError::InvalidDurableState);
+        }
+    }
+    if let Some((request, expected)) = restored_witnessed_escrow {
+        let observed = runtime
+            .prepare_witnessed_escrow(&request)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+        if observed != expected {
+            return Err(BridgeServerError::InvalidDurableState);
+        }
+    }
+    if let Some((request, expected)) = restored_claim {
+        let observed = runtime
+            .prepare_revealing_claim(&request)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+        if observed != expected {
+            return Err(BridgeServerError::InvalidDurableState);
+        }
+    }
+    if let Some((request, expected)) = restored_witnessed {
+        let observed = runtime
+            .prepare_witnessed_claim(&request)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+        if observed != expected {
+            return Err(BridgeServerError::InvalidDurableState);
+        }
+    }
+    if let Some((request, expected)) = restored_completion {
+        let observed = runtime
+            .complete_witnessed_claim(&request)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+        if observed != expected {
+            return Err(BridgeServerError::InvalidDurableState);
+        }
+    }
+    Ok(())
+}
+
 #[allow(
     clippy::too_many_lines,
-    reason = "all eight protocol methods remain visibly registered at one authenticated boundary"
+    reason = "all protocol methods remain visibly registered at one authenticated boundary"
 )]
 fn register_methods(
     module: &mut RpcModule<ServerState>,
@@ -679,6 +720,29 @@ fn register_methods(
                     || async move {
                         runtime
                             .prepare_native_escrow(operation)
+                            .await
+                            .map_err(Into::into)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
+    module.register_async_method(
+        METHOD_PREPARE_WITNESSED_ESCROW,
+        |params, state, _| async move {
+            let request = Arc::new(params.one::<PrepareWitnessedEscrowRequest>()?);
+            state.validate_runtime(&request.context, &request.runtime)?;
+            let operation = Arc::clone(&request);
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_PREPARE_WITNESSED_ESCROW,
+                    &request.context,
+                    request.as_ref(),
+                    || async move {
+                        runtime
+                            .prepare_witnessed_escrow(operation.as_ref())
                             .await
                             .map_err(Into::into)
                             .and_then(to_value)
@@ -1034,6 +1098,7 @@ fn valid_method(method: &str) -> bool {
         method,
         METHOD_DESCRIBE_RUNTIME
             | METHOD_PREPARE_NATIVE_ESCROW
+            | METHOD_PREPARE_WITNESSED_ESCROW
             | METHOD_OBSERVE_ESCROW
             | METHOD_PREPARE_REVEALING_CLAIM
             | METHOD_PREPARE_WITNESSED_CLAIM

@@ -173,6 +173,62 @@ impl PrepareNativeEscrowResult {
     }
 }
 
+/// Requests consecutive aggregate-witness escrow initialization and funding transactions.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct PrepareWitnessedEscrowRequest {
+    /// Version, isolation, correlation, and depositor-role fields.
+    pub context: MessageContext,
+    /// Expected pinned LEZ v0.2 runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// Complete agreement binding, including the aggregate claim authority.
+    pub terms: WitnessedNativeEscrowTerms,
+}
+
+impl PrepareWitnessedEscrowRequest {
+    /// Creates one aggregate-witness escrow preparation request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedNativeEscrowTerms,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+        }
+    }
+}
+
+/// Exact aggregate-witness initialization and funding transactions.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct PrepareWitnessedEscrowResult {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Exact signed `InitializeNativeWitnessed` transaction.
+    pub initialization: PreparedTransaction,
+    /// Exact signed `FundNative` transaction.
+    pub funding: PreparedTransaction,
+}
+
+impl PrepareWitnessedEscrowResult {
+    /// Creates one aggregate-witness escrow preparation result.
+    pub const fn new(
+        context: MessageContext,
+        initialization: PreparedTransaction,
+        funding: PreparedTransaction,
+    ) -> Self {
+        Self {
+            context,
+            initialization,
+            funding,
+        }
+    }
+}
+
 /// Selects owned exact IDs or counterparty discovery by signed terms.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]

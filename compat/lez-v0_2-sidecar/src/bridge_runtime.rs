@@ -156,6 +156,21 @@ impl BridgeRuntime {
         self.planner.prepare(request).await.map_err(Into::into)
     }
 
+    /// Prepares one exact witnessed initialization/funding pair.
+    ///
+    /// # Errors
+    ///
+    /// Preserves every exact planner validation and durable-reservation error.
+    pub async fn prepare_witnessed_escrow(
+        &self,
+        request: &lez_bridge_protocol::PrepareWitnessedEscrowRequest,
+    ) -> Result<lez_bridge_protocol::PrepareWitnessedEscrowResult, BridgeRuntimeError> {
+        self.planner
+            .prepare_witnessed_escrow(request)
+            .await
+            .map_err(Into::into)
+    }
+
     /// Prepares one exact native revealing claim.
     ///
     /// # Errors

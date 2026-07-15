@@ -177,6 +177,7 @@ impl From<NativePrepareError> for VaultClaimPrepareError {
             NativePrepareError::WrongRuntime => Self::WrongRuntime,
             NativePrepareError::WrongSigner => Self::WrongSigner,
             NativePrepareError::ActivePrepare
+            | NativePrepareError::ActiveWitnessedEscrowPrepare
             | NativePrepareError::ActiveClaimPrepare
             | NativePrepareError::ActiveWitnessedClaimPrepare
             | NativePrepareError::ActiveWitnessedClaimCompletion => Self::ActivePrepare,
