@@ -1061,9 +1061,11 @@ schedule. The typed finalized witnessed-claim adapter is now GREEN. The
 actor-local Bitcoin recovery store is also GREEN through revision four and
 offline `Completed` reconstruction. The reference actor now projects exact
 revealing and follow-up claims through revisions three and four in both roles
-and directions, and its live Bitcoin path consumes only the typed Core
-finalized-claim observer. Durable claim submission and the live LEZ claim path
-remain open. The typed Core 31.1 adapter and canonical bounded public evidence
+and directions. Its live Bitcoin path now constructs the role- and
+revision-owned exact claim, persists complete witness bytes before one send,
+never rearms `Started` or `Unknown`, and consumes only the typed Core
+finalized-claim observer for projection. The live LEZ claim path remains open.
+The typed Core 31.1 adapter and canonical bounded public evidence
 codec are GREEN as components. Actual-node reference-actor terminal evidence,
 refund execution, concurrency, production key custody, and the
 accepted proposal's full SDK/demo surface remain pending.
@@ -1140,8 +1142,9 @@ tests. Both claim revisions now project through terminal `Completed` in
 focused role/direction tests: revision three reruns the complete activation
 material gate and accepts only the exact related public signature, while
 revision four accepts only the direction-correct finalized/confirmed follow-up.
-The live Bitcoin finalized observer is wired; durable submit-before-observe and
-the live LEZ path are the next actor slice. Only `activate` may
+The live Bitcoin claim effect is fully composed through actor-owned
+submit-before-observe persistence; the live LEZ path is the next actor slice.
+Only `activate` may
 insert the agreement acceptance. Strict private config schema 2 now requires
 the complete prepared-claim result and distinct Bitcoin/LEZ session IDs plus
 role-local journals. Activation rederives both exact contexts from the signed
@@ -1186,16 +1189,17 @@ sidecars, the adapter, and the SDK; cross-generation first-lock and claim facts
 now fail closed instead of being silently reinterpreted.
 Step 6 is
 2 of 2 for operator-composed actual chain execution, while actor E2E remains
-pending. Claim projection through actor revision four is GREEN without claiming
-that its public-effect submission path or actual-node evidence is complete. Pushed commit
+pending. Claim projection through actor revision four is GREEN. The Bitcoin
+public-effect path is composed without claiming that the LEZ effect path or
+actual-node actor evidence is complete. Pushed commit
 `a58ef96` adds the checked-in secret-safe packet, complete operator recipe,
 exact cleanup proof, synchronized architecture/traceability, and all 76 rendered
 Mermaid diagrams. The countersigned agreement binding the executable Bitcoin
 refund plan is now GREEN in seven focused tests. Pushed commit `523c64d`
 additionally rejects oversized caller-constructed fields before total Borsh
 encoding. Actor activation and both typed funding projections are now
-implemented. Durable claim-effect composition, the live LEZ claim observer,
-and actual-node actor E2E remain the local PoC certification work.
+implemented. The live LEZ claim effect/observer and actual-node actor E2E remain
+the local PoC certification work.
 Exact-pinned `bitcoin` 0.32.101 constructs and verifies
 the P2TR/CSV transaction boundary. Exact-pinned `musig2` 0.4.1 aggregates the
 ordered maker/taker fixture keys, applies the Taproot tweak with matching `Q`
@@ -1473,9 +1477,9 @@ The projection boundary is GREEN for revisions three and four, including
 taker-side signature reproduction, maker-side scalar extraction and point
 checking, one-way claim evidence, signed Bitcoin confirmation policy, finalized
 LEZ policy units in the injected seam, and predecessor CAS convergence. The
-typed live Core finalized observer is wired. Remaining local PoC work is
-composing durable one-attempt claim submission, wiring the live finalized LEZ
-claim path, and repeating both directions through the public actor surface.
+typed live Core finalized observer and durable one-attempt Bitcoin claim path
+are wired. Remaining local PoC work is composing the equivalent finalized LEZ
+claim path and repeating both directions through the public actor surface.
 Certification also requires a combined run-owned harness that creates
 the actual-node countersigned agreement, safely owns the host-sidecar listener
 lifecycle without the current free-port bind race, invokes a fresh public actor
