@@ -1,6 +1,6 @@
 # ADR 0029: M3 starts with an isolated Bitcoin actual-node PoC
 
-Status: Accepted entry boundary; M3 active; one-process public deterministic two-party MuSig2/adaptor/Core fixture GREEN — 2026-07-15
+Status: Accepted entry boundary; M3 active; actual-Core fixture and in-memory dual-domain commitment exchange GREEN — 2026-07-15
 
 ## Context
 
@@ -15,8 +15,13 @@ and verifies a 65-byte Schnorr adaptor presignature, adapts it with the public
 fixture scalar, verifies the resulting 64-byte signature under `Q`, spends it
 through Core policy and consensus, and extracts the same scalar. It still has no
 production Core swap adapter, independent Bitcoin actor processes/stores,
-network exchange of nonce commitments, crash-safe nonce journal, LEZ BTC guest
-path, or composed swap evidence packet.
+crash-safe nonce journal, actual LEZ BTC guest submission, or composed swap
+evidence packet. Pushed `0177151` adds fresh OS nonces, exchanged
+transcript-bound commitments, separate maker/taker state objects, the exact BTC
+message plus a placeholder LEZ message domain, one-use phases, and both
+scalar-reveal orders in memory.
+Those state objects are not yet independent processes and their nonce/partial
+state is not durable.
 
 The accepted proposal names DLC-specs `AdaptorSignature.md` as a conformance
 source. No such file exists in the current DLC repository or its history. The
@@ -54,6 +59,14 @@ flowchart LR
     end
     Provisioner["Run-owned miner and fund provisioner"] --> CookieAuth["Cookie RPC"]
     CookieAuth --> Core
+    subgraph Session["Proven at 0177151: in-memory dual-domain boundary"]
+        MakerState["Maker signer state"] --> Commitment["Commitment before nonce reveal"]
+        TakerState["Taker signer state"] --> Commitment
+        Commitment --> BtcSession["Exact BTC message session"]
+        Commitment --> LezSession["Exact LEZ message session"]
+        BtcSession --> RevealOrder["BTC-first and LEZ-first extraction"]
+        LezSession --> RevealOrder
+    end
     subgraph Target["M3 composition target: pending"]
         Maker["Independent maker actor"] --> Exchange["Authenticated signing exchange"]
         Taker["Independent taker actor"] --> Exchange
@@ -172,12 +185,14 @@ gates now pass. It remains an unaccepted production candidate pending exchanged
 commitments, durable nonce reservation/consumption, zeroization, negative
 vectors, independent actor verification, and review.
 
-## Target pre-lock signing ceremony (pending)
+## Target pre-lock signing ceremony (in-memory boundary GREEN; durability pending)
 
-The following is the required independent-actor ceremony, not a claim about the
-current one-process fixture. At `f5a9caa` role-tagged commitments are computed
-in process but are not exchanged before nonce reveal, and no crash-safe nonce
-journal is exercised.
+The following is the required independent-actor ceremony. At `f5a9caa`
+role-tagged commitments are computed in one process but are not exchanged before
+nonce reveal. At `0177151`, separate maker/taker state objects exchange and
+verify those commitments before nonce reveal for both message domains, consume
+their retained nonce bytes once in memory, and verify both partials. No
+crash-safe nonce journal or independent-process transport is exercised yet.
 
 Both claim transactions and all recovery material are complete before the first
 lock. Each chain/message uses a distinct domain-separated MuSig2 session and

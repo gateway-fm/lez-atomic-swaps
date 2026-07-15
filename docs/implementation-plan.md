@@ -1027,15 +1027,20 @@ two-party MuSig2/adaptor/extraction funding/cooperative-claim composition are
 GREEN. CI runs that composition and fail-hard scans its exact image for
 HIGH/CRITICAL vulnerabilities. Strict clean pushed-commit evidence on
 `f5a9caa66b04b0bec1a86cb732f5a64f63852e6e` closes this cryptographic/Core
-fixture sub-slice. Remote private-CI status remains unobservable without
-credentials.
+fixture sub-slice. Pushed commit `0177151` additionally closes the in-memory
+dual-domain signing boundary: distinct role-state objects, fresh OS nonces,
+commitment-before-reveal, exact BTC/LEZ message binding, one-use phases, peer
+partial verification, adaptation, extraction, and both scalar-reveal orders.
+Remote private-CI status remains unobservable without credentials.
 
 The current tree still has no complete LEZ/BTC swap corridor or user-facing BTC
-swap command. The fixture holds both public deterministic signers in one
-process and computes nonce commitments without exchanging them. It does not
-prove a crash-safe nonce reservation/consumption journal, independent actor
-processes and stores, the LEZ BTC claim path, either complete direction, refund
-execution, production signing authority, or atomicity.
+swap command. The actual-Core fixture holds both public deterministic signers
+in one process and computes commitments without exchanging them; the newer
+dual-session fixture exchanges commitments using distinct in-process role
+objects but does not submit to LEZ. Neither proves a crash-safe nonce
+reservation/consumption journal, independent actor processes and stores, the
+actual LEZ BTC claim path, either complete direction, refund execution,
+production signing authority, or atomicity.
 
 Authority was reread on 2026-07-14: live RFP repository commit `969a76d`
 (file blob `d0fa52b`) and accepted issue #112, whose newline-normalized body
@@ -1089,9 +1094,10 @@ slice in this order:
 6. run `TakerSellsForeign`, then `TakerSellsLez`, through actual local LEZ and
    Bitcoin nodes and emit secret-safe evidence from both actors and chains.
 
-Progress on 2026-07-15: steps 1 and 2 are closed, and step 3's one-process
-cryptographic/Core sub-slice is GREEN; its actor-separated durable signing
-portion remains active. Exact-pinned `bitcoin` 0.32.101 constructs and verifies
+Progress on 2026-07-15: steps 1 and 2 are closed. Step 3's one-process
+cryptographic/Core sub-slice and its fresh-nonce, commitment-exchanging,
+dual-domain in-memory boundary are GREEN; durable role-local signing state and
+independent processes remain active. Exact-pinned `bitcoin` 0.32.101 constructs and verifies
 the P2TR/CSV transaction boundary. Exact-pinned `musig2` 0.4.1 aggregates the
 ordered maker/taker fixture keys, applies the Taproot tweak with matching `Q`
 and parity, creates and verifies both adaptor partials and the 65-byte aggregate
@@ -1101,11 +1107,14 @@ point-checks the labeled public Regtest scalar.
 The exact MuSig2 graph is now locked with package-scoped license exceptions and
 exercised through rust-bitcoin verification and Core policy/consensus. It
 remains an unaccepted dependency candidate: the crate is beta/unaudited,
-maintainer-concentrated, exposes a cloneable non-zeroizing secret nonce, and
-provides no commitment round. The production-shaped wrapper must still exchange
-commitments before reveal, durably reserve and consume fresh nonces, atomically
-persist exact partial outboxes, zeroize secret state, and add negative vectors
-and review. Its `secp256k1` 0.31 types remain byte-isolated from rust-bitcoin's
+maintainer-concentrated, exposes cloneable non-zeroizing internal secret types,
+and provides no commitment round. The project wrapper now supplies a
+transcript-bound commitment round, fresh OS nonce seeds, one-use in-memory
+phases, zeroizing retained key/serialized-nonce bytes, and focused
+phase/commitment/message/point negatives. It must still durably reserve and
+consume nonces, atomically persist exact partial outboxes, prove independent
+process restart behavior, improve upstream-secret handling, and receive
+review. Its `secp256k1` 0.31 types remain byte-isolated from rust-bitcoin's
 0.29 types.
 
 In the `TakerSellsForeign` Bitcoin-leg fixture, the taker policy-checks and
@@ -1163,6 +1172,18 @@ hash-bound attestation passed. The
 records those facts and the one-process, nonce-exchange, durability, LEZ, and
 atomicity nonclaims.
 
+Pushed commit `0177151` adds a separate runnable protocol fixture rather than
+rewriting that retained Core evidence. `dual-chain-adaptor-poc` constructs exact
+BTC and placeholder LEZ 32-byte message sessions over the same adaptor point,
+uses separate maker/taker state objects and OS-random nonces, exchanges and
+checks commitments before nonce reveal, verifies both peer partials, and proves
+that either completed signature reveals the scalar needed to complete the
+other. Focused tests reject reveal-before-commitment, commitment mismatch,
+nonce reuse, changed messages, and wrong adaptor secrets. Its output explicitly
+reports `actual_lez_submission=false`, `durable_nonce_journal=false`, and
+`signer_separation=distinct_state_objects`; it is not actual-node corridor
+evidence.
+
 That slice is GREEN only when retained, secret-safe evidence proves Core 31.1,
 Regtest genesis and an advancing tip, zero chain peers and zero public runtime
 RPC/faucet/funds dependencies, an
@@ -1203,9 +1224,10 @@ an acceptable ambiguous configuration value.
 
 Accepted dependency groups remain Bitcoin Core 31.1 and `bitcoin` 0.32.101: 2
 of 5 entry candidates. The exact `musig2` 0.4.1 graph is locked, package-scoped
-for CC0/Unlicense, policy-gated, and exercised through Core, but remains an
-unaccepted beta/unaudited candidate until commitment exchange, nonce durability
-and zeroization, negative vectors, secret handling, and review pass. `miniscript`
+for CC0/Unlicense, policy-gated, and exercised through Core plus the
+commitment-exchanging dual-domain wrapper, but remains an unaccepted
+beta/unaudited candidate until nonce durability, independent-process recovery,
+stronger secret handling, and review pass. `miniscript`
 13.1.0 and `corepc-client` 0.16.0/`corepc-types` 0.15.0 remain deferred until a
 concrete API requires them.
 

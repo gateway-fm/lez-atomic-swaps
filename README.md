@@ -35,13 +35,25 @@ at height 102 and maker key-path claim at height 103, including the exact
 one-item witness and spent-once outpoint; the final mempool and peer set are
 empty and cleanup is exact.
 
-This is deliberately a one-process public deterministic cryptographic and
-consensus fixture, not a complete swap or production signing authority. The
-nonce commitments are computed but not exchanged before nonce reveal; there is
-no crash-safe nonce reservation/consumption journal, independent maker/taker
-signer processes or durable stores, LEZ BTC guest composition, second direction,
-refund execution, or end-to-end atomicity. There is no executable full BTC swap
-command yet. CI runs the same P2TR funding/claim composition and fail-hard scans
+Pushed commit `0177151` adds the next protocol slice behind canonical byte
+boundaries. Separate maker and taker signer-state objects now create fresh
+OS-random nonces, exchange and verify transcript-bound commitments before nonce
+reveal, reject phase/reuse/message/adaptor mismatches, verify both partials, and
+derive the same aggregate presignature for the exact BTC message and a
+placeholder LEZ message domain. A runnable dual-session fixture proves that
+either domain's completed signature reveals the same scalar and completes the
+other signature. It does not yet build or submit the actual LEZ claim or persist
+nonce state.
+
+The retained actual-Core run is deliberately a one-process public deterministic
+cryptographic and consensus fixture, while the newer dual-session fixture uses
+fresh nonces and exchanged commitments in separate in-process role objects.
+Neither is a complete swap or production signing authority. There is no
+crash-safe nonce reservation/consumption journal, independent maker/taker
+processes or durable stores, LEZ BTC guest composition, second complete
+direction, refund execution, or end-to-end atomicity. There is no executable
+full BTC swap command yet. CI runs the same P2TR funding/claim composition and
+fail-hard scans
 the exact Core image for HIGH/CRITICAL vulnerabilities. The earlier clean
 infrastructure run remains available as
 [secret-safe Core evidence](docs/evidence/m3-bitcoin-core-smoke-a7393df-20260714.json);

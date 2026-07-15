@@ -163,7 +163,7 @@ flowchart TB
 
     subgraph Nodes["Actor-selected node boundary"]
         LEZ["LEZ sequencer<br/>dynamic local port<br/>typed exact-public contract<br/>public live execution pending"]
-        BTC["Bitcoin Core 31.1 Regtest<br/>one-process MuSig2 adaptor claim GREEN<br/>independent actors and LEZ pending"]
+        BTC["Bitcoin Core 31.1 Regtest<br/>actual-Core MuSig2 adaptor claim GREEN<br/>dual-domain in-memory sessions GREEN"]
         XMR["monerod + wallet RPC"]
         ZEC["Zebra 5.2.0 Regtest JSON-RPC<br/>retained proof host 32834"]
     end
@@ -970,6 +970,15 @@ result under `Q`, passes Core policy and consensus, and extracts the matching
 scalar. It is one process: commitments are not exchanged, nonce state is not
 journaled, and independent actors, LEZ effects, both complete directions, and
 atomicity remain the audited M3 target.
+
+Pushed `0177151` adds a production-shaped in-memory boundary alongside that
+retained Core fixture. Separate maker/taker state objects use fresh OS nonces,
+exchange transcript-bound commitments before reveal, verify peer partials, and
+bind distinct BTC and LEZ messages to the same adaptor point. Either completed
+signature reveals the scalar needed to complete the other. The objects still
+share one process, the LEZ message remains a fixture rather than a submitted
+transaction, and nonce/partial state is not durable; those facts keep the
+independent-process and complete-corridor edges pending.
 
 ## Abandonment and autonomous recovery flow
 

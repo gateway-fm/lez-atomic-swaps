@@ -16,8 +16,11 @@ HTTPS provider transport, and actor adapter.
 
 The isolated Bitcoin Core 31.1 infrastructure and typed P2TR transaction slice
 now reproduce a one-process, two-party `MuSig2` adaptor-signature Bitcoin-leg
-fixture. The complete M3 LEZ/BTC swap is **not available**: there is no LEZ
-effect, second direction, refund execution, independent signer process,
+fixture. A second runnable fixture uses separate maker/taker signer-state
+objects, fresh OS-random nonces, commitment-before-reveal, and two
+domain-separated BTC/LEZ messages to prove both scalar-reveal orders. The
+complete M3 LEZ/BTC swap is **not available**: there is no actual LEZ submission,
+second actual-node direction, refund execution, independent signer process,
 durable signer store, or end-to-end atomicity proof.
 
 Start with the standalone cryptographic fixture. It needs Rust/Cargo and locked
@@ -49,6 +52,23 @@ proved. The beta `musig2` 0.4.1 dependency also retains cloneable/non-zeroized
 secret types; clearing the example's input byte arrays does not establish
 complete in-memory erasure.
 
+Run the production-shaped in-memory signing boundary separately:
+
+```sh
+cargo run --locked -p lez-btc-swap-sdk --example dual-chain-adaptor-poc
+```
+
+This command creates distinct BTC and LEZ signing sessions over the same
+adaptor point, exchanges role-bound commitments before public nonces, verifies
+both peer partials, and completes the signatures in both reveal orders. Require
+`nonce_source=os_random`, `commitment_exchange_before_nonce_reveal=true`,
+`dual_domain_sessions=true`, `shared_adaptor_point=true`,
+`btc_witness_items=1`, and `btc_witness_bytes=64`. It intentionally also prints
+`fixture_only=true`, `signer_separation=distinct_state_objects`,
+`actual_lez_submission=false`, and `durable_nonce_journal=false`. Those four
+nonclaims prevent this in-process transcript from being mistaken for the
+independent-actor local-devnet corridor.
+
 Run the package gates separately:
 
 ```sh
@@ -57,7 +77,7 @@ cargo clippy --locked -p lez-btc-swap-sdk --all-targets --all-features -- -D war
 RUSTDOCFLAGS="-D warnings" cargo doc --locked -p lez-btc-swap-sdk --no-deps
 ```
 
-`cargo test --all-targets` compiles examples, including both M3 fixtures, but it
+`cargo test --all-targets` compiles examples, including all M3 fixtures, but it
 does **not** execute their `main` functions. Run the standalone command above
 for the cryptographic transcript and the Core runner below for actual-node
 policy/consensus evidence. Package tests cover deterministic Taproot and
@@ -201,8 +221,10 @@ archive reduces downloads but does not remove the other provenance checks.
 
 There is currently no manual command for a complete M3 LEZ/BTC swap. The
 runnable boundary ends at the isolated `TakerSellsForeign`-shaped Bitcoin leg;
-nonce-exchange/journaling, independent signers and stores, the LEZ leg, the
-opposite direction, refunds, and atomicity remain future slices.
+durable nonce journaling, independent signer processes and stores, the actual
+LEZ leg, the opposite actual-node direction, refunds, and atomicity remain
+future slices. Commitment exchange and both in-memory reveal orders are
+runnable with `dual-chain-adaptor-poc` as described above.
 
 ## Can I run the complete swap myself?
 
