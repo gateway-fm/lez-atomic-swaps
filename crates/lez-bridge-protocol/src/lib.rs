@@ -30,6 +30,12 @@ pub const METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING: &str =
 /// Stable JSON-RPC method for observing one exact finalized aggregate-witness claim.
 pub const METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM: &str =
     "lez_bridge.v1.observe_finalized_witnessed_claim";
+/// Stable JSON-RPC method for classifying exact witnessed-claim presence.
+///
+/// This additive v1 method preserves the original found-only observer while
+/// giving actors a positive, strictly typed proof of a complete stable absence.
+pub const METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM: &str =
+    "lez_bridge.v1.classify_finalized_witnessed_claim";
 /// Stable JSON-RPC method for observing a preimage-revealing claim.
 pub const METHOD_OBSERVE_REVEALING_CLAIM: &str = "lez_bridge.v1.observe_revealing_claim";
 /// Stable JSON-RPC method for preparing a fixed-destination native refund.
@@ -47,24 +53,25 @@ pub const SIDECAR_ROLE_HEADER: &str = "x-lez-bridge-sidecar-role";
 pub const MAX_RPC_BODY_BYTES: u32 = 5_500_000;
 
 pub use messages::{
-    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
-    DescribeRuntimeResult, EscrowMetadataFacts, EscrowObservationTarget, EscrowState,
-    FinalizedBlockIdentity, FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
-    FinalizedWitnessedFundingFacts, FinalizedWitnessedFundingObservationTarget, FundingFoundFacts,
-    FundingObservation, InitializationFoundFacts, InitializationObservation,
-    NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
-    NativeEscrowAccountObservation, NativeFundInstructionFacts, NativeInitializeInstructionFacts,
-    NativeRefundFoundFacts, NativeRefundInstructionFacts, NativeRefundObservation,
-    NativeRefundObservationTarget, ObserveEscrowRequest, ObserveEscrowResult,
-    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
-    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
-    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
-    ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
-    ObservedTransactionFacts, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
-    PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
-    PrepareRevealingClaimResult, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
-    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
-    PreparedWitnessedClaim, ProtocolErrorReply, RevealingClaimFoundFacts,
+    ClassifyFinalizedWitnessedClaimResult, CompleteWitnessedClaimRequest,
+    CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult,
+    EscrowMetadataFacts, EscrowObservationTarget, EscrowState, FinalizedBlockIdentity,
+    FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
+    FinalizedWitnessedClaimScanOutcome, FinalizedWitnessedFundingFacts,
+    FinalizedWitnessedFundingObservationTarget, FundingFoundFacts, FundingObservation,
+    InitializationFoundFacts, InitializationObservation, NativeClaimInstructionFacts,
+    NativeCustodyFacts, NativeEscrowAccountFacts, NativeEscrowAccountObservation,
+    NativeFundInstructionFacts, NativeInitializeInstructionFacts, NativeRefundFoundFacts,
+    NativeRefundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
+    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
+    ObserveFinalizedWitnessedFundingResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
+    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
+    ObserveWitnessedEscrowResult, ObservedTransactionFacts, PrepareNativeEscrowRequest,
+    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
+    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
+    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
+    PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply, RevealingClaimFoundFacts,
     RevealingClaimObservation, RevealingClaimObservationTarget, RuntimeCompatibility,
     RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
     WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts, WitnessedFundingFoundFacts,

@@ -20,10 +20,11 @@ use indexer_service_protocol::{
 use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
 use lez_bridge_protocol::{
-    DiscoveryWindow, ExactMessageBytes, FinalizedWitnessedClaimObservationTarget, Hex32,
-    MessageContext, ObserveFinalizedWitnessedClaimRequest, Participant, PreparedWitnessedClaim,
-    RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor, TransactionId,
-    WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
+    DiscoveryWindow, ExactMessageBytes, FinalizedWitnessedClaimObservationTarget,
+    FinalizedWitnessedClaimScanOutcome, Hex32, MessageContext,
+    ObserveFinalizedWitnessedClaimRequest, Participant, PreparedWitnessedClaim, RequestId, RunId,
+    RuntimeCompatibility, RuntimeDescriptor, TransactionId, WitnessedNativeEscrowTerms,
+    WitnessedNativeEscrowTermsInput,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
@@ -495,6 +496,104 @@ async fn exact_claim_is_returned_only_after_sequential_dual_lookup_and_stable_fi
 }
 
 #[tokio::test]
+async fn exact_presence_and_stable_complete_absence_are_distinct_successes() {
+    let present_fixture = fixture();
+    let observer = FinalizedWitnessedClaimObserver::new(
+        present_fixture.runtime.clone(),
+        indexer(&present_fixture, [Some(11), Some(11)]),
+    );
+    let present = observer.classify(&present_fixture.request).await.unwrap();
+    assert!(matches!(
+        present.outcome,
+        FinalizedWitnessedClaimScanOutcome::PresentExact { ref claim }
+            if claim.transaction.transaction_id
+                == match present_fixture.request.target {
+                    FinalizedWitnessedClaimObservationTarget::Exact {
+                        claim_transaction_id,
+                    } => claim_transaction_id,
+                    FinalizedWitnessedClaimObservationTarget::DiscoverByTerms => {
+                        panic!("exact fixture")
+                    }
+                }
+    ));
+    assert_eq!(present.scanned_window, present_fixture.request.window);
+
+    let mut absent = fixture();
+    absent.blocks[0].body.transactions.clear();
+    let indexer = indexer(&absent, [Some(11), Some(11)]);
+    let observer = FinalizedWitnessedClaimObserver::new(absent.runtime.clone(), indexer.clone());
+    let not_found = observer.classify(&absent.request).await.unwrap();
+    assert_eq!(
+        not_found.outcome,
+        FinalizedWitnessedClaimScanOutcome::NotFound
+    );
+    assert_eq!(not_found.scanned_window, absent.request.window);
+    assert_eq!(not_found.finalized_tip.height, 11);
+    assert_eq!(
+        indexer
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| call.as_str() == "tip")
+            .count(),
+        2,
+        "absence is definitive only after the second stable-tip read"
+    );
+}
+
+#[tokio::test]
+async fn incomplete_or_moving_absence_never_becomes_not_found() {
+    let mut absent = fixture();
+    absent.blocks[0].body.transactions.clear();
+    let observer = FinalizedWitnessedClaimObserver::new(
+        absent.runtime.clone(),
+        indexer(&absent, [Some(10), Some(10)]),
+    );
+    assert_eq!(
+        observer.classify(&absent.request).await.unwrap_err(),
+        BridgeRuntimeError::Unavailable
+    );
+
+    let observer = FinalizedWitnessedClaimObserver::new(
+        absent.runtime.clone(),
+        indexer(&absent, [Some(11), Some(12)]),
+    );
+    assert_eq!(
+        observer.classify(&absent.request).await.unwrap_err(),
+        BridgeRuntimeError::MovingTip
+    );
+}
+
+#[tokio::test]
+async fn caller_can_advance_to_a_fresh_finalized_window() {
+    let mut absent = fixture();
+    absent.blocks[0].body.transactions.clear();
+    let observer = FinalizedWitnessedClaimObserver::new(
+        absent.runtime.clone(),
+        indexer(&absent, [Some(11), Some(11), Some(11), Some(11)]),
+    );
+    let mut first = absent.request.clone();
+    first.window = DiscoveryWindow::new(10, 1).unwrap();
+    let mut fresh = absent.request.clone();
+    fresh.context.request_id = RequestId::new("fresh-finalized-presence-window").unwrap();
+    fresh.window = DiscoveryWindow::new(11, 1).unwrap();
+
+    let first_result = observer.classify(&first).await.unwrap();
+    let fresh_result = observer.classify(&fresh).await.unwrap();
+    assert_eq!(first_result.scanned_window, first.window);
+    assert_eq!(fresh_result.scanned_window, fresh.window);
+    assert_eq!(
+        first_result.outcome,
+        FinalizedWitnessedClaimScanOutcome::NotFound
+    );
+    assert_eq!(
+        fresh_result.outcome,
+        FinalizedWitnessedClaimScanOutcome::NotFound
+    );
+}
+
+#[tokio::test]
 async fn unique_claim_is_discovered_from_terms_without_peer_transaction_id() {
     let fixture = fixture();
     let request = peerless_request(&fixture);
@@ -778,7 +877,14 @@ async fn authenticated_bridge_server_peerless_observation_is_repeatable_and_neve
         .await
         .unwrap();
     let second = observe(bridge.endpoint())
-        .observe_finalized_witnessed_claim(request)
+        .observe_finalized_witnessed_claim(request.clone())
+        .await
+        .unwrap();
+    let mut presence_request = request;
+    presence_request.context.request_id =
+        RequestId::new("authenticated-finalized-presence").unwrap();
+    let presence = observe(bridge.endpoint())
+        .classify_finalized_witnessed_claim(presence_request)
         .await
         .unwrap();
 
@@ -787,6 +893,12 @@ async fn authenticated_bridge_server_peerless_observation_is_repeatable_and_neve
         first.claim.transaction.transaction_id,
         expected_claim_transaction_id
     );
+    assert!(matches!(
+        presence,
+        lez_bridge_client::FinalizedWitnessedClaimPresence::PresentExact { ref claim, .. }
+            if claim.transaction.transaction_id == expected_claim_transaction_id
+    ));
+    assert!(!presence.authorizes_initial_submission());
     assert_eq!(
         indexer
             .calls
@@ -795,7 +907,7 @@ async fn authenticated_bridge_server_peerless_observation_is_repeatable_and_neve
             .iter()
             .filter(|call| call.as_str() == "tip")
             .count(),
-        4,
+        6,
         "repeatable observation must execute a fresh stable-tip read"
     );
     assert_eq!(submission_calls.load(Ordering::SeqCst), 0);

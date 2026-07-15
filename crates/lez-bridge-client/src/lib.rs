@@ -16,24 +16,26 @@ use jsonrpsee::{
 };
 use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClient, HttpClientBuilder};
 use lez_bridge_protocol::{
-    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
-    DescribeRuntimeResult, ErrorCode, ErrorMessage, EscrowState,
-    FinalizedWitnessedClaimObservationTarget, FinalizedWitnessedFundingObservationTarget,
-    MessageContext, ObserveEscrowRequest, ObserveEscrowResult,
-    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
-    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
-    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
-    ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
-    Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
-    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
-    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
-    RequestId, RunId, RuntimeDescriptor, SubmitTransactionRequest, SubmitTransactionResult,
-    WitnessedEscrowMetadataFacts,
+    ChainTip, ClassifyFinalizedWitnessedClaimResult, CompleteWitnessedClaimRequest,
+    CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult, DiscoveryWindow,
+    ErrorCode, ErrorMessage, EscrowState, FinalizedWitnessedClaimFacts,
+    FinalizedWitnessedClaimObservationTarget, FinalizedWitnessedClaimScanOutcome,
+    FinalizedWitnessedFundingObservationTarget, MessageContext, ObserveEscrowRequest,
+    ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
+    ObserveFinalizedWitnessedFundingResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
+    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
+    ObserveWitnessedEscrowResult, Participant, PrepareNativeEscrowRequest,
+    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
+    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
+    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
+    PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RunId,
+    RuntimeDescriptor, SubmitTransactionRequest, SubmitTransactionResult,
+    WitnessedEscrowMetadataFacts, WitnessedNativeEscrowTerms,
 };
 pub use lez_bridge_protocol::{
-    MAX_RPC_BODY_BYTES, METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME,
-    METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
+    MAX_RPC_BODY_BYTES, METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM, METHOD_COMPLETE_WITNESSED_CLAIM,
+    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
     METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING, METHOD_OBSERVE_NATIVE_REFUND,
     METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW,
     METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
@@ -178,6 +180,8 @@ pub enum BridgeOperation {
     CompleteWitnessedClaim,
     /// Exact finalized aggregate-witness claim observation.
     ObserveFinalizedWitnessedClaim,
+    /// Exact finalized aggregate-witness claim presence classification.
+    ClassifyFinalizedWitnessedClaim,
     /// Revealing-claim observation.
     ObserveRevealingClaim,
     /// Fixed-destination native refund preparation.
@@ -186,6 +190,76 @@ pub enum BridgeOperation {
     ObserveNativeRefund,
     /// Exact transaction submission.
     SubmitTransaction,
+}
+
+/// A stable reason why exact claim presence cannot yet be classified.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum FinalizedWitnessedClaimUnavailable {
+    /// The node, finalized tip, requested maturity, or bounded history is unavailable.
+    NodeFinalityOrHistory,
+    /// The finalized tip moved while the sidecar assembled canonical evidence.
+    MovingTip,
+}
+
+/// A transport-level reason why the observation outcome is ambiguous.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum FinalizedWitnessedClaimUncertain {
+    /// The bounded request deadline elapsed before a response was accepted.
+    Timeout,
+    /// The authenticated loopback transport failed before a response was accepted.
+    Transport,
+}
+
+/// Actor-facing exact witnessed-claim presence classification.
+///
+/// Only `NotFound` authorizes an initial submission attempt. It is returned
+/// solely from a strict success response proving the caller's exact bounded
+/// window was completely scanned under one stable finalized tip. Every node,
+/// history, maturity, moving-tip, timeout, and transport failure is distinct
+/// and fails closed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum FinalizedWitnessedClaimPresence {
+    /// The exact canonical finalized claim is already present.
+    PresentExact {
+        /// Echoed operation context.
+        context: MessageContext,
+        /// Stable finalized tip covering the exact scan.
+        finalized_tip: ChainTip,
+        /// Exact caller-owned bounded range that was scanned.
+        scanned_window: DiscoveryWindow,
+        /// Complete independently validated canonical claim facts.
+        claim: Box<FinalizedWitnessedClaimFacts>,
+    },
+    /// The exact complete stable finalized scan found no matching claim.
+    NotFound {
+        /// Echoed operation context.
+        context: MessageContext,
+        /// Stable finalized tip covering the exact scan.
+        finalized_tip: ChainTip,
+        /// Exact caller-owned bounded range that was scanned.
+        scanned_window: DiscoveryWindow,
+    },
+    /// Canonical presence cannot currently be classified from node evidence.
+    Unavailable(FinalizedWitnessedClaimUnavailable),
+    /// Delivery of the read-only classification request is ambiguous.
+    Uncertain(FinalizedWitnessedClaimUncertain),
+}
+
+impl FinalizedWitnessedClaimPresence {
+    /// Returns whether this evidence authorizes the first exact submission attempt.
+    ///
+    /// This is only the chain-absence precondition: the actor must also hold its
+    /// separate durable public-effect CAS send authority. Existing exact presence
+    /// reconciles without sending. Every unavailable or uncertain state returns
+    /// false and must be observed again using a fresh request context and an
+    /// actor-selected current finalized window.
+    #[must_use]
+    pub const fn authorizes_initial_submission(&self) -> bool {
+        matches!(self, Self::NotFound { .. })
+    }
 }
 
 /// A persisted witnessed-claim artifact is not the exact official message it names.
@@ -691,6 +765,110 @@ impl BridgeClient {
         Ok(result)
     }
 
+    /// Classifies exact witnessed-claim presence in one caller-owned finalized window.
+    ///
+    /// The caller may choose a later fresh window on a later poll; this method
+    /// never reuses or widens the funding-observation window. Only a strict
+    /// `NotFound` success covering the exact requested range authorizes an
+    /// initial submission attempt through
+    /// [`FinalizedWitnessedClaimPresence::authorizes_initial_submission`].
+    ///
+    /// # Errors
+    ///
+    /// Rejects request/runtime drift, request-ID reuse, malformed or substituted
+    /// response evidence, invalid exact claim facts, and nonavailability remote
+    /// error categories. Expected node/finality/history failures and ambiguous
+    /// local delivery are returned as typed non-authorizing presence states.
+    pub async fn classify_finalized_witnessed_claim(
+        &self,
+        request: ObserveFinalizedWitnessedClaimRequest,
+    ) -> Result<FinalizedWitnessedClaimPresence, BridgeClientError> {
+        let operation = BridgeOperation::ClassifyFinalizedWitnessedClaim;
+        let context = request.context.clone();
+        let expected_transaction_id = match request.target {
+            FinalizedWitnessedClaimObservationTarget::Exact {
+                claim_transaction_id,
+            } => Some(claim_transaction_id),
+            FinalizedWitnessedClaimObservationTarget::DiscoverByTerms => None,
+        };
+        let expected_claim = request.claim.clone();
+        let expected_terms = request.terms.clone();
+        let expected_program = request.runtime.escrow_program_id;
+        let expected_window = request.window;
+        let window_start = expected_window.start_height();
+        let window_end = window_start
+            .checked_add(u64::from(expected_window.max_blocks() - 1))
+            .ok_or(BridgeClientError::MalformedObservation { operation })?;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_witnessed_preparation(operation, &request.claim)?;
+        self.reserve_context(operation, &context)?;
+        let result: ClassifyFinalizedWitnessedClaimResult = match self
+            .request(
+                operation,
+                METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM,
+                request,
+                &context,
+            )
+            .await
+        {
+            Ok(result) => result,
+            Err(BridgeClientError::Remote(remote)) => {
+                return match remote.code() {
+                    ErrorCode::Unavailable => Ok(FinalizedWitnessedClaimPresence::Unavailable(
+                        FinalizedWitnessedClaimUnavailable::NodeFinalityOrHistory,
+                    )),
+                    ErrorCode::MovingTip => Ok(FinalizedWitnessedClaimPresence::Unavailable(
+                        FinalizedWitnessedClaimUnavailable::MovingTip,
+                    )),
+                    _ => Err(BridgeClientError::Remote(remote)),
+                };
+            }
+            Err(BridgeClientError::Timeout { .. }) => {
+                return Ok(FinalizedWitnessedClaimPresence::Uncertain(
+                    FinalizedWitnessedClaimUncertain::Timeout,
+                ));
+            }
+            Err(BridgeClientError::Transport { .. }) => {
+                return Ok(FinalizedWitnessedClaimPresence::Uncertain(
+                    FinalizedWitnessedClaimUncertain::Transport,
+                ));
+            }
+            Err(error) => return Err(error),
+        };
+        Self::validate_response_context(operation, &context, &result.context)?;
+        if result.scanned_window != expected_window || window_end > result.finalized_tip.height {
+            return Err(BridgeClientError::MalformedObservation { operation });
+        }
+        match result.outcome {
+            FinalizedWitnessedClaimScanOutcome::PresentExact { claim } => {
+                validate_finalized_witnessed_claim_facts(
+                    operation,
+                    expected_transaction_id,
+                    &expected_claim,
+                    &expected_terms,
+                    expected_program,
+                    window_start,
+                    window_end,
+                    result.finalized_tip,
+                    claim.as_ref(),
+                )?;
+                Ok(FinalizedWitnessedClaimPresence::PresentExact {
+                    context: result.context,
+                    finalized_tip: result.finalized_tip,
+                    scanned_window: result.scanned_window,
+                    claim,
+                })
+            }
+            FinalizedWitnessedClaimScanOutcome::NotFound => {
+                Ok(FinalizedWitnessedClaimPresence::NotFound {
+                    context: result.context,
+                    finalized_tip: result.finalized_tip,
+                    scanned_window: result.scanned_window,
+                })
+            }
+        }
+    }
+
     /// Observes one exact aggregate-witness claim in a stable finalized indexer window.
     ///
     /// # Errors
@@ -729,56 +907,17 @@ impl BridgeClient {
             )
             .await?;
         Self::validate_response_context(operation, &context, &result.context)?;
-        let transaction = &result.claim.transaction;
-        let instruction = &result.claim.instruction;
-        let block = result.claim.containing_block;
-        let metadata = &result.claim.metadata;
-        let custody = &result.claim.custody;
-        let expected_metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
-            metadata.account_id,
-            expected_program,
-            custody.account_id,
+        validate_finalized_witnessed_claim_facts(
+            operation,
+            expected_transaction_id,
+            &expected_claim,
             &expected_terms,
-            EscrowState::Claimed,
-        );
-        let expected_accounts = [
-            metadata.account_id,
-            custody.account_id,
-            expected_terms.claimant_account_id(),
-            expected_terms.aggregate_authority_account_id(),
-        ];
-        let exact_signer = transaction.signer_account_ids.as_slice()
-            == [expected_terms.aggregate_authority_account_id()];
-        if expected_transaction_id.is_some_and(|expected| transaction.transaction_id != expected)
-            || !transaction.is_public
-            || transaction.position.height != block.block_id
-            || transaction.position.block_hash != block.block_hash
-            || instruction.program_id != expected_program
-            || instruction.swap_id != expected_terms.swap_id()
-            || instruction.claimant_account_id != expected_terms.claimant_account_id()
-            || instruction.aggregate_authority_account_id
-                != expected_terms.aggregate_authority_account_id()
-            || instruction.claim != expected_claim
-            || instruction.ordered_account_ids.as_slice() != expected_accounts
-            || metadata != &expected_metadata
-            || custody.account_id != metadata.custody_account_id
-            || custody.owner_program_id != expected_terms.authenticated_transfer_program_id()
-            || custody.balance.as_u128() != 0
-            || !aggregate_signature_is_valid(
-                result.claim.aggregate_signature.as_bytes(),
-                expected_claim.message_hash.as_bytes(),
-                expected_terms.aggregate_x_only_public_key().as_bytes(),
-            )
-            || !exact_signer
-            || block.block_id < window_start
-            || block.block_id > window_end
-            || block.block_id > result.finalized_tip.height
-            || (block.block_id == result.finalized_tip.height
-                && block.block_hash != result.finalized_tip.block_hash)
-            || window_end > result.finalized_tip.height
-        {
-            return Err(BridgeClientError::MalformedObservation { operation });
-        }
+            expected_program,
+            window_start,
+            window_end,
+            result.finalized_tip,
+            &result.claim,
+        )?;
         Ok(result)
     }
 
@@ -935,6 +1074,70 @@ impl BridgeClient {
             .await
             .map_err(|error| map_client_error(operation, context, error))
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_finalized_witnessed_claim_facts(
+    operation: BridgeOperation,
+    expected_transaction_id: Option<lez_bridge_protocol::TransactionId>,
+    expected_claim: &PreparedWitnessedClaim,
+    expected_terms: &WitnessedNativeEscrowTerms,
+    expected_program: lez_bridge_protocol::Hex32,
+    window_start: u64,
+    window_end: u64,
+    finalized_tip: ChainTip,
+    claim: &FinalizedWitnessedClaimFacts,
+) -> Result<(), BridgeClientError> {
+    let transaction = &claim.transaction;
+    let instruction = &claim.instruction;
+    let block = claim.containing_block;
+    let metadata = &claim.metadata;
+    let custody = &claim.custody;
+    let expected_metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+        metadata.account_id,
+        expected_program,
+        custody.account_id,
+        expected_terms,
+        EscrowState::Claimed,
+    );
+    let expected_accounts = [
+        metadata.account_id,
+        custody.account_id,
+        expected_terms.claimant_account_id(),
+        expected_terms.aggregate_authority_account_id(),
+    ];
+    let exact_signer = transaction.signer_account_ids.as_slice()
+        == [expected_terms.aggregate_authority_account_id()];
+    if expected_transaction_id.is_some_and(|expected| transaction.transaction_id != expected)
+        || !transaction.is_public
+        || transaction.position.height != block.block_id
+        || transaction.position.block_hash != block.block_hash
+        || instruction.program_id != expected_program
+        || instruction.swap_id != expected_terms.swap_id()
+        || instruction.claimant_account_id != expected_terms.claimant_account_id()
+        || instruction.aggregate_authority_account_id
+            != expected_terms.aggregate_authority_account_id()
+        || &instruction.claim != expected_claim
+        || instruction.ordered_account_ids.as_slice() != expected_accounts
+        || metadata != &expected_metadata
+        || custody.account_id != metadata.custody_account_id
+        || custody.owner_program_id != expected_terms.authenticated_transfer_program_id()
+        || custody.balance.as_u128() != 0
+        || !aggregate_signature_is_valid(
+            claim.aggregate_signature.as_bytes(),
+            expected_claim.message_hash.as_bytes(),
+            expected_terms.aggregate_x_only_public_key().as_bytes(),
+        )
+        || !exact_signer
+        || block.block_id < window_start
+        || block.block_id > window_end
+        || block.block_id > finalized_tip.height
+        || (block.block_id == finalized_tip.height && block.block_hash != finalized_tip.block_hash)
+        || window_end > finalized_tip.height
+    {
+        return Err(BridgeClientError::MalformedObservation { operation });
+    }
+    Ok(())
 }
 
 fn validate_endpoint(endpoint: &str) -> Result<(), BridgeClientError> {

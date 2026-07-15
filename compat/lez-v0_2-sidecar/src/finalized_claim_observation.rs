@@ -10,13 +10,15 @@ use indexer_service_protocol::{
 };
 use indexer_service_rpc::RpcClient as _;
 use lez_bridge_protocol::{
-    AccountIds, AggregateBip340Signature, ChainPosition, ChainTip, EscrowState,
-    FinalizedBlockIdentity, FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
-    FinalizedWitnessedFundingFacts, FinalizedWitnessedFundingObservationTarget, Hex32,
-    MAX_DISCOVERY_BLOCKS, NativeCustodyFacts, NativeFundInstructionFacts,
-    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
-    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
-    ObservedTransactionFacts, WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
+    AccountIds, AggregateBip340Signature, ChainPosition, ChainTip,
+    ClassifyFinalizedWitnessedClaimResult, EscrowState, FinalizedBlockIdentity,
+    FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
+    FinalizedWitnessedClaimScanOutcome, FinalizedWitnessedFundingFacts,
+    FinalizedWitnessedFundingObservationTarget, Hex32, MAX_DISCOVERY_BLOCKS, NativeCustodyFacts,
+    NativeFundInstructionFacts, ObserveFinalizedWitnessedClaimRequest,
+    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
+    ObserveFinalizedWitnessedFundingResult, ObservedTransactionFacts,
+    WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
 };
 use lez_zec_escrow_v02::{ClaimAuthority, EscrowMetadata, EscrowStatus};
 use nssa::{
@@ -167,17 +169,43 @@ impl FinalizedWitnessedClaimObserver {
         Self { runtime, indexer }
     }
 
-    /// Observes the exact transaction once in a fully covered, stable finalized window.
+    /// Preserves the original found-only finalized observer contract.
+    ///
+    /// Definitive absence from [`Self::classify`] maps to the legacy
+    /// `Unavailable` error rather than changing this established response shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns every classifier failure and maps definitive absence to
+    /// [`BridgeRuntimeError::Unavailable`].
+    pub async fn observe(
+        &self,
+        request: &ObserveFinalizedWitnessedClaimRequest,
+    ) -> Result<ObserveFinalizedWitnessedClaimResult, BridgeRuntimeError> {
+        let classified = self.classify(request).await?;
+        match classified.outcome {
+            FinalizedWitnessedClaimScanOutcome::PresentExact { claim } => {
+                Ok(ObserveFinalizedWitnessedClaimResult::new(
+                    classified.context,
+                    classified.finalized_tip,
+                    *claim,
+                ))
+            }
+            FinalizedWitnessedClaimScanOutcome::NotFound => Err(BridgeRuntimeError::Unavailable),
+        }
+    }
+
+    /// Classifies the exact transaction once in a fully covered, stable finalized window.
     ///
     /// # Errors
     ///
     /// Fails closed on role/runtime/message/terms drift, incomplete finality, missing
     /// blocks, by-ID/by-hash disagreement, noncanonical transactions, duplicates,
     /// or movement of the finalized tip. This method performs no submission.
-    pub async fn observe(
+    pub async fn classify(
         &self,
         request: &ObserveFinalizedWitnessedClaimRequest,
-    ) -> Result<ObserveFinalizedWitnessedClaimResult, BridgeRuntimeError> {
+    ) -> Result<ClassifyFinalizedWitnessedClaimResult, BridgeRuntimeError> {
         self.validate_request(request)?;
         let finalized_before = self
             .indexer
@@ -245,11 +273,14 @@ impl FinalizedWitnessedClaimObserver {
             }
         }
 
-        let (containing_header, transaction_index, public) =
-            found.ok_or(BridgeRuntimeError::Unavailable)?;
-        let claim = self
-            .validate_claim(request, &containing_header, transaction_index, &public)
-            .await?;
+        let claim = if let Some((containing_header, transaction_index, public)) = found {
+            Some(
+                self.validate_claim(request, &containing_header, transaction_index, &public)
+                    .await?,
+            )
+        } else {
+            None
+        };
 
         let finalized_after = self
             .indexer
@@ -263,14 +294,24 @@ impl FinalizedWitnessedClaimObserver {
         if tip_block != finalized_tip_before {
             return Err(BridgeRuntimeError::MovingTip);
         }
-        Ok(ObserveFinalizedWitnessedClaimResult::new(
-            request.context.clone(),
-            ChainTip::new(
-                Hex32::from_bytes(tip_block.header.hash.0),
-                tip_block.header.block_id,
-            ),
-            claim,
-        ))
+        let finalized_tip = ChainTip::new(
+            Hex32::from_bytes(tip_block.header.hash.0),
+            tip_block.header.block_id,
+        );
+        Ok(if let Some(claim) = claim {
+            ClassifyFinalizedWitnessedClaimResult::present_exact(
+                request.context.clone(),
+                finalized_tip,
+                request.window,
+                claim,
+            )
+        } else {
+            ClassifyFinalizedWitnessedClaimResult::not_found(
+                request.context.clone(),
+                finalized_tip,
+                request.window,
+            )
+        })
     }
 
     fn validate_request(

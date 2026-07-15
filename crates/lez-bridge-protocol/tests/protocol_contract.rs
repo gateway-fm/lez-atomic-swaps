@@ -1,9 +1,10 @@
 use lez_bridge_protocol::{
     AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip,
-    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
-    DescribeRuntimeResult, DiscoveryWindow, ErrorCode, ErrorMessage, EscrowMetadataFacts,
-    EscrowObservationTarget, EscrowState, ExactMessageBytes, ExactTransactionBytes,
-    FinalizedBlockIdentity, FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
+    ClassifyFinalizedWitnessedClaimResult, CompleteWitnessedClaimRequest,
+    CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult, DiscoveryWindow,
+    ErrorCode, ErrorMessage, EscrowMetadataFacts, EscrowObservationTarget, EscrowState,
+    ExactMessageBytes, ExactTransactionBytes, FinalizedBlockIdentity, FinalizedWitnessedClaimFacts,
+    FinalizedWitnessedClaimObservationTarget, FinalizedWitnessedClaimScanOutcome,
     FinalizedWitnessedFundingFacts, FinalizedWitnessedFundingObservationTarget, FundingFoundFacts,
     FundingObservation, Hex32, InitializationFoundFacts, InitializationObservation,
     MAX_DISCOVERY_BLOCKS, MessageContext, NativeAmount, NativeClaimInstructionFacts,
@@ -229,6 +230,39 @@ fn finalized_witnessed_claim_wire_binds_exact_transcript_witness_and_block() {
         )
         .unwrap(),
         result
+    );
+}
+
+#[test]
+fn finalized_witnessed_claim_presence_wire_is_strict_and_carries_exact_coverage() {
+    let window = DiscoveryWindow::new(50, 3).unwrap();
+    let not_found = ClassifyFinalizedWitnessedClaimResult::not_found(
+        context(),
+        ChainTip::new(h(57), 52),
+        window,
+    );
+    assert_eq!(
+        not_found.outcome,
+        FinalizedWitnessedClaimScanOutcome::NotFound
+    );
+    assert_eq!(not_found.scanned_window, window);
+    assert_eq!(
+        serde_json::to_value(&not_found).unwrap()["outcome"],
+        serde_json::json!({"status": "not_found"})
+    );
+    assert_eq!(
+        serde_json::from_value::<ClassifyFinalizedWitnessedClaimResult>(
+            serde_json::to_value(&not_found).unwrap()
+        )
+        .unwrap(),
+        not_found
+    );
+
+    let mut unknown = serde_json::to_value(&not_found).unwrap();
+    unknown["outcome"]["claim"] = serde_json::json!(null);
+    assert!(
+        serde_json::from_value::<ClassifyFinalizedWitnessedClaimResult>(unknown).is_err(),
+        "not-found evidence must reject fields from the present variant"
     );
 }
 

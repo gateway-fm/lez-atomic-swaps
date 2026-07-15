@@ -2111,6 +2111,127 @@ impl ObserveFinalizedWitnessedClaimResult {
     }
 }
 
+/// Exact outcome of one completely validated finalized witnessed-claim scan.
+///
+/// `NotFound` is a positive result only because its enclosing result also
+/// carries the exact fully scanned window and the stable finalized tip that
+/// covered it. Node, history, finality, or tip-stability failures are protocol
+/// errors and can never be represented by this variant.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+#[must_use]
+pub enum FinalizedWitnessedClaimScanOutcome {
+    /// The canonical finalized scan contained the one exact validated claim.
+    PresentExact {
+        /// Complete exact finalized claim facts.
+        claim: Box<FinalizedWitnessedClaimFacts>,
+    },
+    /// The complete stable finalized scan contained no matching claim.
+    NotFound,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PresentExactStatus {
+    PresentExact,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum NotFoundStatus {
+    NotFound,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PresentExactWitnessedClaimScanOutcomeWire {
+    status: PresentExactStatus,
+    claim: Box<FinalizedWitnessedClaimFacts>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NotFoundWitnessedClaimScanOutcomeWire {
+    status: NotFoundStatus,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum FinalizedWitnessedClaimScanOutcomeWire {
+    PresentExact(PresentExactWitnessedClaimScanOutcomeWire),
+    NotFound(NotFoundWitnessedClaimScanOutcomeWire),
+}
+
+impl<'de> Deserialize<'de> for FinalizedWitnessedClaimScanOutcome {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match FinalizedWitnessedClaimScanOutcomeWire::deserialize(deserializer)? {
+            FinalizedWitnessedClaimScanOutcomeWire::PresentExact(wire) => {
+                let PresentExactStatus::PresentExact = wire.status;
+                Ok(Self::PresentExact { claim: wire.claim })
+            }
+            FinalizedWitnessedClaimScanOutcomeWire::NotFound(wire) => {
+                let NotFoundStatus::NotFound = wire.status;
+                Ok(Self::NotFound)
+            }
+        }
+    }
+}
+
+/// Result of the additive v1 exact witnessed-claim presence classifier.
+///
+/// Unlike [`ObserveFinalizedWitnessedClaimResult`], this type can prove absence.
+/// The echoed window prevents a stale funding-era range from being silently
+/// substituted for the fresh bounded range selected by the caller.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ClassifyFinalizedWitnessedClaimResult {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Stable finalized indexer tip that completely covers `scanned_window`.
+    pub finalized_tip: ChainTip,
+    /// Exact inclusive bounded range that was completely scanned.
+    pub scanned_window: DiscoveryWindow,
+    /// Exact presence or definitive absence within that range.
+    pub outcome: FinalizedWitnessedClaimScanOutcome,
+}
+
+impl ClassifyFinalizedWitnessedClaimResult {
+    /// Creates exact present evidence for a completely scanned stable window.
+    pub fn present_exact(
+        context: MessageContext,
+        finalized_tip: ChainTip,
+        scanned_window: DiscoveryWindow,
+        claim: FinalizedWitnessedClaimFacts,
+    ) -> Self {
+        Self {
+            context,
+            finalized_tip,
+            scanned_window,
+            outcome: FinalizedWitnessedClaimScanOutcome::PresentExact {
+                claim: Box::new(claim),
+            },
+        }
+    }
+
+    /// Creates definitive absence evidence for a completely scanned stable window.
+    pub const fn not_found(
+        context: MessageContext,
+        finalized_tip: ChainTip,
+        scanned_window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            finalized_tip,
+            scanned_window,
+            outcome: FinalizedWitnessedClaimScanOutcome::NotFound,
+        }
+    }
+}
+
 /// Selects an owned exact claim ID or counterparty discovery by signed terms.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]

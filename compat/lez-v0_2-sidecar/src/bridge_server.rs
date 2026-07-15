@@ -13,12 +13,13 @@ use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_protocol::{
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
     DescribeRuntimeResult, ErrorCode, ErrorMessage, MAX_RPC_BODY_BYTES,
-    METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW,
-    METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
-    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
-    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
-    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
-    MessageContext, ObserveEscrowRequest, ObserveFinalizedWitnessedClaimRequest,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM, METHOD_COMPLETE_WITNESSED_CLAIM,
+    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
+    METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING, METHOD_OBSERVE_NATIVE_REFUND,
+    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW,
+    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
+    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, MessageContext,
+    ObserveEscrowRequest, ObserveFinalizedWitnessedClaimRequest,
     ObserveFinalizedWitnessedFundingRequest, ObserveNativeRefundRequest,
     ObserveRevealingClaimRequest, ObserveWitnessedEscrowRequest, Participant,
     PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
@@ -895,6 +896,29 @@ fn register_methods(
         },
     )?;
     module.register_async_method(
+        METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM,
+        |params, state, _| async move {
+            let request: ObserveFinalizedWitnessedClaimRequest = params.one()?;
+            state.validate_runtime(&request.context, &request.runtime)?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM,
+                    &request.context,
+                    &request,
+                    || async move {
+                        runtime
+                            .classify_finalized_witnessed_claim(&operation)
+                            .await
+                            .map_err(Into::into)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
+    module.register_async_method(
         METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
         |params, state, _| async move {
             let request: ObserveFinalizedWitnessedFundingRequest = params.one()?;
@@ -1182,6 +1206,7 @@ fn valid_method(method: &str) -> bool {
             | METHOD_PREPARE_WITNESSED_CLAIM
             | METHOD_COMPLETE_WITNESSED_CLAIM
             | METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM
+            | METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM
             | METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING
             | METHOD_OBSERVE_REVEALING_CLAIM
             | METHOD_PREPARE_NATIVE_REFUND

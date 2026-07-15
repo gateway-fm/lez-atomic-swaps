@@ -6,38 +6,41 @@ use std::{
 
 use jsonrpsee::{RpcModule, types::ErrorObjectOwned};
 use lez_bridge_client::{
-    BridgeClient, BridgeClientConfig, BridgeClientError, BridgeOperation, MAX_RPC_BODY_BYTES,
-    METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW,
-    METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
-    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
-    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
-    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
-    RUN_ID_HEADER, SIDECAR_ROLE_HEADER, SidecarCapability,
+    BridgeClient, BridgeClientConfig, BridgeClientError, BridgeOperation,
+    FinalizedWitnessedClaimPresence, FinalizedWitnessedClaimUnavailable,
+    FinalizedWitnessedClaimUncertain, MAX_RPC_BODY_BYTES,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM, METHOD_COMPLETE_WITNESSED_CLAIM,
+    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
+    METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING, METHOD_OBSERVE_NATIVE_REFUND,
+    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW,
+    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
+    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+    SidecarCapability,
 };
 use lez_bridge_protocol::{
     AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip,
-    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
-    DescribeRuntimeResult, DiscoveryWindow, ErrorCode, ErrorMessage, EscrowObservationTarget,
-    EscrowState, ExactMessageBytes, ExactTransactionBytes, FinalizedBlockIdentity,
-    FinalizedWitnessedClaimFacts, FinalizedWitnessedFundingFacts,
-    FinalizedWitnessedFundingObservationTarget, FundingObservation, Hex32,
-    InitializationObservation, MessageContext, NativeCustodyFacts, NativeEscrowAccountObservation,
-    NativeEscrowTerms, NativeEscrowTermsInput, NativeFundInstructionFacts, NativeRefundObservation,
-    NativeRefundObservationTarget, ObserveEscrowRequest, ObserveEscrowResult,
-    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
-    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
-    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
-    ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
-    ObservedTransactionFacts, Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
-    PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
-    PrepareRevealingClaimResult, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
-    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
-    PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RevealingClaimObservation,
-    RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
-    TransactionId, WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
-    WitnessedFundingObservation, WitnessedInitializationObservation, WitnessedNativeEscrowTerms,
-    WitnessedNativeEscrowTermsInput,
+    ClassifyFinalizedWitnessedClaimResult, CompleteWitnessedClaimRequest,
+    CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult, DiscoveryWindow,
+    ErrorCode, ErrorMessage, EscrowObservationTarget, EscrowState, ExactMessageBytes,
+    ExactTransactionBytes, FinalizedBlockIdentity, FinalizedWitnessedClaimFacts,
+    FinalizedWitnessedFundingFacts, FinalizedWitnessedFundingObservationTarget, FundingObservation,
+    Hex32, InitializationObservation, MessageContext, NativeCustodyFacts,
+    NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
+    NativeFundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
+    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
+    ObserveFinalizedWitnessedFundingResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
+    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
+    ObserveWitnessedEscrowResult, ObservedTransactionFacts, Participant,
+    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
+    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
+    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
+    RequestId, RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage,
+    RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
+    SubmitTransactionResult, TransactionId, WitnessedClaimInstructionFacts,
+    WitnessedEscrowMetadataFacts, WitnessedFundingObservation, WitnessedInitializationObservation,
+    WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
 };
 use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
 use serde_json::json;
@@ -69,6 +72,7 @@ enum Behavior {
     SlowRefundPrepare,
     SlowRefundObserve,
     SlowSubmit,
+    SlowPresence,
     MaximumPrepared,
     UnknownRefundField,
     MutatedFinalizedMetadata,
@@ -87,6 +91,10 @@ enum Behavior {
     MutatedFinalizedFundingPositionHeight,
     MutatedFinalizedFundingPositionHash,
     FinalizedFundingTipBeforeWindowEnd,
+    PresenceNotFound,
+    PresenceUnavailable,
+    PresenceMovingTip,
+    PresenceWrongWindow,
 }
 
 #[derive(Clone, Debug)]
@@ -208,6 +216,7 @@ fn register_existing_transaction_methods(module: &mut RpcModule<Fixture>) {
     register_witnessed_escrow_method(module);
     register_finalized_witnessed_funding_method(module);
     register_finalized_witnessed_claim_method(module);
+    register_finalized_witnessed_claim_presence_method(module);
     module
         .register_async_method(
             METHOD_PREPARE_NATIVE_ESCROW,
@@ -460,75 +469,130 @@ fn register_finalized_witnessed_claim_method(module: &mut RpcModule<Fixture>) {
             |params, fixture, _| {
                 let request: ObserveFinalizedWitnessedClaimRequest = params.one()?;
                 fixture.record(METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM);
-                let prepared = prepared(45, 15);
-                let block_id = match fixture.behavior {
-                    Behavior::FinalizedBeforeWindow => request.window.start_height() - 1,
-                    Behavior::FinalizedAfterWindow => {
-                        request.window.start_height() + u64::from(request.window.max_blocks())
-                    }
-                    _ => request.window.start_height(),
-                };
-                let transaction = lez_bridge_protocol::ObservedTransactionFacts::new(
-                    prepared.transaction_id,
-                    prepared.exact_bytes,
-                    ChainPosition::new(Hex32::from_bytes([80; 32]), block_id, 0),
-                    AccountIds::new(vec![request.terms.aggregate_authority_account_id()]).unwrap(),
-                    true,
-                );
-                let mut metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
-                    Hex32::from_bytes([82; 32]),
-                    request.runtime.escrow_program_id,
-                    Hex32::from_bytes([83; 32]),
-                    &request.terms,
-                    EscrowState::Claimed,
-                );
-                if matches!(fixture.behavior, Behavior::MutatedFinalizedMetadata) {
-                    metadata.status = EscrowState::Funded;
-                }
-                let custody = NativeCustodyFacts::new(
-                    Hex32::from_bytes([83; 32]),
-                    request.terms.authenticated_transfer_program_id(),
-                    0,
-                );
-                let aggregate_signature = finalized_signature(&request, fixture.behavior);
-                let finalized_height =
-                    if matches!(fixture.behavior, Behavior::FinalizedTipHashDisagreement) {
-                        block_id
-                    } else {
-                        61
-                    };
-                Ok::<_, ErrorObjectOwned>(ObserveFinalizedWitnessedClaimResult::new(
-                    response_context(&request.context, fixture.behavior),
-                    ChainTip::new(Hex32::from_bytes([81; 32]), finalized_height),
-                    FinalizedWitnessedClaimFacts::new(
-                        transaction,
-                        WitnessedClaimInstructionFacts::new(
-                            request.runtime.escrow_program_id,
-                            AccountIds::new(vec![
-                                Hex32::from_bytes([82; 32]),
-                                Hex32::from_bytes([83; 32]),
-                                request.terms.claimant_account_id(),
-                                request.terms.aggregate_authority_account_id(),
-                            ])
-                            .unwrap(),
-                            request.terms.swap_id(),
-                            request.terms.claimant_account_id(),
-                            request.terms.aggregate_authority_account_id(),
-                            request.claim,
-                        ),
-                        aggregate_signature,
-                        FinalizedBlockIdentity::new(
-                            block_id,
-                            Hex32::from_bytes([80; 32]),
-                            1_850_000_000_060,
-                        ),
-                        metadata,
-                        custody,
-                    ),
+                Ok::<_, ErrorObjectOwned>(finalized_witnessed_claim_result(
+                    &request,
+                    fixture.behavior,
                 ))
             },
         )
         .expect("observe finalized witnessed claim method");
+}
+
+fn finalized_witnessed_claim_result(
+    request: &ObserveFinalizedWitnessedClaimRequest,
+    behavior: Behavior,
+) -> ObserveFinalizedWitnessedClaimResult {
+    let prepared = prepared(45, 15);
+    let block_id = match behavior {
+        Behavior::FinalizedBeforeWindow => request.window.start_height() - 1,
+        Behavior::FinalizedAfterWindow => {
+            request.window.start_height() + u64::from(request.window.max_blocks())
+        }
+        _ => request.window.start_height(),
+    };
+    let transaction = lez_bridge_protocol::ObservedTransactionFacts::new(
+        prepared.transaction_id,
+        prepared.exact_bytes,
+        ChainPosition::new(Hex32::from_bytes([80; 32]), block_id, 0),
+        AccountIds::new(vec![request.terms.aggregate_authority_account_id()]).unwrap(),
+        true,
+    );
+    let mut metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+        Hex32::from_bytes([82; 32]),
+        request.runtime.escrow_program_id,
+        Hex32::from_bytes([83; 32]),
+        &request.terms,
+        EscrowState::Claimed,
+    );
+    if matches!(behavior, Behavior::MutatedFinalizedMetadata) {
+        metadata.status = EscrowState::Funded;
+    }
+    let custody = NativeCustodyFacts::new(
+        Hex32::from_bytes([83; 32]),
+        request.terms.authenticated_transfer_program_id(),
+        0,
+    );
+    let aggregate_signature = finalized_signature(request, behavior);
+    let finalized_height = if matches!(behavior, Behavior::FinalizedTipHashDisagreement) {
+        block_id
+    } else {
+        61
+    };
+    ObserveFinalizedWitnessedClaimResult::new(
+        response_context(&request.context, behavior),
+        ChainTip::new(Hex32::from_bytes([81; 32]), finalized_height),
+        FinalizedWitnessedClaimFacts::new(
+            transaction,
+            WitnessedClaimInstructionFacts::new(
+                request.runtime.escrow_program_id,
+                AccountIds::new(vec![
+                    Hex32::from_bytes([82; 32]),
+                    Hex32::from_bytes([83; 32]),
+                    request.terms.claimant_account_id(),
+                    request.terms.aggregate_authority_account_id(),
+                ])
+                .unwrap(),
+                request.terms.swap_id(),
+                request.terms.claimant_account_id(),
+                request.terms.aggregate_authority_account_id(),
+                request.claim.clone(),
+            ),
+            aggregate_signature,
+            FinalizedBlockIdentity::new(block_id, Hex32::from_bytes([80; 32]), 1_850_000_000_060),
+            metadata,
+            custody,
+        ),
+    )
+}
+
+fn register_finalized_witnessed_claim_presence_method(module: &mut RpcModule<Fixture>) {
+    module
+        .register_async_method(
+            METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM,
+            |params, fixture, _| async move {
+                let request: ObserveFinalizedWitnessedClaimRequest = params.one()?;
+                fixture.record(METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM);
+                if matches!(fixture.behavior, Behavior::SlowPresence) {
+                    tokio::time::sleep(TIMEOUT_TEST_SERVER_DELAY).await;
+                }
+                if matches!(fixture.behavior, Behavior::PresenceUnavailable) {
+                    return Err(typed_remote_error(request.context));
+                }
+                if matches!(fixture.behavior, Behavior::PresenceMovingTip) {
+                    return Err(ErrorObjectOwned::owned(
+                        -32_010,
+                        "LEZ bridge request failed",
+                        Some(ProtocolErrorReply::new(
+                            request.context,
+                            ErrorCode::MovingTip,
+                            ErrorMessage::new("stable finalized tip moved").unwrap(),
+                        )),
+                    ));
+                }
+                let observed = finalized_witnessed_claim_result(&request, fixture.behavior);
+                let scanned_window = if matches!(fixture.behavior, Behavior::PresenceWrongWindow) {
+                    DiscoveryWindow::new(request.window.start_height() + 1, 1).unwrap()
+                } else {
+                    request.window
+                };
+                let result = if matches!(fixture.behavior, Behavior::PresenceNotFound) {
+                    ClassifyFinalizedWitnessedClaimResult::not_found(
+                        observed.context,
+                        observed.finalized_tip,
+                        scanned_window,
+                    )
+                } else {
+                    ClassifyFinalizedWitnessedClaimResult::present_exact(
+                        observed.context,
+                        observed.finalized_tip,
+                        scanned_window,
+                        observed.claim,
+                    )
+                };
+                Ok::<_, ErrorObjectOwned>(result)
+            },
+        )
+        .expect("classify finalized witnessed claim method");
 }
 
 fn finalized_signature(
@@ -875,6 +939,7 @@ async fn round_trip_finalized_witnessed_claim(
     transcript: PreparedWitnessedClaim,
     completed: &PreparedTransaction,
 ) {
+    let presence_transcript = transcript.clone();
     let finalized = client
         .observe_finalized_witnessed_claim(ObserveFinalizedWitnessedClaimRequest::new(
             context(run, Participant::Maker, "observe-finalized-witnessed"),
@@ -890,6 +955,23 @@ async fn round_trip_finalized_witnessed_claim(
         finalized.claim.transaction.transaction_id,
         completed.transaction_id
     );
+    let presence = client
+        .classify_finalized_witnessed_claim(ObserveFinalizedWitnessedClaimRequest::new(
+            context(run, Participant::Maker, "classify-finalized-witnessed"),
+            expected_runtime.clone(),
+            witnessed_terms(expected_runtime),
+            presence_transcript,
+            completed.transaction_id,
+            DiscoveryWindow::new(60, 1).unwrap(),
+        ))
+        .await
+        .expect("classify finalized witnessed claim");
+    assert!(matches!(
+        presence,
+        FinalizedWitnessedClaimPresence::PresentExact { ref claim, .. }
+            if claim.transaction.transaction_id == completed.transaction_id
+    ));
+    assert!(!presence.authorizes_initial_submission());
 }
 
 async fn round_trip_finalized_witnessed_funding(
@@ -1251,6 +1333,119 @@ async fn finalized_witnessed_claim_rejects_signature_key_and_message_mutations()
     }
 }
 
+async fn classify_presence_for_behavior(
+    behavior: Behavior,
+    suffix: &str,
+) -> Result<FinalizedWitnessedClaimPresence, BridgeClientError> {
+    let expected_runtime = runtime(Participant::Maker, 31);
+    let sidecar = spawn_sidecar(expected_runtime.clone(), MAKER_CAPABILITY, behavior).await;
+    let run = RunId::new(TEST_RUN).expect("run id");
+    let timeout = if matches!(behavior, Behavior::SlowPresence) {
+        TIMEOUT_TEST_CLIENT_DEADLINE
+    } else {
+        Duration::from_secs(1)
+    };
+    let client = client(
+        &sidecar.endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        expected_runtime.clone(),
+        timeout,
+    );
+    let (transcript, completed) =
+        round_trip_witnessed_claim(&client, &run, &expected_runtime, txid(30)).await;
+    let result = client
+        .classify_finalized_witnessed_claim(ObserveFinalizedWitnessedClaimRequest::new(
+            context(&run, Participant::Maker, suffix),
+            expected_runtime.clone(),
+            witnessed_terms(&expected_runtime),
+            transcript,
+            completed.transaction_id,
+            DiscoveryWindow::new(60, 2).unwrap(),
+        ))
+        .await;
+    if matches!(behavior, Behavior::SlowPresence) {
+        tokio::time::sleep(TIMEOUT_TEST_DRAIN).await;
+    }
+    result
+}
+
+#[tokio::test]
+async fn finalized_witnessed_claim_presence_distinguishes_exact_present_and_definitive_absence() {
+    let present = classify_presence_for_behavior(Behavior::Happy, "presence-present")
+        .await
+        .unwrap();
+    let FinalizedWitnessedClaimPresence::PresentExact {
+        finalized_tip,
+        scanned_window,
+        claim,
+        ..
+    } = present
+    else {
+        panic!("canonical exact claim must classify as present")
+    };
+    assert_eq!(finalized_tip.height, 61);
+    assert_eq!(scanned_window, DiscoveryWindow::new(60, 2).unwrap());
+    assert_eq!(claim.transaction.transaction_id, txid(45));
+
+    let absent = classify_presence_for_behavior(Behavior::PresenceNotFound, "presence-absent")
+        .await
+        .unwrap();
+    assert!(absent.authorizes_initial_submission());
+    assert!(matches!(
+        absent,
+        FinalizedWitnessedClaimPresence::NotFound {
+            finalized_tip: ChainTip { height: 61, .. },
+            scanned_window,
+            ..
+        } if scanned_window == DiscoveryWindow::new(60, 2).unwrap()
+    ));
+}
+
+#[tokio::test]
+async fn finalized_witnessed_claim_presence_never_collapses_failures_into_not_found() {
+    assert_eq!(
+        classify_presence_for_behavior(Behavior::PresenceUnavailable, "presence-unavailable")
+            .await
+            .unwrap(),
+        FinalizedWitnessedClaimPresence::Unavailable(
+            FinalizedWitnessedClaimUnavailable::NodeFinalityOrHistory,
+        )
+    );
+    assert_eq!(
+        classify_presence_for_behavior(Behavior::PresenceMovingTip, "presence-moving")
+            .await
+            .unwrap(),
+        FinalizedWitnessedClaimPresence::Unavailable(FinalizedWitnessedClaimUnavailable::MovingTip,)
+    );
+    assert_eq!(
+        classify_presence_for_behavior(Behavior::SlowPresence, "presence-timeout")
+            .await
+            .unwrap(),
+        FinalizedWitnessedClaimPresence::Uncertain(FinalizedWitnessedClaimUncertain::Timeout)
+    );
+}
+
+#[tokio::test]
+async fn finalized_witnessed_claim_presence_rejects_substituted_scan_window() {
+    for (behavior, suffix) in [
+        (Behavior::PresenceWrongWindow, "presence-wrong-window"),
+        (
+            Behavior::MutatedFinalizedMetadata,
+            "presence-mutated-metadata",
+        ),
+    ] {
+        assert!(matches!(
+            classify_presence_for_behavior(behavior, suffix)
+                .await
+                .unwrap_err(),
+            BridgeClientError::MalformedObservation {
+                operation: BridgeOperation::ClassifyFinalizedWitnessedClaim,
+            }
+        ));
+    }
+}
+
 fn assert_all_method_calls(fixture: &Fixture) {
     for method in [
         METHOD_DESCRIBE_RUNTIME,
@@ -1264,6 +1459,7 @@ fn assert_all_method_calls(fixture: &Fixture) {
         METHOD_COMPLETE_WITNESSED_CLAIM,
         METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
         METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
+        METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM,
         METHOD_PREPARE_NATIVE_REFUND,
         METHOD_OBSERVE_NATIVE_REFUND,
         METHOD_SUBMIT_TRANSACTION,

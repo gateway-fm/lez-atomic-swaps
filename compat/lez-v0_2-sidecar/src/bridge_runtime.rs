@@ -3,12 +3,13 @@ use std::sync::Arc;
 use borsh::BorshDeserialize as _;
 use common::{block::Block, transaction::LeeTransaction};
 use lez_bridge_protocol::{
-    AccountIds, ChainPosition, ChainTip, CompleteWitnessedClaimRequest,
-    CompleteWitnessedClaimResult, DiscoveryWindow, EscrowMetadataFacts, EscrowObservationTarget,
-    EscrowState, FundingFoundFacts, FundingObservation, Hex32, InitializationFoundFacts,
-    InitializationObservation, MAX_DISCOVERY_BLOCKS, NativeClaimInstructionFacts,
-    NativeCustodyFacts, NativeFundInstructionFacts, NativeInitializeInstructionFacts,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    AccountIds, ChainPosition, ChainTip, ClassifyFinalizedWitnessedClaimResult,
+    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DiscoveryWindow,
+    EscrowMetadataFacts, EscrowObservationTarget, EscrowState, FundingFoundFacts,
+    FundingObservation, Hex32, InitializationFoundFacts, InitializationObservation,
+    MAX_DISCOVERY_BLOCKS, NativeClaimInstructionFacts, NativeCustodyFacts,
+    NativeFundInstructionFacts, NativeInitializeInstructionFacts, ObserveEscrowRequest,
+    ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
     ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
     ObserveFinalizedWitnessedFundingResult, ObserveRevealingClaimRequest,
     ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
@@ -245,6 +246,20 @@ impl BridgeRuntime {
         request: &ObserveFinalizedWitnessedClaimRequest,
     ) -> Result<ObserveFinalizedWitnessedClaimResult, BridgeRuntimeError> {
         self.finalized_claim_observer.observe(request).await
+    }
+
+    /// Classifies exact witnessed-claim presence in a stable finalized window.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on role/runtime/message/terms drift, incomplete finality,
+    /// missing or contradictory indexer facts, duplicate occurrence, or tip
+    /// movement. Only a complete stable scan may return definitive absence.
+    pub async fn classify_finalized_witnessed_claim(
+        &self,
+        request: &ObserveFinalizedWitnessedClaimRequest,
+    ) -> Result<ClassifyFinalizedWitnessedClaimResult, BridgeRuntimeError> {
+        self.finalized_claim_observer.classify(request).await
     }
 
     /// Observes one witnessed funding effect in a stable, fully finalized indexer window.

@@ -22,22 +22,22 @@ pub use sdk_ports::{
 };
 
 use async_trait::async_trait;
-use lez_bridge_client::{BridgeClient, BridgeClientError};
+use lez_bridge_client::{BridgeClient, BridgeClientError, FinalizedWitnessedClaimPresence};
 use lez_bridge_protocol::{
     AccountIds, DiscoveryWindow, EscrowMetadataFacts, EscrowObservationTarget, EscrowState,
     ExactTransactionBytes, FundingFoundFacts, FundingObservation, Hex32, InitializationFoundFacts,
     InitializationObservation, MessageContext, NativeCustodyFacts, NativeEscrowAccountFacts,
     NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
     NativeRefundFoundFacts, NativeRefundObservation, NativeRefundObservationTarget,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveNativeRefundRequest,
-    ObserveNativeRefundResult, ObserveRevealingClaimRequest, ObserveRevealingClaimResult,
-    ObservedTransactionFacts, Participant as BridgeParticipant, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
-    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PreparedTransaction,
-    ProtocolValueError, RequestId, RevealingClaimFoundFacts, RevealingClaimObservation,
-    RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
-    TransactionId,
+    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
+    ObserveRevealingClaimResult, ObservedTransactionFacts, Participant as BridgeParticipant,
+    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
+    PreparedTransaction, ProtocolValueError, RequestId, RevealingClaimFoundFacts,
+    RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage, RunId,
+    RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
+    SubmitTransactionResult, TransactionId,
 };
 use lez_swap_core::{ChainPosition, LezUnixMilliseconds, Participant};
 use lez_zec_swap_sdk::{
@@ -105,6 +105,36 @@ impl LezBridgeObservationTransport for BridgeClient {
         request: ObserveEscrowRequest,
     ) -> Result<ObserveEscrowResult, Self::Error> {
         BridgeClient::observe_escrow(self, request).await
+    }
+}
+
+/// One read-only attempt to classify exact witnessed-claim presence.
+///
+/// This boundary is intentionally separate from submission. Implementations
+/// must preserve the client's four-way `PresentExact` / `NotFound` /
+/// `Unavailable` / `Uncertain` classification; only `NotFound` may authorize
+/// an actor's first exact submission attempt.
+#[async_trait]
+pub trait LezBridgeWitnessedClaimPresenceTransport: Send + Sync {
+    /// Concrete transport or evidence-validation failure.
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Classifies one exact caller-owned bounded finalized window once.
+    async fn classify_finalized_witnessed_claim(
+        &self,
+        request: ObserveFinalizedWitnessedClaimRequest,
+    ) -> Result<FinalizedWitnessedClaimPresence, Self::Error>;
+}
+
+#[async_trait]
+impl LezBridgeWitnessedClaimPresenceTransport for BridgeClient {
+    type Error = BridgeClientError;
+
+    async fn classify_finalized_witnessed_claim(
+        &self,
+        request: ObserveFinalizedWitnessedClaimRequest,
+    ) -> Result<FinalizedWitnessedClaimPresence, Self::Error> {
+        BridgeClient::classify_finalized_witnessed_claim(self, request).await
     }
 }
 
