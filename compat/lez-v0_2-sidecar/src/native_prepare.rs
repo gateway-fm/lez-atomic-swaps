@@ -4,15 +4,18 @@ use std::{fmt, sync::Arc};
 use std::path::Path;
 
 use async_trait::async_trait;
+use borsh::BorshDeserialize as _;
 use common::transaction::LeeTransaction;
 use lez_bridge_protocol::{
+    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, ExactMessageBytes,
     ExactTransactionBytes, Hex32, Participant, PrepareNativeEscrowRequest,
     PrepareNativeEscrowResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PreparedTransaction, ProtocolValueError, RuntimeCompatibility, RuntimeDescriptor,
+    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PreparedTransaction,
+    PreparedWitnessedClaim, ProtocolValueError, RuntimeCompatibility, RuntimeDescriptor,
     TransactionId,
 };
 use nssa::{
-    AccountId, PrivateKey, PublicKey, PublicTransaction,
+    AccountId, PrivateKey, PublicKey, PublicTransaction, Signature,
     public_transaction::{Message, WitnessSet},
 };
 use sha2::{Digest as _, Sha256};
@@ -64,9 +67,18 @@ pub enum NativePrepareError {
     /// Another revealing claim already owns this signer's active nonce.
     #[error("a distinct native revealing claim already owns the nonce reservation")]
     ActiveClaimPrepare,
+    /// Another witnessed claim already owns the aggregate authority nonce.
+    #[error("a distinct witnessed claim already owns the aggregate authority nonce reservation")]
+    ActiveWitnessedClaimPrepare,
+    /// A witnessed claim was already completed with different bytes.
+    #[error("the witnessed claim reservation was already completed differently")]
+    ActiveWitnessedClaimCompletion,
     /// The claim is assigned to another role or signer.
     #[error("native revealing claim does not belong to this isolated claimant")]
     WrongClaimant,
+    /// Aggregate key/account identity or destination separation was invalid.
+    #[error("witnessed claim aggregate authority binding is invalid")]
+    WrongAggregateAuthority,
     /// The revealing preimage does not match the signed escrow digest.
     #[error("native revealing claim preimage does not match the signed digest")]
     WrongPreimage,
@@ -121,6 +133,8 @@ struct ActivePrepare {
 struct PlannerState {
     active: Option<ActivePrepare>,
     active_claim: Option<ActiveClaimPrepare>,
+    active_witnessed_claim: Option<ActiveWitnessedClaimPrepare>,
+    completed_witnessed_claim: Option<ActiveWitnessedClaimCompletion>,
 }
 
 #[derive(Clone)]
@@ -130,6 +144,18 @@ struct ActiveClaimPrepare {
     terms: lez_bridge_protocol::NativeEscrowTerms,
     funding_transaction_id: TransactionId,
     preimage: Zeroizing<[u8; 32]>,
+}
+
+#[derive(Clone)]
+struct ActiveWitnessedClaimPrepare {
+    request: PrepareWitnessedClaimRequest,
+    result: PrepareWitnessedClaimResult,
+}
+
+#[derive(Clone)]
+struct ActiveWitnessedClaimCompletion {
+    request: CompleteWitnessedClaimRequest,
+    result: CompleteWitnessedClaimResult,
 }
 
 /// One-role, one-signer official v0.2 native escrow planner.
@@ -413,6 +439,159 @@ impl NativeEscrowPlanner {
         Ok(result)
     }
 
+    /// Reserves the exact unsigned official message used by both aggregate signers.
+    ///
+    /// The aggregate authority's current nonce is read once, and the exact
+    /// canonical message bytes/hash are durably installed before being exposed.
+    /// An identical replay returns the same transcript without rereading a nonce.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role, runtime, destination, aggregate key/account, funding ID,
+    /// nonce, canonical encoding, durable state, or active-reservation drift.
+    pub async fn prepare_witnessed_claim(
+        &self,
+        request: &PrepareWitnessedClaimRequest,
+    ) -> Result<PrepareWitnessedClaimResult, NativePrepareError> {
+        let authority = self.validate_witnessed_claim_request(request)?;
+        let mut state = self.state.lock().await;
+        if let Some(active) = state.active_witnessed_claim.as_ref() {
+            return if active.request == *request {
+                self.validate_prepared_witnessed_claim(&active.request, &active.result)?;
+                Ok(active.result.clone())
+            } else {
+                Err(NativePrepareError::ActiveWitnessedClaimPrepare)
+            };
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(recovered) = self.recover_durable_witnessed_claim(request)? {
+            state.active_witnessed_claim = Some(ActiveWitnessedClaimPrepare {
+                request: request.clone(),
+                result: recovered.clone(),
+            });
+            return Ok(recovered);
+        }
+
+        let nonce = self.nonce_source.account_nonce(authority).await?;
+        let message = self.witnessed_claim_message(request, nonce)?;
+        let result = PrepareWitnessedClaimResult::new(
+            request.context.clone(),
+            prepared_witnessed_from_message(request.context.request_id.clone(), &message)?,
+        );
+        self.validate_prepared_witnessed_claim(request, &result)?;
+        #[cfg(target_os = "linux")]
+        if let Some(store) = self.durable_store.as_ref()
+            && let Err(error) = store.create(ReservationKind::WitnessedClaim, request, &result)
+        {
+            if error == DurableReservationError::AlreadyReserved {
+                let recovered = self
+                    .recover_durable_witnessed_claim(request)?
+                    .ok_or(DurableReservationError::Filesystem)?;
+                state.active_witnessed_claim = Some(ActiveWitnessedClaimPrepare {
+                    request: request.clone(),
+                    result: recovered.clone(),
+                });
+                return Ok(recovered);
+            }
+            return Err(error.into());
+        }
+        state.active_witnessed_claim = Some(ActiveWitnessedClaimPrepare {
+            request: request.clone(),
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
+    /// Completes one exact reservation with an externally aggregated signature.
+    ///
+    /// This performs no signing or curve arithmetic. The pinned official LEZ
+    /// verifier checks the supplied 64-byte BIP340 signature, then this planner
+    /// builds and durably retains one canonical public transaction. Submission
+    /// remains a separate exact-byte operation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unstored or mutated messages, context/runtime/role drift, an
+    /// invalid aggregate signature, noncanonical output, or a second differing
+    /// completion for the same reservation.
+    pub async fn complete_witnessed_claim(
+        &self,
+        request: &CompleteWitnessedClaimRequest,
+    ) -> Result<CompleteWitnessedClaimResult, NativePrepareError> {
+        let mut state = self.state.lock().await;
+        #[cfg(target_os = "linux")]
+        if state.active_witnessed_claim.is_none()
+            && let Some(recovered) = self.load_durable_witnessed_claim_for_completion(request)?
+        {
+            state.active_witnessed_claim = Some(recovered);
+        }
+        let active = state
+            .active_witnessed_claim
+            .clone()
+            .ok_or(NativePrepareError::ActiveWitnessedClaimPrepare)?;
+        self.validate_witnessed_completion_request(&active, request)?;
+        if let Some(completed) = state.completed_witnessed_claim.as_ref() {
+            return if completed.request == *request {
+                self.validate_completed_witnessed_claim(&active, request, &completed.result)?;
+                Ok(completed.result.clone())
+            } else {
+                Err(NativePrepareError::ActiveWitnessedClaimCompletion)
+            };
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(recovered) = self.recover_durable_witnessed_completion(&active, request)? {
+            state.completed_witnessed_claim = Some(ActiveWitnessedClaimCompletion {
+                request: request.clone(),
+                result: recovered.clone(),
+            });
+            return Ok(recovered);
+        }
+
+        let message = decode_witnessed_message(&active.result.claim)?;
+        let public_key = PublicKey::try_new(
+            *active
+                .request
+                .terms
+                .aggregate_x_only_public_key()
+                .as_bytes(),
+        )
+        .map_err(|_| NativePrepareError::WrongAggregateAuthority)?;
+        let signature = Signature {
+            value: *request.aggregate_signature.as_bytes(),
+        };
+        if !signature.is_valid_for(&message.hash(), &public_key) {
+            return Err(NativePrepareError::InvalidSignature);
+        }
+        let witness = WitnessSet::from_raw_parts(vec![(signature, public_key)]);
+        let prepared = prepared_from_transaction(&PublicTransaction::new(message, witness))?;
+        let result = CompleteWitnessedClaimResult::new(request.context.clone(), prepared);
+        self.validate_completed_witnessed_claim(&active, request, &result)?;
+        #[cfg(target_os = "linux")]
+        if let Some(store) = self.durable_store.as_ref()
+            && let Err(error) =
+                store.create(ReservationKind::WitnessedClaimCompletion, request, &result)
+        {
+            if error == DurableReservationError::AlreadyReserved {
+                let recovered = self
+                    .recover_durable_witnessed_completion(&active, request)?
+                    .ok_or(DurableReservationError::Filesystem)?;
+                state.completed_witnessed_claim = Some(ActiveWitnessedClaimCompletion {
+                    request: request.clone(),
+                    result: recovered.clone(),
+                });
+                return Ok(recovered);
+            }
+            return Err(error.into());
+        }
+        state.completed_witnessed_claim = Some(ActiveWitnessedClaimCompletion {
+            request: request.clone(),
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
     /// Returns the exact owned initialization/funding pair after checking the
     /// complete observation request and both persisted transaction identities.
     ///
@@ -510,6 +689,14 @@ impl NativeEscrowPlanner {
             self.validate_prepared_claim(&source, &active.result)?;
             return Ok(());
         }
+        if let (Some(active), Some(completed)) = (
+            state.active_witnessed_claim.as_ref(),
+            state.completed_witnessed_claim.as_ref(),
+        ) && &completed.result.claim == prepared
+        {
+            self.validate_completed_witnessed_claim(active, &completed.request, &completed.result)?;
+            return Ok(());
+        }
         Err(NativePrepareError::InvalidTransactionBytes)
     }
 
@@ -555,6 +742,82 @@ impl NativeEscrowPlanner {
         self.validate_prepared_claim(&stored_request, &stored_result)?;
         if &stored_request != request {
             return Err(NativePrepareError::ActiveClaimPrepare);
+        }
+        Ok(Some(stored_result))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn recover_durable_witnessed_claim(
+        &self,
+        request: &PrepareWitnessedClaimRequest,
+    ) -> Result<Option<PrepareWitnessedClaimResult>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some((stored_request, stored_result)) = store
+            .load::<PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult>(
+                ReservationKind::WitnessedClaim,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_prepared_witnessed_claim(&stored_request, &stored_result)?;
+        if &stored_request != request {
+            return Err(NativePrepareError::ActiveWitnessedClaimPrepare);
+        }
+        Ok(Some(stored_result))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn load_durable_witnessed_claim_for_completion(
+        &self,
+        completion: &CompleteWitnessedClaimRequest,
+    ) -> Result<Option<ActiveWitnessedClaimPrepare>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some((stored_request, stored_result)) = store
+            .load::<PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult>(
+                ReservationKind::WitnessedClaim,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_prepared_witnessed_claim(&stored_request, &stored_result)?;
+        if stored_request.context.request_id != completion.claim.preparation_request_id
+            || stored_request.context.run_id != completion.context.run_id
+            || stored_request.context.sidecar_role != completion.context.sidecar_role
+            || stored_request.runtime != completion.runtime
+            || stored_result.claim != completion.claim
+        {
+            return Err(NativePrepareError::ActiveWitnessedClaimPrepare);
+        }
+        Ok(Some(ActiveWitnessedClaimPrepare {
+            request: stored_request,
+            result: stored_result,
+        }))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn recover_durable_witnessed_completion(
+        &self,
+        active: &ActiveWitnessedClaimPrepare,
+        request: &CompleteWitnessedClaimRequest,
+    ) -> Result<Option<CompleteWitnessedClaimResult>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some((stored_request, stored_result)) = store
+            .load::<CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult>(
+                ReservationKind::WitnessedClaimCompletion,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_witnessed_completion_request(active, &stored_request)?;
+        self.validate_completed_witnessed_claim(active, &stored_request, &stored_result)?;
+        if &stored_request != request {
+            return Err(NativePrepareError::ActiveWitnessedClaimCompletion);
         }
         Ok(Some(stored_result))
     }
@@ -632,6 +895,91 @@ impl NativeEscrowPlanner {
         Ok(())
     }
 
+    /// Recomputes and validates one stored unsigned witnessed message.
+    ///
+    /// # Errors
+    ///
+    /// Rejects request identity, role, runtime, authority, nonce, canonical
+    /// encoding, message hash, instruction, or ordered-account drift.
+    pub fn validate_prepared_witnessed_claim(
+        &self,
+        request: &PrepareWitnessedClaimRequest,
+        result: &PrepareWitnessedClaimResult,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_witnessed_claim_request(request)?;
+        if result.context != request.context
+            || result.claim.preparation_request_id != request.context.request_id
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let message = decode_witnessed_message(&result.claim)?;
+        let [nonce] = message.nonces.as_slice() else {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        };
+        if message != self.witnessed_claim_message(request, u128::from(*nonce))? {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
+    }
+
+    fn validate_witnessed_completion_request(
+        &self,
+        active: &ActiveWitnessedClaimPrepare,
+        request: &CompleteWitnessedClaimRequest,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_prepared_witnessed_claim(&active.request, &active.result)?;
+        if request.context.run_id != active.request.context.run_id
+            || request.context.sidecar_role != self.role
+            || request.context.request_id == active.request.context.request_id
+            || request.runtime != active.request.runtime
+            || request.runtime != self.expected_runtime
+            || request.claim != active.result.claim
+            || request.claim.preparation_request_id != active.request.context.request_id
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
+    }
+
+    fn validate_completed_witnessed_claim(
+        &self,
+        active: &ActiveWitnessedClaimPrepare,
+        request: &CompleteWitnessedClaimRequest,
+        result: &CompleteWitnessedClaimResult,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_witnessed_completion_request(active, request)?;
+        if result.context != request.context {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let expected_authority = AccountId::new(
+            *active
+                .request
+                .terms
+                .aggregate_authority_account_id()
+                .as_bytes(),
+        );
+        let transaction = decode_prepared_for_signer(&result.claim, expected_authority)?;
+        let expected_message = decode_witnessed_message(&active.result.claim)?;
+        if transaction.message() != &expected_message {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let [(signature, public_key)] = transaction.witness_set().signatures_and_public_keys()
+        else {
+            return Err(NativePrepareError::InvalidSignature);
+        };
+        if signature.value != *request.aggregate_signature.as_bytes()
+            || public_key.value()
+                != active
+                    .request
+                    .terms
+                    .aggregate_x_only_public_key()
+                    .as_bytes()
+        {
+            return Err(NativePrepareError::InvalidSignature);
+        }
+        Ok(())
+    }
+
     fn validate_request(
         &self,
         request: &PrepareNativeEscrowRequest,
@@ -696,6 +1044,68 @@ impl NativeEscrowPlanner {
             return Err(NativePrepareError::WrongPreimage);
         }
         Ok(())
+    }
+
+    fn validate_witnessed_claim_request(
+        &self,
+        request: &PrepareWitnessedClaimRequest,
+    ) -> Result<AccountId, NativePrepareError> {
+        if request.context.sidecar_role != self.role || request.runtime.sidecar_role != self.role {
+            return Err(NativePrepareError::WrongRole);
+        }
+        if request.runtime != self.expected_runtime
+            || request.runtime.compatibility != RuntimeCompatibility::LeeV0_2_0
+        {
+            return Err(NativePrepareError::WrongRuntime);
+        }
+        let destination = Hex32::from_bytes(self.signer_account_id.into_value());
+        if request.terms.claimant() != self.role
+            || request.runtime.signer_account_id != destination
+            || request.terms.claimant_account_id() != destination
+        {
+            return Err(NativePrepareError::WrongClaimant);
+        }
+        if request.runtime.escrow_program_id != program_id_to_hex(self.escrow_program_id) {
+            return Err(NativePrepareError::WrongEscrowProgram);
+        }
+        if request.terms.authenticated_transfer_program_id()
+            != program_id_to_hex(self.authenticated_transfer_program_id)
+        {
+            return Err(NativePrepareError::WrongAuthenticatedTransferProgram);
+        }
+        if request.funding_transaction_id.as_bytes() == &[0; 32] {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let aggregate_key =
+            PublicKey::try_new(*request.terms.aggregate_x_only_public_key().as_bytes())
+                .map_err(|_| NativePrepareError::WrongAggregateAuthority)?;
+        let authority = AccountId::from(&aggregate_key);
+        if authority == self.signer_account_id
+            || authority.into_value() != *request.terms.aggregate_authority_account_id().as_bytes()
+        {
+            return Err(NativePrepareError::WrongAggregateAuthority);
+        }
+        Ok(authority)
+    }
+
+    fn witnessed_claim_message(
+        &self,
+        request: &PrepareWitnessedClaimRequest,
+        nonce: u128,
+    ) -> Result<Message, NativePrepareError> {
+        let swap_id = *request.terms.swap_id().as_bytes();
+        let metadata = compute_metadata_pda(&self.escrow_program_id, &swap_id);
+        let custody = compute_custody_pda(&self.escrow_program_id, &swap_id);
+        let claimant = AccountId::new(*request.terms.claimant_account_id().as_bytes());
+        let aggregate_authority =
+            AccountId::new(*request.terms.aggregate_authority_account_id().as_bytes());
+        Message::try_new(
+            self.escrow_program_id,
+            vec![metadata, custody, claimant, aggregate_authority],
+            vec![nonce.into()],
+            ZecEscrowInstruction::ClaimNativeWitnessed { swap_id },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)
     }
 
     fn plan_pair(
@@ -777,6 +1187,35 @@ impl NativeEscrowPlanner {
         let witnesses = WitnessSet::for_message(&message, &[&signer_key]);
         prepared_from_transaction(&PublicTransaction::new(message, witnesses))
     }
+}
+
+fn prepared_witnessed_from_message(
+    preparation_request_id: lez_bridge_protocol::RequestId,
+    message: &Message,
+) -> Result<PreparedWitnessedClaim, NativePrepareError> {
+    let exact_message_bytes = ExactMessageBytes::new(
+        borsh::to_vec(message).map_err(|_| NativePrepareError::ProtocolEncoding)?,
+    )?;
+    Ok(PreparedWitnessedClaim::new(
+        preparation_request_id,
+        Hex32::from_bytes(message.hash()),
+        exact_message_bytes,
+    ))
+}
+
+fn decode_witnessed_message(
+    prepared: &PreparedWitnessedClaim,
+) -> Result<Message, NativePrepareError> {
+    let message = Message::try_from_slice(prepared.exact_message_bytes.as_slice())
+        .map_err(|_| NativePrepareError::InvalidTransactionBytes)?;
+    let canonical =
+        borsh::to_vec(&message).map_err(|_| NativePrepareError::InvalidTransactionBytes)?;
+    if canonical != prepared.exact_message_bytes.as_slice()
+        || message.hash() != *prepared.message_hash.as_bytes()
+    {
+        return Err(NativePrepareError::InvalidTransactionBytes);
+    }
+    Ok(message)
 }
 
 fn claim_request_sha256(

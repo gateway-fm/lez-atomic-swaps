@@ -1,9 +1,10 @@
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
-    AccountIds, ChainClock, ChainPosition, ChainTip, DiscoveryWindow, ErrorCode, ErrorMessage,
-    ExactTransactionBytes, Hex32, MessageContext, NativeAmount, NativeEscrowTerms, Participant,
-    RevealingPreimage, TransactionId,
+    AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip, DiscoveryWindow,
+    ErrorCode, ErrorMessage, ExactMessageBytes, ExactTransactionBytes, Hex32, MessageContext,
+    NativeAmount, NativeEscrowTerms, Participant, RevealingPreimage, TransactionId,
+    WitnessedNativeEscrowTerms,
 };
 
 /// Exact official runtime generation isolated behind the sidecar.
@@ -436,7 +437,7 @@ impl EscrowMetadataFacts {
         Self {
             account_id,
             owner_program_id,
-            version: 1,
+            version: 2,
             swap_id: terms.swap_id(),
             terms_hash: terms.terms_hash(),
             secret_digest: terms.secret_digest(),
@@ -1136,6 +1137,134 @@ pub struct PrepareRevealingClaimResult {
 
 impl PrepareRevealingClaimResult {
     /// Creates a revealing claim preparation result.
+    pub const fn new(context: MessageContext, claim: PreparedTransaction) -> Self {
+        Self { context, claim }
+    }
+}
+
+/// Canonical unsigned official LEZ message reserved for aggregate signing.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct PreparedWitnessedClaim {
+    /// Exact prepare request that owns this durable reservation within the run.
+    pub preparation_request_id: crate::RequestId,
+    /// Pinned official `Message::hash()` that both `MuSig` participants sign.
+    pub message_hash: Hex32,
+    /// Canonical Borsh encoding of that exact unsigned official `Message`.
+    pub exact_message_bytes: ExactMessageBytes,
+}
+
+impl PreparedWitnessedClaim {
+    /// Creates one exact unsigned witnessed claim transcript.
+    pub const fn new(
+        preparation_request_id: crate::RequestId,
+        message_hash: Hex32,
+        exact_message_bytes: ExactMessageBytes,
+    ) -> Self {
+        Self {
+            preparation_request_id,
+            message_hash,
+            exact_message_bytes,
+        }
+    }
+}
+
+/// Reserves the exact official LEZ witnessed-claim message before either chain locks.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct PrepareWitnessedClaimRequest {
+    /// Version, isolation, correlation, and destination-role fields.
+    pub context: MessageContext,
+    /// Expected pinned LEZ v0.2 runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// Complete agreement binding, including separate destination and authority accounts.
+    pub terms: WitnessedNativeEscrowTerms,
+    /// Exact prebuilt funding transaction expected to establish the escrow.
+    pub funding_transaction_id: TransactionId,
+}
+
+impl PrepareWitnessedClaimRequest {
+    /// Creates one witnessed-claim message-reservation request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedNativeEscrowTerms,
+        funding_transaction_id: TransactionId,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+            funding_transaction_id,
+        }
+    }
+}
+
+/// Exact unsigned LEZ message/hash returned for external adaptor signing.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct PrepareWitnessedClaimResult {
+    /// Exact echoed preparation context.
+    pub context: MessageContext,
+    /// Reserved immutable unsigned claim transcript.
+    pub claim: PreparedWitnessedClaim,
+}
+
+impl PrepareWitnessedClaimResult {
+    /// Creates one witnessed-claim preparation result.
+    pub const fn new(context: MessageContext, claim: PreparedWitnessedClaim) -> Self {
+        Self { context, claim }
+    }
+}
+
+/// Completes an exact reserved message with one external aggregate BIP340 signature.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct CompleteWitnessedClaimRequest {
+    /// Version, isolation, correlation, and destination-role fields.
+    pub context: MessageContext,
+    /// Expected pinned LEZ v0.2 runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// Exact prepared transcript that was externally signed.
+    pub claim: PreparedWitnessedClaim,
+    /// Completed 64-byte aggregate BIP340 signature.
+    pub aggregate_signature: AggregateBip340Signature,
+}
+
+impl CompleteWitnessedClaimRequest {
+    /// Creates one exact witnessed-claim completion request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        claim: PreparedWitnessedClaim,
+        aggregate_signature: AggregateBip340Signature,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            claim,
+            aggregate_signature,
+        }
+    }
+}
+
+/// Exact completed public transaction eligible for the existing submission method.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct CompleteWitnessedClaimResult {
+    /// Exact echoed completion context.
+    pub context: MessageContext,
+    /// Canonical signed public transaction built by the official LEZ sidecar.
+    pub claim: PreparedTransaction,
+}
+
+impl CompleteWitnessedClaimResult {
+    /// Creates one completed witnessed-claim transaction result.
     pub const fn new(context: MessageContext, claim: PreparedTransaction) -> Self {
         Self { context, claim }
     }

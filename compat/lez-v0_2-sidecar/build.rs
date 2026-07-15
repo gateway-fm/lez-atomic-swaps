@@ -22,7 +22,10 @@ fn main() {
 
 fn assert_native_prepare_surface(client: &str) {
     let initialize = generated_method(client, "initialize_native", "fund_native");
+    let initialize_witnessed =
+        generated_method(client, "initialize_native_witnessed", "fund_native");
     let funding = generated_method(client, "fund_native", "claim_native");
+    let claim_witnessed = generated_method(client, "claim_native_witnessed", "refund_native");
     for expected in [
         "let mut account_ids: Vec<AccountId> = vec![\n            accounts.metadata,\n            accounts.custody,\n            accounts.depositor,\n            accounts.claimant,\n        ];",
         "let signer_ids: Vec<AccountId> = vec![\n            accounts.depositor,\n        ];",
@@ -33,12 +36,30 @@ fn assert_native_prepare_surface(client: &str) {
         );
     }
     for expected in [
+        "let mut account_ids: Vec<AccountId> = vec![\n            accounts.metadata,\n            accounts.custody,\n            accounts.depositor,\n            accounts.claimant,\n            accounts.aggregate_authority,\n        ];",
+        "let signer_ids: Vec<AccountId> = vec![\n            accounts.depositor,\n        ];",
+    ] {
+        assert!(
+            initialize_witnessed.contains(expected),
+            "pinned generated initialize_native_witnessed role/account order changed"
+        );
+    }
+    for expected in [
         "let mut account_ids: Vec<AccountId> = vec![\n            accounts.metadata,\n            accounts.custody,\n            accounts.depositor,\n        ];",
         "let signer_ids: Vec<AccountId> = vec![\n            accounts.depositor,\n        ];",
     ] {
         assert!(
             funding.contains(expected),
             "pinned generated fund_native role/account order changed"
+        );
+    }
+    for expected in [
+        "let mut account_ids: Vec<AccountId> = vec![\n            accounts.metadata,\n            accounts.custody,\n            accounts.claimant,\n            accounts.aggregate_authority,\n        ];",
+        "let signer_ids: Vec<AccountId> = vec![\n            accounts.aggregate_authority,\n        ];",
+    ] {
+        assert!(
+            claim_witnessed.contains(expected),
+            "pinned generated claim_native_witnessed role/account order changed"
         );
     }
 }

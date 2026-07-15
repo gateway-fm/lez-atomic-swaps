@@ -16,6 +16,10 @@ pub const METHOD_PREPARE_NATIVE_ESCROW: &str = "lez_bridge.v1.prepare_native_esc
 pub const METHOD_OBSERVE_ESCROW: &str = "lez_bridge.v1.observe_escrow";
 /// Stable JSON-RPC method for preparing a preimage-revealing claim.
 pub const METHOD_PREPARE_REVEALING_CLAIM: &str = "lez_bridge.v1.prepare_revealing_claim";
+/// Stable JSON-RPC method for reserving an unsigned aggregate-witness claim message.
+pub const METHOD_PREPARE_WITNESSED_CLAIM: &str = "lez_bridge.v1.prepare_witnessed_claim";
+/// Stable JSON-RPC method for completing a reservation with an aggregate signature.
+pub const METHOD_COMPLETE_WITNESSED_CLAIM: &str = "lez_bridge.v1.complete_witnessed_claim";
 /// Stable JSON-RPC method for observing a preimage-revealing claim.
 pub const METHOD_OBSERVE_REVEALING_CLAIM: &str = "lez_bridge.v1.observe_revealing_claim";
 /// Stable JSON-RPC method for preparing a fixed-destination native refund.
@@ -33,23 +37,26 @@ pub const SIDECAR_ROLE_HEADER: &str = "x-lez-bridge-sidecar-role";
 pub const MAX_RPC_BODY_BYTES: u32 = 5_500_000;
 
 pub use messages::{
-    DescribeRuntimeRequest, DescribeRuntimeResult, EscrowMetadataFacts, EscrowObservationTarget,
-    EscrowState, FundingFoundFacts, FundingObservation, InitializationFoundFacts,
-    InitializationObservation, NativeClaimInstructionFacts, NativeCustodyFacts,
-    NativeEscrowAccountFacts, NativeEscrowAccountObservation, NativeFundInstructionFacts,
-    NativeInitializeInstructionFacts, NativeRefundFoundFacts, NativeRefundInstructionFacts,
-    NativeRefundObservation, NativeRefundObservationTarget, ObserveEscrowRequest,
-    ObserveEscrowResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
-    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObservedTransactionFacts,
-    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
-    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PreparedTransaction, ProtocolErrorReply, RevealingClaimFoundFacts, RevealingClaimObservation,
-    RevealingClaimObservationTarget, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
-    SubmitTransactionRequest, SubmitTransactionResult,
+    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
+    DescribeRuntimeResult, EscrowMetadataFacts, EscrowObservationTarget, EscrowState,
+    FundingFoundFacts, FundingObservation, InitializationFoundFacts, InitializationObservation,
+    NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
+    NativeEscrowAccountObservation, NativeFundInstructionFacts, NativeInitializeInstructionFacts,
+    NativeRefundFoundFacts, NativeRefundInstructionFacts, NativeRefundObservation,
+    NativeRefundObservationTarget, ObserveEscrowRequest, ObserveEscrowResult,
+    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
+    ObserveRevealingClaimResult, ObservedTransactionFacts, PrepareNativeEscrowRequest,
+    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
+    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
+    PrepareWitnessedClaimResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
+    RevealingClaimFoundFacts, RevealingClaimObservation, RevealingClaimObservationTarget,
+    RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
+    SubmitTransactionResult,
 };
 pub use primitives::{
-    AccountIds, ChainClock, ChainPosition, ChainTip, DiscoveryWindow, ErrorCode, ErrorMessage,
-    ExactTransactionBytes, Hex32, MAX_DISCOVERY_BLOCKS, MessageContext, NativeAmount,
-    NativeEscrowTerms, NativeEscrowTermsInput, Participant, ProtocolValueError, RequestId,
-    RevealingPreimage, RunId, SchemaVersion, TransactionId,
+    AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip, DiscoveryWindow,
+    ErrorCode, ErrorMessage, ExactMessageBytes, ExactTransactionBytes, Hex32, MAX_DISCOVERY_BLOCKS,
+    MessageContext, NativeAmount, NativeEscrowTerms, NativeEscrowTermsInput, Participant,
+    ProtocolValueError, RequestId, RevealingPreimage, RunId, SchemaVersion, TransactionId,
+    WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
 };

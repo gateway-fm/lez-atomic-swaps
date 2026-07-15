@@ -31,6 +31,15 @@ pub enum ProtocolValueError {
     /// Exact transaction bytes were not canonically base64 encoded.
     #[error("transaction bytes must be canonical base64")]
     InvalidTransactionEncoding,
+    /// Exact unsigned message bytes were empty or exceeded the protocol maximum.
+    #[error("message bytes must contain 1..={MAX_TRANSACTION_BYTES} bytes")]
+    InvalidMessageLength,
+    /// Exact unsigned message bytes were not canonically base64 encoded.
+    #[error("message bytes must be canonical base64")]
+    InvalidMessageEncoding,
+    /// A completed aggregate signature was not exactly 64 canonical bytes.
+    #[error("aggregate BIP340 signature must be exactly 128 lowercase hexadecimal characters")]
+    InvalidBip340Signature,
     /// An account or signer list exceeded its hard bound.
     #[error("account list cannot contain more than {MAX_ACCOUNT_IDS} entries")]
     TooManyAccountIds,
@@ -58,6 +67,12 @@ pub enum ProtocolValueError {
     /// The pinned guest rejects the default authenticated-transfer program.
     #[error("authenticated-transfer program id must be nonzero")]
     ZeroAuthenticatedTransferProgram,
+    /// The witnessed claimant destination and aggregate signing authority were aliased.
+    #[error("witnessed claimant destination and aggregate authority must be distinct")]
+    SameWitnessedClaimAccounts,
+    /// The witnessed aggregate public key was the invalid all-zero sentinel.
+    #[error("witnessed aggregate x-only public key must be nonzero")]
+    ZeroAggregatePublicKey,
     /// A discovery window was empty, oversized, or overflowed its height range.
     #[error("discovery window must cover 1..={MAX_DISCOVERY_BLOCKS} non-overflowing blocks")]
     InvalidDiscoveryWindow,
@@ -342,6 +357,131 @@ impl<'de> Deserialize<'de> for ExactTransactionBytes {
             ));
         }
         Self::new(bytes).map_err(D::Error::custom)
+    }
+}
+
+/// Canonical Borsh bytes of one unsigned official LEZ public message.
+///
+/// This is deliberately distinct from [`ExactTransactionBytes`]: an external
+/// signer signs the official message hash, while submission accepts only the
+/// completed public-transaction encoding.
+#[derive(Clone, Eq, PartialEq)]
+#[must_use]
+pub struct ExactMessageBytes(Vec<u8>);
+
+impl ExactMessageBytes {
+    /// Validates canonical unsigned-message bytes at the protocol boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the byte sequence is empty or exceeds 2 MB.
+    pub fn new(bytes: Vec<u8>) -> Result<Self, ProtocolValueError> {
+        if bytes.is_empty() || bytes.len() > MAX_TRANSACTION_BYTES {
+            Err(ProtocolValueError::InvalidMessageLength)
+        } else {
+            Ok(Self(bytes))
+        }
+    }
+
+    /// Borrows the exact bytes that must be hashed and decoded unchanged.
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for ExactMessageBytes {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ExactMessageBytes")
+            .field("len", &self.0.len())
+            .finish()
+    }
+}
+
+impl Serialize for ExactMessageBytes {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&STANDARD.encode(&self.0))
+    }
+}
+
+impl<'de> Deserialize<'de> for ExactMessageBytes {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let encoded = String::deserialize(deserializer)?;
+        let maximum_encoded_len = MAX_TRANSACTION_BYTES.div_ceil(3) * 4;
+        if encoded.len() > maximum_encoded_len {
+            return Err(D::Error::custom(ProtocolValueError::InvalidMessageLength));
+        }
+        let bytes = STANDARD
+            .decode(&encoded)
+            .map_err(|_| D::Error::custom(ProtocolValueError::InvalidMessageEncoding))?;
+        if STANDARD.encode(&bytes) != encoded {
+            return Err(D::Error::custom(ProtocolValueError::InvalidMessageEncoding));
+        }
+        Self::new(bytes).map_err(D::Error::custom)
+    }
+}
+
+/// One externally completed 64-byte aggregate BIP340 signature.
+#[derive(Clone, Copy, Eq, PartialEq)]
+#[must_use]
+pub struct AggregateBip340Signature([u8; 64]);
+
+impl AggregateBip340Signature {
+    /// Wraps exact aggregate signature bytes; cryptographic verification is
+    /// performed by the pinned official LEZ implementation.
+    pub const fn from_bytes(bytes: [u8; 64]) -> Self {
+        Self(bytes)
+    }
+
+    /// Returns exact aggregate signature bytes.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 64] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for AggregateBip340Signature {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AggregateBip340Signature")
+            .field("len", &self.0.len())
+            .finish()
+    }
+}
+
+impl Serialize for AggregateBip340Signature {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&hex::encode(self.0))
+    }
+}
+
+impl<'de> Deserialize<'de> for AggregateBip340Signature {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let encoded = String::deserialize(deserializer)?;
+        if encoded.len() != 128
+            || !encoded
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(D::Error::custom(ProtocolValueError::InvalidBip340Signature));
+        }
+        let mut bytes = [0_u8; 64];
+        hex::decode_to_slice(&encoded, &mut bytes)
+            .map_err(|_| D::Error::custom(ProtocolValueError::InvalidBip340Signature))?;
+        Ok(Self(bytes))
     }
 }
 
@@ -657,6 +797,176 @@ impl TryFrom<NativeEscrowTermsWire> for NativeEscrowTerms {
 
 impl From<NativeEscrowTerms> for NativeEscrowTermsWire {
     fn from(value: NativeEscrowTerms) -> Self {
+        value.0
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WitnessedNativeEscrowTermsWire {
+    swap_id: Hex32,
+    terms_hash: Hex32,
+    depositor: Participant,
+    depositor_account_id: Hex32,
+    claimant: Participant,
+    claimant_account_id: Hex32,
+    aggregate_authority_account_id: Hex32,
+    aggregate_x_only_public_key: Hex32,
+    amount: NativeAmount,
+    refund_at_ms: u64,
+    authenticated_transfer_program_id: Hex32,
+}
+
+/// Complete signed-agreement input for an aggregate-witness native escrow.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct WitnessedNativeEscrowTermsInput {
+    /// Swap identifier used by the metadata and custody PDA seeds.
+    pub swap_id: Hex32,
+    /// Exact signed agreement commitment passed to the guest.
+    pub terms_hash: Hex32,
+    /// Role depositing the LEZ asset.
+    pub depositor: Participant,
+    /// Exact depositor asset account.
+    pub depositor_account_id: Hex32,
+    /// Role receiving the LEZ asset.
+    pub claimant: Participant,
+    /// Exact claimant asset destination, which never supplies the claim signature.
+    pub claimant_account_id: Hex32,
+    /// Aggregate public account that alone supplies the claim signature.
+    pub aggregate_authority_account_id: Hex32,
+    /// Exact aggregate x-only BIP340 key whose account ID must match the authority.
+    pub aggregate_x_only_public_key: Hex32,
+    /// Full-width native amount.
+    pub amount: u128,
+    /// LEZ wall-clock refund timestamp in Unix milliseconds.
+    pub refund_at_ms: u64,
+    /// Exact authenticated-transfer program identity.
+    pub authenticated_transfer_program_id: Hex32,
+}
+
+/// Primitive witnessed native-escrow values signed by both swap actors.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    try_from = "WitnessedNativeEscrowTermsWire",
+    into = "WitnessedNativeEscrowTermsWire"
+)]
+#[must_use]
+pub struct WitnessedNativeEscrowTerms(WitnessedNativeEscrowTermsWire);
+
+impl WitnessedNativeEscrowTerms {
+    /// Validates witnessed native escrow terms before they cross the sidecar boundary.
+    ///
+    /// # Errors
+    ///
+    /// Rejects aliased roles/accounts, zero amount/refund/program, and a zero
+    /// aggregate key. The pinned official LEZ key implementation performs the
+    /// curve and authority-account checks inside the sidecar.
+    pub fn new(input: WitnessedNativeEscrowTermsInput) -> Result<Self, ProtocolValueError> {
+        if input.depositor == input.claimant {
+            return Err(ProtocolValueError::SameEscrowRoles);
+        }
+        if input.depositor_account_id == input.claimant_account_id {
+            return Err(ProtocolValueError::SameEscrowAccounts);
+        }
+        if input.claimant_account_id == input.aggregate_authority_account_id {
+            return Err(ProtocolValueError::SameWitnessedClaimAccounts);
+        }
+        if input.aggregate_x_only_public_key == Hex32::from_bytes([0; 32]) {
+            return Err(ProtocolValueError::ZeroAggregatePublicKey);
+        }
+        if input.amount == 0 {
+            return Err(ProtocolValueError::ZeroEscrowAmount);
+        }
+        if input.refund_at_ms == 0 {
+            return Err(ProtocolValueError::ZeroRefundAt);
+        }
+        if input.authenticated_transfer_program_id == Hex32::from_bytes([0; 32]) {
+            return Err(ProtocolValueError::ZeroAuthenticatedTransferProgram);
+        }
+        Ok(Self(WitnessedNativeEscrowTermsWire {
+            swap_id: input.swap_id,
+            terms_hash: input.terms_hash,
+            depositor: input.depositor,
+            depositor_account_id: input.depositor_account_id,
+            claimant: input.claimant,
+            claimant_account_id: input.claimant_account_id,
+            aggregate_authority_account_id: input.aggregate_authority_account_id,
+            aggregate_x_only_public_key: input.aggregate_x_only_public_key,
+            amount: NativeAmount::new(input.amount),
+            refund_at_ms: input.refund_at_ms,
+            authenticated_transfer_program_id: input.authenticated_transfer_program_id,
+        }))
+    }
+
+    pub const fn swap_id(&self) -> Hex32 {
+        self.0.swap_id
+    }
+
+    pub const fn terms_hash(&self) -> Hex32 {
+        self.0.terms_hash
+    }
+
+    pub const fn depositor(&self) -> Participant {
+        self.0.depositor
+    }
+
+    pub const fn depositor_account_id(&self) -> Hex32 {
+        self.0.depositor_account_id
+    }
+
+    pub const fn claimant(&self) -> Participant {
+        self.0.claimant
+    }
+
+    pub const fn claimant_account_id(&self) -> Hex32 {
+        self.0.claimant_account_id
+    }
+
+    pub const fn aggregate_authority_account_id(&self) -> Hex32 {
+        self.0.aggregate_authority_account_id
+    }
+
+    pub const fn aggregate_x_only_public_key(&self) -> Hex32 {
+        self.0.aggregate_x_only_public_key
+    }
+
+    pub const fn amount(&self) -> NativeAmount {
+        self.0.amount
+    }
+
+    #[must_use]
+    pub const fn refund_at_ms(&self) -> u64 {
+        self.0.refund_at_ms
+    }
+
+    pub const fn authenticated_transfer_program_id(&self) -> Hex32 {
+        self.0.authenticated_transfer_program_id
+    }
+}
+
+impl TryFrom<WitnessedNativeEscrowTermsWire> for WitnessedNativeEscrowTerms {
+    type Error = ProtocolValueError;
+
+    fn try_from(value: WitnessedNativeEscrowTermsWire) -> Result<Self, Self::Error> {
+        Self::new(WitnessedNativeEscrowTermsInput {
+            swap_id: value.swap_id,
+            terms_hash: value.terms_hash,
+            depositor: value.depositor,
+            depositor_account_id: value.depositor_account_id,
+            claimant: value.claimant,
+            claimant_account_id: value.claimant_account_id,
+            aggregate_authority_account_id: value.aggregate_authority_account_id,
+            aggregate_x_only_public_key: value.aggregate_x_only_public_key,
+            amount: value.amount.as_u128(),
+            refund_at_ms: value.refund_at_ms,
+            authenticated_transfer_program_id: value.authenticated_transfer_program_id,
+        })
+    }
+}
+
+impl From<WitnessedNativeEscrowTerms> for WitnessedNativeEscrowTermsWire {
+    fn from(value: WitnessedNativeEscrowTerms) -> Self {
         value.0
     }
 }

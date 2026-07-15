@@ -22,7 +22,7 @@ use lez_v0_2_sidecar::{
     RuntimeBoundaryError, compute_custody_pda, compute_metadata_pda, program_id_from_hex,
     program_id_to_hex,
 };
-use lez_zec_escrow_v02::{EscrowMetadata, EscrowStatus};
+use lez_zec_escrow_v02::{ClaimAuthority, EscrowMetadata, EscrowStatus};
 use nssa::{Account, AccountId, PrivateKey, PublicKey};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
@@ -648,12 +648,17 @@ fn validate_snapshot(
         );
         return Ok(());
     };
+    let secret_matches = matches!(
+        metadata.claim_authority,
+        ClaimAuthority::Sha256Preimage { secret_digest }
+            if secret_digest == *parsed.terms.secret_digest().as_bytes()
+    );
     ensure!(
         facts.metadata_account().program_owner == parsed.escrow_program_id
-            && metadata.version == 1
+            && metadata.version == 2
             && metadata.swap_id == *parsed.terms.swap_id().as_bytes()
             && metadata.terms_hash == *parsed.terms.terms_hash().as_bytes()
-            && metadata.secret_digest == *parsed.terms.secret_digest().as_bytes()
+            && secret_matches
             && metadata.depositor == parsed.depositor_account_id
             && metadata.depositor_asset == parsed.depositor_account_id
             && metadata.claimant == parsed.claimant_account_id

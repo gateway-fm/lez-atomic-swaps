@@ -1,9 +1,11 @@
 use lez_bridge_protocol::{
-    AccountIds, ChainClock, ChainPosition, ChainTip, DescribeRuntimeRequest, DescribeRuntimeResult,
-    DiscoveryWindow, ErrorCode, ErrorMessage, EscrowMetadataFacts, EscrowObservationTarget,
-    EscrowState, ExactTransactionBytes, FundingFoundFacts, FundingObservation, Hex32,
-    InitializationFoundFacts, InitializationObservation, MAX_DISCOVERY_BLOCKS, MessageContext,
-    NativeAmount, NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
+    AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip,
+    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
+    DescribeRuntimeResult, DiscoveryWindow, ErrorCode, ErrorMessage, EscrowMetadataFacts,
+    EscrowObservationTarget, EscrowState, ExactMessageBytes, ExactTransactionBytes,
+    FundingFoundFacts, FundingObservation, Hex32, InitializationFoundFacts,
+    InitializationObservation, MAX_DISCOVERY_BLOCKS, MessageContext, NativeAmount,
+    NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
     NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
     NativeFundInstructionFacts, NativeInitializeInstructionFacts, NativeRefundFoundFacts,
     NativeRefundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
@@ -11,11 +13,133 @@ use lez_bridge_protocol::{
     ObserveNativeRefundResult, ObserveRevealingClaimRequest, ObserveRevealingClaimResult,
     ObservedTransactionFacts, Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
     PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
-    PrepareRevealingClaimResult, PreparedTransaction, ProtocolErrorReply, RequestId,
+    PrepareRevealingClaimResult, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
+    PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply, RequestId,
     RevealingClaimFoundFacts, RevealingClaimObservation, RevealingClaimObservationTarget,
     RevealingPreimage, RunId, RuntimeCompatibility, RuntimeDescriptor, SchemaVersion,
     SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
+    WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
 };
+
+#[test]
+fn witnessed_claim_wire_keeps_destination_authority_and_preparation_identity_distinct() {
+    let terms = WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
+        swap_id: h(60),
+        terms_hash: h(61),
+        depositor: Participant::Taker,
+        depositor_account_id: h(62),
+        claimant: Participant::Maker,
+        claimant_account_id: h(63),
+        aggregate_authority_account_id: h(64),
+        aggregate_x_only_public_key: h(65),
+        amount: 75,
+        refund_at_ms: 1_850_000_000_123,
+        authenticated_transfer_program_id: h(66),
+    })
+    .unwrap();
+    let prepare_context = MessageContext::new(
+        RunId::new("witnessed-run-0001").unwrap(),
+        RequestId::new("witnessed-prepare-0001").unwrap(),
+        Participant::Maker,
+    );
+    let request = PrepareWitnessedClaimRequest::new(
+        prepare_context.clone(),
+        runtime(),
+        terms,
+        TransactionId::from_bytes([67; 32]),
+    );
+    let prepared = PreparedWitnessedClaim::new(
+        prepare_context.request_id.clone(),
+        h(68),
+        ExactMessageBytes::new(vec![69; 128]).unwrap(),
+    );
+    let prepare_result =
+        PrepareWitnessedClaimResult::new(prepare_context.clone(), prepared.clone());
+    assert_eq!(
+        serde_json::from_str::<PrepareWitnessedClaimRequest>(
+            &serde_json::to_string(&request).unwrap()
+        )
+        .unwrap(),
+        request
+    );
+    assert_eq!(
+        serde_json::from_str::<PrepareWitnessedClaimResult>(
+            &serde_json::to_string(&prepare_result).unwrap()
+        )
+        .unwrap(),
+        prepare_result
+    );
+
+    let complete_context = MessageContext::new(
+        prepare_context.run_id.clone(),
+        RequestId::new("witnessed-complete-0001").unwrap(),
+        Participant::Maker,
+    );
+    let signature = AggregateBip340Signature::from_bytes([70; 64]);
+    let complete = CompleteWitnessedClaimRequest::new(
+        complete_context.clone(),
+        runtime(),
+        prepared,
+        signature,
+    );
+    let completed = CompleteWitnessedClaimResult::new(complete_context, tx(71));
+    assert_eq!(
+        serde_json::from_str::<CompleteWitnessedClaimRequest>(
+            &serde_json::to_string(&complete).unwrap()
+        )
+        .unwrap(),
+        complete
+    );
+    assert_eq!(
+        serde_json::from_str::<CompleteWitnessedClaimResult>(
+            &serde_json::to_string(&completed).unwrap()
+        )
+        .unwrap(),
+        completed
+    );
+    assert_eq!(
+        serde_json::to_value(signature)
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .len(),
+        128
+    );
+}
+
+#[test]
+fn witnessed_claim_wire_rejects_aliases_noncanonical_signature_and_unknown_fields() {
+    assert!(
+        WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
+            swap_id: h(60),
+            terms_hash: h(61),
+            depositor: Participant::Taker,
+            depositor_account_id: h(62),
+            claimant: Participant::Maker,
+            claimant_account_id: h(63),
+            aggregate_authority_account_id: h(63),
+            aggregate_x_only_public_key: h(65),
+            amount: 75,
+            refund_at_ms: 99,
+            authenticated_transfer_program_id: h(66),
+        })
+        .is_err()
+    );
+    for signature in ["00".repeat(63), "AA".repeat(64), "gg".repeat(64)] {
+        assert!(
+            serde_json::from_value::<AggregateBip340Signature>(serde_json::json!(signature))
+                .is_err()
+        );
+    }
+    let mut prepared = serde_json::to_value(PreparedWitnessedClaim::new(
+        RequestId::new("witnessed-prepare-0001").unwrap(),
+        h(68),
+        ExactMessageBytes::new(vec![69; 128]).unwrap(),
+    ))
+    .unwrap();
+    prepared["unexpected"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<PreparedWitnessedClaim>(prepared).is_err());
+}
 
 #[test]
 fn native_refund_state_exact_and_discovery_are_typed_and_timestamped() {
@@ -382,7 +506,7 @@ fn actual_guest_native_metadata_is_field_by_field_bound() {
     let expected_metadata =
         EscrowMetadataFacts::from_native_terms(h(10), h(4), h(12), &terms(), EscrowState::Empty);
     let expected_metadata_json = serde_json::to_value(&expected_metadata).unwrap();
-    assert_eq!(expected_metadata_json["version"], serde_json::json!(1));
+    assert_eq!(expected_metadata_json["version"], serde_json::json!(2));
     assert_eq!(expected_metadata_json["status"], serde_json::json!("empty"));
     assert_eq!(
         expected_metadata_json["owner_program_id"],
@@ -411,7 +535,7 @@ fn actual_guest_native_metadata_is_field_by_field_bound() {
     for (field, changed) in [
         ("account_id", serde_json::to_value(h(30)).unwrap()),
         ("owner_program_id", serde_json::to_value(h(31)).unwrap()),
-        ("version", serde_json::json!(2)),
+        ("version", serde_json::json!(3)),
         ("swap_id", serde_json::to_value(h(32)).unwrap()),
         ("terms_hash", serde_json::to_value(h(33)).unwrap()),
         ("secret_digest", serde_json::to_value(h(34)).unwrap()),

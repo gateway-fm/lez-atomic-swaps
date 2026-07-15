@@ -3,17 +3,19 @@ use std::sync::Arc;
 use borsh::BorshDeserialize as _;
 use common::{block::Block, transaction::LeeTransaction};
 use lez_bridge_protocol::{
-    AccountIds, ChainPosition, ChainTip, DiscoveryWindow, EscrowMetadataFacts,
-    EscrowObservationTarget, EscrowState, FundingFoundFacts, FundingObservation, Hex32,
-    InitializationFoundFacts, InitializationObservation, MAX_DISCOVERY_BLOCKS,
-    NativeClaimInstructionFacts, NativeCustodyFacts, NativeFundInstructionFacts,
-    NativeInitializeInstructionFacts, ObserveEscrowRequest, ObserveEscrowResult,
-    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObservedTransactionFacts,
-    PreparedTransaction, RevealingClaimFoundFacts, RevealingClaimObservation,
-    RevealingClaimObservationTarget, RevealingPreimage, RuntimeDescriptor, SubmissionOutcome,
-    SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
+    AccountIds, ChainPosition, ChainTip, CompleteWitnessedClaimRequest,
+    CompleteWitnessedClaimResult, DiscoveryWindow, EscrowMetadataFacts, EscrowObservationTarget,
+    EscrowState, FundingFoundFacts, FundingObservation, Hex32, InitializationFoundFacts,
+    InitializationObservation, MAX_DISCOVERY_BLOCKS, NativeClaimInstructionFacts,
+    NativeCustodyFacts, NativeFundInstructionFacts, NativeInitializeInstructionFacts,
+    ObserveEscrowRequest, ObserveEscrowResult, ObserveRevealingClaimRequest,
+    ObserveRevealingClaimResult, ObservedTransactionFacts, PrepareWitnessedClaimRequest,
+    PrepareWitnessedClaimResult, PreparedTransaction, RevealingClaimFoundFacts,
+    RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage,
+    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
+    TransactionId,
 };
-use lez_zec_escrow_v02::{EscrowMetadata, EscrowStatus};
+use lez_zec_escrow_v02::{ClaimAuthority, EscrowMetadata, EscrowStatus};
 use nssa::{AccountId, PublicTransaction};
 use sha2::{Digest as _, Sha256};
 
@@ -165,6 +167,37 @@ impl BridgeRuntime {
     ) -> Result<lez_bridge_protocol::PrepareRevealingClaimResult, BridgeRuntimeError> {
         self.planner
             .prepare_revealing_claim(request)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Reserves one exact unsigned witnessed-claim message.
+    ///
+    /// # Errors
+    ///
+    /// Returns the planner's typed validation, nonce, encoding, or durable-state error.
+    pub async fn prepare_witnessed_claim(
+        &self,
+        request: &PrepareWitnessedClaimRequest,
+    ) -> Result<PrepareWitnessedClaimResult, BridgeRuntimeError> {
+        self.planner
+            .prepare_witnessed_claim(request)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Completes one exact witnessed reservation without submitting it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error for transcript drift, invalid signatures, encoding,
+    /// or durable-state conflicts.
+    pub async fn complete_witnessed_claim(
+        &self,
+        request: &CompleteWitnessedClaimRequest,
+    ) -> Result<CompleteWitnessedClaimResult, BridgeRuntimeError> {
+        self.planner
+            .complete_witnessed_claim(request)
             .await
             .map_err(Into::into)
     }
@@ -727,12 +760,15 @@ impl BridgeRuntime {
             EscrowStatus::Refunded => EscrowState::Refunded,
         };
         let expected_transfer = program_id_from_hex(terms.authenticated_transfer_program_id());
+        let ClaimAuthority::Sha256Preimage { secret_digest } = metadata.claim_authority else {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        };
         if facts.metadata_account().program_owner
             != program_id_from_hex(self.runtime.escrow_program_id)
-            || metadata.version != 1
+            || metadata.version != 2
             || metadata.swap_id != *terms.swap_id().as_bytes()
             || metadata.terms_hash != *terms.terms_hash().as_bytes()
-            || metadata.secret_digest != *terms.secret_digest().as_bytes()
+            || secret_digest != *terms.secret_digest().as_bytes()
             || metadata.depositor.into_value() != *terms.depositor_account_id().as_bytes()
             || metadata.depositor_asset != metadata.depositor
             || metadata.claimant.into_value() != *terms.claimant_account_id().as_bytes()

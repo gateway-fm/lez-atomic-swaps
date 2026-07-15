@@ -7,26 +7,30 @@ use std::{
 use jsonrpsee::{RpcModule, types::ErrorObjectOwned};
 use lez_bridge_client::{
     BridgeClient, BridgeClientConfig, BridgeClientError, BridgeOperation, MAX_RPC_BODY_BYTES,
-    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_NATIVE_REFUND,
-    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND,
-    METHOD_PREPARE_REVEALING_CLAIM, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
-    SidecarCapability,
+    METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW,
+    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_PREPARE_NATIVE_ESCROW,
+    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
+    METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER, SidecarCapability,
 };
 use lez_bridge_protocol::{
-    ChainClock, ChainTip, DescribeRuntimeRequest, DescribeRuntimeResult, DiscoveryWindow,
-    ErrorCode, ErrorMessage, EscrowObservationTarget, ExactTransactionBytes, FundingObservation,
-    Hex32, InitializationObservation, MessageContext, NativeEscrowAccountObservation,
-    NativeEscrowTerms, NativeEscrowTermsInput, NativeRefundObservation,
-    NativeRefundObservationTarget, ObserveEscrowRequest, ObserveEscrowResult,
-    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
-    ObserveRevealingClaimResult, Participant, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
-    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PreparedTransaction,
-    ProtocolErrorReply, RequestId, RevealingClaimObservation, RevealingClaimObservationTarget,
-    RevealingPreimage, RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
-    SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
+    AggregateBip340Signature, ChainClock, ChainTip, CompleteWitnessedClaimRequest,
+    CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult, DiscoveryWindow,
+    ErrorCode, ErrorMessage, EscrowObservationTarget, ExactMessageBytes, ExactTransactionBytes,
+    FundingObservation, Hex32, InitializationObservation, MessageContext,
+    NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
+    NativeRefundObservation, NativeRefundObservationTarget, ObserveEscrowRequest,
+    ObserveEscrowResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
+    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, Participant,
+    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
+    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PreparedTransaction,
+    PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RevealingClaimObservation,
+    RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
+    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
+    TransactionId, WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
 };
 use serde_json::json;
+use sha2::{Digest as _, Sha256};
 use tower::ServiceBuilder;
 use tower_http::validate_request::ValidateRequestHeaderLayer;
 
@@ -228,6 +232,34 @@ fn register_existing_transaction_methods(module: &mut RpcModule<Fixture>) {
         })
         .expect("prepare claim method");
     module
+        .register_method(METHOD_PREPARE_WITNESSED_CLAIM, |params, fixture, _| {
+            let request: PrepareWitnessedClaimRequest = params.one()?;
+            fixture.record(METHOD_PREPARE_WITNESSED_CLAIM);
+            let exact_message_bytes = ExactMessageBytes::new(vec![55; 64]).unwrap();
+            let mut hasher = Sha256::new();
+            hasher.update(b"/LEE/v0.3/Message/Public/\0\0\0\0\0\0\0");
+            hasher.update(exact_message_bytes.as_slice());
+            Ok::<_, ErrorObjectOwned>(PrepareWitnessedClaimResult::new(
+                response_context(&request.context, fixture.behavior),
+                PreparedWitnessedClaim::new(
+                    request.context.request_id,
+                    Hex32::from_bytes(hasher.finalize().into()),
+                    exact_message_bytes,
+                ),
+            ))
+        })
+        .expect("prepare witnessed claim method");
+    module
+        .register_method(METHOD_COMPLETE_WITNESSED_CLAIM, |params, fixture, _| {
+            let request: CompleteWitnessedClaimRequest = params.one()?;
+            fixture.record(METHOD_COMPLETE_WITNESSED_CLAIM);
+            Ok::<_, ErrorObjectOwned>(CompleteWitnessedClaimResult::new(
+                response_context(&request.context, fixture.behavior),
+                prepared(45, 15),
+            ))
+        })
+        .expect("complete witnessed claim method");
+    module
         .register_method(METHOD_OBSERVE_REVEALING_CLAIM, |params, fixture, _| {
             let request: ObserveRevealingClaimRequest = params.one()?;
             fixture.record(METHOD_OBSERVE_REVEALING_CLAIM);
@@ -404,6 +436,23 @@ fn terms() -> NativeEscrowTerms {
     .expect("valid terms")
 }
 
+fn witnessed_terms(runtime: &RuntimeDescriptor) -> WitnessedNativeEscrowTerms {
+    WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
+        swap_id: hex32(7),
+        terms_hash: hex32(8),
+        depositor: Participant::Taker,
+        depositor_account_id: hex32(9),
+        claimant: Participant::Maker,
+        claimant_account_id: runtime.signer_account_id,
+        aggregate_authority_account_id: hex32(10),
+        aggregate_x_only_public_key: hex32(11),
+        amount: 20,
+        refund_at_ms: 1_800_000_000_001,
+        authenticated_transfer_program_id: hex32(16),
+    })
+    .expect("valid witnessed terms")
+}
+
 fn context(run: &RunId, role: Participant, suffix: &str) -> MessageContext {
     MessageContext::new(
         run.clone(),
@@ -454,6 +503,33 @@ async fn round_trip_refund(
         ))
         .await
         .expect("observe refund");
+}
+
+async fn round_trip_witnessed_claim(
+    client: &BridgeClient,
+    run: &RunId,
+    expected_runtime: &RuntimeDescriptor,
+    funding_transaction_id: TransactionId,
+) -> PreparedTransaction {
+    let witnessed = client
+        .prepare_witnessed_claim(PrepareWitnessedClaimRequest::new(
+            context(run, Participant::Maker, "prepare-witnessed"),
+            expected_runtime.clone(),
+            witnessed_terms(expected_runtime),
+            funding_transaction_id,
+        ))
+        .await
+        .expect("prepare witnessed claim");
+    client
+        .complete_witnessed_claim(CompleteWitnessedClaimRequest::new(
+            context(run, Participant::Maker, "complete-witnessed"),
+            expected_runtime.clone(),
+            witnessed.claim,
+            AggregateBip340Signature::from_bytes([12; 64]),
+        ))
+        .await
+        .expect("complete witnessed claim")
+        .claim
 }
 
 #[tokio::test]
@@ -528,14 +604,22 @@ async fn all_versioned_methods_round_trip_typed_protocol_values_once() {
         .await
         .expect("observe claim");
 
+    let completed_witnessed = round_trip_witnessed_claim(
+        &client,
+        &run,
+        &expected_runtime,
+        escrow.funding.transaction_id,
+    )
+    .await;
+
     round_trip_refund(&client, &run, &expected_runtime).await;
 
-    let expected_submission_id = claim.claim.transaction_id;
+    let expected_submission_id = completed_witnessed.transaction_id;
     let submitted = client
         .submit_transaction(SubmitTransactionRequest::new(
             context(&run, Participant::Maker, "submit"),
             expected_runtime.clone(),
-            claim.claim,
+            completed_witnessed,
         ))
         .await
         .expect("submit");
@@ -548,6 +632,8 @@ async fn all_versioned_methods_round_trip_typed_protocol_values_once() {
         METHOD_OBSERVE_ESCROW,
         METHOD_PREPARE_REVEALING_CLAIM,
         METHOD_OBSERVE_REVEALING_CLAIM,
+        METHOD_PREPARE_WITNESSED_CLAIM,
+        METHOD_COMPLETE_WITNESSED_CLAIM,
         METHOD_PREPARE_NATIVE_REFUND,
         METHOD_OBSERVE_NATIVE_REFUND,
         METHOD_SUBMIT_TRANSACTION,

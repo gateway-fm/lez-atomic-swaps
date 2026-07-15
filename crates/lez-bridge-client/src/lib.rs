@@ -16,21 +16,24 @@ use jsonrpsee::{
 };
 use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClient, HttpClientBuilder};
 use lez_bridge_protocol::{
-    DescribeRuntimeRequest, DescribeRuntimeResult, ErrorCode, ErrorMessage, MessageContext,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveNativeRefundRequest,
-    ObserveNativeRefundResult, ObserveRevealingClaimRequest, ObserveRevealingClaimResult,
-    Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
+    DescribeRuntimeResult, ErrorCode, ErrorMessage, MessageContext, ObserveEscrowRequest,
+    ObserveEscrowResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
+    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, Participant,
+    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
     PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PreparedTransaction, ProtocolErrorReply, RequestId, RunId, RuntimeDescriptor,
+    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PreparedTransaction,
+    PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RunId, RuntimeDescriptor,
     SubmitTransactionRequest, SubmitTransactionResult,
 };
 pub use lez_bridge_protocol::{
-    MAX_RPC_BODY_BYTES, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW,
-    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_PREPARE_NATIVE_ESCROW,
-    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_SUBMIT_TRANSACTION,
-    RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+    MAX_RPC_BODY_BYTES, METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME,
+    METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM,
+    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
+    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
 };
 use serde::{Serialize, de::DeserializeOwned};
+use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use url::{Host, Url};
 use zeroize::Zeroize;
@@ -38,6 +41,8 @@ use zeroize::Zeroize;
 /// Longest request timeout accepted in client configuration.
 pub const MAX_REQUEST_TIMEOUT: Duration = Duration::from_mins(1);
 const MAX_EXACT_TRANSACTION_BYTES: usize = 2_000_000;
+const OFFICIAL_PUBLIC_MESSAGE_HASH_PREFIX: &[u8; 32] =
+    b"/LEE/v0.3/Message/Public/\x00\x00\x00\x00\x00\x00\x00";
 const MIN_CAPABILITY_BYTES: usize = 32;
 const MAX_CAPABILITY_BYTES: usize = 128;
 
@@ -151,6 +156,10 @@ pub enum BridgeOperation {
     ObserveEscrow,
     /// Randomized revealing-claim preparation.
     PrepareRevealingClaim,
+    /// Unsigned aggregate-witness message reservation.
+    PrepareWitnessedClaim,
+    /// Exact aggregate-witness transaction completion.
+    CompleteWitnessedClaim,
     /// Revealing-claim observation.
     ObserveRevealingClaim,
     /// Fixed-destination native refund preparation.
@@ -451,6 +460,60 @@ impl BridgeClient {
         Ok(result)
     }
 
+    /// Reserves one exact unsigned LEZ message for external aggregate signing.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime drift, request-ID reuse, malformed
+    /// message bytes, typed remote error, timeout, or transport uncertainty.
+    pub async fn prepare_witnessed_claim(
+        &self,
+        request: PrepareWitnessedClaimRequest,
+    ) -> Result<PrepareWitnessedClaimResult, BridgeClientError> {
+        let operation = BridgeOperation::PrepareWitnessedClaim;
+        let context = request.context.clone();
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        self.reserve_context(operation, &context)?;
+        let result: PrepareWitnessedClaimResult = self
+            .request(operation, METHOD_PREPARE_WITNESSED_CLAIM, request, &context)
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_witnessed_preparation(operation, &result.claim)?;
+        Ok(result)
+    }
+
+    /// Completes a reserved message with one external aggregate signature.
+    ///
+    /// The returned exact transaction remains inspectable and must be passed
+    /// separately to [`Self::submit_transaction`], preserving durable
+    /// persist-before-effect and unknown-outcome semantics.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime drift, request-ID reuse, malformed
+    /// completed bytes, typed remote error, timeout, or transport uncertainty.
+    pub async fn complete_witnessed_claim(
+        &self,
+        request: CompleteWitnessedClaimRequest,
+    ) -> Result<CompleteWitnessedClaimResult, BridgeClientError> {
+        let operation = BridgeOperation::CompleteWitnessedClaim;
+        let context = request.context.clone();
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_witnessed_preparation(operation, &request.claim)?;
+        self.reserve_context(operation, &context)?;
+        let result: CompleteWitnessedClaimResult = self
+            .request(
+                operation,
+                METHOD_COMPLETE_WITNESSED_CLAIM,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_prepared(operation, &result.claim)?;
+        Ok(result)
+    }
+
     /// Observes one exact or terms-discovered revealing claim.
     ///
     /// # Errors
@@ -638,6 +701,22 @@ fn validate_prepared(
     Ok(())
 }
 
+fn validate_witnessed_preparation(
+    operation: BridgeOperation,
+    claim: &PreparedWitnessedClaim,
+) -> Result<(), BridgeClientError> {
+    let mut hasher = Sha256::new();
+    hasher.update(OFFICIAL_PUBLIC_MESSAGE_HASH_PREFIX);
+    hasher.update(claim.exact_message_bytes.as_slice());
+    let computed: [u8; 32] = hasher.finalize().into();
+    if claim.message_hash.as_bytes() != &computed || claim.exact_message_bytes.as_slice().is_empty()
+    {
+        Err(BridgeClientError::MalformedPreparedTransaction { operation })
+    } else {
+        Ok(())
+    }
+}
+
 fn map_client_error(
     operation: BridgeOperation,
     context: &MessageContext,
@@ -672,4 +751,50 @@ fn map_client_error(
 
 const fn configuration(reason: ConfigurationError) -> BridgeClientError {
     BridgeClientError::InvalidConfiguration { reason }
+}
+
+#[cfg(test)]
+mod tests {
+    use lez_bridge_protocol::{ExactMessageBytes, Hex32};
+
+    use super::*;
+
+    fn prepared_message(bytes: &[u8], message_hash: [u8; 32]) -> PreparedWitnessedClaim {
+        PreparedWitnessedClaim::new(
+            RequestId::new("witnessed-prepare-0001").unwrap(),
+            Hex32::from_bytes(message_hash),
+            ExactMessageBytes::new(bytes.to_vec()).unwrap(),
+        )
+    }
+
+    #[test]
+    fn witnessed_preparation_hashes_the_exact_returned_message_bytes() {
+        let bytes = b"canonical-official-message";
+        let mut hasher = Sha256::new();
+        hasher.update(OFFICIAL_PUBLIC_MESSAGE_HASH_PREFIX);
+        hasher.update(bytes);
+        let message_hash = hasher.finalize().into();
+
+        validate_witnessed_preparation(
+            BridgeOperation::PrepareWitnessedClaim,
+            &prepared_message(bytes, message_hash),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn witnessed_preparation_rejects_message_bytes_not_bound_by_returned_hash() {
+        let error = validate_witnessed_preparation(
+            BridgeOperation::PrepareWitnessedClaim,
+            &prepared_message(b"mutated-message", [9; 32]),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            BridgeClientError::MalformedPreparedTransaction {
+                operation: BridgeOperation::PrepareWitnessedClaim
+            }
+        ));
+    }
 }
