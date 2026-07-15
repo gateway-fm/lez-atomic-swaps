@@ -13,9 +13,9 @@ use corepc_types::v31::{
     SendRawTransaction, TestMempoolAccept,
 };
 use lez_btc_core_adapter::{
-    BitcoinCoreAdapter, BitcoinCoreRpc, ClaimObservation, ClaimSubmissionAcquire,
-    ClaimSubmissionAttempt, ClaimSubmissionState, ClaimSubmissionStore, CoreAdapterError,
-    CoreConnectivityPolicy, FundingObservation, SendFailure,
+    AuthorizedClaimSubmission, BitcoinCoreAdapter, BitcoinCoreRpc, ClaimObservation,
+    ClaimSubmissionAcquire, ClaimSubmissionAttempt, ClaimSubmissionState, ClaimSubmissionStore,
+    CoreAdapterError, CoreConnectivityPolicy, FundingObservation, SendFailure,
 };
 
 use support::{REGTEST_GENESIS, REQUIRED_CONFIRMATIONS, raw_verbose, swap_fixture};
@@ -738,4 +738,193 @@ async fn durable_attempt_binds_wtxid_and_exact_raw_transaction_digest() {
             .count(),
         1
     );
+}
+
+#[tokio::test]
+async fn caller_authorized_claim_submission_returns_only_chain_outcomes() {
+    let fixture = swap_fixture();
+    let claim_bytes = serialize(&fixture.claim);
+
+    let accepted_rpc = MockRpc::ready();
+    accepted_rpc.push_mempool(Ok(mempool_allowed(&fixture.claim)));
+    accepted_rpc.push_send(Ok(SendRawTransaction(
+        fixture.claim.compute_txid().to_string(),
+    )));
+    assert_eq!(
+        isolated_adapter(accepted_rpc.clone())
+            .submit_authorized_claim(
+                &fixture.agreement,
+                &claim_bytes,
+                fixture.claim.compute_txid(),
+            )
+            .await
+            .expect("authorized claim accepted"),
+        AuthorizedClaimSubmission::Accepted {
+            transaction_id: fixture.claim.compute_txid(),
+        }
+    );
+    assert_eq!(
+        accepted_rpc
+            .calls()
+            .iter()
+            .filter(|call| **call == "sendrawtransaction")
+            .count(),
+        1
+    );
+
+    let rejected_rpc = MockRpc::ready();
+    rejected_rpc.push_mempool(Ok(mempool_allowed(&fixture.claim)));
+    rejected_rpc.push_send(Err(MockError::Rejected));
+    assert_eq!(
+        isolated_adapter(rejected_rpc.clone())
+            .submit_authorized_claim(
+                &fixture.agreement,
+                &claim_bytes,
+                fixture.claim.compute_txid(),
+            )
+            .await
+            .expect("authorized claim definitively rejected"),
+        AuthorizedClaimSubmission::Rejected
+    );
+    assert_eq!(
+        rejected_rpc
+            .calls()
+            .iter()
+            .filter(|call| **call == "sendrawtransaction")
+            .count(),
+        1
+    );
+
+    let unknown_rpc = MockRpc::ready();
+    unknown_rpc.push_mempool(Ok(mempool_allowed(&fixture.claim)));
+    unknown_rpc.push_send(Err(MockError::Transport));
+    assert_eq!(
+        isolated_adapter(unknown_rpc.clone())
+            .submit_authorized_claim(
+                &fixture.agreement,
+                &claim_bytes,
+                fixture.claim.compute_txid(),
+            )
+            .await
+            .expect("authorized claim outcome unknown"),
+        AuthorizedClaimSubmission::Unknown
+    );
+    assert_eq!(
+        unknown_rpc
+            .calls()
+            .iter()
+            .filter(|call| **call == "sendrawtransaction")
+            .count(),
+        1
+    );
+
+    let preflight_unknown_rpc = MockRpc::ready();
+    preflight_unknown_rpc.push_mempool(Err(MockError::Transport));
+    assert_eq!(
+        isolated_adapter(preflight_unknown_rpc.clone())
+            .submit_authorized_claim(
+                &fixture.agreement,
+                &claim_bytes,
+                fixture.claim.compute_txid(),
+            )
+            .await
+            .expect("authorized preflight outcome unknown"),
+        AuthorizedClaimSubmission::Unknown
+    );
+    assert!(
+        !preflight_unknown_rpc
+            .calls()
+            .contains(&"sendrawtransaction")
+    );
+}
+
+#[tokio::test]
+async fn caller_authorized_claim_validates_identity_and_witness_before_send() {
+    let fixture = swap_fixture();
+    let claim_bytes = serialize(&fixture.claim);
+
+    let wrong_identity_rpc = MockRpc::ready();
+    assert!(matches!(
+        isolated_adapter(wrong_identity_rpc.clone())
+            .submit_authorized_claim(
+                &fixture.agreement,
+                &claim_bytes,
+                fixture.funding.compute_txid(),
+            )
+            .await,
+        Err(CoreAdapterError::ClaimTransactionMismatch)
+    ));
+    assert!(wrong_identity_rpc.calls().is_empty());
+
+    let malformed_bytes_rpc = MockRpc::ready();
+    let mut malformed_bytes = claim_bytes.clone();
+    malformed_bytes.push(0);
+    assert!(matches!(
+        isolated_adapter(malformed_bytes_rpc.clone())
+            .submit_authorized_claim(
+                &fixture.agreement,
+                &malformed_bytes,
+                fixture.claim.compute_txid(),
+            )
+            .await,
+        Err(CoreAdapterError::MalformedRawTransaction)
+    ));
+    assert!(malformed_bytes_rpc.calls().is_empty());
+
+    let wrong_claim_rpc = MockRpc::ready();
+    let mut wrong_claim = fixture.claim.clone();
+    wrong_claim.input[0].witness = bitcoin::Witness::from_slice(&[[0x55; 64]]);
+    assert!(matches!(
+        isolated_adapter(wrong_claim_rpc.clone())
+            .submit_authorized_claim(
+                &fixture.agreement,
+                &serialize(&wrong_claim),
+                wrong_claim.compute_txid(),
+            )
+            .await,
+        Err(CoreAdapterError::ClaimTransactionMismatch)
+    ));
+    assert!(wrong_claim_rpc.calls().is_empty());
+
+    let conflicting_witness_rpc = MockRpc::ready();
+    let mut conflicting_witness = mempool_allowed(&fixture.claim);
+    conflicting_witness.0[0].wtxid = swap_fixture().claim.compute_wtxid().to_string();
+    assert_ne!(
+        conflicting_witness.0[0].wtxid,
+        fixture.claim.compute_wtxid().to_string()
+    );
+    conflicting_witness_rpc.push_mempool(Ok(conflicting_witness));
+    assert!(matches!(
+        isolated_adapter(conflicting_witness_rpc.clone())
+            .submit_authorized_claim(
+                &fixture.agreement,
+                &claim_bytes,
+                fixture.claim.compute_txid(),
+            )
+            .await,
+        Err(CoreAdapterError::MempoolResponseMismatch)
+    ));
+    assert!(
+        !conflicting_witness_rpc
+            .calls()
+            .contains(&"sendrawtransaction")
+    );
+
+    let already_known_rpc = MockRpc::ready();
+    already_known_rpc.push_mempool(Ok(mempool_rejected(
+        &fixture.claim,
+        "txn-same-nonwitness-data-in-mempool",
+    )));
+    assert_eq!(
+        isolated_adapter(already_known_rpc.clone())
+            .submit_authorized_claim(
+                &fixture.agreement,
+                &claim_bytes,
+                fixture.claim.compute_txid(),
+            )
+            .await
+            .expect("already-known result remains conservative"),
+        AuthorizedClaimSubmission::Unknown
+    );
+    assert!(!already_known_rpc.calls().contains(&"sendrawtransaction"));
 }

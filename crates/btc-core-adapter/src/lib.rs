@@ -266,6 +266,37 @@ pub enum ClaimSubmissionState {
     Unknown,
 }
 
+/// Chain result of one caller-authorized claim submission.
+///
+/// This type deliberately has no `Started` state: the caller must consume its
+/// durable single-send authority before invoking [`BitcoinCoreAdapter::submit_authorized_claim`]
+/// and durably record this result afterwards.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum AuthorizedClaimSubmission {
+    /// Core returned the exact expected transaction identifier.
+    Accepted {
+        /// Accepted transaction identifier.
+        transaction_id: Txid,
+    },
+    /// Core definitively rejected the transaction.
+    Rejected,
+    /// The attempt outcome cannot be proven and must never be retried.
+    Unknown,
+}
+
+impl From<AuthorizedClaimSubmission> for ClaimSubmissionState {
+    fn from(value: AuthorizedClaimSubmission) -> Self {
+        match value {
+            AuthorizedClaimSubmission::Accepted { transaction_id } => {
+                Self::Accepted { transaction_id }
+            }
+            AuthorizedClaimSubmission::Rejected => Self::Rejected,
+            AuthorizedClaimSubmission::Unknown => Self::Unknown,
+        }
+    }
+}
+
 /// Result of the durable compare-and-set boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClaimSubmissionAcquire {
@@ -568,6 +599,38 @@ where
         }
     }
 
+    /// Submits one exact claim after the caller has durably consumed send authority.
+    ///
+    /// This method does not acquire, persist, or retry submission authority. The
+    /// caller must first durably bind the agreement, `expected_transaction_id`,
+    /// and complete witness-bearing `transaction_bytes` to a single attempt. It
+    /// must treat `Unknown` and every error after authority consumption as
+    /// observe-only. One invocation makes at most one `sendrawtransaction` call.
+    ///
+    /// The canonical bytes and exact agreement claim are validated before any
+    /// RPC. Core's mempool response must identify both the expected txid and the
+    /// wtxid computed from the exact bytes; broadcast success must return the
+    /// expected txid. Already-known and same-nonwitness-data results remain
+    /// `Unknown`, because neither proves that Core holds this exact witness.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed or non-canonical bytes, an agreement or expected txid
+    /// mismatch, readiness failure, or a contradictory typed Core response.
+    pub async fn submit_authorized_claim(
+        &self,
+        agreement: &BtcAgreementV1,
+        transaction_bytes: &[u8],
+        expected_transaction_id: Txid,
+    ) -> Result<AuthorizedClaimSubmission, CoreAdapterError<R::Error>> {
+        let transaction = validate_claim_submission(agreement, transaction_bytes)?;
+        if transaction.compute_txid() != expected_transaction_id {
+            return Err(CoreAdapterError::ClaimTransactionMismatch);
+        }
+        self.perform_claim_submission(agreement, &transaction, transaction_bytes)
+            .await
+    }
+
     /// Executes at most one durable claim submission attempt.
     ///
     /// The exact signed claim is validated locally before the durable CAS. Once
@@ -587,9 +650,7 @@ where
     where
         S: ClaimSubmissionStore,
     {
-        let transaction = decode_raw_transaction::<R::Error>(transaction_bytes)
-            .map_err(widen_core_error::<R::Error, S::Error>)?;
-        validate_exact_claim::<R::Error>(agreement, &transaction)
+        let transaction = validate_claim_submission::<R::Error>(agreement, transaction_bytes)
             .map_err(widen_core_error::<R::Error, S::Error>)?;
         let transaction_id = transaction.compute_txid();
         let attempt = ClaimSubmissionAttempt {
@@ -609,7 +670,7 @@ where
             .perform_claim_submission(agreement, &transaction, transaction_bytes)
             .await
         {
-            Ok(state) => state,
+            Ok(state) => ClaimSubmissionState::from(state),
             Err(error) => {
                 record_result(store, &attempt, ClaimSubmissionState::Unknown)?;
                 return Err(widen_core_error(error));
@@ -624,11 +685,11 @@ where
         agreement: &BtcAgreementV1,
         transaction: &Transaction,
         transaction_bytes: &[u8],
-    ) -> Result<ClaimSubmissionState, CoreAdapterError<R::Error>> {
+    ) -> Result<AuthorizedClaimSubmission, CoreAdapterError<R::Error>> {
         self.ensure_ready(agreement).await?;
         let transaction_id = transaction.compute_txid();
         let Ok(mempool) = self.rpc.test_mempool_accept(transaction_bytes).await else {
-            return Ok(ClaimSubmissionState::Unknown);
+            return Ok(AuthorizedClaimSubmission::Unknown);
         };
         let [acceptance] = mempool.0.as_slice() else {
             return Err(CoreAdapterError::MempoolResponseMismatch);
@@ -665,9 +726,9 @@ where
                     reason,
                     "txn-already-in-mempool" | "txn-same-nonwitness-data-in-mempool"
                 ) {
-                    ClaimSubmissionState::Unknown
+                    AuthorizedClaimSubmission::Unknown
                 } else {
-                    ClaimSubmissionState::Rejected
+                    AuthorizedClaimSubmission::Rejected
                 },
             );
         }
@@ -678,11 +739,11 @@ where
                 if response_txid != transaction_id {
                     return Err(CoreAdapterError::BroadcastIdentityMismatch);
                 }
-                ClaimSubmissionState::Accepted { transaction_id }
+                AuthorizedClaimSubmission::Accepted { transaction_id }
             }
             Err(error) => match R::classify_send_failure(&error) {
-                SendFailure::DefinitiveRejection => ClaimSubmissionState::Rejected,
-                SendFailure::Unknown => ClaimSubmissionState::Unknown,
+                SendFailure::DefinitiveRejection => AuthorizedClaimSubmission::Rejected,
+                SendFailure::Unknown => AuthorizedClaimSubmission::Unknown,
             },
         };
         Ok(state)
@@ -696,6 +757,18 @@ where
             .map_err(CoreAdapterError::Rpc)?;
         parse_ready_chain(&chain)
     }
+}
+
+fn validate_claim_submission<R>(
+    agreement: &BtcAgreementV1,
+    transaction_bytes: &[u8],
+) -> Result<Transaction, CoreAdapterError<R>>
+where
+    R: StdError + 'static,
+{
+    let transaction = decode_raw_transaction(transaction_bytes)?;
+    validate_exact_claim(agreement, &transaction)?;
+    Ok(transaction)
 }
 
 fn widen_core_error<R, S>(error: CoreAdapterError<R>) -> CoreAdapterError<R, S>
