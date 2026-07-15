@@ -1563,7 +1563,9 @@ name = "lez-btc-swap-sdk"
 version = "0.1.0"
 dependencies = [
  "bitcoin",
+ "getrandom 0.3.4",
  "musig2",
+ "thiserror 2.0.18",
  "zeroize",
 ]
 

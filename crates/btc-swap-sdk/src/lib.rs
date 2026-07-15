@@ -6,9 +6,14 @@
 //! `MuSig2` and adaptor types will remain behind that byte boundary rather than
 //! sharing incompatible curve-library Rust types.
 
+mod adaptor;
 mod p2tr;
 mod transaction;
 
+pub use adaptor::{
+    AdaptorSessionContext, AdaptorSessionError, AdaptorSigner, SigningRole, adapt_presignature,
+    extract_adaptor_secret, verify_final_signature,
+};
 pub use p2tr::{
     CsvBlockDelay, CsvBlockDelayError, InvalidXOnlyKey, OutputKeyParity, P2trSwapOutput,
     P2trSwapOutputError, RefundXOnlyKey, TwoPartyAggregateKey, XOnlyKeyPurpose,
