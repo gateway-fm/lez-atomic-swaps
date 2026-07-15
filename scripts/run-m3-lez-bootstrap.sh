@@ -15,6 +15,40 @@ fail() {
   exit 2
 }
 
+transaction_occurrences() {
+  local block_file="$1" transaction_id="$2" variant="$3"
+  case "$variant" in
+    ProgramDeployment | Public) ;;
+    *) fail "unsupported LEZ transaction variant: ${variant}" ;;
+  esac
+  jq -er --arg tx "$transaction_id" --arg variant "$variant" '
+    [.result.body.transactions[]
+      | select((keys | length) == 1 and has($variant))
+      | .[$variant]
+      | select(.hash == $tx)]
+    | length
+  ' "$block_file"
+}
+
+self_test_finality_selector() {
+  local fixture deployment_hash public_hash
+  deployment_hash="$(printf 'a%.0s' {1..64})"
+  public_hash="$(printf 'b%.0s' {1..64})"
+  fixture="$(jq -cn --arg deployment "$deployment_hash" --arg public "$public_hash" '
+    {result:{body:{transactions:[
+      {ProgramDeployment:{hash:$deployment}},
+      {Public:{hash:$public}},
+      {ProgramDeployment:{hash:$deployment},Public:{hash:$public}}
+    ]}}}
+  ')"
+  [[ "$(transaction_occurrences - "$deployment_hash" ProgramDeployment <<<"$fixture")" == 1 ]] ||
+    fail "finality selector did not find exactly one deployment variant"
+  [[ "$(transaction_occurrences - "$public_hash" Public <<<"$fixture")" == 1 ]] ||
+    fail "finality selector did not find exactly one public variant"
+  [[ "$(transaction_occurrences - "$public_hash" ProgramDeployment <<<"$fixture")" == 0 ]] ||
+    fail "finality selector confused public and deployment variants"
+}
+
 emit_contract() {
   jq -n --arg guest "$expected_guest_sha256" --arg program "$expected_program_id" '
     {
@@ -23,6 +57,7 @@ emit_contract() {
       verified_artifact_target_required: true,
       canonical_guest_artifact_independently_hashed: true,
       canonical_guest_source: "compat/lez-v0.2-provisional/escrow/methods/guest/src/bin/zec_escrow_v02.rs",
+      finality_membership_variants: ["ProgramDeployment", "Public"],
       embedded_guest_sha256: $guest,
       escrow_program_id: $program,
       deployment_submission_count: 1,
@@ -41,6 +76,12 @@ if [[ "${1:-}" == "contract" ]]; then
   [[ "$#" == 1 ]] || fail "contract accepts no other arguments"
   command -v jq >/dev/null || fail "jq is required"
   emit_contract
+  exit 0
+fi
+if [[ "${1:-}" == "self-test-finality-selector" ]]; then
+  [[ "$#" == 1 ]] || fail "self-test-finality-selector accepts no other arguments"
+  command -v jq >/dev/null || fail "jq is required"
+  self_test_finality_selector
   exit 0
 fi
 [[ "${1:-}" == "execute" && "$#" == 1 ]] || fail "expected contract or execute"
@@ -167,6 +208,7 @@ prove_finalized_transaction() {
   local label="$1"
   local transaction_id="$2"
   local start_height="$3"
+  local transaction_variant="$4"
   local cursor=$((start_height + 1))
   local tip height block_file block_hash hash_file occurrences containing_file=""
   local count=0 containing_height=0
@@ -180,8 +222,8 @@ prove_finalized_transaction() {
       rpc_read_file "$M3_POC_LEZ_INDEXER_RPC_URL" \
         "$(jq -cn --argjson height "$height" \
           '{jsonrpc:"2.0",id:1,method:"getBlockById",params:[$height]}')" "$block_file"
-      occurrences="$(jq -er --arg tx "$transaction_id" \
-        '[.result.body.transactions[] | select(.Public.hash == $tx)] | length' "$block_file")"
+      occurrences="$(transaction_occurrences "$block_file" "$transaction_id" \
+        "$transaction_variant")"
       if (( occurrences > 0 )); then
         count=$((count + occurrences))
         containing_height="$height"
@@ -234,7 +276,8 @@ jq -e --arg rpc "$M3_POC_LEZ_SEQUENCER_RPC_URL" \
   and (.inclusion_block_hash | test("^[0-9a-f]{64}$"))
 ' "$deployment_evidence" >/dev/null || fail "checked guest deployment evidence is invalid"
 deployment_tx="$(jq -er '.transaction_hash' "$deployment_evidence")"
-deployment_block="$(prove_finalized_transaction lez-deployment "$deployment_tx" "$deployment_start")"
+deployment_block="$(prove_finalized_transaction lez-deployment "$deployment_tx" \
+  "$deployment_start" ProgramDeployment)"
 [[ "$deployment_block" == "$(jq -er '.inclusion_block_id' "$deployment_evidence")" ]] ||
   fail "deployment sequencer and finalized indexer block IDs disagree"
 [[ "$(jq -er '.containing_block_hash' "${M3_POC_EVIDENCE_DIR}/lez-deployment-finality.json")" == \
@@ -281,7 +324,8 @@ claim_vault_for_role() {
     and (.transaction_id | test("^[0-9a-f]{64}$"))
   ' "$claim_evidence" >/dev/null || fail "${role} Vault Claim evidence is invalid"
   claim_tx="$(jq -er '.transaction_id' "$claim_evidence")"
-  claim_block="$(prove_finalized_transaction "${role}-vault-claim" "$claim_tx" "$claim_start")"
+  claim_block="$(prove_finalized_transaction "${role}-vault-claim" "$claim_tx" \
+    "$claim_start" Public)"
   owner_output="${M3_POC_EVIDENCE_DIR}/${role}-owner-after-vault-claim.json"
   vault_output="${M3_POC_EVIDENCE_DIR}/${role}-vault-after-vault-claim.json"
   rpc_read_file "$M3_POC_LEZ_INDEXER_RPC_URL" \

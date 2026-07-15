@@ -93,12 +93,14 @@ rg -Fq 'exact_transaction_occurrences:1' "$direction_driver" ||
 [[ -x "$bootstrap_driver" ]] || fail "LEZ bootstrap driver is missing or not executable"
 bash -n "$bootstrap_driver"
 bootstrap_contract="$($bootstrap_driver contract)"
+"$bootstrap_driver" self-test-finality-selector
 jq -e '
   .schema_version == 1
   and .kind == "m3_lez_bootstrap_contract"
   and .verified_artifact_target_required == true
   and .canonical_guest_artifact_independently_hashed == true
   and .canonical_guest_source == "compat/lez-v0.2-provisional/escrow/methods/guest/src/bin/zec_escrow_v02.rs"
+  and .finality_membership_variants == ["ProgramDeployment", "Public"]
   and .deployment_submission_count == 1
   and .fresh_identity_vault_claims == ["maker", "taker"]
   and .vault_claim_submission_count_per_role == 1
