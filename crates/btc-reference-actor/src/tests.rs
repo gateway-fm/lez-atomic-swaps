@@ -2791,6 +2791,87 @@ async fn bitcoin_claim_effect_persists_before_one_send_then_projects_only_when_f
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn bitcoin_claim_uncertain_scan_stays_prepared_then_stable_scan_submits_once() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Taker);
+    activate_and_project_both_locks(&fixture).await;
+    let effect = prepare_bitcoin_claim_effect(
+        &fixture.config,
+        &fixture.agreement,
+        ClaimTransition::RevealingClaim,
+        &durable_status(&fixture),
+    )
+    .expect("prepare revealing effect")
+    .expect("taker owns revealing effect");
+
+    let uncertain_port = FixedBitcoinClaimPort::new(
+        BitcoinClaimScan::Uncertain,
+        Ok(AuthorizedClaimSubmission::Accepted {
+            transaction_id: effect.expected_transaction_id,
+        }),
+    );
+    let uncertain_observer = BitcoinClaimObserver {
+        chain: uncertain_port.clone(),
+        effect: Some(effect.clone()),
+        state_db: fixture.config.state_db.clone(),
+    };
+    let pending = output_json(
+        drive_claim_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &uncertain_observer,
+        )
+        .await
+        .expect("uncertain scan remains observation-only"),
+    );
+    assert_eq!(pending["outcome"], "awaiting_observation");
+    assert_eq!(pending["revision"], 2);
+    assert_eq!(uncertain_port.submit_calls(), 0);
+
+    let stable_port = FixedBitcoinClaimPort::new(
+        BitcoinClaimScan::Unspent,
+        Ok(AuthorizedClaimSubmission::Accepted {
+            transaction_id: effect.expected_transaction_id,
+        }),
+    );
+    let stable_observer = BitcoinClaimObserver {
+        chain: stable_port.clone(),
+        effect: Some(effect.clone()),
+        state_db: fixture.config.state_db.clone(),
+    };
+    drive_claim_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &stable_observer,
+    )
+    .await
+    .expect("stable absence consumes one send authority");
+    assert_eq!(stable_port.submit_calls(), 1);
+
+    let replay_port = FixedBitcoinClaimPort::new(
+        BitcoinClaimScan::Unspent,
+        Ok(AuthorizedClaimSubmission::Accepted {
+            transaction_id: effect.expected_transaction_id,
+        }),
+    );
+    let replay_observer = BitcoinClaimObserver {
+        chain: replay_port.clone(),
+        effect: Some(effect),
+        state_db: fixture.config.state_db.clone(),
+    };
+    drive_claim_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &replay_observer,
+    )
+    .await
+    .expect("accepted send authority remains consumed after restart");
+    assert_eq!(replay_port.submit_calls(), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn bitcoin_claim_unknown_never_rearms_after_restart() {
     let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Taker);
     activate_and_project_both_locks(&fixture).await;

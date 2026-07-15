@@ -36,6 +36,7 @@ emit_contract() {
       role_allowed_block_and_mempool_observation: true,
       bounded_read_only_observation_retries_never_resubmit: true,
       bounded_pending_observation_retries: true,
+      bounded_prepared_bitcoin_claim_reconciliation: true,
       submission_count_query: true,
       owned_process_registry: true,
       pre_lock_presignature_domains: ["bitcoin", "lez"],
@@ -925,6 +926,55 @@ actor_invoke_observation_retry() {
   fail "${role} actor observation remained unavailable after bounded read-only retries"
 }
 
+actor_reconcile_bitcoin_claim_submission() {
+  local role="$1" peer="$2" expected_revision="$3" label="$4"
+  local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
+  local attempt attempt_output attempt_error mempool_output error_text mempool_count
+  local actor_succeeded
+  actor_last_output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-submit-${role}.json"
+  [[ ! -e "$actor_last_output" && ! -L "$actor_last_output" ]] ||
+    fail "refusing to overwrite actor evidence: ${label}-submit/${role}"
+  for attempt in {1..120}; do
+    attempt_output="${actor_last_output%.json}-attempt-${attempt}.json"
+    attempt_error="${actor_last_output%.json}-attempt-${attempt}.stderr"
+    mempool_output="${actor_last_output%.json}-attempt-${attempt}-mempool.json"
+    actor_succeeded=0
+    if "$M3_POC_ACTOR_BIN" --config "$config" drive \
+        >"$attempt_output" 2>"$attempt_error"; then
+      actor_succeeded=1
+      chmod 0600 "$attempt_output" "$attempt_error"
+      jq -e --arg role "$role" --argjson revision "$((expected_revision - 1))" '
+        .schema_version == 1 and .role == $role and .command == "drive"
+        and .outcome == "awaiting_observation" and .chain == "bitcoin"
+        and .revision == $revision
+      ' "$attempt_output" >/dev/null ||
+        fail "${role} returned an unexpected Bitcoin claim submission state"
+    else
+      chmod 0600 "$attempt_output" "$attempt_error"
+      error_text="$(tr -d '\r\n' <"$attempt_error")"
+      [[ "$error_text" == "actor chain observation is unavailable" ]] ||
+        fail "${role} Bitcoin claim reconciliation failed with a non-retryable typed error"
+    fi
+    core_rpc "$peer" getrawmempool '[]' >"$mempool_output" ||
+      fail "${peer} could not observe the Bitcoin claim mempool"
+    chmod 0600 "$mempool_output"
+    jq -e '.error == null and (.result | type == "array")' \
+      "$mempool_output" >/dev/null || fail "Bitcoin claim mempool response was malformed"
+    mempool_count="$(jq -er '.result | length' "$mempool_output")"
+    if [[ "$mempool_count" == "1" && "$actor_succeeded" == "1" ]]; then
+      bitcoin_claim_tx="$(jq -er '.result[0]' "$mempool_output")"
+      [[ "$bitcoin_claim_tx" =~ ^[0-9a-f]{64}$ ]] ||
+        fail "counterparty observed an invalid actor-owned Bitcoin claim ID"
+      mv "$attempt_output" "$actor_last_output"
+      return 0
+    fi
+    [[ "$mempool_count" == "0" || "$mempool_count" == "1" ]] ||
+      fail "counterparty observed multiple Bitcoin claim candidates"
+    sleep 0.25
+  done
+  fail "prepared actor-owned Bitcoin claim did not reconcile within the bounded window"
+}
+
 activate_actors() {
   local role
   for role in maker taker; do
@@ -1016,20 +1066,15 @@ submit_lez_lock_pair() {
 
 submit_actor_bitcoin_claim() {
   local owner="$1" expected_revision="$2" label="$3"
-  local peer mempool
+  local peer pre_mempool
   case "$owner" in maker) peer=taker ;; taker) peer=maker ;; esac
-  core_rpc "$owner" getrawmempool '[]' |
-    jq -e '.result == []' >/dev/null || fail "Bitcoin claim began with a nonempty mempool"
-  actor_invoke "$owner" drive "${label}-submit"
-  jq -e --arg role "$owner" --argjson revision "$((expected_revision - 1))" '
-    .schema_version == 1 and .role == $role and .command == "drive"
-    and .outcome == "awaiting_observation" and .chain == "bitcoin"
-    and .revision == $revision
-  ' "$actor_last_output" >/dev/null || fail "${owner} did not submit the actor-owned Bitcoin claim"
-  mempool="$(core_rpc "$peer" getrawmempool '[]')"
-  bitcoin_claim_tx="$(jq -er '.result | select(length == 1) | .[0]' <<<"$mempool")"
-  [[ "$bitcoin_claim_tx" =~ ^[0-9a-f]{64}$ ]] ||
-    fail "counterparty did not observe one exact actor-owned Bitcoin claim"
+  pre_mempool="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-pre-mempool.json"
+  core_rpc "$owner" getrawmempool '[]' >"$pre_mempool" ||
+    fail "${owner} could not inspect the pre-claim mempool"
+  chmod 0600 "$pre_mempool"
+  jq -e '.error == null and .result == []' "$pre_mempool" >/dev/null ||
+    fail "Bitcoin claim began with a nonempty or malformed mempool"
+  actor_reconcile_bitcoin_claim_submission "$owner" "$peer" "$expected_revision" "$label"
   mine_one_core_block
   wait_core_confirmed "$bitcoin_claim_tx" "$peer" "$label"
   project_both_to_revision "$expected_revision" bitcoin "${label}-project"
