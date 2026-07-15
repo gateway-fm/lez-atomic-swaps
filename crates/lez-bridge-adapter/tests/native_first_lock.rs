@@ -1123,6 +1123,7 @@ enum ClaimMutation {
     SameHeightWrongHash,
     MetadataOwner,
     MetadataAccount,
+    MetadataVersion,
     MetadataTerms,
     MetadataStatus,
     CustodyAccount,
@@ -1131,7 +1132,7 @@ enum ClaimMutation {
     DepthOverflow,
 }
 
-const ALL_CLAIM_MUTATIONS: [ClaimMutation; 21] = [
+const ALL_CLAIM_MUTATIONS: [ClaimMutation; 22] = [
     ClaimMutation::ResponseContext,
     ClaimMutation::TipHash,
     ClaimMutation::TipHeight,
@@ -1147,6 +1148,7 @@ const ALL_CLAIM_MUTATIONS: [ClaimMutation; 21] = [
     ClaimMutation::SameHeightWrongHash,
     ClaimMutation::MetadataOwner,
     ClaimMutation::MetadataAccount,
+    ClaimMutation::MetadataVersion,
     ClaimMutation::MetadataTerms,
     ClaimMutation::MetadataStatus,
     ClaimMutation::CustodyAccount,
@@ -1481,13 +1483,7 @@ fn claim_found_observation(
                 Hex32::from_bytes(*agreement.onchain_swap_id()),
                 RevealingPreimage::new([0x91; 32]),
             ),
-            EscrowMetadataFacts::from_native_terms(
-                metadata,
-                program,
-                custody,
-                &terms,
-                EscrowState::Claimed,
-            ),
+            metadata_facts_for_agreement(agreement, &terms, EscrowState::Claimed),
             NativeCustodyFacts::new(custody, terms.authenticated_transfer_program_id(), 0),
         )),
         tip,
@@ -1540,6 +1536,7 @@ fn mutate_claim_observation(response: &mut ObserveRevealingClaimResult, mutation
         ClaimMutation::MetadataAccount => {
             found.metadata.account_id = Hex32::from_bytes([0x98; 32]);
         }
+        ClaimMutation::MetadataVersion => found.metadata.version = 2,
         ClaimMutation::MetadataTerms => {
             found.metadata.terms_hash = Hex32::from_bytes([0x99; 32]);
         }
@@ -2291,13 +2288,7 @@ fn refund_accounts(
 ) -> NativeEscrowAccountObservation {
     let terms = native_terms(agreement);
     NativeEscrowAccountObservation::found(NativeEscrowAccountFacts::new(
-        EscrowMetadataFacts::from_native_terms(
-            Hex32::from_bytes(*agreement.lez_terms().metadata_account()),
-            Hex32::from_bytes(program_bytes(agreement.lez_terms().escrow_program_id())),
-            Hex32::from_bytes(*agreement.lez_terms().custody_account()),
-            &terms,
-            status,
-        ),
+        metadata_facts_for_agreement(agreement, &terms, status),
         NativeCustodyFacts::new(
             Hex32::from_bytes(*agreement.lez_terms().custody_account()),
             terms.authenticated_transfer_program_id(),
@@ -2990,6 +2981,35 @@ async fn owner_exact_observation_uses_the_caller_owned_ids() {
     } if initialization_transaction_id == TransactionId::from_bytes([0x11; 32])
         && funding_transaction_id == TransactionId::from_bytes([0x22; 32]))
     );
+}
+
+#[tokio::test]
+async fn v0_1_2_observation_rejects_v0_2_metadata_version() {
+    let agreement = agreement();
+    let request_id = "observe-wrong-metadata-version";
+    let context = observation_context(Participant::Taker, request_id);
+    let mut response = canonical_observation(&agreement, context);
+    let InitializationObservation::Found(initialization) = &mut response.initialization else {
+        panic!("canonical initialization")
+    };
+    let FundingObservation::Found(funding) = &mut response.funding else {
+        panic!("canonical funding")
+    };
+    initialization.metadata.version = 2;
+    funding.metadata.version = 2;
+    let transport = ObservationTransport::new(response);
+    let adapter = observation_adapter(transport, &agreement, Participant::Taker);
+
+    assert!(matches!(
+        adapter
+            .observe_native_escrow(
+                &agreement,
+                RequestId::new(request_id).expect("request id"),
+                exact_target(),
+            )
+            .await,
+        Err(ObserveNativeEscrowError::InconsistentFacts)
+    ));
 }
 
 #[tokio::test]
@@ -4106,6 +4126,28 @@ fn native_terms(agreement: &ZecAgreementV1) -> NativeEscrowTerms {
     .expect("valid native terms")
 }
 
+fn metadata_facts_for_agreement(
+    agreement: &ZecAgreementV1,
+    terms: &NativeEscrowTerms,
+    status: EscrowState,
+) -> EscrowMetadataFacts {
+    let metadata = Hex32::from_bytes(*agreement.lez_terms().metadata_account());
+    let program = Hex32::from_bytes(program_bytes(agreement.lez_terms().escrow_program_id()));
+    let custody = Hex32::from_bytes(*agreement.lez_terms().custody_account());
+    match agreement.lez_terms().chain().environment() {
+        LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility => {
+            EscrowMetadataFacts::from_nssa_v0_1_2_native_terms(
+                metadata, program, custody, terms, status,
+            )
+        }
+        LezEnvironmentV1::DeterministicLocalV0_2 | LezEnvironmentV1::PublicTestnetV0_2 => {
+            EscrowMetadataFacts::from_lee_v0_2_native_terms(
+                metadata, program, custody, terms, status,
+            )
+        }
+    }
+}
+
 fn canonical_observation(
     agreement: &ZecAgreementV1,
     context: MessageContext,
@@ -4118,13 +4160,7 @@ fn canonical_observation(
     let depositor = Hex32::from_bytes(*agreement.lez_account(agreement.lez_depositor()));
     let claimant = Hex32::from_bytes(*agreement.lez_account(agreement.lez_claimant()));
     let signers = AccountIds::new(vec![depositor]).expect("signer list");
-    let metadata = EscrowMetadataFacts::from_native_terms(
-        metadata_account,
-        escrow_program,
-        custody_account,
-        &terms,
-        EscrowState::Funded,
-    );
+    let metadata = metadata_facts_for_agreement(agreement, &terms, EscrowState::Funded);
     let initialization = InitializationFoundFacts::new(
         ObservedTransactionFacts::new(
             TransactionId::from_bytes([0x11; 32]),
@@ -4194,13 +4230,8 @@ fn initialization_only_observation(
     let InitializationObservation::Found(initialization) = &mut response.initialization else {
         panic!("canonical fixture has initialization")
     };
-    initialization.metadata = EscrowMetadataFacts::from_native_terms(
-        Hex32::from_bytes(*agreement.lez_terms().metadata_account()),
-        Hex32::from_bytes(program_bytes(agreement.lez_terms().escrow_program_id())),
-        Hex32::from_bytes(*agreement.lez_terms().custody_account()),
-        &native_terms(agreement),
-        EscrowState::Empty,
-    );
+    initialization.metadata =
+        metadata_facts_for_agreement(agreement, &native_terms(agreement), EscrowState::Empty);
     response.funding = FundingObservation::Absent;
     response
 }

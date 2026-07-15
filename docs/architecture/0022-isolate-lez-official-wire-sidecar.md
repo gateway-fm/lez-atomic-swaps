@@ -123,6 +123,14 @@ that signed selector, and a separate compatibility test compares the local
 derivation source to the pinned official v0.1.2 types. Public v0.2 activation
 remains fail-closed and is tracked as upstream production work.
 
+The signed runtime selector also fixes the escrow metadata generation. The
+historical NSSA v0.1.2 compatibility lane emits escrow metadata schema 1,
+whereas the LEE v0.2 local and dormant-public lanes emit schema 2. Protocol
+constructors name those generations explicitly; the sidecars, adapter, and SDK
+must select the same constructor from the signed environment. A shared
+generation-ambiguous constructor is forbidden because it can relabel genuine
+v0.1.2 node evidence as v0.2 evidence before agreement validation.
+
 The historical v0.1.2 actor file used schema 2. The current v0.2 actor file uses
 schema 3 and binds the runtime selector, typed local or dormant-public routes,
 and the complete described sidecar/Zebra identities to a nonzero exact SHA-256 of the

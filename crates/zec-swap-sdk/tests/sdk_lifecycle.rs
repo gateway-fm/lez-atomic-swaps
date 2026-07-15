@@ -4268,7 +4268,7 @@ fn canonical_lez_claim_snapshot(
     let depositor = *agreement.lez_account(agreement.lez_depositor());
     let claimant = *agreement.lez_account(agreement.lez_claimant());
     let metadata = LezEscrowMetadataSnapshotV1::new(
-        1,
+        2,
         *agreement.onchain_swap_id(),
         *agreement.agreement_commitment(),
         *agreement.secret_digest(),
@@ -4415,7 +4415,7 @@ fn canonical_lez_snapshot(
         terms.amount()
     };
     let metadata = LezEscrowMetadataSnapshotV1::new(
-        1,
+        2,
         *agreement.onchain_swap_id(),
         *agreement.agreement_commitment(),
         *agreement.secret_digest(),

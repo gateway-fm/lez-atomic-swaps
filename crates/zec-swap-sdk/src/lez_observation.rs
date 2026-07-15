@@ -522,7 +522,7 @@ pub(crate) fn expected_escrow_metadata(
 ) -> LezEscrowMetadataSnapshotV1 {
     let terms = agreement.lez_terms();
     LezEscrowMetadataSnapshotV1::new(
-        1,
+        expected_metadata_version(terms.chain().environment()),
         *agreement.onchain_swap_id(),
         *agreement.agreement_commitment(),
         *agreement.secret_digest(),
@@ -538,6 +538,13 @@ pub(crate) fn expected_escrow_metadata(
         agreement.lez_refund_at_ms(),
         status,
     )
+}
+
+const fn expected_metadata_version(environment: LezEnvironmentV1) -> u8 {
+    match environment {
+        LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility => 1,
+        LezEnvironmentV1::DeterministicLocalV0_2 | LezEnvironmentV1::PublicTestnetV0_2 => 2,
+    }
 }
 
 pub(crate) fn custody_matches(
@@ -896,4 +903,23 @@ pub enum LezObservationError {
     /// Stable removal tip is older than the durable observation tip.
     #[error("LEZ stable tip regressed")]
     TipRegression,
+}
+
+#[cfg(test)]
+mod metadata_version_tests {
+    use super::*;
+
+    #[test]
+    fn signed_environment_selects_exact_metadata_generation() {
+        assert_eq!(
+            expected_metadata_version(LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility),
+            1
+        );
+        for environment in [
+            LezEnvironmentV1::DeterministicLocalV0_2,
+            LezEnvironmentV1::PublicTestnetV0_2,
+        ] {
+            assert_eq!(expected_metadata_version(environment), 2);
+        }
+    }
 }

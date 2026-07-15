@@ -1142,6 +1142,11 @@ retries keep the deterministic ID and request; a deliberate window change gets
 a distinct ID, and the request remains evidence-bound. Observation
 returns before the predecessor CAS; a valid concurrent revision-one winner is
 reconstructed without overwrite and other projection failures fail closed.
+The first full-workspace gate exposed an earlier shared metadata constructor
+that relabelled genuine NSSA v0.1.2 schema-1 facts as LEE v0.2 schema-2 facts.
+The correction makes metadata construction generation-explicit in both
+sidecars, the adapter, and the SDK; cross-generation first-lock and claim facts
+now fail closed instead of being silently reinterpreted.
 Step 6 is
 2 of 2 for operator-composed actual chain execution, while actor E2E remains
 pending. Pushed commit
@@ -1427,7 +1432,11 @@ retains the finalized tip. The read-only sidecar still does not retain a
 funding prerequisite across independent claim methods, so revisions one through
 four must enforce the later claim gate. Remaining local PoC work is composing
 those revisions and repeating both live directions through the public actor
-surface. These are remaining deliverables, not external blockers.
+surface. Certification also requires a combined run-owned harness that creates
+the actual-node countersigned agreement, safely owns the host-sidecar listener
+lifecycle without the current free-port bind race, invokes a fresh public actor
+process for every revision, and always cleans only its own resources. These are
+remaining deliverables, not external blockers.
 
 ### Later owner-selected hardening
 

@@ -542,8 +542,44 @@ pub struct EscrowMetadataFacts {
 }
 
 impl EscrowMetadataFacts {
-    /// Builds the exact native metadata shape emitted by the pinned guest.
-    pub const fn from_native_terms(
+    /// Builds the exact native metadata shape emitted by the pinned NSSA v0.1.2 guest.
+    pub const fn from_nssa_v0_1_2_native_terms(
+        account_id: Hex32,
+        owner_program_id: Hex32,
+        custody_account_id: Hex32,
+        terms: &NativeEscrowTerms,
+        status: EscrowState,
+    ) -> Self {
+        Self::from_generation_native_terms(
+            1,
+            account_id,
+            owner_program_id,
+            custody_account_id,
+            terms,
+            status,
+        )
+    }
+
+    /// Builds the exact native metadata shape emitted by the pinned Lee v0.2 guest.
+    pub const fn from_lee_v0_2_native_terms(
+        account_id: Hex32,
+        owner_program_id: Hex32,
+        custody_account_id: Hex32,
+        terms: &NativeEscrowTerms,
+        status: EscrowState,
+    ) -> Self {
+        Self::from_generation_native_terms(
+            2,
+            account_id,
+            owner_program_id,
+            custody_account_id,
+            terms,
+            status,
+        )
+    }
+
+    const fn from_generation_native_terms(
+        version: u8,
         account_id: Hex32,
         owner_program_id: Hex32,
         custody_account_id: Hex32,
@@ -553,7 +589,7 @@ impl EscrowMetadataFacts {
         Self {
             account_id,
             owner_program_id,
-            version: 2,
+            version,
             swap_id: terms.swap_id(),
             terms_hash: terms.terms_hash(),
             secret_digest: terms.secret_digest(),

@@ -2829,7 +2829,7 @@ mod tests {
         let depositor = *agreement.lez_account(agreement.lez_depositor());
         let claimant = *agreement.lez_account(agreement.lez_claimant());
         let metadata = LezEscrowMetadataSnapshotV1::new(
-            1,
+            metadata_version_for_environment(terms.chain().environment()),
             *agreement.onchain_swap_id(),
             *agreement.agreement_commitment(),
             *agreement.secret_digest(),
@@ -2880,6 +2880,13 @@ mod tests {
                 balance: 0,
             },
         )
+    }
+
+    const fn metadata_version_for_environment(environment: LezEnvironmentV1) -> u8 {
+        match environment {
+            LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility => 1,
+            LezEnvironmentV1::DeterministicLocalV0_2 | LezEnvironmentV1::PublicTestnetV0_2 => 2,
+        }
     }
 
     #[tokio::test]

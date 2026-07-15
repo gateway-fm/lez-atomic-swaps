@@ -1249,7 +1249,7 @@ impl OfficialNodeRpc {
             return Err(SidecarError::InvalidNodeResponse);
         }
         Ok(NativeAccountSnapshot {
-            metadata: EscrowMetadataFacts::from_native_terms(
+            metadata: EscrowMetadataFacts::from_nssa_v0_1_2_native_terms(
                 Hex32::from_bytes(metadata_id.into_value()),
                 self.runtime.escrow_program_id,
                 Hex32::from_bytes(custody_id.into_value()),

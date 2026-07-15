@@ -164,6 +164,10 @@ fn negative_matrix_rejects_each_independent_node_or_agreement_deviation() {
             LezClaimObservationError::MetadataBindingMismatch,
         ),
         (
+            Mutation::MetadataVersion,
+            LezClaimObservationError::MetadataBindingMismatch,
+        ),
+        (
             Mutation::MetadataTerms,
             LezClaimObservationError::MetadataBindingMismatch,
         ),
@@ -227,6 +231,7 @@ enum Mutation {
     Accounts,
     MetadataOwner,
     MetadataAccount,
+    MetadataVersion,
     MetadataTerms,
     MetadataStatus,
     CustodyAccount,
@@ -326,7 +331,11 @@ fn claim_snapshot(agreement: &ZecAgreementV1, mutation: Mutation) -> LezClaimNod
         },
     );
     let metadata = LezEscrowMetadataSnapshotV1::new(
-        1,
+        if matches!(mutation, Mutation::MetadataVersion) {
+            1
+        } else {
+            2
+        },
         *agreement.onchain_swap_id(),
         if matches!(mutation, Mutation::MetadataTerms) {
             [0x66; 32]

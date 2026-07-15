@@ -1630,7 +1630,8 @@ fn validate_found_initialization<E: std::error::Error + 'static>(
     ) {
         return Err(ObserveNativeEscrowError::InconsistentFacts);
     }
-    let expected_metadata = EscrowMetadataFacts::from_native_terms(
+    let expected_metadata = native_metadata_facts_for_agreement(
+        agreement,
         Hex32::from_bytes(*agreement.lez_terms().metadata_account()),
         escrow_program,
         Hex32::from_bytes(*agreement.lez_terms().custody_account()),
@@ -1918,6 +1919,36 @@ fn metadata_snapshot(metadata: &EscrowMetadataFacts) -> LezEscrowMetadataSnapsho
     )
 }
 
+fn native_metadata_facts_for_agreement(
+    agreement: &ZecAgreementV1,
+    account_id: Hex32,
+    owner_program_id: Hex32,
+    custody_account_id: Hex32,
+    terms: &NativeEscrowTerms,
+    status: EscrowState,
+) -> EscrowMetadataFacts {
+    match agreement.lez_terms().chain().environment() {
+        LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility => {
+            EscrowMetadataFacts::from_nssa_v0_1_2_native_terms(
+                account_id,
+                owner_program_id,
+                custody_account_id,
+                terms,
+                status,
+            )
+        }
+        LezEnvironmentV1::DeterministicLocalV0_2 | LezEnvironmentV1::PublicTestnetV0_2 => {
+            EscrowMetadataFacts::from_lee_v0_2_native_terms(
+                account_id,
+                owner_program_id,
+                custody_account_id,
+                terms,
+                status,
+            )
+        }
+    }
+}
+
 fn custody_snapshot(custody: &NativeCustodyFacts) -> LezCustodySnapshotV1 {
     LezCustodySnapshotV1::Native {
         program_owner: words_from_bytes(custody.owner_program_id.as_bytes()),
@@ -1961,7 +1992,8 @@ fn validate_refund_account_facts<E: std::error::Error + 'static>(
     let custody_account = Hex32::from_bytes(*agreement.lez_terms().custody_account());
     let escrow_program =
         Hex32::from_bytes(program_id_bytes(agreement.lez_terms().escrow_program_id()));
-    let expected_metadata = EscrowMetadataFacts::from_native_terms(
+    let expected_metadata = native_metadata_facts_for_agreement(
+        agreement,
         metadata_account,
         escrow_program,
         custody_account,
@@ -2147,7 +2179,8 @@ fn validate_found_pair<E: std::error::Error + 'static>(
     .expect("three accounts are bounded");
     let escrow_program =
         Hex32::from_bytes(program_id_bytes(agreement.lez_terms().escrow_program_id()));
-    let expected_metadata = EscrowMetadataFacts::from_native_terms(
+    let expected_metadata = native_metadata_facts_for_agreement(
+        agreement,
         Hex32::from_bytes(*agreement.lez_terms().metadata_account()),
         escrow_program,
         Hex32::from_bytes(*agreement.lez_terms().custody_account()),

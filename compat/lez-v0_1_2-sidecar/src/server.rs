@@ -576,6 +576,7 @@ impl From<SidecarError> for OperationFailure {
             ErrorCode::UnknownSubmissionOutcome => "official node submission outcome is unknown",
             ErrorCode::InvalidRequest
             | ErrorCode::AmbiguousDiscovery
+            | ErrorCode::ConflictingDiscovery
             | ErrorCode::MovingTip
             | ErrorCode::Internal => "official sidecar rejected the request",
         };

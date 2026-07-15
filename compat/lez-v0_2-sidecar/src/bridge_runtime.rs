@@ -1192,7 +1192,7 @@ impl BridgeRuntime {
         if facts.custody_account().balance != expected_balance {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
-        let metadata_facts = EscrowMetadataFacts::from_native_terms(
+        let metadata_facts = EscrowMetadataFacts::from_lee_v0_2_native_terms(
             Hex32::from_bytes(metadata_id.into_value()),
             self.runtime.escrow_program_id,
             Hex32::from_bytes(custody_id.into_value()),

@@ -591,7 +591,7 @@ fn native_refund_state_exact_and_discovery_are_typed_and_timestamped() {
         context(),
         clock,
         NativeEscrowAccountObservation::found(NativeEscrowAccountFacts::new(
-            EscrowMetadataFacts::from_native_terms(
+            EscrowMetadataFacts::from_lee_v0_2_native_terms(
                 h(10),
                 h(4),
                 h(12),
@@ -797,7 +797,7 @@ fn native_happy_path_messages_roundtrip_without_untyped_json() {
                 AccountIds::new(vec![h(10), h(12), h(20), h(21)]).unwrap(),
                 terms(),
             ),
-            EscrowMetadataFacts::from_native_terms(
+            EscrowMetadataFacts::from_lee_v0_2_native_terms(
                 h(10),
                 h(4),
                 h(12),
@@ -812,7 +812,7 @@ fn native_happy_path_messages_roundtrip_without_untyped_json() {
                 AccountIds::new(vec![h(10), h(12), h(20)]).unwrap(),
                 terms().swap_id(),
             ),
-            EscrowMetadataFacts::from_native_terms(
+            EscrowMetadataFacts::from_lee_v0_2_native_terms(
                 h(10),
                 h(4),
                 h(12),
@@ -904,8 +904,27 @@ fn actual_guest_native_terms_are_field_by_field_bound() {
 
 #[test]
 fn actual_guest_native_metadata_is_field_by_field_bound() {
-    let expected_metadata =
-        EscrowMetadataFacts::from_native_terms(h(10), h(4), h(12), &terms(), EscrowState::Empty);
+    let compatibility_metadata = EscrowMetadataFacts::from_nssa_v0_1_2_native_terms(
+        h(10),
+        h(4),
+        h(12),
+        &terms(),
+        EscrowState::Empty,
+    );
+    let expected_metadata = EscrowMetadataFacts::from_lee_v0_2_native_terms(
+        h(10),
+        h(4),
+        h(12),
+        &terms(),
+        EscrowState::Empty,
+    );
+    assert_eq!(compatibility_metadata.version, 1);
+    assert_eq!(expected_metadata.version, 2);
+    assert_eq!(compatibility_metadata.swap_id, expected_metadata.swap_id);
+    assert_eq!(
+        compatibility_metadata.terms_hash,
+        expected_metadata.terms_hash
+    );
     let expected_metadata_json = serde_json::to_value(&expected_metadata).unwrap();
     assert_eq!(expected_metadata_json["version"], serde_json::json!(2));
     assert_eq!(expected_metadata_json["status"], serde_json::json!("empty"));
@@ -1249,7 +1268,7 @@ fn revealing_claim_secret_is_redacted_but_roundtrips() {
                 terms().swap_id(),
                 RevealingPreimage::new([0x5a; 32]),
             ),
-            EscrowMetadataFacts::from_native_terms(
+            EscrowMetadataFacts::from_lee_v0_2_native_terms(
                 h(10),
                 h(4),
                 h(12),

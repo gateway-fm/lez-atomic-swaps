@@ -4824,6 +4824,13 @@ fn canonical_lez_taker_lock(
     canonical_lez_taker_lock_at(agreement, LezInclusionStatusV1::Pending, [0x42; 32], 102)
 }
 
+const fn metadata_version_for_environment(environment: LezEnvironmentV1) -> u8 {
+    match environment {
+        LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility => 1,
+        LezEnvironmentV1::DeterministicLocalV0_2 | LezEnvironmentV1::PublicTestnetV0_2 => 2,
+    }
+}
+
 fn canonical_lez_claim_snapshot(
     agreement: &lez_zec_swap_sdk::ZecAgreementV1,
     preimage: [u8; 32],
@@ -4838,7 +4845,7 @@ fn canonical_lez_claim_snapshot(
     let depositor = *agreement.lez_account(agreement.lez_depositor());
     let claimant = *agreement.lez_account(agreement.lez_claimant());
     let metadata = LezEscrowMetadataSnapshotV1::new(
-        1,
+        metadata_version_for_environment(terms.chain().environment()),
         *agreement.onchain_swap_id(),
         *agreement.agreement_commitment(),
         *agreement.secret_digest(),
@@ -4927,7 +4934,7 @@ fn canonical_lez_taker_lock_with_inclusion(
     let depositor = *agreement.lez_account(agreement.lez_depositor());
     let claimant = *agreement.lez_account(agreement.lez_claimant());
     let metadata = LezEscrowMetadataSnapshotV1::new(
-        1,
+        metadata_version_for_environment(terms.chain().environment()),
         *agreement.onchain_swap_id(),
         *agreement.agreement_commitment(),
         *agreement.secret_digest(),

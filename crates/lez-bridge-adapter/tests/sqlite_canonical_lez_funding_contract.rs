@@ -23,15 +23,15 @@ use lez_zec_swap_sdk::{
     FirstLockStepV1, LezAssetV1, LezChainIdentityV1, LezCustodySnapshotV1, LezEnvironmentV1,
     LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort, LezFundInstructionV1,
     LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezMakerLockObservationPort,
-    LezNodeSnapshotV1, LezStableTipV1, LezTakerFirstLockObservationPort, MakerLockDriveOutcome,
-    MakerLockObservationV1, NegotiationChannel, NegotiationTranscriptV1, OfferDiscovery,
-    PreparedFirstLockSubmissionV1, TakerFirstLockObservationV1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
-    ZcashFirstLockPort, ZcashMakerLockObservationPort, ZcashTakerFirstLockObservationPort,
-    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1,
-    ZecLezTermsV1, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
-    ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding, ZecSwapBindingRecordV1,
-    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
-    derive_lez_swap_id_v1,
+    LezNodeSnapshotV1, LezObservationError, LezStableTipV1, LezTakerFirstLockObservationPort,
+    MakerLockDriveOutcome, MakerLockObservationV1, NegotiationChannel, NegotiationTranscriptV1,
+    OfferDiscovery, PreparedFirstLockSubmissionV1, TakerFirstLockObservationV1,
+    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFirstLockPort, ZcashMakerLockObservationPort,
+    ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
+    ZecAgreementRecordV1, ZecAgreementV1, ZecLezTermsV1, ZecPairSdk, ZecParticipantIdentityV1,
+    ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding,
+    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
+    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use rusqlite::{Connection, params};
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
@@ -44,6 +44,23 @@ use zcash_transparent::address::TransparentAddress;
 
 const LEZ_FUNDING_BYTES: [u8; 32] = [0xab; 32];
 static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn v0_2_funding_snapshot_rejects_v0_1_2_metadata_version() {
+    let agreement = signed_agreement(
+        "sqlite-lez-wrong-metadata-generation",
+        SwapDirection::TakerSellsForeign,
+        false,
+    );
+    assert_eq!(
+        CanonicalLezEscrowObservationV1::validate(
+            &agreement,
+            &lez_taker_lock_snapshot(&agreement, 1),
+        )
+        .expect_err("v0.1.2 metadata cannot authenticate a signed v0.2 agreement"),
+        LezObservationError::MetadataBindingMismatch,
+    );
+}
 
 #[tokio::test]
 async fn taker_claimant_reopens_observed_maker_lez_funding() {
@@ -499,6 +516,18 @@ fn signed_agreement(
 }
 
 fn canonical_lez_taker_lock(agreement: &ZecAgreementV1) -> CanonicalLezEscrowObservationV1 {
+    let metadata_version = match agreement.lez_terms().chain().environment() {
+        LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility => 1,
+        LezEnvironmentV1::DeterministicLocalV0_2 | LezEnvironmentV1::PublicTestnetV0_2 => 2,
+    };
+    CanonicalLezEscrowObservationV1::validate(
+        agreement,
+        &lez_taker_lock_snapshot(agreement, metadata_version),
+    )
+    .expect("canonical taker LEZ observation")
+}
+
+fn lez_taker_lock_snapshot(agreement: &ZecAgreementV1, metadata_version: u8) -> LezNodeSnapshotV1 {
     let terms = agreement.lez_terms();
     let LezAssetV1::Native {
         authenticated_transfer_program_id,
@@ -509,7 +538,7 @@ fn canonical_lez_taker_lock(agreement: &ZecAgreementV1) -> CanonicalLezEscrowObs
     let depositor = *agreement.lez_account(agreement.lez_depositor());
     let claimant = *agreement.lez_account(agreement.lez_claimant());
     let metadata = LezEscrowMetadataSnapshotV1::new(
-        1,
+        metadata_version,
         *agreement.onchain_swap_id(),
         *agreement.agreement_commitment(),
         *agreement.secret_digest(),
@@ -525,7 +554,7 @@ fn canonical_lez_taker_lock(agreement: &ZecAgreementV1) -> CanonicalLezEscrowObs
         agreement.lez_refund_at_ms(),
         LezEscrowStatusV1::Funded,
     );
-    let snapshot = LezNodeSnapshotV1::new(
+    LezNodeSnapshotV1::new(
         terms.chain().environment(),
         *terms.chain().channel_id(),
         *terms.chain().genesis_block_hash(),
@@ -557,9 +586,7 @@ fn canonical_lez_taker_lock(agreement: &ZecAgreementV1) -> CanonicalLezEscrowObs
             program_owner: *authenticated_transfer_program_id,
             balance: terms.amount(),
         },
-    );
-    CanonicalLezEscrowObservationV1::validate(agreement, &snapshot)
-        .expect("canonical taker LEZ observation")
+    )
 }
 
 fn lowerhex(bytes: [u8; 32]) -> String {
