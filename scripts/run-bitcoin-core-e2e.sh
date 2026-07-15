@@ -23,6 +23,11 @@ if [[ "$keep_running" != "0" && "$keep_running" != "1" ]]; then
   echo "BITCOIN_CORE_E2E_KEEP_RUNNING must be 0 or 1" >&2
   exit 1
 fi
+mode="${BITCOIN_CORE_E2E_MODE:-fixture}"
+if [[ "$mode" != "fixture" && "$mode" != "service" ]]; then
+  echo "BITCOIN_CORE_E2E_MODE must be fixture or service" >&2
+  exit 1
+fi
 require_clean="${BITCOIN_CORE_E2E_REQUIRE_CLEAN:-0}"
 if [[ "$require_clean" != "0" && "$require_clean" != "1" ]]; then
   echo "BITCOIN_CORE_E2E_REQUIRE_CLEAN must be 0 or 1" >&2
@@ -54,6 +59,7 @@ readonly funding_transaction_evidence="${evidence_dir}/p2tr-funding-transaction.
 readonly cooperative_spend_evidence="${evidence_dir}/p2tr-cooperative-spend.json"
 readonly cargo_target_dir="${run_dir}/cargo-target"
 readonly genesis_hash="0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206"
+readonly funding_secret_key="0000000000000000000000000000000000000000000000000000000000000001"
 readonly funding_key="79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
 readonly funding_descriptor="rawtr(${funding_key})#xsjqcczm"
 readonly funding_address="bcrt1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqc8gma6"
@@ -121,12 +127,14 @@ write_cleanup_evidence() {
   local partial="${cleanup_evidence}.partial"
   jq -n \
     --arg run_id "$run_id" \
+    --arg mode "$mode" \
     --arg status "$status" \
     --argjson sentinel_survived "$sentinel_survived" \
     --argjson resources_absent "$resources_absent" \
     '{
       schema_version: 1,
       run_id: $run_id,
+      mode: $mode,
       cleanup_status: $status,
       exact_run_resources_absent: $resources_absent,
       foreign_sentinel_survived_exact_cleanup: $sentinel_survived,
@@ -156,6 +164,7 @@ write_attestation_evidence() {
   critical_manifest_sha256="${critical_manifest_sha256%% *}"
   jq -n \
     --arg run_id "$run_id" \
+    --arg mode "$mode" \
     --arg runtime_sha256 "$runtime_sha256" \
     --arg cleanup_sha256 "$cleanup_sha256" \
     --arg critical_manifest_sha256 "$critical_manifest_sha256" '
@@ -163,6 +172,7 @@ write_attestation_evidence() {
       schema_version: 1,
       result: "passed",
       run_id: $run_id,
+      mode: $mode,
       runtime_sha256: $runtime_sha256,
       cleanup_sha256: $cleanup_sha256,
       critical_evidence_manifest_sha256: $critical_manifest_sha256
@@ -207,6 +217,7 @@ cleanup() {
       docker network rm "$sentinel_network" >/dev/null 2>&1 || cleanup_failed=1
     fi
     echo "Bitcoin Core Regtest remains running for RUN_ID=${run_id}"
+    echo "Mode: ${mode}"
     echo "Evidence: ${runtime_evidence}"
     echo "Maker credential file: ${credentials_dir}/maker.curlrc"
     echo "Taker credential file: ${credentials_dir}/taker.curlrc"
@@ -441,19 +452,271 @@ expect_auth_rejected() {
   record_actor_result "$role" getblockchaininfo auth_rejected
 }
 
-cargo fetch --locked
-CARGO_TARGET_DIR="$cargo_target_dir" cargo run --quiet --locked --offline \
-  -p lez-btc-swap-sdk --example btc-core-p2tr-fixture -- contract \
-  >"$contract_evidence"
-chmod 0600 "$contract_evidence"
-helper_binary="${cargo_target_dir}/debug/examples/btc-core-p2tr-fixture"
-if [[ ! -f "$helper_binary" || ! -x "$helper_binary" || -L "$helper_binary" ]]; then
-  echo "Bitcoin P2TR fixture helper is missing or not a regular executable" >&2
-  exit 1
-fi
-helper_sha256="$(sha256sum "$helper_binary")"
-helper_sha256="${helper_sha256%% *}"
-jq -e '
+finish_service_mode() {
+  local funding_credentials="${credentials_dir}/funding.env"
+  local repository_commit
+  local repository_worktree_clean
+  local config_sha256
+  local provenance_sha256
+  local block_policy_sha256
+  local critical_manifest_sha256
+  local actor_matrix_json
+  local completed_at
+  local runtime_partial="${runtime_evidence}.partial"
+
+  core_cli getblockchaininfo >"${evidence_dir}/final-chain.json"
+  core_cli getnetworkinfo >"${evidence_dir}/final-network.json"
+  core_cli getindexinfo >"${evidence_dir}/final-indexes.json"
+  core_cli getmempoolinfo >"${evidence_dir}/final-mempool.json"
+  core_cli getblockheader "$maturity_block_hash" >"${evidence_dir}/final-header.json"
+  chmod 0600 "${evidence_dir}/final-chain.json" "${evidence_dir}/final-network.json" \
+    "${evidence_dir}/final-indexes.json" "${evidence_dir}/final-mempool.json" \
+    "${evidence_dir}/final-header.json"
+  jq -e '.chain == "regtest" and .blocks == 101 and .headers == 101' \
+    "${evidence_dir}/final-chain.json" >/dev/null
+  jq -e '.networkactive == false and .connections == 0' \
+    "${evidence_dir}/final-network.json" >/dev/null
+  jq -e '.txindex.synced == true and .txospenderindex.synced == true' \
+    "${evidence_dir}/final-indexes.json" >/dev/null
+  jq -e '.size == 0 and .unbroadcastcount == 0' \
+    "${evidence_dir}/final-mempool.json" >/dev/null
+  jq -e --arg hash "$maturity_block_hash" --argjson expected "$((mocktime_base + 100 * 600))" '
+    .hash == $hash and .height == 101 and .time == $expected and .confirmations == 1
+  ' "${evidence_dir}/final-header.json" >/dev/null
+  core_cli setmocktime 0
+
+  {
+    printf 'BITCOIN_CORE_NETWORK=regtest\n'
+    printf 'BITCOIN_CORE_FUNDING_SECRET_KEY_HEX=%s\n' "$funding_secret_key"
+    printf 'BITCOIN_CORE_FUNDING_DESCRIPTOR=%s\n' "$funding_descriptor"
+    printf 'BITCOIN_CORE_FUNDING_ADDRESS=%s\n' "$funding_address"
+    printf 'BITCOIN_CORE_FUNDING_TXID=%s\n' "$coinbase_txid"
+    printf 'BITCOIN_CORE_FUNDING_VOUT=%s\n' "$coinbase_vout"
+    printf 'BITCOIN_CORE_FUNDING_VALUE_SAT=5000000000\n'
+  } >"$funding_credentials"
+  chmod 0600 "$funding_credentials"
+
+  sha256sum \
+    scripts/run-bitcoin-core-e2e.sh \
+    "$config_file" \
+    "$provenance_evidence" \
+    "$blocks_file" \
+    "$actor_matrix" \
+    "${evidence_dir}/container-inspect.json" \
+    "${evidence_dir}/network-inspect.json" \
+    "${evidence_dir}/volume-inspect.json" \
+    "${evidence_dir}/image-inspect.json" \
+    "${evidence_dir}/maturity-chain.json" \
+    "${evidence_dir}/maturity-network.json" \
+    "${evidence_dir}/maturity-indexes.json" \
+    "${evidence_dir}/mature-funding.json" \
+    "${evidence_dir}/final-chain.json" \
+    "${evidence_dir}/final-network.json" \
+    "${evidence_dir}/final-indexes.json" \
+    "${evidence_dir}/final-mempool.json" \
+    "${evidence_dir}/final-header.json" \
+    "$funding_credentials" \
+    >"$critical_evidence_manifest"
+  chmod 0600 "$critical_evidence_manifest"
+
+  repository_commit="$(git rev-parse HEAD)"
+  if [[ -z "$(git status --porcelain --untracked-files=normal)" ]]; then
+    repository_worktree_clean=true
+  else
+    repository_worktree_clean=false
+  fi
+  config_sha256="$(sha256sum "$config_file")"
+  config_sha256="${config_sha256%% *}"
+  provenance_sha256="$(sha256sum "$provenance_evidence")"
+  provenance_sha256="${provenance_sha256%% *}"
+  block_policy_sha256="$(sha256sum "$blocks_file")"
+  block_policy_sha256="${block_policy_sha256%% *}"
+  critical_manifest_sha256="$(sha256sum "$critical_evidence_manifest")"
+  critical_manifest_sha256="${critical_manifest_sha256%% *}"
+  actor_matrix_json="$(jq -s . "$actor_matrix")"
+  completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  jq -n \
+    --arg run_id "$run_id" \
+    --arg mode "$mode" \
+    --arg completed_at "$completed_at" \
+    --arg project "$project" \
+    --arg container_id "$container_id" \
+    --arg network "$network" \
+    --arg network_cidr "$network_cidr" \
+    --arg volume "$volume" \
+    --arg image "$image" \
+    --arg image_id "$image_id" \
+    --arg rpc_endpoint "$published_endpoint" \
+    --arg rpc_url "$rpc_url" \
+    --arg maker_credentials "${credentials_dir}/maker.curlrc" \
+    --arg taker_credentials "${credentials_dir}/taker.curlrc" \
+    --arg funding_credentials "$funding_credentials" \
+    --arg source_commit "$BITCOIN_CORE_SOURCE_COMMIT" \
+    --arg archive_sha256 "$BITCOIN_CORE_ARCHIVE_SHA256" \
+    --arg provenance_sha256 "$provenance_sha256" \
+    --arg config_sha256 "$config_sha256" \
+    --arg genesis "$genesis_hash" \
+    --arg descriptor "$funding_descriptor" \
+    --arg address "$funding_address" \
+    --arg coinbase_txid "$coinbase_txid" \
+    --argjson coinbase_vout "$coinbase_vout" \
+    --arg block_policy_sha256 "$block_policy_sha256" \
+    --argjson actor_matrix "$actor_matrix_json" \
+    --arg archive_url "$BITCOIN_CORE_ARCHIVE_URL" \
+    --arg source_url "$BITCOIN_CORE_SOURCE_URL" \
+    --arg guix_url "$BITCOIN_CORE_GUIX_SIGS_URL" \
+    --arg runtime_base "$BITCOIN_CORE_RUNTIME_BASE" \
+    --arg repository_commit "$repository_commit" \
+    --arg require_clean "$require_clean" \
+    --argjson repository_worktree_clean "$repository_worktree_clean" \
+    --arg critical_manifest_sha256 "$critical_manifest_sha256" '
+    {
+      schema_version: 1,
+      result: "passed",
+      mode: $mode,
+      scope: "bitcoin_core_service_provision",
+      run_id: $run_id,
+      completed_at: $completed_at,
+      repository: {
+        commit: $repository_commit,
+        worktree_clean: $repository_worktree_clean,
+        clean_required: ($require_clean == "1"),
+        critical_evidence_manifest_sha256: $critical_manifest_sha256
+      },
+      core: {
+        version: "31.1",
+        source_commit: $source_commit,
+        archive_sha256: $archive_sha256,
+        provenance_evidence_sha256: $provenance_sha256,
+        image: $image,
+        image_id: $image_id,
+        fixture_helper_built: false
+      },
+      isolation: {
+        docker_resource_scope: $project,
+        lifecycle: "exact_id_native_docker",
+        compose_contract_validated: true,
+        container_id: $container_id,
+        network: $network,
+        network_cidr: $network_cidr,
+        data_volume: $volume,
+        rpc_endpoint: $rpc_endpoint,
+        rpc_url: $rpc_url,
+        rpc_publication: "dynamic_literal_loopback_only",
+        p2p_port_published: false,
+        config_sha256: $config_sha256
+      },
+      chain: {
+        network: "regtest",
+        genesis: $genesis,
+        initial_height: 0,
+        final_height: 101,
+        peers_before: 0,
+        peers_after: 0,
+        network_active: false,
+        mocktime: {base: 1700000000, spacing_seconds: 600, blocks: 101, reset_after_evidence: true},
+        generated_block_policy_sha256: $block_policy_sha256
+      },
+      provisioned_funding: {
+        descriptor: $descriptor,
+        address: $address,
+        txid: $coinbase_txid,
+        vout: $coinbase_vout,
+        value_sat: 5000000000,
+        confirmations: 101,
+        script_type: "witness_v1_taproot",
+        deterministic_test_key: true,
+        reproducibility: "fixed_test_key_descriptor_and_block_generation_policy",
+        credentials_file: $funding_credentials
+      },
+      service_contract: {
+        ready_for_external_actor_processes: true,
+        p2tr_fixture_lifecycle_executed: false,
+        p2tr_fixture_proof_claimed: false,
+        adaptor_signature_proof_claimed: false,
+        scalar_extraction_proof_claimed: false,
+        lez_composition_proof_claimed: false,
+        atomicity_proof_claimed: false
+      },
+      actor_rpc: {
+        users: ["maker", "taker"],
+        credentials_distinct: true,
+        credentials_mode: "0600_under_0700_run_root",
+        plaintext_credentials_disclosed: false,
+        maker_curl_config: $maker_credentials,
+        taker_curl_config: $taker_credentials,
+        results: $actor_matrix
+      },
+      external_dependencies: {
+        runtime_external_resources: [],
+        public_rpc_used: false,
+        faucet_used: false,
+        public_funds_used: false,
+        cold_setup_external_resources: [$archive_url, $source_url, $guix_url, $runtime_base]
+      }
+    }
+  ' >"$runtime_partial"
+  jq -e '
+    .result == "passed"
+    and .mode == "service"
+    and .scope == "bitcoin_core_service_provision"
+    and .chain.final_height == 101
+    and .provisioned_funding.value_sat == 5000000000
+    and .provisioned_funding.confirmations == 101
+    and .service_contract.ready_for_external_actor_processes == true
+    and .service_contract.p2tr_fixture_lifecycle_executed == false
+    and .service_contract.p2tr_fixture_proof_claimed == false
+    and .service_contract.adaptor_signature_proof_claimed == false
+    and .service_contract.scalar_extraction_proof_claimed == false
+    and .service_contract.lez_composition_proof_claimed == false
+    and .service_contract.atomicity_proof_claimed == false
+    and .actor_rpc.credentials_distinct == true
+    and .external_dependencies.runtime_external_resources == []
+    and .external_dependencies.public_rpc_used == false
+  ' "$runtime_partial" >/dev/null
+  chmod 0600 "$runtime_partial"
+  mv "$runtime_partial" "$runtime_evidence"
+
+  {
+    printf 'RUN_ID=%s\n' "$run_id"
+    printf 'BITCOIN_CORE_E2E_MODE=service\n'
+    printf 'COMPOSE_PROJECT_NAME=%s\n' "$project"
+    printf 'BITCOIN_CORE_IMAGE=%s\n' "$image"
+    printf 'BITCOIN_CORE_CONFIG=%s\n' "$config_file"
+    printf 'BITCOIN_CORE_RPC_URL=%s\n' "$rpc_url"
+    printf 'BITCOIN_CORE_MAKER_CURL_CONFIG=%s\n' "${credentials_dir}/maker.curlrc"
+    printf 'BITCOIN_CORE_TAKER_CURL_CONFIG=%s\n' "${credentials_dir}/taker.curlrc"
+    printf 'BITCOIN_CORE_FUNDING_CREDENTIALS=%s\n' "$funding_credentials"
+    printf 'BITCOIN_CORE_RUNTIME_EVIDENCE=%s\n' "$runtime_evidence"
+  } >"$manifest"
+  chmod 0600 "$manifest"
+
+  unset maker_password taker_password maker_auth taker_auth
+  runtime_complete=1
+  echo "Bitcoin Core 31.1 isolated service is provisioned for RUN_ID=${run_id}"
+  echo "RPC endpoint: ${rpc_url}"
+  echo "Maker credential file: ${credentials_dir}/maker.curlrc"
+  echo "Taker credential file: ${credentials_dir}/taker.curlrc"
+  echo "Funding credential file: ${funding_credentials}"
+  echo "Evidence: ${runtime_evidence}"
+  echo "Run manifest: ${manifest}"
+}
+
+if [[ "$mode" == "fixture" ]]; then
+  cargo fetch --locked
+  CARGO_TARGET_DIR="$cargo_target_dir" cargo run --quiet --locked --offline \
+    -p lez-btc-swap-sdk --example btc-core-p2tr-fixture -- contract \
+    >"$contract_evidence"
+  chmod 0600 "$contract_evidence"
+  helper_binary="${cargo_target_dir}/debug/examples/btc-core-p2tr-fixture"
+  if [[ ! -f "$helper_binary" || ! -x "$helper_binary" || -L "$helper_binary" ]]; then
+    echo "Bitcoin P2TR fixture helper is missing or not a regular executable" >&2
+    exit 1
+  fi
+  helper_sha256="$(sha256sum "$helper_binary")"
+  helper_sha256="${helper_sha256%% *}"
+  jq -e '
   .schema_version == 1
   and .kind == "p2tr_contract"
   and .fixture_only == true
@@ -479,9 +742,10 @@ jq -e '
   and .script_pubkey == ("5120" + .output_key)
   and .address == "bcrt1pupmaayt7tnlkcsz47pl0gem085xl2lwzlanqx6pymyt7rymu3gaq6psr5y"
 ' "$contract_evidence" >/dev/null
-contract_address="$(jq -er '.address' "$contract_evidence")"
-contract_script_pubkey="$(jq -er '.script_pubkey' "$contract_evidence")"
-contract_adaptor_point="$(jq -er '.adaptor_point' "$contract_evidence")"
+  contract_address="$(jq -er '.address' "$contract_evidence")"
+  contract_script_pubkey="$(jq -er '.script_pubkey' "$contract_evidence")"
+  contract_adaptor_point="$(jq -er '.adaptor_point' "$contract_evidence")"
+fi
 
 export BITCOIN_CORE_CACHE_DIR="$cache_dir"
 export BITCOIN_CORE_PROVENANCE_EVIDENCE="$provenance_evidence"
@@ -698,12 +962,14 @@ if [[ "$derived_address" != "$funding_address" ]]; then
   echo "Bitcoin Core canonical rawtr Regtest address mismatch" >&2
   exit 1
 fi
-contract_descriptor_info="$(core_cli getdescriptorinfo "addr(${contract_address})")"
-contract_descriptor="$(jq -er '.descriptor' <<<"$contract_descriptor_info")"
-derived_contract_address="$(core_cli deriveaddresses "$contract_descriptor" | jq -er 'if length == 1 then .[0] else error("address count") end')"
-if [[ "$derived_contract_address" != "$contract_address" ]]; then
-  echo "Bitcoin Core did not derive the exact SDK P2TR contract address" >&2
-  exit 1
+if [[ "$mode" == "fixture" ]]; then
+  contract_descriptor_info="$(core_cli getdescriptorinfo "addr(${contract_address})")"
+  contract_descriptor="$(jq -er '.descriptor' <<<"$contract_descriptor_info")"
+  derived_contract_address="$(core_cli deriveaddresses "$contract_descriptor" | jq -er 'if length == 1 then .[0] else error("address count") end')"
+  if [[ "$derived_contract_address" != "$contract_address" ]]; then
+    echo "Bitcoin Core did not derive the exact SDK P2TR contract address" >&2
+    exit 1
+  fi
 fi
 
 blocks_file="${evidence_dir}/generated-blocks.ndjson"
@@ -787,6 +1053,11 @@ for role in maker taker; do
   expect_allowed_method_error "$role" "$role_config" sendrawtransaction \
     '["00"]' allowed-sendrawtransaction-error
 done
+
+if [[ "$mode" == "service" ]]; then
+  finish_service_mode
+  exit 0
+fi
 
 core_cli getmempoolinfo >"${evidence_dir}/pre-p2tr-mempool.json"
 chmod 0600 "${evidence_dir}/pre-p2tr-mempool.json"
@@ -1187,6 +1458,7 @@ runtime_partial="${runtime_evidence}.partial"
 
 jq -n \
   --arg run_id "$run_id" \
+  --arg mode "$mode" \
   --arg completed_at "$completed_at" \
   --arg project "$project" \
   --arg container_id "$container_id" \
@@ -1229,6 +1501,7 @@ jq -n \
   {
     schema_version: 1,
     result: "passed",
+    mode: $mode,
     run_id: $run_id,
     completed_at: $completed_at,
     repository: {
@@ -1345,6 +1618,7 @@ jq -n \
 ' >"$runtime_partial"
 jq -e '
   .result == "passed"
+  and .mode == "fixture"
   and .chain.final_height == 103
   and (.repository.critical_evidence_manifest_sha256 | test("^[0-9a-f]{64}$"))
   and (.repository.clean_required == false or .repository.worktree_clean == true)
@@ -1376,6 +1650,7 @@ mv "$runtime_partial" "$runtime_evidence"
 
 {
   printf 'RUN_ID=%s\n' "$run_id"
+  printf 'BITCOIN_CORE_E2E_MODE=%s\n' "$mode"
   printf 'COMPOSE_PROJECT_NAME=%s\n' "$project"
   printf 'BITCOIN_CORE_IMAGE=%s\n' "$image"
   printf 'BITCOIN_CORE_CONFIG=%s\n' "$config_file"

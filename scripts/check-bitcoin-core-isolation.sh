@@ -8,14 +8,21 @@ readonly dockerfile="tests/e2e/bitcoin-core/Dockerfile"
 readonly provenance_file="tests/e2e/bitcoin-core/provenance.env"
 readonly verifier_file="scripts/verify-bitcoin-core-release.sh"
 readonly runner_file="scripts/run-bitcoin-core-e2e.sh"
+readonly service_mode_policy="scripts/test-bitcoin-core-service-mode-policy.sh"
 
 for required_file in \
-  "$compose_file" "$dockerfile" "$provenance_file" "$verifier_file" "$runner_file"; do
+  "$compose_file" "$dockerfile" "$provenance_file" "$verifier_file" "$runner_file" \
+  "$service_mode_policy"; do
   if [[ ! -f "$required_file" ]]; then
     echo "missing isolated Bitcoin Core fixture: ${required_file}" >&2
     exit 1
   fi
 done
+
+if [[ ! -x "$service_mode_policy" ]]; then
+  echo "Bitcoin Core service-mode policy must be executable: ${service_mode_policy}" >&2
+  exit 1
+fi
 
 RUN_ID=policy-check \
 BITCOIN_CORE_IMAGE=lez-atomic-swaps-bitcoin-core:policy-check \
@@ -177,3 +184,5 @@ for term in "${required_runner_runtime_terms[@]}"; do
     exit 1
   fi
 done
+
+"$service_mode_policy"
