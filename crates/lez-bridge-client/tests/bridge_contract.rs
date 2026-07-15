@@ -731,6 +731,48 @@ async fn round_trip_finalized_witnessed_claim(
 }
 
 #[tokio::test]
+async fn finalized_witnessed_claim_discovers_by_terms_without_peer_transaction_id() {
+    let expected_runtime = runtime(Participant::Maker, 31);
+    let sidecar = spawn_sidecar(expected_runtime.clone(), MAKER_CAPABILITY, Behavior::Happy).await;
+    let run = RunId::new(TEST_RUN).expect("run id");
+    let client = client(
+        &sidecar.endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        expected_runtime.clone(),
+        Duration::from_secs(1),
+    );
+    let (transcript, completed) =
+        round_trip_witnessed_claim(&client, &run, &expected_runtime, txid(30)).await;
+    let request = ObserveFinalizedWitnessedClaimRequest::discover_by_terms(
+        context(&run, Participant::Maker, "discover-finalized-witnessed"),
+        expected_runtime.clone(),
+        witnessed_terms(&expected_runtime),
+        transcript,
+        DiscoveryWindow::new(60, 1).unwrap(),
+    );
+    let encoded = serde_json::to_string(&request).unwrap();
+    assert!(!encoded.contains("claim_transaction_id"));
+
+    let observed = client
+        .observe_finalized_witnessed_claim(request)
+        .await
+        .expect("peerless finalized witnessed claim discovery");
+
+    assert_eq!(
+        observed.claim.transaction.transaction_id,
+        completed.transaction_id
+    );
+    assert_eq!(
+        sidecar
+            .fixture
+            .calls(METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM),
+        1
+    );
+    assert_eq!(sidecar.fixture.calls(METHOD_SUBMIT_TRANSACTION), 0);
+}
+
+#[tokio::test]
 async fn witnessed_escrow_prepare_is_role_correct_typed_and_does_not_submit() {
     let expected_runtime = runtime(Participant::Maker, 30);
     let sidecar = spawn_sidecar(expected_runtime.clone(), MAKER_CAPABILITY, Behavior::Happy).await;

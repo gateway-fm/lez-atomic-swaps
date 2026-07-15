@@ -20,10 +20,10 @@ use indexer_service_protocol::{
 use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
 use lez_bridge_protocol::{
-    DiscoveryWindow, ExactMessageBytes, Hex32, MessageContext,
-    ObserveFinalizedWitnessedClaimRequest, Participant, PreparedWitnessedClaim, RequestId, RunId,
-    RuntimeCompatibility, RuntimeDescriptor, TransactionId, WitnessedNativeEscrowTerms,
-    WitnessedNativeEscrowTermsInput,
+    DiscoveryWindow, ExactMessageBytes, FinalizedWitnessedClaimObservationTarget, Hex32,
+    MessageContext, ObserveFinalizedWitnessedClaimRequest, Participant, PreparedWitnessedClaim,
+    RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor, TransactionId,
+    WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
@@ -386,6 +386,48 @@ fn indexer(fixture: &Fixture, tips: impl IntoIterator<Item = Option<u64>>) -> Ar
     })
 }
 
+fn peerless_request(fixture: &Fixture) -> ObserveFinalizedWitnessedClaimRequest {
+    ObserveFinalizedWitnessedClaimRequest::discover_by_terms(
+        fixture.request.context.clone(),
+        fixture.request.runtime.clone(),
+        fixture.request.terms.clone(),
+        fixture.request.claim.clone(),
+        fixture.request.window,
+    )
+}
+
+fn assert_has_no_peer_transaction_id(request: &ObserveFinalizedWitnessedClaimRequest) {
+    assert!(
+        !serde_json::to_string(request)
+            .unwrap()
+            .contains("claim_transaction_id")
+    );
+}
+
+fn replace_claim_nonce(fixture: &mut Fixture, nonce: u128) {
+    let Transaction::Public(indexed) = &mut fixture.blocks[0].body.transactions[0] else {
+        panic!("public fixture")
+    };
+    let private = PrivateKey::try_new([5; 32]).unwrap();
+    let public_key = PublicKey::new_from_private_key(&private);
+    let message = Message::new_preserialized(
+        indexed.message.program_id.0,
+        indexed
+            .message
+            .account_ids
+            .iter()
+            .map(|account| AccountId::new(account.value))
+            .collect(),
+        vec![nonce.into()],
+        indexed.message.instruction_data.clone(),
+    );
+    let signature = nssa::Signature::new(&private, &message.hash());
+    *indexed = indexed_public(&PublicTransaction::new(
+        message,
+        WitnessSet::from_raw_parts(vec![(signature, public_key)]),
+    ));
+}
+
 #[tokio::test]
 async fn exact_claim_is_returned_only_after_sequential_dual_lookup_and_stable_finalized_tip() {
     let fixture = fixture();
@@ -396,7 +438,12 @@ async fn exact_claim_is_returned_only_after_sequential_dual_lookup_and_stable_fi
 
     assert_eq!(
         result.claim.transaction.transaction_id,
-        fixture.request.claim_transaction_id
+        match fixture.request.target {
+            FinalizedWitnessedClaimObservationTarget::Exact {
+                claim_transaction_id,
+            } => claim_transaction_id,
+            FinalizedWitnessedClaimObservationTarget::DiscoverByTerms => panic!("exact fixture"),
+        }
     );
     assert_eq!(result.claim.instruction.claim, fixture.request.claim);
     assert_eq!(
@@ -436,6 +483,64 @@ async fn exact_claim_is_returned_only_after_sequential_dual_lookup_and_stable_fi
             "id:11".to_owned(),
             format!("hash:{}", hex::encode([11; 32])),
         ]
+    );
+}
+
+#[tokio::test]
+async fn unique_claim_is_discovered_from_terms_without_peer_transaction_id() {
+    let fixture = fixture();
+    let request = peerless_request(&fixture);
+    assert_has_no_peer_transaction_id(&request);
+    let observer = FinalizedWitnessedClaimObserver::new(
+        fixture.runtime.clone(),
+        indexer(&fixture, [Some(11), Some(11)]),
+    );
+
+    let result = observer.observe(&request).await.unwrap();
+
+    assert_eq!(result.claim.instruction.claim, request.claim);
+    assert_eq!(result.claim.containing_block.block_id, 10);
+    assert_eq!(result.claim.custody.balance.as_u128(), 0);
+}
+
+#[tokio::test]
+async fn peerless_discovery_distinguishes_ambiguity_conflict_and_absence() {
+    let mut ambiguous = fixture();
+    let first = ambiguous.blocks[0].body.transactions[0].clone();
+    replace_claim_nonce(&mut ambiguous, 10);
+    ambiguous.blocks[1].body.transactions.push(first);
+    let request = peerless_request(&ambiguous);
+    let observer = FinalizedWitnessedClaimObserver::new(
+        ambiguous.runtime.clone(),
+        indexer(&ambiguous, [Some(11), Some(11)]),
+    );
+    assert_eq!(
+        observer.observe(&request).await.unwrap_err(),
+        BridgeRuntimeError::AmbiguousDiscovery
+    );
+
+    let mut conflicting = fixture();
+    replace_claim_nonce(&mut conflicting, 10);
+    let request = peerless_request(&conflicting);
+    let observer = FinalizedWitnessedClaimObserver::new(
+        conflicting.runtime.clone(),
+        indexer(&conflicting, [Some(11), Some(11)]),
+    );
+    assert_eq!(
+        observer.observe(&request).await.unwrap_err(),
+        BridgeRuntimeError::ConflictingDiscovery
+    );
+
+    let mut absent = fixture();
+    absent.blocks[0].body.transactions.clear();
+    let request = peerless_request(&absent);
+    let observer = FinalizedWitnessedClaimObserver::new(
+        absent.runtime.clone(),
+        indexer(&absent, [Some(11), Some(11)]),
+    );
+    assert_eq!(
+        observer.observe(&request).await.unwrap_err(),
+        BridgeRuntimeError::Unavailable
     );
 }
 
@@ -531,8 +636,12 @@ async fn same_height_tip_with_changed_consistent_block_identity_fails_closed() {
 }
 
 #[tokio::test]
-async fn authenticated_bridge_server_observation_is_repeatable_and_never_submits() {
+async fn authenticated_bridge_server_peerless_observation_is_repeatable_and_never_submits() {
     let fixture = fixture();
+    let expected_claim_transaction_id =
+        TransactionId::from_bytes(fixture.blocks[0].body.transactions[0].hash().0);
+    let request = peerless_request(&fixture);
+    assert_has_no_peer_transaction_id(&request);
     let run_id = fixture.request.context.run_id.clone();
     let runtime_descriptor = fixture.runtime.clone();
     let indexer = indexer(&fixture, [Some(11)]);
@@ -602,15 +711,19 @@ async fn authenticated_bridge_server_observation_is_repeatable_and_never_submits
         .unwrap()
     };
     let first = observe(bridge.endpoint())
-        .observe_finalized_witnessed_claim(fixture.request.clone())
+        .observe_finalized_witnessed_claim(request.clone())
         .await
         .unwrap();
     let second = observe(bridge.endpoint())
-        .observe_finalized_witnessed_claim(fixture.request)
+        .observe_finalized_witnessed_claim(request)
         .await
         .unwrap();
 
     assert_eq!(first, second);
+    assert_eq!(
+        first.claim.transaction.transaction_id,
+        expected_claim_transaction_id
+    );
     assert_eq!(
         indexer
             .calls
@@ -736,6 +849,7 @@ async fn either_bound_actor_can_observe_but_cross_role_signer_is_rejected() {
         depositor_fixture.request.terms.depositor_account_id();
     depositor_fixture.request.context.sidecar_role = Participant::Taker;
     depositor_fixture.request.runtime = depositor_fixture.runtime.clone();
+    depositor_fixture.request.target = FinalizedWitnessedClaimObservationTarget::DiscoverByTerms;
     let observer = FinalizedWitnessedClaimObserver::new(
         depositor_fixture.runtime.clone(),
         indexer(&depositor_fixture, [Some(11), Some(11)]),

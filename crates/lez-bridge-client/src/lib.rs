@@ -17,8 +17,9 @@ use jsonrpsee::{
 use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClient, HttpClientBuilder};
 use lez_bridge_protocol::{
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
-    DescribeRuntimeResult, ErrorCode, ErrorMessage, EscrowState, MessageContext,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    DescribeRuntimeResult, ErrorCode, ErrorMessage, EscrowState,
+    FinalizedWitnessedClaimObservationTarget, MessageContext, ObserveEscrowRequest,
+    ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
     ObserveFinalizedWitnessedClaimResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
     ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
     ObserveWitnessedEscrowResult, Participant, PrepareNativeEscrowRequest,
@@ -605,7 +606,12 @@ impl BridgeClient {
     ) -> Result<ObserveFinalizedWitnessedClaimResult, BridgeClientError> {
         let operation = BridgeOperation::ObserveFinalizedWitnessedClaim;
         let context = request.context.clone();
-        let expected_transaction_id = request.claim_transaction_id;
+        let expected_transaction_id = match request.target {
+            FinalizedWitnessedClaimObservationTarget::Exact {
+                claim_transaction_id,
+            } => Some(claim_transaction_id),
+            FinalizedWitnessedClaimObservationTarget::DiscoverByTerms => None,
+        };
         let expected_claim = request.claim.clone();
         let expected_terms = request.terms.clone();
         let expected_program = request.runtime.escrow_program_id;
@@ -645,7 +651,7 @@ impl BridgeClient {
         ];
         let exact_signer = transaction.signer_account_ids.as_slice()
             == [expected_terms.aggregate_authority_account_id()];
-        if transaction.transaction_id != expected_transaction_id
+        if expected_transaction_id.is_some_and(|expected| transaction.transaction_id != expected)
             || !transaction.is_public
             || transaction.position.height != block.block_id
             || transaction.position.block_hash != block.block_hash

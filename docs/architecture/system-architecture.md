@@ -158,7 +158,7 @@ sequenceDiagram
         Indexer-->>Taker: LEZ funding finalized
         Note over Core,Indexer: Both locks final under local policy
         Taker->>Lez: Claim LEZ and reveal adaptor material
-        Indexer-->>Maker: Exact finalized claim witness
+        Indexer-->>Maker: Discover unique finalized claim from terms and transcript
         Maker->>Core: Recover scalar and claim Bitcoin
         Core-->>Taker: Bitcoin output spent once
     else TakerSellsLez
@@ -242,7 +242,7 @@ flowchart TB
         MBR2["Maker lez-v02-bridge-poc<br/>canonical forward and reverse complete"]
         TBR2["Taker lez-v02-bridge-poc<br/>canonical forward and reverse complete"]
         M3WB["M3 witnessed prepare, complete, and submit<br/>both local happy directions GREEN"]
-        M3FO["M3 finalized witnessed-claim observer<br/>same-block terminal state + dual role + BIP340 GREEN"]
+        M3FO["M3 finalized witnessed-claim observer<br/>exact or peerless terms discovery<br/>same-block state + dual role + BIP340 GREEN"]
         MBRJ[("Maker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         TBRJ[("Taker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         MSL2 --> V02J
@@ -365,7 +365,7 @@ flowchart TB
     TBR2 -->|"initialize and fund forward; reveal reverse"| SQ
     MBR2 -->|"non-genesis finalized-tip readiness"| IX
     TBR2 -->|"non-genesis finalized-tip readiness"| IX
-    M3FO -->|"bounded finalized blocks + accounts at containing BlockId"| IX
+    M3FO -->|"bounded finalized blocks + unique terms and transcript match<br/>accounts at containing BlockId"| IX
     MBR2 -->|"typed outbound profile"| LezProfile
     TBR2 -->|"typed outbound profile"| LezProfile
     LezProfile -->|"local explicit loopback"| SQ

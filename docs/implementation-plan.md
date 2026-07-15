@@ -1330,13 +1330,14 @@ through pinned `nssa`; no custom curve or account arithmetic is introduced.
 The finalized-observation slice adds an eleventh bridge method and closes
 typed LEZ revealing-claim evidence. A bounded sequential indexer scan proceeds
 only when the complete requested window is finalized, requires immutable
-`Finalized` blocks to agree by numeric ID and hash, returns the canonical exact
-claim once, and reads terminal metadata and custody at the exact containing
+`Finalized` blocks to agree by numeric ID and hash, returns the canonical
+claim once by exact ID or peerless signed-terms/transcript discovery, and reads
+terminal metadata and custody at the exact containing
 `BlockId`. Either agreement participant may observe with its own role-bound
 sidecar; neither path submits. The client rechecks the inclusive window,
 terminal terms/accounts, and the aggregate BIP-340 signature with exact-pinned
-`secp256k1` 0.29.1. Protocol 20/20, client 2 unit plus 18 integration tests,
-and all 62 pinned-sidecar targets are GREEN under strict Clippy. The upstream
+`secp256k1` 0.29.1. Protocol 21/21, client 2 unit plus 20 integration tests,
+and all 66 pinned-sidecar targets are GREEN under strict Clippy. The upstream
 indexer exposes historical account DTOs without an account proof or atomic
 multi-read snapshot token, so stable finalized-tip bracketing and same-block
 reads are a disclosed trust compensation rather than a production proof.
@@ -1387,10 +1388,13 @@ or rolled-back evidence-chain state, and expose the public revealing witness
 without persisting the scalar. The Core component independently reconstructs
 and cross-checks exact funding/claim consensus bytes, confirmation/block/tip
 facts, and a canonical scalar-free evidence DTO; its actual-node actor wiring
-is still open. Remaining local PoC work is finalized witnessed-funding
-observation, peerless finalized LEZ claim discovery, and wiring both chain
-adapters plus the recovery component through each cohesive reference actor.
-These are remaining deliverables, not external blockers.
+is still open. Peerless finalized LEZ claim discovery is now GREEN: either
+role can discover one unique canonical claim from the signed terms and exact
+prepared transcript without receiving a peer transaction ID, while absence,
+ambiguity, and a conflicting transcript remain distinct fail-closed results.
+Remaining local PoC work is finalized witnessed-funding observation and wiring
+both chain adapters plus the recovery component through each cohesive
+reference actor. These are remaining deliverables, not external blockers.
 
 ### Later owner-selected hardening
 
@@ -1410,8 +1414,10 @@ commitment-exchanging dual-domain wrapper, but remains an unaccepted
 beta/unaudited candidate until independent-process recovery, stronger secret
 handling, and review
 pass. `miniscript`
-13.1.0 and `corepc-client` 0.16.0/`corepc-types` 0.15.0 remain deferred until a
-concrete API requires them.
+13.1.0 and `corepc-client` 0.16.0 remain deferred. Exact `corepc-types`
+0.15.0 is now used only for strict Core v31 response DTOs; it is locked,
+license-gated, and tested but remains an unaccepted dependency candidate until
+the cohesive actual-node actor composition is GREEN.
 
 The P2TR slice now exercises exact-pinned `bitcoin` and `musig2`. The graph
 intentionally contains `secp256k1` 0.29 and 0.31; canonical key and signature

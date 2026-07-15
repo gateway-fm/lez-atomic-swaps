@@ -1657,7 +1657,61 @@ impl CompleteWitnessedClaimResult {
     }
 }
 
-/// Requests proof that one exact witnessed claim occurs exactly once in a finalized window.
+/// Selects an exact completed claim ID or peerless discovery by agreement terms.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+#[must_use]
+pub enum FinalizedWitnessedClaimObservationTarget {
+    /// Require the one exact completed public-transaction identity.
+    Exact {
+        /// Exact completed witnessed-claim transaction ID.
+        claim_transaction_id: TransactionId,
+    },
+    /// Discover the unique canonical claim from the signed terms and transcript.
+    DiscoverByTerms,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExactFinalizedWitnessedClaimObservationTargetWire {
+    mode: ExactMode,
+    claim_transaction_id: TransactionId,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiscoverFinalizedWitnessedClaimObservationTargetWire {
+    mode: DiscoverByTermsMode,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum FinalizedWitnessedClaimObservationTargetWire {
+    Exact(ExactFinalizedWitnessedClaimObservationTargetWire),
+    DiscoverByTerms(DiscoverFinalizedWitnessedClaimObservationTargetWire),
+}
+
+impl<'de> Deserialize<'de> for FinalizedWitnessedClaimObservationTarget {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match FinalizedWitnessedClaimObservationTargetWire::deserialize(deserializer)? {
+            FinalizedWitnessedClaimObservationTargetWire::Exact(wire) => {
+                let ExactMode::Exact = wire.mode;
+                Ok(Self::Exact {
+                    claim_transaction_id: wire.claim_transaction_id,
+                })
+            }
+            FinalizedWitnessedClaimObservationTargetWire::DiscoverByTerms(wire) => {
+                let DiscoverByTermsMode::DiscoverByTerms = wire.mode;
+                Ok(Self::DiscoverByTerms)
+            }
+        }
+    }
+}
+
+/// Requests proof that one witnessed claim occurs exactly once in a finalized window.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 #[must_use]
@@ -1670,8 +1724,8 @@ pub struct ObserveFinalizedWitnessedClaimRequest {
     pub terms: WitnessedNativeEscrowTerms,
     /// Exact unsigned message that the aggregate authority signed.
     pub claim: PreparedWitnessedClaim,
-    /// Exact completed public-transaction identity expected in the indexer.
-    pub claim_transaction_id: TransactionId,
+    /// Exact-ID lookup or peerless canonical discovery.
+    pub target: FinalizedWitnessedClaimObservationTarget,
     /// Inclusive bounded range that must be entirely finalized and scanned.
     pub window: DiscoveryWindow,
 }
@@ -1691,7 +1745,27 @@ impl ObserveFinalizedWitnessedClaimRequest {
             runtime,
             terms,
             claim,
-            claim_transaction_id,
+            target: FinalizedWitnessedClaimObservationTarget::Exact {
+                claim_transaction_id,
+            },
+            window,
+        }
+    }
+
+    /// Creates a peerless terms-and-transcript discovery request.
+    pub const fn discover_by_terms(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedNativeEscrowTerms,
+        claim: PreparedWitnessedClaim,
+        window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+            claim,
+            target: FinalizedWitnessedClaimObservationTarget::DiscoverByTerms,
             window,
         }
     }

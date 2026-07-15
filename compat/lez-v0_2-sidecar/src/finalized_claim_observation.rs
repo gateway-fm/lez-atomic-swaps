@@ -11,9 +11,10 @@ use indexer_service_protocol::{
 use indexer_service_rpc::RpcClient as _;
 use lez_bridge_protocol::{
     AccountIds, AggregateBip340Signature, ChainPosition, ChainTip, EscrowState,
-    FinalizedBlockIdentity, FinalizedWitnessedClaimFacts, Hex32, NativeCustodyFacts,
-    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
-    ObservedTransactionFacts, WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
+    FinalizedBlockIdentity, FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
+    Hex32, NativeCustodyFacts, ObserveFinalizedWitnessedClaimRequest,
+    ObserveFinalizedWitnessedClaimResult, ObservedTransactionFacts, WitnessedClaimInstructionFacts,
+    WitnessedEscrowMetadataFacts,
 };
 use lez_zec_escrow_v02::{ClaimAuthority, EscrowMetadata, EscrowStatus};
 use nssa::{
@@ -195,11 +196,27 @@ impl FinalizedWitnessedClaimObserver {
         for block_id in request.window.start_height()..=window_end {
             let block = self.read_finalized_block(block_id).await?;
             for (transaction_index, transaction) in block.body.transactions.iter().enumerate() {
-                if transaction.hash().0 != *request.claim_transaction_id.as_bytes() {
-                    continue;
-                }
-                let IndexedTransaction::Public(public) = transaction else {
-                    return Err(BridgeRuntimeError::InvalidObservation);
+                let public = match request.target {
+                    FinalizedWitnessedClaimObservationTarget::Exact {
+                        claim_transaction_id,
+                    } => {
+                        if transaction.hash().0 != *claim_transaction_id.as_bytes() {
+                            continue;
+                        }
+                        let IndexedTransaction::Public(public) = transaction else {
+                            return Err(BridgeRuntimeError::InvalidObservation);
+                        };
+                        public
+                    }
+                    FinalizedWitnessedClaimObservationTarget::DiscoverByTerms => {
+                        let IndexedTransaction::Public(public) = transaction else {
+                            continue;
+                        };
+                        if !self.matches_discovery_terms(request, public)? {
+                            continue;
+                        }
+                        public
+                    }
                 };
                 if found
                     .replace((block.header.clone(), transaction_index, public.clone()))
@@ -296,6 +313,46 @@ impl FinalizedWitnessedClaimObserver {
         Ok(by_id)
     }
 
+    fn matches_discovery_terms(
+        &self,
+        request: &ObserveFinalizedWitnessedClaimRequest,
+        indexed: &IndexedPublicTransaction,
+    ) -> Result<bool, BridgeRuntimeError> {
+        let escrow_program = program_id_from_hex(self.runtime.escrow_program_id);
+        if indexed.message.program_id.0 != escrow_program {
+            return Ok(false);
+        }
+        let swap_id = request.terms.swap_id();
+        let expected_accounts = [
+            compute_metadata_pda(&escrow_program, swap_id.as_bytes()).into_value(),
+            compute_custody_pda(&escrow_program, swap_id.as_bytes()).into_value(),
+            *request.terms.claimant_account_id().as_bytes(),
+            *request.terms.aggregate_authority_account_id().as_bytes(),
+        ];
+        if indexed.message.account_ids.len() != expected_accounts.len()
+            || !indexed
+                .message
+                .account_ids
+                .iter()
+                .zip(expected_accounts)
+                .all(|(observed, expected)| observed.value == expected)
+        {
+            return Ok(false);
+        }
+        let instruction = risc0_zkvm::serde::from_slice::<ZecEscrowInstruction, u32>(
+            &indexed.message.instruction_data,
+        )
+        .map_err(|_| BridgeRuntimeError::ConflictingDiscovery)?;
+        match instruction {
+            ZecEscrowInstruction::ClaimNativeWitnessed { swap_id: observed }
+                if observed == *swap_id.as_bytes() =>
+            {
+                Ok(true)
+            }
+            _ => Err(BridgeRuntimeError::ConflictingDiscovery),
+        }
+    }
+
     async fn validate_claim(
         &self,
         request: &ObserveFinalizedWitnessedClaimRequest,
@@ -303,7 +360,18 @@ impl FinalizedWitnessedClaimObserver {
         transaction_index: usize,
         indexed: &IndexedPublicTransaction,
     ) -> Result<FinalizedWitnessedClaimFacts, BridgeRuntimeError> {
-        if indexed.hash.0 != *request.claim_transaction_id.as_bytes()
+        let expected_transaction_id = match request.target {
+            FinalizedWitnessedClaimObservationTarget::Exact {
+                claim_transaction_id,
+            } => Some(claim_transaction_id),
+            FinalizedWitnessedClaimObservationTarget::DiscoverByTerms => None,
+        };
+        let transcript_error = if expected_transaction_id.is_some() {
+            BridgeRuntimeError::InvalidObservation
+        } else {
+            BridgeRuntimeError::ConflictingDiscovery
+        };
+        if expected_transaction_id.is_some_and(|expected| indexed.hash.0 != *expected.as_bytes())
             || indexed.witness_set.proof.is_some()
             || indexed.witness_set.signatures_and_public_keys.len() != 1
         {
@@ -321,9 +389,10 @@ impl FinalizedWitnessedClaimObserver {
         if exact_message != request.claim.exact_message_bytes.as_slice()
             || public.message().hash() != *request.claim.message_hash.as_bytes()
         {
-            return Err(BridgeRuntimeError::InvalidObservation);
+            return Err(transcript_error);
         }
-        self.validate_message(request, public.message())?;
+        self.validate_message(request, public.message())
+            .map_err(|_| transcript_error)?;
         let [(signature, key)] = public.witness_set().signatures_and_public_keys() else {
             return Err(BridgeRuntimeError::InvalidObservation);
         };
@@ -332,10 +401,10 @@ impl FinalizedWitnessedClaimObserver {
                 != *request.terms.aggregate_authority_account_id().as_bytes()
             || !signature.is_valid_for(request.claim.message_hash.as_bytes(), key)
         {
-            return Err(BridgeRuntimeError::InvalidObservation);
+            return Err(transcript_error);
         }
         let prepared = prepared_from_transaction(&public)?;
-        if prepared.transaction_id != request.claim_transaction_id {
+        if expected_transaction_id.is_some_and(|expected| prepared.transaction_id != expected) {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
         let ordered_account_ids = AccountIds::new(

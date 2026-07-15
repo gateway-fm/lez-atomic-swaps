@@ -27,7 +27,7 @@ flowchart LR
     Sequencer -->|"publish LEZ block"| Bedrock
     Bedrock -->|"finalized channel block"| Indexer
     Effect -.->|"Vault integrated finality deferred"| Indexer
-    WitnessedObserver["M3 witnessed-claim finalized observer"] -->|"bounded finalized blocks by ID and hash"| Indexer
+    WitnessedObserver["M3 exact or peerless witnessed-claim observer"] -->|"bounded finalized blocks by ID and hash<br/>unique terms and transcript match"| Indexer
     WitnessedObserver -->|"metadata and custody at containing BlockId"| Indexer
     Sequencer -->|"accepted hash"| Admitted
     Effect -->|"persist Admitted"| Admitted

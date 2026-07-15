@@ -47,6 +47,9 @@ pub enum BridgeRuntimeError {
     /// More than one canonical transaction matched a terms-based slot.
     #[error("official v0.2 terms discovery was ambiguous")]
     AmbiguousDiscovery,
+    /// One canonical terms match conflicted with the expected signed transcript.
+    #[error("official v0.2 terms discovery conflicted with the signed transcript")]
+    ConflictingDiscovery,
     /// The refund bridge slice has not been implemented.
     #[error("native refund is unavailable in the progressive PoC slice")]
     RefundUnavailable,

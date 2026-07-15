@@ -547,6 +547,10 @@ impl From<BridgeRuntimeError> for OperationFailure {
                 code: ErrorCode::AmbiguousDiscovery,
                 message: "official v0.2 discovery matched more than once",
             },
+            BridgeRuntimeError::ConflictingDiscovery => Self {
+                code: ErrorCode::ConflictingDiscovery,
+                message: "official v0.2 discovery conflicted with the signed transcript",
+            },
             BridgeRuntimeError::UnknownSubmissionOutcome => Self {
                 code: ErrorCode::UnknownSubmissionOutcome,
                 message: "official node submission outcome is unknown",

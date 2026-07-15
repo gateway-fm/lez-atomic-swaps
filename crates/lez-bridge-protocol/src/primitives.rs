@@ -1101,6 +1101,8 @@ pub enum ErrorCode {
     Unavailable,
     /// Terms-based discovery found more than one matching transaction.
     AmbiguousDiscovery,
+    /// A unique terms match conflicted with the expected signed transcript.
+    ConflictingDiscovery,
     /// The before and after node tips differed.
     MovingTip,
     /// Submission may have reached the node, but its outcome is unknown.

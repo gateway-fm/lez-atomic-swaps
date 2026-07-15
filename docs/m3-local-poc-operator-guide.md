@@ -89,6 +89,23 @@ loopback HTTP server. They use deterministic RPC doubles and ephemeral loopback
 servers, not the Dockerized Core service, a faucet, a public RPC, or public
 funds. Actual service-mode actor integration remains a separate composed gate.
 
+Repeat exact-ID and peerless finalized LEZ claim observation independently:
+
+~~~sh
+cargo test --locked -p lez-bridge-protocol --all-targets
+cargo test --locked -p lez-bridge-client --all-targets
+cargo +1.96.0 test --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml --all-targets
+~~~
+
+The peerless cases omit the completed claim transaction ID and discover one
+canonical public transaction from the pinned program, terms-derived accounts,
+claimant, aggregate authority, exact prepared transcript, and bounded finalized
+window. They prove unique success plus distinct absence, ambiguity, and
+conflicting-transcript failures through the authenticated server/runtime path.
+The tests use deterministic in-process indexer doubles and ephemeral loopback
+servers; they do not contact the local devnet or any public resource. The
+manual flow below repeats the same request against the retained local indexer.
+
 Run from the repository root. Use a clean or intentionally reviewed worktree
 and a fresh composed identifier:
 
@@ -417,16 +434,16 @@ packet without logging either:
 jq -n --arg run "$M3_RUN_ID" --arg req "$(new_request_id)" --arg role "$CLAIMANT_ROLE" --arg signature "$(jq -er '.payload' "$LEZ_FINAL_PACKET")" --slurpfile runtime "$CLAIMANT_RUNTIME" --slurpfile prepared "$DIRECTION/prepared-claim.json" '{context:{schema_version:1,run_id:$run,request_id:$req,sidecar_role:$role},runtime:$runtime[0],claim:$prepared[0].claim,aggregate_signature:$signature}' >"$DIRECTION/complete-claim-request.json"
 ~~~
 
-After submission, either participant may independently observe the exact
+After submission, either participant may independently discover the exact
 finalized claim through its own role endpoint. Supply the same strict witnessed
-terms and prepared unsigned claim, the completed transaction ID, and the
-inclusive bounded window that contains it:
+terms and prepared unsigned claim plus the inclusive bounded window that
+contains it; do not supply a peer transaction ID:
 
 ~~~sh
 OBSERVER_ROLE=maker
 OBSERVER_RUNTIME="$PRIVATE_ROOT/$OBSERVER_ROLE/runtime.json"
 OBSERVER_ENDPOINT="$MAKER_BRIDGE_URL"
-jq -n --arg run "$M3_RUN_ID" --arg req "$(new_request_id)" --arg role "$OBSERVER_ROLE" --arg tx "$LEZ_CLAIM_TX" --argjson start "$CLAIM_START_HEIGHT" --argjson blocks "$CLAIM_MAX_BLOCKS" --slurpfile runtime "$OBSERVER_RUNTIME" --slurpfile terms "$DIRECTION/terms.json" --slurpfile prepared "$DIRECTION/prepared-claim.json" '{context:{schema_version:1,run_id:$run,request_id:$req,sidecar_role:$role},runtime:$runtime[0],terms:$terms[0],claim:$prepared[0].claim,claim_transaction_id:$tx,window:{start_height:$start,max_blocks:$blocks}}' >"$DIRECTION/observe-finalized-claim-request.json"
+jq -n --arg run "$M3_RUN_ID" --arg req "$(new_request_id)" --arg role "$OBSERVER_ROLE" --argjson start "$CLAIM_START_HEIGHT" --argjson blocks "$CLAIM_MAX_BLOCKS" --slurpfile runtime "$OBSERVER_RUNTIME" --slurpfile terms "$DIRECTION/terms.json" --slurpfile prepared "$DIRECTION/prepared-claim.json" '{context:{schema_version:1,run_id:$run,request_id:$req,sidecar_role:$role},runtime:$runtime[0],terms:$terms[0],claim:$prepared[0].claim,target:{mode:"discover_by_terms"},window:{start_height:$start,max_blocks:$blocks}}' >"$DIRECTION/observe-finalized-claim-request.json"
 "$LEZ_OPERATOR" observe-finalized-witnessed-claim --endpoint "$OBSERVER_ENDPOINT" --run-id "$M3_RUN_ID" --sidecar-role "$OBSERVER_ROLE" --capability-file "$PRIVATE_ROOT/$OBSERVER_ROLE/sidecar.capability" --runtime-file "$OBSERVER_RUNTIME" --request-file "$DIRECTION/observe-finalized-claim-request.json" >"$DIRECTION/finalized-claim.json"
 ~~~
 
@@ -436,6 +453,9 @@ covered by one stable finalized tip, the containing block lies inside it and
 agrees by ID/hash, terminal metadata and zero custody were read at that exact
 numeric block ID, and the client independently verified the aggregate BIP-340
 signature. This call is read-only and never authorizes a replacement submit.
+Require the returned transaction ID to equal the locally retained
+`$LEZ_CLAIM_TX`; this is an evidence comparison after discovery, not an input
+that can be supplied by the counterparty.
 
 Moving-tip observations must use a new request ID on every attempt. Reusing an
 ID returns the sidecar's durable at-most-once result and can replay Unknown

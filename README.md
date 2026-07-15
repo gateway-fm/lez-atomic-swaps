@@ -142,16 +142,18 @@ the pinned official `nssa` implementation rather than duplicating it in shell.
 
 The same operator/client/sidecar boundary now has an explicit read-only
 `observe-finalized-witnessed-claim` call. Either correctly bound participant
-can scan one bounded window only after the indexer finalized tip covers it. The
-sidecar requires equal block-by-ID and block-by-hash results, exactly one
-canonical public claim, the exact aggregate signature/message/authority, and
+can scan one bounded window only after the indexer finalized tip covers it,
+using either an exact transaction ID or peerless discovery from the signed
+terms and prepared transcript. The sidecar requires equal block-by-ID and
+block-by-hash results, exactly one canonical public claim under the pinned
+program and derived accounts, the exact aggregate signature/message/authority, and
 `Claimed` metadata plus zero custody read at that containing numeric block ID.
 The client independently enforces the requested window and verifies BIP-340
 with exact-pinned `secp256k1` 0.29.1. The official indexer supplies historical
 account DTOs but no account proof or atomic multi-read snapshot token; that is
 recorded as an upstream production trust limitation, not hidden as local
-consensus proof. This closes typed LEZ claim evidence, not the pending Bitcoin
-Core adapter or cohesive actor wiring.
+consensus proof. This closes peer-independent typed LEZ claim evidence, not
+finalized funding observation or cohesive actor wiring.
 
 The next durable M3 component is now implemented locally as
 `SqliteBtcRecoveryStore`. Each maker or taker opens a different owner-private
