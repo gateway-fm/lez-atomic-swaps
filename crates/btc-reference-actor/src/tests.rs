@@ -14,10 +14,12 @@ use bitcoin::{
     secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey},
 };
 use lez_bridge_protocol::{
-    AccountIds, ChainPosition, EscrowState, ExactMessageBytes, ExactTransactionBytes,
-    FinalizedBlockIdentity, FinalizedWitnessedFundingFacts, NativeCustodyFacts,
-    NativeFundInstructionFacts, ObservedTransactionFacts, PrepareWitnessedClaimResult,
-    PreparedWitnessedClaim, TransactionId, WitnessedEscrowMetadataFacts,
+    AccountIds, ChainPosition, CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult,
+    EscrowState, ExactMessageBytes, ExactTransactionBytes, FinalizedBlockIdentity,
+    FinalizedWitnessedFundingFacts, NativeCustodyFacts, NativeFundInstructionFacts,
+    ObservedTransactionFacts, PrepareWitnessedClaimResult, PreparedTransaction,
+    PreparedWitnessedClaim, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
+    TransactionId, WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
 };
 use lez_btc_swap_sdk::{
     AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BtcAgreementBodyV1, BtcAgreementRecordV1,
@@ -1702,6 +1704,906 @@ struct FixedBitcoinClaimPort {
     submit_calls: Arc<AtomicUsize>,
 }
 
+#[derive(Clone)]
+struct FixedLezClaimPort {
+    completed: PreparedTransaction,
+    presence: lez_bridge_client::FinalizedWitnessedClaimPresence,
+    submission: Result<SubmissionOutcome, ActorCommandError>,
+    complete_calls: Arc<AtomicUsize>,
+    classify_calls: Arc<AtomicUsize>,
+    submit_calls: Arc<AtomicUsize>,
+    complete_requests: Arc<Mutex<Vec<CompleteWitnessedClaimRequest>>>,
+    classify_requests: Arc<Mutex<Vec<ObserveFinalizedWitnessedClaimRequest>>>,
+    submit_requests: Arc<Mutex<Vec<SubmitTransactionRequest>>>,
+}
+
+#[async_trait]
+impl LezClaimChainPort for FixedLezClaimPort {
+    async fn complete_witnessed_claim(
+        &self,
+        request: CompleteWitnessedClaimRequest,
+    ) -> Result<CompleteWitnessedClaimResult, ActorCommandError> {
+        self.complete_calls.fetch_add(1, Ordering::SeqCst);
+        self.complete_requests
+            .lock()
+            .expect("complete request lock")
+            .push(request.clone());
+        Ok(CompleteWitnessedClaimResult::new(
+            request.context,
+            self.completed.clone(),
+        ))
+    }
+
+    async fn classify_finalized_witnessed_claim(
+        &self,
+        request: ObserveFinalizedWitnessedClaimRequest,
+    ) -> Result<lez_bridge_client::FinalizedWitnessedClaimPresence, ActorCommandError> {
+        self.classify_calls.fetch_add(1, Ordering::SeqCst);
+        self.classify_requests
+            .lock()
+            .expect("classify request lock")
+            .push(request);
+        Ok(self.presence.clone())
+    }
+
+    async fn submit_transaction(
+        &self,
+        request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, ActorCommandError> {
+        self.submit_calls.fetch_add(1, Ordering::SeqCst);
+        self.submit_requests
+            .lock()
+            .expect("submit request lock")
+            .push(request.clone());
+        self.submission.map(|outcome| {
+            SubmitTransactionResult::new(
+                request.context,
+                request.transaction.transaction_id,
+                outcome,
+            )
+        })
+    }
+}
+
+impl FixedLezClaimPort {
+    fn with_presence(
+        completed: PreparedTransaction,
+        presence: lez_bridge_client::FinalizedWitnessedClaimPresence,
+        submission: Result<SubmissionOutcome, ActorCommandError>,
+    ) -> Self {
+        Self {
+            completed,
+            presence,
+            submission,
+            complete_calls: Arc::new(AtomicUsize::new(0)),
+            classify_calls: Arc::new(AtomicUsize::new(0)),
+            submit_calls: Arc::new(AtomicUsize::new(0)),
+            complete_requests: Arc::new(Mutex::new(Vec::new())),
+            classify_requests: Arc::new(Mutex::new(Vec::new())),
+            submit_requests: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn submit_calls(&self) -> usize {
+        self.submit_calls.load(Ordering::SeqCst)
+    }
+}
+
+fn placeholder_lez_port() -> FixedLezClaimPort {
+    let transaction = PreparedTransaction::new(
+        TransactionId::from_bytes([91; 32]),
+        ExactTransactionBytes::new(vec![92; 128]).expect("exact LEZ transaction bytes"),
+    );
+    FixedLezClaimPort::with_presence(
+        transaction,
+        lez_bridge_client::FinalizedWitnessedClaimPresence::Uncertain(
+            lez_bridge_client::FinalizedWitnessedClaimUncertain::Transport,
+        ),
+        Ok(SubmissionOutcome::Accepted),
+    )
+}
+
+fn prepared_lez_claim(config: &ActorConfig, agreement: &BtcAgreementV1) -> PreparedWitnessedClaim {
+    load_prepared_witnessed_claim(config, agreement)
+        .expect("load prepared LEZ claim")
+        .claim
+}
+
+fn finalized_lez_tip(window: DiscoveryWindow) -> ChainTip {
+    let end = window.start_height() + u64::from(window.max_blocks() - 1);
+    ChainTip::new(Hex32::from_bytes([94; 32]), end)
+}
+
+fn not_found_lez_claim_presence(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: ClaimTransition,
+    effect: Option<&PreparedLezClaimEffect>,
+) -> lez_bridge_client::FinalizedWitnessedClaimPresence {
+    let request = finalized_lez_claim_request(
+        config,
+        agreement,
+        transition,
+        &prepared_lez_claim(config, agreement),
+        effect,
+    )
+    .expect("finalized LEZ claim request");
+    lez_bridge_client::FinalizedWitnessedClaimPresence::NotFound {
+        context: request.context,
+        finalized_tip: finalized_lez_tip(request.window),
+        scanned_window: request.window,
+    }
+}
+
+fn exact_lez_claim_presence(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: ClaimTransition,
+    effect: Option<&PreparedLezClaimEffect>,
+    transaction: PreparedTransaction,
+    aggregate_signature: [u8; 64],
+) -> lez_bridge_client::FinalizedWitnessedClaimPresence {
+    let prepared = prepared_lez_claim(config, agreement);
+    let request = finalized_lez_claim_request(config, agreement, transition, &prepared, effect)
+        .expect("finalized LEZ claim request");
+    let block_height = request.window.start_height() + 1;
+    let block_hash = Hex32::from_bytes([93; 32]);
+    let authority = request.terms.aggregate_authority_account_id();
+    let metadata_account = Hex32::from_bytes(*agreement.lez_terms().metadata_account());
+    let custody_account = Hex32::from_bytes(*agreement.lez_terms().custody_account());
+    let transaction_facts = ObservedTransactionFacts::new(
+        transaction.transaction_id,
+        transaction.exact_bytes,
+        ChainPosition::new(block_hash, block_height, 0),
+        AccountIds::new(vec![authority]).expect("one signer"),
+        true,
+    );
+    let instruction = WitnessedClaimInstructionFacts::new(
+        request.runtime.escrow_program_id,
+        AccountIds::new(vec![
+            metadata_account,
+            custody_account,
+            request.terms.claimant_account_id(),
+            authority,
+        ])
+        .expect("claim account list"),
+        request.terms.swap_id(),
+        request.terms.claimant_account_id(),
+        authority,
+        prepared,
+    );
+    let metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+        metadata_account,
+        request.runtime.escrow_program_id,
+        custody_account,
+        &request.terms,
+        EscrowState::Claimed,
+    );
+    let custody = NativeCustodyFacts::new(
+        custody_account,
+        request.terms.authenticated_transfer_program_id(),
+        0,
+    );
+    let claim = FinalizedWitnessedClaimFacts::new(
+        transaction_facts,
+        instruction,
+        AggregateBip340Signature::from_bytes(aggregate_signature),
+        FinalizedBlockIdentity::new(block_height, block_hash, 1_700_000_001_000),
+        metadata,
+        custody,
+    );
+    lez_bridge_client::FinalizedWitnessedClaimPresence::PresentExact {
+        context: request.context,
+        finalized_tip: finalized_lez_tip(request.window),
+        scanned_window: request.window,
+        claim: Box::new(claim),
+    }
+}
+
+fn valid_lez_claim_signature(fixture: &ActorFixture, transition: ClaimTransition) -> [u8; 64] {
+    if transition == ClaimTransition::RevealingClaim {
+        return revealing_signature(fixture);
+    }
+    let revealing_public_signature = revealing_signature(fixture);
+    let (bitcoin_context, bitcoin_presignature) =
+        verified_chain_presignature(&fixture.config, &fixture.agreement, Chain::Bitcoin)
+            .expect("verified Bitcoin presignature");
+    let secret = extract_adaptor_secret(
+        &bitcoin_context,
+        bitcoin_presignature,
+        revealing_public_signature,
+    )
+    .expect("extract followup adaptor secret");
+    let (lez_context, lez_presignature) =
+        verified_chain_presignature(&fixture.config, &fixture.agreement, Chain::Lez)
+            .expect("verified LEZ presignature");
+    adapt_presignature(&lez_context, lez_presignature, secret)
+        .expect("adapt LEZ followup signature")
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn lez_claim_effect_is_role_and_revision_ordered() {
+    let taker = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_both_locks(&taker).await;
+    assert!(
+        prepare_lez_claim_effect(
+            &taker.config,
+            &taker.agreement,
+            ClaimTransition::RevealingClaim,
+            &durable_status(&taker),
+            &placeholder_lez_port(),
+        )
+        .await
+        .expect("taker owns maker-funded LEZ claim")
+        .is_some()
+    );
+
+    let maker = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    activate_and_project_both_locks(&maker).await;
+    assert!(
+        prepare_lez_claim_effect(
+            &maker.config,
+            &maker.agreement,
+            ClaimTransition::RevealingClaim,
+            &durable_status(&maker),
+            &placeholder_lez_port(),
+        )
+        .await
+        .expect("maker only observes its LEZ claim")
+        .is_none()
+    );
+
+    let maker_owner = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Maker);
+    activate_and_project_both_locks(&maker_owner).await;
+    project_revealing_claim(&maker_owner).await;
+    assert!(
+        prepare_lez_claim_effect(
+            &maker_owner.config,
+            &maker_owner.agreement,
+            ClaimTransition::FollowupClaim,
+            &durable_status(&maker_owner),
+            &placeholder_lez_port(),
+        )
+        .await
+        .expect("maker owns taker-funded LEZ followup claim")
+        .is_some()
+    );
+
+    let taker_observer =
+        ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Taker);
+    activate_and_project_both_locks(&taker_observer).await;
+    project_revealing_claim(&taker_observer).await;
+    assert!(
+        prepare_lez_claim_effect(
+            &taker_observer.config,
+            &taker_observer.agreement,
+            ClaimTransition::FollowupClaim,
+            &durable_status(&taker_observer),
+            &placeholder_lez_port(),
+        )
+        .await
+        .expect("taker only observes its LEZ followup claim")
+        .is_none()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[allow(clippy::too_many_lines)] // One scenario proves completion, send, restart window, and projection.
+async fn lez_claim_owner_submits_once_then_projects_exact_finalized_presence() {
+    for (direction, role, transition) in [
+        (
+            SwapDirection::TakerSellsForeign,
+            ActorRole::Taker,
+            ClaimTransition::RevealingClaim,
+        ),
+        (
+            SwapDirection::TakerSellsLez,
+            ActorRole::Maker,
+            ClaimTransition::FollowupClaim,
+        ),
+    ] {
+        let fixture = ActorFixture::for_direction(direction, role);
+        activate_and_project_both_locks(&fixture).await;
+        if transition == ClaimTransition::FollowupClaim {
+            project_revealing_claim(&fixture).await;
+        }
+        let preparation_port = placeholder_lez_port();
+        let effect = prepare_lez_claim_effect(
+            &fixture.config,
+            &fixture.agreement,
+            transition,
+            &durable_status(&fixture),
+            &preparation_port,
+        )
+        .await
+        .expect("prepare owned LEZ claim")
+        .expect("role owns LEZ claim");
+        let repeated = prepare_lez_claim_effect(
+            &fixture.config,
+            &fixture.agreement,
+            transition,
+            &durable_status(&fixture),
+            &preparation_port,
+        )
+        .await
+        .expect("repeat deterministic completion")
+        .expect("role still owns LEZ claim");
+        assert_eq!(effect, repeated);
+        {
+            let completion_requests = preparation_port
+                .complete_requests
+                .lock()
+                .expect("completion request lock");
+            assert_eq!(completion_requests.len(), 2);
+            assert_eq!(completion_requests[0], completion_requests[1]);
+        }
+
+        let absence_port = FixedLezClaimPort::with_presence(
+            effect.transaction.clone(),
+            not_found_lez_claim_presence(
+                &fixture.config,
+                &fixture.agreement,
+                transition,
+                Some(&effect),
+            ),
+            Ok(SubmissionOutcome::Accepted),
+        );
+        let absence_observer = LezClaimObserver {
+            config: &fixture.config,
+            chain: absence_port.clone(),
+            effect: Some(effect.clone()),
+            prepared_claim: prepared_lez_claim(&fixture.config, &fixture.agreement),
+            state_db: fixture.config.state_db.clone(),
+        };
+        let awaiting = output_json(
+            drive_claim_with_observer(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &absence_observer,
+            )
+            .await
+            .expect("one exact LEZ submission"),
+        );
+        assert_eq!(awaiting["outcome"], "awaiting_observation");
+        assert_eq!(awaiting["revision"], transition.predecessor_revision());
+        assert_eq!(absence_port.submit_calls(), 1);
+        let first_request_id = {
+            let absence_requests = absence_port
+                .classify_requests
+                .lock()
+                .expect("absence request lock");
+            assert!(matches!(
+                absence_requests[0].target,
+                FinalizedWitnessedClaimObservationTarget::Exact {
+                    claim_transaction_id
+                } if claim_transaction_id == effect.transaction.transaction_id
+            ));
+            absence_requests[0].context.request_id.clone()
+        };
+
+        let mut later_config = fixture.config.clone();
+        later_config.lez_bridge.discovery_start_height = 21;
+        later_config
+            .validate()
+            .expect("later valid discovery window");
+        let exact_port = FixedLezClaimPort::with_presence(
+            effect.transaction.clone(),
+            exact_lez_claim_presence(
+                &later_config,
+                &fixture.agreement,
+                transition,
+                Some(&effect),
+                effect.transaction.clone(),
+                effect.aggregate_signature,
+            ),
+            Err(ActorCommandError::ObservationUnavailable),
+        );
+        let exact_observer = LezClaimObserver {
+            config: &later_config,
+            chain: exact_port.clone(),
+            effect: Some(effect),
+            prepared_claim: prepared_lez_claim(&later_config, &fixture.agreement),
+            state_db: later_config.state_db.clone(),
+        };
+        let projected = output_json(
+            drive_claim_with_observer(
+                &later_config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &exact_observer,
+            )
+            .await
+            .expect("project finalized exact LEZ claim"),
+        );
+        assert_eq!(projected["outcome"], "observed_then_projected");
+        assert_eq!(projected["revision"], transition.revision());
+        assert_eq!(exact_port.submit_calls(), 0);
+        let exact_requests = exact_port
+            .classify_requests
+            .lock()
+            .expect("exact request lock");
+        assert_ne!(exact_requests[0].context.request_id, first_request_id);
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn lez_claim_non_submitter_discovers_peerlessly_without_completion_or_send() {
+    for (direction, role, transition) in [
+        (
+            SwapDirection::TakerSellsForeign,
+            ActorRole::Maker,
+            ClaimTransition::RevealingClaim,
+        ),
+        (
+            SwapDirection::TakerSellsLez,
+            ActorRole::Taker,
+            ClaimTransition::FollowupClaim,
+        ),
+    ] {
+        let fixture = ActorFixture::for_direction(direction, role);
+        activate_and_project_both_locks(&fixture).await;
+        if transition == ClaimTransition::FollowupClaim {
+            project_revealing_claim(&fixture).await;
+        }
+        let transaction = PreparedTransaction::new(
+            TransactionId::from_bytes([101; 32]),
+            ExactTransactionBytes::new(vec![102; 128]).expect("observer transaction bytes"),
+        );
+        let port = FixedLezClaimPort::with_presence(
+            transaction.clone(),
+            exact_lez_claim_presence(
+                &fixture.config,
+                &fixture.agreement,
+                transition,
+                None,
+                transaction,
+                valid_lez_claim_signature(&fixture, transition),
+            ),
+            Err(ActorCommandError::ObservationUnavailable),
+        );
+        let observer = LezClaimObserver {
+            config: &fixture.config,
+            chain: port.clone(),
+            effect: None,
+            prepared_claim: prepared_lez_claim(&fixture.config, &fixture.agreement),
+            state_db: fixture.config.state_db.clone(),
+        };
+        let projected = output_json(
+            drive_claim_with_observer(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &observer,
+            )
+            .await
+            .expect("peerless finalized LEZ discovery"),
+        );
+        assert_eq!(projected["outcome"], "observed_then_projected");
+        assert_eq!(projected["revision"], transition.revision());
+        assert_eq!(port.complete_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(port.submit_calls(), 0);
+        let requests = port
+            .classify_requests
+            .lock()
+            .expect("peerless classify request lock");
+        assert!(matches!(
+            requests[0].target,
+            FinalizedWitnessedClaimObservationTarget::DiscoverByTerms
+        ));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn lez_claim_unavailable_and_uncertain_are_retryable_observe_only() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_both_locks(&fixture).await;
+    let transition = ClaimTransition::RevealingClaim;
+    let effect = prepare_lez_claim_effect(
+        &fixture.config,
+        &fixture.agreement,
+        transition,
+        &durable_status(&fixture),
+        &placeholder_lez_port(),
+    )
+    .await
+    .expect("prepare LEZ claim")
+    .expect("taker owns LEZ claim");
+    for presence in [
+        lez_bridge_client::FinalizedWitnessedClaimPresence::Unavailable(
+            lez_bridge_client::FinalizedWitnessedClaimUnavailable::NodeFinalityOrHistory,
+        ),
+        lez_bridge_client::FinalizedWitnessedClaimPresence::Unavailable(
+            lez_bridge_client::FinalizedWitnessedClaimUnavailable::MovingTip,
+        ),
+        lez_bridge_client::FinalizedWitnessedClaimPresence::Uncertain(
+            lez_bridge_client::FinalizedWitnessedClaimUncertain::Timeout,
+        ),
+        lez_bridge_client::FinalizedWitnessedClaimPresence::Uncertain(
+            lez_bridge_client::FinalizedWitnessedClaimUncertain::Transport,
+        ),
+    ] {
+        let port = FixedLezClaimPort::with_presence(
+            effect.transaction.clone(),
+            presence,
+            Ok(SubmissionOutcome::Accepted),
+        );
+        let observer = LezClaimObserver {
+            config: &fixture.config,
+            chain: port.clone(),
+            effect: Some(effect.clone()),
+            prepared_claim: prepared_lez_claim(&fixture.config, &fixture.agreement),
+            state_db: fixture.config.state_db.clone(),
+        };
+        let awaiting = output_json(
+            drive_claim_with_observer(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &observer,
+            )
+            .await
+            .expect("uncertain observation stays pending"),
+        );
+        assert_eq!(awaiting["revision"], 2);
+        assert_eq!(port.submit_calls(), 0);
+    }
+
+    let stable_absence_port = FixedLezClaimPort::with_presence(
+        effect.transaction.clone(),
+        not_found_lez_claim_presence(
+            &fixture.config,
+            &fixture.agreement,
+            transition,
+            Some(&effect),
+        ),
+        Ok(SubmissionOutcome::Accepted),
+    );
+    let stable_absence_observer = LezClaimObserver {
+        config: &fixture.config,
+        chain: stable_absence_port.clone(),
+        effect: Some(effect),
+        prepared_claim: prepared_lez_claim(&fixture.config, &fixture.agreement),
+        state_db: fixture.config.state_db.clone(),
+    };
+    drive_claim_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &stable_absence_observer,
+    )
+    .await
+    .expect("later stable absence authorizes one send");
+    assert_eq!(stable_absence_port.submit_calls(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn lez_claim_post_authority_error_is_unknown_and_never_rearms() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_both_locks(&fixture).await;
+    let transition = ClaimTransition::RevealingClaim;
+    let effect = prepare_lez_claim_effect(
+        &fixture.config,
+        &fixture.agreement,
+        transition,
+        &durable_status(&fixture),
+        &placeholder_lez_port(),
+    )
+    .await
+    .expect("prepare LEZ claim")
+    .expect("taker owns LEZ claim");
+    let failing_port = FixedLezClaimPort::with_presence(
+        effect.transaction.clone(),
+        not_found_lez_claim_presence(
+            &fixture.config,
+            &fixture.agreement,
+            transition,
+            Some(&effect),
+        ),
+        Err(ActorCommandError::ObservationUnavailable),
+    );
+    let failing_observer = LezClaimObserver {
+        config: &fixture.config,
+        chain: failing_port.clone(),
+        effect: Some(effect.clone()),
+        prepared_claim: prepared_lez_claim(&fixture.config, &fixture.agreement),
+        state_db: fixture.config.state_db.clone(),
+    };
+    assert_eq!(
+        drive_claim_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &failing_observer,
+        )
+        .await
+        .expect_err("post-authority failure is surfaced after Unknown"),
+        ActorCommandError::ObservationUnavailable
+    );
+    assert_eq!(failing_port.submit_calls(), 1);
+
+    let restarted_port = FixedLezClaimPort::with_presence(
+        effect.transaction.clone(),
+        not_found_lez_claim_presence(
+            &fixture.config,
+            &fixture.agreement,
+            transition,
+            Some(&effect),
+        ),
+        Ok(SubmissionOutcome::Accepted),
+    );
+    let restarted_observer = LezClaimObserver {
+        config: &fixture.config,
+        chain: restarted_port.clone(),
+        effect: Some(effect),
+        prepared_claim: prepared_lez_claim(&fixture.config, &fixture.agreement),
+        state_db: fixture.config.state_db.clone(),
+    };
+    drive_claim_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &restarted_observer,
+    )
+    .await
+    .expect("Unknown restart remains observe-only");
+    assert_eq!(restarted_port.submit_calls(), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[allow(clippy::too_many_lines)] // Crash and activation gates share one exact owned-effect setup.
+async fn lez_claim_started_restart_and_missing_activation_never_send() {
+    let started_fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_both_locks(&started_fixture).await;
+    let transition = ClaimTransition::RevealingClaim;
+    let started_effect = prepare_lez_claim_effect(
+        &started_fixture.config,
+        &started_fixture.agreement,
+        transition,
+        &durable_status(&started_fixture),
+        &placeholder_lez_port(),
+    )
+    .await
+    .expect("prepare LEZ claim")
+    .expect("taker owns LEZ claim");
+    let mut journal = SqlitePublicEffectJournal::open(&started_fixture.config.state_db)
+        .expect("open effect journal");
+    let _ = journal
+        .record_prepared(&started_effect.effect)
+        .expect("persist exact public bytes");
+    assert!(matches!(
+        journal
+            .reconcile(started_effect.effect.key(), PublicEffectObservation::Absent,)
+            .expect("consume send authority before simulated crash"),
+        PublicEffectDecision::SubmitOnce(_)
+    ));
+    drop(journal);
+    let restarted_port = FixedLezClaimPort::with_presence(
+        started_effect.transaction.clone(),
+        not_found_lez_claim_presence(
+            &started_fixture.config,
+            &started_fixture.agreement,
+            transition,
+            Some(&started_effect),
+        ),
+        Ok(SubmissionOutcome::Accepted),
+    );
+    let restarted_observer = LezClaimObserver {
+        config: &started_fixture.config,
+        chain: restarted_port.clone(),
+        effect: Some(started_effect),
+        prepared_claim: prepared_lez_claim(&started_fixture.config, &started_fixture.agreement),
+        state_db: started_fixture.config.state_db.clone(),
+    };
+    drive_claim_with_observer(
+        &started_fixture.config,
+        started_fixture.agreement.clone(),
+        started_fixture.agreement_wire.clone(),
+        &restarted_observer,
+    )
+    .await
+    .expect("Started restart remains observe-only");
+    assert_eq!(restarted_port.submit_calls(), 0);
+
+    let gated_fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_both_locks(&gated_fixture).await;
+    let gated_effect = prepare_lez_claim_effect(
+        &gated_fixture.config,
+        &gated_fixture.agreement,
+        transition,
+        &durable_status(&gated_fixture),
+        &placeholder_lez_port(),
+    )
+    .await
+    .expect("prepare gated LEZ claim")
+    .expect("taker owns gated LEZ claim");
+    let gated_port = FixedLezClaimPort::with_presence(
+        gated_effect.transaction.clone(),
+        not_found_lez_claim_presence(
+            &gated_fixture.config,
+            &gated_fixture.agreement,
+            transition,
+            Some(&gated_effect),
+        ),
+        Ok(SubmissionOutcome::Accepted),
+    );
+    let gated_observer = LezClaimObserver {
+        config: &gated_fixture.config,
+        chain: gated_port.clone(),
+        effect: Some(gated_effect),
+        prepared_claim: prepared_lez_claim(&gated_fixture.config, &gated_fixture.agreement),
+        state_db: gated_fixture.config.state_db.clone(),
+    };
+    fs::remove_file(
+        &gated_fixture
+            .config
+            .signing
+            .prepared_witnessed_claim_result_file,
+    )
+    .expect("remove activation material");
+    assert_eq!(
+        drive_claim_with_observer(
+            &gated_fixture.config,
+            gated_fixture.agreement.clone(),
+            gated_fixture.agreement_wire.clone(),
+            &gated_observer,
+        )
+        .await
+        .expect_err("activation gate reruns before chain observation"),
+        ActorCommandError::ActivationMaterialUnavailable
+    );
+    assert_eq!(gated_port.classify_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(gated_port.submit_calls(), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn lez_claim_conflicting_exact_presence_never_sends_or_rearms() {
+    for conflict_signature in [false, true] {
+        let fixture =
+            ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+        activate_and_project_both_locks(&fixture).await;
+        let transition = ClaimTransition::RevealingClaim;
+        let effect = prepare_lez_claim_effect(
+            &fixture.config,
+            &fixture.agreement,
+            transition,
+            &durable_status(&fixture),
+            &placeholder_lez_port(),
+        )
+        .await
+        .expect("prepare LEZ claim")
+        .expect("taker owns LEZ claim");
+        let transaction = if conflict_signature {
+            effect.transaction.clone()
+        } else {
+            PreparedTransaction::new(
+                effect.transaction.transaction_id,
+                ExactTransactionBytes::new(vec![103; 128]).expect("conflicting exact bytes"),
+            )
+        };
+        let mut signature = effect.aggregate_signature;
+        if conflict_signature {
+            signature[63] ^= 1;
+        }
+        let conflicting_port = FixedLezClaimPort::with_presence(
+            effect.transaction.clone(),
+            exact_lez_claim_presence(
+                &fixture.config,
+                &fixture.agreement,
+                transition,
+                Some(&effect),
+                transaction,
+                signature,
+            ),
+            Ok(SubmissionOutcome::Accepted),
+        );
+        let conflicting_observer = LezClaimObserver {
+            config: &fixture.config,
+            chain: conflicting_port.clone(),
+            effect: Some(effect.clone()),
+            prepared_claim: prepared_lez_claim(&fixture.config, &fixture.agreement),
+            state_db: fixture.config.state_db.clone(),
+        };
+        assert_eq!(
+            drive_claim_with_observer(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &conflicting_observer,
+            )
+            .await
+            .expect_err("conflicting canonical facts fail closed"),
+            ActorCommandError::AgreementBindingInvalid
+        );
+        assert_eq!(conflicting_port.submit_calls(), 0);
+        assert_eq!(durable_status(&fixture).revision(), 2);
+
+        let restarted_port = FixedLezClaimPort::with_presence(
+            effect.transaction.clone(),
+            not_found_lez_claim_presence(
+                &fixture.config,
+                &fixture.agreement,
+                transition,
+                Some(&effect),
+            ),
+            Ok(SubmissionOutcome::Accepted),
+        );
+        let restarted_observer = LezClaimObserver {
+            config: &fixture.config,
+            chain: restarted_port.clone(),
+            effect: Some(effect),
+            prepared_claim: prepared_lez_claim(&fixture.config, &fixture.agreement),
+            state_db: fixture.config.state_db.clone(),
+        };
+        drive_claim_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &restarted_observer,
+        )
+        .await
+        .expect("conflicting-presence restart remains observe-only");
+        assert_eq!(restarted_port.submit_calls(), 0);
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn lez_claim_rejects_containing_block_outside_scanned_finalized_window() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    activate_and_project_both_locks(&fixture).await;
+    let transition = ClaimTransition::RevealingClaim;
+    let transaction = PreparedTransaction::new(
+        TransactionId::from_bytes([104; 32]),
+        ExactTransactionBytes::new(vec![105; 128]).expect("observer transaction bytes"),
+    );
+    let mut presence = exact_lez_claim_presence(
+        &fixture.config,
+        &fixture.agreement,
+        transition,
+        None,
+        transaction.clone(),
+        valid_lez_claim_signature(&fixture, transition),
+    );
+    let lez_bridge_client::FinalizedWitnessedClaimPresence::PresentExact {
+        finalized_tip,
+        claim,
+        ..
+    } = &mut presence
+    else {
+        unreachable!("exact presence fixture")
+    };
+    let outside_height = finalized_tip.height + 1;
+    claim.containing_block.block_id = outside_height;
+    claim.transaction.position.height = outside_height;
+    let port = FixedLezClaimPort::with_presence(
+        transaction,
+        presence,
+        Err(ActorCommandError::ObservationUnavailable),
+    );
+    let observer = LezClaimObserver {
+        config: &fixture.config,
+        chain: port.clone(),
+        effect: None,
+        prepared_claim: prepared_lez_claim(&fixture.config, &fixture.agreement),
+        state_db: fixture.config.state_db.clone(),
+    };
+    assert_eq!(
+        drive_claim_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &observer,
+        )
+        .await
+        .expect_err("claim outside scanned finalized window fails closed"),
+        ActorCommandError::AgreementBindingInvalid
+    );
+    assert_eq!(durable_status(&fixture).revision(), 2);
+    assert_eq!(port.submit_calls(), 0);
+}
+
 impl FixedBitcoinClaimPort {
     fn new(
         scan: BitcoinClaimScan,
@@ -2016,7 +2918,7 @@ async fn bitcoin_claim_wrong_bytes_and_missing_secret_never_gain_send_authority(
     );
     let wrong_observer = BitcoinClaimObserver {
         chain: wrong_port.clone(),
-        effect: Some(effect),
+        effect: Some(effect.clone()),
         state_db: fixture.config.state_db.clone(),
     };
     let pending = output_json(
@@ -2027,10 +2929,31 @@ async fn bitcoin_claim_wrong_bytes_and_missing_secret_never_gain_send_authority(
             &wrong_observer,
         )
         .await
-        .expect("wrong exact bytes are uncertain"),
+        .expect("wrong exact bytes become a durable no-send conflict"),
     );
     assert_eq!(pending["revision"], 2);
     assert_eq!(wrong_port.submit_calls(), 0);
+
+    let restarted_port = FixedBitcoinClaimPort::new(
+        BitcoinClaimScan::Unspent,
+        Ok(AuthorizedClaimSubmission::Accepted {
+            transaction_id: effect.expected_transaction_id,
+        }),
+    );
+    let restarted_observer = BitcoinClaimObserver {
+        chain: restarted_port.clone(),
+        effect: Some(effect.clone()),
+        state_db: fixture.config.state_db.clone(),
+    };
+    drive_claim_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &restarted_observer,
+    )
+    .await
+    .expect("conflicting-presence restart remains observe-only");
+    assert_eq!(restarted_port.submit_calls(), 0);
 
     fs::remove_file(
         fixture
