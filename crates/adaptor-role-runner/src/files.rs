@@ -16,20 +16,20 @@ pub(crate) fn read_public(path: &Path) -> Result<Vec<u8>, RunnerError> {
     read_bounded_regular(path, MAX_PUBLIC_JSON_BYTES, false)
 }
 
-pub(crate) fn read_secret_key(path: &Path) -> Result<Zeroizing<[u8; 32]>, RunnerError> {
+pub(crate) fn read_secret_scalar(path: &Path) -> Result<Zeroizing<[u8; 32]>, RunnerError> {
     let bytes = read_bounded_regular(path, MAX_SECRET_KEY_FILE_BYTES, true)?;
     let encoded = bytes.strip_suffix(b"\n").unwrap_or(bytes.as_slice());
     if encoded.len() != 64 || !encoded.iter().all(u8::is_ascii_hexdigit) {
-        return Err(RunnerError::InvalidSecretKeyFile);
+        return Err(RunnerError::InvalidSecretScalarFile);
     }
-    let encoded = std::str::from_utf8(encoded).map_err(|_| RunnerError::InvalidSecretKeyFile)?;
+    let encoded = std::str::from_utf8(encoded).map_err(|_| RunnerError::InvalidSecretScalarFile)?;
     if encoded.bytes().any(|byte| byte.is_ascii_uppercase()) {
-        return Err(RunnerError::InvalidSecretKeyFile);
+        return Err(RunnerError::InvalidSecretScalarFile);
     }
-    let decoded = hex::decode(encoded).map_err(|_| RunnerError::InvalidSecretKeyFile)?;
+    let decoded = hex::decode(encoded).map_err(|_| RunnerError::InvalidSecretScalarFile)?;
     let key: [u8; 32] = decoded
         .try_into()
-        .map_err(|_| RunnerError::InvalidSecretKeyFile)?;
+        .map_err(|_| RunnerError::InvalidSecretScalarFile)?;
     Ok(Zeroizing::new(key))
 }
 
@@ -52,7 +52,7 @@ fn read_bounded_regular(
         return Err(RunnerError::UnsafeInputFile);
     }
     if require_owner_private && (metadata.mode() & 0o077 != 0 || metadata.nlink() != 1) {
-        return Err(RunnerError::UnsafeSecretKeyFile);
+        return Err(RunnerError::UnsafeSecretScalarFile);
     }
     let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
     file.take(maximum + 1)
@@ -72,5 +72,21 @@ pub(crate) fn write_public_new(path: &Path, bytes: &[u8]) -> Result<(), RunnerEr
     options.write(true).create_new(true).mode(0o600);
     let mut file = options.open(path).map_err(RunnerError::OutputIo)?;
     file.write_all(bytes).map_err(RunnerError::OutputIo)?;
+    file.sync_all().map_err(RunnerError::OutputIo)
+}
+
+pub(crate) fn write_secret_scalar_new(
+    path: &Path,
+    scalar: &Zeroizing<[u8; 32]>,
+) -> Result<(), RunnerError> {
+    let mut encoded = Zeroizing::new([0_u8; 65]);
+    hex::encode_to_slice(&scalar[..], &mut encoded[..64])
+        .map_err(|_| RunnerError::SecretScalarSerialization)?;
+    encoded[64] = b'\n';
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true).mode(0o600);
+    let mut file = options.open(path).map_err(RunnerError::OutputIo)?;
+    file.write_all(encoded.as_ref())
+        .map_err(RunnerError::OutputIo)?;
     file.sync_all().map_err(RunnerError::OutputIo)
 }

@@ -143,6 +143,7 @@ pub(crate) enum PacketKind {
     PublicNonce,
     PartialSignature,
     Presignature,
+    FinalSignature,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -210,7 +211,7 @@ impl PublicPacketV1 {
     fn validate_header(
         &self,
         expected_kind: PacketKind,
-        expected_sender: Role,
+        expected_sender: PacketSender,
         session: &Session,
     ) -> Result<(), RunnerError> {
         if self.schema_version != SCHEMA_VERSION
@@ -220,7 +221,7 @@ impl PublicPacketV1 {
         {
             return Err(RunnerError::PublicPacketCrosswire);
         }
-        if self.sender_role != expected_sender.into() {
+        if self.sender_role != expected_sender {
             return Err(RunnerError::PublicPacketRoleCrosswire);
         }
         Ok(())
@@ -262,7 +263,17 @@ pub(crate) fn read_peer_packet<const N: usize>(
     session: &Session,
 ) -> Result<[u8; N], RunnerError> {
     let (packet, _) = PublicPacketV1::load(path)?;
-    packet.validate_header(kind, local_role.opposite(), session)?;
+    packet.validate_header(kind, local_role.opposite().into(), session)?;
+    decode_exact(&packet.payload)
+}
+
+pub(crate) fn read_aggregate_packet<const N: usize>(
+    path: &Path,
+    kind: PacketKind,
+    session: &Session,
+) -> Result<[u8; N], RunnerError> {
+    let (packet, _) = PublicPacketV1::load(path)?;
+    packet.validate_header(kind, PacketSender::Aggregate, session)?;
     decode_exact(&packet.payload)
 }
 

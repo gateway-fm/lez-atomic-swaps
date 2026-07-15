@@ -7,8 +7,9 @@ use std::{fmt, io, path::PathBuf};
 
 use clap::{Parser, Subcommand};
 use lez_btc_swap_sdk::{
-    FreshAdaptorNonce, PersistedAdaptorSigningMaterial, aggregate_adaptor_presignature,
-    sign_persisted_adaptor_partial, verify_adaptor_partial_signature, verify_nonce_commitment,
+    FreshAdaptorNonce, PersistedAdaptorSigningMaterial, adapt_presignature,
+    aggregate_adaptor_presignature, extract_adaptor_secret, sign_persisted_adaptor_partial,
+    verify_adaptor_partial_signature, verify_nonce_commitment,
 };
 use lez_swap_store::{
     AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
@@ -72,6 +73,30 @@ pub enum Action {
         input: PathBuf,
         /// New role-neutral canonical presignature packet.
         #[arg(long, value_name = "NEW_PUBLIC_JSON")]
+        output: PathBuf,
+    },
+    /// Adapt the exact durable aggregate presignature with the committed scalar.
+    AdaptPresignature {
+        /// Canonical role-neutral aggregate presignature packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        input: PathBuf,
+        /// Owner-private lowercase-hex adaptor scalar file.
+        #[arg(long, value_name = "PRIVATE_SCALAR_FILE")]
+        adaptor_secret_file: PathBuf,
+        /// New role-neutral canonical final-signature packet.
+        #[arg(long, value_name = "NEW_PUBLIC_JSON")]
+        output: PathBuf,
+    },
+    /// Extract the committed scalar from an observed exact final signature.
+    ExtractAdaptorSecret {
+        /// Canonical role-neutral aggregate presignature packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        presignature: PathBuf,
+        /// Canonical role-neutral final-signature packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        final_signature: PathBuf,
+        /// New owner-private lowercase-hex recovered scalar file.
+        #[arg(long, value_name = "NEW_PRIVATE_SCALAR_FILE")]
         output: PathBuf,
     },
 }
@@ -176,6 +201,30 @@ pub fn execute(cli: &Cli) -> Result<(), RunnerError> {
         Action::AcceptPeerPartial { input, output } => {
             accept_peer_partial(&mut journal, &identity, &session, cli.role, input, output)
         }
+        Action::AdaptPresignature {
+            input,
+            adaptor_secret_file,
+            output,
+        } => adapt_durable_presignature(
+            &journal,
+            &identity,
+            &session,
+            input,
+            adaptor_secret_file,
+            output,
+        ),
+        Action::ExtractAdaptorSecret {
+            presignature,
+            final_signature,
+            output,
+        } => extract_durable_adaptor_secret(
+            &journal,
+            &identity,
+            &session,
+            presignature,
+            final_signature,
+            output,
+        ),
     }
 }
 
@@ -197,7 +246,7 @@ fn reserve(
             *snapshot.own_commitment().bytes(),
         );
     }
-    let secret_key = files::read_secret_key(secret_key_file)?;
+    let secret_key = files::read_secret_scalar(secret_key_file)?;
     let fresh = FreshAdaptorNonce::generate(session.context(), role.sdk(), *secret_key)
         .map_err(|_| RunnerError::CryptographicValidation)?;
     if fresh.context_binding() != session.context_binding() {
@@ -248,7 +297,7 @@ fn accept_nonce_and_sign(
     let peer_commitment = ready
         .peer_commitment()
         .ok_or(RunnerError::PeerCommitmentUnavailable)?;
-    let secret_key = files::read_secret_key(secret_key_file)?;
+    let secret_key = files::read_secret_scalar(secret_key_file)?;
     let signed = journal.sign_and_persist_partial(identity, |material| {
         let persisted = PersistedAdaptorSigningMaterial::new(
             *material.identity().signing_domain(),
@@ -328,6 +377,53 @@ fn accept_peer_partial(
     protocol::write_aggregate_packet(output, PacketKind::Presignature, session, presignature)
 }
 
+fn adapt_durable_presignature(
+    journal: &SqliteAdaptorSessionJournal,
+    identity: &AdaptorSessionIdentity,
+    session: &Session,
+    input: &std::path::Path,
+    adaptor_secret_file: &std::path::Path,
+    output: &std::path::Path,
+) -> Result<(), RunnerError> {
+    let presignature = read_durable_presignature(journal, identity, session, input)?;
+    let adaptor_secret = files::read_secret_scalar(adaptor_secret_file)?;
+    let final_signature = adapt_presignature(session.context(), presignature, adaptor_secret)
+        .map_err(|_| RunnerError::CryptographicValidation)?;
+    protocol::write_aggregate_packet(output, PacketKind::FinalSignature, session, final_signature)
+}
+
+fn extract_durable_adaptor_secret(
+    journal: &SqliteAdaptorSessionJournal,
+    identity: &AdaptorSessionIdentity,
+    session: &Session,
+    presignature_path: &std::path::Path,
+    final_signature_path: &std::path::Path,
+    output: &std::path::Path,
+) -> Result<(), RunnerError> {
+    let presignature = read_durable_presignature(journal, identity, session, presignature_path)?;
+    let final_signature =
+        protocol::read_aggregate_packet(final_signature_path, PacketKind::FinalSignature, session)?;
+    let extracted = extract_adaptor_secret(session.context(), presignature, final_signature)
+        .map_err(|_| RunnerError::CryptographicValidation)?;
+    files::write_secret_scalar_new(output, &extracted)
+}
+
+fn read_durable_presignature(
+    journal: &SqliteAdaptorSessionJournal,
+    identity: &AdaptorSessionIdentity,
+    session: &Session,
+    input: &std::path::Path,
+) -> Result<[u8; 65], RunnerError> {
+    let supplied = protocol::read_aggregate_packet(input, PacketKind::Presignature, session)?;
+    let durable = required_snapshot(journal, identity)?
+        .presignature()
+        .ok_or(RunnerError::PresignatureUnavailable)?;
+    if supplied != *durable.bytes() {
+        return Err(RunnerError::PublicPacketCrosswire);
+    }
+    Ok(supplied)
+}
+
 fn ensure_identity(
     journal: &SqliteAdaptorSessionJournal,
     identity: &AdaptorSessionIdentity,
@@ -367,14 +463,14 @@ pub enum RunnerError {
     OutputIo(#[source] io::Error),
     #[error("input must be a stable regular file")]
     UnsafeInputFile,
-    #[error("secret-key file must be owner-private and single-linked")]
-    UnsafeSecretKeyFile,
+    #[error("secret scalar file must be owner-private and single-linked")]
+    UnsafeSecretScalarFile,
     #[error("input file exceeds its protocol bound")]
     InputTooLarge,
     #[error("output file exceeds its protocol bound")]
     OutputTooLarge,
-    #[error("secret-key file is not exact lowercase 32-byte hex")]
-    InvalidSecretKeyFile,
+    #[error("secret scalar file is not exact lowercase 32-byte hex")]
+    InvalidSecretScalarFile,
     #[error("session configuration is invalid")]
     InvalidSessionConfig,
     #[error("session configuration is not canonical JSON")]
@@ -401,6 +497,10 @@ pub enum RunnerError {
     PartialUnavailable,
     #[error("durable public nonce is unavailable")]
     PublicNonceUnavailable,
+    #[error("durable aggregate presignature is unavailable")]
+    PresignatureUnavailable,
+    #[error("secret scalar serialization failed")]
+    SecretScalarSerialization,
     #[error("cryptographic transcript validation failed")]
     CryptographicValidation,
     #[error(transparent)]

@@ -39,6 +39,7 @@ struct Fixture {
     session: PathBuf,
     maker_key: PathBuf,
     taker_key: PathBuf,
+    adaptor_key: PathBuf,
     maker_journal: PathBuf,
     taker_journal: PathBuf,
     context: AdaptorSessionContext,
@@ -49,6 +50,7 @@ fn fixture(domain: Domain) -> Fixture {
     let session = directory.path().join("session.json");
     let maker_key = directory.path().join("maker.key");
     let taker_key = directory.path().join("taker.key");
+    let adaptor_key = directory.path().join("adaptor.key");
     let maker_journal = directory.path().join("maker.sqlite");
     let taker_journal = directory.path().join("taker.sqlite");
 
@@ -59,6 +61,10 @@ fn fixture(domain: Domain) -> Fixture {
     write_private(
         &taker_key,
         format!("{}\n", hex::encode(TAKER_SECRET)).as_bytes(),
+    );
+    write_private(
+        &adaptor_key,
+        format!("{}\n", hex::encode(ADAPTOR_SECRET)).as_bytes(),
     );
 
     let secp = Secp256k1::signing_only();
@@ -129,6 +135,7 @@ fn fixture(domain: Domain) -> Fixture {
         session,
         maker_key,
         taker_key,
+        adaptor_key,
         maker_journal,
         taker_journal,
         context,
@@ -178,10 +185,14 @@ fn run_fail(mut command: Command) -> Output {
 fn assert_secret_free(output: &Output) {
     let maker = hex::encode(MAKER_SECRET);
     let taker = hex::encode(TAKER_SECRET);
+    let adaptor = hex::encode(ADAPTOR_SECRET);
+    let wrong_adaptor = hex::encode([0x54; 32]);
     for bytes in [&output.stdout, &output.stderr] {
         let text = String::from_utf8_lossy(bytes);
         assert!(!text.contains(&maker));
         assert!(!text.contains(&taker));
+        assert!(!text.contains(&adaptor));
+        assert!(!text.contains(&wrong_adaptor));
     }
 }
 
@@ -216,6 +227,9 @@ fn exercise(domain: Domain, crosswire_checks: bool) {
     let maker_presignature = directory.join("maker-presignature.json");
     let taker_presignature = directory.join("taker-presignature.json");
     let maker_presignature_replay = directory.join("maker-presignature-replay.json");
+    let final_signature_packet = directory.join("final-signature.json");
+    let final_signature_from_extracted = directory.join("final-signature-from-extracted.json");
+    let extracted_adaptor_secret = directory.join("extracted-adaptor.key");
 
     let mut reserve_maker = command("maker", &fixture.maker_journal, &fixture.session);
     reserve_maker
@@ -402,13 +416,227 @@ fn exercise(domain: Domain, crosswire_checks: bool) {
     )
     .expect("independent process partials aggregate");
     assert_eq!(process_presignature, presignature);
-    let final_signature = adapt_presignature(
+
+    if crosswire_checks {
+        let wrong_adaptor_key = directory.join("wrong-adaptor.key");
+        write_private(
+            &wrong_adaptor_key,
+            format!("{}\n", hex::encode([0x54; 32])).as_bytes(),
+        );
+        let wrong_secret_output = directory.join("wrong-secret-final.json");
+        let mut wrong_secret = command("maker", &fixture.maker_journal, &fixture.session);
+        wrong_secret
+            .arg("adapt-presignature")
+            .arg("--input")
+            .arg(&maker_presignature)
+            .arg("--adaptor-secret-file")
+            .arg(&wrong_adaptor_key)
+            .arg("--output")
+            .arg(&wrong_secret_output);
+        let failed = run_fail(wrong_secret);
+        assert!(String::from_utf8_lossy(&failed.stderr).contains("cryptographic transcript"));
+        assert!(!wrong_secret_output.exists());
+
+        fs::set_permissions(&fixture.adaptor_key, fs::Permissions::from_mode(0o644))
+            .expect("make adaptor scalar unsafe");
+        let unsafe_secret_output = directory.join("unsafe-secret-final.json");
+        let mut unsafe_secret = command("maker", &fixture.maker_journal, &fixture.session);
+        unsafe_secret
+            .arg("adapt-presignature")
+            .arg("--input")
+            .arg(&maker_presignature)
+            .arg("--adaptor-secret-file")
+            .arg(&fixture.adaptor_key)
+            .arg("--output")
+            .arg(&unsafe_secret_output);
+        let failed = run_fail(unsafe_secret);
+        assert!(String::from_utf8_lossy(&failed.stderr).contains("owner-private"));
+        assert!(!unsafe_secret_output.exists());
+        fs::set_permissions(&fixture.adaptor_key, fs::Permissions::from_mode(0o600))
+            .expect("restore adaptor scalar permissions");
+
+        let packet_bytes = fs::read(&maker_presignature).expect("read aggregate packet");
+        let packet_value: Value =
+            serde_json::from_slice(&packet_bytes).expect("aggregate packet JSON");
+        let original_session_id = packet_value["session_id"]
+            .as_str()
+            .expect("packet session id");
+        let crosswired_presignature = directory.join("crosswired-presignature.json");
+        let packet_text = String::from_utf8(packet_bytes).expect("UTF-8 aggregate packet");
+        let crosswired_text =
+            packet_text.replacen(original_session_id, &hex::encode([0xff; 32]), 1);
+        fs::write(&crosswired_presignature, crosswired_text).expect("write crosswire packet");
+        let mut crosswired = command("maker", &fixture.maker_journal, &fixture.session);
+        crosswired
+            .arg("adapt-presignature")
+            .arg("--input")
+            .arg(&crosswired_presignature)
+            .arg("--adaptor-secret-file")
+            .arg(&fixture.adaptor_key)
+            .arg("--output")
+            .arg(directory.join("crosswired-final.json"));
+        let failed = run_fail(crosswired);
+        assert!(String::from_utf8_lossy(&failed.stderr).contains("another session"));
+
+        let noncanonical_presignature = directory.join("noncanonical-presignature.json");
+        fs::write(
+            &noncanonical_presignature,
+            serde_json::to_vec_pretty(&packet_value).expect("pretty aggregate packet"),
+        )
+        .expect("write noncanonical packet");
+        let mut noncanonical = command("maker", &fixture.maker_journal, &fixture.session);
+        noncanonical
+            .arg("adapt-presignature")
+            .arg("--input")
+            .arg(&noncanonical_presignature)
+            .arg("--adaptor-secret-file")
+            .arg(&fixture.adaptor_key)
+            .arg("--output")
+            .arg(directory.join("noncanonical-final.json"));
+        let failed = run_fail(noncanonical);
+        assert!(String::from_utf8_lossy(&failed.stderr).contains("not canonical"));
+
+        let session_bytes = fs::read(&fixture.session).expect("read canonical session");
+        let session_value: Value = serde_json::from_slice(&session_bytes).expect("session JSON");
+        let original_message = session_value["exact_message"]
+            .as_str()
+            .expect("session message");
+        let wrong_message_session = directory.join("wrong-message-session.json");
+        let session_text = String::from_utf8(session_bytes).expect("UTF-8 session");
+        let wrong_message_text =
+            session_text.replacen(original_message, &hex::encode([0x93; 32]), 1);
+        fs::write(&wrong_message_session, wrong_message_text).expect("write wrong-message session");
+        let mut wrong_message = command("maker", &fixture.maker_journal, &wrong_message_session);
+        wrong_message
+            .arg("adapt-presignature")
+            .arg("--input")
+            .arg(&maker_presignature)
+            .arg("--adaptor-secret-file")
+            .arg(&fixture.adaptor_key)
+            .arg("--output")
+            .arg(directory.join("wrong-message-final.json"));
+        let failed = run_fail(wrong_message);
+        assert!(String::from_utf8_lossy(&failed.stderr).contains("another session"));
+    }
+
+    let mut adapt = command("maker", &fixture.maker_journal, &fixture.session);
+    adapt
+        .arg("adapt-presignature")
+        .arg("--input")
+        .arg(&maker_presignature)
+        .arg("--adaptor-secret-file")
+        .arg(&fixture.adaptor_key)
+        .arg("--output")
+        .arg(&final_signature_packet);
+    run_ok(adapt);
+    let final_signature: [u8; 64] =
+        packet_payload(&final_signature_packet, "final_signature", "aggregate");
+    verify_final_signature(&fixture.context, final_signature).expect("final signature verifies");
+
+    if crosswire_checks {
+        let final_bytes = fs::read(&final_signature_packet).expect("read final packet");
+        let final_value: Value = serde_json::from_slice(&final_bytes).expect("final packet JSON");
+        let final_payload = final_value["payload"]
+            .as_str()
+            .expect("final packet payload");
+        let replacement = if final_payload.starts_with("00") {
+            "01"
+        } else {
+            "00"
+        };
+        let mut invalid_payload = final_payload.to_owned();
+        invalid_payload.replace_range(..2, replacement);
+        let final_text = String::from_utf8(final_bytes).expect("UTF-8 final packet");
+        let invalid_final_packet = directory.join("invalid-final-signature.json");
+        fs::write(
+            &invalid_final_packet,
+            final_text.replacen(final_payload, &invalid_payload, 1),
+        )
+        .expect("write invalid final packet");
+        let invalid_extraction = directory.join("invalid-extracted.key");
+        let mut extract_invalid = command("taker", &fixture.taker_journal, &fixture.session);
+        extract_invalid
+            .arg("extract-adaptor-secret")
+            .arg("--presignature")
+            .arg(&taker_presignature)
+            .arg("--final-signature")
+            .arg(&invalid_final_packet)
+            .arg("--output")
+            .arg(&invalid_extraction);
+        let failed = run_fail(extract_invalid);
+        assert!(String::from_utf8_lossy(&failed.stderr).contains("cryptographic transcript"));
+        assert!(!invalid_extraction.exists());
+    }
+
+    let final_before_replay = fs::read(&final_signature_packet).expect("read final signature");
+    let mut replay_adapt = command("maker", &fixture.maker_journal, &fixture.session);
+    replay_adapt
+        .arg("adapt-presignature")
+        .arg("--input")
+        .arg(&maker_presignature)
+        .arg("--adaptor-secret-file")
+        .arg(&fixture.adaptor_key)
+        .arg("--output")
+        .arg(&final_signature_packet);
+    run_fail(replay_adapt);
+    assert_eq!(
+        fs::read(&final_signature_packet).expect("read final after rejected replay"),
+        final_before_replay
+    );
+
+    let mut extract = command("taker", &fixture.taker_journal, &fixture.session);
+    extract
+        .arg("extract-adaptor-secret")
+        .arg("--presignature")
+        .arg(&taker_presignature)
+        .arg("--final-signature")
+        .arg(&final_signature_packet)
+        .arg("--output")
+        .arg(&extracted_adaptor_secret);
+    run_ok(extract);
+    assert_eq!(
+        fs::read(&extracted_adaptor_secret).expect("read extracted scalar"),
+        format!("{}\n", hex::encode(ADAPTOR_SECRET)).as_bytes()
+    );
+    let extracted_before_replay =
+        fs::read(&extracted_adaptor_secret).expect("read extracted scalar before replay");
+    let mut replay_extract = command("taker", &fixture.taker_journal, &fixture.session);
+    replay_extract
+        .arg("extract-adaptor-secret")
+        .arg("--presignature")
+        .arg(&taker_presignature)
+        .arg("--final-signature")
+        .arg(&final_signature_packet)
+        .arg("--output")
+        .arg(&extracted_adaptor_secret);
+    run_fail(replay_extract);
+    assert_eq!(
+        fs::read(&extracted_adaptor_secret).expect("read extracted scalar after replay"),
+        extracted_before_replay
+    );
+
+    let mut adapt_extracted = command("maker", &fixture.maker_journal, &fixture.session);
+    adapt_extracted
+        .arg("adapt-presignature")
+        .arg("--input")
+        .arg(&maker_presignature)
+        .arg("--adaptor-secret-file")
+        .arg(&extracted_adaptor_secret)
+        .arg("--output")
+        .arg(&final_signature_from_extracted);
+    run_ok(adapt_extracted);
+    assert_eq!(
+        fs::read(&final_signature_from_extracted).expect("read re-adapted final packet"),
+        fs::read(&final_signature_packet).expect("read original final packet")
+    );
+
+    let sdk_final = adapt_presignature(
         &fixture.context,
         presignature,
         Zeroizing::new(ADAPTOR_SECRET),
     )
-    .expect("adapt process presignature");
-    verify_final_signature(&fixture.context, final_signature).expect("final signature verifies");
+    .expect("adapt process presignature independently");
+    assert_eq!(final_signature, sdk_final);
 
     for path in [
         &fixture.maker_journal,
@@ -421,6 +649,9 @@ fn exercise(domain: Domain, crosswire_checks: bool) {
         &taker_partial,
         &maker_presignature,
         &taker_presignature,
+        &final_signature_packet,
+        &final_signature_from_extracted,
+        &extracted_adaptor_secret,
     ] {
         let mode = fs::metadata(path)
             .expect("output metadata")
@@ -438,6 +669,8 @@ fn exercise(domain: Domain, crosswire_checks: bool) {
         taker_partial,
         maker_presignature,
         taker_presignature,
+        final_signature_packet,
+        final_signature_from_extracted,
     ] {
         let text = fs::read_to_string(path).expect("public packet text");
         assert!(!text.contains(&hex::encode(MAKER_SECRET)));
