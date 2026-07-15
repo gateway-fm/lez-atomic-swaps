@@ -44,6 +44,7 @@ flowchart TB
     Contexts --> PublicEffects["0033 Durable public effects"]
     PublicEffects --> ActivationGate["0034 Complete activation authority"]
     ActivationGate --> ClaimProjection["0035 Canonical claim projection"]
+    ClaimProjection --> ClaimPresence["0036 Bounded LEZ claim absence"]
     Direction --> Deadlines["0010 Typed deadlines"]
     LEZ --> Deadlines
     Deadlines --> Recovery["0011 Recovery triggers"]
@@ -131,3 +132,4 @@ flowchart TB
 | [0033](0033-persist-public-effects-before-submission.md) | Persist complete public transaction bytes before consuming one-attempt submission authority | Accepted for the persistence boundary. Twelve focused tests prove exact replay, a concurrent single CAS winner, ambiguous observe-only recovery, corruption rejection, and full-byte reconciliation; actor claim integration and actual-node crash evidence remain pending |
 | [0034](0034-gate-actor-activation-on-signing-material.md) | Require complete agreement-derived signer, prepared-claim, and role-shaped scalar authority before actor activation | Accepted for activation. Strict private schema 2, independent presignature verification, full prepared-result binding, taker-only private scalar point checking, failure-before-state and non-disclosure tests, and fresh-process replay are GREEN; revision-three/four use and actual-node actor evidence remain pending |
 | [0035](0035-project-claims-only-from-canonical-public-evidence.md) | Advance claim revisions only from exact confirmed or finalized public evidence and retain only a one-way scalar commitment | Accepted for the deterministic claim-projection boundary. Both roles and directions reach revisions three and four through predecessor CAS after rerunning activation authority; live submission, concrete chain adapters, and actual-node actor evidence remain pending |
+| [0036](0036-prove-bounded-lez-claim-absence-before-first-send.md) | Distinguish exact finalized LEZ presence from stable complete bounded absence before first-send reconciliation | Accepted for the protocol/client/sidecar boundary. Only a complete stable finalized scan yields `NotFound`; partial history, moving tips, timeouts, and transport ambiguity cannot authorize submission. Actor public-effect composition and actual-node evidence remain pending |
