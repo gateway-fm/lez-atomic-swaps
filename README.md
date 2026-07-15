@@ -140,6 +140,19 @@ complete calls through a strict typed one-shot operator CLI with a private
 capability file. Pushed `bf5bdbd` delegates x-only-key to LEZ-account mapping to
 the pinned official `nssa` implementation rather than duplicating it in shell.
 
+The same operator/client/sidecar boundary now has an explicit read-only
+`observe-finalized-witnessed-claim` call. Either correctly bound participant
+can scan one bounded window only after the indexer finalized tip covers it. The
+sidecar requires equal block-by-ID and block-by-hash results, exactly one
+canonical public claim, the exact aggregate signature/message/authority, and
+`Claimed` metadata plus zero custody read at that containing numeric block ID.
+The client independently enforces the requested window and verifies BIP-340
+with exact-pinned `secp256k1` 0.29.1. The official indexer supplies historical
+account DTOs but no account proof or atomic multi-read snapshot token; that is
+recorded as an upstream production trust limitation, not hidden as local
+consensus proof. This closes typed LEZ claim evidence, not the pending Bitcoin
+Core adapter or cohesive actor wiring.
+
 The older retained actual-Core run remains a one-process public deterministic
 cryptographic and consensus fixture. The new composed run closes live witnessed
 submission, both happy directions, and the PoC atomicity/recovery order through
@@ -252,8 +265,8 @@ current executable slices enforce:
   refund owner intents before broadcast and atomically commits owner/observer
   transitions through `Refunded` in both directions, including rollback,
   conflict, corruption, and close/reopen replay.
-  The main workspace now also has a bounded authenticated eight-method LEZ
-  sidecar client,
+  The M2 lane introduced a bounded authenticated eight-method LEZ sidecar
+  client; the current M3 lane extends the same protocol to eleven methods,
   a signed-agreement native first-lock bridge adapter, typed Zebra
   owner/counterparty claim and refund ports, and the public crash-safe
   timeout-refund SDK contract. The bridge client binds every request
@@ -287,7 +300,8 @@ current executable slices enforce:
   partial coverage is unknown and ambiguity or a moving tip fails closed. The
   executable runner starts concurrent maker and taker sidecars with separate
   private keys, capabilities, runtime descriptors, durable stores, and
-  ephemeral loopback listeners. All eight sidecar methods now execute. Native
+  ephemeral loopback listeners. All eight M2 methods execute, and the three M3
+  witnessed-claim methods are separately covered. Native
   refunds are official permissionless `RefundNative` transactions with no
   nonce or witness; exact-owner and bounded counterparty observations require
   a stable clock, terminal refunded accounts, zero custody, canonical bytes,

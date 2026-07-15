@@ -1,6 +1,11 @@
 # ADR 0026: Use at-most-once LEZ v0.2 submission and query-bound finality
 
-Status: Accepted; role-bound at-most-once Vault submission and durable Admitted state are GREEN; a separate manual audit proves exact sequencer inclusion plus indexer block/hash/account finality, and both canonical corridor effect sequences are independently audited. Integrated bounded Vault query/journal finality, ambiguous multi-effect restart/recovery, refunds/reorg/chaos, and public execution remain deferred -- reconciled 2026-07-14
+Status: Accepted; role-bound at-most-once Vault submission and durable Admitted
+state are GREEN. The M3 witnessed-claim bridge now integrates bounded finalized
+block and same-containing-BlockId terminal account observation for either
+participant. Vault query/journal finality, ambiguous multi-effect
+restart/recovery, refunds/reorg/chaos, upstream historical-account proofs, and
+public execution remain deferred -- reconciled 2026-07-15
 
 ```mermaid
 flowchart LR
@@ -21,7 +26,9 @@ flowchart LR
     Effect -.->|"integrated bounded inclusion query deferred"| Sequencer
     Sequencer -->|"publish LEZ block"| Bedrock
     Bedrock -->|"finalized channel block"| Indexer
-    Effect -.->|"integrated bounded finality query deferred"| Indexer
+    Effect -.->|"Vault integrated finality deferred"| Indexer
+    WitnessedObserver["M3 witnessed-claim finalized observer"] -->|"bounded finalized blocks by ID and hash"| Indexer
+    WitnessedObserver -->|"metadata and custody at containing BlockId"| Indexer
     Sequencer -->|"accepted hash"| Admitted
     Effect -->|"persist Admitted"| Admitted
     Auditor -->|"exact transaction and block queries"| Sequencer

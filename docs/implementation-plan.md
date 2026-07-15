@@ -1021,8 +1021,9 @@ outputs above.
 ## Milestone 3 entry plan: BTC adaptor/Taproot end to end
 
 Status: **active; operator-composed local-devnet happy path 2 of 2; canonical
-countersigned agreement GREEN; cohesive actor integration in progress**. The exact Core 31.1
-release verifier, minimal isolated image fixture, role-aware Regtest boundary,
+countersigned agreement and finalized LEZ claim adapter GREEN; cohesive actor
+integration in progress**. The
+exact Core 31.1 release verifier, minimal isolated image fixture, role-aware Regtest boundary,
 typed P2TR/CSV transaction library, and one-process public deterministic
 two-party MuSig2/adaptor/extraction funding/cooperative-claim composition are
 GREEN. CI runs that composition and fail-hard scans its exact image for
@@ -1055,8 +1056,9 @@ operator-composed happy-path boundary. A bounded canonical agreement now binds
 both role signatures, exact chain identities and confirmation policy, LEZ
 runtime/custody/claim terms, the reconstructed P2TR/CSV contract, funding
 outpoint/value, cooperative transaction/sighash, and direction-correct recovery
-schedule. Typed finalized-claim/Core adapters, cohesive reference-actor
-terminal states, refund execution, concurrency, production key custody, and the
+schedule. The typed finalized witnessed-claim adapter is now GREEN. The Core
+adapter, cohesive reference-actor terminal states, refund execution,
+concurrency, production key custody, and the
 accepted proposal's full SDK/demo surface remain pending.
 
 Authority was reread again on 2026-07-15: accepted replacement issue #112 is
@@ -1120,7 +1122,8 @@ restart-safe SDK bridge, independent one-shot role processes, and external
 adaptation/extraction are GREEN. Step 4's guest source, digest-pinned artifact,
 exact aggregate-account mapping, recursive state effect, durable witnessed
 initialize/fund preparation, durable claim preparation/completion, conservative
-pair observation, and a typed operator boundary are GREEN. The exact guest was
+pair observation, finalized same-block claim/state evidence, and a typed
+operator boundary are GREEN. The exact guest was
 deployed in finalized block 405 and used for both live directions. Step 5 has a
 public BTC transaction/session boundary, separate role sidecars, and
 independent signer processes/stores, but not a cohesive full-lifecycle public
@@ -1128,8 +1131,11 @@ reference actor. Step 6 is 2 of 2 for actual chain execution. Pushed commit
 `a58ef96` adds the checked-in secret-safe packet, complete operator recipe,
 exact cleanup proof, synchronized architecture/traceability, and all 76 rendered
 Mermaid diagrams. The countersigned agreement binding the executable Bitcoin
-refund plan is now GREEN in six focused tests. Typed chain evidence plus durable
-per-actor terminal status remain the local PoC certification work.
+refund plan is now GREEN in seven focused tests. Pushed commit `523c64d`
+additionally rejects oversized caller-constructed fields before total Borsh
+encoding and marks actor activation as planned in the component flow. Typed
+Bitcoin Core evidence plus durable per-actor terminal wiring remain the local
+PoC certification work.
 Exact-pinned `bitcoin` 0.32.101 constructs and verifies
 the P2TR/CSV transaction boundary. Exact-pinned `musig2` 0.4.1 aggregates the
 ordered maker/taker fixture keys, applies the Taproot tweak with matching `Q`
@@ -1287,8 +1293,8 @@ official Borsh `Message`, authority nonce, and official hash before exposure;
 `complete_witnessed_claim` accepts only the same reservation and an externally
 completed 64-byte aggregate signature, verifies it with pinned official `nssa`,
 and durably retains the canonical `PublicTransaction`. The existing
-`submit_transaction` remains the sole effect boundary. Protocol 17/17, client
-16/16, and pinned sidecar 47/47 tests pass, including fresh-process completion,
+`submit_transaction` remains the sole effect boundary. At that checkpoint,
+protocol 17/17, client 16/16, and pinned sidecar 47/47 tests passed, including fresh-process completion,
 exact replay, conflicting completion, authority/account-order, and transcript
 drift. This slice does not claim live-node inclusion or a complete direction.
 
@@ -1316,6 +1322,20 @@ The typed one-shot bridge CLI reads strict request/runtime JSON plus a stable
 owner-private capability file and prints only result JSON. The public account
 helper derives the official LEZ authority account from the x-only aggregate key
 through pinned `nssa`; no custom curve or account arithmetic is introduced.
+
+The finalized-observation slice adds an eleventh bridge method and closes
+typed LEZ revealing-claim evidence. A bounded sequential indexer scan proceeds
+only when the complete requested window is finalized, requires immutable
+`Finalized` blocks to agree by numeric ID and hash, returns the canonical exact
+claim once, and reads terminal metadata and custody at the exact containing
+`BlockId`. Either agreement participant may observe with its own role-bound
+sidecar; neither path submits. The client rechecks the inclusive window,
+terminal terms/accounts, and the aggregate BIP-340 signature with exact-pinned
+`secp256k1` 0.29.1. Protocol 20/20, client 2 unit plus 18 integration tests,
+and all 62 pinned-sidecar targets are GREEN under strict Clippy. The upstream
+indexer exposes historical account DTOs without an account proof or atomic
+multi-read snapshot token, so stable finalized-tip bracketing and same-block
+reads are a disclosed trust compensation rather than a production proof.
 
 The complete operator-composed slice is GREEN only when retained, secret-safe
 evidence proves Core 31.1,
@@ -1356,8 +1376,9 @@ no-clobber helper whose public account IDs feed the run-owned genesis before
 Docker starts. The canonical countersigned agreement now binds the exact
 executable BTC refund plan, chain identity/confirmation policy, and recovery
 schedule and reconstructs all derived Bitcoin fields before accepting either
-signature. Remaining local PoC work is typed finalized LEZ claim and Bitcoin
-Core evidence, then a durable terminal `Completed` record for each cohesive
+signature. Typed finalized LEZ claim evidence is now GREEN. Remaining local PoC
+work is Bitcoin Core evidence, then a durable terminal `Completed` record for
+each cohesive
 reference actor rather than inferring completion only from terminal chain state
 and one-shot role processes. These are remaining deliverables, not external
 blockers.

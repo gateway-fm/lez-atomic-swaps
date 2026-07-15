@@ -327,9 +327,10 @@ capability file, matching runtime file, and request file:
 "$LEZ_OPERATOR" <command> --endpoint "$MAKER_BRIDGE_URL" --run-id "$M3_RUN_ID" --sidecar-role maker --capability-file "$PRIVATE_ROOT/maker/sidecar.capability" --runtime-file "$PRIVATE_ROOT/maker/runtime.json" --request-file <request.json>
 ~~~
 
-Use the taker endpoint and files for taker calls. The six commands are
+Use the taker endpoint and files for taker calls. The seven commands are
 describe-runtime, prepare-witnessed-escrow, observe-witnessed-escrow,
-submit-transaction, prepare-witnessed-claim, and complete-witnessed-claim.
+submit-transaction, prepare-witnessed-claim, complete-witnessed-claim, and
+observe-finalized-witnessed-claim.
 
 Each context has exactly schema_version, run_id, request_id, and sidecar_role.
 Runtime has exactly sidecar_role, compatibility, chain_id, channel_id,
@@ -379,6 +380,26 @@ packet without logging either:
 ~~~sh
 jq -n --arg run "$M3_RUN_ID" --arg req "$(new_request_id)" --arg role "$CLAIMANT_ROLE" --arg signature "$(jq -er '.payload' "$LEZ_FINAL_PACKET")" --slurpfile runtime "$CLAIMANT_RUNTIME" --slurpfile prepared "$DIRECTION/prepared-claim.json" '{context:{schema_version:1,run_id:$run,request_id:$req,sidecar_role:$role},runtime:$runtime[0],claim:$prepared[0].claim,aggregate_signature:$signature}' >"$DIRECTION/complete-claim-request.json"
 ~~~
+
+After submission, either participant may independently observe the exact
+finalized claim through its own role endpoint. Supply the same strict witnessed
+terms and prepared unsigned claim, the completed transaction ID, and the
+inclusive bounded window that contains it:
+
+~~~sh
+OBSERVER_ROLE=maker
+OBSERVER_RUNTIME="$PRIVATE_ROOT/$OBSERVER_ROLE/runtime.json"
+OBSERVER_ENDPOINT="$MAKER_BRIDGE_URL"
+jq -n --arg run "$M3_RUN_ID" --arg req "$(new_request_id)" --arg role "$OBSERVER_ROLE" --arg tx "$LEZ_CLAIM_TX" --argjson start "$CLAIM_START_HEIGHT" --argjson blocks "$CLAIM_MAX_BLOCKS" --slurpfile runtime "$OBSERVER_RUNTIME" --slurpfile terms "$DIRECTION/terms.json" --slurpfile prepared "$DIRECTION/prepared-claim.json" '{context:{schema_version:1,run_id:$run,request_id:$req,sidecar_role:$role},runtime:$runtime[0],terms:$terms[0],claim:$prepared[0].claim,claim_transaction_id:$tx,window:{start_height:$start,max_blocks:$blocks}}' >"$DIRECTION/observe-finalized-claim-request.json"
+"$LEZ_OPERATOR" observe-finalized-witnessed-claim --endpoint "$OBSERVER_ENDPOINT" --run-id "$M3_RUN_ID" --sidecar-role "$OBSERVER_ROLE" --capability-file "$PRIVATE_ROOT/$OBSERVER_ROLE/sidecar.capability" --runtime-file "$OBSERVER_RUNTIME" --request-file "$DIRECTION/observe-finalized-claim-request.json" >"$DIRECTION/finalized-claim.json"
+~~~
+
+Use the observer's matching maker or taker endpoint, capability, and runtime;
+the example endpoint is maker-specific. Success means the whole window was
+covered by one stable finalized tip, the containing block lies inside it and
+agrees by ID/hash, terminal metadata and zero custody were read at that exact
+numeric block ID, and the client independently verified the aggregate BIP-340
+signature. This call is read-only and never authorizes a replacement submit.
 
 Moving-tip observations must use a new request ID on every attempt. Reusing an
 ID returns the sidecar's durable at-most-once result and can replay Unknown
@@ -628,7 +649,9 @@ Terminal certification for each direction additionally requires:
 - gettxspendingprevout names exactly the expected confirmed claim once.
 - The claim's recipient output is present and belongs to the direction-correct
   maker or taker.
-- LEZ same-tip observation reports metadata Claimed and custody balance 0.
+- LEZ finalized-window observation reports the exact aggregate-signature-verified
+  claim and containing block, with metadata Claimed and custody balance 0 read
+  at that same containing block ID.
 - The LEZ claimant balance received the direction amount.
 - Both recipient roles match the signed direction.
 - Recovered scalar matches the committed point, but its value is not recorded.

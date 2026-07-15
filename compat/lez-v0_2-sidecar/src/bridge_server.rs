@@ -14,15 +14,16 @@ use lez_bridge_protocol::{
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
     DescribeRuntimeResult, ErrorCode, ErrorMessage, MAX_RPC_BODY_BYTES,
     METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW,
-    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
-    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
-    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
-    MessageContext, ObserveEscrowRequest, ObserveNativeRefundRequest, ObserveRevealingClaimRequest,
-    ObserveWitnessedEscrowRequest, Participant, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareRevealingClaimRequest,
-    PrepareRevealingClaimResult, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
-    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, ProtocolErrorReply, RUN_ID_HEADER,
-    RunId, SIDECAR_ROLE_HEADER, SubmitTransactionRequest,
+    METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_NATIVE_REFUND,
+    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW,
+    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
+    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, MessageContext,
+    ObserveEscrowRequest, ObserveFinalizedWitnessedClaimRequest, ObserveNativeRefundRequest,
+    ObserveRevealingClaimRequest, ObserveWitnessedEscrowRequest, Participant,
+    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
+    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
+    ProtocolErrorReply, RUN_ID_HEADER, RunId, SIDECAR_ROLE_HEADER, SubmitTransactionRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -94,6 +95,7 @@ pub struct BridgeServerConfig {
 
 impl BridgeServerConfig {
     /// Binds one run and one owner-only durable actor state file.
+    /// A zero loopback port requests an OS-assigned collision-free port.
     #[must_use]
     pub const fn new(
         run_id: RunId,
@@ -567,7 +569,7 @@ pub async fn start_bridge_server(
         .verify_health()
         .await
         .map_err(|_| BridgeServerError::Runtime)?;
-    if !config.listen_address.ip().is_loopback() || config.listen_address.port() == 0 {
+    if !config.listen_address.ip().is_loopback() {
         return Err(BridgeServerError::Bind);
     }
     let store = DurableStore::open(
@@ -865,6 +867,29 @@ fn register_methods(
         },
     )?;
     module.register_async_method(
+        METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
+        |params, state, _| async move {
+            let request: ObserveFinalizedWitnessedClaimRequest = params.one()?;
+            state.validate_runtime(&request.context, &request.runtime)?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
+                    &request.context,
+                    &request,
+                    || async move {
+                        runtime
+                            .observe_finalized_witnessed_claim(&operation)
+                            .await
+                            .map_err(Into::into)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
+    module.register_async_method(
         METHOD_OBSERVE_REVEALING_CLAIM,
         |params, state, _| async move {
             let request: ObserveRevealingClaimRequest = params.one()?;
@@ -1128,6 +1153,7 @@ fn valid_method(method: &str) -> bool {
             | METHOD_PREPARE_REVEALING_CLAIM
             | METHOD_PREPARE_WITNESSED_CLAIM
             | METHOD_COMPLETE_WITNESSED_CLAIM
+            | METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM
             | METHOD_OBSERVE_REVEALING_CLAIM
             | METHOD_PREPARE_NATIVE_REFUND
             | METHOD_OBSERVE_NATIVE_REFUND

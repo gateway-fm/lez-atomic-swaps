@@ -8,28 +8,23 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr as _,
     sync::Arc,
-    time::Duration,
 };
 
 use anyhow::{Context as _, Result, bail, ensure};
 use clap::{Parser, ValueEnum};
-use indexer_service_rpc::RpcClient as _;
 use lez_bridge_protocol::{Hex32, RunId, RuntimeDescriptor};
 use lez_v0_2_sidecar::{
-    BridgeRuntime, BridgeServerCapability, BridgeServerConfig, NativeEscrowPlanner,
-    OfficialNodeRpc, program_id_from_hex, start_bridge_server, validate_loopback_http_endpoint,
+    BridgeRuntime, BridgeServerCapability, BridgeServerConfig, FinalizedIndexerApi,
+    NativeEscrowPlanner, OfficialIndexerRpc, OfficialNodeRpc, program_id_from_hex,
+    start_bridge_server, validate_loopback_http_endpoint,
 };
 use nssa::{AccountId, PrivateKey, PublicKey};
-use sequencer_service_rpc::SequencerClientBuilder;
 use serde::Serialize;
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 use zeroize::{Zeroize as _, Zeroizing};
 
 const MAX_PUBLIC_CONFIG_BYTES: u64 = 16 * 1024;
 const MAX_SECRET_FILE_BYTES: u64 = 256;
-const MAX_NODE_REQUEST_BYTES: u32 = 2_800_000;
-const MAX_NODE_RESPONSE_BYTES: u32 = 8 * 1024 * 1024;
-const INDEXER_STARTUP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Selects one complete outbound node route without weakening the local listener.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -61,6 +56,14 @@ impl NodeRouteProfile {
         match self {
             Self::Local => OfficialNodeRpc::connect_local(endpoint),
             Self::OfficialPublic => OfficialNodeRpc::connect_official_public(endpoint),
+        }
+        .map_err(anyhow::Error::from)
+    }
+
+    fn connect_indexer(self, endpoint: &str) -> Result<OfficialIndexerRpc> {
+        match self {
+            Self::Local => OfficialIndexerRpc::connect_local(endpoint),
+            Self::OfficialPublic => OfficialIndexerRpc::connect_official_public(endpoint),
         }
         .map_err(anyhow::Error::from)
     }
@@ -157,15 +160,14 @@ async fn execute(arguments: Arguments) -> Result<()> {
             .connect_sequencer(&arguments.sequencer_url)
             .context("invalid official sequencer endpoint")?,
     );
-    let indexer = SequencerClientBuilder::default()
-        .max_request_size(MAX_NODE_REQUEST_BYTES)
-        .max_response_size(MAX_NODE_RESPONSE_BYTES)
-        .request_timeout(INDEXER_STARTUP_REQUEST_TIMEOUT)
-        .max_concurrent_requests(1)
-        .build(&arguments.indexer_url)
-        .context("connect official indexer")?;
+    let indexer = Arc::new(
+        arguments
+            .node_profile
+            .connect_indexer(&arguments.indexer_url)
+            .context("connect official indexer")?,
+    );
     let finalized_block_id = indexer
-        .get_last_finalized_block_id()
+        .last_finalized_block_id()
         .await
         .context("official indexer finalized tip is unavailable")?
         .context("official indexer has no finalized block")?;
@@ -182,7 +184,7 @@ async fn execute(arguments: Arguments) -> Result<()> {
         Arc::clone(&node),
         &arguments.state_directory,
     )?);
-    let bridge_runtime = Arc::new(BridgeRuntime::new(runtime.clone(), planner, node));
+    let bridge_runtime = Arc::new(BridgeRuntime::new(runtime.clone(), planner, node, indexer));
     let server = start_bridge_server(
         BridgeServerConfig::new(
             run_id.clone(),
@@ -203,7 +205,7 @@ async fn execute(arguments: Arguments) -> Result<()> {
             node_profile: arguments.node_profile.as_str(),
             sequencer_observation: "bounded_canonical_inclusion_and_same_tip_accounts",
             indexer_health: "getLastFinalizedBlockId_non_genesis",
-            finality: "not_observed_by_this_poc_bridge",
+            finality: "exact_finalized_indexer_observation_available",
         },
     )
     .context("encode readiness")?;

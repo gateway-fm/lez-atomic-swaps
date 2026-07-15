@@ -152,7 +152,7 @@ cargo +1.96.0 test \
   --locked --offline --test witnessed_claim_prepare
 ```
 
-Require 17 protocol, 16 client, and 3 focused sidecar tests. They prove exact
+Require 20 protocol, 21 client, and 3 focused sidecar tests. They prove exact
 message/hash reservation, destination/aggregate-authority separation, official
 signature verification, fresh-process completion without rereading the nonce,
 exact replay, and conflicting-completion rejection. They do not start the LEZ

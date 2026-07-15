@@ -240,6 +240,7 @@ flowchart TB
         MBR2["Maker lez-v02-bridge-poc<br/>canonical forward and reverse complete"]
         TBR2["Taker lez-v02-bridge-poc<br/>canonical forward and reverse complete"]
         M3WB["M3 witnessed prepare, complete, and submit<br/>both local happy directions GREEN"]
+        M3FO["M3 finalized witnessed-claim observer<br/>same-block terminal state + dual role + BIP340 GREEN"]
         MBRJ[("Maker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         TBRJ[("Taker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         MSL2 --> V02J
@@ -249,6 +250,8 @@ flowchart TB
         MBR2 --> M3WB
         TBR2 --> M3WB
         M3WB --> V02J
+        MBR2 --> M3FO
+        TBR2 --> M3FO
     end
 
     subgraph LocalLezV02["Required public-compatible local LEZ v0.2 devnet"]
@@ -356,6 +359,7 @@ flowchart TB
     TBR2 -->|"initialize and fund forward; reveal reverse"| SQ
     MBR2 -->|"non-genesis finalized-tip readiness"| IX
     TBR2 -->|"non-genesis finalized-tip readiness"| IX
+    M3FO -->|"bounded finalized blocks + accounts at containing BlockId"| IX
     MBR2 -->|"typed outbound profile"| LezProfile
     TBR2 -->|"typed outbound profile"| LezProfile
     LezProfile -->|"local explicit loopback"| SQ
@@ -435,7 +439,7 @@ flowchart TB
     classDef running fill:#e6ffec,stroke:#1a7f37;
     class MM,LC,CA,TM,LRR,PublicLezRisk planned;
     class TC,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
-    class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02Full,V02State,MSL2,TLS2,V02J,MBR2,TBR2 running;
+    class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02Full,V02State,MSL2,TLS2,V02J,MBR2,TBR2,M3FO running;
 ```
 
 The maker operator owns maker policy, keys, node selection, and the daemon
@@ -497,9 +501,14 @@ indexer URLs or the exact `https://testnet.lez.logos.co/` origin for both;
 mixed or generic remote routes fail before client construction. It gates
 startup on the official sequencer and indexer health calls, replays successful
 PREPARE results, re-executes observations and transient PREPARE failures, and
-persists submit as unknown before node I/O. Refund calls are typed unavailable;
-sequencer observation is bounded inclusion plus same-tip accounts, and the
-bridge does not assert indexer finality. Historical runs 14d through 14n remain failure and invariant evidence. Fresh
+persists submit as unknown before node I/O. Refund calls are typed unavailable.
+Sequencer observation remains bounded inclusion plus same-tip accounts. The
+new witnessed-claim path separately asserts indexer finality through bounded
+fully covered scans, equal by-ID/by-hash finalized blocks, exact aggregate
+witness validation, and terminal accounts read at the containing block. Either
+role-bound participant can observe without submitting, and the client
+independently verifies BIP-340. Historical runs 14d through 14n remain failure
+and invariant evidence. Fresh
 pre-canonical run `m2poc-corridor-fresh-20260714o` completed `TakerSellsLez`: the taker
 initialized and funded LEZ, the maker funded Zcash, waited for two
 confirmations, claimed LEZ and revealed the preimage, and the taker spent the

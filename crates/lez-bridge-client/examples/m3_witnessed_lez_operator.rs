@@ -14,9 +14,9 @@ use std::{
 
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, MAX_RPC_BODY_BYTES, SidecarCapability};
 use lez_bridge_protocol::{
-    CompleteWitnessedClaimRequest, DescribeRuntimeRequest, ObserveWitnessedEscrowRequest,
-    Participant, PrepareWitnessedClaimRequest, PrepareWitnessedEscrowRequest, RunId,
-    RuntimeDescriptor, SubmitTransactionRequest,
+    CompleteWitnessedClaimRequest, DescribeRuntimeRequest, ObserveFinalizedWitnessedClaimRequest,
+    ObserveWitnessedEscrowRequest, Participant, PrepareWitnessedClaimRequest,
+    PrepareWitnessedEscrowRequest, RunId, RuntimeDescriptor, SubmitTransactionRequest,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use zeroize::Zeroize as _;
@@ -25,7 +25,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_mins(1);
 const MAX_RUNTIME_FILE_BYTES: usize = 16 * 1024;
 const MAX_CAPABILITY_FILE_BYTES: usize = 130;
 const MAX_CAPABILITY_FILE_BYTES_U64: u64 = 130;
-const USAGE: &str = "usage: m3_witnessed_lez_operator <describe-runtime|prepare-witnessed-escrow|observe-witnessed-escrow|submit-transaction|prepare-witnessed-claim|complete-witnessed-claim> --endpoint <http://loopback:port/> --run-id <id> --sidecar-role <maker|taker> --capability-file <private-file> --runtime-file <json-file> --request-file <json-file>";
+const USAGE: &str = "usage: m3_witnessed_lez_operator <describe-runtime|prepare-witnessed-escrow|observe-witnessed-escrow|submit-transaction|prepare-witnessed-claim|complete-witnessed-claim|observe-finalized-witnessed-claim> --endpoint <http://loopback:port/> --run-id <id> --sidecar-role <maker|taker> --capability-file <private-file> --runtime-file <json-file> --request-file <json-file>";
 
 #[derive(Clone, Copy)]
 enum Command {
@@ -35,6 +35,7 @@ enum Command {
     SubmitTransaction,
     PrepareWitnessedClaim,
     CompleteWitnessedClaim,
+    ObserveFinalizedWitnessedClaim,
 }
 
 impl Command {
@@ -46,6 +47,7 @@ impl Command {
             "submit-transaction" => Ok(Self::SubmitTransaction),
             "prepare-witnessed-claim" => Ok(Self::PrepareWitnessedClaim),
             "complete-witnessed-claim" => Ok(Self::CompleteWitnessedClaim),
+            "observe-finalized-witnessed-claim" => Ok(Self::ObserveFinalizedWitnessedClaim),
             _ => Err(CliError::InvalidArguments),
         }
     }
@@ -181,6 +183,14 @@ async fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), CliErr
             let request = read_request::<CompleteWitnessedClaimRequest>(&cli.request_file)?;
             let result = client
                 .complete_witnessed_claim(request)
+                .await
+                .map_err(|_| CliError::BridgeOperationFailed)?;
+            print_result(&result)
+        }
+        Command::ObserveFinalizedWitnessedClaim => {
+            let request = read_request::<ObserveFinalizedWitnessedClaimRequest>(&cli.request_file)?;
+            let result = client
+                .observe_finalized_witnessed_claim(request)
                 .await
                 .map_err(|_| CliError::BridgeOperationFailed)?;
             print_result(&result)

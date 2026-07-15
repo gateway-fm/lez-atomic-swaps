@@ -1657,6 +1657,178 @@ impl CompleteWitnessedClaimResult {
     }
 }
 
+/// Requests proof that one exact witnessed claim occurs exactly once in a finalized window.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ObserveFinalizedWitnessedClaimRequest {
+    /// Version, run, request, and destination-role binding.
+    pub context: MessageContext,
+    /// Expected pinned LEZ v0.2 runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// Complete agreement, including claimant destination and aggregate authority.
+    pub terms: WitnessedNativeEscrowTerms,
+    /// Exact unsigned message that the aggregate authority signed.
+    pub claim: PreparedWitnessedClaim,
+    /// Exact completed public-transaction identity expected in the indexer.
+    pub claim_transaction_id: TransactionId,
+    /// Inclusive bounded range that must be entirely finalized and scanned.
+    pub window: DiscoveryWindow,
+}
+
+impl ObserveFinalizedWitnessedClaimRequest {
+    /// Creates one exact, bounded finalized witnessed-claim observation request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedNativeEscrowTerms,
+        claim: PreparedWitnessedClaim,
+        claim_transaction_id: TransactionId,
+        window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+            claim,
+            claim_transaction_id,
+            window,
+        }
+    }
+}
+
+/// Exact decoded message and role bindings for `ClaimNativeWitnessed`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct WitnessedClaimInstructionFacts {
+    /// Runtime escrow program targeted by the claim.
+    pub program_id: Hex32,
+    /// Exact `[metadata, custody, claimant_destination, aggregate_authority]` order.
+    pub ordered_account_ids: AccountIds,
+    /// Swap identifier encoded by `ClaimNativeWitnessed`.
+    pub swap_id: Hex32,
+    /// Fixed asset destination that does not supply the claim signature.
+    pub claimant_account_id: Hex32,
+    /// Sole public account whose aggregate key supplies the claim signature.
+    pub aggregate_authority_account_id: Hex32,
+    /// Canonical unsigned message and hash recovered from the found transaction.
+    pub claim: PreparedWitnessedClaim,
+}
+
+impl WitnessedClaimInstructionFacts {
+    /// Creates exact decoded witnessed-claim instruction and transcript facts.
+    pub const fn new(
+        program_id: Hex32,
+        ordered_account_ids: AccountIds,
+        swap_id: Hex32,
+        claimant_account_id: Hex32,
+        aggregate_authority_account_id: Hex32,
+        claim: PreparedWitnessedClaim,
+    ) -> Self {
+        Self {
+            program_id,
+            ordered_account_ids,
+            swap_id,
+            claimant_account_id,
+            aggregate_authority_account_id,
+            claim,
+        }
+    }
+}
+
+/// Explicit identity of the containing finalized indexer block.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct FinalizedBlockIdentity {
+    /// Official numeric indexer `BlockId` used for the by-ID lookup.
+    pub block_id: u64,
+    /// Exact block hash used for the independent by-hash lookup.
+    pub block_hash: Hex32,
+    /// Consensus-visible timestamp committed by that block.
+    pub timestamp_ms: u64,
+}
+
+impl FinalizedBlockIdentity {
+    /// Creates one explicit finalized containing-block identity.
+    pub const fn new(block_id: u64, block_hash: Hex32, timestamp_ms: u64) -> Self {
+        Self {
+            block_id,
+            block_hash,
+            timestamp_ms,
+        }
+    }
+}
+
+/// Complete exact facts proving one witnessed claim in a finalized indexer block.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct FinalizedWitnessedClaimFacts {
+    /// Canonical transaction bytes, hash, signer identity, and block position.
+    pub transaction: ObservedTransactionFacts,
+    /// Exact decoded claim message, instruction, destination, and authority facts.
+    pub instruction: WitnessedClaimInstructionFacts,
+    /// The only signature/witness in the canonical public transaction.
+    pub aggregate_signature: AggregateBip340Signature,
+    /// Identity and consensus timestamp of the containing finalized block.
+    pub containing_block: FinalizedBlockIdentity,
+    /// Terminal escrow metadata read at the exact containing finalized block.
+    pub metadata: WitnessedEscrowMetadataFacts,
+    /// Empty native custody read at the exact containing finalized block.
+    pub custody: NativeCustodyFacts,
+}
+
+impl FinalizedWitnessedClaimFacts {
+    /// Creates one complete finalized witnessed-claim proof bundle.
+    pub const fn new(
+        transaction: ObservedTransactionFacts,
+        instruction: WitnessedClaimInstructionFacts,
+        aggregate_signature: AggregateBip340Signature,
+        containing_block: FinalizedBlockIdentity,
+        metadata: WitnessedEscrowMetadataFacts,
+        custody: NativeCustodyFacts,
+    ) -> Self {
+        Self {
+            transaction,
+            instruction,
+            aggregate_signature,
+            containing_block,
+            metadata,
+            custody,
+        }
+    }
+}
+
+/// Returns one exact witnessed claim only after the whole requested window is finalized.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ObserveFinalizedWitnessedClaimResult {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Stable finalized indexer tip that completely covers the requested window.
+    pub finalized_tip: ChainTip,
+    /// Exact finalized claim facts; absence and pending states are errors.
+    pub claim: FinalizedWitnessedClaimFacts,
+}
+
+impl ObserveFinalizedWitnessedClaimResult {
+    /// Creates one exact finalized witnessed-claim result.
+    pub const fn new(
+        context: MessageContext,
+        finalized_tip: ChainTip,
+        claim: FinalizedWitnessedClaimFacts,
+    ) -> Self {
+        Self {
+            context,
+            finalized_tip,
+            claim,
+        }
+    }
+}
+
 /// Selects an owned exact claim ID or counterparty discovery by signed terms.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]

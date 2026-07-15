@@ -10,6 +10,7 @@ mod bridge_server;
 mod durable_reservation;
 #[cfg(target_os = "linux")]
 mod effect_submission;
+mod finalized_claim_observation;
 mod native_prepare;
 mod runtime;
 mod server;
@@ -31,6 +32,9 @@ pub use bridge_runtime::{BridgeRuntime, BridgeRuntimeError};
 pub use bridge_server::{
     BridgeServerCapability, BridgeServerCapabilityError, BridgeServerConfig, BridgeServerError,
     BridgeServerHandle, start_bridge_server,
+};
+pub use finalized_claim_observation::{
+    FinalizedIndexerApi, FinalizedWitnessedClaimObserver, OfficialIndexerRpc,
 };
 pub use native_prepare::{
     NativeEscrowPlanner, NativePrepareError, NonceSource, ZecEscrowInstruction,

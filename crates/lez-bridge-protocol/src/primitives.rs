@@ -434,8 +434,9 @@ impl<'de> Deserialize<'de> for ExactMessageBytes {
 pub struct AggregateBip340Signature([u8; 64]);
 
 impl AggregateBip340Signature {
-    /// Wraps exact aggregate signature bytes; cryptographic verification is
-    /// performed by the pinned official LEZ implementation.
+    /// Wraps exact aggregate signature bytes. The pinned official LEZ runtime
+    /// validates completion, and the bridge client independently verifies a
+    /// signature before accepting its finalized observation.
     pub const fn from_bytes(bytes: [u8; 64]) -> Self {
         Self(bytes)
     }

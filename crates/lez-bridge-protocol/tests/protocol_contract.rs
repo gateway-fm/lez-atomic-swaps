@@ -3,27 +3,107 @@ use lez_bridge_protocol::{
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
     DescribeRuntimeResult, DiscoveryWindow, ErrorCode, ErrorMessage, EscrowMetadataFacts,
     EscrowObservationTarget, EscrowState, ExactMessageBytes, ExactTransactionBytes,
-    FundingFoundFacts, FundingObservation, Hex32, InitializationFoundFacts,
-    InitializationObservation, MAX_DISCOVERY_BLOCKS, MessageContext, NativeAmount,
-    NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
-    NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
-    NativeFundInstructionFacts, NativeInitializeInstructionFacts, NativeRefundFoundFacts,
-    NativeRefundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveNativeRefundRequest,
-    ObserveNativeRefundResult, ObserveRevealingClaimRequest, ObserveRevealingClaimResult,
-    ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult, ObservedTransactionFacts,
-    Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
-    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
-    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
-    RequestId, RevealingClaimFoundFacts, RevealingClaimObservation,
-    RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, SchemaVersion, SubmissionOutcome, SubmitTransactionRequest,
-    SubmitTransactionResult, TransactionId, WitnessedEscrowMetadataFacts,
-    WitnessedFundingFoundFacts, WitnessedFundingObservation, WitnessedInitializationFoundFacts,
+    FinalizedBlockIdentity, FinalizedWitnessedClaimFacts, FundingFoundFacts, FundingObservation,
+    Hex32, InitializationFoundFacts, InitializationObservation, MAX_DISCOVERY_BLOCKS,
+    MessageContext, NativeAmount, NativeClaimInstructionFacts, NativeCustodyFacts,
+    NativeEscrowAccountFacts, NativeEscrowAccountObservation, NativeEscrowTerms,
+    NativeEscrowTermsInput, NativeFundInstructionFacts, NativeInitializeInstructionFacts,
+    NativeRefundFoundFacts, NativeRefundInstructionFacts, NativeRefundObservation,
+    NativeRefundObservationTarget, ObserveEscrowRequest, ObserveEscrowResult,
+    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
+    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
+    ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
+    ObservedTransactionFacts, Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
+    PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
+    PrepareRevealingClaimResult, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
+    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
+    PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RevealingClaimFoundFacts,
+    RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage, RunId,
+    RuntimeCompatibility, RuntimeDescriptor, SchemaVersion, SubmissionOutcome,
+    SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
+    WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts, WitnessedFundingFoundFacts,
+    WitnessedFundingObservation, WitnessedInitializationFoundFacts,
     WitnessedInitializationObservation, WitnessedNativeEscrowTerms,
     WitnessedNativeEscrowTermsInput, WitnessedNativeInitializeInstructionFacts,
 };
+
+#[test]
+fn finalized_witnessed_claim_wire_binds_exact_transcript_witness_and_block() {
+    let terms = WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
+        swap_id: h(40),
+        terms_hash: h(41),
+        depositor: Participant::Taker,
+        depositor_account_id: h(42),
+        claimant: Participant::Maker,
+        claimant_account_id: h(43),
+        aggregate_authority_account_id: h(44),
+        aggregate_x_only_public_key: h(45),
+        amount: 75,
+        refund_at_ms: 1_850_000_000_123,
+        authenticated_transfer_program_id: h(46),
+    })
+    .unwrap();
+    let claim = PreparedWitnessedClaim::new(
+        RequestId::new("witnessed-claim-prepare-0001").unwrap(),
+        h(47),
+        ExactMessageBytes::new(vec![48; 128]).unwrap(),
+    );
+    let request = ObserveFinalizedWitnessedClaimRequest::new(
+        context(),
+        runtime(),
+        terms.clone(),
+        claim.clone(),
+        TransactionId::from_bytes([49; 32]),
+        DiscoveryWindow::new(50, 3).unwrap(),
+    );
+    let transaction = ObservedTransactionFacts::new(
+        TransactionId::from_bytes([49; 32]),
+        ExactTransactionBytes::new(vec![51; 128]).unwrap(),
+        ChainPosition::new(h(52), 51, 2),
+        AccountIds::new(vec![h(44)]).unwrap(),
+        true,
+    );
+    let result = ObserveFinalizedWitnessedClaimResult::new(
+        context(),
+        ChainTip::new(h(57), 52),
+        FinalizedWitnessedClaimFacts::new(
+            transaction,
+            WitnessedClaimInstructionFacts::new(
+                h(4),
+                AccountIds::new(vec![h(53), h(54), h(43), h(44)]).unwrap(),
+                h(40),
+                h(43),
+                h(44),
+                claim,
+            ),
+            AggregateBip340Signature::from_bytes([55; 64]),
+            FinalizedBlockIdentity::new(51, h(52), 1_850_000_000_456),
+            WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+                h(53),
+                h(4),
+                h(54),
+                &terms,
+                EscrowState::Claimed,
+            ),
+            NativeCustodyFacts::new(h(54), h(46), 0),
+        ),
+    );
+
+    assert_eq!(
+        serde_json::from_str::<ObserveFinalizedWitnessedClaimRequest>(
+            &serde_json::to_string(&request).unwrap()
+        )
+        .unwrap(),
+        request
+    );
+    assert_eq!(
+        serde_json::from_str::<ObserveFinalizedWitnessedClaimResult>(
+            &serde_json::to_string(&result).unwrap()
+        )
+        .unwrap(),
+        result
+    );
+}
 
 #[test]
 fn witnessed_escrow_wire_preserves_exact_terms_and_pair() {

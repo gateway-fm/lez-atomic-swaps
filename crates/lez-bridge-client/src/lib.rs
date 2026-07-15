@@ -17,8 +17,9 @@ use jsonrpsee::{
 use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClient, HttpClientBuilder};
 use lez_bridge_protocol::{
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
-    DescribeRuntimeResult, ErrorCode, ErrorMessage, MessageContext, ObserveEscrowRequest,
-    ObserveEscrowResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
+    DescribeRuntimeResult, ErrorCode, ErrorMessage, EscrowState, MessageContext,
+    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    ObserveFinalizedWitnessedClaimResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
     ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
     ObserveWitnessedEscrowResult, Participant, PrepareNativeEscrowRequest,
     PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
@@ -26,13 +27,17 @@ use lez_bridge_protocol::{
     PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
     PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RunId,
     RuntimeDescriptor, SubmitTransactionRequest, SubmitTransactionResult,
+    WitnessedEscrowMetadataFacts,
 };
 pub use lez_bridge_protocol::{
     MAX_RPC_BODY_BYTES, METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME,
-    METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM,
-    METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND,
-    METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
+    METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_NATIVE_REFUND,
+    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW,
+    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
     METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+};
+use secp256k1::{
+    Message as SecpMessage, Secp256k1, XOnlyPublicKey, schnorr::Signature as SchnorrSignature,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest as _, Sha256};
@@ -166,6 +171,8 @@ pub enum BridgeOperation {
     PrepareWitnessedClaim,
     /// Exact aggregate-witness transaction completion.
     CompleteWitnessedClaim,
+    /// Exact finalized aggregate-witness claim observation.
+    ObserveFinalizedWitnessedClaim,
     /// Revealing-claim observation.
     ObserveRevealingClaim,
     /// Fixed-destination native refund preparation.
@@ -256,6 +263,12 @@ pub enum BridgeClientError {
     #[error("LEZ bridge returned a malformed prepared transaction for {operation:?}")]
     MalformedPreparedTransaction {
         /// Preparation operation whose result was rejected.
+        operation: BridgeOperation,
+    },
+    /// A finalized observation result contradicted the exact request or itself.
+    #[error("LEZ bridge returned a malformed finalized observation for {operation:?}")]
+    MalformedObservation {
+        /// Observation operation whose result was rejected.
         operation: BridgeOperation,
     },
     /// Submission did not return the exact persisted transaction ID.
@@ -579,6 +592,92 @@ impl BridgeClient {
         Ok(result)
     }
 
+    /// Observes one exact aggregate-witness claim in a stable finalized indexer window.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime drift, request-ID reuse, strict decoding,
+    /// transaction/message/role mismatch, incoherent block identity, incomplete
+    /// finalized-tip coverage, timeout, transport uncertainty, or typed remote error.
+    pub async fn observe_finalized_witnessed_claim(
+        &self,
+        request: ObserveFinalizedWitnessedClaimRequest,
+    ) -> Result<ObserveFinalizedWitnessedClaimResult, BridgeClientError> {
+        let operation = BridgeOperation::ObserveFinalizedWitnessedClaim;
+        let context = request.context.clone();
+        let expected_transaction_id = request.claim_transaction_id;
+        let expected_claim = request.claim.clone();
+        let expected_terms = request.terms.clone();
+        let expected_program = request.runtime.escrow_program_id;
+        let window_start = request.window.start_height();
+        let window_end = window_start
+            .checked_add(u64::from(request.window.max_blocks() - 1))
+            .ok_or(BridgeClientError::MalformedObservation { operation })?;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_witnessed_preparation(operation, &request.claim)?;
+        self.reserve_context(operation, &context)?;
+        let result: ObserveFinalizedWitnessedClaimResult = self
+            .request(
+                operation,
+                METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        let transaction = &result.claim.transaction;
+        let instruction = &result.claim.instruction;
+        let block = result.claim.containing_block;
+        let metadata = &result.claim.metadata;
+        let custody = &result.claim.custody;
+        let expected_metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+            metadata.account_id,
+            expected_program,
+            custody.account_id,
+            &expected_terms,
+            EscrowState::Claimed,
+        );
+        let expected_accounts = [
+            metadata.account_id,
+            custody.account_id,
+            expected_terms.claimant_account_id(),
+            expected_terms.aggregate_authority_account_id(),
+        ];
+        let exact_signer = transaction.signer_account_ids.as_slice()
+            == [expected_terms.aggregate_authority_account_id()];
+        if transaction.transaction_id != expected_transaction_id
+            || !transaction.is_public
+            || transaction.position.height != block.block_id
+            || transaction.position.block_hash != block.block_hash
+            || instruction.program_id != expected_program
+            || instruction.swap_id != expected_terms.swap_id()
+            || instruction.claimant_account_id != expected_terms.claimant_account_id()
+            || instruction.aggregate_authority_account_id
+                != expected_terms.aggregate_authority_account_id()
+            || instruction.claim != expected_claim
+            || instruction.ordered_account_ids.as_slice() != expected_accounts
+            || metadata != &expected_metadata
+            || custody.account_id != metadata.custody_account_id
+            || custody.owner_program_id != expected_terms.authenticated_transfer_program_id()
+            || custody.balance.as_u128() != 0
+            || !aggregate_signature_is_valid(
+                result.claim.aggregate_signature.as_bytes(),
+                expected_claim.message_hash.as_bytes(),
+                expected_terms.aggregate_x_only_public_key().as_bytes(),
+            )
+            || !exact_signer
+            || block.block_id < window_start
+            || block.block_id > window_end
+            || block.block_id > result.finalized_tip.height
+            || (block.block_id == result.finalized_tip.height
+                && block.block_hash != result.finalized_tip.block_hash)
+            || window_end > result.finalized_tip.height
+        {
+            return Err(BridgeClientError::MalformedObservation { operation });
+        }
+        Ok(result)
+    }
+
     /// Observes one exact or terms-discovered revealing claim.
     ///
     /// # Errors
@@ -780,6 +879,26 @@ fn validate_witnessed_preparation(
     } else {
         Ok(())
     }
+}
+
+fn aggregate_signature_is_valid(
+    signature_bytes: &[u8; 64],
+    message_hash: &[u8; 32],
+    x_only_public_key: &[u8; 32],
+) -> bool {
+    let Ok(signature) = SchnorrSignature::from_slice(signature_bytes) else {
+        return false;
+    };
+    let Ok(public_key) = XOnlyPublicKey::from_slice(x_only_public_key) else {
+        return false;
+    };
+    Secp256k1::verification_only()
+        .verify_schnorr(
+            &signature,
+            &SecpMessage::from_digest(*message_hash),
+            &public_key,
+        )
+        .is_ok()
 }
 
 fn map_client_error(

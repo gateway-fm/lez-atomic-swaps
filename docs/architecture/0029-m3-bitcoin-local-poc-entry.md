@@ -2,9 +2,9 @@
 
 Status: Accepted. The operator-composed local functional PoC completed both
 happy directions on 2026-07-15, and the canonical countersigned agreement is
-GREEN. Typed chain adapters, cohesive lifecycle SDK composition, live refunds,
-concurrency, hardening, production readiness, and an M3 completion tag remain
-open.
+GREEN. The typed finalized LEZ claim observer is also GREEN. The Bitcoin Core
+adapter, cohesive lifecycle SDK composition, live refunds, concurrency,
+hardening, production readiness, and an M3 completion tag remain open.
 
 ## Context
 
@@ -75,9 +75,9 @@ flowchart LR
     Maker --> MakerSidecar
     Taker --> TakerSidecar
     MakerSidecar --> Sequencer
-    MakerSidecar --> Indexer
+    MakerSidecar -->|"finalized claim read by ID and hash"| Indexer
     TakerSidecar --> Sequencer
-    TakerSidecar --> Indexer
+    TakerSidecar -->|"finalized claim read by ID and hash"| Indexer
     Maker --> Core
     Taker --> Core
     Miner --> Core
@@ -111,6 +111,18 @@ transaction/sighash, and conservative recovery anchors and margin. Validation
 reconstructs the aggregate key, Taproot output and claim transaction with the
 pinned libraries and rejects derived-field drift even when both signatures cover
 the drifted body. Actor activation of this record is still pending.
+
+The read-only finalized-claim adapter accepts either agreement participant's
+role-fixed sidecar, scans only a bounded window fully covered by the finalized
+indexer tip, and requires every block to be `Finalized` and byte-equal by
+numeric ID and hash. It accepts the claim exactly once, reconstructs its
+canonical public transaction and aggregate witness, and reads `Claimed`
+metadata plus zero custody at the exact containing `BlockId`. The client then
+rechecks the inclusive window and verifies BIP-340 against the agreement key
+and exact claim hash. The official indexer does not expose an account proof or
+atomic multi-account snapshot token; stable finalized-tip bracketing and
+same-block reads are the current upstream-trust compensation and remain a
+production caveat.
 
 ## Deployed LEZ guest and account onboarding
 
