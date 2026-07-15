@@ -29,7 +29,8 @@ readonly private_dir="${run_root}/private"
 readonly identities_dir="${private_dir}/lez-identities"
 readonly directions_dir="${private_dir}/directions"
 readonly process_registry="${private_dir}/owned-processes.ndjson"
-readonly lez_bootstrap_root="/tmp/lez-atomic-swaps-m3-${run_id}-vault-state"
+readonly secure_state_root="/tmp/lez-atomic-swaps-m3-${run_id}-secure-state"
+readonly lez_bootstrap_root="${secure_state_root}/bootstrap"
 readonly lez_bootstrap_manifest="${private_dir}/lez-bootstrap.env"
 readonly bitcoin_manifest="${repo_root}/.e2e/${bitcoin_run_id}/bitcoin-core/run.env"
 readonly lez_manifest="${repo_root}/.e2e/${lez_run_id}/lez-v02/run.env"
@@ -185,7 +186,7 @@ validate_native_build_prerequisites() {
 validate_native_build_prerequisites
 
 for path in "$run_root" ".e2e/${bitcoin_run_id}" ".e2e/${lez_run_id}" \
-  "$lez_bootstrap_root"; do
+  "$secure_state_root"; do
   [[ ! -e "$path" && ! -L "$path" ]] || fail "refusing to reuse run state: ${path}"
 done
 
@@ -333,16 +334,16 @@ remove_exact_resource_file() {
 }
 
 remove_secure_state_root() {
-  local expected="/tmp/lez-atomic-swaps-m3-${run_id}-vault-state"
-  [[ "$lez_bootstrap_root" == "$expected" ]] || return 1
-  if [[ ! -e "$lez_bootstrap_root" && ! -L "$lez_bootstrap_root" ]]; then
+  local expected="/tmp/lez-atomic-swaps-m3-${run_id}-secure-state"
+  [[ "$secure_state_root" == "$expected" ]] || return 1
+  if [[ ! -e "$secure_state_root" && ! -L "$secure_state_root" ]]; then
     return 0
   fi
-  [[ -d "$lez_bootstrap_root" && ! -L "$lez_bootstrap_root" ]] || return 1
-  [[ "$(stat -c '%u' "$lez_bootstrap_root")" == "$(id -u)" ]] || return 1
-  [[ "$(stat -c '%a' "$lez_bootstrap_root")" == 700 ]] || return 1
-  rm -rf --one-file-system -- "$lez_bootstrap_root" || return 1
-  [[ ! -e "$lez_bootstrap_root" && ! -L "$lez_bootstrap_root" ]]
+  [[ -d "$secure_state_root" && ! -L "$secure_state_root" ]] || return 1
+  [[ "$(stat -c '%u' "$secure_state_root")" == "$(id -u)" ]] || return 1
+  [[ "$(stat -c '%a' "$secure_state_root")" == 700 ]] || return 1
+  rm -rf --one-file-system -- "$secure_state_root" || return 1
+  [[ ! -e "$secure_state_root" && ! -L "$secure_state_root" ]]
 }
 
 write_cleanup_attestation() {
@@ -366,7 +367,7 @@ write_cleanup_attestation() {
   lez_images="$(docker image ls --quiet \
     --filter "label=org.logos-co.atomic-swaps.run=${lez_run_id}" || true)"
   secure_state_absent=false
-  if [[ ! -e "$lez_bootstrap_root" && ! -L "$lez_bootstrap_root" ]]; then
+  if [[ ! -e "$secure_state_root" && ! -L "$secure_state_root" ]]; then
     secure_state_absent=true
   fi
   jq -n \
@@ -439,6 +440,8 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+mkdir -m 0700 "$secure_state_root"
+mkdir -m 0700 "$secure_state_root/directions"
 
 verify_direction_driver_contract() {
   local contract driver_sha
@@ -669,6 +672,7 @@ with_direction_environment() {
   M3_POC_RUN_ID="$run_id" \
   M3_POC_DIRECTION="$direction" \
   M3_POC_DIRECTION_ROOT="$direction_root" \
+  M3_POC_SECURE_STATE_ROOT="${secure_state_root}/directions/${direction}" \
   M3_POC_EVIDENCE_DIR="$evidence_dir" \
   M3_POC_PROCESS_REGISTRY="$process_registry" \
   M3_POC_ACTOR_BIN="$actor_bin" \

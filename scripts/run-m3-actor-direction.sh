@@ -29,6 +29,7 @@ emit_contract() {
       bitcoin_planned_funding_anchor_exact: true,
       lez_exact_finalized_ancestry: true,
       actor_owned_claim_effects: true,
+      secure_sidecar_state_root_required: true,
       submission_count_query: true,
       owned_process_registry: true,
       pre_lock_presignature_domains: ["bitcoin", "lez"],
@@ -88,7 +89,8 @@ preflight() {
 require_environment() {
   local variable value
   local -a required=(
-    M3_POC_RUN_ID M3_POC_DIRECTION M3_POC_DIRECTION_ROOT M3_POC_EVIDENCE_DIR
+    M3_POC_RUN_ID M3_POC_DIRECTION M3_POC_DIRECTION_ROOT M3_POC_SECURE_STATE_ROOT
+    M3_POC_EVIDENCE_DIR
     M3_POC_PROCESS_REGISTRY M3_POC_ACTOR_BIN M3_POC_PROVISIONER_BIN
     M3_POC_ROLE_RUNNER_BIN M3_POC_LEZ_SIDECAR_BIN M3_POC_LEZ_OPERATOR_BIN
     M3_POC_LEZ_NATIVE_ESCROW_BIN M3_POC_BITCOIN_MANIFEST M3_POC_BITCOIN_RPC_URL
@@ -107,7 +109,8 @@ require_environment() {
   done
   [[ "$M3_POC_DIRECTION" == "taker_sells_foreign" ||
      "$M3_POC_DIRECTION" == "taker_sells_lez" ]] || fail "unsupported direction"
-  for variable in M3_POC_DIRECTION_ROOT M3_POC_EVIDENCE_DIR M3_POC_PROCESS_REGISTRY \
+  for variable in M3_POC_DIRECTION_ROOT M3_POC_SECURE_STATE_ROOT M3_POC_EVIDENCE_DIR \
+    M3_POC_PROCESS_REGISTRY \
     M3_POC_ACTOR_BIN M3_POC_PROVISIONER_BIN M3_POC_ROLE_RUNNER_BIN \
     M3_POC_LEZ_SIDECAR_BIN M3_POC_LEZ_OPERATOR_BIN M3_POC_LEZ_NATIVE_ESCROW_BIN \
     M3_POC_BITCOIN_MANIFEST M3_POC_BITCOIN_MAKER_CURL_CONFIG \
@@ -118,6 +121,9 @@ require_environment() {
     value="${!variable}"
     [[ "$value" == /* ]] || fail "path environment must be absolute: ${variable}"
   done
+  [[ "$M3_POC_SECURE_STATE_ROOT" == \
+     "/tmp/lez-atomic-swaps-m3-${M3_POC_RUN_ID}-secure-state/directions/${M3_POC_DIRECTION}" ]] ||
+    fail "secure state root is not the exact run-owned direction root"
   for endpoint in "$M3_POC_BITCOIN_RPC_URL" "$M3_POC_LEZ_SEQUENCER_RPC_URL" \
     "$M3_POC_LEZ_INDEXER_RPC_URL"; do
     [[ "$endpoint" =~ ^http://127\.0\.0\.1:[1-9][0-9]{0,4}/?$ ]] ||
@@ -198,7 +204,7 @@ write_runtime() {
 
 start_sidecars() {
   local phase="$1"
-  local role port role_root log pid endpoints_file maker_port taker_port
+  local role port role_root state_root log pid endpoints_file maker_port taker_port
   endpoints_file="${M3_POC_DIRECTION_ROOT}/${phase}-endpoints.env"
   [[ ! -e "$endpoints_file" ]] || fail "refusing to reuse ${phase} sidecar endpoints"
   : >"${M3_POC_DIRECTION_ROOT}/${phase}-sidecars.tsv"
@@ -209,8 +215,12 @@ start_sidecars() {
   for role in maker taker; do
     case "$role" in maker) port="$maker_port" ;; taker) port="$taker_port" ;; esac
     role_root="${M3_POC_DIRECTION_ROOT}/sidecars/${phase}/${role}"
-    mkdir -p "$role_root/state"
-    chmod 0700 "$role_root" "$role_root/state"
+    state_root="${M3_POC_SECURE_STATE_ROOT}/sidecars/${phase}/${role}"
+    [[ ! -e "$state_root" && ! -L "$state_root" ]] ||
+      fail "refusing to reuse ${phase} ${role} secure sidecar state"
+    mkdir -p "$role_root" "$state_root"
+    chmod 0700 "$role_root" "$M3_POC_SECURE_STATE_ROOT/sidecars" \
+      "$M3_POC_SECURE_STATE_ROOT/sidecars/$phase" "$state_root"
     openssl rand -hex 32 >"$role_root/capability"
     chmod 0600 "$role_root/capability"
     write_runtime "$role" "$phase"
@@ -220,7 +230,7 @@ start_sidecars() {
       --indexer-url "$M3_POC_LEZ_INDEXER_RPC_URL" --run-id "$M3_POC_RUN_ID" \
       --runtime-file "$role_root/runtime.json" --capability-file "$role_root/capability" \
       --private-key-file "${M3_POC_DIRECTION_ROOT}/actors/${role}/lez-signer.key" \
-      --state-directory "$role_root/state" \
+      --state-directory "$state_root" \
       --authenticated-transfer-program-id "$M3_POC_LEZ_AUTH_TRANSFER_PROGRAM_ID" \
       >"$log" 2>&1 &
     pid=$!
@@ -303,6 +313,9 @@ prepare_witnessed_pair() {
 
 prepare_direction_layout() {
   local role source_identity source_key
+  [[ ! -e "$M3_POC_SECURE_STATE_ROOT" && ! -L "$M3_POC_SECURE_STATE_ROOT" ]] ||
+    fail "refusing to reuse direction secure state"
+  mkdir -m 0700 "$M3_POC_SECURE_STATE_ROOT"
   mkdir -p "$M3_POC_DIRECTION_ROOT/actors" "$M3_POC_DIRECTION_ROOT/sidecars"
   chmod 0700 "$M3_POC_DIRECTION_ROOT/actors" "$M3_POC_DIRECTION_ROOT/sidecars"
   for role in maker taker; do
@@ -944,7 +957,7 @@ submit_actor_bitcoin_claim() {
 
 actor_lez_claim_transaction_id() {
   local owner="$1" journal
-  journal="${M3_POC_DIRECTION_ROOT}/sidecars/final/${owner}/state/bridge-requests.v1.json"
+  journal="${M3_POC_SECURE_STATE_ROOT}/sidecars/final/${owner}/bridge-requests.v1.json"
   [[ -f "$journal" && ! -L "$journal" ]] || fail "${owner} sidecar request journal is unavailable"
   jq -er --arg initialization "$lez_initialization_tx" --arg funding "$lez_funding_tx" '
     [.entries[] |
@@ -1069,7 +1082,7 @@ submission_counts() {
   for transaction in "${lez_ids[@]}"; do
     matches=0
     for role in maker taker; do
-      journal="${M3_POC_DIRECTION_ROOT}/sidecars/final/${role}/state/bridge-requests.v1.json"
+      journal="${M3_POC_SECURE_STATE_ROOT}/sidecars/final/${role}/bridge-requests.v1.json"
       [[ -f "$journal" && ! -L "$journal" ]] || fail "LEZ submit journal is unavailable"
       matches=$((matches + $(jq -er --arg tx "$transaction" '
         [.entries[] |

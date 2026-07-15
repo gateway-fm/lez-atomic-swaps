@@ -41,6 +41,7 @@ jq -e '
   and .bitcoin_planned_funding_anchor_exact == true
   and .lez_exact_finalized_ancestry == true
   and .actor_owned_claim_effects == true
+  and .secure_sidecar_state_root_required == true
   and .submission_count_query == true
   and .owned_process_registry == true
   and .pre_lock_presignature_domains == ["bitcoin", "lez"]
