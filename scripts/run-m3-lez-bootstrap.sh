@@ -22,6 +22,7 @@ emit_contract() {
       kind: "m3_lez_bootstrap_contract",
       verified_artifact_target_required: true,
       canonical_guest_artifact_independently_hashed: true,
+      canonical_guest_source: "compat/lez-v0.2-provisional/escrow/methods/guest/src/bin/zec_escrow_v02.rs",
       embedded_guest_sha256: $guest,
       escrow_program_id: $program,
       deployment_submission_count: 1,
@@ -86,7 +87,7 @@ readonly guest_elf="${LEZ_V02_ARTIFACT_TARGET_DIR}/riscv-guest/lez-zec-escrow-v0
 readonly deployer_manifest="compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml"
 readonly deployer_source="compat/lez-v0.2-provisional/escrow/deployer/src/main.rs"
 readonly guest_manifest="compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml"
-readonly guest_source="compat/lez-v0.2-provisional/escrow/methods/guest/src/main.rs"
+readonly guest_source="compat/lez-v0.2-provisional/escrow/methods/guest/src/bin/zec_escrow_v02.rs"
 readonly vault_manifest="compat/lez-v0_2-sidecar/Cargo.toml"
 readonly vault_source="compat/lez-v0_2-sidecar/src/bin/lez-v02-vault-claim-poc.rs"
 [[ -d "$LEZ_V02_ARTIFACT_TARGET_DIR" && ! -L "$LEZ_V02_ARTIFACT_TARGET_DIR" ]] ||

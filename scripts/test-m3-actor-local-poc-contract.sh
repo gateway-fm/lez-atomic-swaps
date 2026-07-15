@@ -98,12 +98,18 @@ jq -e '
   and .kind == "m3_lez_bootstrap_contract"
   and .verified_artifact_target_required == true
   and .canonical_guest_artifact_independently_hashed == true
+  and .canonical_guest_source == "compat/lez-v0.2-provisional/escrow/methods/guest/src/bin/zec_escrow_v02.rs"
   and .deployment_submission_count == 1
   and .fresh_identity_vault_claims == ["maker", "taker"]
   and .vault_claim_submission_count_per_role == 1
   and .finalized_read_retries == "bounded_read_only_never_resubmit"
   and .evidence_binds_script_binary_manifest_source == true
 ' <<<"$bootstrap_contract" >/dev/null || fail "LEZ bootstrap contract is incomplete"
+guest_source="$(jq -er '.canonical_guest_source' <<<"$bootstrap_contract")"
+[[ -f "$guest_source" && ! -L "$guest_source" ]] ||
+  fail "LEZ bootstrap contract does not name a tracked canonical guest source"
+git ls-files --error-unmatch -- "$guest_source" >/dev/null ||
+  fail "LEZ bootstrap canonical guest source is not tracked"
 
 invalid_run_id="M3 invalid $$"
 if invalid_output="$(RUN_ID="$invalid_run_id" M3_ACTOR_POC_MODE=contract "$runner" 2>&1)"; then
