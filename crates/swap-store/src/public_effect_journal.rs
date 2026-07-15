@@ -259,7 +259,11 @@ impl PublicEffectSnapshot {
         self.state
     }
 
-    /// Durable attempt count, constrained to zero or one.
+    /// Durable fresh-send authority consumption count, constrained to zero or one.
+    ///
+    /// One means either that a send was authorized before transport or that
+    /// conflicting chain presence defensively burned that authority without a
+    /// transport call.
     #[must_use]
     pub const fn attempt_count(&self) -> u32 {
         self.attempt_count
@@ -282,6 +286,11 @@ pub enum PublicEffectObservation {
     Absent,
     /// Chain observation could not prove either presence or absence.
     Uncertain,
+    /// Chain evidence proves presence but contradicts the durable exact bytes.
+    ///
+    /// This permanently burns any still-fresh send authority without granting
+    /// a transport call. A later exact match may still prove acceptance.
+    ConflictingPresence,
 }
 
 /// Action authorized after reconciling one durable effect with chain truth.
@@ -435,8 +444,10 @@ impl SqlitePublicEffectJournal {
     ///
     /// `Absent + Prepared` atomically commits `Started` before returning the sole
     /// `SubmitOnce` authorization. `Started` and `Unknown` are never rearmed.
-    /// `Uncertain` is always observe-only. Exact presence monotonically accepts
-    /// Prepared, Started, or Unknown state.
+    /// `Uncertain` is retryable and always observe-only. `ConflictingPresence`
+    /// atomically consumes still-fresh authority without returning
+    /// `SubmitOnce`; later absence can therefore never rearm it. Exact presence
+    /// monotonically accepts Prepared, Started, or Unknown state.
     ///
     /// # Errors
     ///
@@ -478,6 +489,18 @@ impl SqlitePublicEffectJournal {
                 }
             }
             PublicEffectObservation::Uncertain => false,
+            PublicEffectObservation::ConflictingPresence => {
+                match snapshot.state {
+                    PublicEffectState::Prepared => {
+                        burn_authority_without_send(&transaction, &mut snapshot)?;
+                    }
+                    PublicEffectState::Started | PublicEffectState::Unknown => {}
+                    PublicEffectState::Accepted | PublicEffectState::Rejected => {
+                        return Err(StoreError::PublicEffectConflict);
+                    }
+                }
+                false
+            }
         };
         let postcondition =
             load_snapshot(&transaction, key)?.ok_or(StoreError::CorruptPublicEffectState)?;
@@ -803,6 +826,34 @@ fn begin_once(
     snapshot.state = PublicEffectState::Started;
     snapshot.attempt_count = 1;
     snapshot.revision = 1;
+    Ok(())
+}
+
+fn burn_authority_without_send(
+    transaction: &rusqlite::Transaction<'_>,
+    snapshot: &mut PublicEffectSnapshot,
+) -> Result<(), StoreError> {
+    let key = snapshot.effect.key();
+    let updated = transaction.execute(
+        "UPDATE public_effect_journal
+         SET state = 'unknown', attempt_count = 1, revision = 2
+         WHERE swap_id = ?1 AND local_role = ?2 AND chain = ?3
+           AND operation = ?4 AND predecessor_revision = ?5
+           AND state = 'prepared' AND attempt_count = 0 AND revision = 0",
+        params![
+            key.swap_id.as_str(),
+            participant_name(key.local_role),
+            key.chain.as_str(),
+            key.operation.as_str(),
+            revision_to_sql(key.predecessor_revision)?,
+        ],
+    )?;
+    if updated != 1 {
+        return Err(StoreError::PublicEffectConflict);
+    }
+    snapshot.state = PublicEffectState::Unknown;
+    snapshot.attempt_count = 1;
+    snapshot.revision = 2;
     Ok(())
 }
 

@@ -1185,10 +1185,14 @@ validator. A new additive SQLite public-effect journal persists the complete
 public Bitcoin or LEZ bytes, agreement commitment, and expected effect ID before
 a one-winner `Prepared` to `Started` CAS grants the only fresh send. Ambiguous
 `Started` or `Unknown` recovery is observation-only, and exact accepted IDs plus
-complete observed bytes are required. Seven signer-journal, twelve public-
-effect, eleven BTC-recovery, and all 84 store tests pass; the bridge-client graph
-is 28/28. This is the persistence boundary for revisions three and four, not yet
-their actor integration or actual-node evidence.
+complete observed bytes are required. A chain result that proves presence but
+conflicts with the exact durable bytes now atomically burns still-fresh send
+authority to observation-only `Unknown` without a transport call; a later
+absence cannot rearm it, while timeout/finality uncertainty remains retryable.
+Seven signer-journal, fourteen public-effect, eleven BTC-recovery, and all 86
+store tests pass; the bridge-client graph is 28/28. This is the persistence
+boundary for revisions three and four, not yet its complete actual-node
+evidence.
 `status` reports absent or precreated-empty/no-acceptance state as
 `not_activated`; `drive` returns `NotActivated`. Status may migrate an existing
 database schema but creates no acceptance and performs no RPC. Corrupt or

@@ -113,6 +113,82 @@ fn absent_observation_commits_started_before_granting_the_only_send_authorizatio
 }
 
 #[test]
+fn conflicting_presence_durably_burns_authority_without_authorizing_a_send() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("effects.sqlite3");
+    let candidate = prepared();
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+    let _ = journal.record_prepared(&candidate).unwrap();
+
+    let PublicEffectDecision::ObserveOnly(blocked) = journal
+        .reconcile(
+            candidate.key(),
+            PublicEffectObservation::ConflictingPresence,
+        )
+        .unwrap()
+    else {
+        panic!("conflicting chain presence must never grant send authority");
+    };
+    assert_eq!(blocked.state(), PublicEffectState::Unknown);
+    assert_eq!(blocked.attempt_count(), 1);
+    assert_eq!(blocked.revision(), 2);
+
+    drop(journal);
+    let mut restarted = SqlitePublicEffectJournal::open(&path).unwrap();
+    for observation in [
+        PublicEffectObservation::Absent,
+        PublicEffectObservation::Uncertain,
+        PublicEffectObservation::ConflictingPresence,
+    ] {
+        let PublicEffectDecision::ObserveOnly(still_blocked) =
+            restarted.reconcile(candidate.key(), observation).unwrap()
+        else {
+            panic!("burned authority must remain observe-only after restart");
+        };
+        assert_eq!(still_blocked.state(), PublicEffectState::Unknown);
+        assert_eq!(still_blocked.attempt_count(), 1);
+        assert_eq!(still_blocked.revision(), 2);
+    }
+
+    let PublicEffectDecision::ObserveOnly(accepted) = restarted
+        .reconcile(
+            candidate.key(),
+            PublicEffectObservation::PresentExact(candidate.exact_public_bytes().to_vec()),
+        )
+        .unwrap()
+    else {
+        panic!("later exact presence is evidence, not send authority");
+    };
+    assert_eq!(accepted.state(), PublicEffectState::Accepted);
+    assert_eq!(accepted.attempt_count(), 1);
+    assert_eq!(accepted.revision(), 3);
+}
+
+#[test]
+fn transient_uncertainty_does_not_burn_a_later_definitive_absence_decision() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("effects.sqlite3");
+    let candidate = prepared();
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+    let _ = journal.record_prepared(&candidate).unwrap();
+
+    let PublicEffectDecision::ObserveOnly(waiting) = journal
+        .reconcile(candidate.key(), PublicEffectObservation::Uncertain)
+        .unwrap()
+    else {
+        panic!("transient uncertainty must remain observe-only");
+    };
+    assert_eq!(waiting.state(), PublicEffectState::Prepared);
+
+    assert!(matches!(
+        journal
+            .reconcile(candidate.key(), PublicEffectObservation::Absent)
+            .unwrap(),
+        PublicEffectDecision::SubmitOnce(_)
+    ));
+}
+
+#[test]
 fn exact_present_bytes_reconcile_prepared_started_or_unknown_to_accepted() {
     for prior_state in [
         PublicEffectState::Prepared,
