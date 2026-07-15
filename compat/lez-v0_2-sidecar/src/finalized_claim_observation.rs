@@ -212,19 +212,7 @@ impl FinalizedWitnessedClaimObserver {
             .last_finalized_block_id()
             .await?
             .ok_or(BridgeRuntimeError::Unavailable)?;
-        let window_end = request
-            .window
-            .start_height()
-            .checked_add(u64::from(request.window.max_blocks() - 1))
-            .ok_or(BridgeRuntimeError::InvalidObservation)?;
-        if window_end > finalized_before
-            || finalized_before
-                .checked_sub(request.window.start_height())
-                .and_then(|distance| distance.checked_add(1))
-                .is_none_or(|length| length > u64::from(MAX_DISCOVERY_BLOCKS))
-        {
-            return Err(BridgeRuntimeError::Unavailable);
-        }
+        let window_end = Self::validated_window_end(request, finalized_before)?;
         let finalized_tip_before = self.read_finalized_block(finalized_before).await?;
 
         let mut found = None;
@@ -312,6 +300,26 @@ impl FinalizedWitnessedClaimObserver {
                 request.window,
             )
         })
+    }
+
+    fn validated_window_end(
+        request: &ObserveFinalizedWitnessedClaimRequest,
+        finalized_before: u64,
+    ) -> Result<u64, BridgeRuntimeError> {
+        let window_end = request
+            .window
+            .start_height()
+            .checked_add(u64::from(request.window.max_blocks() - 1))
+            .ok_or(BridgeRuntimeError::InvalidObservation)?;
+        let covered_length = finalized_before
+            .checked_sub(request.window.start_height())
+            .and_then(|distance| distance.checked_add(1));
+        if window_end > finalized_before
+            || covered_length.is_none_or(|length| length > u64::from(MAX_DISCOVERY_BLOCKS))
+        {
+            return Err(BridgeRuntimeError::Unavailable);
+        }
+        Ok(window_end)
     }
 
     fn validate_request(

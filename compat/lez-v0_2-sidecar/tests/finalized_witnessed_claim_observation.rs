@@ -40,6 +40,23 @@ use nssa::{
 
 const BRIDGE_CAPABILITY: &str = "finalized-observation-capability-0001";
 
+fn register_mock_sequencer_methods(sequencer_rpc: &mut RpcModule<Arc<AtomicUsize>>) {
+    sequencer_rpc
+        .register_method("checkHealth", |_, _, _| Ok::<_, ErrorObjectOwned>(()))
+        .unwrap();
+    sequencer_rpc
+        .register_method("getChannelId", |_, _, _| {
+            Ok::<_, ErrorObjectOwned>(hex::encode([2_u8; 32]))
+        })
+        .unwrap();
+    sequencer_rpc
+        .register_method("sendTransaction", |_, calls, _| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, ErrorObjectOwned>([0_u8; 32])
+        })
+        .unwrap();
+}
+
 #[derive(Debug)]
 struct FixedNonce;
 
@@ -812,20 +829,7 @@ async fn authenticated_bridge_server_peerless_observation_is_repeatable_and_neve
     let sequencer = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();
     let sequencer_address = sequencer.local_addr().unwrap();
     let mut sequencer_rpc = RpcModule::new(Arc::clone(&submission_calls));
-    sequencer_rpc
-        .register_method("checkHealth", |_, _, _| Ok::<_, ErrorObjectOwned>(()))
-        .unwrap();
-    sequencer_rpc
-        .register_method("getChannelId", |_, _, _| {
-            Ok::<_, ErrorObjectOwned>(hex::encode([2_u8; 32]))
-        })
-        .unwrap();
-    sequencer_rpc
-        .register_method("sendTransaction", |_, calls, _| {
-            calls.fetch_add(1, Ordering::SeqCst);
-            Ok::<_, ErrorObjectOwned>([0_u8; 32])
-        })
-        .unwrap();
+    register_mock_sequencer_methods(&mut sequencer_rpc);
     let sequencer_handle = sequencer.start(sequencer_rpc);
 
     let node = Arc::new(
