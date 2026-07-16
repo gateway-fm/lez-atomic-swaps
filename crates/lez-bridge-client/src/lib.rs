@@ -16,25 +16,27 @@ use jsonrpsee::{
 };
 use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClient, HttpClientBuilder};
 use lez_bridge_protocol::{
-    ChainTip, ClassifyFinalizedWitnessedClaimResult, CompleteWitnessedClaimRequest,
+    ChainClock, ChainTip, ClassifyFinalizedWitnessedClaimResult,
+    ClassifyFinalizedWitnessedFundingResult, CompleteWitnessedClaimRequest,
     CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult, DiscoveryWindow,
     ErrorCode, ErrorMessage, EscrowState, FinalizedWitnessedClaimFacts,
     FinalizedWitnessedClaimObservationTarget, FinalizedWitnessedClaimScanOutcome,
-    FinalizedWitnessedFundingObservationTarget, MessageContext, ObserveEscrowRequest,
-    ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
-    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
-    ObserveFinalizedWitnessedFundingResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
-    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
-    ObserveWitnessedEscrowResult, Participant, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
-    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
-    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
-    PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RunId,
-    RuntimeDescriptor, SubmitTransactionRequest, SubmitTransactionResult,
+    FinalizedWitnessedFundingObservationTarget, FinalizedWitnessedFundingScanOutcome,
+    MessageContext, ObserveEscrowRequest, ObserveEscrowResult,
+    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
+    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
+    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
+    ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
+    Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
+    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
+    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
+    RequestId, RunId, RuntimeDescriptor, SubmitTransactionRequest, SubmitTransactionResult,
     WitnessedEscrowMetadataFacts, WitnessedNativeEscrowTerms,
 };
 pub use lez_bridge_protocol::{
-    MAX_RPC_BODY_BYTES, METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM, METHOD_COMPLETE_WITNESSED_CLAIM,
+    MAX_RPC_BODY_BYTES, METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING, METHOD_COMPLETE_WITNESSED_CLAIM,
     METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
     METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING, METHOD_OBSERVE_NATIVE_REFUND,
     METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW,
@@ -172,6 +174,8 @@ pub enum BridgeOperation {
     ObserveWitnessedEscrow,
     /// Finalized aggregate-witness funding observation.
     ObserveFinalizedWitnessedFunding,
+    /// Finalized aggregate-witness funding found-or-absent classification.
+    ClassifyFinalizedWitnessedFunding,
     /// Randomized revealing-claim preparation.
     PrepareRevealingClaim,
     /// Unsigned aggregate-witness message reservation.
@@ -190,6 +194,36 @@ pub enum BridgeOperation {
     ObserveNativeRefund,
     /// Exact transaction submission.
     SubmitTransaction,
+}
+
+/// Actor-facing finalized witnessed-funding classification.
+///
+/// These are the only successful outcomes. Node availability, history, finality,
+/// moving-tip, malformed evidence, timeout, and transport failures remain typed
+/// [`BridgeClientError`] values and can never become `Absent`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum FinalizedWitnessedFundingPresence {
+    /// One exact canonical finalized funding effect was found.
+    Found {
+        /// Echoed operation context.
+        context: MessageContext,
+        /// Stable finalized clock covering the exact scan.
+        finalized_clock: ChainClock,
+        /// Exact caller-owned bounded range that was scanned.
+        scanned_window: DiscoveryWindow,
+        /// Complete independently validated canonical funding facts.
+        funding: Box<lez_bridge_protocol::FinalizedWitnessedFundingFacts>,
+    },
+    /// The exact complete stable finalized scan found no matching funding effect.
+    Absent {
+        /// Echoed operation context.
+        context: MessageContext,
+        /// Stable finalized clock covering the exact scan.
+        finalized_clock: ChainClock,
+        /// Exact caller-owned bounded range that was scanned.
+        scanned_window: DiscoveryWindow,
+    },
 }
 
 /// A stable reason why exact claim presence cannot yet be classified.
@@ -600,6 +634,91 @@ impl BridgeClient {
         Ok(result)
     }
 
+    /// Classifies witnessed funding as exact found or affirmative finalized absence.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed with typed errors on context/runtime drift, request-ID reuse,
+    /// malformed or substituted evidence, unavailable history/finality, moving tip,
+    /// timeout, transport uncertainty, or typed remote errors.
+    pub async fn classify_finalized_witnessed_funding(
+        &self,
+        request: ObserveFinalizedWitnessedFundingRequest,
+    ) -> Result<FinalizedWitnessedFundingPresence, BridgeClientError> {
+        let operation = BridgeOperation::ClassifyFinalizedWitnessedFunding;
+        let context = request.context.clone();
+        let expected_transaction_id = match request.target {
+            FinalizedWitnessedFundingObservationTarget::Exact {
+                funding_transaction_id,
+            } => Some(funding_transaction_id),
+            FinalizedWitnessedFundingObservationTarget::DiscoverByTerms => None,
+        };
+        let expected_terms = request.terms.clone();
+        let expected_program = request.runtime.escrow_program_id;
+        let expected_window = request.window;
+        let window_start = expected_window.start_height();
+        let window_end = window_start
+            .checked_add(u64::from(expected_window.max_blocks() - 1))
+            .ok_or(BridgeClientError::MalformedObservation { operation })?;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        let expected_observer = if request.runtime.sidecar_role == expected_terms.depositor() {
+            Some(expected_terms.depositor_account_id())
+        } else if request.runtime.sidecar_role == expected_terms.claimant() {
+            Some(expected_terms.claimant_account_id())
+        } else {
+            None
+        };
+        if expected_observer != Some(request.runtime.signer_account_id) {
+            return Err(BridgeClientError::MalformedObservation { operation });
+        }
+        self.reserve_context(operation, &context)?;
+        let result: ClassifyFinalizedWitnessedFundingResult = self
+            .request(
+                operation,
+                METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        if result.scanned_window != expected_window
+            || result.finalized_clock.timestamp_ms == 0
+            || window_end > result.finalized_clock.height
+        {
+            return Err(BridgeClientError::MalformedObservation { operation });
+        }
+        match result.outcome {
+            FinalizedWitnessedFundingScanOutcome::Found { funding } => {
+                validate_finalized_witnessed_funding_facts(
+                    operation,
+                    expected_transaction_id,
+                    &expected_terms,
+                    expected_program,
+                    window_start,
+                    window_end,
+                    ChainTip::new(
+                        result.finalized_clock.block_hash,
+                        result.finalized_clock.height,
+                    ),
+                    funding.as_ref(),
+                )?;
+                Ok(FinalizedWitnessedFundingPresence::Found {
+                    context: result.context,
+                    finalized_clock: result.finalized_clock,
+                    scanned_window: result.scanned_window,
+                    funding,
+                })
+            }
+            FinalizedWitnessedFundingScanOutcome::Absent {} => {
+                Ok(FinalizedWitnessedFundingPresence::Absent {
+                    context: result.context,
+                    finalized_clock: result.finalized_clock,
+                    scanned_window: result.scanned_window,
+                })
+            }
+        }
+    }
+
     /// Observes one witnessed funding effect in a stable finalized indexer window.
     ///
     /// # Errors
@@ -646,46 +765,16 @@ impl BridgeClient {
             )
             .await?;
         Self::validate_response_context(operation, &context, &result.context)?;
-        let transaction = &result.funding.transaction;
-        let instruction = &result.funding.instruction;
-        let block = result.funding.containing_block;
-        let metadata = &result.funding.metadata;
-        let custody = &result.funding.custody;
-        let expected_metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
-            metadata.account_id,
-            expected_program,
-            custody.account_id,
+        validate_finalized_witnessed_funding_facts(
+            operation,
+            expected_transaction_id,
             &expected_terms,
-            EscrowState::Funded,
-        );
-        let expected_accounts = [
-            metadata.account_id,
-            custody.account_id,
-            expected_terms.depositor_account_id(),
-        ];
-        let exact_signer =
-            transaction.signer_account_ids.as_slice() == [expected_terms.depositor_account_id()];
-        if expected_transaction_id.is_some_and(|expected| transaction.transaction_id != expected)
-            || !transaction.is_public
-            || transaction.position.height != block.block_id
-            || transaction.position.block_hash != block.block_hash
-            || instruction.program_id != expected_program
-            || instruction.swap_id != expected_terms.swap_id()
-            || instruction.ordered_account_ids.as_slice() != expected_accounts
-            || metadata != &expected_metadata
-            || custody.account_id != metadata.custody_account_id
-            || custody.owner_program_id != expected_terms.authenticated_transfer_program_id()
-            || custody.balance != expected_terms.amount()
-            || !exact_signer
-            || block.block_id < window_start
-            || block.block_id > window_end
-            || block.block_id > result.finalized_tip.height
-            || (block.block_id == result.finalized_tip.height
-                && block.block_hash != result.finalized_tip.block_hash)
-            || window_end > result.finalized_tip.height
-        {
-            return Err(BridgeClientError::MalformedObservation { operation });
-        }
+            expected_program,
+            window_start,
+            window_end,
+            result.finalized_tip,
+            &result.funding,
+        )?;
         Ok(result)
     }
 
@@ -1074,6 +1163,59 @@ impl BridgeClient {
             .await
             .map_err(|error| map_client_error(operation, context, error))
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_finalized_witnessed_funding_facts(
+    operation: BridgeOperation,
+    expected_transaction_id: Option<lez_bridge_protocol::TransactionId>,
+    expected_terms: &WitnessedNativeEscrowTerms,
+    expected_program: lez_bridge_protocol::Hex32,
+    window_start: u64,
+    window_end: u64,
+    finalized_tip: ChainTip,
+    funding: &lez_bridge_protocol::FinalizedWitnessedFundingFacts,
+) -> Result<(), BridgeClientError> {
+    let transaction = &funding.transaction;
+    let instruction = &funding.instruction;
+    let block = funding.containing_block;
+    let metadata = &funding.metadata;
+    let custody = &funding.custody;
+    let expected_metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+        metadata.account_id,
+        expected_program,
+        custody.account_id,
+        expected_terms,
+        EscrowState::Funded,
+    );
+    let expected_accounts = [
+        metadata.account_id,
+        custody.account_id,
+        expected_terms.depositor_account_id(),
+    ];
+    let exact_signer =
+        transaction.signer_account_ids.as_slice() == [expected_terms.depositor_account_id()];
+    if expected_transaction_id.is_some_and(|expected| transaction.transaction_id != expected)
+        || !transaction.is_public
+        || transaction.position.height != block.block_id
+        || transaction.position.block_hash != block.block_hash
+        || instruction.program_id != expected_program
+        || instruction.swap_id != expected_terms.swap_id()
+        || instruction.ordered_account_ids.as_slice() != expected_accounts
+        || metadata != &expected_metadata
+        || custody.account_id != metadata.custody_account_id
+        || custody.owner_program_id != expected_terms.authenticated_transfer_program_id()
+        || custody.balance != expected_terms.amount()
+        || !exact_signer
+        || block.block_id < window_start
+        || block.block_id > window_end
+        || block.block_id > finalized_tip.height
+        || (block.block_id == finalized_tip.height && block.block_hash != finalized_tip.block_hash)
+        || window_end > finalized_tip.height
+    {
+        return Err(BridgeClientError::MalformedObservation { operation });
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

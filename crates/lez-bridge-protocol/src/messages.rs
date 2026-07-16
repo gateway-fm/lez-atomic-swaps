@@ -2089,6 +2089,72 @@ impl ObserveFinalizedWitnessedFundingResult {
     }
 }
 
+/// Exact outcome of one completely validated finalized witnessed-funding scan.
+///
+/// `Absent` is affirmative only because the enclosing result carries the exact
+/// fully scanned window and stable finalized tip. Transport, history, finality,
+/// malformed evidence, and moving-tip failures cannot inhabit this enum.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+#[must_use]
+pub enum FinalizedWitnessedFundingScanOutcome {
+    /// The canonical finalized scan contained one exact validated funding effect.
+    Found {
+        /// Complete exact finalized funding facts.
+        funding: Box<FinalizedWitnessedFundingFacts>,
+    },
+    /// The complete stable finalized scan contained no matching funding effect.
+    Absent {},
+}
+
+/// Result of the additive v1 witnessed-funding classifier.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ClassifyFinalizedWitnessedFundingResult {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Stable finalized indexer clock completely covering `scanned_window`.
+    pub finalized_clock: ChainClock,
+    /// Exact inclusive bounded range completely scanned.
+    pub scanned_window: DiscoveryWindow,
+    /// Exact funding evidence or affirmative stable-finalized absence.
+    pub outcome: FinalizedWitnessedFundingScanOutcome,
+}
+
+impl ClassifyFinalizedWitnessedFundingResult {
+    /// Creates exact found evidence for a completely scanned stable window.
+    pub fn found(
+        context: MessageContext,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+        funding: FinalizedWitnessedFundingFacts,
+    ) -> Self {
+        Self {
+            context,
+            finalized_clock,
+            scanned_window,
+            outcome: FinalizedWitnessedFundingScanOutcome::Found {
+                funding: Box::new(funding),
+            },
+        }
+    }
+
+    /// Creates affirmative absence evidence for a completely scanned stable window.
+    pub const fn absent(
+        context: MessageContext,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            finalized_clock,
+            scanned_window,
+            outcome: FinalizedWitnessedFundingScanOutcome::Absent {},
+        }
+    }
+}
+
 /// Selects an exact completed claim ID or peerless discovery by agreement terms.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]

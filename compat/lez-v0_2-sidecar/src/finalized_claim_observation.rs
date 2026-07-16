@@ -10,15 +10,15 @@ use indexer_service_protocol::{
 };
 use indexer_service_rpc::RpcClient as _;
 use lez_bridge_protocol::{
-    AccountIds, AggregateBip340Signature, ChainPosition, ChainTip,
-    ClassifyFinalizedWitnessedClaimResult, EscrowState, FinalizedBlockIdentity,
-    FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
+    AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip,
+    ClassifyFinalizedWitnessedClaimResult, ClassifyFinalizedWitnessedFundingResult, EscrowState,
+    FinalizedBlockIdentity, FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
     FinalizedWitnessedClaimScanOutcome, FinalizedWitnessedFundingFacts,
-    FinalizedWitnessedFundingObservationTarget, Hex32, MAX_DISCOVERY_BLOCKS, NativeCustodyFacts,
-    NativeFundInstructionFacts, ObserveFinalizedWitnessedClaimRequest,
-    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
-    ObserveFinalizedWitnessedFundingResult, ObservedTransactionFacts,
-    WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
+    FinalizedWitnessedFundingObservationTarget, FinalizedWitnessedFundingScanOutcome, Hex32,
+    MAX_DISCOVERY_BLOCKS, NativeCustodyFacts, NativeFundInstructionFacts,
+    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
+    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
+    ObservedTransactionFacts, WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
 };
 use lez_zec_escrow_v02::{ClaimAuthority, EscrowMetadata, EscrowStatus};
 use nssa::{
@@ -644,7 +644,36 @@ impl FinalizedWitnessedFundingObserver {
         Self { runtime, indexer }
     }
 
-    /// Observes one exact or terms-discovered funding effect in a finalized window.
+    /// Preserves the original found-only finalized funding observer contract.
+    ///
+    /// Affirmative absence from [`Self::classify`] maps to the legacy
+    /// `Unavailable` error rather than changing the established response shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns every classifier failure and maps affirmative absence to
+    /// [`BridgeRuntimeError::Unavailable`].
+    pub async fn observe(
+        &self,
+        request: &ObserveFinalizedWitnessedFundingRequest,
+    ) -> Result<ObserveFinalizedWitnessedFundingResult, BridgeRuntimeError> {
+        let classified = self.classify(request).await?;
+        match classified.outcome {
+            FinalizedWitnessedFundingScanOutcome::Found { funding } => {
+                Ok(ObserveFinalizedWitnessedFundingResult::new(
+                    classified.context,
+                    ChainTip::new(
+                        classified.finalized_clock.block_hash,
+                        classified.finalized_clock.height,
+                    ),
+                    *funding,
+                ))
+            }
+            FinalizedWitnessedFundingScanOutcome::Absent {} => Err(BridgeRuntimeError::Unavailable),
+        }
+    }
+
+    /// Classifies one exact or terms-discovered funding effect in a finalized window.
     ///
     /// # Errors
     ///
@@ -652,29 +681,17 @@ impl FinalizedWitnessedFundingObserver {
     /// lookups, noncanonical funding transactions, ambiguous discovery, invalid
     /// historical funded state, or movement of the finalized tip. This method never
     /// submits a transaction.
-    pub async fn observe(
+    pub async fn classify(
         &self,
         request: &ObserveFinalizedWitnessedFundingRequest,
-    ) -> Result<ObserveFinalizedWitnessedFundingResult, BridgeRuntimeError> {
+    ) -> Result<ClassifyFinalizedWitnessedFundingResult, BridgeRuntimeError> {
         self.validate_request(request)?;
         let finalized_before = self
             .indexer
             .last_finalized_block_id()
             .await?
             .ok_or(BridgeRuntimeError::Unavailable)?;
-        let window_end = request
-            .window
-            .start_height()
-            .checked_add(u64::from(request.window.max_blocks() - 1))
-            .ok_or(BridgeRuntimeError::InvalidObservation)?;
-        if window_end > finalized_before
-            || finalized_before
-                .checked_sub(request.window.start_height())
-                .and_then(|distance| distance.checked_add(1))
-                .is_none_or(|length| length > u64::from(MAX_DISCOVERY_BLOCKS))
-        {
-            return Err(BridgeRuntimeError::Unavailable);
-        }
+        let window_end = Self::validated_window_end(request, finalized_before)?;
         let finalized_tip_before = self.read_finalized_block(finalized_before).await?;
 
         let mut found = None;
@@ -723,11 +740,14 @@ impl FinalizedWitnessedFundingObserver {
             }
         }
 
-        let (containing_header, transaction_index, public) =
-            found.ok_or(BridgeRuntimeError::Unavailable)?;
-        let funding = self
-            .validate_funding(request, &containing_header, transaction_index, &public)
-            .await?;
+        let funding = if let Some((containing_header, transaction_index, public)) = found {
+            Some(
+                self.validate_funding(request, &containing_header, transaction_index, &public)
+                    .await?,
+            )
+        } else {
+            None
+        };
 
         let finalized_after = self
             .indexer
@@ -741,14 +761,45 @@ impl FinalizedWitnessedFundingObserver {
         if tip_block != finalized_tip_before {
             return Err(BridgeRuntimeError::MovingTip);
         }
-        Ok(ObserveFinalizedWitnessedFundingResult::new(
-            request.context.clone(),
-            ChainTip::new(
-                Hex32::from_bytes(tip_block.header.hash.0),
-                tip_block.header.block_id,
-            ),
-            funding,
-        ))
+        let finalized_clock = ChainClock::new(
+            Hex32::from_bytes(tip_block.header.hash.0),
+            tip_block.header.block_id,
+            tip_block.header.timestamp,
+        );
+        Ok(if let Some(funding) = funding {
+            ClassifyFinalizedWitnessedFundingResult::found(
+                request.context.clone(),
+                finalized_clock,
+                request.window,
+                funding,
+            )
+        } else {
+            ClassifyFinalizedWitnessedFundingResult::absent(
+                request.context.clone(),
+                finalized_clock,
+                request.window,
+            )
+        })
+    }
+
+    fn validated_window_end(
+        request: &ObserveFinalizedWitnessedFundingRequest,
+        finalized_before: u64,
+    ) -> Result<u64, BridgeRuntimeError> {
+        let window_end = request
+            .window
+            .start_height()
+            .checked_add(u64::from(request.window.max_blocks() - 1))
+            .ok_or(BridgeRuntimeError::InvalidObservation)?;
+        let covered_length = finalized_before
+            .checked_sub(request.window.start_height())
+            .and_then(|distance| distance.checked_add(1));
+        if window_end > finalized_before
+            || covered_length.is_none_or(|length| length > u64::from(MAX_DISCOVERY_BLOCKS))
+        {
+            return Err(BridgeRuntimeError::Unavailable);
+        }
+        Ok(window_end)
     }
 
     fn validate_request(

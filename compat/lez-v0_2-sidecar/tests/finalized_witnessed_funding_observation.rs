@@ -18,9 +18,12 @@ use indexer_service_protocol::{
     WitnessSet as IndexedWitnessSet,
 };
 use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
-use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
+use lez_bridge_client::{
+    BridgeClient, BridgeClientConfig, FinalizedWitnessedFundingPresence, SidecarCapability,
+};
 use lez_bridge_protocol::{
-    DiscoveryWindow, FinalizedWitnessedFundingObservationTarget, Hex32, MessageContext,
+    ChainClock, DiscoveryWindow, FinalizedWitnessedFundingObservationTarget,
+    FinalizedWitnessedFundingScanOutcome, Hex32, MessageContext,
     ObserveFinalizedWitnessedFundingRequest, Participant, RequestId, RunId, RuntimeCompatibility,
     RuntimeDescriptor, TransactionId, WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
 };
@@ -519,6 +522,122 @@ async fn unique_funding_is_discovered_from_terms_without_peer_transaction_id() {
 }
 
 #[tokio::test]
+async fn classifier_distinguishes_exact_funding_from_affirmative_stable_absence() {
+    let present_fixture = fixture();
+    let request = peerless_request(&present_fixture);
+    let observer = FinalizedWitnessedFundingObserver::new(
+        present_fixture.runtime.clone(),
+        indexer(
+            &present_fixture,
+            [Some(FINALIZED_TIP_ID), Some(FINALIZED_TIP_ID)],
+        ),
+    );
+    let found = observer.classify(&request).await.unwrap();
+    assert_eq!(found.scanned_window, request.window);
+    assert_eq!(
+        found.finalized_clock,
+        ChainClock::new(
+            Hex32::from_bytes([11; 32]),
+            FINALIZED_TIP_ID,
+            1_850_000_000_011
+        )
+    );
+    assert!(matches!(
+        found.outcome,
+        FinalizedWitnessedFundingScanOutcome::Found { funding }
+            if funding.instruction.swap_id == request.terms.swap_id()
+                && funding.containing_block.block_id == FUNDING_BLOCK_ID
+    ));
+
+    let mut absent_fixture = fixture();
+    absent_fixture.blocks[0].body.transactions.clear();
+    let absent_request = peerless_request(&absent_fixture);
+    let observer = FinalizedWitnessedFundingObserver::new(
+        absent_fixture.runtime.clone(),
+        indexer(
+            &absent_fixture,
+            [Some(FINALIZED_TIP_ID), Some(FINALIZED_TIP_ID)],
+        ),
+    );
+    let absent = observer.classify(&absent_request).await.unwrap();
+    assert_eq!(absent.scanned_window, absent_request.window);
+    assert_eq!(
+        absent.finalized_clock,
+        ChainClock::new(
+            Hex32::from_bytes([11; 32]),
+            FINALIZED_TIP_ID,
+            1_850_000_000_011
+        )
+    );
+    assert!(matches!(
+        absent.outcome,
+        FinalizedWitnessedFundingScanOutcome::Absent {}
+    ));
+}
+
+#[tokio::test]
+async fn classifier_never_collapses_unavailable_moving_or_malformed_evidence_into_absence() {
+    let base_fixture = fixture();
+    let observer = FinalizedWitnessedFundingObserver::new(
+        base_fixture.runtime.clone(),
+        indexer(&base_fixture, [None]),
+    );
+    assert_eq!(
+        observer.classify(&base_fixture.request).await.unwrap_err(),
+        BridgeRuntimeError::Unavailable
+    );
+
+    let observer = FinalizedWitnessedFundingObserver::new(
+        base_fixture.runtime.clone(),
+        indexer(&base_fixture, [Some(FINALIZED_TIP_ID), Some(12)]),
+    );
+    assert_eq!(
+        observer.classify(&base_fixture.request).await.unwrap_err(),
+        BridgeRuntimeError::MovingTip
+    );
+
+    let mut malformed = fixture();
+    mutate_metadata(&mut malformed, |metadata| metadata.amount += 1);
+    let observer = FinalizedWitnessedFundingObserver::new(
+        malformed.runtime.clone(),
+        indexer(&malformed, [Some(FINALIZED_TIP_ID), Some(FINALIZED_TIP_ID)]),
+    );
+    assert_eq!(
+        observer.classify(&malformed.request).await.unwrap_err(),
+        BridgeRuntimeError::InvalidObservation
+    );
+}
+
+fn assert_classified_funding_id(
+    classified: FinalizedWitnessedFundingPresence,
+    expected: TransactionId,
+) {
+    assert!(matches!(
+        classified,
+        FinalizedWitnessedFundingPresence::Found {
+            finalized_clock: ChainClock { timestamp_ms: 1_850_000_000_011, .. },
+            funding,
+            ..
+        } if funding.transaction.transaction_id == expected
+    ));
+}
+
+fn funding_bridge_client(
+    endpoint: &str,
+    run_id: &RunId,
+    runtime: &RuntimeDescriptor,
+) -> BridgeClient {
+    BridgeClient::connect(BridgeClientConfig::new(
+        endpoint,
+        SidecarCapability::new(BRIDGE_CAPABILITY).unwrap(),
+        run_id.clone(),
+        runtime.clone(),
+        Duration::from_secs(2),
+    ))
+    .unwrap()
+}
+
+#[tokio::test]
 async fn authenticated_bridge_server_observation_is_repeatable_and_never_submits() {
     let fixture = fixture();
     let expected_funding_transaction_id =
@@ -583,16 +702,10 @@ async fn authenticated_bridge_server_observation_is_repeatable_and_never_submits
     .await
     .unwrap();
 
-    let observe = |endpoint: &str| {
-        BridgeClient::connect(BridgeClientConfig::new(
-            endpoint,
-            SidecarCapability::new(BRIDGE_CAPABILITY).unwrap(),
-            run_id.clone(),
-            runtime_descriptor.clone(),
-            Duration::from_secs(2),
-        ))
-        .unwrap()
-    };
+    let observe = |endpoint: &str| funding_bridge_client(endpoint, &run_id, &runtime_descriptor);
+    let mut classify_request = request.clone();
+    classify_request.context.request_id =
+        RequestId::new("finalized-funding-classify-0001").unwrap();
     let first = observe(bridge.endpoint())
         .observe_finalized_witnessed_funding(request.clone())
         .await
@@ -602,7 +715,13 @@ async fn authenticated_bridge_server_observation_is_repeatable_and_never_submits
         .await
         .unwrap();
 
+    let classified = observe(bridge.endpoint())
+        .classify_finalized_witnessed_funding(classify_request)
+        .await
+        .unwrap();
+
     assert_eq!(first, second);
+    assert_classified_funding_id(classified, expected_funding_transaction_id);
     assert_eq!(
         first.funding.transaction.transaction_id,
         expected_funding_transaction_id
@@ -615,8 +734,8 @@ async fn authenticated_bridge_server_observation_is_repeatable_and_never_submits
             .iter()
             .filter(|call| call.as_str() == "tip")
             .count(),
-        4,
-        "repeatable observation must execute a fresh stable-tip read"
+        6,
+        "repeatable observation and classification must execute fresh stable-tip reads"
     );
     assert_eq!(submission_calls.load(Ordering::SeqCst), 0);
 

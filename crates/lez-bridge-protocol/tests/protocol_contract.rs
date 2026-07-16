@@ -1,18 +1,19 @@
 use lez_bridge_protocol::{
     AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip,
-    ClassifyFinalizedWitnessedClaimResult, CompleteWitnessedClaimRequest,
-    CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult, DiscoveryWindow,
-    ErrorCode, ErrorMessage, EscrowMetadataFacts, EscrowObservationTarget, EscrowState,
-    ExactMessageBytes, ExactTransactionBytes, FinalizedBlockIdentity, FinalizedWitnessedClaimFacts,
-    FinalizedWitnessedClaimObservationTarget, FinalizedWitnessedClaimScanOutcome,
-    FinalizedWitnessedFundingFacts, FinalizedWitnessedFundingObservationTarget, FundingFoundFacts,
-    FundingObservation, Hex32, InitializationFoundFacts, InitializationObservation,
-    MAX_DISCOVERY_BLOCKS, MessageContext, NativeAmount, NativeClaimInstructionFacts,
-    NativeCustodyFacts, NativeEscrowAccountFacts, NativeEscrowAccountObservation,
-    NativeEscrowTerms, NativeEscrowTermsInput, NativeFundInstructionFacts,
-    NativeInitializeInstructionFacts, NativeRefundFoundFacts, NativeRefundInstructionFacts,
-    NativeRefundObservation, NativeRefundObservationTarget, ObserveEscrowRequest,
-    ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    ClassifyFinalizedWitnessedClaimResult, ClassifyFinalizedWitnessedFundingResult,
+    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
+    DescribeRuntimeResult, DiscoveryWindow, ErrorCode, ErrorMessage, EscrowMetadataFacts,
+    EscrowObservationTarget, EscrowState, ExactMessageBytes, ExactTransactionBytes,
+    FinalizedBlockIdentity, FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
+    FinalizedWitnessedClaimScanOutcome, FinalizedWitnessedFundingFacts,
+    FinalizedWitnessedFundingObservationTarget, FinalizedWitnessedFundingScanOutcome,
+    FundingFoundFacts, FundingObservation, Hex32, InitializationFoundFacts,
+    InitializationObservation, MAX_DISCOVERY_BLOCKS, MessageContext, NativeAmount,
+    NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
+    NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
+    NativeFundInstructionFacts, NativeInitializeInstructionFacts, NativeRefundFoundFacts,
+    NativeRefundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
+    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
     ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
     ObserveFinalizedWitnessedFundingResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
     ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
@@ -124,6 +125,74 @@ fn finalized_witnessed_funding_wire_is_strict_bounded_and_complete() {
     unknown_result["funding"]["unexpected"] = serde_json::json!(true);
     assert!(
         serde_json::from_value::<ObserveFinalizedWitnessedFundingResult>(unknown_result).is_err()
+    );
+}
+
+#[test]
+fn finalized_witnessed_funding_classifier_wire_has_only_found_or_absent_successes() {
+    let terms = WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
+        swap_id: h(60),
+        terms_hash: h(61),
+        depositor: Participant::Maker,
+        depositor_account_id: h(62),
+        claimant: Participant::Taker,
+        claimant_account_id: h(63),
+        aggregate_authority_account_id: h(64),
+        aggregate_x_only_public_key: h(65),
+        amount: 125,
+        refund_at_ms: 1_850_000_001_123,
+        authenticated_transfer_program_id: h(66),
+    })
+    .unwrap();
+    let window = DiscoveryWindow::new(68, 3).unwrap();
+    let found = ClassifyFinalizedWitnessedFundingResult::found(
+        context(),
+        ChainClock::new(h(73), 70, 1_850_000_001_470),
+        window,
+        finalized_witnessed_funding_facts(&terms),
+    );
+    let absent = ClassifyFinalizedWitnessedFundingResult::absent(
+        context(),
+        ChainClock::new(h(73), 70, 1_850_000_001_470),
+        window,
+    );
+
+    assert!(matches!(
+        found.outcome,
+        FinalizedWitnessedFundingScanOutcome::Found { .. }
+    ));
+    assert_eq!(
+        serde_json::to_value(&absent).unwrap()["outcome"],
+        serde_json::json!({"status": "absent"})
+    );
+    assert_eq!(
+        serde_json::from_value::<ClassifyFinalizedWitnessedFundingResult>(
+            serde_json::to_value(found).unwrap()
+        )
+        .unwrap()
+        .finalized_clock
+        .timestamp_ms,
+        1_850_000_001_470
+    );
+    assert_eq!(
+        serde_json::from_value::<ClassifyFinalizedWitnessedFundingResult>(
+            serde_json::to_value(ClassifyFinalizedWitnessedFundingResult::absent(
+                context(),
+                ChainClock::new(h(73), 70, 1_850_000_001_470),
+                window,
+            ))
+            .unwrap()
+        )
+        .unwrap()
+        .scanned_window,
+        window
+    );
+
+    let mut unknown = serde_json::to_value(absent).unwrap();
+    unknown["outcome"]["reason"] = serde_json::json!("rpc_failed");
+    assert!(
+        serde_json::from_value::<ClassifyFinalizedWitnessedFundingResult>(unknown).is_err(),
+        "failures must not fit the affirmative-absence wire shape"
     );
 }
 

@@ -8,39 +8,40 @@ use jsonrpsee::{RpcModule, types::ErrorObjectOwned};
 use lez_bridge_client::{
     BridgeClient, BridgeClientConfig, BridgeClientError, BridgeOperation,
     FinalizedWitnessedClaimPresence, FinalizedWitnessedClaimUnavailable,
-    FinalizedWitnessedClaimUncertain, MAX_RPC_BODY_BYTES,
-    METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM, METHOD_COMPLETE_WITNESSED_CLAIM,
-    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
-    METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING, METHOD_OBSERVE_NATIVE_REFUND,
-    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW,
-    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
-    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
-    SidecarCapability,
+    FinalizedWitnessedClaimUncertain, FinalizedWitnessedFundingPresence, MAX_RPC_BODY_BYTES,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM, METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
+    METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW,
+    METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
+    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
+    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
+    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
+    RUN_ID_HEADER, SIDECAR_ROLE_HEADER, SidecarCapability,
 };
 use lez_bridge_protocol::{
     AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip,
-    ClassifyFinalizedWitnessedClaimResult, CompleteWitnessedClaimRequest,
-    CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult, DiscoveryWindow,
-    ErrorCode, ErrorMessage, EscrowObservationTarget, EscrowState, ExactMessageBytes,
-    ExactTransactionBytes, FinalizedBlockIdentity, FinalizedWitnessedClaimFacts,
-    FinalizedWitnessedFundingFacts, FinalizedWitnessedFundingObservationTarget, FundingObservation,
-    Hex32, InitializationObservation, MessageContext, NativeCustodyFacts,
-    NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
-    NativeFundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
-    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
-    ObserveFinalizedWitnessedFundingResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
-    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
-    ObserveWitnessedEscrowResult, ObservedTransactionFacts, Participant,
-    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
-    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
-    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
-    RequestId, RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage,
-    RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
-    SubmitTransactionResult, TransactionId, WitnessedClaimInstructionFacts,
-    WitnessedEscrowMetadataFacts, WitnessedFundingObservation, WitnessedInitializationObservation,
-    WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
+    ClassifyFinalizedWitnessedClaimResult, ClassifyFinalizedWitnessedFundingResult,
+    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
+    DescribeRuntimeResult, DiscoveryWindow, ErrorCode, ErrorMessage, EscrowObservationTarget,
+    EscrowState, ExactMessageBytes, ExactTransactionBytes, FinalizedBlockIdentity,
+    FinalizedWitnessedClaimFacts, FinalizedWitnessedFundingFacts,
+    FinalizedWitnessedFundingObservationTarget, FundingObservation, Hex32,
+    InitializationObservation, MessageContext, NativeCustodyFacts, NativeEscrowAccountObservation,
+    NativeEscrowTerms, NativeEscrowTermsInput, NativeFundInstructionFacts, NativeRefundObservation,
+    NativeRefundObservationTarget, ObserveEscrowRequest, ObserveEscrowResult,
+    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
+    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
+    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
+    ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
+    ObservedTransactionFacts, Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
+    PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
+    PrepareRevealingClaimResult, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
+    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
+    PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RevealingClaimObservation,
+    RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
+    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
+    TransactionId, WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
+    WitnessedFundingObservation, WitnessedInitializationObservation, WitnessedNativeEscrowTerms,
+    WitnessedNativeEscrowTermsInput,
 };
 use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
 use serde_json::json;
@@ -95,6 +96,7 @@ enum Behavior {
     PresenceUnavailable,
     PresenceMovingTip,
     PresenceWrongWindow,
+    FundingPresenceZeroTimestamp,
 }
 
 #[derive(Clone, Debug)]
@@ -215,6 +217,7 @@ fn register_methods(module: &mut RpcModule<Fixture>) {
 fn register_existing_transaction_methods(module: &mut RpcModule<Fixture>) {
     register_witnessed_escrow_method(module);
     register_finalized_witnessed_funding_method(module);
+    register_finalized_witnessed_funding_presence_method(module);
     register_finalized_witnessed_claim_method(module);
     register_finalized_witnessed_claim_presence_method(module);
     module
@@ -460,6 +463,65 @@ fn register_finalized_witnessed_funding_method(module: &mut RpcModule<Fixture>) 
             },
         )
         .expect("observe finalized witnessed funding method");
+}
+
+fn register_finalized_witnessed_funding_presence_method(module: &mut RpcModule<Fixture>) {
+    module
+        .register_async_method(
+            METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
+            |params, fixture, _| async move {
+                let request: ObserveFinalizedWitnessedFundingRequest = params.one()?;
+                fixture.record(METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING);
+                if matches!(fixture.behavior, Behavior::SlowPresence) {
+                    tokio::time::sleep(TIMEOUT_TEST_SERVER_DELAY).await;
+                }
+                if matches!(fixture.behavior, Behavior::PresenceUnavailable) {
+                    return Err(typed_remote_error(request.context));
+                }
+                if matches!(fixture.behavior, Behavior::PresenceMovingTip) {
+                    return Err(ErrorObjectOwned::owned(
+                        -32_010,
+                        "LEZ bridge request failed",
+                        Some(ProtocolErrorReply::new(
+                            request.context,
+                            ErrorCode::MovingTip,
+                            ErrorMessage::new("stable finalized tip moved").unwrap(),
+                        )),
+                    ));
+                }
+                let observed = finalized_witnessed_funding_result(&request, fixture.behavior);
+                let scanned_window = if matches!(fixture.behavior, Behavior::PresenceWrongWindow) {
+                    DiscoveryWindow::new(request.window.start_height() + 1, 1).unwrap()
+                } else {
+                    request.window
+                };
+                let finalized_clock = ChainClock::new(
+                    observed.finalized_tip.block_hash,
+                    observed.finalized_tip.height,
+                    if matches!(fixture.behavior, Behavior::FundingPresenceZeroTimestamp) {
+                        0
+                    } else {
+                        1_850_000_000_062
+                    },
+                );
+                let result = if matches!(fixture.behavior, Behavior::PresenceNotFound) {
+                    ClassifyFinalizedWitnessedFundingResult::absent(
+                        observed.context,
+                        finalized_clock,
+                        scanned_window,
+                    )
+                } else {
+                    ClassifyFinalizedWitnessedFundingResult::found(
+                        observed.context,
+                        finalized_clock,
+                        scanned_window,
+                        observed.funding,
+                    )
+                };
+                Ok::<_, ErrorObjectOwned>(result)
+            },
+        )
+        .expect("classify finalized witnessed funding method");
 }
 
 fn register_finalized_witnessed_claim_method(module: &mut RpcModule<Fixture>) {
@@ -974,6 +1036,28 @@ async fn round_trip_finalized_witnessed_claim(
     assert!(!presence.authorizes_initial_submission());
 }
 
+async fn round_trip_finalized_witnessed_funding_presence(
+    client: &BridgeClient,
+    run: &RunId,
+    expected_runtime: &RuntimeDescriptor,
+) {
+    let presence = client
+        .classify_finalized_witnessed_funding(
+            ObserveFinalizedWitnessedFundingRequest::discover_by_terms(
+                context(run, Participant::Maker, "classify-finalized-funding"),
+                expected_runtime.clone(),
+                witnessed_deposit_terms(expected_runtime),
+                DiscoveryWindow::new(60, 1).unwrap(),
+            ),
+        )
+        .await
+        .expect("classify finalized funding");
+    assert!(matches!(
+        presence,
+        FinalizedWitnessedFundingPresence::Found { .. }
+    ));
+}
+
 async fn round_trip_finalized_witnessed_funding(
     client: &BridgeClient,
     run: &RunId,
@@ -1333,6 +1417,172 @@ async fn finalized_witnessed_claim_rejects_signature_key_and_message_mutations()
     }
 }
 
+async fn classify_funding_for_behavior(
+    behavior: Behavior,
+    suffix: &str,
+) -> Result<FinalizedWitnessedFundingPresence, BridgeClientError> {
+    let expected_runtime = runtime(Participant::Maker, 32);
+    let sidecar = spawn_sidecar(expected_runtime.clone(), MAKER_CAPABILITY, behavior).await;
+    let run = RunId::new(TEST_RUN).expect("run id");
+    let timeout = if matches!(behavior, Behavior::SlowPresence) {
+        TIMEOUT_TEST_CLIENT_DEADLINE
+    } else {
+        Duration::from_secs(1)
+    };
+    let client = client(
+        &sidecar.endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        expected_runtime.clone(),
+        timeout,
+    );
+    let result = client
+        .classify_finalized_witnessed_funding(
+            ObserveFinalizedWitnessedFundingRequest::discover_by_terms(
+                context(&run, Participant::Maker, suffix),
+                expected_runtime.clone(),
+                witnessed_deposit_terms(&expected_runtime),
+                DiscoveryWindow::new(60, 2).unwrap(),
+            ),
+        )
+        .await;
+    if matches!(behavior, Behavior::SlowPresence) {
+        tokio::time::sleep(TIMEOUT_TEST_DRAIN).await;
+    }
+    result
+}
+
+#[tokio::test]
+async fn finalized_witnessed_funding_classifier_has_only_found_or_affirmative_absent_successes() {
+    let found = classify_funding_for_behavior(Behavior::Happy, "funding-presence-found")
+        .await
+        .unwrap();
+    assert!(matches!(
+        found,
+        FinalizedWitnessedFundingPresence::Found {
+            finalized_clock: ChainClock {
+                height: 62,
+                timestamp_ms: 1_850_000_000_062,
+                ..
+            },
+            scanned_window,
+            funding,
+            ..
+        } if scanned_window == DiscoveryWindow::new(60, 2).unwrap()
+            && funding.transaction.transaction_id == txid(90)
+    ));
+
+    let absent =
+        classify_funding_for_behavior(Behavior::PresenceNotFound, "funding-presence-absent")
+            .await
+            .unwrap();
+    assert!(matches!(
+        absent,
+        FinalizedWitnessedFundingPresence::Absent {
+            finalized_clock: ChainClock {
+                height: 62,
+                timestamp_ms: 1_850_000_000_062,
+                ..
+            },
+            scanned_window,
+            ..
+        } if scanned_window == DiscoveryWindow::new(60, 2).unwrap()
+    ));
+}
+
+#[tokio::test]
+async fn finalized_witnessed_funding_classifier_keeps_failures_typed_and_fail_closed() {
+    for (behavior, suffix, expected_code) in [
+        (
+            Behavior::PresenceUnavailable,
+            "funding-presence-unavailable",
+            ErrorCode::Unavailable,
+        ),
+        (
+            Behavior::PresenceMovingTip,
+            "funding-presence-moving",
+            ErrorCode::MovingTip,
+        ),
+    ] {
+        let error = classify_funding_for_behavior(behavior, suffix)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            BridgeClientError::Remote(remote) if remote.code() == expected_code
+        ));
+    }
+
+    assert!(matches!(
+        classify_funding_for_behavior(Behavior::SlowPresence, "funding-presence-timeout")
+            .await
+            .unwrap_err(),
+        BridgeClientError::Timeout {
+            operation: BridgeOperation::ClassifyFinalizedWitnessedFunding,
+        }
+    ));
+
+    for (behavior, suffix) in [
+        (Behavior::PresenceWrongWindow, "funding-presence-window"),
+        (
+            Behavior::MutatedFinalizedFundingMetadata,
+            "funding-presence-malformed",
+        ),
+        (
+            Behavior::FundingPresenceZeroTimestamp,
+            "funding-presence-zero-clock",
+        ),
+    ] {
+        assert!(matches!(
+            classify_funding_for_behavior(behavior, suffix)
+                .await
+                .unwrap_err(),
+            BridgeClientError::MalformedObservation {
+                operation: BridgeOperation::ClassifyFinalizedWitnessedFunding,
+            }
+        ));
+    }
+
+    assert!(matches!(
+        classify_funding_for_behavior(Behavior::WrongEcho, "funding-presence-correlation")
+            .await
+            .unwrap_err(),
+        BridgeClientError::ResponseContextMismatch {
+            operation: BridgeOperation::ClassifyFinalizedWitnessedFunding,
+        }
+    ));
+
+    let expected_runtime = runtime(Participant::Maker, 32);
+    let stopped = spawn_sidecar(expected_runtime.clone(), MAKER_CAPABILITY, Behavior::Happy).await;
+    let endpoint = stopped.endpoint.clone();
+    stopped.handle.stop().expect("stop mock sidecar");
+    stopped.handle.stopped().await;
+    let run = RunId::new(TEST_RUN).expect("run id");
+    let stopped_client = client(
+        &endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        expected_runtime.clone(),
+        Duration::from_millis(50),
+    );
+    assert!(matches!(
+        stopped_client
+            .classify_finalized_witnessed_funding(
+                ObserveFinalizedWitnessedFundingRequest::discover_by_terms(
+                    context(&run, Participant::Maker, "funding-presence-transport",),
+                    expected_runtime.clone(),
+                    witnessed_deposit_terms(&expected_runtime),
+                    DiscoveryWindow::new(60, 2).unwrap(),
+                ),
+            )
+            .await
+            .unwrap_err(),
+        BridgeClientError::Transport {
+            operation: BridgeOperation::ClassifyFinalizedWitnessedFunding,
+        }
+    ));
+}
+
 async fn classify_presence_for_behavior(
     behavior: Behavior,
     suffix: &str,
@@ -1458,6 +1708,7 @@ fn assert_all_method_calls(fixture: &Fixture) {
         METHOD_PREPARE_WITNESSED_CLAIM,
         METHOD_COMPLETE_WITNESSED_CLAIM,
         METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
+        METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
         METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
         METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM,
         METHOD_PREPARE_NATIVE_REFUND,
@@ -1552,6 +1803,8 @@ async fn all_versioned_methods_round_trip_typed_protocol_values_once() {
     .await;
 
     round_trip_finalized_witnessed_funding(&client, &run, &expected_runtime).await;
+
+    round_trip_finalized_witnessed_funding_presence(&client, &run, &expected_runtime).await;
 
     round_trip_finalized_witnessed_claim(
         &client,
