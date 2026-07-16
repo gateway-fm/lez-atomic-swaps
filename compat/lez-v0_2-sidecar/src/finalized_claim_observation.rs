@@ -11,14 +11,18 @@ use indexer_service_protocol::{
 use indexer_service_rpc::RpcClient as _;
 use lez_bridge_protocol::{
     AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip,
-    ClassifyFinalizedWitnessedClaimResult, ClassifyFinalizedWitnessedFundingResult, EscrowState,
-    FinalizedBlockIdentity, FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
+    ClassifyFinalizedWitnessedClaimResult, ClassifyFinalizedWitnessedFundingResult,
+    ClassifyFinalizedWitnessedInitializationRequest,
+    ClassifyFinalizedWitnessedInitializationResult, EscrowState, FinalizedBlockIdentity,
+    FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
     FinalizedWitnessedClaimScanOutcome, FinalizedWitnessedFundingFacts,
-    FinalizedWitnessedFundingObservationTarget, FinalizedWitnessedFundingScanOutcome, Hex32,
-    MAX_DISCOVERY_BLOCKS, NativeCustodyFacts, NativeFundInstructionFacts,
-    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
-    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
-    ObservedTransactionFacts, WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
+    FinalizedWitnessedFundingObservationTarget, FinalizedWitnessedFundingScanOutcome,
+    FinalizedWitnessedInitializationFacts, Hex32, MAX_DISCOVERY_BLOCKS, NativeCustodyFacts,
+    NativeFundInstructionFacts, ObserveFinalizedWitnessedClaimRequest,
+    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
+    ObserveFinalizedWitnessedFundingResult, ObservedTransactionFacts,
+    WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
+    WitnessedNativeInitializeInstructionFacts,
 };
 use lez_zec_escrow_v02::{ClaimAuthority, EscrowMetadata, EscrowStatus};
 use nssa::{
@@ -58,6 +62,105 @@ pub trait FinalizedIndexerApi: Send + Sync + fmt::Debug {
         account_id: [u8; 32],
         block_id: u64,
     ) -> Result<IndexedAccount, BridgeRuntimeError>;
+}
+
+struct StableFinalizedWindow {
+    blocks: Vec<Block>,
+    finalized_clock: ChainClock,
+    finalized_tip: Block,
+    requested_end: u64,
+}
+
+impl StableFinalizedWindow {
+    async fn confirm_unchanged(
+        &self,
+        indexer: &dyn FinalizedIndexerApi,
+    ) -> Result<(), BridgeRuntimeError> {
+        let finalized_after = indexer
+            .last_finalized_block_id()
+            .await?
+            .ok_or(BridgeRuntimeError::Unavailable)?;
+        if finalized_after != self.finalized_tip.header.block_id {
+            return Err(BridgeRuntimeError::MovingTip);
+        }
+        let finalized_tip_after = read_finalized_block(indexer, finalized_after).await?;
+        if finalized_tip_after != self.finalized_tip {
+            return Err(BridgeRuntimeError::MovingTip);
+        }
+        Ok(())
+    }
+}
+
+async fn read_stable_finalized_window(
+    indexer: &dyn FinalizedIndexerApi,
+    window: lez_bridge_protocol::DiscoveryWindow,
+) -> Result<StableFinalizedWindow, BridgeRuntimeError> {
+    let finalized_before = indexer
+        .last_finalized_block_id()
+        .await?
+        .ok_or(BridgeRuntimeError::Unavailable)?;
+    let requested_end = window
+        .start_height()
+        .checked_add(u64::from(window.max_blocks() - 1))
+        .ok_or(BridgeRuntimeError::InvalidObservation)?;
+    let covered_length = finalized_before
+        .checked_sub(window.start_height())
+        .and_then(|distance| distance.checked_add(1));
+    if requested_end > finalized_before
+        || covered_length.is_none_or(|length| length > u64::from(MAX_DISCOVERY_BLOCKS))
+    {
+        return Err(BridgeRuntimeError::Unavailable);
+    }
+
+    let finalized_tip_before = read_finalized_block(indexer, finalized_before).await?;
+    let mut blocks = Vec::with_capacity(
+        usize::try_from(covered_length.unwrap_or_default())
+            .map_err(|_| BridgeRuntimeError::Unavailable)?,
+    );
+    let mut previous_hash = None;
+    for block_id in window.start_height()..=finalized_before {
+        let block = read_finalized_block(indexer, block_id).await?;
+        if block_id == finalized_before && block != finalized_tip_before {
+            return Err(BridgeRuntimeError::MovingTip);
+        }
+        if previous_hash.is_some_and(|hash| block.header.prev_block_hash != hash) {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+        previous_hash = Some(block.header.hash);
+        blocks.push(block);
+    }
+
+    Ok(StableFinalizedWindow {
+        finalized_clock: ChainClock::new(
+            Hex32::from_bytes(finalized_tip_before.header.hash.0),
+            finalized_tip_before.header.block_id,
+            finalized_tip_before.header.timestamp,
+        ),
+        finalized_tip: finalized_tip_before,
+        blocks,
+        requested_end,
+    })
+}
+
+async fn read_finalized_block(
+    indexer: &dyn FinalizedIndexerApi,
+    block_id: u64,
+) -> Result<Block, BridgeRuntimeError> {
+    let by_id = indexer
+        .block_by_id(block_id)
+        .await?
+        .ok_or(BridgeRuntimeError::Unavailable)?;
+    if by_id.header.block_id != block_id || by_id.bedrock_status != BedrockStatus::Finalized {
+        return Err(BridgeRuntimeError::InvalidObservation);
+    }
+    let by_hash = indexer
+        .block_by_hash(by_id.header.hash.0)
+        .await?
+        .ok_or(BridgeRuntimeError::Unavailable)?;
+    if by_hash != by_id {
+        return Err(BridgeRuntimeError::InvalidObservation);
+    }
+    Ok(by_id)
 }
 
 /// Direct, bounded, no-retry client for the pinned official v0.2 indexer RPC.
@@ -620,6 +723,321 @@ impl FinalizedWitnessedClaimObserver {
     }
 }
 
+/// Fail-closed observer for one exact witnessed initialization in finalized ancestry.
+pub struct FinalizedWitnessedInitializationObserver {
+    runtime: lez_bridge_protocol::RuntimeDescriptor,
+    indexer: Arc<dyn FinalizedIndexerApi>,
+}
+
+impl fmt::Debug for FinalizedWitnessedInitializationObserver {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FinalizedWitnessedInitializationObserver")
+            .field("runtime", &self.runtime)
+            .finish_non_exhaustive()
+    }
+}
+
+impl FinalizedWitnessedInitializationObserver {
+    /// Binds one immutable depositor/runtime identity to one read-only finalized source.
+    pub fn new(
+        runtime: lez_bridge_protocol::RuntimeDescriptor,
+        indexer: Arc<dyn FinalizedIndexerApi>,
+    ) -> Self {
+        Self { runtime, indexer }
+    }
+
+    /// Classifies the caller-owned exact initialization in stable finalized ancestry.
+    ///
+    /// A finalized miss is deliberately `Uncertain`: the pinned v0.2 current
+    /// lookup cannot distinguish pending presence from absence. The composed
+    /// runtime performs that exact current lookup as an additional conflict and
+    /// malformed-fact check before returning this result.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on actor/runtime drift, incomplete or moving finalized
+    /// history, exact-byte substitution, signer/instruction/account drift,
+    /// conflicting same-swap initialization, or invalid historical Empty state.
+    pub async fn classify(
+        &self,
+        request: &ClassifyFinalizedWitnessedInitializationRequest,
+    ) -> Result<ClassifyFinalizedWitnessedInitializationResult, BridgeRuntimeError> {
+        self.validate_request(request)?;
+        let stable = read_stable_finalized_window(self.indexer.as_ref(), request.window).await?;
+        let mut found = None;
+        for block in &stable.blocks {
+            if block.header.block_id > stable.requested_end {
+                continue;
+            }
+            for (transaction_index, transaction) in block.body.transactions.iter().enumerate() {
+                if transaction.hash().0 == *request.initialization.transaction_id.as_bytes() {
+                    let IndexedTransaction::Public(public) = transaction else {
+                        return Err(BridgeRuntimeError::InvalidObservation);
+                    };
+                    let facts = self
+                        .validate_initialization(request, &block.header, transaction_index, public)
+                        .await?;
+                    if found.replace(facts).is_some() {
+                        return Err(BridgeRuntimeError::AmbiguousDiscovery);
+                    }
+                } else if let IndexedTransaction::Public(public) = transaction
+                    && self.matches_same_swap_initialization(request, public)
+                {
+                    return Err(BridgeRuntimeError::ConflictingDiscovery);
+                }
+            }
+        }
+        stable.confirm_unchanged(self.indexer.as_ref()).await?;
+        Ok(if let Some(initialization) = found {
+            ClassifyFinalizedWitnessedInitializationResult::found(
+                request.context.clone(),
+                stable.finalized_clock,
+                request.window,
+                initialization,
+            )
+        } else {
+            ClassifyFinalizedWitnessedInitializationResult::uncertain(
+                request.context.clone(),
+                stable.finalized_clock,
+                request.window,
+            )
+        })
+    }
+
+    fn validate_request(
+        &self,
+        request: &ClassifyFinalizedWitnessedInitializationRequest,
+    ) -> Result<(), BridgeRuntimeError> {
+        if request.runtime != self.runtime
+            || request.context.sidecar_role != self.runtime.sidecar_role
+            || self.runtime.sidecar_role != request.terms.depositor()
+            || self.runtime.signer_account_id != request.terms.depositor_account_id()
+            || request.initialization.transaction_id == request.funding_transaction_id
+            || request.initialization.exact_bytes.as_slice().is_empty()
+        {
+            return Err(BridgeRuntimeError::Planner);
+        }
+        let authority_key =
+            PublicKey::try_new(*request.terms.aggregate_x_only_public_key().as_bytes())
+                .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
+        if AccountId::from(&authority_key).into_value()
+            != *request.terms.aggregate_authority_account_id().as_bytes()
+        {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+        Ok(())
+    }
+
+    fn matches_same_swap_initialization(
+        &self,
+        request: &ClassifyFinalizedWitnessedInitializationRequest,
+        indexed: &IndexedPublicTransaction,
+    ) -> bool {
+        if indexed.message.program_id.0 != program_id_from_hex(self.runtime.escrow_program_id) {
+            return false;
+        }
+        let Ok(instruction) = risc0_zkvm::serde::from_slice::<ZecEscrowInstruction, u32>(
+            &indexed.message.instruction_data,
+        ) else {
+            return false;
+        };
+        matches!(
+            instruction,
+            ZecEscrowInstruction::InitializeNativeWitnessed { swap_id, .. }
+                if swap_id == *request.terms.swap_id().as_bytes()
+        )
+    }
+
+    async fn validate_initialization(
+        &self,
+        request: &ClassifyFinalizedWitnessedInitializationRequest,
+        block: &BlockHeader,
+        transaction_index: usize,
+        indexed: &IndexedPublicTransaction,
+    ) -> Result<FinalizedWitnessedInitializationFacts, BridgeRuntimeError> {
+        if indexed.hash.0 != *request.initialization.transaction_id.as_bytes()
+            || indexed.witness_set.proof.is_some()
+            || indexed.witness_set.signatures_and_public_keys.len() != 1
+        {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+        let public = decode_indexed_public(indexed)?;
+        if public.hash() != indexed.hash.0 {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+        LeeTransaction::Public(public.clone())
+            .transaction_stateless_check()
+            .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
+        self.validate_initialization_message(request, public.message())?;
+        let [(signature, key)] = public.witness_set().signatures_and_public_keys() else {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        };
+        if AccountId::from(key).into_value() != *request.terms.depositor_account_id().as_bytes()
+            || !signature.is_valid_for(&public.message().hash(), key)
+        {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+        let prepared = prepared_from_transaction(&public)?;
+        if prepared != request.initialization {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+        let ordered_account_ids = AccountIds::new(
+            public
+                .message()
+                .account_ids
+                .iter()
+                .map(|account| Hex32::from_bytes(account.into_value()))
+                .collect(),
+        )
+        .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
+        let transaction = ObservedTransactionFacts::new(
+            prepared.transaction_id,
+            prepared.exact_bytes,
+            ChainPosition::new(
+                Hex32::from_bytes(block.hash.0),
+                block.block_id,
+                u32::try_from(transaction_index)
+                    .map_err(|_| BridgeRuntimeError::InvalidObservation)?,
+            ),
+            AccountIds::new(vec![request.terms.depositor_account_id()])
+                .map_err(|_| BridgeRuntimeError::InvalidObservation)?,
+            true,
+        );
+        let (metadata, custody) = self.validate_empty_state(request, block.block_id).await?;
+        Ok(FinalizedWitnessedInitializationFacts::new(
+            transaction,
+            WitnessedNativeInitializeInstructionFacts::new(
+                self.runtime.escrow_program_id,
+                ordered_account_ids,
+                request.terms.clone(),
+            ),
+            FinalizedBlockIdentity::new(
+                block.block_id,
+                Hex32::from_bytes(block.hash.0),
+                block.timestamp,
+            ),
+            metadata,
+            custody,
+        ))
+    }
+
+    fn validate_initialization_message(
+        &self,
+        request: &ClassifyFinalizedWitnessedInitializationRequest,
+        message: &Message,
+    ) -> Result<(), BridgeRuntimeError> {
+        let escrow_program = program_id_from_hex(self.runtime.escrow_program_id);
+        let swap_id = request.terms.swap_id();
+        let expected_accounts = [
+            compute_metadata_pda(&escrow_program, swap_id.as_bytes()),
+            compute_custody_pda(&escrow_program, swap_id.as_bytes()),
+            AccountId::new(*request.terms.depositor_account_id().as_bytes()),
+            AccountId::new(*request.terms.claimant_account_id().as_bytes()),
+            AccountId::new(*request.terms.aggregate_authority_account_id().as_bytes()),
+        ];
+        let instruction =
+            risc0_zkvm::serde::from_slice::<ZecEscrowInstruction, u32>(&message.instruction_data)
+                .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
+        let exact_instruction = matches!(
+            instruction,
+            ZecEscrowInstruction::InitializeNativeWitnessed {
+                swap_id: observed_swap_id,
+                terms_hash,
+                aggregate_x_only_public_key,
+                amount,
+                refund_at,
+                authenticated_transfer_program,
+            } if observed_swap_id == *swap_id.as_bytes()
+                && terms_hash == *request.terms.terms_hash().as_bytes()
+                && aggregate_x_only_public_key
+                    == *request.terms.aggregate_x_only_public_key().as_bytes()
+                && amount == request.terms.amount().as_u128()
+                && refund_at == request.terms.refund_at_ms()
+                && authenticated_transfer_program
+                    == program_id_from_hex(
+                        request.terms.authenticated_transfer_program_id(),
+                    )
+        );
+        if message.program_id != escrow_program
+            || message.account_ids != expected_accounts
+            || message.nonces.len() != 1
+            || !exact_instruction
+        {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+        Ok(())
+    }
+
+    async fn validate_empty_state(
+        &self,
+        request: &ClassifyFinalizedWitnessedInitializationRequest,
+        block_id: u64,
+    ) -> Result<(WitnessedEscrowMetadataFacts, NativeCustodyFacts), BridgeRuntimeError> {
+        let escrow_program = program_id_from_hex(self.runtime.escrow_program_id);
+        let transfer_program =
+            program_id_from_hex(request.terms.authenticated_transfer_program_id());
+        let swap_id = request.terms.swap_id();
+        let metadata_id = compute_metadata_pda(&escrow_program, swap_id.as_bytes());
+        let custody_id = compute_custody_pda(&escrow_program, swap_id.as_bytes());
+        let metadata_account = self
+            .indexer
+            .account_at_block(metadata_id.into_value(), block_id)
+            .await?;
+        let custody_account = self
+            .indexer
+            .account_at_block(custody_id.into_value(), block_id)
+            .await?;
+        let metadata = EscrowMetadata::try_from_slice(metadata_account.data.0.as_ref())
+            .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
+        let ClaimAuthority::AggregateWitness {
+            x_only_public_key,
+            account_id,
+        } = metadata.claim_authority
+        else {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        };
+        if metadata_account.program_owner.0 != escrow_program
+            || metadata.version != 2
+            || metadata.swap_id != *swap_id.as_bytes()
+            || metadata.terms_hash != *request.terms.terms_hash().as_bytes()
+            || x_only_public_key != *request.terms.aggregate_x_only_public_key().as_bytes()
+            || account_id.into_value() != *request.terms.aggregate_authority_account_id().as_bytes()
+            || metadata.depositor.into_value() != *request.terms.depositor_account_id().as_bytes()
+            || metadata.depositor_asset != metadata.depositor
+            || metadata.claimant.into_value() != *request.terms.claimant_account_id().as_bytes()
+            || metadata.claimant_asset != metadata.claimant
+            || metadata.custody != custody_id
+            || metadata.asset_program != transfer_program
+            || metadata.custody_program != transfer_program
+            || metadata.asset_definition != [0; 32]
+            || metadata.amount != request.terms.amount().as_u128()
+            || metadata.refund_at != request.terms.refund_at_ms()
+            || metadata.status != EscrowStatus::Empty
+            || custody_account.program_owner.0 != transfer_program
+            || custody_account.balance != 0
+        {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+        let metadata_id = Hex32::from_bytes(metadata_id.into_value());
+        let custody_id = Hex32::from_bytes(custody_id.into_value());
+        Ok((
+            WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+                metadata_id,
+                self.runtime.escrow_program_id,
+                custody_id,
+                &request.terms,
+                EscrowState::Empty,
+            ),
+            NativeCustodyFacts::new(
+                custody_id,
+                program_id_to_hex(custody_account.program_owner.0),
+                custody_account.balance,
+            ),
+        ))
+    }
+}
+
 /// Fail-closed observer for one witnessed funding effect in one stable finalized window.
 pub struct FinalizedWitnessedFundingObserver {
     runtime: lez_bridge_protocol::RuntimeDescriptor,
@@ -686,26 +1104,11 @@ impl FinalizedWitnessedFundingObserver {
         request: &ObserveFinalizedWitnessedFundingRequest,
     ) -> Result<ClassifyFinalizedWitnessedFundingResult, BridgeRuntimeError> {
         self.validate_request(request)?;
-        let finalized_before = self
-            .indexer
-            .last_finalized_block_id()
-            .await?
-            .ok_or(BridgeRuntimeError::Unavailable)?;
-        let window_end = Self::validated_window_end(request, finalized_before)?;
-        let finalized_tip_before = self.read_finalized_block(finalized_before).await?;
+        let stable = read_stable_finalized_window(self.indexer.as_ref(), request.window).await?;
 
         let mut found = None;
-        let mut previous_hash = None;
-        for block_id in request.window.start_height()..=finalized_before {
-            let block = self.read_finalized_block(block_id).await?;
-            if block_id == finalized_before && block != finalized_tip_before {
-                return Err(BridgeRuntimeError::MovingTip);
-            }
-            if previous_hash.is_some_and(|hash| block.header.prev_block_hash != hash) {
-                return Err(BridgeRuntimeError::InvalidObservation);
-            }
-            previous_hash = Some(block.header.hash);
-            if block_id > window_end {
+        for block in &stable.blocks {
+            if block.header.block_id > stable.requested_end {
                 continue;
             }
             for (transaction_index, transaction) in block.body.transactions.iter().enumerate() {
@@ -749,57 +1152,22 @@ impl FinalizedWitnessedFundingObserver {
             None
         };
 
-        let finalized_after = self
-            .indexer
-            .last_finalized_block_id()
-            .await?
-            .ok_or(BridgeRuntimeError::Unavailable)?;
-        if finalized_after != finalized_before {
-            return Err(BridgeRuntimeError::MovingTip);
-        }
-        let tip_block = self.read_finalized_block(finalized_after).await?;
-        if tip_block != finalized_tip_before {
-            return Err(BridgeRuntimeError::MovingTip);
-        }
-        let finalized_clock = ChainClock::new(
-            Hex32::from_bytes(tip_block.header.hash.0),
-            tip_block.header.block_id,
-            tip_block.header.timestamp,
-        );
+        stable.confirm_unchanged(self.indexer.as_ref()).await?;
+
         Ok(if let Some(funding) = funding {
             ClassifyFinalizedWitnessedFundingResult::found(
                 request.context.clone(),
-                finalized_clock,
+                stable.finalized_clock,
                 request.window,
                 funding,
             )
         } else {
             ClassifyFinalizedWitnessedFundingResult::absent(
                 request.context.clone(),
-                finalized_clock,
+                stable.finalized_clock,
                 request.window,
             )
         })
-    }
-
-    fn validated_window_end(
-        request: &ObserveFinalizedWitnessedFundingRequest,
-        finalized_before: u64,
-    ) -> Result<u64, BridgeRuntimeError> {
-        let window_end = request
-            .window
-            .start_height()
-            .checked_add(u64::from(request.window.max_blocks() - 1))
-            .ok_or(BridgeRuntimeError::InvalidObservation)?;
-        let covered_length = finalized_before
-            .checked_sub(request.window.start_height())
-            .and_then(|distance| distance.checked_add(1));
-        if window_end > finalized_before
-            || covered_length.is_none_or(|length| length > u64::from(MAX_DISCOVERY_BLOCKS))
-        {
-            return Err(BridgeRuntimeError::Unavailable);
-        }
-        Ok(window_end)
     }
 
     fn validate_request(
@@ -830,26 +1198,6 @@ impl FinalizedWitnessedFundingObserver {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
         Ok(())
-    }
-
-    async fn read_finalized_block(&self, block_id: u64) -> Result<Block, BridgeRuntimeError> {
-        let by_id = self
-            .indexer
-            .block_by_id(block_id)
-            .await?
-            .ok_or(BridgeRuntimeError::Unavailable)?;
-        if by_id.header.block_id != block_id || by_id.bedrock_status != BedrockStatus::Finalized {
-            return Err(BridgeRuntimeError::InvalidObservation);
-        }
-        let by_hash = self
-            .indexer
-            .block_by_hash(by_id.header.hash.0)
-            .await?
-            .ok_or(BridgeRuntimeError::Unavailable)?;
-        if by_hash != by_id {
-            return Err(BridgeRuntimeError::InvalidObservation);
-        }
-        Ok(by_id)
     }
 
     fn matches_discovery_terms(

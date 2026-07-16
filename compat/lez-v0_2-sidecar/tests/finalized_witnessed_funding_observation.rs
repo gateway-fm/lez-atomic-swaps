@@ -19,19 +19,23 @@ use indexer_service_protocol::{
 };
 use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_client::{
-    BridgeClient, BridgeClientConfig, FinalizedWitnessedFundingPresence, SidecarCapability,
+    BridgeClient, BridgeClientConfig, FinalizedWitnessedFundingPresence,
+    FinalizedWitnessedInitializationPresence, SidecarCapability,
 };
 use lez_bridge_protocol::{
-    ChainClock, DiscoveryWindow, FinalizedWitnessedFundingObservationTarget,
-    FinalizedWitnessedFundingScanOutcome, Hex32, MessageContext,
-    ObserveFinalizedWitnessedFundingRequest, Participant, RequestId, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, TransactionId, WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
+    ChainClock, ClassifyFinalizedWitnessedInitializationRequest, DiscoveryWindow,
+    ExactTransactionBytes, FinalizedWitnessedFundingObservationTarget,
+    FinalizedWitnessedFundingScanOutcome, FinalizedWitnessedInitializationScanOutcome, Hex32,
+    MessageContext, ObserveFinalizedWitnessedFundingRequest, Participant,
+    PrepareWitnessedEscrowRequest, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    TransactionId, WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
-    FinalizedIndexerApi, FinalizedWitnessedFundingObserver, NativeEscrowPlanner,
-    NativePrepareError, NonceSource, OfficialNodeRpc, ZecEscrowInstruction, compute_custody_pda,
-    compute_metadata_pda, program_id_from_hex, start_bridge_server,
+    FinalizedIndexerApi, FinalizedWitnessedFundingObserver,
+    FinalizedWitnessedInitializationObserver, NativeEscrowPlanner, NativePrepareError, NonceSource,
+    OfficialNodeRpc, ZecEscrowInstruction, compute_custody_pda, compute_metadata_pda,
+    prepared_from_transaction, program_id_from_hex, start_bridge_server,
 };
 use lez_zec_escrow_v02::{ClaimAuthority, EscrowMetadata, EscrowStatus};
 use nssa::{
@@ -50,6 +54,16 @@ struct FixedNonce;
 impl NonceSource for FixedNonce {
     async fn account_nonce(&self, _account_id: AccountId) -> Result<u128, NativePrepareError> {
         Ok(0)
+    }
+}
+
+#[derive(Debug)]
+struct InitializationNonce;
+
+#[async_trait]
+impl NonceSource for InitializationNonce {
+    async fn account_nonce(&self, _account_id: AccountId) -> Result<u128, NativePrepareError> {
+        Ok(8)
     }
 }
 
@@ -443,6 +457,343 @@ fn retarget_exact_request(fixture: &mut Fixture) {
     fixture.request.target = FinalizedWitnessedFundingObservationTarget::Exact {
         funding_transaction_id: transaction_id,
     };
+}
+
+struct InitializationFixture {
+    runtime: RuntimeDescriptor,
+    request: ClassifyFinalizedWitnessedInitializationRequest,
+    blocks: Vec<Block>,
+    accounts: BTreeMap<([u8; 32], u64), IndexedAccount>,
+}
+
+fn empty_initialization_accounts(
+    request: &ClassifyFinalizedWitnessedInitializationRequest,
+) -> BTreeMap<([u8; 32], u64), IndexedAccount> {
+    let terms = &request.terms;
+    let escrow_program = program_id_from_hex(request.runtime.escrow_program_id);
+    let transfer_program = program_id_from_hex(terms.authenticated_transfer_program_id());
+    let metadata = compute_metadata_pda(&escrow_program, terms.swap_id().as_bytes());
+    let custody = compute_custody_pda(&escrow_program, terms.swap_id().as_bytes());
+    let depositor = AccountId::new(*terms.depositor_account_id().as_bytes());
+    let claimant = AccountId::new(*terms.claimant_account_id().as_bytes());
+    let metadata_state = EscrowMetadata {
+        version: 2,
+        swap_id: *terms.swap_id().as_bytes(),
+        terms_hash: *terms.terms_hash().as_bytes(),
+        claim_authority: ClaimAuthority::AggregateWitness {
+            x_only_public_key: *terms.aggregate_x_only_public_key().as_bytes(),
+            account_id: AccountId::new(*terms.aggregate_authority_account_id().as_bytes()),
+        },
+        depositor,
+        depositor_asset: depositor,
+        claimant,
+        claimant_asset: claimant,
+        custody,
+        asset_program: transfer_program,
+        custody_program: transfer_program,
+        asset_definition: [0; 32],
+        amount: terms.amount().as_u128(),
+        refund_at: terms.refund_at_ms(),
+        status: EscrowStatus::Empty,
+    };
+    BTreeMap::from([
+        (
+            (metadata.into_value(), FUNDING_BLOCK_ID),
+            IndexedAccount {
+                program_owner: IndexedProgramId(escrow_program),
+                balance: 0,
+                data: IndexedData(to_vec(&metadata_state).unwrap()),
+                nonce: 0,
+            },
+        ),
+        (
+            (custody.into_value(), FUNDING_BLOCK_ID),
+            IndexedAccount {
+                program_owner: IndexedProgramId(transfer_program),
+                balance: 0,
+                data: IndexedData(Vec::new()),
+                nonce: 0,
+            },
+        ),
+    ])
+}
+
+fn initialization_fixture() -> InitializationFixture {
+    let base = fixture();
+    let terms = base.request.terms.clone();
+    let escrow_program = program_id_from_hex(base.runtime.escrow_program_id);
+    let metadata = compute_metadata_pda(&escrow_program, terms.swap_id().as_bytes());
+    let custody = compute_custody_pda(&escrow_program, terms.swap_id().as_bytes());
+    let depositor = AccountId::new(*terms.depositor_account_id().as_bytes());
+    let claimant = AccountId::new(*terms.claimant_account_id().as_bytes());
+    let authority = AccountId::new(*terms.aggregate_authority_account_id().as_bytes());
+    let message = Message::try_new(
+        escrow_program,
+        vec![metadata, custody, depositor, claimant, authority],
+        vec![8_u128.into()],
+        ZecEscrowInstruction::InitializeNativeWitnessed {
+            swap_id: *terms.swap_id().as_bytes(),
+            terms_hash: *terms.terms_hash().as_bytes(),
+            aggregate_x_only_public_key: *terms.aggregate_x_only_public_key().as_bytes(),
+            amount: terms.amount().as_u128(),
+            refund_at: terms.refund_at_ms(),
+            authenticated_transfer_program: program_id_from_hex(
+                terms.authenticated_transfer_program_id(),
+            ),
+        },
+    )
+    .unwrap();
+    let public_key = PublicKey::new_from_private_key(&base.depositor_private);
+    let signature = nssa::Signature::new(&base.depositor_private, &message.hash());
+    let public = PublicTransaction::new(
+        message,
+        WitnessSet::from_raw_parts(vec![(signature, public_key)]),
+    );
+    let prepared = prepared_from_transaction(&public).unwrap();
+    let funding_transaction_id = match base.request.target {
+        FinalizedWitnessedFundingObservationTarget::Exact {
+            funding_transaction_id,
+        } => funding_transaction_id,
+        FinalizedWitnessedFundingObservationTarget::DiscoverByTerms => panic!("exact fixture"),
+    };
+    let request = ClassifyFinalizedWitnessedInitializationRequest::new(
+        MessageContext::new(
+            RunId::new("finalized-initialization-run-0001").unwrap(),
+            RequestId::new("finalized-initialization-classify-0001").unwrap(),
+            Participant::Maker,
+        ),
+        base.runtime.clone(),
+        terms.clone(),
+        prepared,
+        funding_transaction_id,
+        DiscoveryWindow::new(FUNDING_BLOCK_ID, 2).unwrap(),
+    );
+    let accounts = empty_initialization_accounts(&request);
+    InitializationFixture {
+        runtime: base.runtime,
+        request,
+        blocks: vec![
+            block(
+                FUNDING_BLOCK_ID,
+                [10; 32],
+                vec![Transaction::Public(indexed_public(&public))],
+            ),
+            block(FINALIZED_TIP_ID, [11; 32], Vec::new()),
+        ],
+        accounts,
+    }
+}
+
+fn initialization_indexer(
+    fixture: &InitializationFixture,
+    tips: impl IntoIterator<Item = Option<u64>>,
+) -> Arc<MockIndexer> {
+    Arc::new(MockIndexer {
+        tips: Mutex::new(tips.into_iter().collect()),
+        by_id: fixture
+            .blocks
+            .iter()
+            .map(|block| (block.header.block_id, block.clone()))
+            .collect(),
+        by_hash: fixture
+            .blocks
+            .iter()
+            .map(|block| (block.header.hash.0, block.clone()))
+            .collect(),
+        accounts: fixture.accounts.clone(),
+        calls: Mutex::new(Vec::new()),
+    })
+}
+
+#[tokio::test]
+async fn finalized_initialization_classifier_returns_exact_decoded_empty_state() {
+    let fixture = initialization_fixture();
+    let observer = FinalizedWitnessedInitializationObserver::new(
+        fixture.runtime.clone(),
+        initialization_indexer(&fixture, [Some(FINALIZED_TIP_ID), Some(FINALIZED_TIP_ID)]),
+    );
+
+    let result = observer.classify(&fixture.request).await.unwrap();
+
+    assert!(matches!(
+        result.outcome,
+        FinalizedWitnessedInitializationScanOutcome::Found { initialization }
+            if initialization.transaction.transaction_id == fixture.request.initialization.transaction_id
+                && initialization.transaction.exact_bytes == fixture.request.initialization.exact_bytes
+                && initialization.instruction.terms == fixture.request.terms
+                && initialization.metadata.status == lez_bridge_protocol::EscrowState::Empty
+                && initialization.custody.balance.as_u128() == 0
+    ));
+}
+
+#[tokio::test]
+async fn finalized_initialization_miss_is_uncertain_not_absent() {
+    let mut fixture = initialization_fixture();
+    fixture.blocks[0].body.transactions.clear();
+    let observer = FinalizedWitnessedInitializationObserver::new(
+        fixture.runtime.clone(),
+        initialization_indexer(&fixture, [Some(FINALIZED_TIP_ID), Some(FINALIZED_TIP_ID)]),
+    );
+
+    let result = observer.classify(&fixture.request).await.unwrap();
+
+    assert!(matches!(
+        result.outcome,
+        FinalizedWitnessedInitializationScanOutcome::Uncertain {}
+    ));
+}
+
+#[tokio::test]
+async fn finalized_initialization_never_treats_wrong_exact_bytes_as_absence() {
+    let mut fixture = initialization_fixture();
+    fixture.request.initialization.exact_bytes = ExactTransactionBytes::new(vec![1, 2, 3]).unwrap();
+    let observer = FinalizedWitnessedInitializationObserver::new(
+        fixture.runtime.clone(),
+        initialization_indexer(&fixture, [Some(FINALIZED_TIP_ID), Some(FINALIZED_TIP_ID)]),
+    );
+
+    assert_eq!(
+        observer.classify(&fixture.request).await.unwrap_err(),
+        BridgeRuntimeError::InvalidObservation
+    );
+}
+
+#[tokio::test]
+async fn current_lookup_transport_failure_is_an_error_not_initialization_absence() {
+    let mut fixture = initialization_fixture();
+    fixture.blocks[0].body.transactions.clear();
+    let indexer =
+        initialization_indexer(&fixture, [Some(FINALIZED_TIP_ID), Some(FINALIZED_TIP_ID)]);
+    let sequencer = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();
+    let sequencer_address = sequencer.local_addr().unwrap();
+    let sequencer_handle = sequencer.start(RpcModule::new(()));
+    let planner = Arc::new(
+        NativeEscrowPlanner::new(
+            Participant::Maker,
+            PrivateKey::try_new([6; 32]).unwrap(),
+            program_id_from_hex(fixture.runtime.escrow_program_id),
+            program_id_from_hex(fixture.request.terms.authenticated_transfer_program_id()),
+            fixture.runtime.clone(),
+            Arc::new(InitializationNonce),
+        )
+        .unwrap(),
+    );
+    let prepared = planner
+        .prepare_witnessed_escrow(&PrepareWitnessedEscrowRequest::new(
+            MessageContext::new(
+                fixture.request.context.run_id.clone(),
+                RequestId::new("finalized-initialization-prepare-0001").unwrap(),
+                Participant::Maker,
+            ),
+            fixture.runtime.clone(),
+            fixture.request.terms.clone(),
+        ))
+        .await
+        .unwrap();
+    fixture.request.initialization = prepared.initialization;
+    fixture.request.funding_transaction_id = prepared.funding.transaction_id;
+    let runtime = BridgeRuntime::new(
+        fixture.runtime.clone(),
+        planner,
+        Arc::new(
+            OfficialNodeRpc::connect(&format!("http://{sequencer_address}"))
+                .expect("isolated official-node loopback endpoint"),
+        ),
+        indexer,
+    );
+
+    assert_eq!(
+        runtime
+            .classify_finalized_witnessed_initialization(&fixture.request)
+            .await
+            .unwrap_err(),
+        BridgeRuntimeError::Unavailable
+    );
+
+    sequencer_handle.stop().unwrap();
+    sequencer_handle.stopped().await;
+}
+
+#[tokio::test]
+async fn authenticated_initialization_classifier_is_repeatable_and_never_submits() {
+    let fixture = initialization_fixture();
+    let run_id = fixture.request.context.run_id.clone();
+    let runtime_descriptor = fixture.runtime.clone();
+    let indexer = initialization_indexer(&fixture, [Some(FINALIZED_TIP_ID)]);
+    let submission_calls = Arc::new(AtomicUsize::new(0));
+    let sequencer = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();
+    let sequencer_address = sequencer.local_addr().unwrap();
+    let mut sequencer_rpc = RpcModule::new(Arc::clone(&submission_calls));
+    sequencer_rpc
+        .register_method("checkHealth", |_, _, _| Ok::<_, ErrorObjectOwned>(()))
+        .unwrap();
+    sequencer_rpc
+        .register_method("getChannelId", |_, _, _| {
+            Ok::<_, ErrorObjectOwned>(hex::encode([2_u8; 32]))
+        })
+        .unwrap();
+    sequencer_rpc
+        .register_method("sendTransaction", |_, calls, _| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, ErrorObjectOwned>([0_u8; 32])
+        })
+        .unwrap();
+    let sequencer_handle = sequencer.start(sequencer_rpc);
+    let planner = Arc::new(
+        NativeEscrowPlanner::new(
+            Participant::Maker,
+            PrivateKey::try_new([6; 32]).unwrap(),
+            program_id_from_hex(runtime_descriptor.escrow_program_id),
+            program_id_from_hex(fixture.request.terms.authenticated_transfer_program_id()),
+            runtime_descriptor.clone(),
+            Arc::new(FixedNonce),
+        )
+        .unwrap(),
+    );
+    let runtime = Arc::new(BridgeRuntime::new(
+        runtime_descriptor.clone(),
+        planner,
+        Arc::new(
+            OfficialNodeRpc::connect(&format!("http://{sequencer_address}"))
+                .expect("isolated official-node loopback endpoint"),
+        ),
+        indexer,
+    ));
+    let state_directory = tempfile::tempdir().unwrap();
+    let bridge = start_bridge_server(
+        BridgeServerConfig::new(
+            run_id.clone(),
+            BridgeServerCapability::new(BRIDGE_CAPABILITY).unwrap(),
+            state_directory.path().join("idempotency.json"),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        ),
+        runtime,
+    )
+    .await
+    .unwrap();
+
+    let classify = || async {
+        funding_bridge_client(bridge.endpoint(), &run_id, &runtime_descriptor)
+            .classify_finalized_witnessed_initialization(fixture.request.clone())
+            .await
+    };
+    let first = classify().await.unwrap();
+    let second = classify().await.unwrap();
+
+    assert_eq!(first, second);
+    assert!(matches!(
+        first,
+        FinalizedWitnessedInitializationPresence::Found { initialization, .. }
+            if initialization.transaction.transaction_id
+                == fixture.request.initialization.transaction_id
+                && initialization.transaction.exact_bytes
+                    == fixture.request.initialization.exact_bytes
+    ));
+    assert_eq!(submission_calls.load(Ordering::SeqCst), 0);
+
+    bridge.stop().await.unwrap();
+    sequencer_handle.stop().unwrap();
+    sequencer_handle.stopped().await;
 }
 
 #[tokio::test]

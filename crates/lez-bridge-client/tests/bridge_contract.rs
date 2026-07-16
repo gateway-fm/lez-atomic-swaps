@@ -8,25 +8,29 @@ use jsonrpsee::{RpcModule, types::ErrorObjectOwned};
 use lez_bridge_client::{
     BridgeClient, BridgeClientConfig, BridgeClientError, BridgeOperation,
     FinalizedWitnessedClaimPresence, FinalizedWitnessedClaimUnavailable,
-    FinalizedWitnessedClaimUncertain, FinalizedWitnessedFundingPresence, MAX_RPC_BODY_BYTES,
+    FinalizedWitnessedClaimUncertain, FinalizedWitnessedFundingPresence,
+    FinalizedWitnessedInitializationPresence, MAX_RPC_BODY_BYTES,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM, METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
-    METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW,
-    METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
-    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
-    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
-    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
-    RUN_ID_HEADER, SIDECAR_ROLE_HEADER, SidecarCapability,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION, METHOD_COMPLETE_WITNESSED_CLAIM,
+    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
+    METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING, METHOD_OBSERVE_NATIVE_REFUND,
+    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW,
+    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
+    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+    SidecarCapability,
 };
 use lez_bridge_protocol::{
     AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip,
     ClassifyFinalizedWitnessedClaimResult, ClassifyFinalizedWitnessedFundingResult,
-    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
-    DescribeRuntimeResult, DiscoveryWindow, ErrorCode, ErrorMessage, EscrowObservationTarget,
-    EscrowState, ExactMessageBytes, ExactTransactionBytes, FinalizedBlockIdentity,
-    FinalizedWitnessedClaimFacts, FinalizedWitnessedFundingFacts,
-    FinalizedWitnessedFundingObservationTarget, FundingObservation, Hex32,
-    InitializationObservation, MessageContext, NativeCustodyFacts, NativeEscrowAccountObservation,
-    NativeEscrowTerms, NativeEscrowTermsInput, NativeFundInstructionFacts, NativeRefundObservation,
+    ClassifyFinalizedWitnessedInitializationRequest,
+    ClassifyFinalizedWitnessedInitializationResult, CompleteWitnessedClaimRequest,
+    CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult, DiscoveryWindow,
+    ErrorCode, ErrorMessage, EscrowObservationTarget, EscrowState, ExactMessageBytes,
+    ExactTransactionBytes, FinalizedBlockIdentity, FinalizedWitnessedClaimFacts,
+    FinalizedWitnessedFundingFacts, FinalizedWitnessedFundingObservationTarget,
+    FinalizedWitnessedInitializationFacts, FundingObservation, Hex32, InitializationObservation,
+    MessageContext, NativeCustodyFacts, NativeEscrowAccountObservation, NativeEscrowTerms,
+    NativeEscrowTermsInput, NativeFundInstructionFacts, NativeRefundObservation,
     NativeRefundObservationTarget, ObserveEscrowRequest, ObserveEscrowResult,
     ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
     ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
@@ -41,7 +45,7 @@ use lez_bridge_protocol::{
     RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
     TransactionId, WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
     WitnessedFundingObservation, WitnessedInitializationObservation, WitnessedNativeEscrowTerms,
-    WitnessedNativeEscrowTermsInput,
+    WitnessedNativeEscrowTermsInput, WitnessedNativeInitializeInstructionFacts,
 };
 use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
 use serde_json::json;
@@ -97,6 +101,9 @@ enum Behavior {
     PresenceMovingTip,
     PresenceWrongWindow,
     FundingPresenceZeroTimestamp,
+    InitializationPresenceAbsent,
+    InitializationPresenceUncertain,
+    MutatedFinalizedInitializationBytes,
 }
 
 #[derive(Clone, Debug)]
@@ -218,6 +225,7 @@ fn register_existing_transaction_methods(module: &mut RpcModule<Fixture>) {
     register_witnessed_escrow_method(module);
     register_finalized_witnessed_funding_method(module);
     register_finalized_witnessed_funding_presence_method(module);
+    register_finalized_witnessed_initialization_presence_method(module);
     register_finalized_witnessed_claim_method(module);
     register_finalized_witnessed_claim_presence_method(module);
     module
@@ -314,6 +322,86 @@ fn register_existing_transaction_methods(module: &mut RpcModule<Fixture>) {
             Ok::<_, ErrorObjectOwned>(serde_json::to_value(result).expect("serializable result"))
         })
         .expect("observe claim method");
+}
+
+fn register_finalized_witnessed_initialization_presence_method(module: &mut RpcModule<Fixture>) {
+    module
+        .register_method(
+            METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION,
+            |params, fixture, _| {
+                let request: ClassifyFinalizedWitnessedInitializationRequest = params.one()?;
+                fixture.record(METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION);
+                let metadata_id = Hex32::from_bytes([96; 32]);
+                let custody_id = Hex32::from_bytes([97; 32]);
+                let exact_bytes = if matches!(
+                    fixture.behavior,
+                    Behavior::MutatedFinalizedInitializationBytes
+                ) {
+                    ExactTransactionBytes::new(vec![98; 128]).unwrap()
+                } else {
+                    request.initialization.exact_bytes.clone()
+                };
+                let facts = FinalizedWitnessedInitializationFacts::new(
+                    ObservedTransactionFacts::new(
+                        request.initialization.transaction_id,
+                        exact_bytes,
+                        ChainPosition::new(Hex32::from_bytes([99; 32]), 60, 0),
+                        AccountIds::new(vec![request.terms.depositor_account_id()]).unwrap(),
+                        true,
+                    ),
+                    WitnessedNativeInitializeInstructionFacts::new(
+                        request.runtime.escrow_program_id,
+                        AccountIds::new(vec![
+                            metadata_id,
+                            custody_id,
+                            request.terms.depositor_account_id(),
+                            request.terms.claimant_account_id(),
+                            request.terms.aggregate_authority_account_id(),
+                        ])
+                        .unwrap(),
+                        request.terms.clone(),
+                    ),
+                    FinalizedBlockIdentity::new(60, Hex32::from_bytes([99; 32]), 1_850_000_000_060),
+                    WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+                        metadata_id,
+                        request.runtime.escrow_program_id,
+                        custody_id,
+                        &request.terms,
+                        EscrowState::Empty,
+                    ),
+                    NativeCustodyFacts::new(
+                        custody_id,
+                        request.terms.authenticated_transfer_program_id(),
+                        0,
+                    ),
+                );
+                let clock = ChainClock::new(Hex32::from_bytes([100; 32]), 61, 1_850_000_000_061);
+                let result = match fixture.behavior {
+                    Behavior::InitializationPresenceAbsent => {
+                        ClassifyFinalizedWitnessedInitializationResult::absent(
+                            response_context(&request.context, fixture.behavior),
+                            clock,
+                            request.window,
+                        )
+                    }
+                    Behavior::InitializationPresenceUncertain => {
+                        ClassifyFinalizedWitnessedInitializationResult::uncertain(
+                            response_context(&request.context, fixture.behavior),
+                            clock,
+                            request.window,
+                        )
+                    }
+                    _ => ClassifyFinalizedWitnessedInitializationResult::found(
+                        response_context(&request.context, fixture.behavior),
+                        clock,
+                        request.window,
+                        facts,
+                    ),
+                };
+                Ok::<_, ErrorObjectOwned>(result)
+            },
+        )
+        .expect("classify finalized witnessed initialization method");
 }
 
 fn finalized_witnessed_funding_block_id(
@@ -1450,6 +1538,82 @@ async fn classify_funding_for_behavior(
         tokio::time::sleep(TIMEOUT_TEST_DRAIN).await;
     }
     result
+}
+
+async fn classify_initialization_for_behavior(
+    behavior: Behavior,
+    suffix: &str,
+) -> Result<FinalizedWitnessedInitializationPresence, BridgeClientError> {
+    let expected_runtime = runtime(Participant::Maker, 32);
+    let sidecar = spawn_sidecar(expected_runtime.clone(), MAKER_CAPABILITY, behavior).await;
+    let run = RunId::new(TEST_RUN).expect("run id");
+    let client = client(
+        &sidecar.endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        expected_runtime.clone(),
+        Duration::from_secs(1),
+    );
+    client
+        .classify_finalized_witnessed_initialization(
+            ClassifyFinalizedWitnessedInitializationRequest::new(
+                context(&run, Participant::Maker, suffix),
+                expected_runtime.clone(),
+                witnessed_deposit_terms(&expected_runtime),
+                PreparedTransaction::new(
+                    txid(101),
+                    ExactTransactionBytes::new(vec![102; 128]).unwrap(),
+                ),
+                txid(103),
+                DiscoveryWindow::new(60, 2).unwrap(),
+            ),
+        )
+        .await
+}
+
+#[tokio::test]
+async fn finalized_witnessed_initialization_classifier_preserves_three_way_semantics() {
+    assert!(matches!(
+        classify_initialization_for_behavior(Behavior::Happy, "initialization-found")
+            .await
+            .unwrap(),
+        FinalizedWitnessedInitializationPresence::Found { initialization, .. }
+            if initialization.transaction.transaction_id == txid(101)
+                && initialization.transaction.exact_bytes.as_slice() == [102; 128]
+    ));
+    assert!(matches!(
+        classify_initialization_for_behavior(
+            Behavior::InitializationPresenceAbsent,
+            "initialization-absent",
+        )
+        .await
+        .unwrap(),
+        FinalizedWitnessedInitializationPresence::Absent { .. }
+    ));
+    assert!(matches!(
+        classify_initialization_for_behavior(
+            Behavior::InitializationPresenceUncertain,
+            "initialization-uncertain",
+        )
+        .await
+        .unwrap(),
+        FinalizedWitnessedInitializationPresence::Uncertain { .. }
+    ));
+}
+
+#[tokio::test]
+async fn finalized_witnessed_initialization_never_turns_malformed_facts_into_absence() {
+    assert!(matches!(
+        classify_initialization_for_behavior(
+            Behavior::MutatedFinalizedInitializationBytes,
+            "initialization-mutated-bytes",
+        )
+        .await
+        .unwrap_err(),
+        BridgeClientError::MalformedObservation {
+            operation: BridgeOperation::ClassifyFinalizedWitnessedInitialization,
+        }
+    ));
 }
 
 #[tokio::test]

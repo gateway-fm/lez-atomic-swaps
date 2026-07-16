@@ -1917,6 +1917,160 @@ impl CompleteWitnessedClaimResult {
     }
 }
 
+/// Requests exact witnessed-initialization classification in one finalized window.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ClassifyFinalizedWitnessedInitializationRequest {
+    /// Version, run, request, and destination-role binding.
+    pub context: MessageContext,
+    /// Expected pinned LEZ runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// Complete witnessed agreement terms.
+    pub terms: WitnessedNativeEscrowTerms,
+    /// Exact prepared initialization identity and complete signed bytes.
+    pub initialization: PreparedTransaction,
+    /// Companion funding identity from the same durable prepared pair.
+    pub funding_transaction_id: TransactionId,
+    /// Inclusive bounded range that must be entirely finalized and scanned.
+    pub window: DiscoveryWindow,
+}
+
+impl ClassifyFinalizedWitnessedInitializationRequest {
+    /// Creates one exact finalized witnessed-initialization classification request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedNativeEscrowTerms,
+        initialization: PreparedTransaction,
+        funding_transaction_id: TransactionId,
+        window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+            initialization,
+            funding_transaction_id,
+            window,
+        }
+    }
+}
+
+/// Exact finalized witnessed initialization and historical empty escrow state.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct FinalizedWitnessedInitializationFacts {
+    /// Canonical exact transaction bytes, signer, and finalized position.
+    pub transaction: ObservedTransactionFacts,
+    /// Exact decoded witnessed initialization instruction and ordered accounts.
+    pub instruction: WitnessedNativeInitializeInstructionFacts,
+    /// Identity and consensus timestamp of the containing finalized block.
+    pub containing_block: FinalizedBlockIdentity,
+    /// Exact empty witnessed metadata at the containing block.
+    pub metadata: WitnessedEscrowMetadataFacts,
+    /// Exact zero-balance custody account at the containing block.
+    pub custody: NativeCustodyFacts,
+}
+
+impl FinalizedWitnessedInitializationFacts {
+    /// Creates one complete finalized witnessed-initialization proof bundle.
+    pub const fn new(
+        transaction: ObservedTransactionFacts,
+        instruction: WitnessedNativeInitializeInstructionFacts,
+        containing_block: FinalizedBlockIdentity,
+        metadata: WitnessedEscrowMetadataFacts,
+        custody: NativeCustodyFacts,
+    ) -> Self {
+        Self {
+            transaction,
+            instruction,
+            containing_block,
+            metadata,
+            custody,
+        }
+    }
+}
+
+/// Safe three-way classification for one exact witnessed initialization.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+#[must_use]
+pub enum FinalizedWitnessedInitializationScanOutcome {
+    /// Exact bytes and decoded facts occur once in stable finalized ancestry.
+    Found {
+        /// Complete exact finalized initialization facts.
+        initialization: Box<FinalizedWitnessedInitializationFacts>,
+    },
+    /// Stable finalized and current observations both proved exact absence.
+    Absent {},
+    /// Finalized absence could not exclude current pending or unknown presence.
+    Uncertain {},
+}
+
+/// Exact three-way result for one stable finalized initialization scan.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ClassifyFinalizedWitnessedInitializationResult {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Stable finalized clock covering the exact requested window.
+    pub finalized_clock: ChainClock,
+    /// Exact inclusive bounded range completely scanned.
+    pub scanned_window: DiscoveryWindow,
+    /// Finalized exact presence, affirmative absence, or conservative uncertainty.
+    pub outcome: FinalizedWitnessedInitializationScanOutcome,
+}
+
+impl ClassifyFinalizedWitnessedInitializationResult {
+    /// Creates exact found evidence.
+    pub fn found(
+        context: MessageContext,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+        initialization: FinalizedWitnessedInitializationFacts,
+    ) -> Self {
+        Self {
+            context,
+            finalized_clock,
+            scanned_window,
+            outcome: FinalizedWitnessedInitializationScanOutcome::Found {
+                initialization: Box::new(initialization),
+            },
+        }
+    }
+
+    /// Creates affirmative absence after both finalized and current checks.
+    pub const fn absent(
+        context: MessageContext,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            finalized_clock,
+            scanned_window,
+            outcome: FinalizedWitnessedInitializationScanOutcome::Absent {},
+        }
+    }
+
+    /// Creates conservative uncertainty when pending and absence cannot be separated.
+    pub const fn uncertain(
+        context: MessageContext,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            finalized_clock,
+            scanned_window,
+            outcome: FinalizedWitnessedInitializationScanOutcome::Uncertain {},
+        }
+    }
+}
+
 /// Selects an exact funding ID or peerless discovery by witnessed agreement terms.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]

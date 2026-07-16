@@ -27,6 +27,9 @@ pub const METHOD_COMPLETE_WITNESSED_CLAIM: &str = "lez_bridge.v1.complete_witnes
 /// Stable JSON-RPC method for observing one finalized aggregate-witness funding transaction.
 pub const METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING: &str =
     "lez_bridge.v1.observe_finalized_witnessed_funding";
+/// Stable JSON-RPC method for classifying one exact finalized witnessed initialization.
+pub const METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION: &str =
+    "lez_bridge.v1.classify_finalized_witnessed_initialization";
 /// Stable JSON-RPC method for classifying finalized aggregate-witness funding.
 ///
 /// This additive v1 method preserves the original found-only observer while
@@ -60,11 +63,14 @@ pub const MAX_RPC_BODY_BYTES: u32 = 5_500_000;
 
 pub use messages::{
     ClassifyFinalizedWitnessedClaimResult, ClassifyFinalizedWitnessedFundingResult,
-    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
-    DescribeRuntimeResult, EscrowMetadataFacts, EscrowObservationTarget, EscrowState,
-    FinalizedBlockIdentity, FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
+    ClassifyFinalizedWitnessedInitializationRequest,
+    ClassifyFinalizedWitnessedInitializationResult, CompleteWitnessedClaimRequest,
+    CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult,
+    EscrowMetadataFacts, EscrowObservationTarget, EscrowState, FinalizedBlockIdentity,
+    FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
     FinalizedWitnessedClaimScanOutcome, FinalizedWitnessedFundingFacts,
     FinalizedWitnessedFundingObservationTarget, FinalizedWitnessedFundingScanOutcome,
+    FinalizedWitnessedInitializationFacts, FinalizedWitnessedInitializationScanOutcome,
     FundingFoundFacts, FundingObservation, InitializationFoundFacts, InitializationObservation,
     NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
     NativeEscrowAccountObservation, NativeFundInstructionFacts, NativeInitializeInstructionFacts,

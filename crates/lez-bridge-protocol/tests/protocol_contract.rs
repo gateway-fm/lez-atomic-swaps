@@ -1,15 +1,17 @@
 use lez_bridge_protocol::{
     AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip,
     ClassifyFinalizedWitnessedClaimResult, ClassifyFinalizedWitnessedFundingResult,
-    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DescribeRuntimeRequest,
-    DescribeRuntimeResult, DiscoveryWindow, ErrorCode, ErrorMessage, EscrowMetadataFacts,
-    EscrowObservationTarget, EscrowState, ExactMessageBytes, ExactTransactionBytes,
-    FinalizedBlockIdentity, FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
-    FinalizedWitnessedClaimScanOutcome, FinalizedWitnessedFundingFacts,
-    FinalizedWitnessedFundingObservationTarget, FinalizedWitnessedFundingScanOutcome,
-    FundingFoundFacts, FundingObservation, Hex32, InitializationFoundFacts,
-    InitializationObservation, MAX_DISCOVERY_BLOCKS, MessageContext, NativeAmount,
-    NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
+    ClassifyFinalizedWitnessedInitializationRequest,
+    ClassifyFinalizedWitnessedInitializationResult, CompleteWitnessedClaimRequest,
+    CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult, DiscoveryWindow,
+    ErrorCode, ErrorMessage, EscrowMetadataFacts, EscrowObservationTarget, EscrowState,
+    ExactMessageBytes, ExactTransactionBytes, FinalizedBlockIdentity, FinalizedWitnessedClaimFacts,
+    FinalizedWitnessedClaimObservationTarget, FinalizedWitnessedClaimScanOutcome,
+    FinalizedWitnessedFundingFacts, FinalizedWitnessedFundingObservationTarget,
+    FinalizedWitnessedFundingScanOutcome, FinalizedWitnessedInitializationFacts,
+    FinalizedWitnessedInitializationScanOutcome, FundingFoundFacts, FundingObservation, Hex32,
+    InitializationFoundFacts, InitializationObservation, MAX_DISCOVERY_BLOCKS, MessageContext,
+    NativeAmount, NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
     NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
     NativeFundInstructionFacts, NativeInitializeInstructionFacts, NativeRefundFoundFacts,
     NativeRefundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
@@ -31,6 +33,107 @@ use lez_bridge_protocol::{
     WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
     WitnessedNativeInitializeInstructionFacts,
 };
+
+#[test]
+fn finalized_witnessed_initialization_classifier_is_exact_strict_and_three_way() {
+    let terms = WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
+        swap_id: h(80),
+        terms_hash: h(81),
+        depositor: Participant::Maker,
+        depositor_account_id: h(82),
+        claimant: Participant::Taker,
+        claimant_account_id: h(83),
+        aggregate_authority_account_id: h(84),
+        aggregate_x_only_public_key: h(85),
+        amount: 125,
+        refund_at_ms: 1_850_000_001_123,
+        authenticated_transfer_program_id: h(86),
+    })
+    .unwrap();
+    let initialization = PreparedTransaction::new(
+        TransactionId::from_bytes([87; 32]),
+        ExactTransactionBytes::new(vec![88; 128]).unwrap(),
+    );
+    let window = DiscoveryWindow::new(89, 3).unwrap();
+    let request = ClassifyFinalizedWitnessedInitializationRequest::new(
+        context(),
+        runtime(),
+        terms.clone(),
+        initialization.clone(),
+        TransactionId::from_bytes([89; 32]),
+        window,
+    );
+    let facts = FinalizedWitnessedInitializationFacts::new(
+        ObservedTransactionFacts::new(
+            initialization.transaction_id,
+            initialization.exact_bytes.clone(),
+            ChainPosition::new(h(90), 89, 2),
+            AccountIds::new(vec![h(82)]).unwrap(),
+            true,
+        ),
+        WitnessedNativeInitializeInstructionFacts::new(
+            h(4),
+            AccountIds::new(vec![h(91), h(92), h(82), h(83), h(84)]).unwrap(),
+            terms.clone(),
+        ),
+        FinalizedBlockIdentity::new(89, h(90), 1_850_000_001_456),
+        WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+            h(91),
+            h(4),
+            h(92),
+            &terms,
+            EscrowState::Empty,
+        ),
+        NativeCustodyFacts::new(h(92), h(86), 0),
+    );
+    let found = ClassifyFinalizedWitnessedInitializationResult::found(
+        request.context.clone(),
+        ChainClock::new(h(93), 91, 1_850_000_001_470),
+        window,
+        facts,
+    );
+    let absent = ClassifyFinalizedWitnessedInitializationResult::absent(
+        request.context.clone(),
+        ChainClock::new(h(93), 91, 1_850_000_001_470),
+        window,
+    );
+    let uncertain = ClassifyFinalizedWitnessedInitializationResult::uncertain(
+        request.context.clone(),
+        ChainClock::new(h(93), 91, 1_850_000_001_470),
+        window,
+    );
+
+    assert_eq!(
+        serde_json::from_value::<ClassifyFinalizedWitnessedInitializationRequest>(
+            serde_json::to_value(&request).unwrap()
+        )
+        .unwrap(),
+        request
+    );
+    for result in [found, absent, uncertain] {
+        assert_eq!(
+            serde_json::from_value::<ClassifyFinalizedWitnessedInitializationResult>(
+                serde_json::to_value(&result).unwrap()
+            )
+            .unwrap(),
+            result
+        );
+    }
+    assert!(matches!(
+        ClassifyFinalizedWitnessedInitializationResult::uncertain(
+            context(),
+            ChainClock::new(h(93), 91, 1_850_000_001_470),
+            window,
+        )
+        .outcome,
+        FinalizedWitnessedInitializationScanOutcome::Uncertain {}
+    ));
+    let mut invalid = serde_json::to_value(request).unwrap();
+    invalid["initialization"]["unexpected"] = serde_json::json!(true);
+    assert!(
+        serde_json::from_value::<ClassifyFinalizedWitnessedInitializationRequest>(invalid).is_err()
+    );
+}
 
 #[test]
 fn finalized_witnessed_funding_wire_is_strict_bounded_and_complete() {

@@ -17,11 +17,13 @@ use jsonrpsee::{
 use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClient, HttpClientBuilder};
 use lez_bridge_protocol::{
     ChainClock, ChainTip, ClassifyFinalizedWitnessedClaimResult,
-    ClassifyFinalizedWitnessedFundingResult, CompleteWitnessedClaimRequest,
+    ClassifyFinalizedWitnessedFundingResult, ClassifyFinalizedWitnessedInitializationRequest,
+    ClassifyFinalizedWitnessedInitializationResult, CompleteWitnessedClaimRequest,
     CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult, DiscoveryWindow,
     ErrorCode, ErrorMessage, EscrowState, FinalizedWitnessedClaimFacts,
     FinalizedWitnessedClaimObservationTarget, FinalizedWitnessedClaimScanOutcome,
     FinalizedWitnessedFundingObservationTarget, FinalizedWitnessedFundingScanOutcome,
+    FinalizedWitnessedInitializationFacts, FinalizedWitnessedInitializationScanOutcome,
     MessageContext, ObserveEscrowRequest, ObserveEscrowResult,
     ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
     ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
@@ -36,7 +38,8 @@ use lez_bridge_protocol::{
 };
 pub use lez_bridge_protocol::{
     MAX_RPC_BODY_BYTES, METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM,
-    METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING, METHOD_COMPLETE_WITNESSED_CLAIM,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION, METHOD_COMPLETE_WITNESSED_CLAIM,
     METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
     METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING, METHOD_OBSERVE_NATIVE_REFUND,
     METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW,
@@ -176,6 +179,8 @@ pub enum BridgeOperation {
     ObserveFinalizedWitnessedFunding,
     /// Finalized aggregate-witness funding found-or-absent classification.
     ClassifyFinalizedWitnessedFunding,
+    /// Exact finalized aggregate-witness initialization three-way classification.
+    ClassifyFinalizedWitnessedInitialization,
     /// Randomized revealing-claim preparation.
     PrepareRevealingClaim,
     /// Unsigned aggregate-witness message reservation.
@@ -220,6 +225,48 @@ pub enum FinalizedWitnessedFundingPresence {
         /// Echoed operation context.
         context: MessageContext,
         /// Stable finalized clock covering the exact scan.
+        finalized_clock: ChainClock,
+        /// Exact caller-owned bounded range that was scanned.
+        scanned_window: DiscoveryWindow,
+    },
+}
+
+/// Actor-facing exact witnessed-initialization classification.
+///
+/// `Absent` is only a protocol capability: the sidecar may return it solely
+/// when both finalized history and current/pending state affirmatively prove
+/// absence. A finalized miss combined with an upstream `UnknownOrPending`
+/// lookup is `Uncertain`, never `Absent`. Transport and malformed evidence
+/// remain [`BridgeClientError`] values.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum FinalizedWitnessedInitializationPresence {
+    /// The caller's exact initialization bytes occur in stable finalized ancestry.
+    Found {
+        /// Echoed operation context.
+        context: MessageContext,
+        /// Stable finalized clock covering the scan.
+        finalized_clock: ChainClock,
+        /// Exact caller-owned bounded range that was scanned.
+        scanned_window: DiscoveryWindow,
+        /// Complete independently validated initialization facts.
+        initialization: Box<FinalizedWitnessedInitializationFacts>,
+    },
+    /// Finalized and current/pending observations both affirmatively proved absence.
+    Absent {
+        /// Echoed operation context.
+        context: MessageContext,
+        /// Stable finalized clock covering the scan.
+        finalized_clock: ChainClock,
+        /// Exact caller-owned bounded range that was scanned.
+        scanned_window: DiscoveryWindow,
+    },
+    /// Finalized history did not contain the exact initialization, but current
+    /// upstream evidence could not distinguish pending presence from absence.
+    Uncertain {
+        /// Echoed operation context.
+        context: MessageContext,
+        /// Stable finalized clock covering the scan.
         finalized_clock: ChainClock,
         /// Exact caller-owned bounded range that was scanned.
         scanned_window: DiscoveryWindow,
@@ -719,6 +766,97 @@ impl BridgeClient {
         }
     }
 
+    /// Classifies one exact witnessed initialization in stable finalized history.
+    ///
+    /// A successful `Absent` is accepted only as the sidecar's explicit typed
+    /// assertion that finalized and current/pending evidence both proved the
+    /// exact transaction absent. `Uncertain`, transport failure, and malformed
+    /// evidence never become absence or send authority.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime drift, request-ID reuse, substituted
+    /// bytes or identity, decoded signer/instruction/account mismatch, unstable
+    /// or incomplete finality, timeout, transport uncertainty, or typed remote
+    /// error.
+    pub async fn classify_finalized_witnessed_initialization(
+        &self,
+        request: ClassifyFinalizedWitnessedInitializationRequest,
+    ) -> Result<FinalizedWitnessedInitializationPresence, BridgeClientError> {
+        let operation = BridgeOperation::ClassifyFinalizedWitnessedInitialization;
+        let context = request.context.clone();
+        let expected_transaction_id = request.initialization.transaction_id;
+        let expected_transaction_bytes = request.initialization.exact_bytes.clone();
+        let expected_terms = request.terms.clone();
+        let expected_program = request.runtime.escrow_program_id;
+        let expected_window = request.window;
+        let window_start = expected_window.start_height();
+        let window_end = window_start
+            .checked_add(u64::from(expected_window.max_blocks() - 1))
+            .ok_or(BridgeClientError::MalformedObservation { operation })?;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        if request.runtime.sidecar_role != expected_terms.depositor()
+            || request.runtime.signer_account_id != expected_terms.depositor_account_id()
+        {
+            return Err(BridgeClientError::MalformedObservation { operation });
+        }
+        validate_prepared(operation, &request.initialization)?;
+        self.reserve_context(operation, &context)?;
+        let result: ClassifyFinalizedWitnessedInitializationResult = self
+            .request(
+                operation,
+                METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        if result.scanned_window != expected_window
+            || result.finalized_clock.timestamp_ms == 0
+            || window_end > result.finalized_clock.height
+        {
+            return Err(BridgeClientError::MalformedObservation { operation });
+        }
+        match result.outcome {
+            FinalizedWitnessedInitializationScanOutcome::Found { initialization } => {
+                validate_finalized_witnessed_initialization_facts(
+                    operation,
+                    expected_transaction_id,
+                    &expected_transaction_bytes,
+                    &expected_terms,
+                    expected_program,
+                    window_start,
+                    window_end,
+                    ChainTip::new(
+                        result.finalized_clock.block_hash,
+                        result.finalized_clock.height,
+                    ),
+                    initialization.as_ref(),
+                )?;
+                Ok(FinalizedWitnessedInitializationPresence::Found {
+                    context: result.context,
+                    finalized_clock: result.finalized_clock,
+                    scanned_window: result.scanned_window,
+                    initialization,
+                })
+            }
+            FinalizedWitnessedInitializationScanOutcome::Absent {} => {
+                Ok(FinalizedWitnessedInitializationPresence::Absent {
+                    context: result.context,
+                    finalized_clock: result.finalized_clock,
+                    scanned_window: result.scanned_window,
+                })
+            }
+            FinalizedWitnessedInitializationScanOutcome::Uncertain {} => {
+                Ok(FinalizedWitnessedInitializationPresence::Uncertain {
+                    context: result.context,
+                    finalized_clock: result.finalized_clock,
+                    scanned_window: result.scanned_window,
+                })
+            }
+        }
+    }
+
     /// Observes one witnessed funding effect in a stable finalized indexer window.
     ///
     /// # Errors
@@ -1207,6 +1345,62 @@ fn validate_finalized_witnessed_funding_facts(
         || custody.owner_program_id != expected_terms.authenticated_transfer_program_id()
         || custody.balance != expected_terms.amount()
         || !exact_signer
+        || block.block_id < window_start
+        || block.block_id > window_end
+        || block.block_id > finalized_tip.height
+        || (block.block_id == finalized_tip.height && block.block_hash != finalized_tip.block_hash)
+        || window_end > finalized_tip.height
+    {
+        return Err(BridgeClientError::MalformedObservation { operation });
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_finalized_witnessed_initialization_facts(
+    operation: BridgeOperation,
+    expected_transaction_id: lez_bridge_protocol::TransactionId,
+    expected_transaction_bytes: &lez_bridge_protocol::ExactTransactionBytes,
+    expected_terms: &WitnessedNativeEscrowTerms,
+    expected_program: lez_bridge_protocol::Hex32,
+    window_start: u64,
+    window_end: u64,
+    finalized_tip: ChainTip,
+    initialization: &FinalizedWitnessedInitializationFacts,
+) -> Result<(), BridgeClientError> {
+    let transaction = &initialization.transaction;
+    let instruction = &initialization.instruction;
+    let block = initialization.containing_block;
+    let metadata = &initialization.metadata;
+    let custody = &initialization.custody;
+    let expected_metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+        metadata.account_id,
+        expected_program,
+        custody.account_id,
+        expected_terms,
+        EscrowState::Empty,
+    );
+    let expected_accounts = [
+        metadata.account_id,
+        custody.account_id,
+        expected_terms.depositor_account_id(),
+        expected_terms.claimant_account_id(),
+        expected_terms.aggregate_authority_account_id(),
+    ];
+    if transaction.transaction_id != expected_transaction_id
+        || &transaction.exact_bytes != expected_transaction_bytes
+        || !transaction.is_public
+        || transaction.position.height != block.block_id
+        || transaction.position.block_hash != block.block_hash
+        || transaction.signer_account_ids.as_slice() != [expected_terms.depositor_account_id()]
+        || instruction.program_id != expected_program
+        || &instruction.terms != expected_terms
+        || instruction.ordered_account_ids.as_slice() != expected_accounts
+        || metadata != &expected_metadata
+        || custody.account_id != metadata.custody_account_id
+        || custody.owner_program_id != expected_terms.authenticated_transfer_program_id()
+        || custody.balance.as_u128() != 0
+        || block.timestamp_ms == 0
         || block.block_id < window_start
         || block.block_id > window_end
         || block.block_id > finalized_tip.height

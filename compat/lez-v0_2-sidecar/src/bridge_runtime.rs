@@ -4,12 +4,14 @@ use borsh::BorshDeserialize as _;
 use common::{block::Block, transaction::LeeTransaction};
 use lez_bridge_protocol::{
     AccountIds, ChainPosition, ChainTip, ClassifyFinalizedWitnessedClaimResult,
-    ClassifyFinalizedWitnessedFundingResult, CompleteWitnessedClaimRequest,
+    ClassifyFinalizedWitnessedFundingResult, ClassifyFinalizedWitnessedInitializationRequest,
+    ClassifyFinalizedWitnessedInitializationResult, CompleteWitnessedClaimRequest,
     CompleteWitnessedClaimResult, DiscoveryWindow, EscrowMetadataFacts, EscrowObservationTarget,
-    EscrowState, FundingFoundFacts, FundingObservation, Hex32, InitializationFoundFacts,
-    InitializationObservation, MAX_DISCOVERY_BLOCKS, NativeClaimInstructionFacts,
-    NativeCustodyFacts, NativeFundInstructionFacts, NativeInitializeInstructionFacts,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    EscrowState, FinalizedWitnessedInitializationScanOutcome, FundingFoundFacts,
+    FundingObservation, Hex32, InitializationFoundFacts, InitializationObservation,
+    MAX_DISCOVERY_BLOCKS, NativeClaimInstructionFacts, NativeCustodyFacts,
+    NativeFundInstructionFacts, NativeInitializeInstructionFacts, ObserveEscrowRequest,
+    ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
     ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
     ObserveFinalizedWitnessedFundingResult, ObserveRevealingClaimRequest,
     ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
@@ -26,10 +28,10 @@ use sha2::{Digest as _, Sha256};
 
 use crate::{
     FinalizedIndexerApi, FinalizedWitnessedClaimObserver, FinalizedWitnessedFundingObserver,
-    FinalizedWitnessedRefundObserver, HealthProbe, NativeEscrowPlanner, NativePrepareError,
-    OfficialNativeEscrowFacts, OfficialNodeRpc, RuntimeBoundaryError, ZecEscrowInstruction,
-    compute_custody_pda, compute_metadata_pda, decode_prepared_for_signer,
-    prepared_from_transaction, program_id_from_hex, program_id_to_hex,
+    FinalizedWitnessedInitializationObserver, FinalizedWitnessedRefundObserver, HealthProbe,
+    NativeEscrowPlanner, NativePrepareError, OfficialNativeEscrowFacts, OfficialNodeRpc,
+    RuntimeBoundaryError, ZecEscrowInstruction, compute_custody_pda, compute_metadata_pda,
+    decode_prepared_for_signer, prepared_from_transaction, program_id_from_hex, program_id_to_hex,
 };
 
 /// Fail-closed failures at the `PoC` bridge observation and submission boundary.
@@ -108,6 +110,7 @@ pub struct BridgeRuntime {
     node: Arc<OfficialNodeRpc>,
     finalized_claim_observer: FinalizedWitnessedClaimObserver,
     finalized_funding_observer: FinalizedWitnessedFundingObserver,
+    finalized_initialization_observer: FinalizedWitnessedInitializationObserver,
     finalized_refund_observer: FinalizedWitnessedRefundObserver,
 }
 
@@ -137,13 +140,16 @@ impl BridgeRuntime {
             Arc::clone(&indexer),
         );
         let finalized_funding_observer =
-            FinalizedWitnessedFundingObserver::new(runtime.clone(), indexer);
+            FinalizedWitnessedFundingObserver::new(runtime.clone(), Arc::clone(&indexer));
+        let finalized_initialization_observer =
+            FinalizedWitnessedInitializationObserver::new(runtime.clone(), indexer);
         Self {
             runtime,
             planner,
             node,
             finalized_claim_observer,
             finalized_funding_observer,
+            finalized_initialization_observer,
             finalized_refund_observer,
         }
     }
@@ -305,6 +311,63 @@ impl BridgeRuntime {
         request: &ObserveFinalizedWitnessedFundingRequest,
     ) -> Result<ClassifyFinalizedWitnessedFundingResult, BridgeRuntimeError> {
         self.finalized_funding_observer.classify(request).await
+    }
+
+    /// Classifies one owned exact witnessed initialization without inventing absence.
+    ///
+    /// Stable finalized ancestry is checked first. On a miss, the existing
+    /// exact current-state observer validates the same owned initialization and
+    /// funding IDs/bytes. The pinned v0.2 exact lookup reports a miss as
+    /// `UnknownOrPending`, so that state remains `Uncertain`. Only a future
+    /// affirmative current `Absent` result can produce protocol `Absent`.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on finalized instability, unavailable current state,
+    /// unowned or substituted bytes, and every signer/instruction/account or
+    /// current canonical conflict. No error is mapped to absence.
+    pub async fn classify_finalized_witnessed_initialization(
+        &self,
+        request: &ClassifyFinalizedWitnessedInitializationRequest,
+    ) -> Result<ClassifyFinalizedWitnessedInitializationResult, BridgeRuntimeError> {
+        let finalized = self
+            .finalized_initialization_observer
+            .classify(request)
+            .await?;
+        if matches!(
+            finalized.outcome,
+            FinalizedWitnessedInitializationScanOutcome::Found { .. }
+        ) {
+            return Ok(finalized);
+        }
+        let current = self
+            .observe_witnessed_escrow(&ObserveWitnessedEscrowRequest::new(
+                request.context.clone(),
+                request.runtime.clone(),
+                request.terms.clone(),
+                EscrowObservationTarget::Exact {
+                    initialization_transaction_id: request.initialization.transaction_id,
+                    funding_transaction_id: request.funding_transaction_id,
+                },
+            ))
+            .await?;
+        Ok(match current.initialization {
+            WitnessedInitializationObservation::Absent => {
+                ClassifyFinalizedWitnessedInitializationResult::absent(
+                    finalized.context,
+                    finalized.finalized_clock,
+                    finalized.scanned_window,
+                )
+            }
+            WitnessedInitializationObservation::Found(_)
+            | WitnessedInitializationObservation::UnknownOrPending => {
+                ClassifyFinalizedWitnessedInitializationResult::uncertain(
+                    finalized.context,
+                    finalized.finalized_clock,
+                    finalized.scanned_window,
+                )
+            }
+        })
     }
 
     /// Observes one witnessed funding effect in a stable, fully finalized indexer window.
