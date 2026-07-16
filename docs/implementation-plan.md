@@ -1078,8 +1078,7 @@ both role signatures, exact chain identities and confirmation policy, LEZ
 runtime/custody/claim terms, the reconstructed P2TR/CSV contract, funding
 outpoint/value, cooperative transaction/sighash, and direction-correct recovery
 schedule. The typed finalized witnessed-claim adapter is now GREEN. The
-actor-local Bitcoin recovery store is also GREEN through revision four and
-offline `Completed` reconstruction. The reference actor now projects exact
+actor-local Bitcoin recovery store is also GREEN through revision four and offline `Completed` reconstruction, plus the alternative ordered maker/taker timeout branch to offline `Refunded`. The reference actor now projects exact
 revealing and follow-up claims through revisions three and four in both roles
 and directions. Its live Bitcoin path now constructs the role- and
 revision-owned exact claim, persists complete witness bytes before one send,
@@ -1127,7 +1126,11 @@ program, or aggregate-authority mutation fails closed. The generic submission
 boundary admits only the retained reservation through a dedicated unsigned
 decoder. ADR 0038 records why preparation alone does not prove deadline
 eligibility or authorize a send. Authenticated prepare/restart replay and
-finalized witnessed refund observation are now GREEN. The observer rejects pre-deadline inclusion, exposes stable
+finalized witnessed refund observation are now GREEN. The actor-local
+recovery store also replays typed maker-refund revision three and taker-refund
+revision four evidence to terminal `Refunded`, with an atomic migration that
+preserves old happy-path payload bytes. The observer rejects pre-deadline
+inclusion, exposes stable
 state-only clocks at deadline minus one and at the deadline, accepts only exact
 canonical unsigned bytes in fully covered finalized ancestry, proves historical
 and tip Refunded state with zero custody, and keeps observation repeatable and
@@ -1145,6 +1148,8 @@ Active M3 refund critical path:
   `Refunded` metadata, zero custody, immutable depositor, and bounded absence;
 - [x] register the authenticated finalized observe method without broadening
   generic submission;
+- [x] replay typed maker-refund revision three and taker-refund revision four
+  evidence to terminal `Refunded`, preserving exact legacy payloads on migration;
 - [ ] integrate actor `Refund` effects with observe-before-submit, one `Started`
   CAS, and observation-only ambiguous recovery;
 - [ ] execute both direction-correct timeout/refund paths against fresh isolated
@@ -1581,7 +1586,7 @@ one finalized-LEZ policy unit, and empty `Offered` state come from the signed
 record rather than actor-local mapping. Typed finalized LEZ claim evidence is
 now GREEN. The actor-local
 Bitcoin recovery component is GREEN in both directions: separate maker/taker
-databases replay the four lock/claim revisions to `Completed`, reject mutated
+databases replay the four lock/claim revisions to `Completed` or the ordered lock/refund revisions to `Refunded`, reject mutated
 or rolled-back evidence-chain state, and expose the public revealing witness
 without persisting the scalar.
 The Core component independently reconstructs and cross-checks exact

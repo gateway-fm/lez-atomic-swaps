@@ -1,6 +1,6 @@
 # ADR 0038: Durably prepare the permissionless LEZ refund before actor eligibility
 
-Status: Accepted through authenticated prepare/restart replay and finalized witnessed observation; actor recovery and actual-node evidence remain active -- 2026-07-16
+Status: Accepted through authenticated prepare/restart replay, finalized witnessed observation, and the durable actor lifecycle refund branch; one-attempt execution and actual-node evidence remain active -- 2026-07-16
 
 ```mermaid
 flowchart LR
@@ -19,7 +19,10 @@ flowchart LR
     Sequencer --> Indexer["Finalized indexer evidence"]
     ObserveOnly --> Indexer
     Indexer --> ObserveRpc["Authenticated repeatable observe<br/>no submit and no cached chain truth"]
-    ObserveRpc --> Project["Project Refunded<br/>only from exact final evidence"]
+    ObserveRpc --> Project["Project one finalized refund<br/>only from exact final evidence"]
+    Project --> Lifecycle["Actor-local evidence replay<br/>maker refund revision 3"]
+    Lifecycle --> Later["Only after durable projection<br/>drive the later taker refund"]
+    Later --> Terminal["Taker refund revision 4<br/>terminal Refunded"]
 ```
 
 ## Context
@@ -90,6 +93,8 @@ finality/timestamp object. The observer enforces that fact internally. A future
 additive finalized-refund result would be required if downstream consumers must
 independently reverify the containing timestamp from the response alone.
 
+The actor-local Bitcoin recovery store now admits an alternative exact four-record branch after the two locks: maker-funded refund evidence occupies revision three and taker-funded refund evidence occupies revision four. Each record carries a typed chain position, canonical transaction proof, and bounded adapter evidence. Replay calls the shared coordinator deadline checks and reaches `MakerLegRefunded` before terminal `Refunded`. Existing happy-path JSON omits the optional refund position, and the SQLite constraint migration copies those exact payload strings unchanged in one immediate transaction.
+
 ## Atomicity and failure analysis
 
 There is no distributed transaction spanning Bitcoin, LEZ, and SQLite. Atomicity
@@ -104,10 +109,10 @@ one-attempt public-effect authority, and observe-before-project recovery.
   eligibility is proven.
 - A public transaction response cannot project state without matching finalized
   chain evidence.
+- The later taker-funded refund cannot enter durable revision four until the
+  earlier maker-funded refund is already exact durable revision three.
 
-This decision now claims authenticated prepare reachability, exact restart
-replay, and finalized witnessed state/exact/discovery observation with internal deadline
-enforcement. It does not yet claim actor one-attempt integration or actual-node
+This decision now claims authenticated prepare reachability, exact restart replay, finalized witnessed state/exact/discovery observation with internal deadline enforcement, and ordered durable lifecycle replay to `Refunded`. It does not yet claim actor one-attempt integration or actual-node
 refund execution. Those are the next M3 gates.
 
 ## Evidence

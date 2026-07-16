@@ -381,8 +381,7 @@ one stable finalized clock; exact/discovery scan only fully covered finalized
 ancestry, require equal by-ID/by-hash blocks, enforce the containing timestamp at
 or after the signed deadline, and prove historical plus tip Refunded state with
 zero custody. The authenticated observation is repeatable and never submits.
-Actor one-attempt recovery and actual-node refund evidence remain; ADR 0038
-records that boundary.
+The actor-local recovery store now replays the ordered maker- then taker-funded refund branch to terminal `Refunded` in both directions without changing old happy-path evidence bytes. Actor one-attempt submission and actual-node refund evidence remain; ADR 0038 records that boundary.
 
 The older retained actual-Core run remains a one-process public deterministic
 cryptographic and consensus fixture. The operator-composed run closes live

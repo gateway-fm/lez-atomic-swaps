@@ -331,9 +331,9 @@ flowchart TB
         M3AJ[("M3 role-local adaptor journal<br/>reserve before commitment<br/>consume nonce with exact partial GREEN")]
         M3AS[("M3 taker-only adaptor scalar<br/>owner-private file; point check only at activation<br/>maker authority forbidden")]
         M3PE[("M3 role-local public-effect journal<br/>complete public bytes before one send CAS<br/>actor claim integration GREEN")]
-        M3BR[("M3 BTC lifecycle recovery store<br/>four evidence revisions + hash chain<br/>offline Completed status GREEN")]
+        M3BR[("M3 BTC lifecycle recovery store<br/>four evidence revisions + hash chain<br/>offline Completed or Refunded GREEN")]
         M3BC["M3 typed Core 31.1 adapter<br/>stable-tip evidence + durable one-attempt submit<br/>GREEN component"]
-        M3RA["btc-reference-actor<br/>schema 2 claim authority<br/>revisions zero through four GREEN in source"]
+        M3RA["btc-reference-actor<br/>claim execution GREEN<br/>refund store branch GREEN"]
     end
 
     subgraph LezSidecars["Role-isolated official LEZ v0.1.2 processes"]
@@ -643,8 +643,9 @@ persists submit as unknown before node I/O. The authenticated bridge
 prepare-refund method reaches the internal durable planner, stores the canonical request/result, and reconstructs and compares it
 before a restarted server binds. The repeatable observe-refund method now uses
 fully covered finalized indexer ancestry, equal by-ID/by-hash blocks, historical
-and tip accounts, and the containing-block deadline. It never submits or caches
-chain truth. Actor recovery and actual-node timeout evidence remain open.
+and tip accounts, and the containing-block deadline. It never submits or caches chain truth. The actor-local lifecycle store now
+replays ordered maker- and taker-funded refund evidence to terminal `Refunded`;
+one-attempt actor submission and actual-node timeout evidence remain open.
 Sequencer observation remains bounded inclusion plus same-tip accounts. The
 new witnessed-claim path separately asserts indexer finality through bounded
 fully covered scans, equal by-ID/by-hash finalized blocks, exact aggregate
@@ -1256,8 +1257,7 @@ unavailability, not false absence. Exact retries retain their deterministic
 identity. A concurrent CAS loser may converge only on a valid matching winner;
 other projection failures fail closed. Revisions one through four are GREEN in
 source, deterministic adapter tests, and actual-node run `m3actor-20260716n`.
-Actual-node refund, process-kill, reorg, concurrency, and chaos evidence remains
-pending.
+The store-level alternative branch now requires typed maker-funded refund evidence at revision three before taker-funded refund evidence at revision four and reconstructs terminal `Refunded` after restart. Actor one-attempt refund execution, actual-node refund, process-kill, reorg, concurrency, and chaos evidence remain pending.
 
 ADR 0033 supplies the reusable effect boundary used by both actor-owned claim
 revisions. Both adaptor session databases reopen existing-only; a missing path
@@ -1278,7 +1278,8 @@ flowchart LR
     Observe["Exact chain observation"]
     Core["Bitcoin Core loopback RPC"]
     Sidecar["Role LEZ sidecar loopback RPC"]
-    Lifecycle[("BTC recovery lifecycle")]
+    Lifecycle[("BTC recovery lifecycle<br/>Completed or Refunded replay")]
+    RefundStore["Both-direction and both-role<br/>Refunded component tests"]
     Evidence["m3actor-20260716n<br/>2 of 2 actual-node directions Completed"]
 
     Agreement --> Actor
@@ -1293,6 +1294,7 @@ flowchart LR
     Core -->|"confirmed exact bytes"| Lifecycle
     Sidecar -->|"finalized exact bytes"| Lifecycle
     Lifecycle --> Actor
+    Lifecycle --> RefundStore
     Actor --> Evidence
 ```
 

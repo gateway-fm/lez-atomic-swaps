@@ -3,7 +3,8 @@
 use std::path::Path;
 
 use lez_swap_core::{
-    Chain, ChainProof, ClaimEvidence, Pair, Participant, Phase, SwapCoordinator, SwapId,
+    Chain, ChainPosition, ChainProof, ClaimEvidence, Pair, Participant, Phase, SwapCoordinator,
+    SwapId,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -140,6 +141,10 @@ pub enum BtcLifecycleEvidenceKind {
     RevealingClaim,
     /// The counterparty's follow-up claim completed the happy path.
     FollowupClaim,
+    /// The maker-funded leg reached its canonical timeout refund.
+    MakerRefund,
+    /// The taker-funded leg reached its canonical timeout refund.
+    TakerRefund,
 }
 
 impl BtcLifecycleEvidenceKind {
@@ -149,21 +154,23 @@ impl BtcLifecycleEvidenceKind {
             Self::MakerLock => "maker_lock",
             Self::RevealingClaim => "revealing_claim",
             Self::FollowupClaim => "followup_claim",
+            Self::MakerRefund => "maker_refund",
+            Self::TakerRefund => "taker_refund",
         }
     }
 
-    const fn at_revision(revision: u64) -> Option<Self> {
-        match revision {
-            1 => Some(Self::TakerLock),
-            2 => Some(Self::MakerLock),
-            3 => Some(Self::RevealingClaim),
-            4 => Some(Self::FollowupClaim),
-            _ => None,
-        }
+    const fn is_allowed_at_revision(self, revision: u64) -> bool {
+        matches!(
+            (revision, self),
+            (1, Self::TakerLock)
+                | (2, Self::MakerLock)
+                | (3, Self::RevealingClaim | Self::MakerRefund)
+                | (4, Self::FollowupClaim | Self::TakerRefund)
+        )
     }
 }
 
-/// Secret-free exact evidence for one of the four Bitcoin happy-path transitions.
+/// Secret-free exact evidence for one reviewed happy-path or timeout transition.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 #[must_use]
@@ -174,6 +181,8 @@ pub struct BtcLifecycleEvidenceV1 {
     chain_evidence: Box<[u8]>,
     revealing_public_witness: Option<Box<[u8]>>,
     claim_evidence: Option<ClaimEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refund_position: Option<ChainPosition>,
 }
 
 impl BtcLifecycleEvidenceV1 {
@@ -238,6 +247,7 @@ impl BtcLifecycleEvidenceV1 {
             chain_evidence,
             revealing_public_witness: None,
             claim_evidence: None,
+            refund_position: None,
         })
     }
 
@@ -267,6 +277,7 @@ impl BtcLifecycleEvidenceV1 {
             chain_evidence,
             revealing_public_witness: Some(revealing_public_witness.to_vec().into_boxed_slice()),
             claim_evidence: Some(claim_evidence),
+            refund_position: None,
         })
     }
 
@@ -289,6 +300,77 @@ impl BtcLifecycleEvidenceV1 {
             confirmations,
             chain_evidence,
         )
+    }
+
+    /// Constructs canonical maker-leg timeout refund evidence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects empty proof material, zero confirmations, or a chain/position mismatch.
+    pub fn maker_leg_refund(
+        chain: Chain,
+        transaction_id: impl Into<Box<str>>,
+        confirmations: u32,
+        chain_evidence: Vec<u8>,
+        refund_position: ChainPosition,
+    ) -> Result<Self, BtcRecoveryError> {
+        Self::refund(
+            BtcLifecycleEvidenceKind::MakerRefund,
+            chain,
+            transaction_id,
+            confirmations,
+            chain_evidence,
+            refund_position,
+        )
+    }
+
+    /// Constructs canonical taker-leg timeout refund evidence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects empty proof material, zero confirmations, or a chain/position mismatch.
+    pub fn taker_leg_refund(
+        chain: Chain,
+        transaction_id: impl Into<Box<str>>,
+        confirmations: u32,
+        chain_evidence: Vec<u8>,
+        refund_position: ChainPosition,
+    ) -> Result<Self, BtcRecoveryError> {
+        Self::refund(
+            BtcLifecycleEvidenceKind::TakerRefund,
+            chain,
+            transaction_id,
+            confirmations,
+            chain_evidence,
+            refund_position,
+        )
+    }
+
+    fn refund(
+        kind: BtcLifecycleEvidenceKind,
+        chain: Chain,
+        transaction_id: impl Into<Box<str>>,
+        confirmations: u32,
+        chain_evidence: Vec<u8>,
+        refund_position: ChainPosition,
+    ) -> Result<Self, BtcRecoveryError> {
+        if !matches!(
+            kind,
+            BtcLifecycleEvidenceKind::MakerRefund | BtcLifecycleEvidenceKind::TakerRefund
+        ) || confirmations == 0
+            || refund_position.chain() != chain
+        {
+            return Err(BtcRecoveryError::InvalidEvidence { revision: 0 });
+        }
+        Ok(Self {
+            kind,
+            chain,
+            proof: validated_proof(transaction_id, confirmations)?,
+            chain_evidence: validated_chain_evidence(chain_evidence)?,
+            revealing_public_witness: None,
+            claim_evidence: None,
+            refund_position: Some(refund_position),
+        })
     }
 
     /// Stable semantic transition kind.
@@ -321,6 +403,12 @@ impl BtcLifecycleEvidenceV1 {
         self.revealing_public_witness.as_deref()
     }
 
+    /// Typed governing clock position, only for a refund transition.
+    #[must_use]
+    pub const fn refund_position(&self) -> Option<ChainPosition> {
+        self.refund_position
+    }
+
     /// One-way revealing claim evidence, only for that transition kind.
     #[must_use]
     pub const fn claim_evidence(&self) -> Option<&ClaimEvidence> {
@@ -333,19 +421,24 @@ impl BtcLifecycleEvidenceV1 {
         revision: u64,
     ) -> Result<(), BtcRecoveryError> {
         let expected_chain = match self.kind {
-            BtcLifecycleEvidenceKind::TakerLock | BtcLifecycleEvidenceKind::FollowupClaim => {
-                coordinator.funded_chain(Participant::Taker)
-            }
-            BtcLifecycleEvidenceKind::MakerLock | BtcLifecycleEvidenceKind::RevealingClaim => {
-                coordinator.funded_chain(Participant::Maker)
-            }
+            BtcLifecycleEvidenceKind::TakerLock
+            | BtcLifecycleEvidenceKind::FollowupClaim
+            | BtcLifecycleEvidenceKind::TakerRefund => coordinator.funded_chain(Participant::Taker),
+            BtcLifecycleEvidenceKind::MakerLock
+            | BtcLifecycleEvidenceKind::RevealingClaim
+            | BtcLifecycleEvidenceKind::MakerRefund => coordinator.funded_chain(Participant::Maker),
         };
         let revealing_shape = self.kind == BtcLifecycleEvidenceKind::RevealingClaim;
+        let refund_shape = matches!(
+            self.kind,
+            BtcLifecycleEvidenceKind::MakerRefund | BtcLifecycleEvidenceKind::TakerRefund
+        );
         if self.chain != expected_chain
             || self.chain_evidence.is_empty()
             || self.chain_evidence.len() > MAX_CHAIN_EVIDENCE_BYTES
             || revealing_shape != self.claim_evidence.is_some()
             || revealing_shape != self.revealing_public_witness.is_some()
+            || refund_shape != self.refund_position.is_some()
             || self
                 .revealing_public_witness
                 .as_ref()
@@ -354,8 +447,12 @@ impl BtcLifecycleEvidenceV1 {
                 .revealing_public_witness
                 .as_ref()
                 .is_some_and(|witness| witness.iter().all(|byte| *byte == 0))
-            || (self.kind == BtcLifecycleEvidenceKind::FollowupClaim
-                && self.proof.confirmations() == 0)
+            || (matches!(
+                self.kind,
+                BtcLifecycleEvidenceKind::FollowupClaim
+                    | BtcLifecycleEvidenceKind::MakerRefund
+                    | BtcLifecycleEvidenceKind::TakerRefund
+            ) && self.proof.confirmations() == 0)
         {
             return Err(BtcRecoveryError::InvalidEvidence { revision });
         }
@@ -376,14 +473,24 @@ impl BtcLifecycleEvidenceV1 {
             ),
             BtcLifecycleEvidenceKind::FollowupClaim => coordinator
                 .observe_followup_claim(coordinator.first_claimant().other(), self.proof.clone()),
+            BtcLifecycleEvidenceKind::MakerRefund => coordinator.refund_maker_leg(
+                self.refund_position
+                    .ok_or(BtcRecoveryError::InvalidEvidence { revision })?,
+            ),
+            BtcLifecycleEvidenceKind::TakerRefund => coordinator.refund_taker_leg(
+                self.refund_position
+                    .ok_or(BtcRecoveryError::InvalidEvidence { revision })?,
+            ),
         };
         result.map_err(|_| BtcRecoveryError::InvalidEvidence { revision })?;
 
-        let expected_phase = match revision {
-            1 => Phase::TakerLockConfirmed,
-            2 => Phase::BothLegsLocked,
-            3 => Phase::ClaimEvidenceAvailable,
-            4 => Phase::Completed,
+        let expected_phase = match (revision, self.kind) {
+            (1, BtcLifecycleEvidenceKind::TakerLock) => Phase::TakerLockConfirmed,
+            (2, BtcLifecycleEvidenceKind::MakerLock) => Phase::BothLegsLocked,
+            (3, BtcLifecycleEvidenceKind::RevealingClaim) => Phase::ClaimEvidenceAvailable,
+            (3, BtcLifecycleEvidenceKind::MakerRefund) => Phase::MakerLegRefunded,
+            (4, BtcLifecycleEvidenceKind::FollowupClaim) => Phase::Completed,
+            (4, BtcLifecycleEvidenceKind::TakerRefund) => Phase::Refunded,
             _ => return Err(BtcRecoveryError::InvalidSequence { revision }),
         };
         if coordinator.phase() != expected_phase {
@@ -430,11 +537,13 @@ impl BtcProjectionCommit {
     }
 }
 
-/// Terminal happy-path outcome available from local durable evidence alone.
+/// Terminal outcome available from local durable evidence alone.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BtcTerminalOutcome {
     /// Both claims were replayed and the coordinator reached `Completed`.
     Completed,
+    /// Both timeout refunds were replayed and the coordinator reached `Refunded`.
+    Refunded,
 }
 
 /// Reconstructed actor-local state that does not require live chain endpoints.
@@ -460,7 +569,7 @@ impl BtcOfflineStatus {
         self.phase
     }
 
-    /// Terminal outcome when the exact four-record lifecycle completed.
+    /// Terminal outcome when an exact four-record happy or refund lifecycle completed.
     #[must_use]
     pub const fn terminal(&self) -> Option<BtcTerminalOutcome> {
         self.terminal
@@ -631,7 +740,7 @@ impl SqliteBtcRecoveryStore {
             BtcStoreOpenMode::Activate => open_configured_connection(path)?,
             BtcStoreOpenMode::ExistingOnly => open_existing_configured_connection(path)?,
         };
-        migrate_btc_recovery(&connection)?;
+        migrate_btc_recovery(&mut connection)?;
 
         let initial_snapshot = serde_json::to_string(initial)?;
         let initial_evidence_chain_head = evidence_chain_genesis(acceptance);
@@ -782,7 +891,7 @@ impl SqliteBtcRecoveryStore {
                 actual: reconstructed.revision,
             });
         }
-        if BtcLifecycleEvidenceKind::at_revision(proposed_revision) != Some(evidence.kind) {
+        if !evidence.kind.is_allowed_at_revision(proposed_revision) {
             return Err(BtcRecoveryError::InvalidSequence {
                 revision: proposed_revision,
             });
@@ -852,8 +961,11 @@ impl SqliteBtcRecoveryStore {
         Ok(BtcOfflineStatus {
             revision: reconstructed.revision,
             phase: reconstructed.coordinator.phase(),
-            terminal: (reconstructed.coordinator.phase() == Phase::Completed)
-                .then_some(BtcTerminalOutcome::Completed),
+            terminal: match reconstructed.coordinator.phase() {
+                Phase::Completed => Some(BtcTerminalOutcome::Completed),
+                Phase::Refunded => Some(BtcTerminalOutcome::Refunded),
+                _ => None,
+            },
             revealing_public_witness: reconstructed.revealing_public_witness,
         })
     }
@@ -1034,7 +1146,7 @@ fn hash_field(hasher: &mut Sha256, bytes: &[u8]) {
     hasher.update(bytes);
 }
 
-fn migrate_btc_recovery(connection: &Connection) -> Result<(), BtcRecoveryError> {
+fn migrate_btc_recovery(connection: &mut Connection) -> Result<(), BtcRecoveryError> {
     connection.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS btc_actor_agreements (
@@ -1066,7 +1178,8 @@ fn migrate_btc_recovery(connection: &Connection) -> Result<(), BtcRecoveryError>
             local_role TEXT NOT NULL CHECK (local_role IN ('maker', 'taker')),
             aggregate_revision INTEGER NOT NULL CHECK (aggregate_revision BETWEEN 1 AND 4),
             evidence_kind TEXT NOT NULL CHECK (evidence_kind IN (
-                'taker_lock', 'maker_lock', 'revealing_claim', 'followup_claim'
+                'taker_lock', 'maker_lock', 'revealing_claim', 'followup_claim',
+                'maker_refund', 'taker_refund'
             )),
             payload_version INTEGER NOT NULL,
             payload_json TEXT NOT NULL CHECK (
@@ -1079,6 +1192,45 @@ fn migrate_btc_recovery(connection: &Connection) -> Result<(), BtcRecoveryError>
         );
         ",
     )?;
+    let evidence_schema: String = connection.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'btc_actor_evidence'",
+        [],
+        |row| row.get(0),
+    )?;
+    if !evidence_schema.contains("'maker_refund'") {
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(
+            "
+            ALTER TABLE btc_actor_evidence RENAME TO btc_actor_evidence_v1;
+            CREATE TABLE btc_actor_evidence (
+                swap_id TEXT NOT NULL,
+                local_role TEXT NOT NULL CHECK (local_role IN ('maker', 'taker')),
+                aggregate_revision INTEGER NOT NULL CHECK (aggregate_revision BETWEEN 1 AND 4),
+                evidence_kind TEXT NOT NULL CHECK (evidence_kind IN (
+                    'taker_lock', 'maker_lock', 'revealing_claim', 'followup_claim',
+                    'maker_refund', 'taker_refund'
+                )),
+                payload_version INTEGER NOT NULL,
+                payload_json TEXT NOT NULL CHECK (
+                    length(CAST(payload_json AS BLOB)) BETWEEN 1 AND 327680
+                ),
+                PRIMARY KEY (swap_id, local_role, aggregate_revision),
+                UNIQUE (swap_id, local_role, evidence_kind),
+                FOREIGN KEY (swap_id, local_role)
+                    REFERENCES btc_actor_aggregates(swap_id, local_role) ON DELETE RESTRICT
+            );
+            INSERT INTO btc_actor_evidence (
+                swap_id, local_role, aggregate_revision, evidence_kind,
+                payload_version, payload_json
+            )
+            SELECT swap_id, local_role, aggregate_revision, evidence_kind,
+                   payload_version, payload_json
+            FROM btc_actor_evidence_v1;
+            DROP TABLE btc_actor_evidence_v1;
+            ",
+        )?;
+        transaction.commit()?;
+    }
     Ok(())
 }
 
@@ -1192,7 +1344,7 @@ fn reconstruct_checked(
             &payload_json,
         );
         let evidence: BtcLifecycleEvidenceV1 = serde_json::from_str(&payload_json)?;
-        if BtcLifecycleEvidenceKind::at_revision(durable_revision) != Some(evidence.kind)
+        if !evidence.kind.is_allowed_at_revision(durable_revision)
             || durable_kind != evidence.kind.name()
         {
             return Err(BtcRecoveryError::InvalidSequence {

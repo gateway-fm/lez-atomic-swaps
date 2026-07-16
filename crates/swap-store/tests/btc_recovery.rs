@@ -119,6 +119,43 @@ fn happy_path(coordinator: &SwapCoordinator) -> Vec<BtcLifecycleEvidenceV1> {
     ]
 }
 
+fn refund_path(coordinator: &SwapCoordinator) -> Vec<BtcLifecycleEvidenceV1> {
+    let taker_chain = coordinator.funded_chain(Participant::Taker);
+    let maker_chain = coordinator.funded_chain(Participant::Maker);
+    vec![
+        BtcLifecycleEvidenceV1::taker_lock(
+            taker_chain,
+            "taker-lock-tx",
+            1,
+            b"btc-chain-proof-v1:taker-lock".to_vec(),
+        )
+        .expect("taker lock evidence"),
+        BtcLifecycleEvidenceV1::maker_lock(
+            maker_chain,
+            "maker-lock-tx",
+            1,
+            b"btc-chain-proof-v1:maker-lock".to_vec(),
+        )
+        .expect("maker lock evidence"),
+        BtcLifecycleEvidenceV1::maker_leg_refund(
+            maker_chain,
+            "maker-refund-tx",
+            1,
+            b"btc-chain-proof-v1:maker-refund".to_vec(),
+            ChainPosition::block_height(maker_chain, 100),
+        )
+        .expect("maker refund evidence"),
+        BtcLifecycleEvidenceV1::taker_leg_refund(
+            taker_chain,
+            "taker-refund-tx",
+            1,
+            b"btc-chain-proof-v1:taker-refund".to_vec(),
+            ChainPosition::block_height(taker_chain, 200),
+        )
+        .expect("taker refund evidence"),
+    ]
+}
+
 fn assert_scalar_absent(path: &Path) {
     for suffix in ["", "-wal", "-shm"] {
         let candidate = path.with_file_name(format!(
@@ -355,6 +392,193 @@ fn maker_and_taker_reconstruct_both_btc_directions_through_completed_revision_fo
             assert_scalar_absent(&path);
         }
     }
+}
+
+#[test]
+fn maker_and_taker_reconstruct_both_refund_directions_through_revision_four() {
+    let directory = tempdir().expect("temporary actor stores");
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        for role in [Participant::Maker, Participant::Taker] {
+            let suffix = format!("{direction:?}-{role:?}").to_lowercase();
+            let initial = coordinator(&format!("btc-refund-{suffix}"), direction);
+            let accepted = acceptance(&initial, role);
+            let path = directory.path().join(format!("refund-{suffix}.sqlite"));
+            let mut store = SqliteBtcRecoveryStore::open(&path, &accepted, &initial)
+                .expect("activate refund store");
+            for (predecessor, evidence) in refund_path(&initial).iter().enumerate() {
+                let predecessor = u64::try_from(predecessor).expect("small predecessor");
+                let commit = store
+                    .project(predecessor, evidence)
+                    .expect("project exact refund lifecycle evidence");
+                assert_eq!(commit.revision(), predecessor + 1);
+                assert!(!commit.was_replay());
+            }
+            let status = store.status().expect("terminal refund status");
+            assert_eq!(status.revision(), 4);
+            assert_eq!(status.phase(), Phase::Refunded);
+            assert_eq!(status.terminal(), Some(BtcTerminalOutcome::Refunded));
+            assert_eq!(status.revealing_public_witness(), None);
+            drop(store);
+
+            let mut reopened = SqliteBtcRecoveryStore::open_existing(&path, &accepted, &initial)
+                .expect("replay refund path after restart");
+            assert_eq!(reopened.status().expect("replayed status"), status);
+            let replay = reopened
+                .project(3, &refund_path(&initial)[3])
+                .expect("exact terminal refund replay");
+            assert!(replay.was_replay());
+        }
+    }
+}
+
+#[test]
+fn refund_evidence_rejects_early_wrong_chain_zero_confirmation_and_happy_path_mix() {
+    let initial = coordinator("btc-refund-invalid", SwapDirection::TakerSellsForeign);
+    let maker_chain = initial.funded_chain(Participant::Maker);
+    let taker_chain = initial.funded_chain(Participant::Taker);
+    assert!(
+        BtcLifecycleEvidenceV1::maker_leg_refund(
+            taker_chain,
+            "wrong-chain-refund",
+            1,
+            b"wrong-chain".to_vec(),
+            ChainPosition::block_height(maker_chain, 100),
+        )
+        .is_err()
+    );
+    assert!(
+        BtcLifecycleEvidenceV1::maker_leg_refund(
+            maker_chain,
+            "zero-confirmation-refund",
+            0,
+            b"zero-confirmation".to_vec(),
+            ChainPosition::block_height(maker_chain, 100),
+        )
+        .is_err()
+    );
+
+    let directory = tempdir().expect("temporary actor store");
+    let path = directory.path().join("invalid-refund.sqlite");
+    let accepted = acceptance(&initial, Participant::Maker);
+    let mut store =
+        SqliteBtcRecoveryStore::open(&path, &accepted, &initial).expect("activate store");
+    let path_evidence = refund_path(&initial);
+    let _ = store.project(0, &path_evidence[0]).expect("taker lock");
+    assert!(matches!(
+        store.project(1, &path_evidence[2]),
+        Err(BtcRecoveryError::InvalidSequence { revision: 2 })
+    ));
+    let _ = store.project(1, &path_evidence[1]).expect("maker lock");
+
+    let early = BtcLifecycleEvidenceV1::maker_leg_refund(
+        maker_chain,
+        "early-maker-refund",
+        1,
+        b"early-maker-refund".to_vec(),
+        ChainPosition::block_height(maker_chain, 99),
+    )
+    .expect("well-shaped but early evidence");
+    assert!(matches!(
+        store.project(2, &early),
+        Err(BtcRecoveryError::InvalidEvidence { revision: 3 })
+    ));
+
+    let revealing = &happy_path(&initial)[2];
+    let _ = store
+        .project(2, revealing)
+        .expect("happy branch revealing claim");
+    assert!(matches!(
+        store.project(3, &path_evidence[3]),
+        Err(BtcRecoveryError::InvalidEvidence { revision: 4 })
+    ));
+}
+
+#[test]
+fn old_happy_path_rows_migrate_without_changing_exact_payloads() {
+    let directory = tempdir().expect("temporary actor store");
+    let path = directory.path().join("old-evidence-schema.sqlite");
+    let initial = coordinator("btc-old-evidence-schema", SwapDirection::TakerSellsForeign);
+    let accepted = acceptance(&initial, Participant::Maker);
+    let mut store =
+        SqliteBtcRecoveryStore::open(&path, &accepted, &initial).expect("activate store");
+    let happy = happy_path(&initial);
+    assert!(
+        !serde_json::to_string(&happy[0])
+            .expect("encode old-shape evidence")
+            .contains("refund_position")
+    );
+    let _ = store.project(0, &happy[0]).expect("project taker lock");
+    let _ = store.project(1, &happy[1]).expect("project maker lock");
+    drop(store);
+
+    let connection = Connection::open(&path).expect("open migration fixture");
+    let exact_before: String = connection
+        .query_row(
+            "SELECT group_concat(payload_json, char(10)) FROM btc_actor_evidence ORDER BY aggregate_revision",
+            [],
+            |row| row.get(0),
+        )
+        .expect("exact pre-migration payloads");
+    connection
+        .execute_batch(
+            "
+            PRAGMA foreign_keys = OFF;
+            ALTER TABLE btc_actor_evidence RENAME TO btc_actor_evidence_newer;
+            CREATE TABLE btc_actor_evidence (
+                swap_id TEXT NOT NULL,
+                local_role TEXT NOT NULL CHECK (local_role IN ('maker', 'taker')),
+                aggregate_revision INTEGER NOT NULL CHECK (aggregate_revision BETWEEN 1 AND 4),
+                evidence_kind TEXT NOT NULL CHECK (evidence_kind IN (
+                    'taker_lock', 'maker_lock', 'revealing_claim', 'followup_claim'
+                )),
+                payload_version INTEGER NOT NULL,
+                payload_json TEXT NOT NULL CHECK (
+                    length(CAST(payload_json AS BLOB)) BETWEEN 1 AND 327680
+                ),
+                PRIMARY KEY (swap_id, local_role, aggregate_revision),
+                UNIQUE (swap_id, local_role, evidence_kind),
+                FOREIGN KEY (swap_id, local_role)
+                    REFERENCES btc_actor_aggregates(swap_id, local_role) ON DELETE RESTRICT
+            );
+            INSERT INTO btc_actor_evidence
+            SELECT * FROM btc_actor_evidence_newer;
+            DROP TABLE btc_actor_evidence_newer;
+            PRAGMA foreign_keys = ON;
+            ",
+        )
+        .expect("recreate old evidence constraint");
+    drop(connection);
+
+    let reopened = SqliteBtcRecoveryStore::open_existing(&path, &accepted, &initial)
+        .expect("migrate old happy rows");
+    assert_eq!(
+        reopened
+            .status()
+            .expect("status after migration")
+            .revision(),
+        2
+    );
+    drop(reopened);
+    let connection = Connection::open(&path).expect("inspect migrated store");
+    let exact_after: String = connection
+        .query_row(
+            "SELECT group_concat(payload_json, char(10)) FROM btc_actor_evidence ORDER BY aggregate_revision",
+            [],
+            |row| row.get(0),
+        )
+        .expect("exact post-migration payloads");
+    let schema: String = connection
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'btc_actor_evidence'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("migrated evidence schema");
+    assert_eq!(exact_after, exact_before);
+    assert!(schema.contains("'maker_refund'"));
 }
 
 #[test]
