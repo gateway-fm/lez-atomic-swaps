@@ -1089,9 +1089,11 @@ classifies bounded presence, submits only after stable `NotFound` plus the
 one-winner CAS, and projects only later finalized exact evidence; the other role
 uses peerless terms-and-transcript discovery.
 The typed Core 31.1 adapter and canonical bounded public evidence
-codec are GREEN as components and in run-n's actual-node actor paths. Refund
-execution, concurrency, production key custody, and the
-accepted proposal's full SDK/demo surface remain pending.
+codec are GREEN as components and in run-n's actual-node actor paths. The
+schema-3 public `recover` command now composes the deterministic Bitcoin and LEZ
+refund boundaries in both directions; fresh actual-node timeout evidence,
+concurrency, production key custody, and the accepted proposal's full SDK/demo
+surface remain pending.
 
 The first post-PoC RED-GREEN-REFACTOR loop is now GREEN at the canonical
 Bitcoin transaction and agreement boundary. Exact-pinned `bitcoin` 0.32.101
@@ -1103,7 +1105,12 @@ overspend, and zero fee identically. A validated countersigned agreement
 derives the refund only to the direction-selected funder's already signed
 role-owned destination, using the signed cooperative fee as the deterministic
 version-one baseline. Focused tests cover both directions, wrong keys, changed
-outputs, and exact witness shape. The typed Core adapter now proves signed-anchor deadline eligibility and exact one-send/readback semantics. Actor refund-key custody, durable actor composition, LEZ `RefundNative`, and actual-node timeout evidence remain the active slice.
+outputs, and exact witness shape. The typed Core adapter now proves
+signed-anchor deadline eligibility and exact one-send/readback semantics. The
+actor now requires the agreement-selected Bitcoin funder's lowercase-hex
+mode-`0600` refund-key file, forbids it on the other role, and rederives the
+countersigned x-only key before activation. Fresh actual-node timeout evidence
+remains the active slice.
 
 The refund-wire loop is GREEN. The existing native-refund RPC names and
 hashlock JSON shape remain unchanged, while strict untagged protocol envelopes
@@ -1132,7 +1139,16 @@ inclusion, exposes stable
 state-only clocks at deadline minus one and at the deadline, accepts only exact
 canonical unsigned bytes in fully covered finalized ancestry, proves historical
 and tip Refunded state with zero custody, and keeps observation repeatable and
-no-submit. The typed Core refund adapter now validates the signed funding anchor, exact next-block CSV boundary, canonical three-item witness, conflict and early-inclusion cases, one broadcast, exact post-send txid/wtxid readback, and finalized containing-height evidence. The same readback closes a shared claim race. Actor one-attempt recovery and actual-node both-direction execution are next.
+no-submit. The typed Core refund adapter now validates the signed funding anchor, exact next-block CSV boundary, canonical three-item witness, conflict and
+early-inclusion cases, one broadcast, exact post-send txid/wtxid readback, and
+finalized containing-height evidence. The same readback closes a shared claim
+race. The schema-3 actor composes this with the LEZ planner and observer through
+public `recover`: rev2 to rev3 refunds the maker-funded leg, rev3 to rev4
+refunds the taker-funded leg, and both directions reach `Refunded` in
+deterministic role tests. Exact public bytes are durable before the one-winner
+CAS and only one attempt; `Started`, `Unknown`, and `Accepted` are
+observe-only, and only later exact finalized evidence projects. Fresh
+actual-node both-direction timeout execution is next.
 
 Active M3 refund critical path:
 
@@ -1152,10 +1168,20 @@ Active M3 refund critical path:
 - [x] observe Bitcoin maturity from the signed funding anchor and next-block CSV
   boundary, accept one send only after exact txid/wtxid spender readback, and
   encode finalized evidence at the refund containing height;
-- [ ] integrate actor `Refund` effects with observe-before-submit, one `Started`
-  CAS, and observation-only ambiguous recovery;
+- [x] integrate schema-3 actor `recover` effects for the ordered Bitcoin and LEZ
+  legs with role-shaped authority, persist-before-send, one `Started` CAS,
+  observation-only ambiguous recovery, and finalized-only projection;
 - [ ] execute both direction-correct timeout/refund paths against fresh isolated
   Core and LEZ nodes, then add concurrency, restart, reorg, fee, and chaos cases.
+
+LOGOS-017 records two nonblocking upstream production caveats: the compatible
+refund wire does not separately expose the containing-block timestamp that the
+pinned sidecar enforces internally, and terms discovery uses a fixed maximum
+4096-block window that can age past an old transaction. The actor treats every
+miss, timeout, moving tip, or aged window as unknown/pending with no new send
+authority. Under the owner policy these Logos limitations do not stop M3
+certification, but they remain explicit release work; fresh actual-node refund
+evidence is repository-controlled and is not waived.
 
 Authority was reread again on 2026-07-16: accepted replacement issue #112 is
 open/reopened with the `accepted` and `RFP-003` labels and explicitly supersedes
@@ -1263,15 +1289,16 @@ related public signature, while revision four accepts only the
 direction-correct finalized/confirmed follow-up. The live Bitcoin and LEZ claim
 effects are both composed through actor-owned persist-before-presence and
 one-attempt authority. An accepted send alone does not project.
-Only `activate` may
-insert the agreement acceptance. Strict private config schema 2 now requires
-the complete prepared-claim result and distinct Bitcoin/LEZ session IDs plus
-role-local journals. Activation rederives both exact contexts from the signed
+Only `activate` may insert the agreement acceptance. Strict private config
+schema 3 now requires the complete prepared-claim result, distinct Bitcoin/LEZ
+session IDs and role-local journals, plus a role-shaped refund object: only the
+agreement-selected Bitcoin funder may name its lowercase-hex mode-`0600`
+refund-key file. Activation rederives both exact contexts from the signed
 agreement, opens journals existing-only, verifies local identities, phases, and
 presignatures, requires and point-checks a private taker-only adaptor scalar
 without creating a signature, forbids that authority in maker configs, and
 refuses any state creation on run, claimant, request, message, journal, secret,
-or context drift. The actor gate is 34/34 library tests plus seven CLI
+or context drift. The actor gate is 49/49 library tests plus eight CLI
 integration tests; fresh-process coverage also rejects
 an explicit null maker authority and scans stdout plus SQLite/WAL artifacts for
 raw or hex-encoded scalar disclosure.
@@ -1292,18 +1319,23 @@ complete observed bytes are required. A chain result that proves presence but
 conflicts with the exact durable bytes now atomically burns still-fresh send
 authority to observation-only `Unknown` without a transport call; a later
 absence cannot rearm it, while timeout/finality uncertainty remains retryable.
-Eight focused LEZ actor tests cover both owned directions, both peerless roles,
+Focused LEZ claim tests cover both owned directions, both peerless roles,
 deterministic full-field requests and a later window, accepted-without-
 projection, finalized-only projection, activation reruns, unavailable and
 uncertain observations, `Started`/`Unknown` restart, conflicting bytes or
-signature, and an out-of-window containing block.
+signature, and an out-of-window containing block. The refund actor cases add
+both ordered directions, owner/nonowner roles, pre-deadline state-only reads,
+one attempt, accepted/started/unknown restart suppression, recomputed Bitcoin
+txid/wtxid and canonical bytes, exact LEZ finality, and terminal revision four
+`Refunded`.
 Seven signer-journal, fourteen public-effect, eleven BTC-recovery, and all 86
 store tests pass; the bridge-client gate is 2 unit, 26 integration, and 3
 example tests. This is the persistence
 boundary for revisions three and four; run-n now supplies its complete
 two-direction actual-node PoC evidence.
 `status` reports absent or precreated-empty/no-acceptance state as
-`not_activated`; `drive` returns `NotActivated`. Status may migrate an existing
+`not_activated`; `drive` and `recover` return `NotActivated`. Status may migrate
+an existing
 database schema but creates no acceptance and performs no RPC. Corrupt or
 conflicting existing state fails closed. Pre-funding LEZ finalized-observer
 errors remain retryable `ObservationUnavailable`, not false absence. Exact
@@ -1317,10 +1349,12 @@ that relabelled genuine NSSA v0.1.2 schema-1 facts as LEE v0.2 schema-2 facts.
 The correction makes metadata construction generation-explicit in both
 sidecars, the adapter, and the SDK; cross-generation first-lock and claim facts
 now fail closed instead of being silently reinterpreted.
-Step 6 is 2 of 2 for operator-composed actual chain execution. The public actor
-source path is also proved through revision four for both chain directions by
-run `m3actor-20260716n`. Both Bitcoin and LEZ public-effect paths now have
-actual-node public-actor evidence at the progressive local PoC boundary.
+Step 6 is 2 of 2 for operator-composed actual-chain happy execution. The public
+actor source path is also proved through revision four `Completed` for both
+chain directions by run `m3actor-20260716n`. Both Bitcoin and LEZ claim-effect
+paths have actual-node public-actor evidence at the progressive local PoC
+boundary. Public schema-3 refund composition is deterministic GREEN in both
+directions; its fresh actual-node timeout execution remains the next gate.
 Pushed commit
 `a58ef96` adds the checked-in secret-safe packet, complete operator recipe,
 exact cleanup proof, synchronized architecture/traceability, and all 76 rendered

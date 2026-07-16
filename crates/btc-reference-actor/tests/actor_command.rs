@@ -57,6 +57,7 @@ impl ActorFixture {
         let lez_journal_path = directory.path().join("lez-adaptor.sqlite3");
         let prepared_claim_path = directory.path().join("prepared-witnessed-claim.json");
         let adaptor_secret_path = directory.path().join("adaptor-secret.key");
+        let bitcoin_refund_path = directory.path().join("bitcoin-refund.key");
         let config_path = directory.path().join("actor-private.json");
         fs::write(&agreement_path, &agreement_wire).expect("write agreement");
         let run_id = RunId::new("m3-actor-test-run").expect("run id");
@@ -94,13 +95,14 @@ impl ActorFixture {
         });
         if role == BridgeParticipant::Taker {
             write_private_scalar(&adaptor_secret_path, support::ADAPTOR_SECRET);
+            write_private_scalar(&bitcoin_refund_path, support::REFUND_SECRET);
             signing["adaptor_secret_file"] =
                 Value::from(adaptor_secret_path.to_string_lossy().into_owned());
         }
         write_private_json(
             &config_path,
             &json!({
-                "schema_version": 2,
+                "schema_version": 3,
                 "role": match role {
                     BridgeParticipant::Maker => "maker",
                     BridgeParticipant::Taker => "taker",
@@ -122,7 +124,12 @@ impl ActorFixture {
                     "discovery_start_height": 1,
                     "discovery_max_blocks": 10
                 },
-                "signing": signing
+                "signing": signing,
+                "refund": if role == BridgeParticipant::Taker {
+                    json!({ "bitcoin_refund_key_file": bitcoin_refund_path })
+                } else {
+                    json!({})
+                }
             }),
         );
         let config = ActorConfig::load_private(&config_path)?;
@@ -340,6 +347,7 @@ fn cli_exposes_repeatable_activate_drive_and_status_commands() {
     for (command, expected) in [
         ("activate", ActorCommand::Activate),
         ("drive", ActorCommand::Drive),
+        ("recover", ActorCommand::Recover),
         ("status", ActorCommand::Status),
     ] {
         let cli = ActorCli::try_parse_from([
@@ -427,12 +435,12 @@ fn private_config_rejects_world_readability_and_role_runtime_drift() {
 }
 
 #[test]
-fn strict_schema_one_config_is_rejected_after_signing_gate_migration() {
+fn old_config_schema_is_rejected_after_refund_authority_migration() {
     let fixture = ActorFixture::new(BridgeParticipant::Taker, BridgeParticipant::Taker);
     let mut config: Value =
         serde_json::from_slice(&fs::read(&fixture.config_path).expect("config bytes"))
             .expect("config JSON");
-    config["schema_version"] = Value::from(1);
+    config["schema_version"] = Value::from(2);
     write_private_json(&fixture.config_path, &config);
     assert_eq!(
         ActorConfig::load_private(&fixture.config_path),

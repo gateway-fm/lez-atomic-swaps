@@ -30,6 +30,8 @@ emit_contract() {
       bitcoin_planned_funding_anchor_exact: true,
       lez_exact_finalized_ancestry: true,
       actor_owned_claim_effects: true,
+      actor_config_schema_version: 3,
+      role_shaped_bitcoin_refund_authority: true,
       secure_sidecar_state_root_required: true,
       single_core_rpc_response_per_call: true,
       anchor_height_uses_allowed_blockchain_info: true,
@@ -733,7 +735,7 @@ btc_session_file=""
 lez_session_file=""
 provision_signing_material() {
   local public_spec="${M3_POC_DIRECTION_ROOT}/fixture/public-spec.json"
-  local role source destination
+  local role source destination bitcoin_funder nonfunder refund_destination
   mkdir -p "${M3_POC_DIRECTION_ROOT}/public"
   chmod 0700 "${M3_POC_DIRECTION_ROOT}/public"
   for role in maker taker; do
@@ -744,6 +746,18 @@ provision_signing_material() {
     xxd -p -c 32 "$source" >"$destination"
     chmod 0600 "$destination"
   done
+  case "$M3_POC_DIRECTION" in
+    taker_sells_foreign) bitcoin_funder=taker; nonfunder=maker ;;
+    taker_sells_lez) bitcoin_funder=maker; nonfunder=taker ;;
+  esac
+  source="${M3_POC_DIRECTION_ROOT}/fixture/private/${bitcoin_funder}-refund.key"
+  refund_destination="${M3_POC_DIRECTION_ROOT}/actors/${bitcoin_funder}/bitcoin-refund.key"
+  [[ "$(stat -c '%s' "$source")" == 32 ]] ||
+    fail "${bitcoin_funder} stage-one refund key has an unexpected size"
+  xxd -p -c 32 "$source" >"$refund_destination"
+  chmod 0600 "$refund_destination"
+  [[ ! -e "${M3_POC_DIRECTION_ROOT}/actors/${nonfunder}/bitcoin-refund.key" ]] ||
+    fail "Bitcoin non-funder must not receive refund authority"
   source="${M3_POC_DIRECTION_ROOT}/fixture/private/adaptor-scalar.key"
   [[ "$(stat -c '%s' "$source")" == 32 ]] ||
     fail "stage-one adaptor scalar has an unexpected size"
@@ -822,7 +836,7 @@ run_signing_ceremony() {
 accepted_at=0
 write_actor_configs() {
   local start_height="$1" max_blocks="$2"
-  local role basic endpoint config partial adaptor
+  local role basic endpoint config partial adaptor refund
   [[ "$start_height" =~ ^[0-9]+$ && "$max_blocks" =~ ^[0-9]+$ ]] ||
     fail "actor LEZ window is not numeric"
   (( max_blocks >= 1 && max_blocks <= 4096 )) || fail "actor LEZ window is out of bounds"
@@ -835,6 +849,12 @@ write_actor_configs() {
       taker)
         basic="$M3_POC_BITCOIN_TAKER_BASIC"
         adaptor="${M3_POC_DIRECTION_ROOT}/actors/taker/adaptor-secret.key"
+        ;;
+    esac
+    refund=""
+    case "$M3_POC_DIRECTION:$role" in
+      taker_sells_foreign:taker|taker_sells_lez:maker)
+        refund="${M3_POC_DIRECTION_ROOT}/actors/${role}/bitcoin-refund.key"
         ;;
     esac
     endpoint="$(file_value "${M3_POC_DIRECTION_ROOT}/final-endpoints.env" "$role")"
@@ -852,10 +872,10 @@ write_actor_configs() {
       --arg btc_journal "${M3_POC_DIRECTION_ROOT}/actors/${role}/btc-journal.sqlite" \
       --arg lez_session "$lez_session_id" \
       --arg lez_journal "${M3_POC_DIRECTION_ROOT}/actors/${role}/lez-journal.sqlite" \
-      --arg prepared "$final_prepared_claim" --arg adaptor "$adaptor" \
+      --arg prepared "$final_prepared_claim" --arg adaptor "$adaptor" --arg refund "$refund" \
       --slurpfile runtime "${M3_POC_DIRECTION_ROOT}/sidecars/final/${role}/runtime.json" '
       {
-        schema_version:2,role:$role,agreement_file:$agreement,state_db:$state,
+        schema_version:3,role:$role,agreement_file:$agreement,state_db:$state,
         accepted_at_unix_seconds:$accepted,
         bitcoin_core:{endpoint:$core,cookie_file:$basic,connectivity:"isolated_local"},
         lez_bridge:{endpoint:$bridge,capability_file:$capability,run_id:$run,
@@ -865,7 +885,8 @@ write_actor_configs() {
           bitcoin:{session_id:$btc_session,journal_db:$btc_journal},
           lez:{session_id:$lez_session,journal_db:$lez_journal},
           prepared_witnessed_claim_result_file:$prepared
-        } + (if $role == "taker" then {adaptor_secret_file:$adaptor} else {} end))
+        } + (if $role == "taker" then {adaptor_secret_file:$adaptor} else {} end)),
+        refund:(if $refund == "" then {} else {bitcoin_refund_key_file:$refund} end)
       }
     ' >"$partial"
     chmod 0600 "$partial"

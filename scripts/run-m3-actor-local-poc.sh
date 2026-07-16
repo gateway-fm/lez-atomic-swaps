@@ -461,6 +461,8 @@ verify_direction_driver_contract() {
     and .bitcoin_exact_signed_depth == true
     and .lez_exact_finalized_ancestry == true
     and .actor_owned_claim_effects == true
+    and .actor_config_schema_version == 3
+    and .role_shaped_bitcoin_refund_authority == true
     and .submission_count_query == true
     and .owned_process_registry == true
   ' <<<"$contract" >/dev/null || fail "direction-driver contract is incomplete"

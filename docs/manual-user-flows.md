@@ -12,7 +12,7 @@ self-hosted Zebra route and Tatum's public-provider Testnet Zebrad route, but
 explicitly leaves live execution pending the project-owned transparent signer,
 HTTPS provider transport, and actor adapter.
 
-## M3 status: private two-direction local-devnet happy path reproduced
+## M3 status: actual-node happy path reproduced; deterministic refunds GREEN
 
 The operator-composed M3 PoC has completed both `TakerSellsForeign` and
 `TakerSellsLez` against Bitcoin Core 31.1 Regtest and the exact local LEZ v0.2
@@ -54,10 +54,41 @@ Each direction recorded exactly two Bitcoin effects and three LEZ effects,
 including the actor-owned claim on each chain. Terminal replay produced zero
 resubmissions, and exact run cleanup removed every captured container, network,
 volume, image, and reservation without targeting foreign resources. The exact
-refund plan remains bound in the countersigned agreement, but refund execution,
-concurrent demos, public-node guidance, chaos and adversarial hardening, and
-upstream DLC vector clarification remain production-readiness work. Those
+refund plan remains bound in the countersigned agreement. Public
+schema-3 `recover` now composes both Bitcoin and LEZ refund legs deterministically
+with role authority, durable exact bytes, one-attempt submission, observe-only
+ambiguous recovery, and finalized-only revision 2 to 3 to 4 projection in both
+directions. Fresh actual-node refund evidence, concurrent demos, public-node
+guidance, chaos and adversarial hardening, and upstream DLC vector clarification
+remain production-readiness work. Those
 later items do not reopen the completed progressive M3 local PoC.
+
+### Repeat the M3 timeout/refund path
+
+Build and run the deterministic public-command gate first:
+
+```sh
+cargo test --locked -p btc-reference-actor --all-targets
+```
+
+The current gate has 49 library cases and eight CLI integrations. It exercises
+public `recover` through both direction-correct LEZ/Bitcoin orders, role-shaped
+Bitcoin refund authority, pre-deadline no-send, exact-byte persistence, the
+one-winner/one-attempt journal, observe-only `Started`/`Unknown`/`Accepted`,
+owner/nonowner projection, and finalized-only revisions 2 to 3 to 4. These are
+deterministic ports with temporary local files; the command uses no Docker, RPC,
+faucet, peer, funds, or external network.
+
+For the manual actual-node rehearsal, follow the
+[M3 timeout/refund procedure](m3-local-poc-operator-guide.md#manual-actor-timeoutrefund-recovery).
+It uses a fresh isolated Core 31.1 Regtest node and local LEZ v0.2
+Bedrock/sequencer/indexer plus two role sidecars. Funds are deterministic local
+Regtest/genesis outputs; no public RPC, faucet, deployment, or funds participate.
+The procedure is maintained against the real schema-3 command, but fresh
+actual-node refund evidence is still pending, so do not classify it as an M3
+certification run yet. Moving LEZ tips, indexer readiness, the bounded request
+timeout, and the fixed 4096-block discovery window can cause local observation
+retries; they never authorize another send.
 
 ### Provision exact Bitcoin funding and the agreement before either effect
 
@@ -518,8 +549,9 @@ and LEZ claim effects plus bounded observations are composed. Audited run
 `m3actor-20260716n` passed both directions through Core 31.1 Regtest and the
 private local LEZ v0.2 stack. Both roles finished revision four with next action
 `complete`, and replay resubmission count remained zero.
-Refund, concurrent-swap, crash/chaos, and adversarial journeys remain post-PoC
-work.
+Deterministic public-actor refund recovery is now GREEN in both directions. A
+fresh actual-node timeout run, concurrent swaps, crash/chaos, and adversarial
+journeys remain post-PoC work.
 
 ## Can I run the complete M3 happy path myself?
 

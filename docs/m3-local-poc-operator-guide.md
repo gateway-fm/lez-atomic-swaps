@@ -25,10 +25,11 @@ The actor-owned LEZ claim effect and bounded finalized presence/absence
 observation are now composed and deterministic tests reach terminal projection.
 Run-n drove both directions through that public actor and both actual local node
 stacks. Maker and taker each reached revision 4 `completed` and offline next
-action `complete`; terminal replay caused no resubmission. This closes the
-progressive local PoC automation gap without weakening any ordering check. It
-does not prove later refund/concurrency, chaos, infosec, public-Testnet, or
-production-readiness scope.
+action `complete`; terminal replay caused no resubmission. This closes the progressive local PoC automation gap without weakening any
+ordering check. Public refund recovery is deterministic GREEN in both
+directions, but run-n did not execute it against actual nodes. Fresh
+actual-node refund/concurrency, chaos, infosec, public-Testnet, and
+production-readiness scope remain open.
 
 The earlier operator-composed reference result is
 [m3-local-two-direction-poc-20260715.json](evidence/m3-local-two-direction-poc-20260715.json).
@@ -88,6 +89,14 @@ flowchart LR
     TakerSigners --> ClaimProjection
     ClaimProjection -->|"run-n revision 4 complete"| Maker
     ClaimProjection -->|"run-n revision 4 complete"| Taker
+    Maker -->|"schema-3 recover"| RefundProjection["Deterministic actor refund recovery"]
+    Taker -->|"schema-3 recover"| RefundProjection
+    RefundProjection -->|"owner one-attempt exact refund"| Core
+    RefundProjection -->|"owner one-attempt RefundNative"| Sequencer
+    Core -->|"exact finalized refund bytes"| RefundProjection
+    Indexer -->|"finalized refund state and position"| RefundProjection
+    RefundProjection -->|"revision 3 then 4; actual-node run pending"| Maker
+    RefundProjection -->|"revision 3 then 4; actual-node run pending"| Taker
     Indexer --> Finality["Sequential finality and witness auditor"]
     Core --> Finality
     Finality -->|"exact chain signature"| Recover["Point-checked scalar recovery"]
@@ -109,9 +118,9 @@ Repeat the public actor lifecycle component without Docker or chain nodes:
 cargo test --locked -p btc-reference-actor --all-targets
 ~~~
 
-The focused suite exercises the public `activate`, `drive`, and `status`
-surface through both lock projections and the injected actor claim-observation
-seam through revisions three and four. It uses separate private maker/taker
+The focused suite exercises the public `activate`, `drive`, `recover`, and
+`status` surface through both lock projections and the injected actor
+claim-observation seam through revisions three and four. It uses separate private maker/taker
 configs, proves offline terminal status and idempotent activation, retains a
 finalized LEZ ancestry tip, and covers both directions and roles. Revision
 three reruns all activation material, validates the exact related public
@@ -120,9 +129,10 @@ point-checks that scalar from the maker's persisted presignature, and stores
 only its one-way commitment. Revision four reaches `Completed`; offline status
 then reports next action `complete`. Deterministic observers and loopback-only
 placeholder routes are used, so no public RPC, faucet, public funds, chain
-peer, or external service participates. This component gate does not prove
-actual-node LEZ actor observation or an actual-node actor run. The Bitcoin-effect cases
-additionally prove that the
+peer, or external service participates. The current gate contains 49 library
+cases and eight CLI integrations. Its refund cases use deterministic chain ports and prove the same public command and
+durable journals, but do not prove a fresh actual-node refund run. The
+Bitcoin-effect cases additionally prove that the
 taker alone owns a revealing Bitcoin claim at revision two and the maker alone
 owns a follow-up Bitcoin claim at revision three. Exact public bytes are
 persisted before one send, `Started` and `Unknown` remain observe-only across
@@ -163,8 +173,8 @@ mutation failures, and scan SQLite/WAL for the recovered-scalar sentinel. They
 use synthetic evidence that represents already-validated chain-adapter output;
 there is no RPC, node, Docker container, faucet, public endpoint, or external
 availability dependency in this component gate. It does not substitute for
-the separate actual-node proof; run-n now supplies that proof for both roles and
-directions.
+the separate actual-node proof; run-n supplies the happy proof for both roles
+and directions, while fresh actual-node refunds remain pending.
 
 Repeat the agreement-derived signing context and the new recovery seams:
 
@@ -185,10 +195,11 @@ their exact observation paths, and terminal projection are composed in source
 and deterministic actor tests. Run-n now proves the same boundary through fresh
 two-direction actual-node public-actor execution.
 
-The fourteen public-effect tests persist complete node-disclosable Bitcoin or LEZ
-transaction bytes before authorization. Only definitive `Absent + Prepared`
-commits `Started` and grants one send. A crash before or after that RPC never
-re-arms `Started`; `Uncertain` and `Unknown` are observation-only. Exact
+The fourteen public-effect tests persist complete node-disclosable Bitcoin or
+LEZ transaction bytes before authorization. For claims, only definitive
+`Absent + Prepared` commits `Started`; refunds require affirmative stable
+eligibility instead of treating absence as authority. A crash before or after
+that RPC never re-arms `Started`; `Uncertain` and `Unknown` are observation-only. Exact
 presence may reconcile `Prepared`, `Started`, or `Unknown` to `Accepted`.
 Byte or effect-ID drift and contradictory terminal evidence fail closed. This
 is a temporary-SQLite component gate with no RPC, Docker, faucet, peer, or
@@ -202,13 +213,14 @@ Repeat the typed Bitcoin Core boundary independently:
 cargo test --locked -p lez-btc-core-adapter --all-targets
 ~~~
 
-These 18 tests exercise the exact Core 31.1 typed DTOs, consensus-byte
-cross-checks, stable-tip funding/claim observation, canonical scalar-free
+These 29 all-target test executions exercise the exact Core 31.1 typed DTOs,
+consensus-byte cross-checks, stable-tip funding/claim observation, canonical scalar-free
 evidence, wtxid/raw-byte-bound one-attempt submission semantics, already-known
 and conflicting-witness outcomes, and a bounded authenticated
 loopback HTTP server. They use deterministic RPC doubles and ephemeral loopback
 servers, not the Dockerized Core service, a faucet, a public RPC, or public
-funds. Actual service-mode actor integration remains a separate composed gate.
+funds. Run-n supplies actual-node happy integration; service-mode refund
+integration remains a separate composed gate.
 
 Repeat exact-ID and peerless finalized LEZ funding and claim observation
 independently:
@@ -1054,7 +1066,7 @@ the deterministic planned LEZ funding transaction ID, so it need not wait for
 that transaction to be submitted. Return here after completing direction step
 4 for `TakerSellsForeign` or step 3 for `TakerSellsLez`.
 
-Create strict private schema-2 configs only with normalized absolute paths.
+Create strict private schema-3 configs only with normalized absolute paths.
 `cookie_file` must point to the role's restricted Basic file, never the
 provisioner cookie or funding/mining credential. Each config binds its own
 existing Bitcoin and LEZ signer journal, the two distinct nonzero session IDs,
@@ -1089,6 +1101,8 @@ write_actor_config() {
   local lez_journal="$DIRECTION/$role/lez-journal.sqlite"
   local prepared_result="$DIRECTION/prepared-claim.json"
   local adaptor_secret=""
+  local refund_source=""
+  local refund_key=""
 
   test ! -e "$state_db"
   test -s "$btc_journal"
@@ -1104,6 +1118,29 @@ write_actor_config() {
       ;;
     *) return 2 ;;
   esac
+  case "$DIRECTION_NAME:$role" in
+    taker_sells_foreign:taker)
+      refund_source="$DIRECTION/private/taker-refund.key"
+      refund_key="$DIRECTION/taker/bitcoin-refund.hex"
+      ;;
+    taker_sells_lez:maker)
+      refund_source="$DIRECTION/private/maker-refund.key"
+      refund_key="$DIRECTION/maker/bitcoin-refund.hex"
+      ;;
+  esac
+  if test -n "$refund_source"; then
+    test -f "$refund_source"
+    test "$(wc -c <"$refund_source")" -eq 32
+    test ! -e "$refund_key"
+    test ! -L "$refund_key"
+    (
+      set -o noclobber
+      xxd -p -c 32 "$refund_source" >"$refund_key"
+    )
+    chmod 0600 "$refund_key"
+    test "$(wc -c <"$refund_key")" -eq 65
+    refund_key="$(realpath "$refund_key")"
+  fi
   jq -n \
     --arg role "$role" \
     --arg agreement "$AGREEMENT_FILE" \
@@ -1123,9 +1160,10 @@ write_actor_config() {
     --arg lez_journal "$(realpath "$lez_journal")" \
     --arg prepared_result "$(realpath "$prepared_result")" \
     --arg adaptor_secret "$adaptor_secret" \
+    --arg refund_key "$refund_key" \
     --slurpfile runtime "$runtime" \
     '{
-      schema_version: 2,
+      schema_version: 3,
       role: $role,
       agreement_file: $agreement,
       state_db: $state,
@@ -1157,7 +1195,11 @@ write_actor_config() {
         } + (if $role == "taker"
              then {adaptor_secret_file: $adaptor_secret}
              else {}
-             end))
+             end)),
+      refund: (if $refund_key == ""
+               then {}
+               else {bitcoin_refund_key_file: $refund_key}
+               end)
     }' >"$config"
   chmod 0600 "$config"
 }
@@ -1203,11 +1245,12 @@ hex scalar from a mode-0600, single-link regular file and point-checks it agains
 the agreement without producing a signature. Maker configs carrying a secret
 path and taker configs missing one are rejected. Missing, cross-wired,
 incomplete, unsafe, or changed material fails without creating the actor
-database. Private schema-1 configs are rejected.
+database. Private schema-1 and schema-2 configs are rejected.
 
 An absent state path or an
 empty/migrated database with no acceptance produces `not_activated` from
-`status` and `actor is not activated` from `drive`. `status` may migrate the
+`status` and `actor is not activated` from `drive` or `recover`. `status` may
+migrate the
 schema of an existing SQLite file, but it performs no RPC and never creates an
 acceptance. A corrupt database or an acceptance conflicting with role,
 agreement, timestamp, or initial coordinator fails closed. Do not precreate the
@@ -1301,11 +1344,134 @@ classifying presence, and may submit once only after stable bounded
 history grant no fresh send authority. An accepted response alone does not
 project lifecycle state; a later fresh `drive` must obtain exact finalized
 evidence. The other role discovers the same claim from signed terms and
-transcript without accepting a peer transaction ID. This path is GREEN in
-source and deterministic actor tests. Refunds and a retained two-direction
-actual-node E2E through the public actor are now proved by run-n. The lower-level
-operator flow below remains useful for inspecting each exact request/effect;
-refund and concurrent journeys remain later hardening.
+transcript without accepting a peer transaction ID. This claim path is GREEN in
+source, deterministic actor tests, and run-n. The
+refund path is GREEN only at the deterministic public-actor boundary so far. The
+lower-level operator flow below remains useful for inspecting each exact
+request/effect; fresh actual-node refund and concurrent journeys remain later
+gates.
+
+## Manual actor timeout/refund recovery
+
+Status: the public schema-3 command and both ordered refund directions are GREEN
+with deterministic chain ports. A fresh actual-node refund run has not yet been
+retained. Run `m3actor-20260716n` followed the claim path and its schema-2
+configs are spent audit inputs; do not modify or reuse that run root. Start a
+fresh direction, use the schema-3 config recipe above, stop after both actors
+project revision 2 `both_legs_locked`, and do not submit either cooperative
+claim.
+
+The agreement fixes the recovery order. The maker-funded leg must be durably
+projected at revision 3 before the taker-funded leg can project revision 4:
+
+| Direction | Revision 2 to 3 | Revision 3 to 4 |
+|---|---|---|
+| `taker_sells_foreign` | Maker LEZ refund | Taker Bitcoin refund |
+| `taker_sells_lez` | Maker Bitcoin refund | Taker LEZ refund |
+
+The provisioner output `private/<role>-refund.key` is raw 32-byte owner-private
+material. The recipe converts only the agreement-selected Bitcoin funder key
+with `xxd -p -c 32`, without stdout, into the distinct role-owned
+`<role>/bitcoin-refund.hex` mode-`0600` file that its config names. The file
+contains exactly 64 lowercase hexadecimal characters plus one newline. The
+nonfunder gets no converted file and its config carries `refund:{}`. Activation
+rederives the x-only public key and compares it with the countersigned participant key, so a missing, wrong,
+cross-role, aliased, or unsafe key fails before recovery authority is used. LEZ
+`RefundNative` remains permissionless on chain, but the actor owner/nonowner
+split prevents both local roles from preparing or submitting the same effect.
+
+Before the first deadline, invoke a fresh process for each role:
+
+~~~sh
+for config in "$MAKER_BTC_ACTOR_CONFIG" "$TAKER_BTC_ACTOR_CONFIG"; do
+  "$BTC_ACTOR" --config "$config" recover
+  "$BTC_ACTOR" --config "$config" status
+done
+~~~
+
+At revision 2 the expected pre-deadline result is `awaiting_observation` with no
+projection. For LEZ this performs only the stable state/clock read: it does not
+prepare or submit. For Bitcoin the typed Core adapter does not declare the
+refund eligible until the next block satisfies the signed funding anchor plus
+CSV rule.
+
+For a Bitcoin refund, advance only the isolated run-owned Core node to the exact
+next-block eligibility boundary. With the guide variables above, the eligible
+tip is the signed funding anchor plus the CSV delay minus one:
+
+~~~sh
+TARGET_REFUND_TIP=$((PLANNED_BTC_FUNDING_ANCHOR_HEIGHT + REFUND_CSV_BLOCKS - 1))
+CURRENT_REFUND_TIP="$(docker exec "$CORE_CONTAINER" bitcoin-cli \
+  -conf=/run-config/bitcoin.conf -datadir=/var/lib/bitcoin getblockcount)"
+test "$CURRENT_REFUND_TIP" -le "$TARGET_REFUND_TIP"
+REFUND_BLOCKS=$((TARGET_REFUND_TIP - CURRENT_REFUND_TIP))
+if test "$REFUND_BLOCKS" -gt 0; then
+  docker exec "$CORE_CONTAINER" bitcoin-cli -conf=/run-config/bitcoin.conf \
+    -datadir=/var/lib/bitcoin generatetoaddress "$REFUND_BLOCKS" \
+    "$MINING_ADDRESS" >"$PRIVATE_ROOT/evidence/$DIRECTION_NAME-refund-maturity.json"
+fi
+~~~
+
+Invoke `recover` for both roles. Only the agreement-selected Bitcoin funder can
+persist the exact canonical BIP-342 refund and consume the single send
+authority; the other role observes. Mine the local profile confirmation block
+with the same exact run-owned `generatetoaddress` command already used above,
+then invoke `recover` for both roles again. For the one-confirmation local
+profile, the confirmation command is:
+
+~~~sh
+docker exec "$CORE_CONTAINER" bitcoin-cli -conf=/run-config/bitcoin.conf \
+  -datadir=/var/lib/bitcoin generatetoaddress 1 "$MINING_ADDRESS" \
+  >"$PRIVATE_ROOT/evidence/$DIRECTION_NAME-refund-confirmation.json"
+~~~
+
+Projection requires Core to return the same canonical bytes, recomputed txid and wtxid, agreement confirmation
+depth, and finalized containing height. An accepted send response alone leaves
+the lifecycle revision unchanged.
+
+For a LEZ refund, allow the isolated Bedrock/sequencer/indexer stack to advance
+to a stable finalized clock at or after the countersigned `refund_at_ms`, then
+invoke `recover` for both roles. Before the deadline the owner only reads state.
+At eligibility it prepares the deterministic official `RefundNative` bytes,
+persists them, performs exact observation, and may consume one send authority;
+the other role uses bounded discovery by signed terms and never prepares or
+submits. After the transaction is finalized, invoke both fresh processes again.
+Only exact finalized inclusion plus historical and tip `Refunded` metadata, zero
+custody, immutable depositor, and the configured window can project. The stable
+wire exposes the finalized clock and transaction position; the v0.2 sidecar
+checks the actual containing-block timestamp internally before returning the
+result.
+
+After both role stores report revision 3 `maker_leg_refunded`, repeat the same
+procedure for the direction-correct second chain. Do not start the second leg
+from a role store still at revision 2. Offline `status` reports
+`next_action=recover_taker_leg` at this boundary. Completion is both stores at
+revision 4, phase `refunded`; preserve both configs, stores, public-effect
+journals, exact chain transaction/block identities, command outputs, and
+cleanup evidence.
+
+`Started`, `Unknown`, and `Accepted` journal states never grant a second send. A
+transport ambiguity therefore trades liveness for at-most-once safety: rerun
+`recover` only to observe the exact persisted effect. Never delete the journal,
+regenerate a key, replace bytes, or manually rebroadcast. This does not create a
+distributed atomic transaction across Core, LEZ, and SQLite. Atomicity is
+preserved by pre-lock recovery authority, maker-funded-before-taker-funded
+ordering, durable exact bytes before send, one-winner CAS, finalized-only
+projection, and the rule that revision 4 cannot precede durable revision 3.
+
+The deterministic actor gate uses temporary files and in-process chain ports; it
+uses no RPC, Docker, faucet, peer, funds, or external network. The manual
+actual-node flow uses only the isolated Core 31.1 Regtest node, LEZ v0.2
+Bedrock/sequencer/indexer, and the two role sidecars described in this guide.
+Bitcoin funds come from deterministic local Regtest outputs and LEZ funds from
+local genesis/Vault allocations. No public RPC, faucet, public deployment, or
+public funds are required. Runtime flakiness can still come from local process
+scheduling, moving LEZ tips, indexer readiness, the 30-second read timeout, and
+the fixed maximum 4096-block discovery window ageing past an old transaction.
+Use a fresh isolated run, bounded sequential reads, and a window that covers the
+expected refund height; an unavailable or aged observation is never absence or
+new send authority. The separately missing containing-block timestamp field and
+fixed window are recorded as nonblocking Logos production caveats.
 
 ## Strict witnessed operator requests
 
@@ -1488,7 +1654,7 @@ owner-only journal permissions, two distinct context bindings, commitment
 acceptance before nonce reveal, both exact partials persisted, and identical
 verified presignatures. Retain hashes of public packets, not their complete
 contents, in publishable evidence. Retain the exact `BTC_SESSION_ID` and
-`LEZ_SESSION_ID`; the actor schema-2 config names them and the role-local
+`LEZ_SESSION_ID`; the actor schema-3 config names them and the role-local
 journals. Role-runner session JSON and packet files remain ceremony transport,
 not actor authority. The actor rederives keys, role order, exact messages,
 adaptor point, and the Bitcoin Taproot tweak from the countersigned agreement.
@@ -1840,8 +2006,8 @@ Core adapter, public/Testnet funding path, non-fixture signing authority,
 production confirmation/reorg policy, and key custody must replace that test
 surface.
 
-This PoC does not prove refunds, abandonment, reorg handling, concurrent swaps,
-crash recovery across the full lifecycle, chaos behavior, denial-of-service
+This PoC does not prove fresh actual-node refunds, abandonment, reorg handling,
+concurrent swaps, crash recovery across the full lifecycle, chaos behavior, denial-of-service
 resistance, secure transport between actors, HSM custody, key rotation, backup,
 formal cryptographic audit, public deployment, or production readiness.
 musig2 remains a PoC dependency subject to the recorded audit/zeroization

@@ -14,33 +14,43 @@ use std::{
 };
 
 use async_trait::async_trait;
-use bitcoin::{Txid, consensus::serialize};
+use bitcoin::{
+    Txid,
+    consensus::{deserialize, serialize},
+    secp256k1::{Keypair, Message, Secp256k1, SecretKey},
+};
 use clap::{Parser, Subcommand};
 use lez_bridge_adapter::{CapabilityFileBridgeClientFactory, FreshLezBridgeTransportFactory};
 use lez_bridge_client::{
     BridgeClient, FinalizedWitnessedClaimPresence, validate_prepared_witnessed_claim,
 };
 use lez_bridge_protocol::{
-    AggregateBip340Signature, ChainTip, CompleteWitnessedClaimRequest,
+    AggregateBip340Signature, ChainClock, ChainTip, CompleteWitnessedClaimRequest,
     CompleteWitnessedClaimResult, DiscoveryWindow, EscrowState, FinalizedWitnessedClaimFacts,
     FinalizedWitnessedClaimObservationTarget, Hex32, MessageContext,
+    NativeEscrowAccountObservation, NativeRefundObservation, NativeRefundObservationTarget,
     ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedFundingRequest,
-    Participant as BridgeParticipant, PrepareWitnessedClaimResult, PreparedTransaction,
-    PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
-    SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
+    ObserveNativeRefundRequest, ObserveNativeRefundResult, Participant as BridgeParticipant,
+    PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareWitnessedClaimResult,
+    PreparedTransaction, PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility,
+    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
     WitnessedEscrowMetadataFacts, WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
 };
 use lez_btc_core_adapter::{
-    AuthorizedClaimSubmission, BitcoinCoreAdapter, BitcoinCoreEvidenceV1, BitcoinCoreRpc,
-    ClaimObservation as BitcoinClaimObservation, CoreConnectivityPolicy, FundingObservation,
-    HttpBitcoinCoreConfig, HttpBitcoinCoreRpc,
+    AuthorizedClaimSubmission, AuthorizedRefundSubmission, BitcoinCoreAdapter,
+    BitcoinCoreEvidenceV1, BitcoinCoreRpc, ClaimObservation as BitcoinClaimObservation,
+    CoreConnectivityPolicy, FundingObservation, HttpBitcoinCoreConfig, HttpBitcoinCoreRpc,
+    RefundObservation as BitcoinRefundObservation,
 };
 use lez_btc_swap_sdk::{
     AdaptorSessionContext, BtcAdaptorSessionDomain, BtcAgreementV1, MAX_BTC_AGREEMENT_RECORD_BYTES,
     adapt_presignature, extract_adaptor_secret, verify_adaptor_presignature, verify_adaptor_secret,
     verify_final_signature,
 };
-use lez_swap_core::{Chain, ClaimEvidence, Participant, Phase, SwapId};
+use lez_swap_core::{
+    Chain, ChainPosition as SwapChainPosition, ClaimEvidence, LezUnixMilliseconds, Participant,
+    Phase, SwapId,
+};
 use lez_swap_store::{
     AdaptorSessionIdentity, AdaptorSessionPhase, AdaptorSessionRole, BtcAgreementAcceptance,
     BtcLifecycleEvidenceV1, BtcOfflineStatus, BtcRecoveryError, PreparedPublicEffect,
@@ -53,7 +63,7 @@ use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use zeroize::Zeroizing;
 
-const CONFIG_SCHEMA_VERSION: u16 = 2;
+const CONFIG_SCHEMA_VERSION: u16 = 3;
 const OUTPUT_SCHEMA_VERSION: u16 = 1;
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_PREPARED_CLAIM_RESULT_BYTES: usize = 4 * 1024 * 1024;
@@ -68,6 +78,8 @@ pub enum ActorCommand {
     Activate,
     /// Observe and project at most one eligible lifecycle transition.
     Drive,
+    /// Observe and execute at most one ordered timeout recovery transition.
+    Recover,
     /// Replay only owner-local durable evidence and print secret-free status.
     Status,
 }
@@ -189,6 +201,18 @@ struct ClaimRecoveryConfig {
     adaptor_secret_file: Option<PathBuf>,
 }
 
+/// Role-shaped Bitcoin timeout authority.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RefundAuthorityConfig {
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_path",
+        skip_serializing_if = "Option::is_none"
+    )]
+    bitcoin_refund_key_file: Option<PathBuf>,
+}
+
 fn deserialize_present_path<'de, D>(deserializer: D) -> Result<Option<PathBuf>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -208,6 +232,7 @@ pub struct ActorConfig {
     bitcoin_core: BitcoinCoreConfig,
     lez_bridge: LezBridgeConfig,
     signing: ClaimRecoveryConfig,
+    refund: RefundAuthorityConfig,
 }
 
 impl fmt::Debug for ActorConfig {
@@ -222,6 +247,7 @@ impl fmt::Debug for ActorConfig {
             .field("bitcoin_core", &"[REDACTED]")
             .field("lez_bridge", &"[REDACTED]")
             .field("signing", &"[REDACTED]")
+            .field("refund", &"[REDACTED]")
             .finish()
     }
 }
@@ -294,6 +320,9 @@ impl ActorConfig {
         if let Some(path) = &self.signing.adaptor_secret_file {
             paths.push(path);
         }
+        if let Some(path) = &self.refund.bitcoin_refund_key_file {
+            paths.push(path);
+        }
         if paths.iter().any(|path| !is_normalized_absolute(path)) {
             return Err(ActorConfigError::Invalid);
         }
@@ -352,6 +381,7 @@ pub struct ActorEffectOutputV1 {
 enum ActorEffectCommandV1 {
     Activate,
     Drive,
+    Recover,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -403,6 +433,7 @@ enum ActorNextActionV1 {
     ObserveMakerSecondLock,
     ObserveRevealingClaim,
     ObserveFollowupClaim,
+    RecoverTakerLeg,
     LaterRevisionNotYetComposed,
     Complete,
 }
@@ -654,6 +685,101 @@ trait ClaimObservationPort: Send + Sync {
     ) -> Result<ActorClaimObservation, ActorCommandError>;
 }
 
+/// Timeout transition selected only from exact durable revision and phase.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum RefundTransition {
+    MakerLeg,
+    TakerLeg,
+}
+
+impl RefundTransition {
+    const fn from_status(status: &BtcOfflineStatus) -> Option<Self> {
+        match (status.revision(), status.phase()) {
+            (2, Phase::BothLegsLocked) => Some(Self::MakerLeg),
+            (3, Phase::MakerLegRefunded) => Some(Self::TakerLeg),
+            _ => None,
+        }
+    }
+
+    const fn funded_participant(self) -> Participant {
+        match self {
+            Self::MakerLeg => Participant::Maker,
+            Self::TakerLeg => Participant::Taker,
+        }
+    }
+
+    const fn revision(self) -> u64 {
+        match self {
+            Self::MakerLeg => 3,
+            Self::TakerLeg => 4,
+        }
+    }
+
+    const fn phase(self) -> Phase {
+        match self {
+            Self::MakerLeg => Phase::MakerLegRefunded,
+            Self::TakerLeg => Phase::Refunded,
+        }
+    }
+
+    const fn predecessor_revision(self) -> u64 {
+        self.revision() - 1
+    }
+
+    fn evidence(
+        self,
+        chain: Chain,
+        transaction_id: Box<str>,
+        confirmations: u32,
+        chain_evidence: Vec<u8>,
+        position: SwapChainPosition,
+    ) -> Result<BtcLifecycleEvidenceV1, BtcRecoveryError> {
+        match self {
+            Self::MakerLeg => BtcLifecycleEvidenceV1::maker_leg_refund(
+                chain,
+                transaction_id,
+                confirmations,
+                chain_evidence,
+                position,
+            ),
+            Self::TakerLeg => BtcLifecycleEvidenceV1::taker_leg_refund(
+                chain,
+                transaction_id,
+                confirmations,
+                chain_evidence,
+                position,
+            ),
+        }
+    }
+}
+
+/// Affirmative or pending result returned by one agreement-aware refund observer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ActorRefundObservation {
+    /// The expected timeout effect is not yet canonical.
+    Pending { chain: Chain },
+    /// Public exact evidence is ready for one local durable projection.
+    Ready {
+        chain: Chain,
+        transaction_id: Box<str>,
+        confirmations: u32,
+        chain_evidence: Vec<u8>,
+        position: SwapChainPosition,
+    },
+}
+
+/// Revision-aware refund seam used by deterministic actor tests and live adapters.
+#[async_trait]
+trait RefundObservationPort: Send + Sync {
+    /// Performs one bounded read-only exact-refund observation.
+    async fn observe(
+        &self,
+        agreement: &BtcAgreementV1,
+        transition: RefundTransition,
+    ) -> Result<ActorRefundObservation, ActorCommandError>;
+}
+
 /// One stable Bitcoin claim scan reduced to facts needed by actor policy.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum BitcoinClaimScan {
@@ -691,11 +817,108 @@ trait BitcoinClaimChainPort: Send + Sync {
     ) -> Result<AuthorizedClaimSubmission, ActorCommandError>;
 }
 
+/// Stable Core refund state reduced to actor-owned journal semantics.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum BitcoinRefundScan {
+    Immature,
+    Eligible,
+    Exact(BitcoinExactRefund),
+    Conflicting,
+    Uncertain,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BitcoinExactRefund {
+    transaction_bytes: Vec<u8>,
+    transaction_id: Box<str>,
+    witness_transaction_id: Box<str>,
+    confirmations: u32,
+    block_height: Option<u32>,
+    chain_evidence: Vec<u8>,
+    finalized: bool,
+}
+
+#[async_trait]
+trait BitcoinRefundChainPort: Send + Sync {
+    async fn observe_refund(&self, agreement: &BtcAgreementV1) -> BitcoinRefundScan;
+
+    async fn submit_authorized_refund(
+        &self,
+        agreement: &BtcAgreementV1,
+        transaction_bytes: &[u8],
+        expected_transaction_id: Txid,
+    ) -> Result<AuthorizedRefundSubmission, ActorCommandError>;
+}
+
+/// Fully signed exact public refund bytes, persisted before send eligibility.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreparedBitcoinRefundEffect {
+    effect: PreparedPublicEffect,
+    expected_transaction_id: Txid,
+    expected_witness_transaction_id: bitcoin::Wtxid,
+}
+
 /// Fully signed exact public claim bytes, prepared before any send authorization.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PreparedBitcoinClaimEffect {
     effect: PreparedPublicEffect,
     expected_transaction_id: Txid,
+}
+
+/// Exact public LEZ refund material persisted before any presence scan or send authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreparedLezRefundEffect {
+    effect: PreparedPublicEffect,
+    transaction: PreparedTransaction,
+}
+
+/// Adapter seam keeping LEZ refund preparation, observation, and submission explicit.
+#[async_trait]
+trait LezRefundChainPort: Send + Sync {
+    async fn prepare_native_refund(
+        &self,
+        request: PrepareNativeRefundRequest,
+    ) -> Result<PrepareNativeRefundResult, ActorCommandError>;
+
+    async fn observe_native_refund(
+        &self,
+        request: ObserveNativeRefundRequest,
+    ) -> Result<ObserveNativeRefundResult, ActorCommandError>;
+
+    async fn submit_transaction(
+        &self,
+        request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, ActorCommandError>;
+}
+
+#[async_trait]
+impl LezRefundChainPort for BridgeClient {
+    async fn prepare_native_refund(
+        &self,
+        request: PrepareNativeRefundRequest,
+    ) -> Result<PrepareNativeRefundResult, ActorCommandError> {
+        BridgeClient::prepare_native_refund(self, request)
+            .await
+            .map_err(|_| ActorCommandError::ObservationUnavailable)
+    }
+
+    async fn observe_native_refund(
+        &self,
+        request: ObserveNativeRefundRequest,
+    ) -> Result<ObserveNativeRefundResult, ActorCommandError> {
+        BridgeClient::observe_native_refund(self, request)
+            .await
+            .map_err(|_| ActorCommandError::ObservationUnavailable)
+    }
+
+    async fn submit_transaction(
+        &self,
+        request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, ActorCommandError> {
+        BridgeClient::submit_transaction(self, request)
+            .await
+            .map_err(|_| ActorCommandError::ObservationUnavailable)
+    }
 }
 
 /// Exact completed LEZ public claim persisted before any presence scan or send authority.
@@ -775,6 +998,7 @@ pub async fn execute_actor_command(
     match command {
         ActorCommand::Activate => activate(config).map(ActorCommandOutputV1::Effect),
         ActorCommand::Status => status(config).map(ActorCommandOutputV1::Status),
+        ActorCommand::Recover => recover_live(config).await.map(ActorCommandOutputV1::Effect),
         ActorCommand::Drive => drive_live(config).await.map(ActorCommandOutputV1::Effect),
     }
 }
@@ -812,7 +1036,8 @@ fn validate_activation_material(
         BtcAdaptorSessionDomain::Lez,
         &config.signing.lez,
     )?;
-    validate_taker_adaptor_secret(config, agreement)
+    validate_taker_adaptor_secret(config, agreement)?;
+    validate_bitcoin_refund_authority(config, agreement)
 }
 
 fn load_prepared_witnessed_claim(
@@ -864,6 +1089,37 @@ fn validate_taker_adaptor_secret(
         .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
     verify_adaptor_secret(&context, secret)
         .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)
+}
+
+fn validate_bitcoin_refund_authority(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+) -> Result<(), ActorCommandError> {
+    let path = config.refund.bitcoin_refund_key_file.as_ref();
+    if config.role.sdk() != agreement.bitcoin_funder() {
+        return if path.is_none() {
+            Ok(())
+        } else {
+            Err(ActorCommandError::ActivationMaterialUnavailable)
+        };
+    }
+    let secret =
+        read_private_adaptor_secret(path.ok_or(ActorCommandError::ActivationMaterialUnavailable)?)
+            .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?;
+    let secret = SecretKey::from_slice(secret.as_ref())
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+    let actual = Keypair::from_secret_key(&Secp256k1::new(), &secret)
+        .x_only_public_key()
+        .0
+        .serialize();
+    if &actual
+        != agreement
+            .participant(config.role.sdk())
+            .bitcoin_refund_key()
+    {
+        return Err(ActorCommandError::ActivationMaterialUnavailable);
+    }
+    Ok(())
 }
 
 fn validate_signer_journal(
@@ -999,6 +1255,79 @@ async fn drive_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCo
         Chain::Lez => drive_live_lez_claim(config, agreement, wire, transition, &durable).await,
         Chain::Zcash | Chain::Monero => Err(ActorCommandError::AgreementBindingInvalid),
     }
+}
+
+async fn recover_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommandError> {
+    if !state_file_exists(&config.state_db)? {
+        return Err(ActorCommandError::NotActivated);
+    }
+    let (agreement, wire) = load_agreement(config)?;
+    let store = match open_existing_store(config, &agreement, wire.clone()) {
+        Ok(store) => store,
+        Err(BtcRecoveryError::MissingAgreementAcceptance) => {
+            return Err(ActorCommandError::NotActivated);
+        }
+        Err(_) => return Err(ActorCommandError::StateUnavailable),
+    };
+    let durable = store
+        .status()
+        .map_err(|_| ActorCommandError::StateUnavailable)?;
+    drop(store);
+    let Some(transition) = RefundTransition::from_status(&durable) else {
+        return Ok(effect_output(
+            config,
+            ActorEffectCommandV1::Recover,
+            ActorEffectOutcomeV1::NotYetComposed {
+                durable_revision: durable.revision(),
+            },
+            &durable,
+        ));
+    };
+    let chain = agreement
+        .coordinator()
+        .funded_chain(transition.funded_participant());
+    match chain {
+        Chain::Bitcoin => {
+            let effect = prepare_bitcoin_refund_effect(config, &agreement, transition, &durable)?;
+            let core_config = HttpBitcoinCoreConfig::new(config.bitcoin_core.endpoint.clone())
+                .and_then(|value| value.with_cookie_file(&config.bitcoin_core.cookie_file))
+                .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+            let rpc = HttpBitcoinCoreRpc::connect(&core_config)
+                .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+            let observer = BitcoinRefundObserver {
+                chain: BitcoinCoreAdapter::new(rpc, config.bitcoin_core.connectivity.into()),
+                effect,
+                state_db: config.state_db.clone(),
+            };
+            drive_refund_with_observer(config, agreement, wire, &observer).await
+        }
+        Chain::Lez => drive_live_lez_refund(config, agreement, wire).await,
+        Chain::Zcash | Chain::Monero => Err(ActorCommandError::AgreementBindingInvalid),
+    }
+}
+
+async fn drive_live_lez_refund(
+    config: &ActorConfig,
+    agreement: BtcAgreementV1,
+    wire: Vec<u8>,
+) -> Result<ActorEffectOutputV1, ActorCommandError> {
+    validate_actor_binding(config, &agreement)?;
+    let factory = CapabilityFileBridgeClientFactory::new(
+        config.lez_bridge.endpoint.to_string(),
+        config.lez_bridge.capability_file.clone(),
+        config.lez_bridge.run_id.clone(),
+        config.lez_bridge.runtime.clone(),
+        Duration::from_millis(config.lez_bridge.request_timeout_millis),
+    );
+    let client = factory
+        .fresh_transport()
+        .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+    let observer = LezRefundObserver {
+        config: config.clone(),
+        chain: client,
+        state_db: config.state_db.clone(),
+    };
+    drive_refund_with_observer(config, agreement, wire, &observer).await
 }
 
 async fn drive_live_lez_claim(
@@ -1241,6 +1570,158 @@ async fn drive_claim_with_observer(
     )
 }
 
+/// Drives one ordered timeout revision from exact canonical refund evidence.
+async fn drive_refund_with_observer(
+    config: &ActorConfig,
+    agreement: BtcAgreementV1,
+    agreement_wire: Vec<u8>,
+    observer: &dyn RefundObservationPort,
+) -> Result<ActorEffectOutputV1, ActorCommandError> {
+    if !state_file_exists(&config.state_db)? {
+        return Err(ActorCommandError::NotActivated);
+    }
+    validate_actor_binding(config, &agreement)?;
+    let mut store = match open_existing_store(config, &agreement, agreement_wire) {
+        Ok(store) => store,
+        Err(BtcRecoveryError::MissingAgreementAcceptance) => {
+            return Err(ActorCommandError::NotActivated);
+        }
+        Err(_) => return Err(ActorCommandError::StateUnavailable),
+    };
+    let before = store
+        .status()
+        .map_err(|_| ActorCommandError::StateUnavailable)?;
+    let Some(transition) = RefundTransition::from_status(&before) else {
+        return Ok(effect_output(
+            config,
+            ActorEffectCommandV1::Recover,
+            ActorEffectOutcomeV1::NotYetComposed {
+                durable_revision: before.revision(),
+            },
+            &before,
+        ));
+    };
+    let expected_chain = agreement
+        .coordinator()
+        .funded_chain(transition.funded_participant());
+    let observation = observer.observe(&agreement, transition).await?;
+    let (chain, transaction_id, confirmations, chain_evidence, position) = match observation {
+        ActorRefundObservation::Pending { chain } => {
+            if chain != expected_chain {
+                return Err(ActorCommandError::AgreementBindingInvalid);
+            }
+            return Ok(effect_output(
+                config,
+                ActorEffectCommandV1::Recover,
+                ActorEffectOutcomeV1::AwaitingObservation {
+                    chain: chain.into(),
+                },
+                &before,
+            ));
+        }
+        ActorRefundObservation::Ready {
+            chain,
+            transaction_id,
+            confirmations,
+            chain_evidence,
+            position,
+        } => {
+            if chain != expected_chain
+                || position.chain() != chain
+                || !refund_confirmation_is_ready(&agreement, chain, confirmations)
+            {
+                return Err(ActorCommandError::AgreementBindingInvalid);
+            }
+            (
+                chain,
+                transaction_id,
+                confirmations,
+                chain_evidence,
+                position,
+            )
+        }
+    };
+    let evidence = transition
+        .evidence(
+            chain,
+            transaction_id,
+            confirmations,
+            chain_evidence,
+            position,
+        )
+        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    project_refund_transition(
+        config,
+        &mut store,
+        &before,
+        transition,
+        chain,
+        expected_chain,
+        &evidence,
+    )
+}
+
+fn project_refund_transition(
+    config: &ActorConfig,
+    store: &mut SqliteBtcRecoveryStore,
+    before: &BtcOfflineStatus,
+    transition: RefundTransition,
+    chain: Chain,
+    expected_chain: Chain,
+    evidence: &BtcLifecycleEvidenceV1,
+) -> Result<ActorEffectOutputV1, ActorCommandError> {
+    let (outcome, after) = match store.project(before.revision(), evidence) {
+        Ok(commit) => {
+            let after = store
+                .status()
+                .map_err(|_| ActorCommandError::StateUnavailable)?;
+            (
+                ActorEffectOutcomeV1::ObservedThenProjected {
+                    chain: chain.into(),
+                    was_replay: commit.was_replay(),
+                },
+                after,
+            )
+        }
+        Err(BtcRecoveryError::EvidenceConflict { revision })
+            if revision == transition.revision() =>
+        {
+            let winner = store
+                .status()
+                .map_err(|_| ActorCommandError::StateUnavailable)?;
+            if winner.revision() != transition.revision() || winner.phase() != transition.phase() {
+                return Err(ActorCommandError::ProjectionUnavailable);
+            }
+            (
+                ActorEffectOutcomeV1::ConvergedOnExistingProjection {
+                    chain: expected_chain.into(),
+                    durable_revision: winner.revision(),
+                },
+                winner,
+            )
+        }
+        Err(_) => return Err(ActorCommandError::ProjectionUnavailable),
+    };
+    Ok(effect_output(
+        config,
+        ActorEffectCommandV1::Recover,
+        outcome,
+        &after,
+    ))
+}
+
+fn refund_confirmation_is_ready(
+    agreement: &BtcAgreementV1,
+    chain: Chain,
+    confirmations: u32,
+) -> bool {
+    match chain {
+        Chain::Bitcoin => confirmations >= agreement.required_bitcoin_confirmations(),
+        Chain::Lez => confirmations == FINALIZED_LEZ_CONFIRMATION_UNITS,
+        Chain::Zcash | Chain::Monero => false,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn claim_lifecycle_evidence(
     config: &ActorConfig,
@@ -1390,6 +1871,70 @@ fn claim_evidence_from_signature(
             Ok(ClaimEvidence::new(*secret))
         }
     }
+}
+
+fn prepare_bitcoin_refund_effect(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: RefundTransition,
+    before: &BtcOfflineStatus,
+) -> Result<Option<PreparedBitcoinRefundEffect>, ActorCommandError> {
+    if before.revision() != transition.predecessor_revision()
+        || agreement
+            .coordinator()
+            .funded_chain(transition.funded_participant())
+            != Chain::Bitcoin
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    if config.role.sdk() != transition.funded_participant() {
+        return Ok(None);
+    }
+    validate_bitcoin_refund_authority(config, agreement)?;
+    let path = config
+        .refund
+        .bitcoin_refund_key_file
+        .as_ref()
+        .ok_or(ActorCommandError::ActivationMaterialUnavailable)?;
+    let secret = read_private_adaptor_secret(path)
+        .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?;
+    let secret = SecretKey::from_slice(secret.as_ref())
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+    let secp = Secp256k1::new();
+    let signature = secp
+        .sign_schnorr_no_aux_rand(
+            &Message::from_digest(agreement.bitcoin_refund().sighash_bytes()),
+            &Keypair::from_secret_key(&secp, &secret),
+        )
+        .serialize();
+    let transaction = agreement
+        .bitcoin_refund()
+        .clone()
+        .finalize(signature)
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+    let expected_transaction_id = transaction.compute_txid();
+    let expected_witness_transaction_id = transaction.compute_wtxid();
+    let swap_id = SwapId::new(hex::encode(agreement.body().swap_id()))
+        .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    let key = PublicEffectKey::new(
+        swap_id,
+        config.role.sdk(),
+        PublicEffectChain::Bitcoin,
+        PublicEffectOperation::Refund,
+        transition.predecessor_revision(),
+    );
+    let effect = PreparedPublicEffect::new(
+        key,
+        *agreement.agreement_commitment(),
+        expected_transaction_id.to_string(),
+        serialize(&transaction),
+    )
+    .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    Ok(Some(PreparedBitcoinRefundEffect {
+        effect,
+        expected_transaction_id,
+        expected_witness_transaction_id,
+    }))
 }
 
 fn prepare_bitcoin_claim_effect(
@@ -1737,6 +2282,907 @@ where
         .await
         .map_err(|_| ActorCommandError::ObservationUnavailable)
     }
+}
+
+#[async_trait]
+impl<R> BitcoinRefundChainPort for BitcoinCoreAdapter<R>
+where
+    R: BitcoinCoreRpc + Send + Sync,
+{
+    async fn observe_refund(&self, agreement: &BtcAgreementV1) -> BitcoinRefundScan {
+        let Ok(observation) = BitcoinCoreAdapter::observe_refund(self, agreement).await else {
+            return BitcoinRefundScan::Uncertain;
+        };
+        let (observed, finalized) = match &observation {
+            BitcoinRefundObservation::Immature(_) => return BitcoinRefundScan::Immature,
+            BitcoinRefundObservation::Eligible(_) => return BitcoinRefundScan::Eligible,
+            BitcoinRefundObservation::ConflictingSpend => {
+                return BitcoinRefundScan::Conflicting;
+            }
+            BitcoinRefundObservation::Revealed(observed)
+            | BitcoinRefundObservation::Confirming(observed) => (observed, false),
+            BitcoinRefundObservation::Finalized(observed) => (observed, true),
+        };
+        let chain_evidence = if finalized {
+            let Ok(evidence) = BitcoinCoreEvidenceV1::refund_finalized(agreement, &observation)
+                .and_then(|value| value.encode())
+            else {
+                return BitcoinRefundScan::Uncertain;
+            };
+            evidence
+        } else {
+            Vec::new()
+        };
+        BitcoinRefundScan::Exact(BitcoinExactRefund {
+            transaction_bytes: serialize(observed.transaction()),
+            transaction_id: observed.transaction_id().to_string().into_boxed_str(),
+            witness_transaction_id: observed
+                .transaction()
+                .compute_wtxid()
+                .to_string()
+                .into_boxed_str(),
+            confirmations: observed.confirmations(),
+            block_height: observed.block_height(),
+            chain_evidence,
+            finalized,
+        })
+    }
+
+    async fn submit_authorized_refund(
+        &self,
+        agreement: &BtcAgreementV1,
+        transaction_bytes: &[u8],
+        expected_transaction_id: Txid,
+    ) -> Result<AuthorizedRefundSubmission, ActorCommandError> {
+        BitcoinCoreAdapter::submit_authorized_refund(
+            self,
+            agreement,
+            transaction_bytes,
+            expected_transaction_id,
+        )
+        .await
+        .map_err(|_| ActorCommandError::ObservationUnavailable)
+    }
+}
+
+struct BitcoinRefundObserver<P> {
+    chain: P,
+    effect: Option<PreparedBitcoinRefundEffect>,
+    state_db: PathBuf,
+}
+
+#[async_trait]
+impl<P> RefundObservationPort for BitcoinRefundObserver<P>
+where
+    P: BitcoinRefundChainPort,
+{
+    async fn observe(
+        &self,
+        agreement: &BtcAgreementV1,
+        transition: RefundTransition,
+    ) -> Result<ActorRefundObservation, ActorCommandError> {
+        if let Some(effect) = &self.effect {
+            validate_prepared_bitcoin_refund_effect(effect, transition)?;
+            let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
+                .map_err(|_| ActorCommandError::StateUnavailable)?;
+            let _ = journal
+                .record_prepared(&effect.effect)
+                .map_err(|_| ActorCommandError::StateUnavailable)?;
+        }
+        let scan = self.chain.observe_refund(agreement).await;
+        if let Some(effect) = &self.effect {
+            self.reconcile_and_maybe_submit(agreement, effect, &scan)
+                .await?;
+        }
+        let BitcoinRefundScan::Exact(exact) = scan else {
+            return Ok(ActorRefundObservation::Pending {
+                chain: Chain::Bitcoin,
+            });
+        };
+        if !exact.finalized
+            || !bitcoin_exact_refund_matches(agreement, &exact, self.effect.as_ref())
+        {
+            return Ok(ActorRefundObservation::Pending {
+                chain: Chain::Bitcoin,
+            });
+        }
+        let block_height = exact
+            .block_height
+            .ok_or(ActorCommandError::ObservationUnavailable)?;
+        let position = SwapChainPosition::block_height(Chain::Bitcoin, u64::from(block_height));
+        Ok(ActorRefundObservation::Ready {
+            chain: Chain::Bitcoin,
+            transaction_id: exact.transaction_id,
+            confirmations: exact.confirmations,
+            chain_evidence: exact.chain_evidence,
+            position,
+        })
+    }
+}
+
+impl<P> BitcoinRefundObserver<P>
+where
+    P: BitcoinRefundChainPort,
+{
+    async fn reconcile_and_maybe_submit(
+        &self,
+        agreement: &BtcAgreementV1,
+        effect: &PreparedBitcoinRefundEffect,
+        scan: &BitcoinRefundScan,
+    ) -> Result<(), ActorCommandError> {
+        let observation = match scan {
+            BitcoinRefundScan::Eligible => PublicEffectObservation::EligibleToAttempt,
+            BitcoinRefundScan::Exact(exact)
+                if bitcoin_exact_refund_matches(agreement, exact, Some(effect)) =>
+            {
+                PublicEffectObservation::PresentExact(exact.transaction_bytes.clone())
+            }
+            BitcoinRefundScan::Exact(_) | BitcoinRefundScan::Conflicting => {
+                PublicEffectObservation::ConflictingPresence
+            }
+            BitcoinRefundScan::Immature | BitcoinRefundScan::Uncertain => {
+                PublicEffectObservation::Uncertain
+            }
+        };
+        let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        let decision = journal
+            .reconcile(effect.effect.key(), observation)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        let PublicEffectDecision::SubmitOnce(_) = decision else {
+            return Ok(());
+        };
+        drop(journal);
+
+        let submission = self
+            .chain
+            .submit_authorized_refund(
+                agreement,
+                effect.effect.exact_public_bytes(),
+                effect.expected_transaction_id,
+            )
+            .await;
+        let (result, deferred_error) = match submission {
+            Ok(AuthorizedRefundSubmission::Accepted {
+                transaction_id,
+                witness_transaction_id,
+            }) if transaction_id == effect.expected_transaction_id
+                && witness_transaction_id == effect.expected_witness_transaction_id =>
+            {
+                (
+                    PublicEffectSubmissionResult::Accepted(
+                        transaction_id.to_string().into_boxed_str(),
+                    ),
+                    None,
+                )
+            }
+            Ok(AuthorizedRefundSubmission::Accepted { .. }) => (
+                PublicEffectSubmissionResult::Unknown,
+                Some(ActorCommandError::AgreementBindingInvalid),
+            ),
+            Ok(AuthorizedRefundSubmission::Rejected) => {
+                (PublicEffectSubmissionResult::Rejected, None)
+            }
+            Ok(AuthorizedRefundSubmission::Unknown) => {
+                (PublicEffectSubmissionResult::Unknown, None)
+            }
+            Err(error) => (PublicEffectSubmissionResult::Unknown, Some(error)),
+        };
+        let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        let _ = journal
+            .record_submission_result(effect.effect.key(), &result)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        if let Some(error) = deferred_error {
+            return Err(error);
+        }
+        Ok(())
+    }
+}
+
+fn bitcoin_exact_refund_matches(
+    agreement: &BtcAgreementV1,
+    exact: &BitcoinExactRefund,
+    effect: Option<&PreparedBitcoinRefundEffect>,
+) -> bool {
+    let Ok(transaction) = deserialize::<bitcoin::Transaction>(&exact.transaction_bytes) else {
+        return false;
+    };
+    let transaction_id = transaction.compute_txid();
+    let witness_transaction_id = transaction.compute_wtxid();
+    serialize(&transaction) == exact.transaction_bytes
+        && transaction_id
+            == agreement
+                .bitcoin_refund()
+                .unsigned_transaction()
+                .compute_txid()
+        && exact.transaction_id.as_ref() == transaction_id.to_string().as_str()
+        && exact.witness_transaction_id.as_ref() == witness_transaction_id.to_string().as_str()
+        && effect.is_none_or(|expected| {
+            transaction_id == expected.expected_transaction_id
+                && witness_transaction_id == expected.expected_witness_transaction_id
+                && exact.transaction_bytes.as_slice() == expected.effect.exact_public_bytes()
+        })
+}
+
+fn validate_prepared_bitcoin_refund_effect(
+    effect: &PreparedBitcoinRefundEffect,
+    transition: RefundTransition,
+) -> Result<(), ActorCommandError> {
+    if effect.effect.key().local_role() != transition.funded_participant()
+        || effect.effect.key().chain() != PublicEffectChain::Bitcoin
+        || effect.effect.key().operation() != PublicEffectOperation::Refund
+        || effect.effect.key().predecessor_revision() != transition.predecessor_revision()
+        || effect.effect.expected_effect_id() != effect.expected_transaction_id.to_string()
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct LezRefundRequestIdentityV1 {
+    schema_version: u16,
+    operation: String,
+    agreement_commitment: String,
+    transition: RefundTransition,
+    run_id: RunId,
+    sidecar_role: BridgeParticipant,
+    runtime: RuntimeDescriptor,
+    terms: WitnessedNativeEscrowTerms,
+    target: Option<NativeRefundObservationTarget>,
+    transaction: Option<PreparedTransaction>,
+}
+
+fn prepare_lez_refund_request(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: RefundTransition,
+) -> Result<PrepareNativeRefundRequest, ActorCommandError> {
+    validate_lez_refund_transition(config, agreement, transition)?;
+    if config.role.sdk() != transition.funded_participant() {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    let terms = witnessed_lez_terms(agreement)?;
+    let identity = LezRefundRequestIdentityV1 {
+        schema_version: 1,
+        operation: "prepare_native_refund".into(),
+        agreement_commitment: hex::encode(agreement.agreement_commitment()),
+        transition,
+        run_id: config.lez_bridge.run_id.clone(),
+        sidecar_role: config.role.bridge(),
+        runtime: config.lez_bridge.runtime.clone(),
+        terms: terms.clone(),
+        target: None,
+        transaction: None,
+    };
+    let request_id = deterministic_request_id(&identity)?;
+    Ok(PrepareNativeRefundRequest::new_witnessed(
+        MessageContext::new(
+            config.lez_bridge.run_id.clone(),
+            request_id,
+            config.role.bridge(),
+        ),
+        config.lez_bridge.runtime.clone(),
+        terms,
+    ))
+}
+
+fn lez_refund_observation_request(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: RefundTransition,
+    target: NativeRefundObservationTarget,
+) -> Result<ObserveNativeRefundRequest, ActorCommandError> {
+    validate_lez_refund_transition(config, agreement, transition)?;
+    let owner = config.role.sdk() == transition.funded_participant();
+    let target_is_valid = matches!(
+        (owner, target),
+        (
+            true,
+            NativeRefundObservationTarget::StateOnly | NativeRefundObservationTarget::Exact { .. }
+        ) | (false, NativeRefundObservationTarget::DiscoverByTerms { .. })
+    );
+    if !target_is_valid {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    let terms = witnessed_lez_terms(agreement)?;
+    let identity = LezRefundRequestIdentityV1 {
+        schema_version: 1,
+        operation: "observe_native_refund".into(),
+        agreement_commitment: hex::encode(agreement.agreement_commitment()),
+        transition,
+        run_id: config.lez_bridge.run_id.clone(),
+        sidecar_role: config.role.bridge(),
+        runtime: config.lez_bridge.runtime.clone(),
+        terms: terms.clone(),
+        target: Some(target),
+        transaction: None,
+    };
+    let request_id = deterministic_request_id(&identity)?;
+    Ok(ObserveNativeRefundRequest::new_witnessed(
+        MessageContext::new(
+            config.lez_bridge.run_id.clone(),
+            request_id,
+            config.role.bridge(),
+        ),
+        config.lez_bridge.runtime.clone(),
+        terms,
+        target,
+    ))
+}
+
+fn submit_lez_refund_request(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: RefundTransition,
+    effect: &PreparedLezRefundEffect,
+) -> Result<SubmitTransactionRequest, ActorCommandError> {
+    validate_lez_refund_transition(config, agreement, transition)?;
+    validate_prepared_lez_refund_effect(effect, transition)?;
+    if config.role.sdk() != transition.funded_participant() {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    let terms = witnessed_lez_terms(agreement)?;
+    let identity = LezRefundRequestIdentityV1 {
+        schema_version: 1,
+        operation: "submit_transaction".into(),
+        agreement_commitment: hex::encode(agreement.agreement_commitment()),
+        transition,
+        run_id: config.lez_bridge.run_id.clone(),
+        sidecar_role: config.role.bridge(),
+        runtime: config.lez_bridge.runtime.clone(),
+        terms,
+        target: None,
+        transaction: Some(effect.transaction.clone()),
+    };
+    let request_id = deterministic_request_id(&identity)?;
+    Ok(SubmitTransactionRequest::new(
+        MessageContext::new(
+            config.lez_bridge.run_id.clone(),
+            request_id,
+            config.role.bridge(),
+        ),
+        config.lez_bridge.runtime.clone(),
+        effect.transaction.clone(),
+    ))
+}
+
+struct LezRefundObserver<P> {
+    config: ActorConfig,
+    chain: P,
+    state_db: PathBuf,
+}
+
+#[async_trait]
+impl<P> RefundObservationPort for LezRefundObserver<P>
+where
+    P: LezRefundChainPort,
+{
+    async fn observe(
+        &self,
+        agreement: &BtcAgreementV1,
+        transition: RefundTransition,
+    ) -> Result<ActorRefundObservation, ActorCommandError> {
+        validate_lez_refund_transition(&self.config, agreement, transition)?;
+        let owner = self.config.role.sdk() == transition.funded_participant();
+        if !owner {
+            let request = lez_refund_observation_request(
+                &self.config,
+                agreement,
+                transition,
+                NativeRefundObservationTarget::DiscoverByTerms {
+                    window: self.config.discovery_window()?,
+                },
+            )?;
+            let response = self.chain.observe_native_refund(request.clone()).await?;
+            validate_lez_refund_response(&self.config, agreement, transition, &request, &response)?;
+            return finalized_lez_refund_observation(
+                &self.config,
+                agreement,
+                transition,
+                None,
+                &request,
+                &response,
+            );
+        }
+
+        let state_request = lez_refund_observation_request(
+            &self.config,
+            agreement,
+            transition,
+            NativeRefundObservationTarget::StateOnly,
+        )?;
+        let state_response = self
+            .chain
+            .observe_native_refund(state_request.clone())
+            .await?;
+        let state = validate_lez_refund_response(
+            &self.config,
+            agreement,
+            transition,
+            &state_request,
+            &state_response,
+        )?;
+        if state_response.refund != NativeRefundObservation::NotRequested {
+            return Err(ActorCommandError::AgreementBindingInvalid);
+        }
+        if state != Some(EscrowState::Funded) && state != Some(EscrowState::Refunded) {
+            return Ok(ActorRefundObservation::Pending { chain: Chain::Lez });
+        }
+        if state == Some(EscrowState::Funded)
+            && state_response.clock_after.timestamp_ms < agreement.lez_terms().refund_at_ms()
+        {
+            return Ok(ActorRefundObservation::Pending { chain: Chain::Lez });
+        }
+
+        let effect =
+            prepare_lez_refund_effect(&self.config, agreement, transition, &self.chain).await?;
+        validate_prepared_lez_refund_effect(&effect, transition)?;
+        let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        let _ = journal
+            .record_prepared(&effect.effect)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        drop(journal);
+
+        let request = lez_refund_observation_request(
+            &self.config,
+            agreement,
+            transition,
+            NativeRefundObservationTarget::Exact {
+                refund_transaction_id: effect.transaction.transaction_id,
+                window: self.config.discovery_window()?,
+            },
+        )?;
+        let response = self.chain.observe_native_refund(request.clone()).await?;
+        validate_monotonic_lez_clocks(state_response.clock_after, response.clock_after)?;
+        let account_state =
+            validate_lez_refund_response(&self.config, agreement, transition, &request, &response)?;
+        self.reconcile_and_maybe_submit(agreement, transition, &effect, account_state, &response)
+            .await?;
+        finalized_lez_refund_observation(
+            &self.config,
+            agreement,
+            transition,
+            Some(&effect),
+            &request,
+            &response,
+        )
+    }
+}
+
+impl<P> LezRefundObserver<P>
+where
+    P: LezRefundChainPort,
+{
+    async fn reconcile_and_maybe_submit(
+        &self,
+        agreement: &BtcAgreementV1,
+        transition: RefundTransition,
+        effect: &PreparedLezRefundEffect,
+        account_state: Option<EscrowState>,
+        response: &ObserveNativeRefundResult,
+    ) -> Result<(), ActorCommandError> {
+        let observation = match &response.refund {
+            NativeRefundObservation::Found(found)
+                if found.transaction.transaction_id == effect.transaction.transaction_id
+                    && found.transaction.exact_bytes.as_slice()
+                        == effect.effect.exact_public_bytes() =>
+            {
+                PublicEffectObservation::PresentExact(
+                    found.transaction.exact_bytes.as_slice().to_vec(),
+                )
+            }
+            NativeRefundObservation::Found(_) => PublicEffectObservation::ConflictingPresence,
+            NativeRefundObservation::Absent | NativeRefundObservation::UnknownOrPending
+                if account_state == Some(EscrowState::Funded)
+                    && response.clock_after.timestamp_ms
+                        >= agreement.lez_terms().refund_at_ms() =>
+            {
+                PublicEffectObservation::EligibleToAttempt
+            }
+            NativeRefundObservation::Absent | NativeRefundObservation::UnknownOrPending => {
+                PublicEffectObservation::Uncertain
+            }
+            NativeRefundObservation::NotRequested => {
+                return Err(ActorCommandError::AgreementBindingInvalid);
+            }
+        };
+        let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        let decision = journal
+            .reconcile(effect.effect.key(), observation)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        let PublicEffectDecision::SubmitOnce(_) = decision else {
+            return Ok(());
+        };
+        drop(journal);
+
+        let request = submit_lez_refund_request(&self.config, agreement, transition, effect)?;
+        let expected_context = request.context.clone();
+        let submission = self.chain.submit_transaction(request).await;
+        let (result, deferred_error) = match submission {
+            Ok(response)
+                if response.context == expected_context
+                    && response.transaction_id == effect.transaction.transaction_id
+                    && matches!(
+                        response.outcome,
+                        SubmissionOutcome::Accepted | SubmissionOutcome::AlreadyKnown
+                    ) =>
+            {
+                (
+                    PublicEffectSubmissionResult::Accepted(
+                        hex::encode(response.transaction_id.as_bytes()).into_boxed_str(),
+                    ),
+                    None,
+                )
+            }
+            Ok(_) => (
+                PublicEffectSubmissionResult::Unknown,
+                Some(ActorCommandError::AgreementBindingInvalid),
+            ),
+            Err(error) => (PublicEffectSubmissionResult::Unknown, Some(error)),
+        };
+        let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        let _ = journal
+            .record_submission_result(effect.effect.key(), &result)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        if let Some(error) = deferred_error {
+            return Err(error);
+        }
+        Ok(())
+    }
+}
+
+async fn prepare_lez_refund_effect<P>(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: RefundTransition,
+    chain: &P,
+) -> Result<PreparedLezRefundEffect, ActorCommandError>
+where
+    P: LezRefundChainPort,
+{
+    validate_lez_refund_transition(config, agreement, transition)?;
+    if config.role.sdk() != transition.funded_participant() {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    let request = prepare_lez_refund_request(config, agreement, transition)?;
+    let expected_context = request.context.clone();
+    let response = chain.prepare_native_refund(request).await?;
+    if response.context != expected_context {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    let swap_id = SwapId::new(hex::encode(agreement.body().swap_id()))
+        .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    let key = PublicEffectKey::new(
+        swap_id,
+        config.role.sdk(),
+        PublicEffectChain::Lez,
+        PublicEffectOperation::Refund,
+        transition.predecessor_revision(),
+    );
+    let effect = PreparedPublicEffect::new(
+        key,
+        *agreement.agreement_commitment(),
+        hex::encode(response.refund.transaction_id.as_bytes()),
+        response.refund.exact_bytes.as_slice().to_vec(),
+    )
+    .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    let prepared = PreparedLezRefundEffect {
+        effect,
+        transaction: response.refund,
+    };
+    validate_prepared_lez_refund_effect(&prepared, transition)?;
+    Ok(prepared)
+}
+
+fn validate_prepared_lez_refund_effect(
+    effect: &PreparedLezRefundEffect,
+    transition: RefundTransition,
+) -> Result<(), ActorCommandError> {
+    if effect.effect.key().local_role() != transition.funded_participant()
+        || effect.effect.key().chain() != PublicEffectChain::Lez
+        || effect.effect.key().operation() != PublicEffectOperation::Refund
+        || effect.effect.key().predecessor_revision() != transition.predecessor_revision()
+        || effect.effect.expected_effect_id()
+            != hex::encode(effect.transaction.transaction_id.as_bytes())
+        || effect.effect.exact_public_bytes() != effect.transaction.exact_bytes.as_slice()
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    Ok(())
+}
+
+fn validate_lez_refund_transition(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: RefundTransition,
+) -> Result<(), ActorCommandError> {
+    validate_actor_binding(config, agreement)?;
+    if agreement
+        .coordinator()
+        .funded_chain(transition.funded_participant())
+        != Chain::Lez
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    Ok(())
+}
+
+fn validate_monotonic_lez_clocks(
+    before: ChainClock,
+    after: ChainClock,
+) -> Result<(), ActorCommandError> {
+    if after.height < before.height
+        || after.timestamp_ms < before.timestamp_ms
+        || (after.height == before.height && after.block_hash != before.block_hash)
+    {
+        return Err(ActorCommandError::ObservationUnavailable);
+    }
+    Ok(())
+}
+
+fn validate_lez_refund_response(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: RefundTransition,
+    request: &ObserveNativeRefundRequest,
+    response: &ObserveNativeRefundResult,
+) -> Result<Option<EscrowState>, ActorCommandError> {
+    validate_lez_refund_transition(config, agreement, transition)?;
+    if response.context != request.context || response.clock_before != response.clock_after {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    let expected_request =
+        lez_refund_observation_request(config, agreement, transition, request.target)?;
+    if request != &expected_request {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    let terms = request
+        .terms
+        .witnessed()
+        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+    let state = validate_lez_refund_accounts(config, agreement, terms, &response.accounts)?
+        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+    match &response.refund {
+        NativeRefundObservation::NotRequested => {
+            if request.target != NativeRefundObservationTarget::StateOnly {
+                return Err(ActorCommandError::AgreementBindingInvalid);
+            }
+        }
+        NativeRefundObservation::Absent => {
+            if !matches!(
+                request.target,
+                NativeRefundObservationTarget::DiscoverByTerms { .. }
+            ) {
+                return Err(ActorCommandError::AgreementBindingInvalid);
+            }
+        }
+        NativeRefundObservation::UnknownOrPending => {
+            if request.target == NativeRefundObservationTarget::StateOnly {
+                return Err(ActorCommandError::AgreementBindingInvalid);
+            }
+        }
+        NativeRefundObservation::Found(found) => {
+            validate_lez_refund_found(request, response, Some(state), found)?;
+        }
+    }
+    Ok(Some(state))
+}
+
+fn validate_lez_refund_accounts(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    terms: &WitnessedNativeEscrowTerms,
+    observation: &NativeEscrowAccountObservation,
+) -> Result<Option<EscrowState>, ActorCommandError> {
+    let NativeEscrowAccountObservation::Found(facts) = observation else {
+        return Ok(None);
+    };
+    let metadata = facts
+        .metadata
+        .witnessed()
+        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+    let state = metadata.status;
+    let signed = agreement.lez_terms();
+    let expected_metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+        metadata.account_id,
+        config.lez_bridge.runtime.escrow_program_id,
+        facts.custody.account_id,
+        terms,
+        state,
+    );
+    let expected_balance = if state == EscrowState::Funded {
+        terms.amount().as_u128()
+    } else {
+        0
+    };
+    if metadata.account_id.as_bytes() != signed.metadata_account()
+        || facts.custody.account_id.as_bytes() != signed.custody_account()
+        || metadata != &expected_metadata
+        || facts.custody.owner_program_id != terms.authenticated_transfer_program_id()
+        || facts.custody.balance.as_u128() != expected_balance
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    Ok(Some(state))
+}
+
+fn validate_lez_refund_found(
+    request: &ObserveNativeRefundRequest,
+    response: &ObserveNativeRefundResult,
+    account_state: Option<EscrowState>,
+    found: &lez_bridge_protocol::NativeRefundFoundFacts,
+) -> Result<(), ActorCommandError> {
+    let window = match request.target {
+        NativeRefundObservationTarget::Exact {
+            refund_transaction_id,
+            window,
+        } => {
+            if found.transaction.transaction_id != refund_transaction_id {
+                return Err(ActorCommandError::AgreementBindingInvalid);
+            }
+            window
+        }
+        NativeRefundObservationTarget::DiscoverByTerms { window } => window,
+        NativeRefundObservationTarget::StateOnly => {
+            return Err(ActorCommandError::AgreementBindingInvalid);
+        }
+    };
+    let end = window
+        .start_height()
+        .checked_add(u64::from(window.max_blocks() - 1))
+        .ok_or(ActorCommandError::ObservationUnavailable)?;
+    let terms = request
+        .terms
+        .witnessed()
+        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+    let transaction = &found.transaction;
+    let NativeEscrowAccountObservation::Found(accounts) = &response.accounts else {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    };
+    let metadata = accounts
+        .metadata
+        .witnessed()
+        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+    let expected_accounts = [
+        metadata.account_id,
+        accounts.custody.account_id,
+        terms.depositor_account_id(),
+    ];
+    let same_height_wrong_hash = transaction.position.height == response.clock_after.height
+        && transaction.position.block_hash != response.clock_after.block_hash;
+    if account_state != Some(EscrowState::Refunded)
+        || transaction.position.height < window.start_height()
+        || transaction.position.height > end
+        || end > response.clock_after.height
+        || transaction.position.height > response.clock_after.height
+        || same_height_wrong_hash
+        || !transaction.is_public
+        || !transaction.signer_account_ids.as_slice().is_empty()
+        || found.instruction.program_id != request.runtime.escrow_program_id
+        || found.instruction.swap_id != terms.swap_id()
+        || found.instruction.ordered_account_ids.as_slice() != expected_accounts
+        || response.clock_after.timestamp_ms < terms.refund_at_ms()
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    Ok(())
+}
+
+fn finalized_lez_refund_observation(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: RefundTransition,
+    effect: Option<&PreparedLezRefundEffect>,
+    request: &ObserveNativeRefundRequest,
+    response: &ObserveNativeRefundResult,
+) -> Result<ActorRefundObservation, ActorCommandError> {
+    let NativeRefundObservation::Found(found) = &response.refund else {
+        return Ok(ActorRefundObservation::Pending { chain: Chain::Lez });
+    };
+    if effect.is_some_and(|expected| {
+        found.transaction.transaction_id != expected.transaction.transaction_id
+            || found.transaction.exact_bytes.as_slice() != expected.effect.exact_public_bytes()
+    }) {
+        return Ok(ActorRefundObservation::Pending { chain: Chain::Lez });
+    }
+    let chain_evidence = encode_finalized_lez_refund_evidence(
+        config, agreement, transition, effect, request, response,
+    )?;
+    let confirmations = response
+        .clock_after
+        .height
+        .checked_sub(found.transaction.position.height)
+        .and_then(|distance| distance.checked_add(1))
+        .and_then(|depth| u32::try_from(depth).ok())
+        .ok_or(ActorCommandError::ObservationUnavailable)?;
+    if confirmations == 0 {
+        return Err(ActorCommandError::ObservationUnavailable);
+    }
+    Ok(ActorRefundObservation::Ready {
+        chain: Chain::Lez,
+        transaction_id: hex::encode(found.transaction.transaction_id.as_bytes()).into_boxed_str(),
+        confirmations: FINALIZED_LEZ_CONFIRMATION_UNITS,
+        chain_evidence,
+        position: SwapChainPosition::lez_timestamp_from_milliseconds_floor(
+            LezUnixMilliseconds::new(response.clock_after.timestamp_ms),
+        ),
+    })
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct FinalizedLezRefundEvidenceV1 {
+    schema_version: u16,
+    agreement_commitment: String,
+    transition: RefundTransition,
+    request: ObserveNativeRefundRequest,
+    response: ObserveNativeRefundResult,
+}
+
+fn encode_finalized_lez_refund_evidence(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: RefundTransition,
+    effect: Option<&PreparedLezRefundEffect>,
+    request: &ObserveNativeRefundRequest,
+    response: &ObserveNativeRefundResult,
+) -> Result<Vec<u8>, ActorCommandError> {
+    let encoded = serde_json::to_vec(&FinalizedLezRefundEvidenceV1 {
+        schema_version: 1,
+        agreement_commitment: hex::encode(agreement.agreement_commitment()),
+        transition,
+        request: request.clone(),
+        response: response.clone(),
+    })
+    .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    decode_finalized_lez_refund_evidence(config, agreement, transition, effect, &encoded)?;
+    Ok(encoded)
+}
+
+fn decode_finalized_lez_refund_evidence(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: RefundTransition,
+    effect: Option<&PreparedLezRefundEffect>,
+    bytes: &[u8],
+) -> Result<FinalizedLezRefundEvidenceV1, ActorCommandError> {
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    let evidence = FinalizedLezRefundEvidenceV1::deserialize(&mut deserializer)
+        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    deserializer
+        .end()
+        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    let canonical =
+        serde_json::to_vec(&evidence).map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    if canonical != bytes
+        || evidence.schema_version != 1
+        || evidence.agreement_commitment != hex::encode(agreement.agreement_commitment())
+        || evidence.transition != transition
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    validate_lez_refund_response(
+        config,
+        agreement,
+        transition,
+        &evidence.request,
+        &evidence.response,
+    )?;
+    let NativeRefundObservation::Found(found) = &evidence.response.refund else {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    };
+    if effect.is_some_and(|expected| {
+        found.transaction.transaction_id != expected.transaction.transaction_id
+            || found.transaction.exact_bytes.as_slice() != expected.effect.exact_public_bytes()
+    }) {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    Ok(evidence)
 }
 
 struct BitcoinClaimObserver<P> {
@@ -2696,8 +4142,10 @@ fn status_output(config: &ActorConfig, status: &BtcOfflineStatus) -> ActorStatus
         ActorNextActionV1::ObserveMakerSecondLock
     } else if status.revision() == 2 {
         ActorNextActionV1::ObserveRevealingClaim
-    } else if status.revision() == 3 {
+    } else if status.revision() == 3 && status.phase() == Phase::ClaimEvidenceAvailable {
         ActorNextActionV1::ObserveFollowupClaim
+    } else if status.revision() == 3 && status.phase() == Phase::MakerLegRefunded {
+        ActorNextActionV1::RecoverTakerLeg
     } else {
         ActorNextActionV1::LaterRevisionNotYetComposed
     };

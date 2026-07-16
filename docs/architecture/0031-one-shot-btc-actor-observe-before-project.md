@@ -1,11 +1,12 @@
 # ADR 0031: Bitcoin funding revisions observe before local projection
 
 Status: Accepted and GREEN through revisions zero to four in both repository-owned
-actual-node happy directions. Refund, crash, reorg, and concurrency paths remain
-active.
+actual-node happy directions. The explicit recovery command and deterministic
+one-attempt refund paths are GREEN; fresh actual-node refund, crash, reorg, and
+concurrency paths remain active.
 
-Reconciled 2026-07-15: ADR 0034 migrates the private config to strict schema 2
-and requires the full prepared LEZ claim plus both completed agreement-derived
+Reconciled 2026-07-16: ADRs 0034 and 0038 migrate the private config to strict schema 3
+and require the full prepared LEZ claim plus both completed agreement-derived
 signer journals before activation may create revision zero. Output schema stays
 version 1 and the funding observe-before-project decision below is unchanged.
 
@@ -24,23 +25,28 @@ atomicity.
 
 ## Decision
 
-Expose one public Unix process, `btc-reference-actor`, with exactly three
+Expose one public Unix process, `btc-reference-actor`, with exactly four
 one-shot commands:
 
 ~~~text
 btc-reference-actor --config PRIVATE_JSON activate
 btc-reference-actor --config PRIVATE_JSON drive
+btc-reference-actor --config PRIVATE_JSON recover
 btc-reference-actor --config PRIVATE_JSON status
 ~~~
 
-The strict schema-v2 configuration is owner-private and permanently binds one
+The strict schema-v3 configuration is owner-private and permanently binds one
 maker or taker role, canonical agreement file, role-local state database,
 acceptance time, Bitcoin Core loopback route and credential file, one LEZ
 sidecar loopback route, capability, run identity, runtime, timeout and bounded
 discovery window, two distinct agreement-derived signing sessions with
 role-local journal paths, and the full prepared witnessed-claim result. Taker
 configs also bind one owner-private adaptor-secret file while maker configs are
-forbidden from carrying that authority. The runtime role, LEZ v0.2
+forbidden from carrying that authority. The agreement-derived Bitcoin funder
+must additionally bind one mode-0600 lowercase-hex encoding of its refund
+scalar whose derived x-only key
+matches the countersigned participant; every other role is forbidden from
+carrying it. The runtime role, LEZ v0.2
 compatibility, channel, genesis, escrow program, signer account, and the
 agreement's signed terms must agree. ADR 0034 defines the additional activation
 gate and explicit schema-1 rejection.
@@ -56,7 +62,7 @@ derives the fresh coordinator from that agreement, and durably accepts revision
 zero. Exact activation replay is idempotent.
 
 An absent database or an existing empty or migrated database without acceptance
-is `not_activated` for `status` and `NotActivated` for `drive`.
+is `not_activated` for `status` and `NotActivated` for `drive` or `recover`.
 `status` may migrate the schema of an existing database, but it never creates
 acceptance. It reads the agreement and role-local SQLite store only, constructs
 no Bitcoin or LEZ client, and performs no RPC. Corrupt state or acceptance that
@@ -82,9 +88,10 @@ revision. The LEZ v0.2 finalized observer currently reports ordinary pre-funding
 absence or incomplete-window conditions as retryable `ObservationUnavailable`,
 not as affirmative absence. Affirmative evidence returns
 `observed_then_projected` at revision one or two. At revision one, offline
-status reports `observe_maker_second_lock`; at revision two, a later `drive`
-returns `not_yet_composed` without constructing a chain client because claim
-revisions three and four are not part of this slice.
+status reports `observe_maker_second_lock`. At revision two, `drive` composes the
+canonical claim branch while explicit `recover` composes the alternative ordered
+timeout branch described by ADRs 0035 and 0038; the command choice prevents a
+worker from guessing between success and timeout authority.
 
 ```mermaid
 sequenceDiagram
@@ -145,10 +152,11 @@ flowchart TD
     Project -->|Other failure| Closed
 ```
 
-The funding-observation slices do not submit funding, prepare or adapt a claim,
-extract a scalar, execute a refund, or advance claim revisions three and four. They
-does not prove a complete actor lifecycle or replace the already retained
-operator-composed two-direction chain evidence.
+The funding-observation diagrams above remain read-only and do not themselves
+submit funding, prepare a claim, or execute a refund. Later accepted ADRs compose
+claim and timeout revisions three and four through the same one-shot process and
+predecessor-CAS boundary; their separate evidence gates must not be inferred from
+this funding diagram alone.
 
 ## Resource boundary
 
@@ -166,6 +174,11 @@ Direction and role mapping, the Bitcoin confirmation policy, finalized LEZ
 funding semantics, signed account binding, and both durable lock transitions now
 have one supported executable observer/projector. Status remains useful during node outage.
 The deliberate observation-to-SQLite gap is visible and restartable, not
-hidden. Full claim atomicity still depends on composing revisions three and
-four, durable effect intent, both signing sessions, final claim observation,
-and both-direction actual-node actor evidence in later slices.
+hidden. Claims now use durable exact public effects and canonical final evidence in both
+actual-node directions. Refunds use the same no-distributed-transaction model:
+exact bytes precede one-attempt authority and finalized evidence precedes local
+projection. Offline status distinguishes revision-three claim evidence from
+`MakerLegRefunded`; the latter reports `recover_taker_leg`, so an operator is
+not incorrectly directed back into the claim branch. Fresh actual-node
+refunds, process-kill, reorg, fee, and concurrency evidence remain later M3
+gates.

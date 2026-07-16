@@ -1,6 +1,6 @@
 # ADR 0038: Durably prepare the permissionless LEZ refund before actor eligibility
 
-Status: Accepted through authenticated prepare/restart replay, finalized witnessed observation, and the durable actor lifecycle refund branch; one-attempt execution and actual-node evidence remain active -- 2026-07-16
+Status: Accepted through the public actor one-attempt LEZ and Bitcoin recovery composition; deterministic tests are GREEN and fresh actual-node timeout/refund evidence remains active -- 2026-07-16
 
 ```mermaid
 flowchart LR
@@ -69,13 +69,15 @@ truth. The finalized
 witnessed observer now implements the state-only, exact-owned, and
 discover-by-terms modes behind that same authenticated boundary.
 
-Preparation is not deadline evidence and grants no send authority. State-only
-observation now brackets canonical Funded or Refunded accounts with equal stable
-finalized clocks before and after all reads. The actor must require Funded state
-and a finalized clock at or beyond the signed deadline before asking its journal
-for send authority.
-Only then may its public-effect journal consume one `Prepared` to `Started`
-CAS. The journal now encodes that distinction: refund `Absent` is invalid, only
+Preparation is not deadline evidence and grants no send authority. The public
+`btc-reference-actor recover` command now performs a role-bound state-only read
+before preparation. Before the deadline it returns pending with zero prepare and
+zero submit calls. At or after the signed deadline, only the LEZ depositor may
+replay the deterministic witnessed refund preparation, persist its exact public
+bytes, observe that exact ID, and ask the public-effect journal for send
+authority. The claimant uses `DiscoverByTerms` only and never prepares or
+submits. Only a fresh stable `Funded` account snapshot at or beyond the deadline
+may let the journal consume one `Prepared` to `Started` CAS. The journal now encodes that distinction: refund `Absent` is invalid, only
 affirmative `EligibleToAttempt` can authorize the refund operation, non-refund
 effects cannot use that eligibility, and concurrent callers still produce one
 durable winner.
@@ -118,9 +120,11 @@ one-attempt public-effect authority, and observe-before-project recovery.
 
 This decision now claims authenticated prepare reachability, exact restart
 replay, finalized witnessed state/exact/discovery observation with internal
-deadline enforcement, and ordered durable lifecycle replay to `Refunded`. It
-does not yet claim actor one-attempt integration or actual-node refund
-execution. Those are the next M3 gates.
+deadline enforcement, public one-shot actor composition, one-attempt LEZ and
+Bitcoin authority, role-separated observer behavior, and ordered durable
+lifecycle projection to `Refunded`. It does not yet claim fresh actual-node
+timeout/refund execution, reorg/fee stress, or the final M3 closure run. Those
+remain the next M3 gates.
 
 ## Evidence
 
@@ -147,3 +151,12 @@ eligibility observers. `swap-store/tests/btc_recovery.rs` proves both-direction
 and both-role refund replay, early/wrong-chain/zero-confirmation and happy-branch
 collision rejection, terminal restart replay, and exact old-schema migration.
 Those store tests use only private temporary SQLite files and no network resource.
+
+`btc-reference-actor` deterministic recovery tests exercise the same public
+actor observer boundaries for both refund transitions: pre-deadline LEZ reads
+perform no preparation, eligible LEZ and Bitcoin owners consume one send,
+`Started`/`Unknown`/`Accepted` restart states never rearm, exact finalized
+evidence projects, and nonowners remain observation-only. They use temporary
+owner-private SQLite files and injected chain ports; no RPC, faucet, Docker
+service, or public endpoint is involved. Fresh actual Core/LEZ node evidence is
+therefore still required before the M3 tag.

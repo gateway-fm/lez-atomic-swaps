@@ -41,6 +41,8 @@ jq -e '
   and .bitcoin_planned_funding_anchor_exact == true
   and .lez_exact_finalized_ancestry == true
   and .actor_owned_claim_effects == true
+  and .actor_config_schema_version == 3
+  and .role_shaped_bitcoin_refund_authority == true
   and .secure_sidecar_state_root_required == true
   and .single_core_rpc_response_per_call == true
   and .anchor_height_uses_allowed_blockchain_info == true
@@ -100,6 +102,16 @@ rg -Fq 'planned_bitcoin_funding_anchor_height' "$direction_driver" ||
   fail "Bitcoin lock path does not bind the actual mined height to the planned anchor"
 rg -Fq 'exact_transaction_occurrences:1' "$direction_driver" ||
   fail "Bitcoin lock path does not retain exact containing-block membership"
+rg -Fq 'schema_version:3,role:$role' "$direction_driver" ||
+  fail "actor configs do not use schema version 3"
+rg -Fq 'taker_sells_foreign:taker|taker_sells_lez:maker' "$direction_driver" ||
+  fail "Bitcoin refund authority is not direction/role shaped"
+rg -Fq 'bitcoin_refund_key_file:$refund' "$direction_driver" ||
+  fail "Bitcoin funder config does not carry its private refund key"
+rg -Fq 'xxd -p -c 32 "$source" >"$refund_destination"' "$direction_driver" ||
+  fail "raw provisioned refund material is not encoded for the actor boundary"
+rg -Fq 'Bitcoin non-funder must not receive refund authority' "$direction_driver" ||
+  fail "runner does not assert refund-authority separation"
 
 [[ -x "$bootstrap_driver" ]] || fail "LEZ bootstrap driver is missing or not executable"
 bash -n "$bootstrap_driver"

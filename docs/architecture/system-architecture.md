@@ -330,10 +330,11 @@ flowchart TB
         PCM["Protected preimage + exact claim payload<br/>XChaCha20-Poly1305 + HKDF<br/>schema-v10 envelope journal"]
         M3AJ[("M3 role-local adaptor journal<br/>reserve before commitment<br/>consume nonce with exact partial GREEN")]
         M3AS[("M3 taker-only adaptor scalar<br/>owner-private file; point check only at activation<br/>maker authority forbidden")]
+        M3RK[("M3 Bitcoin-funder refund scalar<br/>mode 0600 + x-only agreement match GREEN")]
         M3PE[("M3 role-local public-effect journal<br/>claim absence or refund eligibility before CAS<br/>refund race guard GREEN")]
         M3BR[("M3 BTC lifecycle recovery store<br/>four evidence revisions + hash chain<br/>offline Completed or Refunded GREEN")]
         M3BC["M3 typed Core 31.1 adapter<br/>claim + refund stable-tip evidence<br/>exact post-send txid/wtxid readback GREEN"]
-        M3RA["btc-reference-actor<br/>claim execution GREEN<br/>refund store branch GREEN"]
+        M3RA["btc-reference-actor<br/>claim + deterministic refund execution GREEN<br/>actual-node refund pending"]
     end
 
     subgraph LezSidecars["Role-isolated official LEZ v0.1.2 processes"]
@@ -356,6 +357,7 @@ flowchart TB
         M3WB["M3 witnessed prepare, complete, and submit<br/>both local happy directions GREEN"]
         M3FF["M3 finalized witnessed-funding observer<br/>parent-linked stable-tip ancestry<br/>historical Funded state GREEN"]
         M3FO["M3 finalized witnessed-claim observer<br/>parent-linked stable-tip ancestry<br/>dual role + BIP340 GREEN"]
+        M3RF["M3 native-refund planner + finalized observer<br/>state-only, exact, and discovery GREEN"]
         MBRJ[("Maker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         TBRJ[("Taker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         MSL2 --> V02J
@@ -369,6 +371,8 @@ flowchart TB
         TBR2 --> M3FF
         MBR2 --> M3FO
         TBR2 --> M3FO
+        MBR2 --> M3RF
+        TBR2 --> M3RF
     end
 
     subgraph LocalLezV02["Required public-compatible local LEZ v0.2 devnet"]
@@ -457,14 +461,18 @@ flowchart TB
     TS -->|"taker only owner-private authority"| M3AS
     PS -->|"maker private config"| M3RA
     TS -->|"taker private config"| M3RA
+    PS -->|"only when maker is Bitcoin funder"| M3RK
+    TS -->|"only when taker is Bitcoin funder"| M3RK
     M3AJ -->|"existing exact-role Bitcoin and LEZ journals"| M3RA
     M3AS -->|"stable read and agreement point check"| M3RA
+    M3RK -->|"Bitcoin funder only; exact refund key"| M3RA
     M3WB -->|"full prepared claim result"| M3RA
     M3RA -->|"predecessor CAS projections one through four"| M3BR
-    M3RA -->|"agreement-derived Bitcoin funding and claim"| M3BC
+    M3RA -->|"agreement-derived Bitcoin funding, claim, and refund"| M3BC
     M3RA -->|"signed-account finalized LEZ funding read"| M3FF
     M3RA -->|"signed transcript finalized LEZ claim read"| M3FO
-    M3RA -->|"persist exact actor-owned claim before presence"| M3PE
+    M3RA -->|"state-only, prepare, exact, submit, finalized discovery"| M3RF
+    M3RA -->|"persist exact actor-owned claim or refund before authority"| M3PE
     PCM -->|"encrypted envelope + journal"| DB
     PCM -->|"encrypted envelope + journal"| TDB
     TM -.-> TS
@@ -568,7 +576,7 @@ flowchart TB
     classDef implemented fill:#ddf4ff,stroke:#0969da;
     classDef running fill:#e6ffec,stroke:#1a7f37;
     class MM,LC,CA,TM,LRR,PublicLezRisk planned;
-    class TC,M3RA,M3AS,M3PE,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
+    class TC,M3RA,M3AS,M3RK,M3PE,M3RF,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
     class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02Full,V02State,MSL2,TLS2,V02J,MBR2,TBR2,M3FF,M3FO running;
 ```
 
@@ -645,7 +653,7 @@ before a restarted server binds. The repeatable observe-refund method now uses
 fully covered finalized indexer ancestry, equal by-ID/by-hash blocks, historical
 and tip accounts, and the containing-block deadline. It never submits or caches chain truth. The actor-local lifecycle store now
 replays ordered maker- and taker-funded refund evidence to terminal `Refunded`;
-one-attempt actor submission and actual-node timeout evidence remain open.
+public actor one-attempt submission is deterministic-test GREEN; fresh actual-node timeout evidence remains open.
 Sequencer observation remains bounded inclusion plus same-tip accounts. The
 new witnessed-claim path separately asserts indexer finality through bounded
 fully covered scans, equal by-ID/by-hash finalized blocks, exact aggregate
@@ -1241,7 +1249,7 @@ projects both claim revisions without persisting the recovered scalar.
 
 ADR 0031 defines the public role-fixed process boundary. Separate
 owner-private maker and taker configs invoke one fresh `btc-reference-actor`
-process for `activate`, `drive`, or `status`. Only activation inserts agreement
+process for `activate`, `drive`, `recover`, or `status`. Only activation inserts agreement
 acceptance. Absent or empty/no-acceptance state remains not activated; corrupt
 or conflicting state fails closed. Status may migrate an existing database
 schema but creates no acceptance, constructs no chain client, and performs no
@@ -1257,10 +1265,10 @@ unavailability, not false absence. Exact retries retain their deterministic
 identity. A concurrent CAS loser may converge only on a valid matching winner;
 other projection failures fail closed. Revisions one through four are GREEN in
 source, deterministic adapter tests, and actual-node run `m3actor-20260716n`.
-The store-level alternative branch now requires typed maker-funded refund evidence at revision three before taker-funded refund evidence at revision four and reconstructs terminal `Refunded` after restart. Actor one-attempt refund execution, actual-node refund, process-kill, reorg, concurrency, and chaos evidence remain pending.
+The alternative branch now exposes explicit `recover`. LEZ owners perform state-only eligibility, durable deterministic preparation, exact observation, one journal-authorized submit, and later finalized projection; LEZ nonowners use terms discovery only. Bitcoin owners use the agreement-matched refund scalar and the typed Core adapter. Both chains recompute or revalidate exact public identity before projection. Deterministic tests cover both transitions, both directions, owner/observer separation, and `Started`/`Unknown`/`Accepted` restart no-rearm through terminal `Refunded`. Fresh actual-node refund, process-kill, reorg, concurrency, and chaos evidence remain pending.
 
-ADR 0033 supplies the reusable effect boundary used by both actor-owned claim
-revisions. Both adaptor session databases reopen existing-only; a missing path
+ADR 0033 supplies the reusable effect boundary used by actor-owned claim and
+refund revisions. Both adaptor session databases reopen existing-only; a missing path
 cannot create empty signer state. Complete public Bitcoin or LEZ transaction
 bytes and signed-agreement authority are durable before a one-winner
 `Prepared` to `Started` CAS permits the only fresh RPC submission. `Started` or

@@ -77,8 +77,12 @@ No public RPC, faucet, peer, credential, public funds, or public deployment is
 used.
 
 The public `btc-reference-actor` now closes the first cohesive lifecycle slice.
-Each fresh role-fixed process accepts `activate`, `drive`, or `status` with a
-strict owner-private schema-2 config. Before `activate` may insert agreement
+Each fresh role-fixed process accepts `activate`, `drive`, `recover`, or `status`
+with a strict owner-private schema-3 config. The agreement-selected Bitcoin
+funder alone supplies a lowercase-hex mode-`0600` refund-key file converted
+without stdout from its raw provisioner key; the other role must have neither
+the converted file nor that authority. Activation rederives and compares the countersigned x-only key. Before
+`activate` may insert agreement
 acceptance or create revision zero, it binds the complete prepared LEZ claim
 result plus two distinct completed role-local signer journals to contexts
 rederived from the countersigned agreement. The taker must also provide an
@@ -126,6 +130,17 @@ See
 [ADR 0031](docs/architecture/0031-one-shot-btc-actor-observe-before-project.md),
 [ADR 0034](docs/architecture/0034-gate-actor-activation-on-signing-material.md),
 and [ADR 0035](docs/architecture/0035-project-claims-only-from-canonical-public-evidence.md).
+
+For timeout recovery, call the same binary with `recover`. The maker-funded leg
+must reach durable revision 3 before the taker-funded leg can reach revision 4
+`Refunded`. Deterministic actor tests cover both direction mappings, owner and
+nonowner roles, pre-deadline no-send, persist-before-send, one-winner/one-attempt
+authority, observe-only ambiguity, exact finalized projection, and terminal
+restart. The [manual timeout/refund procedure](docs/m3-local-poc-operator-guide.md#manual-actor-timeoutrefund-recovery)
+uses only isolated Core 31.1 Regtest and local LEZ v0.2
+Bedrock/sequencer/indexer plus role sidecars; no public RPC, faucet, public
+deployment, or public funds are needed. Fresh actual-node refund execution is
+not yet retained and is the next evidence gate.
 
 Pushed `a8688a3` replaces the unsafe post-confirmation recipe with an exact
 pre-effect funding ceremony. For each direction the operator runs `generate`,
@@ -390,10 +405,12 @@ or after the signed deadline, and prove historical plus tip Refunded state with
 zero custody. The authenticated observation is repeatable and never submits.
 The actor-local recovery store now replays the ordered maker- then taker-funded
 refund branch to terminal `Refunded` in both directions without changing old
-happy-path evidence bytes. The public-effect journal rejects refund absence as
-send authority: only affirmative stable eligibility can consume the one
-`Prepared` to `Started` CAS, and eight racing processes still yield one winner.
-Actor integration and actual-node refund evidence remain; ADR 0038 records that
+happy-path evidence bytes. Public `recover` composes both LEZ and Bitcoin
+refund legs through revision 2 to 3 to 4 in deterministic role tests. Exact
+bytes are durable before the one `Prepared` to `Started` CAS; only affirmative
+stable eligibility grants one attempt, and `Started`, `Unknown`, or `Accepted`
+never rearm. Owner and nonowner roles project only later exact finalized
+evidence. Fresh actual-node refund evidence remains; ADR 0038 records that
 boundary.
 
 The older retained actual-Core run remains a one-process public deterministic
