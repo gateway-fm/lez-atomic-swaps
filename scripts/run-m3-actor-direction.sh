@@ -47,6 +47,12 @@ emit_contract() {
       survivor_intermediate_phase: "claim_evidence_available",
       survivor_intermediate_terminal: false,
       journeys: ["claim", "survivor_claim", "refund", "first_lock_refund"],
+      maker_lock_cutoff_schedule: {
+        claim_and_survivor_seconds_after_preparation: 1800,
+        two_lock_refund_seconds_after_preparation: 300,
+        first_lock_refund_seconds_after_preparation: 0,
+        required_reaction_margin_seconds: 600
+      },
       default_journey: "claim",
       timeout_terminal_phase: "refunded",
       actor_config_schema_version: 3,
@@ -458,7 +464,8 @@ prepare_direction_layout() {
 
 prepare_stage_two_spec() {
   local output="$1" public_spec stage1_sha authority_mapping aggregate_key aggregate_account
-  local depositor claimant amount now refund_seconds refund_at_ms swap_id terms_file earlier later
+  local depositor claimant amount now maker_cutoff refund_seconds refund_at_ms swap_id terms_file
+  local earlier later
   local source_tx source_vout source_value source_script secret_hex secret_file
   local funding_spec funding_summary funding_hex funder mempool genesis height anchor first_summary
   local funding_source_evidence funding_policy_evidence
@@ -476,8 +483,21 @@ prepare_stage_two_spec() {
   amount=1000
   now="$(date -u +%s)"
   case "$M3_POC_JOURNEY" in
-    claim | survivor_claim) earlier=$((now + 3600)); later=$((now + 7200)) ;;
-    refund | first_lock_refund) earlier=$((now + 600)); later=$((now + 1200)) ;;
+    claim | survivor_claim)
+      maker_cutoff=$((now + 1800))
+      earlier=$((now + 3600))
+      later=$((now + 7200))
+      ;;
+    refund)
+      maker_cutoff=$((now + 300))
+      earlier=$((now + 900))
+      later=$((now + 1500))
+      ;;
+    first_lock_refund)
+      maker_cutoff="$now"
+      earlier=$((now + 600))
+      later=$((now + 1200))
+      ;;
   esac
   case "$M3_POC_DIRECTION" in
     taker_sells_foreign) refund_seconds="$earlier" ;;
@@ -607,7 +627,7 @@ prepare_stage_two_spec() {
     --argjson amount "$amount" --argjson refund "$refund_at_ms" --arg claim_hash "$claim_hash" \
     --argjson anchor "$anchor" --argjson refund_height "$((anchor + 144))" \
     --argjson earlier "$earlier" --argjson later "$later" \
-    --argjson maker_cutoff "$now" --slurpfile authority "$authority_mapping" '
+    --argjson maker_cutoff "$maker_cutoff" --slurpfile authority "$authority_mapping" '
     {schema_version:1,stage1_public_sha256:$stage1,swap_id:$swap,direction:$direction,
      bitcoin:{genesis_block_hash:$genesis,required_confirmations:1,
        funding_signed_transaction:$funding_hex,funding_signed_transaction_sha256:$funding_sha,

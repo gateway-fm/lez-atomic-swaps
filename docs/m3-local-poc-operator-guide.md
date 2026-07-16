@@ -38,9 +38,10 @@ actual local stacks in both directions. Maker and taker each reached revision 4
 exactly two confirmed Bitcoin effects and three durable LEZ submissions, and
 neither direction contained a cooperative claim effect. Run
 `m3firstlock-20260716h` separately closes both refund-side absent-maker paths.
-Survivor-specific continuation, live maker-lock cutoff admission, concurrency,
-process-kill/reorg, chaos, infosec, public-Testnet, and production-readiness
-scope remain open.
+Survivor-specific continuation is now GREEN. Canonical maker-lock
+containing-time enforcement is GREEN at `3d202f7`; SDK-owned same-action maker
+submission and actual-node admission evidence, concurrency, process-kill/reorg,
+chaos, infosec, public-Testnet, and production-readiness scope remain open.
 
 The earlier operator-composed reference result is
 [m3-local-two-direction-poc-20260715.json](evidence/m3-local-two-direction-poc-20260715.json).
@@ -1427,8 +1428,9 @@ source, deterministic actor tests, and run-n. The refund path is GREEN in
 deterministic tests and in Run H's fresh actual-node two-lock journey. The
 lower-level operator flow below remains useful for inspecting each exact
 request/effect; refund-side absent-maker and clean post-reveal survivor
-execution are GREEN, while maker-lock cutoff admission, concurrent,
-process-kill, and reorg journeys remain later gates.
+execution are GREEN. Canonical containing-time enforcement is also GREEN;
+SDK-owned same-action maker admission, concurrent, process-kill, and reorg
+journeys remain later gates.
 
 ## Manual actor timeout/refund recovery
 
@@ -2095,6 +2097,16 @@ indexer calls, bounded waits, fresh observation IDs, and retained exact
 evidence. The actor's LEZ scan is bounded to 30 seconds; expiry is uncertain
 read-only observation, not absence and not new send authority. Never mask a
 timeout by resubmitting an effect.
+
+The combined runner now makes its maker-lock timing policy explicit. Happy and
+survivor journeys sign the cutoff 1,800 seconds after agreement preparation;
+the two-lock refund journey uses 300 seconds, with its earlier refund boundary
+at 900 seconds so the required 600-second reaction margin is unchanged; the
+absent-maker journey uses the preparation time itself. These are local PoC
+parameters, not inferred public-chain calibration. Admission compares Bitcoin's
+canonical containing-block median time or LEZ's finalized containing-block
+timestamp to the signed cutoff. A host clock, mempool sighting, sequencer tip,
+or runner-side preflight cannot substitute for that chain evidence.
 
 ## Manual actor first-lock absent-maker recovery
 

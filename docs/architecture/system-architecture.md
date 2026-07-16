@@ -1402,8 +1402,9 @@ the Bitcoin leg safely claimable but unspent.
 **Implementation status:** happy claims, ordered two-lock refunds, the
 absent-maker refund-side branch, and direct post-reveal maker continuation are
 actual-node GREEN. Clean pushed-commit run `m3survivor-20260716c` certifies the
-survivor branch in both directions. Live maker-lock cutoff admission remains
-open.
+survivor branch in both directions. Canonical maker-lock containing-time
+enforcement is GREEN at `3d202f7`; SDK-owned same-action submission and its
+actual-node admission packet remain open.
 
 <!-- atomicity-argument: lez-btc/taker-sells-lez -->
 
@@ -1428,8 +1429,9 @@ leave the remaining LEZ leg safely claimable but not terminal.
 **Implementation status:** happy claims, ordered two-lock refunds, the
 absent-maker refund-side branch, and direct post-reveal maker continuation are
 actual-node GREEN. Clean pushed-commit run `m3survivor-20260716c` certifies the
-survivor branch in both directions. Live maker-lock cutoff admission remains
-open.
+survivor branch in both directions. Canonical maker-lock containing-time
+enforcement is GREEN at `3d202f7`; SDK-owned same-action submission and its
+actual-node admission packet remain open.
 
 The BTC construction is atomic under these explicit conditions:
 
@@ -1438,7 +1440,9 @@ The BTC construction is atomic under these explicit conditions:
   First-lock-only recovery additionally requires the signed maker-lock cutoff,
   fresh canonical absence and unspent observations, and race-safe late-lock
   admission. Run `m3firstlock-20260716h` proves the refund-side actor gate in
-  both actual-node directions; the maker-lock admission race remains pending.
+  both actual-node directions; `3d202f7` rejects late canonical inclusion and
+  quarantines late presence. The SDK-owned submission race and complementary
+  actual-node admission packet remain pending.
 - Both domain-separated aggregate adaptor presignatures and the Bitcoin CSV
   refund commitment are verified and persisted before funding. Neither actor
   has a standalone claim key that bypasses the two-party transcript.

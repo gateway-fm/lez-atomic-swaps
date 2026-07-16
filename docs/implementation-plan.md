@@ -1055,8 +1055,10 @@ active**. The pushed claim packet certifies both happy directions. Fresh run
 timeout/refund demo in both directions. Run `m3firstlock-20260716h` closes both
 refund-side first-lock absent-maker paths. Clean pushed-commit run
 `m3survivor-20260716c` closes direct post-reveal continuation in both
-directions. Live maker-lock cutoff admission and the concurrent-swap demo
-remain open functional M3 gates. The
+directions. Canonical maker-lock containing-time enforcement is GREEN at
+`3d202f7`; SDK-owned maker submission with fresh same-action eligibility,
+its actual-node admission packet, and the concurrent-swap demo remain open
+functional M3 gates. The
 canonical countersigned agreement, finalized LEZ funding/claim
 adapters, typed Core adapter, and reference-actor revisions zero through four
 are GREEN in source, deterministic tests, and run `m3actor-20260716n`. The
@@ -1388,6 +1390,12 @@ Active M3 refund critical path:
   cutoff-authorizing finalized tip, and persists both distinct reads. The actual boundary run and maker-lock
   admission remain open. A boundary race must fail closed rather than permit both an accepted
   maker lock and taker recovery under incompatible histories;
+  Pushed `3d202f7` binds the maker lock's canonical containing-block time to the
+  signed cutoff and exact chain evidence, rejects post-cutoff inclusion in both
+  directions, and preserves the existing Bitcoin evidence-v1 wire. This closes
+  observation-side false acceptance; the
+  same-operation fresh eligibility plus durable SDK intent remains required
+  before the actor, rather than the external runner, may submit the maker lock;
 - [ ] run the accepted concurrent-swap demo with independent funding inputs,
   agreements, actor stores, effect journals, and overlapping in-flight phases;
   this is not satisfied by sequential swaps, either timeout branch, or a
@@ -1422,7 +1430,12 @@ Active M3 refund critical path:
   discovery, negotiation, activation/escrow creation, status/resume, claim, and
   refund with documented public types, errors, and examples. Reuse the existing
   agreement/adaptor/P2TR primitives, coordinator, stores, Core adapter, and LEZ
-  bridge; do not wrap the CLI or duplicate their logic;
+  bridge; do not wrap the CLI or duplicate their logic. Pushed `ed5cd77` closes
+  the shared dependency-light contract: lifecycle, discovery, negotiation,
+  structured errors, versioning, explicit claim order, and bounded ordered
+  exact-public-effect plans are public and independently tested. The concrete
+  BTC facade, activation/status/resume, claims/refunds, and SDK-owned effects
+  remain open;
 - [ ] make the reference actor a thin SDK adapter and move first/second lock
   construction and submission under SDK-owned persist-before-send authority.
   Current actual-node scripts externally submit both locks, so the present

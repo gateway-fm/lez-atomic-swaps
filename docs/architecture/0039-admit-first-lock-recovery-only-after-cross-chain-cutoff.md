@@ -1,6 +1,8 @@
 # ADR 0039: Admit first-lock recovery only after a cross-chain cutoff
 
-Status: Accepted for the M3 BTC PoC; actual-node evidence pending
+Status: Accepted for the M3 BTC PoC; refund-side actual-node evidence is GREEN,
+canonical maker-lock admission is GREEN in code, and SDK-owned submission plus
+fresh actual-node admission evidence remain pending
 
 ## Context
 
@@ -93,6 +95,96 @@ Bitcoin `Ready` means the maker lock exists, `Pending` includes mempool presence
 and remains uncertain, and only stable-tip `Absent` may pass the first gate. The
 LEZ refund observer then revalidates the exact escrow state and signed deadline.
 
+The target maker-owned admission flow is direction-specific. It is an
+architecture requirement for the remaining SDK/actor-owned submission slice;
+the current pushed actor already enforces the final containing-block cutoff when
+observing a submitted lock.
+
+### Taker sells Bitcoin and maker funds LEZ
+
+```mermaid
+sequenceDiagram
+    actor Taker
+    participant Bitcoin as Bitcoin Core
+    participant MakerSDK as Maker BTC-pair SDK
+    participant Store as Maker durable store
+    participant Lez as LEZ finalized RPC
+    participant TakerActor as Taker actor
+
+    Taker->>Bitcoin: Submit exact Bitcoin first lock
+    Bitcoin-->>MakerSDK: Canonical unspent outpoint at signed depth
+    MakerSDK->>Lez: Read finalized clock before signed cutoff
+    MakerSDK->>Store: Persist exact LEZ initialize and fund plan
+    MakerSDK->>Lez: Submit initialize step
+    Lez-->>MakerSDK: Finalized initialized escrow
+    MakerSDK->>Bitcoin: Fresh exact unspent first-lock check
+    MakerSDK->>Lez: Fresh finalized clock before cutoff
+    alt Still eligible
+        MakerSDK->>Lez: Submit exact fund step
+        Lez-->>MakerSDK: Finalized funding and containing timestamp
+        alt Containing timestamp at or before cutoff
+            MakerSDK->>Store: Commit maker-lock evidence at revision two
+            Lez-->>TakerActor: Exact canonical maker lock
+            TakerActor->>TakerActor: Open both-lock claim gate
+        else Funding exists after cutoff
+            MakerSDK->>Store: Record uncertain late presence
+            TakerActor->>TakerActor: Withhold claim and first-lock refund
+        end
+    else First lock changed or cutoff reached
+        MakerSDK->>Store: Keep intent without funding authority
+    end
+```
+
+This direction is conditionally atomic because LEZ funding is the maker's
+value-bearing step. Before that step, only the taker's Bitcoin is locked and it
+has its signed CSV refund. A timely finalized LEZ funding transaction creates
+the two-lock claim path. A late LEZ funding transaction cannot authorize
+revision two, but its presence makes first-lock absence unprovable, so the taker
+cannot simultaneously refund Bitcoin and treat the LEZ leg as nonexistent.
+Initialization without funding holds no maker asset and grants no claim.
+
+### Taker sells LEZ and maker funds Bitcoin
+
+```mermaid
+sequenceDiagram
+    actor Taker
+    participant Lez as LEZ finalized RPC
+    participant MakerSDK as Maker BTC-pair SDK
+    participant Store as Maker durable store
+    participant Bitcoin as Bitcoin Core
+    participant TakerActor as Taker actor
+
+    Taker->>Lez: Submit exact LEZ initialize and fund steps
+    Lez-->>MakerSDK: Finalized funded escrow and custody balance
+    MakerSDK->>Bitcoin: Read stable tip clock before signed cutoff
+    MakerSDK->>Store: Persist exact signed Bitcoin funding bytes
+    MakerSDK->>Lez: Fresh finalized funded and custody check
+    MakerSDK->>Bitcoin: Fresh stable tip clock before cutoff
+    alt Still eligible
+        MakerSDK->>Bitcoin: Submit exact Bitcoin maker lock once
+        Bitcoin-->>MakerSDK: Canonical containing header and median time
+        alt Containing median time at or before cutoff
+            MakerSDK->>Store: Commit maker-lock evidence at revision two
+            Bitcoin-->>TakerActor: Exact canonical maker lock
+            TakerActor->>TakerActor: Open both-lock claim gate
+        else Funding exists after cutoff
+            MakerSDK->>Store: Record uncertain late presence
+            TakerActor->>TakerActor: Withhold claim and first-lock refund
+        end
+    else First lock changed or cutoff reached
+        MakerSDK->>Store: Keep intent without funding authority
+    end
+```
+
+This direction is conditionally atomic because the maker's exact Bitcoin
+transaction is persisted before its sole send and the taker's LEZ escrow is
+rechecked immediately before that action. Canonical inclusion no later than the
+cutoff opens the two-lock claim sequence. Mempool presence is never canonical
+admission. Inclusion after cutoff is quarantined as uncertain: the late Bitcoin
+leg may require its own timeout recovery, but the taker cannot use the
+absent-maker branch while it exists. That sacrifices automatic liveness rather
+than permitting incompatible claim and refund histories.
+
 ## Atomicity argument
 
 This rule preserves atomicity only in combination with each direction's
@@ -122,11 +214,18 @@ maps transport, availability, malformed history, or a moving finalized tip to
 absence. The actor's ordinary revision-one refund path remains fail closed.
 Deterministic RED-GREEN tests cover no-proof refusal, cutoff validation, a
 maker-lock appearance between reads, ambiguous second reads, restart/no-rearm,
-role ownership, exact terminal projection, and replay idempotence.
+role ownership, exact terminal projection, and replay idempotence. Pushed
+commit `3d202f7` additionally binds Bitcoin containing-block median time or LEZ
+finalized containing-block timestamp into maker-lock evidence, accepts before
+and exactly at the signed cutoff, rejects later inclusion from revision two,
+and maps late presence to uncertain on the refund side. Typed Core
+`getblockheader` validation ties hash, confirmation count, height, and median
+time to one stable tip while preserving the existing evidence-v1 wire.
 
-M3 PoC certification additionally requires fresh isolated local-node runs for
-both directions, proving that no maker second-lock effect occurred, only the
-taker owner submitted recovery, both stores converged on revision two
-`Refunded`, replay submitted nothing, and exact run-owned resources were
-cleaned. Until that evidence exists, this ADR is an implemented component
-decision, not an M3 completion claim.
+Run `m3firstlock-20260716h` supplies the isolated two-direction absent-maker
+evidence: no maker second-lock effect, taker-only recovery, revision-two
+`Refunded` convergence, zero replay submission, and exact run-owned cleanup.
+The remaining certifying run must prove the complementary timely maker path
+with the fresh eligibility check and durable plan consumed by the SDK-owned send
+action. Until that evidence exists, this ADR is an implemented safety decision,
+not an M3 completion claim.

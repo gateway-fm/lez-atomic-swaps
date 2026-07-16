@@ -9,6 +9,12 @@ together with the live
 [RFP-003](https://github.com/logos-co/rfp/blob/master/RFPs/RFP-003-atomic-swaps.md).
 The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 
+Pushed commit `ed5cd77` adds the dependency-light common SDK contract required
+by that proposal: deterministic lifecycle, offer discovery, negotiation,
+structured error handling, explicit claim order, versioning, and ordered exact
+public-effect plans. This is the shared contract, not yet the concrete
+full-lifecycle BTC facade or SDK-owned lock submission.
+
 ## Current status
 
 M2 is certified at its private local-functional PoC boundary under
@@ -464,8 +470,10 @@ stable eligibility grants one attempt, and `Started`, `Unknown`, or `Accepted`
 never rearm. Owner and nonowner roles project only later exact finalized
 evidence. Run `m3refund-20260716h` now closes the fresh two-direction
 actual-node refund evidence boundary recorded by ADR 0038; the separate
-refund-side absent-maker boundary is GREEN in `m3firstlock-20260716h`, while
-maker-lock cutoff admission, concurrency, process-kill, and reorg remain open.
+refund-side absent-maker boundary is GREEN in `m3firstlock-20260716h`. Commit
+`3d202f7` also closes canonical containing-time cutoff enforcement; SDK-owned
+maker submission and its actual-node admission packet, concurrency,
+process-kill, and reorg remain open.
 
 The older retained actual-Core run remains a one-process public deterministic
 cryptographic and consensus fixture. The operator-composed run closes live
@@ -474,7 +482,7 @@ order through separate role processes. The public actor source now owns both
 claim effects, and run-n now retains their fresh actual-node composition. This
 closes the progressive private local PoC, but does **not** close the accepted
 proposal's production-ready scope: native/custom-token parity,
-maker-lock cutoff/race and concurrent demos, Testnet4
+SDK-owned maker-lock admission and concurrent demos, Testnet4
 setup/execution, production key custody/Core adapter, QA/chaos/infosec
 campaigns, and GW-M3-001 disposition remain. There is no `m3-complete` tag. CI
 runs the same P2TR funding/claim
@@ -828,6 +836,16 @@ jq -e '.result == "passed" and .all_exact_run_resources_absent == true and
   .foreign_resources_targeted == false and .broad_cleanup_used == false' \
   "$M3_EVIDENCE/cleanup-attestation.json"
 ```
+
+The runner signs a journey-specific maker-second-lock window so the actual-node
+lock can be prepared, finalized, and admitted reproducibly without weakening the
+refund reaction margin. `claim` and `survivor_claim` use a cutoff 1,800 seconds
+after agreement preparation; `refund` uses 300 seconds and moves its earlier
+refund bound to 900 seconds; `first_lock_refund` intentionally fixes the cutoff
+at preparation time because no maker lock is permitted. Bitcoin admission uses
+the canonical containing block's median time, while LEZ admission uses the
+finalized containing block timestamp. Inclusion after the signed cutoff must
+remain revision 1 and fail closed.
 
 To reproduce the actual-node timeout/refund journey, keep the same verified
 prerequisite variables but select `refund` and a different, never-before-used run

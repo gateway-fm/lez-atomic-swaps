@@ -100,11 +100,23 @@ bash -n "$runner"
 bash -n "$direction_driver"
 stage_two_spec_source="$(sed -n '/^prepare_stage_two_spec() {$/,/^}$/p' "$direction_driver")"
 [[ -n "$stage_two_spec_source" ]] || fail "direction boundary lacks stage-two agreement construction"
-rg -Fq -- '--argjson maker_cutoff "$now"' <<<"$stage_two_spec_source" ||
-  fail "stage-two agreement does not bind the current cutoff into jq"
+rg -Fq -- '--argjson maker_cutoff "$maker_cutoff"' <<<"$stage_two_spec_source" ||
+  fail "stage-two agreement does not bind the journey-specific cutoff into jq"
 rg -Fq 'maker_second_lock_cutoff_unix_seconds:$maker_cutoff' \
   <<<"$stage_two_spec_source" ||
   fail "stage-two agreement does not use the bound maker cutoff"
+rg -Fq 'claim | survivor_claim)' <<<"$stage_two_spec_source" ||
+  fail "happy/survivor journeys do not select a future maker-lock cutoff"
+rg -Fq 'maker_cutoff=$((now + 1800))' <<<"$stage_two_spec_source" ||
+  fail "happy/survivor maker-lock cutoff lacks a reproducible admission window"
+rg -Fq 'refund)' <<<"$stage_two_spec_source" ||
+  fail "two-lock refund journey does not select a maker-lock admission window"
+rg -Fq 'maker_cutoff=$((now + 300))' <<<"$stage_two_spec_source" ||
+  fail "two-lock refund cutoff does not precede its signed reaction margin"
+rg -Fq 'first_lock_refund)' <<<"$stage_two_spec_source" ||
+  fail "absent-maker journey does not select an immediate cutoff"
+rg -Fq 'maker_cutoff="$now"' <<<"$stage_two_spec_source" ||
+  fail "absent-maker journey no longer fixes cutoff at agreement preparation"
 if rg -Fq 'maker_second_lock_cutoff_unix_seconds:$now' \
     <<<"$stage_two_spec_source"; then
   fail "stage-two agreement references an unbound jq cutoff variable"
@@ -240,6 +252,12 @@ jq -e '
   and .survivor_intermediate_phase == "claim_evidence_available"
   and .survivor_intermediate_terminal == false
   and .journeys == ["claim", "survivor_claim", "refund", "first_lock_refund"]
+  and .maker_lock_cutoff_schedule == {
+    claim_and_survivor_seconds_after_preparation:1800,
+    two_lock_refund_seconds_after_preparation:300,
+    first_lock_refund_seconds_after_preparation:0,
+    required_reaction_margin_seconds:600
+  }
   and .default_journey == "claim"
   and .actor_owned_refund_effects == true
   and .actor_owned_first_lock_refund_effects == true

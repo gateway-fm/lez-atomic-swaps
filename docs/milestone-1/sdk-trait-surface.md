@@ -1,15 +1,18 @@
 # Per-pair SDK trait surface
 
-Status: review candidate for Logos; M3 entry corrections — 2026-07-14
+Status: common adapter-independent contract implemented at `ed5cd77`; concrete
+pair facades remain review candidates — 2026-07-16
 
 ```mermaid
 flowchart TB
     App["Logos module / CLI / mini-app"] --> Pair["Dedicated lez-btc / lez-xmr / lez-zec SDK"]
+    Pair --> Common["lez-swap-sdk-core lifecycle and exact-effect vocabulary"]
     Pair --> Discover["OfferDiscovery port"]
     Pair --> Negotiate["NegotiationChannel port"]
     Discover --> Terms["Versioned signed SwapTerms"]
     Negotiate --> Terms
-    Terms --> Pure["Deterministic SwapProtocol"]
+    Terms --> Pair
+    Common --> Pure["Deterministic SwapProtocol"]
     Pure --> Evidence["Pair-specific typed evidence + errors"]
     Pair --> Runtime["Reference async coordinator"]
     Runtime --> LEZ["LEZ port"]
@@ -29,6 +32,16 @@ The deliverable is four Rust crates:
 - `lez-btc-swap-sdk`, `lez-xmr-swap-sdk`, and `lez-zec-swap-sdk`: dedicated
   public entry points with pair-specific transactions, evidence, errors,
   examples, and doc packets.
+
+The first crate is now present in the workspace. It exports `SwapProtocol`,
+`OfferDiscovery`, `NegotiationChannel`, structured error category/disposition,
+explicit claim ordering, nonzero protocol/schema versions, and a bounded
+ordered exact-public-effect plan with stable step IDs, expected public IDs,
+complete bytes, redacted diagnostics, and a domain-separated commitment. Its
+external-consumer tests prove that pair crates can implement the lifecycle and
+that discovery/negotiation remain free of chain adapters. It deliberately owns
+no actor, node, store, SQLite, or CLI dependency. Concrete BTC activation,
+status/resume, lock authority, claims, and refunds remain pair-crate work.
 
 Each pair crate exposes the complete user journey required by the RFP. The
 discovery and negotiation ports remain separate from the deterministic protocol

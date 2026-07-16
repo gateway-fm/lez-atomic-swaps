@@ -654,8 +654,9 @@ absent-maker recovery in `m3firstlock-20260716h` are GREEN in both directions.
 Direct post-reveal survivor continuation is clean pushed-commit GREEN in
 `m3survivor-20260716c`; the secret-safe packet is
 `docs/evidence/m3-local-two-direction-survivor-claim-poc-20260716.json`.
-Maker-lock cutoff admission, concurrent swaps, crash/chaos, and adversarial
-journeys remain open.
+Canonical maker-lock containing-time enforcement is GREEN at `3d202f7`.
+SDK-owned same-action maker submission and its actual-node admission packet,
+concurrent swaps, crash/chaos, and adversarial journeys remain open.
 
 ## Can I run the complete M3 happy path myself?
 
