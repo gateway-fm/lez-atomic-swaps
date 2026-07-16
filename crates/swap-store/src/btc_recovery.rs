@@ -12,7 +12,9 @@ use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
 use crate::{
-    StoreError, open_configured_connection, open_existing_configured_connection, participant_name,
+    StoreError,
+    btc_maker_lock_journal::{close_ready_btc_maker_lock_intent, migrate_btc_maker_lock_journal},
+    open_configured_connection, open_existing_configured_connection, participant_name,
 };
 
 const EVIDENCE_PAYLOAD_VERSION: i64 = 1;
@@ -741,6 +743,7 @@ impl SqliteBtcRecoveryStore {
             BtcStoreOpenMode::ExistingOnly => open_existing_configured_connection(path)?,
         };
         migrate_btc_recovery(&mut connection)?;
+        migrate_btc_maker_lock_journal(&mut connection)?;
 
         let initial_snapshot = serde_json::to_string(initial)?;
         let initial_evidence_chain_head = evidence_chain_genesis(acceptance);
@@ -854,16 +857,49 @@ impl SqliteBtcRecoveryStore {
         expected_predecessor: u64,
         evidence: &BtcLifecycleEvidenceV1,
     ) -> Result<BtcProjectionCommit, BtcRecoveryError> {
-        let proposed_revision = expected_predecessor
-            .checked_add(1)
-            .ok_or(BtcRecoveryError::RevisionOverflow)?;
-        let proposed_sql = revision_to_sql(proposed_revision)?;
-        let evidence_json = serde_json::to_string(evidence)?;
-        if evidence_json.len() > MAX_ENCODED_EVIDENCE_BYTES {
-            return Err(BtcRecoveryError::InvalidEvidence {
-                revision: proposed_revision,
+        if self.acceptance.local_role == Participant::Maker
+            && evidence.kind == BtcLifecycleEvidenceKind::MakerLock
+        {
+            return Err(BtcRecoveryError::InvalidSequence {
+                revision: expected_predecessor.saturating_add(1),
             });
         }
+        self.project_with_optional_maker_intent_close(expected_predecessor, evidence, false)
+    }
+
+    /// Atomically projects maker-lock evidence and closes its exact durable plan.
+    ///
+    /// All plan steps must already have exact confirmed `Accepted` evidence.
+    /// The lifecycle evidence insert, aggregate predecessor CAS, and intent-close
+    /// CAS share one immediate transaction, so failure rolls all three back.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a non-maker store, non-maker-lock evidence, missing or incomplete
+    /// intent, stale predecessor, conflicting replay, or any storage failure.
+    pub fn project_maker_lock_and_close(
+        &mut self,
+        expected_predecessor: u64,
+        evidence: &BtcLifecycleEvidenceV1,
+    ) -> Result<BtcProjectionCommit, BtcRecoveryError> {
+        if self.acceptance.local_role != Participant::Maker
+            || evidence.kind != BtcLifecycleEvidenceKind::MakerLock
+        {
+            return Err(BtcRecoveryError::InvalidSequence {
+                revision: expected_predecessor.saturating_add(1),
+            });
+        }
+        self.project_with_optional_maker_intent_close(expected_predecessor, evidence, true)
+    }
+
+    fn project_with_optional_maker_intent_close(
+        &mut self,
+        expected_predecessor: u64,
+        evidence: &BtcLifecycleEvidenceV1,
+        close_maker_intent: bool,
+    ) -> Result<BtcProjectionCommit, BtcRecoveryError> {
+        let (proposed_revision, proposed_sql, evidence_json) =
+            prepare_evidence_projection(expected_predecessor, evidence)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -874,6 +910,13 @@ impl SqliteBtcRecoveryStore {
                 && version == EVIDENCE_PAYLOAD_VERSION
                 && payload == evidence_json
             {
+                maybe_close_maker_intent(
+                    &transaction,
+                    &self.acceptance,
+                    expected_predecessor,
+                    proposed_revision,
+                    close_maker_intent,
+                )?;
                 transaction.commit()?;
                 return Ok(BtcProjectionCommit {
                     revision: proposed_revision,
@@ -943,6 +986,13 @@ impl SqliteBtcRecoveryStore {
                 actual: reconstructed.revision,
             });
         }
+        maybe_close_maker_intent(
+            &transaction,
+            &self.acceptance,
+            expected_predecessor,
+            proposed_revision,
+            close_maker_intent,
+        )?;
         transaction.commit()?;
         Ok(BtcProjectionCommit {
             revision: proposed_revision,
@@ -969,6 +1019,42 @@ impl SqliteBtcRecoveryStore {
             revealing_public_witness: reconstructed.revealing_public_witness,
         })
     }
+}
+
+fn prepare_evidence_projection(
+    expected_predecessor: u64,
+    evidence: &BtcLifecycleEvidenceV1,
+) -> Result<(u64, i64, String), BtcRecoveryError> {
+    let proposed_revision = expected_predecessor
+        .checked_add(1)
+        .ok_or(BtcRecoveryError::RevisionOverflow)?;
+    let proposed_sql = revision_to_sql(proposed_revision)?;
+    let evidence_json = serde_json::to_string(evidence)?;
+    if evidence_json.len() > MAX_ENCODED_EVIDENCE_BYTES {
+        return Err(BtcRecoveryError::InvalidEvidence {
+            revision: proposed_revision,
+        });
+    }
+    Ok((proposed_revision, proposed_sql, evidence_json))
+}
+
+fn maybe_close_maker_intent(
+    transaction: &rusqlite::Transaction<'_>,
+    acceptance: &BtcAgreementAcceptance,
+    predecessor_revision: u64,
+    committed_revision: u64,
+    requested: bool,
+) -> Result<(), BtcRecoveryError> {
+    if requested {
+        close_ready_btc_maker_lock_intent(
+            transaction,
+            acceptance.swap_id(),
+            acceptance.agreement_commitment(),
+            predecessor_revision,
+            committed_revision,
+        )?;
+    }
+    Ok(())
 }
 
 fn has_actor_state_without_acceptance(

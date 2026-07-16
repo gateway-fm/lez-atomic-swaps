@@ -1596,9 +1596,11 @@ name = "lez-bridge-adapter"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bitcoin",
  "getrandom 0.3.4",
  "lez-bridge-client",
  "lez-bridge-protocol",
+ "lez-btc-swap-sdk",
  "lez-swap-core",
  "lez-swap-store",
  "lez-zec-swap-sdk",
@@ -1673,6 +1675,7 @@ dependencies = [
  "borsh",
  "getrandom 0.3.4",
  "lez-swap-core",
+ "lez-swap-sdk-core",
  "musig2",
  "sha2 0.10.9",
  "subtle",
@@ -1739,6 +1742,7 @@ dependencies = [
  "getrandom 0.3.4",
  "lez-bridge-protocol",
  "lez-swap-core",
+ "lez-swap-sdk-core",
  "lez-zec-swap-sdk",
  "rusqlite",
  "secp256k1 0.29.1",

@@ -8,9 +8,14 @@ use lez_swap_core::{
     Chain, ChainPosition, ClaimEvidence, ConfirmationPolicy, Pair, Participant, Phase,
     RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
+use lez_swap_sdk_core::{
+    ExactPublicEffectBytes, ExactPublicEffectPlanV1, ExpectedPublicEffectId, PublicEffectStepId,
+    PublicEffectStepV1,
+};
 use lez_swap_store::{
-    BtcAgreementAcceptance, BtcLifecycleEvidenceV1, BtcRecoveryError, BtcTerminalOutcome,
-    SqliteBtcRecoveryStore, StoreError,
+    BtcAgreementAcceptance, BtcLifecycleEvidenceKind, BtcLifecycleEvidenceV1, BtcMakerLockIntentV1,
+    BtcMakerLockStepObservation, BtcProjectionCommit, BtcRecoveryError, BtcTerminalOutcome,
+    SqliteBtcMakerLockJournal, SqliteBtcRecoveryStore, StoreError,
 };
 use rusqlite::Connection;
 use tempfile::tempdir;
@@ -80,6 +85,55 @@ fn acceptance(coordinator: &SwapCoordinator, role: Participant) -> BtcAgreementA
         1_785_000_000,
     )
     .expect("bounded accepted agreement")
+}
+
+fn project_with_required_maker_intent(
+    store: &mut SqliteBtcRecoveryStore,
+    path: &Path,
+    accepted: &BtcAgreementAcceptance,
+    predecessor: u64,
+    evidence: &BtcLifecycleEvidenceV1,
+) -> Result<BtcProjectionCommit, BtcRecoveryError> {
+    if accepted.local_role() != Participant::Maker
+        || evidence.kind() != BtcLifecycleEvidenceKind::MakerLock
+        || predecessor != 1
+    {
+        return store.project(predecessor, evidence);
+    }
+    let step = PublicEffectStepV1::new(
+        PublicEffectStepId::new("test.bitcoin.maker_lock").expect("valid test step"),
+        ExpectedPublicEffectId::new(format!("maker-lock-{}", accepted.swap_id().as_str()))
+            .expect("valid test effect ID"),
+        ExactPublicEffectBytes::new(
+            format!("exact-maker-lock-{}", accepted.swap_id().as_str()).into_bytes(),
+        )
+        .expect("valid test bytes"),
+    );
+    let plan = ExactPublicEffectPlanV1::new(vec![step.clone()]).expect("valid test plan");
+    let intent = BtcMakerLockIntentV1::new(
+        accepted.swap_id().clone(),
+        *accepted.agreement_commitment(),
+        Participant::Maker,
+        1,
+        plan,
+    )
+    .expect("valid test maker intent");
+    let mut journal = SqliteBtcMakerLockJournal::open(path).expect("open test maker journal");
+    let _ = journal
+        .create_intent(&intent)
+        .expect("stage test maker intent");
+    let _ = journal
+        .reconcile_step(
+            &intent,
+            step.step(),
+            BtcMakerLockStepObservation::PresentExact {
+                expected_public_id: step.expected_public_id().as_str().into(),
+                exact_public_bytes: step.exact_bytes().as_slice().to_vec(),
+            },
+        )
+        .expect("confirm test maker step");
+    drop(journal);
+    store.project_maker_lock_and_close(predecessor, evidence)
 }
 
 fn happy_path(coordinator: &SwapCoordinator) -> Vec<BtcLifecycleEvidenceV1> {
@@ -340,9 +394,14 @@ fn maker_and_taker_reconstruct_both_btc_directions_through_completed_revision_fo
                     store.status().expect("offline status").revision(),
                     index as u64
                 );
-                let commit = store
-                    .project(index as u64, record)
-                    .expect("project exact lifecycle evidence");
+                let commit = project_with_required_maker_intent(
+                    &mut store,
+                    &path,
+                    &accepted,
+                    index as u64,
+                    record,
+                )
+                .expect("project exact lifecycle evidence");
                 assert_eq!(commit.revision(), index as u64 + 1);
                 assert!(!commit.was_replay());
                 assert_eq!(
@@ -410,9 +469,14 @@ fn maker_and_taker_reconstruct_both_refund_directions_through_revision_four() {
                 .expect("activate refund store");
             for (predecessor, evidence) in refund_path(&initial).iter().enumerate() {
                 let predecessor = u64::try_from(predecessor).expect("small predecessor");
-                let commit = store
-                    .project(predecessor, evidence)
-                    .expect("project exact refund lifecycle evidence");
+                let commit = project_with_required_maker_intent(
+                    &mut store,
+                    &path,
+                    &accepted,
+                    predecessor,
+                    evidence,
+                )
+                .expect("project exact refund lifecycle evidence");
                 assert_eq!(commit.revision(), predecessor + 1);
                 assert!(!commit.was_replay());
             }
@@ -545,7 +609,8 @@ fn refund_evidence_rejects_early_wrong_chain_zero_confirmation_and_happy_path_mi
         store.project(1, &path_evidence[2]),
         Err(BtcRecoveryError::InvalidSequence { revision: 2 })
     ));
-    let _ = store.project(1, &path_evidence[1]).expect("maker lock");
+    let _ = project_with_required_maker_intent(&mut store, &path, &accepted, 1, &path_evidence[1])
+        .expect("maker lock");
 
     let early = BtcLifecycleEvidenceV1::maker_leg_refund(
         maker_chain,
@@ -585,7 +650,8 @@ fn old_happy_path_rows_migrate_without_changing_exact_payloads() {
             .contains("refund_position")
     );
     let _ = store.project(0, &happy[0]).expect("project taker lock");
-    let _ = store.project(1, &happy[1]).expect("project maker lock");
+    let _ = project_with_required_maker_intent(&mut store, &path, &accepted, 1, &happy[1])
+        .expect("project maker lock");
     drop(store);
 
     let connection = Connection::open(&path).expect("open migration fixture");
@@ -685,10 +751,7 @@ fn immutable_agreement_role_alias_replay_and_cas_conflicts_fail_closed() {
     ));
     assert!(matches!(
         store.project(9, &evidence[1]),
-        Err(BtcRecoveryError::StalePredecessor {
-            expected: 9,
-            actual: 1
-        })
+        Err(BtcRecoveryError::InvalidSequence { revision: 10 })
     ));
     assert!(matches!(
         store.project(1, &evidence[3]),
@@ -830,9 +893,9 @@ fn all_zero_revealing_witness_fails_in_construction_and_historical_replay() {
     let mut store =
         SqliteBtcRecoveryStore::open(&path, &accepted, &initial).expect("create actor store");
     for (index, record) in evidence.iter().take(3).enumerate() {
-        let _ = store
-            .project(index as u64, record)
-            .expect("advance through revealing claim");
+        let _ =
+            project_with_required_maker_intent(&mut store, &path, &accepted, index as u64, record)
+                .expect("advance through revealing claim");
     }
     drop(store);
 
@@ -998,9 +1061,14 @@ fn reopen_rejects_missing_or_out_of_order_evidence_instead_of_trusting_snapshot(
         let mut store =
             SqliteBtcRecoveryStore::open(&path, &accepted, &initial).expect("create actor store");
         for (index, record) in evidence.iter().enumerate() {
-            let _ = store
-                .project(index as u64, record)
-                .expect("advance before corruption");
+            let _ = project_with_required_maker_intent(
+                &mut store,
+                &path,
+                &accepted,
+                index as u64,
+                record,
+            )
+            .expect("advance before corruption");
         }
         drop(store);
 

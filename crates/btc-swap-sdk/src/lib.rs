@@ -9,6 +9,7 @@
 mod adaptor;
 mod agreement_v1;
 mod p2tr;
+mod sdk;
 mod transaction;
 
 pub use adaptor::{
@@ -28,6 +29,15 @@ pub use agreement_v1::{
 pub use p2tr::{
     CsvBlockDelay, CsvBlockDelayError, InvalidXOnlyKey, OutputKeyParity, P2trSwapOutput,
     P2trSwapOutputError, RefundXOnlyKey, TwoPartyAggregateKey, XOnlyKeyPurpose,
+};
+pub use sdk::{
+    AcceptedBtcAgreementV1, ActiveBtcSwap, BitcoinFirstLockEvidenceV1, BtcActiveSwapEnvelopeV1,
+    BtcFirstLockEvidenceV1, BtcLifecycleActionV1, BtcPairSdk, BtcPreparedLockEffectsV1,
+    BtcPreparedProtocolV1, BtcProtocolCapabilityGapV1, BtcProtocolTermsV1, BtcSdkError,
+    BtcSwapStatusV1, BtcUnsupportedCanonicalStateV1, BtcUnsupportedClaimEvidenceV1,
+    BtcUnsupportedClaimMaterialV1, BtcUnsupportedRecoveryActionV1, ConfirmedBtcFirstLockV1,
+    LezFirstLockEvidenceV1, PreparedBitcoinFundingV1, PreparedLezFundingV1,
+    ValidatedBtcProtocolTermsV1,
 };
 pub use transaction::{
     CooperativeKeyPathSpend, CooperativeKeyPathSpendError, RefundScriptPathSpend,

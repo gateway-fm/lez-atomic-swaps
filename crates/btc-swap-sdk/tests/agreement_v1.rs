@@ -24,6 +24,9 @@ const BITCOIN_GENESIS_HASH: [u8; 32] = [8; 32];
 const REQUIRED_CONFIRMATIONS: u32 = 6;
 const FIRST_DESTINATION_LENGTH_OFFSET: usize = 2 + 32 + 1 + 32 + 4 + 32 + 33 + 32;
 
+// Independent corruption toggles keep every signed-field mutation explicit in
+// the canonical fixture; combining them into a mode enum would hide mixtures.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy)]
 struct FixtureOptions {
     refund_role: Option<Participant>,

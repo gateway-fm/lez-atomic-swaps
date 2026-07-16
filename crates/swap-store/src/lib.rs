@@ -11,6 +11,7 @@ use std::{
 
 mod adaptor_session_journal;
 mod bridge_operation_journal;
+mod btc_maker_lock_journal;
 mod btc_recovery;
 mod public_effect_journal;
 mod zec_recovery;
@@ -25,6 +26,12 @@ pub use adaptor_session_journal::{
 pub use bridge_operation_journal::{
     BridgeContextCommit, BridgeObservationOutcome, BridgeOperationKey, BridgeOperationKind,
     BridgeRequestSpec, DurableBridgeRequestContext, SqliteBridgeOperationJournal,
+};
+pub use btc_maker_lock_journal::{
+    BtcMakerLockIntentCreateOutcome, BtcMakerLockIntentSnapshot, BtcMakerLockIntentV1,
+    BtcMakerLockStepCommit, BtcMakerLockStepDecision, BtcMakerLockStepObservation,
+    BtcMakerLockStepSnapshot, BtcMakerLockStepState, BtcMakerLockSubmissionResult,
+    SqliteBtcMakerLockJournal,
 };
 pub use btc_recovery::{
     BtcAgreementAcceptance, BtcLifecycleEvidenceKind, BtcLifecycleEvidenceV1, BtcOfflineStatus,
@@ -317,6 +324,18 @@ pub enum StoreError {
     /// Public effect bytes, digest, counters, or transition state are malformed.
     #[error("public effect journal state is corrupt")]
     CorruptPublicEffectState,
+    /// A BTC maker second-lock intent has a wrong role, revision, agreement, or plan.
+    #[error("Bitcoin maker-lock intent is invalid")]
+    InvalidBtcMakerLockIntent,
+    /// Immutable BTC maker-lock material or a requested transition conflicts.
+    #[error("Bitcoin maker-lock intent conflicts with durable state")]
+    BtcMakerLockConflict,
+    /// No durable BTC maker second-lock intent exists for the swap.
+    #[error("Bitcoin maker-lock intent has not been prepared")]
+    MissingBtcMakerLockIntent,
+    /// BTC maker-lock plan bytes, order, digest, or transition state are malformed.
+    #[error("Bitcoin maker-lock intent state is corrupt")]
+    CorruptBtcMakerLockIntent,
     /// A bridge poll sequence cannot be represented durably.
     #[error("bridge operation poll sequence overflowed")]
     BridgePollSequenceOverflow,
