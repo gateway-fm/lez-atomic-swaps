@@ -1425,9 +1425,9 @@ transcript without accepting a peer transaction ID. This claim path is GREEN in
 source, deterministic actor tests, and run-n. The refund path is GREEN in
 deterministic tests and in Run H's fresh actual-node two-lock journey. The
 lower-level operator flow below remains useful for inspecting each exact
-request/effect; refund-side absent-maker execution is GREEN, while
-survivor-specific, maker-lock cutoff admission, concurrent, process-kill, and
-reorg journeys remain later gates.
+request/effect; refund-side absent-maker and functional post-reveal survivor
+execution are GREEN, while clean survivor certification, maker-lock cutoff
+admission, concurrent, process-kill, and reorg journeys remain later gates.
 
 ## Manual actor timeout/refund recovery
 
@@ -2167,8 +2167,76 @@ The retained secret-safe result is
 Keep the full `.e2e` root private because it contains credentials, keys, raw
 transactions, and role state. This journey proves the refund side when the
 maker is absent. It does not prove the live maker-lock admission side of the
-cutoff race, post-reveal survivor continuation, concurrent swaps, reorg, or
+cutoff race, concurrent swaps, reorg, or
 production readiness.
+
+## Manual actor post-reveal survivor continuation
+
+Use the same pinned prerequisites as the combined happy flow, a new run ID,
+and the survivor journey. It starts fresh isolated services; do not point it at
+another operator's Core or LEZ nodes.
+
+~~~sh
+export RUN_ID=m3survivor-manual-001
+export M3_ACTOR_POC_JOURNEY=survivor_claim
+./scripts/run-m3-actor-local-poc.sh
+
+export M3_EVIDENCE="$PWD/.e2e/$RUN_ID/m3-actor-poc/evidence"
+jq -e '.kind == "m3_actor_two_direction_survivor_claim_local_poc" and
+  .journey == "survivor_claim" and .result == "passed" and
+  .survivor.revealer == "taker" and .survivor.follower_role == "maker" and
+  .survivor.protected_absence.revealer_actor_invocation_count == 0 and
+  .survivor.intermediate == {
+    phase:"claim_evidence_available",lifecycle_disposition:"recovering",
+    terminal:false,remaining_leg_canonical_and_claimable:true,
+    followup_effect_present:false} and
+  .survivor.delayed_revealer_catchup.observation_only == true and
+  .survivor.delayed_revealer_catchup.bitcoin_successful_resubmission_count == 0 and
+  .survivor.delayed_revealer_catchup.lez_successful_resubmission_count == 0 and
+  .survivor.delayed_revealer_catchup.successful_resubmission_count == 0 and
+  all(.survivor.direction_evidence[];
+    .completion_boundary.completed_before_signed_refund_boundary == true and
+    (.completion_evidence_sha256 | test("^[0-9a-f]{64}$")) and
+    (.recovering_evidence_sha256 | test("^[0-9a-f]{64}$"))) and
+  all(.directions[];
+    .terminal_revision == 4 and .terminal_phase == "completed") and
+  .expected_unique_effects_by_direction == {
+    taker_sells_foreign:{bitcoin:2,lez:3},
+    taker_sells_lez:{bitcoin:2,lez:3}} and
+  .replay_resubmission_count == 0 and
+  .external_resources.public_rpc == false and
+  .external_resources.faucet == false and
+  .external_resources.public_funds == false' \
+  "$M3_EVIDENCE/m3-actor-local-poc.json"
+
+jq -e '.result == "passed" and .all_exact_run_resources_absent == true and
+  .foreign_resources_targeted == false and .broad_cleanup_used == false' \
+  "$M3_EVIDENCE/cleanup-attestation.json"
+~~~
+
+The two directions deliberately mirror real role behavior. After both locks,
+the taker submits the revealing claim and the journey blocks every further
+harnessed taker actor process until maker terminality. A fresh maker observes the public witness, reconstructs
+and point-checks the adaptor scalar against its persisted presignature, commits
+revision 3 `ClaimEvidenceAvailable`, and exits. A separate fresh maker resumes,
+submits the opposite claim, and reaches revision 4 `Completed`. Only then does
+the taker return for observation-only catch-up. Revision 3 is evidence-layer
+`recovering`, not a new protocol phase and never terminal.
+
+The direction packet proves that the still-funded leg is claimable before its
+refund boundary: exact canonical/unspent Core outpoint for
+`TakerSellsForeign`, exact finalized `Funded` LEZ custody for
+`TakerSellsLez`. The run uses ephemeral literal-loopback Core, sequencer, and
+indexer RPCs plus deterministic Regtest/genesis funds. There is no public RPC,
+faucet, peer, Delivery, Chat, public deployment, or public funds. Bedrock may
+attempt `pool.ntp.org:123/udp`, but success is not required. `moving_tip` and
+temporarily unavailable finalized reads are bounded, read-only, and can extend
+runtime without granting another submission.
+
+Functional run `m3survivor-20260716b` passed both directions and exact cleanup.
+Its clean pushed-commit certification rerun remains before the retained packet
+can be called final milestone evidence. Keep the full `.e2e` run root private;
+it contains credentials, actor stores, capabilities, and raw transactions.
 
 ## Public configuration switch and production nonclaims
 
@@ -2188,7 +2256,9 @@ surface.
 
 Run `m3refund-20260716h` proves ordered actual-node refund after both locks, and
 `m3firstlock-20260716h` proves refund-side first-lock absent-maker abandonment.
-They do not prove survivor-specific recovery, live maker-lock admission at the
+Run `m3survivor-20260716b` separately proves functional post-reveal survivor
+recovery but not yet its clean
+pushed-commit certification, live maker-lock admission at the
 deadline-cutoff boundary, reorg handling, concurrent swaps, process-kill
 or crash recovery across the full lifecycle, chaos behavior, denial-of-service
 resistance, secure transport between actors, HSM custody, key rotation, backup,

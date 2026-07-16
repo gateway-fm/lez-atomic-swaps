@@ -1199,10 +1199,10 @@ the maker second lock, a fresh canonical absence and first-lock-unspent recheck,
 and admission/race enforcement that prevents a late second lock from crossing
 the refund decision. A local timer or an assumption that the maker disappeared
 is insufficient. The BTC actor now implements and actual-node proves the
-refund-side cutoff branch in both directions. The live maker-lock admission
-side of that boundary race remains open. The public ZEC SDK and all direct
-survivor branches shown below remain unimplemented or unproved; the XMR flow
-remains an M4 target.
+refund-side cutoff branch and the post-reveal follower-survivor branch in both
+directions. The live maker-lock admission side of that boundary race remains
+open. The public ZEC SDK survivor branches shown below remain unimplemented or
+unproved; the XMR flow remains an M4 target.
 
 This is not a distributed transaction and there is no cross-chain atomic commit.
 Atomicity is a protocol property conditional on canonical chain validation,
@@ -1251,6 +1251,8 @@ sequenceDiagram
     participant Bitcoin as Bitcoin Core
     participant LezSeq as LEZ sequencer
     participant LezIdx as LEZ indexer
+    participant MakerStore as Maker SQLite
+    participant TakerStore as Taker SQLite
 
     Note over Maker,Taker: Signed terms and both adaptor sessions are durable
     Note over Maker,Taker: Taker first lock starts the protocol
@@ -1273,9 +1275,14 @@ sequenceDiagram
             Taker->>LezSeq: Submit witnessed LEZ claim
             LezIdx-->>Maker: Finalized claim exposes adaptor material
             alt Maker follows including after Taker disappears
-                Note over Maker,Taker: Revealer may disappear and follower uses canonical chain disclosure
+                Note over Taker,TakerStore: Taker process exits after reveal submission
+                Maker->>MakerStore: Fresh process observes reveal and commits revision 3
+                Note over Maker,MakerStore: ClaimEvidenceAvailable is nonterminal and BTC remains unspent
+                Note over Maker,MakerStore: Observer exits then another maker process reloads revision 3
                 Maker->>Bitcoin: Submit Bitcoin key path claim
                 Bitcoin-->>Maker: Exact claim confirmed
+                Maker->>MakerStore: Fresh process projects revision 4 Completed
+                Taker->>TakerStore: Later catch up revisions 3 and 4 observation only
             else Maker disappears after reveal
                 Note over Maker,Taker: Follower retains claim authority and ClaimEvidenceAvailable stays nonterminal
             end
@@ -1315,6 +1322,8 @@ sequenceDiagram
     participant Bitcoin as Bitcoin Core
     participant LezSeq as LEZ sequencer
     participant LezIdx as LEZ indexer
+    participant MakerStore as Maker SQLite
+    participant TakerStore as Taker SQLite
 
     Note over Maker,Taker: Signed terms and both adaptor sessions are durable
     Note over Maker,Taker: Taker first lock starts the protocol
@@ -1337,9 +1346,14 @@ sequenceDiagram
             Taker->>Bitcoin: Submit Bitcoin key path claim
             Bitcoin-->>Maker: Canonical signature exposes adaptor material
             alt Maker follows including after Taker disappears
-                Note over Maker,Taker: Revealer may disappear and follower uses canonical chain disclosure
+                Note over Taker,TakerStore: Taker process exits after reveal submission
+                Maker->>MakerStore: Fresh process observes reveal and commits revision 3
+                Note over Maker,MakerStore: ClaimEvidenceAvailable is nonterminal and LEZ remains funded
+                Note over Maker,MakerStore: Observer exits then another maker process reloads revision 3
                 Maker->>LezSeq: Submit witnessed LEZ claim
                 LezIdx-->>Maker: Exact claim finalized
+                Maker->>MakerStore: Fresh process projects revision 4 Completed
+                Taker->>TakerStore: Later catch up revisions 3 and 4 observation only
             else Maker disappears after reveal
                 Note over Maker,Taker: Follower retains claim authority and ClaimEvidenceAvailable stays nonterminal
             end
@@ -1385,9 +1399,12 @@ create cross-chain atomicity.
 role keys are required for progress. Permanent follower abandonment may leave
 the Bitcoin leg safely claimable but unspent.
 
-**Implementation status:** happy claims, ordered two-lock refunds, and the
-absent-maker refund-side branch are actual-node GREEN. Direct post-reveal
-survivor continuation and live maker-lock cutoff admission remain open.
+**Implementation status:** happy claims, ordered two-lock refunds, the
+absent-maker refund-side branch, and direct post-reveal maker continuation are
+actual-node GREEN. Run `m3survivor-20260716b` proves the survivor branch
+functionally in both directions; a clean pushed-commit rerun is the remaining
+certification step for that slice. Live maker-lock cutoff admission remains
+open.
 
 <!-- atomicity-argument: lez-btc/taker-sells-lez -->
 
@@ -1409,9 +1426,12 @@ are operational safeguards rather than the economic atomicity mechanism.
 RPCs, calibrated fees, and retained role authority. A disappeared follower can
 leave the remaining LEZ leg safely claimable but not terminal.
 
-**Implementation status:** happy claims, ordered two-lock refunds, and the
-absent-maker refund-side branch are actual-node GREEN. Direct post-reveal
-survivor continuation and live maker-lock cutoff admission remain open.
+**Implementation status:** happy claims, ordered two-lock refunds, the
+absent-maker refund-side branch, and direct post-reveal maker continuation are
+actual-node GREEN. Run `m3survivor-20260716b` proves the survivor branch
+functionally in both directions; a clean pushed-commit rerun is the remaining
+certification step for that slice. Live maker-lock cutoff admission remains
+open.
 
 The BTC construction is atomic under these explicit conditions:
 
@@ -1440,8 +1460,10 @@ The BTC construction is atomic under these explicit conditions:
 - After both locks, the protocol construction lets a surviving role recover its
   own funded leg at its signed deadline. A LEZ refund is permissionless but pays
   only the immutable depositor; Bitcoin refund remains restricted to its funder
-  key. The current actor proves the both-owner ordered path, not every direct
-  nonowner trigger or absent-peer survivor path.
+  key. The current actor proves the maker follower continuing from canonical
+  reveal after the taker disappears, including a fresh-process restart between
+  revision three and the follow-up. It does not yet prove every direct nonowner
+  refund trigger or every outage/process-kill variant.
 
 This safety argument does not make the two nodes one transaction manager. A
 deep reorg can invalidate evidence that was treated as canonical; fee pressure
@@ -1451,8 +1473,9 @@ directions. Run `m3refund-20260716h` is also actual-node GREEN for the
 both-owner, two-lock ordered refund in both directions: both roles reached
 revision four `Refunded` and replay added zero submissions. Signed-cutoff and
 first-lock-only refund-side recovery are actual-node GREEN in run
-`m3firstlock-20260716h`. Direct survivor/nonowner surfaces, maker-lock
-admission, process-kill,
+`m3firstlock-20260716h`. Functional post-reveal survivor continuation is GREEN
+in `m3survivor-20260716b`; clean pushed-commit certification, nonowner refund
+surfaces, maker-lock admission, process-kill,
 concurrent, fee-bump, and reorg evidence remain pending.
 
 This is an engineering safety argument, not the accepted proposal's promised

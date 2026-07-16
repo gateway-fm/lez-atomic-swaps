@@ -47,6 +47,8 @@ flowchart TB
     ClaimProjection --> ClaimPresence["0036 Bounded LEZ claim absence"]
     ClaimPresence --> PrelockFunding["0037 Exact pre-lock Bitcoin funding"]
     PrelockFunding --> RefundPlanner["0038 Durable LEZ refund preparation"]
+    RefundPlanner --> FirstLockCutoff["0039 Cross-chain first-lock cutoff"]
+    ClaimProjection --> Survivor["0040 Post-reveal survivor continuation"]
     Direction --> Deadlines["0010 Typed deadlines"]
     LEZ --> Deadlines
     Deadlines --> Recovery["0011 Recovery triggers"]
@@ -90,6 +92,8 @@ flowchart TB
     Persistence --> ClaimProjection
     Persistence --> PrelockFunding
     Persistence --> RefundPlanner
+    Persistence --> FirstLockCutoff
+    Persistence --> Survivor
     LezSidecar -.-> Upstream
     PublicRoutes -.-> Upstream
     LocalM2 -.-> Upstream
@@ -138,5 +142,6 @@ flowchart TB
 | [0035](0035-project-claims-only-from-canonical-public-evidence.md) | Advance claim revisions only from exact confirmed or finalized public evidence and retain only a one-way scalar commitment | Accepted and actual-node GREEN through claim projection in both roles and directions. Refund, reorg, crash, and concurrency projection remain |
 | [0036](0036-prove-bounded-lez-claim-absence-before-first-send.md) | Distinguish exact finalized LEZ presence from stable complete bounded absence before first-send reconciliation | Accepted and actual-node GREEN for claims. Refunds now use the stricter state-only eligibility then exact-observation gate with no absence-based authorization; actual-node refund evidence remains |
 | [0037](0037-finalize-exact-bitcoin-funding-before-first-effect.md) | Prepare, policy-check, and countersign one exact Bitcoin funding transaction before either chain effect | Accepted and actual-node GREEN in both public-actor directions. Exact rawtr authorization, planned-anchor recovery terms, secret-safe outputs, and 11 focused tests gate both first effects; refund/timeout execution remains |
-| [0038](0038-durable-permissionless-lez-refund.md) | Durably prepare exact permissionless LEZ refund bytes before finalized actor eligibility can authorize one send | Accepted through authenticated planner replay, public actor one-attempt execution, no-rearm restart, nonowner discovery, and ordered finalized projection. Deterministic gates are GREEN; fresh actual-node timeout/refund execution remains |
-| [0039](0039-admit-first-lock-recovery-only-after-cross-chain-cutoff.md) | Admit a revision-one refund only after a signed cutoff, two fresh exact maker-lock classifications, and a fresh first-lock unspent/eligibility check | Accepted for the M3 BTC PoC; deterministic safety seams are GREEN, while live adapter composition and both-direction actual-node evidence remain |
+| [0038](0038-durable-permissionless-lez-refund.md) | Durably prepare exact permissionless LEZ refund bytes before finalized actor eligibility can authorize one send | Accepted through authenticated planner replay, public actor one-attempt execution, no-rearm restart, nonowner discovery, and ordered finalized projection. Deterministic gates and both-direction actual-node timeout/refund execution are GREEN; later chaos/reorg hardening remains |
+| [0039](0039-admit-first-lock-recovery-only-after-cross-chain-cutoff.md) | Admit a revision-one refund only after a signed cutoff, two fresh exact maker-lock classifications, and a fresh first-lock unspent/eligibility check | Accepted for the M3 BTC PoC; deterministic safety seams plus both-direction actual-node refund-side admission are GREEN. Live maker-lock admission at the cutoff race remains |
+| [0040](0040-continue-post-reveal-from-canonical-evidence.md) | Keep revision 3 nonterminal and let fresh maker processes continue from canonical reveal while the taker is absent | Accepted for the M3 BTC PoC; functional actual-node evidence is GREEN in both directions, with clean pushed-commit certification pending |

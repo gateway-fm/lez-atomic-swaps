@@ -73,6 +73,19 @@ foreign resource. The secret-safe retained packet is
 This closes the refund-side absent-maker journey, not the still-open live
 maker-lock admission race or post-reveal survivor journey.
 
+Run `m3survivor-20260716b` then functionally passed the direct post-reveal
+survivor journey in both directions. After both locks, the taker published the
+direction-correct reveal and the journey barred every further harnessed taker
+actor invocation until maker terminality. A fresh
+maker observed canonical chain disclosure into nonterminal revision 3
+`claim_evidence_available`, exited, and another fresh maker completed the
+opposite claim before the signed refund boundary. Only after maker terminality
+did the taker return for observation-only catch-up. Each direction retained
+exactly two Bitcoin and three LEZ effects, replay added zero effects, and exact
+cleanup targeted no foreign resource. This is hash-bound functional evidence;
+a clean pushed-commit rerun remains before its secret-safe packet is retained as
+certification evidence.
+
 Run `m3poc-live2-20260715a` used one isolated Bitcoin Core 31.1 Regtest node,
 one exact local LEZ v0.2 Bedrock/sequencer/indexer stack, and separate
 capability-authenticated maker/taker sidecars, signing processes, keys,
@@ -162,7 +175,8 @@ source, deterministic actor tests, and the retained run-n actual-node evidence.
 See
 [ADR 0031](docs/architecture/0031-one-shot-btc-actor-observe-before-project.md),
 [ADR 0034](docs/architecture/0034-gate-actor-activation-on-signing-material.md),
-and [ADR 0035](docs/architecture/0035-project-claims-only-from-canonical-public-evidence.md).
+[ADR 0035](docs/architecture/0035-project-claims-only-from-canonical-public-evidence.md),
+and [ADR 0040](docs/architecture/0040-continue-post-reveal-from-canonical-evidence.md).
 
 For timeout recovery, call the same binary with `recover`. The maker-funded leg
 must reach durable revision 3 before the taker-funded leg can reach revision 4
@@ -459,7 +473,7 @@ order through separate role processes. The public actor source now owns both
 claim effects, and run-n now retains their fresh actual-node composition. This
 closes the progressive private local PoC, but does **not** close the accepted
 proposal's production-ready scope: native/custom-token parity,
-survivor-specific recovery, maker-lock cutoff/race and concurrent demos, Testnet4
+clean survivor certification, maker-lock cutoff/race and concurrent demos, Testnet4
 setup/execution, production key custody/Core adapter, QA/chaos/infosec
 campaigns, and GW-M3-001 disposition remain. There is no `m3-complete` tag. CI
 runs the same P2TR funding/claim
@@ -885,6 +899,52 @@ The directions run sequentially and intentionally wait for signed boundaries.
 Advancing LEZ finality can yield typed `moving_tip`; only that read-only
 condition is retried with a fresh request ID, and retained retry evidence proves
 the durable LEZ submission count did not change.
+
+To reproduce the post-reveal survivor journey, keep the same verified
+prerequisites, use another fresh ID, and select `survivor_claim`:
+
+```sh
+export RUN_ID=m3survivor-manual-001
+export M3_ACTOR_POC_JOURNEY=survivor_claim
+./scripts/run-m3-actor-local-poc.sh
+
+export M3_EVIDENCE=".e2e/$RUN_ID/m3-actor-poc/evidence"
+jq -e '.kind == "m3_actor_two_direction_survivor_claim_local_poc" and
+  .journey == "survivor_claim" and .result == "passed" and
+  .survivor.revealer == "taker" and .survivor.follower_role == "maker" and
+  .survivor.protected_absence.revealer_actor_invocation_count == 0 and
+  .survivor.intermediate.phase == "claim_evidence_available" and
+  .survivor.intermediate.lifecycle_disposition == "recovering" and
+  .survivor.intermediate.terminal == false and
+  .survivor.intermediate.remaining_leg_canonical_and_claimable == true and
+  .survivor.delayed_revealer_catchup.observation_only == true and
+  .survivor.delayed_revealer_catchup.bitcoin_successful_resubmission_count == 0 and
+  .survivor.delayed_revealer_catchup.lez_successful_resubmission_count == 0 and
+  .survivor.delayed_revealer_catchup.successful_resubmission_count == 0 and
+  all(.survivor.direction_evidence[];
+    .completion_boundary.completed_before_signed_refund_boundary == true and
+    (.completion_evidence_sha256 | test("^[0-9a-f]{64}$")) and
+    (.recovering_evidence_sha256 | test("^[0-9a-f]{64}$"))) and
+  all(.directions[];
+    .terminal_revision == 4 and .terminal_phase == "completed") and
+  .expected_unique_effects_by_direction == {
+    taker_sells_foreign:{bitcoin:2,lez:3},
+    taker_sells_lez:{bitcoin:2,lez:3}} and
+  .replay_resubmission_count == 0' \
+  "$M3_EVIDENCE/m3-actor-local-poc.json"
+jq -e '.journey == "survivor_claim" and .result == "passed" and
+  .all_exact_run_resources_absent == true and
+  .foreign_resources_targeted == false and .broad_cleanup_used == false' \
+  "$M3_EVIDENCE/cleanup-attestation.json"
+```
+
+This is the actual-user role split: taker reveals and disappears, one fresh
+maker process commits revision 3, a later fresh maker process completes, and
+the taker catches up only after maker terminality. The remaining Bitcoin or LEZ
+leg must be independently canonical and claimable before its refund boundary.
+Runtime uses only the same isolated literal-loopback nodes and deterministic
+local funds described below; bounded finalized-tip retries can extend runtime
+but never grant another send.
 
 The audited run used the same entry point at `6ded2f9`; these are its exact
 run-owned and native-artifact inputs. This is an audit record, not a command to

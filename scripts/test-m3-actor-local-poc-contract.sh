@@ -234,7 +234,12 @@ jq -e '
   and .bitcoin_planned_funding_anchor_exact == true
   and .lez_exact_finalized_ancestry == true
   and .actor_owned_claim_effects == true
-  and .journeys == ["claim", "refund", "first_lock_refund"]
+  and .actor_owned_survivor_claim_effects == true
+  and .survivor_revealer_absent_until_follower_terminal == true
+  and .survivor_fresh_follower_restarts == true
+  and .survivor_intermediate_phase == "claim_evidence_available"
+  and .survivor_intermediate_terminal == false
+  and .journeys == ["claim", "survivor_claim", "refund", "first_lock_refund"]
   and .default_journey == "claim"
   and .actor_owned_refund_effects == true
   and .actor_owned_first_lock_refund_effects == true
@@ -301,6 +306,36 @@ jq -e '
     "bitcoin_lock_by_maker","dual_lock_gate","bitcoin_claim_by_taker","lez_claim_by_maker"]
   and .terminal == {maker_revision:4,taker_revision:4}
 ' <<<"$lez_plan" >/dev/null || fail "LEZ direction effect plan is not role-correct"
+
+foreign_survivor_plan="$("$direction_driver" effect-plan taker_sells_foreign survivor_claim)"
+jq -e '
+  .schema_version == 1 and .journey == "survivor_claim"
+  and .direction == "taker_sells_foreign"
+  and .public_effect_order == ["bitcoin_lock_by_taker","lez_initialize_by_maker",
+    "lez_fund_by_maker","dual_lock_gate","lez_claim_by_taker",
+    "fresh_maker_observes_reveal","maker_revision_three_nonterminal",
+    "fresh_maker_bitcoin_claim","delayed_taker_observation_only_catchup"]
+  and .survivor == {revealer:"taker",follower:"maker",revealing_chain:"lez",
+    followup_chain:"bitcoin",intermediate_phase:"claim_evidence_available",
+    intermediate_terminal:false}
+  and .terminal == {maker_revision:4,taker_revision:4}
+' <<<"$foreign_survivor_plan" >/dev/null ||
+  fail "foreign direction survivor plan is not role-correct"
+
+lez_survivor_plan="$("$direction_driver" effect-plan taker_sells_lez survivor_claim)"
+jq -e '
+  .schema_version == 1 and .journey == "survivor_claim"
+  and .direction == "taker_sells_lez"
+  and .public_effect_order == ["lez_initialize_by_taker","lez_fund_by_taker",
+    "bitcoin_lock_by_maker","dual_lock_gate","bitcoin_claim_by_taker",
+    "fresh_maker_observes_reveal","maker_revision_three_nonterminal",
+    "fresh_maker_lez_claim","delayed_taker_observation_only_catchup"]
+  and .survivor == {revealer:"taker",follower:"maker",revealing_chain:"bitcoin",
+    followup_chain:"lez",intermediate_phase:"claim_evidence_available",
+    intermediate_terminal:false}
+  and .terminal == {maker_revision:4,taker_revision:4}
+' <<<"$lez_survivor_plan" >/dev/null ||
+  fail "LEZ direction survivor plan is not role-correct"
 
 foreign_refund_plan="$("$direction_driver" effect-plan taker_sells_foreign refund)"
 jq -e '
@@ -380,6 +415,103 @@ done
 for behavior in submit_actor_bitcoin_refund submit_actor_lez_refund run_actor_refund_flow; do
   rg -Fq "${behavior}()" "$direction_driver" ||
     fail "actual direction implementation is missing refund behavior: ${behavior}"
+done
+for behavior in submit_actor_bitcoin_claim_effect submit_actor_lez_claim_effect \
+  write_survivor_recovering_evidence assert_survivor_maker_terminal \
+  write_survivor_completion_evidence run_actor_survivor_claim_flow; do
+  rg -Fq "${behavior}()" "$direction_driver" ||
+    fail "actual direction implementation is missing survivor behavior: ${behavior}"
+done
+bitcoin_claim_effect_source="$(sed -n \
+  '/^submit_actor_bitcoin_claim_effect() {$/,/^}$/p' "$direction_driver")"
+lez_claim_effect_source="$(sed -n \
+  '/^submit_actor_lez_claim_effect() {$/,/^}$/p' "$direction_driver")"
+bitcoin_claim_wrapper_source="$(sed -n \
+  '/^submit_actor_bitcoin_claim() {$/,/^}$/p' "$direction_driver")"
+lez_claim_wrapper_source="$(sed -n \
+  '/^submit_actor_lez_claim() {$/,/^}$/p' "$direction_driver")"
+if rg -Fq 'project_both_to_revision' <<<"$bitcoin_claim_effect_source" ||
+   rg -Fq 'project_both_to_revision' <<<"$lez_claim_effect_source"; then
+  fail "survivor effect-only claim helper still projects both actors"
+fi
+rg -Fq 'project_both_to_revision' <<<"$bitcoin_claim_wrapper_source" ||
+  fail "ordinary Bitcoin claim wrapper lost both-role projection"
+rg -Fq 'project_both_to_revision' <<<"$lez_claim_wrapper_source" ||
+  fail "ordinary LEZ claim wrapper lost both-role projection"
+
+survivor_flow_source="$(sed -n \
+  '/^run_actor_survivor_claim_flow() {$/,/^}$/p' "$direction_driver")"
+[[ -n "$survivor_flow_source" ]] || fail "survivor journey has no isolated flow branch"
+if rg -Fq 'project_both_to_revision' <<<"$survivor_flow_source"; then
+  fail "survivor journey erases the protected disappearance interval"
+fi
+for term in \
+  'submit_actor_lez_claim_effect taker 3 survivor-lez-reveal' \
+  'project_role_to_revision maker 3 lez survivor-maker-observe-reveal' \
+  'submit_actor_bitcoin_claim_effect maker 4 survivor-bitcoin-followup' \
+  'project_role_to_revision maker 4 bitcoin survivor-maker-project-followup' \
+  'submit_actor_bitcoin_claim_effect taker 3 survivor-bitcoin-reveal' \
+  'project_role_to_revision maker 3 bitcoin survivor-maker-observe-reveal' \
+  'submit_actor_lez_claim_effect maker 4 survivor-lez-followup' \
+  'project_role_to_revision maker 4 lez survivor-maker-project-followup' \
+  'assert_survivor_maker_terminal' \
+  'survivor_taker_absence_guard=0' \
+  'project_role_to_revision taker 3 "$reveal_chain"' \
+  'project_role_to_revision taker 4 "$followup_chain"'; do
+  rg -Fq "$term" <<<"$survivor_flow_source" ||
+    fail "survivor journey is missing ordered step: ${term}"
+done
+previous_line=0
+for step in \
+  'submit_actor_lez_claim_effect taker 3 survivor-lez-reveal' \
+  'project_role_to_revision maker 3 lez survivor-maker-observe-reveal' \
+  'write_survivor_recovering_evidence' \
+  'submit_actor_bitcoin_claim_effect maker 4 survivor-bitcoin-followup'; do
+  step_line="$(rg -n -F "$step" <<<"$survivor_flow_source" | head -1 | cut -d: -f1)"
+  [[ "$step_line" =~ ^[0-9]+$ && "$step_line" -gt "$previous_line" ]] ||
+    fail "foreign-first survivor steps are not in protocol order: ${step}"
+  previous_line="$step_line"
+done
+previous_line=0
+for step in \
+  'submit_actor_bitcoin_claim_effect taker 3 survivor-bitcoin-reveal' \
+  'project_role_to_revision maker 3 bitcoin survivor-maker-observe-reveal' \
+  'write_survivor_recovering_evidence' \
+  'submit_actor_lez_claim_effect maker 4 survivor-lez-followup'; do
+  step_line="$(rg -n -F "$step" <<<"$survivor_flow_source" | tail -1 | cut -d: -f1)"
+  [[ "$step_line" =~ ^[0-9]+$ && "$step_line" -gt "$previous_line" ]] ||
+    fail "LEZ-first survivor steps are not in protocol order: ${step}"
+  previous_line="$step_line"
+done
+maker_terminal_line="$(rg -n -F 'assert_survivor_maker_terminal' \
+  <<<"$survivor_flow_source" | cut -d: -f1)"
+guard_release_line="$(rg -n -F 'survivor_taker_absence_guard=0' \
+  <<<"$survivor_flow_source" | cut -d: -f1)"
+taker_catchup_line="$(rg -n -F 'project_role_to_revision taker 3 "$reveal_chain"' \
+  <<<"$survivor_flow_source" | cut -d: -f1)"
+if [[ ! "$maker_terminal_line" =~ ^[0-9]+$ || ! "$guard_release_line" =~ ^[0-9]+$ ||
+      ! "$taker_catchup_line" =~ ^[0-9]+$ ||
+      "$maker_terminal_line" -ge "$guard_release_line" ||
+      "$guard_release_line" -ge "$taker_catchup_line" ]]; then
+  fail "survivor revealer is re-enabled before follower terminality"
+fi
+survivor_recovering_source="$(sed -n \
+  '/^write_survivor_recovering_evidence() {$/,/^}$/p' "$direction_driver")"
+for term in 'gettxout' 'gettxspendingprevout' \
+  'write_finalized_witnessed_funding_observation' \
+  'before_signed_later_refund_boundary' \
+  'lifecycle_disposition:"recovering"' 'terminal:false' \
+  'followup_effect_present:false'; do
+  rg -Fq "$term" <<<"$survivor_recovering_source" ||
+    fail "survivor recovering evidence omits exact invariant: ${term}"
+done
+survivor_completion_source="$(sed -n \
+  '/^write_survivor_completion_evidence() {$/,/^}$/p' "$direction_driver")"
+for term in 'bitcoin_mempool_before_sha256' 'bitcoin_mempool_after_sha256' \
+  'actor_observation_sha256' 'successful_resubmission_count' \
+  'outcome:"observed_then_projected"' 'completion_boundary'; do
+  rg -Fq "$term" <<<"$survivor_completion_source" ||
+    fail "survivor completion evidence omits bound per-chain fact: ${term}"
 done
 native_observation_source="$(sed -n '/^write_native_escrow_observation() {$/,/^}$/p' "$direction_driver")"
 [[ -n "$native_observation_source" ]] ||
@@ -792,7 +924,7 @@ if invalid_journey_output="$(RUN_ID="$invalid_journey_run_id" \
   M3_ACTOR_POC_JOURNEY=invalid-journey M3_ACTOR_POC_MODE=contract "$runner" 2>&1)"; then
   fail "an invalid journey reached contract output"
 fi
-[[ "$invalid_journey_output" == *"M3_ACTOR_POC_JOURNEY must be claim, refund, or first_lock_refund"* ]] ||
+[[ "$invalid_journey_output" == *"M3_ACTOR_POC_JOURNEY must be claim, survivor_claim, refund, or first_lock_refund"* ]] ||
   fail "invalid journey did not fail with the bounded validation error"
 [[ ! -e ".e2e/${invalid_journey_run_id}" && ! -L ".e2e/${invalid_journey_run_id}" ]] ||
   fail "invalid journey created run state"
@@ -819,6 +951,7 @@ jq -e --arg run_id "$contract_run_id" '
   and .ordering.taker_first_effects == true
   and .ordering.dual_locks_before_scalar_use == true
   and .ordering.directions_are_sequential == true
+  and .survivor == null
   and .finality.bitcoin == "exact_signed_confirmation_depth"
   and .finality.lez == "exact_finalized_indexer_ancestry"
   and .terminal.required_revision == 4
@@ -850,6 +983,40 @@ jq -e --arg run_id "$contract_run_id" '
     required_for_certification:false
   }
 ' <<<"$contract_json" >/dev/null || fail "contract JSON does not prove the M3 invariants"
+
+survivor_contract_run_id="m3survivorcontract-$RANDOM-$$"
+survivor_contract_json="$(RUN_ID="$survivor_contract_run_id" \
+  M3_ACTOR_POC_JOURNEY=survivor_claim M3_ACTOR_POC_MODE=contract "$runner")"
+jq -e --arg run_id "$survivor_contract_run_id" '
+  .schema_version == 1
+  and .kind == "m3_actor_local_poc_contract"
+  and .execution_performed == false
+  and .run_id == $run_id
+  and .journey == "survivor_claim"
+  and .evidence_packet_kind == "m3_actor_two_direction_survivor_claim_local_poc"
+  and .service_configuration.lez_v0_2.slot_duration_seconds == "1.0"
+  and .ordering.dual_locks_before_scalar_use == true
+  and .effect_semantics.actor_owned == "survivor_claim"
+  and .effect_semantics.expected_unique_effects_by_direction == {
+    taker_sells_foreign:{bitcoin:2,lez:3},
+    taker_sells_lez:{bitcoin:2,lez:3}}
+  and .survivor == {
+    revealer:"taker",follower_role:"maker",
+    revealer_absent_after_reveal_until_follower_terminal:true,
+    fresh_follower_observes_revision_three:true,
+    intermediate_phase:"claim_evidence_available",
+    intermediate_lifecycle_disposition:"recovering",
+    intermediate_terminal:false,
+    remaining_leg_must_be_canonical_and_claimable:true,
+    follower_restart_before_followup:true,
+    delayed_revealer_catchup_observation_only:true}
+  and (.survivor | has("follower") | not)
+  and .terminal.required_revision == 4
+  and .terminal.required_phase == "completed"
+  and .replay.command == "drive"
+  and .replay.resubmission_count == 0
+' <<<"$survivor_contract_json" >/dev/null ||
+  fail "survivor contract omits protected absence, nonterminal recovery, or delayed catch-up"
 
 refund_contract_run_id="m3refundcontract-$RANDOM-$$"
 refund_contract_json="$(RUN_ID="$refund_contract_run_id" M3_ACTOR_POC_JOURNEY=refund \
@@ -918,6 +1085,232 @@ rg -Fq 'slot_duration_seconds:$lez_slot_duration_seconds' "$runner" ||
   fail "M3 evidence does not record the selected LEZ slot cadence"
 run_evidence_source="$(sed -n '/^write_run_evidence() {$/,/^}$/p' "$runner")"
 [[ -n "$run_evidence_source" ]] || fail "outer runner is missing final run evidence"
+rg -Fq 'revealer:$foreign_survivor.revealer' <<<"$run_evidence_source" ||
+  fail "final survivor packet does not derive the revealer from validated evidence"
+rg -Fq 'follower_role:$foreign_survivor.follower_role' <<<"$run_evidence_source" ||
+  fail "final survivor packet does not derive the follower role from validated evidence"
+if rg -Fq 'revealer:"taker",follower:"maker"' <<<"$run_evidence_source"; then
+  fail "final survivor packet reintroduced the duplicate follower-key collision"
+fi
+survivor_validator_source="$(sed -n \
+  '/^validate_survivor_direction_evidence() {$/,/^}$/p' "$runner")"
+[[ -n "$survivor_validator_source" ]] ||
+  fail "outer runner does not validate hashed survivor direction evidence"
+for term in '--slurpfile recovering' '--slurpfile reveal_output' \
+  '--slurpfile followup_output' '--slurpfile bitcoin_before' \
+  '--slurpfile bitcoin_after' 'recovering_evidence_sha256' \
+  'successful_resubmission_count'; do
+  rg -Fq -- "$term" <<<"$survivor_validator_source" ||
+    fail "survivor direction validator is missing bound input: ${term}"
+done
+rg -Fq 'validate_survivor_direction_evidence taker_sells_foreign lez bitcoin' \
+  <<<"$run_evidence_source" ||
+  fail "aggregate evidence does not validate the foreign-first survivor packet"
+rg -Fq 'validate_survivor_direction_evidence taker_sells_lez bitcoin lez' \
+  <<<"$run_evidence_source" ||
+  fail "aggregate evidence does not validate the LEZ-first survivor packet"
+
+survivor_validation_root="$(mktemp -d /tmp/m3-survivor-evidence-contract.XXXXXX)"
+cleanup_survivor_validation_root() {
+  rm -rf -- "$survivor_validation_root"
+}
+trap cleanup_survivor_validation_root EXIT
+
+write_survivor_validation_fixture() {
+  local direction="$1" reveal_chain="$2" followup_chain="$3"
+  local reveal_tx followup_tx remaining_tx
+  local maker_observation maker_revision_three followup_submit terminal_projection
+  local maker_terminal reveal_output followup_output bitcoin_before bitcoin_after
+  local maker_observation_sha maker_revision_three_sha followup_submit_sha
+  local terminal_projection_sha maker_terminal_sha reveal_output_sha followup_output_sha
+  local bitcoin_before_sha bitcoin_after_sha recovering recovering_sha completion boundary remaining
+  reveal_tx="$(printf '%s' "${direction}-reveal" | sha256sum | cut -d' ' -f1)"
+  followup_tx="$(printf '%s' "${direction}-followup" | sha256sum | cut -d' ' -f1)"
+  remaining_tx="$(printf '%s' "${direction}-remaining" | sha256sum | cut -d' ' -f1)"
+  maker_observation="${survivor_validation_root}/${direction}-survivor-maker-observe-reveal-maker.json"
+  maker_revision_three="${survivor_validation_root}/${direction}-survivor-maker-revision-three-status-maker.json"
+  followup_submit="${survivor_validation_root}/${direction}-survivor-${followup_chain}-followup-submit-maker.json"
+  terminal_projection="${survivor_validation_root}/${direction}-survivor-maker-project-followup-maker.json"
+  maker_terminal="${survivor_validation_root}/${direction}-survivor-maker-terminal-status-maker.json"
+  reveal_output="${survivor_validation_root}/${direction}-survivor-delayed-taker-reveal-taker.json"
+  followup_output="${survivor_validation_root}/${direction}-survivor-delayed-taker-followup-taker.json"
+  bitcoin_before="${survivor_validation_root}/${direction}-survivor-catchup-bitcoin-mempool-before.json"
+  bitcoin_after="${survivor_validation_root}/${direction}-survivor-catchup-bitcoin-mempool-after.json"
+  jq -n --arg chain "$reveal_chain" \
+    '{schema_version:1,role:"maker",revision:3,phase:"claim_evidence_available",
+      chain:$chain,outcome:"observed_then_projected"}' >"$maker_observation"
+  jq -n '{schema_version:1,role:"maker",revision:3,phase:"claim_evidence_available",
+    next_action:"observe_followup_claim"}' >"$maker_revision_three"
+  jq -n --arg chain "$followup_chain" \
+    '{schema_version:1,role:"maker",revision:3,phase:"claim_evidence_available",
+      chain:$chain,outcome:"awaiting_observation"}' >"$followup_submit"
+  jq -n --arg chain "$followup_chain" \
+    '{schema_version:1,role:"maker",revision:4,phase:"completed",
+      chain:$chain,outcome:"observed_then_projected"}' >"$terminal_projection"
+  jq -n '{schema_version:1,role:"maker",revision:4,phase:"completed",next_action:"complete"}' \
+    >"$maker_terminal"
+  jq -n --arg chain "$reveal_chain" \
+    '{schema_version:1,role:"taker",revision:3,phase:"claim_evidence_available",
+      chain:$chain,outcome:"observed_then_projected"}' >"$reveal_output"
+  jq -n --arg chain "$followup_chain" \
+    '{schema_version:1,role:"taker",revision:4,phase:"completed",
+      chain:$chain,outcome:"observed_then_projected"}' >"$followup_output"
+  jq -n '{jsonrpc:"2.0",id:1,error:null,result:[]}' >"$bitcoin_before"
+  jq -n '{jsonrpc:"2.0",id:1,error:null,result:[]}' >"$bitcoin_after"
+  maker_observation_sha="$(sha256sum "$maker_observation" | cut -d' ' -f1)"
+  maker_revision_three_sha="$(sha256sum "$maker_revision_three" | cut -d' ' -f1)"
+  followup_submit_sha="$(sha256sum "$followup_submit" | cut -d' ' -f1)"
+  terminal_projection_sha="$(sha256sum "$terminal_projection" | cut -d' ' -f1)"
+  maker_terminal_sha="$(sha256sum "$maker_terminal" | cut -d' ' -f1)"
+  reveal_output_sha="$(sha256sum "$reveal_output" | cut -d' ' -f1)"
+  followup_output_sha="$(sha256sum "$followup_output" | cut -d' ' -f1)"
+  bitcoin_before_sha="$(sha256sum "$bitcoin_before" | cut -d' ' -f1)"
+  bitcoin_after_sha="$(sha256sum "$bitcoin_after" | cut -d' ' -f1)"
+  if [[ "$direction" == "taker_sells_foreign" ]]; then
+    remaining="$(jq -cn --arg tx "$remaining_tx" '
+      {chain:"bitcoin",transaction_id:$tx,canonical:true,unspent_or_funded:true,
+       before_signed_later_refund_boundary:true}')"
+    boundary='{"chain":"bitcoin","confirmed_tip_height":100,"signed_refund_height":200,"completed_before_signed_refund_boundary":true}'
+  else
+    remaining="$(jq -cn --arg tx "$remaining_tx" '
+      {chain:"lez",transaction_id:$tx,amount:"1000",canonical:true,unspent_or_funded:true,
+       before_signed_later_refund_boundary:true,metadata_status:"funded",custody_balance:"1000"}')"
+    boundary="$(jq -cn --arg sha "$(printf finality | sha256sum | cut -d' ' -f1)" \
+      --arg block_sha "$(printf block | sha256sum | cut -d' ' -f1)" '
+      {chain:"lez",finalized_containing_block_timestamp_ms:100,signed_refund_at_ms:200,
+       finality_evidence_sha256:$sha,containing_block_evidence_sha256:$block_sha,
+       completed_before_signed_refund_boundary:true}')"
+  fi
+  recovering="${survivor_validation_root}/${direction}-survivor-recovering.json"
+  jq -n --arg direction "$direction" --arg reveal_chain "$reveal_chain" \
+    --arg reveal_tx "$reveal_tx" --arg followup_chain "$followup_chain" \
+    --arg maker_observation_sha "$maker_observation_sha" \
+    --arg maker_revision_three_sha "$maker_revision_three_sha" \
+    --argjson remaining "$remaining" '
+    {schema_version:1,journey:"survivor_claim",direction:$direction,
+     reveal:{role:"taker",chain:$reveal_chain,transaction_id:$reveal_tx,canonical:true},
+     continuation:{follower_role:"maker",canonical_reveal_observed_by_fresh_process:true,
+       caller_supplied_secret:false,related_presignature_and_adaptor_point_validated:true,
+       projected_revision:3},
+     intermediate:{protocol_phase:"claim_evidence_available",lifecycle_disposition:"recovering",
+       terminal:false,remaining_leg:$remaining,followup_effect_present:false,
+       bitcoin_effect_count:(if $direction == "taker_sells_foreign" then 1 else 2 end),
+       lez_effect_count:(if $direction == "taker_sells_foreign" then 3 else 2 end)},
+     availability:{taker_invocations_after_reveal_before_maker_terminal:0,
+       taker_absence_guard_enforced:true,follower_process_exited_at_revision_three:true},
+     process_evidence:{maker_reveal_observation_sha256:$maker_observation_sha,
+       maker_revision_three_status_sha256:$maker_revision_three_sha},
+     secret_recorded:false,delivery_or_chat_used:false}
+  ' >"$recovering"
+  recovering_sha="$(sha256sum "$recovering" | cut -d' ' -f1)"
+  completion="${survivor_validation_root}/${direction}-survivor-claim.json"
+  jq -n --arg direction "$direction" --arg reveal_chain "$reveal_chain" \
+    --arg followup_chain "$followup_chain" --arg reveal_tx "$reveal_tx" \
+    --arg followup_tx "$followup_tx" --arg recovering_sha "$recovering_sha" \
+    --arg maker_terminal_sha "$maker_terminal_sha" \
+    --arg followup_submit_sha "$followup_submit_sha" \
+    --arg terminal_projection_sha "$terminal_projection_sha" \
+    --arg reveal_output_sha "$reveal_output_sha" --arg followup_output_sha "$followup_output_sha" \
+    --arg bitcoin_before_sha "$bitcoin_before_sha" --arg bitcoin_after_sha "$bitcoin_after_sha" \
+    --argjson boundary "$boundary" '
+    {schema_version:1,journey:"survivor_claim",direction:$direction,
+     reveal:{role:"taker",chain:$reveal_chain,transaction_id:$reveal_tx,canonical:true},
+     continuation:{follower_role:"maker",canonical_reveal_observed_by_fresh_process:true,
+       caller_supplied_secret:false,related_presignature_and_adaptor_point_validated:true,
+       projected_revision:3},
+     intermediate:{protocol_phase:"claim_evidence_available",lifecycle_disposition:"recovering",
+       terminal:false,recovering_evidence_sha256:$recovering_sha},
+     availability:{taker_invocations_after_reveal_before_maker_terminal:0,
+       taker_absence_guard_enforced:true,follower_process_exited_at_revision_three:true,
+       fresh_follower_process_submitted_followup:true,
+       distinct_fresh_follower_process_projected_terminal:true,
+       followup_submission_output_sha256:$followup_submit_sha,
+       terminal_projection_output_sha256:$terminal_projection_sha},
+     completion:{followup_role:"maker",chain:$followup_chain,transaction_id:$followup_tx,
+       canonical:true,maker_revision:4,phase:"completed",
+       maker_terminal_status_sha256:$maker_terminal_sha,boundary:$boundary},
+     delayed_revealer_catchup:{began_after_maker_terminal:true,revisions:[3,4],observation_only:true,
+       actor_observations:{
+         reveal:{chain:$reveal_chain,revision:3,outcome:"observed_then_projected",sha256:$reveal_output_sha},
+         followup:{chain:$followup_chain,revision:4,outcome:"observed_then_projected",sha256:$followup_output_sha}},
+       per_chain:{
+         bitcoin:{actor_observation_sha256:
+             (if $reveal_chain == "bitcoin" then $reveal_output_sha else $followup_output_sha end),
+           mempool_before_count:0,mempool_after_count:0,
+           bitcoin_mempool_before_sha256:$bitcoin_before_sha,
+           bitcoin_mempool_after_sha256:$bitcoin_after_sha,successful_resubmission_count:0},
+         lez:{actor_observation_sha256:
+             (if $reveal_chain == "lez" then $reveal_output_sha else $followup_output_sha end),
+           durable_submission_count_before:3,durable_submission_count_after:3,
+           successful_resubmission_count:0}},successful_resubmission_count:0},
+     secret_recorded:false,delivery_or_chat_used:false}
+  ' >"$completion"
+}
+
+validate_survivor_fixture() {
+  local direction="$1" reveal_chain="$2" followup_chain="$3"
+  bash -c '
+    set -euo pipefail
+    evidence_dir="$1"
+    fail() { echo "isolated survivor validator failed: $*" >&2; exit 2; }
+    eval "$2"
+    validate_survivor_direction_evidence "$3" "$4" "$5"
+  ' survivor-validator "$survivor_validation_root" "$survivor_validator_source" \
+    "$direction" "$reveal_chain" "$followup_chain"
+}
+
+for fixture_spec in 'taker_sells_foreign lez bitcoin' 'taker_sells_lez bitcoin lez'; do
+  read -r fixture_direction fixture_reveal fixture_followup <<<"$fixture_spec"
+  write_survivor_validation_fixture "$fixture_direction" "$fixture_reveal" "$fixture_followup"
+  validate_survivor_fixture "$fixture_direction" "$fixture_reveal" "$fixture_followup" \
+    >/dev/null || fail "strict survivor validator rejected exact ${fixture_direction} evidence"
+done
+
+jq '.direction = "taker_sells_lez"' \
+  "${survivor_validation_root}/taker_sells_foreign-survivor-claim.json" \
+  >"${survivor_validation_root}/taker_sells_foreign-survivor-claim.json.partial"
+mv "${survivor_validation_root}/taker_sells_foreign-survivor-claim.json.partial" \
+  "${survivor_validation_root}/taker_sells_foreign-survivor-claim.json"
+if validate_survivor_fixture taker_sells_foreign lez bitcoin >/dev/null 2>&1; then
+  fail "survivor validator accepted a swapped completion direction"
+fi
+write_survivor_validation_fixture taker_sells_foreign lez bitcoin
+jq '.intermediate.remaining_leg.canonical = false' \
+  "${survivor_validation_root}/taker_sells_foreign-survivor-recovering.json" \
+  >"${survivor_validation_root}/taker_sells_foreign-survivor-recovering.json.partial"
+mv "${survivor_validation_root}/taker_sells_foreign-survivor-recovering.json.partial" \
+  "${survivor_validation_root}/taker_sells_foreign-survivor-recovering.json"
+mutated_recovering_sha="$(sha256sum \
+  "${survivor_validation_root}/taker_sells_foreign-survivor-recovering.json" | cut -d' ' -f1)"
+jq --arg sha "$mutated_recovering_sha" '.intermediate.recovering_evidence_sha256 = $sha' \
+  "${survivor_validation_root}/taker_sells_foreign-survivor-claim.json" \
+  >"${survivor_validation_root}/taker_sells_foreign-survivor-claim.json.partial"
+mv "${survivor_validation_root}/taker_sells_foreign-survivor-claim.json.partial" \
+  "${survivor_validation_root}/taker_sells_foreign-survivor-claim.json"
+if validate_survivor_fixture taker_sells_foreign lez bitcoin >/dev/null 2>&1; then
+  fail "survivor validator accepted a hash-consistent noncanonical remaining leg"
+fi
+write_survivor_validation_fixture taker_sells_lez bitcoin lez
+jq '.result = ["unexpected-bitcoin-resubmission"]' \
+  "${survivor_validation_root}/taker_sells_lez-survivor-catchup-bitcoin-mempool-after.json" \
+  >"${survivor_validation_root}/taker_sells_lez-survivor-catchup-bitcoin-mempool-after.json.partial"
+mv "${survivor_validation_root}/taker_sells_lez-survivor-catchup-bitcoin-mempool-after.json.partial" \
+  "${survivor_validation_root}/taker_sells_lez-survivor-catchup-bitcoin-mempool-after.json"
+mutated_mempool_sha="$(sha256sum \
+  "${survivor_validation_root}/taker_sells_lez-survivor-catchup-bitcoin-mempool-after.json" | \
+  cut -d' ' -f1)"
+jq --arg sha "$mutated_mempool_sha" \
+  '.delayed_revealer_catchup.per_chain.bitcoin.bitcoin_mempool_after_sha256 = $sha' \
+  "${survivor_validation_root}/taker_sells_lez-survivor-claim.json" \
+  >"${survivor_validation_root}/taker_sells_lez-survivor-claim.json.partial"
+mv "${survivor_validation_root}/taker_sells_lez-survivor-claim.json.partial" \
+  "${survivor_validation_root}/taker_sells_lez-survivor-claim.json"
+if validate_survivor_fixture taker_sells_lez bitcoin lez >/dev/null 2>&1; then
+  fail "survivor validator accepted a hash-consistent Bitcoin catch-up resubmission"
+fi
+
+cleanup_survivor_validation_root
+trap - EXIT
 rg -Fq 'observed_timeout_count:$bedrock_ntp_timeout_count' <<<"$run_evidence_source" ||
   fail "final evidence does not record the observed pinned-Bedrock NTP timeout count"
 rg -Fq 'certification_success_depends_on_external_network:false' \
@@ -958,6 +1351,20 @@ write_effect_manifest_fixture() {
          lez_effect_ids:[$lez_initialization,$lez_funding,$lez_claim],
          expected_unique_effects:{bitcoin:2,lez:3},
          actor_owned_claims:{bitcoin:$bitcoin_claim,lez:$lez_claim}}
+      ' >"$output"
+      ;;
+    survivor_claim)
+      jq -n --arg direction "$direction" --arg bitcoin_lock "$btc_lock" \
+        --arg bitcoin_claim "$btc_terminal" --arg lez_initialization "$lez_initialization" \
+        --arg lez_funding "$lez_funding" --arg lez_claim "$lez_terminal" '
+        {schema_version:1,journey:"survivor_claim",direction:$direction,
+         bitcoin_effect_ids:[$bitcoin_lock,$bitcoin_claim],
+         lez_effect_ids:[$lez_initialization,$lez_funding,$lez_claim],
+         expected_unique_effects:{bitcoin:2,lez:3},
+         actor_owned_claims:{bitcoin:$bitcoin_claim,lez:$lez_claim},
+         survivor_evidence_file:($direction + "-survivor-claim.json"),
+         revealer:"taker",follower:"maker",
+         intermediate_phase:"claim_evidence_available",intermediate_terminal:false}
       ' >"$output"
       ;;
     refund)
@@ -1027,6 +1434,23 @@ validate_effect_manifest_pair claim >/dev/null ||
   fail "outer runner rejected two claim-shaped manifests for the claim journey"
 if validate_effect_manifest_pair refund >/dev/null 2>&1; then
   fail "outer runner accepted claim-shaped manifests for the refund journey"
+fi
+
+write_effect_manifest_pair survivor_claim
+validate_effect_manifest_pair survivor_claim >/dev/null ||
+  fail "outer runner rejected two exact survivor-shaped manifests"
+if validate_effect_manifest_pair claim >/dev/null 2>&1; then
+  fail "outer runner accepted survivor manifests as ordinary claim evidence"
+fi
+
+write_effect_manifest_pair survivor_claim
+jq '.intermediate_terminal = true' \
+  "${manifest_validation_root}/taker_sells_foreign-actual-effects.json" \
+  >"${manifest_validation_root}/taker_sells_foreign-actual-effects.json.partial"
+mv "${manifest_validation_root}/taker_sells_foreign-actual-effects.json.partial" \
+  "${manifest_validation_root}/taker_sells_foreign-actual-effects.json"
+if validate_effect_manifest_pair survivor_claim >/dev/null 2>&1; then
+  fail "outer runner accepted terminal revision-three survivor evidence"
 fi
 
 write_effect_manifest_pair refund

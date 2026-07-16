@@ -68,7 +68,6 @@ for flow in "${required_atomic_sequences[@]}"; do
     "Both locks are proven" \
     "Required invariant cutoff plus margin no later than earliest recovery" \
     "Required invariant late maker lock admission closes before refund authority" \
-    "Revealer may disappear and follower uses canonical chain disclosure" \
     "Follower retains claim authority and ClaimEvidenceAvailable stays nonterminal" \
     "No canonical reveal" \
     "Implementation status"; do
@@ -77,6 +76,26 @@ for flow in "${required_atomic_sequences[@]}"; do
       exit 1
     fi
   done
+
+  if [[ "$flow" == lez-btc/* ]]; then
+    for property in \
+      "Taker process exits after reveal submission" \
+      "Fresh process observes reveal and commits revision 3" \
+      "ClaimEvidenceAvailable is nonterminal" \
+      "Observer exits then another maker process reloads revision 3" \
+      "Fresh process projects revision 4 Completed" \
+      "Later catch up revisions 3 and 4 observation only"; do
+      if ! rg -Fq "$property" <<<"$sequence_block"; then
+        echo "BTC atomic sequence ${flow} is missing proved survivor step: ${property}" >&2
+        exit 1
+      fi
+    done
+  elif ! rg -Fq \
+      "Revealer may disappear and follower uses canonical chain disclosure" \
+      <<<"$sequence_block"; then
+    echo "planned atomic sequence ${flow} is missing its survivor target" >&2
+    exit 1
+  fi
 
   argument_block="$(awk -v marker="$argument_marker" '
     $0 == marker { found = 1; next }
@@ -95,13 +114,33 @@ done
 required_flow_properties=(
   "Required invariant cutoff plus margin no later than earliest recovery"
   "Required invariant late maker lock admission closes before refund authority"
-  "Revealer may disappear and follower uses canonical chain disclosure"
   "Follower retains claim authority and ClaimEvidenceAvailable stays nonterminal"
 )
 
 for property in "${required_flow_properties[@]}"; do
   if [[ "$(rg -Fc "$property" "$system_architecture")" -ne 5 ]]; then
     echo "all five atomic flows must state: ${property}" >&2
+    exit 1
+  fi
+done
+
+
+if [[ "$(rg -Fc \
+    "Revealer may disappear and follower uses canonical chain disclosure" \
+    "$system_architecture")" -ne 3 ]]; then
+  echo "the two ZEC flows and one XMR flow must retain the planned survivor target" >&2
+  exit 1
+fi
+
+for property in \
+  "Taker process exits after reveal submission" \
+  "Fresh process observes reveal and commits revision 3" \
+  "ClaimEvidenceAvailable is nonterminal" \
+  "Observer exits then another maker process reloads revision 3" \
+  "Fresh process projects revision 4 Completed" \
+  "Later catch up revisions 3 and 4 observation only"; do
+  if [[ "$(rg -Fc "$property" "$system_architecture")" -ne 2 ]]; then
+    echo "both BTC atomic flows must state the proved survivor step: ${property}" >&2
     exit 1
   fi
 done

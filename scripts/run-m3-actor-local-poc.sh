@@ -17,9 +17,10 @@ if [[ "$mode" != "execute" && "$mode" != "contract" ]]; then
   exit 2
 fi
 journey="${M3_ACTOR_POC_JOURNEY:-claim}"
-if [[ "$journey" != "claim" && "$journey" != "refund" &&
+if [[ "$journey" != "claim" && "$journey" != "survivor_claim" &&
+      "$journey" != "refund" &&
       "$journey" != "first_lock_refund" ]]; then
-  echo "M3_ACTOR_POC_JOURNEY must be claim, refund, or first_lock_refund" >&2
+  echo "M3_ACTOR_POC_JOURNEY must be claim, survivor_claim, refund, or first_lock_refund" >&2
   exit 2
 fi
 case "$journey" in
@@ -30,6 +31,15 @@ case "$journey" in
     packet_kind="m3_actor_two_direction_local_poc"
     actor_owned_effect_semantics="claim"
     success_label="M3 actor two-direction local PoC"
+    lez_slot_duration_seconds="1.0"
+    ;;
+  survivor_claim)
+    terminal_revision=4
+    terminal_phase="completed"
+    replay_command="drive"
+    packet_kind="m3_actor_two_direction_survivor_claim_local_poc"
+    actor_owned_effect_semantics="survivor_claim"
+    success_label="M3 actor two-direction survivor-claim local PoC"
     lez_slot_duration_seconds="1.0"
     ;;
   refund)
@@ -132,6 +142,18 @@ emit_contract() {
           ($journey == "first_lock_refund"),
         directions_are_sequential: true
       },
+      survivor:
+        (if $journey == "survivor_claim" then {
+          revealer:"taker",follower_role:"maker",
+          revealer_absent_after_reveal_until_follower_terminal:true,
+          fresh_follower_observes_revision_three:true,
+          intermediate_phase:"claim_evidence_available",
+          intermediate_lifecycle_disposition:"recovering",
+          intermediate_terminal:false,
+          remaining_leg_must_be_canonical_and_claimable:true,
+          follower_restart_before_followup:true,
+          delayed_revealer_catchup_observation_only:true
+        } else null end),
       finality: {
         bitcoin: "exact_signed_confirmation_depth",
         lez: "exact_finalized_indexer_ancestry"
@@ -547,9 +569,10 @@ verify_direction_driver_contract() {
     and .dual_locks_before_scalar_use == true
     and .bitcoin_exact_signed_depth == true
     and .lez_exact_finalized_ancestry == true
-    and .journeys == ["claim", "refund", "first_lock_refund"]
+    and .journeys == ["claim", "survivor_claim", "refund", "first_lock_refund"]
     and .default_journey == "claim"
     and .actor_owned_claim_effects == true
+    and .actor_owned_survivor_claim_effects == true
     and .actor_owned_refund_effects == true
     and .actor_owned_first_lock_refund_effects == true
     and .first_lock_refund_terminal_revision == 2
@@ -561,6 +584,7 @@ verify_direction_driver_contract() {
     and .first_lock_refund_taker_only_revision_one_and_refund_projection == true
     and .timeout_terminal_phase == "refunded"
     and (if $journey == "claim" then .actor_owned_claim_effects
+         elif $journey == "survivor_claim" then .actor_owned_survivor_claim_effects
          elif $journey == "refund" then .actor_owned_refund_effects
          else .actor_owned_first_lock_refund_effects end) == true
     and .actor_config_schema_version == 3
@@ -929,11 +953,17 @@ validate_actual_effect_manifests() {
       and (.lez_effect_ids | unique | length) == .expected_unique_effects.lez
       and all(.bitcoin_effect_ids[]; type == "string" and test("^[0-9a-f]{64}$"))
       and all(.lez_effect_ids[]; type == "string" and test("^[0-9a-f]{64}$"))
-      and if $journey == "claim" then
+      and if ($journey == "claim" or $journey == "survivor_claim") then
         .actor_owned_claims == {
           bitcoin:.bitcoin_effect_ids[1], lez:.lez_effect_ids[2]
         }
         and (has("actor_owned_refunds") | not)
+        and (if $journey == "survivor_claim" then
+          .survivor_evidence_file == ($direction + "-survivor-claim.json")
+          and .revealer == "taker" and .follower == "maker"
+          and .intermediate_phase == "claim_evidence_available"
+          and .intermediate_terminal == false
+        else (has("survivor_evidence_file") | not) end)
       elif $journey == "refund" then
         .actor_owned_refunds == {
           bitcoin:.bitcoin_effect_ids[1], lez:.lez_effect_ids[2]
@@ -958,9 +988,206 @@ validate_actual_effect_manifests() {
   done
 }
 
+validate_survivor_direction_evidence() {
+  local direction="$1" reveal_chain="$2" followup_chain="$3"
+  local completion="${evidence_dir}/${direction}-survivor-claim.json"
+  local recovering="${evidence_dir}/${direction}-survivor-recovering.json"
+  local reveal_output="${evidence_dir}/${direction}-survivor-delayed-taker-reveal-taker.json"
+  local followup_output="${evidence_dir}/${direction}-survivor-delayed-taker-followup-taker.json"
+  local bitcoin_before="${evidence_dir}/${direction}-survivor-catchup-bitcoin-mempool-before.json"
+  local bitcoin_after="${evidence_dir}/${direction}-survivor-catchup-bitcoin-mempool-after.json"
+  local maker_observation="${evidence_dir}/${direction}-survivor-maker-observe-reveal-maker.json"
+  local maker_revision_three="${evidence_dir}/${direction}-survivor-maker-revision-three-status-maker.json"
+  local followup_submit="${evidence_dir}/${direction}-survivor-${followup_chain}-followup-submit-maker.json"
+  local terminal_projection="${evidence_dir}/${direction}-survivor-maker-project-followup-maker.json"
+  local maker_terminal="${evidence_dir}/${direction}-survivor-maker-terminal-status-maker.json"
+  local file completion_sha recovering_sha reveal_output_sha followup_output_sha
+  local bitcoin_before_sha bitcoin_after_sha maker_observation_sha
+  local maker_revision_three_sha followup_submit_sha terminal_projection_sha maker_terminal_sha
+  for file in "$completion" "$recovering" "$reveal_output" "$followup_output" \
+    "$bitcoin_before" "$bitcoin_after" "$maker_observation" "$maker_revision_three" \
+    "$followup_submit" "$terminal_projection" "$maker_terminal"; do
+    [[ -f "$file" && ! -L "$file" ]] ||
+      fail "${direction} survivor evidence input is unavailable: ${file##*/}"
+  done
+  completion_sha="$(sha256sum "$completion" | sed 's/ .*//')"
+  recovering_sha="$(sha256sum "$recovering" | sed 's/ .*//')"
+  reveal_output_sha="$(sha256sum "$reveal_output" | sed 's/ .*//')"
+  followup_output_sha="$(sha256sum "$followup_output" | sed 's/ .*//')"
+  bitcoin_before_sha="$(sha256sum "$bitcoin_before" | sed 's/ .*//')"
+  bitcoin_after_sha="$(sha256sum "$bitcoin_after" | sed 's/ .*//')"
+  maker_observation_sha="$(sha256sum "$maker_observation" | sed 's/ .*//')"
+  maker_revision_three_sha="$(sha256sum "$maker_revision_three" | sed 's/ .*//')"
+  followup_submit_sha="$(sha256sum "$followup_submit" | sed 's/ .*//')"
+  terminal_projection_sha="$(sha256sum "$terminal_projection" | sed 's/ .*//')"
+  maker_terminal_sha="$(sha256sum "$maker_terminal" | sed 's/ .*//')"
+
+  jq -e --arg direction "$direction" --arg reveal_chain "$reveal_chain" \
+    --arg followup_chain "$followup_chain" --arg recovering_sha "$recovering_sha" \
+    --arg reveal_output_sha "$reveal_output_sha" --arg followup_output_sha "$followup_output_sha" \
+    --arg bitcoin_before_sha "$bitcoin_before_sha" --arg bitcoin_after_sha "$bitcoin_after_sha" \
+    --arg maker_observation_sha "$maker_observation_sha" \
+    --arg maker_revision_three_sha "$maker_revision_three_sha" \
+    --arg followup_submit_sha "$followup_submit_sha" \
+    --arg terminal_projection_sha "$terminal_projection_sha" \
+    --arg maker_terminal_sha "$maker_terminal_sha" \
+    --slurpfile recovering "$recovering" --slurpfile reveal_output "$reveal_output" \
+    --slurpfile followup_output "$followup_output" \
+    --slurpfile bitcoin_before "$bitcoin_before" --slurpfile bitcoin_after "$bitcoin_after" \
+    --slurpfile maker_observation "$maker_observation" \
+    --slurpfile maker_revision_three "$maker_revision_three" \
+    --slurpfile followup_submit "$followup_submit" \
+    --slurpfile terminal_projection "$terminal_projection" \
+    --slurpfile maker_terminal "$maker_terminal" '
+    .schema_version == 1 and .journey == "survivor_claim" and .direction == $direction
+    and .reveal.role == "taker" and .reveal.chain == $reveal_chain
+    and (.reveal.transaction_id | test("^[0-9a-f]{64}$")) and .reveal.canonical == true
+    and .continuation.follower_role == "maker"
+    and .continuation.canonical_reveal_observed_by_fresh_process == true
+    and .continuation.caller_supplied_secret == false
+    and .continuation.related_presignature_and_adaptor_point_validated == true
+    and .continuation.projected_revision == 3
+    and .intermediate.protocol_phase == "claim_evidence_available"
+    and .intermediate.lifecycle_disposition == "recovering"
+    and .intermediate.terminal == false
+    and .intermediate.recovering_evidence_sha256 == $recovering_sha
+    and .availability.taker_invocations_after_reveal_before_maker_terminal == 0
+    and .availability.taker_absence_guard_enforced == true
+    and .availability.follower_process_exited_at_revision_three == true
+    and .availability.fresh_follower_process_submitted_followup == true
+    and .availability.distinct_fresh_follower_process_projected_terminal == true
+    and .availability.followup_submission_output_sha256 == $followup_submit_sha
+    and .availability.terminal_projection_output_sha256 == $terminal_projection_sha
+    and .completion.followup_role == "maker" and .completion.chain == $followup_chain
+    and (.completion.transaction_id | test("^[0-9a-f]{64}$"))
+    and .completion.canonical == true and .completion.maker_revision == 4
+    and .completion.phase == "completed"
+    and .completion.maker_terminal_status_sha256 == $maker_terminal_sha
+    and .completion.boundary.chain == $followup_chain
+    and .completion.boundary.completed_before_signed_refund_boundary == true
+    and .delayed_revealer_catchup.began_after_maker_terminal == true
+    and .delayed_revealer_catchup.revisions == [3,4]
+    and .delayed_revealer_catchup.observation_only == true
+    and .delayed_revealer_catchup.actor_observations.reveal == {
+      chain:$reveal_chain,revision:3,outcome:"observed_then_projected",sha256:$reveal_output_sha}
+    and .delayed_revealer_catchup.actor_observations.followup == {
+      chain:$followup_chain,revision:4,outcome:"observed_then_projected",sha256:$followup_output_sha}
+    and .delayed_revealer_catchup.per_chain.bitcoin.bitcoin_mempool_before_sha256 == $bitcoin_before_sha
+    and .delayed_revealer_catchup.per_chain.bitcoin.bitcoin_mempool_after_sha256 == $bitcoin_after_sha
+    and .delayed_revealer_catchup.per_chain.bitcoin.mempool_before_count == 0
+    and .delayed_revealer_catchup.per_chain.bitcoin.mempool_after_count == 0
+    and .delayed_revealer_catchup.per_chain.bitcoin.successful_resubmission_count == 0
+    and .delayed_revealer_catchup.per_chain.lez.durable_submission_count_before == 3
+    and .delayed_revealer_catchup.per_chain.lez.durable_submission_count_after == 3
+    and .delayed_revealer_catchup.per_chain.lez.successful_resubmission_count == 0
+    and .delayed_revealer_catchup.successful_resubmission_count == 0
+    and .secret_recorded == false and .delivery_or_chat_used == false
+    and $recovering[0].schema_version == 1
+    and $recovering[0].journey == "survivor_claim"
+    and $recovering[0].direction == $direction
+    and $recovering[0].reveal.role == "taker"
+    and $recovering[0].reveal.chain == $reveal_chain
+    and $recovering[0].reveal.transaction_id == .reveal.transaction_id
+    and $recovering[0].reveal.canonical == true
+    and $recovering[0].continuation.follower_role == "maker"
+    and $recovering[0].continuation.canonical_reveal_observed_by_fresh_process == true
+    and $recovering[0].continuation.caller_supplied_secret == false
+    and $recovering[0].continuation.related_presignature_and_adaptor_point_validated == true
+    and $recovering[0].continuation.projected_revision == 3
+    and $recovering[0].intermediate.protocol_phase == "claim_evidence_available"
+    and $recovering[0].intermediate.lifecycle_disposition == "recovering"
+    and $recovering[0].intermediate.terminal == false
+    and $recovering[0].intermediate.remaining_leg.chain == $followup_chain
+    and $recovering[0].intermediate.remaining_leg.canonical == true
+    and $recovering[0].intermediate.remaining_leg.unspent_or_funded == true
+    and $recovering[0].intermediate.remaining_leg.before_signed_later_refund_boundary == true
+    and $recovering[0].intermediate.followup_effect_present == false
+    and $recovering[0].availability.taker_invocations_after_reveal_before_maker_terminal == 0
+    and $recovering[0].availability.taker_absence_guard_enforced == true
+    and $recovering[0].availability.follower_process_exited_at_revision_three == true
+    and $recovering[0].process_evidence.maker_reveal_observation_sha256 == $maker_observation_sha
+    and $recovering[0].process_evidence.maker_revision_three_status_sha256 == $maker_revision_three_sha
+    and $recovering[0].secret_recorded == false
+    and $recovering[0].delivery_or_chat_used == false
+    and $reveal_output[0].role == "taker" and $reveal_output[0].revision == 3
+    and $reveal_output[0].phase == "claim_evidence_available"
+    and $reveal_output[0].outcome == "observed_then_projected"
+    and $followup_output[0].role == "taker" and $followup_output[0].revision == 4
+    and $followup_output[0].phase == "completed"
+    and $followup_output[0].outcome == "observed_then_projected"
+    and $bitcoin_before[0].error == null and $bitcoin_before[0].result == []
+    and $bitcoin_after[0].error == null and $bitcoin_after[0].result == []
+    and $maker_observation[0].role == "maker" and $maker_observation[0].revision == 3
+    and $maker_observation[0].phase == "claim_evidence_available"
+    and $maker_observation[0].outcome == "observed_then_projected"
+    and $maker_revision_three[0].role == "maker" and $maker_revision_three[0].revision == 3
+    and $maker_revision_three[0].phase == "claim_evidence_available"
+    and $maker_revision_three[0].next_action == "observe_followup_claim"
+    and $followup_submit[0].role == "maker" and $followup_submit[0].revision == 3
+    and $followup_submit[0].phase == "claim_evidence_available"
+    and $followup_submit[0].chain == $followup_chain
+    and $followup_submit[0].outcome == "awaiting_observation"
+    and $terminal_projection[0].role == "maker" and $terminal_projection[0].revision == 4
+    and $terminal_projection[0].phase == "completed"
+    and $terminal_projection[0].chain == $followup_chain
+    and $terminal_projection[0].outcome == "observed_then_projected"
+    and $maker_terminal[0].role == "maker" and $maker_terminal[0].revision == 4
+    and $maker_terminal[0].phase == "completed" and $maker_terminal[0].next_action == "complete"
+    and (if $direction == "taker_sells_foreign" then
+      $recovering[0].intermediate.bitcoin_effect_count == 1
+      and $recovering[0].intermediate.lez_effect_count == 3
+      and .completion.boundary.chain == "bitcoin"
+      and (.completion.boundary.confirmed_tip_height | numbers) <
+        (.completion.boundary.signed_refund_height | numbers)
+    else
+      $recovering[0].intermediate.bitcoin_effect_count == 2
+      and $recovering[0].intermediate.lez_effect_count == 2
+      and $recovering[0].intermediate.remaining_leg.metadata_status == "funded"
+      and $recovering[0].intermediate.remaining_leg.custody_balance ==
+        $recovering[0].intermediate.remaining_leg.amount
+      and .completion.boundary.chain == "lez"
+      and (.completion.boundary.finalized_containing_block_timestamp_ms | numbers) <
+        (.completion.boundary.signed_refund_at_ms | numbers)
+      and (.completion.boundary.finality_evidence_sha256 | test("^[0-9a-f]{64}$"))
+      and (.completion.boundary.containing_block_evidence_sha256 | test("^[0-9a-f]{64}$"))
+    end)
+  ' "$completion" >/dev/null || fail "${direction} survivor direction evidence is inconsistent"
+
+  jq -c --arg completion_sha "$completion_sha" --arg recovering_sha "$recovering_sha" \
+    --slurpfile recovering "$recovering" '
+    {direction:.direction,revealer:.reveal.role,follower_role:.continuation.follower_role,
+     protected_absence:{
+       starts_after_reveal_submission:(.reveal.canonical and .availability.taker_absence_guard_enforced),
+       ends_after_follower_terminal:.delayed_revealer_catchup.began_after_maker_terminal,
+       revealer_actor_invocation_count:.availability.taker_invocations_after_reveal_before_maker_terminal},
+     intermediate:{phase:.intermediate.protocol_phase,
+       lifecycle_disposition:.intermediate.lifecycle_disposition,terminal:.intermediate.terminal,
+       remaining_leg_canonical_and_claimable:
+         ($recovering[0].intermediate.remaining_leg.canonical and
+          $recovering[0].intermediate.remaining_leg.unspent_or_funded and
+          $recovering[0].intermediate.remaining_leg.before_signed_later_refund_boundary),
+       followup_effect_present:$recovering[0].intermediate.followup_effect_present},
+     follower:{fresh_revision_three_observer:.continuation.canonical_reveal_observed_by_fresh_process,
+       process_exited_before_followup:.availability.follower_process_exited_at_revision_three,
+       fresh_followup_submitter:.availability.fresh_follower_process_submitted_followup,
+       fresh_terminal_projector:.availability.distinct_fresh_follower_process_projected_terminal},
+     delayed_revealer_catchup:{observation_only:.delayed_revealer_catchup.observation_only,
+       bitcoin_successful_resubmission_count:
+         .delayed_revealer_catchup.per_chain.bitcoin.successful_resubmission_count,
+       lez_successful_resubmission_count:
+         .delayed_revealer_catchup.per_chain.lez.successful_resubmission_count,
+       successful_resubmission_count:.delayed_revealer_catchup.successful_resubmission_count},
+     completion_boundary:.completion.boundary,
+     completion_evidence_sha256:$completion_sha,recovering_evidence_sha256:$recovering_sha,
+     caller_supplied_secret:.continuation.caller_supplied_secret,
+     secret_recorded:.secret_recorded}
+  ' "$completion"
+}
+
 write_run_evidence() {
   local repository_commit completed_at outer_runner_sha direction_driver_sha lez_bootstrap_sha
   local bedrock_log bedrock_ntp_timeout_count
+  local foreign_survivor_summary="null" lez_survivor_summary="null"
   repository_commit="$(git rev-parse HEAD)"
   completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   outer_runner_sha="$(sha256sum scripts/run-m3-actor-local-poc.sh | sed 's/ .*//')"
@@ -973,6 +1200,10 @@ write_run_evidence() {
   [[ -n "$bedrock_ntp_timeout_count" ]] || bedrock_ntp_timeout_count=0
   [[ "$bedrock_ntp_timeout_count" =~ ^[0-9]+$ ]] ||
     fail "Bedrock NTP timeout count is malformed"
+  if [[ "$journey" == "survivor_claim" ]]; then
+    foreign_survivor_summary="$(validate_survivor_direction_evidence taker_sells_foreign lez bitcoin)"
+    lez_survivor_summary="$(validate_survivor_direction_evidence taker_sells_lez bitcoin lez)"
+  fi
   jq -n \
     --arg run_id "$run_id" \
     --arg journey "$journey" \
@@ -997,6 +1228,8 @@ write_run_evidence() {
     --arg lez_run "$lez_run_id" \
     --arg lez_slot_duration_seconds "$lez_slot_duration_seconds" \
     --argjson bedrock_ntp_timeout_count "$bedrock_ntp_timeout_count" \
+    --argjson foreign_survivor "$foreign_survivor_summary" \
+    --argjson lez_survivor "$lez_survivor_summary" \
     --arg foreign_stage2_sha "$(sha256sum "${evidence_dir}/taker_sells_foreign-stage-two.json" | sed 's/ .*//')" \
     --arg lez_stage2_sha "$(sha256sum "${evidence_dir}/taker_sells_lez-stage-two.json" | sed 's/ .*//')" '
     {
@@ -1059,6 +1292,65 @@ write_run_evidence() {
           fresh_maker_observer:true,
           maker_offline_after_activation_until_refund_finality:true,
           taker_only_revision_one_and_refund_projection:true
+        } else null end),
+      survivor:
+        (if $journey == "survivor_claim" then {
+          revealer:$foreign_survivor.revealer,
+          follower_role:$foreign_survivor.follower_role,
+          protected_absence:{
+            starts_after_reveal_submission:
+              ($foreign_survivor.protected_absence.starts_after_reveal_submission and
+               $lez_survivor.protected_absence.starts_after_reveal_submission),
+            ends_after_follower_terminal:
+              ($foreign_survivor.protected_absence.ends_after_follower_terminal and
+               $lez_survivor.protected_absence.ends_after_follower_terminal),
+            revealer_actor_invocation_count:
+              ($foreign_survivor.protected_absence.revealer_actor_invocation_count +
+               $lez_survivor.protected_absence.revealer_actor_invocation_count)
+          },
+          intermediate:{phase:$foreign_survivor.intermediate.phase,
+            lifecycle_disposition:$foreign_survivor.intermediate.lifecycle_disposition,
+            terminal:($foreign_survivor.intermediate.terminal or
+              $lez_survivor.intermediate.terminal),
+            remaining_leg_canonical_and_claimable:
+              ($foreign_survivor.intermediate.remaining_leg_canonical_and_claimable and
+               $lez_survivor.intermediate.remaining_leg_canonical_and_claimable),
+            followup_effect_present:
+              ($foreign_survivor.intermediate.followup_effect_present or
+               $lez_survivor.intermediate.followup_effect_present)},
+          follower:{
+            fresh_revision_three_observer:
+              ($foreign_survivor.follower.fresh_revision_three_observer and
+               $lez_survivor.follower.fresh_revision_three_observer),
+            process_exited_before_followup:
+              ($foreign_survivor.follower.process_exited_before_followup and
+               $lez_survivor.follower.process_exited_before_followup),
+            fresh_followup_submitter:
+              ($foreign_survivor.follower.fresh_followup_submitter and
+               $lez_survivor.follower.fresh_followup_submitter),
+            fresh_terminal_projector:
+              ($foreign_survivor.follower.fresh_terminal_projector and
+               $lez_survivor.follower.fresh_terminal_projector)},
+          delayed_revealer_catchup:{
+            observation_only:
+              ($foreign_survivor.delayed_revealer_catchup.observation_only and
+               $lez_survivor.delayed_revealer_catchup.observation_only),
+            bitcoin_successful_resubmission_count:
+              ($foreign_survivor.delayed_revealer_catchup.bitcoin_successful_resubmission_count +
+               $lez_survivor.delayed_revealer_catchup.bitcoin_successful_resubmission_count),
+            lez_successful_resubmission_count:
+              ($foreign_survivor.delayed_revealer_catchup.lez_successful_resubmission_count +
+               $lez_survivor.delayed_revealer_catchup.lez_successful_resubmission_count),
+            successful_resubmission_count:
+              ($foreign_survivor.delayed_revealer_catchup.successful_resubmission_count +
+               $lez_survivor.delayed_revealer_catchup.successful_resubmission_count)},
+          direction_evidence:{
+            taker_sells_foreign:$foreign_survivor,
+            taker_sells_lez:$lez_survivor},
+          caller_supplied_secret:
+            ($foreign_survivor.caller_supplied_secret or $lez_survivor.caller_supplied_secret),
+          secret_recorded:
+            ($foreign_survivor.secret_recorded or $lez_survivor.secret_recorded)
         } else null end),
       expected_unique_effects_by_direction:
         (if $journey == "first_lock_refund" then
@@ -1127,6 +1419,35 @@ write_run_evidence() {
         taker_only_revision_one_and_refund_projection:true
       }
     else true end)
+    and (if $journey == "survivor_claim" then
+      .survivor.revealer == "taker"
+      and .survivor.follower_role == "maker"
+      and .survivor.protected_absence.revealer_actor_invocation_count == 0
+      and .survivor.intermediate.phase == "claim_evidence_available"
+      and .survivor.intermediate.lifecycle_disposition == "recovering"
+      and .survivor.intermediate.terminal == false
+      and .survivor.intermediate.remaining_leg_canonical_and_claimable == true
+      and .survivor.follower.fresh_revision_three_observer == true
+      and .survivor.follower.process_exited_before_followup == true
+      and .survivor.follower.fresh_followup_submitter == true
+      and .survivor.follower.fresh_terminal_projector == true
+      and .survivor.delayed_revealer_catchup.observation_only == true
+      and .survivor.delayed_revealer_catchup.bitcoin_successful_resubmission_count == 0
+      and .survivor.delayed_revealer_catchup.lez_successful_resubmission_count == 0
+      and .survivor.delayed_revealer_catchup.successful_resubmission_count == 0
+      and .survivor.direction_evidence.taker_sells_foreign.direction == "taker_sells_foreign"
+      and .survivor.direction_evidence.taker_sells_lez.direction == "taker_sells_lez"
+      and (.survivor.direction_evidence.taker_sells_foreign.completion_evidence_sha256 |
+        test("^[0-9a-f]{64}$"))
+      and (.survivor.direction_evidence.taker_sells_lez.completion_evidence_sha256 |
+        test("^[0-9a-f]{64}$"))
+      and (.survivor.direction_evidence.taker_sells_foreign.recovering_evidence_sha256 |
+        test("^[0-9a-f]{64}$"))
+      and (.survivor.direction_evidence.taker_sells_lez.recovering_evidence_sha256 |
+        test("^[0-9a-f]{64}$"))
+      and .survivor.caller_supplied_secret == false
+      and .survivor.secret_recorded == false
+    else .survivor == null end)
     and .replay_command == $replay_command
     and .replay_resubmission_count == 0
     and .external_resources.public_rpc == false

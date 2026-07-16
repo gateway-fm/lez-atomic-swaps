@@ -88,7 +88,7 @@ It uses a fresh isolated Core 31.1 Regtest node and local LEZ v0.2
 Bedrock/sequencer/indexer plus two role sidecars. Funds are deterministic local
 Regtest/genesis outputs; no public RPC, faucet, deployment, or funds participate.
 Retained run `m3refund-20260716h` proves this exact two-lock actual-node path.
-It does not prove survivor-specific recovery or concurrent swaps. Moving LEZ
+It does not prove the separate post-reveal survivor journey or concurrent swaps. Moving LEZ
 tips, indexer readiness, the bounded request
 timeout, and the fixed 4096-block discovery window can cause local observation
 retries; they never authorize another send.
@@ -119,6 +119,76 @@ public RPC, faucet, peer, deployment, or public funds participate. Bedrock may
 attempt `pool.ntp.org:123/udp`, but certification does not depend on success.
 Moving finalized tips can cause bounded read-only retries; timeout, transport,
 malformed evidence, and every non-`moving_tip` remote error fail immediately.
+
+### Repeat the M3 post-reveal survivor path
+
+Use the same verified local prerequisites as the happy path, choose a fresh ID,
+and select the survivor journey. The runner creates its own isolated Core 31.1
+Regtest and private LEZ v0.2 services; do not start shared manual nodes first.
+
+```sh
+export RUN_ID=m3survivor-manual-001
+export M3_ACTOR_POC_JOURNEY=survivor_claim
+./scripts/run-m3-actor-local-poc.sh
+
+export M3_EVIDENCE="$PWD/.e2e/$RUN_ID/m3-actor-poc/evidence"
+jq -e '.kind == "m3_actor_two_direction_survivor_claim_local_poc" and
+  .journey == "survivor_claim" and .result == "passed" and
+  .survivor.revealer == "taker" and .survivor.follower_role == "maker" and
+  .survivor.protected_absence.revealer_actor_invocation_count == 0 and
+  .survivor.intermediate.phase == "claim_evidence_available" and
+  .survivor.intermediate.lifecycle_disposition == "recovering" and
+  .survivor.intermediate.terminal == false and
+  .survivor.intermediate.remaining_leg_canonical_and_claimable == true and
+  .survivor.delayed_revealer_catchup.observation_only == true and
+  .survivor.delayed_revealer_catchup.bitcoin_successful_resubmission_count == 0 and
+  .survivor.delayed_revealer_catchup.lez_successful_resubmission_count == 0 and
+  .survivor.delayed_revealer_catchup.successful_resubmission_count == 0 and
+  all(.survivor.direction_evidence[];
+    .completion_boundary.completed_before_signed_refund_boundary == true) and
+  all(.directions[];
+    .terminal_revision == 4 and .terminal_phase == "completed") and
+  .replay_resubmission_count == 0 and
+  .public_rpc_used == false and .faucet_used == false and
+  .public_funds_used == false and .private_material_disclosed == false' \
+  "$M3_EVIDENCE/m3-actor-local-poc.json"
+
+for direction in taker_sells_foreign taker_sells_lez; do
+  jq -e '.journey == "survivor_claim" and
+    .availability.taker_invocations_after_reveal_before_maker_terminal == 0 and
+    .intermediate.protocol_phase == "claim_evidence_available" and
+    .intermediate.terminal == false and
+    .completion.maker_revision == 4 and
+    .completion.boundary.completed_before_signed_refund_boundary == true and
+    .delayed_revealer_catchup.per_chain.bitcoin.successful_resubmission_count == 0 and
+    .delayed_revealer_catchup.per_chain.lez.successful_resubmission_count == 0 and
+    .delayed_revealer_catchup.successful_resubmission_count == 0 and
+    .secret_recorded == false' \
+    "$M3_EVIDENCE/${direction}-survivor-claim.json"
+done
+
+jq -e '.result == "passed" and .all_exact_run_resources_absent == true and
+  .foreign_resources_targeted == false and .broad_cleanup_used == false' \
+  "$M3_EVIDENCE/cleanup-attestation.json"
+```
+
+This emulates the real role split after both locks. The taker owns and publishes
+the reveal, then the journey fail-closes every harnessed taker actor invocation
+until maker terminality. A fresh
+maker reads the canonical reveal and commits revision 3; that one-shot process
+exits. Another fresh maker resumes from maker-only state, claims the remaining
+leg, and reaches terminal revision 4. Only then can a fresh taker process return
+to observe revisions 3 and 4 without submitting. In `TakerSellsForeign`, the
+remaining Bitcoin outpoint must still be canonical and unspent below its CSV
+boundary. In `TakerSellsLez`, the exact finalized LEZ escrow must remain
+`funded` with full custody before its signed refund timestamp.
+
+No Delivery, Chat, public RPC, faucet, peers, or public funds participate. The
+only disclosed egress attempt is pinned Bedrock's best-effort
+`pool.ntp.org:123/udp`; certification does not depend on it. Advancing LEZ tips
+can produce bounded read-only `moving_tip` or unavailable observations, so the
+local run may take longer without gaining a second submission authority. Keep
+the full `.e2e` root private and never reuse a successful or failed run ID.
 
 ### Provision exact Bitcoin funding and the agreement before either effect
 
@@ -581,8 +651,10 @@ private local LEZ v0.2 stack. Both roles finished revision four with next action
 `complete`, and replay resubmission count remained zero.
 Public-actor two-lock refund recovery in `m3refund-20260716h` and first-lock
 absent-maker recovery in `m3firstlock-20260716h` are GREEN in both directions.
-Direct survivor continuation, maker-lock cutoff admission, concurrent swaps,
-crash/chaos, and adversarial journeys remain open.
+Direct post-reveal survivor continuation is functionally GREEN in
+`m3survivor-20260716b`; the clean pushed-commit certification rerun remains.
+Maker-lock cutoff admission, concurrent swaps, crash/chaos, and adversarial
+journeys remain open.
 
 ## Can I run the complete M3 happy path myself?
 
