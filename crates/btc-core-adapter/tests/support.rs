@@ -281,7 +281,14 @@ pub fn swap_fixture() -> SwapFixture {
         BtcP2trTermsV1::from_contract(&contract),
         funding_terms,
         BtcClaimTermsV1::from_spend(&spend).expect("claim terms"),
-        BtcRecoveryPlanV1::new(1_000, 1_144, 1_700_000_100, 1_700_000_500, 300),
+        BtcRecoveryPlanV1::new(
+            1_000,
+            1_144,
+            1_699_999_800,
+            1_700_000_100,
+            1_700_000_500,
+            300,
+        ),
     );
     let commitment = body.commitment();
     let record = BtcAgreementRecordV1::from_parts(

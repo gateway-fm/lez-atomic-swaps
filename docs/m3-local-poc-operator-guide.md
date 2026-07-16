@@ -1072,7 +1072,9 @@ jq -e '.kind == "m3_actor_two_direction_refund_local_poc" and
     .terminal_revision == 4 and .terminal_phase == "refunded") and
   .actor_process_model == "fresh_one_shot_process_per_command" and
   .actor_owned_effect_semantics == "refund" and
-  .expected_unique_effects == {bitcoin: 2, lez: 3} and
+  .expected_unique_effects_by_direction == {
+    taker_sells_foreign:{bitcoin:2,lez:3},
+    taker_sells_lez:{bitcoin:2,lez:3}} and
   .replay_command == "recover" and .replay_resubmission_count == 0 and
   .services.bitcoin_core.version == "31.1" and
   .services.bitcoin_core.network == "regtest" and

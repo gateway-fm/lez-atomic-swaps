@@ -388,6 +388,10 @@ async fn funding_observation_is_canonical_metric_checked_and_stable_tip_brackete
     assert_eq!(observed.transaction(), &fixture.funding);
     assert_eq!(observed.confirmations(), REQUIRED_CONFIRMATIONS);
     assert_eq!(
+        observed.stable_tip().median_time_unix_seconds(),
+        1_699_999_000
+    );
+    assert_eq!(
         rpc.calls(),
         [
             "getnetworkinfo",

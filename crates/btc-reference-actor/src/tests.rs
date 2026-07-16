@@ -503,7 +503,14 @@ fn directional_agreement(direction: SwapDirection) -> BtcAgreementV1 {
         BtcP2trTermsV1::from_contract(&contract),
         funding,
         BtcClaimTermsV1::from_spend(&claim).expect("claim terms"),
-        BtcRecoveryPlanV1::new(1_000, 1_144, 1_700_000_100, 1_700_000_500, 300),
+        BtcRecoveryPlanV1::new(
+            1_000,
+            1_144,
+            1_699_999_800,
+            1_700_000_100,
+            1_700_000_500,
+            300,
+        ),
     );
     let commitment = body.commitment();
     BtcAgreementV1::validate(BtcAgreementRecordV1::from_parts(
@@ -1167,7 +1174,10 @@ async fn ready_first_lock_is_observed_then_projected_once() {
             .await
             .expect("offline revision-one status"),
     );
-    assert_eq!(status["next_action"], "observe_maker_second_lock");
+    assert_eq!(
+        status["next_action"],
+        "observe_maker_second_lock_or_recover_taker_leg"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1584,6 +1594,88 @@ impl RefundObservationPort for FixedRefundObserver {
     }
 }
 
+struct FixedFirstLockRecoverySafety {
+    observations: Mutex<Vec<FirstLockRecoverySafetyObservation>>,
+    calls: AtomicUsize,
+}
+
+impl FixedFirstLockRecoverySafety {
+    fn ready(agreement: &BtcAgreementV1) -> Self {
+        let observation = FirstLockRecoverySafetyObservation::ReadyToRefund {
+            maker_chain: agreement.coordinator().funded_chain(Participant::Maker),
+            cutoff_unix_seconds: agreement
+                .body()
+                .recovery_plan()
+                .maker_second_lock_cutoff_unix_seconds(),
+            observed_unix_seconds: agreement
+                .body()
+                .recovery_plan()
+                .earlier_refund_latest_unix_seconds(),
+            absence_evidence: b"canonical-maker-lock-absence-read-1".to_vec(),
+        };
+        let second = FirstLockRecoverySafetyObservation::ReadyToRefund {
+            maker_chain: agreement.coordinator().funded_chain(Participant::Maker),
+            cutoff_unix_seconds: agreement
+                .body()
+                .recovery_plan()
+                .maker_second_lock_cutoff_unix_seconds(),
+            observed_unix_seconds: agreement
+                .body()
+                .recovery_plan()
+                .earlier_refund_latest_unix_seconds(),
+            absence_evidence: b"canonical-maker-lock-absence-read-2".to_vec(),
+        };
+        Self {
+            observations: Mutex::new(vec![observation, second]),
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn from_observations(observations: Vec<FirstLockRecoverySafetyObservation>) -> Self {
+        Self {
+            observations: Mutex::new(observations),
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl FirstLockRecoverySafetyPort for FixedFirstLockRecoverySafety {
+    async fn observe(
+        &self,
+        _agreement: &BtcAgreementV1,
+        _read_ordinal: u8,
+    ) -> Result<FirstLockRecoverySafetyObservation, ActorCommandError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let mut observations = self.observations.lock().unwrap();
+        if observations.is_empty() {
+            return Err(ActorCommandError::ObservationUnavailable);
+        }
+        Ok(observations.remove(0))
+    }
+}
+
+async fn drive_admitted_first_lock_refund(
+    fixture: &ActorFixture,
+    observer: &dyn RefundObservationPort,
+) -> Result<ActorEffectOutputV1, ActorCommandError> {
+    let safety = FixedFirstLockRecoverySafety::ready(&fixture.agreement);
+    let result = drive_first_lock_refund_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &safety,
+        observer,
+    )
+    .await;
+    assert_eq!(safety.calls(), 2);
+    result
+}
+
 fn ready_refund_observation(
     agreement: &BtcAgreementV1,
     transition: RefundTransition,
@@ -1702,8 +1794,390 @@ async fn refund_projector_reaches_terminal_for_both_roles_and_directions() {
             assert_eq!(durable.revision(), 4);
             assert_eq!(durable.phase(), Phase::Refunded);
             assert_eq!(durable.terminal(), Some(BtcTerminalOutcome::Refunded));
+            let persisted = persisted_lifecycle_evidence(&fixture, 4);
+            let taker_chain = fixture
+                .agreement
+                .coordinator()
+                .funded_chain(Participant::Taker);
+            assert_eq!(
+                persisted.chain_evidence(),
+                format!(
+                    "canonical-{:?}-{:?}-refund-evidence",
+                    Participant::Taker,
+                    taker_chain
+                )
+                .as_bytes()
+            );
         }
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn first_lock_only_refund_projector_reaches_terminal_for_both_roles_and_directions() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        for role in [ActorRole::Maker, ActorRole::Taker] {
+            let fixture = ActorFixture::for_direction(direction, role);
+            activate_and_project_taker_lock(&fixture).await;
+            let taker_chain = fixture
+                .agreement
+                .coordinator()
+                .funded_chain(Participant::Taker);
+            let position = fixture
+                .agreement
+                .coordinator()
+                .recovery_schedule()
+                .deadline_for_chain(taker_chain)
+                .expect("typed taker refund deadline");
+            let confirmations = match taker_chain {
+                Chain::Bitcoin => fixture.agreement.required_bitcoin_confirmations(),
+                Chain::Lez => FINALIZED_LEZ_CONFIRMATION_UNITS,
+                Chain::Zcash | Chain::Monero => unreachable!("Bitcoin agreement chain set"),
+            };
+            let observer = FixedRefundObserver::new(ActorRefundObservation::Ready {
+                chain: taker_chain,
+                transaction_id: "first-lock-only-refund".into(),
+                confirmations,
+                chain_evidence: b"canonical-first-lock-only-refund".to_vec(),
+                position,
+            });
+
+            let safety = FixedFirstLockRecoverySafety::ready(&fixture.agreement);
+            let output = drive_first_lock_refund_with_observer(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &safety,
+                &observer,
+            )
+            .await
+            .expect("project first-lock-only refund");
+            assert_eq!(safety.calls(), 2);
+            let json = output_json(ActorCommandOutputV1::Effect(output));
+            assert_eq!(json["phase"], "refunded");
+            assert_eq!(json["revision"], 2);
+            let transitions = observer.transitions();
+            assert_eq!(transitions.len(), 1);
+            assert_eq!(transitions[0].funded_participant(), Participant::Taker);
+            let durable = durable_status(&fixture);
+            assert_eq!(durable.phase(), Phase::Refunded);
+            assert_eq!(durable.revision(), 2);
+            assert_eq!(durable.terminal(), Some(BtcTerminalOutcome::Refunded));
+            let persisted = persisted_lifecycle_evidence(&fixture, 2);
+            let envelope: FirstLockRecoveryChainEvidenceV1 =
+                serde_json::from_slice(persisted.chain_evidence())
+                    .expect("decode persisted first-lock admission envelope");
+            assert_eq!(envelope.schema_version, 1);
+            assert_eq!(
+                envelope.agreement_commitment,
+                hex::encode(fixture.agreement.agreement_commitment())
+            );
+            assert_eq!(envelope.first_read.read_ordinal, 1);
+            assert_eq!(envelope.second_read.read_ordinal, 2);
+            assert_ne!(
+                envelope.first_read.absence_evidence_hex,
+                envelope.second_read.absence_evidence_hex
+            );
+            assert_eq!(
+                hex::decode(&envelope.first_read.absence_evidence_hex)
+                    .expect("first safety evidence hex"),
+                b"canonical-maker-lock-absence-read-1"
+            );
+            assert_eq!(
+                hex::decode(&envelope.second_read.absence_evidence_hex)
+                    .expect("second safety evidence hex"),
+                b"canonical-maker-lock-absence-read-2"
+            );
+            assert_eq!(
+                hex::decode(&envelope.refund_chain_evidence_hex).expect("refund evidence hex"),
+                b"canonical-first-lock-only-refund"
+            );
+        }
+    }
+}
+
+#[test]
+fn lez_first_lock_absence_requires_tip_ending_full_window_and_distinct_requests() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    let first = first_lock_lez_funding_request(&fixture.config, &fixture.agreement, 1)
+        .expect("first safety request");
+    let second = first_lock_lez_funding_request(&fixture.config, &fixture.agreement, 2)
+        .expect("second safety request");
+    assert_ne!(first.context, second.context);
+    let window_end = first
+        .window
+        .start_height()
+        .checked_add(u64::from(first.window.max_blocks() - 1))
+        .expect("bounded test window");
+    let cutoff_ms = fixture
+        .agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds()
+        .checked_mul(1_000)
+        .expect("test cutoff milliseconds");
+    let exact_clock = ChainClock::new(Hex32::from_bytes([0xa1; 32]), window_end, cutoff_ms);
+    let encoded = encode_lez_maker_lock_absence_evidence(
+        &fixture.config,
+        &fixture.agreement,
+        1,
+        &first,
+        &first.context,
+        exact_clock,
+        first.window,
+    )
+    .expect("full scan ending at cutoff-authorizing tip");
+    let value: Value = serde_json::from_slice(&encoded).expect("absence evidence JSON");
+    assert_eq!(value["read_ordinal"], 1);
+    assert_eq!(
+        value["agreement_commitment"],
+        hex::encode(fixture.agreement.agreement_commitment())
+    );
+    assert!(
+        !String::from_utf8(encoded.clone())
+            .expect("UTF-8 evidence")
+            .contains("capability_file")
+    );
+
+    let stale_tip = ChainClock::new(
+        Hex32::from_bytes([0xa2; 32]),
+        window_end + 1,
+        cutoff_ms + 1_000,
+    );
+    assert_eq!(
+        encode_lez_maker_lock_absence_evidence(
+            &fixture.config,
+            &fixture.agreement,
+            1,
+            &first,
+            &first.context,
+            stale_tip,
+            first.window,
+        )
+        .expect_err("a stale window cannot borrow a newer tip clock"),
+        ActorCommandError::AgreementBindingInvalid
+    );
+
+    let mut truncated = first.clone();
+    truncated.window =
+        DiscoveryWindow::new(first.window.start_height(), first.window.max_blocks() - 1)
+            .expect("truncated test window");
+    assert_eq!(
+        encode_lez_maker_lock_absence_evidence(
+            &fixture.config,
+            &fixture.agreement,
+            1,
+            &truncated,
+            &truncated.context,
+            exact_clock,
+            truncated.window,
+        )
+        .expect_err("a request narrower than the configured baseline window fails closed"),
+        ActorCommandError::AgreementBindingInvalid
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn canonical_maker_second_lock_wins_revision_one_refund_boundary_race() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let fixture = ActorFixture::for_direction(direction, ActorRole::Taker);
+        activate_and_project_taker_lock(&fixture).await;
+        let refund_observer = FixedRefundObserver::new(ready_refund_observation(
+            &fixture.agreement,
+            RefundTransition::FirstLockRecovery,
+        ));
+        let first = FirstLockRecoverySafetyObservation::ReadyToRefund {
+            maker_chain: fixture
+                .agreement
+                .coordinator()
+                .funded_chain(Participant::Maker),
+            cutoff_unix_seconds: fixture
+                .agreement
+                .body()
+                .recovery_plan()
+                .maker_second_lock_cutoff_unix_seconds(),
+            observed_unix_seconds: fixture
+                .agreement
+                .body()
+                .recovery_plan()
+                .earlier_refund_latest_unix_seconds(),
+            absence_evidence: b"first-stable-absence".to_vec(),
+        };
+        let maker_observation = maker_lock_observation(&fixture.agreement, 1);
+        let ActorFundingObservation::Ready {
+            chain,
+            transaction_id,
+            confirmations,
+            chain_evidence,
+        } = maker_observation.clone()
+        else {
+            unreachable!("maker fixture is canonical")
+        };
+        let safety = FixedFirstLockRecoverySafety::from_observations(vec![
+            first,
+            FirstLockRecoverySafetyObservation::MakerLockReady {
+                chain,
+                transaction_id,
+                confirmations,
+                chain_evidence,
+            },
+        ]);
+
+        let withheld = drive_first_lock_refund_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &safety,
+            &refund_observer,
+        )
+        .await
+        .expect("maker lock appearing on the safety recheck withholds refund");
+        assert_eq!(withheld.revision, 1);
+        assert_eq!(refund_observer.transitions(), Vec::new());
+        assert_eq!(safety.calls(), 2);
+
+        let maker = FixedObserver::new(maker_observation);
+        let projected = drive_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &maker,
+        )
+        .await
+        .expect("canonical maker lock projects after the refund branch is withheld");
+        assert_eq!(projected.revision, 2);
+        assert_eq!(projected.phase, ActorPhaseV1::BothLegsLocked);
+        let durable = durable_status(&fixture);
+        assert_eq!(durable.revision(), 2);
+        assert_eq!(durable.phase(), Phase::BothLegsLocked);
+        assert_eq!(durable.terminal(), None);
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn first_lock_cutoff_and_uncertain_recheck_fail_closed_without_observer_io() {
+    let before = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_taker_lock(&before).await;
+    let maker_chain = before
+        .agreement
+        .coordinator()
+        .funded_chain(Participant::Maker);
+    let cutoff = before
+        .agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds();
+    let refund = FixedRefundObserver::new(ready_refund_observation(
+        &before.agreement,
+        RefundTransition::FirstLockRecovery,
+    ));
+    let before_cutoff = FirstLockRecoverySafetyObservation::ReadyToRefund {
+        maker_chain,
+        cutoff_unix_seconds: cutoff,
+        observed_unix_seconds: cutoff - 1,
+        absence_evidence: b"stable-absence-before-cutoff".to_vec(),
+    };
+    let safety = FixedFirstLockRecoverySafety::from_observations(vec![before_cutoff]);
+    assert_eq!(
+        drive_first_lock_refund_with_observer(
+            &before.config,
+            before.agreement.clone(),
+            before.agreement_wire.clone(),
+            &safety,
+            &refund,
+        )
+        .await
+        .expect_err("pre-cutoff absence cannot grant refund authority"),
+        ActorCommandError::AgreementBindingInvalid
+    );
+    assert_eq!(refund.transitions(), Vec::new());
+
+    let flip = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Taker);
+    activate_and_project_taker_lock(&flip).await;
+    let maker_chain = flip
+        .agreement
+        .coordinator()
+        .funded_chain(Participant::Maker);
+    let cutoff = flip
+        .agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds();
+    let refund = FixedRefundObserver::new(ready_refund_observation(
+        &flip.agreement,
+        RefundTransition::FirstLockRecovery,
+    ));
+    let safety = FixedFirstLockRecoverySafety::from_observations(vec![
+        FirstLockRecoverySafetyObservation::ReadyToRefund {
+            maker_chain,
+            cutoff_unix_seconds: cutoff,
+            observed_unix_seconds: cutoff,
+            absence_evidence: b"stable-absence-at-cutoff".to_vec(),
+        },
+        FirstLockRecoverySafetyObservation::Uncertain { maker_chain },
+    ]);
+    let pending = drive_first_lock_refund_with_observer(
+        &flip.config,
+        flip.agreement.clone(),
+        flip.agreement_wire.clone(),
+        &safety,
+        &refund,
+    )
+    .await
+    .expect("an uncertain second read remains observation-only");
+    assert_eq!(pending.revision, 1);
+    assert_eq!(safety.calls(), 2);
+    assert_eq!(refund.transitions(), Vec::new());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn first_lock_regressing_second_clock_fails_closed_without_refund_io() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_taker_lock(&fixture).await;
+    let maker_chain = fixture
+        .agreement
+        .coordinator()
+        .funded_chain(Participant::Maker);
+    let cutoff = fixture
+        .agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds();
+    let safety = FixedFirstLockRecoverySafety::from_observations(vec![
+        FirstLockRecoverySafetyObservation::ReadyToRefund {
+            maker_chain,
+            cutoff_unix_seconds: cutoff,
+            observed_unix_seconds: cutoff + 1,
+            absence_evidence: b"later-clock-read-1".to_vec(),
+        },
+        FirstLockRecoverySafetyObservation::ReadyToRefund {
+            maker_chain,
+            cutoff_unix_seconds: cutoff,
+            observed_unix_seconds: cutoff,
+            absence_evidence: b"regressed-clock-read-2".to_vec(),
+        },
+    ]);
+    let refund = FixedRefundObserver::new(ready_refund_observation(
+        &fixture.agreement,
+        RefundTransition::FirstLockRecovery,
+    ));
+    let output = drive_first_lock_refund_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &safety,
+        &refund,
+    )
+    .await
+    .expect("clock regression remains observation-only");
+    assert_eq!(output.revision, 1);
+    assert_eq!(safety.calls(), 2);
+    assert_eq!(refund.transitions(), Vec::new());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -2894,6 +3368,19 @@ fn durable_status(fixture: &ActorFixture) -> BtcOfflineStatus {
     .expect("replay actor state")
 }
 
+fn persisted_lifecycle_evidence(fixture: &ActorFixture, revision: u64) -> BtcLifecycleEvidenceV1 {
+    let connection =
+        rusqlite::Connection::open(&fixture.config.state_db).expect("open actor evidence database");
+    let payload: String = connection
+        .query_row(
+            "SELECT payload_json FROM btc_actor_evidence WHERE aggregate_revision = ?1",
+            [i64::try_from(revision).expect("test revision")],
+            |row| row.get(0),
+        )
+        .expect("load persisted lifecycle evidence");
+    serde_json::from_str(&payload).expect("decode persisted lifecycle evidence")
+}
+
 fn exact_finalized_scan(
     effect: &PreparedBitcoinClaimEffect,
     public_signature: [u8; 64],
@@ -3591,6 +4078,431 @@ fn exact_finalized_bitcoin_refund_scan(effect: &PreparedBitcoinRefundEffect) -> 
         chain_evidence: b"canonical-core-refund-evidence".to_vec(),
         finalized: true,
     })
+}
+
+fn prepared_first_lock_bitcoin_refund(fixture: &ActorFixture) -> PreparedBitcoinRefundEffect {
+    prepare_bitcoin_refund_effect(
+        &fixture.config,
+        &fixture.agreement,
+        RefundTransition::FirstLockRecovery,
+        &durable_status(fixture),
+    )
+    .expect("prepare first-lock Bitcoin refund")
+    .expect("the taker is the sole first-lock refund owner")
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn first_lock_owner_does_not_send_without_fresh_maker_lock_absence_proof() {
+    let bitcoin = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_taker_lock(&bitcoin).await;
+    assert_eq!(
+        bitcoin
+            .agreement
+            .coordinator()
+            .funded_chain(Participant::Taker),
+        Chain::Bitcoin
+    );
+    let bitcoin_effect = prepared_first_lock_bitcoin_refund(&bitcoin);
+    let bitcoin_port = FixedBitcoinRefundPort::new(
+        BitcoinRefundScan::Eligible,
+        Ok(AuthorizedRefundSubmission::Accepted {
+            transaction_id: bitcoin_effect.expected_transaction_id,
+            witness_transaction_id: bitcoin_effect.expected_witness_transaction_id,
+        }),
+    );
+    let bitcoin_observer = BitcoinRefundObserver {
+        chain: bitcoin_port.clone(),
+        effect: Some(bitcoin_effect),
+        state_db: bitcoin.config.state_db.clone(),
+    };
+    let bitcoin_output = drive_refund_with_observer(
+        &bitcoin.config,
+        bitcoin.agreement.clone(),
+        bitcoin.agreement_wire.clone(),
+        &bitcoin_observer,
+    )
+    .await
+    .expect("same-chain eligibility alone remains observe-only");
+
+    let lez = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Taker);
+    activate_and_project_taker_lock(&lez).await;
+    assert_eq!(
+        lez.agreement.coordinator().funded_chain(Participant::Taker),
+        Chain::Lez
+    );
+    let lez_port = FixedLezRefundPort::new(
+        &lez,
+        EscrowState::Funded,
+        lez.agreement.lez_terms().refund_at_ms(),
+        FixedLezRefundLookup::Unknown,
+        Ok(SubmissionOutcome::Accepted),
+    );
+    let lez_observer = LezRefundObserver {
+        config: lez.config.clone(),
+        chain: lez_port.clone(),
+        state_db: lez.config.state_db.clone(),
+    };
+    let lez_output = drive_refund_with_observer(
+        &lez.config,
+        lez.agreement.clone(),
+        lez.agreement_wire.clone(),
+        &lez_observer,
+    )
+    .await
+    .expect("same-chain deadline alone remains observe-only");
+
+    // Both ports intentionally supply only the first-lock chain state. Neither
+    // supplies a signed last-safe maker-lock cutoff nor a fresh canonical
+    // absence observation from the opposite chain. Send authority must remain
+    // untouched until a composed admission proof binds both observations.
+    assert_eq!(
+        (
+            bitcoin_port.submit_calls(),
+            lez_port.prepare_calls(),
+            lez_port.submit_calls(),
+        ),
+        (0, 0, 0),
+    );
+    assert_eq!(bitcoin_output.revision, 1);
+    assert_eq!(lez_output.revision, 1);
+}
+
+#[allow(clippy::too_many_lines)] // One first-lock contract covers owner, crash states, and both role projections.
+#[tokio::test(flavor = "current_thread")]
+async fn first_lock_bitcoin_refund_is_taker_owned_crash_safe_and_observable() {
+    let accepted = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_taker_lock(&accepted).await;
+    let accepted_effect = prepared_first_lock_bitcoin_refund(&accepted);
+    let accepted_submission = AuthorizedRefundSubmission::Accepted {
+        transaction_id: accepted_effect.expected_transaction_id,
+        witness_transaction_id: accepted_effect.expected_witness_transaction_id,
+    };
+    let accepted_port =
+        FixedBitcoinRefundPort::new(BitcoinRefundScan::Eligible, Ok(accepted_submission.clone()));
+    let accepted_observer = BitcoinRefundObserver {
+        chain: accepted_port.clone(),
+        effect: Some(accepted_effect.clone()),
+        state_db: accepted.config.state_db.clone(),
+    };
+    let pending = drive_admitted_first_lock_refund(&accepted, &accepted_observer)
+        .await
+        .expect("admitted first-lock Bitcoin refund sends once");
+    assert_eq!(pending.revision, 1);
+    assert_eq!(accepted_port.submit_calls(), 1);
+
+    let accepted_restart =
+        FixedBitcoinRefundPort::new(BitcoinRefundScan::Eligible, Ok(accepted_submission));
+    let accepted_restart_observer = BitcoinRefundObserver {
+        chain: accepted_restart.clone(),
+        effect: Some(accepted_effect.clone()),
+        state_db: accepted.config.state_db.clone(),
+    };
+    drive_admitted_first_lock_refund(&accepted, &accepted_restart_observer)
+        .await
+        .expect("Accepted first-lock Bitcoin restart observes only");
+    assert_eq!(accepted_restart.submit_calls(), 0);
+
+    let exact = exact_finalized_bitcoin_refund_scan(&accepted_effect);
+    let finalized_port = FixedBitcoinRefundPort::new(
+        exact.clone(),
+        Err(ActorCommandError::ObservationUnavailable),
+    );
+    let finalized_observer = BitcoinRefundObserver {
+        chain: finalized_port.clone(),
+        effect: Some(accepted_effect),
+        state_db: accepted.config.state_db.clone(),
+    };
+    let finalized = drive_admitted_first_lock_refund(&accepted, &finalized_observer)
+        .await
+        .expect("exact finalized owner refund projects terminal revision two");
+    assert_eq!(finalized.revision, 2);
+    assert_eq!(finalized.phase, ActorPhaseV1::Refunded);
+    assert_eq!(finalized_port.submit_calls(), 0);
+
+    let nonowner = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    activate_and_project_taker_lock(&nonowner).await;
+    assert!(nonowner.config.refund.bitcoin_refund_key_file.is_none());
+    assert!(
+        prepare_bitcoin_refund_effect(
+            &nonowner.config,
+            &nonowner.agreement,
+            RefundTransition::FirstLockRecovery,
+            &durable_status(&nonowner),
+        )
+        .expect("nonowner preparation is an observation-only result")
+        .is_none()
+    );
+    let nonowner_port =
+        FixedBitcoinRefundPort::new(exact, Err(ActorCommandError::ObservationUnavailable));
+    let nonowner_observer = BitcoinRefundObserver {
+        chain: nonowner_port.clone(),
+        effect: None,
+        state_db: nonowner.config.state_db.clone(),
+    };
+    let observed = drive_admitted_first_lock_refund(&nonowner, &nonowner_observer)
+        .await
+        .expect("maker only observes the taker-owned exact refund");
+    assert_eq!(observed.revision, 2);
+    assert_eq!(observed.phase, ActorPhaseV1::Refunded);
+    assert_eq!(nonowner_port.submit_calls(), 0);
+
+    let unknown = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_taker_lock(&unknown).await;
+    let unknown_effect = prepared_first_lock_bitcoin_refund(&unknown);
+    let unknown_port = FixedBitcoinRefundPort::new(
+        BitcoinRefundScan::Eligible,
+        Ok(AuthorizedRefundSubmission::Unknown),
+    );
+    let unknown_observer = BitcoinRefundObserver {
+        chain: unknown_port.clone(),
+        effect: Some(unknown_effect.clone()),
+        state_db: unknown.config.state_db.clone(),
+    };
+    drive_admitted_first_lock_refund(&unknown, &unknown_observer)
+        .await
+        .expect("ambiguous first-lock Bitcoin send records Unknown");
+    assert_eq!(unknown_port.submit_calls(), 1);
+    let unknown_restart = FixedBitcoinRefundPort::new(
+        BitcoinRefundScan::Eligible,
+        Ok(AuthorizedRefundSubmission::Accepted {
+            transaction_id: unknown_effect.expected_transaction_id,
+            witness_transaction_id: unknown_effect.expected_witness_transaction_id,
+        }),
+    );
+    let unknown_restart_observer = BitcoinRefundObserver {
+        chain: unknown_restart.clone(),
+        effect: Some(unknown_effect),
+        state_db: unknown.config.state_db.clone(),
+    };
+    drive_admitted_first_lock_refund(&unknown, &unknown_restart_observer)
+        .await
+        .expect("Unknown first-lock Bitcoin restart observes only");
+    assert_eq!(unknown_restart.submit_calls(), 0);
+
+    let started = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_taker_lock(&started).await;
+    let started_effect = prepared_first_lock_bitcoin_refund(&started);
+    let mut journal = SqlitePublicEffectJournal::open(&started.config.state_db)
+        .expect("open first-lock Bitcoin effect journal");
+    let _ = journal
+        .record_prepared(&started_effect.effect)
+        .expect("persist exact first-lock Bitcoin refund");
+    assert!(matches!(
+        journal
+            .reconcile(
+                started_effect.effect.key(),
+                PublicEffectObservation::EligibleToAttempt,
+            )
+            .expect("consume first-lock Bitcoin authority before simulated crash"),
+        PublicEffectDecision::SubmitOnce(_)
+    ));
+    drop(journal);
+    let started_restart = FixedBitcoinRefundPort::new(
+        BitcoinRefundScan::Eligible,
+        Ok(AuthorizedRefundSubmission::Accepted {
+            transaction_id: started_effect.expected_transaction_id,
+            witness_transaction_id: started_effect.expected_witness_transaction_id,
+        }),
+    );
+    let started_restart_observer = BitcoinRefundObserver {
+        chain: started_restart.clone(),
+        effect: Some(started_effect),
+        state_db: started.config.state_db.clone(),
+    };
+    drive_admitted_first_lock_refund(&started, &started_restart_observer)
+        .await
+        .expect("Started first-lock Bitcoin restart observes only");
+    assert_eq!(started_restart.submit_calls(), 0);
+}
+
+#[allow(clippy::too_many_lines)] // One first-lock contract covers owner, crash states, and both role projections.
+#[tokio::test(flavor = "current_thread")]
+async fn first_lock_lez_refund_is_taker_owned_crash_safe_and_observable() {
+    let accepted = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Taker);
+    activate_and_project_taker_lock(&accepted).await;
+    let deadline = accepted.agreement.lez_terms().refund_at_ms();
+    let accepted_port = FixedLezRefundPort::new(
+        &accepted,
+        EscrowState::Funded,
+        deadline,
+        FixedLezRefundLookup::Unknown,
+        Ok(SubmissionOutcome::Accepted),
+    );
+    let accepted_observer = LezRefundObserver {
+        config: accepted.config.clone(),
+        chain: accepted_port.clone(),
+        state_db: accepted.config.state_db.clone(),
+    };
+    let pending = drive_admitted_first_lock_refund(&accepted, &accepted_observer)
+        .await
+        .expect("admitted first-lock LEZ refund sends once");
+    assert_eq!(pending.revision, 1);
+    assert_eq!(accepted_port.prepare_calls(), 1);
+    assert_eq!(accepted_port.submit_calls(), 1);
+
+    let accepted_restart = FixedLezRefundPort::new(
+        &accepted,
+        EscrowState::Funded,
+        deadline,
+        FixedLezRefundLookup::Unknown,
+        Ok(SubmissionOutcome::Accepted),
+    );
+    let accepted_restart_observer = LezRefundObserver {
+        config: accepted.config.clone(),
+        chain: accepted_restart.clone(),
+        state_db: accepted.config.state_db.clone(),
+    };
+    drive_admitted_first_lock_refund(&accepted, &accepted_restart_observer)
+        .await
+        .expect("Accepted first-lock LEZ restart observes only");
+    assert_eq!(accepted_restart.submit_calls(), 0);
+
+    let finalized_port = FixedLezRefundPort::new(
+        &accepted,
+        EscrowState::Refunded,
+        deadline + 1,
+        FixedLezRefundLookup::Found,
+        Err(ActorCommandError::ObservationUnavailable),
+    );
+    let finalized_observer = LezRefundObserver {
+        config: accepted.config.clone(),
+        chain: finalized_port.clone(),
+        state_db: accepted.config.state_db.clone(),
+    };
+    let finalized = drive_admitted_first_lock_refund(&accepted, &finalized_observer)
+        .await
+        .expect("exact finalized owner LEZ refund projects terminal revision two");
+    assert_eq!(finalized.revision, 2);
+    assert_eq!(finalized.phase, ActorPhaseV1::Refunded);
+    assert_eq!(finalized_port.submit_calls(), 0);
+
+    let nonowner = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Maker);
+    activate_and_project_taker_lock(&nonowner).await;
+    assert_eq!(
+        prepare_lez_refund_effect(
+            &nonowner.config,
+            &nonowner.agreement,
+            RefundTransition::FirstLockRecovery,
+            &FixedLezRefundPort::new(
+                &nonowner,
+                EscrowState::Refunded,
+                nonowner.agreement.lez_terms().refund_at_ms() + 1,
+                FixedLezRefundLookup::Found,
+                Err(ActorCommandError::ObservationUnavailable),
+            ),
+        )
+        .await
+        .expect_err("maker cannot prepare the taker-owned first-lock LEZ refund"),
+        ActorCommandError::AgreementBindingInvalid
+    );
+    let nonowner_port = FixedLezRefundPort::new(
+        &nonowner,
+        EscrowState::Refunded,
+        nonowner.agreement.lez_terms().refund_at_ms() + 1,
+        FixedLezRefundLookup::Found,
+        Err(ActorCommandError::ObservationUnavailable),
+    );
+    let nonowner_observer = LezRefundObserver {
+        config: nonowner.config.clone(),
+        chain: nonowner_port.clone(),
+        state_db: nonowner.config.state_db.clone(),
+    };
+    let observed = drive_admitted_first_lock_refund(&nonowner, &nonowner_observer)
+        .await
+        .expect("maker only observes the taker-owned exact LEZ refund");
+    assert_eq!(observed.revision, 2);
+    assert_eq!(observed.phase, ActorPhaseV1::Refunded);
+    assert_eq!(nonowner_port.prepare_calls(), 0);
+    assert_eq!(nonowner_port.submit_calls(), 0);
+
+    let unknown = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Taker);
+    activate_and_project_taker_lock(&unknown).await;
+    let unknown_deadline = unknown.agreement.lez_terms().refund_at_ms();
+    let unknown_port = FixedLezRefundPort::new(
+        &unknown,
+        EscrowState::Funded,
+        unknown_deadline,
+        FixedLezRefundLookup::Unknown,
+        Err(ActorCommandError::ObservationUnavailable),
+    );
+    let unknown_observer = LezRefundObserver {
+        config: unknown.config.clone(),
+        chain: unknown_port.clone(),
+        state_db: unknown.config.state_db.clone(),
+    };
+    assert_eq!(
+        drive_admitted_first_lock_refund(&unknown, &unknown_observer)
+            .await
+            .expect_err("ambiguous first-lock LEZ send records Unknown"),
+        ActorCommandError::ObservationUnavailable
+    );
+    assert_eq!(unknown_port.submit_calls(), 1);
+    let unknown_restart = FixedLezRefundPort::new(
+        &unknown,
+        EscrowState::Funded,
+        unknown_deadline,
+        FixedLezRefundLookup::Unknown,
+        Ok(SubmissionOutcome::Accepted),
+    );
+    let unknown_restart_observer = LezRefundObserver {
+        config: unknown.config.clone(),
+        chain: unknown_restart.clone(),
+        state_db: unknown.config.state_db.clone(),
+    };
+    drive_admitted_first_lock_refund(&unknown, &unknown_restart_observer)
+        .await
+        .expect("Unknown first-lock LEZ restart observes only");
+    assert_eq!(unknown_restart.submit_calls(), 0);
+
+    let started = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Taker);
+    activate_and_project_taker_lock(&started).await;
+    let started_deadline = started.agreement.lez_terms().refund_at_ms();
+    let prepare_port = FixedLezRefundPort::new(
+        &started,
+        EscrowState::Funded,
+        started_deadline,
+        FixedLezRefundLookup::Unknown,
+        Ok(SubmissionOutcome::Accepted),
+    );
+    let started_effect = prepare_lez_refund_effect(
+        &started.config,
+        &started.agreement,
+        RefundTransition::FirstLockRecovery,
+        &prepare_port,
+    )
+    .await
+    .expect("prepare first-lock LEZ refund before simulated crash");
+    let mut journal = SqlitePublicEffectJournal::open(&started.config.state_db)
+        .expect("open first-lock LEZ effect journal");
+    let _ = journal
+        .record_prepared(&started_effect.effect)
+        .expect("persist exact first-lock LEZ refund");
+    assert!(matches!(
+        journal
+            .reconcile(
+                started_effect.effect.key(),
+                PublicEffectObservation::EligibleToAttempt,
+            )
+            .expect("consume first-lock LEZ authority before simulated crash"),
+        PublicEffectDecision::SubmitOnce(_)
+    ));
+    drop(journal);
+    let started_restart = FixedLezRefundPort::new(
+        &started,
+        EscrowState::Funded,
+        started_deadline,
+        FixedLezRefundLookup::Unknown,
+        Ok(SubmissionOutcome::Accepted),
+    );
+    let started_restart_observer = LezRefundObserver {
+        config: started.config.clone(),
+        chain: started_restart.clone(),
+        state_db: started.config.state_db.clone(),
+    };
+    drive_admitted_first_lock_refund(&started, &started_restart_observer)
+        .await
+        .expect("Started first-lock LEZ restart observes only");
+    assert_eq!(started_restart.submit_calls(), 0);
 }
 
 #[tokio::test(flavor = "current_thread")]

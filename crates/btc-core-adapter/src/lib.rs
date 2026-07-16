@@ -95,6 +95,7 @@ pub enum CoreConnectivityPolicy {
 pub struct StableTip {
     block_hash: BlockHash,
     height: u32,
+    median_time_unix_seconds: u64,
 }
 
 impl StableTip {
@@ -108,6 +109,12 @@ impl StableTip {
     #[must_use]
     pub const fn height(&self) -> u32 {
         self.height
+    }
+
+    /// Median past time reported for this exact stable active-chain tip.
+    #[must_use]
+    pub const fn median_time_unix_seconds(&self) -> u64 {
+        self.median_time_unix_seconds
     }
 }
 
@@ -149,12 +156,17 @@ impl ObservedFunding {
 /// Current state of the exact agreement funding output.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FundingObservation {
-    /// The transaction is not available through the required transaction index.
-    Absent,
+    /// The transaction is absent from the required index at one stable active-chain tip.
+    Absent {
+        /// Stable tip bracketing the affirmative absence.
+        stable_tip: StableTip,
+    },
     /// The exact output exists but has not reached the signed confirmation policy.
     Pending {
         /// Current confirmation count, including zero for mempool funding.
         confirmations: u32,
+        /// Stable tip bracketing the pending exact transaction.
+        stable_tip: StableTip,
     },
     /// The exact output exists with sufficient active-chain confirmations.
     Ready(ObservedFunding),
@@ -623,7 +635,7 @@ where
             return Err(CoreAdapterError::UnstableTip);
         }
         let Some(response) = response else {
-            return Ok(FundingObservation::Absent);
+            return Ok(FundingObservation::Absent { stable_tip: after });
         };
         let transaction = parse_verbose_transaction(&response, expected_txid)?;
         let output = transaction
@@ -640,7 +652,10 @@ where
         }
         let (confirmations, block_hash) = confirmation_context(&response)?;
         if confirmations < agreement.required_bitcoin_confirmations() {
-            return Ok(FundingObservation::Pending { confirmations });
+            return Ok(FundingObservation::Pending {
+                confirmations,
+                stable_tip: after,
+            });
         }
         let block_hash = block_hash.ok_or(CoreAdapterError::InvalidConfirmationContext)?;
         Ok(FundingObservation::Ready(ObservedFunding {
@@ -1328,9 +1343,12 @@ where
         return Err(CoreAdapterError::ChainNotReady);
     }
     let height = u32::try_from(chain.blocks).map_err(|_| CoreAdapterError::ChainNotReady)?;
+    let median_time_unix_seconds =
+        u64::try_from(chain.median_time).map_err(|_| CoreAdapterError::ChainNotReady)?;
     Ok(StableTip {
         block_hash: parse_block_hash(&chain.best_block_hash, "best block hash")?,
         height,
+        median_time_unix_seconds,
     })
 }
 

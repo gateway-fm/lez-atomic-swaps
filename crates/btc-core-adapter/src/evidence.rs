@@ -17,6 +17,16 @@ use crate::{
 
 const EVIDENCE_SCHEMA_VERSION: u16 = 1;
 
+fn evidence_stable_tip(tip: StableTip) -> StableTip {
+    StableTip {
+        block_hash: tip.block_hash(),
+        height: tip.height(),
+        // Median time is required by live absence admission, but it was never
+        // part of the public evidence-v1 wire. Keep that wire byte-compatible.
+        median_time_unix_seconds: 0,
+    }
+}
+
 /// Maximum canonical evidence payload accepted by the Bitcoin recovery store.
 ///
 /// This deliberately matches the store's 64 KiB raw chain-evidence bound. An
@@ -83,7 +93,7 @@ impl BitcoinCoreEvidenceV1 {
             transaction: observation.transaction().clone(),
             confirmations: observation.confirmations(),
             block_hash: Some(observation.block_hash()),
-            stable_tip: observation.stable_tip(),
+            stable_tip: evidence_stable_tip(observation.stable_tip()),
             public_claim_witness: None,
         };
         evidence.validate(agreement)?;
@@ -122,7 +132,7 @@ impl BitcoinCoreEvidenceV1 {
             transaction: observation.transaction().clone(),
             confirmations: observation.confirmations(),
             block_hash: observation.block_hash(),
-            stable_tip: observation.stable_tip(),
+            stable_tip: evidence_stable_tip(observation.stable_tip()),
             public_claim_witness: Some(public_claim_witness),
         };
         evidence.validate(agreement)?;
@@ -149,7 +159,7 @@ impl BitcoinCoreEvidenceV1 {
             transaction: observation.transaction().clone(),
             confirmations: observation.confirmations(),
             block_hash: observation.block_hash(),
-            stable_tip: observation.stable_tip(),
+            stable_tip: evidence_stable_tip(observation.stable_tip()),
             public_claim_witness: None,
         };
         evidence.validate(agreement)?;
@@ -289,6 +299,7 @@ impl BitcoinCoreEvidenceV1 {
         let stable_tip = StableTip {
             block_hash: parse_block_hash(&wire.stable_tip.block_hash)?,
             height: wire.stable_tip.height,
+            median_time_unix_seconds: 0,
         };
         let public_claim_witness = wire
             .public_claim_witness

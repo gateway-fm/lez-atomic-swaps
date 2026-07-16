@@ -815,7 +815,9 @@ jq -e '.kind == "m3_actor_two_direction_refund_local_poc" and
   .journey == "refund" and .result == "passed" and
   all(.directions[];
     .terminal_revision == 4 and .terminal_phase == "refunded") and
-  .expected_unique_effects == {bitcoin: 2, lez: 3} and
+  .expected_unique_effects_by_direction == {
+    taker_sells_foreign:{bitcoin:2,lez:3},
+    taker_sells_lez:{bitcoin:2,lez:3}} and
   .replay_command == "recover" and .replay_resubmission_count == 0 and
   .services.bitcoin_core == {run_id: (.run_id + "-btc"),
     version: "31.1", network: "regtest"} and

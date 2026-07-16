@@ -435,6 +435,80 @@ fn maker_and_taker_reconstruct_both_refund_directions_through_revision_four() {
 }
 
 #[test]
+fn first_lock_only_taker_refund_reconstructs_terminal_revision_two() {
+    let directory = tempdir().expect("temporary actor stores");
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        for role in [Participant::Maker, Participant::Taker] {
+            let suffix = format!("{direction:?}-{role:?}").to_lowercase();
+            let initial = coordinator(&format!("btc-first-lock-refund-{suffix}"), direction);
+            let accepted = acceptance(&initial, role);
+            let path = directory
+                .path()
+                .join(format!("first-lock-refund-{suffix}.sqlite"));
+            let taker_chain = initial.funded_chain(Participant::Taker);
+            let taker_lock = BtcLifecycleEvidenceV1::taker_lock(
+                taker_chain,
+                "first-lock-only-tx",
+                1,
+                b"btc-chain-proof-v1:first-lock-only".to_vec(),
+            )
+            .expect("first lock evidence");
+            let taker_refund = BtcLifecycleEvidenceV1::taker_leg_refund(
+                taker_chain,
+                "first-lock-only-refund-tx",
+                1,
+                b"btc-chain-proof-v1:first-lock-only-refund".to_vec(),
+                initial
+                    .recovery_schedule()
+                    .deadline_for_chain(taker_chain)
+                    .expect("typed taker refund deadline"),
+            )
+            .expect("first-lock-only refund evidence");
+
+            let mut store = SqliteBtcRecoveryStore::open(&path, &accepted, &initial)
+                .expect("activate first-lock-only store");
+            let lock_commit = store
+                .project(0, &taker_lock)
+                .expect("project only taker lock");
+            assert_eq!(lock_commit.revision(), 1);
+            assert_eq!(
+                store.status().expect("first-lock status").phase(),
+                Phase::TakerLockConfirmed
+            );
+            drop(store);
+
+            let mut restarted = SqliteBtcRecoveryStore::open_existing(&path, &accepted, &initial)
+                .expect("restart before first-lock refund");
+            let refund_commit = restarted
+                .project(1, &taker_refund)
+                .expect("project exact first-lock-only refund");
+            assert_eq!(refund_commit.revision(), 2);
+            assert!(!refund_commit.was_replay());
+            let terminal = restarted.status().expect("terminal first-lock status");
+            assert_eq!(terminal.revision(), 2);
+            assert_eq!(terminal.phase(), Phase::Refunded);
+            assert_eq!(terminal.terminal(), Some(BtcTerminalOutcome::Refunded));
+            drop(restarted);
+
+            let mut replayed = SqliteBtcRecoveryStore::open_existing(&path, &accepted, &initial)
+                .expect("reconstruct terminal first-lock refund");
+            assert_eq!(
+                replayed.status().expect("replayed terminal status"),
+                terminal
+            );
+            let replay = replayed
+                .project(1, &taker_refund)
+                .expect("exact first-lock refund replay is idempotent");
+            assert_eq!(replay.revision(), 2);
+            assert!(replay.was_replay());
+        }
+    }
+}
+
+#[test]
 fn refund_evidence_rejects_early_wrong_chain_zero_confirmation_and_happy_path_mix() {
     let initial = coordinator("btc-refund-invalid", SwapDirection::TakerSellsForeign);
     let maker_chain = initial.funded_chain(Participant::Maker);

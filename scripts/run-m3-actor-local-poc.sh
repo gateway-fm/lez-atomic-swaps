@@ -17,12 +17,14 @@ if [[ "$mode" != "execute" && "$mode" != "contract" ]]; then
   exit 2
 fi
 journey="${M3_ACTOR_POC_JOURNEY:-claim}"
-if [[ "$journey" != "claim" && "$journey" != "refund" ]]; then
-  echo "M3_ACTOR_POC_JOURNEY must be claim or refund" >&2
+if [[ "$journey" != "claim" && "$journey" != "refund" &&
+      "$journey" != "first_lock_refund" ]]; then
+  echo "M3_ACTOR_POC_JOURNEY must be claim, refund, or first_lock_refund" >&2
   exit 2
 fi
 case "$journey" in
   claim)
+    terminal_revision=4
     terminal_phase="completed"
     replay_command="drive"
     packet_kind="m3_actor_two_direction_local_poc"
@@ -31,6 +33,7 @@ case "$journey" in
     lez_slot_duration_seconds="1.0"
     ;;
   refund)
+    terminal_revision=4
     terminal_phase="refunded"
     replay_command="recover"
     packet_kind="m3_actor_two_direction_refund_local_poc"
@@ -38,9 +41,19 @@ case "$journey" in
     success_label="M3 actor two-direction local refund PoC"
     lez_slot_duration_seconds="3.0"
     ;;
+  first_lock_refund)
+    terminal_revision=2
+    terminal_phase="refunded"
+    replay_command="recover"
+    packet_kind="m3_actor_two_direction_first_lock_refund_local_poc"
+    actor_owned_effect_semantics="first_lock_refund"
+    success_label="M3 actor two-direction first-lock refund local PoC"
+    lez_slot_duration_seconds="3.0"
+    ;;
 esac
 
-readonly journey terminal_phase replay_command packet_kind actor_owned_effect_semantics success_label
+readonly journey terminal_revision terminal_phase replay_command packet_kind
+readonly actor_owned_effect_semantics success_label
 readonly lez_slot_duration_seconds
 readonly run_id
 repo_root="$(pwd)"
@@ -83,6 +96,7 @@ emit_contract() {
     --arg lez_run "$lez_run_id" \
     --arg lez_slot_duration_seconds "$lez_slot_duration_seconds" \
     --arg journey "$journey" \
+    --argjson terminal_revision "$terminal_revision" \
     --arg terminal_phase "$terminal_phase" \
     --arg replay_command "$replay_command" \
     --arg packet_kind "$packet_kind" \
@@ -113,7 +127,9 @@ emit_contract() {
         official_nssa_before_stage_two: true,
         stage_two_after_actual_node_facts: true,
         taker_first_effects: true,
-        dual_locks_before_scalar_use: true,
+        dual_locks_before_scalar_use: ($journey != "first_lock_refund"),
+        first_lock_refund_has_no_second_lock_or_dual_lock_gate:
+          ($journey == "first_lock_refund"),
         directions_are_sequential: true
       },
       finality: {
@@ -122,11 +138,32 @@ emit_contract() {
       },
       effect_semantics: {
         actor_owned: $actor_owned_effect_semantics,
-        expected_unique_effects: {bitcoin: 2, lez: 3},
+        expected_unique_effects_by_direction:
+          (if $journey == "first_lock_refund" then
+             {taker_sells_foreign:{bitcoin:2,lez:0},
+              taker_sells_lez:{bitcoin:0,lez:3}}
+           else
+             {taker_sells_foreign:{bitcoin:2,lez:3},
+              taker_sells_lez:{bitcoin:2,lez:3}}
+           end),
+        maker_second_lock_effect_count:
+          (if $journey == "first_lock_refund" then 0 else 1 end),
         accepted_submission_alone_projects: false
       },
+      first_lock_refund:
+        (if $journey == "first_lock_refund" then {
+          signed_maker_second_lock_cutoff_required:true,
+          two_fresh_absence_and_first_lock_unspent_reads_required:true,
+          lez_absence_window_reaches_current_finalized_tip:true,
+          bitcoin_cutoff_clock:"stable_core_median_time",
+          actor_internal_admission_is_authoritative:true,
+          owner_restart_without_resubmission:true,
+          fresh_maker_observer_terminal:true,
+          maker_offline_after_activation_until_refund_finality:true,
+          taker_only_revision_one_and_refund_projection:true
+        } else null end),
       terminal: {
-        required_revision: 4,
+        required_revision: $terminal_revision,
         required_phase: $terminal_phase,
         required_next_action: "complete"
       },
@@ -505,13 +542,22 @@ verify_direction_driver_contract() {
     and .dual_locks_before_scalar_use == true
     and .bitcoin_exact_signed_depth == true
     and .lez_exact_finalized_ancestry == true
-    and .journeys == ["claim", "refund"]
+    and .journeys == ["claim", "refund", "first_lock_refund"]
     and .default_journey == "claim"
     and .actor_owned_claim_effects == true
     and .actor_owned_refund_effects == true
+    and .actor_owned_first_lock_refund_effects == true
+    and .first_lock_refund_terminal_revision == 2
+    and .first_lock_refund_requires_signed_maker_cutoff == true
+    and .first_lock_refund_requires_two_fresh_absence_and_unspent_reads == true
+    and .first_lock_refund_owner_restart_never_resubmits == true
+    and .first_lock_refund_fresh_maker_observer == true
+    and .first_lock_refund_abandoned_maker_after_activation_until_finality == true
+    and .first_lock_refund_taker_only_revision_one_and_refund_projection == true
     and .timeout_terminal_phase == "refunded"
     and (if $journey == "claim" then .actor_owned_claim_effects
-         else .actor_owned_refund_effects end) == true
+         elif $journey == "refund" then .actor_owned_refund_effects
+         else .actor_owned_first_lock_refund_effects end) == true
     and .actor_config_schema_version == 3
     and .role_shaped_bitcoin_refund_authority == true
     and .submission_count_query == true
@@ -794,12 +840,13 @@ run_direction_actor_flow() {
 assert_actor_terminal_status() {
   local status_file="$1"
   local role="$2"
-  jq -e --arg role "$role" --arg terminal_phase "$terminal_phase" '
+  jq -e --arg role "$role" --arg terminal_phase "$terminal_phase" \
+    --argjson terminal_revision "$terminal_revision" '
     .schema_version == 1
     and .role == $role
     and .state == "active"
     and .phase == $terminal_phase
-    and .revision == 4
+    and .revision == $terminal_revision
     and .next_action == "complete"
   ' "$status_file" >/dev/null
 }
@@ -809,12 +856,17 @@ assert_terminal_and_replay() {
   local direction_root="${directions_dir}/${direction}"
   local counts_before="${evidence_dir}/${direction}-submission-counts-before-replay.json"
   local counts_after="${evidence_dir}/${direction}-submission-counts-after-replay.json"
-  local role config terminal replay after
+  local role config terminal replay after expected_bitcoin expected_lez
 
   with_direction_environment "$direction" "$direction_driver" submission-counts >"$counts_before"
   chmod 0600 "$counts_before"
-  jq -e '.schema_version == 1 and (.bitcoin | numbers) >= 1 and (.lez | numbers) >= 1' \
-    "$counts_before" >/dev/null
+  expected_bitcoin="$(jq -er '.expected_unique_effects.bitcoin | numbers' \
+    "${evidence_dir}/${direction}-actual-effects.json")"
+  expected_lez="$(jq -er '.expected_unique_effects.lez | numbers' \
+    "${evidence_dir}/${direction}-actual-effects.json")"
+  jq -e --argjson bitcoin "$expected_bitcoin" --argjson lez "$expected_lez" '
+    .schema_version == 1 and .bitcoin == $bitcoin and .lez == $lez
+  ' "$counts_before" >/dev/null
 
   for role in maker taker; do
     config="${direction_root}/actors/${role}/actor-config.json"
@@ -826,14 +878,15 @@ assert_terminal_and_replay() {
     assert_actor_terminal_status "$terminal" "$role"
     "$actor_bin" --config "$config" "$replay_command" >"$replay"
     jq -e --arg role "$role" --arg replay_command "$replay_command" \
-      --arg terminal_phase "$terminal_phase" '
+      --arg terminal_phase "$terminal_phase" \
+      --argjson terminal_revision "$terminal_revision" '
       .schema_version == 1
       and .role == $role
       and .command == $replay_command
       and .outcome == "not_yet_composed"
-      and .durable_revision == 4
+      and .durable_revision == $terminal_revision
       and .phase == $terminal_phase
-      and .revision == 4
+      and .revision == $terminal_revision
     ' "$replay" >/dev/null
     "$actor_bin" --config "$config" status >"$after"
     assert_actor_terminal_status "$after" "$role"
@@ -856,11 +909,19 @@ validate_actual_effect_manifests() {
       .schema_version == 1
       and .direction == $direction
       and .journey == $journey
-      and .expected_unique_effects == {bitcoin:2,lez:3}
-      and (.bitcoin_effect_ids | type == "array" and length == 2
-           and (unique | length) == 2)
-      and (.lez_effect_ids | type == "array" and length == 3
-           and (unique | length) == 3)
+      and .expected_unique_effects ==
+        (if $journey == "first_lock_refund" and $direction == "taker_sells_foreign"
+         then {bitcoin:2,lez:0}
+         elif $journey == "first_lock_refund"
+         then {bitcoin:0,lez:3}
+         else {bitcoin:2,lez:3}
+         end)
+      and (.bitcoin_effect_ids | type) == "array"
+      and (.bitcoin_effect_ids | length) == .expected_unique_effects.bitcoin
+      and (.bitcoin_effect_ids | unique | length) == .expected_unique_effects.bitcoin
+      and (.lez_effect_ids | type) == "array"
+      and (.lez_effect_ids | length) == .expected_unique_effects.lez
+      and (.lez_effect_ids | unique | length) == .expected_unique_effects.lez
       and all(.bitcoin_effect_ids[]; type == "string" and test("^[0-9a-f]{64}$"))
       and all(.lez_effect_ids[]; type == "string" and test("^[0-9a-f]{64}$"))
       and if $journey == "claim" then
@@ -874,7 +935,18 @@ validate_actual_effect_manifests() {
         }
         and .cooperative_claim_effects_present == false
         and (has("actor_owned_claims") | not)
-      else false
+      elif $direction == "taker_sells_foreign" then
+        .actor_owned_refunds == {bitcoin:.bitcoin_effect_ids[1]}
+        and .maker_second_lock == {chain:"lez",effect_count:0}
+        and .cooperative_claim_effects_present == false
+        and .dual_lock_gate_opened == false
+        and (has("actor_owned_claims") | not)
+      else
+        .actor_owned_refunds == {lez:.lez_effect_ids[2]}
+        and .maker_second_lock == {chain:"bitcoin",effect_count:0}
+        and .cooperative_claim_effects_present == false
+        and .dual_lock_gate_opened == false
+        and (has("actor_owned_claims") | not)
       end
     ' "$manifest" >/dev/null ||
       fail "${direction} actual-effect manifest does not match the ${journey} journey"
@@ -892,6 +964,7 @@ write_run_evidence() {
     --arg run_id "$run_id" \
     --arg journey "$journey" \
     --arg packet_kind "$packet_kind" \
+    --argjson terminal_revision "$terminal_revision" \
     --arg terminal_phase "$terminal_phase" \
     --arg replay_command "$replay_command" \
     --arg actor_owned_effect_semantics "$actor_owned_effect_semantics" \
@@ -943,14 +1016,44 @@ write_run_evidence() {
               slot_duration_seconds:$lez_slot_duration_seconds}
       },
       directions: [
-        {direction: "taker_sells_foreign", terminal_revision: 4,
-         terminal_phase: $terminal_phase, stage_two_evidence_sha256: $foreign_stage2_sha},
-        {direction: "taker_sells_lez", terminal_revision: 4,
-         terminal_phase: $terminal_phase, stage_two_evidence_sha256: $lez_stage2_sha}
+        {direction: "taker_sells_foreign", terminal_revision: $terminal_revision,
+         terminal_phase: $terminal_phase,
+         expected_unique_effects:
+           (if $journey == "first_lock_refund" then {bitcoin:2,lez:0}
+            else {bitcoin:2,lez:3} end),
+         maker_second_lock_effect_count:
+           (if $journey == "first_lock_refund" then 0 else 1 end),
+         stage_two_evidence_sha256: $foreign_stage2_sha},
+        {direction: "taker_sells_lez", terminal_revision: $terminal_revision,
+         terminal_phase: $terminal_phase,
+         expected_unique_effects:
+           (if $journey == "first_lock_refund" then {bitcoin:0,lez:3}
+            else {bitcoin:2,lez:3} end),
+         maker_second_lock_effect_count:
+           (if $journey == "first_lock_refund" then 0 else 1 end),
+         stage_two_evidence_sha256: $lez_stage2_sha}
       ],
       actor_process_model: "fresh_one_shot_process_per_command",
       actor_owned_effect_semantics: $actor_owned_effect_semantics,
-      expected_unique_effects: {bitcoin: 2, lez: 3},
+      first_lock_refund_admission:
+        (if $journey == "first_lock_refund" then {
+          signed_cutoff:true,two_fresh_cross_chain_reads:true,
+          lez_absence_window_reaches_current_finalized_tip:true,
+          bitcoin_cutoff_clock:"stable_core_median_time",
+          actor_internal_gate_authoritative:true,
+          owner_restart_without_resubmission:true,
+          fresh_maker_observer:true,
+          maker_offline_after_activation_until_refund_finality:true,
+          taker_only_revision_one_and_refund_projection:true
+        } else null end),
+      expected_unique_effects_by_direction:
+        (if $journey == "first_lock_refund" then
+           {taker_sells_foreign:{bitcoin:2,lez:0},
+            taker_sells_lez:{bitcoin:0,lez:3}}
+         else
+           {taker_sells_foreign:{bitcoin:2,lez:3},
+            taker_sells_lez:{bitcoin:2,lez:3}}
+         end),
       replay_command: $replay_command,
       replay_resubmission_count: 0,
       prerequisite_cache: {
@@ -966,6 +1069,7 @@ write_run_evidence() {
   chmod 0600 "${run_evidence}.partial"
   mv "${run_evidence}.partial" "$run_evidence"
   jq -e --arg journey "$journey" --arg packet_kind "$packet_kind" \
+    --argjson terminal_revision "$terminal_revision" \
     --arg terminal_phase "$terminal_phase" --arg replay_command "$replay_command" \
     --arg actor_owned_effect_semantics "$actor_owned_effect_semantics" '
     .schema_version == 1
@@ -974,9 +1078,29 @@ write_run_evidence() {
     and .result == "passed"
     and (.directions | length == 2)
     and all(.directions[];
-      .terminal_revision == 4 and .terminal_phase == $terminal_phase)
+      .terminal_revision == $terminal_revision and .terminal_phase == $terminal_phase)
     and .actor_owned_effect_semantics == $actor_owned_effect_semantics
-    and .expected_unique_effects == {bitcoin: 2, lez: 3}
+    and .expected_unique_effects_by_direction ==
+      (if $journey == "first_lock_refund" then
+         {taker_sells_foreign:{bitcoin:2,lez:0},
+          taker_sells_lez:{bitcoin:0,lez:3}}
+       else
+         {taker_sells_foreign:{bitcoin:2,lez:3},
+          taker_sells_lez:{bitcoin:2,lez:3}}
+       end)
+    and (if $journey == "first_lock_refund" then
+      all(.directions[]; .maker_second_lock_effect_count == 0)
+      and .first_lock_refund_admission == {
+        signed_cutoff:true,two_fresh_cross_chain_reads:true,
+        lez_absence_window_reaches_current_finalized_tip:true,
+        bitcoin_cutoff_clock:"stable_core_median_time",
+        actor_internal_gate_authoritative:true,
+        owner_restart_without_resubmission:true,
+        fresh_maker_observer:true,
+        maker_offline_after_activation_until_refund_finality:true,
+        taker_only_revision_one_and_refund_projection:true
+      }
+    else true end)
     and .replay_command == $replay_command
     and .replay_resubmission_count == 0
   ' "$run_evidence" >/dev/null || fail "final journey evidence packet is inconsistent"

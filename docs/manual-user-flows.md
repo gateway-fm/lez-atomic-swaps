@@ -12,7 +12,7 @@ self-hosted Zebra route and Tatum's public-provider Testnet Zebrad route, but
 explicitly leaves live execution pending the project-owned transparent signer,
 HTTPS provider transport, and actor adapter.
 
-## M3 status: actual-node happy path reproduced; deterministic refunds GREEN
+## M3 status: actual-node happy path and two-lock refunds reproduced
 
 The operator-composed M3 PoC has completed both `TakerSellsForeign` and
 `TakerSellsLez` against Bitcoin Core 31.1 Regtest and the exact local LEZ v0.2
@@ -58,10 +58,11 @@ refund plan remains bound in the countersigned agreement. Public
 schema-3 `recover` now composes both Bitcoin and LEZ refund legs deterministically
 with role authority, durable exact bytes, one-attempt submission, observe-only
 ambiguous recovery, and finalized-only revision 2 to 3 to 4 projection in both
-directions. Fresh actual-node refund evidence, concurrent demos, public-node
-guidance, chaos and adversarial hardening, and upstream DLC vector clarification
-remain production-readiness work. Those
-later items do not reopen the completed progressive M3 local PoC.
+directions. Run `m3refund-20260716h` additionally reproduced both two-lock ordered refund
+directions through actual nodes with terminal revision four and zero replay
+submissions. First-lock absent-maker recovery, genuinely overlapping swaps, the
+accepted public full-lifecycle BTC SDK, recordings, public-node guidance, chaos
+and adversarial hardening, and upstream DLC vector clarification remain open. Those later items do not reopen the completed progressive M3 local PoC.
 
 ### Repeat the M3 timeout/refund path
 
@@ -71,7 +72,7 @@ Build and run the deterministic public-command gate first:
 cargo test --locked -p btc-reference-actor --all-targets
 ```
 
-The current gate has 49 library cases and eight CLI integrations. It exercises
+The current gate exercises
 public `recover` through both direction-correct LEZ/Bitcoin orders, role-shaped
 Bitcoin refund authority, pre-deadline no-send, exact-byte persistence, the
 one-winner/one-attempt journal, observe-only `Started`/`Unknown`/`Accepted`,
@@ -84,9 +85,9 @@ For the manual actual-node rehearsal, follow the
 It uses a fresh isolated Core 31.1 Regtest node and local LEZ v0.2
 Bedrock/sequencer/indexer plus two role sidecars. Funds are deterministic local
 Regtest/genesis outputs; no public RPC, faucet, deployment, or funds participate.
-The procedure is maintained against the real schema-3 command, but fresh
-actual-node refund evidence is still pending, so do not classify it as an M3
-certification run yet. Moving LEZ tips, indexer readiness, the bounded request
+Retained run `m3refund-20260716h` proves this exact two-lock actual-node path.
+It does not prove first-lock absent-maker recovery, survivor-specific recovery,
+or concurrent swaps. Moving LEZ tips, indexer readiness, the bounded request
 timeout, and the fixed 4096-block discovery window can cause local observation
 retries; they never authorize another send.
 
@@ -549,9 +550,9 @@ and LEZ claim effects plus bounded observations are composed. Audited run
 `m3actor-20260716n` passed both directions through Core 31.1 Regtest and the
 private local LEZ v0.2 stack. Both roles finished revision four with next action
 `complete`, and replay resubmission count remained zero.
-Deterministic public-actor refund recovery is now GREEN in both directions. A
-fresh actual-node timeout run, concurrent swaps, crash/chaos, and adversarial
-journeys remain post-PoC work.
+Public-actor two-lock refund recovery and retained actual-node run
+`m3refund-20260716h` are GREEN in both directions. First-lock absent-maker
+recovery, concurrent swaps, crash/chaos, and adversarial journeys remain open.
 
 ## Can I run the complete M3 happy path myself?
 

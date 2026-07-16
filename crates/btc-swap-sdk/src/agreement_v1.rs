@@ -518,6 +518,7 @@ impl BtcClaimTermsV1 {
 pub struct BtcRecoveryPlanV1 {
     bitcoin_funding_anchor_height: u32,
     bitcoin_refund_height: u32,
+    maker_second_lock_cutoff_unix_seconds: u64,
     earlier_refund_latest_unix_seconds: u64,
     later_refund_earliest_unix_seconds: u64,
     required_margin_seconds: u64,
@@ -529,6 +530,7 @@ impl BtcRecoveryPlanV1 {
     pub const fn new(
         bitcoin_funding_anchor_height: u32,
         bitcoin_refund_height: u32,
+        maker_second_lock_cutoff_unix_seconds: u64,
         earlier_refund_latest_unix_seconds: u64,
         later_refund_earliest_unix_seconds: u64,
         required_margin_seconds: u64,
@@ -536,6 +538,7 @@ impl BtcRecoveryPlanV1 {
         Self {
             bitcoin_funding_anchor_height,
             bitcoin_refund_height,
+            maker_second_lock_cutoff_unix_seconds,
             earlier_refund_latest_unix_seconds,
             later_refund_earliest_unix_seconds,
             required_margin_seconds,
@@ -552,6 +555,12 @@ impl BtcRecoveryPlanV1 {
     #[must_use]
     pub const fn bitcoin_refund_height(&self) -> u32 {
         self.bitcoin_refund_height
+    }
+
+    /// Signed last-safe wall-clock cutoff by which the maker second lock must be canonical.
+    #[must_use]
+    pub const fn maker_second_lock_cutoff_unix_seconds(&self) -> u64 {
+        self.maker_second_lock_cutoff_unix_seconds
     }
 
     /// Conservative latest wall-clock bound for the earlier refund.
@@ -1440,6 +1449,11 @@ fn reconstruct_recovery(
 ) -> Result<RecoverySchedule, BtcAgreementV1Error> {
     let recovery = body.recovery;
     if recovery.bitcoin_funding_anchor_height == 0
+        || recovery.maker_second_lock_cutoff_unix_seconds == 0
+        || recovery
+            .maker_second_lock_cutoff_unix_seconds
+            .checked_add(recovery.required_margin_seconds)
+            .is_none_or(|earliest| earliest > recovery.earlier_refund_latest_unix_seconds)
         || recovery.bitcoin_refund_height
             != recovery
                 .bitcoin_funding_anchor_height
@@ -1692,6 +1706,7 @@ fn decode_bounded_body(
     let recovery = BtcRecoveryPlanV1::new(
         reader.u32()?,
         reader.u32()?,
+        reader.u64()?,
         reader.u64()?,
         reader.u64()?,
         reader.u64()?,

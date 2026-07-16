@@ -13,6 +13,13 @@ architecture, sequencing, risks, or acceptance evidence changes.
 3. Actual pinned upstream source and executable behavior, where prose and code
    disagree.
 
+The 2026-07-16 authority audit pins the live RFP repository at master commit
+`121da225de1930c5ba693ebbef80ee788d55542a` and RFP-003 file blob `d0fa52b`.
+Replacement issue #112 is open/reopened with the `accepted` and `RFP-003`
+labels and continues to supersede issue #61. These immutable source identities
+anchor this plan; the issue state remains a mutable upstream fact that must be
+reread at milestone closure.
+
 Issue #61 is historical only. The accepted pairs are LEZ-BTC, LEZ-XMR, and
 LEZ-ZEC transparent. ETH and shielded ZEC are out of scope.
 
@@ -1135,8 +1142,10 @@ signed-anchor deadline eligibility and exact one-send/readback semantics. The
 actor now requires the agreement-selected Bitcoin funder's lowercase-hex
 mode-`0600` refund-key file, forbids it on the other role, and rederives the
 countersigned x-only key before activation. Fresh actual-node two-lock timeout
-evidence is GREEN in run `m3refund-20260716h`; first-lock-only recovery and its
-maker-lock cutoff are the active recovery slice.
+evidence is GREEN in run `m3refund-20260716h`. The first-lock rev1-to-rev2
+projection, signed cutoff agreement, finalized LEZ `Found`/`Absent`
+classifier, and refund-side live gate are GREEN. Actual absent-maker execution
+is the active recovery slice.
 
 The refund-wire loop is GREEN. The existing native-refund RPC names and
 hashlock JSON shape remain unchanged, while strict untagged protocol envelopes
@@ -1248,25 +1257,67 @@ Active M3 refund critical path:
   directions, with exact 2 Bitcoin / 3 LEZ effects per direction, no claim
   effect, byte-identical before/after replay counts, zero resubmission, and
   exact foreign-safe cleanup;
+- [x] document the construction-specific atomic flow for every supported pair
+  and direction: BTC forward/reverse, transparent ZEC forward/reverse, and the
+  supported LEZ-first XMR direction each have a dedicated Mermaid sequence plus
+  a direction-specific conditional atomicity argument. Each flow explicitly
+  covers late-lock exclusion, pre-reveal and post-reveal abandonment, and the
+  rule that a half-completed economic outcome remains nonterminal. Stable
+  `atomic-sequence` and `atomicity-argument` identifiers plus the architecture
+  guard prevent a direction or property from disappearing; full GitHub
+  rendering remains deferred to the milestone-close pass;
 - [x] add durable first-lock-only recovery projection: the RED required a
   revision-one `TakerLockConfirmed` store to accept the exact taker-leg refund
   at revision two, reconstruct terminal `Refunded` after reopen, replay
   idempotently, and expose `observe_maker_second_lock_or_recover_taker_leg`;
   GREEN covers maker and taker stores in both BTC directions;
+- [x] bind an explicit maker-second-lock cutoff into both signatures on the
+  canonical BTC agreement. The RED exposed that the agreement did not enforce
+  a safe signed cutoff; GREEN binds and round-trips the exact value and
+  validates a nonzero, overflow-checked reaction margin before the earlier
+  refund bound. This repository-selected implementation of the RFP-derived taker-first, timeout, race-safety, and
+  lossless-recovery obligations; the RFP does not literally prescribe a field
+  named `maker_second_lock_cutoff`;
 - [ ] finish the distinct RFP R2/D1 **first-lock-only absent-maker** BTC journey:
-  after the taker's first lock confirms and the maker never locks, the taker
+  after the taker’s first lock confirms and the maker never locks, the taker
   must own, prepare, submit, finalize, and replay that first-leg refund without
-  maker, Delivery, or Chat participation. Persistence and projection are GREEN;
-  owner effect submission and a fresh actual-node journey remain open;
-- [ ] enforce and evidence the maker-second-lock cutoff/race invariant for that
-  branch. The signed maker-lock cutoff must leave the reviewed finality and
-  reaction margin before the taker's first-leg refund becomes eligible; every
-  maker-lock attempt must revalidate the canonical unspent first lock and the
-  cutoff, and a boundary race must fail closed rather than permit both an
-  accepted maker lock and taker recovery under incompatible histories;
+  maker, Delivery, or Chat participation. Persistence, projection, and live
+  refund-side admission are GREEN: two ordinal-bound exact-tip reads, monotonic clocks, and the exact taker refund evidence persist together. The fresh actual-node journey remains open;
+- [ ] enforce and evidence the maker-second-lock cutoff/race invariant at the
+  live chain boundary. The signed agreement and refund-side live gate are GREEN,
+  but every live maker-lock attempt must still revalidate the canonical unspent
+  first lock and cutoff, and the refund branch must use stable canonical
+  observations from both chains. The actor consumes the pushed LEZ classifier
+  without mapping errors to absence, requires a window ending at the
+  cutoff-authorizing finalized tip, and persists both distinct reads. The actual boundary run and maker-lock
+  admission remain open. A boundary race must fail closed rather than permit both an accepted
+  maker lock and taker recovery under incompatible histories;
 - [ ] run the accepted concurrent-swap demo with independent funding inputs,
   agreements, actor stores, effect journals, and overlapping in-flight phases;
-  this is not satisfied by either timeout branch;
+  this is not satisfied by sequential swaps, either timeout branch, or a
+  two-store unit isolation test;
+- [ ] close the survivor-specific nuance: show which already-funded actor can
+  continue from chain state after its peer disappears in each direction, while
+  keeping role-owned signing authority and never implying that an unfunded
+  survivor can manufacture the missing peer lock;
+- [ ] implement the accepted proposal’s public LEZ/BTC SDK full lifecycle. A
+  shared adapter-independent protocol boundary must expose typed offer
+  discovery, negotiation, activation/escrow creation, status/resume, claim, and
+  refund with documented public types, errors, and examples. Reuse the existing
+  agreement/adaptor/P2TR primitives, coordinator, stores, Core adapter, and LEZ
+  bridge; do not wrap the CLI or duplicate their logic;
+- [ ] make the reference actor a thin SDK adapter and move first/second lock
+  construction and submission under SDK-owned persist-before-send authority.
+  Current actual-node scripts externally submit both locks, so the present
+  happy/refund packets do not yet prove SDK escrow creation;
+- [ ] resolve F7 at the BTC pair boundary. Shared LEZ native/custom-token guest
+  support is GREEN, but the current BTC witnessed terms appear native-only.
+  Obtain owner/Logos interpretation or implement and actually prove a witnessed
+  custom-token BTC path; track this as repository-controlled scope, not a Logos
+  dependency blocker;
+- [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
+  concurrent journeys. Secret-safe JSON manifests prove machine facts but are
+  not recordings and cannot satisfy D1;
 - [ ] synchronize retained secret-safe evidence, manual reproduction,
   architecture/atomicity diagrams, traceability, and the milestone packet,
   then run the exact lint, test, vulnerability, license, source, security, and
@@ -1274,10 +1325,13 @@ Active M3 refund critical path:
 - [ ] after the owner enters later hardening, add restart, reorg, fee, and chaos
   cases beyond the reproducible functional PoC boundary.
 
-Repository-controlled open work, not external blockers, is first-lock-only BTC
-owner submission and actual-node evidence, the maker-second-lock cutoff/race,
-the concurrent demo, and synchronized closure evidence and gates. Run H closes
-the distinct two-lock timeout/refund item. Logos-owned limitations listed below
+Repository-controlled open work, not external blockers, is the durable
+first-lock discovery-window baseline and maker-lock admission, fresh actual-node absent-maker evidence, survivor-specific continuation, two
+genuinely overlapping swaps, the full-lifecycle public BTC SDK surface and SDK-owned locks, the F7 witnessed
+custom-token interpretation or implementation, D1 recordings, and synchronized
+closure evidence and gates. The revision-one-to-two store/projector, signed
+cutoff agreement, finalized LEZ classifier, and refund-side live gate are GREEN components, and run H closes the distinct two-lock timeout/refund item; none
+substitutes for those open actor/chain and deliverable gates. Logos-owned limitations listed below
 remain production-release blockers/nonblocking milestone caveats; they do not
 waive any repository-controlled M3 item.
 
@@ -1323,7 +1377,14 @@ independence, persistence, concurrency, timelock/refund rationale, compute
 evidence, CI, tests for every hard requirement, docs, reference integration,
 write-up, SDK API documentation, and all three BTC demos.
 
-The proposal's named DLC `AdaptorSignature.md` Schnorr corpus does not exist;
+The RFP does not literally name a maker-second-lock cutoff field. The signed
+cutoff is the selected implementation of its combined taker-first,
+timelock-margin, atomic-outcome, missing-counterparty, and concurrency duties
+at the race boundary. Agreement validation is necessary but not sufficient:
+acceptance still requires the live two-chain use of the GREEN LEZ classification,
+actual absent-maker execution, and race evidence above.
+
+The proposal’s named DLC `AdaptorSignature.md` Schnorr corpus does not exist;
 the live DLC corpus is ECDSA. M3 must not fake literal conformance.
 [GW-M3-001](proposal-acceptance-errata.md) proposes official BIP-340/BIP-327
 vectors, project-owned adaptor positive/negative fixtures, an independent
@@ -1471,8 +1532,11 @@ chain directions by run `m3actor-20260716n`. Both Bitcoin and LEZ claim-effect
 paths have actual-node public-actor evidence at the progressive local PoC
 boundary. Public schema-3 two-lock refund composition and actual-node
 execution are GREEN in both directions through run `m3refund-20260716h`.
-The first-lock-only projector and persistence boundary are also GREEN; owner
-effect submission, the maker-lock cutoff/race, and a fresh actual-node first-lock journey remain open.
+The first-lock-only projector, persistence, signed cutoff agreement, and live
+refund-side cross-chain gate are GREEN. Durable discovery-window baseline
+derivation, maker-lock admission, survivor nuance, and a fresh actual-node
+first-lock journey remain open.
+
 Pushed commit
 `a58ef96` adds the checked-in secret-safe packet, complete operator recipe,
 exact cleanup proof, synchronized architecture/traceability, and all 76 rendered
@@ -1782,10 +1846,11 @@ actor process for each command/revision, executes both directions sequentially,
 and attests exact cleanup without targeting foreign Docker resources. Commit
 `650d94e` makes every actor LEZ bridge request finite at 30 seconds. Run-n
 passed this harness at the same pushed commit: both directions, both roles,
-revision four, replay without resubmission, and exact cleanup are audited. The happy-path progressive local PoC has no
-remaining execution task. Run H separately closes two-lock timeout/refund;
-first-lock-only recovery and concurrency remain the active functional M3 work
-before the broader
+revision four, replay without resubmission, and exact cleanup are audited. The
+happy-path progressive local PoC has no remaining execution task. Run H
+separately closes two-lock timeout/refund. First-lock actual-node
+absent-maker/survivor execution and two overlapping swaps remain the active
+functional M3 work before the broader
 owner-selected hardening below.
 
 ### Later owner-selected hardening

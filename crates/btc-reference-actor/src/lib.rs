@@ -22,7 +22,8 @@ use bitcoin::{
 use clap::{Parser, Subcommand};
 use lez_bridge_adapter::{CapabilityFileBridgeClientFactory, FreshLezBridgeTransportFactory};
 use lez_bridge_client::{
-    BridgeClient, FinalizedWitnessedClaimPresence, validate_prepared_witnessed_claim,
+    BridgeClient, FinalizedWitnessedClaimPresence, FinalizedWitnessedFundingPresence,
+    validate_prepared_witnessed_claim,
 };
 use lez_bridge_protocol::{
     AggregateBip340Signature, ChainClock, ChainTip, CompleteWitnessedClaimRequest,
@@ -430,7 +431,7 @@ enum ActorStateV1 {
 #[serde(rename_all = "snake_case")]
 enum ActorNextActionV1 {
     ObserveTakerFirstLock,
-    ObserveMakerSecondLock,
+    ObserveMakerSecondLockOrRecoverTakerLeg,
     ObserveRevealingClaim,
     ObserveFollowupClaim,
     RecoverTakerLeg,
@@ -689,6 +690,7 @@ trait ClaimObservationPort: Send + Sync {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum RefundTransition {
+    FirstLockRecovery,
     MakerLeg,
     TakerLeg,
 }
@@ -696,6 +698,7 @@ enum RefundTransition {
 impl RefundTransition {
     const fn from_status(status: &BtcOfflineStatus) -> Option<Self> {
         match (status.revision(), status.phase()) {
+            (1, Phase::TakerLockConfirmed) => Some(Self::FirstLockRecovery),
             (2, Phase::BothLegsLocked) => Some(Self::MakerLeg),
             (3, Phase::MakerLegRefunded) => Some(Self::TakerLeg),
             _ => None,
@@ -705,12 +708,13 @@ impl RefundTransition {
     const fn funded_participant(self) -> Participant {
         match self {
             Self::MakerLeg => Participant::Maker,
-            Self::TakerLeg => Participant::Taker,
+            Self::FirstLockRecovery | Self::TakerLeg => Participant::Taker,
         }
     }
 
     const fn revision(self) -> u64 {
         match self {
+            Self::FirstLockRecovery => 2,
             Self::MakerLeg => 3,
             Self::TakerLeg => 4,
         }
@@ -718,8 +722,8 @@ impl RefundTransition {
 
     const fn phase(self) -> Phase {
         match self {
+            Self::FirstLockRecovery | Self::TakerLeg => Phase::Refunded,
             Self::MakerLeg => Phase::MakerLegRefunded,
-            Self::TakerLeg => Phase::Refunded,
         }
     }
 
@@ -743,7 +747,7 @@ impl RefundTransition {
                 chain_evidence,
                 position,
             ),
-            Self::TakerLeg => BtcLifecycleEvidenceV1::taker_leg_refund(
+            Self::FirstLockRecovery | Self::TakerLeg => BtcLifecycleEvidenceV1::taker_leg_refund(
                 chain,
                 transaction_id,
                 confirmations,
@@ -778,6 +782,48 @@ trait RefundObservationPort: Send + Sync {
         agreement: &BtcAgreementV1,
         transition: RefundTransition,
     ) -> Result<ActorRefundObservation, ActorCommandError>;
+}
+
+/// Cross-chain admission result for the revision-one absent-maker branch.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum FirstLockRecoverySafetyObservation {
+    /// A stable view could not prove either a canonical maker lock or safe absence.
+    Uncertain { maker_chain: Chain },
+    /// The exact maker second lock is canonical and must win over direct recovery.
+    MakerLockReady {
+        chain: Chain,
+        transaction_id: Box<str>,
+        confirmations: u32,
+        chain_evidence: Vec<u8>,
+    },
+    /// The signed cutoff passed and the exact maker second lock is affirmatively absent.
+    ReadyToRefund {
+        maker_chain: Chain,
+        cutoff_unix_seconds: u64,
+        observed_unix_seconds: u64,
+        absence_evidence: Vec<u8>,
+    },
+}
+
+/// Fresh two-chain safety check used only before a first-lock refund can gain send authority.
+#[async_trait]
+trait FirstLockRecoverySafetyPort: Send + Sync {
+    /// Rechecks the signed cutoff and exact maker-lock state at stable canonical tips.
+    async fn observe(
+        &self,
+        agreement: &BtcAgreementV1,
+        read_ordinal: u8,
+    ) -> Result<FirstLockRecoverySafetyObservation, ActorCommandError>;
+}
+
+/// Live LEZ maker-lock classifier; every call creates a fresh authenticated transport.
+struct LiveLezMakerLockSafety {
+    config: ActorConfig,
+}
+
+/// Live Bitcoin maker-lock classifier; every call creates a fresh Core RPC client.
+struct LiveBitcoinMakerLockSafety {
+    config: ActorConfig,
 }
 
 /// One stable Bitcoin claim scan reduced to facts needed by actor policy.
@@ -998,7 +1044,9 @@ pub async fn execute_actor_command(
     match command {
         ActorCommand::Activate => activate(config).map(ActorCommandOutputV1::Effect),
         ActorCommand::Status => status(config).map(ActorCommandOutputV1::Status),
-        ActorCommand::Recover => recover_live(config).await.map(ActorCommandOutputV1::Effect),
+        ActorCommand::Recover => Box::pin(recover_live(config))
+            .await
+            .map(ActorCommandOutputV1::Effect),
         ActorCommand::Drive => drive_live(config).await.map(ActorCommandOutputV1::Effect),
     }
 }
@@ -1299,9 +1347,17 @@ async fn recover_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, Actor
                 effect,
                 state_db: config.state_db.clone(),
             };
-            drive_refund_with_observer(config, agreement, wire, &observer).await
+            if transition == RefundTransition::FirstLockRecovery {
+                let safety = LiveLezMakerLockSafety {
+                    config: config.clone(),
+                };
+                drive_first_lock_refund_with_observer(config, agreement, wire, &safety, &observer)
+                    .await
+            } else {
+                drive_refund_with_observer(config, agreement, wire, &observer).await
+            }
         }
-        Chain::Lez => drive_live_lez_refund(config, agreement, wire).await,
+        Chain::Lez => Box::pin(drive_live_lez_refund(config, agreement, wire, transition)).await,
         Chain::Zcash | Chain::Monero => Err(ActorCommandError::AgreementBindingInvalid),
     }
 }
@@ -1310,6 +1366,7 @@ async fn drive_live_lez_refund(
     config: &ActorConfig,
     agreement: BtcAgreementV1,
     wire: Vec<u8>,
+    transition: RefundTransition,
 ) -> Result<ActorEffectOutputV1, ActorCommandError> {
     validate_actor_binding(config, &agreement)?;
     let factory = CapabilityFileBridgeClientFactory::new(
@@ -1327,7 +1384,14 @@ async fn drive_live_lez_refund(
         chain: client,
         state_db: config.state_db.clone(),
     };
-    drive_refund_with_observer(config, agreement, wire, &observer).await
+    if transition == RefundTransition::FirstLockRecovery {
+        let safety = LiveBitcoinMakerLockSafety {
+            config: config.clone(),
+        };
+        drive_first_lock_refund_with_observer(config, agreement, wire, &safety, &observer).await
+    } else {
+        drive_refund_with_observer(config, agreement, wire, &observer).await
+    }
 }
 
 async fn drive_live_lez_claim(
@@ -1379,16 +1443,7 @@ async fn drive_with_observer(
         return Err(ActorCommandError::NotActivated);
     }
     validate_actor_binding(config, &agreement)?;
-    let mut store = match open_existing_store(config, &agreement, agreement_wire) {
-        Ok(store) => store,
-        Err(BtcRecoveryError::MissingAgreementAcceptance) => {
-            return Err(ActorCommandError::NotActivated);
-        }
-        Err(_) => return Err(ActorCommandError::StateUnavailable),
-    };
-    let before = store
-        .status()
-        .map_err(|_| ActorCommandError::StateUnavailable)?;
+    let (mut store, before) = open_projection(config, &agreement, agreement_wire)?;
     let Some(transition) = FundingTransition::from_predecessor(before.revision()) else {
         return Ok(effect_output(
             config,
@@ -1489,16 +1544,7 @@ async fn drive_claim_with_observer(
     }
     validate_actor_binding(config, &agreement)?;
     validate_activation_material(config, &agreement)?;
-    let mut store = match open_existing_store(config, &agreement, agreement_wire) {
-        Ok(store) => store,
-        Err(BtcRecoveryError::MissingAgreementAcceptance) => {
-            return Err(ActorCommandError::NotActivated);
-        }
-        Err(_) => return Err(ActorCommandError::StateUnavailable),
-    };
-    let before = store
-        .status()
-        .map_err(|_| ActorCommandError::StateUnavailable)?;
+    let (mut store, before) = open_projection(config, &agreement, agreement_wire)?;
     let Some(transition) = ClaimTransition::from_predecessor(before.revision()) else {
         return Ok(effect_output(
             config,
@@ -1570,27 +1616,260 @@ async fn drive_claim_with_observer(
     )
 }
 
-/// Drives one ordered timeout revision from exact canonical refund evidence.
+/// Drives a timeout revision without granting revision-one send authority.
 async fn drive_refund_with_observer(
     config: &ActorConfig,
     agreement: BtcAgreementV1,
     agreement_wire: Vec<u8>,
     observer: &dyn RefundObservationPort,
 ) -> Result<ActorEffectOutputV1, ActorCommandError> {
-    if !state_file_exists(&config.state_db)? {
-        return Err(ActorCommandError::NotActivated);
+    drive_refund_after_first_lock_safety(config, agreement, agreement_wire, None, observer).await
+}
+
+const MAX_FIRST_LOCK_SAFETY_READ_BYTES: usize = 16 * 1024;
+const MAX_FIRST_LOCK_REFUND_EVIDENCE_BYTES: usize = 32 * 1024;
+const MAX_FIRST_LOCK_ENVELOPE_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Debug)]
+struct FirstLockRecoveryAdmission {
+    maker_chain: Chain,
+    cutoff_unix_seconds: u64,
+    first_observed_unix_seconds: u64,
+    first_absence_evidence: Vec<u8>,
+    second_observed_unix_seconds: u64,
+    second_absence_evidence: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct FirstLockRecoveryReadEvidenceV1 {
+    read_ordinal: u8,
+    observed_unix_seconds: u64,
+    absence_evidence_hex: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct FirstLockRecoveryChainEvidenceV1 {
+    schema_version: u16,
+    agreement_commitment: String,
+    maker_chain: Chain,
+    cutoff_unix_seconds: u64,
+    first_read: FirstLockRecoveryReadEvidenceV1,
+    second_read: FirstLockRecoveryReadEvidenceV1,
+    refund_chain_evidence_hex: String,
+}
+
+fn encode_first_lock_recovery_chain_evidence(
+    agreement: &BtcAgreementV1,
+    admission: &FirstLockRecoveryAdmission,
+    refund_chain_evidence: &[u8],
+) -> Result<Vec<u8>, ActorCommandError> {
+    let maker_chain = agreement.coordinator().funded_chain(Participant::Maker);
+    let cutoff = agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds();
+    if admission.maker_chain != maker_chain
+        || admission.cutoff_unix_seconds != cutoff
+        || admission.first_observed_unix_seconds < cutoff
+        || admission.second_observed_unix_seconds < admission.first_observed_unix_seconds
+        || admission.first_absence_evidence.is_empty()
+        || admission.second_absence_evidence.is_empty()
+        || admission.first_absence_evidence == admission.second_absence_evidence
+        || admission.first_absence_evidence.len() > MAX_FIRST_LOCK_SAFETY_READ_BYTES
+        || admission.second_absence_evidence.len() > MAX_FIRST_LOCK_SAFETY_READ_BYTES
+        || refund_chain_evidence.is_empty()
+        || refund_chain_evidence.len() > MAX_FIRST_LOCK_REFUND_EVIDENCE_BYTES
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
     }
-    validate_actor_binding(config, &agreement)?;
-    let mut store = match open_existing_store(config, &agreement, agreement_wire) {
+    let evidence = FirstLockRecoveryChainEvidenceV1 {
+        schema_version: 1,
+        agreement_commitment: hex::encode(agreement.agreement_commitment()),
+        maker_chain,
+        cutoff_unix_seconds: cutoff,
+        first_read: FirstLockRecoveryReadEvidenceV1 {
+            read_ordinal: 1,
+            observed_unix_seconds: admission.first_observed_unix_seconds,
+            absence_evidence_hex: hex::encode(&admission.first_absence_evidence),
+        },
+        second_read: FirstLockRecoveryReadEvidenceV1 {
+            read_ordinal: 2,
+            observed_unix_seconds: admission.second_observed_unix_seconds,
+            absence_evidence_hex: hex::encode(&admission.second_absence_evidence),
+        },
+        refund_chain_evidence_hex: hex::encode(refund_chain_evidence),
+    };
+    let encoded =
+        serde_json::to_vec(&evidence).map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    if encoded.len() > MAX_FIRST_LOCK_ENVELOPE_BYTES {
+        return Err(ActorCommandError::ObservationUnavailable);
+    }
+    let mut deserializer = serde_json::Deserializer::from_slice(&encoded);
+    let decoded = FirstLockRecoveryChainEvidenceV1::deserialize(&mut deserializer)
+        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    deserializer
+        .end()
+        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    if decoded != evidence
+        || serde_json::to_vec(&decoded).map_err(|_| ActorCommandError::ObservationUnavailable)?
+            != encoded
+    {
+        return Err(ActorCommandError::ObservationUnavailable);
+    }
+    Ok(encoded)
+}
+
+/// Drives revision-one recovery only after two fresh, matching cross-chain safety reads.
+async fn drive_first_lock_refund_with_observer(
+    config: &ActorConfig,
+    agreement: BtcAgreementV1,
+    agreement_wire: Vec<u8>,
+    safety: &dyn FirstLockRecoverySafetyPort,
+    observer: &dyn RefundObservationPort,
+) -> Result<ActorEffectOutputV1, ActorCommandError> {
+    let maker_chain = agreement.coordinator().funded_chain(Participant::Maker);
+    let cutoff = agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds();
+    let mut admitted_reads = Vec::with_capacity(2);
+    for read_ordinal in 1_u8..=2 {
+        match safety.observe(&agreement, read_ordinal).await? {
+            FirstLockRecoverySafetyObservation::Uncertain {
+                maker_chain: observed_chain,
+            } if observed_chain == maker_chain => {
+                return drive_refund_after_first_lock_safety(
+                    config,
+                    agreement,
+                    agreement_wire,
+                    None,
+                    observer,
+                )
+                .await;
+            }
+            FirstLockRecoverySafetyObservation::MakerLockReady {
+                chain,
+                transaction_id,
+                confirmations,
+                chain_evidence,
+            } if chain == maker_chain
+                && !transaction_id.is_empty()
+                && confirmations > 0
+                && !chain_evidence.is_empty() =>
+            {
+                return drive_refund_after_first_lock_safety(
+                    config,
+                    agreement,
+                    agreement_wire,
+                    None,
+                    observer,
+                )
+                .await;
+            }
+            FirstLockRecoverySafetyObservation::ReadyToRefund {
+                maker_chain: observed_chain,
+                cutoff_unix_seconds,
+                observed_unix_seconds,
+                absence_evidence,
+            } if observed_chain == maker_chain
+                && cutoff_unix_seconds == cutoff
+                && observed_unix_seconds >= cutoff
+                && !absence_evidence.is_empty()
+                && absence_evidence.len() <= MAX_FIRST_LOCK_SAFETY_READ_BYTES =>
+            {
+                if admitted_reads
+                    .last()
+                    .is_some_and(|(prior, _)| observed_unix_seconds < *prior)
+                {
+                    return drive_refund_after_first_lock_safety(
+                        config,
+                        agreement,
+                        agreement_wire,
+                        None,
+                        observer,
+                    )
+                    .await;
+                }
+                admitted_reads.push((observed_unix_seconds, absence_evidence));
+            }
+            _ => return Err(ActorCommandError::AgreementBindingInvalid),
+        }
+    }
+    let [
+        (first_observed_unix_seconds, first_absence_evidence),
+        (second_observed_unix_seconds, second_absence_evidence),
+    ] = admitted_reads
+        .try_into()
+        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    if first_absence_evidence == second_absence_evidence {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    let admission = FirstLockRecoveryAdmission {
+        maker_chain,
+        cutoff_unix_seconds: cutoff,
+        first_observed_unix_seconds,
+        first_absence_evidence,
+        second_observed_unix_seconds,
+        second_absence_evidence,
+    };
+    drive_refund_after_first_lock_safety(
+        config,
+        agreement,
+        agreement_wire,
+        Some(admission),
+        observer,
+    )
+    .await
+}
+
+fn admitted_refund_chain_evidence(
+    agreement: &BtcAgreementV1,
+    transition: RefundTransition,
+    admission: Option<&FirstLockRecoveryAdmission>,
+    chain_evidence: Vec<u8>,
+) -> Result<Vec<u8>, ActorCommandError> {
+    match (transition, admission) {
+        (RefundTransition::FirstLockRecovery, Some(admission)) => {
+            encode_first_lock_recovery_chain_evidence(agreement, admission, &chain_evidence)
+        }
+        (_, None) => Ok(chain_evidence),
+        _ => Err(ActorCommandError::AgreementBindingInvalid),
+    }
+}
+
+fn open_projection(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    agreement_wire: Vec<u8>,
+) -> Result<(SqliteBtcRecoveryStore, BtcOfflineStatus), ActorCommandError> {
+    let store = match open_existing_store(config, agreement, agreement_wire) {
         Ok(store) => store,
         Err(BtcRecoveryError::MissingAgreementAcceptance) => {
             return Err(ActorCommandError::NotActivated);
         }
         Err(_) => return Err(ActorCommandError::StateUnavailable),
     };
-    let before = store
+    let status = store
         .status()
         .map_err(|_| ActorCommandError::StateUnavailable)?;
+    Ok((store, status))
+}
+
+/// Drives one ordered timeout revision from exact canonical refund evidence.
+async fn drive_refund_after_first_lock_safety(
+    config: &ActorConfig,
+    agreement: BtcAgreementV1,
+    agreement_wire: Vec<u8>,
+    first_lock_admission: Option<FirstLockRecoveryAdmission>,
+    observer: &dyn RefundObservationPort,
+) -> Result<ActorEffectOutputV1, ActorCommandError> {
+    if !state_file_exists(&config.state_db)? {
+        return Err(ActorCommandError::NotActivated);
+    }
+    validate_actor_binding(config, &agreement)?;
+    let (mut store, before) = open_projection(config, &agreement, agreement_wire)?;
     let Some(transition) = RefundTransition::from_status(&before) else {
         return Ok(effect_output(
             config,
@@ -1604,6 +1883,19 @@ async fn drive_refund_with_observer(
     let expected_chain = agreement
         .coordinator()
         .funded_chain(transition.funded_participant());
+    if transition != RefundTransition::FirstLockRecovery && first_lock_admission.is_some() {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    if transition == RefundTransition::FirstLockRecovery && first_lock_admission.is_none() {
+        return Ok(effect_output(
+            config,
+            ActorEffectCommandV1::Recover,
+            ActorEffectOutcomeV1::AwaitingObservation {
+                chain: expected_chain.into(),
+            },
+            &before,
+        ));
+    }
     let observation = observer.observe(&agreement, transition).await?;
     let (chain, transaction_id, confirmations, chain_evidence, position) = match observation {
         ActorRefundObservation::Pending { chain } => {
@@ -1646,7 +1938,12 @@ async fn drive_refund_with_observer(
             chain,
             transaction_id,
             confirmations,
-            chain_evidence,
+            admitted_refund_chain_evidence(
+                &agreement,
+                transition,
+                first_lock_admission.as_ref(),
+                chain_evidence,
+            )?,
             position,
         )
         .map_err(|_| ActorCommandError::ObservationUnavailable)?;
@@ -3818,6 +4115,352 @@ fn validate_finalized_lez_presence_envelope(
     Ok(())
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LezMakerLockFoundEvidenceV1 {
+    schema_version: u16,
+    read_ordinal: u8,
+    agreement_commitment: String,
+    maker_chain: Chain,
+    request: ObserveFinalizedWitnessedFundingRequest,
+    finalized_clock: ChainClock,
+    scanned_window: DiscoveryWindow,
+    funding: lez_bridge_protocol::FinalizedWitnessedFundingFacts,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_lez_maker_lock_found_evidence(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    read_ordinal: u8,
+    request: &ObserveFinalizedWitnessedFundingRequest,
+    context: &MessageContext,
+    finalized_clock: ChainClock,
+    scanned_window: DiscoveryWindow,
+    funding: &lez_bridge_protocol::FinalizedWitnessedFundingFacts,
+) -> Result<Vec<u8>, ActorCommandError> {
+    let maker_chain = agreement.coordinator().funded_chain(Participant::Maker);
+    let window_end = request
+        .window
+        .start_height()
+        .checked_add(u64::from(request.window.max_blocks() - 1))
+        .ok_or(ActorCommandError::ObservationUnavailable)?;
+    let signed = agreement.lez_terms();
+    if !matches!(read_ordinal, 1 | 2)
+        || maker_chain != Chain::Lez
+        || request != &first_lock_lez_funding_request(config, agreement, read_ordinal)?
+        || context != &request.context
+        || scanned_window != request.window
+        || window_end > finalized_clock.height
+        || funding.metadata.account_id.as_bytes() != signed.metadata_account()
+        || funding.custody.account_id.as_bytes() != signed.custody_account()
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    serde_json::to_vec(&LezMakerLockFoundEvidenceV1 {
+        schema_version: 1,
+        read_ordinal,
+        agreement_commitment: hex::encode(agreement.agreement_commitment()),
+        maker_chain,
+        request: request.clone(),
+        finalized_clock,
+        scanned_window,
+        funding: funding.clone(),
+    })
+    .map_err(|_| ActorCommandError::ObservationUnavailable)
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LezMakerLockAbsenceEvidenceV1 {
+    schema_version: u16,
+    read_ordinal: u8,
+    agreement_commitment: String,
+    maker_chain: Chain,
+    cutoff_unix_seconds: u64,
+    request: ObserveFinalizedWitnessedFundingRequest,
+    finalized_clock: ChainClock,
+    scanned_window: DiscoveryWindow,
+}
+
+fn encode_lez_maker_lock_absence_evidence(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    read_ordinal: u8,
+    request: &ObserveFinalizedWitnessedFundingRequest,
+    context: &MessageContext,
+    finalized_clock: ChainClock,
+    scanned_window: DiscoveryWindow,
+) -> Result<Vec<u8>, ActorCommandError> {
+    let maker_chain = agreement.coordinator().funded_chain(Participant::Maker);
+    let cutoff_unix_seconds = agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds();
+    let cutoff_ms = cutoff_unix_seconds
+        .checked_mul(1_000)
+        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+    let window_end = request
+        .window
+        .start_height()
+        .checked_add(u64::from(request.window.max_blocks() - 1))
+        .ok_or(ActorCommandError::ObservationUnavailable)?;
+    if !matches!(read_ordinal, 1 | 2)
+        || maker_chain != Chain::Lez
+        || request != &first_lock_lez_funding_request(config, agreement, read_ordinal)?
+        || context != &request.context
+        || scanned_window != request.window
+        || window_end != finalized_clock.height
+        || finalized_clock.timestamp_ms < cutoff_ms
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    serde_json::to_vec(&LezMakerLockAbsenceEvidenceV1 {
+        schema_version: 1,
+        read_ordinal,
+        agreement_commitment: hex::encode(agreement.agreement_commitment()),
+        maker_chain,
+        cutoff_unix_seconds,
+        request: request.clone(),
+        finalized_clock,
+        scanned_window,
+    })
+    .map_err(|_| ActorCommandError::ObservationUnavailable)
+}
+
+#[async_trait]
+impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
+    async fn observe(
+        &self,
+        agreement: &BtcAgreementV1,
+        read_ordinal: u8,
+    ) -> Result<FirstLockRecoverySafetyObservation, ActorCommandError> {
+        let maker_chain = agreement.coordinator().funded_chain(Participant::Maker);
+        if maker_chain != Chain::Lez {
+            return Err(ActorCommandError::AgreementBindingInvalid);
+        }
+        let request = first_lock_lez_funding_request(&self.config, agreement, read_ordinal)?;
+        let durable_request = request.clone();
+        let factory = CapabilityFileBridgeClientFactory::new(
+            self.config.lez_bridge.endpoint.to_string(),
+            self.config.lez_bridge.capability_file.clone(),
+            self.config.lez_bridge.run_id.clone(),
+            self.config.lez_bridge.runtime.clone(),
+            Duration::from_millis(self.config.lez_bridge.request_timeout_millis),
+        );
+        let Ok(client) = factory.fresh_transport() else {
+            return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+        };
+        let Ok(presence) = client.classify_finalized_witnessed_funding(request).await else {
+            return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+        };
+        match presence {
+            FinalizedWitnessedFundingPresence::Found {
+                context,
+                finalized_clock,
+                scanned_window,
+                funding,
+            } => {
+                let chain_evidence = encode_lez_maker_lock_found_evidence(
+                    &self.config,
+                    agreement,
+                    read_ordinal,
+                    &durable_request,
+                    &context,
+                    finalized_clock,
+                    scanned_window,
+                    funding.as_ref(),
+                )?;
+                Ok(FirstLockRecoverySafetyObservation::MakerLockReady {
+                    chain: maker_chain,
+                    transaction_id: hex::encode(funding.transaction.transaction_id.as_bytes())
+                        .into_boxed_str(),
+                    confirmations: FINALIZED_LEZ_CONFIRMATION_UNITS,
+                    chain_evidence,
+                })
+            }
+            FinalizedWitnessedFundingPresence::Absent {
+                context,
+                finalized_clock,
+                scanned_window,
+            } => {
+                let cutoff_unix_seconds = agreement
+                    .body()
+                    .recovery_plan()
+                    .maker_second_lock_cutoff_unix_seconds();
+                let observed_unix_seconds = finalized_clock.timestamp_ms / 1_000;
+                if observed_unix_seconds < cutoff_unix_seconds {
+                    return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+                }
+                let absence_evidence = encode_lez_maker_lock_absence_evidence(
+                    &self.config,
+                    agreement,
+                    read_ordinal,
+                    &durable_request,
+                    &context,
+                    finalized_clock,
+                    scanned_window,
+                )?;
+                Ok(FirstLockRecoverySafetyObservation::ReadyToRefund {
+                    maker_chain,
+                    cutoff_unix_seconds,
+                    observed_unix_seconds,
+                    absence_evidence,
+                })
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct BitcoinMakerLockFoundEvidenceV1 {
+    schema_version: u16,
+    read_ordinal: u8,
+    agreement_commitment: String,
+    maker_chain: Chain,
+    core_evidence_hex: String,
+}
+
+fn encode_bitcoin_maker_lock_found_evidence(
+    agreement: &BtcAgreementV1,
+    read_ordinal: u8,
+    core_evidence: &[u8],
+) -> Result<Vec<u8>, ActorCommandError> {
+    let maker_chain = agreement.coordinator().funded_chain(Participant::Maker);
+    if !matches!(read_ordinal, 1 | 2) || maker_chain != Chain::Bitcoin || core_evidence.is_empty() {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    serde_json::to_vec(&BitcoinMakerLockFoundEvidenceV1 {
+        schema_version: 1,
+        read_ordinal,
+        agreement_commitment: hex::encode(agreement.agreement_commitment()),
+        maker_chain,
+        core_evidence_hex: hex::encode(core_evidence),
+    })
+    .map_err(|_| ActorCommandError::ObservationUnavailable)
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct BitcoinMakerLockAbsenceEvidenceV1 {
+    schema_version: u16,
+    read_ordinal: u8,
+    agreement_commitment: String,
+    maker_chain: Chain,
+    cutoff_unix_seconds: u64,
+    expected_funding_transaction_id: String,
+    stable_tip_block_hash: String,
+    stable_tip_height: u32,
+    stable_tip_median_time_unix_seconds: u64,
+}
+
+fn encode_bitcoin_maker_lock_absence_evidence(
+    agreement: &BtcAgreementV1,
+    read_ordinal: u8,
+    stable_tip_block_hash: String,
+    stable_tip_height: u32,
+    stable_tip_median_time_unix_seconds: u64,
+) -> Result<Vec<u8>, ActorCommandError> {
+    let maker_chain = agreement.coordinator().funded_chain(Participant::Maker);
+    let cutoff = agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds();
+    if !matches!(read_ordinal, 1 | 2)
+        || maker_chain != Chain::Bitcoin
+        || stable_tip_median_time_unix_seconds < cutoff
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    serde_json::to_vec(&BitcoinMakerLockAbsenceEvidenceV1 {
+        schema_version: 1,
+        read_ordinal,
+        agreement_commitment: hex::encode(agreement.agreement_commitment()),
+        maker_chain,
+        cutoff_unix_seconds: cutoff,
+        expected_funding_transaction_id: hex::encode(agreement.funding_terms().transaction_id()),
+        stable_tip_block_hash,
+        stable_tip_height,
+        stable_tip_median_time_unix_seconds,
+    })
+    .map_err(|_| ActorCommandError::ObservationUnavailable)
+}
+
+#[async_trait]
+impl FirstLockRecoverySafetyPort for LiveBitcoinMakerLockSafety {
+    async fn observe(
+        &self,
+        agreement: &BtcAgreementV1,
+        read_ordinal: u8,
+    ) -> Result<FirstLockRecoverySafetyObservation, ActorCommandError> {
+        let maker_chain = agreement.coordinator().funded_chain(Participant::Maker);
+        if maker_chain != Chain::Bitcoin {
+            return Err(ActorCommandError::AgreementBindingInvalid);
+        }
+        let Ok(core_config) = HttpBitcoinCoreConfig::new(self.config.bitcoin_core.endpoint.clone())
+            .and_then(|value| value.with_cookie_file(&self.config.bitcoin_core.cookie_file))
+        else {
+            return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+        };
+        let Ok(rpc) = HttpBitcoinCoreRpc::connect(&core_config) else {
+            return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+        };
+        let adapter = BitcoinCoreAdapter::new(rpc, self.config.bitcoin_core.connectivity.into());
+        let Ok(observation) = adapter.observe_funding(agreement).await else {
+            return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+        };
+        match observation {
+            FundingObservation::Ready(observed) => {
+                let chain_evidence = BitcoinCoreEvidenceV1::funding_ready(agreement, &observed)
+                    .and_then(|evidence| evidence.encode())
+                    .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                let chain_evidence = encode_bitcoin_maker_lock_found_evidence(
+                    agreement,
+                    read_ordinal,
+                    &chain_evidence,
+                )?;
+                Ok(FirstLockRecoverySafetyObservation::MakerLockReady {
+                    chain: maker_chain,
+                    transaction_id: observed
+                        .transaction()
+                        .compute_txid()
+                        .to_string()
+                        .into_boxed_str(),
+                    confirmations: observed.confirmations(),
+                    chain_evidence,
+                })
+            }
+            FundingObservation::Pending { .. } => {
+                Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain })
+            }
+            FundingObservation::Absent { stable_tip } => {
+                let observed_unix_seconds = stable_tip.median_time_unix_seconds();
+                let cutoff_unix_seconds = agreement
+                    .body()
+                    .recovery_plan()
+                    .maker_second_lock_cutoff_unix_seconds();
+                if observed_unix_seconds < cutoff_unix_seconds {
+                    return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+                }
+                let absence_evidence = encode_bitcoin_maker_lock_absence_evidence(
+                    agreement,
+                    read_ordinal,
+                    stable_tip.block_hash().to_string(),
+                    stable_tip.height(),
+                    observed_unix_seconds,
+                )?;
+                Ok(FirstLockRecoverySafetyObservation::ReadyToRefund {
+                    maker_chain,
+                    cutoff_unix_seconds,
+                    observed_unix_seconds,
+                    absence_evidence,
+                })
+            }
+        }
+    }
+}
+
 struct LezFundingObserver<'a> {
     config: &'a ActorConfig,
     client: BridgeClient,
@@ -4008,6 +4651,56 @@ fn finalized_lez_funding_request(
     ))
 }
 
+fn first_lock_lez_funding_request(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    read_ordinal: u8,
+) -> Result<ObserveFinalizedWitnessedFundingRequest, ActorCommandError> {
+    validate_actor_binding(config, agreement)?;
+    if !matches!(read_ordinal, 1 | 2) {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    let terms = witnessed_lez_terms(agreement)?;
+    let window = config.discovery_window()?;
+    let identity = FirstLockLezFundingRequestIdentityV1 {
+        schema_version: 1,
+        operation: "classify_first_lock_maker_funding",
+        agreement_commitment: hex::encode(agreement.agreement_commitment()),
+        read_ordinal,
+        run_id: config.lez_bridge.run_id.clone(),
+        sidecar_role: config.role.bridge(),
+        runtime: config.lez_bridge.runtime.clone(),
+        terms: terms.clone(),
+        target: "discover_by_terms",
+        window,
+    };
+    let request_id = deterministic_request_id(&identity)?;
+    Ok(ObserveFinalizedWitnessedFundingRequest::discover_by_terms(
+        MessageContext::new(
+            config.lez_bridge.run_id.clone(),
+            request_id,
+            config.role.bridge(),
+        ),
+        config.lez_bridge.runtime.clone(),
+        terms,
+        window,
+    ))
+}
+
+#[derive(Serialize)]
+struct FirstLockLezFundingRequestIdentityV1 {
+    schema_version: u16,
+    operation: &'static str,
+    agreement_commitment: String,
+    read_ordinal: u8,
+    run_id: RunId,
+    sidecar_role: BridgeParticipant,
+    runtime: RuntimeDescriptor,
+    terms: WitnessedNativeEscrowTerms,
+    target: &'static str,
+    window: DiscoveryWindow,
+}
+
 fn witnessed_lez_terms(
     agreement: &BtcAgreementV1,
 ) -> Result<WitnessedNativeEscrowTerms, ActorCommandError> {
@@ -4139,7 +4832,7 @@ fn status_output(config: &ActorConfig, status: &BtcOfflineStatus) -> ActorStatus
     } else if status.revision() == 0 {
         ActorNextActionV1::ObserveTakerFirstLock
     } else if status.revision() == 1 {
-        ActorNextActionV1::ObserveMakerSecondLock
+        ActorNextActionV1::ObserveMakerSecondLockOrRecoverTakerLeg
     } else if status.revision() == 2 {
         ActorNextActionV1::ObserveRevealingClaim
     } else if status.revision() == 3 && status.phase() == Phase::ClaimEvidenceAvailable {

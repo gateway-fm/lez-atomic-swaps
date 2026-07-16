@@ -223,9 +223,19 @@ jq -e '
   and .bitcoin_planned_funding_anchor_exact == true
   and .lez_exact_finalized_ancestry == true
   and .actor_owned_claim_effects == true
-  and .journeys == ["claim", "refund"]
+  and .journeys == ["claim", "refund", "first_lock_refund"]
   and .default_journey == "claim"
   and .actor_owned_refund_effects == true
+  and .actor_owned_first_lock_refund_effects == true
+  and .first_lock_refund_terminal_revision == 2
+  and .first_lock_refund_requires_signed_maker_cutoff == true
+  and .first_lock_refund_requires_two_fresh_absence_and_unspent_reads == true
+  and .first_lock_refund_lez_absence_window_reaches_current_finalized_tip == true
+  and .first_lock_refund_bitcoin_cutoff_uses_stable_median_time == true
+  and .first_lock_refund_owner_restart_never_resubmits == true
+  and .first_lock_refund_fresh_maker_observer == true
+  and .first_lock_refund_abandoned_maker_after_activation_until_finality == true
+  and .first_lock_refund_taker_only_revision_one_and_refund_projection == true
   and .timeout_terminal_phase == "refunded"
   and .actor_config_schema_version == 3
   and .role_shaped_bitcoin_refund_authority == true
@@ -307,6 +317,42 @@ jq -e '
 ' <<<"$lez_refund_plan" >/dev/null ||
   fail "LEZ direction refund effect plan is not role-correct"
 
+foreign_first_lock_refund_plan="$("$direction_driver" effect-plan \
+  taker_sells_foreign first_lock_refund)"
+jq -e "
+  .schema_version == 1
+  and .journey == \"first_lock_refund\"
+  and .direction == \"taker_sells_foreign\"
+  and .public_effect_order == [\"bitcoin_lock_by_taker\",\"predecessor_one_pending\",
+    \"signed_maker_second_lock_cutoff\",\"fresh_lez_maker_lock_absence_twice\",
+    \"fresh_bitcoin_first_lock_unspent_twice\",\"bitcoin_refund_by_taker\",
+    \"fresh_maker_observer\"]
+  and .expected_unique_effects == {bitcoin:2,lez:0}
+  and .maker_second_lock_effect_count == 0
+  and .actor_availability == {maker_offline_after_activation_until_refund_finality:true,
+    taker_only_revision_one_and_refund_projection:true}
+  and .terminal == {maker_revision:2,taker_revision:2,phase:\"refunded\"}
+" <<<"$foreign_first_lock_refund_plan" >/dev/null ||
+  fail "foreign direction first-lock refund plan is not role-correct"
+
+lez_first_lock_refund_plan="$("$direction_driver" effect-plan \
+  taker_sells_lez first_lock_refund)"
+jq -e "
+  .schema_version == 1
+  and .journey == \"first_lock_refund\"
+  and .direction == \"taker_sells_lez\"
+  and .public_effect_order == [\"lez_initialize_by_taker\",\"lez_fund_by_taker\",
+    \"predecessor_one_pending\",\"signed_maker_second_lock_cutoff\",
+    \"fresh_bitcoin_maker_lock_absence_twice\",\"fresh_lez_first_lock_unspent_twice\",
+    \"lez_refund_by_taker\",\"fresh_maker_observer\"]
+  and .expected_unique_effects == {bitcoin:0,lez:3}
+  and .maker_second_lock_effect_count == 0
+  and .actor_availability == {maker_offline_after_activation_until_refund_finality:true,
+    taker_only_revision_one_and_refund_projection:true}
+  and .terminal == {maker_revision:2,taker_revision:2,phase:\"refunded\"}
+" <<<"$lez_first_lock_refund_plan" >/dev/null ||
+  fail "LEZ direction first-lock refund plan is not role-correct"
+
 if "$direction_driver" effect-plan taker_sells_foreign invalid-journey >/dev/null 2>&1; then
   fail "direction effect plan accepted an invalid journey"
 fi
@@ -324,6 +370,65 @@ for behavior in submit_actor_bitcoin_refund submit_actor_lez_refund run_actor_re
   rg -Fq "${behavior}()" "$direction_driver" ||
     fail "actual direction implementation is missing refund behavior: ${behavior}"
 done
+for behavior in assert_first_lock_recovery_pending \
+  refresh_first_lock_lez_absence_window advance_core_median_time_to_first_lock_cutoff \
+  write_first_lock_recovery_admission_evidence assert_first_lock_owner_terminal_restart \
+  assert_fresh_maker_first_lock_terminal run_actor_first_lock_refund_flow; do
+  rg -Fq "${behavior}()" "$direction_driver" ||
+    fail "actual direction implementation is missing first-lock refund behavior: ${behavior}"
+done
+first_lock_refund_flow_source="$(sed -n \
+  '/^run_actor_first_lock_refund_flow() {$/,/^}$/p' "$direction_driver")"
+[[ -n "$first_lock_refund_flow_source" ]] || fail "first-lock refund has no isolated flow branch"
+if rg -q 'submit_actor_(bitcoin|lez)_claim|write_dual_lock_gate' \
+    <<<"$first_lock_refund_flow_source"; then
+  fail "first-lock refund invokes a claim helper or dual-lock gate"
+fi
+rg -Fq 'write_first_lock_recovery_admission_evidence' <<<"$first_lock_refund_flow_source" ||
+  fail "first-lock refund omits cutoff, absence, or first-lock-unspent admission evidence"
+rg -Fq 'assert_first_lock_recovery_pending' <<<"$first_lock_refund_flow_source" ||
+  fail "first-lock refund omits predecessor-one pending proof"
+foreign_first_lock_refund_source="$(sed -n \
+  '/^    taker_sells_foreign)$/,/^      ;;/p' <<<"$first_lock_refund_flow_source")"
+[[ -n "$foreign_first_lock_refund_source" ]] ||
+  fail "foreign first-lock refund has no isolated direction branch"
+[[ "$(rg -Fc 'refresh_first_lock_lez_absence_window' \
+  <<<"$foreign_first_lock_refund_source")" == 2 ]] ||
+  fail "foreign first-lock refund does not take exactly two fresh LEZ absence snapshots"
+rg -U -Fq \
+  $'project_role_to_revision taker 1 bitcoin bitcoin-first-lock\n      refresh_first_lock_lez_absence_window pre-maturity\n      assert_first_lock_recovery_pending bitcoin' \
+  <<<"$foreign_first_lock_refund_source" ||
+  fail "foreign first-lock pending recovery does not use a fresh pre-maturity LEZ window"
+rg -U -Fq \
+  $'mine_core_to_refund_eligibility bitcoin-taker-first-lock-refund\n      refresh_first_lock_lez_absence_window pre-admission\n      write_first_lock_recovery_admission_evidence' \
+  <<<"$foreign_first_lock_refund_source" ||
+  fail "foreign first-lock recovery admission does not refresh LEZ after maturity mining"
+rg -Fq 'advance_core_median_time_to_first_lock_cutoff' <<<"$first_lock_refund_flow_source" ||
+  fail "LEZ first-lock refund does not advance stable Core median time through cutoff"
+rg -Fq 'project_role_to_revision taker 1' <<<"$first_lock_refund_flow_source" ||
+  fail "first-lock branch does not project revision one in the taker alone"
+if rg -Fq 'project_both_to_revision' <<<"$first_lock_refund_flow_source"; then
+  fail "first-lock branch projects the abandoned maker before refund finality"
+fi
+pending_first_lock_source="$(sed -n \
+  '/^assert_first_lock_recovery_pending() {$/,/^}$/p' "$direction_driver")"
+if rg -Fq 'assert_recovery_pending_both' <<<"$pending_first_lock_source" ||
+   rg -Fq 'actor_invoke maker' <<<"$pending_first_lock_source"; then
+  fail "first-lock pending proof invokes the abandoned maker actor"
+fi
+rg -Fq 'assert_first_lock_owner_terminal_restart' <<<"$first_lock_refund_flow_source" ||
+  fail "first-lock branch omits the taker owner terminal restart"
+rg -Fq 'assert_fresh_maker_first_lock_terminal' <<<"$first_lock_refund_flow_source" ||
+  fail "first-lock branch omits post-finality fresh maker convergence"
+owner_restart_line="$(rg -n -F 'assert_first_lock_owner_terminal_restart' \
+  <<<"$first_lock_refund_flow_source" | cut -d: -f1)"
+maker_restart_line="$(rg -n -F 'assert_fresh_maker_first_lock_terminal' \
+  <<<"$first_lock_refund_flow_source" | cut -d: -f1)"
+if [[ ! "$owner_restart_line" =~ ^[0-9]+$ || ! "$maker_restart_line" =~ ^[0-9]+$ ||
+      "$owner_restart_line" -ge "$maker_restart_line" ]]; then
+  fail "fresh maker convergence does not follow taker terminal restart"
+fi
+
 refund_flow_source="$(sed -n '/^run_actor_refund_flow() {$/,/^}$/p' "$direction_driver")"
 [[ -n "$refund_flow_source" ]] || fail "refund journey has no isolated flow branch"
 rg -Fq 'submit_actor_bitcoin_refund' <<<"$refund_flow_source" ||
@@ -609,7 +714,7 @@ if invalid_journey_output="$(RUN_ID="$invalid_journey_run_id" \
   M3_ACTOR_POC_JOURNEY=invalid-journey M3_ACTOR_POC_MODE=contract "$runner" 2>&1)"; then
   fail "an invalid journey reached contract output"
 fi
-[[ "$invalid_journey_output" == *"M3_ACTOR_POC_JOURNEY must be claim or refund"* ]] ||
+[[ "$invalid_journey_output" == *"M3_ACTOR_POC_JOURNEY must be claim, refund, or first_lock_refund"* ]] ||
   fail "invalid journey did not fail with the bounded validation error"
 [[ ! -e ".e2e/${invalid_journey_run_id}" && ! -L ".e2e/${invalid_journey_run_id}" ]] ||
   fail "invalid journey created run state"
@@ -677,6 +782,48 @@ jq -e --arg run_id "$refund_contract_run_id" '
 ' <<<"$refund_contract_json" >/dev/null ||
   fail "refund contract does not select the reproducible three-second LEZ cadence"
 
+first_lock_contract_run_id="m3firstlockcontract-$RANDOM-$$"
+first_lock_contract_json="$(RUN_ID="$first_lock_contract_run_id" \
+  M3_ACTOR_POC_JOURNEY=first_lock_refund M3_ACTOR_POC_MODE=contract "$runner")"
+jq -e --arg run_id "$first_lock_contract_run_id" '
+  .schema_version == 1
+  and .kind == "m3_actor_local_poc_contract"
+  and .execution_performed == false
+  and .run_id == $run_id
+  and .journey == "first_lock_refund"
+  and .evidence_packet_kind == "m3_actor_two_direction_first_lock_refund_local_poc"
+  and .service_configuration.lez_v0_2.slot_duration_seconds == "3.0"
+  and .ordering.dual_locks_before_scalar_use == false
+  and .ordering.first_lock_refund_has_no_second_lock_or_dual_lock_gate == true
+  and .effect_semantics.actor_owned == "first_lock_refund"
+  and .effect_semantics.expected_unique_effects_by_direction == {
+    taker_sells_foreign:{bitcoin:2,lez:0},
+    taker_sells_lez:{bitcoin:0,lez:3}
+  }
+  and .effect_semantics.maker_second_lock_effect_count == 0
+  and .first_lock_refund == {
+    signed_maker_second_lock_cutoff_required:true,
+    two_fresh_absence_and_first_lock_unspent_reads_required:true,
+    lez_absence_window_reaches_current_finalized_tip:true,
+    bitcoin_cutoff_clock:"stable_core_median_time",
+    actor_internal_admission_is_authoritative:true,
+    owner_restart_without_resubmission:true,
+    fresh_maker_observer_terminal:true,
+    maker_offline_after_activation_until_refund_finality:true,
+    taker_only_revision_one_and_refund_projection:true
+  }
+  and .terminal.required_revision == 2
+  and .terminal.required_phase == "refunded"
+  and .terminal.required_next_action == "complete"
+  and .replay.command == "recover"
+  and .replay.restart_both_roles == true
+  and .replay.resubmission_count == 0
+  and .external_resources.public_rpc == false
+  and .external_resources.faucet == false
+  and .external_resources.public_funds == false
+' <<<"$first_lock_contract_json" >/dev/null ||
+  fail "first-lock refund contract omits exact effects, cutoff/race clocks, replay, or local resources"
+
 rg -Fq 'LEZ_V02_SLOT_DURATION_SECONDS="$lez_slot_duration_seconds"' "$runner" ||
   fail "M3 runner does not pass the journey-selected cadence to the LEZ child"
 rg -Fq 'slot_duration_seconds:$lez_slot_duration_seconds' "$runner" ||
@@ -729,6 +876,33 @@ write_effect_manifest_fixture() {
          actor_owned_refunds:{bitcoin:$bitcoin_refund,lez:$lez_refund},
          cooperative_claim_effects_present:false}
       ' >"$output"
+      ;;
+    first_lock_refund)
+      case "$direction" in
+        taker_sells_foreign)
+          jq -n --arg direction "$direction" --arg bitcoin_lock "$btc_lock" \
+            --arg bitcoin_refund "$btc_terminal" '
+            {schema_version:1,journey:"first_lock_refund",direction:$direction,
+             bitcoin_effect_ids:[$bitcoin_lock,$bitcoin_refund],lez_effect_ids:[],
+             expected_unique_effects:{bitcoin:2,lez:0},
+             actor_owned_refunds:{bitcoin:$bitcoin_refund},
+             maker_second_lock:{chain:"lez",effect_count:0},
+             cooperative_claim_effects_present:false,dual_lock_gate_opened:false}
+          ' >"$output"
+          ;;
+        taker_sells_lez)
+          jq -n --arg direction "$direction" --arg lez_initialization "$lez_initialization" \
+            --arg lez_funding "$lez_funding" --arg lez_refund "$lez_terminal" '
+            {schema_version:1,journey:"first_lock_refund",direction:$direction,
+             bitcoin_effect_ids:[],
+             lez_effect_ids:[$lez_initialization,$lez_funding,$lez_refund],
+             expected_unique_effects:{bitcoin:0,lez:3},
+             actor_owned_refunds:{lez:$lez_refund},
+             maker_second_lock:{chain:"bitcoin",effect_count:0},
+             cooperative_claim_effects_present:false,dual_lock_gate_opened:false}
+          ' >"$output"
+          ;;
+      esac
       ;;
     *) fail "unsupported actual-effect fixture shape: ${shape}" ;;
   esac
@@ -790,6 +964,43 @@ mv "${manifest_validation_root}/taker_sells_lez-actual-effects.json.partial" \
   "${manifest_validation_root}/taker_sells_lez-actual-effects.json"
 if validate_effect_manifest_pair refund >/dev/null 2>&1; then
   fail "outer runner accepted refund evidence containing a cooperative claim effect"
+fi
+
+write_effect_manifest_pair first_lock_refund
+validate_effect_manifest_pair first_lock_refund >/dev/null ||
+  fail "outer runner rejected exact 2/0 and 0/3 first-lock manifests"
+if validate_effect_manifest_pair refund >/dev/null 2>&1; then
+  fail "outer runner accepted first-lock manifests as two-lock refunds"
+fi
+
+write_effect_manifest_pair first_lock_refund
+jq '.maker_second_lock.effect_count = 1' \
+  "${manifest_validation_root}/taker_sells_foreign-actual-effects.json" \
+  >"${manifest_validation_root}/taker_sells_foreign-actual-effects.json.partial"
+mv "${manifest_validation_root}/taker_sells_foreign-actual-effects.json.partial" \
+  "${manifest_validation_root}/taker_sells_foreign-actual-effects.json"
+if validate_effect_manifest_pair first_lock_refund >/dev/null 2>&1; then
+  fail "outer runner accepted a first-lock manifest with a maker second-lock effect"
+fi
+
+write_effect_manifest_pair first_lock_refund
+jq '.dual_lock_gate_opened = true' \
+  "${manifest_validation_root}/taker_sells_lez-actual-effects.json" \
+  >"${manifest_validation_root}/taker_sells_lez-actual-effects.json.partial"
+mv "${manifest_validation_root}/taker_sells_lez-actual-effects.json.partial" \
+  "${manifest_validation_root}/taker_sells_lez-actual-effects.json"
+if validate_effect_manifest_pair first_lock_refund >/dev/null 2>&1; then
+  fail "outer runner accepted a dual-lock gate in the first-lock-only branch"
+fi
+
+write_effect_manifest_pair first_lock_refund
+jq '.actor_owned_claims = {bitcoin:"1111111111111111111111111111111111111111111111111111111111111111"}' \
+  "${manifest_validation_root}/taker_sells_foreign-actual-effects.json" \
+  >"${manifest_validation_root}/taker_sells_foreign-actual-effects.json.partial"
+mv "${manifest_validation_root}/taker_sells_foreign-actual-effects.json.partial" \
+  "${manifest_validation_root}/taker_sells_foreign-actual-effects.json"
+if validate_effect_manifest_pair first_lock_refund >/dev/null 2>&1; then
+  fail "outer runner accepted a claim helper effect in the first-lock refund branch"
 fi
 
 required_terms=(

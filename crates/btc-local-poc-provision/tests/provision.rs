@@ -110,6 +110,7 @@ fn stage2_spec(direction: &str, public_sha256: &str, aggregate_x_only: &str) -> 
             "refund_csv_blocks": 144,
             "planned_bitcoin_funding_anchor_height": 1000,
             "bitcoin_refund_height": 1144,
+            "maker_second_lock_cutoff_unix_seconds": 1_699_999_800,
             "earlier_refund_latest_unix_seconds": 1_700_000_100,
             "later_refund_earliest_unix_seconds": 1_700_000_500,
             "required_margin_seconds": 300

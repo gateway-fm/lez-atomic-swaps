@@ -163,7 +163,7 @@ impl BtcLifecycleEvidenceKind {
         matches!(
             (revision, self),
             (1, Self::TakerLock)
-                | (2, Self::MakerLock)
+                | (2, Self::MakerLock | Self::TakerRefund)
                 | (3, Self::RevealingClaim | Self::MakerRefund)
                 | (4, Self::FollowupClaim | Self::TakerRefund)
         )
@@ -487,10 +487,10 @@ impl BtcLifecycleEvidenceV1 {
         let expected_phase = match (revision, self.kind) {
             (1, BtcLifecycleEvidenceKind::TakerLock) => Phase::TakerLockConfirmed,
             (2, BtcLifecycleEvidenceKind::MakerLock) => Phase::BothLegsLocked,
+            (2 | 4, BtcLifecycleEvidenceKind::TakerRefund) => Phase::Refunded,
             (3, BtcLifecycleEvidenceKind::RevealingClaim) => Phase::ClaimEvidenceAvailable,
             (3, BtcLifecycleEvidenceKind::MakerRefund) => Phase::MakerLegRefunded,
             (4, BtcLifecycleEvidenceKind::FollowupClaim) => Phase::Completed,
-            (4, BtcLifecycleEvidenceKind::TakerRefund) => Phase::Refunded,
             _ => return Err(BtcRecoveryError::InvalidSequence { revision }),
         };
         if coordinator.phase() != expected_phase {

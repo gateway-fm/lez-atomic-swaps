@@ -33,6 +33,63 @@ if [[ "$(rg -c '^sequenceDiagram$' "$system_architecture")" -lt 3 ]]; then
   exit 1
 fi
 
+required_atomic_sequences=(
+  "lez-btc/taker-sells-foreign"
+  "lez-btc/taker-sells-lez"
+  "lez-zec-transparent/taker-sells-foreign"
+  "lez-zec-transparent/taker-sells-lez"
+  "lez-xmr/taker-sells-lez"
+)
+
+for flow in "${required_atomic_sequences[@]}"; do
+  marker="<!-- atomic-sequence: ${flow} -->"
+  argument_marker="<!-- atomicity-argument: ${flow} -->"
+  if [[ "$(rg -Fc "$marker" "$system_architecture")" -ne 1 ]]; then
+    echo "system architecture must contain exactly one atomic sequence for ${flow}" >&2
+    exit 1
+  fi
+  if [[ "$(rg -Fc "$argument_marker" "$system_architecture")" -ne 1 ]]; then
+    echo "system architecture must contain exactly one atomicity argument for ${flow}" >&2
+    exit 1
+  fi
+  sequence_start="${marker}"$'\n\n```mermaid\nsequenceDiagram'
+  if ! rg -UFq "$sequence_start" "$system_architecture"; then
+    echo "atomic sequence marker must immediately precede its Mermaid flow: ${flow}" >&2
+    exit 1
+  fi
+done
+
+required_flow_properties=(
+  "Late maker lock admission closes before refund authority"
+  "Revealer may disappear and follower uses canonical chain disclosure"
+  "Remaining leg stays claimable and lifecycle stays Recovering"
+)
+
+for property in "${required_flow_properties[@]}"; do
+  if [[ "$(rg -Fc "$property" "$system_architecture")" -ne 5 ]]; then
+    echo "all five atomic flows must state: ${property}" >&2
+    exit 1
+  fi
+done
+
+if ! rg -Fq "One finalized claim or refund while the opposite funded leg remains" "$system_architecture"; then
+  echo "system architecture must define nonterminal half-state handling" >&2
+  exit 1
+fi
+
+required_atomicity_arguments=(
+  "The BTC construction is atomic under these explicit conditions:"
+  "The ZEC construction is atomic under these explicit conditions:"
+  "The XMR construction"
+)
+
+for argument in "${required_atomicity_arguments[@]}"; do
+  if ! rg -Fq "$argument" "$system_architecture"; then
+    echo "system architecture is missing pair-specific atomicity argument: ${argument}" >&2
+    exit 1
+  fi
+done
+
 if ! rg -q '^flowchart TB$' "$system_architecture"; then
   echo "system architecture must contain a top-to-bottom component diagram" >&2
   exit 1

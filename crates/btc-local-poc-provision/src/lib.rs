@@ -365,6 +365,7 @@ struct RecoveryPolicy {
     refund_csv_blocks: u32,
     planned_bitcoin_funding_anchor_height: u32,
     bitcoin_refund_height: u32,
+    maker_second_lock_cutoff_unix_seconds: u64,
     earlier_refund_latest_unix_seconds: u64,
     later_refund_earliest_unix_seconds: u64,
     required_margin_seconds: u64,
@@ -856,6 +857,7 @@ pub fn finalize_stage2(spec_file: &Path, output_root: &Path) -> Result<Stage2Sum
     let recovery = BtcRecoveryPlanV1::new(
         spec.recovery.planned_bitcoin_funding_anchor_height,
         spec.recovery.bitcoin_refund_height,
+        spec.recovery.maker_second_lock_cutoff_unix_seconds,
         spec.recovery.earlier_refund_latest_unix_seconds,
         spec.recovery.later_refund_earliest_unix_seconds,
         spec.recovery.required_margin_seconds,

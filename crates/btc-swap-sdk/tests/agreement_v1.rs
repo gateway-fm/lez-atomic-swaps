@@ -16,6 +16,7 @@ const CLAIM_VALUE_SAT: u64 = 99_000;
 const REFUND_CSV_BLOCKS: u32 = 144;
 const BITCOIN_FUNDING_ANCHOR_HEIGHT: u32 = 1_000;
 const BITCOIN_REFUND_HEIGHT: u32 = 1_144;
+const MAKER_SECOND_LOCK_CUTOFF_SECONDS: u64 = 1_699_999_800;
 const EARLIER_REFUND_LATEST_SECONDS: u64 = 1_700_000_100;
 const LATER_REFUND_EARLIEST_SECONDS: u64 = 1_700_000_500;
 const REQUIRED_MARGIN_SECONDS: u64 = 300;
@@ -29,6 +30,7 @@ struct FixtureOptions {
     drift_contract_script: bool,
     drift_claim_sighash: bool,
     wrong_refund_height: bool,
+    unsafe_maker_second_lock_cutoff: bool,
     maker_destination_length: Option<usize>,
     bitcoin_genesis_hash: [u8; 32],
     required_confirmations: u32,
@@ -41,6 +43,7 @@ impl Default for FixtureOptions {
             drift_contract_script: false,
             drift_claim_sighash: false,
             wrong_refund_height: false,
+            unsafe_maker_second_lock_cutoff: false,
             maker_destination_length: None,
             bitcoin_genesis_hash: BITCOIN_GENESIS_HASH,
             required_confirmations: REQUIRED_CONFIRMATIONS,
@@ -226,6 +229,11 @@ fn fixture(direction: SwapDirection, options: FixtureOptions) -> Fixture {
         } else {
             BITCOIN_REFUND_HEIGHT
         },
+        if options.unsafe_maker_second_lock_cutoff {
+            MAKER_SECOND_LOCK_CUTOFF_SECONDS + 1
+        } else {
+            MAKER_SECOND_LOCK_CUTOFF_SECONDS
+        },
         EARLIER_REFUND_LATEST_SECONDS,
         LATER_REFUND_EARLIEST_SECONDS,
         REQUIRED_MARGIN_SECONDS,
@@ -305,6 +313,10 @@ fn assert_actor_activation_view(agreement: &BtcAgreementV1) {
         BITCOIN_FUNDING_ANCHOR_HEIGHT
     );
     assert_eq!(recovery.bitcoin_refund_height(), BITCOIN_REFUND_HEIGHT);
+    assert_eq!(
+        recovery.maker_second_lock_cutoff_unix_seconds(),
+        MAKER_SECOND_LOCK_CUTOFF_SECONDS
+    );
     assert_eq!(recovery.required_margin_seconds(), REQUIRED_MARGIN_SECONDS);
     assert!(
         recovery.later_refund_earliest_unix_seconds()
@@ -813,6 +825,18 @@ fn direction_correct_recovery_schedule_is_reconstructed_and_checked() {
     );
     assert_eq!(
         BtcAgreementV1::validate(signed_record(&wrong_height)),
+        Err(BtcAgreementV1Error::RecoveryScheduleMismatch)
+    );
+
+    let unsafe_cutoff = fixture(
+        SwapDirection::TakerSellsLez,
+        FixtureOptions {
+            unsafe_maker_second_lock_cutoff: true,
+            ..FixtureOptions::default()
+        },
+    );
+    assert_eq!(
+        BtcAgreementV1::validate(signed_record(&unsafe_cutoff)),
         Err(BtcAgreementV1Error::RecoveryScheduleMismatch)
     );
 
