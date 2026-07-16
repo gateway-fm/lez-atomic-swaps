@@ -1,7 +1,8 @@
 # ADR 0034: Gate actor activation on complete signing material
 
-Status: Accepted for the M3 actor activation boundary. Claim revisions three
-and four and actual-node actor evidence remain pending.
+Status: Accepted and GREEN through claim revisions three and four in both
+actual-node happy directions. Refund authority, process-kill, and production key
+custody hardening remain active.
 
 ## Context
 

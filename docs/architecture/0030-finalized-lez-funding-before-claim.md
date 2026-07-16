@@ -1,7 +1,8 @@
 # ADR 0030: Prove finalized LEZ funding before either claim
 
-Status: Accepted; protocol, client, and sidecar implementation GREEN --
-2026-07-15
+Status: Accepted; protocol, client, sidecar, reference-actor integration, and both
+actual-node happy directions GREEN; finalized refund observation remains active --
+reconciled 2026-07-16
 
 ## Context
 

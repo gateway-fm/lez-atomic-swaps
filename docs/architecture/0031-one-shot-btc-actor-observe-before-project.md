@@ -1,8 +1,8 @@
 # ADR 0031: Bitcoin funding revisions observe before local projection
 
-Status: Accepted for the M3 taker- and maker-funding reference-actor slices.
-Claim revisions three and four and a two-direction actual-node actor run remain
-pending.
+Status: Accepted and GREEN through revisions zero to four in both repository-owned
+actual-node happy directions. Refund, crash, reorg, and concurrency paths remain
+active.
 
 Reconciled 2026-07-15: ADR 0034 migrates the private config to strict schema 2
 and requires the full prepared LEZ claim plus both completed agreement-derived

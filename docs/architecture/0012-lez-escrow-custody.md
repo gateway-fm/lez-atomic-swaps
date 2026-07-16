@@ -1,6 +1,6 @@
 # ADR 0012: Split LEZ escrow metadata from asset custody
 
-Status: Accepted; source-correct custody, canonical v0.2 native claims, and strict hashlock/witnessed refund wire GREEN; actual-node refund and token corridor hardening deferred -- reconciled 2026-07-16
+Status: Accepted; source-correct custody, canonical v0.2 native claims, strict hashlock/witnessed refund wire, and durable exact v0.2 refund preparation GREEN; finalized observation, actor execution, actual-node refund, and token corridor hardening remain -- reconciled 2026-07-16
 
 ```mermaid
 flowchart LR
@@ -15,7 +15,8 @@ flowchart LR
     Claimant -->|"pair-specific valid claim"| ATA
     Vault --> NativeProof["Canonical v0.2 actual-node native claim<br/>forward and reverse GREEN"]
     ATA --> TokenProof["Recursive two-definition claim and refund<br/>compatibility tests GREEN"]
-    RefundWire --> Refund["Permissionless fixed-destination refund"]
+    RefundWire --> RefundPlanner["Durable exact v0.2 RefundNative planner<br/>zero nonce and witness"]
+    RefundPlanner --> Refund["Permissionless fixed-destination refund"]
     Refund -.-> Vault
     Refund -.-> ATA
     NativeProof -.-> Deferred["Actual-node refund, token corridor,<br/>reorg and chaos deferred"]
@@ -51,8 +52,9 @@ claims use reviewed library verification.
 The native-refund bridge uses one strict untagged authority envelope. Existing
 hashlock JSON remains byte-shape compatible, while the BTC corridor carries
 aggregate authority account/key facts. Strict inner decoders reject mixed
-authority fields; the v0.1.2 sidecar accepts only hashlock terms and the v0.2
-lane is responsible for witnessed preparation and observation.
+authority fields; the v0.1.2 sidecar accepts only hashlock terms and the v0.2 lane
+durably prepares both shapes; finalized observation and actor authorization
+remain separate.
 
 The first ZEC compatibility fixture was narrower than this target: it directly
 mutated swap-program-owned native accounts and stored custom tokens at an escrow
@@ -69,6 +71,8 @@ tests are GREEN. The canonical v0.2 native path was deployed as ProgramId
 `5cf8c5...29c1` and exercised by independent actors in both actual-node happy
 directions, reaching terminal `Claimed` state with zero custody. The custom
 token path remains lower recursive compatibility evidence rather than a
-composed v0.2 corridor claim. Actual-node refund, token-corridor, reorg, chaos,
-and public execution remain deferred. Private custody, NFTs, partial
+composed v0.2 corridor claim. The durable v0.2 planner now produces and
+restart-restores exact unsigned `RefundNative` bytes without a nonce RPC, as specified by ADR 0038. Finalized
+refund observation, actor submission, actual-node refund, token-corridor, reorg,
+chaos, and public execution remain deferred. Private custody, NFTs, partial
 withdrawal, and mutable destinations are outside v1.

@@ -1,6 +1,6 @@
 # System architecture and actor flows
 
-Status: Living target architecture — 2026-07-15
+Status: Living target architecture — 2026-07-16
 
 This is the canonical whole-system view. ADRs record why individual choices
 were made; this document shows how the choices compose into the product that
@@ -613,6 +613,14 @@ validates the exact official maker/taker Claim transactions with role-specific
 allocations and an independently confirmed owner nonce. Both optionally persist
 their exact reservation in a Linux owner-only no-symlink directory and recover
 the same validated signed bytes after restart without another nonce lookup.
+The native refund planner separately derives the official metadata, custody, and
+immutable depositor account order, constructs an unsigned `RefundNative` public
+transaction with zero nonces and witnesses, and durably reserves the exact bytes
+before exposure. It accepts strict legacy and witnessed terms, revalidates the
+aggregate authority binding for the witnessed shape, restores byte-identically
+after restart without a nonce lookup, and admits only the retained transaction
+to the generic submission boundary. This planner performs no RPC and does not
+claim deadline eligibility or finality.
 Their role-bound SQLite effect journal now exposes the narrow Vault Claim
 one-attempt state machine: it commits exact typed preparation and
 `AttemptStarted` before the only official-transaction call and makes every
@@ -631,7 +639,9 @@ indexer URLs or the exact `https://testnet.lez.logos.co/` origin for both;
 mixed or generic remote routes fail before client construction. It gates
 startup on the official sequencer and indexer health calls, replays successful
 PREPARE results, re-executes observations and transient PREPARE failures, and
-persists submit as unknown before node I/O. Refund calls are typed unavailable.
+persists submit as unknown before node I/O. The bridge server still returns typed unavailable for both refund methods; its
+internal durable refund planner is not RPC-reachable yet, and finalized refund
+observation remains unimplemented.
 Sequencer observation remains bounded inclusion plus same-tip accounts. The
 new witnessed-claim path separately asserts indexer finality through bounded
 fully covered scans, equal by-ID/by-hash finalized blocks, exact aggregate

@@ -1108,17 +1108,41 @@ outputs, and exact witness shape. This does not yet prove Core deadline
 eligibility, actor secret custody, durable refund submission, or LEZ
 `RefundNative`; those remain the active refund slice.
 
-The next refund-wire loop is also GREEN. The existing native-refund RPC names
-and hashlock JSON shape remain unchanged, while strict untagged protocol
-envelopes now accept either `NativeEscrowTerms`/metadata or the M3
+The refund-wire loop is GREEN. The existing native-refund RPC names and
+hashlock JSON shape remain unchanged, while strict untagged protocol envelopes
+accept either `NativeEscrowTerms`/metadata or the M3
 `WitnessedNativeEscrowTerms`/metadata. No variant discriminator is added.
 Each inner type retains `deny_unknown_fields`, so mixed secret-digest and
 aggregate-authority requests or account facts fail closed. The v0.1.2 sidecar
 explicitly accepts only the hashlock variant; all of its targets still compile.
-The v0.2 sidecar compiles against both shapes using the retained pinned local
-Rapidsnark libraries, but its server refund methods remain stubs. Durable
-witnessed refund preparation, stable finalized observation, server
-registration, and actor integration are next.
+
+The following v0.2 planner RED-GREEN-REFACTOR loop is now GREEN as well. It
+builds the exact official `RefundNative` public transaction with ordered
+metadata, custody, and immutable depositor accounts, and with no nonce or
+witness. Complete role, runtime, program, destination, and witnessed-authority
+bindings are revalidated before an owner-only durable exact-byte reservation is
+created. Identical restart replay returns those bytes without a nonce RPC; a
+distinct request or any account, instruction, nonce, witness, ID, signer,
+program, or aggregate-authority mutation fails closed. The generic submission
+boundary admits only the retained reservation through a dedicated unsigned
+decoder. ADR 0038 records why preparation alone does not prove deadline
+eligibility or authorize a send. Stable finalized refund observation,
+authenticated server registration, actor one-attempt recovery, and actual-node
+both-direction execution are next.
+
+Active M3 refund critical path:
+
+- [x] derive and verify the agreement-bound canonical Bitcoin CSV refund;
+- [x] extend the refund wire without changing legacy hashlock JSON;
+- [x] durably prepare and restart-restore exact official LEZ v0.2 refund bytes;
+- [ ] prove stable finalized pre-deadline rejection, deadline eligibility, exact
+  `Refunded` metadata, zero custody, immutable depositor, and bounded absence;
+- [ ] register authenticated prepare/observe server methods and restore successful
+  requests without broadening generic submission;
+- [ ] integrate actor `Refund` effects with observe-before-submit, one `Started`
+  CAS, and observation-only ambiguous recovery;
+- [ ] execute both direction-correct timeout/refund paths against fresh isolated
+  Core and LEZ nodes, then add concurrency, restart, reorg, fee, and chaos cases.
 
 Authority was reread again on 2026-07-16: accepted replacement issue #112 is
 open/reopened with the `accepted` and `RFP-003` labels and explicitly supersedes

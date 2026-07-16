@@ -1,7 +1,8 @@
 # ADR 0032: Derive adaptor contexts from the countersigned agreement
 
-Status: Accepted for the M3 agreement-to-session SDK boundary. Public actor
-claim integration and actual-node evidence remain pending.
+Status: Accepted and GREEN from agreement-derived sessions through public-actor
+claim integration in both actual-node happy directions. Refund-session custody and
+recovery hardening remain active.
 
 ## Context
 

@@ -1,8 +1,8 @@
 # ADR 0036: Prove bounded LEZ claim absence before the first send
 
-Status: Accepted and implemented through the reference actor in pushed commit
-`66d352f`. Reproducible actual-node execution through the public actor processes
-remains pending.
+Status: Accepted and GREEN through the reference actor in both actual-node
+happy directions. Equivalent bounded finalized refund absence/presence evidence
+remains active.
 
 ## Context
 

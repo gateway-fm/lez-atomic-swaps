@@ -1,8 +1,8 @@
 # ADR 0035: Project claims only from canonical public evidence
 
-Status: Accepted and implemented for the M3 reference-actor claim-projection
-and one-attempt submission boundary in pushed commit `66d352f`. Reproducible
-actual-node execution through the public actor processes remains pending.
+Status: Accepted and GREEN for canonical claim projection and one-attempt
+submission through both repository-owned actual-node happy directions. Refund,
+process-kill, reorg, and concurrency projection remain active.
 
 ## Context
 

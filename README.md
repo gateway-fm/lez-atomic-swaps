@@ -366,6 +366,18 @@ former positional booleans and checks exact spending bytes plus the absent or
 present containing block hash. Current `Networked` still means network-enabled
 Regtest, not Testnet4 portability.
 
+The v0.2 native-refund planner now closes the next no-RPC component boundary.
+It produces the official permissionless `RefundNative` transaction with exactly
+metadata, custody, and immutable depositor accounts and with no nonce or
+witness. Strict legacy hashlock and M3 witnessed terms are supported; the
+witnessed aggregate account is recomputed even though it does not sign the
+refund. Owner-only durable reservation precedes byte exposure, identical
+restart replay performs no nonce lookup, and transaction or identity mutations
+fail closed. Five focused tests, the complete sidecar suite, strict Clippy, and
+rustdoc are GREEN. The authenticated refund RPC and finalized observer remain
+unavailable, so this is not yet deadline, submission, or actual-node refund
+evidence. ADR 0038 records the actor one-attempt and finality boundary.
+
 The older retained actual-Core run remains a one-process public deterministic
 cryptographic and consensus fixture. The operator-composed run closes live
 witnessed submission, both happy directions, and the PoC atomicity/recovery

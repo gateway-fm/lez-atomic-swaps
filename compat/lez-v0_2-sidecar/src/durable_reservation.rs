@@ -55,6 +55,7 @@ pub(crate) enum ReservationKind {
     NativeClaim,
     WitnessedClaim,
     WitnessedClaimCompletion,
+    NativeRefund,
     VaultClaim,
 }
 
@@ -66,6 +67,7 @@ impl ReservationKind {
             Self::NativeClaim => "native-claim-reservation.v1.json",
             Self::WitnessedClaim => "witnessed-claim-reservation.v1.json",
             Self::WitnessedClaimCompletion => "witnessed-claim-completion.v1.json",
+            Self::NativeRefund => "native-refund-reservation.v1.json",
             Self::VaultClaim => "vault-claim-reservation.v1.json",
         }
     }

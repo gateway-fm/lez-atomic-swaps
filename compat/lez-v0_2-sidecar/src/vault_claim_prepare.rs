@@ -180,6 +180,7 @@ impl From<NativePrepareError> for VaultClaimPrepareError {
             | NativePrepareError::ActiveWitnessedEscrowPrepare
             | NativePrepareError::ActiveClaimPrepare
             | NativePrepareError::ActiveWitnessedClaimPrepare
+            | NativePrepareError::ActiveRefundPrepare
             | NativePrepareError::ActiveWitnessedClaimCompletion => Self::ActivePrepare,
             NativePrepareError::NonceUnavailable => Self::NonceUnavailable,
             NativePrepareError::ProtocolEncoding => Self::ProtocolEncoding,

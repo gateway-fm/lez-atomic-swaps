@@ -1,8 +1,8 @@
 # ADR 0037: Finalize exact Bitcoin funding before the first effect
 
-Status: Accepted and implemented for the fixture-only provisioner in pushed
-commit `a8688a3`. The run-owned public-actor harness and retained two-direction
-actual-node evidence remain pending.
+Status: Accepted and GREEN in the run-owned public-actor harness and retained
+two-direction actual-node evidence. Refund timeout eligibility, fee stress, and
+reorg hardening remain active.
 
 ## Context
 

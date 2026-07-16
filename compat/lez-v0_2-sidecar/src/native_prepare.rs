@@ -9,10 +9,11 @@ use common::transaction::LeeTransaction;
 use lez_bridge_protocol::{
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, ExactMessageBytes,
     ExactTransactionBytes, Hex32, Participant, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
-    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolValueError,
-    RuntimeCompatibility, RuntimeDescriptor, TransactionId,
+    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
+    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
+    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
+    PreparedTransaction, PreparedWitnessedClaim, ProtocolValueError, RuntimeCompatibility,
+    RuntimeDescriptor, TransactionId,
 };
 use nssa::{
     AccountId, PrivateKey, PublicKey, PublicTransaction, Signature,
@@ -73,6 +74,9 @@ pub enum NativePrepareError {
     /// Another witnessed claim already owns the aggregate authority nonce.
     #[error("a distinct witnessed claim already owns the aggregate authority nonce reservation")]
     ActiveWitnessedClaimPrepare,
+    /// Another fixed-destination refund already owns this planner reservation.
+    #[error("a distinct native refund preparation already owns the reservation")]
+    ActiveRefundPrepare,
     /// A witnessed claim was already completed with different bytes.
     #[error("the witnessed claim reservation was already completed differently")]
     ActiveWitnessedClaimCompletion,
@@ -139,6 +143,7 @@ struct PlannerState {
     active_claim: Option<ActiveClaimPrepare>,
     active_witnessed_claim: Option<ActiveWitnessedClaimPrepare>,
     completed_witnessed_claim: Option<ActiveWitnessedClaimCompletion>,
+    active_refund: Option<ActiveRefundPrepare>,
 }
 
 #[derive(Clone)]
@@ -168,11 +173,19 @@ struct ActiveWitnessedClaimCompletion {
     result: CompleteWitnessedClaimResult,
 }
 
+#[derive(Clone)]
+struct ActiveRefundPrepare {
+    request: PrepareNativeRefundRequest,
+    result: PrepareNativeRefundResult,
+}
+
 /// One-role, one-signer official v0.2 native escrow planner.
 ///
-/// This foundation prepares and retains exact bytes in memory. It intentionally
-/// exposes no submission API: a later slice must prove durable exact-byte
-/// recovery before any transaction becomes eligible for submission.
+/// Signed operations and permissionless refunds are prepared as exact official
+/// bytes. On Linux, an owner-only durable store can reserve those bytes before
+/// exposure. The generic submission validator admits only active, revalidated
+/// preparations; chain eligibility and one-attempt authority remain actor
+/// concerns.
 pub struct NativeEscrowPlanner {
     role: Participant,
     signer_key_bytes: Zeroizing<[u8; 32]>,
@@ -441,6 +454,72 @@ impl NativeEscrowPlanner {
             return Err(error.into());
         }
         state.active_witnessed_escrow = Some(ActiveWitnessedEscrowPrepare {
+            request: request.clone(),
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
+    /// Prepares one exact permissionless fixed-destination native refund.
+    ///
+    /// The official ABI has three ordered accounts and deliberately carries no
+    /// signer nonce or witness. Exact bytes are durably installed before they
+    /// can be returned or admitted by the generic submission boundary.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role, runtime, depositor, program, witnessed-authority, canonical
+    /// encoding, durable-state, or active-reservation drift.
+    pub async fn prepare_native_refund(
+        &self,
+        request: &PrepareNativeRefundRequest,
+    ) -> Result<PrepareNativeRefundResult, NativePrepareError> {
+        self.validate_refund_request(request)?;
+        let mut state = self.state.lock().await;
+        if let Some(active) = state.active_refund.as_ref() {
+            return if active.request == *request {
+                self.validate_prepared_refund(&active.request, &active.result)?;
+                Ok(active.result.clone())
+            } else {
+                Err(NativePrepareError::ActiveRefundPrepare)
+            };
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(recovered) = self.recover_durable_refund(request)? {
+            state.active_refund = Some(ActiveRefundPrepare {
+                request: request.clone(),
+                result: recovered.clone(),
+            });
+            return Ok(recovered);
+        }
+
+        let transaction = PublicTransaction::new(
+            self.refund_message(request)?,
+            WitnessSet::from_raw_parts(Vec::new()),
+        );
+        let result = PrepareNativeRefundResult::new(
+            request.context.clone(),
+            prepared_from_transaction(&transaction)?,
+        );
+        self.validate_prepared_refund(request, &result)?;
+        #[cfg(target_os = "linux")]
+        if let Some(store) = self.durable_store.as_ref()
+            && let Err(error) = store.create(ReservationKind::NativeRefund, request, &result)
+        {
+            if error == DurableReservationError::AlreadyReserved {
+                let recovered = self
+                    .recover_durable_refund(request)?
+                    .ok_or(DurableReservationError::Filesystem)?;
+                state.active_refund = Some(ActiveRefundPrepare {
+                    request: request.clone(),
+                    result: recovered.clone(),
+                });
+                return Ok(recovered);
+            }
+            return Err(error.into());
+        }
+        state.active_refund = Some(ActiveRefundPrepare {
             request: request.clone(),
             result: result.clone(),
         });
@@ -776,8 +855,8 @@ impl NativeEscrowPlanner {
     ///
     /// # Errors
     ///
-    /// Rejects every byte sequence not owned by the active escrow or claim
-    /// reservation and revalidates official canonical bytes and signatures.
+    /// Rejects every byte sequence not owned by an active escrow, claim, or
+    /// refund reservation and revalidates official canonical bytes and signatures.
     pub async fn validate_owned_submission(
         &self,
         prepared: &PreparedTransaction,
@@ -793,6 +872,12 @@ impl NativeEscrowPlanner {
             && (&active.result.initialization == prepared || &active.result.funding == prepared)
         {
             self.validate_prepared_witnessed_escrow(&active.request, &active.result)?;
+            return Ok(());
+        }
+        if let Some(active) = state.active_refund.as_ref()
+            && &active.result.refund == prepared
+        {
+            self.validate_prepared_refund(&active.request, &active.result)?;
             return Ok(());
         }
         if let Some(active) = state.active_claim.as_ref()
@@ -876,6 +961,28 @@ impl NativeEscrowPlanner {
         self.validate_prepared_witnessed_escrow(&stored_request, &stored_result)?;
         if &stored_request != request {
             return Err(NativePrepareError::ActiveWitnessedEscrowPrepare);
+        }
+        Ok(Some(stored_result))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn recover_durable_refund(
+        &self,
+        request: &PrepareNativeRefundRequest,
+    ) -> Result<Option<PrepareNativeRefundResult>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some((stored_request, stored_result)) = store
+            .load::<PrepareNativeRefundRequest, PrepareNativeRefundResult>(
+                ReservationKind::NativeRefund,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_prepared_refund(&stored_request, &stored_result)?;
+        if &stored_request != request {
+            return Err(NativePrepareError::ActiveRefundPrepare);
         }
         Ok(Some(stored_result))
     }
@@ -1071,6 +1178,26 @@ impl NativeEscrowPlanner {
         Ok(())
     }
 
+    /// Validates one recovered exact permissionless refund.
+    ///
+    /// # Errors
+    ///
+    /// Rejects request identity, role, runtime, authority, account order,
+    /// instruction, nonce, witness, exact-byte, or transaction-ID drift.
+    pub fn validate_prepared_refund(
+        &self,
+        request: &PrepareNativeRefundRequest,
+        result: &PrepareNativeRefundResult,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_refund_request(request)?;
+        if result.context != request.context {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let expected = self.refund_message(request)?;
+        decode_unsigned_refund(&result.refund, &expected)?;
+        Ok(())
+    }
+
     /// Validates one recovered exact revealing claim against its full request.
     ///
     /// # Errors
@@ -1213,6 +1340,48 @@ impl NativeEscrowPlanner {
         Ok(())
     }
 
+    fn validate_refund_request(
+        &self,
+        request: &PrepareNativeRefundRequest,
+    ) -> Result<(), NativePrepareError> {
+        if request.context.sidecar_role != self.role || request.runtime.sidecar_role != self.role {
+            return Err(NativePrepareError::WrongRole);
+        }
+        if request.runtime != self.expected_runtime
+            || request.runtime.compatibility != RuntimeCompatibility::LeeV0_2_0
+        {
+            return Err(NativePrepareError::WrongRuntime);
+        }
+        if request.terms.depositor() != self.role {
+            return Err(NativePrepareError::WrongDepositorRole);
+        }
+        let signer = Hex32::from_bytes(self.signer_account_id.into_value());
+        if request.runtime.signer_account_id != signer
+            || request.terms.depositor_account_id() != signer
+        {
+            return Err(NativePrepareError::WrongSigner);
+        }
+        if request.runtime.escrow_program_id != program_id_to_hex(self.escrow_program_id) {
+            return Err(NativePrepareError::WrongEscrowProgram);
+        }
+        if request.terms.authenticated_transfer_program_id()
+            != program_id_to_hex(self.authenticated_transfer_program_id)
+        {
+            return Err(NativePrepareError::WrongAuthenticatedTransferProgram);
+        }
+        if let Some(terms) = request.terms.witnessed() {
+            let aggregate_key = PublicKey::try_new(*terms.aggregate_x_only_public_key().as_bytes())
+                .map_err(|_| NativePrepareError::WrongAggregateAuthority)?;
+            let authority = AccountId::from(&aggregate_key);
+            if authority == self.signer_account_id
+                || authority.into_value() != *terms.aggregate_authority_account_id().as_bytes()
+            {
+                return Err(NativePrepareError::WrongAggregateAuthority);
+            }
+        }
+        Ok(())
+    }
+
     fn validate_claim_request(
         &self,
         request: &PrepareRevealingClaimRequest,
@@ -1326,6 +1495,23 @@ impl NativeEscrowPlanner {
             return Err(NativePrepareError::WrongAggregateAuthority);
         }
         Ok(authority)
+    }
+
+    fn refund_message(
+        &self,
+        request: &PrepareNativeRefundRequest,
+    ) -> Result<Message, NativePrepareError> {
+        let swap_id = *request.terms.swap_id().as_bytes();
+        let metadata = compute_metadata_pda(&self.escrow_program_id, &swap_id);
+        let custody = compute_custody_pda(&self.escrow_program_id, &swap_id);
+        let depositor = AccountId::new(*request.terms.depositor_account_id().as_bytes());
+        Message::try_new(
+            self.escrow_program_id,
+            vec![metadata, custody, depositor],
+            Vec::new(),
+            ZecEscrowInstruction::RefundNative { swap_id },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)
     }
 
     fn witnessed_claim_message(
@@ -1509,6 +1695,33 @@ fn decode_witnessed_message(
         return Err(NativePrepareError::InvalidTransactionBytes);
     }
     Ok(message)
+}
+
+fn decode_unsigned_refund(
+    prepared: &PreparedTransaction,
+    expected_message: &Message,
+) -> Result<PublicTransaction, NativePrepareError> {
+    let transaction = PublicTransaction::from_bytes(prepared.exact_bytes.as_slice())
+        .map_err(|_| NativePrepareError::InvalidTransactionBytes)?;
+    if transaction.to_bytes() != prepared.exact_bytes.as_slice() {
+        return Err(NativePrepareError::InvalidTransactionBytes);
+    }
+    if transaction.hash() != *prepared.transaction_id.as_bytes() {
+        return Err(NativePrepareError::WrongTransactionId);
+    }
+    if transaction.message() != expected_message
+        || !transaction.message().nonces.is_empty()
+        || !transaction
+            .witness_set()
+            .signatures_and_public_keys()
+            .is_empty()
+        || LeeTransaction::Public(transaction.clone())
+            .transaction_stateless_check()
+            .is_err()
+    {
+        return Err(NativePrepareError::InvalidTransactionBytes);
+    }
+    Ok(transaction)
 }
 
 fn claim_request_sha256(
