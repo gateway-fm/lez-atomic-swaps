@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 readonly runner="scripts/run-bitcoin-core-e2e.sh"
+readonly provenance_verifier="scripts/verify-bitcoin-core-release.sh"
 
 fail() {
   echo "Bitcoin Core service-mode policy failed: $*" >&2
@@ -15,8 +16,24 @@ require_fixed() {
   rg -Fq -- "$needle" "$runner" || fail "runner is missing: ${needle}"
 }
 
+require_provenance_fixed() {
+  local needle="$1"
+  rg -Fq -- "$needle" "$provenance_verifier" ||
+    fail "provenance verifier is missing: ${needle}"
+}
+
 [[ -x "$runner" ]] || fail "runner is missing or not executable"
+[[ -x "$provenance_verifier" ]] || fail "provenance verifier is missing or not executable"
 bash -n "$runner"
+bash -n "$provenance_verifier"
+
+for term in \
+  'required_commands=(awk chmod cp curl date diff git gpg gpgconf' \
+  'cleanup_gpg_agent()' \
+  'gpgconf --homedir "$gnupg_home" --kill gpg-agent' \
+  'trap cleanup_gpg_agent EXIT'; do
+  require_provenance_fixed "$term"
+done
 
 invalid_run_id="service-mode-invalid-$$"
 if invalid_output="$(

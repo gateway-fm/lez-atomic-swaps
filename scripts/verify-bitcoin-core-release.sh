@@ -6,6 +6,25 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export LC_ALL=C
 umask 077
 
+gnupg_home=""
+cleanup_gpg_agent() {
+  local status=$?
+  trap - EXIT
+  if [[ -n "$gnupg_home" ]]; then
+    if [[ ! -d "$gnupg_home" || -L "$gnupg_home" ]]; then
+      echo "Bitcoin Core verification keyring changed before GPG-agent cleanup" >&2
+      status=1
+    elif ! gpgconf --homedir "$gnupg_home" --kill gpg-agent >/dev/null 2>&1; then
+      echo "Bitcoin Core verification GPG-agent cleanup failed" >&2
+      status=1
+    fi
+  fi
+  exit "$status"
+}
+trap cleanup_gpg_agent EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 provenance_file="${BITCOIN_CORE_PROVENANCE_FILE:-tests/e2e/bitcoin-core/provenance.env}"
 if [[ ! -f "$provenance_file" || -L "$provenance_file" ]]; then
   echo "missing regular Bitcoin Core provenance contract: ${provenance_file}" >&2
@@ -57,7 +76,7 @@ if [[ -e "$BITCOIN_CORE_PROVENANCE_EVIDENCE" ]]; then
   exit 1
 fi
 
-required_commands=(awk chmod cp curl date diff git gpg jq mkdir mv rg sha256sum sort stat tar tr)
+required_commands=(awk chmod cp curl date diff git gpg gpgconf jq mkdir mv rg sha256sum sort stat tar tr)
 for command_name in "${required_commands[@]}"; do
   command -v "$command_name" >/dev/null || {
     echo "missing Bitcoin Core provenance tool: ${command_name}" >&2
