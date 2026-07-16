@@ -10,6 +10,7 @@ members = [
     "crates/lez-bridge-protocol",
     "crates/maker-node",
     "crates/swap-core",
+    "crates/swap-sdk-core",
     "crates/swap-store",
     "crates/zebra-node-adapter",
     "crates/zec-reference-actor",
