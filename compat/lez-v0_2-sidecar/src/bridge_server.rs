@@ -23,9 +23,10 @@ use lez_bridge_protocol::{
     ObserveFinalizedWitnessedFundingRequest, ObserveNativeRefundRequest,
     ObserveRevealingClaimRequest, ObserveWitnessedEscrowRequest, Participant,
     PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
-    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
-    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
-    ProtocolErrorReply, RUN_ID_HEADER, RunId, SIDECAR_ROLE_HEADER, SubmitTransactionRequest,
+    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
+    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
+    PrepareWitnessedEscrowResult, ProtocolErrorReply, RUN_ID_HEADER, RunId, SIDECAR_ROLE_HEADER,
+    SubmitTransactionRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -237,6 +238,7 @@ type RestoredRequests = (
     Option<(PrepareRevealingClaimRequest, PrepareRevealingClaimResult)>,
     Option<(PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult)>,
     Option<(CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult)>,
+    Option<(PrepareNativeRefundRequest, PrepareNativeRefundResult)>,
 );
 
 impl DurableStore {
@@ -291,6 +293,7 @@ impl DurableStore {
                                 | METHOD_PREPARE_REVEALING_CLAIM
                                 | METHOD_PREPARE_WITNESSED_CLAIM
                                 | METHOD_COMPLETE_WITNESSED_CLAIM
+                                | METHOD_PREPARE_NATIVE_REFUND
                         )
                     })
             })
@@ -426,6 +429,7 @@ impl DurableStore {
         let mut claim = None;
         let mut witnessed = None;
         let mut completed_witnessed = None;
+        let mut refund = None;
         for entry in self.persisted.entries.values() {
             let PersistedOutcome::Success(value) = &entry.outcome else {
                 continue;
@@ -480,11 +484,20 @@ impl DurableStore {
                             .map_err(|_| BridgeServerError::InvalidDurableState)?,
                     ));
                 }
+                METHOD_PREPARE_NATIVE_REFUND if refund.is_none() => {
+                    refund = Some((
+                        serde_json::from_value(request)
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                        serde_json::from_value(value.clone())
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                    ));
+                }
                 METHOD_PREPARE_NATIVE_ESCROW
                 | METHOD_PREPARE_WITNESSED_ESCROW
                 | METHOD_PREPARE_REVEALING_CLAIM
                 | METHOD_PREPARE_WITNESSED_CLAIM
-                | METHOD_COMPLETE_WITNESSED_CLAIM => {
+                | METHOD_COMPLETE_WITNESSED_CLAIM
+                | METHOD_PREPARE_NATIVE_REFUND => {
                     return Err(BridgeServerError::InvalidDurableState);
                 }
                 _ => {}
@@ -496,6 +509,7 @@ impl DurableStore {
             claim,
             witnessed,
             completed_witnessed,
+            refund,
         ))
     }
 }
@@ -645,6 +659,7 @@ async fn restore_runtime_requests(
         restored_claim,
         restored_witnessed,
         restored_completion,
+        restored_refund,
     ) = restored;
     if let Some((request, expected)) = restored_prepare {
         let observed = runtime
@@ -685,6 +700,15 @@ async fn restore_runtime_requests(
     if let Some((request, expected)) = restored_completion {
         let observed = runtime
             .complete_witnessed_claim(&request)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+        if observed != expected {
+            return Err(BridgeServerError::InvalidDurableState);
+        }
+    }
+    if let Some((request, expected)) = restored_refund {
+        let observed = runtime
+            .prepare_native_refund(&request)
             .await
             .map_err(|_| BridgeServerError::InvalidDurableState)?;
         if observed != expected {
@@ -995,15 +1019,19 @@ fn register_refund_stubs(
         |params, state, _| async move {
             let request: PrepareNativeRefundRequest = params.one()?;
             state.validate_runtime(&request.context, &request.runtime)?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
             state
                 .execute(
                     METHOD_PREPARE_NATIVE_REFUND,
                     &request.context,
                     &request,
-                    || async {
-                        Err(OperationFailure::from(
-                            BridgeRuntimeError::RefundUnavailable,
-                        ))
+                    || async move {
+                        runtime
+                            .prepare_native_refund(&operation)
+                            .await
+                            .map_err(Into::into)
+                            .and_then(to_value)
                     },
                 )
                 .await
@@ -1105,9 +1133,11 @@ impl ServerState {
         let prepare = matches!(
             method,
             METHOD_PREPARE_NATIVE_ESCROW
+                | METHOD_PREPARE_WITNESSED_ESCROW
                 | METHOD_PREPARE_REVEALING_CLAIM
                 | METHOD_PREPARE_WITNESSED_CLAIM
                 | METHOD_COMPLETE_WITNESSED_CLAIM
+                | METHOD_PREPARE_NATIVE_REFUND
         );
         let repeatable = method != METHOD_SUBMIT_TRANSACTION
             && (!prepare || matches!(&outcome, PersistedOutcome::Error(_)));
@@ -1170,9 +1200,11 @@ fn encode_request<Request: Serialize>(
     let replay_request = matches!(
         method,
         METHOD_PREPARE_NATIVE_ESCROW
+            | METHOD_PREPARE_WITNESSED_ESCROW
             | METHOD_PREPARE_REVEALING_CLAIM
             | METHOD_PREPARE_WITNESSED_CLAIM
             | METHOD_COMPLETE_WITNESSED_CLAIM
+            | METHOD_PREPARE_NATIVE_REFUND
     )
     .then_some(request_value);
     Ok((request_sha256, replay_request))

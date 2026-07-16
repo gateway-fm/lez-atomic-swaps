@@ -204,6 +204,21 @@ impl BridgeRuntime {
             .map_err(Into::into)
     }
 
+    /// Prepares one exact permissionless native refund without submitting it.
+    ///
+    /// # Errors
+    ///
+    /// Preserves every exact planner validation and durable-reservation error.
+    pub async fn prepare_native_refund(
+        &self,
+        request: &lez_bridge_protocol::PrepareNativeRefundRequest,
+    ) -> Result<lez_bridge_protocol::PrepareNativeRefundResult, BridgeRuntimeError> {
+        self.planner
+            .prepare_native_refund(request)
+            .await
+            .map_err(Into::into)
+    }
+
     /// Reserves one exact unsigned witnessed-claim message.
     ///
     /// # Errors

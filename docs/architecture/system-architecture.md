@@ -639,9 +639,10 @@ indexer URLs or the exact `https://testnet.lez.logos.co/` origin for both;
 mixed or generic remote routes fail before client construction. It gates
 startup on the official sequencer and indexer health calls, replays successful
 PREPARE results, re-executes observations and transient PREPARE failures, and
-persists submit as unknown before node I/O. The bridge server still returns typed unavailable for both refund methods; its
-internal durable refund planner is not RPC-reachable yet, and finalized refund
-observation remains unimplemented.
+persists submit as unknown before node I/O. The authenticated bridge
+prepare-refund method now reaches the internal durable planner, stores the successful canonical request/result, and reconstructs and
+compares it before a restarted server binds. The observe-refund method still
+returns typed unavailable; finalized refund observation remains unimplemented.
 Sequencer observation remains bounded inclusion plus same-tip accounts. The
 new witnessed-claim path separately asserts indexer finality through bounded
 fully covered scans, equal by-ID/by-hash finalized blocks, exact aggregate

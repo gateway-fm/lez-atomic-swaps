@@ -1,6 +1,6 @@
 # ADR 0038: Durably prepare the permissionless LEZ refund before actor eligibility
 
-Status: Accepted at the planner boundary; finalized observation, server registration, actor recovery, and actual-node evidence remain active -- 2026-07-16
+Status: Accepted through authenticated prepare/restart replay; finalized observation, actor recovery, and actual-node evidence remain active -- 2026-07-16
 
 ```mermaid
 flowchart LR
@@ -8,7 +8,8 @@ flowchart LR
     Validate --> Build["Official RefundNative message<br/>metadata, custody, depositor"]
     Build --> Unsigned["Zero nonces<br/>zero witnesses"]
     Unsigned --> Reserve["Owner-only durable<br/>exact-byte reservation"]
-    Reserve --> Admit["Submission boundary admits<br/>only the retained bytes"]
+    Reserve --> BridgeCache["Authenticated role/run bridge<br/>durable request/result replay"]
+    BridgeCache --> Admit["Submission boundary admits<br/>only the retained bytes"]
     FinalizedClock["Stable finalized LEZ clock<br/>and historical escrow state"] --> Eligible{"Deadline reached<br/>and still Funded?"}
     Eligible -->|"no"| NoEffect["No public effect"]
     Eligible -->|"yes"| Journal["Actor one-attempt<br/>public-effect journal"]
@@ -55,6 +56,14 @@ injected nonce or witness, signer substitution, program substitution, or
 aggregate-authority substitution fails closed. The generic submission boundary
 accepts only the exact active reservation and uses a dedicated unsigned decoder.
 
+The capability-authenticated, run/role/runtime-bound loopback bridge now exposes
+that preparation. It durably records the canonical request and successful
+result, restores the planner and compares the reconstructed result before
+binding a restarted server, and replays an identical request ID without calling
+the nonce source. Observations remain repeatable and are not cached as chain
+truth. The refund observation method remains unavailable until the finalized
+observer below is complete.
+
 Preparation is not deadline evidence and grants no send authority. The actor
 must first obtain stable finalized chain facts proving the escrow remains
 `Funded` and the containing-chain clock is at or beyond the signed deadline.
@@ -78,9 +87,10 @@ one-attempt public-effect authority, and observe-before-project recovery.
 - A public transaction response cannot project state without matching finalized
   chain evidence.
 
-This decision does not yet claim server reachability, finalized refund
-observation, deadline enforcement, actor integration, or actual-node refund
-execution. Those are the next M3 gates.
+This decision now claims authenticated prepare reachability and exact restart
+replay. It does not yet claim finalized refund observation, deadline
+enforcement, actor integration, or actual-node refund execution. Those are the
+next M3 gates.
 
 ## Evidence
 
@@ -88,5 +98,7 @@ execution. Those are the next M3 gates.
 official ABI, zero nonce/witness behavior, strict hashlock compatibility,
 witnessed authority binding, transaction and identity mutations, byte-identical
 restart recovery, distinct-request exclusion, owned-submission admission, and
-zero nonce-source calls. The focused tests and the complete v0.2 sidecar suite
-run without an RPC, faucet, chain node, or network dependency.
+zero nonce-source calls. `bridge_native_refund.rs` additionally proves one
+authenticated loopback preparation and byte-identical replay after both the
+server and planner restart. Its sequencer is an ephemeral loopback health stub;
+no faucet, chain node, Docker service, or public network dependency is used.

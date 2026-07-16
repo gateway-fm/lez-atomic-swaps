@@ -373,10 +373,13 @@ witness. Strict legacy hashlock and M3 witnessed terms are supported; the
 witnessed aggregate account is recomputed even though it does not sign the
 refund. Owner-only durable reservation precedes byte exposure, identical
 restart replay performs no nonce lookup, and transaction or identity mutations
-fail closed. Five focused tests, the complete sidecar suite, strict Clippy, and
-rustdoc are GREEN. The authenticated refund RPC and finalized observer remain
-unavailable, so this is not yet deadline, submission, or actual-node refund
-evidence. ADR 0038 records the actor one-attempt and finality boundary.
+fail closed. Five planner tests plus an authenticated bridge/restart test are
+GREEN. The
+prepare RPC now persists its canonical request and result, restores the planner
+before server bind, and returns byte-identical results after a full restart
+without a nonce lookup. The finalized observer remains unavailable, so this is
+not yet deadline, submission, or actual-node refund evidence. ADR 0038 records
+the actor one-attempt and finality boundary.
 
 The older retained actual-Core run remains a one-process public deterministic
 cryptographic and consensus fixture. The operator-composed run closes live
