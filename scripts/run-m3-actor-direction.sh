@@ -568,7 +568,7 @@ prepare_stage_two_spec() {
     --argjson amount "$amount" --argjson refund "$refund_at_ms" --arg claim_hash "$claim_hash" \
     --argjson anchor "$anchor" --argjson refund_height "$((anchor + 144))" \
     --argjson earlier "$earlier" --argjson later "$later" \
-    --slurpfile authority "$authority_mapping" '
+    --argjson maker_cutoff "$now" --slurpfile authority "$authority_mapping" '
     {schema_version:1,stage1_public_sha256:$stage1,swap_id:$swap,direction:$direction,
      bitcoin:{genesis_block_hash:$genesis,required_confirmations:1,
        funding_signed_transaction:$funding_hex,funding_signed_transaction_sha256:$funding_sha,
@@ -583,7 +583,7 @@ prepare_stage_two_spec() {
        claimant_account:$claimant_account,amount:$amount,refund_at_ms:$refund,
        prepared_claim_message_hash:$claim_hash},
      recovery:{refund_csv_blocks:144,planned_bitcoin_funding_anchor_height:$anchor,
-       bitcoin_refund_height:$refund_height,maker_second_lock_cutoff_unix_seconds:$now,
+       bitcoin_refund_height:$refund_height,maker_second_lock_cutoff_unix_seconds:$maker_cutoff,
        earlier_refund_latest_unix_seconds:$earlier,
        later_refund_earliest_unix_seconds:$later,required_margin_seconds:600}}' >"$output"
   chmod 0600 "$output"

@@ -98,6 +98,17 @@ require_fixed() {
 bash -n "$runner"
 [[ -x "$direction_driver" ]] || fail "direction boundary is missing or not executable"
 bash -n "$direction_driver"
+stage_two_spec_source="$(sed -n '/^prepare_stage_two_spec() {$/,/^}$/p' "$direction_driver")"
+[[ -n "$stage_two_spec_source" ]] || fail "direction boundary lacks stage-two agreement construction"
+rg -Fq -- '--argjson maker_cutoff "$now"' <<<"$stage_two_spec_source" ||
+  fail "stage-two agreement does not bind the current cutoff into jq"
+rg -Fq 'maker_second_lock_cutoff_unix_seconds:$maker_cutoff' \
+  <<<"$stage_two_spec_source" ||
+  fail "stage-two agreement does not use the bound maker cutoff"
+if rg -Fq 'maker_second_lock_cutoff_unix_seconds:$now' \
+    <<<"$stage_two_spec_source"; then
+  fail "stage-two agreement references an unbound jq cutoff variable"
+fi
 
 readonly lez_stack_driver="scripts/run-lez-v02-stack.sh"
 [[ -x "$lez_stack_driver" ]] || fail "LEZ v0.2 stack runner is missing or not executable"

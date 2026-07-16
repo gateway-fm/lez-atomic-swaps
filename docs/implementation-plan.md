@@ -1147,6 +1147,14 @@ projection, signed cutoff agreement, finalized LEZ `Found`/`Absent`
 classifier, and refund-side live gate are GREEN. Actual absent-maker execution
 is the active recovery slice.
 
+Actual-node attempt `m3firstlock-20260716b` reached checked LEZ deployment,
+both finalized Vault Claims, and direction planning, then failed before any lock
+broadcast because the stage-two jq program referenced an unbound cutoff
+variable. Its exact cleanup attestation is GREEN. A focused contract guard
+reproduced the RED and now requires the shell value to be explicitly bound as
+`maker_cutoff` before the JSON agreement uses it. This failed run is diagnostic
+evidence, not M3 acceptance evidence; the certifying rerun uses a fresh ID.
+
 The refund-wire loop is GREEN. The existing native-refund RPC names and
 hashlock JSON shape remain unchanged, while strict untagged protocol envelopes
 accept either `NativeEscrowTerms`/metadata or the M3
