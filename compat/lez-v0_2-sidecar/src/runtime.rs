@@ -3,7 +3,7 @@ use std::{fmt, net::IpAddr, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use common::{HashType, block::Block, transaction::LeeTransaction};
 use lez_bridge_protocol::{
-    Hex32, Participant, PreparedTransaction, RuntimeCompatibility, RuntimeDescriptor,
+    ChainClock, Hex32, Participant, PreparedTransaction, RuntimeCompatibility, RuntimeDescriptor,
 };
 use nssa::{Account, AccountId, PublicTransaction};
 use sequencer_service_rpc::{RpcClient as _, SequencerClient, SequencerClientBuilder};
@@ -193,6 +193,33 @@ pub struct OfficialNativeEscrowFacts {
     custody_account: Account,
     depositor_account: Account,
     claimant_account: Account,
+}
+
+/// Stable live identity and consensus-clock facts from the official node.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct OfficialCurrentClockFacts {
+    channel_id: [u8; 32],
+    genesis_block_hash: [u8; 32],
+    clock: ChainClock,
+}
+
+impl OfficialCurrentClockFacts {
+    /// Returns the live official channel identity.
+    #[must_use]
+    pub(crate) const fn channel_id(&self) -> [u8; 32] {
+        self.channel_id
+    }
+
+    /// Returns the live official genesis block hash.
+    #[must_use]
+    pub(crate) const fn genesis_block_hash(&self) -> [u8; 32] {
+        self.genesis_block_hash
+    }
+
+    /// Returns the current clock whose block was stable across the RPC bracket.
+    pub(crate) const fn clock(&self) -> ChainClock {
+        self.clock
+    }
 }
 
 impl OfficialNativeEscrowFacts {
@@ -417,6 +444,87 @@ impl OfficialNodeRpc {
             owner_account,
             vault_account,
             sequencer_tip: tip_after,
+        })
+    }
+
+    /// Reads one stable current consensus clock from the official sequencer.
+    ///
+    /// The current block is read twice between three height reads. This rejects
+    /// both ordinary height movement and same-height block replacement instead
+    /// of presenting either race as an authoritative clock.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed when health, runtime identity, genesis, or current block is
+    /// unavailable, or when height/block identity changes across the bracket.
+    pub(crate) async fn stable_current_clock(
+        &self,
+    ) -> Result<OfficialCurrentClockFacts, RuntimeBoundaryError> {
+        self.client
+            .check_health()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let channel = self
+            .client
+            .get_channel_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let genesis = self
+            .client
+            .get_block(nssa::GENESIS_BLOCK_ID)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?
+            .ok_or(RuntimeBoundaryError::NodeUnavailable)?;
+        if genesis.header.block_id != nssa::GENESIS_BLOCK_ID {
+            return Err(RuntimeBoundaryError::NodeUnavailable);
+        }
+
+        let height_before = self
+            .client
+            .get_last_block_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let block_before = self
+            .client
+            .get_block(height_before)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?
+            .ok_or(RuntimeBoundaryError::NodeUnavailable)?;
+        let height_middle = self
+            .client
+            .get_last_block_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        if height_before != height_middle || block_before.header.block_id != height_before {
+            return Err(RuntimeBoundaryError::InconsistentSnapshot);
+        }
+        let block_after = self
+            .client
+            .get_block(height_middle)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?
+            .ok_or(RuntimeBoundaryError::NodeUnavailable)?;
+        let height_after = self
+            .client
+            .get_last_block_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        if height_middle != height_after
+            || block_after.header.block_id != height_middle
+            || block_before.header.hash != block_after.header.hash
+            || block_before.header.prev_block_hash != block_after.header.prev_block_hash
+            || block_before.header.timestamp != block_after.header.timestamp
+        {
+            return Err(RuntimeBoundaryError::InconsistentSnapshot);
+        }
+        Ok(OfficialCurrentClockFacts {
+            channel_id: channel.0,
+            genesis_block_hash: genesis.header.hash.0,
+            clock: ChainClock::new(
+                Hex32::from_bytes(block_after.header.hash.0),
+                height_after,
+                block_after.header.timestamp,
+            ),
         })
     }
 

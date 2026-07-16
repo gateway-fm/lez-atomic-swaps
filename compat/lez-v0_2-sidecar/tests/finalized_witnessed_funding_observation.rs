@@ -715,6 +715,72 @@ async fn current_lookup_transport_failure_is_an_error_not_initialization_absence
 }
 
 #[tokio::test]
+async fn finalized_miss_rejects_changed_owned_initialization_bytes_before_live_read() {
+    let mut fixture = initialization_fixture();
+    fixture.blocks[0].body.transactions.clear();
+    let indexer =
+        initialization_indexer(&fixture, [Some(FINALIZED_TIP_ID), Some(FINALIZED_TIP_ID)]);
+    let node_reads = Arc::new(AtomicUsize::new(0));
+    let sequencer = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();
+    let sequencer_address = sequencer.local_addr().unwrap();
+    let mut sequencer_rpc = RpcModule::new(Arc::clone(&node_reads));
+    sequencer_rpc
+        .register_method("getLastBlockId", |_, reads, _| {
+            reads.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, ErrorObjectOwned>(FINALIZED_TIP_ID)
+        })
+        .unwrap();
+    let sequencer_handle = sequencer.start(sequencer_rpc);
+    let planner = Arc::new(
+        NativeEscrowPlanner::new(
+            Participant::Maker,
+            PrivateKey::try_new([6; 32]).unwrap(),
+            program_id_from_hex(fixture.runtime.escrow_program_id),
+            program_id_from_hex(fixture.request.terms.authenticated_transfer_program_id()),
+            fixture.runtime.clone(),
+            Arc::new(InitializationNonce),
+        )
+        .unwrap(),
+    );
+    let prepared = planner
+        .prepare_witnessed_escrow(&PrepareWitnessedEscrowRequest::new(
+            MessageContext::new(
+                fixture.request.context.run_id.clone(),
+                RequestId::new("finalized-initialization-prepare-0002").unwrap(),
+                Participant::Maker,
+            ),
+            fixture.runtime.clone(),
+            fixture.request.terms.clone(),
+        ))
+        .await
+        .unwrap();
+    fixture.request.initialization = prepared.initialization;
+    fixture.request.funding_transaction_id = prepared.funding.transaction_id;
+    fixture.request.initialization.exact_bytes = ExactTransactionBytes::new(vec![1, 2, 3]).unwrap();
+    let runtime = BridgeRuntime::new(
+        fixture.runtime.clone(),
+        planner,
+        Arc::new(
+            OfficialNodeRpc::connect(&format!("http://{sequencer_address}"))
+                .expect("isolated official-node loopback endpoint"),
+        ),
+        indexer,
+    );
+
+    assert_eq!(
+        runtime
+            .classify_finalized_witnessed_initialization(&fixture.request)
+            .await
+            .unwrap_err(),
+        BridgeRuntimeError::InvalidObservation
+    );
+    assert_eq!(node_reads.load(Ordering::SeqCst), 0);
+
+    sequencer_handle.stop().unwrap();
+    sequencer_handle.stopped().await;
+}
+
+#[tokio::test]
 async fn authenticated_initialization_classifier_is_repeatable_and_never_submits() {
     let fixture = initialization_fixture();
     let run_id = fixture.request.context.run_id.clone();

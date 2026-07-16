@@ -16,15 +16,15 @@ use lez_bridge_protocol::{
     ErrorMessage, MAX_RPC_BODY_BYTES, METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION, METHOD_COMPLETE_WITNESSED_CLAIM,
-    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
-    METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING, METHOD_OBSERVE_NATIVE_REFUND,
-    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW,
-    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
-    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, MessageContext,
-    ObserveEscrowRequest, ObserveFinalizedWitnessedClaimRequest,
-    ObserveFinalizedWitnessedFundingRequest, ObserveNativeRefundRequest,
-    ObserveRevealingClaimRequest, ObserveWitnessedEscrowRequest, Participant,
-    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_CURRENT_CLOCK, METHOD_OBSERVE_ESCROW,
+    METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
+    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
+    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
+    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
+    MessageContext, ObserveCurrentClockRequest, ObserveEscrowRequest,
+    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedFundingRequest,
+    ObserveNativeRefundRequest, ObserveRevealingClaimRequest, ObserveWitnessedEscrowRequest,
+    Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
     PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
     PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
     PrepareWitnessedEscrowResult, ProtocolErrorReply, RUN_ID_HEADER, RunId, SIDECAR_ROLE_HEADER,
@@ -741,6 +741,29 @@ fn register_methods(
             .await
     })?;
     module.register_async_method(
+        METHOD_OBSERVE_CURRENT_CLOCK,
+        |params, state, _| async move {
+            let request: ObserveCurrentClockRequest = params.one()?;
+            state.validate_runtime(&request.context, &request.runtime)?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_OBSERVE_CURRENT_CLOCK,
+                    &request.context,
+                    &request,
+                    || async move {
+                        runtime
+                            .observe_current_clock(&operation)
+                            .await
+                            .map_err(Into::into)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
+    module.register_async_method(
         METHOD_PREPARE_NATIVE_ESCROW,
         |params, state, _| async move {
             let request: PrepareNativeEscrowRequest = params.one()?;
@@ -1282,6 +1305,7 @@ fn valid_method(method: &str) -> bool {
     matches!(
         method,
         METHOD_DESCRIBE_RUNTIME
+            | METHOD_OBSERVE_CURRENT_CLOCK
             | METHOD_PREPARE_NATIVE_ESCROW
             | METHOD_PREPARE_WITNESSED_ESCROW
             | METHOD_OBSERVE_ESCROW

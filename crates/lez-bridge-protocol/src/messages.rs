@@ -96,6 +96,52 @@ impl DescribeRuntimeResult {
     }
 }
 
+/// Requests one stable current canonical LEZ clock from the official node.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ObserveCurrentClockRequest {
+    /// Version, run, request, and dedicated sidecar-role binding.
+    pub context: MessageContext,
+    /// Complete expected pinned runtime identity.
+    pub runtime: RuntimeDescriptor,
+}
+
+impl ObserveCurrentClockRequest {
+    /// Creates one authenticated current-clock observation request.
+    pub const fn new(context: MessageContext, runtime: RuntimeDescriptor) -> Self {
+        Self { context, runtime }
+    }
+}
+
+/// One stable current canonical LEZ clock from the official node.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ObserveCurrentClockResult {
+    /// Exact echoed request context.
+    pub context: MessageContext,
+    /// Exact echoed runtime identity used for the official-node read.
+    pub runtime: RuntimeDescriptor,
+    /// Stable current block identity, height, and consensus timestamp.
+    pub clock: ChainClock,
+}
+
+impl ObserveCurrentClockResult {
+    /// Creates one stable current-clock result.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        clock: ChainClock,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            clock,
+        }
+    }
+}
+
 /// Exact official-decoder ID and inner `PublicTransaction::to_bytes()` output.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]

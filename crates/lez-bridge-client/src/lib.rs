@@ -24,27 +24,29 @@ use lez_bridge_protocol::{
     FinalizedWitnessedClaimObservationTarget, FinalizedWitnessedClaimScanOutcome,
     FinalizedWitnessedFundingObservationTarget, FinalizedWitnessedFundingScanOutcome,
     FinalizedWitnessedInitializationFacts, FinalizedWitnessedInitializationScanOutcome,
-    MessageContext, ObserveEscrowRequest, ObserveEscrowResult,
-    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
-    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
-    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
-    ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
-    Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
-    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
-    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
-    RequestId, RunId, RuntimeDescriptor, SubmitTransactionRequest, SubmitTransactionResult,
+    MessageContext, ObserveCurrentClockRequest, ObserveCurrentClockResult, ObserveEscrowRequest,
+    ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
+    ObserveFinalizedWitnessedFundingResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
+    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
+    ObserveWitnessedEscrowResult, Participant, PrepareNativeEscrowRequest,
+    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
+    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
+    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
+    PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RunId,
+    RuntimeDescriptor, SubmitTransactionRequest, SubmitTransactionResult,
     WitnessedEscrowMetadataFacts, WitnessedNativeEscrowTerms,
 };
 pub use lez_bridge_protocol::{
     MAX_RPC_BODY_BYTES, METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION, METHOD_COMPLETE_WITNESSED_CLAIM,
-    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
-    METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING, METHOD_OBSERVE_NATIVE_REFUND,
-    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW,
-    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
-    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_CURRENT_CLOCK, METHOD_OBSERVE_ESCROW,
+    METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
+    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
+    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
+    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
+    RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
 };
 use secp256k1::{
     Message as SecpMessage, Secp256k1, XOnlyPublicKey, schnorr::Signature as SchnorrSignature,
@@ -167,6 +169,8 @@ impl fmt::Debug for BridgeClientConfig {
 pub enum BridgeOperation {
     /// Runtime identity description.
     DescribeRuntime,
+    /// Stable current canonical clock observation.
+    ObserveCurrentClock,
     /// Randomized native initialization and funding preparation.
     PrepareNativeEscrow,
     /// Aggregate-witness initialization and funding preparation.
@@ -569,6 +573,34 @@ impl BridgeClient {
         Self::validate_response_context(operation, &context, &result.context)?;
         if result.runtime != self.expected_runtime {
             return Err(BridgeClientError::RuntimeMismatch);
+        }
+        Ok(result)
+    }
+
+    /// Reads one stable current canonical clock from the official LEZ node.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime drift, request-ID reuse, a zero block
+    /// identity or consensus timestamp, timeout, transport uncertainty, strict decoding,
+    /// or typed remote error.
+    pub async fn observe_current_clock(
+        &self,
+        request: ObserveCurrentClockRequest,
+    ) -> Result<ObserveCurrentClockResult, BridgeClientError> {
+        let operation = BridgeOperation::ObserveCurrentClock;
+        let context = request.context.clone();
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        self.reserve_context(operation, &context)?;
+        let result: ObserveCurrentClockResult = self
+            .request(operation, METHOD_OBSERVE_CURRENT_CLOCK, request, &context)
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        if result.runtime != self.expected_runtime
+            || result.clock.block_hash.as_bytes() == &[0; 32]
+            || result.clock.timestamp_ms == 0
+        {
+            return Err(BridgeClientError::MalformedObservation { operation });
         }
         Ok(result)
     }

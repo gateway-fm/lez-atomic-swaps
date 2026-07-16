@@ -10,16 +10,17 @@ use lez_bridge_protocol::{
     EscrowState, FinalizedWitnessedInitializationScanOutcome, FundingFoundFacts,
     FundingObservation, Hex32, InitializationFoundFacts, InitializationObservation,
     MAX_DISCOVERY_BLOCKS, NativeClaimInstructionFacts, NativeCustodyFacts,
-    NativeFundInstructionFacts, NativeInitializeInstructionFacts, ObserveEscrowRequest,
-    ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
-    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
-    ObserveFinalizedWitnessedFundingResult, ObserveRevealingClaimRequest,
-    ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
-    ObservedTransactionFacts, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
-    PreparedTransaction, RevealingClaimFoundFacts, RevealingClaimObservation,
-    RevealingClaimObservationTarget, RevealingPreimage, RuntimeDescriptor, SubmissionOutcome,
-    SubmitTransactionRequest, SubmitTransactionResult, TransactionId, WitnessedEscrowMetadataFacts,
-    WitnessedFundingFoundFacts, WitnessedFundingObservation, WitnessedInitializationFoundFacts,
+    NativeFundInstructionFacts, NativeInitializeInstructionFacts, ObserveCurrentClockRequest,
+    ObserveCurrentClockResult, ObserveEscrowRequest, ObserveEscrowResult,
+    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
+    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
+    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
+    ObserveWitnessedEscrowResult, ObservedTransactionFacts, PrepareWitnessedClaimRequest,
+    PrepareWitnessedClaimResult, PreparedTransaction, RevealingClaimFoundFacts,
+    RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage,
+    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
+    TransactionId, WitnessedEscrowMetadataFacts, WitnessedFundingFoundFacts,
+    WitnessedFundingObservation, WitnessedInitializationFoundFacts,
     WitnessedInitializationObservation, WitnessedNativeInitializeInstructionFacts,
 };
 use lez_zec_escrow_v02::{ClaimAuthority, EscrowMetadata, EscrowStatus};
@@ -170,6 +171,38 @@ impl BridgeRuntime {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
         Ok(())
+    }
+
+    /// Observes one stable current consensus clock from the official node.
+    ///
+    /// This is deliberately independent of the finalized indexer clock.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role/runtime identity drift, moving tips, zero block identities or timestamps, and
+    /// unavailable or contradictory official-node facts.
+    pub async fn observe_current_clock(
+        &self,
+        request: &ObserveCurrentClockRequest,
+    ) -> Result<ObserveCurrentClockResult, BridgeRuntimeError> {
+        if request.runtime != self.runtime
+            || request.context.sidecar_role != self.runtime.sidecar_role
+        {
+            return Err(BridgeRuntimeError::Planner);
+        }
+        let facts = self.node.stable_current_clock().await?;
+        if facts.channel_id() != *self.runtime.channel_id.as_bytes()
+            || facts.genesis_block_hash() != *self.runtime.genesis_block_hash.as_bytes()
+            || facts.clock().block_hash.as_bytes() == &[0; 32]
+            || facts.clock().timestamp_ms == 0
+        {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+        Ok(ObserveCurrentClockResult::new(
+            request.context.clone(),
+            self.runtime.clone(),
+            facts.clock(),
+        ))
     }
 
     /// Prepares one exact native initialization/funding pair.
@@ -340,17 +373,29 @@ impl BridgeRuntime {
         ) {
             return Ok(finalized);
         }
-        let current = self
-            .observe_witnessed_escrow(&ObserveWitnessedEscrowRequest::new(
-                request.context.clone(),
-                request.runtime.clone(),
-                request.terms.clone(),
-                EscrowObservationTarget::Exact {
-                    initialization_transaction_id: request.initialization.transaction_id,
-                    funding_transaction_id: request.funding_transaction_id,
-                },
-            ))
+        let current_request = ObserveWitnessedEscrowRequest::new(
+            request.context.clone(),
+            request.runtime.clone(),
+            request.terms.clone(),
+            EscrowObservationTarget::Exact {
+                initialization_transaction_id: request.initialization.transaction_id,
+                funding_transaction_id: request.funding_transaction_id,
+            },
+        );
+        let owned = self
+            .planner
+            .owned_witnessed_pair(
+                &current_request,
+                request.initialization.transaction_id,
+                request.funding_transaction_id,
+            )
             .await?;
+        if owned.initialization != request.initialization
+            || owned.funding.transaction_id != request.funding_transaction_id
+        {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+        let current = self.observe_witnessed_escrow(&current_request).await?;
         Ok(match current.initialization {
             WitnessedInitializationObservation::Absent => {
                 ClassifyFinalizedWitnessedInitializationResult::absent(

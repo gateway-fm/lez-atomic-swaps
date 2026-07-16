@@ -10,6 +10,8 @@ mod primitives;
 
 /// Stable JSON-RPC method for runtime and signer identity discovery.
 pub const METHOD_DESCRIBE_RUNTIME: &str = "lez_bridge.v1.describe_runtime";
+/// Stable JSON-RPC method for one stable current canonical chain clock.
+pub const METHOD_OBSERVE_CURRENT_CLOCK: &str = "lez_bridge.v1.observe_current_clock";
 /// Stable JSON-RPC method for preparing native initialization and funding.
 pub const METHOD_PREPARE_NATIVE_ESCROW: &str = "lez_bridge.v1.prepare_native_escrow";
 /// Stable JSON-RPC method for preparing aggregate-witness initialization and funding.
@@ -76,7 +78,8 @@ pub use messages::{
     NativeEscrowAccountObservation, NativeFundInstructionFacts, NativeInitializeInstructionFacts,
     NativeRefundFoundFacts, NativeRefundInstructionFacts, NativeRefundMetadataFacts,
     NativeRefundObservation, NativeRefundObservationTarget, NativeRefundTerms,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    ObserveCurrentClockRequest, ObserveCurrentClockResult, ObserveEscrowRequest,
+    ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
     ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
     ObserveFinalizedWitnessedFundingResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
     ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,

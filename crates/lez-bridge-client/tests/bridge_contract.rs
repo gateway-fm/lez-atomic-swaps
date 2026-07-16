@@ -12,12 +12,12 @@ use lez_bridge_client::{
     FinalizedWitnessedInitializationPresence, MAX_RPC_BODY_BYTES,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM, METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION, METHOD_COMPLETE_WITNESSED_CLAIM,
-    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
-    METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING, METHOD_OBSERVE_NATIVE_REFUND,
-    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW,
-    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
-    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
-    SidecarCapability,
+    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_CURRENT_CLOCK, METHOD_OBSERVE_ESCROW,
+    METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
+    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
+    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
+    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
+    RUN_ID_HEADER, SIDECAR_ROLE_HEADER, SidecarCapability,
 };
 use lez_bridge_protocol::{
     AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip,
@@ -31,21 +31,22 @@ use lez_bridge_protocol::{
     FinalizedWitnessedInitializationFacts, FundingObservation, Hex32, InitializationObservation,
     MessageContext, NativeCustodyFacts, NativeEscrowAccountObservation, NativeEscrowTerms,
     NativeEscrowTermsInput, NativeFundInstructionFacts, NativeRefundObservation,
-    NativeRefundObservationTarget, ObserveEscrowRequest, ObserveEscrowResult,
-    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
-    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
-    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
-    ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
-    ObservedTransactionFacts, Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
-    PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
-    PrepareRevealingClaimResult, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
-    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
-    PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RevealingClaimObservation,
-    RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
-    TransactionId, WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
-    WitnessedFundingObservation, WitnessedInitializationObservation, WitnessedNativeEscrowTerms,
-    WitnessedNativeEscrowTermsInput, WitnessedNativeInitializeInstructionFacts,
+    NativeRefundObservationTarget, ObserveCurrentClockRequest, ObserveCurrentClockResult,
+    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
+    ObserveFinalizedWitnessedFundingResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
+    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
+    ObserveWitnessedEscrowResult, ObservedTransactionFacts, Participant,
+    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
+    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
+    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
+    RequestId, RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage,
+    RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
+    SubmitTransactionResult, TransactionId, WitnessedClaimInstructionFacts,
+    WitnessedEscrowMetadataFacts, WitnessedFundingObservation, WitnessedInitializationObservation,
+    WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
+    WitnessedNativeInitializeInstructionFacts,
 };
 use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
 use serde_json::json;
@@ -104,6 +105,9 @@ enum Behavior {
     InitializationPresenceAbsent,
     InitializationPresenceUncertain,
     MutatedFinalizedInitializationBytes,
+    CurrentClockZeroTimestamp,
+    CurrentClockZeroHash,
+    CurrentClockWrongRuntime,
 }
 
 #[derive(Clone, Debug)]
@@ -216,9 +220,88 @@ fn register_methods(module: &mut RpcModule<Fixture>) {
             Ok::<_, ErrorObjectOwned>(value)
         })
         .expect("describe method");
+    module
+        .register_method(METHOD_OBSERVE_CURRENT_CLOCK, |params, fixture, _| {
+            let request: ObserveCurrentClockRequest = params.one()?;
+            fixture.record(METHOD_OBSERVE_CURRENT_CLOCK);
+            let runtime = if matches!(fixture.behavior, Behavior::CurrentClockWrongRuntime) {
+                runtime(Participant::Taker, 99)
+            } else {
+                request.runtime
+            };
+            let timestamp_ms = if matches!(fixture.behavior, Behavior::CurrentClockZeroTimestamp) {
+                0
+            } else {
+                1_850_000_000_071
+            };
+            let block_hash = if matches!(fixture.behavior, Behavior::CurrentClockZeroHash) {
+                [0; 32]
+            } else {
+                [71; 32]
+            };
+            Ok::<_, ErrorObjectOwned>(ObserveCurrentClockResult::new(
+                response_context(&request.context, fixture.behavior),
+                runtime,
+                ChainClock::new(Hex32::from_bytes(block_hash), 71, timestamp_ms),
+            ))
+        })
+        .expect("observe current clock method");
     register_existing_transaction_methods(module);
     register_refund_methods(module);
     register_submit_method(module);
+}
+
+#[tokio::test]
+async fn current_clock_is_runtime_bound_nonzero_and_single_attempt() {
+    let expected_runtime = runtime(Participant::Maker, 55);
+    let run = RunId::new(TEST_RUN).unwrap();
+    for behavior in [
+        Behavior::Happy,
+        Behavior::CurrentClockZeroTimestamp,
+        Behavior::CurrentClockZeroHash,
+        Behavior::CurrentClockWrongRuntime,
+    ] {
+        let sidecar = spawn_sidecar(expected_runtime.clone(), MAKER_CAPABILITY, behavior).await;
+        let observed = client(
+            &sidecar.endpoint,
+            MAKER_CAPABILITY,
+            &run,
+            expected_runtime.clone(),
+            Duration::from_secs(1),
+        )
+        .observe_current_clock(ObserveCurrentClockRequest::new(
+            context(&run, Participant::Maker, "observe-current-clock"),
+            expected_runtime.clone(),
+        ))
+        .await;
+
+        match behavior {
+            Behavior::Happy => assert!(matches!(
+                observed,
+                Ok(ObserveCurrentClockResult {
+                    clock: ChainClock {
+                        height: 71,
+                        timestamp_ms: 1_850_000_000_071,
+                        ..
+                    },
+                    ..
+                })
+            )),
+            Behavior::CurrentClockZeroTimestamp
+            | Behavior::CurrentClockZeroHash
+            | Behavior::CurrentClockWrongRuntime => {
+                assert!(matches!(
+                    observed,
+                    Err(BridgeClientError::MalformedObservation {
+                        operation: BridgeOperation::ObserveCurrentClock
+                    })
+                ));
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(sidecar.fixture.calls(METHOD_OBSERVE_CURRENT_CLOCK), 1);
+        assert_eq!(sidecar.fixture.calls(METHOD_SUBMIT_TRANSACTION), 0);
+    }
 }
 
 fn register_existing_transaction_methods(module: &mut RpcModule<Fixture>) {

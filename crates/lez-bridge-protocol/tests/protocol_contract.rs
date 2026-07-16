@@ -15,7 +15,8 @@ use lez_bridge_protocol::{
     NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
     NativeFundInstructionFacts, NativeInitializeInstructionFacts, NativeRefundFoundFacts,
     NativeRefundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    ObserveCurrentClockRequest, ObserveCurrentClockResult, ObserveEscrowRequest,
+    ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
     ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
     ObserveFinalizedWitnessedFundingResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
     ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
@@ -33,6 +34,36 @@ use lez_bridge_protocol::{
     WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
     WitnessedNativeInitializeInstructionFacts,
 };
+
+#[test]
+fn current_clock_wire_is_strict_and_runtime_bound() {
+    let request = ObserveCurrentClockRequest::new(context(), runtime());
+    let result = ObserveCurrentClockResult::new(
+        request.context.clone(),
+        request.runtime.clone(),
+        ChainClock::new(h(94), 95, 1_850_000_001_500),
+    );
+
+    assert_eq!(
+        serde_json::from_value::<ObserveCurrentClockRequest>(
+            serde_json::to_value(&request).unwrap()
+        )
+        .unwrap(),
+        request
+    );
+    assert_eq!(
+        serde_json::from_value::<ObserveCurrentClockResult>(serde_json::to_value(&result).unwrap())
+            .unwrap(),
+        result
+    );
+
+    let mut invalid_request = serde_json::to_value(&request).unwrap();
+    invalid_request["unexpected"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<ObserveCurrentClockRequest>(invalid_request).is_err());
+    let mut invalid_result = serde_json::to_value(result).unwrap();
+    invalid_result["clock"]["unexpected"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<ObserveCurrentClockResult>(invalid_result).is_err());
+}
 
 #[test]
 fn finalized_witnessed_initialization_classifier_is_exact_strict_and_three_way() {
