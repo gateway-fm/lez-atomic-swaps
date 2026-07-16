@@ -31,13 +31,13 @@ until that actor wiring lands.
 
 ```mermaid
 sequenceDiagram
-    actor Actor as Maker or taker actor
+    actor SwapActor as Maker or taker actor
     participant Bridge as Role-bound LEZ sidecar
     participant Indexer as LEZ finalized indexer
     participant Store as Actor recovery store
     participant Claim as Claim coordinator
 
-    Actor->>Bridge: Observe finalized witnessed funding
+    SwapActor->>Bridge: Observe finalized witnessed funding
     Bridge->>Indexer: Read finalized tip height
     Bridge->>Indexer: Read tip block by ID and hash
     loop Every height in bounded window
@@ -46,8 +46,8 @@ sequenceDiagram
     Bridge->>Indexer: Read metadata at containing BlockId
     Bridge->>Indexer: Read custody at containing BlockId
     Bridge->>Indexer: Reread tip height and full block identity
-    Bridge-->>Actor: Canonical finalized funding facts
-    Actor->>Store: Persist validated LEZ lock evidence
+    Bridge-->>SwapActor: Canonical finalized funding facts
+    SwapActor->>Store: Persist validated LEZ lock evidence
     Store-->>Claim: Both locks final
     Note over Store,Claim: Required cohesive actor gate, observer alone retains no prerequisite
     Claim->>Claim: Permit adaptor reveal or claim

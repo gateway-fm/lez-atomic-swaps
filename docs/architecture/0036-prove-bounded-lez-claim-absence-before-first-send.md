@@ -85,33 +85,33 @@ cannot turn an RPC or witness contradiction into a duplicate send.
 
 ```mermaid
 sequenceDiagram
-    participant Actor as Role fixed actor
+    participant SwapActor as Role fixed actor
     participant Journal as Public effect journal
     participant Sidecar as LEZ sidecar
     participant Indexer as Finalized indexer
 
-    Actor->>Journal: Persist exact public bytes and expected ID
-    Actor->>Sidecar: Classify exact claim in bounded window
+    SwapActor->>Journal: Persist exact public bytes and expected ID
+    SwapActor->>Sidecar: Classify exact claim in bounded window
     Sidecar->>Indexer: Read stable finalized tip and complete ID/hash ancestry
     Indexer-->>Sidecar: Blocks, transactions, and historical account facts
     Sidecar->>Indexer: Reread finalized tip
     alt Exact claim present
-        Sidecar-->>Actor: PresentExact
+        Sidecar-->>SwapActor: PresentExact
         alt ID, exact bytes, and signature match durable effect
-            Actor->>Journal: Reconcile PresentExact
+            SwapActor->>Journal: Reconcile PresentExact
         else Positive evidence conflicts with durable effect
-            Actor->>Journal: Burn authority as ConflictingPresence
-            Journal-->>Actor: Unknown and ObserveOnly
+            SwapActor->>Journal: Burn authority as ConflictingPresence
+            Journal-->>SwapActor: Unknown and ObserveOnly
         end
     else Complete stable scan has no claim
-        Sidecar-->>Actor: NotFound
-        Actor->>Journal: CAS Prepared to Started
+        Sidecar-->>SwapActor: NotFound
+        SwapActor->>Journal: CAS Prepared to Started
     else History, finality, or tip unavailable
-        Sidecar-->>Actor: Unavailable
-        Actor->>Journal: Observe only
+        Sidecar-->>SwapActor: Unavailable
+        SwapActor->>Journal: Observe only
     else Timeout or transport ambiguity
-        Sidecar-->>Actor: Uncertain
-        Actor->>Journal: Observe only
+        Sidecar-->>SwapActor: Uncertain
+        SwapActor->>Journal: Observe only
     end
 ```
 

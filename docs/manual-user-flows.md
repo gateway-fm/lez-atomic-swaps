@@ -1,6 +1,6 @@
 # Manual reproduction guide
 
-Last verified: 2026-07-15
+Last verified: 2026-07-16
 
 This is the living operator guide for the user-visible flows that the repository
 currently proves. Update it in the same change whenever a runner, prerequisite,
@@ -29,9 +29,177 @@ retained result is
 No public RPC, faucet, peer, or public funds were used.
 
 This proves a private local happy path, not the whole accepted M3 submission or
-production readiness. The cohesive lifecycle SDK, exact refund binding,
-refund/concurrent demos, public-node guidance, and upstream DLC vector
-clarification remain.
+production readiness. The public Bitcoin reference actor now projects injected
+exact canonical revealing and follow-up claim evidence through revisions three
+and four for both roles and directions. Immediately before revision three it
+reruns the strict activation-material gate; the taker reproduces the observed
+signature from its private scalar, the maker extracts and point-checks that
+scalar from its persisted presignature, and only one-way `ClaimEvidence` is
+retained. Revision four reconstructs `Completed`, and a fresh offline `status`
+reports `complete`. Exact Bitcoin claims are now actor-owned and durable. The
+taker alone prepares a revealing Bitcoin claim at revision two; the maker alone
+prepares a follow-up Bitcoin claim at revision three and re-extracts its scalar
+from the durable revealing witness plus its persisted LEZ presignature. Exact
+public bytes are journaled before one authorized send. `Started` and `Unknown`
+remain observe-only across restart, mismatched bytes grant no authority, and
+local projection waits for typed Core evidence that the same bytes are
+finalized at the agreement's signed confirmation depth.
+
+Run `m3actor-20260716n` completed that actual-node certification at pushed
+`origin/main` commit
+`6ded2f9b8ba9ec8e0cfbf06287da92d34256f91a` on
+2026-07-16T01:00:30Z. Both maker and taker reached revision 4,
+`phase=completed`, and offline next action `complete` in both directions.
+Each direction recorded exactly two Bitcoin effects and three LEZ effects,
+including the actor-owned claim on each chain. Terminal replay produced zero
+resubmissions, and exact run cleanup removed every captured container, network,
+volume, image, and reservation without targeting foreign resources. The exact
+refund plan remains bound in the countersigned agreement, but refund execution,
+concurrent demos, public-node guidance, chaos and adversarial hardening, and
+upstream DLC vector clarification remain production-readiness work. Those
+later items do not reopen the completed progressive M3 local PoC.
+
+### Provision exact Bitcoin funding and the agreement before either effect
+
+Pushed `a8688a3` removes the former post-confirmation agreement gap. Run the
+detailed, no-clobber recipe in the
+[M3 operator guide](m3-local-poc-operator-guide.md#generate-the-agreement-fixture-before-funding)
+once for each direction. The exact local command surfaces are:
+
+```sh
+cargo run --locked -p btc-local-poc-provision -- generate \
+  --planning-file "$AGREEMENT_PLANNING" \
+  --output-root "$DIRECTION"
+
+# Use Core gettxout to populate the candidate service input; it does not broadcast.
+
+cargo run --locked -p btc-local-poc-provision -- prepare-funding \
+  --spec-file "$FUNDING_PREPARE_SPEC" \
+  --output-root "$DIRECTION"
+
+# Use Core testmempoolaccept on the exact persisted bytes; it does not broadcast.
+
+cargo run --locked -p btc-local-poc-provision -- finalize \
+  --spec-file "$AGREEMENT_FINALIZE_SPEC" \
+  --output-root "$DIRECTION"
+```
+
+`generate` runs after the distinct LEZ owner accounts exist and before either
+chain effect. It creates a fresh normalized
+absolute root and `private/` directory at mode `0700`, then create-new,
+single-link mode-`0600` files for maker/taker signing, refund, and claim
+destinations plus the adaptor scalar and secret-free public specification. It
+refuses an existing root. Use the separate pinned Rust 1.96
+`lez-v02-account-id` helper exactly as shown in the operator guide; the root
+graph deliberately does not reimplement the official Logos account mapping.
+
+The prepare document contains `schema_version`, `stage1_public_sha256`,
+`direction`, `contract_value_sat`, `fee_sat`, and a `service_input` object with
+`transaction_id`, `output_index`, `value_sat`, `script_pubkey`, and
+`signing_secret_key_file`. That last file is a raw 32-byte key in a mode-`0600`
+owner-private file, extracted directly from the Core funding credential without
+stdout. `prepare-funding` creates `funding-transaction.hex` and
+`funding-transaction-summary.json`, both mode `0600`, and prints only the
+secret-free summary. It proves the key/script relation, exact BIP-341
+authorization, canonical bytes/hash/txid, contract/change/fee, one-item
+`SIGHASH_DEFAULT` witness, and Merkle root. It reports
+`node_state_asserted: false` because it performs no RPC.
+
+Before `prepare-funding`, the operator uses Core `gettxout` on the candidate
+outpoint. After preparation, read-only `testmempoolaccept` consumes the exact
+persisted transaction bytes. Those calls establish the current local UTXO view
+and current node policy, not a reservation, broadcast, confirmation, or
+finality. `finalize` then binds the exact raw funding bytes and
+SHA-256, service-input value/script, funding txid/vout/value, claim value, Core
+genesis and confirmation policy, finalized LEZ preparation facts, and a
+recovery plan containing `refund_csv_blocks`,
+`planned_bitcoin_funding_anchor_height`, `bitcoin_refund_height`, both typed
+deadlines, and their margin. It rejects the former broadcast, observed-
+confirmation, and observed-anchor fields, countersigns both roles, and requires
+byte-identical canonical agreement replay.
+
+Complete both Bitcoin and LEZ role-local signing journals from that agreement
+before the first chain submission. When the Bitcoin lock is due, submit the
+persisted exact bytes, mine exactly one isolated Regtest block, and require the
+containing height to equal the signed planned anchor. This ordering maximizes
+atomicity because either post-lock claim needs only durable local material and
+canonical reveal evidence, but no distributed commit exists across files,
+journals, actor stores, Core, and LEZ.
+
+Each multi-file output group is create-new and fail safe, not one filesystem
+transaction. Before any effect, retire an interrupted direction root and start
+from fresh stage one rather than deleting selected outputs. After any possible
+effect, preserve that exact root and reconcile or refund; never regenerate
+authority for already-locked funds.
+
+Repeat its deterministic both-direction gate separately:
+
+```sh
+cargo test --locked -p btc-local-poc-provision --all-targets
+cargo clippy --locked -p btc-local-poc-provision --all-targets --all-features -- -D warnings
+```
+
+All eleven tests use temporary local files and supplied facts, not Core, LEZ,
+Docker, a faucet, or a public endpoint. They cover both directions,
+genuine rawtr signing, public/private crosswires, malformed or drifted funding,
+authority/key and recovery drift, strict JSON, no-clobber, owner-only modes,
+unsafe links, and stdout secret scanning. Actual-node fact collection and the
+isolated helper have separate gates.
+
+The combined local entry point is `scripts/run-m3-actor-local-poc.sh`, with
+per-direction work in `scripts/run-m3-actor-direction.sh`. After building the
+verified guest artifact target and populating both locked Cargo graphs, run it
+with a fresh ID and exact local LEZ prerequisites:
+
+```sh
+export RUN_ID=m3actor-manual-20260715a
+export LEZ_V02_SOURCE_DIR=/absolute/path/to/clean/logos-execution-zone-v0.2.0
+export LEZ_V02_SERVICES_DIR=/absolute/path/to/locked/release-binaries
+export LEZ_V02_R0VM=/absolute/path/to/verified/r0vm
+export LEZ_V02_ARTIFACT_TARGET_DIR=/absolute/path/to/verified/lez-artifact-target
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+./scripts/run-m3-actor-local-poc.sh
+```
+
+The audited run-n command used these exact already-verified local inputs:
+
+```sh
+RUN_ID=m3actor-20260716n \
+LEZ_V02_SOURCE_DIR=/tmp/lez-v020-native-investigation \
+LEZ_V02_SERVICES_DIR=/tmp/lez-v02-services-a58fbce2-20260713/release \
+LEZ_V02_R0VM=/tmp/lez-atomic-swaps-tools/risc0-3.0.5/home/extensions/v3.0.5-cargo-risczero-x86_64-unknown-linux-gnu/r0vm \
+LEZ_V02_ARTIFACT_TARGET_DIR=/tmp/lez-m3-artifact-20260715a \
+RAPIDSNARK_LIB_DIR=/tmp/lez-atomic-swaps-tools/rapidsnark-v0.0.8/d4133227 \
+BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include \
+./scripts/run-m3-actor-local-poc.sh
+```
+
+That invocation is an audit record, not a reusable command: never reuse its
+run ID or existing run root. For a portable repetition, provision equivalent
+verified inputs, choose a fresh ID, and use the preceding generic command.
+
+The runner refuses reused outer, child, and Docker identities, prebuilds every
+actor/sidecar binary offline, starts both actual local node stacks, executes the
+directions sequentially, and writes the terminal and cleanup packets below
+`.e2e/$RUN_ID/m3-actor-poc/evidence`. Apply the exact `jq` assertions in the
+[operator guide](m3-local-poc-operator-guide.md#run-the-combined-actual-node-public-actor-flow)
+before treating a zero exit as evidence. Keep the entire run root private and
+never reuse it after success or failure. Fresh LEZ identity schema version 2
+exposes `account_id`, `account_id_hex`,
+`vault_account_id`, `vault_account_id_hex`, and `x_only_public_key`. The Vault
+ID is derived by official LEZ code from that owner and the Vault program; the
+local stack requires the owner and Vault overrides as a pair before genesis.
+
+Core 31.1 requires the second `gettxspendingprevout` parameter to be the
+options object
+`{"mempool_only":false,"return_spending_tx":true}`, not the older positional
+booleans. The M3 adapter uses that object and verifies the returned spending
+transaction bytes; a mempool observation must omit `blockhash`, while a
+confirmed observation must carry the exact containing block hash. LEZ actor
+scans use a finite 30,000 ms read-only request timeout. A timeout remains
+uncertain observation and can be retried with a fresh observation request; it
+never authorizes another chain submission.
 
 ### Component-level Bitcoin and signing rehearsals
 
@@ -344,8 +512,14 @@ The complete operator sequence for both M3 happy directions is now in the
 [dedicated M3 guide](m3-local-poc-operator-guide.md). It composes the durable
 fresh-process role runner, Bitcoin helper, Bitcoin Core 31.1, the witnessed LEZ
 guest, and local LEZ v0.2 sequencer and indexer. It is deliberately an
-operator-driven recipe rather than one released application command. Refund,
-concurrent-swap, crash/chaos, and adversarial journeys remain post-PoC work.
+operator-driven recipe rather than one released application command. The
+reference actor reaches offline terminal revision four, and both its Bitcoin
+and LEZ claim effects plus bounded observations are composed. Audited run
+`m3actor-20260716n` passed both directions through Core 31.1 Regtest and the
+private local LEZ v0.2 stack. Both roles finished revision four with next action
+`complete`, and replay resubmission count remained zero.
+Refund, concurrent-swap, crash/chaos, and adversarial journeys remain post-PoC
+work.
 
 ## Can I run the complete M3 happy path myself?
 
@@ -353,7 +527,11 @@ Yes. Follow the [M3 local PoC operator guide](m3-local-poc-operator-guide.md).
 It requires Docker and Rust/Cargo, assigns distinct run IDs to the Core and LEZ
 stacks so collision guards remain effective, uses literal loopback RPCs and
 deterministic local funds, and gives chain and journal checks for both
-directions. It is a manual operator recipe today.
+directions. It is a manual operator recipe today: it reproduces the complete
+operator-composed chain flow. Both Bitcoin and LEZ public-actor effects are
+wired, and run `m3actor-20260716n` retained accepted terminal actual-node E2E
+evidence for both directions. This establishes the progressive local PoC; it
+does not claim the later production-hardening journeys listed above.
 
 ## Can I run the complete M2 ZEC swap myself?
 
@@ -1645,6 +1823,32 @@ ephemeral port, although that upstream server binds the host wildcard rather
 than literal loopback; it is not the M2 corridor. Therefore a public RPC outage,
 rate limit, faucet balance, or public-testnet reorg cannot affect a warm local
 run. Cold dependency/image downloads remain external and are listed below.
+
+The M3 `btc-local-poc-provision` generate/prepare/finalize process is not
+another runtime endpoint: it performs no RPC, starts no node or container, and
+uses only OS randomness plus local owner-private files once the root Cargo graph
+is cached. Its official `lez-v02-account-id` helper likewise performs no RPC but
+builds from the separate pinned Rust 1.96 LEZ sidecar graph, so an uncached run
+can share that graph's Cargo/git/native-library download failures. The actual
+Core and LEZ facts around those commands come from the same run-owned loopback
+services documented above. `gettxout` and `testmempoolaccept` can change as the
+local tip or mempool changes and do not reserve the input; the isolated harness
+therefore admits no unrelated writer, broadcasts only after both presignatures,
+and mines the planned next block. Readiness, policy/finality, moving tips, or
+manual transcription can make the ceremony fail closed. They cannot justify
+inventing a fact, weakening a policy, reusing an output root, or overwriting
+create-new files.
+
+M3 run `m3actor-20260716n` used no public RPC, faucet, public peer, public
+fund, or network dependency during certification. Its combined runner required
+all Cargo sources and the checked LEZ artifact, service binaries, Risc0
+`r0vm`, Rapidsnark libraries, and Core release inputs to be locally verified
+before the offline run. Cold provisioning can therefore be externally flaky,
+but the certification itself depends on local Docker, CPU, memory, disk,
+process scheduling, and node readiness. LEZ scans have a finite 30-second
+read-only timeout so a moving or unresponsive local indexer fails uncertain
+instead of hanging; retrying that observation never grants effect
+resubmission.
 
 The SDK memory actor test and schema-v10 SQLite actor test in Flow 2 are the
 most isolated claim lane: they start no service, make no network request, and

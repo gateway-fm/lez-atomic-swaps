@@ -64,6 +64,10 @@ for document in "${documents[@]}"; do
           $0 ~ /^[[:space:]]*Note[[:space:]]+(over|right of|left of)[^:]*:.*;/) {
         reject("semicolons terminate Mermaid sequence-note statements")
       }
+      if (diagram_kind == "sequenceDiagram" &&
+          tolower($0) ~ /^[[:space:]]*(actor|participant)[[:space:]]+actor([[:space:]]+as|[[:space:]]*$)/) {
+        reject("Actor is a reserved sequence token and cannot be a participant identifier")
+      }
 
       if (!declaration_seen && $0 !~ /^[[:space:]]*$/ && $0 !~ /^[[:space:]]*%%/) {
         if ($0 !~ /^(flowchart|graph)[[:space:]]+(TB|TD|BT|RL|LR)[[:space:]]*$/ &&

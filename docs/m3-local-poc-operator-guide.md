@@ -1,9 +1,9 @@
 # M3 local LEZ/BTC PoC operator guide
 
-Last verified: 2026-07-15
+Last verified: 2026-07-16
 
-This guide reproduces the operator-composed M3 happy path proved by private
-local run m3poc-live2-20260715a. It uses Bitcoin Core 31.1 Regtest, the pinned
+This guide reproduces the public-actor M3 happy path proved by private local run
+`m3actor-20260716n` at pushed `origin/main` commit `6ded2f9`. It uses Bitcoin Core 31.1 Regtest, the pinned
 LEZ v0.2 Bedrock/sequencer/indexer stack, the checked witnessed-escrow guest,
 independent maker and taker sidecars, separate signing journals, and actual
 transactions on both local chains.
@@ -11,19 +11,35 @@ transactions on both local chains.
 This is a functional PoC recipe, not an automated full-lifecycle application.
 The public `btc-reference-actor` now provides one-shot, role-fixed activation,
 offline status, and direction-derived taker- and maker-lock observation/projection
-through revision two. It does not yet perform claim revisions three and four,
-so the operator must still compose the proven signing, lock submission, claim,
-and terminal interfaces and retain their
-private evidence. That remaining manual composition is a production gap, not a
-reason to weaken any ordering check below.
+through revision two. Its deterministic claim-observation seam now projects
+revisions three and four for both roles and directions: it reruns the complete
+activation-material gate, makes the taker reproduce the exact revealing
+signature, makes the maker extract and point-check the scalar from that public
+signature, persists only one-way `ClaimEvidence`, and reconstructs terminal
+`Completed` status offline. Exact Bitcoin claims are now actor-owned and
+durable: only the direction- and revision-selected role prepares the exact
+transaction, persists its public bytes before one send authority, and projects
+only after the typed Core observer proves the same bytes finalized at the
+signed confirmation policy. `Started` and `Unknown` never rearm after restart.
+The actor-owned LEZ claim effect and bounded finalized presence/absence
+observation are now composed and deterministic tests reach terminal projection.
+Run-n drove both directions through that public actor and both actual local node
+stacks. Maker and taker each reached revision 4 `completed` and offline next
+action `complete`; terminal replay caused no resubmission. This closes the
+progressive local PoC automation gap without weakening any ordering check. It
+does not prove later refund/concurrency, chaos, infosec, public-Testnet, or
+production-readiness scope.
 
-The secret-safe result of the reference run is
+The earlier operator-composed reference result is
 [m3-local-two-direction-poc-20260715.json](evidence/m3-local-two-direction-poc-20260715.json).
 It records two completed directions, exact public transaction and block
 identities, one Bitcoin confirmation per effect, finalized LEZ inclusion, exact
 chain-witness equality, terminal recipients, and the explicit production
 nonclaims. Do not publish a private run root: it contains keys, capabilities,
 SQLite journals, exact signed transactions, and complete signatures.
+Run-n's audited terminal and cleanup packets remain locally below
+`.e2e/m3actor-20260716n/m3-actor-poc/evidence/`; the entire run root remains
+owner-private.
 
 ## Topology and trust boundary
 
@@ -31,14 +47,32 @@ SQLite journals, exact signed transactions, and complete signatures.
 flowchart LR
     Operator["Local operator"] --> CoreProvisioner["Run-owned Core provisioner"]
     Operator --> LezProvisioner["Run-owned LEZ provisioner"]
+    Operator --> AgreementGenerate["Agreement generate stage"]
     CoreProvisioner --> Core["Bitcoin Core 31.1 Regtest"]
     LezProvisioner --> Bedrock["LEZ v0.2 Bedrock"]
     LezProvisioner --> Sequencer["LEZ v0.2 sequencer RPC"]
     LezProvisioner --> Indexer["LEZ v0.2 indexer RPC"]
     Sequencer --> Bedrock
     Bedrock --> Indexer
-    Maker["Maker process and private store"] --> MakerBridge["Maker witnessed sidecar"]
-    Taker["Taker process and private store"] --> TakerBridge["Taker witnessed sidecar"]
+    Maker["Maker role process and private store"] --> MakerBridge["Maker witnessed sidecar"]
+    Taker["Taker role process and private store"] --> TakerBridge["Taker witnessed sidecar"]
+    Maker --> MakerSigners["Maker BTC and LEZ signer journals"]
+    Taker --> TakerSigners["Taker BTC and LEZ signer journals"]
+    AgreementGenerate --> PrivateFixture["Fresh signing refund claim and adaptor files"]
+    AgreementGenerate --> AccountHelper["Pinned official NSSA account helper"]
+    PrivateFixture --> FundingPrepare["Offline exact funding preparation"]
+    CoreProvisioner --> FundingCredential["Owner-private rawtr credential"]
+    FundingCredential --> FundingPrepare
+    FundingPrepare --> FundingBytes["Persisted exact signed funding bytes"]
+    FundingBytes -.->|"gettxout and read-only policy"| Core
+    FundingBytes --> AgreementFinalize["Agreement finalize stage"]
+    AccountHelper --> AgreementFinalize
+    Sequencer -.->|"operator supplies runtime and deployment facts"| AgreementFinalize
+    Indexer -.->|"operator supplies prepared claim facts"| AgreementFinalize
+    AgreementFinalize --> MakerSigners
+    AgreementFinalize --> TakerSigners
+    AgreementFinalize -->|"run-n actor activation"| Maker
+    AgreementFinalize -->|"run-n actor activation"| Taker
     MakerBridge --> Sequencer
     MakerBridge --> Indexer
     TakerBridge --> Sequencer
@@ -46,6 +80,14 @@ flowchart LR
     Maker -->|"maker rpcauth"| Core
     Taker -->|"taker rpcauth"| Core
     Maker <-->|"public commitments, nonces, partials"| Taker
+    ClaimProjection["Reference actor durable BTC and LEZ claim effects"] -->|"one authorized exact send"| Core
+    ClaimProjection -->|"one authorized exact send"| Sequencer
+    Core -->|"finalized exact bytes at signed depth"| ClaimProjection
+    Indexer -->|"bounded finalized presence or absence"| ClaimProjection
+    MakerSigners --> ClaimProjection
+    TakerSigners --> ClaimProjection
+    ClaimProjection -->|"run-n revision 4 complete"| Maker
+    ClaimProjection -->|"run-n revision 4 complete"| Taker
     Indexer --> Finality["Sequential finality and witness auditor"]
     Core --> Finality
     Finality -->|"exact chain signature"| Recover["Point-checked scalar recovery"]
@@ -61,19 +103,51 @@ allocations. No public RPC, faucet, public peer, or public fund participates.
 
 ## Prerequisites and builds
 
-Repeat both public actor funding transitions without Docker or chain nodes:
+Repeat the public actor lifecycle component without Docker or chain nodes:
 
 ~~~sh
 cargo test --locked -p btc-reference-actor --all-targets
 ~~~
 
-All 18 focused tests invoke the public `activate`, `drive`, and `status` surface,
-use separate private maker/taker configs, prove offline status and idempotent
-activation, retain a finalized LEZ ancestry tip, and observe before projecting
-predecessors zero and one in both directions and roles. Deterministic observers and loopback-only placeholder routes
-are used; no public RPC, faucet, public funds, chain peer, or external service
-participates. This component gate does not prove an actual-node actor run or
-claim revisions three and four.
+The focused suite exercises the public `activate`, `drive`, and `status`
+surface through both lock projections and the injected actor claim-observation
+seam through revisions three and four. It uses separate private maker/taker
+configs, proves offline terminal status and idempotent activation, retains a
+finalized LEZ ancestry tip, and covers both directions and roles. Revision
+three reruns all activation material, validates the exact related public
+signature, reproduces it from the taker's private scalar or extracts and
+point-checks that scalar from the maker's persisted presignature, and stores
+only its one-way commitment. Revision four reaches `Completed`; offline status
+then reports next action `complete`. Deterministic observers and loopback-only
+placeholder routes are used, so no public RPC, faucet, public funds, chain
+peer, or external service participates. This component gate does not prove
+actual-node LEZ actor observation or an actual-node actor run. The Bitcoin-effect cases
+additionally prove that the
+taker alone owns a revealing Bitcoin claim at revision two and the maker alone
+owns a follow-up Bitcoin claim at revision three. Exact public bytes are
+persisted before one send, `Started` and `Unknown` remain observe-only across
+restart, mismatched chain bytes are uncertain, and local projection waits for
+exact finalized Core evidence. The maker derives its follow-up by re-extracting
+the scalar from the durable revision-three revealing witness; no scalar is
+persisted or logged.
+
+Repeat the fixture-only generate/prepare/finalize boundary without a node or
+Docker service:
+
+~~~sh
+cargo test --locked -p btc-local-poc-provision --all-targets
+cargo clippy --locked -p btc-local-poc-provision --all-targets --all-features -- -D warnings
+~~~
+
+Eleven tests cover both `taker_sells_foreign` and `taker_sells_lez`, canonical
+agreement replay, genuine rawtr funding authorization, public/private
+crosswires, malformed or drifted funding, authority/key and recovery drift,
+strict JSON, create-new output behavior, owner-only modes, unsafe-link
+rejection, and stdout secret scanning. They use temporary files and supplied
+deterministic facts; they do not call Core, LEZ,
+the isolated NSSA helper process, a public endpoint, a faucet, or Docker. The
+commands prove the provisioner boundary, not that an operator supplied truthful
+node facts or that the combined actual-node harness invokes both stages.
 
 Before starting either node, the durable Bitcoin lifecycle component can be
 repeated independently:
@@ -89,7 +163,8 @@ mutation failures, and scan SQLite/WAL for the recovered-scalar sentinel. They
 use synthetic evidence that represents already-validated chain-adapter output;
 there is no RPC, node, Docker container, faucet, public endpoint, or external
 availability dependency in this component gate. It does not substitute for
-the still-pending reference-actor run through actual nodes.
+the separate actual-node proof; run-n now supplies that proof for both roles and
+directions.
 
 Repeat the agreement-derived signing context and the new recovery seams:
 
@@ -101,13 +176,16 @@ cargo test --locked -p lez-swap-store --test adaptor_session_journal \
 cargo test --locked -p lez-swap-store --test public_effect_journal -- --nocapture
 ~~~
 
-The future claim actor retains distinct nonzero Bitcoin and LEZ session IDs and
+The claim actor retains distinct nonzero Bitcoin and LEZ session IDs and
 role-local journal paths. It rederives keys, role order, messages, adaptor point,
 and the Bitcoin Taproot tweak from the countersigned agreement, then requires
 the existing journal identities to match. The role-runner session JSON is
-manual ceremony input, not actor authority. Claim composition is still pending.
+manual ceremony input, not actor authority. Both Bitcoin and LEZ claim effects,
+their exact observation paths, and terminal projection are composed in source
+and deterministic actor tests. Run-n now proves the same boundary through fresh
+two-direction actual-node public-actor execution.
 
-The twelve public-effect tests persist complete node-disclosable Bitcoin or LEZ
+The fourteen public-effect tests persist complete node-disclosable Bitcoin or LEZ
 transaction bytes before authorization. Only definitive `Absent + Prepared`
 commits `Started` and grants one send. A crash before or after that RPC never
 re-arms `Started`; `Uncertain` and `Unknown` are observation-only. Exact
@@ -148,7 +226,7 @@ window. Funding requires canonical `FundNative`, historical `Funded` metadata,
 and exact custody at its containing block before claim. Claim additionally
 binds the exact prepared transcript and signature. They prove unique success
 plus distinct absence, ambiguity, and conflicting-transcript failures through
-the authenticated server/runtime path. Protocol 22/22, client 2 unit plus 23
+the authenticated server/runtime path. Protocol 23/23, client 2 unit plus 26
 integration and 3 CLI tests, and sidecar 78/78 are GREEN.
 The public `validate_prepared_witnessed_claim` unit boundary checks only that
 the message is nonempty and its bytes match the official domain-separated hash.
@@ -199,9 +277,10 @@ label. CORE_RUN_ID and LEZ_RUN_ID preserve one composed lineage while avoiding
 that intentional collision. Do not bypass either script's reuse check.
 
 Required host tools include Bash, Rust/Cargo, Docker with Compose, curl, jq,
-OpenSSL, sha256sum, xxd, a C toolchain, libclang, GPG, and the tools checked by
-the three repository scripts below. The LEZ v0.2 path uses Rust 1.96.0, Risc0
-3.0.5, the pinned guest builder, and locally verified Rapidsnark/GMP libraries.
+Python 3, OpenSSL, sha256sum, xxd, a C toolchain, libclang, GPG, and the tools
+checked by the three repository scripts below. The LEZ v0.2 path uses Rust
+1.96.0, Risc0 3.0.5, the pinned guest builder, and locally verified
+Rapidsnark/GMP libraries.
 A cold machine may need network access to populate signed Bitcoin release
 material, Cargo/git sources, the digest-pinned Risc0 image, and the
 checksum-pinned Logos circuits archive. Runtime execution after those caches
@@ -248,12 +327,112 @@ permissions, and prints only the public descriptor:
 chmod 0600 "$PRIVATE_ROOT/evidence/"*-public-identity.json
 export LEZ_V02_MAKER_ACCOUNT_ID="$(jq -er '.account_id' "$PRIVATE_ROOT/maker/identity.json")"
 export LEZ_V02_TAKER_ACCOUNT_ID="$(jq -er '.account_id' "$PRIVATE_ROOT/taker/identity.json")"
+export LEZ_V02_MAKER_VAULT_ACCOUNT_ID="$(jq -er '.vault_account_id' "$PRIVATE_ROOT/maker/identity.json")"
+export LEZ_V02_TAKER_VAULT_ACCOUNT_ID="$(jq -er '.vault_account_id' "$PRIVATE_ROOT/taker/identity.json")"
+test "$(jq -er '.version' "$PRIVATE_ROOT/maker/identity.json")" = 2
+test "$(jq -er '.version' "$PRIVATE_ROOT/taker/identity.json")" = 2
 test "$LEZ_V02_MAKER_ACCOUNT_ID" != "$LEZ_V02_TAKER_ACCOUNT_ID"
+test "$LEZ_V02_MAKER_VAULT_ACCOUNT_ID" != "$LEZ_V02_TAKER_VAULT_ACCOUNT_ID"
 ~~~
 
 Never print either signer file. The provisioner refuses an existing output
-path instead of reusing or overwriting an identity. Its account IDs are public
-and are the exact values that the stack must place in genesis.
+path instead of reusing or overwriting an identity. Identity schema version 2
+contains public `account_id`, `account_id_hex`, `vault_account_id`,
+`vault_account_id_hex`, and `x_only_public_key` fields. Official LEZ code
+derives each Vault ID from its owner and the Vault program. The stack must
+receive each owner and derived Vault override as a pair before genesis.
+
+## Generate the agreement fixture before funding
+
+Run this whole three-command procedure once per direction with a fresh output
+root. Generation belongs after the official maker/taker LEZ owner accounts exist but
+before creating the Bitcoin funding output: its public specification contains
+the direction-specific P2TR scripts that Core must actually fund. It contacts
+no node and does not invent later chain facts.
+
+~~~sh
+export DIRECTION_NAME=taker_sells_foreign
+case "$DIRECTION_NAME" in
+  taker_sells_foreign|taker_sells_lez) ;;
+  *) exit 2 ;;
+esac
+export REFUND_CSV_BLOCKS=144
+install -d -m 0700 "$PRIVATE_ROOT/directions"
+export DIRECTION="$(realpath -m "$PRIVATE_ROOT/directions/$DIRECTION_NAME")"
+export AGREEMENT_PLANNING="$PRIVATE_ROOT/evidence/$DIRECTION_NAME-agreement-planning.json"
+export AGREEMENT_GENERATE_SUMMARY="$PRIVATE_ROOT/evidence/$DIRECTION_NAME-agreement-generate.json"
+test ! -e "$DIRECTION"
+test ! -e "$AGREEMENT_PLANNING"
+test ! -e "$AGREEMENT_GENERATE_SUMMARY"
+(
+  set -o noclobber
+  jq -n \
+    --arg maker "$LEZ_V02_MAKER_ACCOUNT_ID" \
+    --arg taker "$LEZ_V02_TAKER_ACCOUNT_ID" \
+    --argjson csv "$REFUND_CSV_BLOCKS" \
+    '{schema_version:1,maker_lez_owner_account:$maker,taker_lez_owner_account:$taker,refund_csv_blocks:$csv}' \
+    >"$AGREEMENT_PLANNING"
+  chmod 0600 "$AGREEMENT_PLANNING"
+  cargo run --locked -p btc-local-poc-provision -- generate \
+    --planning-file "$AGREEMENT_PLANNING" \
+    --output-root "$DIRECTION" \
+    >"$AGREEMENT_GENERATE_SUMMARY"
+  chmod 0600 "$AGREEMENT_GENERATE_SUMMARY"
+)
+export STAGE1_PUBLIC_SPEC="$(jq -er '.public_spec_file' "$AGREEMENT_GENERATE_SUMMARY")"
+export STAGE1_PUBLIC_SHA256="$(jq -er '.public_spec_sha256' "$AGREEMENT_GENERATE_SUMMARY")"
+test "$STAGE1_PUBLIC_SPEC" = "$DIRECTION/public-spec.json"
+test "$(jq -er '.private_material_disclosed' "$AGREEMENT_GENERATE_SUMMARY")" = false
+~~~
+
+The normalized absolute output root must not exist; its parent must already be
+canonical. Stage one creates the root and `private/` as mode `0700`, then uses
+`create_new`, `O_NOFOLLOW`, mode `0600`, and a single-link check for the public
+specification and seven fresh OS-random secret files: maker/taker signing,
+refund, and claim-destination keys plus the adaptor scalar. The public one-line
+summary contains no private material. Re-running `generate` against the same
+root fails instead of reusing or overwriting any file. Create-new writes are
+fail-safe but the multi-file stage is not one filesystem transaction: after an
+interruption, retire the entire incomplete root and generate a fresh one rather
+than deleting selected files or attempting repair.
+
+Derive the aggregate LEZ authority with the exact helper named by that summary:
+
+~~~sh
+jq -e '
+  .lez_authority_helper.manifest_path == "compat/lez-v0_2-sidecar/Cargo.toml" and
+  .lez_authority_helper.package == "lez-v0-2-sidecar" and
+  .lez_authority_helper.example == "lez-v02-account-id" and
+  .lez_authority_helper.result_schema == "lez-v0.2-nssa-account-id" and
+  .lez_authority_helper.result_version == 1
+' "$AGREEMENT_GENERATE_SUMMARY"
+export LEZ_AUTHORITY_X_ONLY="$(jq -er '.lez_authority_helper.argument' "$AGREEMENT_GENERATE_SUMMARY")"
+export LEZ_AUTHORITY_MAPPING="$PRIVATE_ROOT/evidence/$DIRECTION_NAME-lez-authority.json"
+test ! -e "$LEZ_AUTHORITY_MAPPING"
+(
+  set -o noclobber
+  CARGO_TARGET_DIR="$SIDECAR_TARGET" CARGO_NET_OFFLINE=true \
+    cargo +1.96.0 run --locked --offline \
+      --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+      --package lez-v0-2-sidecar \
+      --example lez-v02-account-id -- \
+      "$LEZ_AUTHORITY_X_ONLY" >"$LEZ_AUTHORITY_MAPPING"
+  chmod 0600 "$LEZ_AUTHORITY_MAPPING"
+)
+jq -e --arg key "$LEZ_AUTHORITY_X_ONLY" '
+  .schema == "lez-v0.2-nssa-account-id" and
+  .version == 1 and
+  .x_only_public_key == $key and
+  (.account_id | type == "string" and length == 64)
+' "$LEZ_AUTHORITY_MAPPING"
+~~~
+
+This manifest-qualified Rust 1.96 command deliberately executes in
+`compat/lez-v0_2-sidecar` with its separate target and official pinned `nssa`
+graph. The root provisioner does not depend on `nssa` and must not copy its
+derivation. Stage two binds the helper's exact schema, version, key, and account;
+the live pinned LEZ prepare path independently rejects a wrong authority
+account. Do not substitute a locally reimplemented hash or account mapping.
 
 ## Start both retained local chains
 
@@ -273,7 +452,9 @@ Start and retain the exact LEZ v0.2 stack:
 ~~~sh
 RUN_ID="$LEZ_RUN_ID" LEZ_V02_KEEP_RUNNING=1 \
   LEZ_V02_MAKER_ACCOUNT_ID="$LEZ_V02_MAKER_ACCOUNT_ID" \
+  LEZ_V02_MAKER_VAULT_ACCOUNT_ID="$LEZ_V02_MAKER_VAULT_ACCOUNT_ID" \
   LEZ_V02_TAKER_ACCOUNT_ID="$LEZ_V02_TAKER_ACCOUNT_ID" \
+  LEZ_V02_TAKER_VAULT_ACCOUNT_ID="$LEZ_V02_TAKER_VAULT_ACCOUNT_ID" \
   ./scripts/run-lez-v02-stack.sh
 ~~~
 
@@ -303,6 +484,8 @@ export BEDROCK_URL="$BEDROCK_RPC_URL"
 export LEZ_CHAIN_ID="$LEZ_V02_CHANNEL_PUBLIC_KEY"
 test "$LEZ_V02_MAKER_ACCOUNT_ID" = "$(jq -er '.account_id' "$PRIVATE_ROOT/maker/identity.json")"
 test "$LEZ_V02_TAKER_ACCOUNT_ID" = "$(jq -er '.account_id' "$PRIVATE_ROOT/taker/identity.json")"
+test "$LEZ_V02_MAKER_VAULT_ACCOUNT_ID" = "$(jq -er '.vault_account_id' "$PRIVATE_ROOT/maker/identity.json")"
+test "$LEZ_V02_TAKER_VAULT_ACCOUNT_ID" = "$(jq -er '.vault_account_id' "$PRIVATE_ROOT/taker/identity.json")"
 ~~~
 
 Never print or commit either curl config, Basic credential file, or the Core
@@ -445,18 +628,428 @@ whose finality field is not_observed_by_this_poc_bridge. Sidecar observation
 proves bounded canonical inclusion and stable same-tip account effects. It does
 not prove Bedrock finality; the separate indexer audit remains mandatory.
 
+## Prepare and finalize exact funding before either chain effect
+
+Do not broadcast the contract funding after `generate`. First deploy/finalize
+the exact LEZ guest and prepare the deterministic witnessed escrow/claim pair without
+submitting either transaction. Derive the direction-correct
+metadata/custody/depositor/claimant accounts and retain the prepared claim hash.
+Then use one actual mature Core rawtr service output to construct the exact
+funding transaction offline.
+
+The service key is stored as hexadecimal in the owner-private Core credential,
+while `prepare-funding` requires a raw 32-byte mode-`0600` file. Extract it with
+a direct file-to-file conversion that emits nothing to stdout and never print,
+log, or commit either credential:
+
+~~~sh
+export CORE_SERVICE_INPUT_KEY="$DIRECTION/private/core-service-input.key"
+test ! -e "$CORE_SERVICE_INPUT_KEY"
+python3 - "$CORE_FUNDING_FILE" "$CORE_SERVICE_INPUT_KEY" <<'PY'
+import os
+import re
+import sys
+
+source, destination = sys.argv[1:]
+values = []
+with open(source, encoding="ascii") as credential:
+    for line in credential:
+        name, separator, value = line.rstrip("\n").partition("=")
+        if separator and name == "BITCOIN_CORE_FUNDING_SECRET_KEY_HEX":
+            values.append(value)
+if len(values) != 1 or re.fullmatch(r"[0-9a-f]{64}", values[0]) is None:
+    raise SystemExit("Core funding credential contains no unique canonical key")
+secret = bytes.fromhex(values[0])
+descriptor = os.open(
+    destination,
+    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+    0o600,
+)
+try:
+    if os.write(descriptor, secret) != len(secret):
+        raise SystemExit("short private-key write")
+finally:
+    os.close(descriptor)
+PY
+test "$(stat -c '%a' "$CORE_SERVICE_INPUT_KEY")" = 600
+test "$(stat -c '%s' "$CORE_SERVICE_INPUT_KEY")" = 32
+~~~
+
+For the first direction, take the public service outpoint/value from the same
+credential. For a later direction in the same isolated Core run, use the
+previous prepared funding summary's exact rawtr change output instead. In both
+cases query the current Core UTXO view and derive the script from that response:
+
+~~~sh
+credential_field() {
+  awk -F= -v key="$1" '$1 == key {print substr($0, length(key) + 2)}' "$CORE_FUNDING_FILE"
+}
+export SERVICE_INPUT_TXID="$(credential_field BITCOIN_CORE_FUNDING_TXID)"
+export SERVICE_INPUT_VOUT="$(credential_field BITCOIN_CORE_FUNDING_VOUT)"
+export SERVICE_INPUT_VALUE_SAT="$(credential_field BITCOIN_CORE_FUNDING_VALUE_SAT)"
+# For direction two, override these three values from direction one's summary.
+
+case "$DIRECTION_NAME" in
+  taker_sells_foreign)
+    export FUNDING_ROLE_CONFIG="$TAKER_CORE_CONFIG"
+    ;;
+  taker_sells_lez)
+    export FUNDING_ROLE_CONFIG="$MAKER_CORE_CONFIG"
+    ;;
+esac
+
+core_role_rpc() {
+  local config="$1" method="$2" params="$3"
+  curl --fail --silent --show-error --noproxy '*' --config "$config" \
+    --connect-timeout 2 --max-time 30 -H 'content-type: application/json' \
+    --data "$(jq -cn --arg method "$method" --argjson params "$params" \
+      '{jsonrpc:"2.0",id:1,method:$method,params:$params}')" "$CORE_RPC_URL"
+}
+
+export SERVICE_INPUT_EVIDENCE="$PRIVATE_ROOT/evidence/$DIRECTION_NAME-service-input.json"
+core_role_rpc "$FUNDING_ROLE_CONFIG" gettxout \
+  "[\"$SERVICE_INPUT_TXID\",$SERVICE_INPUT_VOUT,true]" >"$SERVICE_INPUT_EVIDENCE"
+export SERVICE_INPUT_SCRIPT="$(jq -er '.result.scriptPubKey.hex' "$SERVICE_INPUT_EVIDENCE")"
+jq -e --argjson value "$SERVICE_INPUT_VALUE_SAT" \
+  '.result != null and ((.result.value * 100000000 | round) == $value)' \
+  "$SERVICE_INPUT_EVIDENCE" >/dev/null
+~~~
+
+Build the strict prepare document. The provisioner creates the raw transaction
+only in `funding-transaction.hex`; stdout contains the same secret-free summary
+written separately below, never the raw transaction or service key:
+
+~~~sh
+export CONTRACT_VALUE_SAT=1000000
+export FUNDING_FEE_SAT=1000
+export FUNDING_PREPARE_SPEC="$PRIVATE_ROOT/evidence/$DIRECTION_NAME-funding-prepare.json"
+export FUNDING_PREPARE_SUMMARY="$PRIVATE_ROOT/evidence/$DIRECTION_NAME-funding-prepared.json"
+jq -n \
+  --arg stage1 "$STAGE1_PUBLIC_SHA256" \
+  --arg direction "$DIRECTION_NAME" \
+  --arg tx "$SERVICE_INPUT_TXID" \
+  --argjson vout "$SERVICE_INPUT_VOUT" \
+  --argjson value "$SERVICE_INPUT_VALUE_SAT" \
+  --arg script "$SERVICE_INPUT_SCRIPT" \
+  --arg secret "$CORE_SERVICE_INPUT_KEY" \
+  --argjson contract "$CONTRACT_VALUE_SAT" \
+  --argjson fee "$FUNDING_FEE_SAT" \
+  '{schema_version:1,stage1_public_sha256:$stage1,direction:$direction,
+    service_input:{transaction_id:$tx,output_index:$vout,value_sat:$value,
+      script_pubkey:$script,signing_secret_key_file:$secret},
+    contract_value_sat:$contract,fee_sat:$fee}' >"$FUNDING_PREPARE_SPEC"
+chmod 0600 "$FUNDING_PREPARE_SPEC"
+cargo run --locked -p btc-local-poc-provision -- prepare-funding \
+  --spec-file "$FUNDING_PREPARE_SPEC" \
+  --output-root "$DIRECTION" >"$FUNDING_PREPARE_SUMMARY"
+chmod 0600 "$FUNDING_PREPARE_SUMMARY"
+test "$(jq -er '.private_material_disclosed' "$FUNDING_PREPARE_SUMMARY")" = false
+test "$(jq -er '.node_state_asserted' "$FUNDING_PREPARE_SUMMARY")" = false
+test "$(stat -c '%a' "$DIRECTION/funding-transaction.hex")" = 600
+~~~
+
+Ask Core for current read-only policy on those exact persisted bytes. Keep the
+raw bytes out of terminal output by using a request file. `allowed: true` is
+not a reservation, submission, confirmation, or finality statement:
+
+~~~sh
+export FUNDING_POLICY_REQUEST="$PRIVATE_ROOT/evidence/$DIRECTION_NAME-funding-policy-request.json"
+export FUNDING_POLICY_RESPONSE="$PRIVATE_ROOT/evidence/$DIRECTION_NAME-funding-policy-response.json"
+jq -n --rawfile raw "$DIRECTION/funding-transaction.hex" \
+  '{jsonrpc:"2.0",id:1,method:"testmempoolaccept",params:[[($raw | gsub("[\\r\\n]";""))]]}' \
+  >"$FUNDING_POLICY_REQUEST"
+chmod 0600 "$FUNDING_POLICY_REQUEST"
+curl --fail --silent --show-error --noproxy '*' --config "$FUNDING_ROLE_CONFIG" \
+  --connect-timeout 2 --max-time 30 -H 'content-type: application/json' \
+  --data-binary "@$FUNDING_POLICY_REQUEST" "$CORE_RPC_URL" >"$FUNDING_POLICY_RESPONSE"
+chmod 0600 "$FUNDING_POLICY_RESPONSE"
+jq -e --arg txid "$(jq -er '.transaction_id' "$FUNDING_PREPARE_SUMMARY")" \
+  --arg wtxid "$(jq -er '.witness_transaction_id' "$FUNDING_PREPARE_SUMMARY")" \
+  '.result[0].allowed == true and .result[0].txid == $txid and .result[0].wtxid == $wtxid' \
+  "$FUNDING_POLICY_RESPONSE" >/dev/null
+
+core_role_rpc "$FUNDING_ROLE_CONFIG" getblockhash '[0]' \
+  >"$PRIVATE_ROOT/evidence/$DIRECTION_NAME-core-genesis.json"
+core_role_rpc "$FUNDING_ROLE_CONFIG" getblockcount '[]' \
+  >"$PRIVATE_ROOT/evidence/$DIRECTION_NAME-core-tip-before-funding.json"
+export CORE_GENESIS_HASH="$(jq -er '.result' "$PRIVATE_ROOT/evidence/$DIRECTION_NAME-core-genesis.json")"
+export PLANNED_BTC_FUNDING_ANCHOR_HEIGHT="$((
+  $(jq -er '.result' "$PRIVATE_ROOT/evidence/$DIRECTION_NAME-core-tip-before-funding.json") + 1
+))"
+export BTC_REFUND_HEIGHT="$((PLANNED_BTC_FUNDING_ANCHOR_HEIGHT + REFUND_CSV_BLOCKS))"
+~~~
+
+Now finalize the agreement using the exact prepared funding bytes, the planned
+next-block anchor, finalized LEZ deployment identity, prepared claim facts, and
+typed recovery schedule. The provisioner still performs no RPC; its
+cryptographic proof and Core's node-state proof remain deliberately separate.
+
+~~~sh
+export PLANNED_BTC_SCRIPT="$(jq -er --arg direction "$DIRECTION_NAME" '.contracts[$direction].script_pubkey' "$STAGE1_PUBLIC_SPEC")"
+: "${SWAP_ID:?64-hex fresh swap ID}"
+: "${CORE_GENESIS_HASH:?actual Core getblockhash 0}"
+: "${REQUIRED_BTC_CONFIRMATIONS:?signed confirmation policy}"
+: "${BTC_CLAIM_VALUE_SAT:?planned fee-subtracted claim value}"
+: "${LEZ_CHAIN_ID:?actual LEZ chain ID}"
+: "${LEZ_CHANNEL_ID:?actual LEZ channel ID}"
+: "${LEZ_GENESIS_BLOCK_HASH:?actual LEZ genesis hash}"
+: "${ESCROW_PROGRAM_ID:?finalized checked escrow ProgramId}"
+: "${AUTH_TRANSFER_PROGRAM_ID:?actual authenticated-transfer ProgramId}"
+: "${LEZ_METADATA_ACCOUNT:?direction-derived metadata account}"
+: "${LEZ_CUSTODY_ACCOUNT:?direction-derived custody account}"
+: "${LEZ_DEPOSITOR_ACCOUNT:?direction-derived depositor account}"
+: "${LEZ_CLAIMANT_ACCOUNT:?direction-derived claimant account}"
+: "${LEZ_AMOUNT:?signed integer amount}"
+: "${LEZ_REFUND_AT_MS:?signed LEZ refund time in milliseconds}"
+: "${LEZ_PREPARED_CLAIM_MESSAGE_HASH:?official prepared claim message hash}"
+: "${BTC_REFUND_HEIGHT:?funding anchor plus CSV}"
+: "${EARLIER_REFUND_LATEST_UNIX_SECONDS:?earlier refund bound}"
+: "${LATER_REFUND_EARLIEST_UNIX_SECONDS:?later refund bound}"
+: "${REQUIRED_REFUND_MARGIN_SECONDS:?minimum cross-chain margin}"
+test "$(jq -er '.contract_script_pubkey' "$FUNDING_PREPARE_SUMMARY")" = "$PLANNED_BTC_SCRIPT"
+export AGREEMENT_FINALIZE_SPEC="$PRIVATE_ROOT/evidence/$DIRECTION_NAME-agreement-finalize.json"
+export AGREEMENT_FINALIZE_SUMMARY="$PRIVATE_ROOT/evidence/$DIRECTION_NAME-agreement-finalized.json"
+test ! -e "$AGREEMENT_FINALIZE_SPEC"
+test ! -e "$AGREEMENT_FINALIZE_SUMMARY"
+test ! -e "$DIRECTION/agreement.borsh"
+test ! -e "$DIRECTION/agreement-summary.json"
+(
+  set -o noclobber
+  jq -n \
+    --arg stage1 "$STAGE1_PUBLIC_SHA256" \
+    --arg swap "$SWAP_ID" \
+    --arg direction "$DIRECTION_NAME" \
+    --arg core_genesis "$CORE_GENESIS_HASH" \
+    --argjson required_btc "$REQUIRED_BTC_CONFIRMATIONS" \
+    --rawfile funding_signed "$DIRECTION/funding-transaction.hex" \
+    --arg funding_sha "$(jq -er '.signed_transaction_sha256' "$FUNDING_PREPARE_SUMMARY")" \
+    --argjson funding_input_value "$(jq -er '.input_value_sat' "$FUNDING_PREPARE_SUMMARY")" \
+    --arg funding_input_script "$(jq -er '.input_script_pubkey' "$FUNDING_PREPARE_SUMMARY")" \
+    --arg funding_txid "$(jq -er '.transaction_id' "$FUNDING_PREPARE_SUMMARY")" \
+    --argjson funding_vout "$(jq -er '.contract_output_index' "$FUNDING_PREPARE_SUMMARY")" \
+    --argjson funding_value "$(jq -er '.contract_value_sat' "$FUNDING_PREPARE_SUMMARY")" \
+    --argjson claim_value "$BTC_CLAIM_VALUE_SAT" \
+    --arg lez_chain "$LEZ_CHAIN_ID" \
+    --arg lez_channel "$LEZ_CHANNEL_ID" \
+    --arg lez_genesis "$LEZ_GENESIS_BLOCK_HASH" \
+    --arg escrow "$ESCROW_PROGRAM_ID" \
+    --arg transfer "$AUTH_TRANSFER_PROGRAM_ID" \
+    --arg metadata "$LEZ_METADATA_ACCOUNT" \
+    --arg custody "$LEZ_CUSTODY_ACCOUNT" \
+    --arg depositor "$LEZ_DEPOSITOR_ACCOUNT" \
+    --arg claimant "$LEZ_CLAIMANT_ACCOUNT" \
+    --argjson amount "$LEZ_AMOUNT" \
+    --argjson refund_ms "$LEZ_REFUND_AT_MS" \
+    --arg claim_hash "$LEZ_PREPARED_CLAIM_MESSAGE_HASH" \
+    --argjson csv "$REFUND_CSV_BLOCKS" \
+    --argjson funding_anchor "$PLANNED_BTC_FUNDING_ANCHOR_HEIGHT" \
+    --argjson btc_refund "$BTC_REFUND_HEIGHT" \
+    --argjson earlier "$EARLIER_REFUND_LATEST_UNIX_SECONDS" \
+    --argjson later "$LATER_REFUND_EARLIEST_UNIX_SECONDS" \
+    --argjson margin "$REQUIRED_REFUND_MARGIN_SECONDS" \
+    --slurpfile authority "$LEZ_AUTHORITY_MAPPING" \
+    '{
+      schema_version: 1,
+      stage1_public_sha256: $stage1,
+      swap_id: $swap,
+      direction: $direction,
+      bitcoin: {
+        genesis_block_hash: $core_genesis,
+        required_confirmations: $required_btc,
+        funding_signed_transaction: ($funding_signed | gsub("[\\r\\n]";"")),
+        funding_signed_transaction_sha256: $funding_sha,
+        funding_input_value_sat: $funding_input_value,
+        funding_input_script_pubkey: $funding_input_script,
+        funding_transaction_id: $funding_txid,
+        funding_output_index: $funding_vout,
+        funding_value_sat: $funding_value,
+        claim_value_sat: $claim_value
+      },
+      lez_runtime: {
+        compatibility: "lee_v0_2_0",
+        chain_id: $lez_chain,
+        channel_id: $lez_channel,
+        genesis_block_hash: $lez_genesis,
+        escrow_program_id: $escrow,
+        authenticated_transfer_program_id: $transfer
+      },
+      lez_terms: {
+        aggregate_authority_mapping: $authority[0],
+        metadata_account: $metadata,
+        custody_account: $custody,
+        depositor_account: $depositor,
+        claimant_account: $claimant,
+        amount: $amount,
+        refund_at_ms: $refund_ms,
+        prepared_claim_message_hash: $claim_hash
+      },
+      recovery: {
+        refund_csv_blocks: $csv,
+        planned_bitcoin_funding_anchor_height: $funding_anchor,
+        bitcoin_refund_height: $btc_refund,
+        earlier_refund_latest_unix_seconds: $earlier,
+        later_refund_earliest_unix_seconds: $later,
+        required_margin_seconds: $margin
+      }
+    }' >"$AGREEMENT_FINALIZE_SPEC"
+  chmod 0600 "$AGREEMENT_FINALIZE_SPEC"
+  cargo run --locked -p btc-local-poc-provision -- finalize \
+    --spec-file "$AGREEMENT_FINALIZE_SPEC" \
+    --output-root "$DIRECTION" \
+    >"$AGREEMENT_FINALIZE_SUMMARY"
+  chmod 0600 "$AGREEMENT_FINALIZE_SUMMARY"
+)
+test "$(jq -er '.direction' "$AGREEMENT_FINALIZE_SUMMARY")" = "$DIRECTION_NAME"
+test "$(jq -er '.agreement_revalidated' "$AGREEMENT_FINALIZE_SUMMARY")" = true
+test "$(jq -er '.private_material_disclosed' "$AGREEMENT_FINALIZE_SUMMARY")" = false
+test "$(jq -er '.bitcoin_funding_authorization' "$AGREEMENT_FINALIZE_SUMMARY")" = verified
+test "$(jq -er '.bitcoin_node_state' "$AGREEMENT_FINALIZE_SUMMARY")" = not_asserted
+test "$(jq -er '.planned_bitcoin_funding_anchor_height' "$AGREEMENT_FINALIZE_SUMMARY")" = "$PLANNED_BTC_FUNDING_ANCHOR_HEIGHT"
+export AGREEMENT_FILE="$(jq -er '.agreement_file' "$AGREEMENT_FINALIZE_SUMMARY")"
+test "$AGREEMENT_FILE" = "$DIRECTION/agreement.borsh"
+test "$(stat -c '%a' "$AGREEMENT_FILE")" = 600
+~~~
+
+Finalization stable-reads the stage-one public/private set and exact persisted
+funding bytes, verifies the public SHA-256, and reconstructs every public key
+and both P2TR/CSV contracts. It independently verifies canonical transaction
+encoding/hash/txid, the rawtr prevout key/script/value, exact contract output,
+bounded positive fee, one 64-byte `SIGHASH_DEFAULT` witness, and the BIP-341
+Schnorr signature before it signs the agreement. It then binds the exact
+official LEZ authority result, deployment/accounts/amount/refund/prepared-
+message facts, planned anchor, direction-derived roles, and recovery margin,
+and re-decodes a byte-identical canonical Borsh agreement.
+
+That is cryptographic reconstruction, not node truth: finalization never
+contacts Core, the sequencer, or the indexer. `gettxout` establishes the local
+node's current UTXO view, `testmempoolaccept` its current read-only policy, and
+post-send transaction/block reads the actual containing height and later signed
+confirmation depth. None is a cross-chain proof or distributed transaction.
+
+The generate set, funding hex/summary, and agreement/summary are create-new
+owner-private groups, but no group is one filesystem transaction. Before any
+effect, an interruption or partial output retires the whole direction root;
+restart at `generate` with fresh secrets. After a possible broadcast, preserve
+the exact root and reconcile from node evidence or execute the signed refund.
+Never delete selected survivors or re-sign an already locked swap.
+
+After finalization, complete and verify both roles' Bitcoin and LEZ journals
+before actor activation or either chain submission. This maximizes atomicity:
+after the first lock, either direction's opposite claim requires only persisted
+local material and canonical public reveal evidence. It is not a distributed
+atomic commit across the filesystem, signer journals, actor databases, Core,
+and LEZ; ambiguity is handled by durable exact bytes, one-attempt authority,
+observation, and fail-closed recovery.
+
+When Bitcoin funding is direction-correctly due, re-run
+`testmempoolaccept`, send only `$DIRECTION/funding-transaction.hex`, mine exactly
+one isolated block, and require its containing height to equal
+`$PLANNED_BTC_FUNDING_ANCHOR_HEIGHT`. A mismatch invalidates certification and
+the agreement's absolute recovery schedule even though the actual Taproot CSV
+leaf remains consensus-valid. Preserve evidence, stop the lifecycle, and
+recover through the actual relative-CSV script when eligible; never patch the
+signed agreement after the effect.
+
+## Run the combined actual-node public-actor flow
+
+The repository-owned composition enters through
+`scripts/run-m3-actor-local-poc.sh` and delegates each direction to
+`scripts/run-m3-actor-direction.sh`. Do not start the retained manual services
+above when using this entry point; it creates fresh Core and LEZ child runs,
+executes the directions sequentially, and cleans only resources whose exact IDs
+it captured. After the pinned verifier has produced the deployer target and all
+offline graphs are cached, run:
+
+~~~sh
+export RUN_ID=m3actor-manual-20260715a
+export LEZ_V02_SOURCE_DIR=/absolute/path/to/clean/logos-execution-zone-v0.2.0
+export LEZ_V02_SERVICES_DIR=/absolute/path/to/locked/release-binaries
+export LEZ_V02_R0VM=/absolute/path/to/verified/r0vm
+export LEZ_V02_ARTIFACT_TARGET_DIR=/absolute/path/to/verified/lez-artifact-target
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+./scripts/run-m3-actor-local-poc.sh
+~~~
+
+For audit only, retained run-n used the following exact already-verified
+inputs:
+
+~~~sh
+RUN_ID=m3actor-20260716n \
+LEZ_V02_SOURCE_DIR=/tmp/lez-v020-native-investigation \
+LEZ_V02_SERVICES_DIR=/tmp/lez-v02-services-a58fbce2-20260713/release \
+LEZ_V02_R0VM=/tmp/lez-atomic-swaps-tools/risc0-3.0.5/home/extensions/v3.0.5-cargo-risczero-x86_64-unknown-linux-gnu/r0vm \
+LEZ_V02_ARTIFACT_TARGET_DIR=/tmp/lez-m3-artifact-20260715a \
+RAPIDSNARK_LIB_DIR=/tmp/lez-atomic-swaps-tools/rapidsnark-v0.0.8/d4133227 \
+BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include \
+./scripts/run-m3-actor-local-poc.sh
+~~~
+
+Never rerun that literal command: `m3actor-20260716n` and its root are spent
+identities. A portable reproduction uses equivalent verified prerequisites and
+a fresh run ID with the generic command above.
+
+The run ID must be a fresh 8–48 character lowercase identifier. The runner
+refuses an existing outer root, either child root, or same-ID Docker resource.
+It validates the canonical absolute Rapidsnark directory and all four pinned
+library hashes before its offline builds; `LEZ_V02_ARTIFACT_TARGET_DIR` must
+already contain the verified deployer and exact checked guest. A successful
+process exit is necessary but not sufficient. Check both the terminal packet
+and the cleanup attestation:
+
+~~~sh
+export M3_EVIDENCE="$PWD/.e2e/${RUN_ID}/m3-actor-poc/evidence"
+jq -e '.result == "passed" and
+  (.directions | map(.direction) ==
+    ["taker_sells_foreign", "taker_sells_lez"]) and
+  all(.directions[];
+    .terminal_revision == 4 and .terminal_phase == "completed") and
+  .actor_process_model == "fresh_one_shot_process_per_command" and
+  .replay_resubmission_count == 0 and
+  .public_rpc_used == false and .faucet_used == false and
+  .public_funds_used == false and .private_material_disclosed == false' \
+  "$M3_EVIDENCE/m3-actor-local-poc.json"
+jq -e '.result == "passed" and .all_exact_run_resources_absent == true and
+  .foreign_resources_targeted == false and .broad_cleanup_used == false' \
+  "$M3_EVIDENCE/cleanup-attestation.json"
+for direction in taker_sells_foreign taker_sells_lez; do
+  for role in maker taker; do
+    jq -e '.state == "active" and .phase == "completed" and
+      .revision == 4 and .next_action == "complete"' \
+      "$M3_EVIDENCE/${direction}-${role}-terminal.json"
+  done
+  jq -e '.bitcoin == 2 and .lez == 3' \
+    "$M3_EVIDENCE/${direction}-actual-submission-counts.json"
+  jq -e '(.bitcoin_effect_ids | length) == 2 and
+    (.lez_effect_ids | length) == 3 and
+    .expected_unique_effects.bitcoin == 2 and
+    .expected_unique_effects.lez == 3 and
+    (.actor_owned_claims.bitcoin | length) > 0 and
+    (.actor_owned_claims.lez | length) > 0' \
+    "$M3_EVIDENCE/${direction}-actual-effects.json"
+done
+~~~
+
+Keep the entire `.e2e/$RUN_ID` tree private: the public terminal packet is
+secret-safe, but sibling evidence and `private/` contain credentials, keys,
+complete transactions, and signer/actor databases. If the run fails, the
+cleanup attestation should still prove exact cleanup; no terminal success packet
+exists, and the same run ID and run root must never be reused.
+
 ## Repeat the two-lock reference-actor flow
 
 The actor consumes an already canonical countersigned Borsh agreement; it does
-not negotiate or create one. Retain that exact agreement as
-`$DIRECTION/agreement.borsh`, and require its Bitcoin genesis, confirmation
-policy, LEZ channel/genesis/program/accounts, direction, and swap terms to match
-the run artifacts below. Use different state databases, role Basic files,
-capabilities, runtimes, and configs for maker and taker.
+not negotiate or create one. Finalization emits that exact agreement as
+`$DIRECTION/agreement.borsh`; do not copy, rewrite, or re-sign it. Require its
+Bitcoin genesis, confirmation policy, LEZ channel/genesis/program/accounts,
+direction, and swap terms to match the run artifacts below. Use different state
+databases, role Basic files, capabilities, runtimes, and configs for maker and
+taker.
 
-This recipe is chronological only after the exact LEZ claim has been prepared
-and both fresh-process signing ceremonies below have reached verified
-presignatures, but still before the first chain submission. Preparation uses
+This recipe is chronological only after the exact LEZ claim has been prepared,
+the funding transaction has passed read-only Core policy, the agreement has
+been finalized, and both fresh-process signing ceremonies below have reached
+verified presignatures, but still before the first chain submission. Preparation uses
 the deterministic planned LEZ funding transaction ID, so it need not wait for
 that transaction to be submitted. Return here after completing direction step
 4 for `TakerSellsForeign` or step 3 for `TakerSellsLez`.
@@ -521,7 +1114,7 @@ write_actor_config() {
     --arg bridge "$bridge_url" \
     --arg capability "$(realpath "$capability")" \
     --arg run "$M3_RUN_ID" \
-    --argjson timeout 10000 \
+    --argjson timeout 30000 \
     --argjson start "$ACTOR_DISCOVERY_START_HEIGHT" \
     --argjson blocks "$ACTOR_DISCOVERY_MAX_BLOCKS" \
     --arg btc_session "$BTC_SESSION_ID" \
@@ -574,6 +1167,12 @@ write_actor_config taker "$TAKER_CORE_BASIC" "$TAKER_BRIDGE_URL"
 export MAKER_BTC_ACTOR_CONFIG="$DIRECTION/maker-btc-actor.json"
 export TAKER_BTC_ACTOR_CONFIG="$DIRECTION/taker-btc-actor.json"
 ~~~
+
+The 30,000 ms value is a finite timeout for a read-only LEZ bridge scan, added
+in commit `650d94e`. It prevents an unavailable or moving local indexer from
+hanging the actor indefinitely. Timeout is uncertain observation: preserve the
+persisted effect bytes and state, then retry only the observation under the
+rules below. It never grants authority to resubmit initialize, fund, or claim.
 
 The single LEZ discovery window is used by whichever direction-derived funding
 transition observes LEZ. Choose an inclusive window that the finalized tip
@@ -672,11 +1271,41 @@ returns before the predecessor-one SQLite CAS. Exact replay is idempotent;
 different concurrent valid observations may only converge on an already valid
 revision-two winner and never overwrite it.
 
-A later `drive` returns `not_yet_composed` at durable revision `2` without RPC.
-Claim revisions three and four, adaptation/extraction/submission, terminal
-status, refunds, and live two-direction E2E through this actor are pending. Use
-the operator-composed flow below for those effects; do not interpret revision
-two as a complete swap.
+Status at durable revision `2` reports `observe_revealing_claim`. The live
+Bitcoin and LEZ claim branches, plus the injected deterministic seams used by
+their tests, advance exact canonical evidence to revision `3`
+`claim_evidence_available`; the direction-correct follow-up reaches revision
+`4` `completed`, and fresh offline `status` reports `complete`. Both branches
+rerun strict activation material before claim use. The taker must reproduce the
+revealing signature from its private scalar, while the maker must extract and
+point-check the same scalar from its persisted presignature; only
+`ClaimEvidence` survives in lifecycle state.
+
+For a Bitcoin revealing claim at revision `2`, only the taker prepares and may
+submit. For a Bitcoin follow-up at revision `3`, only the maker prepares and may
+submit, after re-extracting the scalar from the durable revision-three
+revealing witness and its matching persisted LEZ presignature. The other role
+is observation-only. Before chain I/O the actor records the exact transaction
+bytes, transaction ID, agreement, role, operation, and predecessor revision in
+its public-effect journal. Only a definitive unspent observation plus fresh
+`Prepared` state grants one authorized Core send. `Started` or `Unknown` is
+observe-only forever across restart; an exact-byte mismatch is uncertain, not
+absence and not authority. An accepted send response does not advance local
+lifecycle state. Projection occurs only after Core returns those exact bytes as
+finalized at the agreement's signed confirmation depth.
+
+For a LEZ revealing or follow-up claim, the direction- and revision-owning role
+completes the exact aggregate signature, persists the exact transaction before
+classifying presence, and may submit once only after stable bounded
+`NotFound`. `Started`, `Unknown`, conflicting presence, and uncertain or moving
+history grant no fresh send authority. An accepted response alone does not
+project lifecycle state; a later fresh `drive` must obtain exact finalized
+evidence. The other role discovers the same claim from signed terms and
+transcript without accepting a peer transaction ID. This path is GREEN in
+source and deterministic actor tests. Refunds and a retained two-direction
+actual-node E2E through the public actor are now proved by run-n. The lower-level
+operator flow below remains useful for inspecting each exact request/effect;
+refund and concurrent journeys remain later hardening.
 
 ## Strict witnessed operator requests
 
@@ -732,9 +1361,11 @@ The stable live observation above is a progress/recovery hint, not the
 dual-lock finality checkpoint. After the indexer finalized tip covers the funding
 window, either bound participant must run the distinct finalized funding
 observation. The bridge returns evidence but does not retain a prerequisite
-across its independent claim methods; until cohesive actor wiring lands, the
-operator must persist this checkpoint before permitting claim. Peerless mode
-accepts no transaction ID from the counterparty:
+across its independent claim methods. The public actor enforces the ordering by
+observing and projecting both locks before it permits claim projection. In this
+lower-level operator recipe, the operator must persist the same checkpoint
+before permitting any independent bridge claim method. Peerless mode accepts no
+transaction ID from the counterparty:
 
 ~~~sh
 FUNDING_OBSERVER_ROLE=maker
@@ -882,22 +1513,60 @@ core_actor_rpc() {
 
 The actor allowlist includes chain/network reads, raw transaction and outpoint
 observation, mempool reads, testmempoolaccept, and sendrawtransaction. Actors
-cannot mine. Use the one exact run-owned Core container and its cookie
-provisioner only:
+cannot mine. Identify the one exact run-owned Core container and its mining
+address now, but do not advance its tip until the direction recipe explicitly
+submits the planned funding bytes:
+
+Bitcoin Core 31.1 changed the accepted second parameter for
+`gettxspendingprevout`. Every spender observation must send the options object
+`{"mempool_only":false,"return_spending_tx":true}`; the former positional
+booleans are invalid. The typed adapter additionally requires the returned
+spending transaction's exact bytes, requires `blockhash` absent while the
+transaction is only in the mempool, and requires the exact containing block
+hash once confirmed. Commit `2233964` introduced this compatibility fix and
+its contract tests.
 
 ~~~sh
 mapfile -t CORE_CONTAINERS < <(docker container ls --quiet --filter "label=org.logos-co.atomic-swaps.run=$CORE_RUN_ID")
 test "${#CORE_CONTAINERS[@]}" -eq 1
 CORE_CONTAINER="${CORE_CONTAINERS[0]}"
 MINING_ADDRESS="$(awk -F= '$1 == "BITCOIN_CORE_FUNDING_ADDRESS" {print $2}' "$CORE_FUNDING_FILE")"
-docker exec "$CORE_CONTAINER" bitcoin-cli -conf=/run-config/bitcoin.conf -datadir=/var/lib/bitcoin generatetoaddress 1 "$MINING_ADDRESS"
 ~~~
 
-For every Bitcoin lock or claim: testmempoolaccept under the submitting role,
-require allowed true, sendrawtransaction under that role, observe the mempool
-under the other role, mine exactly one block with the provisioner, then require
-getrawtransaction reports one confirmation. One confirmation is an intentional
-local Regtest happy-path policy only, never a production policy.
+For the Bitcoin funding lock, repeat `testmempoolaccept` under the
+direction-correct role immediately before the first send. Submit only the exact
+persisted funding file, mine one block, and bind the actual containing height to
+the agreement's plan:
+
+~~~sh
+export BTC_FUNDING_ROLE=taker # use maker for taker_sells_lez
+export BTC_FUNDING_RAW="$(tr -d '\r\n' <"$DIRECTION/funding-transaction.hex")"
+core_actor_rpc "$BTC_FUNDING_ROLE" testmempoolaccept "[[\"$BTC_FUNDING_RAW\"]]" \
+  >"$PRIVATE_ROOT/evidence/$DIRECTION_NAME-funding-policy-before-send.json"
+jq -e '.result[0].allowed == true' \
+  "$PRIVATE_ROOT/evidence/$DIRECTION_NAME-funding-policy-before-send.json" >/dev/null
+core_actor_rpc "$BTC_FUNDING_ROLE" sendrawtransaction "[\"$BTC_FUNDING_RAW\"]" \
+  >"$PRIVATE_ROOT/evidence/$DIRECTION_NAME-funding-send.json"
+test "$(jq -er '.result' "$PRIVATE_ROOT/evidence/$DIRECTION_NAME-funding-send.json")" = \
+  "$(jq -er '.transaction_id' "$FUNDING_PREPARE_SUMMARY")"
+docker exec "$CORE_CONTAINER" bitcoin-cli -conf=/run-config/bitcoin.conf \
+  -datadir=/var/lib/bitcoin generatetoaddress 1 "$MINING_ADDRESS" \
+  >"$PRIVATE_ROOT/evidence/$DIRECTION_NAME-funding-mine.json"
+core_actor_rpc "$BTC_FUNDING_ROLE" getrawtransaction \
+  "[\"$(jq -er '.transaction_id' "$FUNDING_PREPARE_SUMMARY")\",true]" \
+  >"$PRIVATE_ROOT/evidence/$DIRECTION_NAME-funding-confirmed.json"
+export BTC_FUNDING_BLOCK_HASH="$(jq -er '.result.blockhash' "$PRIVATE_ROOT/evidence/$DIRECTION_NAME-funding-confirmed.json")"
+core_actor_rpc "$BTC_FUNDING_ROLE" getblockheader "[\"$BTC_FUNDING_BLOCK_HASH\",true]" \
+  >"$PRIVATE_ROOT/evidence/$DIRECTION_NAME-funding-block.json"
+test "$(jq -er '.result.height' "$PRIVATE_ROOT/evidence/$DIRECTION_NAME-funding-block.json")" = \
+  "$PLANNED_BTC_FUNDING_ANCHOR_HEIGHT"
+unset BTC_FUNDING_RAW
+~~~
+
+For each later Bitcoin claim, apply the same role policy check and exact
+send/observation discipline, then mine exactly one block and require the signed
+confirmation policy. One confirmation is an intentional local Regtest happy-
+path policy only, never a production policy.
 
 ## Direction 1: TakerSellsForeign
 
@@ -1096,23 +1765,64 @@ otherwise abandon the isolated chain funds and start a fresh run.
 
 ## External resources and flakiness
 
-Runtime external resources are empty:
+Runtime external resources were empty in audited run
+`m3actor-20260716n`: its packet explicitly records no public RPC, faucet,
+public funds, or certification-time network dependency.
 
 - Bitcoin Core is local Regtest with zero peers and deterministic local mining.
 - LEZ is the run-owned local Bedrock, sequencer, and indexer.
 - Funds come from local genesis/Vault and Regtest outputs.
 - No faucet, public RPC, public Testnet, public peer, or public funds are used.
 
+Loopback describes reachability, not a node double. The combined runner starts
+the pinned Core daemon and the exact LEZ Bedrock/sequencer/indexer services,
+then checks Core version, Regtest genesis, policy, canonical transaction bytes,
+containing blocks, confirmation depth, and spent-once outpoints. On LEZ it
+checks the source/binary/runtime identities, deploys the checked guest, requires
+sequential finalized ancestry, re-reads Vault ownership and balances, and binds
+the exact initialize/fund/claim transactions to historical account state. The
+deterministic genesis and Regtest funds make the setup reproducible; these node
+and chain assertions, rather than the loopback address itself, establish the
+local behavior under test.
+
+The root `generate`, `prepare-funding`, and `finalize` commands and their eleven
+tests perform no RPC,
+start no service, and use no Docker. With a warm Cargo cache they depend only on
+the OS random source and local owner-private files. The official
+`lez-v02-account-id` invocation also performs no RPC, but its first build uses
+the separate locked Rust 1.96 LEZ sidecar graph and can be delayed by the same
+cold Cargo/git/native-library availability as that graph. Actual Core funding,
+LEZ deployment/finality, prepared-claim facts, Core UTXO state, and read-only
+policy are collected around those commands. Local node readiness, moving-tip
+observations, or manual transcription can delay or fail the ceremony. Such
+failure is not permission to invent a fact, reuse a fixture root, relax a
+policy, or overwrite output.
+
 Cold setup can depend on crates.io/git caches, official Bitcoin release and
 Guix-signature URLs, the digest-pinned Risc0 builder image, and the
 checksum-pinned Logos circuits release. Treat download, DNS, registry, and
 registry-rate failures as setup flakiness, not chain evidence.
 
+The combined actor runner invokes all root and sidecar Cargo builds with
+`--offline`, so a missing locked source fails before either service starts. It
+still inherits the exact LEZ checkout/service/r0vm paths and the Core release
+provenance workflow; provision those inputs first. Docker daemon availability,
+image construction, CPU, memory, and disk pressure are local execution
+dependencies. None is a public chain dependency, and none may be converted into
+a looser finality, policy, identity, or cleanup assertion.
+
+The Core release verifier creates a run-owned GnuPG home and, on normal exit or
+signal, calls `gpgconf --homedir <that-home> --kill gpg-agent`. It fails closed
+if that exact cleanup fails and never kills agents outside the run. Run-n's
+post-cleanup process audit found no agent for its GnuPG home.
+
 Remaining runtime flakiness is local: process scheduling, an advancing LEZ tip
 across multi-read observations, indexer/sequencer readiness, heavy parallel
 indexer reads, port selection, and manual ordering. Use unique ports, sequential
 indexer calls, bounded waits, fresh observation IDs, and retained exact
-evidence. Never mask a timeout by resubmitting an effect.
+evidence. The actor's LEZ scan is bounded to 30 seconds; expiry is uncertain
+read-only observation, not absence and not new send authority. Never mask a
+timeout by resubmitting an effect.
 
 ## Public configuration switch and production nonclaims
 

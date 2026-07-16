@@ -96,38 +96,38 @@ convergence. Any other conflict fails closed.
 
 ```mermaid
 sequenceDiagram
-    participant Actor as Role fixed actor
+    participant SwapActor as Role fixed actor
     participant Authority as Agreement and signer authority
     participant Effect as Public effect journal
     participant Chain as Bitcoin Core or LEZ adapter
     participant Store as Role local recovery store
 
-    Actor->>Store: Read durable predecessor
-    Store-->>Actor: Revision 2 or revision 3
-    Actor->>Authority: Rerun complete activation gate
-    Authority-->>Actor: Exact role and session authority
-    opt Actor owns this claim transition
-        Actor->>Actor: Complete exact public claim
-        Actor->>Effect: Persist exact bytes and expected ID
+    SwapActor->>Store: Read durable predecessor
+    Store-->>SwapActor: Revision 2 or revision 3
+    SwapActor->>Authority: Rerun complete activation gate
+    Authority-->>SwapActor: Exact role and session authority
+    opt Swap actor owns this claim transition
+        SwapActor->>SwapActor: Complete exact public claim
+        SwapActor->>Effect: Persist exact bytes and expected ID
     end
-    Actor->>Chain: Classify exact or peerless claim presence
+    SwapActor->>Chain: Classify exact or peerless claim presence
     alt Evidence pending or uncertain
-        Chain-->>Actor: No canonical exact claim
-        Actor-->>Actor: Return with predecessor unchanged
+        Chain-->>SwapActor: No canonical exact claim
+        SwapActor-->>SwapActor: Return with predecessor unchanged
     else Stable bounded absence and owned claim
-        Chain-->>Actor: Definitive NotFound
-        Actor->>Effect: CAS Prepared to Started
-        Effect-->>Actor: SubmitOnce or ObserveOnly
-        Actor->>Chain: Submit only after SubmitOnce
-        Actor-->>Actor: Keep predecessor until canonical presence
+        Chain-->>SwapActor: Definitive NotFound
+        SwapActor->>Effect: CAS Prepared to Started
+        Effect-->>SwapActor: SubmitOnce or ObserveOnly
+        SwapActor->>Chain: Submit only after SubmitOnce
+        SwapActor-->>SwapActor: Keep predecessor until canonical presence
     else Revealing claim at revision 2
-        Chain-->>Actor: Confirmed or finalized exact evidence and signature
-        Actor->>Authority: Reproduce or extract and point check scalar
-        Authority-->>Actor: One way ClaimEvidence only
-        Actor->>Store: CAS revision 2 to revision 3
+        Chain-->>SwapActor: Confirmed or finalized exact evidence and signature
+        SwapActor->>Authority: Reproduce or extract and point check scalar
+        Authority-->>SwapActor: One way ClaimEvidence only
+        SwapActor->>Store: CAS revision 2 to revision 3
     else Follow-up claim at revision 3
-        Chain-->>Actor: Confirmed or finalized exact evidence
-        Actor->>Store: CAS revision 3 to revision 4
+        Chain-->>SwapActor: Confirmed or finalized exact evidence
+        SwapActor->>Store: CAS revision 3 to revision 4
     end
 ```
 
