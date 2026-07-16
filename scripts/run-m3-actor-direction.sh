@@ -8,6 +8,7 @@ umask 077
 
 readonly initial_terms_hash="1111111111111111111111111111111111111111111111111111111111111111"
 readonly pda_probe_secret_digest="2222222222222222222222222222222222222222222222222222222222222222"
+readonly actor_lez_bridge_request_timeout_millis=30000
 
 fail() {
   echo "M3 actor direction failed: $*" >&2
@@ -15,7 +16,7 @@ fail() {
 }
 
 emit_contract() {
-  jq -n '
+  jq -n --argjson bridge_timeout "$actor_lez_bridge_request_timeout_millis" '
     {
       schema_version: 1,
       kind: "m3_actor_direction_driver_contract",
@@ -37,6 +38,7 @@ emit_contract() {
       bounded_read_only_observation_retries_never_resubmit: true,
       bounded_pending_observation_retries: true,
       bounded_prepared_bitcoin_claim_reconciliation: true,
+      actor_lez_bridge_request_timeout_millis: $bridge_timeout,
       submission_count_query: true,
       owned_process_registry: true,
       pre_lock_presignature_domains: ["bitcoin", "lez"],
@@ -846,6 +848,7 @@ write_actor_configs() {
       --arg capability "${M3_POC_DIRECTION_ROOT}/sidecars/final/${role}/capability" \
       --arg run "$M3_POC_RUN_ID" --argjson start "$start_height" \
       --argjson blocks "$max_blocks" --arg btc_session "$btc_session_id" \
+      --argjson bridge_timeout "$actor_lez_bridge_request_timeout_millis" \
       --arg btc_journal "${M3_POC_DIRECTION_ROOT}/actors/${role}/btc-journal.sqlite" \
       --arg lez_session "$lez_session_id" \
       --arg lez_journal "${M3_POC_DIRECTION_ROOT}/actors/${role}/lez-journal.sqlite" \
@@ -856,7 +859,7 @@ write_actor_configs() {
         accepted_at_unix_seconds:$accepted,
         bitcoin_core:{endpoint:$core,cookie_file:$basic,connectivity:"isolated_local"},
         lez_bridge:{endpoint:$bridge,capability_file:$capability,run_id:$run,
-          runtime:$runtime[0],request_timeout_millis:10000,
+          runtime:$runtime[0],request_timeout_millis:$bridge_timeout,
           discovery_start_height:$start,discovery_max_blocks:$blocks},
         signing:({
           bitcoin:{session_id:$btc_session,journal_db:$btc_journal},
