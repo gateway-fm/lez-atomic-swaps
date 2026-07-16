@@ -1155,6 +1155,15 @@ reproduced the RED and now requires the shell value to be explicitly bound as
 `maker_cutoff` before the JSON agreement uses it. This failed run is diagnostic
 evidence, not M3 acceptance evidence; the certifying rerun uses a fresh ID.
 
+Attempt `m3firstlock-20260716c` crossed that boundary, finalized the taker
+Bitcoin first lock, and then correctly withheld LEZ absence authority because
+the current finalized LEZ timestamp had not yet crossed the signed cutoff. Its
+exact cleanup attestation is GREEN. The next RED-GREEN guard requires a bounded
+240-sample finalized-tip wait, revalidates exact finalized block identity on
+each usable sample, and retains the wait count. RPC uncertainty still cannot
+become absence. This attempt is also diagnostic rather than acceptance
+evidence.
+
 The refund-wire loop is GREEN. The existing native-refund RPC names and
 hashlock JSON shape remain unchanged, while strict untagged protocol envelopes
 accept either `NativeEscrowTerms`/metadata or the M3

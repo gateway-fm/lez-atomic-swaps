@@ -1754,38 +1754,43 @@ refresh_first_lock_lez_absence_window() {
   local label="$1"
   local baseline="$actor_prelock_lez_tip"
   local spec="${M3_POC_DIRECTION_ROOT}/stage-two.json"
-  local tip blocks cutoff tip_file tip_timestamp
+  local tip=0 blocks=0 cutoff tip_file tip_timestamp=0 waited=0
   [[ "$label" =~ ^[a-z0-9-]{1,48}$ ]] ||
     fail "first-lock LEZ absence-window evidence label is invalid"
   [[ "$baseline" =~ ^[0-9]+$ ]] || fail "pre-lock LEZ baseline is unavailable"
   cutoff="$(jq -er '.recovery.maker_second_lock_cutoff_unix_seconds | numbers' "$spec")"
-  for _ in {1..120}; do
+  tip_file="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-first-lock-lez-${label}-cutoff-tip.json"
+  for _ in {1..240}; do
+    waited=$((waited + 1))
     tip="$(finalized_tip)"
     blocks=$((tip - baseline))
-    (( blocks >= 1 )) && break
+    if (( blocks >= 1 && blocks <= 4096 )); then
+      rpc_read_file "$M3_POC_LEZ_INDEXER_RPC_URL" \
+        "$(jq -cn --argjson height "$tip" \
+          '{jsonrpc:"2.0",id:1,method:"getBlockById",params:[$height]}')" "$tip_file"
+      jq -e --argjson tip "$tip" '
+        .result.header.block_id == $tip and .result.bedrock_status == "Finalized"
+      ' "$tip_file" >/dev/null || fail "LEZ cutoff tip is not the exact finalized block"
+      tip_timestamp="$(jq -er '.result.header.timestamp | numbers' "$tip_file")"
+      (( tip_timestamp >= cutoff * 1000 )) && break
+    fi
     sleep 0.25
   done
   (( blocks >= 1 && blocks <= 4096 )) ||
     fail "first-lock LEZ absence window does not reach a bounded current finalized tip"
-  tip_file="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-first-lock-lez-${label}-cutoff-tip.json"
-  rpc_read_file "$M3_POC_LEZ_INDEXER_RPC_URL" \
-    "$(jq -cn --argjson height "$tip" \
-      '{jsonrpc:"2.0",id:1,method:"getBlockById",params:[$height]}')" "$tip_file"
-  tip_timestamp="$(jq -er '.result.header.timestamp | numbers' "$tip_file")"
   (( tip_timestamp >= cutoff * 1000 )) ||
-    fail "current finalized LEZ tip has not crossed the signed maker cutoff"
-  jq -e --argjson tip "$tip" '
-    .result.header.block_id == $tip and .result.bedrock_status == "Finalized"
-  ' "$tip_file" >/dev/null || fail "LEZ cutoff tip is not the exact finalized block"
+    fail "finalized LEZ chain time did not cross the signed maker cutoff within the bound"
   write_actor_configs "$((baseline + 1))" "$blocks"
   jq -n --argjson baseline "$baseline" --argjson start "$((baseline + 1))" \
     --argjson tip "$tip" --argjson blocks "$blocks" \
-    --argjson cutoff "$cutoff" --argjson tip_timestamp "$tip_timestamp" '
+    --argjson cutoff "$cutoff" --argjson tip_timestamp "$tip_timestamp" \
+    --argjson wait_iterations "$waited" '
     {schema_version:1,pre_lock_finalized_baseline:$baseline,
      discovery_start_height:$start,current_finalized_tip:$tip,
      discovery_max_blocks:$blocks,
      signed_maker_second_lock_cutoff_unix_seconds:$cutoff,
      current_finalized_tip_timestamp_ms:$tip_timestamp,
+     finalized_cutoff_wait_iterations:$wait_iterations,
      finalized_clock_cutoff_satisfied:($tip_timestamp >= $cutoff * 1000),
      every_finalized_block_after_baseline_included:
        ($start + $blocks - 1 == $tip)}

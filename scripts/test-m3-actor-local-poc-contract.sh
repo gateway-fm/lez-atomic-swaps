@@ -388,6 +388,18 @@ for behavior in assert_first_lock_recovery_pending \
   rg -Fq "${behavior}()" "$direction_driver" ||
     fail "actual direction implementation is missing first-lock refund behavior: ${behavior}"
 done
+lez_cutoff_refresh_source="$(sed -n \
+  '/^refresh_first_lock_lez_absence_window() {$/,/^}$/p' "$direction_driver")"
+[[ -n "$lez_cutoff_refresh_source" ]] || fail "LEZ first-lock cutoff refresh is missing"
+rg -Fq 'for _ in {1..240}; do' <<<"$lez_cutoff_refresh_source" ||
+  fail "LEZ first-lock cutoff refresh does not wait within a fixed bound"
+rg -Fq '(( tip_timestamp >= cutoff * 1000 )) && break' \
+  <<<"$lez_cutoff_refresh_source" ||
+  fail "LEZ first-lock cutoff refresh does not wait for finalized chain time"
+rg -Fq 'finalized_cutoff_wait_iterations:$wait_iterations' \
+  <<<"$lez_cutoff_refresh_source" ||
+  fail "LEZ first-lock cutoff refresh does not retain its bounded wait evidence"
+
 first_lock_refund_flow_source="$(sed -n \
   '/^run_actor_first_lock_refund_flow() {$/,/^}$/p' "$direction_driver")"
 [[ -n "$first_lock_refund_flow_source" ]] || fail "first-lock refund has no isolated flow branch"
