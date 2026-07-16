@@ -1118,6 +1118,55 @@ actor_invoke() {
   chmod 0600 "$actor_last_output"
 }
 
+actor_invoke_awaiting_retry() {
+  local role="$1" command="$2" chain="$3" phase="$4" revision="$5"
+  local minimum_count="$6" target_count="$7" label="$8"
+  local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
+  local attempt attempt_output attempt_error error_text durable_count
+  assert_survivor_actor_invocation_allowed "$role" "$label"
+  [[ "$chain" == "lez" ]] ||
+    fail "Maker-lock pending retry is only defined for LEZ observations"
+  [[ "$minimum_count" =~ ^[0-9]+$ && "$target_count" =~ ^[0-9]+$ &&
+     "$minimum_count" -le "$target_count" ]] ||
+    fail "Maker-lock pending retry received invalid submission bounds"
+  actor_last_output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-${role}.json"
+  [[ ! -e "$actor_last_output" && ! -L "$actor_last_output" ]] ||
+    fail "refusing to overwrite actor evidence: ${label}/${role}"
+  for attempt in {1..120}; do
+    durable_count="$(lez_successful_submission_count)"
+    (( durable_count >= minimum_count && durable_count <= target_count )) ||
+      fail "Maker-lock retry observed an out-of-bound durable submission count"
+    attempt_output="${actor_last_output%.json}-attempt-${attempt}.json"
+    attempt_error="${actor_last_output%.json}-attempt-${attempt}.stderr"
+    if "$M3_POC_ACTOR_BIN" --config "$config" "$command" \
+        >"$attempt_output" 2>"$attempt_error"; then
+      chmod 0600 "$attempt_output" "$attempt_error"
+      jq -e --arg role "$role" --arg chain "$chain" --arg phase "$phase" \
+          --argjson revision "$revision" '
+        .schema_version == 1 and .role == $role and .command == "drive"
+        and .outcome == "awaiting_observation" and .chain == $chain
+        and .phase == $phase and .revision == $revision
+      ' "$attempt_output" >/dev/null ||
+        fail "${role} actor returned an unexpected Maker-lock pending state"
+      [[ "$(lez_successful_submission_count)" == "$target_count" ]] ||
+        fail "Maker-lock actor success did not reach the exact durable submission count"
+      mv "$attempt_output" "$actor_last_output"
+      return 0
+    fi
+    chmod 0600 "$attempt_output" "$attempt_error"
+    [[ ! -s "$attempt_output" ]] ||
+      fail "${role} Maker-lock retry received ambiguous actor stdout"
+    error_text="$(tr -d '\r\n' <"$attempt_error")"
+    [[ "$error_text" == "actor chain observation is unavailable" ]] ||
+      fail "${role} Maker-lock drive failed with a non-retryable typed error"
+    durable_count="$(lez_successful_submission_count)"
+    (( durable_count >= minimum_count && durable_count <= target_count )) ||
+      fail "Maker-lock typed failure crossed its durable submission bound"
+    sleep 0.25
+  done
+  fail "${role} Maker-lock observation remained unavailable after bounded retries"
+}
+
 actor_invoke_observation_retry() {
   local role="$1" expected="$2" chain="$3" label="$4"
   local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
@@ -1533,7 +1582,8 @@ submit_actor_maker_lez_second_lock_pair() {
   lez_initialization_tx="$(jq -er '.initialization.transaction_id' "$final_prepared_escrow")"
   lez_funding_tx="$(jq -er '.funding.transaction_id' "$final_prepared_escrow")"
 
-  actor_invoke maker drive lez-maker-initialization-submit
+  actor_invoke_awaiting_retry maker drive lez taker_lock_confirmed 1 0 1 \
+    lez-maker-initialization-submit
   jq -e '
     .schema_version == 1 and .role == "maker" and .command == "drive"
     and .outcome == "awaiting_observation" and .chain == "lez"
@@ -1544,7 +1594,8 @@ submit_actor_maker_lez_second_lock_pair() {
   [[ "$after_count" == 1 ]] ||
     fail "Maker actor did not add exactly one LEZ initialization submission"
 
-  actor_invoke maker drive lez-maker-initialization-accepted-restart
+  actor_invoke_awaiting_retry maker drive lez taker_lock_confirmed 1 1 1 \
+    lez-maker-initialization-accepted-restart
   jq -e '
     .schema_version == 1 and .role == "maker" and .command == "drive"
     and .outcome == "awaiting_observation" and .chain == "lez"
@@ -1559,7 +1610,8 @@ submit_actor_maker_lez_second_lock_pair() {
   (( initialization_window_blocks >= 1 && initialization_window_blocks <= 4096 )) ||
     fail "finalized LEZ initialization window is out of bounds"
   write_actor_configs "$((initial_start + 1))" "$initialization_window_blocks"
-  actor_invoke maker drive lez-maker-initialization-finalized-observe
+  actor_invoke_awaiting_retry maker drive lez taker_lock_confirmed 1 1 1 \
+    lez-maker-initialization-finalized-observe
   jq -e '
     .schema_version == 1 and .role == "maker" and .command == "drive"
     and .outcome == "awaiting_observation" and .chain == "lez"
@@ -1570,7 +1622,8 @@ submit_actor_maker_lez_second_lock_pair() {
     fail "finalized LEZ initialization observation changed the submission count"
 
   funding_start="$lez_proved_tip"
-  actor_invoke maker drive lez-maker-funding-submit
+  actor_invoke_awaiting_retry maker drive lez taker_lock_confirmed 1 1 2 \
+    lez-maker-funding-submit
   jq -e '
     .schema_version == 1 and .role == "maker" and .command == "drive"
     and .outcome == "awaiting_observation" and .chain == "lez"
@@ -1581,7 +1634,8 @@ submit_actor_maker_lez_second_lock_pair() {
   [[ "$after_count" == 2 ]] ||
     fail "Maker actor did not add exactly one LEZ funding submission"
 
-  actor_invoke maker drive lez-maker-funding-accepted-restart
+  actor_invoke_awaiting_retry maker drive lez taker_lock_confirmed 1 2 2 \
+    lez-maker-funding-accepted-restart
   jq -e '
     .schema_version == 1 and .role == "maker" and .command == "drive"
     and .outcome == "awaiting_observation" and .chain == "lez"

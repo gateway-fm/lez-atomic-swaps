@@ -941,6 +941,22 @@ bitcoin_lock_confirmation_source="$(sed -n \
   '/^confirm_bitcoin_lock_after_submission() {$/,/^}$/p' "$direction_driver")"
 lez_maker_lock_source="$(sed -n \
   '/^submit_actor_maker_lez_second_lock_pair() {$/,/^}$/p' "$direction_driver")"
+maker_lock_awaiting_retry_source="$(sed -n \
+  '/^actor_invoke_awaiting_retry() {$/,/^}$/p' "$direction_driver")"
+[[ -n "$maker_lock_awaiting_retry_source" ]] ||
+  fail "Maker-lock path lacks a bounded typed observation retry helper"
+rg -Fq 'for attempt in {1..120}; do' <<<"$maker_lock_awaiting_retry_source" ||
+  fail "Maker-lock observation retry is not statically bounded"
+rg -Fq 'actor chain observation is unavailable' <<<"$maker_lock_awaiting_retry_source" ||
+  fail "Maker-lock retry does not restrict itself to typed observation unavailability"
+rg -Fq '[[ ! -s "$attempt_output" ]]' <<<"$maker_lock_awaiting_retry_source" ||
+  fail "Maker-lock retry can continue after an ambiguous actor stdout"
+for term in \
+  'durable_count >= minimum_count && durable_count <= target_count' \
+  '[[ "$(lez_successful_submission_count)" == "$target_count" ]]'; do
+  rg -Fq "$term" <<<"$maker_lock_awaiting_retry_source" ||
+    fail "Maker-lock retry does not enforce its durable submission bound: ${term}"
+done
 rg -Fq 'sendrawtransaction' <<<"$bitcoin_first_lock_source" ||
   fail "Taker Bitcoin first-lock helper no longer performs its external submission"
 rg -Fq 'submit_lez_transaction_once taker' <<<"$lez_first_lock_source" ||
@@ -956,7 +972,7 @@ if rg -Fq 'submit_lez_transaction_once' <<<"$lez_maker_lock_source" ||
   fail "runner still submits a Maker LEZ second-lock member externally"
 fi
 for source in "$bitcoin_maker_lock_source" "$lez_maker_lock_source"; do
-  rg -Fq 'actor_invoke maker drive' <<<"$source" ||
+  rg -q 'actor_invoke(_awaiting_retry)? maker drive' <<<"$source" ||
     fail "Maker second-lock path does not use a fresh Maker actor process"
   rg -Fq '.outcome == "awaiting_observation"' <<<"$source" ||
     fail "Maker second-lock path does not validate the settled actor output"
@@ -970,6 +986,14 @@ rg -Fq 'prove_lez_finalized_transaction' <<<"$lez_maker_lock_source" ||
   fail "runner does not prove actor-submitted LEZ maker-lock finality"
 rg -Fq 'lez_successful_submission_count' <<<"$lez_maker_lock_source" ||
   fail "LEZ maker-lock path does not retain exact submission counts"
+for invocation in \
+  'actor_invoke_awaiting_retry maker drive lez taker_lock_confirmed 1 0 1' \
+  'actor_invoke_awaiting_retry maker drive lez taker_lock_confirmed 1 1 1' \
+  'actor_invoke_awaiting_retry maker drive lez taker_lock_confirmed 1 1 2' \
+  'actor_invoke_awaiting_retry maker drive lez taker_lock_confirmed 1 2 2'; do
+  rg -Fq "$invocation" <<<"$lez_maker_lock_source" ||
+    fail "LEZ Maker lock path is missing retry/count policy: ${invocation}"
+done
 
 maker_lez_source_line() {
   local needle="$1" line
@@ -980,9 +1004,9 @@ maker_lez_source_line() {
 }
 
 lez_init_submit_line="$(maker_lez_source_line \
-  'actor_invoke maker drive lez-maker-initialization-submit')"
+  'lez-maker-initialization-submit')"
 lez_init_restart_line="$(maker_lez_source_line \
-  'actor_invoke maker drive lez-maker-initialization-accepted-restart')"
+  'lez-maker-initialization-accepted-restart')"
 lez_init_finality_line="$(maker_lez_source_line \
   'prove_lez_finalized_transaction lez-initialization')"
 lez_init_window_line="$(maker_lez_source_line \
@@ -990,14 +1014,14 @@ lez_init_window_line="$(maker_lez_source_line \
 lez_init_write_line="$(maker_lez_source_line \
   'write_actor_configs "$((initial_start + 1))" "$initialization_window_blocks"')"
 lez_init_observe_line="$(maker_lez_source_line \
-  'actor_invoke maker drive lez-maker-initialization-finalized-observe')"
+  'lez-maker-initialization-finalized-observe')"
 lez_init_count_stable_line="$(maker_lez_source_line \
   '[[ "$(lez_successful_submission_count)" == 1 ]]')"
 lez_funding_submit_line="$(maker_lez_source_line \
-  'actor_invoke maker drive lez-maker-funding-submit')"
+  'lez-maker-funding-submit')"
 lez_funding_count_line="$(maker_lez_source_line '[[ "$after_count" == 2 ]]')"
 lez_funding_restart_line="$(maker_lez_source_line \
-  'actor_invoke maker drive lez-maker-funding-accepted-restart')"
+  'lez-maker-funding-accepted-restart')"
 lez_funding_finality_line="$(maker_lez_source_line \
   'prove_lez_finalized_transaction lez-funding')"
 lez_pair_window_line="$(maker_lez_source_line \
