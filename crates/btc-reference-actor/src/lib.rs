@@ -594,8 +594,112 @@ enum ActorFundingObservation {
         chain: Chain,
         transaction_id: Box<str>,
         confirmations: u32,
+        canonical_inclusion_time: CanonicalInclusionTimeV1,
         chain_evidence: Vec<u8>,
     },
+}
+
+/// Chain-native canonical inclusion clock used only for maker-lock cutoff admission.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "chain", rename_all = "snake_case", deny_unknown_fields)]
+enum CanonicalInclusionTimeV1 {
+    /// Bitcoin containing-block median past time.
+    Bitcoin { median_time_unix_seconds: u64 },
+    /// Finalized LEZ containing-block timestamp.
+    Lez { timestamp_ms: u64 },
+}
+
+impl CanonicalInclusionTimeV1 {
+    const fn chain(&self) -> Chain {
+        match self {
+            Self::Bitcoin { .. } => Chain::Bitcoin,
+            Self::Lez { .. } => Chain::Lez,
+        }
+    }
+
+    fn is_at_or_before_cutoff(&self, cutoff_unix_seconds: u64) -> bool {
+        match self {
+            Self::Bitcoin {
+                median_time_unix_seconds,
+            } => *median_time_unix_seconds <= cutoff_unix_seconds,
+            Self::Lez { timestamp_ms } => cutoff_unix_seconds
+                .checked_mul(1_000)
+                .is_some_and(|cutoff_ms| *timestamp_ms <= cutoff_ms),
+        }
+    }
+}
+
+fn canonical_maker_lock_is_timely(
+    maker_chain: Chain,
+    canonical_inclusion_time: &CanonicalInclusionTimeV1,
+    cutoff_unix_seconds: u64,
+) -> bool {
+    canonical_inclusion_time.chain() == maker_chain
+        && canonical_inclusion_time.is_at_or_before_cutoff(cutoff_unix_seconds)
+}
+
+/// Canonical durable proof that a maker lock was included no later than the signed cutoff.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct MakerLockCutoffEvidenceV1 {
+    schema_version: u16,
+    agreement_commitment: String,
+    maker_chain: Chain,
+    cutoff_unix_seconds: u64,
+    canonical_inclusion_time: CanonicalInclusionTimeV1,
+    chain_evidence_hex: String,
+}
+
+fn encode_maker_lock_cutoff_evidence(
+    agreement: &BtcAgreementV1,
+    maker_chain: Chain,
+    canonical_inclusion_time: CanonicalInclusionTimeV1,
+    chain_evidence: &[u8],
+) -> Result<Vec<u8>, ActorCommandError> {
+    let cutoff_unix_seconds = agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds();
+    if maker_chain != agreement.coordinator().funded_chain(Participant::Maker)
+        || !canonical_maker_lock_is_timely(
+            maker_chain,
+            &canonical_inclusion_time,
+            cutoff_unix_seconds,
+        )
+        || chain_evidence.is_empty()
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    serde_json::to_vec(&MakerLockCutoffEvidenceV1 {
+        schema_version: 1,
+        agreement_commitment: hex::encode(agreement.agreement_commitment()),
+        maker_chain,
+        cutoff_unix_seconds,
+        canonical_inclusion_time,
+        chain_evidence_hex: hex::encode(chain_evidence),
+    })
+    .map_err(|_| ActorCommandError::ObservationUnavailable)
+}
+
+#[cfg(test)]
+fn decode_maker_lock_cutoff_evidence(
+    agreement: &BtcAgreementV1,
+    encoded: &[u8],
+) -> Result<MakerLockCutoffEvidenceV1, ActorCommandError> {
+    let evidence: MakerLockCutoffEvidenceV1 =
+        serde_json::from_slice(encoded).map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    let chain_evidence = hex::decode(&evidence.chain_evidence_hex)
+        .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    let canonical = encode_maker_lock_cutoff_evidence(
+        agreement,
+        evidence.maker_chain,
+        evidence.canonical_inclusion_time.clone(),
+        &chain_evidence,
+    )?;
+    if evidence.schema_version != 1 || canonical != encoded {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    Ok(evidence)
 }
 
 /// Revision-aware observation seam used by deterministic actor tests and live adapters.
@@ -1474,11 +1578,21 @@ async fn drive_with_observer(
             chain,
             transaction_id,
             confirmations,
+            canonical_inclusion_time,
             chain_evidence,
         } => {
-            if chain != expected_chain {
+            if chain != expected_chain || canonical_inclusion_time.chain() != chain {
                 return Err(ActorCommandError::AgreementBindingInvalid);
             }
+            let chain_evidence = match transition {
+                FundingTransition::TakerLock => chain_evidence,
+                FundingTransition::MakerLock => encode_maker_lock_cutoff_evidence(
+                    &agreement,
+                    chain,
+                    canonical_inclusion_time,
+                    &chain_evidence,
+                )?,
+            };
             (chain, transaction_id, confirmations, chain_evidence)
         }
     };
@@ -2525,6 +2639,9 @@ where
                 .to_string()
                 .into_boxed_str(),
             confirmations: observed.confirmations(),
+            canonical_inclusion_time: CanonicalInclusionTimeV1::Bitcoin {
+                median_time_unix_seconds: observed.block_median_time_unix_seconds(),
+            },
             chain_evidence: evidence,
         })
     }
@@ -4261,6 +4378,16 @@ impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
                 scanned_window,
                 funding,
             } => {
+                let cutoff_unix_seconds = agreement
+                    .body()
+                    .recovery_plan()
+                    .maker_second_lock_cutoff_unix_seconds();
+                let inclusion = CanonicalInclusionTimeV1::Lez {
+                    timestamp_ms: funding.containing_block.timestamp_ms,
+                };
+                if !canonical_maker_lock_is_timely(maker_chain, &inclusion, cutoff_unix_seconds) {
+                    return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+                }
                 let chain_evidence = encode_lez_maker_lock_found_evidence(
                     &self.config,
                     agreement,
@@ -4412,6 +4539,16 @@ impl FirstLockRecoverySafetyPort for LiveBitcoinMakerLockSafety {
         };
         match observation {
             FundingObservation::Ready(observed) => {
+                let cutoff_unix_seconds = agreement
+                    .body()
+                    .recovery_plan()
+                    .maker_second_lock_cutoff_unix_seconds();
+                let inclusion = CanonicalInclusionTimeV1::Bitcoin {
+                    median_time_unix_seconds: observed.block_median_time_unix_seconds(),
+                };
+                if !canonical_maker_lock_is_timely(maker_chain, &inclusion, cutoff_unix_seconds) {
+                    return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+                }
                 let chain_evidence = BitcoinCoreEvidenceV1::funding_ready(agreement, &observed)
                     .and_then(|evidence| evidence.encode())
                     .map_err(|_| ActorCommandError::ObservationUnavailable)?;
@@ -4508,6 +4645,9 @@ impl FundingObservationPort for LezFundingObserver<'_> {
             transaction_id: hex::encode(result.funding.transaction.transaction_id.as_bytes())
                 .into_boxed_str(),
             confirmations: FINALIZED_LEZ_CONFIRMATION_UNITS,
+            canonical_inclusion_time: CanonicalInclusionTimeV1::Lez {
+                timestamp_ms: result.funding.containing_block.timestamp_ms,
+            },
             chain_evidence,
         })
     }

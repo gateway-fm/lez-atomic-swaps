@@ -6,11 +6,11 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use bitcoin::consensus::{deserialize, serialize};
-use bitcoin::{OutPoint, Transaction, Txid};
+use bitcoin::{BlockHash, OutPoint, Transaction, Txid};
 use corepc_types::v31::{
-    GetBlockHash, GetBlockchainInfo, GetIndexInfo, GetIndexInfoName, GetNetworkInfo,
-    GetRawTransactionVerbose, GetTxSpendingPrevout, GetTxSpendingPrevoutItem, MempoolAcceptance,
-    SendRawTransaction, TestMempoolAccept,
+    GetBlockHash, GetBlockHeaderVerbose, GetBlockchainInfo, GetIndexInfo, GetIndexInfoName,
+    GetNetworkInfo, GetRawTransactionVerbose, GetTxSpendingPrevout, GetTxSpendingPrevoutItem,
+    MempoolAcceptance, SendRawTransaction, TestMempoolAccept,
 };
 use lez_btc_core_adapter::{
     AuthorizedClaimSubmission, AuthorizedRefundSubmission, BitcoinCoreAdapter, BitcoinCoreRpc,
@@ -53,6 +53,7 @@ struct MockResponses {
     genesis: GetBlockHash,
     indexes: GetIndexInfo,
     raw: VecDeque<Option<GetRawTransactionVerbose>>,
+    headers: VecDeque<GetBlockHeaderVerbose>,
     spender: VecDeque<GetTxSpendingPrevout>,
     mempool: VecDeque<Result<TestMempoolAccept, MockError>>,
     send: VecDeque<Result<SendRawTransaction, MockError>>,
@@ -75,6 +76,12 @@ impl MockRpc {
                 genesis: GetBlockHash(REGTEST_GENESIS.to_owned()),
                 indexes: index_info_at(true, true, height),
                 raw: VecDeque::new(),
+                headers: VecDeque::from([block_header(
+                    TIP_A,
+                    height.saturating_sub(REQUIRED_CONFIRMATIONS - 1),
+                    REQUIRED_CONFIRMATIONS,
+                    1_699_998_900,
+                )]),
                 spender: VecDeque::new(),
                 mempool: VecDeque::new(),
                 send: VecDeque::new(),
@@ -100,6 +107,10 @@ impl MockRpc {
             .expect("mock lock")
             .spender
             .push_back(value);
+    }
+
+    fn replace_header(&self, value: GetBlockHeaderVerbose) {
+        self.inner.lock().expect("mock lock").headers = VecDeque::from([value]);
     }
 
     fn push_mempool(&self, value: Result<TestMempoolAccept, MockError>) {
@@ -150,6 +161,15 @@ impl BitcoinCoreRpc for MockRpc {
         let mut inner = self.inner.lock().expect("mock lock");
         inner.calls.push("getrawtransaction");
         inner.raw.pop_front().ok_or(MockError::Transport)
+    }
+
+    async fn get_block_header(
+        &self,
+        _block_hash: BlockHash,
+    ) -> Result<GetBlockHeaderVerbose, Self::Error> {
+        let mut inner = self.inner.lock().expect("mock lock");
+        inner.calls.push("getblockheader");
+        inner.headers.pop_front().ok_or(MockError::Transport)
     }
 
     async fn get_tx_spending_prevout(
@@ -218,6 +238,33 @@ fn chain_info_at(tip: &str, height: u32) -> GetBlockchainInfo {
         "size_on_disk": 4096, "pruned": false, "warnings": []
     }))
     .expect("chain response")
+}
+
+fn block_header(
+    hash: &str,
+    height: u32,
+    confirmations: u32,
+    median_time: i64,
+) -> GetBlockHeaderVerbose {
+    serde_json::from_value(serde_json::json!({
+        "hash": hash,
+        "confirmations": confirmations,
+        "height": height,
+        "version": 1,
+        "versionHex": "00000001",
+        "merkleroot": TIP_B,
+        "time": 1_699_999_000,
+        "mediantime": median_time,
+        "nonce": 0,
+        "bits": "207fffff",
+        "target": "7fffff0000000000000000000000000000000000000000000000000000000000",
+        "difficulty": 4.656_542_373_906_925e-10,
+        "chainwork": "0000000000000000000000000000000000000000000000000000000000000192",
+        "nTx": 1,
+        "previousblockhash": TIP_B,
+        "nextblockhash": TIP_A
+    }))
+    .expect("block header response")
 }
 
 fn index_info(txindex_synced: bool, spender_synced: bool) -> GetIndexInfo {
@@ -387,6 +434,8 @@ async fn funding_observation_is_canonical_metric_checked_and_stable_tip_brackete
     };
     assert_eq!(observed.transaction(), &fixture.funding);
     assert_eq!(observed.confirmations(), REQUIRED_CONFIRMATIONS);
+    assert_eq!(observed.block_height(), 195);
+    assert_eq!(observed.block_median_time_unix_seconds(), 1_699_998_900);
     assert_eq!(
         observed.stable_tip().median_time_unix_seconds(),
         1_699_999_000
@@ -399,6 +448,7 @@ async fn funding_observation_is_canonical_metric_checked_and_stable_tip_brackete
             "getblockhash",
             "getindexinfo",
             "getrawtransaction",
+            "getblockheader",
             "getblockchaininfo"
         ]
     );
@@ -446,6 +496,28 @@ async fn funding_observation_is_canonical_metric_checked_and_stable_tip_brackete
             .await,
         Err(CoreAdapterError::UnstableTip)
     ));
+
+    for invalid_header in [
+        block_header(TIP_B, 195, REQUIRED_CONFIRMATIONS, 1_699_998_900),
+        block_header(TIP_A, 195, REQUIRED_CONFIRMATIONS - 1, 1_699_998_900),
+        block_header(TIP_A, 194, REQUIRED_CONFIRMATIONS, 1_699_998_900),
+        block_header(TIP_A, 195, REQUIRED_CONFIRMATIONS, -1),
+    ] {
+        let rpc = MockRpc::ready();
+        rpc.push_raw(raw_verbose(
+            &fixture.funding,
+            Some(u64::from(REQUIRED_CONFIRMATIONS)),
+            Some(TIP_A),
+        ));
+        rpc.replace_header(invalid_header);
+        assert!(matches!(
+            isolated_adapter(rpc)
+                .observe_funding(&fixture.agreement)
+                .await,
+            Err(CoreAdapterError::InvalidConfirmationContext
+                | CoreAdapterError::MalformedResponse(_))
+        ));
+    }
 }
 
 #[tokio::test]

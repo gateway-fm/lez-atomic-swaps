@@ -6,11 +6,11 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use bitcoin::consensus::serialize;
-use bitcoin::{OutPoint, Txid};
+use bitcoin::{BlockHash, OutPoint, Txid};
 use corepc_types::v31::{
-    GetBlockHash, GetBlockchainInfo, GetIndexInfo, GetIndexInfoName, GetNetworkInfo,
-    GetRawTransactionVerbose, GetTxSpendingPrevout, GetTxSpendingPrevoutItem, SendRawTransaction,
-    TestMempoolAccept,
+    GetBlockHash, GetBlockHeaderVerbose, GetBlockchainInfo, GetIndexInfo, GetIndexInfoName,
+    GetNetworkInfo, GetRawTransactionVerbose, GetTxSpendingPrevout, GetTxSpendingPrevoutItem,
+    SendRawTransaction, TestMempoolAccept,
 };
 use lez_btc_core_adapter::{
     BitcoinCoreAdapter, BitcoinCoreEvidenceError, BitcoinCoreEvidenceKind, BitcoinCoreEvidenceV1,
@@ -43,6 +43,7 @@ struct MockResponses {
     height: u32,
     chains: VecDeque<GetBlockchainInfo>,
     raw: VecDeque<Option<GetRawTransactionVerbose>>,
+    headers: VecDeque<GetBlockHeaderVerbose>,
     spender: VecDeque<GetTxSpendingPrevout>,
 }
 
@@ -53,6 +54,7 @@ impl MockRpc {
                 height: 200,
                 chains: VecDeque::from([ready_chain(), ready_chain()]),
                 raw: VecDeque::from([Some(raw)]),
+                headers: VecDeque::from([ready_funding_header()]),
                 spender: VecDeque::new(),
             })),
         }
@@ -64,6 +66,7 @@ impl MockRpc {
                 height: 200,
                 chains: VecDeque::from([ready_chain(), ready_chain()]),
                 raw: VecDeque::from([Some(raw)]),
+                headers: VecDeque::new(),
                 spender: VecDeque::from([spender]),
             })),
         }
@@ -80,6 +83,7 @@ impl MockRpc {
                 height,
                 chains: VecDeque::from([ready_chain_at(height), ready_chain_at(height)]),
                 raw: VecDeque::from([Some(funding), Some(refund)]),
+                headers: VecDeque::new(),
                 spender: VecDeque::from([spender]),
             })),
         }
@@ -157,6 +161,18 @@ impl BitcoinCoreRpc for MockRpc {
             .ok_or(MockError)
     }
 
+    async fn get_block_header(
+        &self,
+        _block_hash: BlockHash,
+    ) -> Result<GetBlockHeaderVerbose, Self::Error> {
+        self.inner
+            .lock()
+            .expect("mock lock")
+            .headers
+            .pop_front()
+            .ok_or(MockError)
+    }
+
     async fn get_tx_spending_prevout(
         &self,
         _outpoint: OutPoint,
@@ -211,6 +227,28 @@ fn ready_chain_at(height: u32) -> GetBlockchainInfo {
         "warnings": []
     }))
     .expect("chain response")
+}
+
+fn ready_funding_header() -> GetBlockHeaderVerbose {
+    serde_json::from_value(json!({
+        "hash": TIP,
+        "confirmations": REQUIRED_CONFIRMATIONS,
+        "height": 195,
+        "version": 1,
+        "versionHex": "00000001",
+        "merkleroot": TIP,
+        "time": 1_699_999_000,
+        "mediantime": 1_699_998_900,
+        "nonce": 0,
+        "bits": "207fffff",
+        "target": "7fffff0000000000000000000000000000000000000000000000000000000000",
+        "difficulty": 4.656_542_373_906_925e-10,
+        "chainwork": "0000000000000000000000000000000000000000000000000000000000000192",
+        "nTx": 1,
+        "previousblockhash": TIP,
+        "nextblockhash": TIP
+    }))
+    .expect("block header response")
 }
 
 fn spender(

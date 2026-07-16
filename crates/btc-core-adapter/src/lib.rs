@@ -18,8 +18,8 @@ use bitcoin::consensus::{deserialize, serialize};
 use bitcoin::hashes::{Hash as _, sha256};
 use bitcoin::{BlockHash, OutPoint, Transaction, Txid, Witness, Wtxid};
 use corepc_types::v31::{
-    GetBlockHash, GetBlockchainInfo, GetIndexInfo, GetNetworkInfo, GetRawTransactionVerbose,
-    GetTxSpendingPrevout, SendRawTransaction, TestMempoolAccept,
+    GetBlockHash, GetBlockHeaderVerbose, GetBlockchainInfo, GetIndexInfo, GetNetworkInfo,
+    GetRawTransactionVerbose, GetTxSpendingPrevout, SendRawTransaction, TestMempoolAccept,
 };
 use lez_btc_swap_sdk::BtcAgreementV1;
 use thiserror::Error;
@@ -50,6 +50,11 @@ pub trait BitcoinCoreRpc: Send + Sync {
         &self,
         transaction_id: Txid,
     ) -> Result<Option<GetRawTransactionVerbose>, Self::Error>;
+    /// Calls verbose `getblockheader` through the exact Core 31 type.
+    async fn get_block_header(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<GetBlockHeaderVerbose, Self::Error>;
     /// Calls Core 31 `gettxspendingprevout` with spender bytes requested.
     async fn get_tx_spending_prevout(
         &self,
@@ -124,6 +129,8 @@ pub struct ObservedFunding {
     transaction: Transaction,
     confirmations: u32,
     block_hash: BlockHash,
+    block_height: u32,
+    block_median_time_unix_seconds: u64,
     stable_tip: StableTip,
 }
 
@@ -144,6 +151,18 @@ impl ObservedFunding {
     #[must_use]
     pub const fn block_hash(&self) -> BlockHash {
         self.block_hash
+    }
+
+    /// Active-chain height of the block containing the funding transaction.
+    #[must_use]
+    pub const fn block_height(&self) -> u32 {
+        self.block_height
+    }
+
+    /// Median past time of the canonical block containing the funding transaction.
+    #[must_use]
+    pub const fn block_median_time_unix_seconds(&self) -> u64 {
+        self.block_median_time_unix_seconds
     }
 
     /// Stable tip bracketing this observation.
@@ -630,11 +649,11 @@ where
             .get_raw_transaction(expected_txid)
             .await
             .map_err(CoreAdapterError::Rpc)?;
-        let after = self.current_ready_tip().await?;
-        if before != after {
-            return Err(CoreAdapterError::UnstableTip);
-        }
         let Some(response) = response else {
+            let after = self.current_ready_tip().await?;
+            if before != after {
+                return Err(CoreAdapterError::UnstableTip);
+            }
             return Ok(FundingObservation::Absent { stable_tip: after });
         };
         let transaction = parse_verbose_transaction(&response, expected_txid)?;
@@ -652,16 +671,33 @@ where
         }
         let (confirmations, block_hash) = confirmation_context(&response)?;
         if confirmations < agreement.required_bitcoin_confirmations() {
+            let after = self.current_ready_tip().await?;
+            if before != after {
+                return Err(CoreAdapterError::UnstableTip);
+            }
             return Ok(FundingObservation::Pending {
                 confirmations,
                 stable_tip: after,
             });
         }
         let block_hash = block_hash.ok_or(CoreAdapterError::InvalidConfirmationContext)?;
+        let header = self
+            .rpc
+            .get_block_header(block_hash)
+            .await
+            .map_err(CoreAdapterError::Rpc)?;
+        let after = self.current_ready_tip().await?;
+        if before != after {
+            return Err(CoreAdapterError::UnstableTip);
+        }
+        let (block_height, block_median_time_unix_seconds) =
+            validate_funding_block_header(&header, block_hash, confirmations, after)?;
         Ok(FundingObservation::Ready(ObservedFunding {
             transaction,
             confirmations,
             block_hash,
+            block_height,
+            block_median_time_unix_seconds,
             stable_tip: after,
         }))
     }
@@ -1479,6 +1515,35 @@ where
         )),
         _ => Err(CoreAdapterError::InvalidConfirmationContext),
     }
+}
+
+fn validate_funding_block_header<R>(
+    header: &GetBlockHeaderVerbose,
+    expected_hash: BlockHash,
+    transaction_confirmations: u32,
+    stable_tip: StableTip,
+) -> Result<(u32, u64), CoreAdapterError<R>>
+where
+    R: StdError + 'static,
+{
+    let header_hash = parse_block_hash(&header.hash, "funding block header hash")?;
+    let confirmations = u32::try_from(header.confirmations)
+        .map_err(|_| CoreAdapterError::InvalidConfirmationContext)?;
+    let height =
+        u32::try_from(header.height).map_err(|_| CoreAdapterError::InvalidConfirmationContext)?;
+    let median_time_unix_seconds = u64::try_from(header.median_time)
+        .map_err(|_| CoreAdapterError::InvalidConfirmationContext)?;
+    let expected_tip_height = height
+        .checked_add(confirmations.saturating_sub(1))
+        .ok_or(CoreAdapterError::InvalidConfirmationContext)?;
+    if header_hash != expected_hash
+        || confirmations == 0
+        || confirmations != transaction_confirmations
+        || expected_tip_height != stable_tip.height()
+    {
+        return Err(CoreAdapterError::InvalidConfirmationContext);
+    }
+    Ok((height, median_time_unix_seconds))
 }
 
 fn validate_exact_claim<R>(

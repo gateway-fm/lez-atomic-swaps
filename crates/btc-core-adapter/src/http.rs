@@ -7,10 +7,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
-use bitcoin::{OutPoint, Txid};
+use bitcoin::{BlockHash, OutPoint, Txid};
 use corepc_types::v31::{
-    GetBlockHash, GetBlockchainInfo, GetIndexInfo, GetNetworkInfo, GetRawTransactionVerbose,
-    GetTxSpendingPrevout, SendRawTransaction, TestMempoolAccept,
+    GetBlockHash, GetBlockHeaderVerbose, GetBlockchainInfo, GetIndexInfo, GetNetworkInfo,
+    GetRawTransactionVerbose, GetTxSpendingPrevout, SendRawTransaction, TestMempoolAccept,
 };
 use jsonrpsee::{
     core::{ClientError, client::ClientT as _},
@@ -241,6 +241,16 @@ impl BitcoinCoreRpc for HttpBitcoinCoreRpc {
             )
             .await;
         optional_call(response)
+    }
+
+    async fn get_block_header(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<GetBlockHeaderVerbose, Self::Error> {
+        self.client
+            .request("getblockheader", rpc_params![block_hash.to_string(), true])
+            .await
+            .map_err(HttpBitcoinCoreError::Request)
     }
 
     async fn get_tx_spending_prevout(

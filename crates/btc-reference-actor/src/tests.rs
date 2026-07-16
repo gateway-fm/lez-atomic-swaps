@@ -623,6 +623,18 @@ fn maker_lock_observation(
     agreement: &BtcAgreementV1,
     evidence_suffix: u8,
 ) -> ActorFundingObservation {
+    let cutoff = agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds();
+    maker_lock_observation_at(agreement, evidence_suffix, cutoff)
+}
+
+fn maker_lock_observation_at(
+    agreement: &BtcAgreementV1,
+    evidence_suffix: u8,
+    inclusion_unix_seconds: u64,
+) -> ActorFundingObservation {
     let chain = agreement.coordinator().funded_chain(Participant::Maker);
     ActorFundingObservation::Ready {
         chain,
@@ -632,8 +644,68 @@ fn maker_lock_observation(
         } else {
             FINALIZED_LEZ_CONFIRMATION_UNITS
         },
+        canonical_inclusion_time: match chain {
+            Chain::Bitcoin => CanonicalInclusionTimeV1::Bitcoin {
+                median_time_unix_seconds: inclusion_unix_seconds,
+            },
+            Chain::Lez => CanonicalInclusionTimeV1::Lez {
+                timestamp_ms: inclusion_unix_seconds
+                    .checked_mul(1_000)
+                    .expect("fixture LEZ timestamp"),
+            },
+            Chain::Zcash | Chain::Monero => unreachable!("Bitcoin agreement chain set"),
+        },
         chain_evidence: vec![b'm', b'a', b'k', b'e', b'r', evidence_suffix],
     }
+}
+
+#[test]
+fn maker_lock_timeliness_predicate_covers_live_safety_boundaries_for_both_chains() {
+    let cutoff = 1_699_999_800;
+    for (chain, before, at, after) in [
+        (
+            Chain::Bitcoin,
+            CanonicalInclusionTimeV1::Bitcoin {
+                median_time_unix_seconds: cutoff - 1,
+            },
+            CanonicalInclusionTimeV1::Bitcoin {
+                median_time_unix_seconds: cutoff,
+            },
+            CanonicalInclusionTimeV1::Bitcoin {
+                median_time_unix_seconds: cutoff + 1,
+            },
+        ),
+        (
+            Chain::Lez,
+            CanonicalInclusionTimeV1::Lez {
+                timestamp_ms: cutoff * 1_000 - 1,
+            },
+            CanonicalInclusionTimeV1::Lez {
+                timestamp_ms: cutoff * 1_000,
+            },
+            CanonicalInclusionTimeV1::Lez {
+                timestamp_ms: cutoff * 1_000 + 1,
+            },
+        ),
+    ] {
+        assert!(canonical_maker_lock_is_timely(chain, &before, cutoff));
+        assert!(canonical_maker_lock_is_timely(chain, &at, cutoff));
+        assert!(!canonical_maker_lock_is_timely(chain, &after, cutoff));
+    }
+    assert!(!canonical_maker_lock_is_timely(
+        Chain::Bitcoin,
+        &CanonicalInclusionTimeV1::Lez {
+            timestamp_ms: cutoff * 1_000,
+        },
+        cutoff,
+    ));
+    assert!(!canonical_maker_lock_is_timely(
+        Chain::Lez,
+        &CanonicalInclusionTimeV1::Bitcoin {
+            median_time_unix_seconds: cutoff,
+        },
+        cutoff,
+    ));
 }
 
 #[test]
@@ -1151,6 +1223,13 @@ async fn ready_first_lock_is_observed_then_projected_once() {
             .to_string()
             .into_boxed_str(),
         confirmations: support::REQUIRED_CONFIRMATIONS,
+        canonical_inclusion_time: CanonicalInclusionTimeV1::Bitcoin {
+            median_time_unix_seconds: fixture
+                .agreement
+                .body()
+                .recovery_plan()
+                .maker_second_lock_cutoff_unix_seconds(),
+        },
         chain_evidence: b"canonical-adapter-evidence".to_vec(),
     });
 
@@ -1241,6 +1320,186 @@ async fn maker_lock_projects_in_both_directions_for_both_roles() {
             assert_eq!(status["revision"], 2);
             assert_eq!(status["phase"], "both_legs_locked");
             assert_eq!(status["next_action"], "observe_revealing_claim");
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn maker_lock_cutoff_accepts_before_and_at_but_rejects_after_on_both_chains() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        for offset in [-1_i64, 0] {
+            let fixture = ActorFixture::for_direction(direction, ActorRole::Taker);
+            activate_and_project_taker_lock(&fixture).await;
+            let cutoff = fixture
+                .agreement
+                .body()
+                .recovery_plan()
+                .maker_second_lock_cutoff_unix_seconds();
+            let inclusion = if offset < 0 {
+                cutoff - offset.unsigned_abs()
+            } else {
+                cutoff
+            };
+            let observer = FixedObserver::new(maker_lock_observation_at(
+                &fixture.agreement,
+                u8::try_from(offset + 2).expect("fixture suffix"),
+                inclusion,
+            ));
+            let projected = drive_with_observer(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &observer,
+            )
+            .await
+            .expect("timely maker lock projects");
+            assert_eq!(projected.revision, 2);
+            assert_eq!(projected.phase, Phase::BothLegsLocked.into());
+        }
+
+        let fixture = ActorFixture::for_direction(direction, ActorRole::Taker);
+        activate_and_project_taker_lock(&fixture).await;
+        let cutoff = fixture
+            .agreement
+            .body()
+            .recovery_plan()
+            .maker_second_lock_cutoff_unix_seconds();
+        let observer =
+            FixedObserver::new(maker_lock_observation_at(&fixture.agreement, 9, cutoff + 1));
+        let error = drive_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &observer,
+        )
+        .await
+        .expect_err("late maker lock must fail closed");
+        assert_eq!(error, ActorCommandError::AgreementBindingInvalid);
+        let status = output_json(
+            execute_actor_command(&fixture.config, ActorCommand::Status)
+                .await
+                .expect("late maker lock leaves revision one"),
+        );
+        assert_eq!(status["revision"], 1);
+        assert_eq!(status["phase"], "taker_lock_confirmed");
+
+        let fixture = ActorFixture::for_direction(direction, ActorRole::Taker);
+        activate_and_project_taker_lock(&fixture).await;
+        let mut mismatched = maker_lock_observation(&fixture.agreement, 10);
+        let ActorFundingObservation::Ready {
+            chain,
+            canonical_inclusion_time,
+            ..
+        } = &mut mismatched
+        else {
+            unreachable!("maker fixture is ready")
+        };
+        *canonical_inclusion_time = match chain {
+            Chain::Bitcoin => CanonicalInclusionTimeV1::Lez { timestamp_ms: 0 },
+            Chain::Lez => CanonicalInclusionTimeV1::Bitcoin {
+                median_time_unix_seconds: 0,
+            },
+            Chain::Zcash | Chain::Monero => unreachable!("Bitcoin agreement chain set"),
+        };
+        let error = drive_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &FixedObserver::new(mismatched),
+        )
+        .await
+        .expect_err("chain/time discriminator mismatch fails closed");
+        assert_eq!(error, ActorCommandError::AgreementBindingInvalid);
+    }
+}
+
+#[test]
+fn maker_lock_cutoff_wrapper_is_canonical_and_rejects_mutation() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let fixture = ActorFixture::for_direction(direction, ActorRole::Taker);
+        let chain = fixture
+            .agreement
+            .coordinator()
+            .funded_chain(Participant::Maker);
+        let cutoff = fixture
+            .agreement
+            .body()
+            .recovery_plan()
+            .maker_second_lock_cutoff_unix_seconds();
+        let inclusion = match chain {
+            Chain::Bitcoin => CanonicalInclusionTimeV1::Bitcoin {
+                median_time_unix_seconds: cutoff,
+            },
+            Chain::Lez => CanonicalInclusionTimeV1::Lez {
+                timestamp_ms: cutoff * 1_000,
+            },
+            Chain::Zcash | Chain::Monero => unreachable!("Bitcoin agreement chain set"),
+        };
+        let encoded = encode_maker_lock_cutoff_evidence(
+            &fixture.agreement,
+            chain,
+            inclusion,
+            b"exact-chain-evidence",
+        )
+        .expect("canonical cutoff wrapper");
+        decode_maker_lock_cutoff_evidence(&fixture.agreement, &encoded)
+            .expect("canonical wrapper decodes");
+        let value: Value = serde_json::from_slice(&encoded).expect("wrapper JSON");
+        for mutation in [
+            "unknown",
+            "commitment",
+            "chain",
+            "cutoff",
+            "time",
+            "payload",
+        ] {
+            let mut changed = value.clone();
+            match mutation {
+                "unknown" => {
+                    changed
+                        .as_object_mut()
+                        .expect("wrapper object")
+                        .insert("unexpected".to_owned(), Value::Bool(true));
+                }
+                "commitment" => changed["agreement_commitment"] = Value::String("00".repeat(32)),
+                "chain" => {
+                    changed["maker_chain"] = Value::String(
+                        match chain {
+                            Chain::Bitcoin => "lez",
+                            Chain::Lez => "bitcoin",
+                            Chain::Zcash | Chain::Monero => {
+                                unreachable!("Bitcoin agreement chain set")
+                            }
+                        }
+                        .to_owned(),
+                    );
+                }
+                "cutoff" => changed["cutoff_unix_seconds"] = Value::from(cutoff + 1),
+                "time" => match chain {
+                    Chain::Bitcoin => {
+                        changed["canonical_inclusion_time"]["median_time_unix_seconds"] =
+                            Value::from(cutoff + 1);
+                    }
+                    Chain::Lez => {
+                        changed["canonical_inclusion_time"]["timestamp_ms"] =
+                            Value::from(cutoff * 1_000 + 1);
+                    }
+                    Chain::Zcash | Chain::Monero => unreachable!("Bitcoin agreement chain set"),
+                },
+                "payload" => changed["chain_evidence_hex"] = Value::String(String::new()),
+                _ => unreachable!("fixed mutation"),
+            }
+            let mutated = serde_json::to_vec(&changed).expect("mutated wrapper JSON");
+            assert!(
+                decode_maker_lock_cutoff_evidence(&fixture.agreement, &mutated).is_err(),
+                "mutation must fail: {mutation}"
+            );
         }
     }
 }
@@ -1455,6 +1714,13 @@ async fn concurrent_revision_zero_drives_converge_on_a_valid_winner() {
             chain: Chain::Bitcoin,
             transaction_id: transaction_id.clone().into_boxed_str(),
             confirmations: support::REQUIRED_CONFIRMATIONS,
+            canonical_inclusion_time: CanonicalInclusionTimeV1::Bitcoin {
+                median_time_unix_seconds: fixture
+                    .agreement
+                    .body()
+                    .recovery_plan()
+                    .maker_second_lock_cutoff_unix_seconds(),
+            },
             chain_evidence: serde_json::to_vec(&serde_json::json!({
                 "immutable_funding": "same",
                 "finalized_tip": { "height": tip_height }
@@ -2013,11 +2279,28 @@ async fn canonical_maker_second_lock_wins_revision_one_refund_boundary_race() {
             chain,
             transaction_id,
             confirmations,
+            canonical_inclusion_time,
             chain_evidence,
         } = maker_observation.clone()
         else {
             unreachable!("maker fixture is canonical")
         };
+        let cutoff = fixture
+            .agreement
+            .body()
+            .recovery_plan()
+            .maker_second_lock_cutoff_unix_seconds();
+        assert!(canonical_maker_lock_is_timely(
+            chain,
+            &canonical_inclusion_time,
+            cutoff,
+        ));
+        assert!(match &canonical_inclusion_time {
+            CanonicalInclusionTimeV1::Bitcoin {
+                median_time_unix_seconds,
+            } => *median_time_unix_seconds == cutoff,
+            CanonicalInclusionTimeV1::Lez { timestamp_ms } => *timestamp_ms == cutoff * 1_000,
+        });
         let safety = FixedFirstLockRecoverySafety::from_observations(vec![
             first,
             FirstLockRecoverySafetyObservation::MakerLockReady {

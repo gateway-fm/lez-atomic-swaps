@@ -105,6 +105,38 @@ async fn production_transport_uses_exact_core_31_methods_params_and_typed_respon
         .expect("raw transaction method");
     module
         .register_method::<Result<Value, ErrorObjectOwned>, _>(
+            "getblockheader",
+            |params, calls, _| {
+                let (block_hash, verbose): (String, bool) = params.parse()?;
+                assert_eq!(block_hash, TIP);
+                assert!(verbose);
+                calls
+                    .lock()
+                    .expect("call log")
+                    .push(format!("header:{block_hash}:{verbose}"));
+                Ok(json!({
+                    "hash": TIP,
+                    "confirmations": 6,
+                    "height": 195,
+                    "version": 1,
+                    "versionHex": "00000001",
+                    "merkleroot": TIP,
+                    "time": 1_699_999_000,
+                    "mediantime": 1_699_998_900,
+                    "nonce": 0,
+                    "bits": "207fffff",
+                    "target": "7fffff0000000000000000000000000000000000000000000000000000000000",
+                    "difficulty": 4.656_542_373_906_925e-10,
+                    "chainwork": "0000000000000000000000000000000000000000000000000000000000000192",
+                    "nTx": 1,
+                    "previousblockhash": TIP,
+                    "nextblockhash": TIP
+                }))
+            },
+        )
+        .expect("block header method");
+    module
+        .register_method::<Result<Value, ErrorObjectOwned>, _>(
             "gettxspendingprevout",
             move |params, calls, _| {
                 let (requested, options): (Vec<Value>, Value) = params.parse()?;
@@ -189,6 +221,13 @@ async fn production_transport_uses_exact_core_31_methods_params_and_typed_respon
         funding_txid.to_string()
     );
     assert_eq!(
+        rpc.get_block_header(TIP.parse().expect("fixture block hash"))
+            .await
+            .expect("block header")
+            .median_time,
+        1_699_998_900
+    );
+    assert_eq!(
         rpc.get_tx_spending_prevout(outpoint)
             .await
             .expect("spender")
@@ -219,6 +258,7 @@ async fn production_transport_uses_exact_core_31_methods_params_and_typed_respon
             "blockhash:0".to_owned(),
             "indexes".to_owned(),
             format!("raw:{funding_txid}:true"),
+            format!("header:{TIP}:true"),
             "spender:core31-options".to_owned(),
             "mempool".to_owned(),
             "send".to_owned()
