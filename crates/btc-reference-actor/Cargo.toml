@@ -21,6 +21,7 @@ lez-bridge-client = { version = "0.1.0", path = "../lez-bridge-client" }
 lez-bridge-protocol = { version = "0.1.0", path = "../lez-bridge-protocol" }
 lez-btc-swap-sdk = { version = "0.1.0", path = "../btc-swap-sdk" }
 lez-swap-core = { version = "0.1.0", path = "../swap-core" }
+lez-swap-sdk-core = { version = "0.1.0", path = "../swap-sdk-core" }
 lez-swap-store = { version = "0.1.0", path = "../swap-store" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"

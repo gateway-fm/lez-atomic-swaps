@@ -385,6 +385,7 @@ dependencies = [
  "lez-btc-core-adapter",
  "lez-btc-swap-sdk",
  "lez-swap-core",
+ "lez-swap-sdk-core",
  "lez-swap-store",
  "rusqlite",
  "serde",

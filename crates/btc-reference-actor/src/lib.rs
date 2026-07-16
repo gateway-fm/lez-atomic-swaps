@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use bitcoin::{
     Txid,
     consensus::{deserialize, serialize},
+    hashes::Hash as _,
     secp256k1::{Keypair, Message, Secp256k1, SecretKey},
 };
 use clap::{Parser, Subcommand};
@@ -33,8 +34,9 @@ use lez_bridge_protocol::{
     ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedFundingRequest,
     ObserveNativeRefundRequest, ObserveNativeRefundResult, Participant as BridgeParticipant,
     PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareWitnessedClaimResult,
-    PreparedTransaction, PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
+    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
+    PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
     WitnessedEscrowMetadataFacts, WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
 };
 use lez_btc_core_adapter::{
@@ -44,30 +46,40 @@ use lez_btc_core_adapter::{
     RefundObservation as BitcoinRefundObservation,
 };
 use lez_btc_swap_sdk::{
-    AdaptorSessionContext, BtcAdaptorSessionDomain, BtcAgreementV1, MAX_BTC_AGREEMENT_RECORD_BYTES,
-    adapt_presignature, extract_adaptor_secret, verify_adaptor_presignature, verify_adaptor_secret,
-    verify_final_signature,
+    AdaptorSessionContext, BtcAdaptorSessionDomain, BtcAgreementV1, BtcFirstLockEvidenceV1,
+    BtcPairSdk, BtcPreparedLockEffectsV1, MAX_BTC_AGREEMENT_RECORD_BYTES, PreparedBitcoinFundingV1,
+    PreparedLezFundingV1, adapt_presignature, extract_adaptor_secret, verify_adaptor_presignature,
+    verify_adaptor_secret, verify_final_signature,
 };
 use lez_swap_core::{
     Chain, ChainPosition as SwapChainPosition, ClaimEvidence, LezUnixMilliseconds, Participant,
-    Phase, SwapId,
+    Phase, SwapDirection, SwapId,
+};
+use lez_swap_sdk_core::{
+    ExactPublicEffectBytes, ExactPublicEffectPlanV1, ExpectedPublicEffectId, PublicEffectStepId,
+    PublicEffectStepV1,
 };
 use lez_swap_store::{
     AdaptorSessionIdentity, AdaptorSessionPhase, AdaptorSessionRole, BtcAgreementAcceptance,
-    BtcLifecycleEvidenceV1, BtcOfflineStatus, BtcRecoveryError, PreparedPublicEffect,
+    BtcLifecycleEvidenceV1, BtcMakerLockIntentCreateOutcome, BtcMakerLockIntentV1,
+    BtcMakerLockStepDecision, BtcMakerLockStepObservation, BtcMakerLockStepState,
+    BtcMakerLockSubmissionResult, BtcOfflineStatus, BtcRecoveryError, PreparedPublicEffect,
     PublicEffectChain, PublicEffectDecision, PublicEffectKey, PublicEffectObservation,
     PublicEffectOperation, PublicEffectSubmissionResult, SqliteAdaptorSessionJournal,
-    SqliteBtcRecoveryStore, SqlitePublicEffectJournal,
+    SqliteBtcMakerLockJournal, SqliteBtcRecoveryStore, SqlitePublicEffectJournal,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use zeroize::Zeroizing;
 
-const CONFIG_SCHEMA_VERSION: u16 = 3;
+const LEGACY_CONFIG_SCHEMA_VERSION: u16 = 3;
+const CONFIG_SCHEMA_VERSION: u16 = 4;
 const OUTPUT_SCHEMA_VERSION: u16 = 1;
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_PREPARED_CLAIM_RESULT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_MAKER_BITCOIN_FUNDING_BYTES: usize = 4 * 1024 * 1024;
+const MAX_MAKER_LEZ_PREPARATION_BYTES: usize = 4 * 1024 * 1024;
 const MAX_ADAPTOR_SECRET_FILE_BYTES: usize = 65;
 const MAX_REQUEST_TIMEOUT_MILLIS: u64 = 60_000;
 const FINALIZED_LEZ_CONFIRMATION_UNITS: u32 = 1;
@@ -214,6 +226,30 @@ struct RefundAuthorityConfig {
     bitcoin_refund_key_file: Option<PathBuf>,
 }
 
+/// Exact maker-owned second-lock material introduced by configuration schema 4.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "chain", rename_all = "snake_case", deny_unknown_fields)]
+enum MakerLockMaterialConfig {
+    /// Exact signed Bitcoin funding transaction bytes.
+    Bitcoin {
+        exact_funding_transaction_file: PathBuf,
+    },
+    /// Exact LEZ preparation request and its signed initialization/funding result.
+    Lez {
+        preparation_request_file: PathBuf,
+        preparation_result_file: PathBuf,
+    },
+}
+
+fn deserialize_present_maker_lock_material<'de, D>(
+    deserializer: D,
+) -> Result<Option<MakerLockMaterialConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    MakerLockMaterialConfig::deserialize(deserializer).map(Some)
+}
+
 fn deserialize_present_path<'de, D>(deserializer: D) -> Result<Option<PathBuf>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -234,6 +270,12 @@ pub struct ActorConfig {
     lez_bridge: LezBridgeConfig,
     signing: ClaimRecoveryConfig,
     refund: RefundAuthorityConfig,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_maker_lock_material",
+        skip_serializing_if = "Option::is_none"
+    )]
+    maker_lock: Option<MakerLockMaterialConfig>,
 }
 
 impl fmt::Debug for ActorConfig {
@@ -249,6 +291,7 @@ impl fmt::Debug for ActorConfig {
             .field("lez_bridge", &"[REDACTED]")
             .field("signing", &"[REDACTED]")
             .field("refund", &"[REDACTED]")
+            .field("maker_lock", &"[REDACTED]")
             .finish()
     }
 }
@@ -269,8 +312,10 @@ impl ActorConfig {
     }
 
     fn validate(&self) -> Result<(), ActorConfigError> {
-        if self.schema_version != CONFIG_SCHEMA_VERSION
-            || self.accepted_at_unix_seconds == 0
+        if !matches!(
+            self.schema_version,
+            LEGACY_CONFIG_SCHEMA_VERSION | CONFIG_SCHEMA_VERSION
+        ) || self.accepted_at_unix_seconds == 0
             || self.lez_bridge.request_timeout_millis == 0
             || self.lez_bridge.request_timeout_millis > MAX_REQUEST_TIMEOUT_MILLIS
             || self.lez_bridge.runtime.sidecar_role != self.role.bridge()
@@ -307,6 +352,12 @@ impl ActorConfig {
         {
             return Err(ActorConfigError::Invalid);
         }
+        match (self.schema_version, self.role, &self.maker_lock) {
+            (LEGACY_CONFIG_SCHEMA_VERSION, _, None)
+            | (CONFIG_SCHEMA_VERSION, ActorRole::Maker, Some(_))
+            | (CONFIG_SCHEMA_VERSION, ActorRole::Taker, None) => {}
+            _ => return Err(ActorConfigError::Invalid),
+        }
         match (self.role, &self.signing.adaptor_secret_file) {
             (ActorRole::Taker, Some(_)) | (ActorRole::Maker, None) => {}
             (ActorRole::Taker, None) | (ActorRole::Maker, Some(_)) => {
@@ -323,6 +374,16 @@ impl ActorConfig {
         }
         if let Some(path) = &self.refund.bitcoin_refund_key_file {
             paths.push(path);
+        }
+        match &self.maker_lock {
+            Some(MakerLockMaterialConfig::Bitcoin {
+                exact_funding_transaction_file,
+            }) => paths.push(exact_funding_transaction_file),
+            Some(MakerLockMaterialConfig::Lez {
+                preparation_request_file,
+                preparation_result_file,
+            }) => paths.extend([preparation_request_file, preparation_result_file]),
+            None => {}
         }
         if paths.iter().any(|path| !is_normalized_absolute(path)) {
             return Err(ActorConfigError::Invalid);
@@ -617,6 +678,17 @@ impl CanonicalInclusionTimeV1 {
         }
     }
 
+    fn is_before_cutoff(&self, cutoff_unix_seconds: u64) -> bool {
+        match self {
+            Self::Bitcoin {
+                median_time_unix_seconds,
+            } => *median_time_unix_seconds < cutoff_unix_seconds,
+            Self::Lez { timestamp_ms } => cutoff_unix_seconds
+                .checked_mul(1_000)
+                .is_some_and(|cutoff_ms| *timestamp_ms < cutoff_ms),
+        }
+    }
+
     fn is_at_or_before_cutoff(&self, cutoff_unix_seconds: u64) -> bool {
         match self {
             Self::Bitcoin {
@@ -710,6 +782,96 @@ trait FundingObservationPort: Send + Sync {
         &self,
         agreement: &BtcAgreementV1,
         transition: FundingTransition,
+    ) -> Result<ActorFundingObservation, ActorCommandError>;
+}
+
+/// Exact taker first-lock material returned by a fresh chain-eligibility adapter.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PreparedFirstLockMaterialV1 {
+    Bitcoin(PreparedBitcoinFundingV1),
+    Lez(PreparedLezFundingV1),
+}
+
+/// One fresh first-lock check plus the exact facts independently validated by the SDK.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FreshMakerLockEligibilityV1 {
+    prepared_first_lock: PreparedFirstLockMaterialV1,
+    evidence: BtcFirstLockEvidenceV1,
+    current_maker_chain_time: CanonicalInclusionTimeV1,
+}
+
+/// Chain-qualified maker step observation. Byte equality without the
+/// chain-specific canonical/finalized threshold can never accept a step.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum MakerLockStepChainObservationV1 {
+    PresentExactCanonical {
+        expected_public_id: Box<str>,
+        exact_public_bytes: Vec<u8>,
+    },
+    PresentExactPending {
+        expected_public_id: Box<str>,
+        exact_public_bytes: Vec<u8>,
+    },
+    Absent,
+    Uncertain,
+    ConflictingPresence,
+}
+
+impl MakerLockStepChainObservationV1 {
+    fn into_journal(self) -> BtcMakerLockStepObservation {
+        match self {
+            Self::PresentExactCanonical {
+                expected_public_id,
+                exact_public_bytes,
+            } => BtcMakerLockStepObservation::PresentExact {
+                expected_public_id,
+                exact_public_bytes,
+            },
+            Self::PresentExactPending {
+                expected_public_id,
+                exact_public_bytes,
+            } => {
+                let _ = (expected_public_id, exact_public_bytes);
+                BtcMakerLockStepObservation::Uncertain
+            }
+            Self::Absent => BtcMakerLockStepObservation::Absent,
+            Self::Uncertain => BtcMakerLockStepObservation::Uncertain,
+            Self::ConflictingPresence => BtcMakerLockStepObservation::ConflictingPresence,
+        }
+    }
+}
+
+/// Typed seam for actor-owned maker second-lock observation and one-shot submission.
+#[cfg_attr(not(test), allow(dead_code))]
+#[async_trait]
+trait MakerLockExecutionPort: Send + Sync {
+    /// Reads the current exact public effect before any submission decision.
+    async fn observe_step(
+        &self,
+        agreement: &BtcAgreementV1,
+        step: &PublicEffectStepV1,
+    ) -> Result<MakerLockStepChainObservationV1, ActorCommandError>;
+
+    /// Rechecks the taker first lock immediately before a possible node send.
+    async fn fresh_eligibility(
+        &self,
+        agreement: &BtcAgreementV1,
+    ) -> Result<FreshMakerLockEligibilityV1, ActorCommandError>;
+
+    /// Performs the sole transport mutation authorized by the durable journal CAS.
+    async fn submit_step(
+        &self,
+        agreement: &BtcAgreementV1,
+        step: &PublicEffectStepV1,
+    ) -> Result<BtcMakerLockSubmissionResult, ActorCommandError>;
+
+    /// Reads complete canonical maker-lock lifecycle evidence after every step is exact.
+    async fn observe_complete(
+        &self,
+        agreement: &BtcAgreementV1,
     ) -> Result<ActorFundingObservation, ActorCommandError>;
 }
 
@@ -1189,7 +1351,97 @@ fn validate_activation_material(
         &config.signing.lez,
     )?;
     validate_taker_adaptor_secret(config, agreement)?;
-    validate_bitcoin_refund_authority(config, agreement)
+    validate_bitcoin_refund_authority(config, agreement)?;
+    if config.schema_version == CONFIG_SCHEMA_VERSION && config.role == ActorRole::Maker {
+        let _ = load_prepared_maker_lock_material(config, agreement)?;
+    }
+    Ok(())
+}
+
+/// Agreement-bound maker second-lock material reconstructed from schema-4 files.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PreparedMakerLockMaterialV1 {
+    Bitcoin(PreparedBitcoinFundingV1),
+    Lez(PreparedLezFundingV1),
+}
+
+impl PreparedMakerLockMaterialV1 {
+    fn plan(&self) -> &ExactPublicEffectPlanV1 {
+        match self {
+            Self::Bitcoin(prepared) => prepared.plan(),
+            Self::Lez(prepared) => prepared.plan(),
+        }
+    }
+}
+
+fn load_prepared_maker_lock_material(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+) -> Result<PreparedMakerLockMaterialV1, ActorCommandError> {
+    if config.schema_version != CONFIG_SCHEMA_VERSION || config.role != ActorRole::Maker {
+        return Err(ActorCommandError::ActivationMaterialUnavailable);
+    }
+    match (agreement.direction(), config.maker_lock.as_ref()) {
+        (
+            SwapDirection::TakerSellsLez,
+            Some(MakerLockMaterialConfig::Bitcoin {
+                exact_funding_transaction_file,
+            }),
+        ) => {
+            let exact = read_stable_file(
+                exact_funding_transaction_file,
+                MAX_MAKER_BITCOIN_FUNDING_BYTES,
+                false,
+            )
+            .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?;
+            let expected = Txid::from_byte_array(*agreement.funding_terms().transaction_id());
+            PreparedBitcoinFundingV1::new(expected.to_string(), exact)
+                .map(PreparedMakerLockMaterialV1::Bitcoin)
+                .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)
+        }
+        (
+            SwapDirection::TakerSellsForeign,
+            Some(MakerLockMaterialConfig::Lez {
+                preparation_request_file,
+                preparation_result_file,
+            }),
+        ) => {
+            let request =
+                read_strict_material::<PrepareWitnessedEscrowRequest>(preparation_request_file)?;
+            let result =
+                read_strict_material::<PrepareWitnessedEscrowResult>(preparation_result_file)?;
+            let expected_terms = witnessed_lez_terms(agreement)?;
+            if request.context.run_id != config.lez_bridge.run_id
+                || request.context.sidecar_role != BridgeParticipant::Maker
+                || request.runtime != config.lez_bridge.runtime
+                || request.terms != expected_terms
+                || result.context != request.context
+            {
+                return Err(ActorCommandError::ActivationMaterialUnavailable);
+            }
+            PreparedLezFundingV1::new(
+                hex::encode(result.initialization.transaction_id.as_bytes()),
+                result.initialization.exact_bytes.as_slice().to_vec(),
+                hex::encode(result.funding.transaction_id.as_bytes()),
+                result.funding.exact_bytes.as_slice().to_vec(),
+            )
+            .map(PreparedMakerLockMaterialV1::Lez)
+            .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)
+        }
+        _ => Err(ActorCommandError::ActivationMaterialUnavailable),
+    }
+}
+
+fn read_strict_material<T: DeserializeOwned>(path: &Path) -> Result<T, ActorCommandError> {
+    let bytes = read_stable_file(path, MAX_MAKER_LEZ_PREPARATION_BYTES, false)
+        .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?;
+    let mut deserializer = serde_json::Deserializer::from_slice(&bytes);
+    let value = T::deserialize(&mut deserializer)
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+    deserializer
+        .end()
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+    Ok(value)
 }
 
 fn load_prepared_witnessed_claim(
@@ -1345,6 +1597,14 @@ async fn drive_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCo
         .map_err(|_| ActorCommandError::StateUnavailable)?;
     drop(store);
     if let Some(transition) = FundingTransition::from_predecessor(durable.revision()) {
+        if transition == FundingTransition::MakerLock
+            && config.schema_version == CONFIG_SCHEMA_VERSION
+            && config.role == ActorRole::Maker
+        {
+            // The typed schema-4 execution seam is complete, but live Core/LEZ
+            // composition must be added before the CLI may mutate either node.
+            return Err(ActorCommandError::ActivationMaterialUnavailable);
+        }
         let expected_chain = agreement.coordinator().funded_chain(transition.funder());
         return match expected_chain {
             Chain::Bitcoin => {
@@ -1528,7 +1788,321 @@ async fn drive_live_lez_claim(
     drive_claim_with_observer(config, agreement, wire, &observer).await
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+fn validate_fresh_maker_lock_plan(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    agreement_wire: &[u8],
+    eligibility: FreshMakerLockEligibilityV1,
+    require_pre_cutoff: bool,
+) -> Result<ExactPublicEffectPlanV1, ActorCommandError> {
+    let maker = load_prepared_maker_lock_material(config, agreement)?;
+    let maker_chain = agreement.coordinator().funded_chain(Participant::Maker);
+    let cutoff = agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds();
+    if eligibility.current_maker_chain_time.chain() != maker_chain
+        || (require_pre_cutoff
+            && !eligibility
+                .current_maker_chain_time
+                .is_before_cutoff(cutoff))
+    {
+        return Err(ActorCommandError::ObservationUnavailable);
+    }
+    let effects = match (
+        agreement.direction(),
+        eligibility.prepared_first_lock,
+        maker.clone(),
+    ) {
+        (
+            SwapDirection::TakerSellsForeign,
+            PreparedFirstLockMaterialV1::Bitcoin(first),
+            PreparedMakerLockMaterialV1::Lez(second),
+        ) => BtcPreparedLockEffectsV1::new(first, second),
+        (
+            SwapDirection::TakerSellsLez,
+            PreparedFirstLockMaterialV1::Lez(first),
+            PreparedMakerLockMaterialV1::Bitcoin(second),
+        ) => BtcPreparedLockEffectsV1::new(second, first),
+        _ => return Err(ActorCommandError::AgreementBindingInvalid),
+    };
+    let sdk = BtcPairSdk::new(Participant::Maker, *agreement.bitcoin_chain_policy());
+    let accepted = sdk
+        .accept_wire(agreement_wire)
+        .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    let active = sdk
+        .activate(accepted, effects)
+        .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    let confirmed = active
+        .validate_first_lock(&eligibility.evidence)
+        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    let validated = active
+        .second_lock_plan(&confirmed)
+        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    if validated != maker.plan() {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    Ok(validated.clone())
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn maker_lock_intent(
+    agreement: &BtcAgreementV1,
+    plan: ExactPublicEffectPlanV1,
+) -> Result<BtcMakerLockIntentV1, ActorCommandError> {
+    BtcMakerLockIntentV1::new(
+        agreement.coordinator().id().clone(),
+        *agreement.agreement_commitment(),
+        Participant::Maker,
+        1,
+        plan,
+    )
+    .map_err(|_| ActorCommandError::ProjectionUnavailable)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn maker_lock_awaiting_output(
+    config: &ActorConfig,
+    before: &BtcOfflineStatus,
+    chain: Chain,
+) -> ActorEffectOutputV1 {
+    effect_output(
+        config,
+        ActorEffectCommandV1::Drive,
+        ActorEffectOutcomeV1::AwaitingObservation {
+            chain: chain.into(),
+        },
+        before,
+    )
+}
+
+/// Drives one schema-4 maker-owned second lock through exact SDK validation,
+/// durable one-attempt authority, and atomic lifecycle projection plus intent close.
+#[allow(clippy::too_many_lines)] // Keep the audited observe-check-CAS-send order linear.
+#[cfg_attr(not(test), allow(dead_code))]
+async fn drive_maker_lock_with_port(
+    config: &ActorConfig,
+    agreement: BtcAgreementV1,
+    agreement_wire: Vec<u8>,
+    port: &dyn MakerLockExecutionPort,
+) -> Result<ActorEffectOutputV1, ActorCommandError> {
+    if config.schema_version != CONFIG_SCHEMA_VERSION || config.role != ActorRole::Maker {
+        return Err(ActorCommandError::ActivationMaterialUnavailable);
+    }
+    if !state_file_exists(&config.state_db)? {
+        return Err(ActorCommandError::NotActivated);
+    }
+    validate_actor_binding(config, &agreement)?;
+    let (mut store, before) = open_projection(config, &agreement, agreement_wire.clone())?;
+    if before.revision() != 1 {
+        return Ok(effect_output(
+            config,
+            ActorEffectCommandV1::Drive,
+            ActorEffectOutcomeV1::NotYetComposed {
+                durable_revision: before.revision(),
+            },
+            &before,
+        ));
+    }
+    let maker_chain = agreement.coordinator().funded_chain(Participant::Maker);
+    let configured = load_prepared_maker_lock_material(config, &agreement)?;
+    let expected_intent = maker_lock_intent(&agreement, configured.plan().clone())?;
+    let mut journal = SqliteBtcMakerLockJournal::open(&config.state_db)
+        .map_err(|_| ActorCommandError::StateUnavailable)?;
+    let existing = journal
+        .load_intent(agreement.coordinator().id())
+        .map_err(|_| ActorCommandError::StateUnavailable)?;
+    if existing
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.intent() != &expected_intent)
+    {
+        return Err(ActorCommandError::ProjectionUnavailable);
+    }
+    let next_step = match existing.as_ref() {
+        Some(snapshot) => snapshot
+            .steps()
+            .iter()
+            .find(|step| step.state() != BtcMakerLockStepState::Accepted)
+            .map(|step| step.step().clone()),
+        None => expected_intent.plan().steps().first().cloned(),
+    };
+
+    if let Some(step) = next_step {
+        let observation = port.observe_step(&agreement, &step).await?;
+        let fresh = port.fresh_eligibility(&agreement).await?;
+        let sdk_plan =
+            validate_fresh_maker_lock_plan(config, &agreement, &agreement_wire, fresh, true)?;
+        if sdk_plan != *expected_intent.plan() {
+            return Err(ActorCommandError::AgreementBindingInvalid);
+        }
+        match journal
+            .create_intent(&expected_intent)
+            .map_err(|_| ActorCommandError::ProjectionUnavailable)?
+        {
+            BtcMakerLockIntentCreateOutcome::Created
+            | BtcMakerLockIntentCreateOutcome::ExistingSame => {}
+            BtcMakerLockIntentCreateOutcome::Conflict => {
+                return Err(ActorCommandError::ProjectionUnavailable);
+            }
+        }
+        let decision = journal
+            .reconcile_step(&expected_intent, step.step(), observation.into_journal())
+            .map_err(|_| ActorCommandError::ProjectionUnavailable)?;
+        match decision {
+            BtcMakerLockStepDecision::SubmitOnce(snapshot) => {
+                let result = port.submit_step(&agreement, snapshot.step()).await?;
+                let _ = journal
+                    .record_submission_result(&expected_intent, snapshot.step().step(), &result)
+                    .map_err(|_| ActorCommandError::ProjectionUnavailable)?;
+                return Ok(maker_lock_awaiting_output(config, &before, maker_chain));
+            }
+            BtcMakerLockStepDecision::ObserveOnly(_) => {}
+        }
+    }
+
+    let snapshot = journal
+        .load_intent(agreement.coordinator().id())
+        .map_err(|_| ActorCommandError::StateUnavailable)?
+        .ok_or(ActorCommandError::ProjectionUnavailable)?;
+    if snapshot
+        .steps()
+        .iter()
+        .any(|step| step.state() != BtcMakerLockStepState::Accepted)
+    {
+        return Ok(maker_lock_awaiting_output(config, &before, maker_chain));
+    }
+    drop(journal);
+
+    let complete = port.observe_complete(&agreement).await?;
+    let (chain, transaction_id, confirmations, canonical_inclusion_time, chain_evidence) =
+        match complete {
+            ActorFundingObservation::Pending { chain } => {
+                if chain != maker_chain {
+                    return Err(ActorCommandError::AgreementBindingInvalid);
+                }
+                return Ok(maker_lock_awaiting_output(config, &before, maker_chain));
+            }
+            ActorFundingObservation::Ready {
+                chain,
+                transaction_id,
+                confirmations,
+                canonical_inclusion_time,
+                chain_evidence,
+            } => (
+                chain,
+                transaction_id,
+                confirmations,
+                canonical_inclusion_time,
+                chain_evidence,
+            ),
+        };
+    let final_expected_id = expected_intent
+        .plan()
+        .steps()
+        .last()
+        .ok_or(ActorCommandError::AgreementBindingInvalid)?
+        .expected_public_id()
+        .as_str();
+    if chain != maker_chain
+        || canonical_inclusion_time.chain() != chain
+        || transaction_id.as_ref() != final_expected_id
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    let cutoff_evidence = encode_maker_lock_cutoff_evidence(
+        &agreement,
+        chain,
+        canonical_inclusion_time,
+        &chain_evidence,
+    )?;
+    let evidence =
+        BtcLifecycleEvidenceV1::maker_lock(chain, transaction_id, confirmations, cutoff_evidence)
+            .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    // A completed journal does not make revision one eligible forever. Re-read
+    // and SDK-validate the exact taker first lock after the final canonical
+    // maker-lock observation and immediately before the atomic projection.
+    let fresh = port.fresh_eligibility(&agreement).await?;
+    let sdk_plan =
+        validate_fresh_maker_lock_plan(config, &agreement, &agreement_wire, fresh, false)?;
+    if sdk_plan != *expected_intent.plan() {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    let commit = store
+        .project_maker_lock_and_close(1, &evidence)
+        .map_err(|_| ActorCommandError::ProjectionUnavailable)?;
+    let after = store
+        .status()
+        .map_err(|_| ActorCommandError::StateUnavailable)?;
+    Ok(effect_output(
+        config,
+        ActorEffectCommandV1::Drive,
+        ActorEffectOutcomeV1::ObservedThenProjected {
+            chain: chain.into(),
+            was_replay: commit.was_replay(),
+        },
+        &after,
+    ))
+}
+
+fn stage_legacy_observed_maker_lock(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transaction_id: &str,
+    chain_evidence: &[u8],
+) -> Result<(), ActorCommandError> {
+    if config.schema_version != LEGACY_CONFIG_SCHEMA_VERSION || config.role != ActorRole::Maker {
+        return Err(ActorCommandError::ProjectionUnavailable);
+    }
+    let step = PublicEffectStepV1::new(
+        PublicEffectStepId::new("legacy.observed_maker_lock")
+            .map_err(|_| ActorCommandError::ProjectionUnavailable)?,
+        ExpectedPublicEffectId::new(transaction_id)
+            .map_err(|_| ActorCommandError::ProjectionUnavailable)?,
+        ExactPublicEffectBytes::new(chain_evidence.to_vec())
+            .map_err(|_| ActorCommandError::ProjectionUnavailable)?,
+    );
+    let plan = ExactPublicEffectPlanV1::new(vec![step])
+        .map_err(|_| ActorCommandError::ProjectionUnavailable)?;
+    let intent = maker_lock_intent(agreement, plan)?;
+    let mut journal = SqliteBtcMakerLockJournal::open(&config.state_db)
+        .map_err(|_| ActorCommandError::StateUnavailable)?;
+    match journal
+        .create_intent(&intent)
+        .map_err(|_| ActorCommandError::ProjectionUnavailable)?
+    {
+        BtcMakerLockIntentCreateOutcome::Created
+        | BtcMakerLockIntentCreateOutcome::ExistingSame => {}
+        BtcMakerLockIntentCreateOutcome::Conflict => {
+            return Err(ActorCommandError::ProjectionUnavailable);
+        }
+    }
+    let step = &intent.plan().steps()[0];
+    let decision = journal
+        .reconcile_step(
+            &intent,
+            step.step(),
+            BtcMakerLockStepObservation::PresentExact {
+                expected_public_id: step.expected_public_id().as_str().into(),
+                exact_public_bytes: step.exact_bytes().as_slice().to_vec(),
+            },
+        )
+        .map_err(|_| ActorCommandError::ProjectionUnavailable)?;
+    match decision {
+        BtcMakerLockStepDecision::ObserveOnly(snapshot)
+            if snapshot.state() == BtcMakerLockStepState::Accepted
+                && snapshot.attempt_count() == 0 =>
+        {
+            Ok(())
+        }
+        BtcMakerLockStepDecision::ObserveOnly(_) | BtcMakerLockStepDecision::SubmitOnce(_) => {
+            Err(ActorCommandError::ProjectionUnavailable)
+        }
+    }
+}
+
 /// Drives one composed funding revision with an injected agreement-aware observer.
+#[allow(clippy::too_many_lines)] // Legacy observation-only handoff stays adjacent to projection.
 ///
 /// This is the deterministic TDD seam for the exact same durable projection used
 /// by the disk-configured command.
@@ -1596,10 +2170,20 @@ async fn drive_with_observer(
             (chain, transaction_id, confirmations, chain_evidence)
         }
     };
+    let maker_owned_observation =
+        transition == FundingTransition::MakerLock && config.role == ActorRole::Maker;
+    if maker_owned_observation {
+        stage_legacy_observed_maker_lock(config, &agreement, &transaction_id, &chain_evidence)?;
+    }
     let evidence = transition
         .evidence(chain, transaction_id, confirmations, chain_evidence)
         .map_err(|_| ActorCommandError::ObservationUnavailable)?;
-    let (outcome, after) = match store.project(before.revision(), &evidence) {
+    let projection = if maker_owned_observation {
+        store.project_maker_lock_and_close(before.revision(), &evidence)
+    } else {
+        store.project(before.revision(), &evidence)
+    };
+    let (outcome, after) = match projection {
         Ok(commit) => {
             let after = store
                 .status()

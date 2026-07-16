@@ -9,9 +9,9 @@ use std::{
 
 use super::*;
 use bitcoin::{
-    Amount, OutPoint, ScriptBuf, TxOut, Txid,
-    hashes::Hash as _,
+    Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness, absolute,
     secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey},
+    transaction,
 };
 use lez_bridge_protocol::{
     AccountIds, ChainPosition, CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult,
@@ -104,7 +104,7 @@ impl ActorFixture {
         let agreement_file = directory.path().join("agreement.json");
         fs::write(&agreement_file, &agreement_wire).expect("write agreement");
         let config = ActorConfig {
-            schema_version: CONFIG_SCHEMA_VERSION,
+            schema_version: LEGACY_CONFIG_SCHEMA_VERSION,
             role,
             agreement_file,
             state_db: directory.path().join("actor.sqlite3"),
@@ -149,6 +149,7 @@ impl ActorFixture {
                 adaptor_secret_file: (role == ActorRole::Taker)
                     .then(|| directory.path().join("adaptor-secret.key")),
             },
+            maker_lock: None,
             refund: RefundAuthorityConfig {
                 bitcoin_refund_key_file: (role.sdk() == agreement.bitcoin_funder())
                     .then(|| directory.path().join("bitcoin-refund.key")),
@@ -400,6 +401,36 @@ fn agreement_signature(secret: &SecretKey, commitment: [u8; 32]) -> [u8; 64] {
     .serialize()
 }
 
+fn directional_funding_transaction(script_pubkey: Vec<u8>) -> Transaction {
+    Transaction {
+        version: transaction::Version::TWO,
+        lock_time: absolute::LockTime::ZERO,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([42; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::from_bytes(vec![0x51]),
+            sequence: Sequence::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![
+            TxOut {
+                value: Amount::from_sat(1),
+                script_pubkey: ScriptBuf::new(),
+            },
+            TxOut {
+                value: Amount::from_sat(100_000),
+                script_pubkey: ScriptBuf::from_bytes(script_pubkey),
+            },
+        ],
+    }
+}
+
+fn exact_directional_funding(agreement: &BtcAgreementV1) -> Transaction {
+    directional_funding_transaction(agreement.p2tr_contract().script_pubkey_bytes().to_vec())
+}
+
 #[allow(clippy::too_many_lines)]
 fn directional_agreement(direction: SwapDirection) -> BtcAgreementV1 {
     let maker_secret = test_secret(1);
@@ -449,7 +480,13 @@ fn directional_agreement(direction: SwapDirection) -> BtcAgreementV1 {
         CsvBlockDelay::new(144).expect("CSV"),
     )
     .expect("P2TR contract");
-    let funding = BtcFundingTermsV1::new([21; 32], 1, 100_000);
+    let funding_transaction =
+        directional_funding_transaction(contract.script_pubkey_bytes().to_vec());
+    let funding = BtcFundingTermsV1::new(
+        funding_transaction.compute_txid().to_byte_array(),
+        1,
+        100_000,
+    );
     let claim = lez_btc_swap_sdk::CooperativeKeyPathSpend::new(
         &contract,
         OutPoint {
@@ -521,6 +558,296 @@ fn directional_agreement(direction: SwapDirection) -> BtcAgreementV1 {
         agreement_signature(&taker_secret, commitment),
     ))
     .expect("valid directional agreement")
+}
+
+const TEST_LEZ_INITIALIZATION_ID: [u8; 32] = [81; 32];
+const TEST_LEZ_FUNDING_ID: [u8; 32] = [82; 32];
+const TEST_LEZ_INITIALIZATION_BYTES: &[u8] = b"exact-lez-initialize";
+const TEST_LEZ_FUNDING_BYTES: &[u8] = b"exact-lez-fund";
+const TEST_TAKER_LEZ_INITIALIZATION_ID: &str = "taker-lez-initialize";
+const TEST_TAKER_LEZ_FUNDING_ID: &str = "taker-lez-fund";
+const TEST_TAKER_LEZ_INITIALIZATION_BYTES: &[u8] = b"exact-taker-lez-initialize";
+const TEST_TAKER_LEZ_FUNDING_BYTES: &[u8] = b"exact-taker-lez-fund";
+
+fn configure_schema4_maker_material(fixture: &mut ActorFixture) {
+    assert_eq!(fixture.config.role, ActorRole::Maker);
+    fixture.config.schema_version = CONFIG_SCHEMA_VERSION;
+    fixture.config.maker_lock = Some(match fixture.agreement.direction() {
+        SwapDirection::TakerSellsForeign => {
+            let request_path = fixture.directory.path().join("maker-lez-request.json");
+            let result_path = fixture.directory.path().join("maker-lez-result.json");
+            let context = MessageContext::new(
+                fixture.config.lez_bridge.run_id.clone(),
+                RequestId::new("maker-lock-preparation").expect("request ID"),
+                BridgeParticipant::Maker,
+            );
+            let request = PrepareWitnessedEscrowRequest::new(
+                context.clone(),
+                fixture.config.lez_bridge.runtime.clone(),
+                witnessed_lez_terms(&fixture.agreement).expect("witnessed terms"),
+            );
+            let result = PrepareWitnessedEscrowResult::new(
+                context,
+                PreparedTransaction::new(
+                    TransactionId::from_bytes(TEST_LEZ_INITIALIZATION_ID),
+                    ExactTransactionBytes::new(TEST_LEZ_INITIALIZATION_BYTES.to_vec())
+                        .expect("initialization bytes"),
+                ),
+                PreparedTransaction::new(
+                    TransactionId::from_bytes(TEST_LEZ_FUNDING_ID),
+                    ExactTransactionBytes::new(TEST_LEZ_FUNDING_BYTES.to_vec())
+                        .expect("funding bytes"),
+                ),
+            );
+            fs::write(
+                &request_path,
+                serde_json::to_vec(&request).expect("request JSON"),
+            )
+            .expect("write request");
+            fs::write(
+                &result_path,
+                serde_json::to_vec(&result).expect("result JSON"),
+            )
+            .expect("write result");
+            MakerLockMaterialConfig::Lez {
+                preparation_request_file: request_path,
+                preparation_result_file: result_path,
+            }
+        }
+        SwapDirection::TakerSellsLez => {
+            let funding_path = fixture.directory.path().join("maker-bitcoin-funding.raw");
+            fs::write(
+                &funding_path,
+                serialize(&exact_directional_funding(&fixture.agreement)),
+            )
+            .expect("write exact Bitcoin funding");
+            MakerLockMaterialConfig::Bitcoin {
+                exact_funding_transaction_file: funding_path,
+            }
+        }
+    });
+    fixture.config.validate().expect("schema-4 maker config");
+}
+
+fn fresh_maker_eligibility(fixture: &ActorFixture) -> FreshMakerLockEligibilityV1 {
+    let before_cutoff = fixture
+        .agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds()
+        - 1;
+    let current_maker_chain_time = match fixture
+        .agreement
+        .coordinator()
+        .funded_chain(Participant::Maker)
+    {
+        Chain::Bitcoin => CanonicalInclusionTimeV1::Bitcoin {
+            median_time_unix_seconds: before_cutoff,
+        },
+        Chain::Lez => CanonicalInclusionTimeV1::Lez {
+            timestamp_ms: before_cutoff * 1_000,
+        },
+        Chain::Zcash | Chain::Monero => unreachable!("Bitcoin agreement chain set"),
+    };
+    match fixture.agreement.direction() {
+        SwapDirection::TakerSellsForeign => {
+            let funding = exact_directional_funding(&fixture.agreement);
+            let exact = serialize(&funding);
+            FreshMakerLockEligibilityV1 {
+                prepared_first_lock: PreparedFirstLockMaterialV1::Bitcoin(
+                    PreparedBitcoinFundingV1::new(
+                        funding.compute_txid().to_string(),
+                        exact.clone(),
+                    )
+                    .expect("prepared Bitcoin first lock"),
+                ),
+                evidence: BtcFirstLockEvidenceV1::Bitcoin(
+                    lez_btc_swap_sdk::BitcoinFirstLockEvidenceV1::new(
+                        *fixture.agreement.bitcoin_genesis_hash(),
+                        exact,
+                        fixture.agreement.required_bitcoin_confirmations(),
+                    )
+                    .expect("Bitcoin first-lock evidence"),
+                ),
+                current_maker_chain_time,
+            }
+        }
+        SwapDirection::TakerSellsLez => FreshMakerLockEligibilityV1 {
+            prepared_first_lock: PreparedFirstLockMaterialV1::Lez(
+                PreparedLezFundingV1::new(
+                    TEST_TAKER_LEZ_INITIALIZATION_ID,
+                    TEST_TAKER_LEZ_INITIALIZATION_BYTES.to_vec(),
+                    TEST_TAKER_LEZ_FUNDING_ID,
+                    TEST_TAKER_LEZ_FUNDING_BYTES.to_vec(),
+                )
+                .expect("prepared LEZ first lock"),
+            ),
+            evidence: BtcFirstLockEvidenceV1::Lez(
+                lez_btc_swap_sdk::LezFirstLockEvidenceV1::new(
+                    *fixture.agreement.lez_terms().genesis_block_hash(),
+                    TEST_TAKER_LEZ_INITIALIZATION_ID,
+                    TEST_TAKER_LEZ_INITIALIZATION_BYTES.to_vec(),
+                    TEST_TAKER_LEZ_FUNDING_ID,
+                    TEST_TAKER_LEZ_FUNDING_BYTES.to_vec(),
+                    *fixture.agreement.lez_terms().metadata_account(),
+                    *fixture.agreement.lez_terms().custody_account(),
+                    fixture.agreement.lez_terms().amount(),
+                    true,
+                )
+                .expect("LEZ first-lock evidence"),
+            ),
+            current_maker_chain_time,
+        },
+    }
+}
+
+fn mismatched_fresh_maker_eligibility(fixture: &ActorFixture) -> FreshMakerLockEligibilityV1 {
+    let mut eligibility = fresh_maker_eligibility(fixture);
+    eligibility.evidence = match fixture.agreement.direction() {
+        SwapDirection::TakerSellsForeign => {
+            let mut changed = exact_directional_funding(&fixture.agreement);
+            changed.input[0].witness.push([0xaa]);
+            BtcFirstLockEvidenceV1::Bitcoin(
+                lez_btc_swap_sdk::BitcoinFirstLockEvidenceV1::new(
+                    *fixture.agreement.bitcoin_genesis_hash(),
+                    serialize(&changed),
+                    fixture.agreement.required_bitcoin_confirmations(),
+                )
+                .expect("changed-witness Bitcoin evidence"),
+            )
+        }
+        SwapDirection::TakerSellsLez => BtcFirstLockEvidenceV1::Lez(
+            lez_btc_swap_sdk::LezFirstLockEvidenceV1::new(
+                *fixture.agreement.lez_terms().genesis_block_hash(),
+                TEST_TAKER_LEZ_INITIALIZATION_ID,
+                b"changed-exact-taker-lez-initialize".to_vec(),
+                TEST_TAKER_LEZ_FUNDING_ID,
+                TEST_TAKER_LEZ_FUNDING_BYTES.to_vec(),
+                *fixture.agreement.lez_terms().metadata_account(),
+                *fixture.agreement.lez_terms().custody_account(),
+                fixture.agreement.lez_terms().amount(),
+                true,
+            )
+            .expect("changed-byte LEZ evidence"),
+        ),
+    };
+    eligibility
+}
+
+fn maker_time_at_cutoff(agreement: &BtcAgreementV1) -> CanonicalInclusionTimeV1 {
+    let cutoff = agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds();
+    match agreement.coordinator().funded_chain(Participant::Maker) {
+        Chain::Bitcoin => CanonicalInclusionTimeV1::Bitcoin {
+            median_time_unix_seconds: cutoff,
+        },
+        Chain::Lez => CanonicalInclusionTimeV1::Lez {
+            timestamp_ms: cutoff * 1_000,
+        },
+        Chain::Zcash | Chain::Monero => unreachable!("Bitcoin agreement chain set"),
+    }
+}
+
+struct FixedMakerLockPort {
+    observation: MakerLockStepChainObservationV1,
+    eligibility: FreshMakerLockEligibilityV1,
+    complete: ActorFundingObservation,
+    submission_result: BtcMakerLockSubmissionResult,
+    submissions: AtomicUsize,
+    eligibility_checks: AtomicUsize,
+    events: Mutex<Vec<&'static str>>,
+    observed_steps: Mutex<Vec<String>>,
+}
+
+impl FixedMakerLockPort {
+    fn new(
+        observation: MakerLockStepChainObservationV1,
+        eligibility: FreshMakerLockEligibilityV1,
+        complete: ActorFundingObservation,
+    ) -> Self {
+        Self {
+            observation,
+            eligibility,
+            complete,
+            submission_result: BtcMakerLockSubmissionResult::Unknown,
+            submissions: AtomicUsize::new(0),
+            eligibility_checks: AtomicUsize::new(0),
+            events: Mutex::new(Vec::new()),
+            observed_steps: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn with_submission_result(mut self, result: BtcMakerLockSubmissionResult) -> Self {
+        self.submission_result = result;
+        self
+    }
+
+    fn submissions(&self) -> usize {
+        self.submissions.load(Ordering::SeqCst)
+    }
+
+    fn eligibility_checks(&self) -> usize {
+        self.eligibility_checks.load(Ordering::SeqCst)
+    }
+
+    fn events(&self) -> Vec<&'static str> {
+        self.events.lock().expect("event log").clone()
+    }
+
+    fn observed_steps(&self) -> Vec<String> {
+        self.observed_steps.lock().expect("step log").clone()
+    }
+}
+
+#[async_trait]
+impl MakerLockExecutionPort for FixedMakerLockPort {
+    async fn observe_step(
+        &self,
+        _agreement: &BtcAgreementV1,
+        step: &PublicEffectStepV1,
+    ) -> Result<MakerLockStepChainObservationV1, ActorCommandError> {
+        self.events.lock().expect("event log").push("observe_step");
+        self.observed_steps
+            .lock()
+            .expect("step log")
+            .push(step.step().as_str().to_owned());
+        Ok(self.observation.clone())
+    }
+
+    async fn fresh_eligibility(
+        &self,
+        _agreement: &BtcAgreementV1,
+    ) -> Result<FreshMakerLockEligibilityV1, ActorCommandError> {
+        self.events
+            .lock()
+            .expect("event log")
+            .push("fresh_eligibility");
+        self.eligibility_checks.fetch_add(1, Ordering::SeqCst);
+        Ok(self.eligibility.clone())
+    }
+
+    async fn submit_step(
+        &self,
+        _agreement: &BtcAgreementV1,
+        _step: &PublicEffectStepV1,
+    ) -> Result<BtcMakerLockSubmissionResult, ActorCommandError> {
+        self.events.lock().expect("event log").push("submit_step");
+        self.submissions.fetch_add(1, Ordering::SeqCst);
+        Ok(self.submission_result.clone())
+    }
+
+    async fn observe_complete(
+        &self,
+        _agreement: &BtcAgreementV1,
+    ) -> Result<ActorFundingObservation, ActorCommandError> {
+        self.events
+            .lock()
+            .expect("event log")
+            .push("observe_complete");
+        Ok(self.complete.clone())
+    }
 }
 
 struct FixedObserver {
@@ -630,6 +957,25 @@ fn maker_lock_observation(
     maker_lock_observation_at(agreement, evidence_suffix, cutoff)
 }
 
+fn exact_maker_lock_complete_observation(
+    agreement: &BtcAgreementV1,
+    plan: &ExactPublicEffectPlanV1,
+    evidence_suffix: u8,
+) -> ActorFundingObservation {
+    let mut observation = maker_lock_observation(agreement, evidence_suffix);
+    let ActorFundingObservation::Ready { transaction_id, .. } = &mut observation else {
+        unreachable!("maker-lock helper is ready")
+    };
+    *transaction_id = plan
+        .steps()
+        .last()
+        .expect("maker plan has a final step")
+        .expected_public_id()
+        .as_str()
+        .into();
+    observation
+}
+
 fn maker_lock_observation_at(
     agreement: &BtcAgreementV1,
     evidence_suffix: u8,
@@ -706,6 +1052,496 @@ fn maker_lock_timeliness_predicate_covers_live_safety_boundaries_for_both_chains
         },
         cutoff,
     ));
+}
+
+#[test]
+fn schema4_maker_material_is_role_shaped_and_agreement_direction_bound() {
+    let mut maker = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    maker.config.schema_version = CONFIG_SCHEMA_VERSION;
+    assert_eq!(maker.config.validate(), Err(ActorConfigError::Invalid));
+
+    configure_schema4_maker_material(&mut maker);
+    let prepared =
+        load_prepared_maker_lock_material(&maker.config, &maker.agreement).expect("maker material");
+    assert_eq!(prepared.plan().steps().len(), 2);
+
+    let (request_path, _) = match maker.config.maker_lock.as_ref().expect("maker material") {
+        MakerLockMaterialConfig::Lez {
+            preparation_request_file,
+            preparation_result_file,
+        } => (
+            preparation_request_file.clone(),
+            preparation_result_file.clone(),
+        ),
+        MakerLockMaterialConfig::Bitcoin { .. } => unreachable!("forward maker uses LEZ"),
+    };
+    let original_request = fs::read(&request_path).expect("original request");
+    let mut changed_request: PrepareWitnessedEscrowRequest =
+        serde_json::from_slice(&original_request).expect("decode request");
+    changed_request.context.request_id =
+        RequestId::new("changed-maker-lock-request").expect("changed request ID");
+    fs::write(
+        &request_path,
+        serde_json::to_vec(&changed_request).expect("changed request JSON"),
+    )
+    .expect("change request");
+    assert_eq!(
+        load_prepared_maker_lock_material(&maker.config, &maker.agreement),
+        Err(ActorCommandError::ActivationMaterialUnavailable)
+    );
+    fs::write(&request_path, original_request).expect("restore request");
+
+    maker.config.schema_version = LEGACY_CONFIG_SCHEMA_VERSION;
+    assert_eq!(maker.config.validate(), Err(ActorConfigError::Invalid));
+    maker.config.schema_version = CONFIG_SCHEMA_VERSION;
+
+    let wrong_path = maker.directory.path().join("wrong-bitcoin.raw");
+    fs::write(
+        &wrong_path,
+        serialize(&exact_directional_funding(&maker.agreement)),
+    )
+    .expect("wrong direction bytes");
+    maker.config.maker_lock = Some(MakerLockMaterialConfig::Bitcoin {
+        exact_funding_transaction_file: wrong_path,
+    });
+    maker
+        .config
+        .validate()
+        .expect("role shape is syntactically valid");
+    assert_eq!(
+        load_prepared_maker_lock_material(&maker.config, &maker.agreement),
+        Err(ActorCommandError::ActivationMaterialUnavailable)
+    );
+
+    let mut taker = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    taker.config.schema_version = CONFIG_SCHEMA_VERSION;
+    taker
+        .config
+        .validate()
+        .expect("schema-4 taker has no maker authority");
+    taker.config.maker_lock = maker.config.maker_lock.clone();
+    assert_eq!(taker.config.validate(), Err(ActorConfigError::Invalid));
+}
+
+#[tokio::test]
+async fn schema4_changed_lez_preparation_result_conflicts_with_durable_intent() {
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    configure_schema4_maker_material(&mut fixture);
+    activate_and_project_taker_lock(&fixture).await;
+    let plan = load_prepared_maker_lock_material(&fixture.config, &fixture.agreement)
+        .expect("maker plan")
+        .plan()
+        .clone();
+    let eligibility = fresh_maker_eligibility(&fixture);
+    let complete = exact_maker_lock_complete_observation(&fixture.agreement, &plan, 69);
+    let first = FixedMakerLockPort::new(
+        MakerLockStepChainObservationV1::Absent,
+        eligibility.clone(),
+        complete.clone(),
+    );
+    drive_maker_lock_with_port(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &first,
+    )
+    .await
+    .expect("stage immutable intent before first send");
+    assert_eq!(first.submissions(), 1);
+
+    let result_path = match fixture.config.maker_lock.as_ref().expect("maker material") {
+        MakerLockMaterialConfig::Lez {
+            preparation_result_file,
+            ..
+        } => preparation_result_file,
+        MakerLockMaterialConfig::Bitcoin { .. } => unreachable!("forward maker uses LEZ"),
+    };
+    let mut changed: PrepareWitnessedEscrowResult =
+        serde_json::from_slice(&fs::read(result_path).expect("result bytes"))
+            .expect("decode result");
+    changed.funding = PreparedTransaction::new(
+        changed.funding.transaction_id,
+        ExactTransactionBytes::new(b"changed-exact-lez-funding-result".to_vec())
+            .expect("changed bytes"),
+    );
+    fs::write(
+        result_path,
+        serde_json::to_vec(&changed).expect("changed result JSON"),
+    )
+    .expect("change result");
+
+    let retry = FixedMakerLockPort::new(
+        MakerLockStepChainObservationV1::Absent,
+        eligibility,
+        complete,
+    );
+    assert_eq!(
+        drive_maker_lock_with_port(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &retry,
+        )
+        .await,
+        Err(ActorCommandError::ProjectionUnavailable)
+    );
+    assert_eq!(retry.events(), Vec::<&'static str>::new());
+    assert_eq!(retry.submissions(), 0);
+}
+
+#[tokio::test]
+async fn schema4_maker_send_requires_fresh_exact_first_lock_and_strict_pre_cutoff_time() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let mut fixture = ActorFixture::for_direction(direction, ActorRole::Maker);
+        configure_schema4_maker_material(&mut fixture);
+        activate_and_project_taker_lock(&fixture).await;
+        let plan = load_prepared_maker_lock_material(&fixture.config, &fixture.agreement)
+            .expect("maker plan")
+            .plan()
+            .clone();
+        let complete = exact_maker_lock_complete_observation(&fixture.agreement, &plan, 70);
+
+        let mut at_cutoff = fresh_maker_eligibility(&fixture);
+        at_cutoff.current_maker_chain_time = maker_time_at_cutoff(&fixture.agreement);
+        let cutoff_port = FixedMakerLockPort::new(
+            MakerLockStepChainObservationV1::Absent,
+            at_cutoff,
+            complete.clone(),
+        );
+        assert_eq!(
+            drive_maker_lock_with_port(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &cutoff_port,
+            )
+            .await,
+            Err(ActorCommandError::ObservationUnavailable)
+        );
+        assert_eq!(cutoff_port.submissions(), 0);
+        assert_eq!(
+            cutoff_port.events(),
+            vec!["observe_step", "fresh_eligibility"]
+        );
+
+        let drift_port = FixedMakerLockPort::new(
+            MakerLockStepChainObservationV1::Absent,
+            mismatched_fresh_maker_eligibility(&fixture),
+            complete,
+        );
+        assert_eq!(
+            drive_maker_lock_with_port(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &drift_port,
+            )
+            .await,
+            Err(ActorCommandError::ObservationUnavailable)
+        );
+        assert_eq!(drift_port.submissions(), 0);
+
+        let journal =
+            SqliteBtcMakerLockJournal::open(&fixture.config.state_db).expect("maker journal");
+        assert_eq!(
+            journal
+                .load_intent(fixture.agreement.coordinator().id())
+                .expect("load intent"),
+            None
+        );
+
+        let mut store = open_existing_store(
+            &fixture.config,
+            &fixture.agreement,
+            fixture.agreement_wire.clone(),
+        )
+        .expect("maker recovery store");
+        let maker_chain = fixture
+            .agreement
+            .coordinator()
+            .funded_chain(Participant::Maker);
+        let generic = BtcLifecycleEvidenceV1::maker_lock(
+            maker_chain,
+            "generic-maker-lock",
+            if maker_chain == Chain::Bitcoin {
+                fixture.agreement.required_bitcoin_confirmations()
+            } else {
+                FINALIZED_LEZ_CONFIRMATION_UNITS
+            },
+            b"generic projection is forbidden".to_vec(),
+        )
+        .expect("generic evidence");
+        assert!(matches!(
+            store.project(1, &generic),
+            Err(BtcRecoveryError::InvalidSequence { revision: 2 })
+        ));
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // One scenario proves the complete ordered crash-safety contract.
+async fn schema4_maker_lock_is_ordered_no_rearm_and_atomically_closed_in_both_directions() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let mut fixture = ActorFixture::for_direction(direction, ActorRole::Maker);
+        configure_schema4_maker_material(&mut fixture);
+        activate_and_project_taker_lock(&fixture).await;
+
+        let plan = load_prepared_maker_lock_material(&fixture.config, &fixture.agreement)
+            .expect("maker material")
+            .plan()
+            .clone();
+        let eligibility = fresh_maker_eligibility(&fixture);
+        let complete = exact_maker_lock_complete_observation(&fixture.agreement, &plan, 88);
+
+        for (index, step) in plan.steps().iter().enumerate() {
+            let submission_result = if index == 0 {
+                BtcMakerLockSubmissionResult::Accepted(step.expected_public_id().as_str().into())
+            } else {
+                BtcMakerLockSubmissionResult::Unknown
+            };
+            let absent = FixedMakerLockPort::new(
+                MakerLockStepChainObservationV1::Absent,
+                eligibility.clone(),
+                complete.clone(),
+            )
+            .with_submission_result(submission_result.clone());
+            let sent = drive_maker_lock_with_port(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &absent,
+            )
+            .await
+            .expect("one authorized maker send");
+            assert_eq!(sent.revision, 1);
+            assert_eq!(absent.submissions(), 1);
+            assert_eq!(absent.eligibility_checks(), 1);
+            assert_eq!(
+                absent.events(),
+                vec!["observe_step", "fresh_eligibility", "submit_step"]
+            );
+
+            let after_send = SqliteBtcMakerLockJournal::open(&fixture.config.state_db)
+                .expect("journal after node result")
+                .load_intent(fixture.agreement.coordinator().id())
+                .expect("load intent")
+                .expect("intent after send");
+            assert_eq!(
+                after_send.steps()[index].state(),
+                BtcMakerLockStepState::Unknown
+            );
+            assert_eq!(
+                after_send.steps()[index].submission_result(),
+                Some(&submission_result)
+            );
+
+            let replay = drive_maker_lock_with_port(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &absent,
+            )
+            .await
+            .expect("absence cannot rearm");
+            assert_eq!(replay.revision, 1);
+            assert_eq!(absent.submissions(), 1);
+            assert_eq!(absent.eligibility_checks(), 2);
+            assert_eq!(
+                absent.events(),
+                vec![
+                    "observe_step",
+                    "fresh_eligibility",
+                    "submit_step",
+                    "observe_step",
+                    "fresh_eligibility",
+                ]
+            );
+            assert_eq!(
+                absent.observed_steps(),
+                vec![step.step().as_str().to_owned(); 2]
+            );
+
+            let pending = FixedMakerLockPort::new(
+                MakerLockStepChainObservationV1::PresentExactPending {
+                    expected_public_id: step.expected_public_id().as_str().into(),
+                    exact_public_bytes: step.exact_bytes().as_slice().to_vec(),
+                },
+                eligibility.clone(),
+                complete.clone(),
+            );
+            let still_pending = drive_maker_lock_with_port(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &pending,
+            )
+            .await
+            .expect("byte-equal unconfirmed observation remains pending");
+            assert_eq!(still_pending.revision, 1);
+            assert_eq!(pending.submissions(), 0);
+
+            let conflicting_presence = FixedMakerLockPort::new(
+                MakerLockStepChainObservationV1::ConflictingPresence,
+                eligibility.clone(),
+                complete.clone(),
+            );
+            let conflict_pending = drive_maker_lock_with_port(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &conflicting_presence,
+            )
+            .await
+            .expect("unknown step stays observation-only on conflicting presence");
+            assert_eq!(conflict_pending.revision, 1);
+            assert_eq!(conflicting_presence.submissions(), 0);
+
+            let mut wrong_bytes = step.exact_bytes().as_slice().to_vec();
+            wrong_bytes.push(0xff);
+            let conflict = FixedMakerLockPort::new(
+                MakerLockStepChainObservationV1::PresentExactCanonical {
+                    expected_public_id: step.expected_public_id().as_str().into(),
+                    exact_public_bytes: wrong_bytes,
+                },
+                eligibility.clone(),
+                complete.clone(),
+            );
+            assert_eq!(
+                drive_maker_lock_with_port(
+                    &fixture.config,
+                    fixture.agreement.clone(),
+                    fixture.agreement_wire.clone(),
+                    &conflict,
+                )
+                .await,
+                Err(ActorCommandError::ProjectionUnavailable)
+            );
+
+            let is_final = index + 1 == plan.steps().len();
+            let final_pending = ActorFundingObservation::Pending {
+                chain: fixture
+                    .agreement
+                    .coordinator()
+                    .funded_chain(Participant::Maker),
+            };
+            let present = FixedMakerLockPort::new(
+                MakerLockStepChainObservationV1::PresentExactCanonical {
+                    expected_public_id: step.expected_public_id().as_str().into(),
+                    exact_public_bytes: step.exact_bytes().as_slice().to_vec(),
+                },
+                eligibility.clone(),
+                if is_final {
+                    final_pending
+                } else {
+                    complete.clone()
+                },
+            );
+            let observed = drive_maker_lock_with_port(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &present,
+            )
+            .await
+            .expect("canonical exact observation advances ordered maker plan");
+            assert_eq!(present.submissions(), 0);
+            assert_eq!(observed.revision, 1);
+
+            if is_final {
+                let mut wrong_complete = complete.clone();
+                let ActorFundingObservation::Ready { transaction_id, .. } = &mut wrong_complete
+                else {
+                    unreachable!("complete observation")
+                };
+                *transaction_id = "different-plan-final-id".into();
+                let wrong_final = FixedMakerLockPort::new(
+                    MakerLockStepChainObservationV1::Uncertain,
+                    eligibility.clone(),
+                    wrong_complete,
+                );
+                assert_eq!(
+                    drive_maker_lock_with_port(
+                        &fixture.config,
+                        fixture.agreement.clone(),
+                        fixture.agreement_wire.clone(),
+                        &wrong_final,
+                    )
+                    .await,
+                    Err(ActorCommandError::AgreementBindingInvalid)
+                );
+                assert_eq!(wrong_final.events(), vec!["observe_complete"]);
+
+                let stale_first = FixedMakerLockPort::new(
+                    MakerLockStepChainObservationV1::Uncertain,
+                    mismatched_fresh_maker_eligibility(&fixture),
+                    complete.clone(),
+                );
+                assert_eq!(
+                    drive_maker_lock_with_port(
+                        &fixture.config,
+                        fixture.agreement.clone(),
+                        fixture.agreement_wire.clone(),
+                        &stale_first,
+                    )
+                    .await,
+                    Err(ActorCommandError::ObservationUnavailable)
+                );
+                assert_eq!(
+                    stale_first.events(),
+                    vec!["observe_complete", "fresh_eligibility"]
+                );
+
+                let finalize = FixedMakerLockPort::new(
+                    MakerLockStepChainObservationV1::Uncertain,
+                    eligibility.clone(),
+                    complete.clone(),
+                );
+                let closed = drive_maker_lock_with_port(
+                    &fixture.config,
+                    fixture.agreement.clone(),
+                    fixture.agreement_wire.clone(),
+                    &finalize,
+                )
+                .await
+                .expect("fresh first lock permits atomic final projection");
+                assert_eq!(closed.revision, 2);
+                assert_eq!(finalize.observed_steps(), Vec::<String>::new());
+                assert_eq!(finalize.eligibility_checks(), 1);
+                assert_eq!(
+                    finalize.events(),
+                    vec!["observe_complete", "fresh_eligibility"]
+                );
+            }
+        }
+
+        let journal =
+            SqliteBtcMakerLockJournal::open(&fixture.config.state_db).expect("maker journal");
+        let snapshot = journal
+            .load_intent(fixture.agreement.coordinator().id())
+            .expect("load intent")
+            .expect("durable intent");
+        assert_eq!(snapshot.closed_revision(), Some(2));
+        assert!(
+            snapshot
+                .steps()
+                .iter()
+                .all(|step| step.state() == BtcMakerLockStepState::Accepted)
+        );
+        let store = open_existing_store(
+            &fixture.config,
+            &fixture.agreement,
+            fixture.agreement_wire.clone(),
+        )
+        .expect("reopen actor store");
+        assert_eq!(store.status().expect("status").revision(), 2);
+    }
 }
 
 #[test]
@@ -1295,6 +2131,18 @@ async fn maker_lock_projects_in_both_directions_for_both_roles() {
             );
             assert_eq!(projected["revision"], 2);
             assert_eq!(projected["phase"], "both_legs_locked");
+            if role == ActorRole::Maker {
+                let journal = SqliteBtcMakerLockJournal::open(&fixture.config.state_db)
+                    .expect("legacy observation-only journal");
+                let snapshot = journal
+                    .load_intent(fixture.agreement.coordinator().id())
+                    .expect("load legacy intent")
+                    .expect("legacy observed intent");
+                assert_eq!(snapshot.steps().len(), 1);
+                assert_eq!(snapshot.steps()[0].state(), BtcMakerLockStepState::Accepted);
+                assert_eq!(snapshot.steps()[0].attempt_count(), 0);
+                assert_eq!(snapshot.steps()[0].submission_result(), None);
+            }
             assert_eq!(observer.calls(), 1);
             assert_eq!(observer.transitions(), vec![FundingTransition::MakerLock]);
 
