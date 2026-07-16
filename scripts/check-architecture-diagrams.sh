@@ -57,17 +57,74 @@ for flow in "${required_atomic_sequences[@]}"; do
     echo "atomic sequence marker must immediately precede its Mermaid flow: ${flow}" >&2
     exit 1
   fi
+  sequence_block="$(awk -v marker="$marker" '
+    $0 == marker { found = 1; next }
+    found && $0 == "```mermaid" { mermaid = 1; next }
+    mermaid && $0 == "```" { exit }
+    mermaid { print }
+  ' "$system_architecture")"
+  for property in \
+    "Taker first lock starts the protocol" \
+    "Both locks are proven" \
+    "Required invariant cutoff plus margin no later than earliest recovery" \
+    "Required invariant late maker lock admission closes before refund authority" \
+    "Revealer may disappear and follower uses canonical chain disclosure" \
+    "Follower retains claim authority and ClaimEvidenceAvailable stays nonterminal" \
+    "No canonical reveal" \
+    "Implementation status"; do
+    if ! rg -Fq "$property" <<<"$sequence_block"; then
+      echo "atomic sequence ${flow} is missing scoped property: ${property}" >&2
+      exit 1
+    fi
+  done
+
+  argument_block="$(awk -v marker="$argument_marker" '
+    $0 == marker { found = 1; next }
+    found && ($0 ~ /^<!-- atomicity-argument:/ || $0 ~ /^### /) { exit }
+    found { print }
+  ' "$system_architecture")"
+  for label in "Economic safety" "Replay/idempotency" \
+    "Conditional liveness" "Implementation status"; do
+    if ! rg -Fq "**${label}:**" <<<"$argument_block"; then
+      echo "atomicity argument ${flow} is missing scoped label: ${label}" >&2
+      exit 1
+    fi
+  done
 done
 
 required_flow_properties=(
-  "Late maker lock admission closes before refund authority"
+  "Required invariant cutoff plus margin no later than earliest recovery"
+  "Required invariant late maker lock admission closes before refund authority"
   "Revealer may disappear and follower uses canonical chain disclosure"
-  "Remaining leg stays claimable and lifecycle stays Recovering"
+  "Follower retains claim authority and ClaimEvidenceAvailable stays nonterminal"
 )
 
 for property in "${required_flow_properties[@]}"; do
   if [[ "$(rg -Fc "$property" "$system_architecture")" -ne 5 ]]; then
     echo "all five atomic flows must state: ${property}" >&2
+    exit 1
+  fi
+done
+
+if rg -Fq '<!-- atomic-sequence: lez-xmr/taker-sells-foreign -->' \
+    "$system_architecture"; then
+  echo "unsupported XMR-first direction must not have an atomic sequence" >&2
+  exit 1
+fi
+if ! rg -Fq 'XMR-first is rejected' "$system_architecture"; then
+  echo "architecture must retain the unsupported XMR-first rationale" >&2
+  exit 1
+fi
+if rg -Fq 'lifecycle stays Recovering' "$system_architecture"; then
+  echo "architecture must use implemented nonterminal phases, not a Recovering enum" >&2
+  exit 1
+fi
+
+for term in "Aumayr" "Fournier one-time-VES" "aEUF-CMA" \
+  "witness-extractability" "pre-signature-adaptability" \
+  "BTC pair-specific F7"; do
+  if ! rg -Fq "$term" "$system_architecture"; then
+    echo "BTC atomicity write-up is missing formal/F7 boundary: ${term}" >&2
     exit 1
   fi
 done

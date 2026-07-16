@@ -1052,8 +1052,10 @@ public actor and actual nodes at pushed `origin/main` commit `6ded2f9`; later
 QA, chaos, infosec, public-Testnet, and production-readiness hardening remain
 active**. The pushed claim packet certifies both happy directions. Fresh run
 `m3refund-20260716h` now also closes the separate actual-node two-lock
-timeout/refund demo in both directions. First-lock-only absent-maker recovery
-and the concurrent-swap demo remain separate open M3 gates. The
+timeout/refund demo in both directions. Run `m3firstlock-20260716h` closes both
+refund-side first-lock absent-maker paths. Live maker-lock cutoff admission,
+direct survivor continuation, and the concurrent-swap demo remain open M3
+gates. The
 canonical countersigned agreement, finalized LEZ funding/claim
 adapters, typed Core adapter, and reference-actor revisions zero through four
 are GREEN in source, deterministic tests, and run `m3actor-20260716n`. The
@@ -1123,7 +1125,8 @@ The typed Core 31.1 adapter and canonical bounded public evidence
 codec are GREEN as components and in run-n's actual-node actor paths. The
 schema-3 public `recover` command now composes the deterministic Bitcoin and LEZ
 refund boundaries in both directions. Run `m3refund-20260716h` now proves those
-two-lock timeout paths against actual local nodes; first-lock-only recovery,
+two-lock timeout paths and `m3firstlock-20260716h` proves both first-lock-only
+absent-maker refund paths against actual local nodes; direct survivor recovery,
 concurrency, production key custody, and the accepted proposal's full SDK/demo
 surface remain pending.
 
@@ -1144,8 +1147,9 @@ mode-`0600` refund-key file, forbids it on the other role, and rederives the
 countersigned x-only key before activation. Fresh actual-node two-lock timeout
 evidence is GREEN in run `m3refund-20260716h`. The first-lock rev1-to-rev2
 projection, signed cutoff agreement, finalized LEZ `Found`/`Absent`
-classifier, and refund-side live gate are GREEN. Actual absent-maker execution
-is the active recovery slice.
+classifier, and refund-side live gate are GREEN. Run
+`m3firstlock-20260716h` closes actual absent-maker execution; live maker-lock
+admission at the cutoff boundary remains the active race-safety slice.
 
 Actual-node attempt `m3firstlock-20260716b` reached checked LEZ deployment,
 both finalized Vault Claims, and direction planning, then failed before any lock
@@ -1220,6 +1224,19 @@ active RED-GREEN slice requires a bounded retry of only that typed observation,
 with a fresh request ID per attempt, empty failed stdout, retained diagnostics,
 unchanged durable effect count, and immediate rejection of every other error.
 The certifying rerun will use a fresh ID.
+
+Run `m3firstlock-20260716h` is the clean pushed-commit GREEN rerun. Both
+economic directions used fresh Core 31.1 Regtest and private LEZ v0.2 nodes,
+fresh one-shot actors, separate role stores/journals, and a maker that remained
+offline after activation through refund finality. The Bitcoin-first direction
+retained exactly lock plus refund and no LEZ effect; the LEZ-first direction
+retained exactly initialize, fund, and refund and no Bitcoin effect. Both
+fresh makers reconstructed terminal revision two `Refunded`, terminal replay
+added zero effects, and exact cleanup targeted no foreign resource. Its second
+witnessed-funding admission sample converged after three typed `moving_tip`
+retries with fresh request IDs and unchanged durable submission count. The
+secret-safe retained packet is
+`docs/evidence/m3-local-two-direction-first-lock-refund-poc-20260716.json`.
 
 The refund-wire loop is GREEN. The existing native-refund RPC names and
 hashlock JSON shape remain unchanged, while strict untagged protocol envelopes
@@ -1352,11 +1369,14 @@ Active M3 refund critical path:
   refund bound. This repository-selected implementation of the RFP-derived taker-first, timeout, race-safety, and
   lossless-recovery obligations; the RFP does not literally prescribe a field
   named `maker_second_lock_cutoff`;
-- [ ] finish the distinct RFP R2/D1 **first-lock-only absent-maker** BTC journey:
+- [x] finish the distinct RFP R2/D1 **first-lock-only absent-maker** BTC journey:
   after the taker’s first lock confirms and the maker never locks, the taker
   must own, prepare, submit, finalize, and replay that first-leg refund without
   maker, Delivery, or Chat participation. Persistence, projection, and live
-  refund-side admission are GREEN: two ordinal-bound exact-tip reads, monotonic clocks, and the exact taker refund evidence persist together. The fresh actual-node journey remains open;
+  refund-side admission are GREEN: two ordinal-bound exact-tip reads, monotonic
+  clocks, and exact taker refund evidence persist together. Run
+  `m3firstlock-20260716h` proves both actual-node directions, fresh-maker
+  reconstruction, zero replay submission, and exact foreign-safe cleanup;
 - [ ] enforce and evidence the maker-second-lock cutoff/race invariant at the
   live chain boundary. The signed agreement and refund-side live gate are GREEN,
   but every live maker-lock attempt must still revalidate the canonical unspent
@@ -1399,8 +1419,8 @@ Active M3 refund critical path:
 - [ ] after the owner enters later hardening, add restart, reorg, fee, and chaos
   cases beyond the reproducible functional PoC boundary.
 
-Repository-controlled open work, not external blockers, is the durable
-first-lock discovery-window baseline and maker-lock admission, fresh actual-node absent-maker evidence, survivor-specific continuation, two
+Repository-controlled open work, not external blockers, is live maker-lock
+admission at the cutoff boundary, survivor-specific continuation, two
 genuinely overlapping swaps, the full-lifecycle public BTC SDK surface and SDK-owned locks, the F7 witnessed
 custom-token interpretation or implementation, D1 recordings, and synchronized
 closure evidence and gates. The revision-one-to-two store/projector, signed
@@ -1455,8 +1475,8 @@ The RFP does not literally name a maker-second-lock cutoff field. The signed
 cutoff is the selected implementation of its combined taker-first,
 timelock-margin, atomic-outcome, missing-counterparty, and concurrency duties
 at the race boundary. Agreement validation is necessary but not sufficient:
-acceptance still requires the live two-chain use of the GREEN LEZ classification,
-actual absent-maker execution, and race evidence above.
+acceptance now has live two-chain absent-maker execution and still requires the
+maker-lock admission side of the boundary race evidence above.
 
 The proposal’s named DLC `AdaptorSignature.md` Schnorr corpus does not exist;
 the live DLC corpus is ECDSA. M3 must not fake literal conformance.
@@ -1606,10 +1626,10 @@ chain directions by run `m3actor-20260716n`. Both Bitcoin and LEZ claim-effect
 paths have actual-node public-actor evidence at the progressive local PoC
 boundary. Public schema-3 two-lock refund composition and actual-node
 execution are GREEN in both directions through run `m3refund-20260716h`.
-The first-lock-only projector, persistence, signed cutoff agreement, and live
-refund-side cross-chain gate are GREEN. Durable discovery-window baseline
-derivation, maker-lock admission, survivor nuance, and a fresh actual-node
-first-lock journey remain open.
+The first-lock-only projector, persistence, signed cutoff agreement, durable
+discovery-window baseline, and live refund-side cross-chain gate are GREEN.
+Run `m3firstlock-20260716h` closes both fresh actual-node first-lock journeys;
+maker-lock admission at the boundary and survivor nuance remain open.
 
 Pushed commit
 `a58ef96` adds the checked-in secret-safe packet, complete operator recipe,
@@ -1921,9 +1941,10 @@ and attests exact cleanup without targeting foreign Docker resources. Commit
 `650d94e` makes every actor LEZ bridge request finite at 30 seconds. Run-n
 passed this harness at the same pushed commit: both directions, both roles,
 revision four, replay without resubmission, and exact cleanup are audited. The
-happy-path progressive local PoC has no remaining execution task. Run H
-separately closes two-lock timeout/refund. First-lock actual-node
-absent-maker/survivor execution and two overlapping swaps remain the active
+happy-path progressive local PoC has no remaining execution task. Run
+`m3refund-20260716h` separately closes two-lock timeout/refund, and run
+`m3firstlock-20260716h` closes actual-node absent-maker recovery. Direct
+post-reveal survivor execution and two overlapping swaps remain the active
 functional M3 work before the broader
 owner-selected hardening below.
 

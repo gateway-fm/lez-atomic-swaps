@@ -35,10 +35,11 @@ ordering check. Run H then executed the public `recover` command against both
 actual local stacks in both directions. Maker and taker each reached revision 4
 `refunded`, terminal replay added no submission, each direction retained
 exactly two confirmed Bitcoin effects and three durable LEZ submissions, and
-neither direction contained a cooperative claim effect. First-lock-only
-absent-maker recovery, survivor-specific continuation, deadline-cutoff/race
-hardening, concurrency, process-kill/reorg, chaos, infosec, public-Testnet, and
-production-readiness scope remain open.
+neither direction contained a cooperative claim effect. Run
+`m3firstlock-20260716h` separately closes both refund-side absent-maker paths.
+Survivor-specific continuation, live maker-lock cutoff admission, concurrency,
+process-kill/reorg, chaos, infosec, public-Testnet, and production-readiness
+scope remain open.
 
 The earlier operator-composed reference result is
 [m3-local-two-direction-poc-20260715.json](evidence/m3-local-two-direction-poc-20260715.json).
@@ -1424,8 +1425,9 @@ transcript without accepting a peer transaction ID. This claim path is GREEN in
 source, deterministic actor tests, and run-n. The refund path is GREEN in
 deterministic tests and in Run H's fresh actual-node two-lock journey. The
 lower-level operator flow below remains useful for inspecting each exact
-request/effect; absent-maker, survivor-specific, cutoff/race, concurrent,
-process-kill, and reorg journeys remain later gates.
+request/effect; refund-side absent-maker execution is GREEN, while
+survivor-specific, maker-lock cutoff admission, concurrent, process-kill, and
+reorg journeys remain later gates.
 
 ## Manual actor timeout/refund recovery
 
@@ -2093,6 +2095,81 @@ evidence. The actor's LEZ scan is bounded to 30 seconds; expiry is uncertain
 read-only observation, not absence and not new send authority. Never mask a
 timeout by resubmitting an effect.
 
+## Manual actor first-lock absent-maker recovery
+
+Status: both actual-node directions are GREEN at clean pushed commit `cefcd07`
+in run `m3firstlock-20260716h`. Use the same verified prerequisites as the
+combined happy path, a new run ID, and the dedicated journey:
+
+~~~sh
+export RUN_ID=m3firstlock-manual-001
+export M3_ACTOR_POC_JOURNEY=first_lock_refund
+./scripts/run-m3-actor-local-poc.sh
+
+export M3_EVIDENCE="$PWD/.e2e/$RUN_ID/m3-actor-poc/evidence"
+jq -e '.kind == "m3_actor_two_direction_first_lock_refund_local_poc" and
+  .journey == "first_lock_refund" and .result == "passed" and
+  all(.directions[];
+    .terminal_revision == 2 and .terminal_phase == "refunded" and
+    .maker_second_lock_effect_count == 0) and
+  .expected_unique_effects_by_direction == {
+    taker_sells_foreign:{bitcoin:2,lez:0},
+    taker_sells_lez:{bitcoin:0,lez:3}} and
+  .first_lock_refund_admission.signed_cutoff == true and
+  .first_lock_refund_admission.two_fresh_cross_chain_reads == true and
+  .first_lock_refund_admission.owner_restart_without_resubmission == true and
+  .first_lock_refund_admission.fresh_maker_observer == true and
+  .replay_resubmission_count == 0 and
+  .external_resources.certification_success_depends_on_external_network == false' \
+  "$M3_EVIDENCE/m3-actor-local-poc.json"
+jq -e '.journey == "first_lock_refund" and .result == "passed" and
+  .all_exact_run_resources_absent == true and
+  .foreign_resources_targeted == false and .broad_cleanup_used == false' \
+  "$M3_EVIDENCE/cleanup-attestation.json"
+~~~
+
+The runner creates one countersigned agreement per direction and activates
+separate maker/taker stores and signing journals before the first effect. The
+taker submits only the direction-correct first lock. The maker is not invoked
+again until refund finality and therefore cannot submit the second lock. The
+taker must remain at revision 1 while it waits for the signed maker-lock cutoff
+and its chain-specific recovery boundary. Two fresh, complete observations
+must show the other lock absent and the taker lock canonical and unspent. The
+actor's persisted admission is authoritative; the runner reads corroborate it
+but cannot grant send authority.
+
+`TakerSellsForeign` then spends the exact Bitcoin first lock through its
+countersigned BIP-342 CSV branch. `TakerSellsLez` submits the official
+`RefundNative` only after a finalized LEZ block timestamp crosses the signed
+deadline. Exact confirmed/finalized evidence projects the taker to revision 2;
+a new maker process must then reconstruct the first lock and refund from chain
+state before it also reports revision 2 `refunded`. Terminal restart and both
+role replays must leave the effect manifests byte-identical.
+
+All chain RPCs are ephemeral literal-loopback Core, LEZ sequencer, and LEZ
+indexer endpoints. Funds are deterministic local Regtest coinbase or genesis
+Vault allocations. No public RPC, faucet, peer, deployment, or public funds are
+used. Cold provisioning can still depend on pinned artifact/image sources.
+Pinned Bedrock makes best-effort `pool.ntp.org:123/udp` attempts, but the final
+packet must say certification has no external-network success dependency.
+
+An advancing finalized LEZ tip may return typed `moving_tip` during the exact
+witnessed-funding read. The runner retries only that read-only category, at
+most 120 attempts over 30 seconds, with a fresh request ID and retained empty
+failed stdout. Timeout, transport ambiguity, malformed evidence, authentication
+failure, and every other remote category abort. Retry evidence must show the
+durable LEZ submission count unchanged. Run H's first sample succeeded once;
+the second converged after three moving-tip retries. This local finality race
+can extend elapsed time but can never authorize a duplicate effect.
+
+The retained secret-safe result is
+`docs/evidence/m3-local-two-direction-first-lock-refund-poc-20260716.json`.
+Keep the full `.e2e` root private because it contains credentials, keys, raw
+transactions, and role state. This journey proves the refund side when the
+maker is absent. It does not prove the live maker-lock admission side of the
+cutoff race, post-reveal survivor continuation, concurrent swaps, reorg, or
+production readiness.
+
 ## Public configuration switch and production nonclaims
 
 The LEZ sidecar has a dormant official_public node profile. Switching LEZ
@@ -2109,9 +2186,10 @@ Core adapter, public/Testnet funding path, non-fixture signing authority,
 production confirmation/reorg policy, and key custody must replace that test
 surface.
 
-Run H proves ordered actual-node refund only after both locks. It does not prove
-first-lock-only absent-maker abandonment, survivor-specific recovery,
-deadline-cutoff/race hardening, reorg handling, concurrent swaps, process-kill
+Run `m3refund-20260716h` proves ordered actual-node refund after both locks, and
+`m3firstlock-20260716h` proves refund-side first-lock absent-maker abandonment.
+They do not prove survivor-specific recovery, live maker-lock admission at the
+deadline-cutoff boundary, reorg handling, concurrent swaps, process-kill
 or crash recovery across the full lifecycle, chaos behavior, denial-of-service
 resistance, secure transport between actors, HSM custody, key rotation, backup,
 formal cryptographic audit, public deployment, or production readiness.

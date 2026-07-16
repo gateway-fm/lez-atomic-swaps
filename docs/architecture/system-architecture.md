@@ -653,7 +653,9 @@ before a restarted server binds. The repeatable observe-refund method now uses
 fully covered finalized indexer ancestry, equal by-ID/by-hash blocks, historical
 and tip accounts, and the containing-block deadline. It never submits or caches chain truth. The actor-local lifecycle store now
 replays ordered maker- and taker-funded refund evidence to terminal `Refunded`;
-public actor one-attempt submission is deterministic-test GREEN; fresh actual-node timeout evidence remains open.
+public actor one-attempt submission is deterministic-test GREEN, and fresh
+actual-node two-lock plus first-lock refund evidence is GREEN in
+`m3refund-20260716h` and `m3firstlock-20260716h`.
 Sequencer observation remains bounded inclusion plus same-tip accounts. The
 new witnessed-claim path separately asserts indexer finality through bounded
 fully covered scans, equal by-ID/by-hash finalized blocks, exact aggregate
@@ -1196,23 +1198,27 @@ RPCs. A first-lock-only refund is safe only after a signed last-safe cutoff for
 the maker second lock, a fresh canonical absence and first-lock-unspent recheck,
 and admission/race enforcement that prevents a late second lock from crossing
 the refund decision. A local timer or an assumption that the maker disappeared
-is insufficient. The BTC actor now implements the refund-side cutoff branch,
-but its actual-node proof, durable baseline derivation, and maker-lock admission remain
-open. The public ZEC SDK and all direct survivor branches shown below remain
-unimplemented or unproved.
+is insufficient. The BTC actor now implements and actual-node proves the
+refund-side cutoff branch in both directions. The live maker-lock admission
+side of that boundary race remains open. The public ZEC SDK and all direct
+survivor branches shown below remain unimplemented or unproved; the XMR flow
+remains an M4 target.
 
 This is not a distributed transaction and there is no cross-chain atomic commit.
 Atomicity is a protocol property conditional on canonical chain validation,
 sound cryptography, durable local recovery state, and the signed confirmation
-and recovery profile. The diagrams below show the precise construction for each
-supported pair.
+and recovery profile. The diagrams below are normative protocol sequences with
+explicit implementation-status annotations for each supported direction.
 
 All diagrams use the same terminality rule. `Completed` requires canonical
 claim evidence for every funded leg. `Refunded` requires canonical recovery
 evidence for every funded leg, or for the sole taker leg when the maker never
 funded. One finalized claim or refund while the opposite funded leg remains
-claimable is `Recovering`, never terminal. An abandoned key owner can leave its
-output unspent indefinitely; that is a liveness failure, not permission to give
+claimable stays in the applicable nonterminal phase, such as
+`ClaimEvidenceAvailable`, `MakerLegRefunded`, `TakerLegRefunded`, or the XMR
+target `MakerRecoveryAvailable`; `Recovering` is only an informal category, not
+an implemented protocol phase. An abandoned key owner can leave its output
+unspent indefinitely; that is a liveness failure, not permission to give
 the survivor the other role private key or to report a false atomic outcome.
 
 The current local runs do not prove node diversity. Both roles may use separate
@@ -1247,17 +1253,18 @@ sequenceDiagram
     participant LezIdx as LEZ indexer
 
     Note over Maker,Taker: Signed terms and both adaptor sessions are durable
+    Note over Maker,Taker: Taker first lock starts the protocol
     Taker->>Bitcoin: Fund taker Bitcoin leg
     Bitcoin-->>Maker: Canonical confirmation policy reached
-    Note over Maker,Taker: Signed second lock cutoff precedes the taker CSV refund
+    Note over Maker,Taker: Required invariant cutoff plus margin no later than earliest recovery
     alt Cutoff passes with maker LEZ lock canonically absent
         Taker->>LezIdx: Freshly recheck exact maker LEZ lock absent
         Taker->>Bitcoin: Freshly recheck taker BTC lock canonical and unspent
         Note over Maker,Taker: Cutoff admission and cross chain race enforcement required
-        Note over Maker,Taker: Late maker lock admission closes before refund authority
+        Note over Maker,Taker: Required invariant late maker lock admission closes before refund authority
         Taker->>Bitcoin: Refund only funded BTC leg at signed CSV height
         Bitcoin-->>Taker: Exact first lock refund confirmed
-        Note over Maker,Taker: Public cutoff and first lock evidence pending
+        Note over Maker,Taker: Implementation status Run H proves refund side and maker lock admission remains pending
     else Maker LEZ lock admission succeeds before the cutoff
         Maker->>LezSeq: Initialize and fund maker LEZ leg
         LezIdx-->>Taker: Finalized exact LEZ funding
@@ -1270,7 +1277,7 @@ sequenceDiagram
                 Maker->>Bitcoin: Submit Bitcoin key path claim
                 Bitcoin-->>Maker: Exact claim confirmed
             else Maker disappears after reveal
-                Note over Maker,Taker: Remaining leg stays claimable and lifecycle stays Recovering
+                Note over Maker,Taker: Follower retains claim authority and ClaimEvidenceAvailable stays nonterminal
             end
         else No canonical reveal and both locks time out
             alt Both refund owners are available
@@ -1310,17 +1317,18 @@ sequenceDiagram
     participant LezIdx as LEZ indexer
 
     Note over Maker,Taker: Signed terms and both adaptor sessions are durable
+    Note over Maker,Taker: Taker first lock starts the protocol
     Taker->>LezSeq: Initialize and fund taker LEZ leg
     LezIdx-->>Maker: Finalized exact LEZ funding
-    Note over Maker,Taker: Signed second lock cutoff precedes the taker LEZ refund
+    Note over Maker,Taker: Required invariant cutoff plus margin no later than earliest recovery
     alt Cutoff passes with maker BTC lock canonically absent
         Taker->>Bitcoin: Freshly recheck exact maker BTC lock absent
         Taker->>LezIdx: Freshly recheck taker LEZ lock canonical and unspent
         Note over Maker,Taker: Cutoff admission and cross chain race enforcement required
-        Note over Maker,Taker: Late maker lock admission closes before refund authority
+        Note over Maker,Taker: Required invariant late maker lock admission closes before refund authority
         Taker->>LezSeq: Refund only funded LEZ leg at signed deadline
         LezIdx-->>Taker: Exact first lock refund finalized
-        Note over Maker,Taker: Public cutoff and first lock evidence pending
+        Note over Maker,Taker: Implementation status Run H proves refund side and maker lock admission remains pending
     else Maker BTC lock admission succeeds before the cutoff
         Maker->>Bitcoin: Fund maker Bitcoin leg
         Bitcoin-->>Taker: Canonical confirmation policy reached
@@ -1333,7 +1341,7 @@ sequenceDiagram
                 Maker->>LezSeq: Submit witnessed LEZ claim
                 LezIdx-->>Maker: Exact claim finalized
             else Maker disappears after reveal
-                Note over Maker,Taker: Remaining leg stays claimable and lifecycle stays Recovering
+                Note over Maker,Taker: Follower retains claim authority and ClaimEvidenceAvailable stays nonterminal
             end
         else No canonical reveal and both locks time out
             alt Both refund owners are available
@@ -1364,6 +1372,23 @@ adaptor completion material for the Bitcoin claim by the maker. Without that
 reveal, the maker-funded LEZ refund becomes available before the later
 taker-funded Bitcoin refund.
 
+**Economic safety:** under the stated cryptographic, canonicality, and timelock
+assumptions, the taker either refunds its sole first lock, or can receive LEZ
+only by exposing the material that lets the maker claim Bitcoin. A one-leg
+post-reveal state is nonterminal.
+
+**Replay/idempotency:** persist-before-send journals and exact finalized
+projection prevent duplicate effects and false terminal status. They do not
+create cross-chain atomicity.
+
+**Conditional liveness:** inclusion, usable nodes, fee policy, and retained
+role keys are required for progress. Permanent follower abandonment may leave
+the Bitcoin leg safely claimable but unspent.
+
+**Implementation status:** happy claims, ordered two-lock refunds, and the
+absent-maker refund-side branch are actual-node GREEN. Direct post-reveal
+survivor continuation and live maker-lock cutoff admission remain open.
+
 <!-- atomicity-argument: lez-btc/taker-sells-lez -->
 
 For `TakerSellsLez`, the canonical Bitcoin key-path claim discloses the
@@ -1371,14 +1396,31 @@ adaptor completion material for the witnessed LEZ claim by the maker. Without
 that reveal, the maker-funded Bitcoin refund becomes available before the later
 taker-funded LEZ refund.
 
+**Economic safety:** under the stated assumptions, the taker either refunds
+its sole LEZ first lock, or its Bitcoin claim exposes the material that lets
+the maker claim the witnessed LEZ leg. A one-leg post-reveal state is
+nonterminal.
+
+**Replay/idempotency:** exact-byte journals, one-attempt authority, and
+finalized-only projection prevent duplicate effects and false completion. They
+are operational safeguards rather than the economic atomicity mechanism.
+
+**Conditional liveness:** progress still needs canonical inclusion, available
+RPCs, calibrated fees, and retained role authority. A disappeared follower can
+leave the remaining LEZ leg safely claimable but not terminal.
+
+**Implementation status:** happy claims, ordered two-lock refunds, and the
+absent-maker refund-side branch are actual-node GREEN. Direct post-reveal
+survivor continuation and live maker-lock cutoff admission remain open.
+
 The BTC construction is atomic under these explicit conditions:
 
 - Taker-first funding and the canonical confirmation gate prevent the maker
   from placing its own second-lock value at risk before the first lock is real.
   First-lock-only recovery additionally requires the signed maker-lock cutoff,
   fresh canonical absence and unspent observations, and race-safe late-lock
-  admission. The BTC actor gate is component-GREEN; its actual-node evidence and
-  maker-lock admission race remain pending.
+  admission. Run `m3firstlock-20260716h` proves the refund-side actor gate in
+  both actual-node directions; the maker-lock admission race remains pending.
 - Both domain-separated aggregate adaptor presignatures and the Bitcoin CSV
   refund commitment are verified and persisted before funding. Neither actor
   has a standalone claim key that bypasses the two-party transcript.
@@ -1387,6 +1429,7 @@ The BTC construction is atomic under these explicit conditions:
   key-path signature reveals the same committed adaptor scalar, allowing the
   other claimant to complete the opposite presignature without the peer.
 - The recovery schedule enforces
+  `maker_second_lock_cutoff + required_margin <= earlier_refund_latest` and
   `later_refund_earliest >= earlier_refund_latest + required_margin`. It maps
   the maker-funded leg to the earlier recovery and the taker-funded leg to the
   later recovery without comparing raw LEZ timestamps to Bitcoin heights.
@@ -1407,9 +1450,18 @@ liveness for at-most-once safety. Happy claims are actual-node GREEN in both
 directions. Run `m3refund-20260716h` is also actual-node GREEN for the
 both-owner, two-lock ordered refund in both directions: both roles reached
 revision four `Refunded` and replay added zero submissions. Signed-cutoff and
-first-lock-only recovery are component-GREEN but lack the
-fresh actual-node run. Direct survivor/nonowner surfaces, process-kill,
+first-lock-only refund-side recovery are actual-node GREEN in run
+`m3firstlock-20260716h`. Direct survivor/nonowner surfaces, maker-lock
+admission, process-kill,
 concurrent, fee-bump, and reorg evidence remain pending.
+
+This is an engineering safety argument, not the accepted proposal's promised
+formal theorem. M7 must connect the implemented aggregate adaptor construction
+to the Aumayr et al. and Fournier one-time-VES analyses and state the exact
+aEUF-CMA, witness-extractability, and pre-signature-adaptability assumptions.
+Also, “LEZ leg” in the BTC flows currently means the proved witnessed native
+path. Shared guest ATA/custom-token support is GREEN, but BTC pair-specific F7
+custom-token parity remains unresolved and is not implied by these diagrams.
 
 ### LEZ and transparent Zcash
 
@@ -1430,18 +1482,19 @@ sequenceDiagram
     participant LezIdx as LEZ indexer
 
     Note over Maker,Taker: One signed digest binds both locks
+    Note over Maker,Taker: Taker first lock starts the protocol
     Taker->>Zebra: Fund taker BIP-199 ZEC leg
     Zebra-->>Maker: Canonical confirmation policy reached
-    Note over Maker,Taker: Signed second lock cutoff precedes the taker ZEC refund
+    Note over Maker,Taker: Required invariant cutoff plus margin no later than earliest recovery
     alt Cutoff passes with maker LEZ lock canonically absent
         Taker->>LezIdx: Freshly recheck exact maker LEZ lock absent
         Taker->>Zebra: Freshly recheck taker ZEC lock canonical and unspent
         Note over Maker,Taker: Cutoff admission and cross chain race enforcement required
-        Note over Maker,Taker: Late maker lock admission closes before refund authority
+        Note over Maker,Taker: Required invariant late maker lock admission closes before refund authority
         Taker->>Zebra: Refund only funded ZEC leg at signed CLTV height
         Zebra-->>Taker: Exact first lock refund confirmed
-        Note over Maker,Taker: Public cutoff and first lock evidence pending
-    else Maker LEZ lock admission succeeds before the cutoff
+        Note over Maker,Taker: Implementation status ZEC cutoff and first lock actor evidence pending
+    else Required target maker LEZ lock admission succeeds before the cutoff
         Maker->>LezSeq: Initialize and fund maker LEZ leg
         LezIdx-->>Taker: Finalized exact LEZ funding
         Note over Maker,Taker: Both locks are proven before preimage release
@@ -1453,7 +1506,7 @@ sequenceDiagram
                 Maker->>Zebra: Claim exact ZEC output with preimage
                 Zebra-->>Maker: Exact ZEC claim confirmed
             else Maker disappears after reveal
-                Note over Maker,Taker: Remaining leg stays claimable and lifecycle stays Recovering
+                Note over Maker,Taker: Follower retains claim authority and ClaimEvidenceAvailable stays nonterminal
             end
         else No canonical reveal and both locks time out
             alt Both refund owners are available
@@ -1492,18 +1545,19 @@ sequenceDiagram
     participant LezIdx as LEZ indexer
 
     Note over Maker,Taker: One signed digest binds both locks
+    Note over Maker,Taker: Taker first lock starts the protocol
     Taker->>LezSeq: Initialize and fund taker LEZ leg
     LezIdx-->>Maker: Finalized exact LEZ funding
-    Note over Maker,Taker: Signed second lock cutoff precedes the taker LEZ refund
+    Note over Maker,Taker: Required invariant cutoff plus margin no later than earliest recovery
     alt Cutoff passes with maker ZEC lock canonically absent
         Taker->>Zebra: Freshly recheck exact maker ZEC lock absent
         Taker->>LezIdx: Freshly recheck taker LEZ lock canonical and unspent
         Note over Maker,Taker: Cutoff admission and cross chain race enforcement required
-        Note over Maker,Taker: Late maker lock admission closes before refund authority
+        Note over Maker,Taker: Required invariant late maker lock admission closes before refund authority
         Taker->>LezSeq: Refund only funded LEZ leg at signed deadline
         LezIdx-->>Taker: Exact first lock refund finalized
-        Note over Maker,Taker: Public cutoff and first lock evidence pending
-    else Maker ZEC lock admission succeeds before the cutoff
+        Note over Maker,Taker: Implementation status ZEC cutoff and first lock actor evidence pending
+    else Required target maker ZEC lock admission succeeds before the cutoff
         Maker->>Zebra: Fund maker BIP-199 ZEC leg
         Zebra-->>Taker: Canonical confirmation policy reached
         Note over Maker,Taker: Both locks are proven before preimage release
@@ -1515,7 +1569,7 @@ sequenceDiagram
                 Taker->>Zebra: Claim exact ZEC output with preimage
                 Zebra-->>Taker: Exact ZEC claim confirmed
             else Taker disappears after reveal
-                Note over Maker,Taker: Remaining leg stays claimable and lifecycle stays Recovering
+                Note over Maker,Taker: Follower retains claim authority and ClaimEvidenceAvailable stays nonterminal
             end
         else No canonical reveal and both locks time out
             alt Both refund owners are available
@@ -1545,12 +1599,42 @@ agreement-bound preimage, which lets the maker claim the exact ZEC output. If no
 preimage is published, the maker-funded LEZ refund precedes the later
 taker-funded ZEC refund.
 
+**Economic safety:** an honest taker either recovers its sole ZEC first lock or
+reveals the agreement preimage only after both locks, thereby enabling the
+maker's exact ZEC claim. A half-completed reveal path is nonterminal.
+
+**Replay/idempotency:** durable intents and canonical-only projection prevent
+duplicate sends and false completion but are not the hashlock atomicity
+mechanism.
+
+**Conditional liveness:** the argument assumes usable nodes, inclusion, fees,
+retained refund keys, and a sufficient cross-chain margin.
+
+**Implementation status:** the normative direction and local happy path are
+GREEN; the signed cutoff, first-lock actor path, and direct survivor E2E remain
+unimplemented or unproved.
+
 <!-- atomicity-argument: lez-zec-transparent/taker-sells-lez -->
 
 For `TakerSellsLez`, the maker can receive LEZ only by publishing the same
 agreement-bound preimage, which lets the taker claim the exact ZEC output. If no
 preimage is published, the taker-funded LEZ refund precedes the later
 maker-funded ZEC refund.
+
+**Economic safety:** an honest taker either recovers its sole LEZ first lock or
+uses the published preimage to claim the exact ZEC output after the maker
+receives LEZ. A half-completed reveal path is nonterminal.
+
+**Replay/idempotency:** durable intents and canonical-only projection prevent
+duplicate sends and false completion but are not the hashlock atomicity
+mechanism.
+
+**Conditional liveness:** the argument assumes usable nodes, inclusion, fees,
+retained refund keys, and a sufficient cross-chain margin.
+
+**Implementation status:** the normative direction and local happy path are
+GREEN; the signed cutoff, first-lock actor path, and direct survivor E2E remain
+unimplemented or unproved.
 
 The ZEC construction is atomic under these explicit conditions:
 
@@ -1610,19 +1694,20 @@ sequenceDiagram
     participant LezIdx as LEZ indexer
     participant Monero as monerod and wallet RPC
 
-    Note over Maker,Taker: DLEQ and key share recovery data are durable
+    Note over Maker,Taker: M4 requirement DLEQ and key share recovery data are durable
+    Note over Maker,Taker: Taker first lock starts the protocol
     Taker->>LezSeq: Fund taker LEZ leg
     LezIdx-->>Maker: Canonical LEZ confirmation policy reached
-    Note over Maker,Taker: Signed second lock cutoff precedes the taker LEZ refund
+    Note over Maker,Taker: Required invariant cutoff plus margin no later than earliest recovery
     alt Cutoff passes with maker XMR lock canonically absent
         Taker->>Monero: Freshly recheck exact maker XMR lock absent
         Taker->>LezIdx: Freshly recheck taker LEZ lock canonical and unspent
         Note over Maker,Taker: Cutoff admission and cross chain race enforcement required
-        Note over Maker,Taker: Late maker lock admission closes before refund authority
+        Note over Maker,Taker: Required invariant late maker lock admission closes before refund authority
         Taker->>LezSeq: Refund only funded LEZ leg at signed deadline
         LezIdx-->>Taker: Exact first lock refund finalized
-        Note over Maker,Taker: M4 cutoff and first lock evidence pending
-    else Maker XMR lock admission succeeds before the cutoff
+        Note over Maker,Taker: Implementation status M4 cutoff and first lock evidence pending
+    else Required M4 target maker XMR lock admission succeeds before the cutoff
         Maker->>Monero: Fund maker Monero output
         Monero-->>Taker: Canonical Monero confirmation policy reached
         Note over Maker,Taker: Both locks are proven before adaptor reveal
@@ -1634,7 +1719,7 @@ sequenceDiagram
                 Taker->>Monero: Spend maker Monero output
                 Monero-->>Taker: Exact spend confirmed
             else Taker disappears after reveal
-                Note over Maker,Taker: Remaining leg stays claimable and lifecycle stays Recovering
+                Note over Maker,Taker: Follower retains claim authority and ClaimEvidenceAvailable stays nonterminal
             end
         else No canonical reveal and both locks enter recovery
             alt Both recovery owners are available
@@ -1664,6 +1749,21 @@ For supported `TakerSellsLez`, the maker can receive LEZ only by publishing
 the adaptor witness that reveals the recovery share needed for the taker to
 spend XMR. If there is no reveal, the taker refunds LEZ; only that canonical
 refund event enables the maker to recover XMR with the persisted key shares.
+
+**Economic safety:** there is no invented Monero timeout. A canonical LEZ claim
+reveals the taker's Monero spend share; without that reveal, the taker refunds
+LEZ and only the canonical refund event enables the maker's XMR recovery.
+
+**Replay/idempotency:** durable shares, event projection, and one-attempt spend
+authority prevent duplicate effects and false terminal state. They do not
+replace the DLEQ and event-gated economic construction.
+
+**Conditional liveness:** the model assumes valid DLEQ proofs, retained shares,
+canonical LEZ events, usable Monero RPCs, and transaction inclusion. Lost
+authority may leave a safe nonterminal output indefinitely.
+
+**Implementation status:** this is an M4 normative target backed by the M1
+model and coordinator contracts, not an implemented monerod lifecycle or E2E.
 
 The XMR construction’s atomicity argument differs from the deadline-bearing
 pairs:

@@ -12,7 +12,7 @@ self-hosted Zebra route and Tatum's public-provider Testnet Zebrad route, but
 explicitly leaves live execution pending the project-owned transparent signer,
 HTTPS provider transport, and actor adapter.
 
-## M3 status: actual-node happy path and two-lock refunds reproduced
+## M3 status: happy, two-lock refund, and absent-maker paths reproduced
 
 The operator-composed M3 PoC has completed both `TakerSellsForeign` and
 `TakerSellsLez` against Bitcoin Core 31.1 Regtest and the exact local LEZ v0.2
@@ -60,7 +60,9 @@ with role authority, durable exact bytes, one-attempt submission, observe-only
 ambiguous recovery, and finalized-only revision 2 to 3 to 4 projection in both
 directions. Run `m3refund-20260716h` additionally reproduced both two-lock ordered refund
 directions through actual nodes with terminal revision four and zero replay
-submissions. First-lock absent-maker recovery, genuinely overlapping swaps, the
+submissions. Run `m3firstlock-20260716h` also reproduced both first-lock-only
+absent-maker directions through terminal revision 2 with no maker second-lock
+effect and zero replay submissions. Genuinely overlapping swaps, the
 accepted public full-lifecycle BTC SDK, recordings, public-node guidance, chaos
 and adversarial hardening, and upstream DLC vector clarification remain open. Those later items do not reopen the completed progressive M3 local PoC.
 
@@ -86,10 +88,37 @@ It uses a fresh isolated Core 31.1 Regtest node and local LEZ v0.2
 Bedrock/sequencer/indexer plus two role sidecars. Funds are deterministic local
 Regtest/genesis outputs; no public RPC, faucet, deployment, or funds participate.
 Retained run `m3refund-20260716h` proves this exact two-lock actual-node path.
-It does not prove first-lock absent-maker recovery, survivor-specific recovery,
-or concurrent swaps. Moving LEZ tips, indexer readiness, the bounded request
+It does not prove survivor-specific recovery or concurrent swaps. Moving LEZ
+tips, indexer readiness, the bounded request
 timeout, and the fixed 4096-block discovery window can cause local observation
 retries; they never authorize another send.
+
+### Repeat the M3 first-lock absent-maker path
+
+Use the same verified prerequisites as the happy path, a never-used run ID,
+and the repository-owned actor journey:
+
+```sh
+export RUN_ID=m3firstlock-manual-001
+export M3_ACTOR_POC_JOURNEY=first_lock_refund
+./scripts/run-m3-actor-local-poc.sh
+```
+
+Assert the terminal and cleanup packets with the exact `jq` checks in the
+[README quick start](../README.md#m3-public-actor-local-poc-quick-start). The
+runner emulates both real user role shapes: maker and taker activate separately;
+the taker alone reaches revision 1 after its direction-correct first lock; the
+maker stays offline and produces no second-lock effect; the taker waits for the
+signed cutoff and Bitcoin CSV or finalized LEZ deadline; two fresh cross-chain
+reads admit one refund; then a fresh maker reconstructs first lock and refund
+from its own store plus chain RPCs. Both roles finish revision 2 `refunded`.
+
+Runtime chain endpoints are ephemeral literal-loopback Core, LEZ sequencer,
+and LEZ indexer RPCs. Funds are deterministic Regtest/genesis allocations. No
+public RPC, faucet, peer, deployment, or public funds participate. Bedrock may
+attempt `pool.ntp.org:123/udp`, but certification does not depend on success.
+Moving finalized tips can cause bounded read-only retries; timeout, transport,
+malformed evidence, and every non-`moving_tip` remote error fail immediately.
 
 ### Provision exact Bitcoin funding and the agreement before either effect
 
@@ -550,9 +579,10 @@ and LEZ claim effects plus bounded observations are composed. Audited run
 `m3actor-20260716n` passed both directions through Core 31.1 Regtest and the
 private local LEZ v0.2 stack. Both roles finished revision four with next action
 `complete`, and replay resubmission count remained zero.
-Public-actor two-lock refund recovery and retained actual-node run
-`m3refund-20260716h` are GREEN in both directions. First-lock absent-maker
-recovery, concurrent swaps, crash/chaos, and adversarial journeys remain open.
+Public-actor two-lock refund recovery in `m3refund-20260716h` and first-lock
+absent-maker recovery in `m3firstlock-20260716h` are GREEN in both directions.
+Direct survivor continuation, maker-lock cutoff admission, concurrent swaps,
+crash/chaos, and adversarial journeys remain open.
 
 ## Can I run the complete M3 happy path myself?
 
