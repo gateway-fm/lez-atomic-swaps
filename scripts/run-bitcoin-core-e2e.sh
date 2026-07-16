@@ -1063,8 +1063,11 @@ for role in maker taker; do
   expect_allowed_success "$role" "$role_config" gettxout \
     "[\"${coinbase_txid}\",${coinbase_vout}]" allowed-gettxout
   expect_allowed_success "$role" "$role_config" gettxspendingprevout \
-    "[[{\"txid\":\"${coinbase_txid}\",\"vout\":${coinbase_vout}}]]" \
+    "[[{\"txid\":\"${coinbase_txid}\",\"vout\":${coinbase_vout}}],{\"mempool_only\":false,\"return_spending_tx\":true}]" \
     allowed-gettxspendingprevout
+  jq -e --arg txid "$coinbase_txid" --argjson vout "$coinbase_vout" '
+    .result == [{txid:$txid,vout:$vout}]
+  ' "${evidence_dir}/${role}-allowed-gettxspendingprevout.body" >/dev/null
   expect_allowed_success "$role" "$role_config" getindexinfo '[]' \
     allowed-getindexinfo
   expect_allowed_success "$role" "$role_config" getmempoolinfo '[]' \
@@ -1139,10 +1142,13 @@ expect_allowed_success maker "${credentials_dir}/maker.curlrc" getmempoolentry \
 jq -e '.result.fees.base == 0.00001 and .result.unbroadcast == true' \
   "${evidence_dir}/maker-p2tr-funding-mempool-observation.body" >/dev/null
 expect_allowed_success maker "${credentials_dir}/maker.curlrc" gettxspendingprevout \
-  "[[{\"txid\":\"${coinbase_txid}\",\"vout\":${coinbase_vout}}]]" \
+  "[[{\"txid\":\"${coinbase_txid}\",\"vout\":${coinbase_vout}}],{\"mempool_only\":false,\"return_spending_tx\":true}]" \
   p2tr-funding-prevout-observation
-jq -e --arg txid "$funding_txid" '
-  .result | length == 1 and .[0].spendingtxid == $txid
+jq -e --arg txid "$funding_txid" --arg raw "$funding_raw" '
+  .result | length == 1
+  and .[0].spendingtxid == $txid
+  and .[0].spendingtx == $raw
+  and (.[0] | has("blockhash") | not)
 ' "${evidence_dir}/maker-p2tr-funding-prevout-observation.body" >/dev/null
 expect_allowed_success maker "${credentials_dir}/maker.curlrc" getmempoolinfo \
   '[]' p2tr-funding-mempool-size
@@ -1217,11 +1223,14 @@ done
 expect_allowed_null maker "${credentials_dir}/maker.curlrc" gettxout \
   "[\"${coinbase_txid}\",${coinbase_vout}]" p2tr-mining-source-spent
 expect_allowed_success maker "${credentials_dir}/maker.curlrc" gettxspendingprevout \
-  "[[{\"txid\":\"${coinbase_txid}\",\"vout\":${coinbase_vout}}]]" \
+  "[[{\"txid\":\"${coinbase_txid}\",\"vout\":${coinbase_vout}}],{\"mempool_only\":false,\"return_spending_tx\":true}]" \
   p2tr-funding-confirmed-spender
-jq -e --arg txid "$funding_txid" '
+jq -e --arg txid "$funding_txid" --arg raw "$funding_raw" \
+  --arg block "$funding_block_hash" '
   .result | length == 1
   and .[0].spendingtxid == $txid
+  and .[0].spendingtx == $raw
+  and .[0].blockhash == $block
 ' "${evidence_dir}/maker-p2tr-funding-confirmed-spender.body" >/dev/null
 expect_allowed_success maker "${credentials_dir}/maker.curlrc" getmempoolinfo \
   '[]' p2tr-after-funding-block-mempool
@@ -1306,10 +1315,13 @@ expect_allowed_success taker "${credentials_dir}/taker.curlrc" getmempoolentry \
 jq -e '.result.fees.base == 0.00001 and .result.unbroadcast == true' \
   "${evidence_dir}/taker-p2tr-cooperative-mempool-observation.body" >/dev/null
 expect_allowed_success taker "${credentials_dir}/taker.curlrc" gettxspendingprevout \
-  "[[{\"txid\":\"${funding_txid}\",\"vout\":0}]]" \
+  "[[{\"txid\":\"${funding_txid}\",\"vout\":0}],{\"mempool_only\":false,\"return_spending_tx\":true}]" \
   p2tr-cooperative-prevout-observation
-jq -e --arg txid "$cooperative_txid" '
-  .result | length == 1 and .[0].spendingtxid == $txid
+jq -e --arg txid "$cooperative_txid" --arg raw "$cooperative_raw" '
+  .result | length == 1
+  and .[0].spendingtxid == $txid
+  and .[0].spendingtx == $raw
+  and (.[0] | has("blockhash") | not)
 ' "${evidence_dir}/taker-p2tr-cooperative-prevout-observation.body" >/dev/null
 expect_allowed_success taker "${credentials_dir}/taker.curlrc" getmempoolinfo \
   '[]' p2tr-cooperative-mempool-size
@@ -1377,11 +1389,14 @@ done
 expect_allowed_null taker "${credentials_dir}/taker.curlrc" gettxout \
   "[\"${funding_txid}\",0]" p2tr-contract-spent
 expect_allowed_success taker "${credentials_dir}/taker.curlrc" gettxspendingprevout \
-  "[[{\"txid\":\"${funding_txid}\",\"vout\":0}]]" \
+  "[[{\"txid\":\"${funding_txid}\",\"vout\":0}],{\"mempool_only\":false,\"return_spending_tx\":true}]" \
   p2tr-cooperative-confirmed-spender
-jq -e --arg txid "$cooperative_txid" '
+jq -e --arg txid "$cooperative_txid" --arg raw "$cooperative_raw" \
+  --arg block "$cooperative_block_hash" '
   .result | length == 1
   and .[0].spendingtxid == $txid
+  and .[0].spendingtx == $raw
+  and .[0].blockhash == $block
 ' "${evidence_dir}/taker-p2tr-cooperative-confirmed-spender.body" >/dev/null
 
 core_cli getrawtransaction "$funding_txid" true "$funding_block_hash" \

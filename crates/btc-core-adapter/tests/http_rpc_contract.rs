@@ -107,16 +107,19 @@ async fn production_transport_uses_exact_core_31_methods_params_and_typed_respon
         .register_method::<Result<Value, ErrorObjectOwned>, _>(
             "gettxspendingprevout",
             move |params, calls, _| {
-                let (requested, include_mempool, return_spending_tx): (Vec<Value>, bool, bool) =
-                    params.parse()?;
+                let (requested, options): (Vec<Value>, Value) = params.parse()?;
                 assert_eq!(
                     requested,
                     [json!({ "txid": outpoint.txid, "vout": outpoint.vout })]
                 );
+                assert_eq!(
+                    options,
+                    json!({ "mempool_only": false, "return_spending_tx": true })
+                );
                 calls
                     .lock()
                     .expect("call log")
-                    .push(format!("spender:{include_mempool}:{return_spending_tx}"));
+                    .push("spender:core31-options".to_owned());
                 Ok(json!([{
                     "txid": outpoint.txid,
                     "vout": outpoint.vout,
@@ -216,7 +219,7 @@ async fn production_transport_uses_exact_core_31_methods_params_and_typed_respon
             "blockhash:0".to_owned(),
             "indexes".to_owned(),
             format!("raw:{funding_txid}:true"),
-            "spender:false:true".to_owned(),
+            "spender:core31-options".to_owned(),
             "mempool".to_owned(),
             "send".to_owned()
         ]

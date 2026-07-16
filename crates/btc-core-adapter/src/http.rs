@@ -252,7 +252,16 @@ impl BitcoinCoreRpc for HttpBitcoinCoreRpc {
             "vout": outpoint.vout
         })];
         self.client
-            .request("gettxspendingprevout", rpc_params![outpoints, false, true])
+            .request(
+                "gettxspendingprevout",
+                rpc_params![
+                    outpoints,
+                    serde_json::json!({
+                        "mempool_only": false,
+                        "return_spending_tx": true
+                    })
+                ],
+            )
             .await
             .map_err(HttpBitcoinCoreError::Request)
     }
