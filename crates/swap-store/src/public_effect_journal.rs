@@ -282,7 +282,12 @@ impl PublicEffectSnapshot {
 pub enum PublicEffectObservation {
     /// Chain evidence contains these complete exact transaction bytes.
     PresentExact(Vec<u8>),
-    /// A definitive bounded observation did not find the exact effect.
+    /// Stable finalized chain state proves a refund is funded and its deadline reached.
+    ///
+    /// Unlike absence, this is affirmative pre-effect eligibility and is valid only
+    /// for [`PublicEffectOperation::Refund`].
+    EligibleToAttempt,
+    /// A definitive bounded observation did not find the exact non-refund effect.
     Absent,
     /// Chain observation could not prove either presence or absence.
     Uncertain,
@@ -442,8 +447,9 @@ impl SqlitePublicEffectJournal {
 
     /// Reconciles durable authority with one prior exact chain observation.
     ///
-    /// `Absent + Prepared` atomically commits `Started` before returning the sole
-    /// `SubmitOnce` authorization. `Started` and `Unknown` are never rearmed.
+    /// `Absent + Prepared` authorizes only non-refund effects. For refunds, only
+    /// `EligibleToAttempt + Prepared` atomically commits `Started` before returning
+    /// the sole `SubmitOnce` authorization. `Started` and `Unknown` are never rearmed.
     /// `Uncertain` is retryable and always observe-only. `ConflictingPresence`
     /// atomically consumes still-fresh authority without returning
     /// `SubmitOnce`; later absence can therefore never rearm it. Exact presence
@@ -480,7 +486,21 @@ impl SqlitePublicEffectJournal {
                 }
                 false
             }
+            PublicEffectObservation::EligibleToAttempt => {
+                if key.operation != PublicEffectOperation::Refund {
+                    return Err(StoreError::InvalidPublicEffect);
+                }
+                if snapshot.state == PublicEffectState::Prepared {
+                    begin_once(&transaction, &mut snapshot)?;
+                    true
+                } else {
+                    false
+                }
+            }
             PublicEffectObservation::Absent => {
+                if key.operation == PublicEffectOperation::Refund {
+                    return Err(StoreError::InvalidPublicEffect);
+                }
                 if snapshot.state == PublicEffectState::Prepared {
                     begin_once(&transaction, &mut snapshot)?;
                     true

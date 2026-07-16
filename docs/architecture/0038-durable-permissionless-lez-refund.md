@@ -74,7 +74,11 @@ observation now brackets canonical Funded or Refunded accounts with equal stable
 finalized clocks before and after all reads. The actor must require Funded state
 and a finalized clock at or beyond the signed deadline before asking its journal
 for send authority.
-Only then may its public-effect journal consume one `Prepared` to `Started` CAS.
+Only then may its public-effect journal consume one `Prepared` to `Started`
+CAS. The journal now encodes that distinction: refund `Absent` is invalid, only
+affirmative `EligibleToAttempt` can authorize the refund operation, non-refund
+effects cannot use that eligibility, and concurrent callers still produce one
+durable winner.
 After any possible call, `Started` and `Unknown` are permanently observation-only.
 Projection to the lifecycle store requires later exact finalized `Refunded`
 evidence with zero custody and the immutable depositor effect. Exact observation
@@ -112,8 +116,11 @@ one-attempt public-effect authority, and observe-before-project recovery.
 - The later taker-funded refund cannot enter durable revision four until the
   earlier maker-funded refund is already exact durable revision three.
 
-This decision now claims authenticated prepare reachability, exact restart replay, finalized witnessed state/exact/discovery observation with internal deadline enforcement, and ordered durable lifecycle replay to `Refunded`. It does not yet claim actor one-attempt integration or actual-node
-refund execution. Those are the next M3 gates.
+This decision now claims authenticated prepare reachability, exact restart
+replay, finalized witnessed state/exact/discovery observation with internal
+deadline enforcement, and ordered durable lifecycle replay to `Refunded`. It
+does not yet claim actor one-attempt integration or actual-node refund
+execution. Those are the next M3 gates.
 
 ## Evidence
 
@@ -133,3 +140,10 @@ identity and ancestry, moving tips, mutation, role and ID pre-read rejection,
 ambiguity/conflict, and authenticated repeatable no-submit behavior. It uses an
 in-memory finalized-indexer double plus an ephemeral loopback health server; it
 does not use a faucet, chain node, Docker service, or public endpoint.
+
+`swap-store/tests/public_effect_journal.rs` proves refund absence rejection,
+operation separation, restart no-rearm, and one winner across eight concurrent
+eligibility observers. `swap-store/tests/btc_recovery.rs` proves both-direction
+and both-role refund replay, early/wrong-chain/zero-confirmation and happy-branch
+collision rejection, terminal restart replay, and exact old-schema migration.
+Those store tests use only private temporary SQLite files and no network resource.

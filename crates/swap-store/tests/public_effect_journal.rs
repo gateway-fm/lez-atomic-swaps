@@ -30,6 +30,22 @@ fn prepared() -> PreparedPublicEffect {
     .unwrap()
 }
 
+fn prepared_refund() -> PreparedPublicEffect {
+    PreparedPublicEffect::new(
+        PublicEffectKey::new(
+            SwapId::new("m3-public-refund-effect").unwrap(),
+            Participant::Maker,
+            PublicEffectChain::Lez,
+            PublicEffectOperation::Refund,
+            2,
+        ),
+        [0xb1; 32],
+        "lez-refund-transaction-0001",
+        vec![0x11, 0x12, 0x13, 0x14],
+    )
+    .unwrap()
+}
+
 #[test]
 fn prepared_effect_is_exactly_replayable_and_conflicts_on_any_immutable_drift() {
     let directory = tempdir().unwrap();
@@ -110,6 +126,56 @@ fn absent_observation_commits_started_before_granting_the_only_send_authorizatio
         };
         assert_eq!(durable.state(), PublicEffectState::Started);
     }
+}
+
+#[test]
+fn only_explicit_refund_eligibility_can_authorize_the_one_attempt() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("refund-effects.sqlite3");
+    let candidate = prepared_refund();
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+    let _ = journal.record_prepared(&candidate).unwrap();
+
+    assert!(matches!(
+        journal.reconcile(candidate.key(), PublicEffectObservation::Absent),
+        Err(StoreError::InvalidPublicEffect)
+    ));
+    assert_eq!(
+        journal.current(candidate.key()).unwrap().unwrap().state(),
+        PublicEffectState::Prepared
+    );
+    let PublicEffectDecision::SubmitOnce(started) = journal
+        .reconcile(candidate.key(), PublicEffectObservation::EligibleToAttempt)
+        .unwrap()
+    else {
+        panic!("stable refund eligibility must grant one send authorization");
+    };
+    assert_eq!(started.state(), PublicEffectState::Started);
+    assert_eq!(started.attempt_count(), 1);
+
+    drop(journal);
+    let mut restarted = SqlitePublicEffectJournal::open(&path).unwrap();
+    for observation in [
+        PublicEffectObservation::EligibleToAttempt,
+        PublicEffectObservation::Uncertain,
+    ] {
+        let PublicEffectDecision::ObserveOnly(durable) =
+            restarted.reconcile(candidate.key(), observation).unwrap()
+        else {
+            panic!("consumed refund authority must remain observe-only");
+        };
+        assert_eq!(durable.state(), PublicEffectState::Started);
+        assert_eq!(durable.attempt_count(), 1);
+    }
+
+    let claim = prepared();
+    let mut claim_journal =
+        SqlitePublicEffectJournal::open(directory.path().join("claim.sqlite3")).unwrap();
+    let _ = claim_journal.record_prepared(&claim).unwrap();
+    assert!(matches!(
+        claim_journal.reconcile(claim.key(), PublicEffectObservation::EligibleToAttempt,),
+        Err(StoreError::InvalidPublicEffect)
+    ));
 }
 
 #[test]
@@ -340,6 +406,48 @@ fn competing_processes_receive_exactly_one_submit_once_decision() {
                 let mut journal = SqlitePublicEffectJournal::open(path.as_ref()).unwrap();
                 journal
                     .reconcile(&key, PublicEffectObservation::Absent)
+                    .unwrap()
+            })
+        })
+        .collect::<Vec<_>>();
+    let decisions = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        decisions
+            .iter()
+            .filter(|decision| matches!(decision, PublicEffectDecision::SubmitOnce(_)))
+            .count(),
+        1
+    );
+    assert_eq!(
+        decisions
+            .iter()
+            .filter(|decision| matches!(decision, PublicEffectDecision::ObserveOnly(_)))
+            .count(),
+        7
+    );
+}
+
+#[test]
+fn competing_refund_eligibility_observers_receive_exactly_one_attempt() {
+    let directory = tempdir().unwrap();
+    let path = Arc::new(directory.path().join("refund-race.sqlite3"));
+    let candidate = prepared_refund();
+    let _ = SqlitePublicEffectJournal::open(path.as_ref())
+        .unwrap()
+        .record_prepared(&candidate)
+        .unwrap();
+
+    let workers = (0..8)
+        .map(|_| {
+            let path = Arc::clone(&path);
+            let key = candidate.key().clone();
+            thread::spawn(move || {
+                let mut journal = SqlitePublicEffectJournal::open(path.as_ref()).unwrap();
+                journal
+                    .reconcile(&key, PublicEffectObservation::EligibleToAttempt)
                     .unwrap()
             })
         })

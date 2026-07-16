@@ -1150,6 +1150,8 @@ Active M3 refund critical path:
   generic submission;
 - [x] replay typed maker-refund revision three and taker-refund revision four
   evidence to terminal `Refunded`, preserving exact legacy payloads on migration;
+- [x] require affirmative stable refund eligibility for the sole `Prepared` to
+  `Started` CAS; absence is invalid for refunds and races yield one winner;
 - [ ] integrate actor `Refund` effects with observe-before-submit, one `Started`
   CAS, and observation-only ambiguous recovery;
 - [ ] execute both direction-correct timeout/refund paths against fresh isolated
