@@ -1209,6 +1209,18 @@ finalized lock window, aggregate authority, canonical full-width amount, and
 historical funded custody. Run F is diagnostic, not combined acceptance
 evidence; the certifying rerun uses a fresh ID.
 
+Attempt `m3firstlock-20260716g` again completed the actual-node
+`TakerSellsForeign` first-lock refund and reached the independently finalized
+`TakerSellsLez` refund deadline with no maker second lock. Its first exact
+witnessed-funding admission read failed closed with the sidecar's typed
+`moving_tip` result while the local finalized tip advanced. No refund was
+submitted, and exact run-owned cleanup is GREEN. This is a read-only
+availability race, not absence authority and not acceptance evidence. The
+active RED-GREEN slice requires a bounded retry of only that typed observation,
+with a fresh request ID per attempt, empty failed stdout, retained diagnostics,
+unchanged durable effect count, and immediate rejection of every other error.
+The certifying rerun will use a fresh ID.
+
 The refund-wire loop is GREEN. The existing native-refund RPC names and
 hashlock JSON shape remain unchanged, while strict untagged protocol envelopes
 accept either `NativeEscrowTerms`/metadata or the M3

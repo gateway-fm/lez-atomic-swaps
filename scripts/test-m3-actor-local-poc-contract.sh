@@ -718,6 +718,28 @@ fi
 cleanup_lez_retry_contract_root
 trap - EXIT
 
+finalized_funding_observation_source="$(sed -n \
+  '/^write_finalized_witnessed_funding_observation() {$/,/^}$/p' "$direction_driver")"
+[[ -n "$finalized_funding_observation_source" ]] ||
+  fail "finalized witnessed-funding observation helper is unavailable"
+rg -Fq 'for attempt in {1..120}; do' <<<"$finalized_funding_observation_source" ||
+  fail "finalized witnessed-funding observation lacks a static retry bound"
+rg -Fq 'bridge observation unavailable: moving_tip' \
+  <<<"$finalized_funding_observation_source" ||
+  fail "finalized witnessed-funding observation does not restrict retries to typed moving-tip"
+rg -Fq 'new_request_id' <<<"$finalized_funding_observation_source" ||
+  fail "finalized witnessed-funding retry does not allocate a fresh request id"
+rg -Fq 'observation_only:true' <<<"$finalized_funding_observation_source" ||
+  fail "finalized witnessed-funding retry evidence does not distinguish read-only observation"
+operator_call_source="$(sed -n '/^operator_call() {$/,/^}$/p' "$direction_driver")"
+rg -Fq 'return 1' <<<"$operator_call_source" ||
+  fail "operator wrapper can mask a failed command when called from a retry conditional"
+lez_operator_source="crates/lez-bridge-client/examples/m3_witnessed_lez_operator.rs"
+rg -Fq 'ErrorCode::MovingTip' "$lez_operator_source" ||
+  fail "witnessed operator erases the typed moving-tip category"
+rg -Fq 'bridge observation unavailable: moving_tip' "$lez_operator_source" ||
+  fail "witnessed operator lacks a stable secret-free moving-tip diagnostic"
+
 rg -Fq 'planned_bitcoin_funding_anchor_height' "$direction_driver" ||
   fail "Bitcoin lock path does not bind the actual mined height to the planned anchor"
 rg -Fq 'exact_transaction_occurrences:1' "$direction_driver" ||

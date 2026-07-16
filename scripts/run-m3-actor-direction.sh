@@ -360,10 +360,13 @@ operator_call() {
   local role_root endpoint
   role_root="${M3_POC_DIRECTION_ROOT}/sidecars/${phase}/${role}"
   endpoint="$(file_value "${M3_POC_DIRECTION_ROOT}/${phase}-endpoints.env" "$role")"
-  "$M3_POC_LEZ_OPERATOR_BIN" "$command" --endpoint "$endpoint" \
-    --run-id "$M3_POC_RUN_ID" --sidecar-role "$role" \
-    --capability-file "$role_root/capability" --runtime-file "$role_root/runtime.json" \
-    --request-file "$request" >"$output"
+  if ! "$M3_POC_LEZ_OPERATOR_BIN" "$command" --endpoint "$endpoint" \
+      --run-id "$M3_POC_RUN_ID" --sidecar-role "$role" \
+      --capability-file "$role_root/capability" --runtime-file "$role_root/runtime.json" \
+      --request-file "$request" >"$output"; then
+    chmod 0600 "$output"
+    return 1
+  fi
   chmod 0600 "$output"
 }
 
@@ -1753,6 +1756,8 @@ write_native_escrow_observation() {
 finalized_witnessed_funding_observation_file=""
 write_finalized_witnessed_funding_observation() {
   local label="$1" depositor request output amount terms_hash start blocks funding
+  local attempt attempt_request attempt_output attempt_error submissions_before submissions_after
+  local successful_attempt=0 moving_tip_retries=0 retry_evidence
   case "$M3_POC_DIRECTION" in
     taker_sells_foreign) depositor=maker ;;
     taker_sells_lez) depositor=taker ;;
@@ -1768,20 +1773,65 @@ write_finalized_witnessed_funding_observation() {
   terms_hash="$(jq -er '.terms_hash | strings | select(test("^[0-9a-f]{64}$"))' "$final_terms")"
   request="${M3_POC_DIRECTION_ROOT}/${label}-request.json"
   output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}.json"
-  [[ ! -e "$request" && ! -L "$request" && ! -e "$output" && ! -L "$output" ]] ||
+  retry_evidence="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-retry.json"
+  [[ ! -e "$request" && ! -L "$request" && ! -e "$output" && ! -L "$output" &&
+     ! -e "$retry_evidence" && ! -L "$retry_evidence" ]] ||
     fail "refusing to overwrite finalized witnessed-funding evidence"
-  jq -n --arg run "$M3_POC_RUN_ID" --arg request "$(new_request_id)" \
-    --arg role "$depositor" --arg funding "$funding" \
-    --argjson start "$start" --argjson blocks "$blocks" \
-    --slurpfile runtime "${M3_POC_DIRECTION_ROOT}/sidecars/final/${depositor}/runtime.json" \
-    --slurpfile terms "$final_terms" '
-    {context:{schema_version:1,run_id:$run,request_id:$request,sidecar_role:$role},
-     runtime:$runtime[0],terms:$terms[0],
-     target:{mode:"exact",funding_transaction_id:$funding},
-     window:{start_height:$start,max_blocks:$blocks}}
-  ' >"$request"
-  chmod 0600 "$request"
-  operator_call final "$depositor" observe-finalized-witnessed-funding "$request" "$output"
+  submissions_before="$(lez_successful_submission_count)"
+  for attempt in {1..120}; do
+    attempt_request="${M3_POC_DIRECTION_ROOT}/${label}-attempt-${attempt}-request.json"
+    attempt_output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-attempt-${attempt}.json"
+    attempt_error="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-attempt-${attempt}.stderr"
+    [[ ! -e "$attempt_request" && ! -L "$attempt_request" &&
+       ! -e "$attempt_output" && ! -L "$attempt_output" &&
+       ! -e "$attempt_error" && ! -L "$attempt_error" ]] ||
+      fail "refusing to overwrite a finalized witnessed-funding attempt"
+    jq -n --arg run "$M3_POC_RUN_ID" --arg request "$(new_request_id)" \
+      --arg role "$depositor" --arg funding "$funding" \
+      --argjson start "$start" --argjson blocks "$blocks" \
+      --slurpfile runtime "${M3_POC_DIRECTION_ROOT}/sidecars/final/${depositor}/runtime.json" \
+      --slurpfile terms "$final_terms" '
+      {context:{schema_version:1,run_id:$run,request_id:$request,sidecar_role:$role},
+       runtime:$runtime[0],terms:$terms[0],
+       target:{mode:"exact",funding_transaction_id:$funding},
+       window:{start_height:$start,max_blocks:$blocks}}
+    ' >"$attempt_request"
+    chmod 0600 "$attempt_request"
+    if operator_call final "$depositor" observe-finalized-witnessed-funding \
+        "$attempt_request" "$attempt_output" 2>"$attempt_error"; then
+      chmod 0600 "$attempt_error"
+      [[ -s "$attempt_output" ]] ||
+        fail "successful finalized witnessed-funding observation returned empty evidence"
+      mv "$attempt_request" "$request"
+      mv "$attempt_output" "$output"
+      successful_attempt="$attempt"
+      break
+    fi
+    chmod 0600 "$attempt_error"
+    [[ ! -s "$attempt_output" ]] ||
+      fail "failed finalized witnessed-funding observation returned ambiguous stdout"
+    if ! rg -Fq 'bridge observation unavailable: moving_tip' "$attempt_error"; then
+      fail "finalized witnessed-funding observation failed outside typed moving-tip"
+    fi
+    moving_tip_retries=$((moving_tip_retries + 1))
+    sleep 0.25
+  done
+  (( successful_attempt > 0 )) ||
+    fail "finalized witnessed-funding observation exhausted its moving-tip retry bound"
+  submissions_after="$(lez_successful_submission_count)"
+  [[ "$submissions_after" == "$submissions_before" ]] ||
+    fail "read-only finalized witnessed-funding retry changed the durable submission count"
+  jq -n --argjson attempts "$successful_attempt" \
+    --argjson retries "$moving_tip_retries" --argjson before "$submissions_before" \
+    --argjson after "$submissions_after" '
+    {schema_version:1,operation:"observe_finalized_witnessed_funding",
+     attempts:$attempts,moving_tip_retries:$retries,max_attempts:120,
+     fresh_request_id_per_attempt:true,failed_attempt_stdout_empty:true,
+     only_typed_moving_tip_retried:true,observation_only:true,
+     durable_lez_submissions_before:$before,durable_lez_submissions_after:$after,
+     public_effect_count_unchanged:($before == $after)}
+  ' >"$retry_evidence"
+  chmod 0600 "$retry_evidence"
   jq -e --arg run "$M3_POC_RUN_ID" --arg role "$depositor" \
     --arg funding "$funding" --arg amount "$amount" --arg terms_hash "$terms_hash" \
     --argjson start "$start" --argjson end "$((start + blocks - 1))" '

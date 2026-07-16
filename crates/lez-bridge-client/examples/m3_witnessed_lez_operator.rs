@@ -12,12 +12,14 @@ use std::{
     time::Duration,
 };
 
-use lez_bridge_client::{BridgeClient, BridgeClientConfig, MAX_RPC_BODY_BYTES, SidecarCapability};
+use lez_bridge_client::{
+    BridgeClient, BridgeClientConfig, BridgeClientError, MAX_RPC_BODY_BYTES, SidecarCapability,
+};
 use lez_bridge_protocol::{
-    CompleteWitnessedClaimRequest, DescribeRuntimeRequest, ObserveFinalizedWitnessedClaimRequest,
-    ObserveFinalizedWitnessedFundingRequest, ObserveWitnessedEscrowRequest, Participant,
-    PrepareWitnessedClaimRequest, PrepareWitnessedEscrowRequest, RunId, RuntimeDescriptor,
-    SubmitTransactionRequest,
+    CompleteWitnessedClaimRequest, DescribeRuntimeRequest, ErrorCode,
+    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedFundingRequest,
+    ObserveWitnessedEscrowRequest, Participant, PrepareWitnessedClaimRequest,
+    PrepareWitnessedEscrowRequest, RunId, RuntimeDescriptor, SubmitTransactionRequest,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use zeroize::Zeroize as _;
@@ -82,6 +84,7 @@ enum CliError {
     RuntimeRoleMismatch,
     ClientConfigurationInvalid,
     BridgeOperationFailed,
+    BridgeObservationMovingTip,
     OutputFailed,
 }
 
@@ -102,6 +105,7 @@ impl fmt::Display for CliError {
             Self::RuntimeRoleMismatch => "runtime sidecar role differs from explicit role",
             Self::ClientConfigurationInvalid => "bridge client configuration is invalid",
             Self::BridgeOperationFailed => "bridge operation failed",
+            Self::BridgeObservationMovingTip => "bridge observation unavailable: moving_tip",
             Self::OutputFailed => "result output failed",
         })
     }
@@ -172,7 +176,7 @@ async fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), CliErr
             let result = client
                 .observe_finalized_witnessed_funding(request)
                 .await
-                .map_err(|_| CliError::BridgeOperationFailed)?;
+                .map_err(map_finalized_funding_observation_error)?;
             print_result(&result)
         }
         Command::SubmitTransaction => {
@@ -207,6 +211,15 @@ async fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), CliErr
                 .map_err(|_| CliError::BridgeOperationFailed)?;
             print_result(&result)
         }
+    }
+}
+
+fn map_finalized_funding_observation_error(error: BridgeClientError) -> CliError {
+    match error {
+        BridgeClientError::Remote(remote) if remote.code() == ErrorCode::MovingTip => {
+            CliError::BridgeObservationMovingTip
+        }
+        _ => CliError::BridgeOperationFailed,
     }
 }
 
@@ -455,6 +468,13 @@ mod tests {
             parse_arguments(duplicate).err(),
             Some(CliError::InvalidArguments)
         );
+    }
+
+    #[test]
+    fn moving_tip_diagnostic_is_stable_and_secret_free() {
+        let rendered = CliError::BridgeObservationMovingTip.to_string();
+        assert_eq!(rendered, "bridge observation unavailable: moving_tip");
+        assert!(!rendered.contains(CAPABILITY));
     }
 
     #[test]
