@@ -749,9 +749,24 @@ impl LezBridgeBtcFirstLockProofTransport for BtcFirstLockProofTransport {
         } else {
             EscrowState::Funded
         };
+        let mut current_transaction =
+            proof_transaction(FUNDING_ID, current_funding_bytes, [0x62; 32], 6, 0);
+        if matches!(self.mutation, ProofMutation::CurrentSigner) {
+            current_transaction.signer_account_ids =
+                AccountIds::new(vec![Hex32::from_bytes(MAKER_ACCOUNT)]).expect("wrong signer");
+        }
+        let mut current_instruction = proof_funding_instruction(&finalized_shape);
+        if matches!(self.mutation, ProofMutation::CurrentAccounts) {
+            current_instruction.ordered_account_ids = AccountIds::new(vec![
+                Hex32::from_bytes(CUSTODY_ACCOUNT),
+                Hex32::from_bytes(METADATA_ACCOUNT),
+                finalized_shape.terms.depositor_account_id(),
+            ])
+            .expect("wrong account order");
+        }
         let funding = WitnessedFundingObservation::found(WitnessedFundingFoundFacts::new(
-            proof_transaction(FUNDING_ID, current_funding_bytes, [0x62; 32], 6, 0),
-            proof_funding_instruction(&finalized_shape),
+            current_transaction,
+            current_instruction,
             proof_metadata(&finalized_shape, current_status),
             proof_custody(
                 &finalized_shape,
@@ -900,6 +915,22 @@ async fn proof_fails_closed_on_finality_current_state_pair_and_cross_binding_dri
         (
             ProofMutation::FinalizedAbsent,
             "finalized funding is unavailable",
+        ),
+        (
+            ProofMutation::FinalizedInstruction,
+            "finalized funding differs",
+        ),
+        (
+            ProofMutation::FinalizedPosition,
+            "finalized funding differs",
+        ),
+        (
+            ProofMutation::CurrentSigner,
+            "current LEZ first-lock pair differs",
+        ),
+        (
+            ProofMutation::CurrentAccounts,
+            "current LEZ first-lock pair differs",
         ),
         (ProofMutation::CurrentTipDrift, "current tip changed"),
         (
