@@ -1030,7 +1030,7 @@ impl FinalizedWitnessedFundingObserver {
     }
 }
 
-fn decode_indexed_public(
+pub(crate) fn decode_indexed_public(
     indexed: &IndexedPublicTransaction,
 ) -> Result<PublicTransaction, BridgeRuntimeError> {
     let message = Message::new_preserialized(

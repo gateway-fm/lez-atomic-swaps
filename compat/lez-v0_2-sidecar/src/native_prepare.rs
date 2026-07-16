@@ -850,6 +850,33 @@ impl NativeEscrowPlanner {
         Ok((active.result.claim.clone(), *active.preimage))
     }
 
+    /// Returns the exact owned native refund after checking observation identity.
+    ///
+    /// # Errors
+    ///
+    /// Rejects run, role, runtime, terms, preparation, or transaction-ID drift.
+    pub async fn owned_native_refund(
+        &self,
+        request: &lez_bridge_protocol::ObserveNativeRefundRequest,
+        refund_transaction_id: TransactionId,
+    ) -> Result<PreparedTransaction, NativePrepareError> {
+        let state = self.state.lock().await;
+        let active = state
+            .active_refund
+            .as_ref()
+            .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        if active.request.context.run_id != request.context.run_id
+            || active.request.context.sidecar_role != request.context.sidecar_role
+            || active.request.runtime != request.runtime
+            || active.request.terms != request.terms
+            || active.result.refund.transaction_id != refund_transaction_id
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        self.validate_prepared_refund(&active.request, &active.result)?;
+        Ok(active.result.refund.clone())
+    }
+
     /// Checks that a generic submission is one of this actor's exact active
     /// durable preparations, without reconstructing or re-signing it.
     ///

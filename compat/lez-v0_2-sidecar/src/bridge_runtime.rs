@@ -26,10 +26,10 @@ use sha2::{Digest as _, Sha256};
 
 use crate::{
     FinalizedIndexerApi, FinalizedWitnessedClaimObserver, FinalizedWitnessedFundingObserver,
-    HealthProbe, NativeEscrowPlanner, NativePrepareError, OfficialNativeEscrowFacts,
-    OfficialNodeRpc, RuntimeBoundaryError, ZecEscrowInstruction, compute_custody_pda,
-    compute_metadata_pda, decode_prepared_for_signer, prepared_from_transaction,
-    program_id_from_hex, program_id_to_hex,
+    FinalizedWitnessedRefundObserver, HealthProbe, NativeEscrowPlanner, NativePrepareError,
+    OfficialNativeEscrowFacts, OfficialNodeRpc, RuntimeBoundaryError, ZecEscrowInstruction,
+    compute_custody_pda, compute_metadata_pda, decode_prepared_for_signer,
+    prepared_from_transaction, program_id_from_hex, program_id_to_hex,
 };
 
 /// Fail-closed failures at the `PoC` bridge observation and submission boundary.
@@ -53,9 +53,6 @@ pub enum BridgeRuntimeError {
     /// One canonical terms match conflicted with the expected signed transcript.
     #[error("official v0.2 terms discovery conflicted with the signed transcript")]
     ConflictingDiscovery,
-    /// The refund bridge slice has not been implemented.
-    #[error("native refund is unavailable in the progressive PoC slice")]
-    RefundUnavailable,
     /// Submission could have reached the sequencer but no acknowledgement is known.
     #[error("official v0.2 transaction submission outcome is unknown")]
     UnknownSubmissionOutcome,
@@ -111,6 +108,7 @@ pub struct BridgeRuntime {
     node: Arc<OfficialNodeRpc>,
     finalized_claim_observer: FinalizedWitnessedClaimObserver,
     finalized_funding_observer: FinalizedWitnessedFundingObserver,
+    finalized_refund_observer: FinalizedWitnessedRefundObserver,
 }
 
 impl std::fmt::Debug for BridgeRuntime {
@@ -133,6 +131,11 @@ impl BridgeRuntime {
     ) -> Self {
         let finalized_claim_observer =
             FinalizedWitnessedClaimObserver::new(runtime.clone(), Arc::clone(&indexer));
+        let finalized_refund_observer = FinalizedWitnessedRefundObserver::new(
+            runtime.clone(),
+            Arc::clone(&planner),
+            Arc::clone(&indexer),
+        );
         let finalized_funding_observer =
             FinalizedWitnessedFundingObserver::new(runtime.clone(), indexer);
         Self {
@@ -141,6 +144,7 @@ impl BridgeRuntime {
             node,
             finalized_claim_observer,
             finalized_funding_observer,
+            finalized_refund_observer,
         }
     }
 
@@ -217,6 +221,18 @@ impl BridgeRuntime {
             .prepare_native_refund(request)
             .await
             .map_err(Into::into)
+    }
+
+    /// Observes canonical witnessed native-refund state and finalized effects.
+    ///
+    /// # Errors
+    ///
+    /// Preserves finalized observer identity, finality, deadline, and canonical-fact errors.
+    pub async fn observe_native_refund(
+        &self,
+        request: &lez_bridge_protocol::ObserveNativeRefundRequest,
+    ) -> Result<lez_bridge_protocol::ObserveNativeRefundResult, BridgeRuntimeError> {
+        self.finalized_refund_observer.observe(request).await
     }
 
     /// Reserves one exact unsigned witnessed-claim message.

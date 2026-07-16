@@ -551,7 +551,7 @@ impl From<BridgeRuntimeError> for OperationFailure {
                 code: ErrorCode::InvalidTransaction,
                 message: "official v0.2 bridge validation failed",
             },
-            BridgeRuntimeError::Unavailable | BridgeRuntimeError::RefundUnavailable => Self {
+            BridgeRuntimeError::Unavailable => Self {
                 code: ErrorCode::Unavailable,
                 message: "required official v0.2 operation is unavailable",
             },
@@ -1008,10 +1008,10 @@ fn register_methods(
             )
             .await
     })?;
-    register_refund_stubs(module)
+    register_refund_methods(module)
 }
 
-fn register_refund_stubs(
+fn register_refund_methods(
     module: &mut RpcModule<ServerState>,
 ) -> Result<(), jsonrpsee::core::RegisterMethodError> {
     module.register_async_method(
@@ -1042,15 +1042,19 @@ fn register_refund_stubs(
         |params, state, _| async move {
             let request: ObserveNativeRefundRequest = params.one()?;
             state.validate_runtime(&request.context, &request.runtime)?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
             state
                 .execute(
                     METHOD_OBSERVE_NATIVE_REFUND,
                     &request.context,
                     &request,
-                    || async {
-                        Err(OperationFailure::from(
-                            BridgeRuntimeError::RefundUnavailable,
-                        ))
+                    || async move {
+                        runtime
+                            .observe_native_refund(&operation)
+                            .await
+                            .map_err(Into::into)
+                            .and_then(to_value)
                     },
                 )
                 .await

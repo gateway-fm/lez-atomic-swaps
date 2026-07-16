@@ -1,6 +1,6 @@
 # ADR 0038: Durably prepare the permissionless LEZ refund before actor eligibility
 
-Status: Accepted through authenticated prepare/restart replay; finalized observation, actor recovery, and actual-node evidence remain active -- 2026-07-16
+Status: Accepted through authenticated prepare/restart replay and finalized witnessed observation; actor recovery and actual-node evidence remain active -- 2026-07-16
 
 ```mermaid
 flowchart LR
@@ -18,7 +18,8 @@ flowchart LR
     Journal -->|"Started or Unknown"| ObserveOnly["Observe only<br/>never resubmit"]
     Sequencer --> Indexer["Finalized indexer evidence"]
     ObserveOnly --> Indexer
-    Indexer --> Project["Project Refunded<br/>only from exact final evidence"]
+    Indexer --> ObserveRpc["Authenticated repeatable observe<br/>no submit and no cached chain truth"]
+    ObserveRpc --> Project["Project Refunded<br/>only from exact final evidence"]
 ```
 
 ## Context
@@ -61,16 +62,33 @@ that preparation. It durably records the canonical request and successful
 result, restores the planner and compares the reconstructed result before
 binding a restarted server, and replays an identical request ID without calling
 the nonce source. Observations remain repeatable and are not cached as chain
-truth. The refund observation method remains unavailable until the finalized
-observer below is complete.
+truth. The finalized
+witnessed observer now implements the state-only, exact-owned, and
+discover-by-terms modes behind that same authenticated boundary.
 
-Preparation is not deadline evidence and grants no send authority. The actor
-must first obtain stable finalized chain facts proving the escrow remains
-`Funded` and the containing-chain clock is at or beyond the signed deadline.
+Preparation is not deadline evidence and grants no send authority. State-only
+observation now brackets canonical Funded or Refunded accounts with equal stable
+finalized clocks before and after all reads. The actor must require Funded state
+and a finalized clock at or beyond the signed deadline before asking its journal
+for send authority.
 Only then may its public-effect journal consume one `Prepared` to `Started` CAS.
 After any possible call, `Started` and `Unknown` are permanently observation-only.
 Projection to the lifecycle store requires later exact finalized `Refunded`
-evidence with zero custody and the immutable depositor effect.
+evidence with zero custody and the immutable depositor effect. Exact observation
+is bound to the actor-owned durable bytes; claimant discovery is bound to the
+signed witnessed terms. Both scan a fully covered bounded window through the
+stable finalized tip, require equal block results by ID and hash plus intact
+ancestry, accept only the canonical unsigned RefundNative account/instruction
+shape, enforce the containing-block timestamp at or after `refund_at`, and check
+historical and tip terminal accounts. Complete discovery misses may be Absent;
+exact misses remain UnknownOrPending. Missing or partial account state fails
+unavailable rather than becoming absence.
+
+The existing compatible response wire exposes the stable finalized tip clock and
+the refund transaction position, but it has no separate containing-block
+finality/timestamp object. The observer enforces that fact internally. A future
+additive finalized-refund result would be required if downstream consumers must
+independently reverify the containing timestamp from the response alone.
 
 ## Atomicity and failure analysis
 
@@ -87,10 +105,10 @@ one-attempt public-effect authority, and observe-before-project recovery.
 - A public transaction response cannot project state without matching finalized
   chain evidence.
 
-This decision now claims authenticated prepare reachability and exact restart
-replay. It does not yet claim finalized refund observation, deadline
-enforcement, actor integration, or actual-node refund execution. Those are the
-next M3 gates.
+This decision now claims authenticated prepare reachability, exact restart
+replay, and finalized witnessed state/exact/discovery observation with internal deadline
+enforcement. It does not yet claim actor one-attempt integration or actual-node
+refund execution. Those are the next M3 gates.
 
 ## Evidence
 
@@ -102,3 +120,11 @@ zero nonce-source calls. `bridge_native_refund.rs` additionally proves one
 authenticated loopback preparation and byte-identical replay after both the
 server and planner restart. Its sequencer is an ephemeral loopback health stub;
 no faucet, chain node, Docker service, or public network dependency is used.
+`finalized_native_refund_observation.rs` adds nine cases for stable state-only
+clocks at deadline minus one and deadline, exact owned presence, claimant
+discovery, complete/incomplete absence, containing-block deadline enforcement,
+historical and tip terminal state, zero custody, canonical unsigned bytes, block
+identity and ancestry, moving tips, mutation, role and ID pre-read rejection,
+ambiguity/conflict, and authenticated repeatable no-submit behavior. It uses an
+in-memory finalized-indexer double plus an ephemeral loopback health server; it
+does not use a faucet, chain node, Docker service, or public endpoint.

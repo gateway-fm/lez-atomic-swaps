@@ -11,6 +11,7 @@ mod durable_reservation;
 #[cfg(target_os = "linux")]
 mod effect_submission;
 mod finalized_claim_observation;
+mod finalized_refund_observation;
 mod native_prepare;
 mod runtime;
 mod server;
@@ -37,6 +38,7 @@ pub use finalized_claim_observation::{
     FinalizedIndexerApi, FinalizedWitnessedClaimObserver, FinalizedWitnessedFundingObserver,
     OfficialIndexerRpc,
 };
+pub use finalized_refund_observation::FinalizedWitnessedRefundObserver;
 pub use native_prepare::{
     NativeEscrowPlanner, NativePrepareError, NonceSource, ZecEscrowInstruction,
     compute_custody_pda, compute_metadata_pda, decode_prepared_for_signer,

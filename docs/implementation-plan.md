@@ -1126,9 +1126,13 @@ distinct request or any account, instruction, nonce, witness, ID, signer,
 program, or aggregate-authority mutation fails closed. The generic submission
 boundary admits only the retained reservation through a dedicated unsigned
 decoder. ADR 0038 records why preparation alone does not prove deadline
-eligibility or authorize a send. Authenticated prepare registration and full
-server/planner restart replay are now GREEN. Stable finalized refund observation, actor one-attempt recovery, and
-actual-node both-direction execution are next.
+eligibility or authorize a send. Authenticated prepare/restart replay and
+finalized witnessed refund observation are now GREEN. The observer rejects pre-deadline inclusion, exposes stable
+state-only clocks at deadline minus one and at the deadline, accepts only exact
+canonical unsigned bytes in fully covered finalized ancestry, proves historical
+and tip Refunded state with zero custody, and keeps observation repeatable and
+no-submit. Actor one-attempt recovery and actual-node both-direction execution
+are next.
 
 Active M3 refund critical path:
 
@@ -1137,9 +1141,9 @@ Active M3 refund critical path:
 - [x] durably prepare and restart-restore exact official LEZ v0.2 refund bytes;
 - [x] register authenticated prepare and restore its successful canonical
   request/result before accepting traffic;
-- [ ] prove stable finalized pre-deadline rejection, deadline eligibility, exact
+- [x] prove stable finalized pre-deadline rejection, deadline eligibility, exact
   `Refunded` metadata, zero custody, immutable depositor, and bounded absence;
-- [ ] register the authenticated finalized observe method without broadening
+- [x] register the authenticated finalized observe method without broadening
   generic submission;
 - [ ] integrate actor `Refund` effects with observe-before-submit, one `Started`
   CAS, and observation-only ambiguous recovery;
