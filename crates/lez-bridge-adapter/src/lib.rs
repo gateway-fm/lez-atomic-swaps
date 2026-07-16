@@ -9,7 +9,8 @@ mod request_context;
 mod sdk_ports;
 
 pub use btc_current_first_lock::{
-    CurrentLezFirstLockError, CurrentLezFirstLockEvidenceV1, LezBridgeCurrentEscrowTransport,
+    CurrentLezFirstLockError, CurrentLezFirstLockEvidenceV1, CurrentLezFundedEscrowError,
+    CurrentLezFundedEscrowEvidenceV1, LezBridgeCurrentEscrowTransport,
 };
 pub use canonical_funding::{
     SqliteCanonicalLezFundingSource, SqliteCanonicalLezFundingSourceError,

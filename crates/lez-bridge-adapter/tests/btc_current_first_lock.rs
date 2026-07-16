@@ -40,6 +40,7 @@ enum Mutation {
     None,
     ClockDrift,
     Claimed,
+    TermsHash,
     MetadataAccount,
     CustodyAccount,
     CustodyOwner,
@@ -110,14 +111,18 @@ impl LezBridgeCurrentEscrowTransport for ReadOnlyTransport {
         let accounts = if matches!(self.mutation, Mutation::AccountsAbsent) {
             NativeEscrowAccountObservation::Absent
         } else {
+            let mut metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+                metadata_account,
+                request.runtime.escrow_program_id,
+                custody_account,
+                terms,
+                state,
+            );
+            if matches!(self.mutation, Mutation::TermsHash) {
+                metadata.terms_hash = Hex32::from_bytes([0xa4; 32]);
+            }
             NativeEscrowAccountObservation::found(NativeEscrowAccountFacts::new_witnessed(
-                WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
-                    metadata_account,
-                    request.runtime.escrow_program_id,
-                    custody_account,
-                    terms,
-                    state,
-                ),
+                metadata,
                 NativeCustodyFacts::new(custody_account, custody_owner, custody_value),
             ))
         };
@@ -338,6 +343,59 @@ fn adapter(transport: ReadOnlyTransport, role: Participant) -> LezBridgeAdapter<
 }
 
 #[tokio::test]
+async fn generic_funded_escrow_reads_the_agreement_selected_lez_depositor_in_both_directions() {
+    for (direction, expected_depositor, expected_claimant) in [
+        (
+            SwapDirection::TakerSellsForeign,
+            BridgeParticipant::Maker,
+            BridgeParticipant::Taker,
+        ),
+        (
+            SwapDirection::TakerSellsLez,
+            BridgeParticipant::Taker,
+            BridgeParticipant::Maker,
+        ),
+    ] {
+        let agreement = agreement(direction);
+        for role in [Participant::Maker, Participant::Taker] {
+            let transport = ReadOnlyTransport::new(Mutation::None);
+            let adapter = adapter(transport.clone(), role);
+            let evidence = adapter
+                .observe_current_lez_funded_escrow(
+                    &agreement,
+                    RequestId::new(format!("current-funded-{direction:?}-{role:?}").to_lowercase())
+                        .expect("request ID"),
+                )
+                .await
+                .expect("current agreement-selected funded escrow");
+
+            assert_eq!(evidence.schema_version(), 1);
+            assert_eq!(evidence.clock().height, 12);
+            assert_eq!(evidence.clock().timestamp_ms, 200_000);
+            assert_eq!(evidence.metadata().status, EscrowState::Funded);
+            assert_eq!(evidence.metadata().account_id.as_bytes(), &METADATA_ACCOUNT);
+            assert_eq!(evidence.custody().account_id.as_bytes(), &CUSTODY_ACCOUNT);
+            assert_eq!(evidence.custody().balance.as_u128(), LEZ_AMOUNT);
+
+            let requests = transport.requests.lock().expect("request log");
+            assert_eq!(requests.len(), 1);
+            assert_eq!(requests[0].context.sidecar_role, runtime(role).sidecar_role);
+            assert_eq!(requests[0].terms.depositor(), expected_depositor);
+            assert_eq!(requests[0].terms.claimant(), expected_claimant);
+            assert_eq!(
+                requests[0].terms.depositor_account_id().as_bytes(),
+                agreement.lez_terms().depositor_account()
+            );
+            assert_eq!(
+                requests[0].terms.claimant_account_id().as_bytes(),
+                agreement.lez_terms().claimant_account()
+            );
+            assert_eq!(requests[0].target, NativeRefundObservationTarget::StateOnly);
+        }
+    }
+}
+
+#[tokio::test]
 async fn both_roles_derive_the_reverse_first_lock_and_read_state_only_once() {
     let agreement = agreement(SwapDirection::TakerSellsLez);
     for role in [Participant::Maker, Participant::Taker] {
@@ -385,31 +443,102 @@ async fn forward_direction_is_not_misrepresented_as_a_lez_first_lock() {
 }
 
 #[tokio::test]
-async fn drift_spent_wrong_accounts_and_value_fail_closed() {
-    let agreement = agreement(SwapDirection::TakerSellsLez);
-    for (mutation, expected) in [
-        (Mutation::ClockDrift, "clock"),
-        (Mutation::Claimed, "funded"),
-        (Mutation::MetadataAccount, "account"),
-        (Mutation::CustodyAccount, "account"),
-        (Mutation::CustodyOwner, "account"),
-        (Mutation::CustodyValue, "value"),
-        (Mutation::AccountsAbsent, "unavailable"),
-        (Mutation::RefundLookedUp, "state-only"),
+async fn generic_funded_escrow_rejects_runtime_and_role_account_drift_before_transport() {
+    let agreement = agreement(SwapDirection::TakerSellsForeign);
+    for (label, selected_runtime, expected) in [
+        (
+            "compatibility",
+            RuntimeDescriptor {
+                compatibility: RuntimeCompatibility::NssaV0_1_2,
+                ..runtime(Participant::Maker)
+            },
+            "incompatible",
+        ),
+        (
+            "channel",
+            RuntimeDescriptor {
+                channel_id: Hex32::from_bytes([0xb1; 32]),
+                ..runtime(Participant::Maker)
+            },
+            "chain identity",
+        ),
+        (
+            "genesis",
+            RuntimeDescriptor {
+                genesis_block_hash: Hex32::from_bytes([0xb2; 32]),
+                ..runtime(Participant::Maker)
+            },
+            "chain identity",
+        ),
+        (
+            "program",
+            RuntimeDescriptor {
+                escrow_program_id: Hex32::from_bytes([0xb3; 32]),
+                ..runtime(Participant::Maker)
+            },
+            "program",
+        ),
+        (
+            "role-account",
+            RuntimeDescriptor {
+                signer_account_id: Hex32::from_bytes(TAKER_ACCOUNT),
+                ..runtime(Participant::Maker)
+            },
+            "local role",
+        ),
     ] {
-        let transport = ReadOnlyTransport::new(mutation);
-        let error = adapter(transport.clone(), Participant::Maker)
-            .observe_current_lez_first_lock(
+        let transport = ReadOnlyTransport::new(Mutation::None);
+        let adapter = LezBridgeAdapter::new(
+            transport.clone(),
+            RunId::new("btc-current-runtime-drift").expect("run ID"),
+            selected_runtime,
+            Participant::Maker,
+        )
+        .expect("runtime sidecar role remains maker");
+        let error = adapter
+            .observe_current_lez_funded_escrow(
                 &agreement,
-                RequestId::new(format!("mutation-{mutation:?}").to_lowercase())
-                    .expect("request ID"),
+                RequestId::new(format!("runtime-{label}")).expect("request ID"),
             )
             .await
-            .expect_err("mutation must fail closed");
-        assert!(
-            error.to_string().contains(expected),
-            "{mutation:?}: {error}"
-        );
-        assert_eq!(transport.requests.lock().expect("request log").len(), 1);
+            .expect_err("runtime drift must fail before transport");
+        assert!(error.to_string().contains(expected), "{label}: {error}");
+        assert!(transport.requests.lock().expect("request log").is_empty());
+    }
+}
+
+#[tokio::test]
+async fn drift_spent_wrong_accounts_and_value_fail_closed() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let agreement = agreement(direction);
+        for (mutation, expected) in [
+            (Mutation::ClockDrift, "clock"),
+            (Mutation::Claimed, "funded"),
+            (Mutation::TermsHash, "account"),
+            (Mutation::MetadataAccount, "account"),
+            (Mutation::CustodyAccount, "account"),
+            (Mutation::CustodyOwner, "account"),
+            (Mutation::CustodyValue, "value"),
+            (Mutation::AccountsAbsent, "unavailable"),
+            (Mutation::RefundLookedUp, "state-only"),
+        ] {
+            let transport = ReadOnlyTransport::new(mutation);
+            let error = adapter(transport.clone(), Participant::Maker)
+                .observe_current_lez_funded_escrow(
+                    &agreement,
+                    RequestId::new(format!("mutation-{direction:?}-{mutation:?}").to_lowercase())
+                        .expect("request ID"),
+                )
+                .await
+                .expect_err("mutation must fail closed");
+            assert!(
+                error.to_string().contains(expected),
+                "{direction:?}/{mutation:?}: {error}"
+            );
+            assert_eq!(transport.requests.lock().expect("request log").len(), 1);
+        }
     }
 }
