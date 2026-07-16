@@ -868,7 +868,11 @@ and Guix provenance, the LEZ/Risc0 artifacts, Docker images, and cold Cargo/git
 inputs are setup dependencies and can fail because of DNS, registry, or host
 availability. Runtime chain I/O uses only local Core Regtest and the local LEZ
 Bedrock/sequencer/indexer; funds are fresh local Regtest/genesis outputs, with
-no public RPC, peer, faucet, public deployment, or public funds. See the
+no public chain RPC, peer, faucet, public deployment, or public funds. The
+pinned Bedrock binary also makes best-effort UDP NTP attempts to
+`pool.ntp.org:123`; certification does not depend on success, and the M3 runner
+records the observed timeout count. Thus the chain boundary is fully local, but
+the Bedrock process is not claimed to make zero egress attempts. See the
 [M3 operator guide](docs/m3-local-poc-operator-guide.md) for exact builds,
 proof boundaries, private evidence handling, and failure recovery.
 
@@ -953,7 +957,11 @@ remain deliberately deferred under the progressive-PoC boundary.
 ### External dependencies and flakiness
 
 The current automated and retained local PoC flows use no public blockchain
-RPC, faucet, credential, or public funds. Public-route parsing, TLS client
+RPC, faucet, credential, or public funds. The pinned LEZ Bedrock component can
+make best-effort UDP NTP attempts to `pool.ntp.org:123`; local certification
+requires no successful reply and records observed timeout attempts. This is an
+external egress attempt, not a public chain dependency. Public-route parsing,
+TLS client
 construction, credential loading/redaction, and strict LEZ profile selection
 are tested without connecting. The successful corridor used dynamic-loopback
 Bedrock, sequencer, indexer, Zebra Regtest, and two independently authenticated

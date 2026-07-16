@@ -1550,8 +1550,10 @@ uses no RPC, Docker, faucet, peer, funds, or external network. The manual
 actual-node flow uses only the isolated Core 31.1 Regtest node, LEZ v0.2
 Bedrock/sequencer/indexer, and the two role sidecars described in this guide.
 Bitcoin funds come from deterministic local Regtest outputs and LEZ funds from
-local genesis/Vault allocations. No public RPC, faucet, public deployment, or
-public funds are required. Runtime flakiness can still come from local process
+local genesis/Vault allocations. No public chain RPC, faucet, public deployment,
+or public funds are required. The pinned Bedrock process can make best-effort UDP NTP attempts to `pool.ntp.org:123`; certification does not require a
+successful reply, and the combined runner records observed timeout attempts.
+Runtime flakiness can still come from local process
 scheduling, moving LEZ tips, indexer readiness, the 30-second read timeout, and
 the fixed maximum 4096-block discovery window ageing past an old transaction.
 Use a fresh isolated run, bounded sequential reads, and a window that covers the
@@ -2017,16 +2019,24 @@ otherwise abandon the isolated chain funds and start a fresh run.
 
 ## External resources and flakiness
 
-Runtime external resources were empty in audited runs
-`m3actor-20260716n` and `m3refund-20260716h`: both packets explicitly
-record no public RPC, faucet, public funds, or certification-time network
-dependency.
+Audited runs `m3actor-20260716n` and `m3refund-20260716h` used no public
+chain RPC, peer, faucet, public funds, or successful external-network service as
+a certification dependency. The narrower chain claim remains true; “runtime
+external resources were empty” was too broad. Live first-lock diagnostics show
+the pinned Bedrock process making best-effort UDP NTP attempts to
+`pool.ntp.org:123`, with observed replies timing out. Certification neither
+requires nor trusts a successful NTP reply, and current final evidence records
+the observed timeout count.
 
 - Bitcoin Core is local Regtest with zero peers and deterministic local mining.
 - LEZ is the run-owned local v0.2 Bedrock, sequencer, and indexer. Run H used
   the private-local 3.0-second slot.
 - Funds come from local genesis/Vault and Regtest outputs.
-- No faucet, public RPC, public Testnet, public peer, or public funds are used.
+- No faucet, public chain RPC, public Testnet, public peer, or public
+  funds are used.
+- Pinned Bedrock may attempt `pool.ntp.org:123/udp`; this optional time-sync
+  egress can fail or be blocked without invalidating the local proof. The proof
+  waits for and verifies canonical finalized block timestamps instead.
 
 Loopback describes reachability, not a node double. The combined runner starts
 the pinned Core daemon and the exact LEZ Bedrock/sequencer/indexer services,
@@ -2073,7 +2083,8 @@ signal, calls `gpgconf --homedir <that-home> --kill gpg-agent`. It fails closed
 if that exact cleanup fails and never kills agents outside the run. Run-n's
 post-cleanup process audit found no agent for its GnuPG home.
 
-Remaining runtime flakiness is local: deliberate recovery-deadline waits,
+Remaining certification-sensitive runtime flakiness is local: deliberate
+recovery-deadline waits,
 process scheduling, an advancing LEZ tip
 across multi-read observations, indexer/sequencer readiness, heavy parallel
 indexer reads, port selection, and manual ordering. Use unique ports, sequential

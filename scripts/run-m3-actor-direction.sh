@@ -1760,7 +1760,7 @@ refresh_first_lock_lez_absence_window() {
   [[ "$baseline" =~ ^[0-9]+$ ]] || fail "pre-lock LEZ baseline is unavailable"
   cutoff="$(jq -er '.recovery.maker_second_lock_cutoff_unix_seconds | numbers' "$spec")"
   tip_file="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-first-lock-lez-${label}-cutoff-tip.json"
-  for _ in {1..240}; do
+  for _ in {1..1200}; do
     waited=$((waited + 1))
     tip="$(finalized_tip)"
     blocks=$((tip - baseline))

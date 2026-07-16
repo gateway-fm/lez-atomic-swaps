@@ -1158,11 +1158,28 @@ evidence, not M3 acceptance evidence; the certifying rerun uses a fresh ID.
 Attempt `m3firstlock-20260716c` crossed that boundary, finalized the taker
 Bitcoin first lock, and then correctly withheld LEZ absence authority because
 the current finalized LEZ timestamp had not yet crossed the signed cutoff. Its
-exact cleanup attestation is GREEN. The next RED-GREEN guard requires a bounded
-240-sample finalized-tip wait, revalidates exact finalized block identity on
-each usable sample, and retains the wait count. RPC uncertainty still cannot
-become absence. This attempt is also diagnostic rather than acceptance
-evidence.
+exact cleanup attestation is GREEN. The initial RED-GREEN guard required a bounded 240-sample finalized-tip wait,
+revalidated exact finalized block identity on each usable sample, and retained
+the wait count. RPC uncertainty still could not become absence. This attempt is
+also diagnostic rather than acceptance evidence.
+
+Attempt `m3firstlock-20260716d` crossed both prior fixes and confirmed the taker
+Bitcoin first lock. Its 60-second finalized-tip wait then failed closed: the
+signed cutoff was `1784205779`, while the last usable finalized LEZ block was
+height 36 at `1784205765508` milliseconds, 13.492 seconds before the cutoff.
+Bedrock continued producing/finalizing, so this measured local finality/indexer
+lag invalidated the harness bound, not the signed atomicity invariant. The next
+RED-GREEN guard extends only that bound to 1200 quarter-second samples (five
+minutes); every usable sample still revalidates exact finalized block identity,
+and uncertainty still cannot become absence. Exact cleanup is GREEN. This is
+diagnostic evidence, not acceptance evidence.
+
+The same run exposed repeated best-effort pinned-Bedrock UDP NTP attempts to
+`pool.ntp.org:123`, all observed as timeouts. No public chain RPC, peer, faucet,
+deployment, or public funds participated, and certification does not depend on
+NTP success. The contract and final evidence now distinguish an attempted
+external time-sync request from an external success dependency and record the
+observed timeout count.
 
 The refund-wire loop is GREEN. The existing native-refund RPC names and
 hashlock JSON shape remain unchanged, while strict untagged protocol envelopes

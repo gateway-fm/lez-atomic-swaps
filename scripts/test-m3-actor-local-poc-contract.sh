@@ -391,7 +391,7 @@ done
 lez_cutoff_refresh_source="$(sed -n \
   '/^refresh_first_lock_lez_absence_window() {$/,/^}$/p' "$direction_driver")"
 [[ -n "$lez_cutoff_refresh_source" ]] || fail "LEZ first-lock cutoff refresh is missing"
-rg -Fq 'for _ in {1..240}; do' <<<"$lez_cutoff_refresh_source" ||
+rg -Fq 'for _ in {1..1200}; do' <<<"$lez_cutoff_refresh_source" ||
   fail "LEZ first-lock cutoff refresh does not wait within a fixed bound"
 rg -Fq '(( tip_timestamp >= cutoff * 1000 )) && break' \
   <<<"$lez_cutoff_refresh_source" ||
@@ -789,6 +789,11 @@ jq -e --arg run_id "$contract_run_id" '
   and .external_resources.public_rpc == false
   and .external_resources.faucet == false
   and .external_resources.public_funds == false
+  and .external_resources.bedrock_ntp == {
+    endpoint:"pool.ntp.org:123/udp",
+    attempted_by_pinned_component:true,
+    required_for_certification:false
+  }
 ' <<<"$contract_json" >/dev/null || fail "contract JSON does not prove the M3 invariants"
 
 refund_contract_run_id="m3refundcontract-$RANDOM-$$"
@@ -844,6 +849,11 @@ jq -e --arg run_id "$first_lock_contract_run_id" '
   and .external_resources.public_rpc == false
   and .external_resources.faucet == false
   and .external_resources.public_funds == false
+  and .external_resources.bedrock_ntp == {
+    endpoint:"pool.ntp.org:123/udp",
+    attempted_by_pinned_component:true,
+    required_for_certification:false
+  }
 ' <<<"$first_lock_contract_json" >/dev/null ||
   fail "first-lock refund contract omits exact effects, cutoff/race clocks, replay, or local resources"
 
@@ -851,6 +861,13 @@ rg -Fq 'LEZ_V02_SLOT_DURATION_SECONDS="$lez_slot_duration_seconds"' "$runner" ||
   fail "M3 runner does not pass the journey-selected cadence to the LEZ child"
 rg -Fq 'slot_duration_seconds:$lez_slot_duration_seconds' "$runner" ||
   fail "M3 evidence does not record the selected LEZ slot cadence"
+run_evidence_source="$(sed -n '/^write_run_evidence() {$/,/^}$/p' "$runner")"
+[[ -n "$run_evidence_source" ]] || fail "outer runner is missing final run evidence"
+rg -Fq 'observed_timeout_count:$bedrock_ntp_timeout_count' <<<"$run_evidence_source" ||
+  fail "final evidence does not record the observed pinned-Bedrock NTP timeout count"
+rg -Fq 'certification_success_depends_on_external_network:false' \
+  <<<"$run_evidence_source" ||
+  fail "final evidence does not distinguish attempted egress from a certification dependency"
 [[ "$(rg -Foc 'render_bedrock_deployment_settings' "$lez_stack_driver")" -ge 2 ]] ||
   fail "LEZ stack defines but does not invoke the audited settings renderer"
 rg -Fq 'LEZ_V02_SLOT_DURATION_SECONDS' "$lez_stack_driver" ||

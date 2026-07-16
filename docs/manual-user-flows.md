@@ -1872,8 +1872,12 @@ manual transcription can make the ceremony fail closed. They cannot justify
 inventing a fact, weakening a policy, reusing an output root, or overwriting
 create-new files.
 
-M3 run `m3actor-20260716n` used no public RPC, faucet, public peer, public
-fund, or network dependency during certification. Its combined runner required
+M3 run `m3actor-20260716n` used no public chain RPC, faucet, public peer, or
+public fund, and no external network service was a certification success
+dependency. Live first-lock diagnostics additionally show the pinned Bedrock
+process attempting `pool.ntp.org:123/udp`; observed attempts timed out, and the
+runner now records that count. Blocking or failure of this optional time-sync
+egress does not weaken or satisfy the canonical finalized-block checks. Its combined runner required
 all Cargo sources and the checked LEZ artifact, service binaries, Risc0
 `r0vm`, Rapidsnark libraries, and Core release inputs to be locally verified
 before the offline run. Cold provisioning can therefore be externally flaky,
@@ -1949,6 +1953,7 @@ Cold setup and CI do use external software-distribution services:
 | Community Zcash faucet or Discord support | Not used by automated/local M2 runs; optional future TAZ funding only | External operator; verify any returned txid independently through self-hosted Zebra | No SLA/current rate or amount; faucet may time out, rate-limit, or be depleted and is never a required CI gate |
 | Operator-controlled LEZ Testnet and Zcash TAZ accounts/funds | Not used by automated/local M2 runs; required before any future live corridor | Provision independently, keep role keys mode `0600`, verify balances and every funding tx through the selected exact RPC route, and bind identities in the signed agreement/runtime | Provisioning delay, insufficient funds, key custody error, public confirmation/finality latency, and reorgs can fail a live run; never substitute deterministic local funds as public evidence |
 | Zallet v0.1.0-alpha.4 | Not used by automated/local M2 runs; optional future funding wallet, never the HTLC signer | Exact alpha tag, loopback RPC, Zebra cookie; explicit transparent privacy policy | Alpha/epoch compatibility; cannot export derived transparent keys or sign arbitrary HTLC transactions |
+| `pool.ntp.org:123/udp` | Best-effort time sync attempted by the pinned local Bedrock component during M3 actual-node runs | Not trusted as chain evidence; certification requires canonical finalized block identity/timestamps and does not require an NTP reply; final evidence records observed timeout attempts | DNS/UDP filtering or service outage can produce log timeouts, but cannot make the certification pass or fail while the local chain crosses the signed cutoff within its independent bounded wait |
 | GHCR Logos Blockchain image | Local LEZ v0.2 Bedrock node and source/binary contract | Exact digest `sha256:91d6c5bf07e07fcfba5e7cf07d21ee686a6bc4b9f6210f2d28bffbcad9a3729f`; verifier checks OCI source revision `d8711bbc...` and license | Registry outage can block a cold pull; the manual contract verifier never pulls and fails if the exact cached image is absent. Public-testnet parity remains an upstream production question |
 | GitHub Rapisnark v0.0.8 release asset | Exact LEZ v0.2 service and sidecar builds | Revision, archive name, SHA-256, and all four extracted static-library hashes are contract-bound | Release/CDN outage blocks an uncached build; implicit build-script download is rejected in favor of the preverified local directory |
 | Docker Hub `zfnd/zebra` and `risczero/risc0-guest-builder` | Cold Zebra image build and Risc0 guest build | Zebra `5.2.0` source image and guest builder are digest-pinned | Registry outage, throttling, or authentication policy can block a cold pull; local images reduce but do not guarantee offline BuildKit resolution |

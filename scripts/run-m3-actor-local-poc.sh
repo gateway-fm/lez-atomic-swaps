@@ -201,7 +201,12 @@ emit_contract() {
         public_rpc: false,
         faucet: false,
         public_funds: false,
-        test_funds: "deterministic_local_genesis_and_regtest_outputs"
+        test_funds: "deterministic_local_genesis_and_regtest_outputs",
+        bedrock_ntp: {
+          endpoint: "pool.ntp.org:123/udp",
+          attempted_by_pinned_component: true,
+          required_for_certification: false
+        }
       }
     }'
 }
@@ -955,11 +960,19 @@ validate_actual_effect_manifests() {
 
 write_run_evidence() {
   local repository_commit completed_at outer_runner_sha direction_driver_sha lez_bootstrap_sha
+  local bedrock_log bedrock_ntp_timeout_count
   repository_commit="$(git rev-parse HEAD)"
   completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   outer_runner_sha="$(sha256sum scripts/run-m3-actor-local-poc.sh | sed 's/ .*//')"
   direction_driver_sha="$(sha256sum "$direction_driver" | sed 's/ .*//')"
   lez_bootstrap_sha="$(sha256sum "$lez_bootstrap_driver" | sed 's/ .*//')"
+  bedrock_log="${repo_root}/.e2e/${lez_run_id}/lez-v02/bedrock/logs/logos-blockchain.log"
+  [[ -f "$bedrock_log" && ! -L "$bedrock_log" ]] ||
+    fail "run-owned Bedrock log is unavailable for external-resource evidence"
+  bedrock_ntp_timeout_count="$(rg -c "NTP sync failed from pool.ntp.org:123" "$bedrock_log" || true)"
+  [[ -n "$bedrock_ntp_timeout_count" ]] || bedrock_ntp_timeout_count=0
+  [[ "$bedrock_ntp_timeout_count" =~ ^[0-9]+$ ]] ||
+    fail "Bedrock NTP timeout count is malformed"
   jq -n \
     --arg run_id "$run_id" \
     --arg journey "$journey" \
@@ -983,6 +996,7 @@ write_run_evidence() {
     --arg bitcoin_run "$bitcoin_run_id" \
     --arg lez_run "$lez_run_id" \
     --arg lez_slot_duration_seconds "$lez_slot_duration_seconds" \
+    --argjson bedrock_ntp_timeout_count "$bedrock_ntp_timeout_count" \
     --arg foreign_stage2_sha "$(sha256sum "${evidence_dir}/taker_sells_foreign-stage-two.json" | sed 's/ .*//')" \
     --arg lez_stage2_sha "$(sha256sum "${evidence_dir}/taker_sells_lez-stage-two.json" | sed 's/ .*//')" '
     {
@@ -1061,6 +1075,18 @@ write_run_evidence() {
         network_dependency_during_certification: false,
         cold_cache_is_a_setup_prerequisite_not_a_runtime_rpc: true
       },
+      external_resources: {
+        public_rpc:false,
+        faucet:false,
+        public_funds:false,
+        bedrock_ntp:{
+          endpoint:"pool.ntp.org:123/udp",
+          attempted_by_pinned_component:true,
+          required_for_certification:false,
+          observed_timeout_count:$bedrock_ntp_timeout_count
+        },
+        certification_success_depends_on_external_network:false
+      },
       public_rpc_used: false,
       faucet_used: false,
       public_funds_used: false,
@@ -1103,6 +1129,14 @@ write_run_evidence() {
     else true end)
     and .replay_command == $replay_command
     and .replay_resubmission_count == 0
+    and .external_resources.public_rpc == false
+    and .external_resources.faucet == false
+    and .external_resources.public_funds == false
+    and .external_resources.bedrock_ntp.endpoint == "pool.ntp.org:123/udp"
+    and .external_resources.bedrock_ntp.attempted_by_pinned_component == true
+    and .external_resources.bedrock_ntp.required_for_certification == false
+    and (.external_resources.bedrock_ntp.observed_timeout_count | numbers) >= 0
+    and .external_resources.certification_success_depends_on_external_network == false
   ' "$run_evidence" >/dev/null || fail "final journey evidence packet is inconsistent"
 }
 
