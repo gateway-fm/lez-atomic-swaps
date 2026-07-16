@@ -245,6 +245,11 @@ jq -e '
   and .bitcoin_exact_signed_depth == true
   and .bitcoin_planned_funding_anchor_exact == true
   and .lez_exact_finalized_ancestry == true
+  and .actor_owned_maker_lock_effects == true
+  and .taker_first_lock_external_runner_submission == true
+  and .maker_lock_submission_actor_output == "awaiting_observation"
+  and .maker_lock_restart_never_resubmits == true
+  and .runner_only_confirms_actor_submitted_maker_locks == true
   and .actor_owned_claim_effects == true
   and .actor_owned_survivor_claim_effects == true
   and .survivor_revealer_absent_until_follower_terminal == true
@@ -271,7 +276,7 @@ jq -e '
   and .first_lock_refund_abandoned_maker_after_activation_until_finality == true
   and .first_lock_refund_taker_only_revision_one_and_refund_projection == true
   and .timeout_terminal_phase == "refunded"
-  and .actor_config_schema_version == 3
+  and .actor_config_schema_version == 4
   and .role_shaped_bitcoin_refund_authority == true
   and .secure_sidecar_state_root_required == true
   and .single_core_rpc_response_per_call == true
@@ -422,7 +427,9 @@ if "$direction_driver" effect-plan taker_sells_foreign invalid-journey >/dev/nul
 fi
 
 for behavior in prepare_final_transcript provision_signing_material run_signing_ceremony \
-  write_actor_configs activate_actors submit_bitcoin_lock submit_lez_lock_pair \
+  write_actor_configs activate_actors submit_taker_bitcoin_first_lock \
+  submit_taker_lez_first_lock_pair submit_actor_maker_bitcoin_second_lock \
+  submit_actor_maker_lez_second_lock_pair \
   actor_invoke_observation_retry \
   actor_reconcile_bitcoin_claim_submission \
   write_dual_lock_gate submit_actor_bitcoin_claim submit_actor_lez_claim \
@@ -894,8 +901,125 @@ rg -Fq 'planned_bitcoin_funding_anchor_height' "$direction_driver" ||
   fail "Bitcoin lock path does not bind the actual mined height to the planned anchor"
 rg -Fq 'exact_transaction_occurrences:1' "$direction_driver" ||
   fail "Bitcoin lock path does not retain exact containing-block membership"
-rg -Fq 'schema_version:3,role:$role' "$direction_driver" ||
-  fail "actor configs do not use schema version 3"
+actor_config_source="$(sed -n '/^write_actor_configs() {$/,/^}$/p' "$direction_driver")"
+rg -Fq 'schema_version:4,role:$role' <<<"$actor_config_source" ||
+  fail "actor configs do not use schema version 4"
+rg -Fq 'exact_funding_transaction_file:$maker_bitcoin_funding' \
+  <<<"$actor_config_source" ||
+  fail "Bitcoin Maker config does not name the exact signed funding transaction"
+rg -Fq 'preparation_request_file:$maker_lez_request' <<<"$actor_config_source" ||
+  fail "LEZ Maker config does not name the exact preparation request"
+rg -Fq 'preparation_result_file:$maker_lez_result' <<<"$actor_config_source" ||
+  fail "LEZ Maker config does not name the exact preparation result"
+rg -Fq 'if $role == "maker" then {maker_lock:' <<<"$actor_config_source" ||
+  fail "maker_lock is not restricted to the Maker config"
+
+bitcoin_first_lock_source="$(sed -n \
+  '/^submit_taker_bitcoin_first_lock() {$/,/^}$/p' "$direction_driver")"
+lez_first_lock_source="$(sed -n \
+  '/^submit_taker_lez_first_lock_pair() {$/,/^}$/p' "$direction_driver")"
+lez_external_submission_source="$(sed -n \
+  '/^submit_lez_transaction_once() {$/,/^}$/p' "$direction_driver")"
+bitcoin_maker_lock_source="$(sed -n \
+  '/^submit_actor_maker_bitcoin_second_lock() {$/,/^}$/p' "$direction_driver")"
+bitcoin_lock_confirmation_source="$(sed -n \
+  '/^confirm_bitcoin_lock_after_submission() {$/,/^}$/p' "$direction_driver")"
+lez_maker_lock_source="$(sed -n \
+  '/^submit_actor_maker_lez_second_lock_pair() {$/,/^}$/p' "$direction_driver")"
+rg -Fq 'sendrawtransaction' <<<"$bitcoin_first_lock_source" ||
+  fail "Taker Bitcoin first-lock helper no longer performs its external submission"
+rg -Fq 'submit_lez_transaction_once taker' <<<"$lez_first_lock_source" ||
+  fail "Taker LEZ first-lock helper no longer performs its external submissions"
+rg -Fq '"$M3_POC_DIRECTION" == "taker_sells_lez" && "$role" == "taker"' \
+  <<<"$lez_external_submission_source" ||
+  fail "external LEZ submit helper is not fail-closed to the Taker first lock"
+if rg -Fq 'sendrawtransaction' <<<"$bitcoin_maker_lock_source"; then
+  fail "runner still submits the Maker Bitcoin second lock externally"
+fi
+if rg -Fq 'submit_lez_transaction_once' <<<"$lez_maker_lock_source" ||
+   rg -Fq 'operator_call final maker submit-transaction' <<<"$lez_maker_lock_source"; then
+  fail "runner still submits a Maker LEZ second-lock member externally"
+fi
+for source in "$bitcoin_maker_lock_source" "$lez_maker_lock_source"; do
+  rg -Fq 'actor_invoke maker drive' <<<"$source" ||
+    fail "Maker second-lock path does not use a fresh Maker actor process"
+  rg -Fq '.outcome == "awaiting_observation"' <<<"$source" ||
+    fail "Maker second-lock path does not validate the settled actor output"
+done
+rg -Fq 'confirm_bitcoin_lock_after_submission maker taker' \
+  <<<"$bitcoin_maker_lock_source" ||
+  fail "Maker Bitcoin path does not hand the actor-submitted effect to confirmation"
+rg -Fq 'mine_one_core_block' <<<"$bitcoin_lock_confirmation_source" ||
+  fail "runner does not mine the actor-submitted Bitcoin maker lock"
+rg -Fq 'prove_lez_finalized_transaction' <<<"$lez_maker_lock_source" ||
+  fail "runner does not prove actor-submitted LEZ maker-lock finality"
+rg -Fq 'lez_successful_submission_count' <<<"$lez_maker_lock_source" ||
+  fail "LEZ maker-lock path does not retain exact submission counts"
+
+maker_lez_source_line() {
+  local needle="$1" line
+  line="$(rg -n -m1 -F -- "$needle" <<<"$lez_maker_lock_source" | cut -d: -f1)"
+  [[ "$line" =~ ^[0-9]+$ ]] ||
+    fail "LEZ maker-lock source is missing ordered step: ${needle}"
+  printf '%s\n' "$line"
+}
+
+lez_init_submit_line="$(maker_lez_source_line \
+  'actor_invoke maker drive lez-maker-initialization-submit')"
+lez_init_restart_line="$(maker_lez_source_line \
+  'actor_invoke maker drive lez-maker-initialization-accepted-restart')"
+lez_init_finality_line="$(maker_lez_source_line \
+  'prove_lez_finalized_transaction lez-initialization')"
+lez_init_window_line="$(maker_lez_source_line \
+  'initialization_window_blocks=$((lez_proved_tip - initial_start))')"
+lez_init_write_line="$(maker_lez_source_line \
+  'write_actor_configs "$((initial_start + 1))" "$initialization_window_blocks"')"
+lez_init_observe_line="$(maker_lez_source_line \
+  'actor_invoke maker drive lez-maker-initialization-finalized-observe')"
+lez_init_count_stable_line="$(maker_lez_source_line \
+  '[[ "$(lez_successful_submission_count)" == 1 ]]')"
+lez_funding_submit_line="$(maker_lez_source_line \
+  'actor_invoke maker drive lez-maker-funding-submit')"
+lez_funding_count_line="$(maker_lez_source_line '[[ "$after_count" == 2 ]]')"
+lez_funding_restart_line="$(maker_lez_source_line \
+  'actor_invoke maker drive lez-maker-funding-accepted-restart')"
+lez_funding_finality_line="$(maker_lez_source_line \
+  'prove_lez_finalized_transaction lez-funding')"
+lez_pair_window_line="$(maker_lez_source_line \
+  'lez_lock_window_blocks=$((lez_proved_tip - initial_start))')"
+lez_pair_write_line="$(maker_lez_source_line \
+  'write_actor_configs "$lez_lock_window_start" "$lez_lock_window_blocks"')"
+lez_pair_assert_line="$(maker_lez_source_line 'assert_lez_pair_inside_actor_window')"
+
+if (( lez_init_submit_line >= lez_init_restart_line ||
+      lez_init_restart_line >= lez_init_finality_line ||
+      lez_init_finality_line >= lez_init_window_line ||
+      lez_init_window_line >= lez_init_write_line ||
+      lez_init_write_line >= lez_init_observe_line ||
+      lez_init_observe_line >= lez_init_count_stable_line ||
+      lez_init_count_stable_line >= lez_funding_submit_line ||
+      lez_funding_submit_line >= lez_funding_count_line ||
+      lez_funding_count_line >= lez_funding_restart_line ||
+      lez_funding_restart_line >= lez_funding_finality_line ||
+      lez_funding_finality_line >= lez_pair_window_line ||
+      lez_pair_window_line >= lez_pair_write_line ||
+      lez_pair_write_line >= lez_pair_assert_line )); then
+  fail "LEZ Maker lock must refresh the init window, observe canonical init, then fund and prove the full pair"
+fi
+
+lez_pair_assertion_source="$(sed -n \
+  '/^assert_lez_pair_inside_actor_window() {$/,/^}$/p' "$direction_driver")"
+[[ -n "$lez_pair_assertion_source" ]] ||
+  fail "LEZ Maker lock lacks a full-pair actor-window assertion"
+for term in 'initialization_block' 'funding_block' \
+  'window_end=$((lez_lock_window_start + lez_lock_window_blocks - 1))' \
+  'window_end == lez_proved_tip' \
+  'initialization_block >= lez_lock_window_start' \
+  'funding_block >= lez_lock_window_start' \
+  'initialization_and_funding_inside_window:true'; do
+  rg -Fq "$term" <<<"$lez_pair_assertion_source" ||
+    fail "LEZ Maker full-pair window assertion is missing: ${term}"
+done
 rg -Fq 'taker_sells_foreign:taker|taker_sells_lez:maker' "$direction_driver" ||
   fail "Bitcoin refund authority is not direction/role shaped"
 rg -Fq 'bitcoin_refund_key_file:$refund' "$direction_driver" ||

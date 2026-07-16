@@ -29,6 +29,11 @@ emit_contract() {
       bitcoin_exact_signed_depth: true,
       bitcoin_planned_funding_anchor_exact: true,
       lez_exact_finalized_ancestry: true,
+      actor_owned_maker_lock_effects: true,
+      taker_first_lock_external_runner_submission: true,
+      maker_lock_submission_actor_output: "awaiting_observation",
+      maker_lock_restart_never_resubmits: true,
+      runner_only_confirms_actor_submitted_maker_locks: true,
       actor_owned_claim_effects: true,
       actor_owned_survivor_claim_effects: true,
       actor_owned_refund_effects: true,
@@ -55,7 +60,7 @@ emit_contract() {
       },
       default_journey: "claim",
       timeout_terminal_phase: "refunded",
-      actor_config_schema_version: 3,
+      actor_config_schema_version: 4,
       role_shaped_bitcoin_refund_authority: true,
       secure_sidecar_state_root_required: true,
       single_core_rpc_response_per_call: true,
@@ -785,21 +790,11 @@ bitcoin_lock_tx=""
 bitcoin_claim_tx=""
 bitcoin_refund_tx=""
 bitcoin_refund_wtxid=""
-submit_bitcoin_lock() {
-  local funder peer funding_hex expected response mempool planned_anchor mined_block
-  case "$M3_POC_DIRECTION" in
-    taker_sells_foreign) funder=taker; peer=maker ;;
-    taker_sells_lez) funder=maker; peer=taker ;;
-  esac
-  funding_hex="$(tr -d '\r\n' <"${M3_POC_DIRECTION_ROOT}/fixture/funding-transaction.hex")"
+confirm_bitcoin_lock_after_submission() {
+  local funder="$1" peer="$2"
+  local expected mempool planned_anchor mined_block
   expected="$(jq -er '.bitcoin_funding_transaction_id' \
     "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-stage-two.json")"
-  core_rpc "$funder" testmempoolaccept "[[\"${funding_hex}\"]]" |
-    jq -e '.result[0].allowed == true' >/dev/null ||
-    fail "Core policy rejected the exact signed Bitcoin lock"
-  response="$(core_rpc "$funder" sendrawtransaction "[\"${funding_hex}\"]")"
-  [[ "$(jq -er '.result' <<<"$response")" == "$expected" ]] ||
-    fail "Core returned an unexpected Bitcoin lock ID"
   mempool="$(core_rpc "$peer" getrawmempool '[]')"
   jq -e --arg tx "$expected" '.result == [$tx]' <<<"$mempool" >/dev/null ||
     fail "counterparty did not observe the exact Bitcoin lock in mempool"
@@ -826,6 +821,58 @@ submit_bitcoin_lock() {
   chmod 0600 "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-bitcoin-funding-anchor.json"
   wait_core_confirmed "$expected" "$peer" bitcoin-lock
   bitcoin_lock_tx="$expected"
+}
+
+submit_taker_bitcoin_first_lock() {
+  local funding_hex expected response
+  [[ "$M3_POC_DIRECTION" == "taker_sells_foreign" ]] ||
+    fail "external Bitcoin lock submission is reserved for the Taker first lock"
+  funding_hex="$(tr -d '\r\n' <"${M3_POC_DIRECTION_ROOT}/fixture/funding-transaction.hex")"
+  expected="$(jq -er '.bitcoin_funding_transaction_id' \
+    "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-stage-two.json")"
+  core_rpc taker testmempoolaccept "[[\"${funding_hex}\"]]" |
+    jq -e '.result[0].allowed == true' >/dev/null ||
+    fail "Core policy rejected the exact signed Bitcoin Taker first lock"
+  response="$(core_rpc taker sendrawtransaction "[\"${funding_hex}\"]")"
+  [[ "$(jq -er '.result' <<<"$response")" == "$expected" ]] ||
+    fail "Core returned an unexpected Bitcoin Taker first-lock ID"
+  confirm_bitcoin_lock_after_submission taker maker
+}
+
+submit_actor_maker_bitcoin_second_lock() {
+  local funding_hex expected mempool
+  [[ "$M3_POC_DIRECTION" == "taker_sells_lez" ]] ||
+    fail "actor-owned Bitcoin Maker lock is only valid when the Taker sells LEZ"
+  funding_hex="$(tr -d '\r\n' <"${M3_POC_DIRECTION_ROOT}/fixture/funding-transaction.hex")"
+  expected="$(jq -er '.bitcoin_funding_transaction_id' \
+    "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-stage-two.json")"
+  core_rpc maker testmempoolaccept "[[\"${funding_hex}\"]]" |
+    jq -e '.result[0].allowed == true' >/dev/null ||
+    fail "Core policy rejected the exact signed Bitcoin Maker second lock"
+
+  actor_invoke maker drive bitcoin-maker-lock-submit
+  jq -e '
+    .schema_version == 1 and .role == "maker" and .command == "drive"
+    and .outcome == "awaiting_observation" and .chain == "bitcoin"
+    and .phase == "taker_lock_confirmed" and .revision == 1
+  ' "$actor_last_output" >/dev/null ||
+    fail "Maker actor did not submit the Bitcoin second lock from revision one"
+  mempool="$(core_rpc taker getrawmempool '[]')"
+  jq -e --arg tx "$expected" '.result == [$tx]' <<<"$mempool" >/dev/null ||
+    fail "Taker did not observe exactly the actor-submitted Bitcoin Maker lock"
+
+  actor_invoke maker drive bitcoin-maker-lock-accepted-restart
+  jq -e '
+    .schema_version == 1 and .role == "maker" and .command == "drive"
+    and .outcome == "awaiting_observation" and .chain == "bitcoin"
+    and .phase == "taker_lock_confirmed" and .revision == 1
+  ' "$actor_last_output" >/dev/null ||
+    fail "fresh Maker restart changed the accepted Bitcoin lock state"
+  core_rpc maker getrawmempool '[]' | jq -e --arg tx "$expected" \
+    '.error == null and .result == [$tx]' >/dev/null ||
+    fail "fresh Maker restart resubmitted or changed the Bitcoin second lock"
+
+  confirm_bitcoin_lock_after_submission maker taker
 }
 
 final_terms=""
@@ -972,9 +1019,18 @@ actor_prelock_lez_tip=0
 write_actor_configs() {
   local start_height="$1" max_blocks="$2"
   local role basic endpoint config partial adaptor refund
+  local maker_bitcoin_funding maker_lez_request maker_lez_result
   [[ "$start_height" =~ ^[0-9]+$ && "$max_blocks" =~ ^[0-9]+$ ]] ||
     fail "actor LEZ window is not numeric"
   (( max_blocks >= 1 && max_blocks <= 4096 )) || fail "actor LEZ window is out of bounds"
+  maker_bitcoin_funding="${M3_POC_DIRECTION_ROOT}/fixture/funding-transaction.hex"
+  maker_lez_request="${M3_POC_DIRECTION_ROOT}/final-prepare-escrow-request.json"
+  maker_lez_result="$final_prepared_escrow"
+  [[ -f "$maker_bitcoin_funding" && ! -L "$maker_bitcoin_funding" ]] ||
+    fail "exact signed Bitcoin maker-lock material is unavailable"
+  [[ -f "$maker_lez_request" && ! -L "$maker_lez_request" &&
+     -f "$maker_lez_result" && ! -L "$maker_lez_result" ]] ||
+    fail "exact witnessed LEZ maker-lock material is unavailable"
   for role in maker taker; do
     case "$role" in
       maker)
@@ -1008,9 +1064,12 @@ write_actor_configs() {
       --arg lez_session "$lez_session_id" \
       --arg lez_journal "${M3_POC_DIRECTION_ROOT}/actors/${role}/lez-journal.sqlite" \
       --arg prepared "$final_prepared_claim" --arg adaptor "$adaptor" --arg refund "$refund" \
+      --arg direction "$M3_POC_DIRECTION" \
+      --arg maker_bitcoin_funding "$maker_bitcoin_funding" \
+      --arg maker_lez_request "$maker_lez_request" --arg maker_lez_result "$maker_lez_result" \
       --slurpfile runtime "${M3_POC_DIRECTION_ROOT}/sidecars/final/${role}/runtime.json" '
       {
-        schema_version:3,role:$role,agreement_file:$agreement,state_db:$state,
+        schema_version:4,role:$role,agreement_file:$agreement,state_db:$state,
         accepted_at_unix_seconds:$accepted,
         bitcoin_core:{endpoint:$core,cookie_file:$basic,connectivity:"isolated_local"},
         lez_bridge:{endpoint:$bridge,capability_file:$capability,run_id:$run,
@@ -1022,7 +1081,13 @@ write_actor_configs() {
           prepared_witnessed_claim_result_file:$prepared
         } + (if $role == "taker" then {adaptor_secret_file:$adaptor} else {} end)),
         refund:(if $refund == "" then {} else {bitcoin_refund_key_file:$refund} end)
-      }
+      } + (if $role == "maker" then {maker_lock:
+        (if $direction == "taker_sells_lez" then
+          {chain:"bitcoin",exact_funding_transaction_file:$maker_bitcoin_funding}
+         elif $direction == "taker_sells_foreign" then
+          {chain:"lez",preparation_request_file:$maker_lez_request,
+           preparation_result_file:$maker_lez_result}
+         else error("unsupported maker-lock direction") end)} else {} end)
     ' >"$partial"
     chmod 0600 "$partial"
     mv "$partial" "$config"
@@ -1378,6 +1443,10 @@ lez_refund_tx=""
 submit_lez_transaction_once() {
   local role="$1" member="$2" label="$3" start_height="$4"
   local request output expected returned
+  [[ "$M3_POC_DIRECTION" == "taker_sells_lez" && "$role" == "taker" ]] ||
+    fail "external LEZ submission is reserved for the Taker first-lock pair"
+  [[ "$member" == "initialization" || "$member" == "funding" ]] ||
+    fail "external LEZ first-lock member is invalid"
   request="${M3_POC_DIRECTION_ROOT}/${label}-submit-request.json"
   output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-submission.json"
   expected="$(jq -er --arg member "$member" '.[$member].transaction_id' \
@@ -1402,23 +1471,133 @@ submit_lez_transaction_once() {
 
 lez_lock_window_start=0
 lez_lock_window_blocks=0
-submit_lez_lock_pair() {
-  local depositor initial_start funding_start
-  case "$M3_POC_DIRECTION" in
-    taker_sells_foreign) depositor=maker ;;
-    taker_sells_lez) depositor=taker ;;
-  esac
+submit_taker_lez_first_lock_pair() {
+  local initial_start funding_start
+  [[ "$M3_POC_DIRECTION" == "taker_sells_lez" ]] ||
+    fail "external LEZ lock submission is reserved for the Taker first lock"
   initial_start="$(finalized_tip)"
-  submit_lez_transaction_once "$depositor" initialization lez-initialization "$initial_start"
+  submit_lez_transaction_once taker initialization lez-initialization "$initial_start"
   lez_initialization_tx="$(jq -er '.initialization.transaction_id' "$final_prepared_escrow")"
   funding_start="$lez_proved_tip"
-  submit_lez_transaction_once "$depositor" funding lez-funding "$funding_start"
+  submit_lez_transaction_once taker funding lez-funding "$funding_start"
   lez_funding_tx="$(jq -er '.funding.transaction_id' "$final_prepared_escrow")"
   lez_lock_window_start=$((initial_start + 1))
   lez_lock_window_blocks=$((lez_proved_tip - initial_start))
   (( lez_lock_window_blocks >= 1 && lez_lock_window_blocks <= 4096 )) ||
     fail "finalized LEZ funding window is out of bounds"
   write_actor_configs "$lez_lock_window_start" "$lez_lock_window_blocks"
+}
+
+assert_lez_pair_inside_actor_window() {
+  local initialization_finality funding_finality initialization_block funding_block
+  local window_end evidence
+  initialization_finality="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-lez-initialization-finality.json"
+  funding_finality="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-lez-funding-finality.json"
+  evidence="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-lez-maker-lock-actor-window.json"
+  [[ -f "$initialization_finality" && ! -L "$initialization_finality" &&
+     -f "$funding_finality" && ! -L "$funding_finality" ]] ||
+    fail "LEZ Maker lock finality evidence is unavailable"
+  [[ ! -e "$evidence" && ! -L "$evidence" ]] ||
+    fail "refusing to overwrite LEZ Maker lock actor-window evidence"
+  initialization_block="$(jq -er '.containing_block_id | numbers' "$initialization_finality")"
+  funding_block="$(jq -er '.containing_block_id | numbers' "$funding_finality")"
+  window_end=$((lez_lock_window_start + lez_lock_window_blocks - 1))
+  (( window_end == lez_proved_tip &&
+     initialization_block >= lez_lock_window_start &&
+     initialization_block <= window_end &&
+     funding_block >= lez_lock_window_start &&
+     funding_block <= window_end )) ||
+    fail "final LEZ actor window does not contain both Maker lock transactions"
+  jq -n --arg direction "$M3_POC_DIRECTION" \
+    --argjson start "$lez_lock_window_start" --argjson blocks "$lez_lock_window_blocks" \
+    --argjson end "$window_end" --argjson tip "$lez_proved_tip" \
+    --argjson initialization "$initialization_block" --argjson funding "$funding_block" '
+    {schema_version:1,direction:$direction,
+     discovery_window:{start_height:$start,max_blocks:$blocks,end_height:$end},
+     finalized_tip_height:$tip,
+     containing_blocks:{initialization:$initialization,funding:$funding},
+     inclusive_window_reaches_tip:($end == $tip),
+     initialization_and_funding_inside_window:true}
+  ' >"$evidence"
+  chmod 0600 "$evidence"
+}
+
+submit_actor_maker_lez_second_lock_pair() {
+  local initial_start funding_start before_count after_count initialization_window_blocks
+  [[ "$M3_POC_DIRECTION" == "taker_sells_foreign" ]] ||
+    fail "actor-owned LEZ Maker lock is only valid when the Taker sells foreign"
+  initial_start="$(finalized_tip)"
+  before_count="$(lez_successful_submission_count)"
+  [[ "$before_count" == 0 ]] ||
+    fail "LEZ Maker second lock began with an unexpected durable submission count"
+  lez_initialization_tx="$(jq -er '.initialization.transaction_id' "$final_prepared_escrow")"
+  lez_funding_tx="$(jq -er '.funding.transaction_id' "$final_prepared_escrow")"
+
+  actor_invoke maker drive lez-maker-initialization-submit
+  jq -e '
+    .schema_version == 1 and .role == "maker" and .command == "drive"
+    and .outcome == "awaiting_observation" and .chain == "lez"
+    and .phase == "taker_lock_confirmed" and .revision == 1
+  ' "$actor_last_output" >/dev/null ||
+    fail "Maker actor did not submit LEZ initialization from revision one"
+  after_count="$(lez_successful_submission_count)"
+  [[ "$after_count" == 1 ]] ||
+    fail "Maker actor did not add exactly one LEZ initialization submission"
+
+  actor_invoke maker drive lez-maker-initialization-accepted-restart
+  jq -e '
+    .schema_version == 1 and .role == "maker" and .command == "drive"
+    and .outcome == "awaiting_observation" and .chain == "lez"
+    and .phase == "taker_lock_confirmed" and .revision == 1
+  ' "$actor_last_output" >/dev/null ||
+    fail "fresh Maker restart changed accepted LEZ initialization state"
+  [[ "$(lez_successful_submission_count)" == "$after_count" ]] ||
+    fail "fresh Maker restart resubmitted LEZ initialization"
+  prove_lez_finalized_transaction lez-initialization "$lez_initialization_tx" "$initial_start"
+
+  initialization_window_blocks=$((lez_proved_tip - initial_start))
+  (( initialization_window_blocks >= 1 && initialization_window_blocks <= 4096 )) ||
+    fail "finalized LEZ initialization window is out of bounds"
+  write_actor_configs "$((initial_start + 1))" "$initialization_window_blocks"
+  actor_invoke maker drive lez-maker-initialization-finalized-observe
+  jq -e '
+    .schema_version == 1 and .role == "maker" and .command == "drive"
+    and .outcome == "awaiting_observation" and .chain == "lez"
+    and .phase == "taker_lock_confirmed" and .revision == 1
+  ' "$actor_last_output" >/dev/null ||
+    fail "Maker actor did not accept finalized LEZ initialization at revision one"
+  [[ "$(lez_successful_submission_count)" == 1 ]] ||
+    fail "finalized LEZ initialization observation changed the submission count"
+
+  funding_start="$lez_proved_tip"
+  actor_invoke maker drive lez-maker-funding-submit
+  jq -e '
+    .schema_version == 1 and .role == "maker" and .command == "drive"
+    and .outcome == "awaiting_observation" and .chain == "lez"
+    and .phase == "taker_lock_confirmed" and .revision == 1
+  ' "$actor_last_output" >/dev/null ||
+    fail "Maker actor did not submit LEZ funding from revision one"
+  after_count="$(lez_successful_submission_count)"
+  [[ "$after_count" == 2 ]] ||
+    fail "Maker actor did not add exactly one LEZ funding submission"
+
+  actor_invoke maker drive lez-maker-funding-accepted-restart
+  jq -e '
+    .schema_version == 1 and .role == "maker" and .command == "drive"
+    and .outcome == "awaiting_observation" and .chain == "lez"
+    and .phase == "taker_lock_confirmed" and .revision == 1
+  ' "$actor_last_output" >/dev/null ||
+    fail "fresh Maker restart changed accepted LEZ funding state"
+  [[ "$(lez_successful_submission_count)" == "$after_count" ]] ||
+    fail "fresh Maker restart resubmitted LEZ funding"
+  prove_lez_finalized_transaction lez-funding "$lez_funding_tx" "$funding_start"
+
+  lez_lock_window_start=$((initial_start + 1))
+  lez_lock_window_blocks=$((lez_proved_tip - initial_start))
+  (( lez_lock_window_blocks >= 1 && lez_lock_window_blocks <= 4096 )) ||
+    fail "finalized actor-owned LEZ funding window is out of bounds"
+  write_actor_configs "$lez_lock_window_start" "$lez_lock_window_blocks"
+  assert_lez_pair_inside_actor_window
 }
 
 submit_actor_bitcoin_claim_effect() {
@@ -2247,7 +2426,7 @@ run_actor_first_lock_refund_flow() {
   local deadline
   case "$M3_POC_DIRECTION" in
     taker_sells_foreign)
-      submit_bitcoin_lock
+      submit_taker_bitcoin_first_lock
       project_role_to_revision taker 1 bitcoin bitcoin-first-lock
       refresh_first_lock_lez_absence_window pre-maturity
       assert_first_lock_recovery_pending bitcoin
@@ -2257,7 +2436,7 @@ run_actor_first_lock_refund_flow() {
       submit_actor_bitcoin_refund taker 2 bitcoin-taker-first-lock-refund
       ;;
     taker_sells_lez)
-      submit_lez_lock_pair
+      submit_taker_lez_first_lock_pair
       project_role_to_revision taker 1 lez lez-first-lock
       assert_first_lock_recovery_pending lez
       deadline="$(jq -er '.lez_terms.refund_at_ms | numbers' "$spec")"
@@ -2781,15 +2960,15 @@ run_actor_flow() {
     claim | survivor_claim | refund)
       case "$M3_POC_DIRECTION" in
         taker_sells_foreign)
-          submit_bitcoin_lock
+          submit_taker_bitcoin_first_lock
           project_both_to_revision 1 bitcoin bitcoin-first-lock
-          submit_lez_lock_pair
+          submit_actor_maker_lez_second_lock_pair
           project_both_to_revision 2 lez lez-second-lock
           ;;
         taker_sells_lez)
-          submit_lez_lock_pair
+          submit_taker_lez_first_lock_pair
           project_both_to_revision 1 lez lez-first-lock
-          submit_bitcoin_lock
+          submit_actor_maker_bitcoin_second_lock
           project_both_to_revision 2 bitcoin bitcoin-second-lock
           ;;
       esac
