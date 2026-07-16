@@ -1094,6 +1094,20 @@ codec are GREEN as components and in run-n's actual-node actor paths. Refund
 execution, concurrency, production key custody, and the
 accepted proposal's full SDK/demo surface remain pending.
 
+The first post-PoC RED-GREEN-REFACTOR loop is now GREEN at the canonical
+Bitcoin transaction and agreement boundary. Exact-pinned `bitcoin` 0.32.101
+constructs a one-input BIP-342 script-path refund with the agreement CSV
+sequence, exact funding prevout/value, default tapleaf sighash, funder-key
+verification, and signature/script/control-block witness. The shared
+claim/refund value validator rejects null outpoints, MAX_MONEY overflow,
+overspend, and zero fee identically. A validated countersigned agreement
+derives the refund only to the direction-selected funder's already signed
+role-owned destination, using the signed cooperative fee as the deterministic
+version-one baseline. Focused tests cover both directions, wrong keys, changed
+outputs, and exact witness shape. This does not yet prove Core deadline
+eligibility, actor secret custody, durable refund submission, or LEZ
+`RefundNative`; those remain the active refund slice.
+
 Authority was reread again on 2026-07-16: accepted replacement issue #112 is
 open/reopened with the `accepted` and `RFP-003` labels and explicitly supersedes
 issue #61. The live RFP repository baseline is master commit

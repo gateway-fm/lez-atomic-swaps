@@ -29,4 +29,7 @@ pub use p2tr::{
     CsvBlockDelay, CsvBlockDelayError, InvalidXOnlyKey, OutputKeyParity, P2trSwapOutput,
     P2trSwapOutputError, RefundXOnlyKey, TwoPartyAggregateKey, XOnlyKeyPurpose,
 };
-pub use transaction::{CooperativeKeyPathSpend, CooperativeKeyPathSpendError};
+pub use transaction::{
+    CooperativeKeyPathSpend, CooperativeKeyPathSpendError, RefundScriptPathSpend,
+    RefundScriptPathSpendError,
+};

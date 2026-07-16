@@ -1,6 +1,6 @@
 # ADR 0009: Bitcoin uses a Taproot script-path CSV refund
 
-Status: Accepted; one-process public deterministic two-party MuSig2/adaptor/extraction Core spend GREEN; refund matrix and production protocol pending — 2026-07-15
+Status: Accepted; independent-actor cooperative claims and the canonical agreement-derived BIP-342 refund transaction are GREEN; actual-node refund matrix and production fee policy pending — 2026-07-16
 
 ```mermaid
 flowchart TB
@@ -10,7 +10,7 @@ flowchart TB
     KeyPath -->|"no / timeout"| Delay["Wait relative CSV delay"]
     Delay --> Tapleaf["CSV + funder refund key tapleaf"]
     Tapleaf --> Refund["Taproot script-path refund"]
-    Refund --> Fee["Current-fee RBF/CPFP policy"]
+    Refund --> Fee["Signed-fee v1 baseline<br/>bounded RBF/CPFP later"]
     Claim --> Privacy["Ordinary key-path appearance"]
     Refund --> Visible["Refund branch intentionally visible"]
 ```
@@ -40,7 +40,10 @@ The cooperative path is a key-path spend. The refund is a script-path spend and
 is therefore identifiable when used, which the RFP explicitly permits. The
 funder constructs and signs the refund spend when needed, with an `nSequence`
 that satisfies the committed relative delay. Pair terms commit the exact output
-key, tapleaf, amount, network, and refund authority before the taker locks.
+key, tapleaf, amount, network, refund authority, and both role-owned Bitcoin
+destinations before the taker locks. Version one derives its initial refund fee
+from the countersigned cooperative fee; the only output pays the
+direction-derived funder's signed destination.
 
 This is the default because consensus protects the refund condition and recovery
 does not depend on preserving one pre-signed transaction. A later privacy-driven
@@ -51,9 +54,11 @@ pre-signed failure mode.
 
 - The relative delay starts from confirmation of the Bitcoin funding output;
   chain adapters never derive it from local wall-clock time.
-- The refund transaction is created with current fee conditions. M3 must select
-  and test a Bitcoin Core-compatible RBF/CPFP policy without changing the locked
-  output, tapleaf, or refund authority.
+- The deterministic version-one refund starts with the countersigned
+  cooperative fee. M3 must select and test a Bitcoin Core-compatible bounded
+  RBF/CPFP policy. Any replacement may only reduce the same signed
+  funder-destination output, must be durably journaled as exact bytes before
+  submission, and cannot change the locked output, tapleaf, or refund authority.
 - Confirmation/reorg monitoring can move an observation back below policy; the
   maker cannot treat mempool presence or a stale height as final.
 - Wallet backup must preserve the refund key and immutable negotiated transcript,
@@ -91,8 +96,13 @@ signature under `Q`. Core accepts and mines the funding and one-item key-path
 claim through policy and consensus at Regtest heights 102 and 103; extraction
 recovers the public fixture scalar and matches its adaptor point.
 
-This closes only the one-process cooperative fixture boundary. The nonce
-commitments are not exchanged before reveal, no crash-safe nonce journal or
-independent maker/taker signer process is proven, and the CSV script-path
-refund, fee replacement, LEZ effect, both complete directions, and atomicity
-remain pending.
+The later role-fixed actor composition closes the former one-process claim
+limitations: separate maker/taker processes, configs, keys, signer journals,
+recovery stores, and public-effect journals complete both happy directions on
+actual isolated Core and LEZ nodes. The first post-PoC hardening loop now also
+constructs and verifies the exact BIP-342 refund transaction from the
+countersigned agreement in both directions. It fixes the input sequence to the
+committed CSV delay, signs the tapleaf digest under the funder's committed key,
+and assembles the three-item witness. Actual Core pre-boundary rejection,
+at-boundary acceptance, restart-safe submission, replacement/fee-bump policy,
+LEZ refund, and both-refund atomicity evidence remain pending.

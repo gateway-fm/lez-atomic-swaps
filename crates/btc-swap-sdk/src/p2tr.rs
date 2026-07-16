@@ -362,6 +362,22 @@ impl P2trSwapOutput {
     pub(crate) fn script_pubkey(&self) -> &ScriptBuf {
         &self.script_pubkey
     }
+
+    pub(crate) const fn refund_key(&self) -> XOnlyPublicKey {
+        self.refund_key.0
+    }
+
+    pub(crate) const fn refund_script(&self) -> &ScriptBuf {
+        &self.refund_script
+    }
+
+    pub(crate) const fn refund_control_block(&self) -> &ControlBlock {
+        &self.control_block
+    }
+
+    pub(crate) const fn tapleaf_hash(&self) -> TapLeafHash {
+        self.tapleaf_hash
+    }
 }
 
 #[cfg(test)]

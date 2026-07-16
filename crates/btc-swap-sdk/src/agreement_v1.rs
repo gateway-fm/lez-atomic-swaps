@@ -22,7 +22,7 @@ use thiserror::Error;
 
 use crate::{
     AdaptorSessionContext, AdaptorSessionError, CooperativeKeyPathSpend, CsvBlockDelay,
-    OutputKeyParity, P2trSwapOutput, RefundXOnlyKey, TwoPartyAggregateKey,
+    OutputKeyParity, P2trSwapOutput, RefundScriptPathSpend, RefundXOnlyKey, TwoPartyAggregateKey,
 };
 
 /// Domain separator for canonical version-1 LEZ/BTC agreement commitments.
@@ -172,7 +172,10 @@ impl BtcParticipantIdentityV1 {
         &self.bitcoin_refund_key
     }
 
-    /// Exact successful Bitcoin claim destination for this role.
+    /// Exact role-owned Bitcoin destination.
+    ///
+    /// It receives this role's successful claim, or its unilateral refund when
+    /// this role is the direction-derived Bitcoin funder.
     #[must_use]
     pub fn claim_destination_script_pubkey(&self) -> &[u8] {
         &self.claim_destination_script_pubkey
@@ -787,6 +790,7 @@ pub struct BtcAgreementV1 {
     record: BtcAgreementRecordV1,
     contract: P2trSwapOutput,
     cooperative_claim: CooperativeKeyPathSpend,
+    bitcoin_refund: RefundScriptPathSpend,
     coordinator: SwapCoordinator,
 }
 
@@ -849,12 +853,15 @@ impl BtcAgreementV1 {
         }
         let contract = reconstruct_contract(&record.body.p2tr)?;
         let cooperative_claim = reconstruct_claim(&record.body, &contract)?;
+        let bitcoin_refund =
+            reconstruct_bitcoin_refund(&record.body, &contract, cooperative_claim.fee())?;
         let recovery_schedule = reconstruct_recovery(&record.body)?;
         let coordinator = derive_initial_coordinator(&record.body, recovery_schedule)?;
         Ok(Self {
             record,
             contract,
             cooperative_claim,
+            bitcoin_refund,
             coordinator,
         })
     }
@@ -1068,6 +1075,17 @@ impl BtcAgreementV1 {
         &self.cooperative_claim
     }
 
+    /// Reconstructed exact unilateral Bitcoin refund transaction and BIP-342 sighash.
+    ///
+    /// The destination is the countersigned Bitcoin funder's role-owned script,
+    /// and the fee equals the countersigned cooperative claim fee. The outpoint,
+    /// value, CSV sequence, tapleaf, and control block all come from the same
+    /// validated agreement.
+    #[must_use]
+    pub const fn bitcoin_refund(&self) -> &RefundScriptPathSpend {
+        &self.bitcoin_refund
+    }
+
     /// Reconstructed direction-correct recovery schedule.
     #[must_use]
     pub const fn recovery_schedule(&self) -> RecoverySchedule {
@@ -1176,6 +1194,9 @@ pub enum BtcAgreementV1Error {
     /// Claim cannot be built or any signed derived claim field drifted.
     #[error("signed Bitcoin claim differs from canonical reconstruction")]
     BitcoinClaimMismatch,
+    /// Direction-derived refund destination or transaction cannot be reconstructed.
+    #[error("signed Bitcoin inputs do not derive a canonical refund")]
+    BitcoinRefundMismatch,
     /// Signed recovery anchors or direction-specific schedule are invalid.
     #[error("signed recovery schedule is invalid")]
     RecoveryScheduleMismatch,
@@ -1383,6 +1404,35 @@ fn reconstruct_claim(
         return Err(BtcAgreementV1Error::BitcoinClaimMismatch);
     }
     Ok(spend)
+}
+
+fn reconstruct_bitcoin_refund(
+    body: &BtcAgreementBodyV1,
+    contract: &P2trSwapOutput,
+    fee: Amount,
+) -> Result<RefundScriptPathSpend, BtcAgreementV1Error> {
+    let destination = body
+        .participants
+        .for_participant(bitcoin_funder(body.direction()))
+        .claim_destination_script_pubkey();
+    let output_value = body
+        .funding
+        .value_sat
+        .checked_sub(fee.to_sat())
+        .ok_or(BtcAgreementV1Error::BitcoinRefundMismatch)?;
+    RefundScriptPathSpend::new(
+        contract,
+        OutPoint {
+            txid: Txid::from_byte_array(body.funding.transaction_id),
+            vout: body.funding.output_index,
+        },
+        Amount::from_sat(body.funding.value_sat),
+        vec![TxOut {
+            value: Amount::from_sat(output_value),
+            script_pubkey: ScriptBuf::from_bytes(destination.to_vec()),
+        }],
+    )
+    .map_err(|_| BtcAgreementV1Error::BitcoinRefundMismatch)
 }
 
 fn reconstruct_recovery(

@@ -401,6 +401,49 @@ fn canonical_countersigned_agreement_reconstructs_both_directions() {
 }
 
 #[test]
+fn countersigned_agreement_derives_exact_funder_refund_in_both_directions() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let fixture = fixture(direction, FixtureOptions::default());
+        let agreement =
+            BtcAgreementV1::validate(signed_record(&fixture)).expect("validated agreement");
+        let refund = agreement.bitcoin_refund();
+        let [output] = refund.unsigned_transaction().output.as_slice() else {
+            panic!("refund must have exactly one output");
+        };
+
+        assert_eq!(
+            refund.funding_outpoint(),
+            agreement.cooperative_claim().funding_outpoint()
+        );
+        assert_eq!(
+            refund.funding_prevout(),
+            agreement.cooperative_claim().funding_prevout()
+        );
+        assert_eq!(
+            refund.unsigned_transaction().input[0]
+                .sequence
+                .to_consensus_u32(),
+            agreement.p2tr_contract().refund_sequence()
+        );
+        assert_eq!(refund.fee(), agreement.cooperative_claim().fee());
+        assert_eq!(output.value, Amount::from_sat(CLAIM_VALUE_SAT));
+        assert_eq!(
+            output.script_pubkey.as_bytes(),
+            agreement
+                .participant(agreement.bitcoin_funder())
+                .claim_destination_script_pubkey()
+        );
+        assert_ne!(
+            refund.sighash_bytes(),
+            agreement.cooperative_claim().sighash_bytes()
+        );
+    }
+}
+
+#[test]
 fn validated_agreement_derives_both_fresh_adaptor_session_contexts() {
     for direction in [
         SwapDirection::TakerSellsForeign,

@@ -107,7 +107,7 @@ flowchart TB
 | [0006](0006-lez-upstream-semantics.md) | Pin LEZ behavior and verify source assumptions executablely | Accepted |
 | [0007](0007-maker-local-rpc.md) | Authenticated local JSON-RPC with a transport-hardening gate | Accepted, production transport pending |
 | [0008](0008-bidirectional-role-ordering.md) | Separate product direction from reviewed pair funding capability | Accepted; XMR is LEZ-first only |
-| [0009](0009-bitcoin-refund-path.md) | Taproot key-path cooperative claim with script-path CSV refund | Accepted; a one-process public deterministic two-party MuSig2/adaptor/extraction Core claim and an in-memory fresh-nonce dual-domain signing boundary are GREEN, while durable independent processes and refund evidence remain |
+| [0009](0009-bitcoin-refund-path.md) | Taproot key-path cooperative claim with script-path CSV refund | Accepted; separate role actors complete both actual-node cooperative directions and the agreement-derived BIP-342 refund transaction is GREEN, while Core deadline/restart/fee-bump and LEZ refund evidence remain |
 | [0010](0010-typed-cross-chain-deadlines.md) | Typed consensus clocks plus conservative cross-chain safety bounds | Accepted for deadline legs; XMR superseded by 0011 |
 | [0011](0011-event-gated-recovery.md) | Recovery uses typed deadlines or canonical events; XMR has no native timelock | Accepted and represented in core/RPC/CLI |
 | [0012](0012-lez-escrow-custody.md) | Split metadata PDA from authenticated-transfer custody or required custom-token ATA | Native authenticated-transfer and recursive ATA compatibility paths are GREEN; canonical v0.2 native custody completed both local happy directions, while actual-node refund and token-corridor hardening remain deferred |
