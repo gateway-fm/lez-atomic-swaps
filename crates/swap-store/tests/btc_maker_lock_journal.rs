@@ -58,6 +58,88 @@ fn exact(step: &PublicEffectStepV1) -> BtcMakerLockStepObservation {
     }
 }
 
+fn exact_idempotent_submission_safe(step: &PublicEffectStepV1) -> BtcMakerLockStepObservation {
+    BtcMakerLockStepObservation::ExactIdempotentSubmissionSafe {
+        expected_public_id: step.expected_public_id().as_str().into(),
+        exact_public_bytes: step.exact_bytes().as_slice().to_vec(),
+    }
+}
+
+#[test]
+fn exact_idempotent_unknown_can_start_once_without_claiming_absence() {
+    let directory = tempdir().expect("temporary store");
+    let path = directory.path().join("maker.sqlite3");
+    let candidate = intent("btc-maker-idempotent-unknown", lez_plan());
+    let initialize = candidate.plan().steps()[0].clone();
+    let mut journal = SqliteBtcMakerLockJournal::open(&path).expect("open journal");
+    let _ = journal.create_intent(&candidate).expect("create intent");
+
+    let BtcMakerLockStepDecision::SubmitOnce(started) = journal
+        .reconcile_step(
+            &candidate,
+            initialize.step(),
+            exact_idempotent_submission_safe(&initialize),
+        )
+        .expect("start exact idempotent submission")
+    else {
+        panic!("exact idempotent admission must grant one durable send");
+    };
+    assert_eq!(started.state(), BtcMakerLockStepState::Started);
+    assert_eq!(started.attempt_count(), 1);
+
+    drop(journal);
+    let mut restarted = SqliteBtcMakerLockJournal::open(&path).expect("restart journal");
+    let BtcMakerLockStepDecision::ObserveOnly(replayed) = restarted
+        .reconcile_step(
+            &candidate,
+            initialize.step(),
+            exact_idempotent_submission_safe(&initialize),
+        )
+        .expect("idempotent restart stays observe-only")
+    else {
+        panic!("durably consumed authority must never rearm");
+    };
+    assert_eq!(replayed.state(), BtcMakerLockStepState::Started);
+    assert_eq!(replayed.attempt_count(), 1);
+}
+
+#[test]
+fn exact_idempotent_admission_rejects_changed_identity_or_bytes() {
+    let directory = tempdir().expect("temporary store");
+    for (case, observation) in [
+        (
+            "id",
+            BtcMakerLockStepObservation::ExactIdempotentSubmissionSafe {
+                expected_public_id: "different-init-id".into(),
+                exact_public_bytes: vec![0x10, 0x11],
+            },
+        ),
+        (
+            "bytes",
+            BtcMakerLockStepObservation::ExactIdempotentSubmissionSafe {
+                expected_public_id: "lez-init-id".into(),
+                exact_public_bytes: vec![0x10, 0xff],
+            },
+        ),
+    ] {
+        let path = directory.path().join(format!("{case}.sqlite3"));
+        let candidate = intent(&format!("btc-maker-idempotent-{case}"), lez_plan());
+        let initialize = candidate.plan().steps()[0].clone();
+        let mut journal = SqliteBtcMakerLockJournal::open(&path).expect("open journal");
+        let _ = journal.create_intent(&candidate).expect("create intent");
+        assert!(matches!(
+            journal.reconcile_step(&candidate, initialize.step(), observation),
+            Err(StoreError::BtcMakerLockConflict)
+        ));
+        let durable = journal
+            .load_intent(candidate.swap_id())
+            .expect("load intent")
+            .expect("intent exists");
+        assert_eq!(durable.steps()[0].state(), BtcMakerLockStepState::Prepared);
+        assert_eq!(durable.steps()[0].attempt_count(), 0);
+    }
+}
+
 #[test]
 fn lez_plan_is_durable_in_order_and_exact_reopen_is_idempotent() {
     let directory = tempdir().expect("temporary store");

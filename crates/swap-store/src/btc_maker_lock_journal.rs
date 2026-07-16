@@ -230,6 +230,19 @@ pub enum BtcMakerLockStepObservation {
         /// Complete observed public wire bytes.
         exact_public_bytes: Vec<u8>,
     },
+    /// The adapter could not prove current absence, but independently proved
+    /// that one node call can submit only this retained identity and exact
+    /// byte sequence and that replaying it is economically idempotent.
+    ///
+    /// This is intentionally distinct from [`Self::Absent`]: it grants the
+    /// same one durable send attempt without making a false chain-absence
+    /// claim. A Started, Unknown, or Accepted step remains observe-only.
+    ExactIdempotentSubmissionSafe {
+        /// Chain-native identity independently bound to the node call.
+        expected_public_id: Box<str>,
+        /// Complete exact wire bytes independently bound to the node call.
+        exact_public_bytes: Vec<u8>,
+    },
     /// A bounded fresh lookup proved this exact effect absent.
     Absent,
     /// The lookup could not prove exact presence or absence.
@@ -444,6 +457,23 @@ impl SqliteBtcMakerLockJournal {
                 }
             }
             BtcMakerLockStepObservation::Absent => {
+                if durable.closed_revision.is_none()
+                    && predecessors_accepted
+                    && step.state == BtcMakerLockStepState::Prepared
+                {
+                    begin_step_once(&transaction, intent, index, &mut step)?;
+                    submit_once = true;
+                }
+            }
+            BtcMakerLockStepObservation::ExactIdempotentSubmissionSafe {
+                expected_public_id,
+                exact_public_bytes,
+            } => {
+                if expected_public_id.as_ref() != step.step.expected_public_id().as_str()
+                    || exact_public_bytes.as_slice() != step.step.exact_bytes().as_slice()
+                {
+                    return Err(StoreError::BtcMakerLockConflict);
+                }
                 if durable.closed_revision.is_none()
                     && predecessors_accepted
                     && step.state == BtcMakerLockStepState::Prepared
