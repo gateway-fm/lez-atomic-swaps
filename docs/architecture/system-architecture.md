@@ -333,8 +333,10 @@ flowchart TB
         M3RK[("M3 Bitcoin-funder refund scalar<br/>mode 0600 + x-only agreement match GREEN")]
         M3PE[("M3 role-local public-effect journal<br/>claim absence or refund eligibility before CAS<br/>refund race guard GREEN")]
         M3BR[("M3 BTC lifecycle recovery store<br/>four evidence revisions + hash chain<br/>offline Completed or Refunded GREEN")]
-        M3BC["M3 typed Core 31.1 adapter<br/>claim + refund stable-tip evidence<br/>exact post-send txid/wtxid readback GREEN"]
-        M3RA["btc-reference-actor<br/>claim + deterministic refund execution GREEN<br/>actual-node refund pending"]
+        M3SDK["M3 role-fixed BTC funding facade<br/>exact Bitcoin and ordered LEZ plans<br/>byte-bound first-lock validation GREEN"]
+        M3ML[("M3 Maker second-lock journal<br/>ordered one-attempt steps<br/>atomic revision-two close GREEN")]
+        M3BC["M3 typed Core 31.1 adapter<br/>exact unspent funding + claim/refund evidence<br/>authorized one-send readback GREEN"]
+        M3RA["btc-reference-actor<br/>claims, refunds, survivor GREEN<br/>Maker-lock integration active"]
     end
 
     subgraph LezSidecars["Role-isolated official LEZ v0.1.2 processes"]
@@ -467,6 +469,8 @@ flowchart TB
     M3AS -->|"stable read and agreement point check"| M3RA
     M3RK -->|"Bitcoin funder only; exact refund key"| M3RA
     M3WB -->|"full prepared claim result"| M3RA
+    M3SDK -.->|"schema-4 exact plans"| M3RA
+    M3ML -.->|"observe before one send; close with revision two"| M3RA
     M3RA -->|"predecessor CAS projections one through four"| M3BR
     M3RA -->|"agreement-derived Bitcoin funding, claim, and refund"| M3BC
     M3RA -->|"signed-account finalized LEZ funding read"| M3FF
@@ -576,7 +580,7 @@ flowchart TB
     classDef implemented fill:#ddf4ff,stroke:#0969da;
     classDef running fill:#e6ffec,stroke:#1a7f37;
     class MM,LC,CA,TM,LRR,PublicLezRisk planned;
-    class TC,M3RA,M3AS,M3RK,M3PE,M3RF,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
+    class TC,M3RA,M3AS,M3RK,M3PE,M3RF,M3BR,M3BC,M3SDK,M3ML,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
     class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02Full,V02State,MSL2,TLS2,V02J,MBR2,TBR2,M3FF,M3FO running;
 ```
 
@@ -598,6 +602,16 @@ taker projection, maker-independent observation replay, confirmed maker funding,
 and the taker-local observed-maker transition. Schema-v10 claim and refund
 journals protect exact owner material, keep observer paths secret-free, and
 replay separate role stores to `Completed` or `Refunded` in both directions.
+The BTC pair now also exposes a dependency-light role-fixed funding facade with
+exact Bitcoin and ordered LEZ plans, byte-bound first-lock validation, and
+typed capability gaps for the still-open full lifecycle. Its dedicated
+Maker-only revision-one SQLite journal persists the complete second-lock plan,
+consumes one authority per step, retains node-admitted versus ambiguous outcomes
+without rearming, and accepts completion only from exact canonical observation.
+Maker revision-two projection and intent close share one transaction; Taker
+projection remains observation-only. The LEZ-first direction has a separate
+state-only current `Funded` check under equal canonical clocks, which
+complements rather than replaces finalized first-lock evidence.
 The official native-refund sidecar, main revealing-claim/refund validation
 adapters, both-direction agreement-bound Zebra funding discovery, and
 context-owning LEZ SDK ports are now GREEN. The production fresh-client
@@ -1201,8 +1215,9 @@ the refund decision. A local timer or an assumption that the maker disappeared
 is insufficient. The BTC actor now implements and actual-node proves the
 refund-side cutoff branch and the post-reveal follower-survivor branch in both
 directions. The live maker-lock admission side of that boundary race remains
-open. The public ZEC SDK survivor branches shown below remain unimplemented or
-unproved; the XMR flow remains an M4 target.
+open, although its exact ports, plans, and durable one-attempt authority are
+now GREEN prerequisites. The public ZEC SDK survivor branches shown below
+remain unimplemented or unproved; the XMR flow remains an M4 target.
 
 This is not a distributed transaction and there is no cross-chain atomic commit.
 Atomicity is a protocol property conditional on canonical chain validation,
@@ -1403,7 +1418,8 @@ the Bitcoin leg safely claimable but unspent.
 absent-maker refund-side branch, and direct post-reveal maker continuation are
 actual-node GREEN. Clean pushed-commit run `m3survivor-20260716c` certifies the
 survivor branch in both directions. Canonical maker-lock containing-time
-enforcement is GREEN at `3d202f7`; SDK-owned same-action submission and its
+enforcement is GREEN at `3d202f7`; exact unspent/submission ports and durable
+SDK plans/authority are GREEN at `4fb6950` and `79d7e68`. Actor wiring and its
 actual-node admission packet remain open.
 
 <!-- atomicity-argument: lez-btc/taker-sells-lez -->
@@ -1430,7 +1446,8 @@ leave the remaining LEZ leg safely claimable but not terminal.
 absent-maker refund-side branch, and direct post-reveal maker continuation are
 actual-node GREEN. Clean pushed-commit run `m3survivor-20260716c` certifies the
 survivor branch in both directions. Canonical maker-lock containing-time
-enforcement is GREEN at `3d202f7`; SDK-owned same-action submission and its
+enforcement is GREEN at `3d202f7`; exact unspent/submission ports and durable
+SDK plans/authority are GREEN at `4fb6950` and `79d7e68`. Actor wiring and its
 actual-node admission packet remain open.
 
 The BTC construction is atomic under these explicit conditions:
@@ -1441,8 +1458,9 @@ The BTC construction is atomic under these explicit conditions:
   fresh canonical absence and unspent observations, and race-safe late-lock
   admission. Run `m3firstlock-20260716h` proves the refund-side actor gate in
   both actual-node directions; `3d202f7` rejects late canonical inclusion and
-  quarantines late presence. The SDK-owned submission race and complementary
-  actual-node admission packet remain pending.
+  quarantines late presence. The exact ports, plans, and one-attempt journal are
+  GREEN; actor integration and the complementary actual-node admission packet
+  remain pending.
 - Both domain-separated aggregate adaptor presignatures and the Bitcoin CSV
   refund commitment are verified and persisted before funding. Neither actor
   has a standalone claim key that bypasses the two-party transcript.

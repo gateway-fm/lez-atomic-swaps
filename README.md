@@ -25,6 +25,18 @@ readback. Pending, spent, absent, malformed, moving-tip, rejected, and ambiguous
 states never manufacture another send authority. Actor ownership and the
 complementary actual-node admission run remain open.
 
+Pushed commit `79d7e68` adds the complementary durable foundation. A role-fixed
+BTC SDK facade validates both direction-specific exact lock plans and accepts
+second-lock access only from exact first-lock bytes and canonical facts. A
+dedicated hardened SQLite journal persists the complete Maker plan, consumes
+one authority per ordered step, distinguishes node admission from ambiguity,
+never rearms either outcome, and atomically closes the intent with the Maker's
+revision-two evidence. The LEZ-first direction also has a read-only state-only
+check proving the exact escrow remains `Funded` under one stable canonical
+clock; it explicitly does not claim finality. Actor schema/port wiring and
+actual-node evidence remain open, and the funding facade does not yet satisfy
+the accepted full-lifecycle SDK requirement.
+
 ## Current status
 
 M2 is certified at its private local-functional PoC boundary under
@@ -486,8 +498,11 @@ never rearm. Owner and nonowner roles project only later exact finalized
 evidence. Run `m3refund-20260716h` now closes the fresh two-direction
 actual-node refund evidence boundary recorded by ADR 0038; the separate
 refund-side absent-maker boundary is GREEN in `m3firstlock-20260716h`. Commit
-`3d202f7` also closes canonical containing-time cutoff enforcement; SDK-owned
-maker submission and its actual-node admission packet, concurrency,
+`3d202f7` closes canonical containing-time cutoff enforcement. Commits
+`4fb6950` and `79d7e68` add exact unspent eligibility, one-shot Bitcoin
+funding, role-fixed exact plans, current LEZ first-lock state, and durable
+ordered Maker authority. Actor-owned submission and its actual-node admission
+packet, concurrency,
 process-kill, and reorg remain open.
 
 The older retained actual-Core run remains a one-process public deterministic
@@ -497,7 +512,7 @@ order through separate role processes. The public actor source now owns both
 claim effects, and run-n now retains their fresh actual-node composition. This
 closes the progressive private local PoC, but does **not** close the accepted
 proposal's production-ready scope: native/custom-token parity,
-SDK-owned maker-lock admission and concurrent demos, Testnet4
+actor-integrated SDK-owned maker-lock admission and concurrent demos, Testnet4
 setup/execution, production key custody/Core adapter, QA/chaos/infosec
 campaigns, and GW-M3-001 disposition remain. There is no `m3-complete` tag. CI
 runs the same P2TR funding/claim

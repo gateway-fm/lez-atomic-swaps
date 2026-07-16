@@ -1056,8 +1056,10 @@ timeout/refund demo in both directions. Run `m3firstlock-20260716h` closes both
 refund-side first-lock absent-maker paths. Clean pushed-commit run
 `m3survivor-20260716c` closes direct post-reveal continuation in both
 directions. Canonical maker-lock containing-time enforcement is GREEN at
-`3d202f7`; SDK-owned maker submission with fresh same-action eligibility,
-its actual-node admission packet, and the concurrent-swap demo remain open
+`3d202f7`. Pushed commits `4fb6950` and `79d7e68` close the typed Core
+unspent/submission port, role-fixed exact-plan facade, current LEZ first-lock
+state proof, and durable ordered Maker intent with atomic revision-two close.
+Actor schema/port integration, its actual-node admission packet, and the concurrent-swap demo remain open
 functional M3 gates. The
 canonical countersigned agreement, finalized LEZ funding/claim
 adapters, typed Core adapter, and reference-actor revisions zero through four
@@ -1445,12 +1447,22 @@ Active M3 refund critical path:
   structured errors, versioning, explicit claim order, and bounded ordered
   exact-public-effect plans are public and independently tested. The concrete
   full-lifecycle BTC facade, durable post-activation resume, claims/refunds, and
-  SDK-owned effects remain open. A role-fixed BTC funding facade is under
-  integration and is not counted complete until its exact-evidence contract,
-  actor ownership, and actual-node flow are pushed and verified;
+  SDK-owned effects remain open. Pushed `79d7e68` adds the narrower role-fixed
+  funding facade: both direction-specific exact plans, offline revision-zero
+  activation/status/resume, exact-byte first-lock validation, claim order, and
+  typed unsupported capability gaps. Its same-txid/different-witness and
+  same-LEZ-ID/different-byte regressions prove that a caller cannot assert a
+  plan commitment without the observed bytes. This is a GREEN prerequisite,
+  not the accepted full-lifecycle SDK;
 - [ ] make the reference actor a thin SDK adapter and move first/second lock
   construction and submission under SDK-owned persist-before-send authority.
-  Current actual-node scripts externally submit both locks, so the present
+  Pushed `79d7e68` adds the dedicated Maker-only revision-one journal with
+  complete ordered plan persistence, exact schema validation, observe-before-
+  send, one CAS winner, durable accepted-versus-unknown call classification,
+  no rearm, exact confirmed step acceptance, and atomic intent close plus
+  lifecycle projection. It also forbids the Maker from bypassing that close via
+  the generic projector while preserving Taker observation-only projection.
+  Current actual-node scripts still externally submit both locks, so the present
   happy/refund packets do not yet prove SDK escrow creation;
 - [ ] resolve F7 at the BTC pair boundary. Shared LEZ native/custom-token guest
   support is GREEN, but the current BTC witnessed terms appear native-only.

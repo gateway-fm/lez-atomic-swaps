@@ -1,8 +1,9 @@
 # ADR 0039: Admit first-lock recovery only after a cross-chain cutoff
 
-Status: Accepted for the M3 BTC PoC; refund-side actual-node evidence is GREEN,
-canonical maker-lock admission is GREEN in code, and SDK-owned submission plus
-fresh actual-node admission evidence remain pending
+Status: Accepted for the M3 BTC PoC; refund-side actual-node evidence, canonical
+containing-time admission, exact unspent/submission ports, role-fixed lock
+plans, and durable Maker authority are GREEN. Actor wiring plus fresh
+actual-node admission evidence remain pending
 
 ## Context
 
@@ -222,10 +223,20 @@ and maps late presence to uncertain on the refund side. Typed Core
 `getblockheader` validation ties hash, confirmation count, height, and median
 time to one stable tip while preserving the existing evidence-v1 wire.
 
+Pushed `4fb6950` makes the Bitcoin first-lock check a single stable-tip bracket
+over exact bytes, containing header, and current spender-index state, and adds
+caller-authorized one-shot Bitcoin funding with exact byte readback. Pushed
+`79d7e68` adds the role-fixed exact-plan facade, the state-only current LEZ
+first-lock check, and a hardened ordered Maker journal. Node acceptance and
+transport ambiguity are distinct durable observe-only outcomes; neither is
+canonical completion. Only exact confirmed step evidence can close the intent,
+and the Maker's revision-two evidence plus intent close share one SQLite
+transaction. The generic Maker projector cannot bypass that boundary.
+
 Run `m3firstlock-20260716h` supplies the isolated two-direction absent-maker
 evidence: no maker second-lock effect, taker-only recovery, revision-two
 `Refunded` convergence, zero replay submission, and exact run-owned cleanup.
 The remaining certifying run must prove the complementary timely maker path
-with the fresh eligibility check and durable plan consumed by the SDK-owned send
-action. Until that evidence exists, this ADR is an implemented safety decision,
-not an M3 completion claim.
+through the actor with the fresh eligibility check and durable plan consumed by
+the SDK-owned send action. Until that evidence exists, this ADR is an
+implemented safety decision, not an M3 completion claim.
