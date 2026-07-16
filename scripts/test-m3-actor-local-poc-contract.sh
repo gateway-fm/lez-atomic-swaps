@@ -914,6 +914,21 @@ rg -Fq 'preparation_result_file:$maker_lez_result' <<<"$actor_config_source" ||
 rg -Fq 'if $role == "maker" then {maker_lock:' <<<"$actor_config_source" ||
   fail "maker_lock is not restricted to the Maker config"
 
+top_level_direction_contract_source="$(sed -n \
+  '/^verify_direction_driver_contract() {$/,/^}$/p' "$runner")"
+[[ -n "$top_level_direction_contract_source" ]] ||
+  fail "top-level runner lacks its embedded direction-contract verifier"
+rg -Fq '.actor_config_schema_version == 4' \
+  <<<"$top_level_direction_contract_source" ||
+  fail "top-level runner still rejects schema-4 actor configs"
+for term in '.actor_owned_maker_lock_effects == true' \
+  '.taker_first_lock_external_runner_submission == true' \
+  '.maker_lock_restart_never_resubmits == true' \
+  '.runner_only_confirms_actor_submitted_maker_locks == true'; do
+  rg -Fq "$term" <<<"$top_level_direction_contract_source" ||
+    fail "top-level runner does not verify direction contract field: ${term}"
+done
+
 bitcoin_first_lock_source="$(sed -n \
   '/^submit_taker_bitcoin_first_lock() {$/,/^}$/p' "$direction_driver")"
 lez_first_lock_source="$(sed -n \

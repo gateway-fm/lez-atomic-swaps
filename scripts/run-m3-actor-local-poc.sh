@@ -569,6 +569,11 @@ verify_direction_driver_contract() {
     and .dual_locks_before_scalar_use == true
     and .bitcoin_exact_signed_depth == true
     and .lez_exact_finalized_ancestry == true
+    and .actor_owned_maker_lock_effects == true
+    and .taker_first_lock_external_runner_submission == true
+    and .maker_lock_submission_actor_output == "awaiting_observation"
+    and .maker_lock_restart_never_resubmits == true
+    and .runner_only_confirms_actor_submitted_maker_locks == true
     and .journeys == ["claim", "survivor_claim", "refund", "first_lock_refund"]
     and .default_journey == "claim"
     and .actor_owned_claim_effects == true
@@ -587,7 +592,7 @@ verify_direction_driver_contract() {
          elif $journey == "survivor_claim" then .actor_owned_survivor_claim_effects
          elif $journey == "refund" then .actor_owned_refund_effects
          else .actor_owned_first_lock_refund_effects end) == true
-    and .actor_config_schema_version == 3
+    and .actor_config_schema_version == 4
     and .role_shaped_bitcoin_refund_authority == true
     and .submission_count_query == true
     and .owned_process_registry == true
