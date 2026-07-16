@@ -1,0 +1,423 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-07-16",
+  "milestone": "M3",
+  "classification": "private_local_two_direction_post_reveal_survivor_claim_poc",
+  "result": "passed",
+  "run_id": "m3survivor-20260716c",
+  "completed_at": "2026-07-16T17:29:50Z",
+  "provenance": {
+    "repository_commit": "6e8b065c2247306b746743454e7816bab8285350",
+    "worktree_clean_during_run": true,
+    "commit_pushed_before_run": true,
+    "validated_executable_scripts": {
+      "outer_runner": {
+        "repository_path": "scripts/run-m3-actor-local-poc.sh",
+        "sha256": "106162db6f6045a919f7a273d79c3ad3b497979c02f1d3d039053f489495f942"
+      },
+      "direction_driver": {
+        "repository_path": "scripts/run-m3-actor-direction.sh",
+        "sha256": "4e729680d0a72138f1855d2b76a694d94612856f50b28c9834692490882db70e"
+      },
+      "lez_bootstrap": {
+        "repository_path": "scripts/run-m3-lez-bootstrap.sh",
+        "sha256": "fb888075a391d5757faf8626956f63a10447c1d0a7c18526642ef034edbf82fa"
+      },
+      "external_override_allowed": false
+    },
+    "direction_evidence": {
+      "taker_sells_foreign": {
+        "direction": "taker_sells_foreign",
+        "revealer": "taker",
+        "follower_role": "maker",
+        "protected_absence": {
+          "starts_after_reveal_submission": true,
+          "ends_after_follower_terminal": true,
+          "revealer_actor_invocation_count": 0
+        },
+        "intermediate": {
+          "phase": "claim_evidence_available",
+          "lifecycle_disposition": "recovering",
+          "terminal": false,
+          "remaining_leg_canonical_and_claimable": true,
+          "followup_effect_present": false
+        },
+        "follower": {
+          "fresh_revision_three_observer": true,
+          "process_exited_before_followup": true,
+          "fresh_followup_submitter": true,
+          "fresh_terminal_projector": true
+        },
+        "delayed_revealer_catchup": {
+          "observation_only": true,
+          "bitcoin_successful_resubmission_count": 0,
+          "lez_successful_resubmission_count": 0,
+          "successful_resubmission_count": 0
+        },
+        "completion_boundary": {
+          "chain": "bitcoin",
+          "confirmed_tip_height": 103,
+          "signed_refund_height": 246,
+          "completed_before_signed_refund_boundary": true
+        },
+        "completion_evidence_sha256": "cd0c6f1ec7ac3152912504a8824bf6d4cae44847fdfc67b9c00d4b11ede50d09",
+        "recovering_evidence_sha256": "9f8138f697a6f5c69c1e87dbca34e5576c7601ebdda2eff58dc5f7423ab4ab9e",
+        "caller_supplied_secret": false,
+        "secret_recorded": false
+      },
+      "taker_sells_lez": {
+        "direction": "taker_sells_lez",
+        "revealer": "taker",
+        "follower_role": "maker",
+        "protected_absence": {
+          "starts_after_reveal_submission": true,
+          "ends_after_follower_terminal": true,
+          "revealer_actor_invocation_count": 0
+        },
+        "intermediate": {
+          "phase": "claim_evidence_available",
+          "lifecycle_disposition": "recovering",
+          "terminal": false,
+          "remaining_leg_canonical_and_claimable": true,
+          "followup_effect_present": false
+        },
+        "follower": {
+          "fresh_revision_three_observer": true,
+          "process_exited_before_followup": true,
+          "fresh_followup_submitter": true,
+          "fresh_terminal_projector": true
+        },
+        "delayed_revealer_catchup": {
+          "observation_only": true,
+          "bitcoin_successful_resubmission_count": 0,
+          "lez_successful_resubmission_count": 0,
+          "successful_resubmission_count": 0
+        },
+        "completion_boundary": {
+          "chain": "lez",
+          "finalized_containing_block_id": 41,
+          "finalized_containing_block_timestamp_ms": 1784222938518,
+          "signed_refund_at_ms": 1784230017000,
+          "finality_evidence_sha256": "90da3186446ecfd4801d90d711c601b866225bc0db78c7093b05e20770948e6e",
+          "containing_block_evidence_sha256": "ffb63c78a4e755a9eab063eeeea9479b01a889a235844bbcdeb9b6a6fb60ff26",
+          "completed_before_signed_refund_boundary": true
+        },
+        "completion_evidence_sha256": "a5abeec4e549c7fb222924ae4432c21465823e41b2c646a05dbcf6a6f76df95f",
+        "recovering_evidence_sha256": "fa19422dde454a1f57acdee1d8f7ba7ca056e8848dde03db707c18b264d5d700",
+        "caller_supplied_secret": false,
+        "secret_recorded": false
+      }
+    }
+  },
+  "local_topology": {
+    "bitcoin_core": {
+      "version": "31.1",
+      "network": "regtest",
+      "rpc_scope": "ephemeral_literal_loopback",
+      "public_peers": 0,
+      "funds_source": "deterministic_local_regtest_coinbase_output"
+    },
+    "lez": {
+      "version": "v0.2.0",
+      "network": "private_local",
+      "slot_duration_seconds": "1.0",
+      "rpc_scope": "ephemeral_literal_loopback",
+      "funds_source": "deterministic_local_genesis_vault_allocations"
+    },
+    "actor_process_model": "fresh_one_shot_process_per_command",
+    "maker_and_taker_stores_signer_journals_credentials_distinct": true
+  },
+  "survivor_protocol": {
+    "revealer": "taker",
+    "follower_role": "maker",
+    "protected_absence": {
+      "starts_after_reveal_submission": true,
+      "ends_after_follower_terminal": true,
+      "revealer_actor_invocation_count": 0
+    },
+    "intermediate": {
+      "phase": "claim_evidence_available",
+      "lifecycle_disposition": "recovering",
+      "terminal": false,
+      "remaining_leg_canonical_and_claimable": true,
+      "followup_effect_present": false
+    },
+    "follower": {
+      "fresh_revision_three_observer": true,
+      "process_exited_before_followup": true,
+      "fresh_followup_submitter": true,
+      "fresh_terminal_projector": true
+    },
+    "delayed_revealer_catchup": {
+      "observation_only": true,
+      "bitcoin_successful_resubmission_count": 0,
+      "lez_successful_resubmission_count": 0,
+      "successful_resubmission_count": 0
+    },
+    "caller_supplied_secret": false,
+    "secret_recorded": false
+  },
+  "directions": [
+    {
+      "direction": "TakerSellsForeign",
+      "revealing_chain": "lez",
+      "followup_chain": "bitcoin",
+      "reveal_transaction_id": "c173cc779012d9f4edb6eb7d7cacc777c6034f73c9128450d8ccbe3257ad4fda",
+      "followup_transaction_id": "0ad77f9c32a4feb29bdd56b7af3d7e4d01f5602fae0bf0830da7f9153575af45",
+      "continuation": {
+        "follower_role": "maker",
+        "canonical_reveal_observed_by_fresh_process": true,
+        "caller_supplied_secret": false,
+        "related_presignature_and_adaptor_point_validated": true,
+        "projected_revision": 3
+      },
+      "intermediate": {
+        "protocol_phase": "claim_evidence_available",
+        "lifecycle_disposition": "recovering",
+        "terminal": false,
+        "remaining_leg": {
+          "chain": "bitcoin",
+          "transaction_id": "bc11415878a0cf7d720bcee6e32d7c26d20370dffa4d09611f9318231cb9230b",
+          "output_index": 0,
+          "value_sat": 1000000,
+          "canonical": true,
+          "unspent_or_funded": true,
+          "observed_tip_height": 102,
+          "signed_refund_height": 246,
+          "before_signed_later_refund_boundary": true
+        },
+        "followup_effect_present": false
+      },
+      "completion": {
+        "maker_revision": 4,
+        "phase": "completed",
+        "boundary": {
+          "chain": "bitcoin",
+          "confirmed_tip_height": 103,
+          "signed_refund_height": 246,
+          "completed_before_signed_refund_boundary": true
+        }
+      },
+      "effects": {
+        "bitcoin_ids": [
+          "bc11415878a0cf7d720bcee6e32d7c26d20370dffa4d09611f9318231cb9230b",
+          "0ad77f9c32a4feb29bdd56b7af3d7e4d01f5602fae0bf0830da7f9153575af45"
+        ],
+        "lez_ids": [
+          "0df736f007ec64f95f98f846c38ba53a27eaae9ff3df5b43d6fb7c40804580c2",
+          "355e284e39ee9664bae3147772b895a083c0c7fa50b8093630862fb23ad4f5f8",
+          "c173cc779012d9f4edb6eb7d7cacc777c6034f73c9128450d8ccbe3257ad4fda"
+        ],
+        "expected_unique": {
+          "bitcoin": 2,
+          "lez": 3
+        }
+      },
+      "protected_absence_and_processes": {
+        "taker_invocations_after_reveal_before_maker_terminal": 0,
+        "taker_absence_guard_enforced": true,
+        "follower_process_exited_at_revision_three": true,
+        "fresh_follower_process_submitted_followup": true,
+        "distinct_fresh_follower_process_projected_terminal": true,
+        "followup_submission_output_sha256": "cf60781d6947879e346b53fa13384e611ac9c3c5a96c9f5565366a856a4a76d5",
+        "terminal_projection_output_sha256": "a3d0c5fd242af4f5c076b701f9d477d4667fc3d712421c2036c2649e82bb60de"
+      },
+      "delayed_revealer_catchup": {
+        "began_after_maker_terminal": true,
+        "revisions": [
+          3,
+          4
+        ],
+        "observation_only": true,
+        "actor_observations": {
+          "reveal": {
+            "chain": "lez",
+            "revision": 3,
+            "outcome": "observed_then_projected",
+            "sha256": "c283d5c6b8fde107f5ab34dc41d052f5f450168280018893799c87f56ac25563"
+          },
+          "followup": {
+            "chain": "bitcoin",
+            "revision": 4,
+            "outcome": "observed_then_projected",
+            "sha256": "3c4466f9873f8e703299a04182f9012cca135db617a8bc1b2878c03759cfc46a"
+          }
+        },
+        "per_chain": {
+          "bitcoin": {
+            "actor_observation_sha256": "3c4466f9873f8e703299a04182f9012cca135db617a8bc1b2878c03759cfc46a",
+            "mempool_before_count": 0,
+            "mempool_after_count": 0,
+            "bitcoin_mempool_before_sha256": "d5d4570915ae356dcee912806f2822465692ce1aa3533894cc2fc1e8385455f6",
+            "bitcoin_mempool_after_sha256": "d5d4570915ae356dcee912806f2822465692ce1aa3533894cc2fc1e8385455f6",
+            "successful_resubmission_count": 0
+          },
+          "lez": {
+            "actor_observation_sha256": "c283d5c6b8fde107f5ab34dc41d052f5f450168280018893799c87f56ac25563",
+            "durable_submission_count_before": 3,
+            "durable_submission_count_after": 3,
+            "successful_resubmission_count": 0
+          }
+        },
+        "successful_resubmission_count": 0
+      },
+      "delivery_or_chat_used": false
+    },
+    {
+      "direction": "TakerSellsLez",
+      "revealing_chain": "bitcoin",
+      "followup_chain": "lez",
+      "reveal_transaction_id": "09cb7f2073e0e14e682522749adef42371ae5565df4878b62d805b2975bfa8ba",
+      "followup_transaction_id": "7b494aacbdcd2f8d4a0ba011c305af9c8c25ed0ad4091446a27a0c042304320d",
+      "continuation": {
+        "follower_role": "maker",
+        "canonical_reveal_observed_by_fresh_process": true,
+        "caller_supplied_secret": false,
+        "related_presignature_and_adaptor_point_validated": true,
+        "projected_revision": 3
+      },
+      "intermediate": {
+        "protocol_phase": "claim_evidence_available",
+        "lifecycle_disposition": "recovering",
+        "terminal": false,
+        "remaining_leg": {
+          "chain": "lez",
+          "transaction_id": "37fede3e7bd6cf16cd2adbf0e151859282ea7d8c1ac219d40f3e663fceeb0870",
+          "amount": "1000",
+          "canonical": true,
+          "unspent_or_funded": true,
+          "finalized_tip_height": 37,
+          "finalized_tip_timestamp_ms": 1784222898087,
+          "signed_refund_at_ms": 1784230017000,
+          "before_signed_later_refund_boundary": true,
+          "metadata_status": "funded",
+          "custody_balance": "1000"
+        },
+        "followup_effect_present": false
+      },
+      "completion": {
+        "maker_revision": 4,
+        "phase": "completed",
+        "boundary": {
+          "chain": "lez",
+          "finalized_containing_block_id": 41,
+          "finalized_containing_block_timestamp_ms": 1784222938518,
+          "signed_refund_at_ms": 1784230017000,
+          "finality_evidence_sha256": "90da3186446ecfd4801d90d711c601b866225bc0db78c7093b05e20770948e6e",
+          "containing_block_evidence_sha256": "ffb63c78a4e755a9eab063eeeea9479b01a889a235844bbcdeb9b6a6fb60ff26",
+          "completed_before_signed_refund_boundary": true
+        }
+      },
+      "effects": {
+        "bitcoin_ids": [
+          "6ecb5cbb4a60e5ba46c77e58fd8d68313d4b5a25518b9d7784714aa5aaca49d8",
+          "09cb7f2073e0e14e682522749adef42371ae5565df4878b62d805b2975bfa8ba"
+        ],
+        "lez_ids": [
+          "2d62d13a829cc3c4c5d37180bf7509fe89677a254f301fe29a7b369a25106067",
+          "37fede3e7bd6cf16cd2adbf0e151859282ea7d8c1ac219d40f3e663fceeb0870",
+          "7b494aacbdcd2f8d4a0ba011c305af9c8c25ed0ad4091446a27a0c042304320d"
+        ],
+        "expected_unique": {
+          "bitcoin": 2,
+          "lez": 3
+        }
+      },
+      "protected_absence_and_processes": {
+        "taker_invocations_after_reveal_before_maker_terminal": 0,
+        "taker_absence_guard_enforced": true,
+        "follower_process_exited_at_revision_three": true,
+        "fresh_follower_process_submitted_followup": true,
+        "distinct_fresh_follower_process_projected_terminal": true,
+        "followup_submission_output_sha256": "48be91557bdd7c2068f400ee918042b0b369cbd8e95dd212ecab8f50faa82c3a",
+        "terminal_projection_output_sha256": "4b4b42b9fa3363ab3be82551d37114921594c9966ad9f540032ece53c3ff9e8c"
+      },
+      "delayed_revealer_catchup": {
+        "began_after_maker_terminal": true,
+        "revisions": [
+          3,
+          4
+        ],
+        "observation_only": true,
+        "actor_observations": {
+          "reveal": {
+            "chain": "bitcoin",
+            "revision": 3,
+            "outcome": "observed_then_projected",
+            "sha256": "0b65caf9fd3471710112358eb0820213b00f79e4fbd6f291186bfe71b44024f0"
+          },
+          "followup": {
+            "chain": "lez",
+            "revision": 4,
+            "outcome": "observed_then_projected",
+            "sha256": "6d0305edc3152967950fb020a0a612deddb84a12383c59e2ffda8988eb39e8e3"
+          }
+        },
+        "per_chain": {
+          "bitcoin": {
+            "actor_observation_sha256": "0b65caf9fd3471710112358eb0820213b00f79e4fbd6f291186bfe71b44024f0",
+            "mempool_before_count": 0,
+            "mempool_after_count": 0,
+            "bitcoin_mempool_before_sha256": "d5d4570915ae356dcee912806f2822465692ce1aa3533894cc2fc1e8385455f6",
+            "bitcoin_mempool_after_sha256": "d5d4570915ae356dcee912806f2822465692ce1aa3533894cc2fc1e8385455f6",
+            "successful_resubmission_count": 0
+          },
+          "lez": {
+            "actor_observation_sha256": "6d0305edc3152967950fb020a0a612deddb84a12383c59e2ffda8988eb39e8e3",
+            "durable_submission_count_before": 3,
+            "durable_submission_count_after": 3,
+            "successful_resubmission_count": 0
+          }
+        },
+        "successful_resubmission_count": 0
+      },
+      "delivery_or_chat_used": false
+    }
+  ],
+  "terminal_replay": {
+    "roles_restarted": [
+      "maker",
+      "taker"
+    ],
+    "directions_replayed": 2,
+    "before_after_effect_manifests_byte_identical": true,
+    "resubmission_count": 0
+  },
+  "exact_cleanup": {
+    "result": "passed",
+    "all_exact_run_resources_absent": true,
+    "containers_absent": null,
+    "networks_absent": null,
+    "volumes_absent": null,
+    "images_absent": null,
+    "secure_reservation_state_absent": null,
+    "broad_cleanup_used": false,
+    "foreign_resources_targeted": false
+  },
+  "runtime_external_resources": {
+    "public_rpc_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_peers_used": false,
+    "certification_success_depends_on_external_network": false,
+    "best_effort_bedrock_ntp": "pool.ntp.org:123/udp",
+    "observed_ntp_timeout_count": 31
+  },
+  "secret_safety": {
+    "private_keys_recorded": false,
+    "credentials_recorded": false,
+    "capabilities_recorded": false,
+    "adaptor_scalar_or_preimage_recorded": false,
+    "raw_transactions_recorded": false,
+    "logs_recorded": false,
+    "private_material_disclosed": false,
+    "public_transaction_and_block_identifiers_recorded": true
+  },
+  "open_scope": [
+    "Live maker-second-lock admission at the cutoff/refund boundary race remains open; the refund-side absent-maker branch is certified separately.",
+    "Two genuinely overlapping swaps with independent funding, agreements, stores, signer sessions, effect journals, and deadlines remain open.",
+    "The accepted public full-lifecycle BTC SDK, SDK-owned lock creation, D1 local demo artifacts, and F7 witnessed custom-token disposition remain open.",
+    "Process-kill, reorg/replacement, fee-pressure, chaos, public execution, production key custody, formal review, and production readiness remain open.",
+    "This file alone does not authorize an M3 completion tag."
+  ]
+}

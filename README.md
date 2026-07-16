@@ -71,9 +71,10 @@ revision 2 `refunded`, replay added zero effects, and exact cleanup targeted no
 foreign resource. The secret-safe retained packet is
 [M3 first-lock absent-maker evidence](docs/evidence/m3-local-two-direction-first-lock-refund-poc-20260716.json).
 This closes the refund-side absent-maker journey, not the still-open live
-maker-lock admission race or post-reveal survivor journey.
+maker-lock admission race. The separate post-reveal survivor journey is
+certified by run C below.
 
-Run `m3survivor-20260716b` then functionally passed the direct post-reveal
+Run `m3survivor-20260716c` passed the direct post-reveal
 survivor journey in both directions. After both locks, the taker published the
 direction-correct reveal and the journey barred every further harnessed taker
 actor invocation until maker terminality. A fresh
@@ -82,9 +83,9 @@ maker observed canonical chain disclosure into nonterminal revision 3
 opposite claim before the signed refund boundary. Only after maker terminality
 did the taker return for observation-only catch-up. Each direction retained
 exactly two Bitcoin and three LEZ effects, replay added zero effects, and exact
-cleanup targeted no foreign resource. This is hash-bound functional evidence;
-a clean pushed-commit rerun remains before its secret-safe packet is retained as
-certification evidence.
+cleanup targeted no foreign resource. The run used clean, already-pushed commit
+`6e8b065`; the retained secret-safe packet is
+[M3 post-reveal survivor evidence](docs/evidence/m3-local-two-direction-survivor-claim-poc-20260716.json).
 
 Run `m3poc-live2-20260715a` used one isolated Bitcoin Core 31.1 Regtest node,
 one exact local LEZ v0.2 Bedrock/sequencer/indexer stack, and separate
@@ -473,7 +474,7 @@ order through separate role processes. The public actor source now owns both
 claim effects, and run-n now retains their fresh actual-node composition. This
 closes the progressive private local PoC, but does **not** close the accepted
 proposal's production-ready scope: native/custom-token parity,
-clean survivor certification, maker-lock cutoff/race and concurrent demos, Testnet4
+maker-lock cutoff/race and concurrent demos, Testnet4
 setup/execution, production key custody/Core adapter, QA/chaos/infosec
 campaigns, and GW-M3-001 disposition remain. There is no `m3-complete` tag. CI
 runs the same P2TR funding/claim

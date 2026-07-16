@@ -1,7 +1,7 @@
 # ADR 0040: Continue post-reveal from canonical evidence without the revealer
 
-Status: Accepted for the M3 BTC PoC; functional actual-node evidence GREEN,
-clean pushed-commit certification pending
+Status: Accepted for the M3 BTC PoC; clean pushed-commit actual-node evidence
+GREEN in both directions
 
 ## Context
 
@@ -105,8 +105,9 @@ process boundaries, delayed taker observation-only catch-up, per-chain zero
 successful resubmissions bound to actor outputs, Core mempool reads and LEZ
 durable counts, local-only resources, and exact cleanup.
 
-Functional run `m3survivor-20260716b` completed both actual-node directions
-against Bitcoin Core 31.1 Regtest and private LEZ v0.2. Run A first exposed a
+Clean run `m3survivor-20260716c` at already-pushed commit `6e8b065` completed
+both actual-node directions against Bitcoin Core 31.1 Regtest and private LEZ
+v0.2. Run A first exposed a
 duplicate JSON key that replaced the follower role with follower process
 evidence; the RED-GREEN fix uses distinct `follower_role` and `follower` fields.
 Post-PoC contract tests also enforce effect-only helper separation, call order,
@@ -115,6 +116,5 @@ ordering, and the packet schema. The outer packet must validate and derive its
 claims from both hashed direction packets and their hashed actor/RPC inputs;
 it may not merely hash files and repeat constants. Executable negative fixtures
 reject swapped direction evidence, a noncanonical remaining leg, and a Bitcoin
-catch-up effect. A fresh run at a clean pushed implementation
-commit remains the certification gate before retaining the final secret-safe
-packet.
+catch-up effect. The retained secret-safe packet is
+[`m3-local-two-direction-survivor-claim-poc-20260716.json`](../evidence/m3-local-two-direction-survivor-claim-poc-20260716.json).

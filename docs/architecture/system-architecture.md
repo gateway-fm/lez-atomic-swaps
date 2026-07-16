@@ -1401,9 +1401,8 @@ the Bitcoin leg safely claimable but unspent.
 
 **Implementation status:** happy claims, ordered two-lock refunds, the
 absent-maker refund-side branch, and direct post-reveal maker continuation are
-actual-node GREEN. Run `m3survivor-20260716b` proves the survivor branch
-functionally in both directions; a clean pushed-commit rerun is the remaining
-certification step for that slice. Live maker-lock cutoff admission remains
+actual-node GREEN. Clean pushed-commit run `m3survivor-20260716c` certifies the
+survivor branch in both directions. Live maker-lock cutoff admission remains
 open.
 
 <!-- atomicity-argument: lez-btc/taker-sells-lez -->
@@ -1428,9 +1427,8 @@ leave the remaining LEZ leg safely claimable but not terminal.
 
 **Implementation status:** happy claims, ordered two-lock refunds, the
 absent-maker refund-side branch, and direct post-reveal maker continuation are
-actual-node GREEN. Run `m3survivor-20260716b` proves the survivor branch
-functionally in both directions; a clean pushed-commit rerun is the remaining
-certification step for that slice. Live maker-lock cutoff admission remains
+actual-node GREEN. Clean pushed-commit run `m3survivor-20260716c` certifies the
+survivor branch in both directions. Live maker-lock cutoff admission remains
 open.
 
 The BTC construction is atomic under these explicit conditions:
@@ -1473,9 +1471,9 @@ directions. Run `m3refund-20260716h` is also actual-node GREEN for the
 both-owner, two-lock ordered refund in both directions: both roles reached
 revision four `Refunded` and replay added zero submissions. Signed-cutoff and
 first-lock-only refund-side recovery are actual-node GREEN in run
-`m3firstlock-20260716h`. Functional post-reveal survivor continuation is GREEN
-in `m3survivor-20260716b`; clean pushed-commit certification, nonowner refund
-surfaces, maker-lock admission, process-kill,
+`m3firstlock-20260716h`. Post-reveal survivor continuation is clean
+pushed-commit GREEN in `m3survivor-20260716c`; nonowner refund surfaces,
+maker-lock admission, process-kill,
 concurrent, fee-bump, and reorg evidence remain pending.
 
 This is an engineering safety argument, not the accepted proposal's promised

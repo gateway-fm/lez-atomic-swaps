@@ -1580,4 +1580,35 @@ if rg -n 'docker[[:space:]]+(system[[:space:]]+prune|container[[:space:]]+prune|
   fail "runner contains a broad or foreign-resource cleanup primitive"
 fi
 
+retained_survivor="docs/evidence/m3-local-two-direction-survivor-claim-poc-20260716.json"
+[[ -f "$retained_survivor" && ! -L "$retained_survivor" ]] ||
+  fail "clean survivor certification packet is missing or unsafe"
+jq -e '
+  .schema_version == 1 and .milestone == "M3" and .result == "passed"
+  and .classification == "private_local_two_direction_post_reveal_survivor_claim_poc"
+  and .run_id == "m3survivor-20260716c"
+  and .provenance.repository_commit == "6e8b065c2247306b746743454e7816bab8285350"
+  and .provenance.worktree_clean_during_run == true
+  and .provenance.commit_pushed_before_run == true
+  and .survivor_protocol.protected_absence.revealer_actor_invocation_count == 0
+  and .survivor_protocol.intermediate.terminal == false
+  and .survivor_protocol.intermediate.remaining_leg_canonical_and_claimable == true
+  and (.directions | length) == 2
+  and all(.directions[];
+    .intermediate.protocol_phase == "claim_evidence_available"
+    and .intermediate.terminal == false
+    and .completion.maker_revision == 4 and .completion.phase == "completed"
+    and .completion.boundary.completed_before_signed_refund_boundary == true
+    and .delayed_revealer_catchup.per_chain.bitcoin.successful_resubmission_count == 0
+    and .delayed_revealer_catchup.per_chain.lez.successful_resubmission_count == 0
+    and .delayed_revealer_catchup.successful_resubmission_count == 0)
+  and .terminal_replay.resubmission_count == 0
+  and .exact_cleanup.all_exact_run_resources_absent == true
+  and .exact_cleanup.foreign_resources_targeted == false
+  and .runtime_external_resources.certification_success_depends_on_external_network == false
+  and .secret_safety.private_material_disclosed == false
+  and .open_scope[-1] == "This file alone does not authorize an M3 completion tag."
+' "$retained_survivor" >/dev/null ||
+  fail "clean survivor certification packet is incomplete or overclaims M3 closure"
+
 echo "M3 actor local-PoC orchestration contract is complete"

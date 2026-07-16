@@ -1053,10 +1053,10 @@ QA, chaos, infosec, public-Testnet, and production-readiness hardening remain
 active**. The pushed claim packet certifies both happy directions. Fresh run
 `m3refund-20260716h` now also closes the separate actual-node two-lock
 timeout/refund demo in both directions. Run `m3firstlock-20260716h` closes both
-refund-side first-lock absent-maker paths. Functional run
-`m3survivor-20260716b` closes direct post-reveal continuation in both directions;
-its clean pushed-commit certification rerun, live maker-lock cutoff admission,
-and the concurrent-swap demo remain open M3 gates. The
+refund-side first-lock absent-maker paths. Clean pushed-commit run
+`m3survivor-20260716c` closes direct post-reveal continuation in both
+directions. Live maker-lock cutoff admission and the concurrent-swap demo
+remain open functional M3 gates. The
 canonical countersigned agreement, finalized LEZ funding/claim
 adapters, typed Core adapter, and reference-actor revisions zero through four
 are GREEN in source, deterministic tests, and run `m3actor-20260716n`. The
@@ -1127,9 +1127,9 @@ codec are GREEN as components and in run-n's actual-node actor paths. The
 schema-3 public `recover` command now composes the deterministic Bitcoin and LEZ
 refund boundaries in both directions. Run `m3refund-20260716h` now proves those
 two-lock timeout paths and `m3firstlock-20260716h` proves both first-lock-only
-absent-maker refund paths against actual local nodes. Functional survivor
-recovery is also GREEN in `m3survivor-20260716b`; clean certification,
-concurrency, production key custody, and the accepted proposal's full SDK/demo
+absent-maker refund paths against actual local nodes. Survivor recovery is
+clean GREEN in `m3survivor-20260716c`; concurrency, production key custody,
+and the accepted proposal's full SDK/demo
 surface remain pending.
 
 The first post-PoC RED-GREEN-REFACTOR loop is now GREEN at the canonical
@@ -1393,14 +1393,15 @@ Active M3 refund critical path:
   this is not satisfied by sequential swaps, either timeout branch, or a
   two-store unit isolation test;
 - [x] close the survivor-specific nuance: after both locks, the taker publishes
-  the direction-correct reveal and is then barred from every harnessed taker actor
-  invocation until maker terminality. A fresh maker observes the canonical reveal, extracts and
+  the direction-correct reveal and is then barred from every harnessed taker
+  actor invocation until maker terminality. A fresh maker observes the
+  canonical reveal, extracts and
   point-checks the adaptor scalar, commits nonterminal revision 3
   `ClaimEvidenceAvailable`, and exits while the opposite leg remains exact and
   claimable before its signed refund boundary. Another fresh maker resumes from
   its store and the chain, submits the follow-up, and reaches revision 4 before
-  the taker returns for observation-only revisions 3 and 4. Functional run
-  `m3survivor-20260716b` is GREEN in both directions with exact 2 Bitcoin / 3 LEZ
+  the taker returns for observation-only revisions 3 and 4. Clean pushed-commit
+  run `m3survivor-20260716c` is GREEN in both directions with exact 2 Bitcoin / 3 LEZ
   effects, zero delayed-catchup or terminal-replay resubmission, no
   caller-supplied secret, and foreign-safe cleanup. Run A first exposed a final
   packet duplicate-key bug (`follower` role versus process evidence); the
@@ -1413,8 +1414,9 @@ Active M3 refund critical path:
   validates and derives the aggregate from both recovery/completion packets,
   binds fresh actor outputs plus pre/post Core mempool reads and LEZ durable
   counts, records per-chain successful-resubmission counts, and proves the
-  follow-up finalized or confirmed before its signed refund boundary. A clean pushed-commit
-  certification rerun remains before retaining final milestone evidence;
+  follow-up finalized or confirmed before its signed refund boundary. The
+  secret-safe retained packet is
+  `docs/evidence/m3-local-two-direction-survivor-claim-poc-20260716.json`;
 - [ ] implement the accepted proposal’s public LEZ/BTC SDK full lifecycle. A
   shared adapter-independent protocol boundary must expose typed offer
   discovery, negotiation, activation/escrow creation, status/resume, claim, and
@@ -1650,8 +1652,8 @@ execution are GREEN in both directions through run `m3refund-20260716h`.
 The first-lock-only projector, persistence, signed cutoff agreement, durable
 discovery-window baseline, and live refund-side cross-chain gate are GREEN.
 Run `m3firstlock-20260716h` closes both fresh actual-node first-lock journeys.
-Run `m3survivor-20260716b` functionally closes the survivor nuance; its clean
-certification and maker-lock admission at the boundary remain open.
+Run `m3survivor-20260716c` cleanly certifies the survivor nuance; maker-lock
+admission at the boundary remains open.
 
 Pushed commit
 `a58ef96` adds the checked-in secret-safe packet, complete operator recipe,
@@ -1965,9 +1967,9 @@ passed this harness at the same pushed commit: both directions, both roles,
 revision four, replay without resubmission, and exact cleanup are audited. The
 happy-path progressive local PoC has no remaining execution task. Run
 `m3refund-20260716h` separately closes two-lock timeout/refund, and run
-`m3firstlock-20260716h` closes actual-node absent-maker recovery. Functional
-post-reveal survivor execution is GREEN in `m3survivor-20260716b`; its clean
-certification, live maker-lock admission, and two overlapping swaps remain the
+`m3firstlock-20260716h` closes actual-node absent-maker recovery. Clean
+post-reveal survivor execution is GREEN in `m3survivor-20260716c`; live
+maker-lock admission and two overlapping swaps remain the
 active functional M3 work before the broader
 owner-selected hardening below.
 

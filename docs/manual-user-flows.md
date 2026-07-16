@@ -651,8 +651,9 @@ private local LEZ v0.2 stack. Both roles finished revision four with next action
 `complete`, and replay resubmission count remained zero.
 Public-actor two-lock refund recovery in `m3refund-20260716h` and first-lock
 absent-maker recovery in `m3firstlock-20260716h` are GREEN in both directions.
-Direct post-reveal survivor continuation is functionally GREEN in
-`m3survivor-20260716b`; the clean pushed-commit certification rerun remains.
+Direct post-reveal survivor continuation is clean pushed-commit GREEN in
+`m3survivor-20260716c`; the secret-safe packet is
+`docs/evidence/m3-local-two-direction-survivor-claim-poc-20260716.json`.
 Maker-lock cutoff admission, concurrent swaps, crash/chaos, and adversarial
 journeys remain open.
 

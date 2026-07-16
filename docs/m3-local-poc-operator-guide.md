@@ -2,8 +2,9 @@
 
 Last verified: 2026-07-16
 
-This guide reproduces the public-actor M3 happy and two-lock refund paths proved
-by private local runs `m3actor-20260716n` and `m3refund-20260716h`.
+This guide reproduces the public-actor M3 happy, two-lock refund, and
+post-reveal survivor paths proved by private local runs `m3actor-20260716n`,
+`m3refund-20260716h`, and `m3survivor-20260716c`.
 The happy run used pushed `origin/main` commit `6ded2f9`; the refund run used
 base HEAD `ef5f306` with a dirty pre-commit source tree and independently
 validated runner hashes. The latter is hash-bound functional evidence, not
@@ -1425,9 +1426,9 @@ transcript without accepting a peer transaction ID. This claim path is GREEN in
 source, deterministic actor tests, and run-n. The refund path is GREEN in
 deterministic tests and in Run H's fresh actual-node two-lock journey. The
 lower-level operator flow below remains useful for inspecting each exact
-request/effect; refund-side absent-maker and functional post-reveal survivor
-execution are GREEN, while clean survivor certification, maker-lock cutoff
-admission, concurrent, process-kill, and reorg journeys remain later gates.
+request/effect; refund-side absent-maker and clean post-reveal survivor
+execution are GREEN, while maker-lock cutoff admission, concurrent,
+process-kill, and reorg journeys remain later gates.
 
 ## Manual actor timeout/refund recovery
 
@@ -2233,9 +2234,10 @@ attempt `pool.ntp.org:123/udp`, but success is not required. `moving_tip` and
 temporarily unavailable finalized reads are bounded, read-only, and can extend
 runtime without granting another submission.
 
-Functional run `m3survivor-20260716b` passed both directions and exact cleanup.
-Its clean pushed-commit certification rerun remains before the retained packet
-can be called final milestone evidence. Keep the full `.e2e` run root private;
+Clean pushed-commit run `m3survivor-20260716c` passed both directions and exact
+cleanup. Its secret-safe retained packet is
+`docs/evidence/m3-local-two-direction-survivor-claim-poc-20260716.json`. Keep
+the full `.e2e` run root private;
 it contains credentials, actor stores, capabilities, and raw transactions.
 
 ## Public configuration switch and production nonclaims
@@ -2256,9 +2258,8 @@ surface.
 
 Run `m3refund-20260716h` proves ordered actual-node refund after both locks, and
 `m3firstlock-20260716h` proves refund-side first-lock absent-maker abandonment.
-Run `m3survivor-20260716b` separately proves functional post-reveal survivor
-recovery but not yet its clean
-pushed-commit certification, live maker-lock admission at the
+Run `m3survivor-20260716c` separately certifies clean post-reveal survivor
+recovery. Live maker-lock admission at the
 deadline-cutoff boundary, reorg handling, concurrent swaps, process-kill
 or crash recovery across the full lifecycle, chaos behavior, denial-of-service
 resistance, secure transport between actors, HSM custody, key rotation, backup,
