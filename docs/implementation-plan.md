@@ -1103,9 +1103,7 @@ overspend, and zero fee identically. A validated countersigned agreement
 derives the refund only to the direction-selected funder's already signed
 role-owned destination, using the signed cooperative fee as the deterministic
 version-one baseline. Focused tests cover both directions, wrong keys, changed
-outputs, and exact witness shape. This does not yet prove Core deadline
-eligibility, actor secret custody, durable refund submission, or LEZ
-`RefundNative`; those remain the active refund slice.
+outputs, and exact witness shape. The typed Core adapter now proves signed-anchor deadline eligibility and exact one-send/readback semantics. Actor refund-key custody, durable actor composition, LEZ `RefundNative`, and actual-node timeout evidence remain the active slice.
 
 The refund-wire loop is GREEN. The existing native-refund RPC names and
 hashlock JSON shape remain unchanged, while strict untagged protocol envelopes
@@ -1134,8 +1132,7 @@ inclusion, exposes stable
 state-only clocks at deadline minus one and at the deadline, accepts only exact
 canonical unsigned bytes in fully covered finalized ancestry, proves historical
 and tip Refunded state with zero custody, and keeps observation repeatable and
-no-submit. Actor one-attempt recovery and actual-node both-direction execution
-are next.
+no-submit. The typed Core refund adapter now validates the signed funding anchor, exact next-block CSV boundary, canonical three-item witness, conflict and early-inclusion cases, one broadcast, exact post-send txid/wtxid readback, and finalized containing-height evidence. The same readback closes a shared claim race. Actor one-attempt recovery and actual-node both-direction execution are next.
 
 Active M3 refund critical path:
 
@@ -1152,6 +1149,9 @@ Active M3 refund critical path:
   evidence to terminal `Refunded`, preserving exact legacy payloads on migration;
 - [x] require affirmative stable refund eligibility for the sole `Prepared` to
   `Started` CAS; absence is invalid for refunds and races yield one winner;
+- [x] observe Bitcoin maturity from the signed funding anchor and next-block CSV
+  boundary, accept one send only after exact txid/wtxid spender readback, and
+  encode finalized evidence at the refund containing height;
 - [ ] integrate actor `Refund` effects with observe-before-submit, one `Started`
   CAS, and observation-only ambiguous recovery;
 - [ ] execute both direction-correct timeout/refund paths against fresh isolated

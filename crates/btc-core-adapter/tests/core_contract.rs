@@ -13,9 +13,10 @@ use corepc_types::v31::{
     SendRawTransaction, TestMempoolAccept,
 };
 use lez_btc_core_adapter::{
-    AuthorizedClaimSubmission, BitcoinCoreAdapter, BitcoinCoreRpc, ClaimObservation,
-    ClaimSubmissionAcquire, ClaimSubmissionAttempt, ClaimSubmissionState, ClaimSubmissionStore,
-    CoreAdapterError, CoreConnectivityPolicy, FundingObservation, SendFailure,
+    AuthorizedClaimSubmission, AuthorizedRefundSubmission, BitcoinCoreAdapter, BitcoinCoreRpc,
+    ClaimObservation, ClaimSubmissionAcquire, ClaimSubmissionAttempt, ClaimSubmissionState,
+    ClaimSubmissionStore, CoreAdapterError, CoreConnectivityPolicy, FundingObservation,
+    RefundObservation, SendFailure,
 };
 
 use support::{REGTEST_GENESIS, REQUIRED_CONFIRMATIONS, raw_verbose, swap_fixture};
@@ -59,13 +60,20 @@ struct MockResponses {
 
 impl MockRpc {
     fn ready() -> Self {
+        Self::ready_at(200)
+    }
+
+    fn ready_at(height: u32) -> Self {
         Self {
             inner: Arc::new(Mutex::new(MockResponses {
                 calls: Vec::new(),
                 network: network_info(310_100, "/Satoshi:31.1.0/", false),
-                chains: VecDeque::from([chain_info(TIP_A), chain_info(TIP_A)]),
+                chains: VecDeque::from([
+                    chain_info_at(TIP_A, height),
+                    chain_info_at(TIP_A, height),
+                ]),
                 genesis: GetBlockHash(REGTEST_GENESIS.to_owned()),
-                indexes: index_info(true, true),
+                indexes: index_info_at(true, true, height),
                 raw: VecDeque::new(),
                 spender: VecDeque::new(),
                 mempool: VecDeque::new(),
@@ -195,8 +203,12 @@ fn isolated_adapter(rpc: MockRpc) -> BitcoinCoreAdapter<MockRpc> {
 }
 
 fn chain_info(tip: &str) -> GetBlockchainInfo {
+    chain_info_at(tip, 200)
+}
+
+fn chain_info_at(tip: &str, height: u32) -> GetBlockchainInfo {
     serde_json::from_value(serde_json::json!({
-        "chain": "regtest", "blocks": 200, "headers": 200, "bestblockhash": tip,
+        "chain": "regtest", "blocks": height, "headers": height, "bestblockhash": tip,
         "bits": "207fffff",
         "target": "7fffff0000000000000000000000000000000000000000000000000000000000",
         "difficulty": 4.656_542_373_906_925e-10, "time": 1_700_000_000,
@@ -209,19 +221,23 @@ fn chain_info(tip: &str) -> GetBlockchainInfo {
 }
 
 fn index_info(txindex_synced: bool, spender_synced: bool) -> GetIndexInfo {
+    index_info_at(txindex_synced, spender_synced, 200)
+}
+
+fn index_info_at(txindex_synced: bool, spender_synced: bool, height: u32) -> GetIndexInfo {
     GetIndexInfo(BTreeMap::from([
         (
             "txindex".to_owned(),
             GetIndexInfoName {
                 synced: txindex_synced,
-                best_block_height: 200,
+                best_block_height: height,
             },
         ),
         (
             "txospenderindex".to_owned(),
             GetIndexInfoName {
                 synced: spender_synced,
-                best_block_height: 200,
+                best_block_height: height,
             },
         ),
     ]))
@@ -489,6 +505,16 @@ async fn claim_observation_requires_exact_spender_bytes_and_one_item_witness() {
     ));
 }
 
+fn unspent(outpoint: OutPoint) -> GetTxSpendingPrevout {
+    GetTxSpendingPrevout(vec![GetTxSpendingPrevoutItem {
+        txid: outpoint.txid.to_string(),
+        vout: outpoint.vout,
+        spending_txid: None,
+        spending_tx: None,
+        block_hash: None,
+    }])
+}
+
 fn spender(outpoint: OutPoint, transaction: &Transaction) -> GetTxSpendingPrevout {
     GetTxSpendingPrevout(vec![GetTxSpendingPrevoutItem {
         txid: outpoint.txid.to_string(),
@@ -497,6 +523,174 @@ fn spender(outpoint: OutPoint, transaction: &Transaction) -> GetTxSpendingPrevou
         spending_tx: Some(hex::encode(serialize(transaction))),
         block_hash: Some(TIP_A.to_owned()),
     }])
+}
+
+#[tokio::test]
+async fn refund_observation_uses_signed_anchor_and_next_block_csv_boundary() {
+    let fixture = swap_fixture();
+    let outpoint = fixture.agreement.bitcoin_refund().funding_outpoint();
+
+    let immature_rpc = MockRpc::ready_at(1_142);
+    immature_rpc.push_raw(raw_verbose(&fixture.funding, Some(143), Some(TIP_A)));
+    immature_rpc.push_spender(unspent(outpoint));
+    let RefundObservation::Immature(immature) = isolated_adapter(immature_rpc)
+        .observe_refund(&fixture.agreement)
+        .await
+        .expect("immature refund")
+    else {
+        panic!("expected immature refund");
+    };
+    assert_eq!(immature.funding_block_height(), 1_000);
+    assert_eq!(immature.first_valid_block_height(), 1_144);
+
+    let eligible_rpc = MockRpc::ready_at(1_143);
+    eligible_rpc.push_raw(raw_verbose(&fixture.funding, Some(144), Some(TIP_A)));
+    eligible_rpc.push_spender(unspent(outpoint));
+    let RefundObservation::Eligible(eligible) = isolated_adapter(eligible_rpc)
+        .observe_refund(&fixture.agreement)
+        .await
+        .expect("eligible refund")
+    else {
+        panic!("expected eligible refund");
+    };
+    assert_eq!(eligible.funding_block_height(), 1_000);
+    assert_eq!(eligible.first_valid_block_height(), 1_144);
+}
+
+#[tokio::test]
+async fn refund_observation_classifies_exact_finality_conflict_and_anchor_drift() {
+    let fixture = swap_fixture();
+    let outpoint = fixture.agreement.bitcoin_refund().funding_outpoint();
+
+    let finalized_rpc = MockRpc::ready_at(1_149);
+    finalized_rpc.push_raw(raw_verbose(&fixture.funding, Some(150), Some(TIP_A)));
+    finalized_rpc.push_spender(spender(outpoint, &fixture.refund));
+    finalized_rpc.push_raw(raw_verbose(&fixture.refund, Some(6), Some(TIP_A)));
+    let RefundObservation::Finalized(finalized) = isolated_adapter(finalized_rpc)
+        .observe_refund(&fixture.agreement)
+        .await
+        .expect("finalized refund")
+    else {
+        panic!("expected finalized refund");
+    };
+    assert_eq!(finalized.transaction(), &fixture.refund);
+    assert_eq!(finalized.block_height(), Some(1_144));
+    assert_eq!(finalized.confirmations(), 6);
+
+    let conflicting_rpc = MockRpc::ready_at(1_149);
+    conflicting_rpc.push_raw(raw_verbose(&fixture.funding, Some(150), Some(TIP_A)));
+    conflicting_rpc.push_spender(spender(outpoint, &fixture.claim));
+    conflicting_rpc.push_raw(raw_verbose(&fixture.claim, Some(6), Some(TIP_A)));
+    assert_eq!(
+        isolated_adapter(conflicting_rpc)
+            .observe_refund(&fixture.agreement)
+            .await
+            .expect("conflicting spend is a typed terminal observation"),
+        RefundObservation::ConflictingSpend
+    );
+
+    let wrong_anchor_rpc = MockRpc::ready_at(1_143);
+    wrong_anchor_rpc.push_raw(raw_verbose(&fixture.funding, Some(143), Some(TIP_A)));
+    assert!(matches!(
+        isolated_adapter(wrong_anchor_rpc)
+            .observe_refund(&fixture.agreement)
+            .await,
+        Err(CoreAdapterError::FundingAnchorMismatch)
+    ));
+
+    let early_rpc = MockRpc::ready_at(1_143);
+    early_rpc.push_raw(raw_verbose(&fixture.funding, Some(144), Some(TIP_A)));
+    early_rpc.push_spender(spender(outpoint, &fixture.refund));
+    early_rpc.push_raw(raw_verbose(&fixture.refund, Some(1), Some(TIP_A)));
+    assert!(matches!(
+        isolated_adapter(early_rpc)
+            .observe_refund(&fixture.agreement)
+            .await,
+        Err(CoreAdapterError::RefundTransactionMismatch)
+    ));
+}
+
+#[tokio::test]
+async fn authorized_refund_requires_exact_post_send_witness_readback() {
+    let fixture = swap_fixture();
+    let refund_bytes = serialize(&fixture.refund);
+    let outpoint = fixture.agreement.bitcoin_refund().funding_outpoint();
+
+    let accepted_rpc = MockRpc::ready();
+    accepted_rpc.push_mempool(Ok(mempool_allowed(&fixture.refund)));
+    accepted_rpc.push_send(Ok(SendRawTransaction(
+        fixture.refund.compute_txid().to_string(),
+    )));
+    accepted_rpc.push_spender(spender(outpoint, &fixture.refund));
+    assert_eq!(
+        isolated_adapter(accepted_rpc.clone())
+            .submit_authorized_refund(
+                &fixture.agreement,
+                &refund_bytes,
+                fixture.refund.compute_txid(),
+            )
+            .await
+            .expect("exact refund accepted"),
+        AuthorizedRefundSubmission::Accepted {
+            transaction_id: fixture.refund.compute_txid(),
+            witness_transaction_id: fixture.refund.compute_wtxid(),
+        }
+    );
+
+    let mut conflicting_witness = fixture.refund.clone();
+    let script = fixture.agreement.p2tr_contract().refund_script_bytes();
+    let control = fixture
+        .agreement
+        .p2tr_contract()
+        .refund_control_block_bytes();
+    conflicting_witness.input[0].witness =
+        bitcoin::Witness::from_slice(&[&[0x55; 64], script, control.as_slice()]);
+    assert_eq!(
+        conflicting_witness.compute_txid(),
+        fixture.refund.compute_txid()
+    );
+    assert_ne!(
+        conflicting_witness.compute_wtxid(),
+        fixture.refund.compute_wtxid()
+    );
+    let raced_rpc = MockRpc::ready();
+    raced_rpc.push_mempool(Ok(mempool_allowed(&fixture.refund)));
+    raced_rpc.push_send(Ok(SendRawTransaction(
+        fixture.refund.compute_txid().to_string(),
+    )));
+    raced_rpc.push_spender(spender(outpoint, &conflicting_witness));
+    assert_eq!(
+        isolated_adapter(raced_rpc.clone())
+            .submit_authorized_refund(
+                &fixture.agreement,
+                &refund_bytes,
+                fixture.refund.compute_txid(),
+            )
+            .await
+            .expect("same txid different witness is unknown"),
+        AuthorizedRefundSubmission::Unknown
+    );
+    assert_eq!(
+        raced_rpc
+            .calls()
+            .iter()
+            .filter(|call| **call == "sendrawtransaction")
+            .count(),
+        1
+    );
+
+    let invalid_rpc = MockRpc::ready();
+    assert!(matches!(
+        isolated_adapter(invalid_rpc.clone())
+            .submit_authorized_refund(
+                &fixture.agreement,
+                &serialize(&conflicting_witness),
+                conflicting_witness.compute_txid(),
+            )
+            .await,
+        Err(CoreAdapterError::RefundTransactionMismatch)
+    ));
+    assert!(invalid_rpc.calls().is_empty());
 }
 
 #[tokio::test]
@@ -509,6 +703,10 @@ async fn claim_submission_is_durable_once_and_unknown_never_retries() {
     rpc.push_send(Ok(SendRawTransaction(
         fixture.claim.compute_txid().to_string(),
     )));
+    rpc.push_spender(spender(
+        fixture.agreement.cooperative_claim().funding_outpoint(),
+        &fixture.claim,
+    ));
     let adapter = isolated_adapter(rpc.clone());
     let store = MemorySubmissionStore::default();
     let accepted = adapter
@@ -750,6 +948,10 @@ async fn caller_authorized_claim_submission_returns_only_chain_outcomes() {
     accepted_rpc.push_send(Ok(SendRawTransaction(
         fixture.claim.compute_txid().to_string(),
     )));
+    accepted_rpc.push_spender(spender(
+        fixture.agreement.cooperative_claim().funding_outpoint(),
+        &fixture.claim,
+    ));
     assert_eq!(
         isolated_adapter(accepted_rpc.clone())
             .submit_authorized_claim(
@@ -835,6 +1037,41 @@ async fn caller_authorized_claim_submission_returns_only_chain_outcomes() {
         !preflight_unknown_rpc
             .calls()
             .contains(&"sendrawtransaction")
+    );
+}
+
+#[tokio::test]
+async fn claim_send_success_with_another_witness_is_unknown() {
+    let first = swap_fixture();
+    let second = swap_fixture();
+    assert_eq!(first.claim.compute_txid(), second.claim.compute_txid());
+    assert_ne!(first.claim.compute_wtxid(), second.claim.compute_wtxid());
+    let rpc = MockRpc::ready();
+    rpc.push_mempool(Ok(mempool_allowed(&first.claim)));
+    rpc.push_send(Ok(SendRawTransaction(
+        first.claim.compute_txid().to_string(),
+    )));
+    rpc.push_spender(spender(
+        first.agreement.cooperative_claim().funding_outpoint(),
+        &second.claim,
+    ));
+    assert_eq!(
+        isolated_adapter(rpc.clone())
+            .submit_authorized_claim(
+                &first.agreement,
+                &serialize(&first.claim),
+                first.claim.compute_txid(),
+            )
+            .await
+            .expect("broadcast race is conservative"),
+        AuthorizedClaimSubmission::Unknown
+    );
+    assert_eq!(
+        rpc.calls()
+            .iter()
+            .filter(|call| **call == "sendrawtransaction")
+            .count(),
+        1
     );
 }
 

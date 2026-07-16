@@ -215,6 +215,133 @@ pub enum ClaimObservation {
     Finalized(ObservedClaim),
 }
 
+/// Signed-anchor maturity facts for the exact unilateral refund.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RefundEligibility {
+    stable_tip: StableTip,
+    funding_block_height: u32,
+    first_valid_block_height: u32,
+}
+
+impl RefundEligibility {
+    /// Stable active-chain tip used for the maturity decision.
+    #[must_use]
+    pub const fn stable_tip(&self) -> StableTip {
+        self.stable_tip
+    }
+
+    /// Active-chain height containing the exact agreement funding transaction.
+    #[must_use]
+    pub const fn funding_block_height(&self) -> u32 {
+        self.funding_block_height
+    }
+
+    /// First block that may contain the BIP-68 refund.
+    #[must_use]
+    pub const fn first_valid_block_height(&self) -> u32 {
+        self.first_valid_block_height
+    }
+}
+
+/// Exact agreement refund observed through the spender index.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObservedRefund {
+    transaction: Transaction,
+    transaction_id: Txid,
+    confirmations: u32,
+    block_hash: Option<BlockHash>,
+    block_height: Option<u32>,
+    stable_tip: StableTip,
+}
+
+impl ObservedRefund {
+    /// Canonical signed BIP-342 refund transaction.
+    #[must_use]
+    pub const fn transaction(&self) -> &Transaction {
+        &self.transaction
+    }
+
+    /// Canonical non-witness transaction identifier.
+    #[must_use]
+    pub const fn transaction_id(&self) -> Txid {
+        self.transaction_id
+    }
+
+    /// Active-chain confirmations, or zero while in the mempool.
+    #[must_use]
+    pub const fn confirmations(&self) -> u32 {
+        self.confirmations
+    }
+
+    /// Active-chain block hash, absent only for a mempool refund.
+    #[must_use]
+    pub const fn block_hash(&self) -> Option<BlockHash> {
+        self.block_hash
+    }
+
+    /// Active-chain containing-block height, absent only for a mempool refund.
+    #[must_use]
+    pub const fn block_height(&self) -> Option<u32> {
+        self.block_height
+    }
+
+    /// Stable active-chain tip bracketing the observation.
+    #[must_use]
+    pub const fn stable_tip(&self) -> StableTip {
+        self.stable_tip
+    }
+}
+
+/// Maturity and spender state of the exact agreement refund path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RefundObservation {
+    /// The funding anchor is exact but the next block is too early for BIP-68.
+    Immature(RefundEligibility),
+    /// The next block may contain the refund and the outpoint remains unspent.
+    Eligible(RefundEligibility),
+    /// The exact refund is visible in the mempool.
+    Revealed(ObservedRefund),
+    /// The exact refund is confirmed below signed policy.
+    Confirming(ObservedRefund),
+    /// The exact refund satisfies signed confirmation policy.
+    Finalized(ObservedRefund),
+    /// Another transaction or witness spends the agreement outpoint.
+    ConflictingSpend,
+}
+
+/// Result of one caller-authorized exact refund submission.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum AuthorizedRefundSubmission {
+    /// Exact post-send spender bytes prove Core holds the prepared witness.
+    Accepted {
+        /// Canonical non-witness transaction identifier.
+        transaction_id: Txid,
+        /// Canonical witness transaction identifier.
+        witness_transaction_id: Wtxid,
+    },
+    /// Core definitively rejected the exact transaction.
+    Rejected,
+    /// Exact acceptance cannot be proved and no retry is permitted.
+    Unknown,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ParsedSpender {
+    transaction_id: Txid,
+    transaction_bytes: Vec<u8>,
+    block_hash: Option<BlockHash>,
+}
+
+enum ExactSubmissionOutcome {
+    Accepted {
+        transaction_id: Txid,
+        witness_transaction_id: Wtxid,
+    },
+    Rejected,
+    Unknown,
+}
+
 /// Durable identity of one permitted claim broadcast attempt.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClaimSubmissionAttempt {
@@ -385,6 +512,12 @@ pub enum CoreAdapterError<RpcError: StdError + 'static, StoreError: StdError + '
     /// Spending transaction differs from the exact signed agreement claim.
     #[error("observed spender is not the exact agreement claim")]
     ClaimTransactionMismatch,
+    /// Confirmed funding height differs from the countersigned recovery anchor.
+    #[error("observed funding height differs from the signed recovery anchor")]
+    FundingAnchorMismatch,
+    /// Spending transaction differs from the exact signed agreement refund.
+    #[error("observed spender is not the exact agreement refund")]
+    RefundTransactionMismatch,
     /// Mempool preflight response is malformed or identifies another transaction.
     #[error("Bitcoin Core mempool preflight response is inconsistent")]
     MempoolResponseMismatch,
@@ -599,6 +732,134 @@ where
         }
     }
 
+    /// Observes signed Bitcoin refund maturity and the exact outpoint spender.
+    ///
+    /// The funding containing height is derived from a stable tip and active-chain
+    /// confirmations, then required to equal the countersigned recovery anchor.
+    /// BIP-68 admission is eligible when the next block can be the signed refund
+    /// height. A finalized result always records the refund containing-block height.
+    ///
+    /// # Errors
+    ///
+    /// Rejects readiness, funding-anchor, spender, consensus-byte, placement, or
+    /// stable-tip contradictions.
+    pub async fn observe_refund(
+        &self,
+        agreement: &BtcAgreementV1,
+    ) -> Result<RefundObservation, CoreAdapterError<R::Error>> {
+        let before = self.ensure_ready(agreement).await?;
+        let eligibility = self.refund_eligibility(agreement, before).await?;
+        self.observe_refund_spender(agreement, before, eligibility)
+            .await
+    }
+
+    async fn refund_eligibility(
+        &self,
+        agreement: &BtcAgreementV1,
+        stable_tip: StableTip,
+    ) -> Result<RefundEligibility, CoreAdapterError<R::Error>> {
+        let funding = agreement.funding_terms();
+        let funding_txid = Txid::from_byte_array(*funding.transaction_id());
+        let response = self
+            .rpc
+            .get_raw_transaction(funding_txid)
+            .await
+            .map_err(CoreAdapterError::Rpc)?
+            .ok_or(CoreAdapterError::FundingOutputMismatch)?;
+        let transaction = parse_verbose_transaction(&response, funding_txid)?;
+        let output = transaction
+            .output
+            .get(
+                usize::try_from(funding.output_index())
+                    .map_err(|_| CoreAdapterError::FundingOutputMismatch)?,
+            )
+            .ok_or(CoreAdapterError::FundingOutputMismatch)?;
+        if output.value.to_sat() != funding.value_sat()
+            || output.script_pubkey.as_bytes() != agreement.p2tr_contract().script_pubkey_bytes()
+        {
+            return Err(CoreAdapterError::FundingOutputMismatch);
+        }
+        let (confirmations, block_hash) = confirmation_context(&response)?;
+        if confirmations == 0 || block_hash.is_none() {
+            return Err(CoreAdapterError::InvalidConfirmationContext);
+        }
+        let funding_block_height = stable_tip
+            .height
+            .checked_add(1)
+            .and_then(|height| height.checked_sub(confirmations))
+            .ok_or(CoreAdapterError::InvalidConfirmationContext)?;
+        let recovery = agreement.body().recovery_plan();
+        if funding_block_height != recovery.bitcoin_funding_anchor_height() {
+            return Err(CoreAdapterError::FundingAnchorMismatch);
+        }
+        Ok(RefundEligibility {
+            stable_tip,
+            funding_block_height,
+            first_valid_block_height: recovery.bitcoin_refund_height(),
+        })
+    }
+
+    async fn observe_refund_spender(
+        &self,
+        agreement: &BtcAgreementV1,
+        before: StableTip,
+        eligibility: RefundEligibility,
+    ) -> Result<RefundObservation, CoreAdapterError<R::Error>> {
+        let outpoint = agreement.bitcoin_refund().funding_outpoint();
+        let response = self
+            .rpc
+            .get_tx_spending_prevout(outpoint)
+            .await
+            .map_err(CoreAdapterError::Rpc)?;
+        let Some(spender) = parse_spender_response(&response, outpoint)? else {
+            let after = self.current_ready_tip().await?;
+            if before != after {
+                return Err(CoreAdapterError::UnstableTip);
+            }
+            return Ok(
+                if before.height.saturating_add(1) >= eligibility.first_valid_block_height {
+                    RefundObservation::Eligible(eligibility)
+                } else {
+                    RefundObservation::Immature(eligibility)
+                },
+            );
+        };
+        let response = self
+            .rpc
+            .get_raw_transaction(spender.transaction_id)
+            .await
+            .map_err(CoreAdapterError::Rpc)?
+            .ok_or(CoreAdapterError::SpenderResponseMismatch)?;
+        let transaction = parse_verbose_transaction(&response, spender.transaction_id)?;
+        if serialize(&transaction) != spender.transaction_bytes {
+            return Err(CoreAdapterError::SpenderResponseMismatch);
+        }
+        let (confirmations, block_hash) = confirmation_context(&response)?;
+        if spender.block_hash != block_hash {
+            return Err(CoreAdapterError::SpenderResponseMismatch);
+        }
+        let after = self.current_ready_tip().await?;
+        if before != after {
+            return Err(CoreAdapterError::UnstableTip);
+        }
+        if validate_exact_refund::<R::Error>(agreement, &transaction).is_err() {
+            return Ok(RefundObservation::ConflictingSpend);
+        }
+        let block_height = refund_block_height(agreement, after, confirmations)?;
+        let observed = ObservedRefund {
+            transaction,
+            transaction_id: spender.transaction_id,
+            confirmations,
+            block_hash,
+            block_height,
+            stable_tip: after,
+        };
+        Ok(classify_refund(
+            observed,
+            agreement.required_bitcoin_confirmations(),
+        ))
+    }
+
     /// Submits one exact claim after the caller has durably consumed send authority.
     ///
     /// This method does not acquire, persist, or retry submission authority. The
@@ -629,6 +890,48 @@ where
         }
         self.perform_claim_submission(agreement, &transaction, transaction_bytes)
             .await
+    }
+
+    /// Submits one exact BIP-342 refund after the actor journal has durably
+    /// consumed send authority. A successful txid response is accepted only
+    /// when a post-send spender read returns the same complete witness bytes.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed or non-canonical bytes, agreement/identity drift,
+    /// readiness failure, or a contradictory typed Core response.
+    pub async fn submit_authorized_refund(
+        &self,
+        agreement: &BtcAgreementV1,
+        transaction_bytes: &[u8],
+        expected_transaction_id: Txid,
+    ) -> Result<AuthorizedRefundSubmission, CoreAdapterError<R::Error>> {
+        let transaction = decode_raw_transaction(transaction_bytes)?;
+        validate_exact_refund(agreement, &transaction)?;
+        if transaction.compute_txid() != expected_transaction_id {
+            return Err(CoreAdapterError::RefundTransactionMismatch);
+        }
+        Ok(
+            match self
+                .perform_exact_submission(
+                    agreement,
+                    &transaction,
+                    transaction_bytes,
+                    agreement.bitcoin_refund().funding_outpoint(),
+                )
+                .await?
+            {
+                ExactSubmissionOutcome::Accepted {
+                    transaction_id,
+                    witness_transaction_id,
+                } => AuthorizedRefundSubmission::Accepted {
+                    transaction_id,
+                    witness_transaction_id,
+                },
+                ExactSubmissionOutcome::Rejected => AuthorizedRefundSubmission::Rejected,
+                ExactSubmissionOutcome::Unknown => AuthorizedRefundSubmission::Unknown,
+            },
+        )
     }
 
     /// Executes at most one durable claim submission attempt.
@@ -686,20 +989,47 @@ where
         transaction: &Transaction,
         transaction_bytes: &[u8],
     ) -> Result<AuthorizedClaimSubmission, CoreAdapterError<R::Error>> {
+        Ok(
+            match self
+                .perform_exact_submission(
+                    agreement,
+                    transaction,
+                    transaction_bytes,
+                    agreement.cooperative_claim().funding_outpoint(),
+                )
+                .await?
+            {
+                ExactSubmissionOutcome::Accepted { transaction_id, .. } => {
+                    AuthorizedClaimSubmission::Accepted { transaction_id }
+                }
+                ExactSubmissionOutcome::Rejected => AuthorizedClaimSubmission::Rejected,
+                ExactSubmissionOutcome::Unknown => AuthorizedClaimSubmission::Unknown,
+            },
+        )
+    }
+
+    async fn perform_exact_submission(
+        &self,
+        agreement: &BtcAgreementV1,
+        transaction: &Transaction,
+        transaction_bytes: &[u8],
+        outpoint: OutPoint,
+    ) -> Result<ExactSubmissionOutcome, CoreAdapterError<R::Error>> {
         self.ensure_ready(agreement).await?;
         let transaction_id = transaction.compute_txid();
+        let witness_transaction_id = transaction.compute_wtxid();
         let Ok(mempool) = self.rpc.test_mempool_accept(transaction_bytes).await else {
-            return Ok(AuthorizedClaimSubmission::Unknown);
+            return Ok(ExactSubmissionOutcome::Unknown);
         };
         let [acceptance] = mempool.0.as_slice() else {
             return Err(CoreAdapterError::MempoolResponseMismatch);
         };
         let accepted_transaction_id = Txid::from_str(&acceptance.txid)
             .map_err(|_| CoreAdapterError::MempoolResponseMismatch)?;
-        let accepted_witness_id = bitcoin::Wtxid::from_str(&acceptance.wtxid)
+        let accepted_witness_id = Wtxid::from_str(&acceptance.wtxid)
             .map_err(|_| CoreAdapterError::MempoolResponseMismatch)?;
         if accepted_transaction_id != transaction_id
-            || accepted_witness_id != transaction.compute_wtxid()
+            || accepted_witness_id != witness_transaction_id
         {
             return Err(CoreAdapterError::MempoolResponseMismatch);
         }
@@ -726,27 +1056,75 @@ where
                     reason,
                     "txn-already-in-mempool" | "txn-same-nonwitness-data-in-mempool"
                 ) {
-                    AuthorizedClaimSubmission::Unknown
+                    ExactSubmissionOutcome::Unknown
                 } else {
-                    AuthorizedClaimSubmission::Rejected
+                    ExactSubmissionOutcome::Rejected
                 },
             );
         }
-        let state = match self.rpc.send_raw_transaction(transaction_bytes).await {
+        match self.rpc.send_raw_transaction(transaction_bytes).await {
             Ok(response) => {
                 let response_txid = Txid::from_str(&response.0)
                     .map_err(|_| CoreAdapterError::BroadcastIdentityMismatch)?;
                 if response_txid != transaction_id {
                     return Err(CoreAdapterError::BroadcastIdentityMismatch);
                 }
-                AuthorizedClaimSubmission::Accepted { transaction_id }
+                if self
+                    .post_send_exact_spender(outpoint, transaction_bytes, transaction_id)
+                    .await
+                {
+                    Ok(ExactSubmissionOutcome::Accepted {
+                        transaction_id,
+                        witness_transaction_id,
+                    })
+                } else {
+                    Ok(ExactSubmissionOutcome::Unknown)
+                }
             }
-            Err(error) => match R::classify_send_failure(&error) {
-                SendFailure::DefinitiveRejection => AuthorizedClaimSubmission::Rejected,
-                SendFailure::Unknown => AuthorizedClaimSubmission::Unknown,
-            },
+            Err(error) => Ok(match R::classify_send_failure(&error) {
+                SendFailure::DefinitiveRejection => ExactSubmissionOutcome::Rejected,
+                SendFailure::Unknown => ExactSubmissionOutcome::Unknown,
+            }),
+        }
+    }
+
+    async fn post_send_exact_spender(
+        &self,
+        outpoint: OutPoint,
+        transaction_bytes: &[u8],
+        transaction_id: Txid,
+    ) -> bool {
+        let Ok(response) = self.rpc.get_tx_spending_prevout(outpoint).await else {
+            return false;
         };
-        Ok(state)
+        let [item] = response.0.as_slice() else {
+            return false;
+        };
+        let Ok(response_outpoint_txid) = Txid::from_str(&item.txid) else {
+            return false;
+        };
+        let Some(spending_txid) = item
+            .spending_txid
+            .as_deref()
+            .and_then(|value| Txid::from_str(value).ok())
+        else {
+            return false;
+        };
+        let Some(spending_bytes) = item
+            .spending_tx
+            .as_deref()
+            .and_then(|value| decode_raw_hex::<R::Error>(value).ok())
+        else {
+            return false;
+        };
+        response_outpoint_txid == outpoint.txid
+            && item.vout == outpoint.vout
+            && spending_txid == transaction_id
+            && spending_bytes == transaction_bytes
+            && decode_raw_transaction::<R::Error>(&spending_bytes).is_ok_and(|transaction| {
+                transaction.compute_txid() == transaction_id
+                    && serialize(&transaction) == transaction_bytes
+            })
     }
 
     async fn current_ready_tip(&self) -> Result<StableTip, CoreAdapterError<R::Error>> {
@@ -757,6 +1135,121 @@ where
             .map_err(CoreAdapterError::Rpc)?;
         parse_ready_chain(&chain)
     }
+}
+
+fn parse_spender_response<R>(
+    response: &GetTxSpendingPrevout,
+    outpoint: OutPoint,
+) -> Result<Option<ParsedSpender>, CoreAdapterError<R>>
+where
+    R: StdError + 'static,
+{
+    let [item] = response.0.as_slice() else {
+        return Err(CoreAdapterError::SpenderResponseMismatch);
+    };
+    let response_txid =
+        Txid::from_str(&item.txid).map_err(|_| CoreAdapterError::SpenderResponseMismatch)?;
+    if response_txid != outpoint.txid || item.vout != outpoint.vout {
+        return Err(CoreAdapterError::SpenderResponseMismatch);
+    }
+    let Some(spending_txid) = item.spending_txid.as_deref() else {
+        if item.spending_tx.is_some() || item.block_hash.is_some() {
+            return Err(CoreAdapterError::SpenderResponseMismatch);
+        }
+        return Ok(None);
+    };
+    let spending_txid =
+        Txid::from_str(spending_txid).map_err(|_| CoreAdapterError::SpenderResponseMismatch)?;
+    let spending_bytes = decode_raw_hex(
+        item.spending_tx
+            .as_deref()
+            .ok_or(CoreAdapterError::SpenderResponseMismatch)?,
+    )?;
+    let block_hash = item
+        .block_hash
+        .as_deref()
+        .map(|value| parse_block_hash(value, "spender block hash"))
+        .transpose()?;
+    Ok(Some(ParsedSpender {
+        transaction_id: spending_txid,
+        transaction_bytes: spending_bytes,
+        block_hash,
+    }))
+}
+
+fn refund_block_height<R>(
+    agreement: &BtcAgreementV1,
+    stable_tip: StableTip,
+    confirmations: u32,
+) -> Result<Option<u32>, CoreAdapterError<R>>
+where
+    R: StdError + 'static,
+{
+    if confirmations == 0 {
+        return Ok(None);
+    }
+    let height = stable_tip
+        .height
+        .checked_add(1)
+        .and_then(|tip| tip.checked_sub(confirmations))
+        .ok_or(CoreAdapterError::InvalidConfirmationContext)?;
+    if height < agreement.body().recovery_plan().bitcoin_refund_height() {
+        return Err(CoreAdapterError::RefundTransactionMismatch);
+    }
+    Ok(Some(height))
+}
+
+fn classify_refund(observed: ObservedRefund, required_confirmations: u32) -> RefundObservation {
+    if observed.confirmations == 0 {
+        RefundObservation::Revealed(observed)
+    } else if observed.confirmations < required_confirmations {
+        RefundObservation::Confirming(observed)
+    } else {
+        RefundObservation::Finalized(observed)
+    }
+}
+
+fn validate_exact_refund<R>(
+    agreement: &BtcAgreementV1,
+    transaction: &Transaction,
+) -> Result<(), CoreAdapterError<R>>
+where
+    R: StdError + 'static,
+{
+    let [input] = transaction.input.as_slice() else {
+        return Err(CoreAdapterError::RefundTransactionMismatch);
+    };
+    let mut witness = input.witness.iter();
+    let signature: [u8; 64] = witness
+        .next()
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or(CoreAdapterError::RefundTransactionMismatch)?;
+    let script = witness
+        .next()
+        .ok_or(CoreAdapterError::RefundTransactionMismatch)?;
+    let control_block = witness
+        .next()
+        .ok_or(CoreAdapterError::RefundTransactionMismatch)?;
+    if witness.next().is_some()
+        || script != agreement.p2tr_contract().refund_script_bytes()
+        || control_block != agreement.p2tr_contract().refund_control_block_bytes()
+    {
+        return Err(CoreAdapterError::RefundTransactionMismatch);
+    }
+    let expected = agreement
+        .bitcoin_refund()
+        .clone()
+        .finalize(signature)
+        .map_err(|_| CoreAdapterError::RefundTransactionMismatch)?;
+    if &expected != transaction {
+        return Err(CoreAdapterError::RefundTransactionMismatch);
+    }
+    let mut unsigned = transaction.clone();
+    unsigned.input[0].witness = Witness::new();
+    if serialize(&unsigned) != agreement.bitcoin_refund().unsigned_transaction_bytes() {
+        return Err(CoreAdapterError::RefundTransactionMismatch);
+    }
+    Ok(())
 }
 
 fn validate_claim_submission<R>(
@@ -800,6 +1293,8 @@ where
         CoreAdapterError::UnstableTip => CoreAdapterError::UnstableTip,
         CoreAdapterError::SpenderResponseMismatch => CoreAdapterError::SpenderResponseMismatch,
         CoreAdapterError::ClaimTransactionMismatch => CoreAdapterError::ClaimTransactionMismatch,
+        CoreAdapterError::FundingAnchorMismatch => CoreAdapterError::FundingAnchorMismatch,
+        CoreAdapterError::RefundTransactionMismatch => CoreAdapterError::RefundTransactionMismatch,
         CoreAdapterError::MempoolResponseMismatch => CoreAdapterError::MempoolResponseMismatch,
         CoreAdapterError::BroadcastIdentityMismatch => CoreAdapterError::BroadcastIdentityMismatch,
     }

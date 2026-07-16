@@ -10,7 +10,10 @@ use lez_btc_swap_sdk::BtcAgreementV1;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{ClaimObservation, ObservedFunding, StableTip, validate_exact_claim};
+use crate::{
+    ClaimObservation, ObservedFunding, RefundObservation, StableTip, validate_exact_claim,
+    validate_exact_refund,
+};
 
 const EVIDENCE_SCHEMA_VERSION: u16 = 1;
 
@@ -33,6 +36,8 @@ pub enum BitcoinCoreEvidenceKind {
     ClaimConfirming,
     /// The exact claim reached the signed confirmation policy.
     ClaimFinalized,
+    /// The exact BIP-342 refund reached the signed confirmation policy.
+    RefundFinalized,
 }
 
 impl BitcoinCoreEvidenceKind {
@@ -119,6 +124,33 @@ impl BitcoinCoreEvidenceV1 {
             block_hash: observation.block_hash(),
             stable_tip: observation.stable_tip(),
             public_claim_witness: Some(public_claim_witness),
+        };
+        evidence.validate(agreement)?;
+        evidence.ensure_encodable()?;
+        Ok(evidence)
+    }
+
+    /// Captures one exact finalized BIP-342 refund observation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects non-finalized states and transaction, agreement, confirmation,
+    /// signed deadline, or containing-height mismatches.
+    pub fn refund_finalized(
+        agreement: &BtcAgreementV1,
+        observation: &RefundObservation,
+    ) -> Result<Self, BitcoinCoreEvidenceError> {
+        let RefundObservation::Finalized(observation) = observation else {
+            return Err(BitcoinCoreEvidenceError::UnsupportedObservation);
+        };
+        let evidence = Self {
+            kind: BitcoinCoreEvidenceKind::RefundFinalized,
+            agreement_commitment: *agreement.agreement_commitment(),
+            transaction: observation.transaction().clone(),
+            confirmations: observation.confirmations(),
+            block_hash: observation.block_hash(),
+            stable_tip: observation.stable_tip(),
+            public_claim_witness: None,
         };
         evidence.validate(agreement)?;
         evidence.ensure_encodable()?;
@@ -222,6 +254,18 @@ impl BitcoinCoreEvidenceV1 {
         self.stable_tip
     }
 
+    /// Derived active-chain containing-block height for a confirmed transaction.
+    #[must_use]
+    pub fn confirmed_block_height(&self) -> Option<u32> {
+        if self.confirmations == 0 || self.block_hash.is_none() {
+            return None;
+        }
+        self.stable_tip
+            .height()
+            .checked_add(1)?
+            .checked_sub(self.confirmations)
+    }
+
     /// Exact public 64-byte Bitcoin claim witness, never an adaptor scalar.
     #[must_use]
     pub const fn claim_public_witness(&self) -> Option<&[u8; 64]> {
@@ -323,6 +367,18 @@ impl BitcoinCoreEvidenceV1 {
                     return Err(BitcoinCoreEvidenceError::ObservationStateMismatch);
                 }
                 self.validate_claim(agreement)?;
+            }
+            BitcoinCoreEvidenceKind::RefundFinalized => {
+                let Some(block_height) = self.confirmed_block_height() else {
+                    return Err(BitcoinCoreEvidenceError::ObservationStateMismatch);
+                };
+                if self.public_claim_witness.is_some()
+                    || self.confirmations < agreement.required_bitcoin_confirmations()
+                    || block_height < agreement.body().recovery_plan().bitcoin_refund_height()
+                    || validate_exact_refund::<Infallible>(agreement, &self.transaction).is_err()
+                {
+                    return Err(BitcoinCoreEvidenceError::ObservationStateMismatch);
+                }
             }
         }
         Ok(())

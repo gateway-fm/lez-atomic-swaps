@@ -1,6 +1,6 @@
 # ADR 0009: Bitcoin uses a Taproot script-path CSV refund
 
-Status: Accepted; independent-actor cooperative claims and the canonical agreement-derived BIP-342 refund transaction are GREEN; actual-node refund matrix and production fee policy pending — 2026-07-16
+Status: Accepted; canonical BIP-342 construction plus typed Core maturity, exact observation, one-send submission, and finalized evidence are GREEN; actor key custody, actual-node refund matrix, and production fee policy remain — 2026-07-16
 
 ```mermaid
 flowchart TB
@@ -10,7 +10,11 @@ flowchart TB
     KeyPath -->|"no / timeout"| Delay["Wait relative CSV delay"]
     Delay --> Tapleaf["CSV + funder refund key tapleaf"]
     Tapleaf --> Refund["Taproot script-path refund"]
-    Refund --> Fee["Signed-fee v1 baseline<br/>bounded RBF/CPFP later"]
+    Refund --> Core["Core 31.1 stable-tip observer<br/>signed funding anchor + next-block CSV"]
+    Core --> Journal["Actor journal authorizes one send"]
+    Journal --> Readback["Post-send exact spender bytes<br/>txid + wtxid"]
+    Readback --> Evidence["Finalized containing-block height<br/>canonical durable evidence"]
+    Evidence --> Fee["Signed-fee v1 baseline<br/>bounded RBF/CPFP later"]
     Claim --> Privacy["Ordinary key-path appearance"]
     Refund --> Visible["Refund branch intentionally visible"]
 ```
@@ -49,6 +53,27 @@ This is the default because consensus protects the refund condition and recovery
 does not depend on preserving one pre-signed transaction. A later privacy-driven
 change requires measured evidence and a superseding ADR that addresses every
 pre-signed failure mode.
+
+### Core maturity and exact-submission contract
+
+The typed Core 31.1 adapter derives the actual funding containing height as
+`stable_tip + 1 - funding_confirmations` and requires it to equal the
+countersigned recovery anchor. For block-based BIP-68, a refund may enter block
+`anchor + CSV`, so send eligibility begins when the next block can equal the
+signed refund height; it does not wait one extra block. A confirmed refund
+records its own containing-block height, derived as `stable_tip + 1 -
+refund_confirmations`, never the observation tip height.
+
+The actor-owned public-effect journal, not Core, owns the one-send CAS. The
+adapter validates canonical consensus bytes and the exact three-item
+SIGHASH_DEFAULT witness, preflights txid and wtxid, and calls
+`sendrawtransaction` at most once. Because txid excludes witness, a successful
+broadcast txid is insufficient: Core can already hold another witness with the
+same txid. The adapter therefore accepts only an exact post-send
+`gettxspendingprevout` byte readback with the expected txid and wtxid. Missing,
+ambiguous, or different readback is terminal `Unknown` and never authorizes a
+retry. The same shared submission primitive now closes that race for
+cooperative claims.
 
 ## Fee, reorg, and operational consequences
 
@@ -103,6 +128,4 @@ actual isolated Core and LEZ nodes. The first post-PoC hardening loop now also
 constructs and verifies the exact BIP-342 refund transaction from the
 countersigned agreement in both directions. It fixes the input sequence to the
 committed CSV delay, signs the tapleaf digest under the funder's committed key,
-and assembles the three-item witness. Actual Core pre-boundary rejection,
-at-boundary acceptance, restart-safe submission, replacement/fee-bump policy,
-LEZ refund, and both-refund atomicity evidence remain pending.
+and assembles the three-item witness. The typed Core component now proves the signed funding anchor, the exact next-block CSV boundary, mempool/confirming/finalized classification, conflicting spends, early inclusion rejection, exact post-send witness readback, and canonical finalized evidence at the refund containing height. Its complete tests, strict Clippy, and rustdoc are GREEN without new RPC methods or dependencies. Actor-owned refund-key custody, a fresh actual-node boundary run, restart/concurrency/reorg/fee cases, LEZ refund composition, and both-refund atomicity evidence remain pending.

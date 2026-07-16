@@ -15,7 +15,7 @@ use corepc_types::v31::{
 use lez_btc_core_adapter::{
     BitcoinCoreAdapter, BitcoinCoreEvidenceError, BitcoinCoreEvidenceKind, BitcoinCoreEvidenceV1,
     BitcoinCoreRpc, ClaimObservation, CoreConnectivityPolicy, FundingObservation,
-    MAX_BITCOIN_CORE_EVIDENCE_BYTES, SendFailure,
+    MAX_BITCOIN_CORE_EVIDENCE_BYTES, RefundObservation, SendFailure,
 };
 use serde_json::{Value, json};
 
@@ -40,6 +40,7 @@ struct MockRpc {
 }
 
 struct MockResponses {
+    height: u32,
     chains: VecDeque<GetBlockchainInfo>,
     raw: VecDeque<Option<GetRawTransactionVerbose>>,
     spender: VecDeque<GetTxSpendingPrevout>,
@@ -49,6 +50,7 @@ impl MockRpc {
     fn with_raw(raw: GetRawTransactionVerbose) -> Self {
         Self {
             inner: Arc::new(Mutex::new(MockResponses {
+                height: 200,
                 chains: VecDeque::from([ready_chain(), ready_chain()]),
                 raw: VecDeque::from([Some(raw)]),
                 spender: VecDeque::new(),
@@ -59,8 +61,25 @@ impl MockRpc {
     fn with_claim(raw: GetRawTransactionVerbose, spender: GetTxSpendingPrevout) -> Self {
         Self {
             inner: Arc::new(Mutex::new(MockResponses {
+                height: 200,
                 chains: VecDeque::from([ready_chain(), ready_chain()]),
                 raw: VecDeque::from([Some(raw)]),
+                spender: VecDeque::from([spender]),
+            })),
+        }
+    }
+
+    fn with_refund(
+        funding: GetRawTransactionVerbose,
+        refund: GetRawTransactionVerbose,
+        spender: GetTxSpendingPrevout,
+    ) -> Self {
+        let height = 1_149;
+        Self {
+            inner: Arc::new(Mutex::new(MockResponses {
+                height,
+                chains: VecDeque::from([ready_chain_at(height), ready_chain_at(height)]),
+                raw: VecDeque::from([Some(funding), Some(refund)]),
                 spender: VecDeque::from([spender]),
             })),
         }
@@ -107,19 +126,20 @@ impl BitcoinCoreRpc for MockRpc {
     }
 
     async fn get_index_info(&self) -> Result<GetIndexInfo, Self::Error> {
+        let height = self.inner.lock().expect("mock lock").height;
         Ok(GetIndexInfo(BTreeMap::from([
             (
                 "txindex".to_owned(),
                 GetIndexInfoName {
                     synced: true,
-                    best_block_height: 200,
+                    best_block_height: height,
                 },
             ),
             (
                 "txospenderindex".to_owned(),
                 GetIndexInfoName {
                     synced: true,
-                    best_block_height: 200,
+                    best_block_height: height,
                 },
             ),
         ])))
@@ -169,10 +189,14 @@ impl BitcoinCoreRpc for MockRpc {
 }
 
 fn ready_chain() -> GetBlockchainInfo {
+    ready_chain_at(200)
+}
+
+fn ready_chain_at(height: u32) -> GetBlockchainInfo {
     serde_json::from_value(json!({
         "chain": "regtest",
-        "blocks": 200,
-        "headers": 200,
+        "blocks": height,
+        "headers": height,
         "bestblockhash": TIP,
         "bits": "207fffff",
         "target": "7fffff0000000000000000000000000000000000000000000000000000000000",
@@ -223,6 +247,44 @@ async fn observed_claim(confirmations: u32) -> (support::SwapFixture, ClaimObser
         .await
         .expect("adapter-validated claim");
     (fixture, observation)
+}
+
+async fn observed_refund() -> (support::SwapFixture, RefundObservation) {
+    let fixture = swap_fixture();
+    let rpc = MockRpc::with_refund(
+        raw_verbose(&fixture.funding, Some(150), Some(TIP)),
+        raw_verbose(&fixture.refund, Some(6), Some(TIP)),
+        spender(
+            fixture.agreement.bitcoin_refund().funding_outpoint(),
+            &fixture.refund,
+            Some(TIP),
+        ),
+    );
+    let observation = BitcoinCoreAdapter::new(rpc, CoreConnectivityPolicy::IsolatedLocal)
+        .observe_refund(&fixture.agreement)
+        .await
+        .expect("adapter-validated refund");
+    (fixture, observation)
+}
+
+#[tokio::test]
+async fn finalized_refund_evidence_preserves_containing_height_and_exact_witness() {
+    let (fixture, observation) = observed_refund().await;
+    let RefundObservation::Finalized(refund) = &observation else {
+        panic!("expected finalized refund");
+    };
+    assert_eq!(refund.block_height(), Some(1_144));
+    let evidence = BitcoinCoreEvidenceV1::refund_finalized(&fixture.agreement, &observation)
+        .expect("refund evidence");
+    assert_eq!(evidence.kind(), BitcoinCoreEvidenceKind::RefundFinalized);
+    assert_eq!(evidence.transaction(), &fixture.refund);
+    assert_eq!(evidence.confirmed_block_height(), Some(1_144));
+    assert_eq!(evidence.claim_public_witness(), None);
+    let encoded = evidence.encode().expect("canonical refund evidence");
+    let decoded = BitcoinCoreEvidenceV1::decode(&fixture.agreement, &encoded)
+        .expect("refund evidence decodes");
+    assert_eq!(decoded, evidence);
+    assert_eq!(decoded.confirmed_block_height(), Some(1_144));
 }
 
 #[tokio::test]

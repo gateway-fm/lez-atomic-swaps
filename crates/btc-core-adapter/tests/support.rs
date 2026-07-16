@@ -26,6 +26,7 @@ const CLAIM_VALUE_SAT: u64 = 99_000;
 pub const MAKER_SECRET: [u8; 32] = [0x31; 32];
 pub const TAKER_SECRET: [u8; 32] = [0x42; 32];
 pub const ADAPTOR_SECRET: [u8; 32] = [0x53; 32];
+pub const REFUND_SECRET: [u8; 32] = [0x62; 32];
 pub const LEZ_PREPARED_MESSAGE_BYTES: &[u8] = b"m3-actor-prepared-witnessed-claim";
 
 #[allow(clippy::missing_panics_doc, clippy::must_use_candidate)]
@@ -48,6 +49,7 @@ pub struct SwapFixture {
     pub agreement: BtcAgreementV1,
     pub funding: Transaction,
     pub claim: Transaction,
+    pub refund: Transaction,
 }
 
 #[allow(clippy::missing_panics_doc, clippy::must_use_candidate)]
@@ -304,9 +306,35 @@ pub fn swap_fixture() -> SwapFixture {
         .clone()
         .finalize(signature)
         .expect("signed claim");
+    let refund_signature = Secp256k1::new()
+        .sign_schnorr_no_aux_rand(
+            &Message::from_digest(agreement.bitcoin_refund().sighash_bytes()),
+            &Keypair::from_secret_key(&Secp256k1::new(), &secret(REFUND_SECRET)),
+        )
+        .serialize();
+    let refund = agreement
+        .bitcoin_refund()
+        .clone()
+        .finalize(refund_signature)
+        .expect("signed refund");
     SwapFixture {
         agreement,
         funding,
         claim,
+        refund,
     }
+}
+
+#[test]
+fn refund_fixture_is_exact_signed_agreement_transaction() {
+    let fixture = swap_fixture();
+    assert_eq!(
+        fixture.refund.compute_txid(),
+        fixture
+            .agreement
+            .bitcoin_refund()
+            .unsigned_transaction()
+            .compute_txid()
+    );
+    assert_eq!(fixture.refund.input[0].witness.len(), 3);
 }
