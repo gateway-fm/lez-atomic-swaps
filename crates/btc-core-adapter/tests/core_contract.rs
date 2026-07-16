@@ -13,10 +13,11 @@ use corepc_types::v31::{
     MempoolAcceptance, SendRawTransaction, TestMempoolAccept,
 };
 use lez_btc_core_adapter::{
-    AuthorizedClaimSubmission, AuthorizedRefundSubmission, BitcoinCoreAdapter, BitcoinCoreRpc,
-    ClaimObservation, ClaimSubmissionAcquire, ClaimSubmissionAttempt, ClaimSubmissionState,
-    ClaimSubmissionStore, CoreAdapterError, CoreConnectivityPolicy, FundingObservation,
-    RefundObservation, SendFailure,
+    AuthorizedClaimSubmission, AuthorizedFundingSubmission, AuthorizedRefundSubmission,
+    BitcoinCoreAdapter, BitcoinCoreRpc, ClaimObservation, ClaimSubmissionAcquire,
+    ClaimSubmissionAttempt, ClaimSubmissionState, ClaimSubmissionStore, CoreAdapterError,
+    CoreConnectivityPolicy, ExactFundingObservation, FundingObservation, RefundObservation,
+    SendFailure,
 };
 
 use support::{REGTEST_GENESIS, REQUIRED_CONFIRMATIONS, raw_verbose, swap_fixture};
@@ -521,6 +522,108 @@ async fn funding_observation_is_canonical_metric_checked_and_stable_tip_brackete
 }
 
 #[tokio::test]
+async fn exact_funding_observation_proves_current_unspent_state_at_one_stable_tip() {
+    let fixture = swap_fixture();
+    let outpoint = fixture.agreement.cooperative_claim().funding_outpoint();
+    let rpc = MockRpc::ready();
+    rpc.push_raw(raw_verbose(
+        &fixture.funding,
+        Some(u64::from(REQUIRED_CONFIRMATIONS)),
+        Some(TIP_A),
+    ));
+    rpc.push_spender(unspent(outpoint));
+
+    let ExactFundingObservation::Unspent(observed) = isolated_adapter(rpc.clone())
+        .observe_exact_funding(&fixture.agreement)
+        .await
+        .expect("exact confirmed funding is currently unspent")
+    else {
+        panic!("expected unspent exact funding");
+    };
+    assert_eq!(observed.transaction(), &fixture.funding);
+    assert_eq!(observed.confirmations(), REQUIRED_CONFIRMATIONS);
+    assert_eq!(
+        rpc.calls(),
+        [
+            "getnetworkinfo",
+            "getblockchaininfo",
+            "getblockhash",
+            "getindexinfo",
+            "getrawtransaction",
+            "getblockheader",
+            "gettxspendingprevout",
+            "getblockchaininfo"
+        ]
+    );
+
+    let spent_rpc = MockRpc::ready();
+    spent_rpc.push_raw(raw_verbose(
+        &fixture.funding,
+        Some(u64::from(REQUIRED_CONFIRMATIONS)),
+        Some(TIP_A),
+    ));
+    spent_rpc.push_spender(spender(outpoint, &fixture.claim));
+    let ExactFundingObservation::Spent {
+        funding,
+        spender_transaction_id,
+    } = isolated_adapter(spent_rpc)
+        .observe_exact_funding(&fixture.agreement)
+        .await
+        .expect("spent funding is distinct from absence")
+    else {
+        panic!("expected spent exact funding");
+    };
+    assert_eq!(funding.transaction(), &fixture.funding);
+    assert_eq!(spender_transaction_id, fixture.claim.compute_txid());
+
+    let forged_spender_rpc = MockRpc::ready();
+    forged_spender_rpc.push_raw(raw_verbose(
+        &fixture.funding,
+        Some(u64::from(REQUIRED_CONFIRMATIONS)),
+        Some(TIP_A),
+    ));
+    forged_spender_rpc.push_spender(spender(outpoint, &fixture.funding));
+    assert!(matches!(
+        isolated_adapter(forged_spender_rpc)
+            .observe_exact_funding(&fixture.agreement)
+            .await,
+        Err(CoreAdapterError::SpenderResponseMismatch)
+    ));
+
+    let pending_rpc = MockRpc::ready();
+    pending_rpc.push_raw(raw_verbose(&fixture.funding, None, None));
+    let ExactFundingObservation::Pending {
+        transaction,
+        confirmations,
+        ..
+    } = isolated_adapter(pending_rpc)
+        .observe_exact_funding(&fixture.agreement)
+        .await
+        .expect("pending exact bytes are observable but ineligible")
+    else {
+        panic!("expected pending exact funding");
+    };
+    assert_eq!(transaction, fixture.funding);
+    assert_eq!(confirmations, 0);
+
+    let unstable_rpc = MockRpc::ready();
+    unstable_rpc.inner.lock().expect("mock lock").chains =
+        VecDeque::from([chain_info(TIP_A), chain_info(TIP_B)]);
+    unstable_rpc.push_raw(raw_verbose(
+        &fixture.funding,
+        Some(u64::from(REQUIRED_CONFIRMATIONS)),
+        Some(TIP_A),
+    ));
+    unstable_rpc.push_spender(unspent(outpoint));
+    assert!(matches!(
+        isolated_adapter(unstable_rpc)
+            .observe_exact_funding(&fixture.agreement)
+            .await,
+        Err(CoreAdapterError::UnstableTip)
+    ));
+}
+
+#[tokio::test]
 async fn claim_observation_requires_exact_spender_bytes_and_one_item_witness() {
     let fixture = swap_fixture();
     let outpoint = fixture.agreement.cooperative_claim().funding_outpoint();
@@ -767,6 +870,126 @@ async fn authorized_refund_requires_exact_post_send_witness_readback() {
         Err(CoreAdapterError::RefundTransactionMismatch)
     ));
     assert!(invalid_rpc.calls().is_empty());
+}
+
+#[tokio::test]
+async fn authorized_funding_is_one_send_and_requires_exact_post_send_bytes() {
+    let fixture = swap_fixture();
+    let funding_bytes = serialize(&fixture.funding);
+
+    let accepted_rpc = MockRpc::ready();
+    accepted_rpc.push_mempool(Ok(mempool_allowed(&fixture.funding)));
+    accepted_rpc.push_send(Ok(SendRawTransaction(
+        fixture.funding.compute_txid().to_string(),
+    )));
+    accepted_rpc.push_raw(raw_verbose(&fixture.funding, None, None));
+    assert_eq!(
+        isolated_adapter(accepted_rpc.clone())
+            .submit_authorized_funding(
+                &fixture.agreement,
+                &funding_bytes,
+                fixture.funding.compute_txid(),
+            )
+            .await
+            .expect("exact funding accepted"),
+        AuthorizedFundingSubmission::Accepted {
+            transaction_id: fixture.funding.compute_txid(),
+            witness_transaction_id: fixture.funding.compute_wtxid(),
+        }
+    );
+    assert_eq!(
+        accepted_rpc
+            .calls()
+            .iter()
+            .filter(|call| **call == "sendrawtransaction")
+            .count(),
+        1
+    );
+
+    let missing_readback_rpc = MockRpc::ready();
+    missing_readback_rpc.push_mempool(Ok(mempool_allowed(&fixture.funding)));
+    missing_readback_rpc.push_send(Ok(SendRawTransaction(
+        fixture.funding.compute_txid().to_string(),
+    )));
+    missing_readback_rpc
+        .inner
+        .lock()
+        .expect("mock lock")
+        .raw
+        .push_back(None);
+    assert_eq!(
+        isolated_adapter(missing_readback_rpc.clone())
+            .submit_authorized_funding(
+                &fixture.agreement,
+                &funding_bytes,
+                fixture.funding.compute_txid(),
+            )
+            .await
+            .expect("missing readback is conservative"),
+        AuthorizedFundingSubmission::Unknown
+    );
+    assert_eq!(
+        missing_readback_rpc
+            .calls()
+            .iter()
+            .filter(|call| **call == "sendrawtransaction")
+            .count(),
+        1
+    );
+
+    let rejected_rpc = MockRpc::ready();
+    rejected_rpc.push_mempool(Ok(mempool_allowed(&fixture.funding)));
+    rejected_rpc.push_send(Err(MockError::Rejected));
+    assert_eq!(
+        isolated_adapter(rejected_rpc)
+            .submit_authorized_funding(
+                &fixture.agreement,
+                &funding_bytes,
+                fixture.funding.compute_txid(),
+            )
+            .await
+            .expect("definitive funding rejection"),
+        AuthorizedFundingSubmission::Rejected
+    );
+}
+
+#[tokio::test]
+async fn authorized_funding_validates_agreement_and_identity_before_rpc() {
+    let fixture = swap_fixture();
+    let wrong_identity_rpc = MockRpc::ready();
+    assert!(matches!(
+        isolated_adapter(wrong_identity_rpc.clone())
+            .submit_authorized_funding(
+                &fixture.agreement,
+                &serialize(&fixture.funding),
+                fixture.claim.compute_txid(),
+            )
+            .await,
+        Err(CoreAdapterError::FundingTransactionMismatch)
+    ));
+    assert!(wrong_identity_rpc.calls().is_empty());
+
+    let mut wrong_output = fixture.funding.clone();
+    let contract_output = usize::try_from(fixture.agreement.funding_terms().output_index())
+        .expect("contract output index");
+    wrong_output.output[contract_output].value = bitcoin::Amount::from_sat(
+        wrong_output.output[contract_output]
+            .value
+            .to_sat()
+            .saturating_add(1),
+    );
+    let wrong_output_rpc = MockRpc::ready();
+    assert!(matches!(
+        isolated_adapter(wrong_output_rpc.clone())
+            .submit_authorized_funding(
+                &fixture.agreement,
+                &serialize(&wrong_output),
+                wrong_output.compute_txid(),
+            )
+            .await,
+        Err(CoreAdapterError::FundingOutputMismatch)
+    ));
+    assert!(wrong_output_rpc.calls().is_empty());
 }
 
 #[tokio::test]

@@ -191,6 +191,39 @@ pub enum FundingObservation {
     Ready(ObservedFunding),
 }
 
+/// Exact agreement funding state used at a fresh public-effect eligibility boundary.
+///
+/// Unlike [`FundingObservation`], this type retains pending transaction bytes and
+/// distinguishes a confirmed unspent output from a confirmed output that already
+/// has a spender. Only [`ExactFundingObservation::Unspent`] grants fresh-action
+/// eligibility; every other variant is observe-only.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ExactFundingObservation {
+    /// The transaction is absent from the required index at one stable active-chain tip.
+    Absent {
+        /// Stable tip bracketing the affirmative absence.
+        stable_tip: StableTip,
+    },
+    /// The exact output exists but has not reached the signed confirmation policy.
+    Pending {
+        /// Canonical consensus transaction reconstructed from RPC hex.
+        transaction: Transaction,
+        /// Current confirmation count, including zero for mempool funding.
+        confirmations: u32,
+        /// Stable tip bracketing the pending exact transaction.
+        stable_tip: StableTip,
+    },
+    /// The exact output is sufficiently confirmed and currently unspent.
+    Unspent(ObservedFunding),
+    /// The exact output is sufficiently confirmed but already spent.
+    Spent {
+        /// Canonical confirmed agreement funding.
+        funding: ObservedFunding,
+        /// Non-witness identifier of the transaction currently spending the output.
+        spender_transaction_id: Txid,
+    },
+}
+
 /// Exact successful key-path claim observed through the spender index.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ObservedClaim {
@@ -357,6 +390,27 @@ pub enum AuthorizedRefundSubmission {
     Unknown,
 }
 
+/// Result of one caller-authorized exact funding submission.
+///
+/// The caller must durably consume its single-send authority before invoking
+/// [`BitcoinCoreAdapter::submit_authorized_funding`]. `Unknown` is terminal for
+/// that authority and must never be retried.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum AuthorizedFundingSubmission {
+    /// Core returned the expected txid and an exact post-send byte readback succeeded.
+    Accepted {
+        /// Canonical non-witness transaction identifier.
+        transaction_id: Txid,
+        /// Canonical witness transaction identifier.
+        witness_transaction_id: Wtxid,
+    },
+    /// Core definitively rejected the exact transaction.
+    Rejected,
+    /// Exact acceptance cannot be proved and no retry is permitted.
+    Unknown,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ParsedSpender {
     transaction_id: Txid,
@@ -371,6 +425,21 @@ enum ExactSubmissionOutcome {
     },
     Rejected,
     Unknown,
+}
+
+enum FundingState {
+    Absent {
+        stable_tip: StableTip,
+    },
+    Pending {
+        transaction: Transaction,
+        confirmations: u32,
+        stable_tip: StableTip,
+    },
+    Ready {
+        funding: ObservedFunding,
+        spender: Option<ParsedSpender>,
+    },
 }
 
 /// Durable identity of one permitted claim broadcast attempt.
@@ -531,6 +600,9 @@ pub enum CoreAdapterError<RpcError: StdError + 'static, StoreError: StdError + '
     /// Funding transaction does not contain the exact agreement output.
     #[error("observed funding output differs from agreement")]
     FundingOutputMismatch,
+    /// Funding transaction identity differs from the signed agreement or caller expectation.
+    #[error("funding transaction identity differs from agreement")]
+    FundingTransactionMismatch,
     /// Confirmation context is partial or invalid.
     #[error("Bitcoin Core returned invalid transaction confirmation context")]
     InvalidConfirmationContext,
@@ -641,6 +713,66 @@ where
         &self,
         agreement: &BtcAgreementV1,
     ) -> Result<FundingObservation, CoreAdapterError<R::Error>> {
+        Ok(match self.observe_funding_state(agreement, false).await? {
+            FundingState::Absent { stable_tip } => FundingObservation::Absent { stable_tip },
+            FundingState::Pending {
+                confirmations,
+                stable_tip,
+                ..
+            } => FundingObservation::Pending {
+                confirmations,
+                stable_tip,
+            },
+            FundingState::Ready { funding, .. } => FundingObservation::Ready(funding),
+        })
+    }
+
+    /// Observes exact agreement funding and its current spender state under one
+    /// stable-tip bracket.
+    ///
+    /// Pending bytes are retained so callers can distinguish exact plan presence
+    /// from a conflicting transaction without granting fresh-send authority.
+    /// Confirmed funding is `Unspent` only after `gettxspendingprevout` proves no
+    /// spender at the same stable active-chain tip.
+    ///
+    /// # Errors
+    ///
+    /// Rejects readiness, raw consensus, RPC metric, agreement output,
+    /// confirmation, spender-index, or stable-tip mismatches.
+    pub async fn observe_exact_funding(
+        &self,
+        agreement: &BtcAgreementV1,
+    ) -> Result<ExactFundingObservation, CoreAdapterError<R::Error>> {
+        Ok(match self.observe_funding_state(agreement, true).await? {
+            FundingState::Absent { stable_tip } => ExactFundingObservation::Absent { stable_tip },
+            FundingState::Pending {
+                transaction,
+                confirmations,
+                stable_tip,
+            } => ExactFundingObservation::Pending {
+                transaction,
+                confirmations,
+                stable_tip,
+            },
+            FundingState::Ready {
+                funding,
+                spender: None,
+            } => ExactFundingObservation::Unspent(funding),
+            FundingState::Ready {
+                funding,
+                spender: Some(spender),
+            } => ExactFundingObservation::Spent {
+                funding,
+                spender_transaction_id: spender.transaction_id,
+            },
+        })
+    }
+
+    async fn observe_funding_state(
+        &self,
+        agreement: &BtcAgreementV1,
+        inspect_spender: bool,
+    ) -> Result<FundingState, CoreAdapterError<R::Error>> {
         let before = self.ensure_ready(agreement).await?;
         let funding = agreement.funding_terms();
         let expected_txid = Txid::from_byte_array(*funding.transaction_id());
@@ -654,7 +786,7 @@ where
             if before != after {
                 return Err(CoreAdapterError::UnstableTip);
             }
-            return Ok(FundingObservation::Absent { stable_tip: after });
+            return Ok(FundingState::Absent { stable_tip: after });
         };
         let transaction = parse_verbose_transaction(&response, expected_txid)?;
         let output = transaction
@@ -675,7 +807,8 @@ where
             if before != after {
                 return Err(CoreAdapterError::UnstableTip);
             }
-            return Ok(FundingObservation::Pending {
+            return Ok(FundingState::Pending {
+                transaction,
                 confirmations,
                 stable_tip: after,
             });
@@ -686,20 +819,41 @@ where
             .get_block_header(block_hash)
             .await
             .map_err(CoreAdapterError::Rpc)?;
+        let spender = if inspect_spender {
+            let outpoint = OutPoint {
+                txid: expected_txid,
+                vout: funding.output_index(),
+            };
+            let response = self
+                .rpc
+                .get_tx_spending_prevout(outpoint)
+                .await
+                .map_err(CoreAdapterError::Rpc)?;
+            let spender = parse_spender_response(&response, outpoint)?;
+            if let Some(spender) = &spender {
+                validate_funding_spender(spender, outpoint)?;
+            }
+            spender
+        } else {
+            None
+        };
         let after = self.current_ready_tip().await?;
         if before != after {
             return Err(CoreAdapterError::UnstableTip);
         }
         let (block_height, block_median_time_unix_seconds) =
             validate_funding_block_header(&header, block_hash, confirmations, after)?;
-        Ok(FundingObservation::Ready(ObservedFunding {
-            transaction,
-            confirmations,
-            block_hash,
-            block_height,
-            block_median_time_unix_seconds,
-            stable_tip: after,
-        }))
+        Ok(FundingState::Ready {
+            funding: ObservedFunding {
+                transaction,
+                confirmations,
+                block_hash,
+                block_height,
+                block_median_time_unix_seconds,
+                stable_tip: after,
+            },
+            spender,
+        })
     }
 
     /// Observes and validates the exact successful claim spender under a stable tip.
@@ -943,6 +1097,56 @@ where
             .await
     }
 
+    /// Submits one exact agreement funding transaction after the actor journal
+    /// has durably consumed send authority.
+    ///
+    /// Local consensus decoding, exact agreement output, and caller-provided
+    /// txid are checked before any RPC. One invocation makes at most one
+    /// `sendrawtransaction` call. A successful send becomes `Accepted` only
+    /// after `getrawtransaction` returns the same canonical bytes; any ambiguous
+    /// response is terminal `Unknown` and cannot authorize a retry.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed or non-canonical bytes, agreement/identity drift,
+    /// readiness failure, or a contradictory typed Core response.
+    pub async fn submit_authorized_funding(
+        &self,
+        agreement: &BtcAgreementV1,
+        transaction_bytes: &[u8],
+        expected_transaction_id: Txid,
+    ) -> Result<AuthorizedFundingSubmission, CoreAdapterError<R::Error>> {
+        let transaction = validate_funding_submission(agreement, transaction_bytes)?;
+        if transaction.compute_txid() != expected_transaction_id {
+            return Err(CoreAdapterError::FundingTransactionMismatch);
+        }
+        Ok(
+            match self
+                .perform_single_broadcast(agreement, &transaction, transaction_bytes)
+                .await?
+            {
+                ExactSubmissionOutcome::Accepted {
+                    transaction_id,
+                    witness_transaction_id,
+                } => {
+                    if self
+                        .post_send_exact_funding(transaction_bytes, transaction_id)
+                        .await
+                    {
+                        AuthorizedFundingSubmission::Accepted {
+                            transaction_id,
+                            witness_transaction_id,
+                        }
+                    } else {
+                        AuthorizedFundingSubmission::Unknown
+                    }
+                }
+                ExactSubmissionOutcome::Rejected => AuthorizedFundingSubmission::Rejected,
+                ExactSubmissionOutcome::Unknown => AuthorizedFundingSubmission::Unknown,
+            },
+        )
+    }
+
     /// Submits one exact BIP-342 refund after the actor journal has durably
     /// consumed send authority. A successful txid response is accepted only
     /// when a post-send spender read returns the same complete witness bytes.
@@ -1066,6 +1270,36 @@ where
         transaction_bytes: &[u8],
         outpoint: OutPoint,
     ) -> Result<ExactSubmissionOutcome, CoreAdapterError<R::Error>> {
+        match self
+            .perform_single_broadcast(agreement, transaction, transaction_bytes)
+            .await?
+        {
+            ExactSubmissionOutcome::Accepted {
+                transaction_id,
+                witness_transaction_id,
+            } => {
+                if self
+                    .post_send_exact_spender(outpoint, transaction_bytes, transaction_id)
+                    .await
+                {
+                    Ok(ExactSubmissionOutcome::Accepted {
+                        transaction_id,
+                        witness_transaction_id,
+                    })
+                } else {
+                    Ok(ExactSubmissionOutcome::Unknown)
+                }
+            }
+            outcome => Ok(outcome),
+        }
+    }
+
+    async fn perform_single_broadcast(
+        &self,
+        agreement: &BtcAgreementV1,
+        transaction: &Transaction,
+        transaction_bytes: &[u8],
+    ) -> Result<ExactSubmissionOutcome, CoreAdapterError<R::Error>> {
         self.ensure_ready(agreement).await?;
         let transaction_id = transaction.compute_txid();
         let witness_transaction_id = transaction.compute_wtxid();
@@ -1120,23 +1354,30 @@ where
                 if response_txid != transaction_id {
                     return Err(CoreAdapterError::BroadcastIdentityMismatch);
                 }
-                if self
-                    .post_send_exact_spender(outpoint, transaction_bytes, transaction_id)
-                    .await
-                {
-                    Ok(ExactSubmissionOutcome::Accepted {
-                        transaction_id,
-                        witness_transaction_id,
-                    })
-                } else {
-                    Ok(ExactSubmissionOutcome::Unknown)
-                }
+                Ok(ExactSubmissionOutcome::Accepted {
+                    transaction_id,
+                    witness_transaction_id,
+                })
             }
             Err(error) => Ok(match R::classify_send_failure(&error) {
                 SendFailure::DefinitiveRejection => ExactSubmissionOutcome::Rejected,
                 SendFailure::Unknown => ExactSubmissionOutcome::Unknown,
             }),
         }
+    }
+
+    async fn post_send_exact_funding(
+        &self,
+        transaction_bytes: &[u8],
+        transaction_id: Txid,
+    ) -> bool {
+        let Ok(Some(response)) = self.rpc.get_raw_transaction(transaction_id).await else {
+            return false;
+        };
+        parse_verbose_transaction::<R::Error>(&response, transaction_id).is_ok_and(|transaction| {
+            transaction.compute_txid() == transaction_id
+                && serialize(&transaction) == transaction_bytes
+        })
     }
 
     async fn post_send_exact_spender(
@@ -1228,6 +1469,25 @@ where
     }))
 }
 
+fn validate_funding_spender<R>(
+    spender: &ParsedSpender,
+    outpoint: OutPoint,
+) -> Result<(), CoreAdapterError<R>>
+where
+    R: StdError + 'static,
+{
+    let transaction = decode_raw_transaction(&spender.transaction_bytes)?;
+    if transaction.compute_txid() != spender.transaction_id
+        || !transaction
+            .input
+            .iter()
+            .any(|input| input.previous_output == outpoint)
+    {
+        return Err(CoreAdapterError::SpenderResponseMismatch);
+    }
+    Ok(())
+}
+
 fn refund_block_height<R>(
     agreement: &BtcAgreementV1,
     stable_tip: StableTip,
@@ -1315,6 +1575,33 @@ where
     Ok(transaction)
 }
 
+fn validate_funding_submission<R>(
+    agreement: &BtcAgreementV1,
+    transaction_bytes: &[u8],
+) -> Result<Transaction, CoreAdapterError<R>>
+where
+    R: StdError + 'static,
+{
+    let transaction = decode_raw_transaction(transaction_bytes)?;
+    let funding = agreement.funding_terms();
+    let output = transaction
+        .output
+        .get(
+            usize::try_from(funding.output_index())
+                .map_err(|_| CoreAdapterError::FundingOutputMismatch)?,
+        )
+        .ok_or(CoreAdapterError::FundingOutputMismatch)?;
+    if output.value.to_sat() != funding.value_sat()
+        || output.script_pubkey.as_bytes() != agreement.p2tr_contract().script_pubkey_bytes()
+    {
+        return Err(CoreAdapterError::FundingOutputMismatch);
+    }
+    if transaction.compute_txid() != Txid::from_byte_array(*funding.transaction_id()) {
+        return Err(CoreAdapterError::FundingTransactionMismatch);
+    }
+    Ok(transaction)
+}
+
 fn widen_core_error<R, S>(error: CoreAdapterError<R>) -> CoreAdapterError<R, S>
 where
     R: StdError + 'static,
@@ -1338,6 +1625,9 @@ where
             CoreAdapterError::RawTransactionMetricsMismatch
         }
         CoreAdapterError::FundingOutputMismatch => CoreAdapterError::FundingOutputMismatch,
+        CoreAdapterError::FundingTransactionMismatch => {
+            CoreAdapterError::FundingTransactionMismatch
+        }
         CoreAdapterError::InvalidConfirmationContext => {
             CoreAdapterError::InvalidConfirmationContext
         }
