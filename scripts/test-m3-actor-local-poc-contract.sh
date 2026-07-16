@@ -390,6 +390,30 @@ rg -Fq '.amount | strings | select(test("^[1-9][0-9]*$"))' \
 if rg -Fq '.amount | numbers' <<<"$native_observation_source"; then
   fail "native escrow admission incorrectly drops the canonical string amount"
 fi
+finalized_funding_source="$(sed -n '/^write_finalized_witnessed_funding_observation() {$/,/^}$/p' "$direction_driver")"
+[[ -n "$finalized_funding_source" ]] ||
+  fail "first-lock admission is missing the finalized witnessed-funding observer"
+rg -Fq 'observe-finalized-witnessed-funding' <<<"$finalized_funding_source" ||
+  fail "first-lock admission does not reuse the typed finalized witnessed-funding operation"
+rg -Fq 'target:{mode:"exact",funding_transaction_id:$funding}' \
+  <<<"$finalized_funding_source" ||
+  fail "first-lock witnessed-funding observation is not bound to the exact persisted transaction"
+rg -Fq 'window:{start_height:$start,max_blocks:$blocks}' \
+  <<<"$finalized_funding_source" ||
+  fail "first-lock witnessed-funding observation is not bound to the finalized lock window"
+admission_sample_source="$(sed -n '/^write_first_lock_recovery_admission_sample() {$/,/^}$/p' "$direction_driver")"
+foreign_admission_source="$(sed -n '/^    taker_sells_foreign)$/,/^      ;;/p' <<<"$admission_sample_source")"
+lez_admission_source="$(sed -n '/^    taker_sells_lez)$/,/^      ;;/p' <<<"$admission_sample_source")"
+rg -Fq 'write_native_escrow_observation' <<<"$foreign_admission_source" ||
+  fail "foreign first-lock admission no longer proves witnessed-PDA absence"
+rg -Fq 'write_finalized_witnessed_funding_observation' <<<"$lez_admission_source" ||
+  fail "LEZ first-lock admission does not use aggregate-witness finalized funding evidence"
+if rg -Fq 'write_native_escrow_observation' <<<"$lez_admission_source" ||
+   rg -Fq '.amount | numbers' <<<"$lez_admission_source"; then
+  fail "LEZ first-lock admission still uses hashlock terms or drops the canonical amount"
+fi
+[[ "$(rg -Fc 'write_native_escrow_observation' <<<"$admission_sample_source")" == 1 ]] ||
+  fail "hashlock-only native observation is not isolated to the absent LEZ second lock"
 for behavior in assert_first_lock_recovery_pending \
   refresh_first_lock_lez_absence_window advance_core_median_time_to_first_lock_cutoff \
   write_first_lock_recovery_admission_evidence assert_first_lock_owner_terminal_restart \

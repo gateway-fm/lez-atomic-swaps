@@ -1750,6 +1750,55 @@ write_native_escrow_observation() {
     fail "native escrow admission observation is malformed"
 }
 
+finalized_witnessed_funding_observation_file=""
+write_finalized_witnessed_funding_observation() {
+  local label="$1" depositor request output amount terms_hash start blocks funding
+  case "$M3_POC_DIRECTION" in
+    taker_sells_foreign) depositor=maker ;;
+    taker_sells_lez) depositor=taker ;;
+    *) fail "unsupported witnessed-funding observation direction" ;;
+  esac
+  start="$lez_lock_window_start"
+  blocks="$lez_lock_window_blocks"
+  funding="$lez_funding_tx"
+  [[ "$start" =~ ^[0-9]+$ && "$blocks" =~ ^[0-9]+$ &&
+     "$funding" =~ ^[0-9a-f]{64}$ ]] ||
+    fail "finalized witnessed-funding observation inputs are unavailable"
+  amount="$(jq -er '.amount | strings | select(test("^[1-9][0-9]*$"))' "$final_terms")"
+  terms_hash="$(jq -er '.terms_hash | strings | select(test("^[0-9a-f]{64}$"))' "$final_terms")"
+  request="${M3_POC_DIRECTION_ROOT}/${label}-request.json"
+  output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}.json"
+  [[ ! -e "$request" && ! -L "$request" && ! -e "$output" && ! -L "$output" ]] ||
+    fail "refusing to overwrite finalized witnessed-funding evidence"
+  jq -n --arg run "$M3_POC_RUN_ID" --arg request "$(new_request_id)" \
+    --arg role "$depositor" --arg funding "$funding" \
+    --argjson start "$start" --argjson blocks "$blocks" \
+    --slurpfile runtime "${M3_POC_DIRECTION_ROOT}/sidecars/final/${depositor}/runtime.json" \
+    --slurpfile terms "$final_terms" '
+    {context:{schema_version:1,run_id:$run,request_id:$request,sidecar_role:$role},
+     runtime:$runtime[0],terms:$terms[0],
+     target:{mode:"exact",funding_transaction_id:$funding},
+     window:{start_height:$start,max_blocks:$blocks}}
+  ' >"$request"
+  chmod 0600 "$request"
+  operator_call final "$depositor" observe-finalized-witnessed-funding "$request" "$output"
+  jq -e --arg run "$M3_POC_RUN_ID" --arg role "$depositor" \
+    --arg funding "$funding" --arg amount "$amount" --arg terms_hash "$terms_hash" \
+    --argjson start "$start" --argjson end "$((start + blocks - 1))" '
+    .context.run_id == $run and .context.sidecar_role == $role
+    and .funding.transaction.transaction_id == $funding
+    and .funding.metadata.terms_hash == $terms_hash
+    and .funding.metadata.status == "funded"
+    and .funding.metadata.amount == $amount
+    and .funding.custody.balance == $amount
+    and (.funding.containing_block.block_id | numbers) >= $start
+    and (.funding.containing_block.block_id | numbers) <= $end
+    and (.finalized_tip.height | numbers) >= $end
+  ' "$output" >/dev/null ||
+    fail "finalized witnessed funding does not exactly match the taker first lock"
+  finalized_witnessed_funding_observation_file="$output"
+}
+
 refresh_first_lock_lez_absence_window() {
   local label="$1"
   local baseline="$actor_prelock_lez_tip"
@@ -1838,7 +1887,7 @@ write_first_lock_recovery_admission_sample() {
   local funding="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-funding-prepared.json"
   local prefix="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-first-lock-admission-${sample}"
   local cutoff observed core_before core_after mempool txout spender source_tx source_vout planned_tx
-  local expected_lez output
+  local expected_lez output lez_observation_file
   cutoff="$(jq -er '.recovery.maker_second_lock_cutoff_unix_seconds | numbers' "$spec")"
   observed="$(date -u +%s)"
   (( observed >= cutoff )) || fail "first-lock recovery admission sampled before the signed maker cutoff"
@@ -1852,9 +1901,10 @@ write_first_lock_recovery_admission_sample() {
   jq -e '.error == null and .result == []' "$mempool" >/dev/null ||
     fail "first-lock recovery admission found an unexpected Bitcoin mempool effect"
 
-  write_native_escrow_observation "first-lock-admission-${sample}-native"
   case "$M3_POC_DIRECTION" in
     taker_sells_foreign)
+      write_native_escrow_observation "first-lock-admission-${sample}-native"
+      lez_observation_file="$native_observation_file"
       expected_lez=0
       [[ "$(lez_successful_submission_count)" == "$expected_lez" ]] ||
         fail "maker LEZ second-lock submission exists in the first-lock-only branch"
@@ -1880,13 +1930,18 @@ write_first_lock_recovery_admission_sample() {
       ' "$spender" >/dev/null || fail "Bitcoin taker first lock has a canonical spender"
       ;;
     taker_sells_lez)
+      write_finalized_witnessed_funding_observation \
+        "first-lock-admission-${sample}-finalized-witnessed-funding"
+      lez_observation_file="$finalized_witnessed_funding_observation_file"
       expected_lez=2
       [[ "$(lez_successful_submission_count)" == "$expected_lez" ]] ||
         fail "LEZ first lock does not have exactly its initialization and funding effects"
-      jq -e --argjson amount "$(jq -er '.amount | numbers' "$final_terms")" '
-        (.after.escrow_state | strings | ascii_downcase) == "funded"
-        and .after.custody.balance == $amount
-      ' "$native_observation_file" >/dev/null ||
+      jq -e --arg amount "$(jq -er '.amount | strings | select(test("^[1-9][0-9]*$"))' \
+          "$final_terms")" '
+        .funding.metadata.status == "funded"
+        and .funding.metadata.amount == $amount
+        and .funding.custody.balance == $amount
+      ' "$lez_observation_file" >/dev/null ||
         fail "LEZ taker first lock is not canonical, funded, and unspent"
       source_tx="$(jq -er '.input_transaction_id' "$funding")"
       source_vout="$(jq -er '.input_output_index | numbers' "$funding")"
@@ -1915,7 +1970,7 @@ write_first_lock_recovery_admission_sample() {
   output="${prefix}.json"
   jq -n --arg direction "$M3_POC_DIRECTION" --argjson sample "$sample" \
     --argjson cutoff "$cutoff" --argjson observed "$observed" \
-    --arg native_file "$(basename "$native_observation_file")" \
+    --arg lez_file "$(basename "$lez_observation_file")" \
     --argjson lez_submissions "$expected_lez" \
     --slurpfile before "$core_before" --slurpfile after "$core_after" '
     {schema_version:1,direction:$direction,sample:$sample,
@@ -1928,7 +1983,7 @@ write_first_lock_recovery_admission_sample() {
        revalidated_after_read:
          ($before[0].result.blocks == $after[0].result.blocks
           and $before[0].result.bestblockhash == $after[0].result.bestblockhash)},
-     lez_stable_native_observation_file:$native_file,
+     lez_stable_escrow_observation_file:$lez_file,
      durable_lez_submission_count:$lez_submissions,
      runner_checks_are_corroborating_not_send_authority:true,
      actor_internal_two_read_admission_required:true}

@@ -1193,6 +1193,22 @@ selector; GREEN preserves the signed wire format and delegates the final
 `u128` range check to the typed native-escrow CLI. Run E remains diagnostic,
 not acceptance evidence, and the certifying rerun uses a fresh ID.
 
+Attempt `m3firstlock-20260716f` completed the actual-node
+`TakerSellsForeign` first-lock refund through both revision-two `Refunded`
+roles and zero-submission replay. In `TakerSellsLez`, it finalized the taker
+LEZ first lock, remained pending until the signed later deadline, crossed that
+deadline in finalized LEZ time, and advanced stable Core median time through
+the maker cutoff. Its first corroborating admission read then failed before
+refund authorization because the runner reused the hashlock-only native escrow
+observer against aggregate-witness metadata. Exact cleanup is GREEN and no
+ambiguous refund submission occurred. A focused RED now isolates that
+hashlock-only absence probe to `TakerSellsForeign`; GREEN reuses the existing
+authenticated sidecar's exact, bounded, finalized witnessed-funding observer
+for `TakerSellsLez`, binding the persisted funding transaction, original
+finalized lock window, aggregate authority, canonical full-width amount, and
+historical funded custody. Run F is diagnostic, not combined acceptance
+evidence; the certifying rerun uses a fresh ID.
+
 The refund-wire loop is GREEN. The existing native-refund RPC names and
 hashlock JSON shape remain unchanged, while strict untagged protocol envelopes
 accept either `NativeEscrowTerms`/metadata or the M3
