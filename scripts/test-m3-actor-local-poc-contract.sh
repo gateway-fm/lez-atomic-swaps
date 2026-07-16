@@ -381,6 +381,15 @@ for behavior in submit_actor_bitcoin_refund submit_actor_lez_refund run_actor_re
   rg -Fq "${behavior}()" "$direction_driver" ||
     fail "actual direction implementation is missing refund behavior: ${behavior}"
 done
+native_observation_source="$(sed -n '/^write_native_escrow_observation() {$/,/^}$/p' "$direction_driver")"
+[[ -n "$native_observation_source" ]] ||
+  fail "native escrow admission observation is missing"
+rg -Fq '.amount | strings | select(test("^[1-9][0-9]*$"))' \
+  <<<"$native_observation_source" ||
+  fail "native escrow admission does not preserve the canonical nonzero u128 decimal string"
+if rg -Fq '.amount | numbers' <<<"$native_observation_source"; then
+  fail "native escrow admission incorrectly drops the canonical string amount"
+fi
 for behavior in assert_first_lock_recovery_pending \
   refresh_first_lock_lez_absence_window advance_core_median_time_to_first_lock_cutoff \
   write_first_lock_recovery_admission_evidence assert_first_lock_owner_terminal_restart \

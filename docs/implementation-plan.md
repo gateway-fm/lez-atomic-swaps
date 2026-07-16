@@ -1181,6 +1181,18 @@ NTP success. The contract and final evidence now distinguish an attempted
 external time-sync request from an external success dependency and record the
 observed timeout count.
 
+Attempt `m3firstlock-20260716e` crossed the new bound, finalized the taker
+Bitcoin first lock, proved both fresh LEZ absence windows beyond the signed
+cutoff, and reached refund admission. It then failed before refund broadcast
+because the native observation path selected JSON numbers from the
+agreement-bound LEZ amount, whose canonical full-width `u128` wire form is a
+decimal string. The CLI rejected the resulting empty `--amount`; no ambiguous
+submission occurred. Exact cleanup is GREEN. A focused RED now requires a
+nonzero canonical decimal-string extraction and forbids the lossy numeric
+selector; GREEN preserves the signed wire format and delegates the final
+`u128` range check to the typed native-escrow CLI. Run E remains diagnostic,
+not acceptance evidence, and the certifying rerun uses a fresh ID.
+
 The refund-wire loop is GREEN. The existing native-refund RPC names and
 hashlock JSON shape remain unchanged, while strict untagged protocol envelopes
 accept either `NativeEscrowTerms`/metadata or the M3

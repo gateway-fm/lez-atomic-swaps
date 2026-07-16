@@ -1737,7 +1737,7 @@ write_native_escrow_observation() {
     --depositor-account-id "$(jq -er '.depositor_account_id' "$terms")" \
     --claimant-role "$(jq -er '.claimant' "$terms")" \
     --claimant-account-id "$(jq -er '.claimant_account_id' "$terms")" \
-    --amount "$(jq -er '.amount | numbers' "$terms")" \
+    --amount "$(jq -er '.amount | strings | select(test("^[1-9][0-9]*$"))' "$terms")" \
     --refund-at-ms "$(jq -er '.refund_at_ms | numbers' "$terms")" \
     >"$native_observation_file"
   chmod 0600 "$native_observation_file"
