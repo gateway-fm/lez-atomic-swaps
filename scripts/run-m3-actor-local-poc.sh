@@ -16,7 +16,32 @@ if [[ "$mode" != "execute" && "$mode" != "contract" ]]; then
   echo "M3_ACTOR_POC_MODE must be execute or contract" >&2
   exit 2
 fi
+journey="${M3_ACTOR_POC_JOURNEY:-claim}"
+if [[ "$journey" != "claim" && "$journey" != "refund" ]]; then
+  echo "M3_ACTOR_POC_JOURNEY must be claim or refund" >&2
+  exit 2
+fi
+case "$journey" in
+  claim)
+    terminal_phase="completed"
+    replay_command="drive"
+    packet_kind="m3_actor_two_direction_local_poc"
+    actor_owned_effect_semantics="claim"
+    success_label="M3 actor two-direction local PoC"
+    lez_slot_duration_seconds="1.0"
+    ;;
+  refund)
+    terminal_phase="refunded"
+    replay_command="recover"
+    packet_kind="m3_actor_two_direction_refund_local_poc"
+    actor_owned_effect_semantics="refund"
+    success_label="M3 actor two-direction local refund PoC"
+    lez_slot_duration_seconds="3.0"
+    ;;
+esac
 
+readonly journey terminal_phase replay_command packet_kind actor_owned_effect_semantics success_label
+readonly lez_slot_duration_seconds
 readonly run_id
 repo_root="$(pwd)"
 readonly repo_root
@@ -55,16 +80,27 @@ emit_contract() {
     --arg run_id "$run_id" \
     --arg run_root "$relative_run_root" \
     --arg bitcoin_run "$bitcoin_run_id" \
-    --arg lez_run "$lez_run_id" '
+    --arg lez_run "$lez_run_id" \
+    --arg lez_slot_duration_seconds "$lez_slot_duration_seconds" \
+    --arg journey "$journey" \
+    --arg terminal_phase "$terminal_phase" \
+    --arg replay_command "$replay_command" \
+    --arg packet_kind "$packet_kind" \
+    --arg actor_owned_effect_semantics "$actor_owned_effect_semantics" '
     {
       schema_version: 1,
       kind: "m3_actor_local_poc_contract",
       execution_performed: false,
+      journey: $journey,
+      evidence_packet_kind: $packet_kind,
       run_id: $run_id,
       run_root: $run_root,
       service_runs: {
         bitcoin_core: $bitcoin_run,
         lez_v0_2: $lez_run
+      },
+      service_configuration: {
+        lez_v0_2: {slot_duration_seconds: $lez_slot_duration_seconds}
       },
       directions: ["taker_sells_foreign", "taker_sells_lez"],
       process_model: {
@@ -84,12 +120,18 @@ emit_contract() {
         bitcoin: "exact_signed_confirmation_depth",
         lez: "exact_finalized_indexer_ancestry"
       },
+      effect_semantics: {
+        actor_owned: $actor_owned_effect_semantics,
+        expected_unique_effects: {bitcoin: 2, lez: 3},
+        accepted_submission_alone_projects: false
+      },
       terminal: {
         required_revision: 4,
-        required_phase: "completed",
+        required_phase: $terminal_phase,
         required_next_action: "complete"
       },
       replay: {
+        command: $replay_command,
         restart_both_roles: true,
         resubmission_count: 0
       },
@@ -374,6 +416,7 @@ write_cleanup_attestation() {
   fi
   jq -n \
     --arg run_id "$run_id" \
+    --arg journey "$journey" \
     --arg result "$result" \
     --arg bitcoin_run "$bitcoin_run_id" \
     --arg lez_run "$lez_run_id" \
@@ -388,6 +431,7 @@ write_cleanup_attestation() {
     --argjson secure_state_absent "$secure_state_absent" '
     {
       schema_version: 1,
+      journey: $journey,
       run_id: $run_id,
       result: $result,
       cleanup_scope: "captured_exact_ids_names_and_secure_state_root",
@@ -449,8 +493,9 @@ verify_direction_driver_contract() {
   local contract driver_sha
   driver_sha="$(sha256sum "$direction_driver" | sed 's/ .*//')"
   [[ "$driver_sha" =~ ^[0-9a-f]{64}$ ]] || fail "direction-driver SHA-256 is invalid"
-  contract="$($direction_driver contract)" || fail "direction-driver contract is unavailable"
-  jq -e '
+  contract="$(M3_POC_JOURNEY="$journey" "$direction_driver" contract)" ||
+    fail "direction-driver contract is unavailable"
+  jq -e --arg journey "$journey" '
     .schema_version == 1
     and .kind == "m3_actor_direction_driver_contract"
     and .stage_two_spec_uses_actual_node_facts == true
@@ -460,13 +505,20 @@ verify_direction_driver_contract() {
     and .dual_locks_before_scalar_use == true
     and .bitcoin_exact_signed_depth == true
     and .lez_exact_finalized_ancestry == true
+    and .journeys == ["claim", "refund"]
+    and .default_journey == "claim"
     and .actor_owned_claim_effects == true
+    and .actor_owned_refund_effects == true
+    and .timeout_terminal_phase == "refunded"
+    and (if $journey == "claim" then .actor_owned_claim_effects
+         else .actor_owned_refund_effects end) == true
     and .actor_config_schema_version == 3
     and .role_shaped_bitcoin_refund_authority == true
     and .submission_count_query == true
     and .owned_process_registry == true
   ' <<<"$contract" >/dev/null || fail "direction-driver contract is incomplete"
-  "$direction_driver" preflight || fail "direction runtime backend is not ready"
+  M3_POC_JOURNEY="$journey" "$direction_driver" preflight ||
+    fail "direction runtime backend is not ready"
 }
 
 verify_lez_bootstrap_contract() {
@@ -629,6 +681,7 @@ start_actual_nodes() {
   capture_owned_resources image "$bitcoin_run_id" 1 "$image_resources"
 
   RUN_ID="$lez_run_id" LEZ_V02_KEEP_RUNNING=1 \
+    LEZ_V02_SLOT_DURATION_SECONDS="$lez_slot_duration_seconds" \
     LEZ_V02_MAKER_ACCOUNT_ID="$maker_account" LEZ_V02_MAKER_VAULT_ACCOUNT_ID="$maker_vault" \
     LEZ_V02_TAKER_ACCOUNT_ID="$taker_account" LEZ_V02_TAKER_VAULT_ACCOUNT_ID="$taker_vault" \
     ./scripts/run-lez-v02-stack.sh >"${evidence_dir}/lez-service.log" 2>&1
@@ -639,6 +692,8 @@ start_actual_nodes() {
 
   [[ -f "$bitcoin_manifest" && -f "$lez_manifest" ]] ||
     fail "retained node manifests are unavailable"
+  [[ "$(manifest_value "$lez_manifest" LEZ_V02_SLOT_DURATION_SECONDS)" == "$lez_slot_duration_seconds" ]] ||
+    fail "LEZ child manifest does not attest the journey-selected slot duration"
   chmod 0600 "${evidence_dir}/bitcoin-service.log" "${evidence_dir}/lez-service.log"
 }
 
@@ -674,6 +729,7 @@ with_direction_environment() {
   shift
   local direction_root="${directions_dir}/${direction}"
   M3_POC_RUN_ID="$run_id" \
+  M3_POC_JOURNEY="$journey" \
   M3_POC_DIRECTION="$direction" \
   M3_POC_DIRECTION_ROOT="$direction_root" \
   M3_POC_SECURE_STATE_ROOT="${secure_state_root}/directions/${direction}" \
@@ -738,11 +794,11 @@ run_direction_actor_flow() {
 assert_actor_terminal_status() {
   local status_file="$1"
   local role="$2"
-  jq -e --arg role "$role" '
+  jq -e --arg role "$role" --arg terminal_phase "$terminal_phase" '
     .schema_version == 1
     and .role == $role
     and .state == "active"
-    and .phase == "completed"
+    and .phase == $terminal_phase
     and .revision == 4
     and .next_action == "complete"
   ' "$status_file" >/dev/null
@@ -753,7 +809,7 @@ assert_terminal_and_replay() {
   local direction_root="${directions_dir}/${direction}"
   local counts_before="${evidence_dir}/${direction}-submission-counts-before-replay.json"
   local counts_after="${evidence_dir}/${direction}-submission-counts-after-replay.json"
-  local role config terminal replay_drive after
+  local role config terminal replay after
 
   with_direction_environment "$direction" "$direction_driver" submission-counts >"$counts_before"
   chmod 0600 "$counts_before"
@@ -763,30 +819,66 @@ assert_terminal_and_replay() {
   for role in maker taker; do
     config="${direction_root}/actors/${role}/actor-config.json"
     terminal="${evidence_dir}/${direction}-${role}-terminal.json"
-    replay_drive="${evidence_dir}/${direction}-${role}-replay-drive.json"
+    replay="${evidence_dir}/${direction}-${role}-replay-${replay_command}.json"
     after="${evidence_dir}/${direction}-${role}-after-replay.json"
     [[ -f "$config" && ! -L "$config" ]] || fail "${role} actor config is unavailable"
     "$actor_bin" --config "$config" status >"$terminal"
     assert_actor_terminal_status "$terminal" "$role"
-    "$actor_bin" --config "$config" drive >"$replay_drive"
-    jq -e --arg role "$role" '
+    "$actor_bin" --config "$config" "$replay_command" >"$replay"
+    jq -e --arg role "$role" --arg replay_command "$replay_command" \
+      --arg terminal_phase "$terminal_phase" '
       .schema_version == 1
       and .role == $role
-      and .command == "drive"
+      and .command == $replay_command
       and .outcome == "not_yet_composed"
       and .durable_revision == 4
-      and .phase == "completed"
+      and .phase == $terminal_phase
       and .revision == 4
-    ' "$replay_drive" >/dev/null
+    ' "$replay" >/dev/null
     "$actor_bin" --config "$config" status >"$after"
     assert_actor_terminal_status "$after" "$role"
-    chmod 0600 "$terminal" "$replay_drive" "$after"
+    chmod 0600 "$terminal" "$replay" "$after"
   done
 
   with_direction_environment "$direction" "$direction_driver" submission-counts >"$counts_after"
   chmod 0600 "$counts_after"
   [[ "$(jq -S -c . "$counts_before")" == "$(jq -S -c . "$counts_after")" ]] ||
     fail "fresh-process terminal replay resubmitted a public effect"
+}
+
+validate_actual_effect_manifests() {
+  local direction manifest
+  for direction in "${directions[@]}"; do
+    manifest="${evidence_dir}/${direction}-actual-effects.json"
+    [[ -f "$manifest" && ! -L "$manifest" ]] ||
+      fail "${direction} actual-effect manifest is unavailable"
+    jq -e --arg direction "$direction" --arg journey "$journey" '
+      .schema_version == 1
+      and .direction == $direction
+      and .journey == $journey
+      and .expected_unique_effects == {bitcoin:2,lez:3}
+      and (.bitcoin_effect_ids | type == "array" and length == 2
+           and (unique | length) == 2)
+      and (.lez_effect_ids | type == "array" and length == 3
+           and (unique | length) == 3)
+      and all(.bitcoin_effect_ids[]; type == "string" and test("^[0-9a-f]{64}$"))
+      and all(.lez_effect_ids[]; type == "string" and test("^[0-9a-f]{64}$"))
+      and if $journey == "claim" then
+        .actor_owned_claims == {
+          bitcoin:.bitcoin_effect_ids[1], lez:.lez_effect_ids[2]
+        }
+        and (has("actor_owned_refunds") | not)
+      elif $journey == "refund" then
+        .actor_owned_refunds == {
+          bitcoin:.bitcoin_effect_ids[1], lez:.lez_effect_ids[2]
+        }
+        and .cooperative_claim_effects_present == false
+        and (has("actor_owned_claims") | not)
+      else false
+      end
+    ' "$manifest" >/dev/null ||
+      fail "${direction} actual-effect manifest does not match the ${journey} journey"
+  done
 }
 
 write_run_evidence() {
@@ -798,6 +890,11 @@ write_run_evidence() {
   lez_bootstrap_sha="$(sha256sum "$lez_bootstrap_driver" | sed 's/ .*//')"
   jq -n \
     --arg run_id "$run_id" \
+    --arg journey "$journey" \
+    --arg packet_kind "$packet_kind" \
+    --arg terminal_phase "$terminal_phase" \
+    --arg replay_command "$replay_command" \
+    --arg actor_owned_effect_semantics "$actor_owned_effect_semantics" \
     --arg repository_commit "$repository_commit" \
     --arg completed_at "$completed_at" \
     --arg outer_runner "scripts/run-m3-actor-local-poc.sh" \
@@ -812,11 +909,13 @@ write_run_evidence() {
     --arg bindgen_extra_clang_args "$BINDGEN_EXTRA_CLANG_ARGS" \
     --arg bitcoin_run "$bitcoin_run_id" \
     --arg lez_run "$lez_run_id" \
+    --arg lez_slot_duration_seconds "$lez_slot_duration_seconds" \
     --arg foreign_stage2_sha "$(sha256sum "${evidence_dir}/taker_sells_foreign-stage-two.json" | sed 's/ .*//')" \
     --arg lez_stage2_sha "$(sha256sum "${evidence_dir}/taker_sells_lez-stage-two.json" | sed 's/ .*//')" '
     {
       schema_version: 1,
-      kind: "m3_actor_two_direction_local_poc",
+      kind: $packet_kind,
+      journey: $journey,
       result: "passed",
       run_id: $run_id,
       repository_commit: $repository_commit,
@@ -840,15 +939,19 @@ write_run_evidence() {
       },
       services: {
         bitcoin_core: {run_id: $bitcoin_run, version: "31.1", network: "regtest"},
-        lez: {run_id: $lez_run, version: "v0.2.0", network: "private_local"}
+        lez: {run_id: $lez_run, version: "v0.2.0", network: "private_local",
+              slot_duration_seconds:$lez_slot_duration_seconds}
       },
       directions: [
         {direction: "taker_sells_foreign", terminal_revision: 4,
-         terminal_phase: "completed", stage_two_evidence_sha256: $foreign_stage2_sha},
+         terminal_phase: $terminal_phase, stage_two_evidence_sha256: $foreign_stage2_sha},
         {direction: "taker_sells_lez", terminal_revision: 4,
-         terminal_phase: "completed", stage_two_evidence_sha256: $lez_stage2_sha}
+         terminal_phase: $terminal_phase, stage_two_evidence_sha256: $lez_stage2_sha}
       ],
       actor_process_model: "fresh_one_shot_process_per_command",
+      actor_owned_effect_semantics: $actor_owned_effect_semantics,
+      expected_unique_effects: {bitcoin: 2, lez: 3},
+      replay_command: $replay_command,
       replay_resubmission_count: 0,
       prerequisite_cache: {
         cargo_offline_required: true,
@@ -862,6 +965,21 @@ write_run_evidence() {
     }' >"${run_evidence}.partial"
   chmod 0600 "${run_evidence}.partial"
   mv "${run_evidence}.partial" "$run_evidence"
+  jq -e --arg journey "$journey" --arg packet_kind "$packet_kind" \
+    --arg terminal_phase "$terminal_phase" --arg replay_command "$replay_command" \
+    --arg actor_owned_effect_semantics "$actor_owned_effect_semantics" '
+    .schema_version == 1
+    and .kind == $packet_kind
+    and .journey == $journey
+    and .result == "passed"
+    and (.directions | length == 2)
+    and all(.directions[];
+      .terminal_revision == 4 and .terminal_phase == $terminal_phase)
+    and .actor_owned_effect_semantics == $actor_owned_effect_semantics
+    and .expected_unique_effects == {bitcoin: 2, lez: 3}
+    and .replay_command == $replay_command
+    and .replay_resubmission_count == 0
+  ' "$run_evidence" >/dev/null || fail "final journey evidence packet is inconsistent"
 }
 
 verify_direction_driver_contract
@@ -890,5 +1008,6 @@ for direction in "${directions[@]}"; do
   assert_terminal_and_replay "$direction"
 done
 
+validate_actual_effect_manifests
 write_run_evidence
-echo "M3 actor two-direction local PoC passed: ${run_evidence}"
+echo "${success_label} passed: ${run_evidence}"

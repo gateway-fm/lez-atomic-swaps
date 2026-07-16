@@ -146,7 +146,12 @@ impl FinalizedWitnessedRefundObserver {
         {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
-        self.ensure_stable(finalized_before, &tip_before).await?;
+        self.ensure_snapshot(
+            finalized_before,
+            &tip_before,
+            matches!(&refund, NativeRefundObservation::Found(_)),
+        )
+        .await?;
         Ok(ObserveNativeRefundResult::new(
             request.context.clone(),
             clock,
@@ -527,21 +532,58 @@ impl FinalizedWitnessedRefundObserver {
         Ok(by_id)
     }
 
-    async fn ensure_stable(
+    async fn ensure_snapshot(
         &self,
         finalized_before: u64,
         tip_before: &Block,
+        terminal_refund_found: bool,
     ) -> Result<(), BridgeRuntimeError> {
         let finalized_after = self
             .indexer
             .last_finalized_block_id()
             .await?
             .ok_or(BridgeRuntimeError::Unavailable)?;
-        if finalized_after != finalized_before {
+        if finalized_after < finalized_before {
             return Err(BridgeRuntimeError::MovingTip);
         }
-        let tip_after = self.read_finalized_block(finalized_after).await?;
-        if &tip_after != tip_before {
+        if finalized_after == finalized_before {
+            let tip_after = self.read_finalized_block(finalized_after).await?;
+            return if &tip_after == tip_before {
+                Ok(())
+            } else {
+                Err(BridgeRuntimeError::MovingTip)
+            };
+        }
+        if !terminal_refund_found {
+            return Err(BridgeRuntimeError::MovingTip);
+        }
+
+        let descendant_count = finalized_after
+            .checked_sub(finalized_before)
+            .ok_or(BridgeRuntimeError::MovingTip)?;
+        if descendant_count > u64::from(MAX_DISCOVERY_BLOCKS) {
+            return Err(BridgeRuntimeError::Unavailable);
+        }
+
+        let pinned_again = self.read_finalized_block(finalized_before).await?;
+        if &pinned_again != tip_before {
+            return Err(BridgeRuntimeError::MovingTip);
+        }
+        let mut previous = pinned_again;
+        for block_id in (finalized_before + 1)..=finalized_after {
+            let descendant = self.read_finalized_block(block_id).await?;
+            if descendant.header.prev_block_hash != previous.header.hash {
+                return Err(BridgeRuntimeError::InvalidObservation);
+            }
+            previous = descendant;
+        }
+
+        let tip_again = self.read_finalized_block(finalized_after).await?;
+        if tip_again != previous {
+            return Err(BridgeRuntimeError::MovingTip);
+        }
+        let pinned_last = self.read_finalized_block(finalized_before).await?;
+        if &pinned_last != tip_before {
             return Err(BridgeRuntimeError::MovingTip);
         }
         Ok(())

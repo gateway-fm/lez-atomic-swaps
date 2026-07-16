@@ -30,6 +30,10 @@ emit_contract() {
       bitcoin_planned_funding_anchor_exact: true,
       lez_exact_finalized_ancestry: true,
       actor_owned_claim_effects: true,
+      actor_owned_refund_effects: true,
+      journeys: ["claim", "refund"],
+      default_journey: "claim",
+      timeout_terminal_phase: "refunded",
       actor_config_schema_version: 3,
       role_shaped_bitcoin_refund_authority: true,
       secure_sidecar_state_root_required: true,
@@ -52,10 +56,11 @@ emit_contract() {
 
 emit_effect_plan() {
   local direction="$1"
-  case "$direction" in
-    taker_sells_foreign)
+  local journey="${2:-claim}"
+  case "$journey:$direction" in
+    claim:taker_sells_foreign)
       jq -n --arg direction "$direction" '
-        {schema_version:1,direction:$direction,
+        {schema_version:1,journey:"claim",direction:$direction,
          before_first_effect:["finalize_agreement","prepare_exact_lez_claim",
            "bitcoin_presignature_verified","lez_presignature_verified","activate_both_roles"],
          public_effect_order:["bitcoin_lock_by_taker","lez_initialize_by_maker",
@@ -64,15 +69,37 @@ emit_effect_plan() {
          terminal:{maker_revision:4,taker_revision:4}}
       '
       ;;
-    taker_sells_lez)
+    claim:taker_sells_lez)
       jq -n --arg direction "$direction" '
-        {schema_version:1,direction:$direction,
+        {schema_version:1,journey:"claim",direction:$direction,
          before_first_effect:["finalize_agreement","prepare_exact_lez_claim",
            "bitcoin_presignature_verified","lez_presignature_verified","activate_both_roles"],
          public_effect_order:["lez_initialize_by_taker","lez_fund_by_taker",
            "bitcoin_lock_by_maker","dual_lock_gate","bitcoin_claim_by_taker",
            "lez_claim_by_maker"],
          terminal:{maker_revision:4,taker_revision:4}}
+      '
+      ;;
+    refund:taker_sells_foreign)
+      jq -n --arg direction "$direction" '
+        {schema_version:1,journey:"refund",direction:$direction,
+         before_first_effect:["finalize_agreement","prepare_exact_lez_claim",
+           "bitcoin_presignature_verified","lez_presignature_verified","activate_both_roles"],
+         public_effect_order:["bitcoin_lock_by_taker","lez_initialize_by_maker",
+           "lez_fund_by_maker","dual_lock_gate","lez_refund_by_maker",
+           "bitcoin_refund_by_taker"],
+         terminal:{maker_revision:4,taker_revision:4,phase:"refunded"}}
+      '
+      ;;
+    refund:taker_sells_lez)
+      jq -n --arg direction "$direction" '
+        {schema_version:1,journey:"refund",direction:$direction,
+         before_first_effect:["finalize_agreement","prepare_exact_lez_claim",
+           "bitcoin_presignature_verified","lez_presignature_verified","activate_both_roles"],
+         public_effect_order:["lez_initialize_by_taker","lez_fund_by_taker",
+           "bitcoin_lock_by_maker","dual_lock_gate","bitcoin_refund_by_maker",
+           "lez_refund_by_taker"],
+         terminal:{maker_revision:4,taker_revision:4,phase:"refunded"}}
       '
       ;;
     *) fail "unsupported effect-plan direction" ;;
@@ -100,7 +127,7 @@ preflight() {
 require_environment() {
   local variable value
   local -a required=(
-    M3_POC_RUN_ID M3_POC_DIRECTION M3_POC_DIRECTION_ROOT M3_POC_SECURE_STATE_ROOT
+    M3_POC_RUN_ID M3_POC_DIRECTION M3_POC_JOURNEY M3_POC_DIRECTION_ROOT M3_POC_SECURE_STATE_ROOT
     M3_POC_EVIDENCE_DIR
     M3_POC_PROCESS_REGISTRY M3_POC_ACTOR_BIN M3_POC_PROVISIONER_BIN
     M3_POC_ROLE_RUNNER_BIN M3_POC_LEZ_SIDECAR_BIN M3_POC_LEZ_OPERATOR_BIN
@@ -120,6 +147,8 @@ require_environment() {
   done
   [[ "$M3_POC_DIRECTION" == "taker_sells_foreign" ||
      "$M3_POC_DIRECTION" == "taker_sells_lez" ]] || fail "unsupported direction"
+  [[ "$M3_POC_JOURNEY" == "claim" || "$M3_POC_JOURNEY" == "refund" ]] ||
+    fail "unsupported actor journey"
   for variable in M3_POC_DIRECTION_ROOT M3_POC_SECURE_STATE_ROOT M3_POC_EVIDENCE_DIR \
     M3_POC_PROCESS_REGISTRY \
     M3_POC_ACTOR_BIN M3_POC_PROVISIONER_BIN M3_POC_ROLE_RUNNER_BIN \
@@ -349,7 +378,7 @@ prepare_direction_layout() {
 
 prepare_stage_two_spec() {
   local output="$1" public_spec stage1_sha authority_mapping aggregate_key aggregate_account
-  local depositor claimant amount now refund_seconds refund_at_ms swap_id terms_file
+  local depositor claimant amount now refund_seconds refund_at_ms swap_id terms_file earlier later
   local source_tx source_vout source_value source_script secret_hex secret_file
   local funding_spec funding_summary funding_hex funder mempool genesis height anchor first_summary
   local funding_source_evidence funding_policy_evidence
@@ -366,8 +395,10 @@ prepare_stage_two_spec() {
   esac
   amount=1000
   now="$(date -u +%s)"
-  earlier=$((now + 3600))
-  later=$((now + 7200))
+  case "$M3_POC_JOURNEY" in
+    claim) earlier=$((now + 3600)); later=$((now + 7200)) ;;
+    refund) earlier=$((now + 600)); later=$((now + 1200)) ;;
+  esac
   case "$M3_POC_DIRECTION" in
     taker_sells_foreign) refund_seconds="$earlier" ;;
     taker_sells_lez) refund_seconds="$later" ;;
@@ -651,6 +682,8 @@ wait_core_confirmed() {
 
 bitcoin_lock_tx=""
 bitcoin_claim_tx=""
+bitcoin_refund_tx=""
+bitcoin_refund_wtxid=""
 submit_bitcoin_lock() {
   local funder peer funding_hex expected response mempool planned_anchor mined_block
   case "$M3_POC_DIRECTION" in
@@ -950,6 +983,127 @@ actor_invoke_observation_retry() {
   fail "${role} actor observation remained unavailable after bounded read-only retries"
 }
 
+actor_invoke_recovery_retry() {
+  local role="$1" expected="$2" chain="$3" label="$4"
+  local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
+  local attempt attempt_output attempt_error error_text
+  actor_last_output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-${role}.json"
+  [[ ! -e "$actor_last_output" && ! -L "$actor_last_output" ]] ||
+    fail "refusing to overwrite actor recovery evidence: ${label}/${role}"
+  for attempt in {1..120}; do
+    attempt_output="${actor_last_output%.json}-attempt-${attempt}.json"
+    attempt_error="${actor_last_output%.json}-attempt-${attempt}.stderr"
+    if "$M3_POC_ACTOR_BIN" --config "$config" recover \
+        >"$attempt_output" 2>"$attempt_error"; then
+      chmod 0600 "$attempt_output" "$attempt_error"
+      if jq -e --arg role "$role" --arg chain "$chain" \
+          --argjson revision "$expected" '
+        .schema_version == 1 and .role == $role and .command == "recover"
+        and (.outcome == "observed_then_projected"
+             or .outcome == "converged_on_existing_projection")
+        and .chain == $chain and .revision == $revision
+      ' "$attempt_output" >/dev/null; then
+        mv "$attempt_output" "$actor_last_output"
+        return 0
+      fi
+      jq -e --arg role "$role" --arg chain "$chain" \
+        --argjson revision "$((expected - 1))" '
+        .schema_version == 1 and .role == $role and .command == "recover"
+        and .outcome == "awaiting_observation" and .chain == $chain
+        and .revision == $revision
+      ' "$attempt_output" >/dev/null ||
+        fail "${role} actor returned an unexpected successful recovery state"
+      sleep 0.25
+      continue
+    fi
+    chmod 0600 "$attempt_output" "$attempt_error"
+    error_text="$(tr -d '\r\n' <"$attempt_error")"
+    [[ "$error_text" == "actor chain observation is unavailable" ]] ||
+      fail "${role} actor recovery failed with a non-retryable typed error"
+    sleep 0.25
+  done
+  fail "${role} actor recovery remained unavailable after bounded read-only retries"
+}
+
+actor_invoke_recovery_pending_retry() {
+  local role="$1" predecessor="$2" chain="$3" label="$4"
+  local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
+  local attempt attempt_output attempt_error error_text initial_count current_count
+  initial_count="$(lez_successful_submission_count)"
+  [[ "$initial_count" =~ ^[0-9]+$ ]] ||
+    fail "LEZ pending recovery submission count is invalid"
+  actor_last_output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-${role}.json"
+  [[ ! -e "$actor_last_output" && ! -L "$actor_last_output" ]] ||
+    fail "refusing to overwrite pending recovery evidence: ${label}/${role}"
+  for attempt in {1..120}; do
+    attempt_output="${actor_last_output%.json}-attempt-${attempt}.json"
+    attempt_error="${actor_last_output%.json}-attempt-${attempt}.stderr"
+    if "$M3_POC_ACTOR_BIN" --config "$config" recover \
+        >"$attempt_output" 2>"$attempt_error"; then
+      chmod 0600 "$attempt_output" "$attempt_error"
+      jq -e --arg role "$role" --arg chain "$chain" --argjson revision "$predecessor" '
+        .schema_version == 1 and .role == $role and .command == "recover"
+        and .outcome == "awaiting_observation" and .chain == $chain
+        and .revision == $revision
+      ' "$attempt_output" >/dev/null ||
+        fail "${role} actor returned an unexpected successful pending recovery state"
+      mv "$attempt_output" "$actor_last_output"
+      return 0
+    fi
+    chmod 0600 "$attempt_output" "$attempt_error"
+    error_text="$(tr -d '\r\n' <"$attempt_error")"
+    [[ "$error_text" == "actor chain observation is unavailable" &&
+       ! -s "$attempt_output" ]] ||
+      fail "${role} actor pending recovery failed with a non-retryable typed error"
+    current_count="$(lez_successful_submission_count)"
+    [[ "$current_count" == "$initial_count" ]] ||
+      fail "${role} actor pending recovery changed the durable LEZ submission count; refusing retry"
+    sleep 0.25
+  done
+  fail "${role} actor pending recovery remained unavailable after bounded read-only retries"
+}
+
+assert_recovery_pending_both() {
+  local chain="$1" predecessor="$2" label="$3"
+  local role config output error error_text status expected_phase expected_action
+  case "$predecessor" in
+    2) expected_phase=both_legs_locked; expected_action=observe_revealing_claim ;;
+    3) expected_phase=maker_leg_refunded; expected_action=recover_taker_leg ;;
+    *) fail "unsupported recovery predecessor: ${predecessor}" ;;
+  esac
+  for role in maker taker; do
+    config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
+    output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-${role}.json"
+    error="${output%.json}.stderr"
+    status="${output%.json}-after-unavailable.json"
+    [[ ! -e "$output" && ! -L "$output" && ! -e "$error" && ! -L "$error" &&
+       ! -e "$status" && ! -L "$status" ]] ||
+      fail "refusing to overwrite pre-eligibility recovery evidence: ${label}/${role}"
+    if "$M3_POC_ACTOR_BIN" --config "$config" recover >"$output" 2>"$error"; then
+      chmod 0600 "$output" "$error"
+      jq -e --arg role "$role" --arg chain "$chain" --argjson revision "$predecessor" '
+        .schema_version == 1 and .role == $role and .command == "recover"
+        and .outcome == "awaiting_observation" and .chain == $chain
+        and .revision == $revision
+      ' "$output" >/dev/null ||
+        fail "${role} actor gained recovery authority before ${chain} eligibility"
+      continue
+    fi
+    chmod 0600 "$output" "$error"
+    error_text="$(tr -d '\r\n' <"$error")"
+    [[ "$error_text" == "actor chain observation is unavailable" && ! -s "$output" ]] ||
+      fail "${role} actor pre-eligibility recovery failed with a non-retryable typed error"
+    "$M3_POC_ACTOR_BIN" --config "$config" status >"$status"
+    chmod 0600 "$status"
+    jq -e --arg role "$role" --arg phase "$expected_phase" --arg action "$expected_action" \
+      --argjson revision "$predecessor" '
+      .schema_version == 1 and .role == $role and .state == "active"
+      and .revision == $revision and .phase == $phase and .next_action == $action
+    ' "$status" >/dev/null ||
+      fail "${role} actor state changed after retryable pre-eligibility observation"
+  done
+}
+
 actor_reconcile_bitcoin_claim_submission() {
   local role="$1" peer="$2" expected_revision="$3" label="$4"
   local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
@@ -1026,6 +1180,32 @@ project_both_to_revision() {
   done
 }
 
+project_both_refunds_to_revision() {
+  local expected="$1" chain="$2" phase="$3" label="$4"
+  local role revision observed_phase next_action
+  if [[ "$expected" == 3 ]]; then next_action=recover_taker_leg; else next_action=complete; fi
+  for role in maker taker; do
+    actor_invoke "$role" status "${label}-pre-status"
+    revision="$(jq -er '.revision | numbers' "$actor_last_output")"
+    observed_phase="$(jq -er '.phase | strings' "$actor_last_output")"
+    if [[ "$revision" == "$expected" && "$observed_phase" == "$phase" ]]; then
+      continue
+    fi
+    [[ "$revision" == "$((expected - 1))" ]] ||
+      fail "${role} refund projection began from unexpected revision ${revision}"
+    actor_invoke_recovery_retry "$role" "$expected" "$chain" "${label}-project"
+  done
+  for role in maker taker; do
+    actor_invoke "$role" status "${label}-post-status"
+    jq -e --arg role "$role" --arg phase "$phase" --arg next "$next_action" \
+      --argjson revision "$expected" '
+      .schema_version == 1 and .role == $role and .state == "active"
+      and .phase == $phase and .revision == $revision and .next_action == $next
+    ' "$actor_last_output" >/dev/null ||
+      fail "${role} durable refund status did not reach ${phase} revision ${expected}"
+  done
+}
+
 capture_both_statuses() {
   local expected="$1" label="$2"
   local role
@@ -1042,6 +1222,7 @@ capture_both_statuses() {
 lez_initialization_tx=""
 lez_funding_tx=""
 lez_claim_tx=""
+lez_refund_tx=""
 submit_lez_transaction_once() {
   local role="$1" member="$2" label="$3" start_height="$4"
   local request output expected returned
@@ -1104,6 +1285,148 @@ submit_actor_bitcoin_claim() {
   project_both_to_revision "$expected_revision" bitcoin "${label}-project"
 }
 
+wait_for_host_recovery_bound() {
+  local bound_seconds="$1" label="$2"
+  local now
+  for _ in {1..1200}; do
+    now="$(date -u +%s)"
+    if (( now >= bound_seconds )); then
+      jq -n --arg label "$label" --argjson bound "$bound_seconds" --argjson observed "$now" '
+        {schema_version:1,label:$label,bound_unix_seconds:$bound,
+         observed_unix_seconds:$observed,bound_satisfied:true}
+      ' >"${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-wall-clock.json"
+      chmod 0600 "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-wall-clock.json"
+      return 0
+    fi
+    sleep 1
+  done
+  fail "host wall clock did not reach the signed ${label} recovery bound"
+}
+
+mine_core_to_refund_eligibility() {
+  local label="$1" spec="${M3_POC_DIRECTION_ROOT}/stage-two.json"
+  local target current blocks address mined tip_hash tip
+  target="$(( $(jq -er '.recovery.bitcoin_refund_height | numbers' "$spec") - 1 ))"
+  current="$(core_admin getblockcount)"
+  [[ "$current" =~ ^[0-9]+$ && "$target" =~ ^[0-9]+$ && "$current" -le "$target" ]] ||
+    fail "Core tip is already beyond the signed refund eligibility boundary"
+  blocks=$((target - current))
+  address="$(file_value "$M3_POC_BITCOIN_FUNDING_CREDENTIALS" BITCOIN_CORE_FUNDING_ADDRESS)"
+  if (( blocks > 0 )); then
+    mined="$(core_admin generatetoaddress "$blocks" "$address")"
+    [[ "$(jq -er 'length' <<<"$mined")" == "$blocks" ]] ||
+      fail "Core did not mine the exact refund maturity distance"
+  fi
+  tip="$(core_admin getblockcount)"
+  [[ "$tip" == "$target" ]] || fail "Core refund eligibility tip drifted"
+  tip_hash="$(core_admin getblockhash "$tip")"
+  jq -n --arg label "$label" --arg hash "$tip_hash" \
+    --argjson previous "$current" --argjson mined "$blocks" --argjson tip "$tip" '
+    {schema_version:1,label:$label,previous_tip:$previous,mined_blocks:$mined,
+     eligible_tip:$tip,eligible_tip_hash:$hash,
+     next_block_is_signed_refund_height:true}
+  ' >"${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-maturity.json"
+  chmod 0600 "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-maturity.json"
+}
+
+submit_actor_bitcoin_refund() {
+  local owner="$1" expected_revision="$2" label="$3"
+  local peer predecessor mempool_output restart_mempool confirmed spender spec public_spec
+  local funding_tx funding_vout delay script control destination output_value expected_height phase
+  predecessor=$((expected_revision - 1))
+  case "$owner" in maker) peer=taker ;; taker) peer=maker ;; *) fail "invalid Bitcoin refund owner" ;; esac
+  spec="${M3_POC_DIRECTION_ROOT}/stage-two.json"
+  public_spec="${M3_POC_DIRECTION_ROOT}/fixture/public-spec.json"
+  mempool_output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-pre-mempool.json"
+  core_rpc "$peer" getrawmempool '[]' >"$mempool_output"
+  chmod 0600 "$mempool_output"
+  jq -e '.error == null and .result == []' "$mempool_output" >/dev/null ||
+    fail "Bitcoin refund began with a nonempty mempool"
+
+  actor_invoke "$owner" recover "${label}-submit"
+  jq -e --arg role "$owner" --argjson revision "$predecessor" '
+    .schema_version == 1 and .role == $role and .command == "recover"
+    and .outcome == "awaiting_observation" and .chain == "bitcoin"
+    and .revision == $revision
+  ' "$actor_last_output" >/dev/null || fail "Bitcoin refund owner did not submit from its predecessor"
+  restart_mempool="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-accepted-mempool.json"
+  core_rpc "$peer" getrawmempool '[]' >"$restart_mempool"
+  chmod 0600 "$restart_mempool"
+  jq -e '.error == null and (.result | length) == 1' "$restart_mempool" >/dev/null ||
+    fail "counterparty did not observe exactly one Bitcoin refund"
+  bitcoin_refund_tx="$(jq -er '.result[0]' "$restart_mempool")"
+
+  actor_invoke "$owner" recover "${label}-accepted-restart-owner"
+  jq -e --arg role "$owner" --argjson revision "$predecessor" '
+    .schema_version == 1 and .role == $role and .command == "recover"
+    and .outcome == "awaiting_observation" and .chain == "bitcoin"
+    and .revision == $revision
+  ' "$actor_last_output" >/dev/null || fail "accepted Bitcoin refund restart changed owner state"
+  actor_invoke "$peer" recover "${label}-accepted-restart-peer"
+  jq -e --arg role "$peer" --argjson revision "$predecessor" '
+    .schema_version == 1 and .role == $role and .command == "recover"
+    and .outcome == "awaiting_observation" and .chain == "bitcoin"
+    and .revision == $revision
+  ' "$actor_last_output" >/dev/null || fail "peer projected an unconfirmed Bitcoin refund"
+  core_rpc "$owner" getrawmempool '[]' | jq -e --arg tx "$bitcoin_refund_tx" \
+    '.error == null and .result == [$tx]' >/dev/null ||
+    fail "Bitcoin refund restart changed the exact mempool effect"
+
+  mine_one_core_block
+  expected_height="$(jq -er '.recovery.bitcoin_refund_height | numbers' "$spec")"
+  [[ "$core_mined_block_height" == "$expected_height" ]] ||
+    fail "Bitcoin refund was not mined at the countersigned height"
+  wait_core_confirmed "$bitcoin_refund_tx" "$peer" "$label"
+  confirmed="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-confirmed.json"
+  bitcoin_refund_wtxid="$(jq -er '.result.hash' "$confirmed")"
+  funding_tx="$(jq -er '.bitcoin.funding_transaction_id' "$spec")"
+  funding_vout="$(jq -er '.bitcoin.funding_output_index | numbers' "$spec")"
+  output_value="$(jq -er '.bitcoin.claim_value_sat | numbers' "$spec")"
+  delay="$(jq -er '.refund_csv_blocks | numbers' "$public_spec")"
+  script="$(jq -er --arg direction "$M3_POC_DIRECTION" '.contracts[$direction].refund_script' "$public_spec")"
+  control="$(jq -er --arg direction "$M3_POC_DIRECTION" '.contracts[$direction].refund_control_block' "$public_spec")"
+  destination="$(jq -er --arg owner "$owner" '.[$owner].bitcoin_claim_destination_script_pubkey' "$public_spec")"
+  jq -e --arg tx "$bitcoin_refund_tx" --arg funding "$funding_tx" \
+    --arg script "$script" --arg control "$control" --arg destination "$destination" \
+    --argjson vout "$funding_vout" --argjson delay "$delay" --argjson value "$output_value" '
+    .error == null and .result.txid == $tx and (.result.hash | test("^[0-9a-f]{64}$"))
+    and (.result.confirmations | numbers) >= 1
+    and (.result.vin | length) == 1 and .result.vin[0].txid == $funding
+    and .result.vin[0].vout == $vout and .result.vin[0].sequence == $delay
+    and (.result.vin[0].txinwitness | length) == 3
+    and (.result.vin[0].txinwitness[0] | test("^[0-9a-f]{128}$"))
+    and .result.vin[0].txinwitness[1] == $script
+    and .result.vin[0].txinwitness[2] == $control
+    and (.result.vout | length) == 1
+    and ((.result.vout[0].value * 100000000 | round) == $value)
+    and .result.vout[0].scriptPubKey.hex == $destination
+  ' "$confirmed" >/dev/null || fail "confirmed Bitcoin refund violates the countersigned transaction"
+  spender="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-spender.json"
+  core_rpc "$peer" gettxspendingprevout \
+    "[[{\"txid\":\"${funding_tx}\",\"vout\":${funding_vout}}],{\"mempool_only\":false,\"return_spending_tx\":true}]" \
+    >"$spender"
+  chmod 0600 "$spender"
+  jq -e --arg tx "$bitcoin_refund_tx" --arg block "$core_mined_block_hash" '
+    .error == null and (.result | length) == 1
+    and .result[0].spendingtxid == $tx and .result[0].blockhash == $block
+    and (.result[0].spendingtx | test("^[0-9a-f]+$"))
+  ' "$spender" >/dev/null || fail "Core did not return the exact finalized refund spender"
+  if [[ "$expected_revision" == 3 ]]; then phase=maker_leg_refunded; else phase=refunded; fi
+  jq -n --arg direction "$M3_POC_DIRECTION" --arg owner "$owner" \
+    --arg tx "$bitcoin_refund_tx" --arg wtxid "$bitcoin_refund_wtxid" \
+    --arg block "$core_mined_block_hash" --argjson height "$core_mined_block_height" \
+    --argjson signed_height "$expected_height" --argjson sequence "$delay" \
+    --argjson revision "$expected_revision" '
+    {schema_version:1,direction:$direction,owner:$owner,transaction_id:$tx,
+     witness_transaction_id:$wtxid,containing_block_hash:$block,
+     containing_block_height:$height,signed_refund_height:$signed_height,
+     signed_csv_sequence:$sequence,projected_revision:$revision,
+     exact_countersigned_transaction:true,canonical_three_item_witness:true}
+  ' >"${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-refund.json"
+  chmod 0600 "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-refund.json"
+  project_both_refunds_to_revision "$expected_revision" bitcoin "$phase" "$label"
+}
+
 actor_lez_claim_transaction_id() {
   local owner="$1" journal
   journal="${M3_POC_SECURE_STATE_ROOT}/sidecars/final/${owner}/bridge-requests.v1.json"
@@ -1116,6 +1439,133 @@ actor_lez_claim_transaction_id() {
       select(. != $initialization and . != $funding)] |
     unique | select(length == 1) | .[0]
   ' "$journal"
+}
+
+lez_successful_submission_count() {
+  local role journal total=0
+  for role in maker taker; do
+    journal="${M3_POC_SECURE_STATE_ROOT}/sidecars/final/${role}/bridge-requests.v1.json"
+    [[ -f "$journal" && ! -L "$journal" ]] || fail "${role} sidecar request journal is unavailable"
+    total=$((total + $(jq -er '
+      [.entries[] |
+        select(.method == "lez_bridge.v1.submit_transaction"
+               and .outcome.kind == "success")] | length
+    ' "$journal")))
+  done
+  printf '%s\n' "$total"
+}
+
+actor_lez_refund_transaction_id() {
+  local owner="$1" journal
+  journal="${M3_POC_SECURE_STATE_ROOT}/sidecars/final/${owner}/bridge-requests.v1.json"
+  [[ -f "$journal" && ! -L "$journal" ]] || fail "${owner} sidecar request journal is unavailable"
+  jq -er --arg initialization "$lez_initialization_tx" --arg funding "$lez_funding_tx" '
+    [.entries[] |
+      select(.method == "lez_bridge.v1.submit_transaction"
+             and .outcome.kind == "success") |
+      .outcome.value.transaction_id |
+      select(. != $initialization and . != $funding)] |
+    unique | select(length == 1) | .[0]
+  ' "$journal"
+}
+
+wait_lez_finalized_deadline() {
+  local deadline_ms="$1" label="$2"
+  local tip response timestamp block_hash
+  for _ in {1..1200}; do
+    tip="$(finalized_tip)"
+    if response="$(rpc "$M3_POC_LEZ_INDEXER_RPC_URL" \
+        "$(jq -cn --argjson height "$tip" \
+          '{jsonrpc:"2.0",id:1,method:"getBlockById",params:[$height]}')" 2>/dev/null)" &&
+      timestamp="$(jq -er '.result.header.timestamp | numbers' <<<"$response" 2>/dev/null)" &&
+      jq -e '.error == null and .result.bedrock_status == "Finalized"' <<<"$response" >/dev/null 2>&1 &&
+      (( timestamp >= deadline_ms )); then
+      block_hash="$(jq -er '.result.header.hash | strings' <<<"$response")"
+      jq -n --arg label "$label" --arg hash "$block_hash" \
+        --argjson deadline "$deadline_ms" --argjson timestamp "$timestamp" --argjson tip "$tip" '
+        {schema_version:1,label:$label,deadline_ms:$deadline,
+         finalized_tip:{height:$tip,block_hash:$hash,timestamp_ms:$timestamp},
+         deadline_satisfied:true}
+      ' >"${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-deadline.json"
+      chmod 0600 "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-deadline.json"
+      return 0
+    fi
+    sleep 1
+  done
+  fail "LEZ finalized clock did not reach the countersigned refund deadline"
+}
+
+assert_lez_refund_preprojection_status_both() {
+  local predecessor="$1" label="$2"
+  local role expected_phase expected_action
+  [[ "$(lez_successful_submission_count)" == 3 ]] ||
+    fail "LEZ preprojection proof requires exactly three durable submissions"
+  case "$predecessor" in
+    2) expected_phase=both_legs_locked; expected_action=observe_revealing_claim ;;
+    3) expected_phase=maker_leg_refunded; expected_action=recover_taker_leg ;;
+    *) fail "unsupported LEZ refund preprojection predecessor: ${predecessor}" ;;
+  esac
+  for role in maker taker; do
+    actor_invoke "$role" status "${label}-post-submit-pre-finality"
+    jq -e --arg role "$role" --arg phase "$expected_phase" --arg action "$expected_action" \
+      --argjson revision "$predecessor" '
+      .schema_version == 1 and .role == $role and .state == "active"
+      and .revision == $revision and .phase == $phase and .next_action == $action
+    ' "$actor_last_output" >/dev/null ||
+      fail "${role} actor changed lifecycle state before LEZ refund finality"
+  done
+  [[ "$(lez_successful_submission_count)" == 3 ]] ||
+    fail "LEZ preprojection status proof changed the durable submission count"
+}
+
+submit_actor_lez_refund() {
+  local owner="$1" expected_revision="$2" label="$3"
+  local peer predecessor refund_start before_count after_count finality block_height block_file
+  local block_timestamp deadline window_blocks phase
+  predecessor=$((expected_revision - 1))
+  case "$owner" in maker) peer=taker ;; taker) peer=maker ;; *) fail "invalid LEZ refund owner" ;; esac
+  refund_start="$(finalized_tip)"
+  before_count="$(lez_successful_submission_count)"
+  [[ "$before_count" == 2 ]] || fail "LEZ refund began with an unexpected submission count"
+
+  actor_invoke_recovery_pending_retry "$owner" "$predecessor" lez "${label}-submit"
+  jq -e --arg role "$owner" --argjson revision "$predecessor" '
+    .schema_version == 1 and .role == $role and .command == "recover"
+    and .outcome == "awaiting_observation" and .chain == "lez"
+    and .revision == $revision
+  ' "$actor_last_output" >/dev/null || fail "LEZ refund owner did not submit from its predecessor"
+  lez_refund_tx="$(actor_lez_refund_transaction_id "$owner")"
+  [[ "$lez_refund_tx" =~ ^[0-9a-f]{64}$ ]] || fail "actor-owned LEZ refund ID is invalid"
+  after_count="$(lez_successful_submission_count)"
+  [[ "$after_count" == 3 ]] || fail "LEZ refund did not add exactly one durable submission"
+
+  assert_lez_refund_preprojection_status_both "$predecessor" "$label"
+
+  prove_lez_finalized_transaction "$label" "$lez_refund_tx" "$refund_start"
+  finality="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-finality.json"
+  block_height="$(jq -er '.containing_block_id | numbers' "$finality")"
+  block_file="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-block-${block_height}.json"
+  block_timestamp="$(jq -er '.result.header.timestamp | numbers' "$block_file")"
+  deadline="$(jq -er '.lez_terms.refund_at_ms | numbers' "${M3_POC_DIRECTION_ROOT}/stage-two.json")"
+  (( block_timestamp >= deadline )) || fail "LEZ refund containing block predates the signed deadline"
+  window_blocks=$((lez_proved_tip - refund_start))
+  (( window_blocks >= 1 && window_blocks <= 4096 )) ||
+    fail "finalized LEZ refund window is out of bounds"
+  write_actor_configs "$((refund_start + 1))" "$window_blocks"
+  if [[ "$expected_revision" == 3 ]]; then phase=maker_leg_refunded; else phase=refunded; fi
+  project_both_refunds_to_revision "$expected_revision" lez "$phase" "$label"
+  [[ "$(lez_successful_submission_count)" == 3 ]] ||
+    fail "LEZ finalized refund projection changed the durable submission count"
+  jq -n --arg direction "$M3_POC_DIRECTION" --arg owner "$owner" --arg tx "$lez_refund_tx" \
+    --argjson block "$block_height" --argjson timestamp "$block_timestamp" \
+    --argjson deadline "$deadline" --argjson submissions "$(lez_successful_submission_count)" '
+    {schema_version:1,direction:$direction,owner:$owner,transaction_id:$tx,
+     containing_block_id:$block,containing_timestamp_ms:$timestamp,
+     signed_refund_at_ms:$deadline,deadline_satisfied:($timestamp >= $deadline),
+     durable_total_lez_submissions:$submissions,exact_finalized_projection:true,
+     actor_validated_refunded_metadata_zero_custody_and_immutable_depositor:true}
+  ' >"${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-refund.json"
+  chmod 0600 "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-refund.json"
 }
 
 submit_actor_lez_claim() {
@@ -1158,16 +1608,90 @@ write_dual_lock_gate() {
 
 write_actual_effect_manifest() {
   local output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-actual-effects.json"
-  jq -n --arg direction "$M3_POC_DIRECTION" --arg bitcoin_lock "$bitcoin_lock_tx" \
-    --arg bitcoin_claim "$bitcoin_claim_tx" --arg lez_initialization "$lez_initialization_tx" \
-    --arg lez_funding "$lez_funding_tx" --arg lez_claim "$lez_claim_tx" '
-    {schema_version:1,direction:$direction,
-     bitcoin_effect_ids:[$bitcoin_lock,$bitcoin_claim],
-     lez_effect_ids:[$lez_initialization,$lez_funding,$lez_claim],
-     expected_unique_effects:{bitcoin:2,lez:3},
-     actor_owned_claims:{bitcoin:$bitcoin_claim,lez:$lez_claim}}
-  ' >"$output"
+  case "$M3_POC_JOURNEY" in
+    claim)
+      jq -n --arg direction "$M3_POC_DIRECTION" --arg bitcoin_lock "$bitcoin_lock_tx" \
+        --arg bitcoin_claim "$bitcoin_claim_tx" --arg lez_initialization "$lez_initialization_tx" \
+        --arg lez_funding "$lez_funding_tx" --arg lez_claim "$lez_claim_tx" '
+        {schema_version:1,journey:"claim",direction:$direction,
+         bitcoin_effect_ids:[$bitcoin_lock,$bitcoin_claim],
+         lez_effect_ids:[$lez_initialization,$lez_funding,$lez_claim],
+         expected_unique_effects:{bitcoin:2,lez:3},
+         actor_owned_claims:{bitcoin:$bitcoin_claim,lez:$lez_claim}}
+      ' >"$output"
+      ;;
+    refund)
+      jq -n --arg direction "$M3_POC_DIRECTION" --arg bitcoin_lock "$bitcoin_lock_tx" \
+        --arg bitcoin_refund "$bitcoin_refund_tx" --arg lez_initialization "$lez_initialization_tx" \
+        --arg lez_funding "$lez_funding_tx" --arg lez_refund "$lez_refund_tx" '
+        {schema_version:1,journey:"refund",direction:$direction,
+         bitcoin_effect_ids:[$bitcoin_lock,$bitcoin_refund],
+         lez_effect_ids:[$lez_initialization,$lez_funding,$lez_refund],
+         expected_unique_effects:{bitcoin:2,lez:3},
+         actor_owned_refunds:{bitcoin:$bitcoin_refund,lez:$lez_refund},
+         cooperative_claim_effects_present:false}
+      ' >"$output"
+      ;;
+  esac
   chmod 0600 "$output"
+}
+
+run_actor_claim_flow() {
+  case "$M3_POC_DIRECTION" in
+    taker_sells_foreign)
+      submit_actor_lez_claim taker 3 lez-revealing-claim
+      submit_actor_bitcoin_claim maker 4 bitcoin-followup-claim
+      ;;
+    taker_sells_lez)
+      submit_actor_bitcoin_claim taker 3 bitcoin-revealing-claim
+      submit_actor_lez_claim maker 4 lez-followup-claim
+      ;;
+  esac
+}
+
+run_actor_refund_flow() {
+  local spec="${M3_POC_DIRECTION_ROOT}/stage-two.json"
+  local deadline later_bound earlier_bound before_count now
+  deadline="$(jq -er '.lez_terms.refund_at_ms | numbers' "$spec")"
+  later_bound="$(jq -er '.recovery.later_refund_earliest_unix_seconds | numbers' "$spec")"
+  earlier_bound="$(jq -er '.recovery.earlier_refund_latest_unix_seconds | numbers' "$spec")"
+  case "$M3_POC_DIRECTION" in
+    taker_sells_foreign)
+      before_count="$(lez_successful_submission_count)"
+      [[ "$before_count" == 2 ]] || fail "LEZ pre-refund submission count drifted"
+      assert_recovery_pending_both lez 2 lez-maker-refund-predeadline
+      [[ "$(lez_successful_submission_count)" == "$before_count" ]] ||
+        fail "pre-deadline LEZ recovery submitted an effect"
+      wait_lez_finalized_deadline "$deadline" lez-maker-refund
+      submit_actor_lez_refund maker 3 lez-maker-refund
+
+      assert_recovery_pending_both bitcoin 3 bitcoin-taker-refund-immature
+      core_rpc maker getrawmempool '[]' | jq -e '.error == null and .result == []' >/dev/null ||
+        fail "immature Bitcoin recovery changed the mempool"
+      wait_for_host_recovery_bound "$later_bound" bitcoin-taker-refund-later-bound
+      mine_core_to_refund_eligibility bitcoin-taker-refund
+      submit_actor_bitcoin_refund taker 4 bitcoin-taker-refund
+      ;;
+    taker_sells_lez)
+      assert_recovery_pending_both bitcoin 2 bitcoin-maker-refund-immature
+      core_rpc taker getrawmempool '[]' | jq -e '.error == null and .result == []' >/dev/null ||
+        fail "immature Bitcoin recovery changed the mempool"
+      now="$(date -u +%s)"
+      (( now <= earlier_bound )) || fail "Bitcoin first refund missed the signed earlier bound"
+      mine_core_to_refund_eligibility bitcoin-maker-refund
+      submit_actor_bitcoin_refund maker 3 bitcoin-maker-refund
+      now="$(date -u +%s)"
+      (( now <= earlier_bound )) || fail "Bitcoin first refund completed after the signed earlier bound"
+
+      before_count="$(lez_successful_submission_count)"
+      [[ "$before_count" == 2 ]] || fail "LEZ pre-refund submission count drifted"
+      assert_recovery_pending_both lez 3 lez-taker-refund-predeadline
+      [[ "$(lez_successful_submission_count)" == "$before_count" ]] ||
+        fail "pre-deadline LEZ recovery submitted an effect"
+      wait_lez_finalized_deadline "$deadline" lez-taker-refund
+      submit_actor_lez_refund taker 4 lez-taker-refund
+      ;;
+  esac
 }
 
 run_actor_flow() {
@@ -1197,15 +1721,9 @@ run_actor_flow() {
   esac
   write_dual_lock_gate
 
-  case "$M3_POC_DIRECTION" in
-    taker_sells_foreign)
-      submit_actor_lez_claim taker 3 lez-revealing-claim
-      submit_actor_bitcoin_claim maker 4 bitcoin-followup-claim
-      ;;
-    taker_sells_lez)
-      submit_actor_bitcoin_claim taker 3 bitcoin-revealing-claim
-      submit_actor_lez_claim maker 4 lez-followup-claim
-      ;;
+  case "$M3_POC_JOURNEY" in
+    claim) run_actor_claim_flow ;;
+    refund) run_actor_refund_flow ;;
   esac
   capture_both_statuses 4 terminal-status
   write_actual_effect_manifest
@@ -1266,9 +1784,9 @@ case "$command_name" in
     preflight
     ;;
   effect-plan)
-    [[ "$#" == 2 ]] || fail "effect-plan requires one direction"
+    [[ "$#" == 2 || "$#" == 3 ]] || fail "effect-plan requires a direction and optional journey"
     command -v jq >/dev/null || fail "jq is required"
-    emit_effect_plan "$2"
+    emit_effect_plan "$2" "${3:-claim}"
     ;;
   prepare-stage-two-spec)
     [[ "$#" == 2 ]] || fail "prepare-stage-two-spec requires one new output path"

@@ -40,6 +40,26 @@ Commit `650d94e` also sets every actor-to-LEZ finalized scan to a finite
 finalized-window scan that completed run-n, while a timeout remains retryable
 read-only unavailability and never grants another submission.
 
+Run `m3refund-20260716h` then passed the two-lock timeout/refund journey
+from base HEAD `ef5f306` with a dirty pre-commit source tree and the packet's
+independently validated runner hashes. It is hash-bound functional evidence,
+not clean exact-commit certification.
+Fresh one-shot maker and taker processes executed both directions against
+Bitcoin Core 31.1 Regtest and LEZ v0.2 private-local
+Bedrock/sequencer/indexer services using a 3.0-second slot. In both directions,
+both role stores reached revision 4 `refunded` with next action `complete`.
+Each direction retained exactly two confirmed Bitcoin effects and three exact
+durable LEZ submissions: one Bitcoin refund and one LEZ `RefundNative` were
+actor-owned, and no cooperative claim effect was present. Terminal `recover`
+replay changed no effect count. The packet records no public RPC, faucet,
+public funds, certification-time network dependency, or private-material
+disclosure; exact cleanup removed only captured run resources and targeted no
+foreign activity. The retained evidence span from its first emitted file to
+cleanup was 54 minutes 5 seconds. Most elapsed time is the deliberate signed
+deadline wait across two sequential directions, so this is not a throughput
+benchmark. It proves ordered recovery after both locks, not a first-lock-only
+absent-maker or survivor-only journey.
+
 Run `m3poc-live2-20260715a` used one isolated Bitcoin Core 31.1 Regtest node,
 one exact local LEZ v0.2 Bedrock/sequencer/indexer stack, and separate
 capability-authenticated maker/taker sidecars, signing processes, keys,
@@ -139,8 +159,11 @@ authority, observe-only ambiguity, exact finalized projection, and terminal
 restart. The [manual timeout/refund procedure](docs/m3-local-poc-operator-guide.md#manual-actor-timeoutrefund-recovery)
 uses only isolated Core 31.1 Regtest and local LEZ v0.2
 Bedrock/sequencer/indexer plus role sidecars; no public RPC, faucet, public
-deployment, or public funds are needed. Fresh actual-node refund execution is
-not yet retained and is the next evidence gate.
+deployment, or public funds are needed. Run `m3refund-20260716h` now retains
+fresh actual-node execution for both ordered two-lock refund directions.
+First-lock-only absent-maker recovery, survivor-specific continuation,
+deadline-cutoff/race hardening, concurrency, process-kill, and reorg journeys
+remain later gates.
 
 Pushed `a8688a3` replaces the unsafe post-confirmation recipe with an exact
 pre-effect funding ceremony. For each direction the operator runs `generate`,
@@ -410,8 +433,10 @@ refund legs through revision 2 to 3 to 4 in deterministic role tests. Exact
 bytes are durable before the one `Prepared` to `Started` CAS; only affirmative
 stable eligibility grants one attempt, and `Started`, `Unknown`, or `Accepted`
 never rearm. Owner and nonowner roles project only later exact finalized
-evidence. Fresh actual-node refund evidence remains; ADR 0038 records that
-boundary.
+evidence. Run `m3refund-20260716h` now closes the fresh two-direction
+actual-node refund evidence boundary recorded by ADR 0038; the separate
+absent-maker, cutoff/race, concurrency, process-kill, and reorg boundaries
+remain open.
 
 The older retained actual-Core run remains a one-process public deterministic
 cryptographic and consensus fixture. The operator-composed run closes live
@@ -419,7 +444,8 @@ witnessed submission, both happy directions, and the PoC atomicity/recovery
 order through separate role processes. The public actor source now owns both
 claim effects, and run-n now retains their fresh actual-node composition. This
 closes the progressive private local PoC, but does **not** close the accepted
-proposal's production-ready scope: native/custom-token parity, refund/timeout and concurrent demos, Testnet4
+proposal's production-ready scope: native/custom-token parity, first-lock-only
+absent-maker and survivor-specific recovery, cutoff/race and concurrent demos, Testnet4
 setup/execution, production key custody/Core adapter, QA/chaos/infosec
 campaigns, and GW-M3-001 disposition remain. There is no `m3-complete` tag. CI
 runs the same P2TR funding/claim
@@ -773,6 +799,43 @@ jq -e '.result == "passed" and .all_exact_run_resources_absent == true and
   .foreign_resources_targeted == false and .broad_cleanup_used == false' \
   "$M3_EVIDENCE/cleanup-attestation.json"
 ```
+
+To reproduce the actual-node timeout/refund journey, keep the same verified
+prerequisite variables but select `refund` and a different, never-before-used run
+ID. Change the example ID for every attempt; a failed or successful root is
+spent and the runner refuses to reuse it.
+
+```sh
+export RUN_ID=m3refund-manual-001
+export M3_ACTOR_POC_JOURNEY=refund
+./scripts/run-m3-actor-local-poc.sh
+
+export M3_EVIDENCE=".e2e/$RUN_ID/m3-actor-poc/evidence"
+jq -e '.kind == "m3_actor_two_direction_refund_local_poc" and
+  .journey == "refund" and .result == "passed" and
+  all(.directions[];
+    .terminal_revision == 4 and .terminal_phase == "refunded") and
+  .expected_unique_effects == {bitcoin: 2, lez: 3} and
+  .replay_command == "recover" and .replay_resubmission_count == 0 and
+  .services.bitcoin_core == {run_id: (.run_id + "-btc"),
+    version: "31.1", network: "regtest"} and
+  .services.lez.version == "v0.2.0" and
+  .services.lez.network == "private_local" and
+  .services.lez.slot_duration_seconds == "3.0" and
+  .public_rpc_used == false and .faucet_used == false and
+  .public_funds_used == false and .private_material_disclosed == false' \
+  "$M3_EVIDENCE/m3-actor-local-poc.json"
+jq -e '.journey == "refund" and .result == "passed" and
+  .all_exact_run_resources_absent == true and
+  .foreign_resources_targeted == false and .broad_cleanup_used == false' \
+  "$M3_EVIDENCE/cleanup-attestation.json"
+```
+
+The refund runner waits for the countersigned deadlines and executes the two
+directions sequentially. Run H's retained evidence-to-cleanup span was 54
+minutes 5 seconds with 3.0-second LEZ slots; local load, finality progress, and
+moving-tip retries can extend that. A timeout is uncertain observation and
+never grants another submission.
 
 The audited run used the same entry point at `6ded2f9`; these are its exact
 run-owned and native-artifact inputs. This is an audit record, not a command to

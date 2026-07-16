@@ -2,8 +2,13 @@
 
 Last verified: 2026-07-16
 
-This guide reproduces the public-actor M3 happy path proved by private local run
-`m3actor-20260716n` at pushed `origin/main` commit `6ded2f9`. It uses Bitcoin Core 31.1 Regtest, the pinned
+This guide reproduces the public-actor M3 happy and two-lock refund paths proved
+by private local runs `m3actor-20260716n` and `m3refund-20260716h`.
+The happy run used pushed `origin/main` commit `6ded2f9`; the refund run used
+base HEAD `ef5f306` with a dirty pre-commit source tree and independently
+validated runner hashes. The latter is hash-bound functional evidence, not
+clean exact-commit certification. Both use
+Bitcoin Core 31.1 Regtest, the pinned
 LEZ v0.2 Bedrock/sequencer/indexer stack, the checked witnessed-escrow guest,
 independent maker and taker sidecars, separate signing journals, and actual
 transactions on both local chains.
@@ -26,9 +31,13 @@ observation are now composed and deterministic tests reach terminal projection.
 Run-n drove both directions through that public actor and both actual local node
 stacks. Maker and taker each reached revision 4 `completed` and offline next
 action `complete`; terminal replay caused no resubmission. This closes the progressive local PoC automation gap without weakening any
-ordering check. Public refund recovery is deterministic GREEN in both
-directions, but run-n did not execute it against actual nodes. Fresh
-actual-node refund/concurrency, chaos, infosec, public-Testnet, and
+ordering check. Run H then executed the public `recover` command against both
+actual local stacks in both directions. Maker and taker each reached revision 4
+`refunded`, terminal replay added no submission, each direction retained
+exactly two confirmed Bitcoin effects and three durable LEZ submissions, and
+neither direction contained a cooperative claim effect. First-lock-only
+absent-maker recovery, survivor-specific continuation, deadline-cutoff/race
+hardening, concurrency, process-kill/reorg, chaos, infosec, public-Testnet, and
 production-readiness scope remain open.
 
 The earlier operator-composed reference result is
@@ -40,7 +49,8 @@ nonclaims. Do not publish a private run root: it contains keys, capabilities,
 SQLite journals, exact signed transactions, and complete signatures.
 Run-n's audited terminal and cleanup packets remain locally below
 `.e2e/m3actor-20260716n/m3-actor-poc/evidence/`; the entire run root remains
-owner-private.
+owner-private. Run H's corresponding private evidence root is
+`.e2e/m3refund-20260716h/m3-actor-poc/evidence/`.
 
 ## Topology and trust boundary
 
@@ -95,8 +105,8 @@ flowchart LR
     RefundProjection -->|"owner one-attempt RefundNative"| Sequencer
     Core -->|"exact finalized refund bytes"| RefundProjection
     Indexer -->|"finalized refund state and position"| RefundProjection
-    RefundProjection -->|"revision 3 then 4; actual-node run pending"| Maker
-    RefundProjection -->|"revision 3 then 4; actual-node run pending"| Taker
+    RefundProjection -->|"run H revision 3 then 4 refunded"| Maker
+    RefundProjection -->|"run H revision 3 then 4 refunded"| Taker
     Indexer --> Finality["Sequential finality and witness auditor"]
     Core --> Finality
     Finality -->|"exact chain signature"| Recover["Point-checked scalar recovery"]
@@ -130,8 +140,9 @@ only its one-way commitment. Revision four reaches `Completed`; offline status
 then reports next action `complete`. Deterministic observers and loopback-only
 placeholder routes are used, so no public RPC, faucet, public funds, chain
 peer, or external service participates. The current gate contains 49 library
-cases and eight CLI integrations. Its refund cases use deterministic chain ports and prove the same public command and
-durable journals, but do not prove a fresh actual-node refund run. The
+cases and eight CLI integrations. Its refund cases use deterministic chain
+ports and prove the same public command and durable journals without themselves
+starting nodes; Run H separately proves the fresh actual-node composition. The
 Bitcoin-effect cases additionally prove that the
 taker alone owns a revealing Bitcoin claim at revision two and the maker alone
 owns a follow-up Bitcoin claim at revision three. Exact public bytes are
@@ -173,8 +184,8 @@ mutation failures, and scan SQLite/WAL for the recovered-scalar sentinel. They
 use synthetic evidence that represents already-validated chain-adapter output;
 there is no RPC, node, Docker container, faucet, public endpoint, or external
 availability dependency in this component gate. It does not substitute for
-the separate actual-node proof; run-n supplies the happy proof for both roles
-and directions, while fresh actual-node refunds remain pending.
+the separate actual-node proof; run-n supplies the happy proof and Run H
+supplies the ordered two-lock refund proof for both roles and directions.
 
 Repeat the agreement-derived signing context and the new recovery seams:
 
@@ -1042,6 +1053,69 @@ for direction in taker_sells_foreign taker_sells_lez; do
 done
 ~~~
 
+The default journey is `claim`. To reproduce Run H's actual-node refund
+boundary, keep the same verified prerequisite variables, select `refund`, and
+use a different never-before-used run ID. Change the example ID for every
+attempt; successful and failed roots are both spent.
+
+~~~sh
+export RUN_ID=m3refund-manual-001
+export M3_ACTOR_POC_JOURNEY=refund
+./scripts/run-m3-actor-local-poc.sh
+
+export M3_EVIDENCE="$PWD/.e2e/$RUN_ID/m3-actor-poc/evidence"
+jq -e '.kind == "m3_actor_two_direction_refund_local_poc" and
+  .journey == "refund" and .result == "passed" and
+  (.directions | map(.direction) ==
+    ["taker_sells_foreign", "taker_sells_lez"]) and
+  all(.directions[];
+    .terminal_revision == 4 and .terminal_phase == "refunded") and
+  .actor_process_model == "fresh_one_shot_process_per_command" and
+  .actor_owned_effect_semantics == "refund" and
+  .expected_unique_effects == {bitcoin: 2, lez: 3} and
+  .replay_command == "recover" and .replay_resubmission_count == 0 and
+  .services.bitcoin_core.version == "31.1" and
+  .services.bitcoin_core.network == "regtest" and
+  .services.lez.version == "v0.2.0" and
+  .services.lez.network == "private_local" and
+  .services.lez.slot_duration_seconds == "3.0" and
+  .public_rpc_used == false and .faucet_used == false and
+  .public_funds_used == false and .private_material_disclosed == false' \
+  "$M3_EVIDENCE/m3-actor-local-poc.json"
+jq -e '.journey == "refund" and .result == "passed" and
+  .all_exact_run_resources_absent == true and
+  .foreign_resources_targeted == false and .broad_cleanup_used == false' \
+  "$M3_EVIDENCE/cleanup-attestation.json"
+for direction in taker_sells_foreign taker_sells_lez; do
+  for role in maker taker; do
+    jq -e '.state == "active" and .phase == "refunded" and
+      .revision == 4 and .next_action == "complete"' \
+      "$M3_EVIDENCE/${direction}-${role}-terminal.json"
+  done
+  jq -e '.bitcoin == 2 and .lez == 3' \
+    "$M3_EVIDENCE/${direction}-actual-submission-counts.json"
+  jq -e '.journey == "refund" and
+    (.bitcoin_effect_ids | length) == 2 and
+    (.lez_effect_ids | length) == 3 and
+    (.actor_owned_refunds.bitcoin | type) == "string" and
+    (.actor_owned_refunds.lez | type) == "string" and
+    .cooperative_claim_effects_present == false' \
+    "$M3_EVIDENCE/${direction}-actual-effects.json"
+  jq -s -e '.[0] == .[1]' \
+    "$M3_EVIDENCE/${direction}-submission-counts-before-replay.json" \
+    "$M3_EVIDENCE/${direction}-submission-counts-after-replay.json"
+done
+unset M3_ACTOR_POC_JOURNEY
+~~~
+
+Run H's evidence files span 54 minutes 5 seconds from the first retained file
+through cleanup. The two directions run sequentially and intentionally wait for
+signed five- and fifteen-minute recovery bounds while LEZ advances in
+3.0-second slots; this duration is not a performance baseline. Scheduling,
+indexer finality, a moving LEZ tip, and bounded read retries can extend it.
+Unavailability or timeout remains uncertain observation and never creates a new
+send authority.
+
 Keep the entire `.e2e/$RUN_ID` tree private: the public terminal packet is
 secret-safe, but sibling evidence and `private/` contain credentials, keys,
 complete transactions, and signer/actor databases. If the run fails, the
@@ -1345,21 +1419,21 @@ history grant no fresh send authority. An accepted response alone does not
 project lifecycle state; a later fresh `drive` must obtain exact finalized
 evidence. The other role discovers the same claim from signed terms and
 transcript without accepting a peer transaction ID. This claim path is GREEN in
-source, deterministic actor tests, and run-n. The
-refund path is GREEN only at the deterministic public-actor boundary so far. The
+source, deterministic actor tests, and run-n. The refund path is GREEN in
+deterministic tests and in Run H's fresh actual-node two-lock journey. The
 lower-level operator flow below remains useful for inspecting each exact
-request/effect; fresh actual-node refund and concurrent journeys remain later
-gates.
+request/effect; absent-maker, survivor-specific, cutoff/race, concurrent,
+process-kill, and reorg journeys remain later gates.
 
 ## Manual actor timeout/refund recovery
 
 Status: the public schema-3 command and both ordered refund directions are GREEN
-with deterministic chain ports. A fresh actual-node refund run has not yet been
-retained. Run `m3actor-20260716n` followed the claim path and its schema-2
-configs are spent audit inputs; do not modify or reuse that run root. Start a
-fresh direction, use the schema-3 config recipe above, stop after both actors
-project revision 2 `both_legs_locked`, and do not submit either cooperative
-claim.
+with deterministic chain ports and fresh actual nodes in
+`m3refund-20260716h`. Run `m3actor-20260716n` followed the claim path;
+both retained roots and their configs are spent audit inputs, so do not modify
+or reuse them. For manual inspection, start a fresh direction, use the schema-3
+config recipe above, stop after both actors project revision 2
+`both_legs_locked`, and do not submit either cooperative claim.
 
 The agreement fixes the recovery order. The maker-funded leg must be durably
 projected at revision 3 before the taker-funded leg can project revision 4:
@@ -1368,6 +1442,16 @@ projected at revision 3 before the taker-funded leg can project revision 4:
 |---|---|---|
 | `taker_sells_foreign` | Maker LEZ refund | Taker Bitcoin refund |
 | `taker_sells_lez` | Maker Bitcoin refund | Taker LEZ refund |
+
+Run H retained that exact order. The foreign direction finalized maker LEZ
+refund `a5cbb48a...97e41` in block 111 before confirming taker Bitcoin
+refund `ef48682a...72886`. The LEZ direction confirmed maker Bitcoin
+refund `17c652fb...56c96` before finalizing taker LEZ refund
+`64e1005b...9a6b4` in block 292. In each direction the final effect manifest
+contains two unique Bitcoin effects and three unique LEZ effects, names exactly
+one actor-owned refund on each chain, and reports no cooperative claim. All four
+role/direction terminal files are revision 4 `refunded` with next action
+`complete`, and the before/after replay count packets are identical.
 
 The provisioner output `private/<role>-refund.key` is raw 32-byte owner-private
 material. The recipe converts only the agreement-selected Bitcoin funder key
@@ -1931,23 +2015,28 @@ otherwise abandon the isolated chain funds and start a fresh run.
 
 ## External resources and flakiness
 
-Runtime external resources were empty in audited run
-`m3actor-20260716n`: its packet explicitly records no public RPC, faucet,
-public funds, or certification-time network dependency.
+Runtime external resources were empty in audited runs
+`m3actor-20260716n` and `m3refund-20260716h`: both packets explicitly
+record no public RPC, faucet, public funds, or certification-time network
+dependency.
 
 - Bitcoin Core is local Regtest with zero peers and deterministic local mining.
-- LEZ is the run-owned local Bedrock, sequencer, and indexer.
+- LEZ is the run-owned local v0.2 Bedrock, sequencer, and indexer. Run H used
+  the private-local 3.0-second slot.
 - Funds come from local genesis/Vault and Regtest outputs.
 - No faucet, public RPC, public Testnet, public peer, or public funds are used.
 
 Loopback describes reachability, not a node double. The combined runner starts
 the pinned Core daemon and the exact LEZ Bedrock/sequencer/indexer services,
 then checks Core version, Regtest genesis, policy, canonical transaction bytes,
-containing blocks, confirmation depth, and spent-once outpoints. On LEZ it
+containing blocks, confirmation depth, and spent-once outpoints. Run H also
+checks the exact next-block CSV boundary, three-item refund witness, txid/wtxid
+readback, and refund containing height. On LEZ it
 checks the source/binary/runtime identities, deploys the checked guest, requires
 sequential finalized ancestry, re-reads Vault ownership and balances, and binds
-the exact initialize/fund/claim transactions to historical account state. The
-deterministic genesis and Regtest funds make the setup reproducible; these node
+the exact initialize/fund/claim or refund transactions to historical account
+state. The deterministic genesis and Regtest funds make the setup reproducible;
+these node
 and chain assertions, rather than the loopback address itself, establish the
 local behavior under test.
 
@@ -1982,7 +2071,8 @@ signal, calls `gpgconf --homedir <that-home> --kill gpg-agent`. It fails closed
 if that exact cleanup fails and never kills agents outside the run. Run-n's
 post-cleanup process audit found no agent for its GnuPG home.
 
-Remaining runtime flakiness is local: process scheduling, an advancing LEZ tip
+Remaining runtime flakiness is local: deliberate recovery-deadline waits,
+process scheduling, an advancing LEZ tip
 across multi-read observations, indexer/sequencer readiness, heavy parallel
 indexer reads, port selection, and manual ordering. Use unique ports, sequential
 indexer calls, bounded waits, fresh observation IDs, and retained exact
@@ -2006,8 +2096,10 @@ Core adapter, public/Testnet funding path, non-fixture signing authority,
 production confirmation/reorg policy, and key custody must replace that test
 surface.
 
-This PoC does not prove fresh actual-node refunds, abandonment, reorg handling,
-concurrent swaps, crash recovery across the full lifecycle, chaos behavior, denial-of-service
+Run H proves ordered actual-node refund only after both locks. It does not prove
+first-lock-only absent-maker abandonment, survivor-specific recovery,
+deadline-cutoff/race hardening, reorg handling, concurrent swaps, process-kill
+or crash recovery across the full lifecycle, chaos behavior, denial-of-service
 resistance, secure transport between actors, HSM custody, key rotation, backup,
 formal cryptographic audit, public deployment, or production readiness.
 musig2 remains a PoC dependency subject to the recorded audit/zeroization

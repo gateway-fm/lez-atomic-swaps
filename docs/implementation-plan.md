@@ -1,6 +1,6 @@
 # Living implementation plan
 
-Last updated: 2026-07-15
+Last updated: 2026-07-16
 
 This file is the delivery control document. It must change whenever scope,
 architecture, sequencing, risks, or acceptance evidence changes.
@@ -284,6 +284,26 @@ boundary:
 - [x] Document transparent-pool visibility and the shield-after-swap user journey.
 - [ ] Record happy, refund/timeout, and concurrent-swap demos from passing
   testnet actor suites.
+
+RFP R2/D1 reconciliation during M3 exposed a recovery branch that the M2
+happy-path packet and the broad refund-demo checkbox above did not state
+precisely:
+
+- [ ] add the corrective ZEC **first-lock-only absent-maker** actor journey in
+  both accepted directions. After the taker locks the direction-correct first
+  leg and the maker never submits the second lock, the taker must recover that
+  first leg from persisted state and canonical LEZ/Zebra evidence alone;
+- [ ] bind a direction-correct maker-second-lock cutoff that leaves the reviewed
+  finality and reaction margin before first-leg recovery, reobserve the first
+  lock as canonical and unspent on every maker attempt, and fail closed across
+  the cutoff/refund race.
+
+This is neither the existing two-lock timeout path, where both legs already
+exist and refund in the fixed LEZ-before-ZEC order, nor the concurrent-swap
+demo. It is a corrective accepted-delivery gap, not a retroactive claim about
+the narrower `m2-complete` happy PoC tag, which already excludes actual-node
+recovery and later hardening. It must be closed before the complete RFP
+delivery is certified.
 
 Owner-approved stealth certification policy (ADRs 0023 and 0027): the unchecked
 public deployment, public Zcash-testnet, full discovery/negotiation SDK
@@ -1023,7 +1043,11 @@ outputs above.
 Status: **progressive private local-devnet PoC complete 2 of 2 through the
 public actor and actual nodes at pushed `origin/main` commit `6ded2f9`; later
 QA, chaos, infosec, public-Testnet, and production-readiness hardening remain
-active**. The canonical countersigned agreement, finalized LEZ funding/claim
+active**. The pushed claim packet certifies both happy directions. Fresh run
+`m3refund-20260716h` now also closes the separate actual-node two-lock
+timeout/refund demo in both directions. First-lock-only absent-maker recovery
+and the concurrent-swap demo remain separate open M3 gates. The
+canonical countersigned agreement, finalized LEZ funding/claim
 adapters, typed Core adapter, and reference-actor revisions zero through four
 are GREEN in source, deterministic tests, and run `m3actor-20260716n`. The
 exact Core 31.1 release verifier, minimal isolated image fixture, role-aware Regtest boundary,
@@ -1091,7 +1115,8 @@ uses peerless terms-and-transcript discovery.
 The typed Core 31.1 adapter and canonical bounded public evidence
 codec are GREEN as components and in run-n's actual-node actor paths. The
 schema-3 public `recover` command now composes the deterministic Bitcoin and LEZ
-refund boundaries in both directions; fresh actual-node timeout evidence,
+refund boundaries in both directions. Run `m3refund-20260716h` now proves those
+two-lock timeout paths against actual local nodes; first-lock-only recovery,
 concurrency, production key custody, and the accepted proposal's full SDK/demo
 surface remain pending.
 
@@ -1109,8 +1134,9 @@ outputs, and exact witness shape. The typed Core adapter now proves
 signed-anchor deadline eligibility and exact one-send/readback semantics. The
 actor now requires the agreement-selected Bitcoin funder's lowercase-hex
 mode-`0600` refund-key file, forbids it on the other role, and rederives the
-countersigned x-only key before activation. Fresh actual-node timeout evidence
-remains the active slice.
+countersigned x-only key before activation. Fresh actual-node two-lock timeout
+evidence is GREEN in run `m3refund-20260716h`; first-lock-only recovery and its
+maker-lock cutoff are the active recovery slice.
 
 The refund-wire loop is GREEN. The existing native-refund RPC names and
 hashlock JSON shape remain unchanged, while strict untagged protocol envelopes
@@ -1147,8 +1173,53 @@ public `recover`: rev2 to rev3 refunds the maker-funded leg, rev3 to rev4
 refunds the taker-funded leg, and both directions reach `Refunded` in
 deterministic role tests. Exact public bytes are durable before the one-winner
 CAS and only one attempt; `Started`, `Unknown`, and `Accepted` are
-observe-only, and only later exact finalized evidence projects. Fresh
-actual-node both-direction timeout execution is next.
+observe-only, and only later exact finalized evidence projects.
+
+Run `m3refund-20260716g` supplied the final fail-closed RED: its first
+two-lock direction reached revision four `Refunded` for both actors with zero
+replay effects, while the second made and finalized each exact refund once but
+failed after 120 bounded nonowner `moving_tip` reads instead of projecting
+terminal state. Exact cleanup passed. The correction pins the terminal-only
+finalized prefix while still rejecting moving or inconsistent coverage; its 16
+of 16 focused cases and complete pinned sidecar suite are GREEN.
+
+Fresh successor run `m3refund-20260716h` closes the actual-node two-lock
+timeout/refund gate. Its packet at
+`.e2e/m3refund-20260716h/m3-actor-poc/evidence/m3-actor-local-poc.json` reports
+`passed` at `2026-07-16T10:22:51Z`. In both `TakerSellsForeign` and
+`TakerSellsLez`, independent maker and taker actors reached terminal revision
+four `Refunded` and offline `complete`. Each direction has exactly two unique
+confirmed Bitcoin effects (funding plus actor-owned script-path refund) and
+three exact durable LEZ submissions (initialize, fund, and actor-owned native
+refund), with no cooperative claim effect. All four terminal `recover`
+invocations returned without changing revision or phase; before/after effect manifests are
+byte-identical and the measured replay resubmission count is zero. The terminal
+command currently labels that no-op outcome `not_yet_composed`; certification
+uses the unchanged terminal status and exact zero-effect comparison rather than
+calling that label `complete`.
+
+The same packet binds Bitcoin Core 31.1 Regtest and private local LEZ v0.2.0,
+the three executable runner hashes, the two stage-two packet hashes, offline
+native-build prerequisites, and the selected local timing profile. It records
+no public RPC, faucet, peers, or funds. Exact-ID cleanup removed every run-owned
+container, network, volume, image, and secure reservation state without broad
+cleanup or a foreign target. The run used base repository commit `ef5f306` with
+a dirty worktree; the exact runner scripts are hash-bound, but this is not
+described as clean pushed-commit evidence. A checked-in secret-safe summary
+must retain these facts and public transaction/block IDs and hashes while
+omitting private state, credentials, capabilities, raw signing material, logs,
+and full raw transaction packets.
+
+The local stack now makes its timing profile explicit. Happy claim evidence
+uses the audited upstream-compatible `1.0`-second LEZ slot duration. Refund
+certification uses the runner-owned, tightly allowlisted, manifest-recorded
+`3.0`-second local slot duration so a loaded host has a stable observation
+interval; it does not weaken deadlines, finality checks, or stable-prefix
+validation. Both profiles run the same pinned Bedrock, sequencer, indexer,
+guest, sidecars, and actor code, use only isolated loopback endpoints and local
+genesis/Regtest funds, and retain the selected duration in evidence. Public LEZ
+timing remains deployment configuration and requires fresh proof rather than
+assuming local cadence parity.
 
 Active M3 refund critical path:
 
@@ -1171,8 +1242,44 @@ Active M3 refund critical path:
 - [x] integrate schema-3 actor `recover` effects for the ordered Bitcoin and LEZ
   legs with role-shaped authority, persist-before-send, one `Started` CAS,
   observation-only ambiguous recovery, and finalized-only projection;
-- [ ] execute both direction-correct timeout/refund paths against fresh isolated
-  Core and LEZ nodes, then add concurrency, restart, reorg, fee, and chaos cases.
+- [x] close both direction-correct **two-lock timeout/refund** paths against
+  fresh isolated Core 31.1 Regtest and private local LEZ v0.2.0 nodes. Run
+  `m3refund-20260716h` leaves both actors at revision four `Refunded` in both
+  directions, with exact 2 Bitcoin / 3 LEZ effects per direction, no claim
+  effect, byte-identical before/after replay counts, zero resubmission, and
+  exact foreign-safe cleanup;
+- [x] add durable first-lock-only recovery projection: the RED required a
+  revision-one `TakerLockConfirmed` store to accept the exact taker-leg refund
+  at revision two, reconstruct terminal `Refunded` after reopen, replay
+  idempotently, and expose `observe_maker_second_lock_or_recover_taker_leg`;
+  GREEN covers maker and taker stores in both BTC directions;
+- [ ] finish the distinct RFP R2/D1 **first-lock-only absent-maker** BTC journey:
+  after the taker's first lock confirms and the maker never locks, the taker
+  must own, prepare, submit, finalize, and replay that first-leg refund without
+  maker, Delivery, or Chat participation. Persistence and projection are GREEN;
+  owner effect submission and a fresh actual-node journey remain open;
+- [ ] enforce and evidence the maker-second-lock cutoff/race invariant for that
+  branch. The signed maker-lock cutoff must leave the reviewed finality and
+  reaction margin before the taker's first-leg refund becomes eligible; every
+  maker-lock attempt must revalidate the canonical unspent first lock and the
+  cutoff, and a boundary race must fail closed rather than permit both an
+  accepted maker lock and taker recovery under incompatible histories;
+- [ ] run the accepted concurrent-swap demo with independent funding inputs,
+  agreements, actor stores, effect journals, and overlapping in-flight phases;
+  this is not satisfied by either timeout branch;
+- [ ] synchronize retained secret-safe evidence, manual reproduction,
+  architecture/atomicity diagrams, traceability, and the milestone packet,
+  then run the exact lint, test, vulnerability, license, source, security, and
+  static Mermaid gates before any M3 completion tag;
+- [ ] after the owner enters later hardening, add restart, reorg, fee, and chaos
+  cases beyond the reproducible functional PoC boundary.
+
+Repository-controlled open work, not external blockers, is first-lock-only BTC
+owner submission and actual-node evidence, the maker-second-lock cutoff/race,
+the concurrent demo, and synchronized closure evidence and gates. Run H closes
+the distinct two-lock timeout/refund item. Logos-owned limitations listed below
+remain production-release blockers/nonblocking milestone caveats; they do not
+waive any repository-controlled M3 item.
 
 LOGOS-017 records two nonblocking upstream production caveats: the compatible
 refund wire does not separately expose the containing-block timestamp that the
@@ -1180,8 +1287,17 @@ pinned sidecar enforces internally, and terms discovery uses a fixed maximum
 4096-block window that can age past an old transaction. The actor treats every
 miss, timeout, moving tip, or aged window as unknown/pending with no new send
 authority. Under the owner policy these Logos limitations do not stop M3
-certification, but they remain explicit release work; fresh actual-node refund
-evidence is repository-controlled and is not waived.
+certification, but they remain explicit release work. Run H proves the private
+local actual-node two-lock refunds under these disclosed compensations; it does
+not establish proof-bearing public LEZ finality. The upstream indexer also
+returns finalized blocks and historical account state as RPC DTOs without an
+account proof or atomic multi-read snapshot token, and live official-endpoint
+`getLastFinalizedBlockId` support remains unverified. The local actor therefore
+brackets reads at a stable finalized prefix, checks parent-linked ancestry, and
+requires exact same-block terminal state; those are explicit trust
+compensations, not proof-equivalent production finality. Under ADR 0018 this
+Logos-owned limitation is disclosed for production without weakening the local
+M3 evidence gate.
 
 Authority was reread again on 2026-07-16: accepted replacement issue #112 is
 open/reopened with the `accepted` and `RFP-003` labels and explicitly supersedes
@@ -1353,8 +1469,10 @@ Step 6 is 2 of 2 for operator-composed actual-chain happy execution. The public
 actor source path is also proved through revision four `Completed` for both
 chain directions by run `m3actor-20260716n`. Both Bitcoin and LEZ claim-effect
 paths have actual-node public-actor evidence at the progressive local PoC
-boundary. Public schema-3 refund composition is deterministic GREEN in both
-directions; its fresh actual-node timeout execution remains the next gate.
+boundary. Public schema-3 two-lock refund composition and actual-node
+execution are GREEN in both directions through run `m3refund-20260716h`.
+The first-lock-only projector and persistence boundary are also GREEN; owner
+effect submission, the maker-lock cutoff/race, and a fresh actual-node first-lock journey remain open.
 Pushed commit
 `a58ef96` adds the checked-in secret-safe packet, complete operator recipe,
 exact cleanup proof, synchronized architecture/traceability, and all 76 rendered
@@ -1592,8 +1710,9 @@ Vault onboarding, both role views of each lock, both complete presignatures
 before the first effect, no scalar use before dual locks, exact finalized or
 confirmed reveal bytes, point-checked recovery, opposite-chain completion from
 persisted state, spent-once Bitcoin outputs, and zero LEZ custody. This accepts
-the local happy-path execution, not U8 public-route execution, refund/concurrent
-demos, production authority, or accepted-proposal M3 completion.
+the local happy-path execution. That packet alone does not prove U8 public-route
+execution, the separately evidenced run-H refund demo, concurrency, production
+authority, or accepted-proposal M3 completion.
 
 The PoC gate requires both actors terminal `Completed`, taker-first canonical
 at the negotiated policy before the maker effect, no scalar revelation before
@@ -1663,8 +1782,10 @@ actor process for each command/revision, executes both directions sequentially,
 and attests exact cleanup without targeting foreign Docker resources. Commit
 `650d94e` makes every actor LEZ bridge request finite at 30 seconds. Run-n
 passed this harness at the same pushed commit: both directions, both roles,
-revision four, replay without resubmission, and exact cleanup are audited. The
-progressive local PoC has no remaining execution task; the next work is the
+revision four, replay without resubmission, and exact cleanup are audited. The happy-path progressive local PoC has no
+remaining execution task. Run H separately closes two-lock timeout/refund;
+first-lock-only recovery and concurrency remain the active functional M3 work
+before the broader
 owner-selected hardening below.
 
 ### Later owner-selected hardening

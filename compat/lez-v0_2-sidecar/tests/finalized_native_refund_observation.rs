@@ -3,7 +3,7 @@ use std::{
     net::{Ipv4Addr, SocketAddr},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -19,7 +19,7 @@ use indexer_service_protocol::{
 use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
 use lez_bridge_protocol::{
-    DiscoveryWindow, Hex32, MessageContext, NativeEscrowAccountObservation,
+    DiscoveryWindow, Hex32, MAX_DISCOVERY_BLOCKS, MessageContext, NativeEscrowAccountObservation,
     NativeRefundObservation, NativeRefundObservationTarget, ObserveNativeRefundRequest,
     Participant, PrepareNativeRefundRequest, RequestId, RunId, RuntimeCompatibility,
     RuntimeDescriptor, WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
@@ -92,6 +92,57 @@ impl FinalizedIndexerApi for MockIndexer {
             .get(&(account_id, block_id))
             .cloned()
             .ok_or(BridgeRuntimeError::Unavailable)
+    }
+}
+
+#[derive(Debug)]
+struct ReplacingPinnedBlockIndexer {
+    base: Arc<MockIndexer>,
+    changed_pin: Block,
+    pin_id_reads: AtomicUsize,
+    serving_changed_pin: AtomicBool,
+    change_from_read: usize,
+    restore_from_read: Option<usize>,
+}
+
+#[async_trait]
+impl FinalizedIndexerApi for ReplacingPinnedBlockIndexer {
+    async fn last_finalized_block_id(&self) -> Result<Option<u64>, BridgeRuntimeError> {
+        self.base.last_finalized_block_id().await
+    }
+
+    async fn block_by_id(&self, block_id: u64) -> Result<Option<Block>, BridgeRuntimeError> {
+        if block_id == self.changed_pin.header.block_id {
+            let read = self.pin_id_reads.fetch_add(1, Ordering::SeqCst);
+            let serve_changed = read >= self.change_from_read
+                && self.restore_from_read.is_none_or(|restore| read < restore);
+            self.serving_changed_pin
+                .store(serve_changed, Ordering::SeqCst);
+            if serve_changed {
+                return Ok(Some(self.changed_pin.clone()));
+            }
+        }
+        self.base.block_by_id(block_id).await
+    }
+
+    async fn block_by_hash(
+        &self,
+        block_hash: [u8; 32],
+    ) -> Result<Option<Block>, BridgeRuntimeError> {
+        if self.serving_changed_pin.load(Ordering::SeqCst)
+            && block_hash == self.changed_pin.header.hash.0
+        {
+            return Ok(Some(self.changed_pin.clone()));
+        }
+        self.base.block_by_hash(block_hash).await
+    }
+
+    async fn account_at_block(
+        &self,
+        account_id: [u8; 32],
+        block_id: u64,
+    ) -> Result<IndexedAccount, BridgeRuntimeError> {
+        self.base.account_at_block(account_id, block_id).await
     }
 }
 
@@ -345,6 +396,28 @@ fn indexer(fixture: &Fixture) -> Arc<MockIndexer> {
         accounts: fixture.accounts.clone(),
         tip_calls: AtomicUsize::new(0),
     })
+}
+
+fn advancing_indexer(fixture: &Fixture, finalized_after: u64) -> Arc<MockIndexer> {
+    assert!(finalized_after >= FINALIZED_TIP_ID);
+    let mut indexer = indexer(fixture);
+    let inner = Arc::get_mut(&mut indexer).unwrap();
+    for height in (FINALIZED_TIP_ID + 1)..=finalized_after {
+        let hash_byte = u8::try_from(height).unwrap();
+        let descendant = block(
+            height,
+            [hash_byte; 32],
+            REFUND_AT_MS + (height - REFUND_BLOCK_ID),
+            Vec::new(),
+        );
+        inner
+            .by_hash
+            .insert(descendant.header.hash.0, descendant.clone());
+        inner.by_id.insert(height, descendant);
+    }
+    *inner.tips.get_mut().unwrap() =
+        VecDeque::from([Some(FINALIZED_TIP_ID), Some(finalized_after)]);
+    indexer
 }
 
 #[tokio::test]
@@ -685,6 +758,187 @@ async fn contradictory_blocks_broken_ancestry_and_tip_movement_fail_closed() {
     );
     assert_eq!(
         observer.observe(&moving_fixture.request).await.unwrap_err(),
+        BridgeRuntimeError::Unavailable
+    );
+}
+
+#[tokio::test]
+async fn terminal_owned_refund_accepts_bounded_finalized_descendants_and_keeps_pinned_clock() {
+    let fixture = fixture().await;
+    let observer = FinalizedWitnessedRefundObserver::new(
+        fixture.runtime.clone(),
+        Arc::clone(&fixture.planner),
+        advancing_indexer(&fixture, FINALIZED_TIP_ID + 2),
+    );
+
+    let result = observer.observe(&fixture.request).await.unwrap();
+
+    assert!(matches!(result.refund, NativeRefundObservation::Found(_)));
+    assert_eq!(result.clock_before, result.clock_after);
+    assert_eq!(result.clock_after.height, FINALIZED_TIP_ID);
+    assert_eq!(result.clock_after.block_hash, h(11));
+    assert_eq!(result.clock_after.timestamp_ms, REFUND_AT_MS + 1);
+}
+
+#[tokio::test]
+async fn terminal_discovered_refund_accepts_bounded_finalized_descendants_and_keeps_pinned_clock() {
+    let fixture = fixture().await;
+    let indexer = advancing_indexer(&fixture, FINALIZED_TIP_ID + 2);
+    let (request, observer) = claimant_observer(&fixture, indexer);
+
+    let result = observer.observe(&request).await.unwrap();
+
+    assert!(matches!(result.refund, NativeRefundObservation::Found(_)));
+    assert_eq!(result.clock_before, result.clock_after);
+    assert_eq!(result.clock_after.height, FINALIZED_TIP_ID);
+    assert_eq!(result.clock_after.block_hash, h(11));
+}
+
+#[tokio::test]
+async fn terminal_refund_rejects_broken_first_and_later_descendant_parent_links() {
+    for broken_height in [FINALIZED_TIP_ID + 1, FINALIZED_TIP_ID + 2] {
+        let fixture = fixture().await;
+        let mut indexer = advancing_indexer(&fixture, FINALIZED_TIP_ID + 2);
+        let inner = Arc::get_mut(&mut indexer).unwrap();
+        let descendant = inner.by_id.get_mut(&broken_height).unwrap();
+        descendant.header.prev_block_hash = HashType([99; 32]);
+        inner
+            .by_hash
+            .insert(descendant.header.hash.0, descendant.clone());
+        let observer = FinalizedWitnessedRefundObserver::new(
+            fixture.runtime.clone(),
+            Arc::clone(&fixture.planner),
+            indexer,
+        );
+
+        assert_eq!(
+            observer.observe(&fixture.request).await.unwrap_err(),
+            BridgeRuntimeError::InvalidObservation
+        );
+    }
+}
+
+#[tokio::test]
+async fn terminal_refund_rejects_descendant_id_hash_disagreement() {
+    let fixture = fixture().await;
+    let mut indexer = advancing_indexer(&fixture, FINALIZED_TIP_ID + 1);
+    let inner = Arc::get_mut(&mut indexer).unwrap();
+    inner.by_hash.insert([12; 32], fixture.blocks[1].clone());
+    let observer = FinalizedWitnessedRefundObserver::new(
+        fixture.runtime.clone(),
+        Arc::clone(&fixture.planner),
+        indexer,
+    );
+
+    assert_eq!(
+        observer.observe(&fixture.request).await.unwrap_err(),
+        BridgeRuntimeError::InvalidObservation
+    );
+}
+
+#[tokio::test]
+async fn terminal_refund_rejects_pinned_block_replacement_and_aba() {
+    for (change_from_read, restore_from_read) in [(2, None), (1, Some(2))] {
+        let fixture = fixture().await;
+        let base = advancing_indexer(&fixture, FINALIZED_TIP_ID + 1);
+        let mut changed_pin = fixture.blocks[1].clone();
+        changed_pin.header.hash = HashType([77; 32]);
+        changed_pin.header.timestamp += 1;
+        let indexer = Arc::new(ReplacingPinnedBlockIndexer {
+            base,
+            changed_pin,
+            pin_id_reads: AtomicUsize::new(0),
+            serving_changed_pin: AtomicBool::new(false),
+            change_from_read,
+            restore_from_read,
+        });
+        let observer = FinalizedWitnessedRefundObserver::new(
+            fixture.runtime.clone(),
+            Arc::clone(&fixture.planner),
+            indexer,
+        );
+
+        assert_eq!(
+            observer.observe(&fixture.request).await.unwrap_err(),
+            BridgeRuntimeError::MovingTip
+        );
+    }
+}
+
+#[tokio::test]
+async fn terminal_refund_rejects_height_regression_and_unbounded_advance() {
+    let regression_fixture = fixture().await;
+    let regression = indexer(&regression_fixture);
+    *regression.tips.lock().unwrap() =
+        VecDeque::from([Some(FINALIZED_TIP_ID), Some(FINALIZED_TIP_ID - 1)]);
+    let observer = FinalizedWitnessedRefundObserver::new(
+        regression_fixture.runtime.clone(),
+        Arc::clone(&regression_fixture.planner),
+        regression,
+    );
+    assert_eq!(
+        observer
+            .observe(&regression_fixture.request)
+            .await
+            .unwrap_err(),
+        BridgeRuntimeError::MovingTip
+    );
+
+    let overflow_fixture = fixture().await;
+    let overflow = indexer(&overflow_fixture);
+    *overflow.tips.lock().unwrap() = VecDeque::from([
+        Some(FINALIZED_TIP_ID),
+        Some(FINALIZED_TIP_ID + u64::from(MAX_DISCOVERY_BLOCKS) + 1),
+    ]);
+    let observer = FinalizedWitnessedRefundObserver::new(
+        overflow_fixture.runtime.clone(),
+        Arc::clone(&overflow_fixture.planner),
+        overflow,
+    );
+    assert_eq!(
+        observer
+            .observe(&overflow_fixture.request)
+            .await
+            .unwrap_err(),
+        BridgeRuntimeError::Unavailable
+    );
+}
+
+#[tokio::test]
+async fn nonterminal_refund_snapshots_remain_same_tip_only() {
+    let mut state_fixture = fixture().await;
+    state_fixture.request.target = NativeRefundObservationTarget::StateOnly;
+    let observer = FinalizedWitnessedRefundObserver::new(
+        state_fixture.runtime.clone(),
+        Arc::clone(&state_fixture.planner),
+        advancing_indexer(&state_fixture, FINALIZED_TIP_ID + 1),
+    );
+    assert_eq!(
+        observer.observe(&state_fixture.request).await.unwrap_err(),
+        BridgeRuntimeError::MovingTip
+    );
+
+    let mut exact_miss_fixture = fixture().await;
+    exact_miss_fixture.blocks[0].body.transactions.clear();
+    let observer = FinalizedWitnessedRefundObserver::new(
+        exact_miss_fixture.runtime.clone(),
+        Arc::clone(&exact_miss_fixture.planner),
+        advancing_indexer(&exact_miss_fixture, FINALIZED_TIP_ID + 1),
+    );
+    assert_eq!(
+        observer
+            .observe(&exact_miss_fixture.request)
+            .await
+            .unwrap_err(),
+        BridgeRuntimeError::MovingTip
+    );
+
+    let mut absent_fixture = fixture().await;
+    absent_fixture.blocks[0].body.transactions.clear();
+    let indexer = advancing_indexer(&absent_fixture, FINALIZED_TIP_ID + 1);
+    let (request, observer) = claimant_observer(&absent_fixture, indexer);
+    assert_eq!(
+        observer.observe(&request).await.unwrap_err(),
         BridgeRuntimeError::MovingTip
     );
 }

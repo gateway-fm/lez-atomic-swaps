@@ -13,6 +13,16 @@ readonly bedrock_signing_key_hex="0ab865b8054be13810889714c1f1d82c3d8bb2e4510c26
 readonly expected_bedrock_signing_key_sha256="8fd0d8a6423536c14b5d3979e5135bf37253f5dfbc8485b52202bbf963b8f02e"
 readonly upstream_lez_channel_id="0101010101010101010101010101010101010101010101010101010101010101"
 readonly upstream_genesis_time_hex="2c04626900000000"
+readonly upstream_slot_duration_seconds="1.0"
+slot_duration_seconds="${LEZ_V02_SLOT_DURATION_SECONDS:-$upstream_slot_duration_seconds}"
+case "$slot_duration_seconds" in
+  1.0 | 3.0) ;;
+  *)
+    echo "LEZ_V02_SLOT_DURATION_SECONDS must be exactly 1.0 or 3.0" >&2
+    exit 1
+    ;;
+esac
+readonly slot_duration_seconds
 readonly default_maker_account_id="B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd"
 readonly default_maker_vault_account_id="7Mzr43PK9VxpcvwdjgL8PeE4nb2aG9FqBKLfkoH8RBmQ"
 readonly maker_genesis_allocation="100000"
@@ -161,27 +171,70 @@ count_fixed_occurrences() {
   fi
 }
 
-source_genesis_time_occurrences="$(count_fixed_occurrences "$upstream_genesis_time_hex" \
-  "${source_dir}/bedrock/deployment-settings.yaml")"
-if [[ "$source_genesis_time_occurrences" != "1" ]]; then
-  echo "locked Bedrock fixture must contain the audited embedded genesis time exactly once" >&2
-  exit 1
-fi
-if [[ "$genesis_time_hex" == "$upstream_genesis_time_hex" ]]; then
-  echo "generated Bedrock genesis time must differ from the audited stale fixture time" >&2
-  exit 1
-fi
-sed "s/${upstream_genesis_time_hex}/${genesis_time_hex}/" \
-  "${source_dir}/bedrock/deployment-settings.yaml" >"${run_dir}/config/deployment-settings.yaml"
-generated_genesis_time_occurrences="$(count_fixed_occurrences "$genesis_time_hex" \
-  "${run_dir}/config/deployment-settings.yaml")"
-generated_stale_time_occurrences="$(count_fixed_occurrences "$upstream_genesis_time_hex" \
-  "${run_dir}/config/deployment-settings.yaml")"
-if [[ "$generated_genesis_time_occurrences" != "1" ||
-      "$generated_stale_time_occurrences" != "0" ]]; then
-  echo "generated Bedrock fixture must replace exactly the one audited genesis timestamp" >&2
-  exit 1
-fi
+render_bedrock_deployment_settings() {
+  local source="$1" output="$2" genesis_hex="$3" slot_duration="$4"
+  local source_genesis_count source_slot_count generated_genesis_count
+  local generated_stale_count generated_slot_count generated_stale_slot_count temporary
+
+  [[ "$source" == /* && -f "$source" && ! -L "$source" ]] || {
+    echo "Bedrock deployment-settings source must be one absolute regular non-symlink" >&2
+    return 1
+  }
+  [[ "$output" == /* && ! -e "$output" && ! -L "$output" ]] || {
+    echo "Bedrock deployment-settings output must be one absent absolute path" >&2
+    return 1
+  }
+  [[ "$genesis_hex" =~ ^[0-9a-f]{16}$ &&
+     "$genesis_hex" != "$upstream_genesis_time_hex" ]] || {
+    echo "Bedrock genesis time must be one fresh lowercase 64-bit hex value" >&2
+    return 1
+  }
+  case "$slot_duration" in
+    1.0 | 3.0) ;;
+    *)
+      echo "Bedrock slot duration must be exactly 1.0 or 3.0 seconds" >&2
+      return 1
+      ;;
+  esac
+
+  source_genesis_count="$(count_fixed_occurrences "$upstream_genesis_time_hex" "$source")"
+  source_slot_count="$(count_fixed_occurrences "  slot_duration: '1.0'" "$source")"
+  [[ "$source_genesis_count" == 1 && "$source_slot_count" == 1 ]] || {
+    echo "locked Bedrock fixture must contain one audited genesis and slot duration" >&2
+    return 1
+  }
+
+  temporary="$(mktemp "${output}.partial.XXXXXX")" || return 1
+  if ! sed \
+      -e "s/${upstream_genesis_time_hex}/${genesis_hex}/" \
+      -e "s/  slot_duration: '1.0'/  slot_duration: '${slot_duration}'/" \
+      "$source" >"$temporary"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+  generated_genesis_count="$(count_fixed_occurrences "$genesis_hex" "$temporary")"
+  generated_stale_count="$(count_fixed_occurrences "$upstream_genesis_time_hex" "$temporary")"
+  generated_slot_count="$(count_fixed_occurrences "  slot_duration: '${slot_duration}'" "$temporary")"
+  generated_stale_slot_count="$(count_fixed_occurrences "  slot_duration: '1.0'" "$temporary")"
+  if [[ "$generated_genesis_count" != 1 || "$generated_stale_count" != 0 ||
+        "$generated_slot_count" != 1 ||
+        ( "$slot_duration" == 3.0 && "$generated_stale_slot_count" != 0 ) ]]; then
+    rm -f -- "$temporary"
+    echo "generated Bedrock fixture failed exact audited replacement" >&2
+    return 1
+  fi
+  if ! ln "$temporary" "$output"; then
+    rm -f -- "$temporary"
+    echo "refusing to replace an existing Bedrock deployment-settings output" >&2
+    return 1
+  fi
+  rm -f -- "$temporary"
+}
+
+render_bedrock_deployment_settings \
+  "${source_dir}/bedrock/deployment-settings.yaml" \
+  "${run_dir}/config/deployment-settings.yaml" \
+  "$genesis_time_hex" "$slot_duration_seconds"
 jq --arg channel "$channel_id" \
   '.bedrock_config.addr = "http://bedrock:18080" | .channel_id = $channel' \
   "${source_dir}/lez/indexer/service/configs/docker/indexer_config.json" \
@@ -245,6 +298,7 @@ printf "LEZ_V02_CHANNEL_PUBLIC_KEY=%s\n" "$channel_id" >>"$manifest"
 printf "LEZ_V02_BEDROCK_SIGNING_KEY_SHA256=%s\n" "$expected_bedrock_signing_key_sha256" >>"$manifest"
 printf "LEZ_V02_GENESIS_CHANNEL=%s\n" "$genesis_channel_id" >>"$manifest"
 printf "LEZ_V02_BEDROCK_GENESIS_TIME_EPOCH=%s\n" "$chain_start_epoch" >>"$manifest"
+printf "LEZ_V02_SLOT_DURATION_SECONDS=%s\n" "$slot_duration_seconds" >>"$manifest"
 printf "LEZ_V02_MAKER_ACCOUNT_ID=%s\n" "$maker_account_id" >>"$manifest"
 printf "LEZ_V02_MAKER_VAULT_ACCOUNT_ID=%s\n" "$maker_vault_account_id" >>"$manifest"
 printf "LEZ_V02_MAKER_GENESIS_ALLOCATION=%s\n" "$maker_genesis_allocation" >>"$manifest"
