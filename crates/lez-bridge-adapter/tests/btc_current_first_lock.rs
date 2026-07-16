@@ -9,13 +9,21 @@ use bitcoin::{
     transaction::Version,
 };
 use lez_bridge_adapter::{
-    CurrentLezFirstLockError, LezBridgeAdapter, LezBridgeCurrentEscrowTransport,
+    CurrentLezFirstLockError, LezBridgeAdapter, LezBridgeBtcFirstLockProofTransport,
+    LezBridgeCurrentEscrowTransport,
 };
+use lez_bridge_client::FinalizedWitnessedFundingPresence;
 use lez_bridge_protocol::{
-    ChainClock, EscrowState, Hex32, NativeCustodyFacts, NativeEscrowAccountFacts,
-    NativeEscrowAccountObservation, NativeRefundObservation, NativeRefundObservationTarget,
-    ObserveNativeRefundRequest, ObserveNativeRefundResult, Participant as BridgeParticipant,
-    RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor, WitnessedEscrowMetadataFacts,
+    AccountIds, ChainClock, ChainPosition, ChainTip, DiscoveryWindow, EscrowObservationTarget,
+    EscrowState, ExactTransactionBytes, FinalizedBlockIdentity, FinalizedWitnessedFundingFacts,
+    Hex32, NativeCustodyFacts, NativeEscrowAccountFacts, NativeEscrowAccountObservation,
+    NativeFundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
+    ObserveFinalizedWitnessedFundingRequest, ObserveNativeRefundRequest, ObserveNativeRefundResult,
+    ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult, ObservedTransactionFacts,
+    Participant as BridgeParticipant, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    TransactionId, WitnessedEscrowMetadataFacts, WitnessedFundingFoundFacts,
+    WitnessedFundingObservation, WitnessedInitializationFoundFacts,
+    WitnessedInitializationObservation, WitnessedNativeInitializeInstructionFacts,
 };
 use lez_btc_swap_sdk::{
     AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BtcAgreementBodyV1, BtcAgreementRecordV1,
@@ -540,5 +548,389 @@ async fn drift_spent_wrong_accounts_and_value_fail_closed() {
             );
             assert_eq!(transport.requests.lock().expect("request log").len(), 1);
         }
+    }
+}
+
+const INITIALIZATION_ID: [u8; 32] = [0x41; 32];
+const FUNDING_ID: [u8; 32] = [0x42; 32];
+const INITIALIZATION_BYTES: &[u8] = b"exact-witnessed-initialization";
+const FUNDING_BYTES: &[u8] = b"exact-witnessed-funding";
+
+#[derive(Clone, Copy, Debug)]
+enum ProofMutation {
+    None,
+    FinalizedAbsent,
+    FinalizedInstruction,
+    FinalizedPosition,
+    CurrentSigner,
+    CurrentAccounts,
+    CurrentTipDrift,
+    MissingInitialization,
+    ReversedPair,
+    CrossBoundFunding,
+    WrongCurrentMetadata,
+}
+
+#[derive(Clone, Debug)]
+struct BtcFirstLockProofTransport {
+    mutation: ProofMutation,
+    order: Arc<Mutex<Vec<&'static str>>>,
+    finalized_requests: Arc<Mutex<Vec<ObserveFinalizedWitnessedFundingRequest>>>,
+    current_requests: Arc<Mutex<Vec<ObserveWitnessedEscrowRequest>>>,
+}
+
+impl BtcFirstLockProofTransport {
+    fn new(mutation: ProofMutation) -> Self {
+        Self {
+            mutation,
+            order: Arc::new(Mutex::new(Vec::new())),
+            finalized_requests: Arc::new(Mutex::new(Vec::new())),
+            current_requests: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+fn proof_transaction(
+    transaction_id: [u8; 32],
+    exact_bytes: &[u8],
+    block_hash: [u8; 32],
+    height: u64,
+    transaction_index: u32,
+) -> ObservedTransactionFacts {
+    ObservedTransactionFacts::new(
+        TransactionId::from_bytes(transaction_id),
+        ExactTransactionBytes::new(exact_bytes.to_vec()).expect("exact transaction bytes"),
+        ChainPosition::new(Hex32::from_bytes(block_hash), height, transaction_index),
+        AccountIds::new(vec![Hex32::from_bytes(TAKER_ACCOUNT)]).expect("one signer"),
+        true,
+    )
+}
+
+fn proof_metadata(
+    request: &ObserveFinalizedWitnessedFundingRequest,
+    status: EscrowState,
+) -> WitnessedEscrowMetadataFacts {
+    WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+        Hex32::from_bytes(METADATA_ACCOUNT),
+        request.runtime.escrow_program_id,
+        Hex32::from_bytes(CUSTODY_ACCOUNT),
+        &request.terms,
+        status,
+    )
+}
+
+fn proof_custody(
+    request: &ObserveFinalizedWitnessedFundingRequest,
+    balance: u128,
+) -> NativeCustodyFacts {
+    NativeCustodyFacts::new(
+        Hex32::from_bytes(CUSTODY_ACCOUNT),
+        request.terms.authenticated_transfer_program_id(),
+        balance,
+    )
+}
+
+fn proof_funding_instruction(
+    request: &ObserveFinalizedWitnessedFundingRequest,
+) -> NativeFundInstructionFacts {
+    NativeFundInstructionFacts::new(
+        request.runtime.escrow_program_id,
+        AccountIds::new(vec![
+            Hex32::from_bytes(METADATA_ACCOUNT),
+            Hex32::from_bytes(CUSTODY_ACCOUNT),
+            request.terms.depositor_account_id(),
+        ])
+        .expect("fund accounts"),
+        request.terms.swap_id(),
+    )
+}
+
+#[async_trait]
+impl LezBridgeBtcFirstLockProofTransport for BtcFirstLockProofTransport {
+    type Error = TestTransportError;
+
+    async fn classify_finalized_witnessed_funding(
+        &self,
+        request: ObserveFinalizedWitnessedFundingRequest,
+    ) -> Result<FinalizedWitnessedFundingPresence, Self::Error> {
+        self.order.lock().expect("order log").push("finalized");
+        self.finalized_requests
+            .lock()
+            .expect("finalized requests")
+            .push(request.clone());
+        let finalized_clock = ChainClock::new(Hex32::from_bytes([0x70; 32]), 20, 1_700_000_200_000);
+        if matches!(self.mutation, ProofMutation::FinalizedAbsent) {
+            return Ok(FinalizedWitnessedFundingPresence::Absent {
+                context: request.context,
+                finalized_clock,
+                scanned_window: request.window,
+            });
+        }
+        let mut instruction = proof_funding_instruction(&request);
+        if matches!(self.mutation, ProofMutation::FinalizedInstruction) {
+            instruction.program_id = Hex32::from_bytes([0xa5; 32]);
+        }
+        let block_id = if matches!(self.mutation, ProofMutation::FinalizedPosition) {
+            7
+        } else {
+            6
+        };
+        let funding = FinalizedWitnessedFundingFacts::new(
+            proof_transaction(FUNDING_ID, FUNDING_BYTES, [0x62; 32], 6, 0),
+            instruction,
+            FinalizedBlockIdentity::new(block_id, Hex32::from_bytes([0x62; 32]), 1_700_000_006_000),
+            proof_metadata(&request, EscrowState::Funded),
+            proof_custody(&request, LEZ_AMOUNT),
+        );
+        Ok(FinalizedWitnessedFundingPresence::Found {
+            context: request.context,
+            finalized_clock,
+            scanned_window: request.window,
+            funding: Box::new(funding),
+        })
+    }
+
+    async fn observe_witnessed_escrow(
+        &self,
+        request: ObserveWitnessedEscrowRequest,
+    ) -> Result<ObserveWitnessedEscrowResult, Self::Error> {
+        self.order.lock().expect("order log").push("current");
+        self.current_requests
+            .lock()
+            .expect("current requests")
+            .push(request.clone());
+        let finalized_shape = ObserveFinalizedWitnessedFundingRequest::discover_by_terms(
+            request.context.clone(),
+            request.runtime.clone(),
+            request.terms.clone(),
+            match request.target {
+                EscrowObservationTarget::DiscoverByTerms { window } => window,
+                EscrowObservationTarget::Exact { .. } => panic!("expected discovery"),
+            },
+        );
+        let init_position = if matches!(self.mutation, ProofMutation::ReversedPair) {
+            (6, 1)
+        } else {
+            (5, 1)
+        };
+        let initialization = if matches!(self.mutation, ProofMutation::MissingInitialization) {
+            WitnessedInitializationObservation::Absent
+        } else {
+            WitnessedInitializationObservation::found(WitnessedInitializationFoundFacts::new(
+                proof_transaction(
+                    INITIALIZATION_ID,
+                    INITIALIZATION_BYTES,
+                    [0x61; 32],
+                    init_position.0,
+                    init_position.1,
+                ),
+                WitnessedNativeInitializeInstructionFacts::new(
+                    request.runtime.escrow_program_id,
+                    AccountIds::new(vec![
+                        Hex32::from_bytes(METADATA_ACCOUNT),
+                        Hex32::from_bytes(CUSTODY_ACCOUNT),
+                        request.terms.depositor_account_id(),
+                        request.terms.claimant_account_id(),
+                        request.terms.aggregate_authority_account_id(),
+                    ])
+                    .expect("initialize accounts"),
+                    request.terms.clone(),
+                ),
+                proof_metadata(&finalized_shape, EscrowState::Funded),
+            ))
+        };
+        let current_funding_bytes = if matches!(self.mutation, ProofMutation::CrossBoundFunding) {
+            b"substituted-current-funding".as_slice()
+        } else {
+            FUNDING_BYTES
+        };
+        let current_status = if matches!(self.mutation, ProofMutation::WrongCurrentMetadata) {
+            EscrowState::Claimed
+        } else {
+            EscrowState::Funded
+        };
+        let funding = WitnessedFundingObservation::found(WitnessedFundingFoundFacts::new(
+            proof_transaction(FUNDING_ID, current_funding_bytes, [0x62; 32], 6, 0),
+            proof_funding_instruction(&finalized_shape),
+            proof_metadata(&finalized_shape, current_status),
+            proof_custody(
+                &finalized_shape,
+                if current_status == EscrowState::Funded {
+                    LEZ_AMOUNT
+                } else {
+                    0
+                },
+            ),
+        ));
+        let tip_before = ChainTip::new(Hex32::from_bytes([0x71; 32]), 21);
+        let tip_after = if matches!(self.mutation, ProofMutation::CurrentTipDrift) {
+            ChainTip::new(Hex32::from_bytes([0x72; 32]), 22)
+        } else {
+            tip_before
+        };
+        Ok(ObserveWitnessedEscrowResult::new(
+            request.context,
+            tip_before,
+            initialization,
+            funding,
+            tip_after,
+        ))
+    }
+}
+
+fn proof_window() -> DiscoveryWindow {
+    DiscoveryWindow::new(1, 20).expect("proof window")
+}
+
+fn proof_adapter(
+    transport: BtcFirstLockProofTransport,
+    role: Participant,
+) -> LezBridgeAdapter<BtcFirstLockProofTransport> {
+    LezBridgeAdapter::new(
+        transport,
+        RunId::new("btc-finalized-current-first-lock").expect("run ID"),
+        runtime(role),
+        role,
+    )
+    .expect("proof adapter")
+}
+
+#[tokio::test]
+async fn maker_proves_finalized_and_current_lez_first_lock_in_that_order() {
+    let agreement = agreement(SwapDirection::TakerSellsLez);
+    let transport = BtcFirstLockProofTransport::new(ProofMutation::None);
+    let proof = proof_adapter(transport.clone(), Participant::Maker)
+        .prove_btc_lez_first_lock(
+            &agreement,
+            RequestId::new("btc-first-lock-finalized").expect("request ID"),
+            RequestId::new("btc-first-lock-current").expect("request ID"),
+            proof_window(),
+        )
+        .await
+        .expect("finalized and current first-lock proof");
+
+    assert_eq!(
+        transport.order.lock().expect("order log").as_slice(),
+        ["finalized", "current"]
+    );
+    assert_eq!(proof.finalized_clock().height, 20);
+    assert_eq!(proof.current_tip().height, 21);
+    assert_eq!(
+        proof.prepared().plan().steps()[0]
+            .expected_public_id()
+            .as_str(),
+        "41".repeat(32)
+    );
+    assert_eq!(
+        proof.prepared().plan().steps()[1]
+            .expected_public_id()
+            .as_str(),
+        "42".repeat(32)
+    );
+    assert_eq!(
+        proof.evidence().exact_initialization().as_slice(),
+        INITIALIZATION_BYTES
+    );
+    assert_eq!(proof.evidence().exact_funding().as_slice(), FUNDING_BYTES);
+
+    let finalized = transport
+        .finalized_requests
+        .lock()
+        .expect("finalized requests");
+    let current = transport.current_requests.lock().expect("current requests");
+    assert_eq!(finalized.len(), 1);
+    assert_eq!(current.len(), 1);
+    assert_eq!(finalized[0].window, proof_window());
+    assert_eq!(finalized[0].context.sidecar_role, BridgeParticipant::Maker);
+    assert_eq!(current[0].context.sidecar_role, BridgeParticipant::Maker);
+    assert!(matches!(
+        current[0].target,
+        EscrowObservationTarget::DiscoverByTerms { window } if window == proof_window()
+    ));
+}
+
+#[tokio::test]
+async fn proof_rejects_wrong_direction_and_non_claimant_before_transport() {
+    for (direction, role, expected) in [
+        (
+            SwapDirection::TakerSellsForeign,
+            Participant::Maker,
+            "does not select",
+        ),
+        (
+            SwapDirection::TakerSellsLez,
+            Participant::Taker,
+            "not the LEZ",
+        ),
+    ] {
+        let transport = BtcFirstLockProofTransport::new(ProofMutation::None);
+        let error = proof_adapter(transport.clone(), role)
+            .prove_btc_lez_first_lock(
+                &agreement(direction),
+                RequestId::new(format!("proof-role-finalized-{role:?}").to_lowercase())
+                    .expect("request ID"),
+                RequestId::new(format!("proof-role-current-{role:?}").to_lowercase())
+                    .expect("request ID"),
+                proof_window(),
+            )
+            .await
+            .expect_err("direction or role must fail closed");
+        assert!(error.to_string().contains(expected), "{error}");
+        assert!(transport.order.lock().expect("order log").is_empty());
+    }
+
+    let transport = BtcFirstLockProofTransport::new(ProofMutation::None);
+    let request_id = RequestId::new("duplicate-proof-read").expect("request ID");
+    let error = proof_adapter(transport.clone(), Participant::Maker)
+        .prove_btc_lez_first_lock(
+            &agreement(SwapDirection::TakerSellsLez),
+            request_id.clone(),
+            request_id,
+            proof_window(),
+        )
+        .await
+        .expect_err("duplicate operation identities must fail before transport");
+    assert!(error.to_string().contains("must be distinct"), "{error}");
+    assert!(transport.order.lock().expect("order log").is_empty());
+}
+
+#[tokio::test]
+async fn proof_fails_closed_on_finality_current_state_pair_and_cross_binding_drift() {
+    for (mutation, expected) in [
+        (
+            ProofMutation::FinalizedAbsent,
+            "finalized funding is unavailable",
+        ),
+        (ProofMutation::CurrentTipDrift, "current tip changed"),
+        (
+            ProofMutation::MissingInitialization,
+            "complete current pair",
+        ),
+        (ProofMutation::ReversedPair, "chronological"),
+        (
+            ProofMutation::CrossBoundFunding,
+            "finalized funding differs",
+        ),
+        (
+            ProofMutation::WrongCurrentMetadata,
+            "current funded escrow differs",
+        ),
+    ] {
+        let transport = BtcFirstLockProofTransport::new(mutation);
+        let error = proof_adapter(transport.clone(), Participant::Maker)
+            .prove_btc_lez_first_lock(
+                &agreement(SwapDirection::TakerSellsLez),
+                RequestId::new(format!("proof-finalized-{mutation:?}").to_lowercase())
+                    .expect("request ID"),
+                RequestId::new(format!("proof-current-{mutation:?}").to_lowercase())
+                    .expect("request ID"),
+                proof_window(),
+            )
+            .await
+            .expect_err("proof drift must fail closed");
+        assert!(
+            error.to_string().contains(expected),
+            "{mutation:?}: {error}"
+        );
     }
 }

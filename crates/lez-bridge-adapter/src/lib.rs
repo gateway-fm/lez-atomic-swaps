@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 mod btc_current_first_lock;
+mod btc_first_lock_proof;
 mod canonical_funding;
 mod client_factory;
 mod request_context;
@@ -11,6 +12,9 @@ mod sdk_ports;
 pub use btc_current_first_lock::{
     CurrentLezFirstLockError, CurrentLezFirstLockEvidenceV1, CurrentLezFundedEscrowError,
     CurrentLezFundedEscrowEvidenceV1, LezBridgeCurrentEscrowTransport,
+};
+pub use btc_first_lock_proof::{
+    BtcLezFirstLockProofError, BtcLezFirstLockProofV1, LezBridgeBtcFirstLockProofTransport,
 };
 pub use canonical_funding::{
     SqliteCanonicalLezFundingSource, SqliteCanonicalLezFundingSourceError,
