@@ -80,6 +80,33 @@ overlapping swaps, the full-lifecycle public BTC SDK surface, D1 recordings,
 process-kill/reorg, chaos, public Testnet4/LEZ deployment, production custody,
 and formal review remain open.
 
+Commit `8870910` is a narrower GREEN M3 component result, not new actual-node
+evidence. The strict schema-4 actor seam requires complete direction-shaped
+Maker material, reconstructs exact lock effects through `BtcPairSdk`, and uses
+`SqliteBtcMakerLockJournal` for observe-before-send, one-attempt ordering,
+cutoff/first-lock rechecks, exact final observation, and atomic revision-two
+close. `Accepted` and `Unknown` never rearm. Schema 3 remains supported only as
+observation-only compatibility with zero send attempts. Its focused gate is 73
+of 73 GREEN (65 library plus 8 CLI integration), and strict Clippy, rustdoc,
+formatting, and diff checks pass. The live schema-4 Maker CLI still fails closed.
+LEZ v0.2 cannot prove pending-level initialization absence. Pushed `3336b6e`
+adds journal observation `ExactIdempotentSubmissionSafe`, which grants one CAS/send only when
+the adapter/node call is bound to the same exact ID and bytes. It does not claim
+absence, never rearms `Started` or `Unknown`, and still requires canonical
+evidence for acceptance. Its store-focused tests/gates are GREEN, but a live
+adapter/node port must still prove the idempotence contract. Pushed `11111dd`
+maps this distinct observation through the typed actor; one drive submits once
+and a restarted actor submits zero times. That is actor no-rearm evidence, not
+live adapter/node composition. Pushed `923586b`
+proves the agreement-selected LEZ escrow is currently `Funded` with complete
+custody under one unchanged canonical clock for either role/direction. It is
+state-only and neither finality nor exact initialize/fund transaction evidence.
+The Bitcoin-maker direction still lacks a composed view joining those current
+facts with exact bytes and finalized fund evidence. Current runner schema-4
+edits are uncommitted and are not evidence. No
+actual-node maker-lock admission packet or `m3-complete` tag exists for this
+slice.
+
 ## Functionality
 
 | ID | Contract | Acceptance evidence | Status / milestone |

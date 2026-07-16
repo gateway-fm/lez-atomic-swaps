@@ -8,6 +8,23 @@ added zero submissions. Refunds, process-kill/reorg, concurrency, chaos,
 information-security and production-readiness work, and the milestone tag
 remain separate closure gates.
 
+Reconciled at pushed `8870910`: the historical 2-of-2 packet remains valid for
+the schema-3 actor flow, but it is not evidence for the new schema-4 Maker
+lock path. The schema-4 `BtcPairSdk` plus `SqliteBtcMakerLockJournal` typed seam
+is GREEN at 73 of 73 focused tests and all strict gates. Its live Maker CLI is
+intentionally fail closed, current runner schema-4 edits are uncommitted, and
+there is no actual-node admission packet or `m3-complete` tag for this slice.
+Pushed `3336b6e` makes exact-idempotent LEZ initialization journal admission
+GREEN in focused tests: it grants one same-ID/same-bytes CAS/send,
+does not claim pending-level absence, never rearms `Started` or `Unknown`, and
+still requires canonical evidence. Its live adapter port must separately prove
+the idempotence contract. Pushed `11111dd` maps that distinct observation
+through the typed actor and proves one first-drive submission followed by zero
+submissions after restart; this is not live composition. Pushed `923586b` makes the generic state-only current
+`Funded` escrow proof GREEN for either role/direction under one unchanged
+canonical clock. It does not prove finality or exact transaction bytes, and the
+joined live actor view remains open.
+
 ## Context
 
 The live RFP and accepted Gateway proposal require a complete LEZ and BTC
@@ -45,7 +62,9 @@ flowchart LR
         Agreement["Validated countersigned agreement v1"]
         Maker["Maker actor and store"]
         Taker["Taker actor and store"]
-        Actor["btc-reference-actor<br/>activate drive status<br/>2 of 2 actual-node directions GREEN"]
+        Actor["btc-reference-actor<br/>schema 3 actual-node history<br/>schema 4 typed seam GREEN; live fails closed"]
+        MakerJournal[("Schema 4 Maker lock journal<br/>observe before one attempt")]
+        Runner["Schema 4 runner edits<br/>uncommitted and not evidence"]
         MakerSigner["Maker signing journal"]
         TakerSigner["Taker signing journal"]
         Recovery["SqliteBtcRecoveryStore component GREEN"]
@@ -60,12 +79,19 @@ flowchart LR
         Recovery --> MakerRecovery
         Recovery --> TakerRecovery
         Actor -->|"role-selected predecessor projections one through four"| Recovery
+        Actor --> MakerJournal
+        Runner -.-> Actor
     end
 
     subgraph RoleServices["Role local services"]
         MakerSidecar["Maker sidecar<br/>dynamic literal-loopback port"]
         TakerSidecar["Taker sidecar<br/>dynamic literal-loopback port"]
         CoreAdapter["Typed Core 31.1 adapter and canonical evidence GREEN"]
+        InitJournal["Exact-idempotent init journal 3336b6e<br/>one same-ID same-bytes CAS and send"]
+        InitActor["Typed actor map 11111dd<br/>restart no-rearm GREEN"]
+        InitGap["Missing live LEZ init admission port<br/>pending absence unavailable"]
+        CurrentLez["Generic current Funded proof 923586b<br/>state-only and not finality"]
+        StateGap["Missing joined current exact-byte finalized view"]
     end
 
     subgraph Bitcoin["Bitcoin local devnet"]
@@ -90,6 +116,13 @@ flowchart LR
     TakerSidecar --> Sequencer
     TakerSidecar -->|"finalized funding and claim reads by ID and hash"| Indexer
     Actor -->|"exact taker-funding read"| CoreAdapter
+    InitJournal --> InitActor
+    InitActor --> Actor
+    Actor -.-> InitGap
+    InitJournal -.-> InitGap
+    CurrentLez -.-> Actor
+    CurrentLez -.-> StateGap
+    Actor -.-> StateGap
     CoreAdapter --> Core
     Miner --> Core
     Core --> Evidence["Secret safe evidence"]
@@ -556,8 +589,9 @@ resources, and exact cleanup. Secret material is excluded.
 The repository-owned actual-node functional boundary is complete at two of two
 directions. The following are deliberately not accepted by this ADR:
 
-- live abandonment and both one-lock and two-lock refund execution at the CSV
-  boundaries;
+- live schema-4 Maker lock admission through the role-local Core and LEZ
+  adapters, including the missing live LEZ exact-idempotence proof and the join
+  of current escrow facts with exact bytes and finalized funding evidence;
 - concurrent swaps, crash recovery, reorgs, chaos, denial-of-service, and
   adversarial security campaigns;
 - production key custody, fee management, confirmation policy, public routing,
@@ -566,11 +600,13 @@ directions. The following are deliberately not accepted by this ADR:
 - literal conformance to the nonexistent DLC Schnorr adaptor vector file;
 - an `m3-complete` tag.
 
-Refund ordering remains the ADR 0009 design. If the maker never submits the
+Refund ordering remains the ADR 0009 design. Actual-node two-lock and
+first-lock-only refunds are now recorded by later M3 evidence. If the maker never submits the
 second lock, the taker eventually recovers the first leg. If both legs are
 locked and claims do not complete, the maker-funded shorter recovery occurs
 before the taker-funded longer recovery after the conservative cross-chain
-margin. That design has not yet been exercised against both live local nodes.
+margin. Those refund journeys do not substitute for timely schema-4 Maker lock
+admission against both live local nodes.
 
 This ADR accepts the repository-owned private local M3 happy-path PoC proven by
 `m3actor-20260716n`. It does not certify the production-hardening nonclaims or

@@ -335,8 +335,10 @@ flowchart TB
         M3BR[("M3 BTC lifecycle recovery store<br/>four evidence revisions + hash chain<br/>offline Completed or Refunded GREEN")]
         M3SDK["M3 role-fixed BTC funding facade<br/>exact Bitcoin and ordered LEZ plans<br/>byte-bound first-lock validation GREEN"]
         M3ML[("M3 Maker second-lock journal<br/>ordered one-attempt steps<br/>atomic revision-two close GREEN")]
+        M3ID[("M3 exact-idempotent init path<br/>journal 3336b6e; actor map 11111dd<br/>restart no-rearm GREEN; live port unclaimed")]
         M3BC["M3 typed Core 31.1 adapter<br/>exact unspent funding + claim/refund evidence<br/>authorized one-send readback GREEN"]
-        M3RA["btc-reference-actor<br/>claims, refunds, survivor GREEN<br/>Maker-lock integration active"]
+        M3RA["btc-reference-actor<br/>schema 4 typed Maker seam GREEN<br/>live Maker CLI fails closed"]
+        M3RUN["Schema 4 runner edits uncommitted<br/>not milestone evidence"]
     end
 
     subgraph LezSidecars["Role-isolated official LEZ v0.1.2 processes"]
@@ -358,8 +360,11 @@ flowchart TB
         TBR2["Taker lez-v02-bridge-poc<br/>canonical forward and reverse complete"]
         M3WB["M3 witnessed prepare, complete, and submit<br/>both local happy directions GREEN"]
         M3FF["M3 finalized witnessed-funding observer<br/>parent-linked stable-tip ancestry<br/>historical Funded state GREEN"]
+        M3CF["M3 generic current funded-escrow proof<br/>stable state-only clock and custody GREEN<br/>923586b; not finality"]
         M3FO["M3 finalized witnessed-claim observer<br/>parent-linked stable-tip ancestry<br/>dual role + BIP340 GREEN"]
         M3RF["M3 native-refund planner + finalized observer<br/>state-only, exact, and discovery GREEN"]
+        M3LI["Missing live LEZ init admission port<br/>pending absence unavailable"]
+        M3LC["Missing live LEZ first lock view<br/>current Funded plus exact bytes plus finality"]
         MBRJ[("Maker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         TBRJ[("Taker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         MSL2 --> V02J
@@ -469,13 +474,22 @@ flowchart TB
     M3AS -->|"stable read and agreement point check"| M3RA
     M3RK -->|"Bitcoin funder only; exact refund key"| M3RA
     M3WB -->|"full prepared claim result"| M3RA
-    M3SDK -.->|"schema-4 exact plans"| M3RA
-    M3ML -.->|"observe before one send; close with revision two"| M3RA
+    M3SDK -->|"schema 4 exact plans"| M3RA
+    M3ML -->|"observe before one send; close with revision two"| M3RA
+    M3ID -->|"typed exact-idempotent mapping; live proof missing"| M3RA
+    M3RUN -.->|"uncommitted composition only"| M3RA
     M3RA -->|"predecessor CAS projections one through four"| M3BR
     M3RA -->|"agreement-derived Bitcoin funding, claim, and refund"| M3BC
     M3RA -->|"signed-account finalized LEZ funding read"| M3FF
+    M3RA -.->|"current funded proof needs joined live view"| M3CF
     M3RA -->|"signed transcript finalized LEZ claim read"| M3FO
     M3RA -->|"state-only, prepare, exact, submit, finalized discovery"| M3RF
+    M3RA -.->|"live LEZ maker path needs safe init admission"| M3LI
+    M3RA -.->|"live Bitcoin maker path needs joined first-lock view"| M3LC
+    M3LI -.-> M3WB
+    M3ID -.->|"adapter and node idempotence not composed"| M3LI
+    M3LC -.-> M3FF
+    M3CF -->|"current Funded facts only"| M3LC
     M3RA -->|"persist exact actor-owned claim or refund before authority"| M3PE
     PCM -->|"encrypted envelope + journal"| DB
     PCM -->|"encrypted envelope + journal"| TDB
@@ -609,9 +623,18 @@ Maker-only revision-one SQLite journal persists the complete second-lock plan,
 consumes one authority per step, retains node-admitted versus ambiguous outcomes
 without rearming, and accepts completion only from exact canonical observation.
 Maker revision-two projection and intent close share one transaction; Taker
-projection remains observation-only. The LEZ-first direction has a separate
-state-only current `Funded` check under equal canonical clocks, which
-complements rather than replaces finalized first-lock evidence.
+projection remains observation-only. Pushed `8870910` composes that contract at
+the typed schema-4 actor seam while leaving the live CLI fail closed. Pushed
+`3336b6e` additionally permits one journal attempt from exact-idempotent
+same-ID/same-bytes admission without calling it absence; a live adapter still
+has to prove the node operation satisfies that contract. Pushed `11111dd` maps
+that distinct observation through the typed actor and proves one first-drive
+submission followed by zero submissions after actor restart; it still does not
+compose a live port. Pushed `923586b`
+generalizes the separate state-only current `Funded` check to the agreement-
+selected LEZ escrow in either direction and for either role under one unchanged
+canonical clock. It complements rather than replaces exact transaction bytes
+and finalized funding evidence.
 The official native-refund sidecar, main revealing-claim/refund validation
 adapters, both-direction agreement-bound Zebra funding discovery, and
 context-owning LEZ SDK ports are now GREEN. The production fresh-client
@@ -1419,8 +1442,13 @@ absent-maker refund-side branch, and direct post-reveal maker continuation are
 actual-node GREEN. Clean pushed-commit run `m3survivor-20260716c` certifies the
 survivor branch in both directions. Canonical maker-lock containing-time
 enforcement is GREEN at `3d202f7`; exact unspent/submission ports and durable
-SDK plans/authority are GREEN at `4fb6950` and `79d7e68`. Actor wiring and its
-actual-node admission packet remain open.
+SDK plans/authority are GREEN at `4fb6950` and `79d7e68`. Commit `8870910`
+wires them through the strict schema-4 typed actor seam; 73 of 73 focused tests
+and all strict gates are GREEN. Pushed `3336b6e`, `11111dd`, and `923586b`
+additionally close exact-idempotent journal admission, typed actor mapping with
+restart no-rearm, and generic current-`Funded` proof as components. The live Maker CLI remains fail closed because adapter/node
+idempotence and the exact-byte/finality join are not composed, and no
+actual-node admission packet exists for this seam.
 
 <!-- atomicity-argument: lez-btc/taker-sells-lez -->
 
@@ -1447,8 +1475,13 @@ absent-maker refund-side branch, and direct post-reveal maker continuation are
 actual-node GREEN. Clean pushed-commit run `m3survivor-20260716c` certifies the
 survivor branch in both directions. Canonical maker-lock containing-time
 enforcement is GREEN at `3d202f7`; exact unspent/submission ports and durable
-SDK plans/authority are GREEN at `4fb6950` and `79d7e68`. Actor wiring and its
-actual-node admission packet remain open.
+SDK plans/authority are GREEN at `4fb6950` and `79d7e68`. Commit `8870910`
+wires them through the strict schema-4 typed actor seam; 73 of 73 focused tests
+and all strict gates are GREEN. Pushed `3336b6e`, `11111dd`, and `923586b`
+additionally close exact-idempotent journal admission, typed actor mapping with
+restart no-rearm, and generic current-`Funded` proof as components. The live Maker CLI remains fail closed because adapter/node
+idempotence and the exact-byte/finality join are not composed, and no
+actual-node admission packet exists for this seam.
 
 The BTC construction is atomic under these explicit conditions:
 
@@ -1459,8 +1492,11 @@ The BTC construction is atomic under these explicit conditions:
   admission. Run `m3firstlock-20260716h` proves the refund-side actor gate in
   both actual-node directions; `3d202f7` rejects late canonical inclusion and
   quarantines late presence. The exact ports, plans, and one-attempt journal are
-  GREEN; actor integration and the complementary actual-node admission packet
-  remain pending.
+  GREEN, and `8870910` integrates them at the typed schema-4 actor seam.
+  Commits `3336b6e`, `11111dd`, and `923586b` close exact-idempotent journal
+  admission, actor mapping/restart no-rearm, and generic current-funded state
+  proof, but not the live idempotence proof or the
+  exact-byte/finality join. Complementary actual-node admission remains pending.
 - Both domain-separated aggregate adaptor presignatures and the Bitcoin CSV
   refund commitment are verified and persisted before funding. Neither actor
   has a standalone claim key that bypasses the two-party transcript.

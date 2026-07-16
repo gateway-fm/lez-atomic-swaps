@@ -34,8 +34,40 @@ never rearms either outcome, and atomically closes the intent with the Maker's
 revision-two evidence. The LEZ-first direction also has a read-only state-only
 check proving the exact escrow remains `Funded` under one stable canonical
 clock; it explicitly does not claim finality. Actor schema/port wiring and
-actual-node evidence remain open, and the funding facade does not yet satisfy
-the accepted full-lifecycle SDK requirement.
+actual-node evidence remained open at that commit, and the funding facade does
+not yet satisfy the accepted full-lifecycle SDK requirement.
+
+Pushed commit `8870910` now closes the next typed seam. Strict schema 4 gives
+the Maker complete direction-shaped material, reconstructs the exact
+`BtcPairSdk` lock plan, persists it in `SqliteBtcMakerLockJournal`, observes
+before each single allowed send, rechecks the signed cutoff and exact first lock,
+and atomically closes the final intent with lifecycle revision two. Node
+`Accepted` and `Unknown` are both observation-only; only exact canonical or
+finalized evidence completes a step. Schema 3 remains accepted solely as
+legacy observation-only compatibility and never receives send authority. The
+focused actor gates are 73 of 73 GREEN (65 library tests and 8 CLI integration
+tests), with strict Clippy, rustdoc, formatting, and diff checks also GREEN.
+This is typed/mock-seam evidence, not an actual-node maker-lock run: the live
+schema-4 Maker CLI remains deliberately fail closed until the LEZ initialization
+admission port and direction-specific current-state composition described below
+are wired. LEZ v0.2 cannot prove pending-level initialization absence. Pushed
+commit `3336b6e` therefore adds a distinct
+`ExactIdempotentSubmissionSafe` journal observation: it grants one CAS/send only when
+the adapter and node call are bound to the same exact ID and bytes, does not
+claim absence, never rearms `Started` or `Unknown`, and still requires canonical
+evidence for acceptance. Its store-focused tests/gates are GREEN, but a live
+adapter/node port must still prove that idempotence contract. Pushed `11111dd`
+maps this distinct observation through `MakerLockStepChainObservationV1`; its
+actor restart test grants one exact-idempotent submission on the first drive and
+zero on restart. This proves typed actor no-rearm, not live adapter/node
+idempotence or actual-node admission.
+Pushed `923586b` separately generalizes the state-only LEZ proof: either role in
+either direction can prove that the agreement-selected escrow is currently
+`Funded` with the complete signed custody amount under one unchanged canonical
+clock. It performs no mutation and does not claim finality or bind the exact
+initialize/fund transaction bytes, so the joined live actor view remains open.
+The concurrent runner edits are uncommitted and are not
+milestone evidence. There is still no `m3-complete` tag.
 
 ## Current status
 
@@ -501,9 +533,18 @@ refund-side absent-maker boundary is GREEN in `m3firstlock-20260716h`. Commit
 `3d202f7` closes canonical containing-time cutoff enforcement. Commits
 `4fb6950` and `79d7e68` add exact unspent eligibility, one-shot Bitcoin
 funding, role-fixed exact plans, current LEZ first-lock state, and durable
-ordered Maker authority. Actor-owned submission and its actual-node admission
-packet, concurrency,
-process-kill, and reorg remain open.
+ordered Maker authority. Commit `8870910` composes those pieces through the
+schema-4 typed actor seam and keeps schema 3 observation-only. Live CLI
+composition and its actual-node admission packet, concurrency, process-kill,
+and reorg remain open. In particular, LEZ still needs a live exact-init
+admission port. Pending-level absence is unavailable; pushed `3336b6e` supplies
+the exact-idempotent one-shot journal path and `11111dd` maps it through the
+typed actor with restart/no-rearm coverage, but it is safe only after a live
+adapter proves same-ID/same-bytes idempotence. The LEZ-first direction needs one live view that
+joins `923586b` current-`Funded` evidence with exact initialize/fund bytes and
+finalized fund evidence. The state-only proof alone is not finality. The
+existing BTC adapter already exposes exact observation and authorized
+submission primitives.
 
 The older retained actual-Core run remains a one-process public deterministic
 cryptographic and consensus fixture. The operator-composed run closes live
@@ -512,7 +553,7 @@ order through separate role processes. The public actor source now owns both
 claim effects, and run-n now retains their fresh actual-node composition. This
 closes the progressive private local PoC, but does **not** close the accepted
 proposal's production-ready scope: native/custom-token parity,
-actor-integrated SDK-owned maker-lock admission and concurrent demos, Testnet4
+live-adapter-composed SDK-owned maker-lock admission and concurrent demos, Testnet4
 setup/execution, production key custody/Core adapter, QA/chaos/infosec
 campaigns, and GW-M3-001 disposition remain. There is no `m3-complete` tag. CI
 runs the same P2TR funding/claim

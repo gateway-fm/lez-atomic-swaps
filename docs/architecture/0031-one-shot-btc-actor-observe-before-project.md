@@ -2,13 +2,38 @@
 
 Status: Accepted and GREEN through revisions zero to four in both repository-owned
 actual-node happy directions. The explicit recovery command and deterministic
-one-attempt refund paths are GREEN; fresh actual-node refund, crash, reorg, and
-concurrency paths remain active.
+one-attempt refund paths are GREEN. Pushed `8870910` additionally makes the
+strict schema-4 typed Maker lock/journal seam GREEN; its live CLI remains fail
+closed. Pushed `11111dd` additionally maps exact-idempotent admission through
+the typed actor and proves restart no-rearm, but has no live or actual-node
+evidence. Crash, reorg, and concurrency paths
+remain active.
 
 Reconciled 2026-07-16: ADRs 0034 and 0038 migrate the private config to strict schema 3
 and require the full prepared LEZ claim plus both completed agreement-derived
 signer journals before activation may create revision zero. Output schema stays
 version 1 and the funding observe-before-project decision below is unchanged.
+
+Reconciled at `8870910`: schema 3 is now legacy observation-only compatibility.
+It can project an already observed exact maker lock through a no-send journal
+intent with `attempt_count` zero, but it cannot call `SubmitOnce`. Schema 4
+requires complete direction-shaped Maker material and reconstructs the exact
+lock plan through `BtcPairSdk`; Taker configs forbid that material. The typed
+seam observes before every possible send and atomically closes final exact
+evidence with revision two. The live schema-4 Maker CLI deliberately returns
+`ActivationMaterialUnavailable` until the missing LEZ live views are composed.
+LEZ v0.2 cannot prove pending-level initialization absence. Pushed `3336b6e`
+adds journal observation `ExactIdempotentSubmissionSafe`, which grants one
+CAS/send only for the same exact ID and bytes; it is not absence, cannot rearm
+`Started` or `Unknown`, and still requires canonical evidence for acceptance.
+Its focused tests/gates are GREEN, but the live adapter must still prove that
+exact idempotence. Pushed `11111dd` maps this observation through
+`MakerLockStepChainObservationV1`: the first drive submits once and a restarted
+actor submits zero times. This is typed actor restart evidence, not a live port.
+Pushed `923586b` also proves the agreement-selected LEZ
+escrow is currently `Funded` with complete custody under one stable current
+clock for either role/direction. That state-only proof is not finalized
+transaction evidence, so the live joined view remains open.
 
 ## Context
 
@@ -35,7 +60,7 @@ btc-reference-actor --config PRIVATE_JSON recover
 btc-reference-actor --config PRIVATE_JSON status
 ~~~
 
-The strict schema-v3 configuration is owner-private and permanently binds one
+The historical strict schema-v3 configuration is owner-private and permanently binds one
 maker or taker role, canonical agreement file, role-local state database,
 acceptance time, Bitcoin Core loopback route and credential file, one LEZ
 sidecar loopback route, capability, run identity, runtime, timeout and bounded
@@ -50,6 +75,13 @@ carrying it. The runtime role, LEZ v0.2
 compatibility, channel, genesis, escrow program, signer account, and the
 agreement's signed terms must agree. ADR 0034 defines the additional activation
 gate and explicit schema-1 rejection.
+
+Schema 4 retains those private role/runtime bindings and adds exact Maker lock
+activation material. `TakerSellsLez` carries the exact signed Bitcoin funding
+file; `TakerSellsForeign` carries the exact LEZ prepare request and prepare
+result, including initialization/funding IDs and bytes. These are complete
+inputs to the typed seam, not authorization for the currently unavailable live
+composition.
 For a LEZ funding read, the deterministic observation ID hashes the complete
 request identity, including run, role, runtime, signed terms, target, and
 window. An exact retry retains the same ID and request; a deliberate bounded-

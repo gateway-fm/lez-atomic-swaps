@@ -1059,8 +1059,29 @@ directions. Canonical maker-lock containing-time enforcement is GREEN at
 `3d202f7`. Pushed commits `4fb6950` and `79d7e68` close the typed Core
 unspent/submission port, role-fixed exact-plan facade, current LEZ first-lock
 state proof, and durable ordered Maker intent with atomic revision-two close.
-Actor schema/port integration, its actual-node admission packet, and the concurrent-swap demo remain open
-functional M3 gates. The
+Pushed `8870910` closes strict schema-4 typed actor/port integration: direction-
+shaped exact material reconstructs the `BtcPairSdk` plan, the actor observes
+before each one-attempt send, rechecks cutoff and first-lock eligibility, and
+atomically closes exact final observation with revision two. Schema 3 remains
+legacy observation-only compatibility with zero attempts. The focused gate is
+73 of 73 GREEN (65 library plus 8 CLI integration), with strict Clippy,
+rustdoc, formatting, and diff checks GREEN. Live schema-4 CLI composition, its
+actual-node admission packet, and the concurrent-swap demo remain open
+functional M3 gates. LEZ v0.2 cannot prove pending-level initialization
+absence. Pushed `3336b6e` adds a distinct journal
+`ExactIdempotentSubmissionSafe` observation that may grant one CAS/send only
+for an adapter/node operation bound to the same exact ID and bytes; it is not
+absence, never rearms `Started` or `Unknown`, and still requires canonical
+evidence for acceptance. Store-focused tests/gates are GREEN, but the live port
+must still prove that exact idempotence contract. Pushed `11111dd` maps the
+distinct observation through `MakerLockStepChainObservationV1`; its actor test
+submits once on the first drive and zero times after restart. This is typed
+no-rearm evidence, not live adapter/node composition. Pushed `923586b` generalizes
+the read-only LEZ current-state proof to the agreement-selected escrow in either
+direction and for either role. It proves current `Funded` metadata and complete
+custody under one unchanged canonical clock, but explicitly does not prove
+finality or exact initialize/fund transaction bytes. Current runner schema-4
+edits are uncommitted and are not evidence. The
 canonical countersigned agreement, finalized LEZ funding/claim
 adapters, typed Core adapter, and reference-actor revisions zero through four
 are GREEN in source, deterministic tests, and run `m3actor-20260716n`. The
@@ -1406,8 +1427,18 @@ Active M3 refund critical path:
   The same commit adds caller-authorized Bitcoin funding submission: canonical
   bytes, agreement output, txid/wtxid/vsize, one broadcast, and exact
   `getrawtransaction` readback are checked, while rejection and ambiguity are
-  terminal outcomes for already-consumed durable authority. Actor wiring and
-  actual-node admission evidence remain open;
+  terminal outcomes for already-consumed durable authority. Pushed `8870910`
+  wires that contract into the strict schema-4 typed actor seam. The live CLI
+  still fails closed because the LEZ-maker path lacks a live exact-init
+  admission port. LEZ v0.2 cannot prove pending-level absence. Pushed `3336b6e`
+  can authorize only one same-ID/same-bytes journal call and cannot manufacture
+  canonical acceptance. Pushed `11111dd` maps that result through the typed
+  actor and proves restart does not rearm it, but the live adapter must prove
+  the node operation's idempotence.
+  Pushed `923586b` now provides the generic current-`Funded` state-only proof;
+  the Bitcoin-maker path still needs one composed live view that joins it with
+  exact initialize/fund bytes and finalized fund evidence. Actual-node
+  admission evidence remains open;
 - [ ] run the accepted concurrent-swap demo with independent funding inputs,
   agreements, actor stores, effect journals, and overlapping in-flight phases;
   this is not satisfied by sequential swaps, either timeout branch, or a
@@ -1462,8 +1493,22 @@ Active M3 refund critical path:
   no rearm, exact confirmed step acceptance, and atomic intent close plus
   lifecycle projection. It also forbids the Maker from bypassing that close via
   the generic projector while preserving Taker observation-only projection.
-  Current actual-node scripts still externally submit both locks, so the present
-  happy/refund packets do not yet prove SDK escrow creation;
+  Pushed `8870910` makes this the schema-4 typed actor path: the Maker requires
+  exact direction-shaped material; the Taker forbids it; every step observes
+  before one possible send; `Accepted` and `Unknown` stay observation-only;
+  exact canonical/finalized evidence alone advances; and the final observation
+  ID must equal the final plan ID before atomic close. Schema 3 remains
+  observation-only with `attempt_count` zero. The live schema-4 CLI deliberately
+  returns `ActivationMaterialUnavailable` until its missing LEZ admission and
+  joined current-state adapters are composed. Pushed `3336b6e` makes the
+  `ExactIdempotentSubmissionSafe` journal path GREEN, and `11111dd` maps it
+  through the typed actor with one-send/restart-no-rearm coverage. Neither
+  supplies the live same-ID/same-bytes node proof or makes an absence claim.
+  Pushed `923586b`
+  supplies generic current-funded state-only evidence, not finality or the
+  exact transaction-byte join. Current actual-node scripts still
+  externally submit both locks, so the present happy/refund packets do not prove
+  this schema-4 SDK escrow-creation seam against nodes;
 - [ ] resolve F7 at the BTC pair boundary. Shared LEZ native/custom-token guest
   support is GREEN, but the current BTC witnessed terms appear native-only.
   Obtain owner/Logos interpretation or implement and actually prove a witnessed
@@ -1479,8 +1524,8 @@ Active M3 refund critical path:
 - [ ] after the owner enters later hardening, add restart, reorg, fee, and chaos
   cases beyond the reproducible functional PoC boundary.
 
-Repository-controlled open work, not external blockers, is live maker-lock
-admission at the cutoff boundary, two
+Repository-controlled open work, not external blockers, is live-adapter
+maker-lock admission at the cutoff boundary and its actual-node evidence, two
 genuinely overlapping swaps, the full-lifecycle public BTC SDK surface and SDK-owned locks, the F7 witnessed
 custom-token interpretation or implementation, D1 recordings, and synchronized
 closure evidence and gates. The revision-one-to-two store/projector, signed
@@ -2006,7 +2051,8 @@ happy-path progressive local PoC has no remaining execution task. Run
 `m3refund-20260716h` separately closes two-lock timeout/refund, and run
 `m3firstlock-20260716h` closes actual-node absent-maker recovery. Clean
 post-reveal survivor execution is GREEN in `m3survivor-20260716c`; live
-maker-lock admission and two overlapping swaps remain the
+schema-4 maker-lock composition and its actual-node admission evidence, plus
+two overlapping swaps, remain the
 active functional M3 work before the broader
 owner-selected hardening below.
 
