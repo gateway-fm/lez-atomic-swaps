@@ -259,6 +259,16 @@ GREEN in `m3actor-20260716n`; refund and process-kill/reorg paths remain
 pending. ADR 0031 records the process boundary and ADR 0033 records the
 effect-journal boundary.
 
+The first refund hardening slices now derive the exact BIP-342 transaction from
+the countersigned agreement and extend the existing native-refund bridge wire
+to strict hashlock-or-witnessed terms and metadata without changing legacy JSON
+shape. Mixed authority facts fail closed, and the compatibility sidecar
+explicitly refuses the witnessed variant. The v0.2 guest already enforces its
+permissionless fixed depositor destination and timestamp validity window.
+Durable v0.2 preparation, finalized observation, actor one-attempt submission,
+and lifecycle projection are still pending and are not implied by the protocol
+wire.
+
 ## Deployed LEZ guest and account onboarding
 
 The exact guest ELF SHA-256 is

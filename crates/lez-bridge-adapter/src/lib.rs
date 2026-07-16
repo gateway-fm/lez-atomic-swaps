@@ -2007,7 +2007,7 @@ fn validate_refund_accounts<E: std::error::Error + 'static>(
     let NativeEscrowAccountObservation::Found(facts) = observation else {
         return Ok(None);
     };
-    let state = facts.metadata.status;
+    let state = facts.metadata.status();
     validate_refund_account_facts(agreement, terms, facts, state)?;
     Ok(Some(state))
 }
@@ -2035,7 +2035,7 @@ fn validate_refund_account_facts<E: std::error::Error + 'static>(
     } else {
         0
     };
-    if facts.metadata != expected_metadata
+    if facts.metadata.hashlock() != Some(&expected_metadata)
         || facts.custody.account_id != custody_account
         || facts.custody.owner_program_id != terms.authenticated_transfer_program_id()
         || facts.custody.balance.as_u128() != expected_balance

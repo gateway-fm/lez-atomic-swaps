@@ -1,10 +1,11 @@
 # ADR 0012: Split LEZ escrow metadata from asset custody
 
-Status: Accepted; source-correct authenticated-transfer and ATA custody GREEN, canonical v0.2 native custody exercised in both actual-node happy directions; actual-node refund and token corridor hardening deferred -- reconciled 2026-07-14
+Status: Accepted; source-correct custody, canonical v0.2 native claims, and strict hashlock/witnessed refund wire GREEN; actual-node refund and token corridor hardening deferred -- reconciled 2026-07-16
 
 ```mermaid
 flowchart LR
-    Agreement["Dual-signed swap terms"] --> Meta["Metadata PDA<br/>roles, digest, amount, deadline"]
+    Agreement["Dual-signed swap terms"] --> Meta["Metadata PDA<br/>roles, authority, amount, deadline"]
+    Agreement --> RefundWire["Strict untagged refund wire<br/>hashlock or aggregate witness"]
     Meta --> Asset{"Asset path"}
     Asset -->|"native"| Vault["Authenticated-transfer custody PDA"]
     Asset -->|"custom token"| ATA["ATA of metadata and definition"]
@@ -14,7 +15,8 @@ flowchart LR
     Claimant -->|"pair-specific valid claim"| ATA
     Vault --> NativeProof["Canonical v0.2 actual-node native claim<br/>forward and reverse GREEN"]
     ATA --> TokenProof["Recursive two-definition claim and refund<br/>compatibility tests GREEN"]
-    Refund["Permissionless fixed-destination refund"] -.-> Vault
+    RefundWire --> Refund["Permissionless fixed-destination refund"]
+    Refund -.-> Vault
     Refund -.-> ATA
     NativeProof -.-> Deferred["Actual-node refund, token corridor,<br/>reorg and chaos deferred"]
     TokenProof -.-> Deferred
@@ -45,6 +47,12 @@ directions use distinct two-party aggregate witnessed authorities bound to exact
 claim messages and adaptor sessions, with no actor-owned or direct-secret bypass.
 XMR retains its separately reviewed pair-specific witnessed authority; hash
 claims use reviewed library verification.
+
+The native-refund bridge uses one strict untagged authority envelope. Existing
+hashlock JSON remains byte-shape compatible, while the BTC corridor carries
+aggregate authority account/key facts. Strict inner decoders reject mixed
+authority fields; the v0.1.2 sidecar accepts only hashlock terms and the v0.2
+lane is responsible for witnessed preparation and observation.
 
 The first ZEC compatibility fixture was narrower than this target: it directly
 mutated swap-program-owned native accounts and stored custom tokens at an escrow

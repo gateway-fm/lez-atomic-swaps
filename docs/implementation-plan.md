@@ -1108,6 +1108,18 @@ outputs, and exact witness shape. This does not yet prove Core deadline
 eligibility, actor secret custody, durable refund submission, or LEZ
 `RefundNative`; those remain the active refund slice.
 
+The next refund-wire loop is also GREEN. The existing native-refund RPC names
+and hashlock JSON shape remain unchanged, while strict untagged protocol
+envelopes now accept either `NativeEscrowTerms`/metadata or the M3
+`WitnessedNativeEscrowTerms`/metadata. No variant discriminator is added.
+Each inner type retains `deny_unknown_fields`, so mixed secret-digest and
+aggregate-authority requests or account facts fail closed. The v0.1.2 sidecar
+explicitly accepts only the hashlock variant; all of its targets still compile.
+The v0.2 sidecar compiles against both shapes using the retained pinned local
+Rapidsnark libraries, but its server refund methods remain stubs. Durable
+witnessed refund preparation, stable finalized observation, server
+registration, and actor integration are next.
+
 Authority was reread again on 2026-07-16: accepted replacement issue #112 is
 open/reopened with the `accepted` and `RFP-003` labels and explicitly supersedes
 issue #61. The live RFP repository baseline is master commit

@@ -2364,9 +2364,19 @@ fn mutate_refund_observation(response: &mut ObserveNativeRefundResult, mutation:
         RefundMutation::ClockHeight => response.clock_after.height += 1,
         RefundMutation::ClockTimestamp => response.clock_after.timestamp_ms += 1,
         RefundMutation::MetadataTerms => {
-            accounts.metadata.terms_hash = Hex32::from_bytes([0x92; 32]);
+            accounts
+                .metadata
+                .hashlock_mut()
+                .expect("ZEC refund metadata is hashlock")
+                .terms_hash = Hex32::from_bytes([0x92; 32]);
         }
-        RefundMutation::MetadataStatus => accounts.metadata.status = EscrowState::Funded,
+        RefundMutation::MetadataStatus => {
+            accounts
+                .metadata
+                .hashlock_mut()
+                .expect("ZEC refund metadata is hashlock")
+                .status = EscrowState::Funded;
+        }
         RefundMutation::CustodyAccount => {
             accounts.custody.account_id = Hex32::from_bytes([0x93; 32]);
         }

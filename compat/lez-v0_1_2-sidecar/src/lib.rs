@@ -566,6 +566,10 @@ impl OfficialNodeRpc {
         request: &ObserveNativeRefundRequest,
     ) -> Result<ObserveNativeRefundResult, SidecarError> {
         self.validate_refund_observe_request(request)?;
+        let terms = request
+            .terms
+            .hashlock()
+            .ok_or(SidecarError::ProtocolEncoding)?;
         let expected = match request.target {
             NativeRefundObservationTarget::Exact {
                 refund_transaction_id,
@@ -579,7 +583,7 @@ impl OfficialNodeRpc {
             | NativeRefundObservationTarget::DiscoverByTerms { .. } => None,
         };
         let clock_before = self.read_clock().await?;
-        let accounts = self.read_native_account_observation(&request.terms).await?;
+        let accounts = self.read_native_account_observation(terms).await?;
         let refund = match request.target {
             NativeRefundObservationTarget::StateOnly => NativeRefundObservation::NotRequested,
             NativeRefundObservationTarget::Exact { window, .. } => {
@@ -587,28 +591,24 @@ impl OfficialNodeRpc {
                     .as_ref()
                     .ok_or(SidecarError::TransactionNotPrepared)?;
                 let scan = self
-                    .scan_native_refund(&request.terms, window, Some(expected), clock_before.height)
+                    .scan_native_refund(terms, window, Some(expected), clock_before.height)
                     .await?;
                 match scan.refund {
                     Some(found) => {
                         validate_refunded_accounts(&accounts)?;
-                        NativeRefundObservation::found(
-                            self.refund_found_facts(&request.terms, found),
-                        )
+                        NativeRefundObservation::found(self.refund_found_facts(terms, found))
                     }
                     None => NativeRefundObservation::UnknownOrPending,
                 }
             }
             NativeRefundObservationTarget::DiscoverByTerms { window } => {
                 let scan = self
-                    .scan_native_refund(&request.terms, window, None, clock_before.height)
+                    .scan_native_refund(terms, window, None, clock_before.height)
                     .await?;
                 match scan.refund {
                     Some(found) => {
                         validate_refunded_accounts(&accounts)?;
-                        NativeRefundObservation::found(
-                            self.refund_found_facts(&request.terms, found),
-                        )
+                        NativeRefundObservation::found(self.refund_found_facts(terms, found))
                     }
                     None if scan.fully_covered => NativeRefundObservation::Absent,
                     None => NativeRefundObservation::UnknownOrPending,
@@ -2153,8 +2153,9 @@ impl NativeEscrowPlanner {
 
     fn refund_message(
         &self,
-        terms: &lez_bridge_protocol::NativeEscrowTerms,
+        terms: &lez_bridge_protocol::NativeRefundTerms,
     ) -> Result<Message, SidecarError> {
+        let terms = terms.hashlock().ok_or(SidecarError::ProtocolEncoding)?;
         native_refund_message(terms, self.escrow_program_id)
     }
 
@@ -2447,7 +2448,7 @@ fn validate_refunded_accounts(
     let NativeEscrowAccountObservation::Found(facts) = accounts else {
         return Err(SidecarError::InvalidNodeResponse);
     };
-    if facts.metadata.status != EscrowState::Refunded || facts.custody.balance.as_u128() != 0 {
+    if facts.metadata.status() != EscrowState::Refunded || facts.custody.balance.as_u128() != 0 {
         return Err(SidecarError::InvalidNodeResponse);
     }
     Ok(())

@@ -656,6 +656,168 @@ fn native_refund_state_exact_and_discovery_are_typed_and_timestamped() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One contract keeps legacy/witnessed JSON and mixed-field negatives together.
+fn native_refund_wire_preserves_hashlock_shape_and_adds_strict_witnessed_shape() {
+    let hashlock_prepare = PrepareNativeRefundRequest::new(context(), runtime(), terms());
+    let hashlock_json = serde_json::to_value(&hashlock_prepare).unwrap();
+    assert!(hashlock_json["terms"].get("secret_digest").is_some());
+    assert!(
+        hashlock_json["terms"]
+            .get("aggregate_authority_account_id")
+            .is_none()
+    );
+    assert!(hashlock_json["terms"].get("kind").is_none());
+    assert_eq!(
+        hashlock_json["terms"],
+        serde_json::to_value(terms()).unwrap(),
+        "the legacy terms object must not acquire an envelope or discriminator"
+    );
+    assert_eq!(
+        serde_json::to_vec(&hashlock_prepare.terms).unwrap(),
+        serde_json::to_vec(&terms()).unwrap(),
+        "the legacy terms bytes must remain identical"
+    );
+    assert_eq!(
+        hashlock_prepare.terms.hashlock(),
+        Some(&terms()),
+        "the existing constructor remains hashlock-only"
+    );
+
+    let witnessed = WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
+        swap_id: h(30),
+        terms_hash: h(31),
+        depositor: Participant::Maker,
+        depositor_account_id: h(32),
+        claimant: Participant::Taker,
+        claimant_account_id: h(33),
+        aggregate_authority_account_id: h(34),
+        aggregate_x_only_public_key: h(35),
+        amount: 9_000,
+        refund_at_ms: 1_850_000_000_123,
+        authenticated_transfer_program_id: h(36),
+    })
+    .unwrap();
+    let witnessed_prepare =
+        PrepareNativeRefundRequest::new_witnessed(context(), runtime(), witnessed.clone());
+    let witnessed_json = serde_json::to_value(&witnessed_prepare).unwrap();
+    assert!(
+        witnessed_json["terms"]
+            .get("aggregate_authority_account_id")
+            .is_some()
+    );
+    assert!(witnessed_json["terms"].get("secret_digest").is_none());
+    assert!(witnessed_json["terms"].get("kind").is_none());
+    assert_eq!(
+        witnessed_prepare.terms.witnessed(),
+        Some(&witnessed),
+        "the witnessed constructor cannot silently downgrade authority"
+    );
+    assert_eq!(
+        serde_json::from_value::<PrepareNativeRefundRequest>(witnessed_json.clone()).unwrap(),
+        witnessed_prepare
+    );
+
+    let target = NativeRefundObservationTarget::DiscoverByTerms {
+        window: DiscoveryWindow::new(40, 3).unwrap(),
+    };
+    let observe =
+        ObserveNativeRefundRequest::new_witnessed(context(), runtime(), witnessed.clone(), target);
+    assert_eq!(observe.terms.swap_id(), witnessed.swap_id());
+    assert_eq!(observe.terms.terms_hash(), witnessed.terms_hash());
+    assert_eq!(observe.terms.depositor(), witnessed.depositor());
+    assert_eq!(
+        observe.terms.depositor_account_id(),
+        witnessed.depositor_account_id()
+    );
+    assert_eq!(observe.terms.claimant(), witnessed.claimant());
+    assert_eq!(
+        observe.terms.claimant_account_id(),
+        witnessed.claimant_account_id()
+    );
+    assert_eq!(observe.terms.amount(), witnessed.amount());
+    assert_eq!(observe.terms.refund_at_ms(), witnessed.refund_at_ms());
+    assert_eq!(
+        observe.terms.authenticated_transfer_program_id(),
+        witnessed.authenticated_transfer_program_id()
+    );
+    assert_eq!(
+        serde_json::from_value::<ObserveNativeRefundRequest>(
+            serde_json::to_value(&observe).unwrap()
+        )
+        .unwrap(),
+        observe
+    );
+
+    let facts = NativeEscrowAccountFacts::new_witnessed(
+        WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+            h(37),
+            h(4),
+            h(38),
+            &witnessed,
+            EscrowState::Refunded,
+        ),
+        NativeCustodyFacts::new(h(38), h(36), 0),
+    );
+    let witnessed_facts_json = serde_json::to_value(&facts).unwrap();
+    assert_eq!(
+        facts.metadata.witnessed().unwrap().status,
+        EscrowState::Refunded
+    );
+    let result = ObserveNativeRefundResult::new(
+        context(),
+        ChainClock::new(h(39), 40, witnessed.refund_at_ms()),
+        NativeEscrowAccountObservation::found(facts),
+        NativeRefundObservation::UnknownOrPending,
+        ChainClock::new(h(39), 40, witnessed.refund_at_ms()),
+    );
+    assert_eq!(
+        serde_json::from_value::<ObserveNativeRefundResult>(serde_json::to_value(&result).unwrap())
+            .unwrap(),
+        result
+    );
+
+    let mut mixed_witnessed = witnessed_json;
+    mixed_witnessed["terms"]["secret_digest"] = serde_json::json!("2a".repeat(32));
+    assert!(
+        serde_json::from_value::<PrepareNativeRefundRequest>(mixed_witnessed).is_err(),
+        "mixed witnessed/hashlock authority must fail closed"
+    );
+    let mut mixed_hashlock = hashlock_json;
+    mixed_hashlock["terms"]["aggregate_authority_account_id"] = serde_json::json!("2b".repeat(32));
+    mixed_hashlock["terms"]["aggregate_x_only_public_key"] = serde_json::json!("2c".repeat(32));
+    assert!(
+        serde_json::from_value::<PrepareNativeRefundRequest>(mixed_hashlock).is_err(),
+        "mixed hashlock/witnessed authority must fail closed"
+    );
+
+    let mut mixed_witnessed_metadata = witnessed_facts_json;
+    mixed_witnessed_metadata["metadata"]["secret_digest"] = serde_json::json!("2d".repeat(32));
+    assert!(
+        serde_json::from_value::<NativeEscrowAccountFacts>(mixed_witnessed_metadata).is_err(),
+        "mixed witnessed/hashlock metadata must fail closed"
+    );
+    let hashlock_facts = NativeEscrowAccountFacts::new(
+        EscrowMetadataFacts::from_lee_v0_2_native_terms(
+            h(10),
+            h(4),
+            h(12),
+            &terms(),
+            EscrowState::Refunded,
+        ),
+        NativeCustodyFacts::new(h(12), h(22), 0),
+    );
+    let mut mixed_hashlock_metadata = serde_json::to_value(hashlock_facts).unwrap();
+    mixed_hashlock_metadata["metadata"]["aggregate_authority_account_id"] =
+        serde_json::json!("2e".repeat(32));
+    mixed_hashlock_metadata["metadata"]["aggregate_x_only_public_key"] =
+        serde_json::json!("2f".repeat(32));
+    assert!(
+        serde_json::from_value::<NativeEscrowAccountFacts>(mixed_hashlock_metadata).is_err(),
+        "mixed hashlock/witnessed metadata must fail closed"
+    );
+}
+
+#[test]
 fn native_refund_wire_rejects_implicit_windows_ambiguity_and_unknown_fields() {
     let transaction_id = "28".repeat(32);
     for malformed_target in [

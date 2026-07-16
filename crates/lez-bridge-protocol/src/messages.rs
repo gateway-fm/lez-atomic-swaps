@@ -1136,6 +1136,126 @@ impl ObserveWitnessedEscrowResult {
     }
 }
 
+/// Authority-specific native escrow terms accepted by the refund boundary.
+///
+/// The enum is intentionally untagged: existing hashlock JSON remains
+/// byte-for-byte compatible, while each strict inner type rejects mixed
+/// hashlock and aggregate-witness authority fields.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+#[must_use]
+pub enum NativeRefundTerms {
+    /// Preimage/hashlock native escrow terms used by the earlier corridor.
+    Hashlock(NativeEscrowTerms),
+    /// Aggregate-witness native escrow terms used by the BTC corridor.
+    Witnessed(WitnessedNativeEscrowTerms),
+}
+
+impl NativeRefundTerms {
+    /// Returns the hashlock terms only when that authority shape was decoded.
+    #[must_use]
+    pub const fn hashlock(&self) -> Option<&NativeEscrowTerms> {
+        match self {
+            Self::Hashlock(terms) => Some(terms),
+            Self::Witnessed(_) => None,
+        }
+    }
+
+    /// Returns the aggregate-witness terms only when that shape was decoded.
+    #[must_use]
+    pub const fn witnessed(&self) -> Option<&WitnessedNativeEscrowTerms> {
+        match self {
+            Self::Hashlock(_) => None,
+            Self::Witnessed(terms) => Some(terms),
+        }
+    }
+
+    /// Returns the swap identifier common to both authority variants.
+    pub const fn swap_id(&self) -> Hex32 {
+        match self {
+            Self::Hashlock(terms) => terms.swap_id(),
+            Self::Witnessed(terms) => terms.swap_id(),
+        }
+    }
+
+    /// Returns the countersigned agreement commitment.
+    pub const fn terms_hash(&self) -> Hex32 {
+        match self {
+            Self::Hashlock(terms) => terms.terms_hash(),
+            Self::Witnessed(terms) => terms.terms_hash(),
+        }
+    }
+
+    /// Returns the immutable refund beneficiary role.
+    pub const fn depositor(&self) -> Participant {
+        match self {
+            Self::Hashlock(terms) => terms.depositor(),
+            Self::Witnessed(terms) => terms.depositor(),
+        }
+    }
+
+    /// Returns the immutable refund beneficiary account.
+    pub const fn depositor_account_id(&self) -> Hex32 {
+        match self {
+            Self::Hashlock(terms) => terms.depositor_account_id(),
+            Self::Witnessed(terms) => terms.depositor_account_id(),
+        }
+    }
+
+    /// Returns the claimant role.
+    pub const fn claimant(&self) -> Participant {
+        match self {
+            Self::Hashlock(terms) => terms.claimant(),
+            Self::Witnessed(terms) => terms.claimant(),
+        }
+    }
+
+    /// Returns the claimant asset account.
+    pub const fn claimant_account_id(&self) -> Hex32 {
+        match self {
+            Self::Hashlock(terms) => terms.claimant_account_id(),
+            Self::Witnessed(terms) => terms.claimant_account_id(),
+        }
+    }
+
+    /// Returns the exact native amount.
+    pub const fn amount(&self) -> NativeAmount {
+        match self {
+            Self::Hashlock(terms) => terms.amount(),
+            Self::Witnessed(terms) => terms.amount(),
+        }
+    }
+
+    /// Returns the guest refund deadline in Unix milliseconds.
+    #[must_use]
+    pub const fn refund_at_ms(&self) -> u64 {
+        match self {
+            Self::Hashlock(terms) => terms.refund_at_ms(),
+            Self::Witnessed(terms) => terms.refund_at_ms(),
+        }
+    }
+
+    /// Returns the authenticated-transfer program identity.
+    pub const fn authenticated_transfer_program_id(&self) -> Hex32 {
+        match self {
+            Self::Hashlock(terms) => terms.authenticated_transfer_program_id(),
+            Self::Witnessed(terms) => terms.authenticated_transfer_program_id(),
+        }
+    }
+}
+
+impl From<NativeEscrowTerms> for NativeRefundTerms {
+    fn from(value: NativeEscrowTerms) -> Self {
+        Self::Hashlock(value)
+    }
+}
+
+impl From<WitnessedNativeEscrowTerms> for NativeRefundTerms {
+    fn from(value: WitnessedNativeEscrowTerms) -> Self {
+        Self::Witnessed(value)
+    }
+}
+
 /// Requests one native fixed-destination refund transaction.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1146,7 +1266,7 @@ pub struct PrepareNativeRefundRequest {
     /// Expected runtime identity.
     pub runtime: RuntimeDescriptor,
     /// Exact native escrow values, including the immutable refund destination.
-    pub terms: NativeEscrowTerms,
+    pub terms: NativeRefundTerms,
 }
 
 impl PrepareNativeRefundRequest {
@@ -1159,7 +1279,20 @@ impl PrepareNativeRefundRequest {
         Self {
             context,
             runtime,
-            terms,
+            terms: NativeRefundTerms::Hashlock(terms),
+        }
+    }
+
+    /// Creates an aggregate-witness native refund preparation request.
+    pub const fn new_witnessed(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedNativeEscrowTerms,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms: NativeRefundTerms::Witnessed(terms),
         }
     }
 }
@@ -1268,7 +1401,7 @@ pub struct ObserveNativeRefundRequest {
     /// Expected runtime identity.
     pub runtime: RuntimeDescriptor,
     /// Expected native escrow values.
-    pub terms: NativeEscrowTerms,
+    pub terms: NativeRefundTerms,
     /// Account-only, exact-ID, or terms-discovery observation mode.
     pub target: NativeRefundObservationTarget,
 }
@@ -1284,9 +1417,86 @@ impl ObserveNativeRefundRequest {
         Self {
             context,
             runtime,
-            terms,
+            terms: NativeRefundTerms::Hashlock(terms),
             target,
         }
+    }
+
+    /// Creates an aggregate-witness native refund observation request.
+    pub const fn new_witnessed(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedNativeEscrowTerms,
+        target: NativeRefundObservationTarget,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms: NativeRefundTerms::Witnessed(terms),
+            target,
+        }
+    }
+}
+
+/// Authority-specific decoded metadata returned by native refund observation.
+///
+/// Untagged serialization preserves the existing hashlock response shape.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+#[must_use]
+pub enum NativeRefundMetadataFacts {
+    /// Metadata for a preimage/hashlock escrow.
+    Hashlock(EscrowMetadataFacts),
+    /// Metadata for an aggregate-witness escrow.
+    Witnessed(WitnessedEscrowMetadataFacts),
+}
+
+impl NativeRefundMetadataFacts {
+    /// Returns the hashlock metadata only for that authority shape.
+    #[must_use]
+    pub const fn hashlock(&self) -> Option<&EscrowMetadataFacts> {
+        match self {
+            Self::Hashlock(metadata) => Some(metadata),
+            Self::Witnessed(_) => None,
+        }
+    }
+
+    /// Returns mutable hashlock metadata only for that authority shape.
+    #[must_use]
+    pub const fn hashlock_mut(&mut self) -> Option<&mut EscrowMetadataFacts> {
+        match self {
+            Self::Hashlock(metadata) => Some(metadata),
+            Self::Witnessed(_) => None,
+        }
+    }
+
+    /// Returns the witnessed metadata only for that authority shape.
+    #[must_use]
+    pub const fn witnessed(&self) -> Option<&WitnessedEscrowMetadataFacts> {
+        match self {
+            Self::Hashlock(_) => None,
+            Self::Witnessed(metadata) => Some(metadata),
+        }
+    }
+
+    /// Returns the decoded guest escrow status.
+    pub const fn status(&self) -> EscrowState {
+        match self {
+            Self::Hashlock(metadata) => metadata.status,
+            Self::Witnessed(metadata) => metadata.status,
+        }
+    }
+}
+
+impl From<EscrowMetadataFacts> for NativeRefundMetadataFacts {
+    fn from(value: EscrowMetadataFacts) -> Self {
+        Self::Hashlock(value)
+    }
+}
+
+impl From<WitnessedEscrowMetadataFacts> for NativeRefundMetadataFacts {
+    fn from(value: WitnessedEscrowMetadataFacts) -> Self {
+        Self::Witnessed(value)
     }
 }
 
@@ -1296,7 +1506,7 @@ impl ObserveNativeRefundRequest {
 #[must_use]
 pub struct NativeEscrowAccountFacts {
     /// Current metadata decoded at the bracketed stable clock.
-    pub metadata: EscrowMetadataFacts,
+    pub metadata: NativeRefundMetadataFacts,
     /// Current native custody decoded at the bracketed stable clock.
     pub custody: NativeCustodyFacts,
 }
@@ -1304,7 +1514,21 @@ pub struct NativeEscrowAccountFacts {
 impl NativeEscrowAccountFacts {
     /// Creates current native escrow account facts.
     pub const fn new(metadata: EscrowMetadataFacts, custody: NativeCustodyFacts) -> Self {
-        Self { metadata, custody }
+        Self {
+            metadata: NativeRefundMetadataFacts::Hashlock(metadata),
+            custody,
+        }
+    }
+
+    /// Creates aggregate-witness native escrow account facts.
+    pub const fn new_witnessed(
+        metadata: WitnessedEscrowMetadataFacts,
+        custody: NativeCustodyFacts,
+    ) -> Self {
+        Self {
+            metadata: NativeRefundMetadataFacts::Witnessed(metadata),
+            custody,
+        }
     }
 }
 

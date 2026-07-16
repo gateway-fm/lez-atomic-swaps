@@ -1358,7 +1358,10 @@ async fn observes_stable_native_refund_state_and_consensus_clock_without_scannin
     let absent = rpc.observe_native_refund(&planner, &request).await.unwrap();
     assert_eq!(absent.accounts, NativeEscrowAccountObservation::Absent);
     assert_eq!(absent.refund, NativeRefundObservation::NotRequested);
-    *mock.accounts.lock().unwrap() = funded_native_accounts(&request.terms, escrow_program);
+    *mock.accounts.lock().unwrap() = funded_native_accounts(
+        request.terms.hashlock().expect("hashlock refund terms"),
+        escrow_program,
+    );
     mock.accounts.lock().unwrap().pop_first();
     assert_eq!(
         rpc.observe_native_refund(&planner, &request)
@@ -1366,7 +1369,10 @@ async fn observes_stable_native_refund_state_and_consensus_clock_without_scannin
             .unwrap_err(),
         SidecarError::InvalidNodeResponse
     );
-    *mock.accounts.lock().unwrap() = funded_native_accounts(&request.terms, escrow_program);
+    *mock.accounts.lock().unwrap() = funded_native_accounts(
+        request.terms.hashlock().expect("hashlock refund terms"),
+        escrow_program,
+    );
     *mock.tip_overrides.lock().unwrap() = vec![1, 0];
     assert_eq!(
         rpc.observe_native_refund(&planner, &request)
@@ -1391,7 +1397,11 @@ struct ExactRefundEdgeFixture<'a> {
 
 async fn assert_exact_refund_edges(fixture: ExactRefundEdgeFixture<'_>) {
     *fixture.mock.accounts.lock().unwrap() = native_accounts(
-        &fixture.request.terms,
+        fixture
+            .request
+            .terms
+            .hashlock()
+            .expect("hashlock refund terms"),
         fixture.escrow_program,
         EscrowStatus::Funded,
     );
@@ -1570,7 +1580,11 @@ fn refund_with_forbidden_nonce(transaction: &NSSATransaction) -> NSSATransaction
 
 async fn assert_refund_discovery_edges(fixture: RefundDiscoveryEdgeFixture<'_>) {
     *fixture.mock.accounts.lock().unwrap() = native_accounts(
-        &fixture.request.terms,
+        fixture
+            .request
+            .terms
+            .hashlock()
+            .expect("hashlock refund terms"),
         fixture.escrow_program,
         EscrowStatus::Funded,
     );
@@ -1614,7 +1628,11 @@ async fn assert_refund_discovery_edges(fixture: RefundDiscoveryEdgeFixture<'_>) 
 
     *fixture.mock.blocks.lock().unwrap() = vec![fixture.genesis];
     *fixture.mock.accounts.lock().unwrap() = native_accounts(
-        &fixture.request.terms,
+        fixture
+            .request
+            .terms
+            .hashlock()
+            .expect("hashlock refund terms"),
         fixture.escrow_program,
         EscrowStatus::Funded,
     );
