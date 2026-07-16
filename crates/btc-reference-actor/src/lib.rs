@@ -815,6 +815,12 @@ enum MakerLockStepChainObservationV1 {
         expected_public_id: Box<str>,
         exact_public_bytes: Vec<u8>,
     },
+    /// Current absence is not provable, but the adapter independently binds
+    /// one idempotent node call to this exact public identity and byte string.
+    ExactIdempotentSubmissionSafe {
+        expected_public_id: Box<str>,
+        exact_public_bytes: Vec<u8>,
+    },
     Absent,
     Uncertain,
     ConflictingPresence,
@@ -837,6 +843,13 @@ impl MakerLockStepChainObservationV1 {
                 let _ = (expected_public_id, exact_public_bytes);
                 BtcMakerLockStepObservation::Uncertain
             }
+            Self::ExactIdempotentSubmissionSafe {
+                expected_public_id,
+                exact_public_bytes,
+            } => BtcMakerLockStepObservation::ExactIdempotentSubmissionSafe {
+                expected_public_id,
+                exact_public_bytes,
+            },
             Self::Absent => BtcMakerLockStepObservation::Absent,
             Self::Uncertain => BtcMakerLockStepObservation::Uncertain,
             Self::ConflictingPresence => BtcMakerLockStepObservation::ConflictingPresence,

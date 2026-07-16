@@ -1283,6 +1283,62 @@ async fn schema4_maker_send_requires_fresh_exact_first_lock_and_strict_pre_cutof
 }
 
 #[tokio::test]
+async fn schema4_exact_idempotent_lez_admission_sends_once_without_claiming_absence() {
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    configure_schema4_maker_material(&mut fixture);
+    activate_and_project_taker_lock(&fixture).await;
+    let plan = load_prepared_maker_lock_material(&fixture.config, &fixture.agreement)
+        .expect("maker plan")
+        .plan()
+        .clone();
+    let initialization = &plan.steps()[0];
+    let observation = MakerLockStepChainObservationV1::ExactIdempotentSubmissionSafe {
+        expected_public_id: initialization.expected_public_id().as_str().into(),
+        exact_public_bytes: initialization.exact_bytes().as_slice().to_vec(),
+    };
+    let first = FixedMakerLockPort::new(
+        observation.clone(),
+        fresh_maker_eligibility(&fixture),
+        exact_maker_lock_complete_observation(&fixture.agreement, &plan, 81),
+    );
+    let output = drive_maker_lock_with_port(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &first,
+    )
+    .await
+    .expect("exact idempotent admission");
+    assert!(matches!(
+        output.outcome,
+        ActorEffectOutcomeV1::AwaitingObservation {
+            chain: ActorChainV1::Lez
+        }
+    ));
+    assert_eq!(first.submissions(), 1);
+    assert_eq!(
+        first.events(),
+        vec!["observe_step", "fresh_eligibility", "submit_step"]
+    );
+
+    let restarted = FixedMakerLockPort::new(
+        observation,
+        fresh_maker_eligibility(&fixture),
+        exact_maker_lock_complete_observation(&fixture.agreement, &plan, 82),
+    );
+    drive_maker_lock_with_port(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &restarted,
+    )
+    .await
+    .expect("exact idempotent restart remains observe-only");
+    assert_eq!(restarted.submissions(), 0);
+}
+
+#[tokio::test]
 #[allow(clippy::too_many_lines)] // One scenario proves the complete ordered crash-safety contract.
 async fn schema4_maker_lock_is_ordered_no_rearm_and_atomically_closed_in_both_directions() {
     for direction in [
