@@ -615,12 +615,11 @@ fn configure_schema4_maker_material(fixture: &mut ActorFixture) {
             }
         }
         SwapDirection::TakerSellsLez => {
-            let funding_path = fixture.directory.path().join("maker-bitcoin-funding.raw");
-            fs::write(
-                &funding_path,
-                serialize(&exact_directional_funding(&fixture.agreement)),
-            )
-            .expect("write exact Bitcoin funding");
+            let funding_path = fixture.directory.path().join("maker-bitcoin-funding.hex");
+            let mut encoded =
+                hex::encode(serialize(&exact_directional_funding(&fixture.agreement))).into_bytes();
+            encoded.push(b'\n');
+            fs::write(&funding_path, encoded).expect("write exact Bitcoin funding");
             MakerLockMaterialConfig::Bitcoin {
                 exact_funding_transaction_file: funding_path,
             }
@@ -1338,6 +1337,172 @@ async fn schema4_exact_idempotent_lez_admission_sends_once_without_claiming_abse
     assert_eq!(restarted.submissions(), 0);
 }
 
+#[test]
+fn schema4_live_lez_requests_bind_exact_plan_and_distinct_operations() {
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    configure_schema4_maker_material(&mut fixture);
+    let material = load_prepared_maker_lock_material(&fixture.config, &fixture.agreement)
+        .expect("maker material");
+    let plan = material.plan();
+    let initialization = &plan.steps()[0];
+    let funding = &plan.steps()[1];
+
+    let initialization_read =
+        maker_lez_initialization_classification_request(&fixture.config, &fixture.agreement, plan)
+            .expect("initialization classification request");
+    let funding_read =
+        maker_lez_funding_classification_request(&fixture.config, &fixture.agreement, funding)
+            .expect("funding classification request");
+    let initialization_current =
+        maker_lez_current_pair_request(&fixture.config, &fixture.agreement, plan, initialization)
+            .expect("current initialization request");
+    let funding_current =
+        maker_lez_current_pair_request(&fixture.config, &fixture.agreement, plan, funding)
+            .expect("current funding request");
+    let clock_read = maker_lez_current_clock_request(&fixture.config, &fixture.agreement, 1)
+        .expect("current clock request");
+    let current_funded_read =
+        maker_lez_current_funded_request_id(&fixture.config, &fixture.agreement)
+            .expect("current funded request ID");
+    let initialization_submit =
+        maker_lez_submit_request(&fixture.config, &fixture.agreement, initialization)
+            .expect("initialization submit request");
+    let funding_submit = maker_lez_submit_request(&fixture.config, &fixture.agreement, funding)
+        .expect("funding submit request");
+
+    assert_eq!(
+        hex::encode(initialization_read.initialization.transaction_id.as_bytes()),
+        initialization.expected_public_id().as_str()
+    );
+    assert_eq!(
+        initialization_read.initialization.exact_bytes.as_slice(),
+        initialization.exact_bytes().as_slice()
+    );
+    assert_eq!(
+        hex::encode(initialization_read.funding_transaction_id.as_bytes()),
+        funding.expected_public_id().as_str()
+    );
+    assert!(matches!(
+        funding_read.target,
+        FinalizedWitnessedFundingObservationTarget::Exact {
+            funding_transaction_id
+        } if hex::encode(funding_transaction_id.as_bytes())
+            == funding.expected_public_id().as_str()
+    ));
+    assert_eq!(clock_read.runtime, fixture.config.lez_bridge.runtime);
+    assert_eq!(clock_read.context.sidecar_role, BridgeParticipant::Maker);
+    for current in [&initialization_current, &funding_current] {
+        assert!(matches!(
+            current.target,
+            EscrowObservationTarget::Exact {
+                initialization_transaction_id,
+                funding_transaction_id,
+            } if hex::encode(initialization_transaction_id.as_bytes())
+                == initialization.expected_public_id().as_str()
+                && hex::encode(funding_transaction_id.as_bytes())
+                    == funding.expected_public_id().as_str()
+        ));
+    }
+    assert_eq!(
+        initialization_submit.transaction,
+        initialization_read.initialization
+    );
+    assert_eq!(
+        funding_submit.transaction.exact_bytes.as_slice(),
+        funding.exact_bytes().as_slice()
+    );
+
+    let request_ids = [
+        initialization_read.context.request_id.as_str(),
+        funding_read.context.request_id.as_str(),
+        initialization_current.context.request_id.as_str(),
+        funding_current.context.request_id.as_str(),
+        clock_read.context.request_id.as_str(),
+        current_funded_read.as_str(),
+        initialization_submit.context.request_id.as_str(),
+        funding_submit.context.request_id.as_str(),
+    ];
+    for (index, request_id) in request_ids.iter().enumerate() {
+        assert!(!request_ids[index + 1..].contains(request_id));
+    }
+}
+
+#[test]
+fn schema4_bitcoin_maker_material_matches_runner_hex_and_sdk_vocabulary() {
+    let mut fixture = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Maker);
+    configure_schema4_maker_material(&mut fixture);
+    let PreparedMakerLockMaterialV1::Bitcoin(prepared) =
+        load_prepared_maker_lock_material(&fixture.config, &fixture.agreement)
+            .expect("runner-shaped hex artifact must load")
+    else {
+        panic!("reverse direction must prepare Bitcoin Maker funding");
+    };
+    let [step] = prepared.plan().steps() else {
+        panic!("Bitcoin Maker plan must have one step");
+    };
+    assert_eq!(step.step().as_str(), "bitcoin.funding");
+    assert!(bitcoin_maker_step_is_supported(step));
+}
+
+#[test]
+fn live_maker_fresh_read_ordinals_are_bounded_to_one_drive() {
+    let counter = AtomicU8::new(0);
+    assert_eq!(next_fresh_read_ordinal(&counter).unwrap(), 1);
+    assert_eq!(next_fresh_read_ordinal(&counter).unwrap(), 2);
+    assert_eq!(
+        next_fresh_read_ordinal(&counter),
+        Err(ActorCommandError::ObservationUnavailable)
+    );
+}
+
+#[tokio::test]
+async fn schema4_timely_canonical_maker_lock_reconciles_after_current_cutoff() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let mut fixture = ActorFixture::for_direction(direction, ActorRole::Maker);
+        configure_schema4_maker_material(&mut fixture);
+        activate_and_project_taker_lock(&fixture).await;
+        let plan = load_prepared_maker_lock_material(&fixture.config, &fixture.agreement)
+            .expect("maker plan")
+            .plan()
+            .clone();
+
+        for (index, step) in plan.steps().iter().enumerate() {
+            let mut after_cutoff = fresh_maker_eligibility(&fixture);
+            after_cutoff.current_maker_chain_time = maker_time_at_cutoff(&fixture.agreement);
+            let port = FixedMakerLockPort::new(
+                MakerLockStepChainObservationV1::PresentExactCanonical {
+                    expected_public_id: step.expected_public_id().as_str().into(),
+                    exact_public_bytes: step.exact_bytes().as_slice().to_vec(),
+                },
+                after_cutoff,
+                exact_maker_lock_complete_observation(&fixture.agreement, &plan, 91),
+            );
+            let output = drive_maker_lock_with_port(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &port,
+            )
+            .await
+            .expect("canonical inclusion time, not current clock, admits a found lock");
+            assert_eq!(port.submissions(), 0);
+            if index + 1 == plan.steps().len() {
+                assert_eq!(
+                    port.events(),
+                    vec!["observe_step", "observe_complete", "fresh_eligibility"]
+                );
+                assert_eq!(output.phase, ActorPhaseV1::BothLegsLocked);
+            } else {
+                assert_eq!(port.events(), vec!["observe_step"]);
+            }
+        }
+    }
+}
+
 #[tokio::test]
 #[allow(clippy::too_many_lines)] // One scenario proves the complete ordered crash-safety contract.
 async fn schema4_maker_lock_is_ordered_no_rearm_and_atomically_closed_in_both_directions() {
@@ -1408,7 +1573,7 @@ async fn schema4_maker_lock_is_ordered_no_rearm_and_atomically_closed_in_both_di
             .expect("absence cannot rearm");
             assert_eq!(replay.revision, 1);
             assert_eq!(absent.submissions(), 1);
-            assert_eq!(absent.eligibility_checks(), 2);
+            assert_eq!(absent.eligibility_checks(), 1);
             assert_eq!(
                 absent.events(),
                 vec![
@@ -1416,7 +1581,6 @@ async fn schema4_maker_lock_is_ordered_no_rearm_and_atomically_closed_in_both_di
                     "fresh_eligibility",
                     "submit_step",
                     "observe_step",
-                    "fresh_eligibility",
                 ]
             );
             assert_eq!(
