@@ -15,6 +15,16 @@ structured error handling, explicit claim order, versioning, and ordered exact
 public-effect plans. This is the shared contract, not yet the concrete
 full-lifecycle BTC facade or SDK-owned lock submission.
 
+Pushed commit `4fb6950` closes the Bitcoin-side fresh maker-admission
+prerequisite. The typed Core adapter now brackets the exact funding bytes,
+canonical containing header, current spender-index state, and unchanged active
+tip in one observation; only a sufficiently confirmed and currently unspent
+agreement output is eligible. It also exposes a funding-specific authorized
+one-send boundary whose success requires exact post-send transaction-byte
+readback. Pending, spent, absent, malformed, moving-tip, rejected, and ambiguous
+states never manufacture another send authority. Actor ownership and the
+complementary actual-node admission run remain open.
+
 ## Current status
 
 M2 is certified at its private local-functional PoC boundary under
@@ -422,18 +432,23 @@ countersigned agreement, an unpruned synced tip, and synced `txindex` plus
 disconnected local node from an explicitly network-enabled Regtest node. Exact
 funding and key-path claim observations are reconstructed from consensus bytes
 and cross-checked against Core's typed vin, vout, identity, size, weight,
-confirmation, block, spender, and stable-tip facts. Canonical bounded evidence
+confirmation, block, spender, and stable-tip facts. The fresh-maker variant
+adds the spender-index read inside the same stable-tip bracket and distinguishes
+confirmed-unspent, confirmed-spent, pending exact bytes, and affirmative
+absence. Canonical bounded evidence
 records bind the agreement, transaction bytes/IDs, block/tip context, exact
 64-byte public claim witness without a scalar, and finalized refund containing height. Submission is one-attempt only:
 an owner-provided durable CAS binds txid, wtxid, and the exact raw-byte digest
 before mempool policy and one broadcast. Broadcast success is accepted only
 after the spender index returns the same complete witness bytes; same-txid but
-different-wtxid races are terminal `Unknown` for claims and refunds. Already-known or ambiguous results
+different-wtxid races are terminal `Unknown` for claims and refunds. Funding
+submission uses the same single-send preflight but requires an exact
+`getrawtransaction` byte readback rather than a spender read. Already-known or ambiguous results
 become terminal `Unknown`, while conflicting witness bytes fail before another
 RPC mutation. The HTTP
 transport is literal-loopback, Basic-file authenticated, bounded, one-request
 concurrent, and rejects non-`0600`, symlinked, hard-linked, replaced, or changed
-credential files. The full 29 all-target test executions plus strict dependency, Clippy, and
+credential files. The full 32 all-target test executions plus strict dependency, Clippy, and
 rustdoc gates are GREEN. Refund observation additionally binds the
 stable-tip-derived funding height to the signed anchor, applies BIP-68 at the
 next-block boundary, and emits finalized evidence at the refund containing

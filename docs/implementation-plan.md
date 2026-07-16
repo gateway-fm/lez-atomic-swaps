@@ -1395,7 +1395,17 @@ Active M3 refund critical path:
   directions, and preserves the existing Bitcoin evidence-v1 wire. This closes
   observation-side false acceptance; the
   same-operation fresh eligibility plus durable SDK intent remains required
-  before the actor, rather than the external runner, may submit the maker lock;
+  before the actor, rather than the external runner, may submit the maker lock.
+  Pushed `4fb6950` closes the Bitcoin node prerequisite: one stable-tip bracket
+  now covers the exact agreement funding transaction, containing header, and
+  `gettxspendingprevout`, so only sufficiently confirmed and currently unspent
+  funding can grant fresh eligibility. Pending exact bytes, spent funding,
+  absence, malformed spender bytes, and a moving tip remain non-authorizing.
+  The same commit adds caller-authorized Bitcoin funding submission: canonical
+  bytes, agreement output, txid/wtxid/vsize, one broadcast, and exact
+  `getrawtransaction` readback are checked, while rejection and ambiguity are
+  terminal outcomes for already-consumed durable authority. Actor wiring and
+  actual-node admission evidence remain open;
 - [ ] run the accepted concurrent-swap demo with independent funding inputs,
   agreements, actor stores, effect journals, and overlapping in-flight phases;
   this is not satisfied by sequential swaps, either timeout branch, or a
@@ -1434,8 +1444,10 @@ Active M3 refund critical path:
   the shared dependency-light contract: lifecycle, discovery, negotiation,
   structured errors, versioning, explicit claim order, and bounded ordered
   exact-public-effect plans are public and independently tested. The concrete
-  BTC facade, activation/status/resume, claims/refunds, and SDK-owned effects
-  remain open;
+  full-lifecycle BTC facade, durable post-activation resume, claims/refunds, and
+  SDK-owned effects remain open. A role-fixed BTC funding facade is under
+  integration and is not counted complete until its exact-evidence contract,
+  actor ownership, and actual-node flow are pushed and verified;
 - [ ] make the reference actor a thin SDK adapter and move first/second lock
   construction and submission under SDK-owned persist-before-send authority.
   Current actual-node scripts externally submit both locks, so the present
