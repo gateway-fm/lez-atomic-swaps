@@ -1094,11 +1094,11 @@ codec are GREEN as components and in run-n's actual-node actor paths. Refund
 execution, concurrency, production key custody, and the
 accepted proposal's full SDK/demo surface remain pending.
 
-Authority was reread again on 2026-07-15: accepted replacement issue #112 is
-closed with the `accepted` label and explicitly supersedes issue #61. The live
-RFP repository baseline remains commit `969a76d`
-(file blob `d0fa52b`) and accepted issue #112, whose newline-normalized body
-SHA-256 remains
+Authority was reread again on 2026-07-16: accepted replacement issue #112 is
+open/reopened with the `accepted` and `RFP-003` labels and explicitly supersedes
+issue #61. The live RFP repository baseline is master commit
+`121da225de1930c5ba693ebbef80ee788d55542a` (file blob `d0fa52b`) and accepted
+issue #112, whose newline-normalized body SHA-256 remains
 `49356263a762307abc0f8dd2863ac5af8fe13d9b17b674f242d025de655f1c87`.
 Issue #61 remains superseded.
 

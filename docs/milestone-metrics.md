@@ -34,7 +34,7 @@ evidence instead of assigning a percentage to unlike work items.
 
 | Metric | Current measurement | Evidence or next measurement point |
 |---|---|---|
-| Live authorities reconciled | 2 of 2 | RFP repository commit `969a76d`; accepted issue #112 body SHA-256 `49356263...f1c87`; issue #61 excluded |
+| Live authorities reconciled | 2 of 2 | RFP master commit `121da225...5542a` / blob `d0fa52b`; open/reopened accepted issue #112 body SHA-256 `49356263...f1c87`; issue #61 excluded. Re-fetched 2026-07-16 |
 | Executable BTC-specific crates/components | 3 BTC crates, 1 actual-node runner, 4 fixture examples/CLIs, 1 role-local journal, 1 role-runner crate, and 2 of 2 live actor directions GREEN | Source tests remain GREEN. Run `m3actor-20260716n` binds commit `6ded2f9`, certified script hashes, fresh one-shot actor processes, four terminal role stores, and exact replay |
 | Typed Bitcoin Core adapter | 18 of 18 adapter tests plus 2 of 2 actual-node actor integrations GREEN | Exact Core 31.1 readiness, funding, claim, canonical evidence, and one-attempt submission are covered. The live fix sends `gettxspendingprevout` flags as Core 31.1's single options object. Testnet4 remains production-portability work |
 | LEZ BTC witnessed path | Fresh checked deployment/onboarding and 2 of 2 actor directions GREEN | Deployment finalized in block 6; maker/taker Vault Claims in 9/12. Foreign init/fund/claim finalized in 16/19/25; LEZ-direction init/fund/claim in 31/34/42. Bounded scans and finite 30-second bridge reads are live-proven; upstream historical-account proof/snapshot limits remain |
