@@ -1796,8 +1796,23 @@ Active M3 refund critical path:
   authenticated real-client route/restart coverage, five focused scanner
   cases, and all 122 sidecar tests plus 44 protocol contracts, strict Clippy,
   rustdoc/doctests, formatting, diff, advisory, ban, license, and source gates.
-  Live schema-5 journal/actor composition, runner integration, and
-  two-direction actual-node token swap evidence remain open;
+  Fresh isolated run `m3f7compose20260717l` then proved the checked guest
+  deployment, both fresh-identity Vault claims, the eight-transaction official
+  Token/ATA fixture, the forward Bitcoin first lock, and actor-owned finalized
+  LEZ initialization plus custody creation. Its funding pre-send loop exposed
+  a repository-owned liveness defect: bounded snapshot absence was coupled to
+  an unrelated twice-frozen live finalized tip, so a continuously advancing
+  official indexer could deny send authority forever. The run was stopped
+  through its exact cleanup trap before any funding submission. RED-GREEN
+  coverage now anchors missing-effect predecessor state to the immutable
+  requested-end block, revalidates that exact block by ID and hash after the
+  historical account reads, permits later finalized blocks to arrive, and
+  still fails closed on requested-end identity drift. All three focused tests
+  and the full eight-test sidecar unit set pass. Found effects, refunds, actor
+  CAS, deterministic transaction bytes, accepted/unknown journals, nonce
+  replay protection, and monotonic escrow transitions keep their stricter
+  existing behavior. A fresh two-direction live rerun, exact terminal ATA
+  balances, finalized claim export, and packet hash bindings remain open;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
   not recordings and cannot satisfy D1. The repository now supplies a
@@ -1823,9 +1838,9 @@ Active M3 refund critical path:
 - [ ] after the owner enters later hardening, add restart, reorg, fee, and chaos
   cases beyond the reproducible functional PoC boundary.
 
-Repository-controlled open work, not external blockers, is the F7 live
-journal/actor and runner composition, two-direction actual-node custom-token
-evidence, D1 recordings, and synchronized closure evidence and gates. The
+Repository-controlled open work, not external blockers, is the F7 fresh
+two-direction actual-node custom-token rerun, exact terminal balance/finality
+packet binding, D1 recordings, and synchronized closure evidence and gates. The
 official-wallet starting fixture is GREEN but cannot substitute for
 actor-owned escrow/claim/refund effects or finalized balance evidence. The
 revision-one-to-two store/projector, signed

@@ -90,6 +90,34 @@ pub(crate) struct StableFinalizedWindow {
 }
 
 impl StableFinalizedWindow {
+    pub(crate) fn requested_end_block(&self) -> Result<&Block, BridgeRuntimeError> {
+        self.blocks
+            .iter()
+            .find(|block| block.header.block_id == self.requested_end)
+            .ok_or(BridgeRuntimeError::Unavailable)
+    }
+
+    pub(crate) fn requested_end_clock(&self) -> Result<ChainClock, BridgeRuntimeError> {
+        let block = self.requested_end_block()?;
+        Ok(ChainClock::new(
+            Hex32::from_bytes(block.header.hash.0),
+            block.header.block_id,
+            block.header.timestamp,
+        ))
+    }
+
+    pub(crate) async fn confirm_requested_end(
+        &self,
+        indexer: &dyn FinalizedIndexerApi,
+    ) -> Result<(), BridgeRuntimeError> {
+        let expected = self.requested_end_block()?;
+        let observed = read_finalized_block(indexer, self.requested_end).await?;
+        if &observed != expected {
+            return Err(BridgeRuntimeError::MovingTip);
+        }
+        Ok(())
+    }
+
     pub(crate) async fn confirm_unchanged(
         &self,
         indexer: &dyn FinalizedIndexerApi,

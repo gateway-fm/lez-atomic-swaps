@@ -6,8 +6,9 @@ focused evidence. The checked manifest, public IDL, deployer assembly, verifier,
 and active M3 runner pins now share the new guest identity. The additive strict
 v2 transaction, finalized-classifier, exact-once client, main-process adapter,
 and official sidecar planner, route, replay, and finalized-scan boundaries are
-also implemented. Live journal/actor composition and actual-node custom-token
-evidence remain open.
+also implemented. Live journal/actor composition has crossed initialization
+and custody creation on the fresh local nodes; a complete two-direction
+actual-node custom-token packet remains open.
 
 ## Context
 
@@ -254,7 +255,12 @@ sidecar server. The four preparation/completion methods restore exact durable
 requests and results in dependency order. The finalized scanner validates
 canonical bytes, hash, stateless transaction rules, signer and account order,
 instruction, programs, official ATAs, metadata, fungible definition, holdings,
-stable ID/hash block ancestry, and a post-account-read unchanged tip. A
+and stable ID/hash block ancestry. Found effects and current-state/refund reads
+retain the post-account-read unchanged-tip guard. Missing-effect authorization
+is instead tied to the immutable requested-end block: the scanner proves the
+exact predecessor state there and then re-reads that same boundary by ID and
+hash. A later finalized tip may advance without invalidating the bounded
+snapshot; requested-end identity drift still fails closed. A
 same-height refund fork found during root review now forces
 `UnknownOrPending`; it cannot combine transaction evidence and terminal state
 from different finalized views. Historical default-account absence remains
@@ -263,9 +269,37 @@ init/custody/fund scanner journey, authenticated client/restart coverage, all
 122 sidecar tests, and strict documentation, lint, dependency, license, source,
 formatting, and diff gates.
 
-Durable live journal/actor mapping and role-owned actual-node execution remain
-open. Component tests do not by themselves prove that the actual local node
-provides every required token state transition and finalized scan together.
+```mermaid
+sequenceDiagram
+    participant Actor
+    participant Journal
+    participant Sidecar
+    participant Indexer
+    participant Node
+
+    Actor->>Sidecar: Classify exact effect in fixed window
+    Sidecar->>Indexer: Read requested-end block by ID and hash
+    Sidecar->>Indexer: Read predecessor accounts at requested end
+    Sidecar->>Indexer: Re-read requested-end block by ID and hash
+    Indexer-->>Sidecar: Same immutable boundary
+    Sidecar-->>Actor: Absent at bounded snapshot
+    Actor->>Journal: Consume one send authority with CAS
+    Journal-->>Actor: Exact bytes and transaction ID
+    Actor->>Node: Submit exact transaction once
+    Note over Actor,Node: A newer finalized tip does not rearm the journal
+```
+
+The fixed boundary is safe for actor-owned exact submissions because the
+prepared bytes and transaction ID are durable before the CAS, accepted or
+unknown attempts never rearm, identical bytes are replay-safe, and a later
+conflicting transition is rejected by LEZ nonce and monotonic escrow-state
+checks. This remains an authoritative-indexer trust compensation, not a
+cryptographic historical-account proof or an atomic multi-read token.
+
+Fresh role-owned execution has proved Bitcoin first lock plus finalized LEZ
+initialization and custody creation after the checked deployment and official
+Token/ATA fixture. Funding, claims, the reverse direction, terminal balances,
+and the final reproducibility packet still require a fresh uninterrupted run.
 
 This ADR does not certify an actual-node custom-token swap in either trade
 direction, exact composed balances/effects, restart/no-resubmission, public

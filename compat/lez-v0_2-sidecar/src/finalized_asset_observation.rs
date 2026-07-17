@@ -92,6 +92,10 @@ impl FinalizedAssetObserver {
         Self { runtime, indexer }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the four typed scan outcomes stay explicit at the initialization boundary"
+    )]
     pub(crate) async fn classify_initialization(
         &self,
         request: &ClassifyFinalizedWitnessedAssetInitializationV2Request,
@@ -147,7 +151,7 @@ impl FinalizedAssetObserver {
                     .map_err(|_| BridgeRuntimeError::InvalidObservation)?
                 }
                 Scan::Missing(stable) => {
-                    let clock = stable.finalized_clock;
+                    let clock = stable.requested_end_clock()?;
                     match self
                         .classify_missing_effect(
                             &request.terms,
@@ -198,6 +202,10 @@ impl FinalizedAssetObserver {
         )
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the four typed scan outcomes stay explicit at the custody boundary"
+    )]
     pub(crate) async fn classify_custody_creation(
         &self,
         request: &ClassifyFinalizedWitnessedAssetCustodyCreationV2Request,
@@ -263,7 +271,7 @@ impl FinalizedAssetObserver {
                     .map_err(|_| BridgeRuntimeError::InvalidObservation)?
                 }
                 Scan::Missing(stable) => {
-                    let clock = stable.finalized_clock;
+                    let clock = stable.requested_end_clock()?;
                     match self
                         .classify_missing_effect(
                             &request.terms,
@@ -316,6 +324,10 @@ impl FinalizedAssetObserver {
         )
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the four typed scan outcomes stay explicit at the funding boundary"
+    )]
     pub(crate) async fn classify_funding(
         &self,
         request: &ClassifyFinalizedWitnessedAssetFundingV2Request,
@@ -375,7 +387,7 @@ impl FinalizedAssetObserver {
                     .map_err(|_| BridgeRuntimeError::InvalidObservation)?
                 }
                 Scan::Missing(stable) => {
-                    let clock = stable.finalized_clock;
+                    let clock = stable.requested_end_clock()?;
                     match self
                         .classify_missing_effect(&request.terms, EffectKind::Funding, &stable)
                         .await?
@@ -422,6 +434,10 @@ impl FinalizedAssetObserver {
         )
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the four typed scan outcomes stay explicit at the claim boundary"
+    )]
     pub(crate) async fn classify_claim(
         &self,
         request: &ClassifyFinalizedWitnessedAssetClaimV2Request,
@@ -489,7 +505,7 @@ impl FinalizedAssetObserver {
                     .map_err(|_| BridgeRuntimeError::InvalidObservation)?
                 }
                 Scan::Missing(stable) => {
-                    let clock = stable.finalized_clock;
+                    let clock = stable.requested_end_clock()?;
                     match self
                         .classify_missing_effect(&request.terms, EffectKind::Claim, &stable)
                         .await?
@@ -690,7 +706,7 @@ impl FinalizedAssetObserver {
         kind: EffectKind,
         stable: &StableFinalizedWindow,
     ) -> Result<MissingEffectClassification, BridgeRuntimeError> {
-        let tip = stable.finalized_tip.header.block_id;
+        let tip = stable.requested_end;
         let state_proves_absence = match kind {
             EffectKind::Initialization => {
                 let metadata_id = compute_metadata_pda(
@@ -737,7 +753,7 @@ impl FinalizedAssetObserver {
         if !state_proves_absence {
             return Ok(MissingEffectClassification::Uncertain);
         }
-        match stable.confirm_unchanged(self.indexer.as_ref()).await {
+        match stable.confirm_requested_end(self.indexer.as_ref()).await {
             Ok(()) => Ok(MissingEffectClassification::Absent),
             Err(error) => missing_state_error(error),
         }
@@ -798,16 +814,18 @@ impl FinalizedAssetObserver {
                 }
             }
         }
-        if let Err(error) = stable.confirm_unchanged(self.indexer.as_ref()).await {
-            return Ok(Scan::Unavailable(match error {
-                BridgeRuntimeError::MovingTip => {
-                    FinalizedWitnessedAssetUnavailableReasonV2::MovingTip
-                }
-                _ => FinalizedWitnessedAssetUnavailableReasonV2::HistoryUnavailable,
-            }));
-        }
         Ok(match found {
-            Some(candidate) => Scan::Found(Box::new(candidate), Box::new(stable)),
+            Some(candidate) => {
+                if let Err(error) = stable.confirm_unchanged(self.indexer.as_ref()).await {
+                    return Ok(Scan::Unavailable(match error {
+                        BridgeRuntimeError::MovingTip => {
+                            FinalizedWitnessedAssetUnavailableReasonV2::MovingTip
+                        }
+                        _ => FinalizedWitnessedAssetUnavailableReasonV2::HistoryUnavailable,
+                    }));
+                }
+                Scan::Found(Box::new(candidate), Box::new(stable))
+            }
             None => Scan::Missing(Box::new(stable)),
         })
     }
@@ -1669,6 +1687,96 @@ mod tests {
     }
 
     #[derive(Debug)]
+    struct AdvancingTipAfterAccountIndexer {
+        base: ScanIndexer,
+        next_tip: Block,
+        advanced: AtomicBool,
+    }
+
+    #[async_trait]
+    impl FinalizedIndexerApi for AdvancingTipAfterAccountIndexer {
+        async fn last_finalized_block_id(&self) -> Result<Option<u64>, BridgeRuntimeError> {
+            Ok(Some(if self.advanced.load(Ordering::SeqCst) {
+                self.next_tip.header.block_id
+            } else {
+                self.base.tip
+            }))
+        }
+
+        async fn block_by_id(&self, block_id: u64) -> Result<Option<Block>, BridgeRuntimeError> {
+            if block_id == self.next_tip.header.block_id {
+                Ok(Some(self.next_tip.clone()))
+            } else {
+                self.base.block_by_id(block_id).await
+            }
+        }
+
+        async fn block_by_hash(
+            &self,
+            block_hash: [u8; 32],
+        ) -> Result<Option<Block>, BridgeRuntimeError> {
+            if block_hash == self.next_tip.header.hash.0 {
+                Ok(Some(self.next_tip.clone()))
+            } else {
+                self.base.block_by_hash(block_hash).await
+            }
+        }
+
+        async fn account_at_block(
+            &self,
+            account_id: [u8; 32],
+            block_id: u64,
+        ) -> Result<HistoricalAccount, BridgeRuntimeError> {
+            let account = self.base.account_at_block(account_id, block_id).await?;
+            self.advanced.store(true, Ordering::SeqCst);
+            Ok(account)
+        }
+    }
+
+    #[derive(Debug)]
+    struct RequestedEndDriftAfterAccountIndexer {
+        base: ScanIndexer,
+        replacement: Block,
+        changed: AtomicBool,
+    }
+
+    #[async_trait]
+    impl FinalizedIndexerApi for RequestedEndDriftAfterAccountIndexer {
+        async fn last_finalized_block_id(&self) -> Result<Option<u64>, BridgeRuntimeError> {
+            Ok(Some(self.base.tip))
+        }
+
+        async fn block_by_id(&self, block_id: u64) -> Result<Option<Block>, BridgeRuntimeError> {
+            if self.changed.load(Ordering::SeqCst) && block_id == self.replacement.header.block_id {
+                Ok(Some(self.replacement.clone()))
+            } else {
+                self.base.block_by_id(block_id).await
+            }
+        }
+
+        async fn block_by_hash(
+            &self,
+            block_hash: [u8; 32],
+        ) -> Result<Option<Block>, BridgeRuntimeError> {
+            if block_hash == self.replacement.header.hash.0 {
+                Ok(Some(self.replacement.clone()))
+            } else {
+                self.base.block_by_hash(block_hash).await
+            }
+        }
+
+        async fn account_at_block(
+            &self,
+            account_id: [u8; 32],
+            block_id: u64,
+        ) -> Result<HistoricalAccount, BridgeRuntimeError> {
+            let account = self.base.account_at_block(account_id, block_id).await?;
+            self.changed.store(true, Ordering::SeqCst);
+            Ok(account)
+        }
+    }
+
+    #[derive(Debug)]
     struct ForkAfterScanIndexer {
         old: ScanIndexer,
         new_tip: Block,
@@ -2037,6 +2145,97 @@ mod tests {
                 .await
                 .unwrap(),
             MissingEffectClassification::Uncertain
+        ));
+    }
+
+    fn absent_funding_request(
+        fixture: &TokenFixture,
+    ) -> ClassifyFinalizedWitnessedAssetFundingV2Request {
+        ClassifyFinalizedWitnessedAssetFundingV2Request::new(
+            MessageContext::new(
+                RunId::new("asset-snapshot-boundary-run-0001").unwrap(),
+                RequestId::new("asset-snapshot-boundary-funding-0001").unwrap(),
+                Participant::Maker,
+            ),
+            fixture.runtime.clone(),
+            fixture.terms.clone(),
+            PreparedTransaction::new(
+                lez_bridge_protocol::TransactionId::from_bytes([201; 32]),
+                lez_bridge_protocol::ExactTransactionBytes::new(vec![1]).unwrap(),
+            ),
+            DiscoveryWindow::new(10, 1).unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn missing_effect_is_anchored_to_requested_end_while_live_tip_advances() {
+        let seed = token_fixture(EscrowStatus::Empty, HistoricalAccount::Absent);
+        let mut accounts = seed.accounts.clone();
+        accounts.insert((seed.custody_id, 10), holding(seed.definition_id, 0));
+        let fixture = TokenFixture { accounts, ..seed };
+        let requested_end = finalized_block(10, Vec::new());
+        let next_tip = finalized_block(11, Vec::new());
+        let indexer = Arc::new(AdvancingTipAfterAccountIndexer {
+            base: ScanIndexer {
+                tip: 10,
+                by_id: BTreeMap::from([(10, requested_end.clone())]),
+                by_hash: BTreeMap::from([(requested_end.header.hash.0, requested_end.clone())]),
+                accounts: fixture.accounts.clone(),
+            },
+            next_tip,
+            advanced: AtomicBool::new(false),
+        });
+        let observer = FinalizedAssetObserver::new(fixture.runtime.clone(), indexer.clone());
+        let result = observer
+            .classify_funding(&absent_funding_request(&fixture))
+            .await
+            .unwrap();
+
+        let (finalized_clock, scanned_window) = match result.outcome {
+            FinalizedWitnessedAssetScanOutcomeV2::Absent {
+                finalized_clock,
+                scanned_window,
+            } => (finalized_clock, scanned_window),
+            other => panic!("fixed finalized snapshot must prove bounded absence: {other:?}"),
+        };
+        assert_eq!(scanned_window, DiscoveryWindow::new(10, 1).unwrap());
+        assert_eq!(finalized_clock.height, 10);
+        assert_eq!(finalized_clock.block_hash.as_bytes(), &[10; 32]);
+        assert!(indexer.advanced.load(Ordering::SeqCst));
+        assert_eq!(indexer.last_finalized_block_id().await.unwrap(), Some(11));
+    }
+
+    #[tokio::test]
+    async fn missing_effect_fails_closed_when_requested_end_identity_drifts() {
+        let seed = token_fixture(EscrowStatus::Empty, HistoricalAccount::Absent);
+        let mut accounts = seed.accounts.clone();
+        accounts.insert((seed.custody_id, 10), holding(seed.definition_id, 0));
+        let fixture = TokenFixture { accounts, ..seed };
+        let requested_end = finalized_block(10, Vec::new());
+        let mut replacement = requested_end.clone();
+        replacement.header.hash = HashType([202; 32]);
+        replacement.header.signature = IndexedSignature([202; 64]);
+        let indexer = Arc::new(RequestedEndDriftAfterAccountIndexer {
+            base: ScanIndexer {
+                tip: 10,
+                by_id: BTreeMap::from([(10, requested_end.clone())]),
+                by_hash: BTreeMap::from([(requested_end.header.hash.0, requested_end)]),
+                accounts: fixture.accounts.clone(),
+            },
+            replacement,
+            changed: AtomicBool::new(false),
+        });
+        let observer = FinalizedAssetObserver::new(fixture.runtime.clone(), indexer);
+        let result = observer
+            .classify_funding(&absent_funding_request(&fixture))
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            result.outcome,
+            FinalizedWitnessedAssetScanOutcomeV2::Unavailable {
+                reason: FinalizedWitnessedAssetUnavailableReasonV2::MovingTip
+            }
         ));
     }
 

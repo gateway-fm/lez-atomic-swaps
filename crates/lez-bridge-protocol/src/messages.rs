@@ -4414,7 +4414,8 @@ pub enum FinalizedWitnessedAssetScanOutcomeV2<T> {
         /// Complete asset-specific finalized facts.
         facts: Box<T>,
     },
-    /// A complete stable finalized scan and current-state check proved absence.
+    /// A complete finalized scan and exact predecessor state at the immutable window boundary
+    /// proved bounded absence.
     Absent {
         /// Stable finalized clock completely covering `scanned_window`.
         finalized_clock: ChainClock,
