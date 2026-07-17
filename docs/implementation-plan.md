@@ -1807,12 +1807,24 @@ Active M3 refund critical path:
   coverage now anchors missing-effect predecessor state to the immutable
   requested-end block, revalidates that exact block by ID and hash after the
   historical account reads, permits later finalized blocks to arrive, and
-  still fails closed on requested-end identity drift. All three focused tests
-  and the full eight-test sidecar unit set pass. Found effects, refunds, actor
+  still fails closed on requested-end identity drift. Pushed commit `d48e70e`
+  carries that requested-end absence fix; all three focused tests and the full
+  eight-test sidecar unit set pass. Found effects, refunds, actor
   CAS, deterministic transaction bytes, accepted/unknown journals, nonce
   replay protection, and monotonic escrow transitions keep their stricter
-  existing behavior. A fresh two-direction live rerun, exact terminal ATA
-  balances, finalized claim export, and packet hash bindings remain open;
+  existing behavior. Subsequent fresh isolated run
+  `m3f7compose20260717m` proved the fresh official-wallet build, checked guest
+  deployment, both finalized fresh-identity Vault claims, and the official
+  eight-transaction Token/ATA fixture. It is not PoC evidence: a transient
+  rewrite of the live runner during concurrent terminal-evidence editing
+  produced the shell error `eements` and invalidated the run before either
+  trade direction started. Its exact cleanup attestation passed and targeted
+  no foreign resource. The process correction is mandatory: never edit a
+  runner during its live execution; finish, syntax-check, test, and commit the
+  complete patch before starting a new run. Current work adds explicit terminal
+  ATA balance assertions and packet bindings: forward `175/75/0`, reverse
+  `75/175/0`, and conserved total `250`. A fresh two-direction live run follows,
+  then synchronized documentation and milestone-wide closure gates;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
   not recordings and cannot satisfy D1. The repository now supplies a

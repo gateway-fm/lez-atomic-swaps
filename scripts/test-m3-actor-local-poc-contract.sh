@@ -1442,6 +1442,11 @@ jq -e --arg run_id "$custom_token_contract_run_id" '
     directions_use_distinct_definitions_and_depositors:true,
     evidence_path_passed_to_direction:true,
     private_path_passed_to_direction:true,
+    terminal_balance_evidence:{
+      official_wallet_owner_ata_reads:true,
+      finalized_actor_custody_read:true,
+      exact_direction_balances:true,
+      conservation_total:250},
     token_program_id:"c5d50f88bfe7cb14b421673e9441aade7571e522eef035cc24d80b2e53c69a7c",
     ata_program_id:"95841cc8bd2c87d7111bc5c7f3aa2a85d35e90f7217e82a397aa05acd51500f8"
   }
@@ -1464,6 +1469,35 @@ jq -e --arg run_id "$custom_token_contract_run_id" '
 wallet_prebuild_source="$(sed -n '/^prebuild() {$/,/^}$/p' "$runner")"
 fixture_source="$(sed -n '/^provision_f7_token_fixture() {$/,/^}$/p' "$runner")"
 direction_environment_source="$(sed -n '/^direction_command() {$/,/^}$/p' "$runner")"
+terminal_balance_source="$(sed -n \
+  '/^write_custom_token_terminal_balance_evidence() {$/,/^}$/p' "$runner")"
+[[ -n "$terminal_balance_source" ]] ||
+  fail "outer runner lacks custom-token terminal balance evidence"
+for required in \
+  'ata list --owner "$owner" --token-definition "$definition"' \
+  'btc_actor_evidence' \
+  '.chain_evidence | implode | fromjson' \
+  '.facts.metadata.claimant_asset_account_id == $claimant_ata' \
+  '.facts.metadata.asset_definition == $definition' \
+  '.facts.metadata.custody_account_id == $custody' \
+  '(.facts.metadata.amount | tostring) == $amount and $amount == "75"' \
+  '.facts.custody.kind == "custom_token"' \
+  'same_atomic_snapshot_as_finalized_claim:false' \
+  'claim_transfer_atomicity:"single_on_chain_claim_transaction"' \
+  'conservation_total:($maker_balance + $taker_balance + $custody_balance)' \
+  'write_custom_token_terminal_balance_evidence "$direction"'; do
+  rg -Fq "$required" "$runner" ||
+    fail "custom-token terminal evidence omits: ${required}"
+done
+if rg -n \
+  -e ' \+[[:space:]]+--(arg|argjson|slurpfile)' \
+  -e ' \+[[:space:]]+"\$[A-Za-z_{]' \
+  -e 'LEE_WALLET_HOME_DIR=.* \+[[:space:]]' \
+  -e 'sqlite3 .* \+[[:space:]]' \
+  -e 'jq -[a-zA-Z0-9 -]* \+[[:space:]]+--' \
+  "$runner" >/dev/null; then
+  fail "outer runner contains collapsed patch-artifact command arguments"
+fi
 [[ -n "$wallet_prebuild_source" && -n "$fixture_source" &&
    -n "$direction_environment_source" ]] ||
   fail "custom-token runner helpers are incomplete"
@@ -1632,7 +1666,18 @@ for term in 'asset_mode: $asset_mode' 'f7_token_fixture_summary' \
   'target_in_exact_cleaned_secure_root:true' \
   'deterministic_local_genesis_regtest_and_official_tokens' \
   'taker_sells_foreign:{bitcoin:2,lez:4}' \
-  'taker_sells_lez:{bitcoin:2,lez:4}'; do
+  'taker_sells_lez:{bitcoin:2,lez:4}' \
+  'taker_sells_foreign-custom-token-terminal-balances.json' \
+  'taker_sells_lez-custom-token-terminal-balances.json' \
+  'custom_token_terminal_balances:$foreign_terminal_balance' \
+  'custom_token_terminal_balances:$lez_terminal_balance' \
+  '{maker:175,taker:75,custody:0}' \
+  '{maker:75,taker:175,custody:0}' \
+  'bindings:.bindings' \
+  '.bindings.actor_submit.sha256' \
+  '.bindings.lez_claim_finality.sha256' \
+  '.bindings.actual_effects.sha256' \
+  'actual_effects_sha256:.bindings.actual_effects.sha256'; do
   rg -Fq -- "$term" <<<"$run_evidence_source" ||
     fail "final run evidence omits custom-token invariant: ${term}"
 done
