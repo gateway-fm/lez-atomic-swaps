@@ -3,8 +3,9 @@
 Status: Accepted at the checked-guest component boundary. Pushed commit
 `66d5e26cd35c6282c0cd420533f70e6ea3e506c9` adds the implementation and
 focused evidence. The checked manifest, public IDL, deployer assembly, verifier,
-and active M3 runner pins now share the new guest identity. Sidecar/SDK
-composition and actual-node custom-token evidence remain open.
+and active M3 runner pins now share the new guest identity. The additive strict
+v2 transaction-message boundary is also implemented. Finalized classifiers,
+sidecar/SDK composition, and actual-node custom-token evidence remain open.
 
 ## Context
 
@@ -184,9 +185,32 @@ clarifications rather than a broad source or license exception.
 
 An additive `asset_terms_version: 2` bridge-protocol envelope also preserves
 all v1 native JSON and method strings while binding strict native or
-custom-token terms. Distinct v2 RPC messages, ordered token effects and
-observations, client/sidecar/adapter/SDK composition, and role-owned actual-node
-execution still remain.
+custom-token terms. Seven distinct `lez_bridge.v2.*` methods now model ordered
+native two-effect or custom-token three-effect preparation, current-state
+observation, witnessed claim reservation/completion/finalized observation, and
+permissionless refund preparation/observation. Cross-field constructors reject
+definition, ATA, program, authority, amount, state, instruction-order, and
+unknown-field drift. Thirty-five protocol tests plus strict Clippy, rustdoc,
+formatting, and diff gates pass.
+
+```mermaid
+flowchart LR
+    Terms["Versioned countersigned asset terms"] --> Wire["Strict LEZ bridge v2 messages"]
+    Wire --> Prepare["Ordered prepare effects"]
+    Wire --> Current["Stable current-state observation"]
+    Wire --> Claim["Witnessed claim lifecycle"]
+    Wire --> Refund["Permissionless refund lifecycle"]
+    Client["Bridge client integration open"] -.-> Wire
+    Sidecar["Official sidecar integration open"] -.-> Wire
+    Finality["Finalized funding and presence classifiers open"] -.-> Current
+```
+
+The current-state escrow observation cannot certify finalized funding or an
+exact absent-versus-unknown submission outcome. Finalized asset initialization,
+funding, claim-presence, and recovery classifiers therefore remain required
+before actor-owned persist-before-send and restart/no-resubmission claims.
+Client, sidecar, adapter, SDK composition, countersigned token-field mapping,
+and role-owned actual-node execution also remain open.
 
 This ADR does not certify an actual-node custom-token swap in either trade
 direction, exact composed balances/effects, restart/no-resubmission, public

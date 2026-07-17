@@ -2,35 +2,51 @@ use lez_bridge_protocol::{
     AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip,
     ClassifyFinalizedWitnessedClaimResult, ClassifyFinalizedWitnessedFundingResult,
     ClassifyFinalizedWitnessedInitializationRequest,
-    ClassifyFinalizedWitnessedInitializationResult, CompleteWitnessedClaimRequest,
+    ClassifyFinalizedWitnessedInitializationResult, CompleteWitnessedAssetClaimV2Request,
+    CompleteWitnessedAssetClaimV2Result, CompleteWitnessedClaimRequest,
     CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult, DiscoveryWindow,
     ErrorCode, ErrorMessage, EscrowMetadataFacts, EscrowObservationTarget, EscrowState,
-    ExactMessageBytes, ExactTransactionBytes, FinalizedBlockIdentity, FinalizedWitnessedClaimFacts,
+    ExactMessageBytes, ExactTransactionBytes, FinalizedBlockIdentity,
+    FinalizedWitnessedAssetClaimFactsV2, FinalizedWitnessedClaimFacts,
     FinalizedWitnessedClaimObservationTarget, FinalizedWitnessedClaimScanOutcome,
     FinalizedWitnessedFundingFacts, FinalizedWitnessedFundingObservationTarget,
     FinalizedWitnessedFundingScanOutcome, FinalizedWitnessedInitializationFacts,
     FinalizedWitnessedInitializationScanOutcome, FundingFoundFacts, FundingObservation, Hex32,
     InitializationFoundFacts, InitializationObservation, MAX_DISCOVERY_BLOCKS,
-    METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
-    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, MessageContext, NativeAmount,
-    NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
-    NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
-    NativeFundInstructionFacts, NativeInitializeInstructionFacts, NativeRefundFoundFacts,
-    NativeRefundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
-    ObserveCurrentClockRequest, ObserveCurrentClockResult, ObserveEscrowRequest,
-    ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
-    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
-    ObserveFinalizedWitnessedFundingResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
-    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
+    METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2, METHOD_COMPLETE_WITNESSED_CLAIM,
+    METHOD_OBSERVE_FINALIZED_WITNESSED_ASSET_CLAIM_V2, METHOD_OBSERVE_WITNESSED_ASSET_ESCROW_V2,
+    METHOD_OBSERVE_WITNESSED_ASSET_REFUND_V2, METHOD_OBSERVE_WITNESSED_ESCROW,
+    METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2, METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2,
+    METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2, METHOD_PREPARE_WITNESSED_CLAIM,
+    METHOD_PREPARE_WITNESSED_ESCROW, MessageContext, NativeAmount, NativeClaimInstructionFacts,
+    NativeCustodyFacts, NativeEscrowAccountFacts, NativeEscrowAccountObservation,
+    NativeEscrowTerms, NativeEscrowTermsInput, NativeFundInstructionFacts,
+    NativeInitializeInstructionFacts, NativeRefundFoundFacts, NativeRefundInstructionFacts,
+    NativeRefundObservation, NativeRefundObservationTarget, ObserveCurrentClockRequest,
+    ObserveCurrentClockResult, ObserveEscrowRequest, ObserveEscrowResult,
+    ObserveFinalizedWitnessedAssetClaimV2Request, ObserveFinalizedWitnessedAssetClaimV2Result,
+    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
+    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
+    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
+    ObserveRevealingClaimResult, ObserveWitnessedAssetEscrowV2Request,
+    ObserveWitnessedAssetEscrowV2Result, ObserveWitnessedAssetRefundV2Request,
+    ObserveWitnessedAssetRefundV2Result, ObserveWitnessedEscrowRequest,
     ObserveWitnessedEscrowResult, ObservedTransactionFacts, Participant,
     PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
     PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
+    PrepareWitnessedAssetClaimV2Request, PrepareWitnessedAssetClaimV2Result,
+    PrepareWitnessedAssetEscrowV2Request, PrepareWitnessedAssetEscrowV2Result,
+    PrepareWitnessedAssetRefundV2Request, PrepareWitnessedAssetRefundV2Result,
     PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
     PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
     RequestId, RevealingClaimFoundFacts, RevealingClaimObservation,
     RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
     RuntimeDescriptor, SchemaVersion, SubmissionOutcome, SubmitTransactionRequest,
-    SubmitTransactionResult, TransactionId, WITNESSED_LEZ_ASSET_TERMS_VERSION,
+    SubmitTransactionResult, TokenHoldingFactsV2, TransactionId, WITNESSED_LEZ_ASSET_TERMS_VERSION,
+    WitnessedAssetClaimInstructionFactsV2, WitnessedAssetCustodyFactsV2,
+    WitnessedAssetObservedPrepareEffectV2, WitnessedAssetPrepareStepV2,
+    WitnessedAssetPreparedEffectV2, WitnessedAssetRefundFoundFactsV2,
+    WitnessedAssetRefundInstructionFactsV2, WitnessedAssetRefundObservationV2,
     WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts, WitnessedFundingFoundFacts,
     WitnessedFundingObservation, WitnessedInitializationFoundFacts,
     WitnessedInitializationObservation, WitnessedLezAssetTermsV2, WitnessedLezAssetV2,
@@ -2065,4 +2081,473 @@ fn witnessed_token_input(definition: Hex32) -> WitnessedTokenEscrowTermsV2Input 
         amount: 125,
         refund_at_ms: 1_850_000_000_456,
     }
+}
+
+#[test]
+fn witnessed_asset_v2_methods_and_prepare_effect_order_are_additive_and_strict() {
+    for (actual, expected) in [
+        (
+            METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2,
+            "lez_bridge.v2.prepare_witnessed_asset_escrow",
+        ),
+        (
+            METHOD_OBSERVE_WITNESSED_ASSET_ESCROW_V2,
+            "lez_bridge.v2.observe_witnessed_asset_escrow",
+        ),
+        (
+            METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2,
+            "lez_bridge.v2.prepare_witnessed_asset_claim",
+        ),
+        (
+            METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2,
+            "lez_bridge.v2.complete_witnessed_asset_claim",
+        ),
+        (
+            METHOD_OBSERVE_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
+            "lez_bridge.v2.observe_finalized_witnessed_asset_claim",
+        ),
+        (
+            METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2,
+            "lez_bridge.v2.prepare_witnessed_asset_refund",
+        ),
+        (
+            METHOD_OBSERVE_WITNESSED_ASSET_REFUND_V2,
+            "lez_bridge.v2.observe_witnessed_asset_refund",
+        ),
+    ] {
+        assert_eq!(actual, expected);
+        assert!(!actual.starts_with("lez_bridge.v1."));
+    }
+
+    let token = token_asset(h(82));
+    let request = PrepareWitnessedAssetEscrowV2Request::new(context(), runtime(), token.clone());
+    assert_eq!(
+        serde_json::from_value::<PrepareWitnessedAssetEscrowV2Request>(
+            serde_json::to_value(&request).unwrap()
+        )
+        .unwrap(),
+        request
+    );
+    let effects = token_prepared_effects();
+    let result =
+        PrepareWitnessedAssetEscrowV2Result::new(context(), token.clone(), effects.clone())
+            .unwrap();
+    assert_eq!(result.effects, effects);
+    assert_eq!(
+        serde_json::from_value::<PrepareWitnessedAssetEscrowV2Result>(
+            serde_json::to_value(&result).unwrap()
+        )
+        .unwrap(),
+        result
+    );
+
+    let mut wrong_order = effects.clone();
+    wrong_order.swap(1, 2);
+    assert!(
+        PrepareWitnessedAssetEscrowV2Result::new(context(), token.clone(), wrong_order).is_err()
+    );
+    assert!(
+        PrepareWitnessedAssetEscrowV2Result::new(context(), token, effects[..2].to_vec()).is_err()
+    );
+
+    let native = WitnessedLezAssetTermsV2::native(witnessed_native_terms());
+    let native_effects = vec![
+        WitnessedAssetPreparedEffectV2::new(
+            WitnessedAssetPrepareStepV2::InitializeWitnessed,
+            tx(8),
+        ),
+        WitnessedAssetPreparedEffectV2::new(WitnessedAssetPrepareStepV2::Fund, tx(9)),
+    ];
+    assert!(
+        PrepareWitnessedAssetEscrowV2Result::new(
+            context(),
+            native.clone(),
+            native_effects.clone(),
+        )
+        .is_ok()
+    );
+    let mut native_with_ata = native_effects;
+    native_with_ata.insert(
+        1,
+        WitnessedAssetPreparedEffectV2::new(WitnessedAssetPrepareStepV2::CreateCustodyAta, tx(10)),
+    );
+    assert!(PrepareWitnessedAssetEscrowV2Result::new(context(), native, native_with_ata).is_err());
+
+    let mut unknown = serde_json::to_value(result).unwrap();
+    unknown["effects"][0]["surprise"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<PrepareWitnessedAssetEscrowV2Result>(unknown).is_err());
+}
+
+#[test]
+fn witnessed_asset_v2_token_prepare_observation_rejects_definition_ata_authority_and_order_drift() {
+    for definition in [h(82), h(83)] {
+        let terms = token_asset(definition);
+        let token = terms.asset().custom_token().unwrap();
+        let metadata = WitnessedEscrowMetadataFacts::from_witnessed_token_terms(
+            h(102),
+            h(103),
+            token,
+            EscrowState::Funded,
+        );
+        let custody = WitnessedAssetCustodyFactsV2::CustomToken(TokenHoldingFactsV2::new(
+            token.custody_ata_account_id(),
+            token.token_program_id(),
+            token.token_definition_account_id(),
+            token.amount().as_u128(),
+        ));
+        let observed_effects = token_observed_prepare_effects(token, metadata.account_id);
+        let request = ObserveWitnessedAssetEscrowV2Request::new(
+            context(),
+            runtime(),
+            terms.clone(),
+            token_prepared_effects(),
+            discovery_window(),
+        )
+        .unwrap();
+        let result = ObserveWitnessedAssetEscrowV2Result::new(
+            context(),
+            terms.clone(),
+            ChainTip::new(h(104), 90),
+            observed_effects,
+            metadata,
+            custody,
+            ChainTip::new(h(104), 90),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::from_value::<ObserveWitnessedAssetEscrowV2Request>(
+                serde_json::to_value(&request).unwrap()
+            )
+            .unwrap(),
+            request
+        );
+        let encoded = serde_json::to_value(&result).unwrap();
+        assert_eq!(
+            serde_json::from_value::<ObserveWitnessedAssetEscrowV2Result>(encoded.clone()).unwrap(),
+            result
+        );
+
+        for (path, replacement) in [
+            (
+                vec!["terms", "asset", "terms", "token_definition_account_id"],
+                serde_json::to_value(h(110)).unwrap(),
+            ),
+            (
+                vec!["terms", "asset", "terms", "claimant_ata_account_id"],
+                serde_json::to_value(h(111)).unwrap(),
+            ),
+            (
+                vec!["terms", "asset", "terms", "aggregate_authority_account_id"],
+                serde_json::to_value(h(112)).unwrap(),
+            ),
+        ] {
+            let mut changed = encoded.clone();
+            json_set(&mut changed, &path, replacement);
+            assert!(
+                serde_json::from_value::<ObserveWitnessedAssetEscrowV2Result>(changed).is_err(),
+                "drift at {path:?} was accepted"
+            );
+        }
+        let mut wrong_order = encoded.clone();
+        wrong_order["effects"][0]["ordered_account_ids"]
+            .as_array_mut()
+            .unwrap()
+            .swap(1, 2);
+        assert!(
+            serde_json::from_value::<ObserveWitnessedAssetEscrowV2Result>(wrong_order).is_err()
+        );
+        let mut unknown = encoded;
+        unknown["custody"]["facts"]["surprise"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<ObserveWitnessedAssetEscrowV2Result>(unknown).is_err());
+    }
+}
+
+#[test]
+fn witnessed_asset_v2_claim_prepare_and_complete_models_are_strict() {
+    let terms = token_asset(h(82));
+    let claim = PreparedWitnessedClaim::new(
+        RequestId::new("asset-v2-claim-prepare").unwrap(),
+        h(120),
+        ExactMessageBytes::new(vec![121; 128]).unwrap(),
+    );
+    let prepare_claim = PrepareWitnessedAssetClaimV2Request::new(
+        context(),
+        runtime(),
+        terms.clone(),
+        TransactionId::from_bytes([122; 32]),
+    );
+    let prepare_claim_result =
+        PrepareWitnessedAssetClaimV2Result::new(context(), terms.clone(), claim.clone());
+    let complete_claim = CompleteWitnessedAssetClaimV2Request::new(
+        context(),
+        runtime(),
+        terms.clone(),
+        claim.clone(),
+        AggregateBip340Signature::from_bytes([123; 64]),
+    );
+    let complete_claim_result =
+        CompleteWitnessedAssetClaimV2Result::new(context(), terms.clone(), tx(124));
+    for roundtrip in [
+        serde_json::from_value::<PrepareWitnessedAssetClaimV2Request>(
+            serde_json::to_value(&prepare_claim).unwrap(),
+        )
+        .is_ok(),
+        serde_json::from_value::<PrepareWitnessedAssetClaimV2Result>(
+            serde_json::to_value(&prepare_claim_result).unwrap(),
+        )
+        .is_ok(),
+        serde_json::from_value::<CompleteWitnessedAssetClaimV2Request>(
+            serde_json::to_value(&complete_claim).unwrap(),
+        )
+        .is_ok(),
+        serde_json::from_value::<CompleteWitnessedAssetClaimV2Result>(
+            serde_json::to_value(&complete_claim_result).unwrap(),
+        )
+        .is_ok(),
+    ] {
+        assert!(roundtrip);
+    }
+}
+
+#[test]
+fn witnessed_asset_v2_finalized_claim_is_exact_and_token_bound() {
+    let terms = token_asset(h(82));
+    let token = terms.asset().custom_token().unwrap();
+    let claim = PreparedWitnessedClaim::new(
+        RequestId::new("asset-v2-claim-prepare").unwrap(),
+        h(120),
+        ExactMessageBytes::new(vec![121; 128]).unwrap(),
+    );
+    let claimed_metadata = WitnessedEscrowMetadataFacts::from_witnessed_token_terms(
+        h(125),
+        h(103),
+        token,
+        EscrowState::Claimed,
+    );
+    let empty_custody = WitnessedAssetCustodyFactsV2::CustomToken(TokenHoldingFactsV2::new(
+        token.custody_ata_account_id(),
+        token.token_program_id(),
+        token.token_definition_account_id(),
+        0,
+    ));
+    let claim_facts = FinalizedWitnessedAssetClaimFactsV2::new(
+        observed_tx(124),
+        WitnessedAssetClaimInstructionFactsV2::new(
+            h(103),
+            AccountIds::new(vec![
+                claimed_metadata.account_id,
+                token.custody_ata_account_id(),
+                token.claimant_owner_account_id(),
+                token.claimant_ata_account_id(),
+                token.aggregate_authority_account_id(),
+            ])
+            .unwrap(),
+            token.swap_id(),
+            claim.clone(),
+        ),
+        AggregateBip340Signature::from_bytes([123; 64]),
+        FinalizedBlockIdentity::new(91, h(126), 1_850_000_000_600),
+        claimed_metadata,
+        empty_custody,
+    );
+    let observe_claim = ObserveFinalizedWitnessedAssetClaimV2Request::new(
+        context(),
+        runtime(),
+        terms.clone(),
+        claim,
+        TransactionId::from_bytes([124; 32]),
+        discovery_window(),
+    );
+    let observe_claim_result = ObserveFinalizedWitnessedAssetClaimV2Result::new(
+        context(),
+        terms.clone(),
+        ChainTip::new(h(127), 92),
+        claim_facts,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::from_value::<ObserveFinalizedWitnessedAssetClaimV2Request>(
+            serde_json::to_value(&observe_claim).unwrap()
+        )
+        .unwrap(),
+        observe_claim
+    );
+    let claim_json = serde_json::to_value(&observe_claim_result).unwrap();
+    assert_eq!(
+        serde_json::from_value::<ObserveFinalizedWitnessedAssetClaimV2Result>(claim_json.clone())
+            .unwrap(),
+        observe_claim_result
+    );
+    let mut wrong_authority = claim_json;
+    wrong_authority["claim"]["instruction"]["ordered_account_ids"][4] =
+        serde_json::to_value(h(128)).unwrap();
+    assert!(
+        serde_json::from_value::<ObserveFinalizedWitnessedAssetClaimV2Result>(wrong_authority)
+            .is_err()
+    );
+}
+
+#[test]
+fn witnessed_asset_v2_refund_models_are_exact_and_token_bound() {
+    let terms = token_asset(h(82));
+    let token = terms.asset().custom_token().unwrap();
+    let prepare_refund =
+        PrepareWitnessedAssetRefundV2Request::new(context(), runtime(), terms.clone());
+    let prepare_refund_result =
+        PrepareWitnessedAssetRefundV2Result::new(context(), terms.clone(), tx(129));
+    assert_eq!(
+        serde_json::from_value::<PrepareWitnessedAssetRefundV2Request>(
+            serde_json::to_value(&prepare_refund).unwrap()
+        )
+        .unwrap(),
+        prepare_refund
+    );
+    assert_eq!(
+        serde_json::from_value::<PrepareWitnessedAssetRefundV2Result>(
+            serde_json::to_value(&prepare_refund_result).unwrap()
+        )
+        .unwrap(),
+        prepare_refund_result
+    );
+    let refunded_metadata = WitnessedEscrowMetadataFacts::from_witnessed_token_terms(
+        h(125),
+        h(103),
+        token,
+        EscrowState::Refunded,
+    );
+    let refund = WitnessedAssetRefundObservationV2::found(WitnessedAssetRefundFoundFactsV2::new(
+        observed_tx(129),
+        WitnessedAssetRefundInstructionFactsV2::new(
+            h(103),
+            AccountIds::new(vec![
+                refunded_metadata.account_id,
+                token.custody_ata_account_id(),
+                token.depositor_ata_account_id(),
+            ])
+            .unwrap(),
+            token.swap_id(),
+        ),
+    ));
+    let observe_refund = ObserveWitnessedAssetRefundV2Request::new(
+        context(),
+        runtime(),
+        terms.clone(),
+        NativeRefundObservationTarget::Exact {
+            refund_transaction_id: TransactionId::from_bytes([129; 32]),
+            window: discovery_window(),
+        },
+    );
+    let observe_refund_result = ObserveWitnessedAssetRefundV2Result::new(
+        context(),
+        terms.clone(),
+        ChainClock::new(h(130), 93, 1_850_000_000_700),
+        refunded_metadata,
+        WitnessedAssetCustodyFactsV2::CustomToken(TokenHoldingFactsV2::new(
+            token.custody_ata_account_id(),
+            token.token_program_id(),
+            token.token_definition_account_id(),
+            0,
+        )),
+        refund,
+        ChainClock::new(h(130), 93, 1_850_000_000_700),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::from_value::<ObserveWitnessedAssetRefundV2Request>(
+            serde_json::to_value(&observe_refund).unwrap()
+        )
+        .unwrap(),
+        observe_refund
+    );
+    let refund_json = serde_json::to_value(&observe_refund_result).unwrap();
+    assert_eq!(
+        serde_json::from_value::<ObserveWitnessedAssetRefundV2Result>(refund_json.clone()).unwrap(),
+        observe_refund_result
+    );
+    let mut wrong_refund_ata = refund_json;
+    wrong_refund_ata["refund"]["facts"]["instruction"]["ordered_account_ids"][2] =
+        serde_json::to_value(h(131)).unwrap();
+    assert!(
+        serde_json::from_value::<ObserveWitnessedAssetRefundV2Result>(wrong_refund_ata).is_err()
+    );
+}
+
+fn token_asset(definition: Hex32) -> WitnessedLezAssetTermsV2 {
+    WitnessedLezAssetTermsV2::custom_token(
+        WitnessedTokenEscrowTermsV2::new(witnessed_token_input(definition)).unwrap(),
+    )
+}
+
+fn token_prepared_effects() -> Vec<WitnessedAssetPreparedEffectV2> {
+    vec![
+        WitnessedAssetPreparedEffectV2::new(
+            WitnessedAssetPrepareStepV2::InitializeWitnessed,
+            tx(105),
+        ),
+        WitnessedAssetPreparedEffectV2::new(WitnessedAssetPrepareStepV2::CreateCustodyAta, tx(106)),
+        WitnessedAssetPreparedEffectV2::new(WitnessedAssetPrepareStepV2::Fund, tx(107)),
+    ]
+}
+
+fn token_observed_prepare_effects(
+    token: &WitnessedTokenEscrowTermsV2,
+    metadata: Hex32,
+) -> Vec<WitnessedAssetObservedPrepareEffectV2> {
+    vec![
+        WitnessedAssetObservedPrepareEffectV2::new(
+            WitnessedAssetPrepareStepV2::InitializeWitnessed,
+            observed_tx(105),
+            h(103),
+            AccountIds::new(vec![
+                metadata,
+                token.depositor_owner_account_id(),
+                token.claimant_owner_account_id(),
+                token.token_definition_account_id(),
+                token.aggregate_authority_account_id(),
+            ])
+            .unwrap(),
+        ),
+        WitnessedAssetObservedPrepareEffectV2::new(
+            WitnessedAssetPrepareStepV2::CreateCustodyAta,
+            observed_tx(106),
+            h(103),
+            AccountIds::new(vec![
+                metadata,
+                token.token_definition_account_id(),
+                token.custody_ata_account_id(),
+            ])
+            .unwrap(),
+        ),
+        WitnessedAssetObservedPrepareEffectV2::new(
+            WitnessedAssetPrepareStepV2::Fund,
+            observed_tx(107),
+            h(103),
+            AccountIds::new(vec![
+                metadata,
+                token.depositor_owner_account_id(),
+                token.depositor_ata_account_id(),
+                token.custody_ata_account_id(),
+            ])
+            .unwrap(),
+        ),
+    ]
+}
+
+fn observed_tx(byte: u8) -> ObservedTransactionFacts {
+    ObservedTransactionFacts::new(
+        TransactionId::from_bytes([byte; 32]),
+        ExactTransactionBytes::new(vec![byte; 128]).unwrap(),
+        ChainPosition::new(h(byte.wrapping_add(1)), u64::from(byte), 0),
+        AccountIds::new(vec![h(73)]).unwrap(),
+        true,
+    )
+}
+
+fn json_set(value: &mut serde_json::Value, path: &[&str], replacement: serde_json::Value) {
+    let (last, parents) = path.split_last().unwrap();
+    let mut current = value;
+    for key in parents {
+        current = &mut current[*key];
+    }
+    current[*last] = replacement;
 }

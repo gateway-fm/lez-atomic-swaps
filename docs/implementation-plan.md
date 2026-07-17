@@ -1672,9 +1672,17 @@ Active M3 refund critical path:
   bind every output to the checked artifact and IDL. Sixteen deployer tests,
   dependency policy, and the graph-local advisory, ban, license, and source
   audit pass alongside Clippy, rustdoc, formatting, and artifact checks.
-  Distinct v2 RPC request/results, ordered token effects/observations,
-  client/sidecar/adapter/SDK composition, and two-direction actual-node token
-  evidence remain open;
+  Seven distinct v2 transaction methods now carry strict native or custom-token
+  request/results for ordered two-step or three-step preparation, exact current
+  observations, witnessed claim reservation/completion/finalized observation,
+  and permissionless refund preparation/observation. Their cross-field
+  validators reject definition, ATA, program, authority, amount, state,
+  instruction-order, and unknown-field drift for two definitions while all v1
+  JSON and method strings remain unchanged. Thirty-five protocol tests, strict
+  Clippy, rustdoc, formatting, and diff gates pass. Finalized asset
+  initialization/funding/presence classifiers, countersigned token-field
+  agreement mapping, client/sidecar/adapter/SDK composition, and two-direction
+  actual-node token evidence remain open;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
   not recordings and cannot satisfy D1. The repository now supplies a

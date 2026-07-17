@@ -89,6 +89,12 @@ pub enum ProtocolValueError {
         "unsupported witnessed LEZ asset terms version {0}; expected {WITNESSED_LEZ_ASSET_TERMS_VERSION}"
     )]
     UnsupportedWitnessedLezAssetTermsVersion(u16),
+    /// A native or token preparation omitted, duplicated, or reordered an exact effect.
+    #[error("witnessed asset preparation effects do not match the asset-specific order")]
+    InvalidWitnessedAssetPrepareEffects,
+    /// Decoded instruction, metadata, or custody facts disagreed with exact asset terms.
+    #[error("witnessed asset facts mismatch: {0}")]
+    WitnessedAssetFactsMismatch(&'static str),
     /// A discovery window was empty, oversized, or overflowed its height range.
     #[error("discovery window must cover 1..={MAX_DISCOVERY_BLOCKS} non-overflowing blocks")]
     InvalidDiscoveryWindow,
@@ -1262,6 +1268,26 @@ pub enum WitnessedLezAssetV2 {
     Native(WitnessedNativeEscrowTerms),
     /// Exact witnessed custom-token owner, ATA, definition, program, and authority terms.
     CustomToken(WitnessedTokenEscrowTermsV2),
+}
+
+impl WitnessedLezAssetV2 {
+    /// Returns existing native terms only for the native variant.
+    #[must_use]
+    pub const fn native(&self) -> Option<&WitnessedNativeEscrowTerms> {
+        match self {
+            Self::Native(terms) => Some(terms),
+            Self::CustomToken(_) => None,
+        }
+    }
+
+    /// Returns custom-token terms only for the custom-token variant.
+    #[must_use]
+    pub const fn custom_token(&self) -> Option<&WitnessedTokenEscrowTermsV2> {
+        match self {
+            Self::Native(_) => None,
+            Self::CustomToken(terms) => Some(terms),
+        }
+    }
 }
 
 #[derive(Deserialize)]
