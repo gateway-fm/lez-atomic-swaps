@@ -61,6 +61,8 @@ fn v02_escrow_guest_generated_client_and_deployment_inputs_exist() {
             "fund_token",
             "claim_token",
             "refund_token",
+            "initialize_token_witnessed",
+            "claim_token_witnessed",
         ]
     );
 
@@ -94,7 +96,34 @@ fn v02_escrow_guest_generated_client_and_deployment_inputs_exist() {
         generated_method(&generated, "create_token_custody", Some("fund_token"))
             .contains(no_signers)
     );
-    assert!(generated_method(&generated, "refund_token", None).contains(no_signers));
+    assert!(
+        generated_method(
+            &generated,
+            "refund_token",
+            Some("initialize_token_witnessed")
+        )
+        .contains(no_signers)
+    );
+    let witnessed_token_initialize = generated_method(
+        &generated,
+        "initialize_token_witnessed",
+        Some("claim_token_witnessed"),
+    );
+    assert!(witnessed_token_initialize.contains(
+        "let signer_ids: Vec<AccountId> = vec![\n            accounts.depositor_owner,\n        ];"
+    ));
+    assert!(
+        witnessed_token_initialize
+            .contains("accounts.token_definition,\n            accounts.aggregate_authority,")
+    );
+    let witnessed_token_claim = generated_method(&generated, "claim_token_witnessed", None);
+    assert!(witnessed_token_claim.contains(
+        "let signer_ids: Vec<AccountId> = vec![\n            accounts.aggregate_authority,\n        ];"
+    ));
+    assert!(
+        witnessed_token_claim
+            .contains("accounts.claimant_asset,\n            accounts.aggregate_authority,")
+    );
     for method in names {
         assert!(
             generated.contains(&format!("pub async fn {method}(")),
@@ -161,11 +190,11 @@ fn v02_escrow_guest_generated_client_and_deployment_inputs_exist() {
     );
     assert_eq!(
         manifest["artifact"]["elf_sha256"].as_str(),
-        Some("a199c5be062adcb27cf63c62d9f5688b37058b4699ce7e1767fd26eeceb5e293")
+        Some("bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7")
     );
     assert_eq!(
         manifest["artifact"]["image_id"].as_str(),
-        Some("39b6a4db85374de9359ea82164ef415019919475f656d597c5ab2231bc104dec")
+        Some("f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e")
     );
     assert_eq!(
         manifest["artifact"]["program_id_words"]
@@ -175,15 +204,31 @@ fn v02_escrow_guest_generated_client_and_deployment_inputs_exist() {
             .map(|word| word.as_integer().expect("ProgramId word"))
             .collect::<Vec<_>>(),
         vec![
-            3_685_004_857,
-            3_914_151_813,
-            564_698_677,
-            1_346_498_404,
-            1_972_670_745,
-            2_547_341_046,
-            824_355_781,
-            3_964_473_532,
+            1_272_113_907,
+            3_457_602_453,
+            3_003_947_153,
+            3_094_354_515,
+            385_689_402,
+            461_173_824,
+            2_924_967_813,
+            1_311_010_034,
         ]
+    );
+    assert_eq!(
+        manifest["interface"]["idl_sha256"].as_str(),
+        Some("994afe1a2fccf285a56070edd520a482d528ef7a85772e12dd7222cf5c80d53f")
+    );
+    assert_eq!(
+        manifest["interface"]["instruction_count"].as_integer(),
+        Some(13)
+    );
+    assert_eq!(
+        manifest["interface"]["initialize_token_witnessed_variant"].as_integer(),
+        Some(11)
+    );
+    assert_eq!(
+        manifest["interface"]["claim_token_witnessed_variant"].as_integer(),
+        Some(12)
     );
     assert!(
         deployment_ready(&manifest).is_err(),

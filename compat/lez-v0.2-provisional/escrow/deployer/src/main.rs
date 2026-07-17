@@ -13,8 +13,10 @@ use anyhow::{Context as _, Result, ensure};
 use clap::{Parser, Subcommand};
 use common::{HashType, transaction::LeeTransaction};
 use hmac::{Hmac, Mac as _};
+use lez_zec_escrow_v02::{Instruction as EscrowInstruction, PROGRAM_IDL_JSON};
 use lez_zec_escrow_v02_methods::{ZEC_ESCROW_V02_ELF, ZEC_ESCROW_V02_ID};
-use nssa::{ProgramDeploymentTransaction, program::Program};
+use nssa::{AccountId, ProgramDeploymentTransaction, program::Program};
+use nssa_core::program::PdaSeed;
 use sequencer_service_rpc::{RpcClient as _, SequencerClient, SequencerClientBuilder};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -29,6 +31,7 @@ const OFFICIAL_CHANNEL_ID: &str =
 const DEPLOYMENT_EVIDENCE_SCHEMA_VERSION: u16 = 1;
 const AUTHENTICATED_EVIDENCE_SCHEMA_VERSION: u16 = 1;
 const PROVISIONED_IDENTITY_SCHEMA_VERSION: u16 = 1;
+const PUBLIC_INSTRUCTION_ASSEMBLY_SCHEMA_VERSION: u16 = 1;
 const MAX_DEPLOYMENT_EVIDENCE_BYTES: usize = 64 * 1024;
 const EVIDENCE_AUTHENTICATION_KEY_BYTES: usize = 32;
 const EVIDENCE_AUTHENTICATION_ALGORITHM: &str = "hmac-sha256-v1";
@@ -78,6 +81,53 @@ struct Arguments {
 enum Command {
     /// Validate the checked artifact and official testnet identities without mutation.
     Inspect,
+    /// Print the artifact-bound public SpEL IDL without RPC access or mutation.
+    Interface,
+    /// Assemble exact public words/accounts for witnessed custom-token initialization.
+    AssembleInitializeTokenWitnessed {
+        #[arg(long)]
+        metadata_account_id: String,
+        #[arg(long)]
+        depositor_owner_account_id: String,
+        #[arg(long)]
+        claimant_owner_account_id: String,
+        #[arg(long)]
+        token_definition_account_id: String,
+        #[arg(long)]
+        aggregate_authority_account_id: String,
+        /// Exactly 32 lowercase or uppercase hex bytes.
+        #[arg(long)]
+        swap_id: String,
+        /// Exactly 32 nonzero hex bytes.
+        #[arg(long)]
+        terms_hash: String,
+        /// Exact aggregate BIP-340 x-only key as 32 hex bytes.
+        #[arg(long)]
+        aggregate_x_only_public_key: String,
+        #[arg(long)]
+        amount: u128,
+        #[arg(long)]
+        refund_at: u64,
+    },
+    /// Assemble exact public words/accounts for a witnessed custom-token claim.
+    AssembleClaimTokenWitnessed {
+        #[arg(long)]
+        metadata_account_id: String,
+        #[arg(long)]
+        custody_account_id: String,
+        #[arg(long)]
+        claimant_owner_account_id: String,
+        #[arg(long)]
+        claimant_asset_account_id: String,
+        /// Definition is validation-only and is not an instruction account.
+        #[arg(long)]
+        token_definition_account_id: String,
+        #[arg(long)]
+        aggregate_authority_account_id: String,
+        /// Exactly 32 lowercase or uppercase hex bytes.
+        #[arg(long)]
+        swap_id: String,
+    },
     /// Submit the checked deployment exactly once and observe canonical inclusion.
     Deploy {
         /// Maximum wall time for observation after the one submission attempt.
@@ -118,6 +168,7 @@ struct DeploymentManifest {
     artifact_status: String,
     target: Target,
     artifact: Artifact,
+    interface: InterfaceArtifact,
 }
 
 #[derive(Debug, Deserialize)]
@@ -135,6 +186,72 @@ struct Artifact {
     elf_sha256: String,
     image_id: String,
     program_id_words: [u32; 8],
+}
+
+#[derive(Debug, Deserialize)]
+struct InterfaceArtifact {
+    idl_sha256: String,
+    instruction_count: usize,
+    initialize_token_witnessed_variant: u32,
+    claim_token_witnessed_variant: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PublicInterfaceSummary {
+    idl_sha256: String,
+    instruction_count: usize,
+    initialize_token_witnessed_variant: u32,
+    claim_token_witnessed_variant: u32,
+}
+
+#[derive(Clone, Debug)]
+struct InitializeTokenWitnessedAssembly {
+    metadata: AccountId,
+    depositor_owner: AccountId,
+    claimant_owner: AccountId,
+    token_definition: AccountId,
+    aggregate_authority: AccountId,
+    swap_id: [u8; 32],
+    terms_hash: [u8; 32],
+    aggregate_x_only_public_key: [u8; 32],
+    amount: u128,
+    refund_at: u64,
+}
+
+#[derive(Clone, Debug)]
+struct ClaimTokenWitnessedAssembly {
+    metadata: AccountId,
+    custody: AccountId,
+    claimant_owner: AccountId,
+    claimant_asset: AccountId,
+    token_definition: AccountId,
+    aggregate_authority: AccountId,
+    swap_id: [u8; 32],
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PublicInstructionAccount {
+    name: String,
+    account_id: String,
+    writable: bool,
+    signer: bool,
+    init: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PublicInstructionAssembly {
+    schema_version: u16,
+    program_id_words: [u32; 8],
+    program_id_hex: String,
+    elf_sha256: String,
+    image_id: String,
+    idl_sha256: String,
+    instruction_name: String,
+    variant_index: u32,
+    accounts: Vec<PublicInstructionAccount>,
+    instruction_data_words: Vec<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -221,6 +338,89 @@ async fn main() -> Result<()> {
             let (_, preflight) = preflight(&manifest).await?;
             println!("{}", serde_json::to_string_pretty(&preflight)?);
         }
+        Command::Interface => {
+            checked_public_interface(&manifest)?;
+            println!("{PROGRAM_IDL_JSON}");
+        }
+        Command::AssembleInitializeTokenWitnessed {
+            metadata_account_id,
+            depositor_owner_account_id,
+            claimant_owner_account_id,
+            token_definition_account_id,
+            aggregate_authority_account_id,
+            swap_id,
+            terms_hash,
+            aggregate_x_only_public_key,
+            amount,
+            refund_at,
+        } => {
+            let assembly = assemble_initialize_token_witnessed(
+                &manifest,
+                InitializeTokenWitnessedAssembly {
+                    metadata: parse_account_id(&metadata_account_id, "metadata account ID")?,
+                    depositor_owner: parse_account_id(
+                        &depositor_owner_account_id,
+                        "depositor owner account ID",
+                    )?,
+                    claimant_owner: parse_account_id(
+                        &claimant_owner_account_id,
+                        "claimant owner account ID",
+                    )?,
+                    token_definition: parse_account_id(
+                        &token_definition_account_id,
+                        "token definition account ID",
+                    )?,
+                    aggregate_authority: parse_account_id(
+                        &aggregate_authority_account_id,
+                        "aggregate authority account ID",
+                    )?,
+                    swap_id: parse_hex_32(&swap_id, "swap ID")?,
+                    terms_hash: parse_hex_32(&terms_hash, "terms hash")?,
+                    aggregate_x_only_public_key: parse_hex_32(
+                        &aggregate_x_only_public_key,
+                        "aggregate x-only public key",
+                    )?,
+                    amount,
+                    refund_at,
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&assembly)?);
+        }
+        Command::AssembleClaimTokenWitnessed {
+            metadata_account_id,
+            custody_account_id,
+            claimant_owner_account_id,
+            claimant_asset_account_id,
+            token_definition_account_id,
+            aggregate_authority_account_id,
+            swap_id,
+        } => {
+            let assembly = assemble_claim_token_witnessed(
+                &manifest,
+                ClaimTokenWitnessedAssembly {
+                    metadata: parse_account_id(&metadata_account_id, "metadata account ID")?,
+                    custody: parse_account_id(&custody_account_id, "custody account ID")?,
+                    claimant_owner: parse_account_id(
+                        &claimant_owner_account_id,
+                        "claimant owner account ID",
+                    )?,
+                    claimant_asset: parse_account_id(
+                        &claimant_asset_account_id,
+                        "claimant asset account ID",
+                    )?,
+                    token_definition: parse_account_id(
+                        &token_definition_account_id,
+                        "token definition account ID",
+                    )?,
+                    aggregate_authority: parse_account_id(
+                        &aggregate_authority_account_id,
+                        "aggregate authority account ID",
+                    )?,
+                    swap_id: parse_hex_32(&swap_id, "swap ID")?,
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&assembly)?);
+        }
         Command::Deploy {
             timeout_seconds,
             evidence_authentication_key_file,
@@ -272,6 +472,274 @@ fn checked_artifact() -> Result<(String, String)> {
     let elf_sha256 = hex::encode(Sha256::digest(ZEC_ESCROW_V02_ELF));
     let image_id = risc0_zkvm::Digest::from(program.id()).to_string();
     Ok((elf_sha256, image_id))
+}
+
+fn parse_account_id(value: &str, name: &str) -> Result<AccountId> {
+    value
+        .parse()
+        .with_context(|| format!("parse canonical base58 {name}"))
+}
+
+fn parse_hex_32(value: &str, name: &str) -> Result<[u8; 32]> {
+    let mut bytes = [0_u8; 32];
+    hex::decode_to_slice(value, &mut bytes)
+        .with_context(|| format!("{name} must be exactly 32 hex bytes"))?;
+    Ok(bytes)
+}
+
+fn generated_public_interface(manifest: &DeploymentManifest) -> Result<PublicInterfaceSummary> {
+    let idl: serde_json::Value =
+        serde_json::from_str(PROGRAM_IDL_JSON).context("parse generated public SpEL IDL")?;
+    let instructions = idl
+        .get("instructions")
+        .and_then(serde_json::Value::as_array)
+        .context("generated public SpEL IDL omitted instructions")?;
+    let expected_names = [
+        "initialize_native",
+        "initialize_native_witnessed",
+        "fund_native",
+        "claim_native",
+        "claim_native_witnessed",
+        "refund_native",
+        "initialize_token",
+        "create_token_custody",
+        "fund_token",
+        "claim_token",
+        "refund_token",
+        "initialize_token_witnessed",
+        "claim_token_witnessed",
+    ];
+    ensure!(
+        instructions.len() == expected_names.len()
+            && instructions
+                .iter()
+                .zip(expected_names)
+                .all(|(instruction, expected)| {
+                    instruction.get("name").and_then(serde_json::Value::as_str) == Some(expected)
+                }),
+        "generated public SpEL IDL changed existing tags or witnessed-token append order"
+    );
+    let idl_sha256 = hex::encode(Sha256::digest(PROGRAM_IDL_JSON.as_bytes()));
+    validate_nonzero_lower_hex(&idl_sha256, "public IDL SHA-256")?;
+    ensure!(
+        manifest.interface.idl_sha256 == idl_sha256,
+        "immutable manifest public IDL SHA-256 differs from generated interface: generated {idl_sha256}"
+    );
+    ensure!(
+        manifest.interface.instruction_count == instructions.len()
+            && manifest.interface.initialize_token_witnessed_variant == 11
+            && manifest.interface.claim_token_witnessed_variant == 12,
+        "immutable manifest public instruction tags differ from generated append-only interface"
+    );
+    Ok(PublicInterfaceSummary {
+        idl_sha256,
+        instruction_count: instructions.len(),
+        initialize_token_witnessed_variant: 11,
+        claim_token_witnessed_variant: 12,
+    })
+}
+
+fn checked_public_interface(manifest: &DeploymentManifest) -> Result<PublicInterfaceSummary> {
+    validate_immutable_target(manifest)?;
+    generated_public_interface(manifest)
+}
+
+fn public_interface_instruction<'a>(
+    idl: &'a serde_json::Value,
+    name: &str,
+) -> Result<(u32, &'a serde_json::Value)> {
+    let instructions = idl
+        .get("instructions")
+        .and_then(serde_json::Value::as_array)
+        .context("generated public SpEL IDL omitted instructions")?;
+    let (variant, instruction) = instructions
+        .iter()
+        .enumerate()
+        .find(|(_, instruction)| {
+            instruction.get("name").and_then(serde_json::Value::as_str) == Some(name)
+        })
+        .with_context(|| format!("generated public SpEL IDL omitted {name}"))?;
+    Ok((
+        u32::try_from(variant).context("public instruction variant exceeds u32")?,
+        instruction,
+    ))
+}
+
+fn assemble_checked_public_instruction<T: Serialize>(
+    manifest: &DeploymentManifest,
+    instruction_name: &str,
+    accounts: &[(&str, AccountId)],
+    instruction: T,
+) -> Result<PublicInstructionAssembly> {
+    let (elf_sha256, image_id) = validate_immutable_target(manifest)?;
+    let interface = generated_public_interface(manifest)?;
+    let idl: serde_json::Value =
+        serde_json::from_str(PROGRAM_IDL_JSON).context("parse generated public SpEL IDL")?;
+    let (variant_index, idl_instruction) = public_interface_instruction(&idl, instruction_name)?;
+    let idl_accounts = idl_instruction
+        .get("accounts")
+        .and_then(serde_json::Value::as_array)
+        .context("public IDL instruction omitted accounts")?;
+    ensure!(
+        idl_accounts.len() == accounts.len(),
+        "public instruction account count differs from exact IDL"
+    );
+
+    let mut prepared_accounts = Vec::with_capacity(accounts.len());
+    for (index, ((provided_name, account_id), idl_account)) in
+        accounts.iter().zip(idl_accounts).enumerate()
+    {
+        let expected_name = idl_account
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .context("public IDL account omitted its name")?;
+        ensure!(
+            *provided_name == expected_name,
+            "public instruction account {index} must be {expected_name}, got {provided_name}"
+        );
+        prepared_accounts.push(PublicInstructionAccount {
+            name: expected_name.to_owned(),
+            account_id: account_id.to_string(),
+            writable: idl_account
+                .get("writable")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            signer: idl_account
+                .get("signer")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            init: idl_account
+                .get("init")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        });
+    }
+
+    let instruction_data_words = Program::serialize_instruction(instruction)
+        .context("serialize public instruction with the official Risc0 codec")?;
+    let actual_variant = instruction_data_words
+        .first()
+        .copied()
+        .context("serialized public instruction is empty")?;
+    ensure!(
+        actual_variant == variant_index,
+        "serialized public instruction variant {actual_variant} differs from IDL tag {variant_index}"
+    );
+    Ok(PublicInstructionAssembly {
+        schema_version: PUBLIC_INSTRUCTION_ASSEMBLY_SCHEMA_VERSION,
+        program_id_words: ZEC_ESCROW_V02_ID,
+        program_id_hex: program_id_hex(ZEC_ESCROW_V02_ID),
+        elf_sha256,
+        image_id,
+        idl_sha256: interface.idl_sha256,
+        instruction_name: instruction_name.to_owned(),
+        variant_index,
+        accounts: prepared_accounts,
+        instruction_data_words,
+    })
+}
+
+fn metadata_account_id(swap_id: [u8; 32]) -> AccountId {
+    AccountId::for_public_pda(&ZEC_ESCROW_V02_ID, &PdaSeed::new(swap_id))
+}
+
+fn associated_token_account(
+    ata_program: [u32; 8],
+    owner: AccountId,
+    definition: AccountId,
+) -> AccountId {
+    ata_core::get_associated_token_account_id(
+        &ata_program,
+        &ata_core::compute_ata_seed(owner, definition),
+    )
+}
+
+fn assemble_initialize_token_witnessed(
+    manifest: &DeploymentManifest,
+    request: InitializeTokenWitnessedAssembly,
+) -> Result<PublicInstructionAssembly> {
+    ensure!(
+        request.metadata == metadata_account_id(request.swap_id),
+        "metadata account is not the exact public swap PDA"
+    );
+    ensure!(
+        request.terms_hash != [0; 32]
+            && request.aggregate_x_only_public_key != [0; 32]
+            && request.amount > 0
+            && request.refund_at > 0,
+        "witnessed-token initialize terms must be nonzero"
+    );
+    ensure!(
+        request.aggregate_authority != request.claimant_owner,
+        "aggregate authority must remain separate from the fixed claimant"
+    );
+    let accounts = [
+        ("metadata", request.metadata),
+        ("depositor_owner", request.depositor_owner),
+        ("claimant_owner", request.claimant_owner),
+        ("token_definition", request.token_definition),
+        ("aggregate_authority", request.aggregate_authority),
+    ];
+    assemble_checked_public_instruction(
+        manifest,
+        "initialize_token_witnessed",
+        &accounts,
+        EscrowInstruction::InitializeTokenWitnessed {
+            swap_id: request.swap_id,
+            terms_hash: request.terms_hash,
+            aggregate_x_only_public_key: request.aggregate_x_only_public_key,
+            amount: request.amount,
+            refund_at: request.refund_at,
+            ata_program: manifest.target.associated_token_account_program_id,
+        },
+    )
+}
+
+fn assemble_claim_token_witnessed(
+    manifest: &DeploymentManifest,
+    request: ClaimTokenWitnessedAssembly,
+) -> Result<PublicInstructionAssembly> {
+    ensure!(
+        request.metadata == metadata_account_id(request.swap_id),
+        "metadata account is not the exact public swap PDA"
+    );
+    ensure!(
+        request.custody
+            == associated_token_account(
+                manifest.target.associated_token_account_program_id,
+                request.metadata,
+                request.token_definition,
+            ),
+        "custody is not the exact metadata-owned ATA for the token definition"
+    );
+    ensure!(
+        request.claimant_asset
+            == associated_token_account(
+                manifest.target.associated_token_account_program_id,
+                request.claimant_owner,
+                request.token_definition,
+            ),
+        "claimant asset is not the exact fixed claimant ATA for the token definition"
+    );
+    ensure!(
+        request.aggregate_authority != request.claimant_owner,
+        "aggregate authority must remain separate from the fixed claimant"
+    );
+    let accounts = [
+        ("metadata", request.metadata),
+        ("custody", request.custody),
+        ("claimant_owner", request.claimant_owner),
+        ("claimant_asset", request.claimant_asset),
+        ("aggregate_authority", request.aggregate_authority),
+    ];
+    assemble_checked_public_instruction(
+        manifest,
+        "claim_token_witnessed",
+        &accounts,
+        EscrowInstruction::ClaimTokenWitnessed {
+            swap_id: request.swap_id,
+        },
+    )
 }
 
 async fn preflight(manifest: &DeploymentManifest) -> Result<(SequencerClient, PreflightEvidence)> {
@@ -336,6 +804,7 @@ fn validate_immutable_target(manifest: &DeploymentManifest) -> Result<(String, S
         manifest.artifact.program_id_words == ZEC_ESCROW_V02_ID,
         "immutable manifest ProgramId words differ from the checked guest"
     );
+    generated_public_interface(manifest)?;
     Ok((elf_sha256, image_id))
 }
 

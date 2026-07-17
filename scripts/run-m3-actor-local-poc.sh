@@ -629,8 +629,8 @@ verify_lez_bootstrap_contract() {
     .schema_version == 1
     and .kind == "m3_lez_bootstrap_contract"
     and .verified_artifact_target_required == true
-    and .embedded_guest_sha256 == "a199c5be062adcb27cf63c62d9f5688b37058b4699ce7e1767fd26eeceb5e293"
-    and .escrow_program_id == "39b6a4db85374de9359ea82164ef415019919475f656d597c5ab2231bc104dec"
+    and .embedded_guest_sha256 == "bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7"
+    and .escrow_program_id == "f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e"
     and .deployment_submission_count == 1
     and .fresh_identity_vault_claims == ["maker", "taker"]
     and .vault_claim_submission_count_per_role == 1

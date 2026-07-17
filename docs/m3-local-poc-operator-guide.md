@@ -561,9 +561,18 @@ export DEPLOYER="$LEZ_V02_ARTIFACT_TARGET_DIR/debug/lez-zec-escrow-v02-deployer"
 ~~~
 
 Require ELF SHA-256
-a199c5be062adcb27cf63c62d9f5688b37058b4699ce7e1767fd26eeceb5e293
+bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7
 and ImageID/ProgramId
-39b6a4db85374de9359ea82164ef415019919475f656d597c5ab2231bc104dec.
+f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e.
+Require generated public IDL SHA-256
+994afe1a2fccf285a56070edd520a482d528ef7a85772e12dd7222cf5c80d53f,
+13 instructions, and the append-only witnessed-token tags 11 and 12:
+
+~~~sh
+"$DEPLOYER" interface |
+  jq -e '.instructions | length == 13 and .[11].name == "initialize_token_witnessed" and .[12].name == "claim_token_witnessed"' >/dev/null
+~~~
+
 The verifier must finish all guest, methods, deployer, Clippy, rustdoc, source,
 feature, license, and advisory-policy checks.
 
@@ -574,7 +583,7 @@ install -d -m 0700 "$PRIVATE_ROOT/deployment"
 "$DEPLOYER" deploy-local --rpc-url "$SEQUENCER_URL" --channel-id "$LEZ_CHAIN_ID" --timeout-seconds 300 >"$PRIVATE_ROOT/deployment/deployment.json"
 chmod 0600 "$PRIVATE_ROOT/deployment/deployment.json"
 export ESCROW_PROGRAM_ID="$(jq -er '.preflight.image_id' "$PRIVATE_ROOT/deployment/deployment.json")"
-jq -e --arg expected 39b6a4db85374de9359ea82164ef415019919475f656d597c5ab2231bc104dec '.preflight.image_id == $expected and .transaction_hash != null and .inclusion_block_id > 0 and .inclusion_block_hash != null' "$PRIVATE_ROOT/deployment/deployment.json" >/dev/null
+jq -e --arg expected f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e '.preflight.image_id == $expected and .transaction_hash != null and .inclusion_block_id > 0 and .inclusion_block_hash != null' "$PRIVATE_ROOT/deployment/deployment.json" >/dev/null
 ~~~
 
 deploy-local performs one submission attempt. If it times out or returns an

@@ -6,8 +6,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export LC_ALL=C
 umask 077
 
-readonly expected_guest_sha256="a199c5be062adcb27cf63c62d9f5688b37058b4699ce7e1767fd26eeceb5e293"
-readonly expected_program_id="39b6a4db85374de9359ea82164ef415019919475f656d597c5ab2231bc104dec"
+readonly expected_guest_sha256="bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7"
+readonly expected_program_id="f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e"
 readonly auth_transfer_program_id="dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71"
 
 fail() {

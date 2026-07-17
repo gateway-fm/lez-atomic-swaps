@@ -387,6 +387,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4858a9d740c5007a9069007c3b4e91152d0506f13c1b31dd49051fd537656156"
 
 [[package]]
+name = "associated_token_account_core"
+version = "0.1.0"
+source = "git+https://github.com/logos-blockchain/logos-execution-zone.git?tag=v0.2.0#a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
+dependencies = [
+ "lee_core",
+ "risc0-zkvm",
+ "serde",
+]
+
+[[package]]
 name = "astro-float"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3082,16 +3092,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "lez-zec-escrow-v02"
+version = "0.0.0"
+dependencies = [
+ "associated_token_account_core",
+ "authenticated_transfer_core",
+ "borsh",
+ "lee_core",
+ "serde",
+ "sha2",
+ "spel-framework",
+ "token_core",
+]
+
+[[package]]
 name = "lez-zec-escrow-v02-deployer"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "associated_token_account_core",
  "clap",
  "common",
  "hex",
  "hmac",
  "jsonrpsee",
  "lee",
+ "lee_core",
+ "lez-zec-escrow-v02",
  "lez-zec-escrow-v02-methods",
  "risc0-zkvm",
  "sequencer_service_protocol",
@@ -6513,6 +6540,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "spel-framework"
+version = "0.5.0"
+source = "git+https://github.com/logos-co/spel.git?rev=df17acd98436be4f09c55877dae1fe2e73cbcdca#df17acd98436be4f09c55877dae1fe2e73cbcdca"
+dependencies = [
+ "borsh",
+ "lee_core",
+ "serde_json",
+ "spel-framework-core",
+ "spel-framework-macros",
+]
+
+[[package]]
+name = "spel-framework-core"
+version = "0.5.0"
+source = "git+https://github.com/logos-co/spel.git?rev=df17acd98436be4f09c55877dae1fe2e73cbcdca#df17acd98436be4f09c55877dae1fe2e73cbcdca"
+dependencies = [
+ "base58",
+ "borsh",
+ "lee_core",
+ "proc-macro2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syn 2.0.118",
+ "thiserror 1.0.69",
+ "toml",
+]
+
+[[package]]
+name = "spel-framework-macros"
+version = "0.5.0"
+source = "git+https://github.com/logos-co/spel.git?rev=df17acd98436be4f09c55877dae1fe2e73cbcdca#df17acd98436be4f09c55877dae1fe2e73cbcdca"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "sha2",
+ "spel-framework-core",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "spin"
 version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6845,6 +6914,16 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
+name = "token_core"
+version = "0.1.0"
+source = "git+https://github.com/logos-blockchain/logos-execution-zone.git?tag=v0.2.0#a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
+dependencies = [
+ "borsh",
+ "lee_core",
+ "serde",
+]
 
 [[package]]
 name = "tokio"

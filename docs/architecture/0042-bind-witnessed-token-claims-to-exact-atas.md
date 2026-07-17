@@ -2,8 +2,9 @@
 
 Status: Accepted at the checked-guest component boundary. Pushed commit
 `66d5e26cd35c6282c0cd420533f70e6ea3e506c9` adds the implementation and
-focused evidence. The new guest identity is not yet the deployment identity
-trusted by the composed M3 runner.
+focused evidence. The checked manifest, public IDL, deployer assembly, verifier,
+and active M3 runner pins now share the new guest identity. Sidecar/SDK
+composition and actual-node custom-token evidence remain open.
 
 ## Context
 
@@ -169,11 +170,23 @@ Commit `66d5e26` retains these exact component facts:
 
 ## Consequences and remaining integration
 
-The checked deployment manifest intentionally retains the previous guest
-identity. The IDL, generated/deployment client, exact deployer, witnessed
-sidecar, public BTC SDK, actor configuration, and actual-node runner do not yet
-consume tags 11 and 12 or the new ELF/ImageID. The full verifier must fail if
-old and new identities are mixed.
+The checked manifest now binds the new ELF/ImageID, generated public IDL
+SHA-256, 13 exact append-only instruction names, and witnessed-token tags 11
+and 12. A local-only deployer command emits that artifact-bound IDL, and typed
+initialize/claim assemblers rederive the metadata PDA and custody/claimant ATAs,
+preserve exact IDL account order and signer flags, and serialize through the
+official Risc0 codec without RPC access. The full verifier, CI pin assertions,
+active M3 bootstrap/runner, and operator guide use the same identity. This is
+configuration and deterministic assembly evidence, not an actual deployment or
+chain effect. The deployer graph's advisory, duplicate, license, and source
+policy also passes with exact SPEL source and hash-checked license
+clarifications rather than a broad source or license exception.
+
+An additive `asset_terms_version: 2` bridge-protocol envelope also preserves
+all v1 native JSON and method strings while binding strict native or
+custom-token terms. Distinct v2 RPC messages, ordered token effects and
+observations, client/sidecar/adapter/SDK composition, and role-owned actual-node
+execution still remain.
 
 This ADR does not certify an actual-node custom-token swap in either trade
 direction, exact composed balances/effects, restart/no-resubmission, public

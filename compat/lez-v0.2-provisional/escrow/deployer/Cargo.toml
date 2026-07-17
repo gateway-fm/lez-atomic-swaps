@@ -10,12 +10,15 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 anyhow = "=1.0.103"
+ata_core = { package = "associated_token_account_core", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
 clap = { version = "=4.6.1", features = ["derive"] }
 common = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
 hex = "=0.4.3"
 hmac = "=0.12.1"
+lez-zec-escrow-v02 = { version = "=0.0.0", path = ".." }
 lez-zec-escrow-v02-methods = { version = "=0.0.0", path = "../methods" }
 nssa = { package = "lee", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+nssa_core = { package = "lee_core", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["host"] }
 risc0-zkvm = { version = "=3.0.5", features = ["std"] }
 sequencer_service_rpc = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["client"] }
 serde = { version = "=1.0.228", features = ["derive"] }

@@ -29,6 +29,31 @@ exceptions = [
     { crate = "webpki-roots@1.0.8", allow = ["CDLA-Permissive-2.0"] },
 ]
 
+# SPEL carries both files at the exact PR head but omits Cargo license fields.
+[[licenses.clarify]]
+crate = "spel-framework@0.5.0"
+expression = "MIT OR Apache-2.0"
+license-files = [
+    { path = "../LICENSE-MIT", hash = 0x6193b12d },
+    { path = "../LICENSE-APACHE-v2", hash = 0x0b75c107 },
+]
+
+[[licenses.clarify]]
+crate = "spel-framework-core@0.5.0"
+expression = "MIT OR Apache-2.0"
+license-files = [
+    { path = "../LICENSE-MIT", hash = 0x6193b12d },
+    { path = "../LICENSE-APACHE-v2", hash = 0x0b75c107 },
+]
+
+[[licenses.clarify]]
+crate = "spel-framework-macros@0.5.0"
+expression = "MIT OR Apache-2.0"
+license-files = [
+    { path = "../LICENSE-MIT", hash = 0x6193b12d },
+    { path = "../LICENSE-APACHE-v2", hash = 0x0b75c107 },
+]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
@@ -44,5 +69,6 @@ allow-git = [
     "https://github.com/logos-blockchain/logos-blockchain.git",
     "https://github.com/logos-blockchain/logos-execution-zone.git",
     "https://github.com/logos-co/Overwatch",
+    "https://github.com/logos-co/spel.git",
     "https://github.com/arkworks-rs/spongefish.git",
 ]

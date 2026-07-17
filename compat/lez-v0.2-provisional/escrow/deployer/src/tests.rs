@@ -296,7 +296,7 @@ async fn checked_preflight(
 
 #[tokio::test]
 async fn any_local_preflight_identity_mutation_causes_zero_rpc_effects() {
-    for mutation in 0..10 {
+    for mutation in 0..14 {
         let (mock, client, handle) = start_mock(SubmitMode::Pending).await;
         let mut manifest = checked_manifest();
         match mutation {
@@ -313,6 +313,10 @@ async fn any_local_preflight_identity_mutation_causes_zero_rpc_effects() {
             7 => manifest.artifact.elf_sha256.replace_range(0..2, "ff"),
             8 => manifest.artifact.image_id.replace_range(0..2, "ff"),
             9 => manifest.artifact.program_id_words[0] ^= 1,
+            10 => manifest.interface.idl_sha256.replace_range(0..2, "ff"),
+            11 => manifest.interface.instruction_count -= 1,
+            12 => manifest.interface.initialize_token_witnessed_variant -= 1,
+            13 => manifest.interface.claim_token_witnessed_variant -= 1,
             _ => unreachable!(),
         }
 
@@ -651,4 +655,258 @@ fn checked_elf_image_id_and_manifest_program_words_are_one_identity() {
         manifest.target.associated_token_account_identity_source,
         OFFICIAL_ASSOCIATED_TOKEN_ACCOUNT_IDENTITY_SOURCE
     );
+}
+
+#[test]
+fn f7_public_idl_and_artifact_identity_are_exact_and_append_only() {
+    let manifest = checked_manifest();
+    validate_immutable_target(&manifest).expect("checked F7 artifact and interface identity");
+    let interface = checked_public_interface(&manifest).expect("checked public SpEL IDL");
+
+    assert_eq!(
+        manifest.artifact.elf_sha256,
+        "bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7"
+    );
+    assert_eq!(
+        manifest.artifact.image_id,
+        "f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e"
+    );
+    assert_eq!(
+        manifest.artifact.program_id_words,
+        [
+            1_272_113_907,
+            3_457_602_453,
+            3_003_947_153,
+            3_094_354_515,
+            385_689_402,
+            461_173_824,
+            2_924_967_813,
+            1_311_010_034,
+        ]
+    );
+    assert_eq!(interface.instruction_count, 13);
+    assert_eq!(interface.initialize_token_witnessed_variant, 11);
+    assert_eq!(interface.claim_token_witnessed_variant, 12);
+}
+
+#[test]
+fn witnessed_token_public_assemblies_match_idl_account_order_and_risc0_wire() {
+    let manifest = checked_manifest();
+    let depositor = AccountId::new([2; 32]);
+    let claimant = AccountId::new([3; 32]);
+    let definition = AccountId::new([4; 32]);
+    let authority = AccountId::new([5; 32]);
+    let swap_id = [8; 32];
+    let metadata = metadata_account_id(swap_id);
+    let custody = associated_token_account(
+        OFFICIAL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+        metadata,
+        definition,
+    );
+    let claimant_asset = associated_token_account(
+        OFFICIAL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+        claimant,
+        definition,
+    );
+
+    let initialize = assemble_initialize_token_witnessed(
+        &manifest,
+        InitializeTokenWitnessedAssembly {
+            metadata,
+            depositor_owner: depositor,
+            claimant_owner: claimant,
+            token_definition: definition,
+            aggregate_authority: authority,
+            swap_id,
+            terms_hash: [9; 32],
+            aggregate_x_only_public_key: [10; 32],
+            amount: 75,
+            refund_at: 10_000,
+        },
+    )
+    .expect("exact witnessed-token initialize assembly");
+    assert_eq!(initialize.instruction_name, "initialize_token_witnessed");
+    assert_eq!(initialize.variant_index, 11);
+    assert_eq!(
+        initialize
+            .accounts
+            .iter()
+            .map(|account| account.name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "metadata",
+            "depositor_owner",
+            "claimant_owner",
+            "token_definition",
+            "aggregate_authority",
+        ]
+    );
+    assert_eq!(
+        initialize
+            .accounts
+            .iter()
+            .filter(|account| account.signer)
+            .map(|account| account.name.as_str())
+            .collect::<Vec<_>>(),
+        ["depositor_owner"]
+    );
+    assert_eq!(
+        initialize.instruction_data_words,
+        Program::serialize_instruction(lez_zec_escrow_v02::Instruction::InitializeTokenWitnessed {
+            swap_id,
+            terms_hash: [9; 32],
+            aggregate_x_only_public_key: [10; 32],
+            amount: 75,
+            refund_at: 10_000,
+            ata_program: OFFICIAL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+        })
+        .expect("official Risc0 serializer")
+    );
+
+    let claim = assemble_claim_token_witnessed(
+        &manifest,
+        ClaimTokenWitnessedAssembly {
+            metadata,
+            custody,
+            claimant_owner: claimant,
+            claimant_asset,
+            token_definition: definition,
+            aggregate_authority: authority,
+            swap_id,
+        },
+    )
+    .expect("exact witnessed-token claim assembly");
+    assert_eq!(claim.instruction_name, "claim_token_witnessed");
+    assert_eq!(claim.variant_index, 12);
+    assert_eq!(
+        claim
+            .accounts
+            .iter()
+            .map(|account| account.name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "metadata",
+            "custody",
+            "claimant_owner",
+            "claimant_asset",
+            "aggregate_authority",
+        ]
+    );
+    assert_eq!(
+        claim
+            .accounts
+            .iter()
+            .filter(|account| account.signer)
+            .map(|account| account.name.as_str())
+            .collect::<Vec<_>>(),
+        ["aggregate_authority"]
+    );
+}
+
+#[test]
+fn public_assembly_rejects_wrong_account_order_and_wire_variant() {
+    let manifest = checked_manifest();
+    let accounts = [
+        ("metadata", AccountId::new([1; 32])),
+        ("depositor_owner", AccountId::new([2; 32])),
+        ("claimant_owner", AccountId::new([3; 32])),
+        ("token_definition", AccountId::new([4; 32])),
+        ("aggregate_authority", AccountId::new([5; 32])),
+    ];
+    let instruction = lez_zec_escrow_v02::Instruction::InitializeTokenWitnessed {
+        swap_id: [8; 32],
+        terms_hash: [9; 32],
+        aggregate_x_only_public_key: [10; 32],
+        amount: 75,
+        refund_at: 10_000,
+        ata_program: OFFICIAL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+    };
+
+    let mut swapped = accounts;
+    swapped.swap(1, 2);
+    assert!(
+        assemble_checked_public_instruction(
+            &manifest,
+            "initialize_token_witnessed",
+            &swapped,
+            instruction.clone(),
+        )
+        .is_err(),
+        "IDL account order is part of the public transaction contract"
+    );
+    assert!(
+        assemble_checked_public_instruction(
+            &manifest,
+            "initialize_token_witnessed",
+            &accounts[..4],
+            instruction,
+        )
+        .is_err(),
+        "missing aggregate authority must fail before transaction assembly"
+    );
+    assert!(
+        assemble_checked_public_instruction(
+            &manifest,
+            "initialize_token_witnessed",
+            &accounts,
+            lez_zec_escrow_v02::Instruction::ClaimTokenWitnessed { swap_id: [8; 32] },
+        )
+        .is_err(),
+        "a different serialized variant must not be labeled as initialize"
+    );
+}
+
+#[test]
+fn typed_witnessed_token_assembly_rejects_wrong_pda_atas_and_authority_role() {
+    let manifest = checked_manifest();
+    let swap_id = [8; 32];
+    let metadata = metadata_account_id(swap_id);
+    let claimant = AccountId::new([3; 32]);
+    let definition = AccountId::new([4; 32]);
+    let authority = AccountId::new([5; 32]);
+    let custody = associated_token_account(
+        OFFICIAL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+        metadata,
+        definition,
+    );
+    let claimant_asset = associated_token_account(
+        OFFICIAL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+        claimant,
+        definition,
+    );
+    let initialize = InitializeTokenWitnessedAssembly {
+        metadata,
+        depositor_owner: AccountId::new([2; 32]),
+        claimant_owner: claimant,
+        token_definition: definition,
+        aggregate_authority: authority,
+        swap_id,
+        terms_hash: [9; 32],
+        aggregate_x_only_public_key: [10; 32],
+        amount: 75,
+        refund_at: 10_000,
+    };
+    let claim = ClaimTokenWitnessedAssembly {
+        metadata,
+        custody,
+        claimant_owner: claimant,
+        claimant_asset,
+        token_definition: definition,
+        aggregate_authority: authority,
+        swap_id,
+    };
+
+    let mut wrong_metadata = initialize.clone();
+    wrong_metadata.metadata = AccountId::new([99; 32]);
+    assert!(assemble_initialize_token_witnessed(&manifest, wrong_metadata).is_err());
+    let mut claimant_as_authority = initialize;
+    claimant_as_authority.aggregate_authority = claimant;
+    assert!(assemble_initialize_token_witnessed(&manifest, claimant_as_authority).is_err());
+
+    let mut wrong_custody = claim.clone();
+    wrong_custody.custody = AccountId::new([98; 32]);
+    assert!(assemble_claim_token_witnessed(&manifest, wrong_custody).is_err());
+    let mut wrong_claimant_ata = claim;
+    wrong_claimant_ata.claimant_asset = AccountId::new([97; 32]);
+    assert!(assemble_claim_token_witnessed(&manifest, wrong_claimant_ata).is_err());
 }

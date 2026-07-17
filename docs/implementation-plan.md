@@ -1661,9 +1661,20 @@ Active M3 refund critical path:
   are GREEN. Official ATA/key derivation remains a sidecar duty, and distinct
   v2 request/results plus ordered token effects and observation facts are the
   next wire slice;
-  The checked deployment manifest intentionally remains on the old identity
-  until the IDL, deployer, sidecar, SDK, and actual-node path consume the new
-  instructions; the full verifier must fail rather than silently mix them;
+  The checked deployment manifest, full verifier, active M3 bootstrap/runner,
+  CI pin assertions, and operator guide now consume that exact new ELF/ImageID.
+  The generated public IDL is bound by SHA-256
+  `994afe1a2fccf285a56070edd520a482d528ef7a85772e12dd7222cf5c80d53f`,
+  13 exact append-only instruction names, and tags 11/12. The local-only
+  deployer interface and typed initialize/claim assemblers perform zero RPC,
+  rederive the metadata PDA plus custody/claimant ATAs, preserve exact IDL
+  account order/signer flags, serialize through the official Risc0 codec, and
+  bind every output to the checked artifact and IDL. Sixteen deployer tests,
+  dependency policy, and the graph-local advisory, ban, license, and source
+  audit pass alongside Clippy, rustdoc, formatting, and artifact checks.
+  Distinct v2 RPC request/results, ordered token effects/observations,
+  client/sidecar/adapter/SDK composition, and two-direction actual-node token
+  evidence remain open;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
   not recordings and cannot satisfy D1. The repository now supplies a
