@@ -28,6 +28,10 @@ use crate::{
 /// Domain separator for canonical version-1 LEZ/BTC agreement commitments.
 pub const BTC_AGREEMENT_V1_DOMAIN: &[u8] = b"logos.gateway.lez-btc.agreement.v1\0";
 
+/// Domain separator for deterministic claim-session identities derived from a
+/// countersigned agreement.
+const BTC_CLAIM_SESSION_V1_DOMAIN: &[u8] = b"logos.gateway.lez-btc.claim-session.v1\0";
+
 /// Only accepted wire schema.
 pub const BTC_AGREEMENT_SCHEMA_V1: u16 = 1;
 
@@ -1048,6 +1052,30 @@ impl BtcAgreementV1 {
                 session_id,
             ),
         }
+    }
+
+    /// Reconstructs the canonical lifecycle claim context for one chain.
+    ///
+    /// Unlike [`Self::adaptor_session_context`], this facade derives the
+    /// session identity from the countersigned agreement and chain domain. It
+    /// therefore cannot be replayed under a caller-substituted session ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AdaptorSessionError`] if the validated public inputs cannot be
+    /// reconstructed into the requested cryptographic context.
+    pub fn claim_adaptor_session_context(
+        &self,
+        domain: BtcAdaptorSessionDomain,
+    ) -> Result<AdaptorSessionContext, AdaptorSessionError> {
+        let mut hasher = Sha256::new();
+        hasher.update(BTC_CLAIM_SESSION_V1_DOMAIN);
+        hasher.update(self.agreement_commitment());
+        hasher.update(match domain {
+            BtcAdaptorSessionDomain::Bitcoin => b"bitcoin".as_slice(),
+            BtcAdaptorSessionDomain::Lez => b"lez".as_slice(),
+        });
+        self.adaptor_session_context(domain, hasher.finalize().into())
     }
 
     /// Exact signed Bitcoin funding outpoint and amount.

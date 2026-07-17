@@ -5,13 +5,16 @@ use bitcoin::secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use bitcoin::transaction::Version;
 use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness};
 use lez_btc_swap_sdk::{
-    AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BitcoinFirstLockEvidenceV1,
-    BtcActiveSwapEnvelopeV1, BtcAgreementBodyV1, BtcAgreementRecordV1, BtcChainPolicyV1,
-    BtcClaimTermsV1, BtcFirstLockEvidenceV1, BtcFundingTermsV1, BtcLezTermsV1,
-    BtcLifecycleActionV1, BtcP2trTermsV1, BtcPairSdk, BtcParticipantIdentityV1, BtcParticipantsV1,
+    AdaptorSessionContext, AdaptorSigner, BTC_AGREEMENT_SCHEMA_V1, BitcoinFirstLockEvidenceV1,
+    BitcoinRevealingClaimEvidenceV1, BtcActiveSwapEnvelopeV1, BtcAgreementBodyV1,
+    BtcAgreementRecordV1, BtcChainPolicyV1, BtcClaimTermsV1, BtcFirstLockEvidenceV1,
+    BtcFundingTermsV1, BtcLezTermsV1, BtcLifecycleActionV1, BtcP2trTermsV1, BtcPairSdk,
+    BtcParticipantIdentityV1, BtcParticipantsV1, BtcPreparedClaimEffectsV1,
     BtcPreparedLockEffectsV1, BtcProtocolCapabilityGapV1, BtcProtocolTermsV1, BtcRecoveryPlanV1,
-    BtcSdkError, CooperativeKeyPathSpend, CsvBlockDelay, LezFirstLockEvidenceV1, P2trSwapOutput,
-    PreparedBitcoinFundingV1, PreparedLezFundingV1, RefundXOnlyKey, TwoPartyAggregateKey,
+    BtcRevealingClaimEvidenceV1, BtcSdkError, CooperativeKeyPathSpend, CsvBlockDelay,
+    LezFirstLockEvidenceV1, LezRevealingClaimEvidenceV1, P2trSwapOutput, PreparedBitcoinFundingV1,
+    PreparedLezClaimTemplateV1, PreparedLezFundingV1, RefundXOnlyKey, SigningRole,
+    TwoPartyAggregateKey, adapt_presignature,
 };
 use lez_swap_core::{Participant, Phase, SwapDirection};
 use lez_swap_sdk_core::{ClaimOrder, SwapProtocol};
@@ -24,6 +27,8 @@ const CLAIM_VALUE_SAT: u64 = 99_000;
 const LEZ_AMOUNT: u128 = 5_000;
 const LEZ_INITIALIZATION_ID: &str = "lez-init-01";
 const LEZ_FUNDING_ID: &str = "lez-fund-02";
+const LEZ_CLAIM_ID: &str = "lez-claim-03";
+const LEZ_CLAIM_SIGNATURE_OFFSET: usize = 9;
 
 struct Fixture {
     record: BtcAgreementRecordV1,
@@ -248,6 +253,88 @@ fn lez_evidence(finalized: bool) -> BtcFirstLockEvidenceV1 {
         )
         .expect("LEZ evidence"),
     )
+}
+
+fn complete_presignature(
+    context: &AdaptorSessionContext,
+    maker_secret: &SecretKey,
+    taker_secret: &SecretKey,
+) -> [u8; 65] {
+    let mut maker = AdaptorSigner::new(
+        context.clone(),
+        SigningRole::Maker,
+        maker_secret.secret_bytes(),
+    )
+    .expect("maker signer");
+    let mut taker = AdaptorSigner::new(
+        context.clone(),
+        SigningRole::Taker,
+        taker_secret.secret_bytes(),
+    )
+    .expect("taker signer");
+    maker
+        .accept_peer_commitment(taker.nonce_commitment())
+        .expect("maker accepts commitment");
+    taker
+        .accept_peer_commitment(maker.nonce_commitment())
+        .expect("taker accepts commitment");
+    let maker_nonce = maker.public_nonce().expect("maker nonce");
+    let taker_nonce = taker.public_nonce().expect("taker nonce");
+    maker
+        .accept_peer_nonce(taker_nonce)
+        .expect("maker accepts nonce");
+    taker
+        .accept_peer_nonce(maker_nonce)
+        .expect("taker accepts nonce");
+    let maker_partial = maker
+        .create_partial_signature()
+        .expect("maker partial signature");
+    let taker_partial = taker
+        .create_partial_signature()
+        .expect("taker partial signature");
+    maker
+        .accept_peer_partial_signature(taker_partial)
+        .expect("maker accepts partial");
+    taker
+        .accept_peer_partial_signature(maker_partial)
+        .expect("taker accepts partial");
+    let presignature = maker.presignature().expect("aggregate presignature");
+    assert_eq!(
+        presignature,
+        taker.presignature().expect("same presignature")
+    );
+    presignature
+}
+
+fn prepared_claims(fixture: &Fixture) -> (BtcPreparedClaimEffectsV1, [u8; 65], [u8; 65], Vec<u8>) {
+    let agreement = lez_btc_swap_sdk::BtcAgreementV1::validate(fixture.record.clone())
+        .expect("validated agreement");
+    let maker_secret = secret(1);
+    let taker_secret = secret(2);
+    let bitcoin_context = agreement
+        .claim_adaptor_session_context(lez_btc_swap_sdk::BtcAdaptorSessionDomain::Bitcoin)
+        .expect("agreement-bound Bitcoin claim context");
+    let lez_context = agreement
+        .claim_adaptor_session_context(lez_btc_swap_sdk::BtcAdaptorSessionDomain::Lez)
+        .expect("agreement-bound LEZ claim context");
+    let bitcoin_presignature =
+        complete_presignature(&bitcoin_context, &maker_secret, &taker_secret);
+    let lez_presignature = complete_presignature(&lez_context, &maker_secret, &taker_secret);
+    let mut lez_template = b"lez.claim".to_vec();
+    lez_template.extend_from_slice(&[0; 64]);
+    lez_template.extend_from_slice(b".v1");
+    let claims = BtcPreparedClaimEffectsV1::new(
+        &agreement,
+        bitcoin_presignature,
+        lez_presignature,
+        PreparedLezClaimTemplateV1::new(
+            LEZ_CLAIM_ID,
+            lez_template.clone(),
+            LEZ_CLAIM_SIGNATURE_OFFSET,
+        )
+        .expect("bounded LEZ signature template"),
+    );
+    (claims, bitcoin_presignature, lez_presignature, lez_template)
 }
 
 #[test]
@@ -477,11 +564,13 @@ fn lez_first_lock_rejects_same_ids_with_different_exact_bytes() {
 #[test]
 fn common_protocol_validates_terms_but_refuses_incomplete_recovery_preparation() {
     let fixture = fixture(SwapDirection::TakerSellsForeign);
+    let (claims, ..) = prepared_claims(&fixture);
     let sdk = BtcPairSdk::new(
         Participant::Taker,
         BtcChainPolicyV1::new(BITCOIN_GENESIS, REQUIRED_CONFIRMATIONS),
     );
-    let terms = BtcProtocolTermsV1::new(fixture.record.clone(), fixture.lock_effects.clone());
+    let terms = BtcProtocolTermsV1::new(fixture.record.clone(), fixture.lock_effects.clone())
+        .with_claim_effects(claims);
     let validated = sdk.validate_terms(&terms).expect("validated terms");
     assert!(matches!(
         sdk.prepare(validated),
@@ -517,5 +606,346 @@ fn durable_resume_rejects_role_and_unsupported_transition_revision() {
     assert!(matches!(
         sdk.resume(future),
         Err(BtcSdkError::UnsupportedResumeRevision(1))
+    ));
+}
+
+#[test]
+fn common_protocol_extracts_and_builds_exact_claims_in_both_directions() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let fixture = fixture(direction);
+        let (claims, bitcoin_presignature, lez_presignature, lez_template) =
+            prepared_claims(&fixture);
+        let sdk = BtcPairSdk::new(
+            Participant::Maker,
+            BtcChainPolicyV1::new(BITCOIN_GENESIS, REQUIRED_CONFIRMATIONS),
+        );
+        let terms = BtcProtocolTermsV1::new(fixture.record, fixture.lock_effects)
+            .with_claim_effects(claims);
+        let validated = sdk.validate_terms(&terms).expect("validated claim terms");
+        let prepared = sdk.prepare_claims(validated).expect("claim-ready protocol");
+        let adaptor_secret = zeroize::Zeroizing::new(secret(7).secret_bytes());
+
+        let evidence = match direction {
+            SwapDirection::TakerSellsForeign => {
+                let context = prepared
+                    .agreement()
+                    .claim_adaptor_session_context(lez_btc_swap_sdk::BtcAdaptorSessionDomain::Lez)
+                    .expect("LEZ context");
+                let signature = adapt_presignature(&context, lez_presignature, adaptor_secret)
+                    .expect("revealing LEZ signature");
+                let mut exact_claim = lez_template;
+                exact_claim[LEZ_CLAIM_SIGNATURE_OFFSET..LEZ_CLAIM_SIGNATURE_OFFSET + 64]
+                    .copy_from_slice(&signature);
+                BtcRevealingClaimEvidenceV1::Lez(
+                    LezRevealingClaimEvidenceV1::new(
+                        Participant::Taker,
+                        LEZ_GENESIS,
+                        LEZ_CLAIM_ID,
+                        exact_claim,
+                        signature,
+                        true,
+                    )
+                    .expect("canonical LEZ claim evidence"),
+                )
+            }
+            SwapDirection::TakerSellsLez => {
+                let context = prepared
+                    .agreement()
+                    .claim_adaptor_session_context(
+                        lez_btc_swap_sdk::BtcAdaptorSessionDomain::Bitcoin,
+                    )
+                    .expect("Bitcoin context");
+                let signature = adapt_presignature(&context, bitcoin_presignature, adaptor_secret)
+                    .expect("revealing Bitcoin signature");
+                let claim = prepared
+                    .agreement()
+                    .cooperative_claim()
+                    .clone()
+                    .finalize(signature)
+                    .expect("signed Bitcoin claim");
+                BtcRevealingClaimEvidenceV1::Bitcoin(
+                    BitcoinRevealingClaimEvidenceV1::new(
+                        Participant::Taker,
+                        BITCOIN_GENESIS,
+                        serialize(&claim),
+                        REQUIRED_CONFIRMATIONS,
+                    )
+                    .expect("canonical Bitcoin claim evidence"),
+                )
+            }
+        };
+
+        let material = sdk
+            .validate_revealing_claim(&prepared, &evidence)
+            .expect("agreement-bound extracted adaptor material");
+        let first = sdk
+            .build_followup_claim(&prepared, &material)
+            .expect("exact follow-up claim");
+        let replay = sdk
+            .build_followup_claim(&prepared, &material)
+            .expect("deterministic replay");
+        assert_eq!(first, replay);
+        let [step] = first.steps() else {
+            panic!("one exact follow-up claim step");
+        };
+        match direction {
+            SwapDirection::TakerSellsForeign => {
+                assert_eq!(step.step().as_str(), "bitcoin.claim");
+                let transaction: Transaction =
+                    bitcoin::consensus::deserialize(step.exact_bytes().as_slice())
+                        .expect("canonical follow-up transaction");
+                assert_eq!(
+                    transaction.compute_txid().to_string(),
+                    step.expected_public_id().as_str()
+                );
+                assert_eq!(transaction.input[0].witness.len(), 1);
+            }
+            SwapDirection::TakerSellsLez => {
+                assert_eq!(step.step().as_str(), "lez.claim");
+                assert_eq!(step.expected_public_id().as_str(), LEZ_CLAIM_ID);
+                assert_eq!(&step.exact_bytes().as_slice()[..9], b"lez.claim");
+                assert_eq!(&step.exact_bytes().as_slice()[73..], b".v1");
+            }
+        }
+    }
+}
+
+#[test]
+fn claim_lifecycle_rejects_role_byte_and_adaptor_substitution() {
+    let fixture = fixture(SwapDirection::TakerSellsForeign);
+    let (claims, bitcoin_presignature, lez_presignature, mut lez_template) =
+        prepared_claims(&fixture);
+    let sdk = BtcPairSdk::new(
+        Participant::Maker,
+        BtcChainPolicyV1::new(BITCOIN_GENESIS, REQUIRED_CONFIRMATIONS),
+    );
+    let terms =
+        BtcProtocolTermsV1::new(fixture.record, fixture.lock_effects).with_claim_effects(claims);
+    let validated = sdk.validate_terms(&terms).expect("validated claim terms");
+    let prepared = sdk.prepare_claims(validated).expect("claim-ready protocol");
+    let bitcoin_context = prepared
+        .agreement()
+        .claim_adaptor_session_context(lez_btc_swap_sdk::BtcAdaptorSessionDomain::Bitcoin)
+        .expect("Bitcoin context");
+    let wrong_domain_signature = adapt_presignature(
+        &bitcoin_context,
+        bitcoin_presignature,
+        zeroize::Zeroizing::new(secret(7).secret_bytes()),
+    )
+    .expect("valid Bitcoin-domain signature");
+    lez_template[LEZ_CLAIM_SIGNATURE_OFFSET..LEZ_CLAIM_SIGNATURE_OFFSET + 64]
+        .copy_from_slice(&wrong_domain_signature);
+    let wrong_adaptor = BtcRevealingClaimEvidenceV1::Lez(
+        LezRevealingClaimEvidenceV1::new(
+            Participant::Taker,
+            LEZ_GENESIS,
+            LEZ_CLAIM_ID,
+            lez_template,
+            wrong_domain_signature,
+            true,
+        )
+        .expect("bounded but substituted evidence"),
+    );
+    assert!(matches!(
+        sdk.validate_revealing_claim(&prepared, &wrong_adaptor),
+        Err(BtcSdkError::InvalidAdaptorClaim(_))
+    ));
+
+    let lez_context = prepared
+        .agreement()
+        .claim_adaptor_session_context(lez_btc_swap_sdk::BtcAdaptorSessionDomain::Lez)
+        .expect("LEZ context");
+    let valid_signature = adapt_presignature(
+        &lez_context,
+        lez_presignature,
+        zeroize::Zeroizing::new(secret(7).secret_bytes()),
+    )
+    .expect("valid LEZ signature");
+    let mut exact = b"lez.claim".to_vec();
+    exact.extend_from_slice(&valid_signature);
+    exact.extend_from_slice(b".v1");
+    exact[0] ^= 1;
+    let byte_drift = BtcRevealingClaimEvidenceV1::Lez(
+        LezRevealingClaimEvidenceV1::new(
+            Participant::Taker,
+            LEZ_GENESIS,
+            LEZ_CLAIM_ID,
+            exact,
+            valid_signature,
+            true,
+        )
+        .expect("bounded drifted evidence"),
+    );
+    assert!(matches!(
+        sdk.validate_revealing_claim(&prepared, &byte_drift),
+        Err(BtcSdkError::RevealingClaimPlanMismatch)
+    ));
+
+    let role_substitution = BtcRevealingClaimEvidenceV1::Lez(
+        LezRevealingClaimEvidenceV1::new(
+            Participant::Maker,
+            LEZ_GENESIS,
+            LEZ_CLAIM_ID,
+            {
+                let mut bytes = b"lez.claim".to_vec();
+                bytes.extend_from_slice(&valid_signature);
+                bytes.extend_from_slice(b".v1");
+                bytes
+            },
+            valid_signature,
+            true,
+        )
+        .expect("bounded role-substituted evidence"),
+    );
+    assert!(matches!(
+        sdk.validate_revealing_claim(&prepared, &role_substitution),
+        Err(BtcSdkError::RevealingClaimRoleMismatch { .. })
+    ));
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn bitcoin_revealing_claim_rejects_role_byte_adaptor_and_sdk_substitution() {
+    let fixture = fixture(SwapDirection::TakerSellsLez);
+    let (claims, bitcoin_presignature, lez_presignature, _) = prepared_claims(&fixture);
+    let maker = BtcPairSdk::new(
+        Participant::Maker,
+        BtcChainPolicyV1::new(BITCOIN_GENESIS, REQUIRED_CONFIRMATIONS),
+    );
+    let terms =
+        BtcProtocolTermsV1::new(fixture.record, fixture.lock_effects).with_claim_effects(claims);
+    let validated = maker.validate_terms(&terms).expect("validated claim terms");
+    let prepared = maker
+        .prepare_claims(validated)
+        .expect("claim-ready protocol");
+    let bitcoin_context = prepared
+        .agreement()
+        .claim_adaptor_session_context(lez_btc_swap_sdk::BtcAdaptorSessionDomain::Bitcoin)
+        .expect("Bitcoin context");
+    let bitcoin_signature = adapt_presignature(
+        &bitcoin_context,
+        bitcoin_presignature,
+        zeroize::Zeroizing::new(secret(7).secret_bytes()),
+    )
+    .expect("valid Bitcoin signature");
+    let bitcoin_claim = prepared
+        .agreement()
+        .cooperative_claim()
+        .clone()
+        .finalize(bitcoin_signature)
+        .expect("signed Bitcoin claim");
+    let valid = BtcRevealingClaimEvidenceV1::Bitcoin(
+        BitcoinRevealingClaimEvidenceV1::new(
+            Participant::Taker,
+            BITCOIN_GENESIS,
+            serialize(&bitcoin_claim),
+            REQUIRED_CONFIRMATIONS,
+        )
+        .expect("canonical Bitcoin evidence"),
+    );
+    let _material = maker
+        .validate_revealing_claim(&prepared, &valid)
+        .expect("valid revealing claim");
+
+    let wrong_role = BtcRevealingClaimEvidenceV1::Bitcoin(
+        BitcoinRevealingClaimEvidenceV1::new(
+            Participant::Maker,
+            BITCOIN_GENESIS,
+            serialize(&bitcoin_claim),
+            REQUIRED_CONFIRMATIONS,
+        )
+        .expect("bounded wrong-role evidence"),
+    );
+    assert!(matches!(
+        maker.validate_revealing_claim(&prepared, &wrong_role),
+        Err(BtcSdkError::RevealingClaimRoleMismatch { .. })
+    ));
+
+    let mut byte_drift = bitcoin_claim.clone();
+    byte_drift.output[0].value = Amount::from_sat(CLAIM_VALUE_SAT - 1);
+    let byte_drift = BtcRevealingClaimEvidenceV1::Bitcoin(
+        BitcoinRevealingClaimEvidenceV1::new(
+            Participant::Taker,
+            BITCOIN_GENESIS,
+            serialize(&byte_drift),
+            REQUIRED_CONFIRMATIONS,
+        )
+        .expect("bounded byte-drifted evidence"),
+    );
+    assert!(matches!(
+        maker.validate_revealing_claim(&prepared, &byte_drift),
+        Err(BtcSdkError::RevealingClaimPlanMismatch)
+    ));
+
+    let lez_context = prepared
+        .agreement()
+        .claim_adaptor_session_context(lez_btc_swap_sdk::BtcAdaptorSessionDomain::Lez)
+        .expect("LEZ context");
+    let wrong_domain_signature = adapt_presignature(
+        &lez_context,
+        lez_presignature,
+        zeroize::Zeroizing::new(secret(7).secret_bytes()),
+    )
+    .expect("valid LEZ-domain signature");
+    let mut wrong_adaptor = bitcoin_claim;
+    wrong_adaptor.input[0].witness = Witness::from_slice(&[wrong_domain_signature]);
+    let wrong_adaptor = BtcRevealingClaimEvidenceV1::Bitcoin(
+        BitcoinRevealingClaimEvidenceV1::new(
+            Participant::Taker,
+            BITCOIN_GENESIS,
+            serialize(&wrong_adaptor),
+            REQUIRED_CONFIRMATIONS,
+        )
+        .expect("bounded wrong-adaptor evidence"),
+    );
+    assert!(matches!(
+        maker.validate_revealing_claim(&prepared, &wrong_adaptor),
+        Err(BtcSdkError::InvalidAdaptorClaim(_))
+    ));
+
+    let taker = BtcPairSdk::new(
+        Participant::Taker,
+        BtcChainPolicyV1::new(BITCOIN_GENESIS, REQUIRED_CONFIRMATIONS),
+    );
+    assert!(matches!(
+        taker.validate_revealing_claim(&prepared, &valid),
+        Err(BtcSdkError::FollowupClaimRoleMismatch { .. })
+    ));
+}
+
+#[test]
+fn protocol_terms_reject_substituted_claim_presignatures_before_prepare() {
+    let current = fixture(SwapDirection::TakerSellsForeign);
+    let (_, mut bitcoin_presignature, lez_presignature, lez_template) = prepared_claims(&current);
+    bitcoin_presignature[64] ^= 1;
+    let claims = BtcPreparedClaimEffectsV1::new(
+        &lez_btc_swap_sdk::BtcAgreementV1::validate(current.record.clone())
+            .expect("validated current agreement"),
+        bitcoin_presignature,
+        lez_presignature,
+        PreparedLezClaimTemplateV1::new(LEZ_CLAIM_ID, lez_template, LEZ_CLAIM_SIGNATURE_OFFSET)
+            .expect("bounded LEZ template"),
+    );
+    let sdk = BtcPairSdk::new(
+        Participant::Maker,
+        BtcChainPolicyV1::new(BITCOIN_GENESIS, REQUIRED_CONFIRMATIONS),
+    );
+    let terms = BtcProtocolTermsV1::new(current.record.clone(), current.lock_effects.clone())
+        .with_claim_effects(claims);
+    assert!(matches!(
+        sdk.validate_terms(&terms),
+        Err(BtcSdkError::InvalidAdaptorClaim(_))
+    ));
+
+    let other = fixture(SwapDirection::TakerSellsLez);
+    let (other_claims, ..) = prepared_claims(&other);
+    let substituted_agreement = BtcProtocolTermsV1::new(current.record, current.lock_effects)
+        .with_claim_effects(other_claims);
+    assert!(matches!(
+        sdk.validate_terms(&substituted_agreement),
+        Err(BtcSdkError::ClaimPreparationAgreementMismatch)
     ));
 }

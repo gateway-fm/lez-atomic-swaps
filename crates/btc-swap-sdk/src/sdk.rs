@@ -1,26 +1,34 @@
-//! Role-fixed deterministic LEZ/Bitcoin funding facade.
+//! Role-fixed deterministic LEZ/Bitcoin lifecycle facade.
 //!
-//! This module deliberately stops at exact lock construction and canonical
-//! first-lock validation. It performs no node, discovery, negotiation,
-//! persistence, claim, or refund I/O. The unsupported claim and recovery
-//! methods on its [`SwapProtocol`] implementation return typed capability gaps
-//! instead of pretending the current M3 slice is a full lifecycle SDK.
+//! This module performs no node, discovery, negotiation, persistence, claim,
+//! or refund I/O. It validates exact lock and revealing-claim evidence, then
+//! deterministically constructs the material-consuming follow-up claim. The
+//! still-unsupported recovery selector remains an explicit typed gap.
 
 use bitcoin::consensus::{deserialize, serialize};
 use bitcoin::hashes::Hash as _;
-use bitcoin::{Transaction, Txid};
+use bitcoin::{Transaction, Txid, Witness};
 use lez_swap_core::{Chain, Participant, Phase, SwapCoordinator, SwapDirection, SwapId};
 use lez_swap_sdk_core::{
-    ClaimOrder, ErrorCategory, ExactPublicEffectBytes, ExactPublicEffectPlanV1,
+    ClaimLeg, ClaimOrder, ErrorCategory, ExactPublicEffectBytes, ExactPublicEffectPlanV1,
     ExpectedPublicEffectId, ProtocolError, PublicEffectPlanError, PublicEffectStepId,
     PublicEffectStepV1, SwapProtocol,
 };
 
-use crate::{BtcAgreementRecordV1, BtcAgreementV1, BtcAgreementV1Error, BtcChainPolicyV1};
+use zeroize::Zeroizing;
+
+use crate::{
+    AdaptorSessionError, BtcAdaptorSessionDomain, BtcAgreementRecordV1, BtcAgreementV1,
+    BtcAgreementV1Error, BtcChainPolicyV1, CooperativeKeyPathSpendError, adapt_presignature,
+    extract_adaptor_secret, verify_adaptor_presignature, verify_final_signature,
+};
 
 const BITCOIN_FUNDING_STEP: &str = "bitcoin.funding";
 const LEZ_INITIALIZE_STEP: &str = "lez.initialize";
 const LEZ_FUND_STEP: &str = "lez.fund";
+const BITCOIN_CLAIM_STEP: &str = "bitcoin.claim";
+const LEZ_CLAIM_STEP: &str = "lez.claim";
+const SCHNORR_SIGNATURE_BYTES: usize = 64;
 
 /// Exact signed Bitcoin funding effect supplied before activation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -182,12 +190,116 @@ impl BtcPreparedLockEffectsV1 {
     }
 }
 
+/// Exact bounded LEZ claim envelope with a canonical Schnorr signature slot.
+///
+/// The SDK does not reinterpret LEZ transaction encoding. Instead, the LEZ
+/// adapter supplies the exact public envelope it already knows how to submit,
+/// with one 64-byte zero placeholder. Claim construction replaces only that
+/// slot after verifying/adapting the agreement-bound presignature.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct PreparedLezClaimTemplateV1 {
+    expected_public_id: ExpectedPublicEffectId,
+    exact_template: ExactPublicEffectBytes,
+    signature_offset: usize,
+}
+
+impl PreparedLezClaimTemplateV1 {
+    /// Validates a bounded exact envelope and its unique 64-byte zero slot.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an invalid public ID, empty/oversized bytes, an out-of-bounds
+    /// offset, or a nonzero signature placeholder.
+    pub fn new(
+        expected_public_id: impl Into<Box<str>>,
+        exact_template: impl Into<Box<[u8]>>,
+        signature_offset: usize,
+    ) -> Result<Self, BtcSdkError> {
+        let expected_public_id = ExpectedPublicEffectId::new(expected_public_id)?;
+        let exact_template = ExactPublicEffectBytes::new(exact_template)?;
+        let signature_end = signature_offset
+            .checked_add(SCHNORR_SIGNATURE_BYTES)
+            .ok_or(BtcSdkError::InvalidLezClaimSignatureSlot)?;
+        if exact_template
+            .as_slice()
+            .get(signature_offset..signature_end)
+            != Some([0_u8; SCHNORR_SIGNATURE_BYTES].as_slice())
+        {
+            return Err(BtcSdkError::InvalidLezClaimSignatureSlot);
+        }
+        Ok(Self {
+            expected_public_id,
+            exact_template,
+            signature_offset,
+        })
+    }
+
+    fn materialize(
+        &self,
+        signature: [u8; SCHNORR_SIGNATURE_BYTES],
+    ) -> Result<ExactPublicEffectBytes, BtcSdkError> {
+        let mut exact = self.exact_template.as_slice().to_vec();
+        let signature_end = self.signature_offset + SCHNORR_SIGNATURE_BYTES;
+        exact[self.signature_offset..signature_end].copy_from_slice(&signature);
+        ExactPublicEffectBytes::new(exact).map_err(Into::into)
+    }
+}
+
+/// Complete public claim preparation required before lock construction.
+///
+/// Presignatures remain secret-free public cryptographic material. They are
+/// verified under deterministic contexts derived from the countersigned
+/// agreement during term validation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct BtcPreparedClaimEffectsV1 {
+    agreement_commitment: [u8; 32],
+    bitcoin_presignature: [u8; 65],
+    lez_presignature: [u8; 65],
+    lez_claim: PreparedLezClaimTemplateV1,
+}
+
+impl BtcPreparedClaimEffectsV1 {
+    /// Combines exact dual-chain presignatures and the bounded LEZ claim envelope.
+    pub fn new(
+        agreement: &BtcAgreementV1,
+        bitcoin_presignature: [u8; 65],
+        lez_presignature: [u8; 65],
+        lez_claim: PreparedLezClaimTemplateV1,
+    ) -> Self {
+        Self {
+            agreement_commitment: *agreement.agreement_commitment(),
+            bitcoin_presignature,
+            lez_presignature,
+            lez_claim,
+        }
+    }
+
+    fn validate(&self, agreement: &BtcAgreementV1) -> Result<(), BtcSdkError> {
+        if self.agreement_commitment != *agreement.agreement_commitment() {
+            return Err(BtcSdkError::ClaimPreparationAgreementMismatch);
+        }
+        let bitcoin = agreement
+            .claim_adaptor_session_context(BtcAdaptorSessionDomain::Bitcoin)
+            .map_err(BtcSdkError::InvalidAdaptorClaim)?;
+        verify_adaptor_presignature(&bitcoin, self.bitcoin_presignature)
+            .map_err(BtcSdkError::InvalidAdaptorClaim)?;
+        let lez = agreement
+            .claim_adaptor_session_context(BtcAdaptorSessionDomain::Lez)
+            .map_err(BtcSdkError::InvalidAdaptorClaim)?;
+        verify_adaptor_presignature(&lez, self.lez_presignature)
+            .map_err(BtcSdkError::InvalidAdaptorClaim)
+    }
+}
+
 /// Untrusted terms consumed by the deterministic common lifecycle contract.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[must_use]
 pub struct BtcProtocolTermsV1 {
     agreement: BtcAgreementRecordV1,
     lock_effects: BtcPreparedLockEffectsV1,
+    claim_effects: Option<BtcPreparedClaimEffectsV1>,
 }
 
 impl BtcProtocolTermsV1 {
@@ -199,7 +311,14 @@ impl BtcProtocolTermsV1 {
         Self {
             agreement,
             lock_effects,
+            claim_effects: None,
         }
+    }
+
+    /// Adds complete public claim preparation for the common lifecycle trait.
+    pub fn with_claim_effects(mut self, claim_effects: BtcPreparedClaimEffectsV1) -> Self {
+        self.claim_effects = Some(claim_effects);
+        self
     }
 }
 
@@ -209,6 +328,7 @@ impl BtcProtocolTermsV1 {
 pub struct ValidatedBtcProtocolTermsV1 {
     agreement: BtcAgreementV1,
     lock_effects: BtcPreparedLockEffectsV1,
+    claim_effects: Option<BtcPreparedClaimEffectsV1>,
 }
 
 impl ValidatedBtcProtocolTermsV1 {
@@ -219,10 +339,11 @@ impl ValidatedBtcProtocolTermsV1 {
     }
 }
 
-/// Funding-ready deterministic protocol state.
+/// Claim-ready deterministic protocol state.
 ///
-/// Claim and refund recovery material is not represented by this slice; the
-/// corresponding trait calls return [`BtcSdkError::UnsupportedCapability`].
+/// Both agreement-bound adaptor presignatures and the exact LEZ substitution
+/// template have been verified. Construction-ordered refund selection remains
+/// an explicit [`BtcSdkError::UnsupportedCapability`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[must_use]
 pub struct BtcPreparedProtocolV1 {
@@ -234,6 +355,13 @@ impl BtcPreparedProtocolV1 {
     #[must_use]
     pub const fn agreement(&self) -> &BtcAgreementV1 {
         self.terms.agreement()
+    }
+
+    fn claim_effects(&self) -> &BtcPreparedClaimEffectsV1 {
+        self.terms
+            .claim_effects
+            .as_ref()
+            .expect("prepare proves complete claim effects")
     }
 }
 
@@ -410,6 +538,31 @@ impl BtcPairSdk {
         })
     }
 
+    /// Creates the deterministic claim-only prepared value used by the claim
+    /// methods on [`SwapProtocol`].
+    ///
+    /// This deliberately does not implement [`SwapProtocol::prepare`]: the
+    /// common method promises complete pre-lock refund recoverability, while
+    /// this first lifecycle slice has only complete claim preparation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects terms without both verified adaptor presignatures and the exact
+    /// LEZ claim substitution template, or terms validated under another local
+    /// Bitcoin policy.
+    pub fn prepare_claims(
+        &self,
+        terms: ValidatedBtcProtocolTermsV1,
+    ) -> Result<BtcPreparedProtocolV1, BtcSdkError> {
+        terms
+            .agreement
+            .ensure_bitcoin_policy(&self.bitcoin_policy)?;
+        if terms.claim_effects.is_none() {
+            return Err(BtcSdkError::MissingClaimEffects);
+        }
+        Ok(BtcPreparedProtocolV1 { terms })
+    }
+
     /// Validates exact lock effects and returns a role-fixed active value.
     ///
     /// # Errors
@@ -528,8 +681,7 @@ impl ActiveBtcSwap {
             .plan_for_participant(self.agreement(), Participant::Maker))
     }
 
-    /// Explicit direction-specific claim order, even though claim construction
-    /// remains an unsupported capability in this slice.
+    /// Explicit direction-specific revealing/follow-up claim order.
     pub const fn claim_order(&self) -> ClaimOrder {
         claim_order(self.accepted.agreement.direction())
     }
@@ -690,28 +842,144 @@ impl ConfirmedBtcFirstLockV1 {
     }
 }
 
-/// Full-lifecycle capabilities intentionally absent from this funding slice.
+/// Adapter-produced canonical Bitcoin revealing-claim facts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct BitcoinRevealingClaimEvidenceV1 {
+    claimant: Participant,
+    genesis_block_hash: [u8; 32],
+    exact_transaction: ExactPublicEffectBytes,
+    signature: [u8; SCHNORR_SIGNATURE_BYTES],
+    confirmations: u32,
+}
+
+impl BitcoinRevealingClaimEvidenceV1 {
+    /// Captures a canonical one-input, one-item key-path claim observation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects empty/oversized, malformed, non-canonical, or structurally
+    /// different Bitcoin claim bytes.
+    pub fn new(
+        claimant: Participant,
+        genesis_block_hash: [u8; 32],
+        exact_transaction: impl Into<Box<[u8]>>,
+        confirmations: u32,
+    ) -> Result<Self, BtcSdkError> {
+        let exact_transaction = ExactPublicEffectBytes::new(exact_transaction)?;
+        let transaction = parse_bitcoin_revealing_claim(&exact_transaction)?;
+        if serialize(&transaction) != exact_transaction.as_slice() {
+            return Err(BtcSdkError::MalformedBitcoinClaim(
+                bitcoin::consensus::encode::Error::ParseFailed(
+                    "non-canonical Bitcoin claim transaction bytes",
+                ),
+            ));
+        }
+        let signature = bitcoin_claim_signature(&transaction)?;
+        Ok(Self {
+            claimant,
+            genesis_block_hash,
+            exact_transaction,
+            signature,
+            confirmations,
+        })
+    }
+
+    /// Exact canonical consensus transaction bytes observed by the adapter.
+    pub const fn exact_transaction(&self) -> &ExactPublicEffectBytes {
+        &self.exact_transaction
+    }
+}
+
+/// Adapter-produced finalized LEZ revealing-claim facts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct LezRevealingClaimEvidenceV1 {
+    claimant: Participant,
+    genesis_block_hash: [u8; 32],
+    public_id: ExpectedPublicEffectId,
+    exact_claim: ExactPublicEffectBytes,
+    signature: [u8; SCHNORR_SIGNATURE_BYTES],
+    finalized: bool,
+}
+
+impl LezRevealingClaimEvidenceV1 {
+    /// Captures finalized LEZ adapter facts and the exact witnessed signature.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an invalid public identity or empty/oversized exact bytes.
+    pub fn new(
+        claimant: Participant,
+        genesis_block_hash: [u8; 32],
+        public_id: impl Into<Box<str>>,
+        exact_claim: impl Into<Box<[u8]>>,
+        signature: [u8; SCHNORR_SIGNATURE_BYTES],
+        finalized: bool,
+    ) -> Result<Self, BtcSdkError> {
+        Ok(Self {
+            claimant,
+            genesis_block_hash,
+            public_id: ExpectedPublicEffectId::new(public_id)?,
+            exact_claim: ExactPublicEffectBytes::new(exact_claim)?,
+            signature,
+            finalized,
+        })
+    }
+
+    /// Complete signed public envelope observed by the LEZ adapter.
+    pub const fn exact_claim(&self) -> &ExactPublicEffectBytes {
+        &self.exact_claim
+    }
+}
+
+/// Direction-specific canonical revealing-claim evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum BtcRevealingClaimEvidenceV1 {
+    /// Canonical confirmed Bitcoin P2TR key-path claim.
+    Bitcoin(BitcoinRevealingClaimEvidenceV1),
+    /// Canonical finalized LEZ witnessed claim.
+    Lez(LezRevealingClaimEvidenceV1),
+}
+
+/// Agreement-bound adaptor scalar extracted from canonical revealing evidence.
+///
+/// Debug output is redacted and no accessor exposes the private scalar.
+/// [`SwapProtocol::build_followup_claim`] can borrow it to deterministically
+/// reconstruct the exact replay-safe public effect.
+#[must_use]
+pub struct BtcRecoveredClaimMaterialV1 {
+    agreement_commitment: [u8; 32],
+    direction: SwapDirection,
+    revealing_claimant: Participant,
+    followup_claimant: Participant,
+    adaptor_secret: Zeroizing<[u8; 32]>,
+}
+
+impl std::fmt::Debug for BtcRecoveredClaimMaterialV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BtcRecoveredClaimMaterialV1")
+            .field("agreement_commitment", &self.agreement_commitment)
+            .field("direction", &self.direction)
+            .field("revealing_claimant", &self.revealing_claimant)
+            .field("followup_claimant", &self.followup_claimant)
+            .field("adaptor_secret", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// Full-lifecycle capabilities intentionally absent from this slice.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 pub enum BtcProtocolCapabilityGapV1 {
     /// Complete dual-chain adaptor presignatures and signed recovery effects
     /// cannot yet be proven durable before the first public lock.
     PreLockRecovery,
-    /// Canonical revealing-claim extraction is not exposed yet.
-    RevealingClaim,
-    /// Material-consuming follow-up claim construction is not exposed yet.
-    FollowupClaim,
     /// Construction-ordered recovery selection is not exposed yet.
     Recovery,
 }
-
-/// Placeholder evidence accepted only to return a typed claim capability gap.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BtcUnsupportedClaimEvidenceV1;
-
-/// Placeholder material accepted only to return a typed claim capability gap.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BtcUnsupportedClaimMaterialV1;
 
 /// Placeholder state accepted only to return a typed recovery capability gap.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -748,6 +1016,12 @@ pub enum BtcSdkError {
     /// LEZ initialization and funding must have independent transaction IDs.
     #[error("LEZ initialization and funding identities must be distinct")]
     DuplicateLezEffectIdentity,
+    /// Claim-only preparation requires both presignatures and the LEZ template.
+    #[error("BTC SDK claim preparation is incomplete")]
+    MissingClaimEffects,
+    /// Prepared claim effects were created for another countersigned agreement.
+    #[error("prepared claim effects belong to another countersigned agreement")]
+    ClaimPreparationAgreementMismatch,
     /// Accepted/durable role differs from this facade's fixed role.
     #[error("stored local role is {actual:?}; SDK role is {expected:?}")]
     LocalRoleMismatch {
@@ -756,8 +1030,8 @@ pub enum BtcSdkError {
         /// Role supplied by untrusted accepted/durable state.
         actual: Participant,
     },
-    /// This funding slice cannot replay post-activation transitions yet.
-    #[error("BTC SDK funding slice cannot resume revision {0}")]
+    /// The role-local active facade cannot replay post-activation transitions yet.
+    #[error("BTC SDK active facade cannot resume revision {0}")]
     UnsupportedResumeRevision(u64),
     /// Evidence names the wrong direction-derived first-lock chain.
     #[error("first-lock evidence uses the wrong chain for the signed direction")]
@@ -788,8 +1062,62 @@ pub enum BtcSdkError {
     /// Confirmation belongs to a different agreement/direction/first plan.
     #[error("confirmed first lock is not bound to this prepared swap")]
     FirstLockConfirmationMismatch,
-    /// Full-lifecycle behavior is deliberately unavailable in this slice.
-    #[error("BTC SDK capability is not implemented in this funding slice: {0:?}")]
+    /// LEZ claim template does not contain a complete zeroed Schnorr slot.
+    #[error("LEZ claim template has an invalid 64-byte signature slot")]
+    InvalidLezClaimSignatureSlot,
+    /// Bitcoin revealing-claim bytes could not be decoded exactly.
+    #[error("Bitcoin revealing-claim transaction bytes are malformed")]
+    MalformedBitcoinClaim(#[source] bitcoin::consensus::encode::Error),
+    /// Bitcoin revealing evidence is not a canonical one-item key-path spend.
+    #[error("Bitcoin revealing claim is not a canonical one-item key-path spend")]
+    InvalidBitcoinClaimWitness,
+    /// Exact signed Bitcoin follow-up construction failed canonical verification.
+    #[error("Bitcoin follow-up claim signature or transaction is invalid")]
+    InvalidBitcoinClaim(#[source] CooperativeKeyPathSpendError),
+    /// A claim presignature, signature, or extracted scalar failed verification.
+    #[error("claim adaptor transcript is invalid")]
+    InvalidAdaptorClaim(#[source] AdaptorSessionError),
+    /// Evidence names the wrong direction-derived revealing chain.
+    #[error("revealing-claim evidence uses the wrong chain for the signed direction")]
+    WrongRevealingClaimChain,
+    /// Adapter evidence attributes the revealing effect to the wrong claimant.
+    #[error("revealing claim belongs to {actual:?}; signed claimant is {expected:?}")]
+    RevealingClaimRoleMismatch {
+        /// Claimant selected by the signed agreement and chain order.
+        expected: Participant,
+        /// Claimant supplied by untrusted canonical evidence.
+        actual: Participant,
+    },
+    /// The role-fixed facade does not own the material-consuming follow-up leg.
+    #[error("follow-up claim belongs to {expected:?}; SDK role is {actual:?}")]
+    FollowupClaimRoleMismatch {
+        /// Follow-up claimant selected by the signed agreement.
+        expected: Participant,
+        /// Role fixed on the SDK.
+        actual: Participant,
+    },
+    /// Revealing evidence identifies a different chain network.
+    #[error("revealing-claim evidence identifies a different network")]
+    RevealingClaimNetworkMismatch,
+    /// Bitcoin revealing evidence has not reached the signed policy.
+    #[error("Bitcoin revealing claim has {actual} confirmations; requires {required}")]
+    RevealingClaimConfirmationLag {
+        /// Signed required confirmation count.
+        required: u32,
+        /// Current canonical confirmation count.
+        actual: u32,
+    },
+    /// LEZ revealing evidence is not finalized.
+    #[error("LEZ revealing claim is not finalized")]
+    RevealingClaimNotFinalized,
+    /// Observed revealing bytes or public identity differ from prepared effects.
+    #[error("revealing claim differs from the exact prepared claim effect")]
+    RevealingClaimPlanMismatch,
+    /// Recovered material belongs to another agreement, direction, or role.
+    #[error("recovered claim material is not bound to this prepared swap")]
+    RecoveredClaimMaterialMismatch,
+    /// Remaining full-lifecycle behavior is deliberately unavailable.
+    #[error("BTC SDK capability is not implemented in this lifecycle slice: {0:?}")]
     UnsupportedCapability(BtcProtocolCapabilityGapV1),
 }
 
@@ -803,20 +1131,38 @@ impl ProtocolError for BtcSdkError {
             | Self::BitcoinFundingIdentityMismatch
             | Self::BitcoinFundingAgreementMismatch
             | Self::DuplicateLezEffectIdentity
+            | Self::MissingClaimEffects
+            | Self::ClaimPreparationAgreementMismatch
             | Self::LocalRoleMismatch { .. }
             | Self::WrongFirstLockChain
             | Self::FirstLockPlanMismatch
             | Self::FirstLockIdentityMismatch
-            | Self::FirstLockConfirmationMismatch => ErrorCategory::TranscriptMismatch,
+            | Self::FirstLockConfirmationMismatch
+            | Self::InvalidLezClaimSignatureSlot
+            | Self::MalformedBitcoinClaim(_)
+            | Self::InvalidBitcoinClaimWitness
+            | Self::InvalidBitcoinClaim(_)
+            | Self::InvalidAdaptorClaim(_)
+            | Self::WrongRevealingClaimChain
+            | Self::RevealingClaimRoleMismatch { .. }
+            | Self::FollowupClaimRoleMismatch { .. }
+            | Self::RevealingClaimPlanMismatch
+            | Self::RecoveredClaimMaterialMismatch => ErrorCategory::TranscriptMismatch,
             Self::BitcoinFundingOutputMismatch | Self::FirstLockTermsMismatch => {
                 ErrorCategory::WrongValue
             }
             Self::UnsupportedResumeRevision(_) | Self::UnsupportedCapability(_) => {
                 ErrorCategory::UnsupportedCapability
             }
-            Self::FirstLockNetworkMismatch => ErrorCategory::WrongNetwork,
-            Self::FirstLockConfirmationLag { .. } => ErrorCategory::ObservationLag,
-            Self::FirstLockNotFinalized => ErrorCategory::NonCanonicalEvidence,
+            Self::FirstLockNetworkMismatch | Self::RevealingClaimNetworkMismatch => {
+                ErrorCategory::WrongNetwork
+            }
+            Self::FirstLockConfirmationLag { .. } | Self::RevealingClaimConfirmationLag { .. } => {
+                ErrorCategory::ObservationLag
+            }
+            Self::FirstLockNotFinalized | Self::RevealingClaimNotFinalized => {
+                ErrorCategory::NonCanonicalEvidence
+            }
         }
     }
 }
@@ -829,8 +1175,8 @@ impl SwapProtocol for BtcPairSdk {
     type FirstLockEvidence = BtcFirstLockEvidenceV1;
     type ConfirmedFirstLock = ConfirmedBtcFirstLockV1;
     type SecondLockTemplate = ExactPublicEffectPlanV1;
-    type RevealingClaimEvidence = BtcUnsupportedClaimEvidenceV1;
-    type RecoveredClaimMaterial = BtcUnsupportedClaimMaterialV1;
+    type RevealingClaimEvidence = BtcRevealingClaimEvidenceV1;
+    type RecoveredClaimMaterial = BtcRecoveredClaimMaterialV1;
     type FollowupClaimTemplate = ExactPublicEffectPlanV1;
     type CanonicalChainState = BtcUnsupportedCanonicalStateV1;
     type RecoveryAction = BtcUnsupportedRecoveryActionV1;
@@ -842,9 +1188,13 @@ impl SwapProtocol for BtcPairSdk {
             &self.bitcoin_policy,
         )?;
         terms.lock_effects.validate(&agreement)?;
+        if let Some(claim_effects) = &terms.claim_effects {
+            claim_effects.validate(&agreement)?;
+        }
         Ok(ValidatedBtcProtocolTermsV1 {
             agreement,
             lock_effects: terms.lock_effects.clone(),
+            claim_effects: terms.claim_effects.clone(),
         })
     }
 
@@ -896,22 +1246,18 @@ impl SwapProtocol for BtcPairSdk {
 
     fn validate_revealing_claim(
         &self,
-        _prepared: &Self::Prepared,
-        _evidence: &Self::RevealingClaimEvidence,
+        prepared: &Self::Prepared,
+        evidence: &Self::RevealingClaimEvidence,
     ) -> Result<Self::RecoveredClaimMaterial, Self::Error> {
-        Err(BtcSdkError::UnsupportedCapability(
-            BtcProtocolCapabilityGapV1::RevealingClaim,
-        ))
+        validate_revealing_claim(self, prepared, evidence)
     }
 
     fn build_followup_claim(
         &self,
-        _prepared: &Self::Prepared,
-        _material: &Self::RecoveredClaimMaterial,
+        prepared: &Self::Prepared,
+        material: &Self::RecoveredClaimMaterial,
     ) -> Result<Self::FollowupClaimTemplate, Self::Error> {
-        Err(BtcSdkError::UnsupportedCapability(
-            BtcProtocolCapabilityGapV1::FollowupClaim,
-        ))
+        build_followup_claim(self, prepared, material)
     }
 
     fn recovery_action(
@@ -923,6 +1269,222 @@ impl SwapProtocol for BtcPairSdk {
             BtcProtocolCapabilityGapV1::Recovery,
         ))
     }
+}
+
+fn validate_revealing_claim(
+    sdk: &BtcPairSdk,
+    prepared: &BtcPreparedProtocolV1,
+    evidence: &BtcRevealingClaimEvidenceV1,
+) -> Result<BtcRecoveredClaimMaterialV1, BtcSdkError> {
+    let agreement = prepared.agreement();
+    let order = claim_order(agreement.direction());
+    let revealing_claimant = claimant_for_leg(agreement, order.revealing());
+    let followup_claimant = claimant_for_leg(agreement, order.followup());
+    if sdk.local_participant != followup_claimant {
+        return Err(BtcSdkError::FollowupClaimRoleMismatch {
+            expected: followup_claimant,
+            actual: sdk.local_participant,
+        });
+    }
+
+    let adaptor_secret = match (order.revealing(), evidence) {
+        (ClaimLeg::Foreign, BtcRevealingClaimEvidenceV1::Bitcoin(observed)) => {
+            validate_revealing_claimant(revealing_claimant, observed.claimant)?;
+            validate_bitcoin_revealing_claim(prepared, observed)?
+        }
+        (ClaimLeg::Lez, BtcRevealingClaimEvidenceV1::Lez(observed)) => {
+            validate_revealing_claimant(revealing_claimant, observed.claimant)?;
+            validate_lez_revealing_claim(prepared, observed)?
+        }
+        _ => return Err(BtcSdkError::WrongRevealingClaimChain),
+    };
+
+    Ok(BtcRecoveredClaimMaterialV1 {
+        agreement_commitment: *agreement.agreement_commitment(),
+        direction: agreement.direction(),
+        revealing_claimant,
+        followup_claimant,
+        adaptor_secret,
+    })
+}
+
+fn validate_revealing_claimant(
+    expected: Participant,
+    actual: Participant,
+) -> Result<(), BtcSdkError> {
+    if expected == actual {
+        Ok(())
+    } else {
+        Err(BtcSdkError::RevealingClaimRoleMismatch { expected, actual })
+    }
+}
+
+fn validate_bitcoin_revealing_claim(
+    prepared: &BtcPreparedProtocolV1,
+    observed: &BitcoinRevealingClaimEvidenceV1,
+) -> Result<Zeroizing<[u8; 32]>, BtcSdkError> {
+    let agreement = prepared.agreement();
+    if observed.genesis_block_hash != *agreement.bitcoin_genesis_hash() {
+        return Err(BtcSdkError::RevealingClaimNetworkMismatch);
+    }
+    let required = agreement.required_bitcoin_confirmations();
+    if observed.confirmations < required {
+        return Err(BtcSdkError::RevealingClaimConfirmationLag {
+            required,
+            actual: observed.confirmations,
+        });
+    }
+    let transaction = parse_bitcoin_revealing_claim(&observed.exact_transaction)?;
+    let mut unsigned = transaction;
+    unsigned.input[0].witness = Witness::new();
+    if unsigned != *agreement.cooperative_claim().unsigned_transaction() {
+        return Err(BtcSdkError::RevealingClaimPlanMismatch);
+    }
+    let context = agreement
+        .claim_adaptor_session_context(BtcAdaptorSessionDomain::Bitcoin)
+        .map_err(BtcSdkError::InvalidAdaptorClaim)?;
+    verify_final_signature(&context, observed.signature)
+        .map_err(BtcSdkError::InvalidAdaptorClaim)?;
+    extract_adaptor_secret(
+        &context,
+        prepared.claim_effects().bitcoin_presignature,
+        observed.signature,
+    )
+    .map_err(BtcSdkError::InvalidAdaptorClaim)
+}
+
+fn validate_lez_revealing_claim(
+    prepared: &BtcPreparedProtocolV1,
+    observed: &LezRevealingClaimEvidenceV1,
+) -> Result<Zeroizing<[u8; 32]>, BtcSdkError> {
+    let agreement = prepared.agreement();
+    if observed.genesis_block_hash != *agreement.lez_terms().genesis_block_hash() {
+        return Err(BtcSdkError::RevealingClaimNetworkMismatch);
+    }
+    if !observed.finalized {
+        return Err(BtcSdkError::RevealingClaimNotFinalized);
+    }
+    let template = &prepared.claim_effects().lez_claim;
+    if observed.public_id != template.expected_public_id
+        || observed.exact_claim != template.materialize(observed.signature)?
+    {
+        return Err(BtcSdkError::RevealingClaimPlanMismatch);
+    }
+    let context = agreement
+        .claim_adaptor_session_context(BtcAdaptorSessionDomain::Lez)
+        .map_err(BtcSdkError::InvalidAdaptorClaim)?;
+    verify_final_signature(&context, observed.signature)
+        .map_err(BtcSdkError::InvalidAdaptorClaim)?;
+    extract_adaptor_secret(
+        &context,
+        prepared.claim_effects().lez_presignature,
+        observed.signature,
+    )
+    .map_err(BtcSdkError::InvalidAdaptorClaim)
+}
+
+fn build_followup_claim(
+    sdk: &BtcPairSdk,
+    prepared: &BtcPreparedProtocolV1,
+    material: &BtcRecoveredClaimMaterialV1,
+) -> Result<ExactPublicEffectPlanV1, BtcSdkError> {
+    let agreement = prepared.agreement();
+    let order = claim_order(agreement.direction());
+    let revealing_claimant = claimant_for_leg(agreement, order.revealing());
+    let followup_claimant = claimant_for_leg(agreement, order.followup());
+    if sdk.local_participant != followup_claimant {
+        return Err(BtcSdkError::FollowupClaimRoleMismatch {
+            expected: followup_claimant,
+            actual: sdk.local_participant,
+        });
+    }
+    if material.agreement_commitment != *agreement.agreement_commitment()
+        || material.direction != agreement.direction()
+        || material.revealing_claimant != revealing_claimant
+        || material.followup_claimant != followup_claimant
+    {
+        return Err(BtcSdkError::RecoveredClaimMaterialMismatch);
+    }
+
+    let step = match order.followup() {
+        ClaimLeg::Foreign => {
+            let context = agreement
+                .claim_adaptor_session_context(BtcAdaptorSessionDomain::Bitcoin)
+                .map_err(BtcSdkError::InvalidAdaptorClaim)?;
+            let signature = adapt_presignature(
+                &context,
+                prepared.claim_effects().bitcoin_presignature,
+                Zeroizing::new(*material.adaptor_secret),
+            )
+            .map_err(BtcSdkError::InvalidAdaptorClaim)?;
+            let transaction = agreement
+                .cooperative_claim()
+                .clone()
+                .finalize(signature)
+                .map_err(BtcSdkError::InvalidBitcoinClaim)?;
+            PublicEffectStepV1::new(
+                PublicEffectStepId::new(BITCOIN_CLAIM_STEP)?,
+                ExpectedPublicEffectId::new(transaction.compute_txid().to_string())?,
+                ExactPublicEffectBytes::new(serialize(&transaction))?,
+            )
+        }
+        ClaimLeg::Lez => {
+            let context = agreement
+                .claim_adaptor_session_context(BtcAdaptorSessionDomain::Lez)
+                .map_err(BtcSdkError::InvalidAdaptorClaim)?;
+            let signature = adapt_presignature(
+                &context,
+                prepared.claim_effects().lez_presignature,
+                Zeroizing::new(*material.adaptor_secret),
+            )
+            .map_err(BtcSdkError::InvalidAdaptorClaim)?;
+            let lez_claim = &prepared.claim_effects().lez_claim;
+            PublicEffectStepV1::new(
+                PublicEffectStepId::new(LEZ_CLAIM_STEP)?,
+                lez_claim.expected_public_id.clone(),
+                lez_claim.materialize(signature)?,
+            )
+        }
+    };
+    ExactPublicEffectPlanV1::new(vec![step]).map_err(Into::into)
+}
+
+const fn claimant_for_leg(agreement: &BtcAgreementV1, leg: ClaimLeg) -> Participant {
+    match leg {
+        ClaimLeg::Lez => agreement.lez_claimant(),
+        ClaimLeg::Foreign => agreement.bitcoin_claimant(),
+    }
+}
+
+fn parse_bitcoin_revealing_claim(
+    bytes: &ExactPublicEffectBytes,
+) -> Result<Transaction, BtcSdkError> {
+    let transaction: Transaction =
+        deserialize(bytes.as_slice()).map_err(BtcSdkError::MalformedBitcoinClaim)?;
+    if transaction.is_coinbase()
+        || transaction.input.len() != 1
+        || !transaction.input[0].script_sig.is_empty()
+        || transaction.input[0].witness.len() != 1
+        || transaction.input[0]
+            .witness
+            .iter()
+            .next()
+            .is_none_or(|signature| signature.len() != SCHNORR_SIGNATURE_BYTES)
+    {
+        return Err(BtcSdkError::InvalidBitcoinClaimWitness);
+    }
+    Ok(transaction)
+}
+
+fn bitcoin_claim_signature(
+    transaction: &Transaction,
+) -> Result<[u8; SCHNORR_SIGNATURE_BYTES], BtcSdkError> {
+    transaction.input[0]
+        .witness
+        .iter()
+        .next()
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or(BtcSdkError::InvalidBitcoinClaimWitness)
 }
 
 fn parse_signed_bitcoin_funding(

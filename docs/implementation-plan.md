@@ -1578,7 +1578,20 @@ Active M3 refund critical path:
   cover both directions, resume at every revision, role/byte substitution,
   replay, and loss of negotiation capability after activation. A compiling
   lifecycle example and API docs are required. Real Delivery/Chat adapters are
-  M5 scope; typed ports and realistic in-memory M3 implementations are enough;
+  M5 scope; typed ports and realistic in-memory M3 implementations are enough.
+  The first claim-lifecycle RED-GREEN slice now replaces the unsupported claim
+  evidence/material types with canonical Bitcoin/LEZ revealing evidence,
+  redacted zeroizing recovered adaptor material, and deterministic exact
+  follow-up plans in both directions. Claim sessions are derived from the
+  countersigned agreement and chain domain; both adaptor presignatures and the
+  bounded LEZ signature-substitution envelope are verified before claim-ready
+  preparation. External-consumer tests reject role, agreement, network,
+  finality, byte, presignature, and adaptor-domain substitution and prove
+  deterministic replay. The shared `SwapProtocol::prepare` still returns the
+  honest `PreLockRecovery` gap because complete signed refund preparation is
+  not yet composed; canonical recovery state/action, revision-one-through-four
+  resume, chain/store orchestration, a compiling full example, and the public
+  discovery/negotiation/activation composition remain open;
 - [x] make the reference actor a thin SDK adapter and move first/second lock
   construction and submission under SDK-owned persist-before-send authority.
   Pushed `79d7e68` adds the dedicated Maker-only revision-one journal with

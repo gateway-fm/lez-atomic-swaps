@@ -31,13 +31,14 @@ pub use p2tr::{
     P2trSwapOutputError, RefundXOnlyKey, TwoPartyAggregateKey, XOnlyKeyPurpose,
 };
 pub use sdk::{
-    AcceptedBtcAgreementV1, ActiveBtcSwap, BitcoinFirstLockEvidenceV1, BtcActiveSwapEnvelopeV1,
-    BtcFirstLockEvidenceV1, BtcLifecycleActionV1, BtcPairSdk, BtcPreparedLockEffectsV1,
-    BtcPreparedProtocolV1, BtcProtocolCapabilityGapV1, BtcProtocolTermsV1, BtcSdkError,
-    BtcSwapStatusV1, BtcUnsupportedCanonicalStateV1, BtcUnsupportedClaimEvidenceV1,
-    BtcUnsupportedClaimMaterialV1, BtcUnsupportedRecoveryActionV1, ConfirmedBtcFirstLockV1,
-    LezFirstLockEvidenceV1, PreparedBitcoinFundingV1, PreparedLezFundingV1,
-    ValidatedBtcProtocolTermsV1,
+    AcceptedBtcAgreementV1, ActiveBtcSwap, BitcoinFirstLockEvidenceV1,
+    BitcoinRevealingClaimEvidenceV1, BtcActiveSwapEnvelopeV1, BtcFirstLockEvidenceV1,
+    BtcLifecycleActionV1, BtcPairSdk, BtcPreparedClaimEffectsV1, BtcPreparedLockEffectsV1,
+    BtcPreparedProtocolV1, BtcProtocolCapabilityGapV1, BtcProtocolTermsV1,
+    BtcRecoveredClaimMaterialV1, BtcRevealingClaimEvidenceV1, BtcSdkError, BtcSwapStatusV1,
+    BtcUnsupportedCanonicalStateV1, BtcUnsupportedRecoveryActionV1, ConfirmedBtcFirstLockV1,
+    LezFirstLockEvidenceV1, LezRevealingClaimEvidenceV1, PreparedBitcoinFundingV1,
+    PreparedLezClaimTemplateV1, PreparedLezFundingV1, ValidatedBtcProtocolTermsV1,
 };
 pub use transaction::{
     CooperativeKeyPathSpend, CooperativeKeyPathSpendError, RefundScriptPathSpend,
