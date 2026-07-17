@@ -20,11 +20,14 @@ pub use adaptor::{
     verify_final_signature, verify_nonce_commitment,
 };
 pub use agreement_v1::{
-    BTC_AGREEMENT_SCHEMA_V1, BtcAdaptorSessionDomain, BtcAgreementBodyV1, BtcAgreementRecordV1,
-    BtcAgreementV1, BtcAgreementV1Error, BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1,
-    BtcLezTermsV1, BtcOutputKeyParityV1, BtcP2trTermsV1, BtcParticipantIdentityV1,
-    BtcParticipantsV1, BtcRecoveryPlanV1, MAX_BITCOIN_REQUIRED_CONFIRMATIONS,
-    MAX_BTC_AGREEMENT_RECORD_BYTES,
+    BTC_AGREEMENT_SCHEMA_V1, BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1, BTC_LEZ_ASSET_EXTENSION_V1_DOMAIN,
+    BtcAdaptorSessionDomain, BtcAgreementBodyV1, BtcAgreementRecordV1, BtcAgreementV1,
+    BtcAgreementV1Error, BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1,
+    BtcLezAssetExtensionBodyV1, BtcLezAssetExtensionRecordV1, BtcLezAssetExtensionV1,
+    BtcLezAssetExtensionV1Error, BtcLezAssetV1, BtcLezCustomTokenTermsV1, BtcLezTermsV1,
+    BtcOutputKeyParityV1, BtcP2trTermsV1, BtcParticipantIdentityV1, BtcParticipantsV1,
+    BtcRecoveryPlanV1, MAX_BITCOIN_REQUIRED_CONFIRMATIONS, MAX_BTC_AGREEMENT_RECORD_BYTES,
+    MAX_BTC_LEZ_ASSET_EXTENSION_RECORD_BYTES,
 };
 pub use p2tr::{
     CsvBlockDelay, CsvBlockDelayError, InvalidXOnlyKey, OutputKeyParity, P2trSwapOutput,
@@ -32,14 +35,16 @@ pub use p2tr::{
 };
 pub use sdk::{
     AcceptedBtcAgreementV1, ActiveBtcSwap, BitcoinCanonicalRecoveryStateV1,
-    BitcoinFirstLockEvidenceV1, BitcoinRevealingClaimEvidenceV1, BtcActiveSwapEnvelopeV1,
-    BtcCanonicalRecoveryStateV1, BtcFirstLockEvidenceV1, BtcLifecycleActionV1, BtcPairSdk,
+    BitcoinFirstLockEvidenceV1, BitcoinFollowupClaimEvidenceV1, BitcoinRevealingClaimEvidenceV1,
+    BtcActiveSwapEnvelopeV1, BtcBoxPortError, BtcCanonicalRecoveryStateV1, BtcFirstLockEvidenceV1,
+    BtcFollowupClaimEvidenceV1, BtcLifecycleActionV1, BtcLifecycleSdk,
+    BtcLifecycleTransitionOutcomeV1, BtcLifecycleTransitionV1, BtcPairSdk,
     BtcPreparedClaimEffectsV1, BtcPreparedLockEffectsV1, BtcPreparedProtocolV1,
     BtcPreparedRecoveryEffectsV1, BtcProtocolTermsV1, BtcRecoveredClaimMaterialV1,
     BtcRecoveryActionV1, BtcRecoveryWaitReasonV1, BtcRevealingClaimEvidenceV1, BtcSdkError,
     BtcSwapStatusV1, ConfirmedBtcFirstLockV1, LezCanonicalRecoveryStateV1, LezFirstLockEvidenceV1,
-    LezRevealingClaimEvidenceV1, PreparedBitcoinFundingV1, PreparedBitcoinRefundV1,
-    PreparedLezClaimTemplateV1, PreparedLezFundingV1, PreparedLezRefundV1,
+    LezFollowupClaimEvidenceV1, LezRevealingClaimEvidenceV1, PreparedBitcoinFundingV1,
+    PreparedBitcoinRefundV1, PreparedLezClaimTemplateV1, PreparedLezFundingV1, PreparedLezRefundV1,
     ValidatedBtcProtocolTermsV1,
 };
 pub use transaction::{

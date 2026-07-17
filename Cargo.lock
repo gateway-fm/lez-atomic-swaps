@@ -1672,6 +1672,7 @@ dependencies = [
 name = "lez-btc-swap-sdk"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bitcoin",
  "borsh",
  "getrandom 0.3.4",
@@ -1681,6 +1682,7 @@ dependencies = [
  "sha2 0.10.9",
  "subtle",
  "thiserror 2.0.18",
+ "tokio",
  "zeroize",
 ]
 

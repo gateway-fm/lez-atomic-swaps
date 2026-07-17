@@ -93,6 +93,15 @@ accepted two-swap opposite-direction overlap checkpoint. Arbitrary-N and
 same-direction nonce scheduling, accepted full-lifecycle SDK/custom-token
 review, final milestone gates, and production hardening remain open.
 
+The public BTC SDK now deterministically validates application-owned
+discovery/negotiation, drops those peer capabilities at activation, and replays
+exact agreement-bound claim or ordered-refund transitions through revisions one
+to four in both directions and roles. A separate two-role-signed asset extension
+binds the unchanged agreement-v1 commitment to an explicit native or exact
+custom-token selection without aliasing custom custody to native custody. These
+are component gates, not new actual-node evidence: the public process-durable
+store/chain composition and F7 client/sidecar/actor mapping remain open.
+
 Run `m3refund-20260716h` then passed the two-lock timeout/refund journey
 from base HEAD `ef5f306` with a dirty pre-commit source tree and the packet's
 independently validated runner hashes. It is hash-bound functional evidence,

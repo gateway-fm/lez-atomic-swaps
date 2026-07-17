@@ -9,7 +9,7 @@ use bitcoin::hashes::Hash as _;
 use bitcoin::hex::DisplayHex as _;
 use bitcoin::secp256k1::{Message, PublicKey, Secp256k1, XOnlyPublicKey, schnorr::Signature};
 use bitcoin::{Amount, OutPoint, ScriptBuf, TxOut, Txid};
-use borsh::BorshSerialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 use lez_swap_core::{
     Chain, ChainPosition, ConfirmationPolicy, Pair, Participant, RecoverySchedule, SwapCoordinator,
     SwapDirection, SwapId, TimelockSafety,
@@ -28,12 +28,21 @@ use crate::{
 /// Domain separator for canonical version-1 LEZ/BTC agreement commitments.
 pub const BTC_AGREEMENT_V1_DOMAIN: &[u8] = b"logos.gateway.lez-btc.agreement.v1\0";
 
+/// Domain separator for additive version-1 LEZ asset-extension commitments.
+pub const BTC_LEZ_ASSET_EXTENSION_V1_DOMAIN: &[u8] = b"logos.gateway.lez-btc.asset-extension.v1\0";
+
 /// Domain separator for deterministic claim-session identities derived from a
 /// countersigned agreement.
 const BTC_CLAIM_SESSION_V1_DOMAIN: &[u8] = b"logos.gateway.lez-btc.claim-session.v1\0";
 
 /// Only accepted wire schema.
 pub const BTC_AGREEMENT_SCHEMA_V1: u16 = 1;
+
+/// Only accepted additive LEZ asset-extension schema.
+pub const BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1: u16 = 1;
+
+/// Maximum canonical LEZ asset-extension record size accepted from a peer.
+pub const MAX_BTC_LEZ_ASSET_EXTENSION_RECORD_BYTES: usize = 1_024;
 
 /// Maximum canonical agreement record size accepted from a peer.
 pub const MAX_BTC_AGREEMENT_RECORD_BYTES: usize = 16 * 1024;
@@ -334,12 +343,594 @@ impl BtcLezTermsV1 {
     }
 }
 
+/// Exact custom-token fields added to one otherwise unchanged version-1 agreement.
+///
+/// Common LEZ fields are repeated deliberately and must equal the signed base
+/// agreement. This prevents an actor from accepting one amount, deadline, role,
+/// or authority while constructing a different token escrow. Native program
+/// and custody fields in the base agreement do not apply to this custom asset.
+#[derive(BorshDeserialize, BorshSerialize, Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BtcLezCustomTokenTermsV1 {
+    token_program_id: [u8; 32],
+    ata_program_id: [u8; 32],
+    token_definition_account: [u8; 32],
+    depositor_owner_account: [u8; 32],
+    depositor_ata_account: [u8; 32],
+    claimant_owner_account: [u8; 32],
+    claimant_ata_account: [u8; 32],
+    custody_ata_account: [u8; 32],
+    amount: u128,
+    refund_at_ms: u64,
+    aggregate_authority_account: [u8; 32],
+    aggregate_x_only_public_key: [u8; 32],
+}
+
+impl BtcLezCustomTokenTermsV1 {
+    /// Creates untrusted primitive custom-token terms.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub const fn new(
+        token_program_id: [u8; 32],
+        ata_program_id: [u8; 32],
+        token_definition_account: [u8; 32],
+        depositor_owner_account: [u8; 32],
+        depositor_ata_account: [u8; 32],
+        claimant_owner_account: [u8; 32],
+        claimant_ata_account: [u8; 32],
+        custody_ata_account: [u8; 32],
+        amount: u128,
+        refund_at_ms: u64,
+        aggregate_authority_account: [u8; 32],
+        aggregate_x_only_public_key: [u8; 32],
+    ) -> Self {
+        Self {
+            token_program_id,
+            ata_program_id,
+            token_definition_account,
+            depositor_owner_account,
+            depositor_ata_account,
+            claimant_owner_account,
+            claimant_ata_account,
+            custody_ata_account,
+            amount,
+            refund_at_ms,
+            aggregate_authority_account,
+            aggregate_x_only_public_key,
+        }
+    }
+
+    /// Exact token program identifier.
+    #[must_use]
+    pub const fn token_program_id(&self) -> &[u8; 32] {
+        &self.token_program_id
+    }
+
+    /// Exact associated-token-account program identifier.
+    #[must_use]
+    pub const fn ata_program_id(&self) -> &[u8; 32] {
+        &self.ata_program_id
+    }
+
+    /// Exact fungible-token definition account.
+    #[must_use]
+    pub const fn token_definition_account(&self) -> &[u8; 32] {
+        &self.token_definition_account
+    }
+
+    /// Direction-derived LEZ depositor owner.
+    #[must_use]
+    pub const fn depositor_owner_account(&self) -> &[u8; 32] {
+        &self.depositor_owner_account
+    }
+
+    /// Exact depositor holding account for this token definition.
+    #[must_use]
+    pub const fn depositor_ata_account(&self) -> &[u8; 32] {
+        &self.depositor_ata_account
+    }
+
+    /// Direction-derived LEZ claimant owner.
+    #[must_use]
+    pub const fn claimant_owner_account(&self) -> &[u8; 32] {
+        &self.claimant_owner_account
+    }
+
+    /// Exact claimant holding account for this token definition.
+    #[must_use]
+    pub const fn claimant_ata_account(&self) -> &[u8; 32] {
+        &self.claimant_ata_account
+    }
+
+    /// Exact escrow custody holding account for this token definition.
+    #[must_use]
+    pub const fn custody_ata_account(&self) -> &[u8; 32] {
+        &self.custody_ata_account
+    }
+
+    /// Exact full-width token amount.
+    #[must_use]
+    pub const fn amount(&self) -> u128 {
+        self.amount
+    }
+
+    /// Exact guest refund deadline in Unix milliseconds.
+    #[must_use]
+    pub const fn refund_at_ms(&self) -> u64 {
+        self.refund_at_ms
+    }
+
+    /// Exact aggregate-authority account.
+    #[must_use]
+    pub const fn aggregate_authority_account(&self) -> &[u8; 32] {
+        &self.aggregate_authority_account
+    }
+
+    /// Exact aggregate x-only key checked by the witnessed guest.
+    #[must_use]
+    pub const fn aggregate_x_only_public_key(&self) -> &[u8; 32] {
+        &self.aggregate_x_only_public_key
+    }
+}
+
+/// Explicit LEZ asset selection bound to a version-1 BTC agreement.
+///
+/// The Native variant is a real canonical enum variant, rather than absence of
+/// token fields, so native and custom-token commitments cannot share bytes.
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug, Eq, PartialEq)]
+pub enum BtcLezAssetV1 {
+    /// Native LEZ value using the complete fields already signed in the base agreement.
+    Native,
+    /// One exact custom fungible-token definition and all of its holding accounts.
+    CustomToken(Box<BtcLezCustomTokenTermsV1>),
+}
+
+/// Canonical additive asset body countersigned by both agreement roles.
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug, Eq, PartialEq)]
+pub struct BtcLezAssetExtensionBodyV1 {
+    base_agreement_commitment: [u8; 32],
+    asset: BtcLezAssetV1,
+}
+
+impl BtcLezAssetExtensionBodyV1 {
+    /// Binds one explicit asset selection to one exact validated base agreement.
+    #[must_use]
+    pub const fn new(base_agreement_commitment: [u8; 32], asset: BtcLezAssetV1) -> Self {
+        Self {
+            base_agreement_commitment,
+            asset,
+        }
+    }
+
+    /// Fixed-domain SHA-256 over canonical Borsh extension-body bytes.
+    ///
+    /// # Panics
+    ///
+    /// Serializing these fixed in-memory fields to a vector cannot fail. A
+    /// panic would indicate a broken canonical serialization implementation.
+    #[must_use]
+    pub fn commitment(&self) -> [u8; 32] {
+        let encoded = borsh::to_vec(self).expect("serializing into a Vec cannot fail");
+        let mut hasher = Sha256::new();
+        hasher.update(BTC_LEZ_ASSET_EXTENSION_V1_DOMAIN);
+        hasher.update(encoded);
+        hasher.finalize().into()
+    }
+
+    /// Exact canonical Borsh bytes hashed by the commitment method.
+    ///
+    /// # Errors
+    ///
+    /// Returns an encoding error if canonical encoding fails.
+    pub fn encode_canonical(&self) -> Result<Vec<u8>, BtcLezAssetExtensionV1Error> {
+        borsh::to_vec(self).map_err(|_| BtcLezAssetExtensionV1Error::WireEncoding)
+    }
+
+    /// Exact version-1 agreement commitment extended by this record.
+    #[must_use]
+    pub const fn base_agreement_commitment(&self) -> &[u8; 32] {
+        &self.base_agreement_commitment
+    }
+
+    /// Explicit native or custom-token asset selection.
+    #[must_use]
+    pub const fn asset(&self) -> &BtcLezAssetV1 {
+        &self.asset
+    }
+}
+
+/// Primitive untrusted countersigned asset-extension record.
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug, Eq, PartialEq)]
+pub struct BtcLezAssetExtensionRecordV1 {
+    schema_version: u16,
+    body: BtcLezAssetExtensionBodyV1,
+    asset_commitment: [u8; 32],
+    maker_signature: [u8; 64],
+    taker_signature: [u8; 64],
+}
+
+impl BtcLezAssetExtensionRecordV1 {
+    /// Assembles untrusted extension fields.
+    #[must_use]
+    pub const fn from_parts(
+        schema_version: u16,
+        body: BtcLezAssetExtensionBodyV1,
+        asset_commitment: [u8; 32],
+        maker_signature: [u8; 64],
+        taker_signature: [u8; 64],
+    ) -> Self {
+        Self {
+            schema_version,
+            body,
+            asset_commitment,
+            maker_signature,
+            taker_signature,
+        }
+    }
+
+    /// Exact extension schema version.
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
+    /// Exact canonical extension body.
+    #[must_use]
+    pub const fn body(&self) -> &BtcLezAssetExtensionBodyV1 {
+        &self.body
+    }
+
+    /// Exact extension commitment countersigned by both roles.
+    #[must_use]
+    pub const fn asset_commitment(&self) -> &[u8; 32] {
+        &self.asset_commitment
+    }
+
+    /// Exact role signature over the asset commitment.
+    #[must_use]
+    pub const fn signature(&self, participant: Participant) -> &[u8; 64] {
+        match participant {
+            Participant::Maker => &self.maker_signature,
+            Participant::Taker => &self.taker_signature,
+        }
+    }
+
+    /// Encodes canonical Borsh and enforces the fixed extension bound.
+    ///
+    /// # Errors
+    ///
+    /// Returns an encoding or oversize error.
+    pub fn encode_wire(&self) -> Result<Vec<u8>, BtcLezAssetExtensionV1Error> {
+        let encoded = borsh::to_vec(self).map_err(|_| BtcLezAssetExtensionV1Error::WireEncoding)?;
+        if encoded.len() > MAX_BTC_LEZ_ASSET_EXTENSION_RECORD_BYTES {
+            return Err(BtcLezAssetExtensionV1Error::OversizedWireRecord {
+                actual: encoded.len(),
+                maximum: MAX_BTC_LEZ_ASSET_EXTENSION_RECORD_BYTES,
+            });
+        }
+        Ok(encoded)
+    }
+}
+
+/// Validated immutable countersigned LEZ asset extension.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BtcLezAssetExtensionV1 {
+    record: BtcLezAssetExtensionRecordV1,
+}
+
+impl BtcLezAssetExtensionV1 {
+    /// Validates one extension against one already validated base agreement.
+    ///
+    /// # Errors
+    ///
+    /// Rejects schema, commitment, agreement, role, common-term, asset,
+    /// alias, aggregate-authority, signature, encoding, and size mismatches.
+    pub fn validate(
+        record: BtcLezAssetExtensionRecordV1,
+        agreement: &BtcAgreementV1,
+    ) -> Result<Self, BtcLezAssetExtensionV1Error> {
+        if record.schema_version != BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1 {
+            return Err(BtcLezAssetExtensionV1Error::UnsupportedSchema(
+                record.schema_version,
+            ));
+        }
+        let _ = record.encode_wire()?;
+        let expected_commitment = record.body.commitment();
+        if record
+            .asset_commitment
+            .ct_eq(&expected_commitment)
+            .unwrap_u8()
+            == 0
+        {
+            return Err(BtcLezAssetExtensionV1Error::AssetCommitmentMismatch);
+        }
+        if record
+            .body
+            .base_agreement_commitment
+            .ct_eq(agreement.agreement_commitment())
+            .unwrap_u8()
+            == 0
+        {
+            return Err(BtcLezAssetExtensionV1Error::BaseAgreementMismatch);
+        }
+
+        validate_lez_asset(&record.body.asset, agreement)?;
+        verify_asset_role_signature(
+            Participant::Maker,
+            agreement,
+            record.maker_signature,
+            expected_commitment,
+        )?;
+        verify_asset_role_signature(
+            Participant::Taker,
+            agreement,
+            record.taker_signature,
+            expected_commitment,
+        )?;
+
+        Ok(Self { record })
+    }
+
+    /// Validates an extension and requires an exact locally expected asset.
+    ///
+    /// This is the actor-facing policy path for pinning official program IDs,
+    /// the token definition, and every ATA instead of trusting peer-selected
+    /// values merely because both peers signed them.
+    ///
+    /// # Errors
+    ///
+    /// Returns any intrinsic validation error or an exact asset mismatch.
+    pub fn validate_for_asset(
+        record: BtcLezAssetExtensionRecordV1,
+        agreement: &BtcAgreementV1,
+        expected: &BtcLezAssetV1,
+    ) -> Result<Self, BtcLezAssetExtensionV1Error> {
+        let extension = Self::validate(record, agreement)?;
+        extension.ensure_asset(expected)?;
+        Ok(extension)
+    }
+
+    /// Bounded canonical decode followed by complete agreement-bound validation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects oversized, malformed, trailing, non-canonical, or invalid records.
+    pub fn from_wire(
+        bytes: &[u8],
+        agreement: &BtcAgreementV1,
+    ) -> Result<Self, BtcLezAssetExtensionV1Error> {
+        if bytes.len() > MAX_BTC_LEZ_ASSET_EXTENSION_RECORD_BYTES {
+            return Err(BtcLezAssetExtensionV1Error::OversizedWireRecord {
+                actual: bytes.len(),
+                maximum: MAX_BTC_LEZ_ASSET_EXTENSION_RECORD_BYTES,
+            });
+        }
+        let record: BtcLezAssetExtensionRecordV1 = borsh::from_slice(bytes)
+            .map_err(|_| BtcLezAssetExtensionV1Error::MalformedWireRecord)?;
+        if record.encode_wire()?.as_slice() != bytes {
+            return Err(BtcLezAssetExtensionV1Error::MalformedWireRecord);
+        }
+        Self::validate(record, agreement)
+    }
+
+    /// Canonical wire replay.
+    ///
+    /// # Errors
+    ///
+    /// Returns an encoding or size error.
+    pub fn encode_wire(&self) -> Result<Vec<u8>, BtcLezAssetExtensionV1Error> {
+        self.record.encode_wire()
+    }
+
+    /// Requires the exact locally expected asset selection and fields.
+    ///
+    /// # Errors
+    ///
+    /// Rejects native/custom-token kind changes or any custom-token field change.
+    pub fn ensure_asset(
+        &self,
+        expected: &BtcLezAssetV1,
+    ) -> Result<(), BtcLezAssetExtensionV1Error> {
+        if self.asset() == expected {
+            Ok(())
+        } else {
+            Err(BtcLezAssetExtensionV1Error::LezAssetMismatch)
+        }
+    }
+
+    /// Exact validated canonical record, including both signatures.
+    #[must_use]
+    pub const fn record(&self) -> &BtcLezAssetExtensionRecordV1 {
+        &self.record
+    }
+
+    /// Exact base agreement commitment covered by this extension.
+    #[must_use]
+    pub const fn base_agreement_commitment(&self) -> &[u8; 32] {
+        &self.record.body.base_agreement_commitment
+    }
+
+    /// Explicit validated native or custom-token asset.
+    #[must_use]
+    pub const fn asset(&self) -> &BtcLezAssetV1 {
+        &self.record.body.asset
+    }
+
+    /// Commitment countersigned by both roles.
+    #[must_use]
+    pub const fn asset_commitment(&self) -> &[u8; 32] {
+        &self.record.asset_commitment
+    }
+
+    /// Immutable terms binding passed to a version-2 witnessed LEZ escrow.
+    #[must_use]
+    pub const fn lez_terms_binding(&self) -> [u8; 32] {
+        self.record.asset_commitment
+    }
+}
+
+/// Rejection taxonomy for untrusted additive LEZ asset extensions.
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+pub enum BtcLezAssetExtensionV1Error {
+    /// Schema is not the one supported additive extension schema.
+    #[error("unsupported LEZ asset-extension schema {0}")]
+    UnsupportedSchema(u16),
+    /// Wire bytes exceed the fixed limit.
+    #[error("LEZ asset-extension record is {actual} bytes; maximum is {maximum}")]
+    OversizedWireRecord {
+        /// Actual byte count.
+        actual: usize,
+        /// Fixed maximum.
+        maximum: usize,
+    },
+    /// Wire is truncated, malformed, non-canonical, or contains trailing bytes.
+    #[error("LEZ asset-extension wire record is malformed")]
+    MalformedWireRecord,
+    /// In-memory canonical encoding failed.
+    #[error("LEZ asset-extension record could not be encoded")]
+    WireEncoding,
+    /// Stored commitment differs from the canonical extension-body hash.
+    #[error("LEZ asset-extension commitment does not match its canonical body")]
+    AssetCommitmentMismatch,
+    /// Extension names a different version-1 agreement commitment.
+    #[error("LEZ asset extension belongs to a different base agreement")]
+    BaseAgreementMismatch,
+    /// Token owner roles do not match the direction-derived base-agreement roles.
+    #[error("LEZ token owner roles do not match the base agreement")]
+    LezAssetRoleMismatch,
+    /// Amount, deadline, or authority differs from the base agreement.
+    #[error("LEZ token common terms do not match the base agreement")]
+    LezBaseTermsMismatch,
+    /// A required token identity or amount is zero or invalid.
+    #[error("LEZ token asset contains an empty or invalid identity")]
+    InvalidLezAssetIdentity,
+    /// Two semantically distinct token programs or accounts are aliased.
+    #[error("LEZ token programs or accounts are aliased")]
+    LezAssetAlias,
+    /// Aggregate authority x-only key cannot be parsed canonically.
+    #[error("LEZ aggregate-authority x-only key is invalid")]
+    InvalidAggregateAuthorityKey,
+    /// Aggregate authority key differs from the base agreement's `MuSig2` aggregate.
+    #[error("LEZ aggregate authority differs from the base agreement")]
+    AggregateAuthorityMismatch,
+    /// Validated asset differs from exact local program/account policy.
+    #[error("LEZ asset does not match local expected asset policy")]
+    LezAssetMismatch,
+    /// Base-agreement role key unexpectedly cannot be reparsed.
+    #[error("{0:?} base-agreement signing key is malformed")]
+    InvalidParticipantKey(Participant),
+    /// Role signature encoding is malformed.
+    #[error("{0:?} LEZ asset-extension signature is malformed")]
+    InvalidSignatureEncoding(Participant),
+    /// Role did not sign the exact extension commitment.
+    #[error("{0:?} LEZ asset-extension signature does not verify")]
+    SignatureMismatch(Participant),
+}
+
+fn validate_lez_asset(
+    asset: &BtcLezAssetV1,
+    agreement: &BtcAgreementV1,
+) -> Result<(), BtcLezAssetExtensionV1Error> {
+    let BtcLezAssetV1::CustomToken(token) = asset else {
+        return Ok(());
+    };
+    let base = agreement.lez_terms();
+
+    let fixed = [
+        token.token_program_id,
+        token.ata_program_id,
+        token.token_definition_account,
+        token.depositor_owner_account,
+        token.depositor_ata_account,
+        token.claimant_owner_account,
+        token.claimant_ata_account,
+        token.custody_ata_account,
+        token.aggregate_authority_account,
+    ];
+    if token.aggregate_x_only_public_key == [0; 32] {
+        return Err(BtcLezAssetExtensionV1Error::InvalidAggregateAuthorityKey);
+    }
+    if fixed.contains(&[0; 32]) || token.amount == 0 || token.refund_at_ms == 0 {
+        return Err(BtcLezAssetExtensionV1Error::InvalidLezAssetIdentity);
+    }
+
+    if token.depositor_owner_account != *base.depositor_account()
+        || token.claimant_owner_account != *base.claimant_account()
+    {
+        return Err(BtcLezAssetExtensionV1Error::LezAssetRoleMismatch);
+    }
+    if token.amount != base.amount()
+        || token.refund_at_ms != base.refund_at_ms()
+        || token.aggregate_authority_account != *base.aggregate_authority_account()
+    {
+        return Err(BtcLezAssetExtensionV1Error::LezBaseTermsMismatch);
+    }
+
+    let aggregate_key = XOnlyPublicKey::from_slice(&token.aggregate_x_only_public_key)
+        .map_err(|_| BtcLezAssetExtensionV1Error::InvalidAggregateAuthorityKey)?;
+    if aggregate_key.serialize() != agreement.p2tr_contract().aggregate_internal_key_bytes() {
+        return Err(BtcLezAssetExtensionV1Error::AggregateAuthorityMismatch);
+    }
+
+    let accounts = [
+        *base.metadata_account(),
+        token.token_definition_account,
+        token.depositor_owner_account,
+        token.depositor_ata_account,
+        token.claimant_owner_account,
+        token.claimant_ata_account,
+        token.custody_ata_account,
+        token.aggregate_authority_account,
+    ];
+    let programs = [
+        *base.escrow_program_id(),
+        token.token_program_id,
+        token.ata_program_id,
+    ];
+    if !all_distinct(&accounts)
+        || !all_distinct(&programs)
+        || programs
+            .iter()
+            .any(|program| accounts.iter().any(|account| program == account))
+    {
+        return Err(BtcLezAssetExtensionV1Error::LezAssetAlias);
+    }
+
+    Ok(())
+}
+
+fn all_distinct(values: &[[u8; 32]]) -> bool {
+    values
+        .iter()
+        .enumerate()
+        .all(|(index, value)| !values[index + 1..].contains(value))
+}
+
+fn verify_asset_role_signature(
+    role: Participant,
+    agreement: &BtcAgreementV1,
+    signature_bytes: [u8; 64],
+    commitment: [u8; 32],
+) -> Result<(), BtcLezAssetExtensionV1Error> {
+    let public_key = PublicKey::from_slice(agreement.participant(role).musig2_public_key())
+        .map_err(|_| BtcLezAssetExtensionV1Error::InvalidParticipantKey(role))?;
+    let signature = Signature::from_slice(&signature_bytes)
+        .map_err(|_| BtcLezAssetExtensionV1Error::InvalidSignatureEncoding(role))?;
+    Secp256k1::verification_only()
+        .verify_schnorr(
+            &signature,
+            &Message::from_digest(commitment),
+            &public_key.x_only_public_key().0,
+        )
+        .map_err(|_| BtcLezAssetExtensionV1Error::SignatureMismatch(role))
+}
+
 /// Exact primitive fields of the one-leaf P2TR swap output.
 #[derive(BorshSerialize, Clone, Debug, Eq, PartialEq)]
 pub struct BtcP2trTermsV1 {
     aggregate_internal_key: [u8; 32],
     refund_key: [u8; 32],
     refund_csv_blocks: u32,
+
     refund_leaf_version: u8,
     refund_script: Vec<u8>,
     tapleaf_hash: [u8; 32],

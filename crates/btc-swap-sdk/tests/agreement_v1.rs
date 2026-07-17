@@ -3,11 +3,14 @@ use bitcoin::hex::DisplayHex as _;
 use bitcoin::secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use bitcoin::{Amount, OutPoint, ScriptBuf, TxOut, Txid};
 use lez_btc_swap_sdk::{
-    AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BtcAdaptorSessionDomain, BtcAgreementBodyV1,
-    BtcAgreementRecordV1, BtcAgreementV1, BtcAgreementV1Error, BtcChainPolicyV1, BtcClaimTermsV1,
-    BtcFundingTermsV1, BtcLezTermsV1, BtcP2trTermsV1, BtcParticipantIdentityV1, BtcParticipantsV1,
-    BtcRecoveryPlanV1, CsvBlockDelay, MAX_BITCOIN_REQUIRED_CONFIRMATIONS,
-    MAX_BTC_AGREEMENT_RECORD_BYTES, P2trSwapOutput, RefundXOnlyKey, TwoPartyAggregateKey,
+    AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1,
+    BtcAdaptorSessionDomain, BtcAgreementBodyV1, BtcAgreementRecordV1, BtcAgreementV1,
+    BtcAgreementV1Error, BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1,
+    BtcLezAssetExtensionBodyV1, BtcLezAssetExtensionRecordV1, BtcLezAssetExtensionV1,
+    BtcLezAssetExtensionV1Error, BtcLezAssetV1, BtcLezCustomTokenTermsV1, BtcLezTermsV1,
+    BtcP2trTermsV1, BtcParticipantIdentityV1, BtcParticipantsV1, BtcRecoveryPlanV1, CsvBlockDelay,
+    MAX_BITCOIN_REQUIRED_CONFIRMATIONS, MAX_BTC_AGREEMENT_RECORD_BYTES, P2trSwapOutput,
+    RefundXOnlyKey, TwoPartyAggregateKey,
 };
 use lez_swap_core::{Chain, MakerRecoveryTrigger, Pair, Participant, Phase, SwapDirection};
 
@@ -276,6 +279,95 @@ fn signed_record(fixture: &Fixture) -> BtcAgreementRecordV1 {
     BtcAgreementRecordV1::from_parts(
         BTC_AGREEMENT_SCHEMA_V1,
         fixture.body.clone(),
+        commitment,
+        signature(&fixture.maker_secret, commitment),
+        signature(&fixture.taker_secret, commitment),
+    )
+}
+
+#[derive(Clone, Copy)]
+struct TokenFixtureOptions {
+    token_program_id: [u8; 32],
+    ata_program_id: [u8; 32],
+    token_definition_account: [u8; 32],
+    depositor_owner_account: Option<[u8; 32]>,
+    depositor_ata_account: [u8; 32],
+    claimant_owner_account: Option<[u8; 32]>,
+    claimant_ata_account: [u8; 32],
+    custody_ata_account: [u8; 32],
+    amount: Option<u128>,
+    refund_at_ms: Option<u64>,
+    aggregate_authority_account: Option<[u8; 32]>,
+    aggregate_x_only_public_key: Option<[u8; 32]>,
+}
+
+impl Default for TokenFixtureOptions {
+    fn default() -> Self {
+        Self {
+            token_program_id: [40; 32],
+            ata_program_id: [41; 32],
+            token_definition_account: [42; 32],
+            depositor_owner_account: None,
+            depositor_ata_account: [43; 32],
+            claimant_owner_account: None,
+            claimant_ata_account: [44; 32],
+            custody_ata_account: [45; 32],
+            amount: None,
+            refund_at_ms: None,
+            aggregate_authority_account: None,
+            aggregate_x_only_public_key: None,
+        }
+    }
+}
+
+fn custom_token_terms_with(
+    agreement: &BtcAgreementV1,
+    options: &TokenFixtureOptions,
+) -> BtcLezCustomTokenTermsV1 {
+    BtcLezCustomTokenTermsV1::new(
+        options.token_program_id,
+        options.ata_program_id,
+        options.token_definition_account,
+        options
+            .depositor_owner_account
+            .unwrap_or(*agreement.lez_terms().depositor_account()),
+        options.depositor_ata_account,
+        options
+            .claimant_owner_account
+            .unwrap_or(*agreement.lez_terms().claimant_account()),
+        options.claimant_ata_account,
+        options.custody_ata_account,
+        options.amount.unwrap_or(agreement.lez_terms().amount()),
+        options
+            .refund_at_ms
+            .unwrap_or(agreement.lez_terms().refund_at_ms()),
+        options
+            .aggregate_authority_account
+            .unwrap_or(*agreement.lez_terms().aggregate_authority_account()),
+        options
+            .aggregate_x_only_public_key
+            .unwrap_or(agreement.p2tr_contract().aggregate_internal_key_bytes()),
+    )
+}
+
+fn custom_token_terms(agreement: &BtcAgreementV1) -> BtcLezCustomTokenTermsV1 {
+    custom_token_terms_with(agreement, &TokenFixtureOptions::default())
+}
+
+fn custom_token_asset(terms: &BtcLezCustomTokenTermsV1) -> BtcLezAssetV1 {
+    BtcLezAssetV1::CustomToken(Box::new(*terms))
+}
+
+fn signed_asset_extension(
+    fixture: &Fixture,
+    agreement: &BtcAgreementV1,
+    asset: BtcLezAssetV1,
+) -> BtcLezAssetExtensionRecordV1 {
+    let body = BtcLezAssetExtensionBodyV1::new(*agreement.agreement_commitment(), asset);
+    let commitment = body.commitment();
+    BtcLezAssetExtensionRecordV1::from_parts(
+        BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1,
+        body,
         commitment,
         signature(&fixture.maker_secret, commitment),
         signature(&fixture.taker_secret, commitment),
@@ -847,4 +939,365 @@ fn direction_correct_recovery_schedule_is_reconstructed_and_checked() {
     let agreement = BtcAgreementV1::validate(signed_record(&valid)).expect("valid schedule");
     assert_eq!(agreement.lez_depositor(), Participant::Taker);
     assert_eq!(agreement.bitcoin_funder(), Participant::Maker);
+}
+
+#[test]
+fn additive_asset_extension_is_explicit_countersigned_and_leaves_v1_bytes_unchanged() {
+    let fixture = fixture(SwapDirection::TakerSellsForeign, FixtureOptions::default());
+    let legacy_record = signed_record(&fixture);
+    let legacy_wire = legacy_record.encode_wire().expect("legacy wire");
+    let legacy_commitment = fixture.body.commitment();
+    let agreement = BtcAgreementV1::validate(legacy_record).expect("agreement");
+
+    let native_record = signed_asset_extension(&fixture, &agreement, BtcLezAssetV1::Native);
+    let native_wire = native_record.encode_wire().expect("native extension wire");
+    let native =
+        BtcLezAssetExtensionV1::from_wire(&native_wire, &agreement).expect("native binding");
+    assert_eq!(native.encode_wire().expect("wire replay"), native_wire);
+    assert_eq!(
+        native.base_agreement_commitment(),
+        agreement.agreement_commitment()
+    );
+    assert_eq!(native.asset(), &BtcLezAssetV1::Native);
+    assert_eq!(native.lez_terms_binding(), *native.asset_commitment());
+
+    let custom_asset = custom_token_asset(&custom_token_terms(&agreement));
+    let custom_record = signed_asset_extension(&fixture, &agreement, custom_asset.clone());
+    let custom_wire = custom_record.encode_wire().expect("custom extension wire");
+    let custom =
+        BtcLezAssetExtensionV1::from_wire(&custom_wire, &agreement).expect("custom binding");
+    assert_eq!(custom.encode_wire().expect("wire replay"), custom_wire);
+    assert_eq!(custom.asset(), &custom_asset);
+    assert_ne!(custom.asset_commitment(), native.asset_commitment());
+    assert_ne!(custom_wire, native_wire);
+    custom
+        .ensure_asset(&custom_asset)
+        .expect("exact locally expected asset");
+
+    let BtcLezAssetV1::CustomToken(token) = custom.asset() else {
+        panic!("custom token asset");
+    };
+    assert_eq!(token.token_program_id(), &[40; 32]);
+    assert_eq!(token.ata_program_id(), &[41; 32]);
+    assert_eq!(token.token_definition_account(), &[42; 32]);
+    assert_eq!(
+        token.depositor_owner_account(),
+        agreement.lez_terms().depositor_account()
+    );
+    assert_eq!(token.depositor_ata_account(), &[43; 32]);
+    assert_eq!(
+        token.claimant_owner_account(),
+        agreement.lez_terms().claimant_account()
+    );
+    assert_eq!(token.claimant_ata_account(), &[44; 32]);
+    assert_eq!(token.custody_ata_account(), &[45; 32]);
+    assert_eq!(token.amount(), agreement.lez_terms().amount());
+    assert_eq!(token.refund_at_ms(), agreement.lez_terms().refund_at_ms());
+    assert_eq!(
+        token.aggregate_authority_account(),
+        agreement.lez_terms().aggregate_authority_account()
+    );
+    assert_eq!(
+        token.aggregate_x_only_public_key(),
+        &agreement.p2tr_contract().aggregate_internal_key_bytes()
+    );
+
+    assert_eq!(
+        signed_record(&fixture)
+            .encode_wire()
+            .expect("legacy replay"),
+        legacy_wire
+    );
+    assert_eq!(fixture.body.commitment(), legacy_commitment);
+}
+
+#[test]
+fn asset_extension_rejects_cross_agreement_network_role_and_base_term_substitution() {
+    let base_fixture = fixture(SwapDirection::TakerSellsForeign, FixtureOptions::default());
+    let agreement =
+        BtcAgreementV1::validate(signed_record(&base_fixture)).expect("validated agreement");
+    let valid_record = signed_asset_extension(
+        &base_fixture,
+        &agreement,
+        custom_token_asset(&custom_token_terms(&agreement)),
+    );
+
+    let other_fixture = fixture(
+        SwapDirection::TakerSellsForeign,
+        FixtureOptions {
+            bitcoin_genesis_hash: [9; 32],
+            ..FixtureOptions::default()
+        },
+    );
+    let other_agreement =
+        BtcAgreementV1::validate(signed_record(&other_fixture)).expect("other network agreement");
+    assert_eq!(
+        BtcLezAssetExtensionV1::validate(valid_record.clone(), &other_agreement),
+        Err(BtcLezAssetExtensionV1Error::BaseAgreementMismatch)
+    );
+
+    for options in [
+        TokenFixtureOptions {
+            depositor_owner_account: Some(*agreement.lez_terms().claimant_account()),
+            ..TokenFixtureOptions::default()
+        },
+        TokenFixtureOptions {
+            claimant_owner_account: Some(*agreement.lez_terms().depositor_account()),
+            ..TokenFixtureOptions::default()
+        },
+    ] {
+        let record = signed_asset_extension(
+            &base_fixture,
+            &agreement,
+            custom_token_asset(&custom_token_terms_with(&agreement, &options)),
+        );
+        assert_eq!(
+            BtcLezAssetExtensionV1::validate(record, &agreement),
+            Err(BtcLezAssetExtensionV1Error::LezAssetRoleMismatch)
+        );
+    }
+
+    for options in [
+        TokenFixtureOptions {
+            amount: Some(agreement.lez_terms().amount() + 1),
+            ..TokenFixtureOptions::default()
+        },
+        TokenFixtureOptions {
+            refund_at_ms: Some(agreement.lez_terms().refund_at_ms() + 1_000),
+            ..TokenFixtureOptions::default()
+        },
+        TokenFixtureOptions {
+            aggregate_authority_account: Some([51; 32]),
+            ..TokenFixtureOptions::default()
+        },
+    ] {
+        let record = signed_asset_extension(
+            &base_fixture,
+            &agreement,
+            custom_token_asset(&custom_token_terms_with(&agreement, &options)),
+        );
+        assert_eq!(
+            BtcLezAssetExtensionV1::validate(record, &agreement),
+            Err(BtcLezAssetExtensionV1Error::LezBaseTermsMismatch)
+        );
+    }
+
+    let wrong_authority_key = signed_asset_extension(
+        &base_fixture,
+        &agreement,
+        custom_token_asset(&custom_token_terms_with(
+            &agreement,
+            &TokenFixtureOptions {
+                aggregate_x_only_public_key: Some(x_only_public_key(&secret(9))),
+                ..TokenFixtureOptions::default()
+            },
+        )),
+    );
+    assert_eq!(
+        BtcLezAssetExtensionV1::validate(wrong_authority_key, &agreement),
+        Err(BtcLezAssetExtensionV1Error::AggregateAuthorityMismatch)
+    );
+}
+
+#[test]
+fn every_asset_field_is_covered_by_the_commitment() {
+    let fixture = fixture(SwapDirection::TakerSellsLez, FixtureOptions::default());
+    let agreement = BtcAgreementV1::validate(signed_record(&fixture)).expect("validated agreement");
+    let expected = custom_token_asset(&custom_token_terms(&agreement));
+    let signed = signed_asset_extension(&fixture, &agreement, expected.clone());
+
+    let substitutions = [
+        BtcLezAssetV1::Native,
+        custom_token_asset(&custom_token_terms_with(
+            &agreement,
+            &TokenFixtureOptions {
+                token_program_id: [52; 32],
+                ..TokenFixtureOptions::default()
+            },
+        )),
+        custom_token_asset(&custom_token_terms_with(
+            &agreement,
+            &TokenFixtureOptions {
+                ata_program_id: [53; 32],
+                ..TokenFixtureOptions::default()
+            },
+        )),
+        custom_token_asset(&custom_token_terms_with(
+            &agreement,
+            &TokenFixtureOptions {
+                token_definition_account: [54; 32],
+                ..TokenFixtureOptions::default()
+            },
+        )),
+        custom_token_asset(&custom_token_terms_with(
+            &agreement,
+            &TokenFixtureOptions {
+                depositor_ata_account: [55; 32],
+                ..TokenFixtureOptions::default()
+            },
+        )),
+        custom_token_asset(&custom_token_terms_with(
+            &agreement,
+            &TokenFixtureOptions {
+                claimant_ata_account: [56; 32],
+                ..TokenFixtureOptions::default()
+            },
+        )),
+        custom_token_asset(&custom_token_terms_with(
+            &agreement,
+            &TokenFixtureOptions {
+                custody_ata_account: [60; 32],
+                ..TokenFixtureOptions::default()
+            },
+        )),
+    ];
+
+    for substituted_asset in substitutions {
+        let substituted_body =
+            BtcLezAssetExtensionBodyV1::new(*agreement.agreement_commitment(), substituted_asset);
+        let substituted_record = BtcLezAssetExtensionRecordV1::from_parts(
+            BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1,
+            substituted_body,
+            *signed.asset_commitment(),
+            *signed.signature(Participant::Maker),
+            *signed.signature(Participant::Taker),
+        );
+        assert_eq!(
+            BtcLezAssetExtensionV1::validate(substituted_record, &agreement),
+            Err(BtcLezAssetExtensionV1Error::AssetCommitmentMismatch)
+        );
+    }
+}
+
+#[test]
+fn exact_asset_policy_rejects_kind_program_definition_and_custody_substitutions() {
+    let fixture = fixture(SwapDirection::TakerSellsLez, FixtureOptions::default());
+    let agreement = BtcAgreementV1::validate(signed_record(&fixture)).expect("validated agreement");
+    let expected = custom_token_asset(&custom_token_terms(&agreement));
+    let signed = signed_asset_extension(&fixture, &agreement, expected);
+
+    let valid = BtcLezAssetExtensionV1::validate(signed, &agreement).expect("valid extension");
+    for unexpected in [
+        BtcLezAssetV1::Native,
+        custom_token_asset(&custom_token_terms_with(
+            &agreement,
+            &TokenFixtureOptions {
+                token_program_id: [57; 32],
+                ..TokenFixtureOptions::default()
+            },
+        )),
+        custom_token_asset(&custom_token_terms_with(
+            &agreement,
+            &TokenFixtureOptions {
+                ata_program_id: [58; 32],
+                ..TokenFixtureOptions::default()
+            },
+        )),
+        custom_token_asset(&custom_token_terms_with(
+            &agreement,
+            &TokenFixtureOptions {
+                token_definition_account: [59; 32],
+                ..TokenFixtureOptions::default()
+            },
+        )),
+        custom_token_asset(&custom_token_terms_with(
+            &agreement,
+            &TokenFixtureOptions {
+                custody_ata_account: [61; 32],
+                ..TokenFixtureOptions::default()
+            },
+        )),
+    ] {
+        assert_eq!(
+            valid.ensure_asset(&unexpected),
+            Err(BtcLezAssetExtensionV1Error::LezAssetMismatch)
+        );
+    }
+}
+
+#[test]
+fn asset_extension_rejects_aliases_invalid_authority_schema_signature_and_wire() {
+    let fixture = fixture(SwapDirection::TakerSellsForeign, FixtureOptions::default());
+    let agreement = BtcAgreementV1::validate(signed_record(&fixture)).expect("validated agreement");
+
+    for options in [
+        TokenFixtureOptions {
+            ata_program_id: [40; 32],
+            ..TokenFixtureOptions::default()
+        },
+        TokenFixtureOptions {
+            claimant_ata_account: [43; 32],
+            ..TokenFixtureOptions::default()
+        },
+        TokenFixtureOptions {
+            token_definition_account: *agreement.lez_terms().metadata_account(),
+            ..TokenFixtureOptions::default()
+        },
+        TokenFixtureOptions {
+            custody_ata_account: [43; 32],
+            ..TokenFixtureOptions::default()
+        },
+    ] {
+        let aliased = signed_asset_extension(
+            &fixture,
+            &agreement,
+            custom_token_asset(&custom_token_terms_with(&agreement, &options)),
+        );
+        assert_eq!(
+            BtcLezAssetExtensionV1::validate(aliased, &agreement),
+            Err(BtcLezAssetExtensionV1Error::LezAssetAlias)
+        );
+    }
+
+    let invalid_key = signed_asset_extension(
+        &fixture,
+        &agreement,
+        custom_token_asset(&custom_token_terms_with(
+            &agreement,
+            &TokenFixtureOptions {
+                aggregate_x_only_public_key: Some([0; 32]),
+                ..TokenFixtureOptions::default()
+            },
+        )),
+    );
+    assert_eq!(
+        BtcLezAssetExtensionV1::validate(invalid_key, &agreement),
+        Err(BtcLezAssetExtensionV1Error::InvalidAggregateAuthorityKey)
+    );
+
+    let valid = signed_asset_extension(&fixture, &agreement, BtcLezAssetV1::Native);
+    let unsupported = BtcLezAssetExtensionRecordV1::from_parts(
+        BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1 + 1,
+        valid.body().clone(),
+        *valid.asset_commitment(),
+        *valid.signature(Participant::Maker),
+        *valid.signature(Participant::Taker),
+    );
+    assert_eq!(
+        BtcLezAssetExtensionV1::validate(unsupported, &agreement),
+        Err(BtcLezAssetExtensionV1Error::UnsupportedSchema(
+            BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1 + 1
+        ))
+    );
+
+    let swapped = BtcLezAssetExtensionRecordV1::from_parts(
+        BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1,
+        valid.body().clone(),
+        *valid.asset_commitment(),
+        *valid.signature(Participant::Taker),
+        *valid.signature(Participant::Maker),
+    );
+    assert_eq!(
+        BtcLezAssetExtensionV1::validate(swapped, &agreement),
+        Err(BtcLezAssetExtensionV1Error::SignatureMismatch(
+            Participant::Maker
+        ))
+    );
+
+    let mut trailing = valid.encode_wire().expect("extension wire");
+    trailing.push(0);
+    assert_eq!(
+        BtcLezAssetExtensionV1::from_wire(&trailing, &agreement),
+        Err(BtcLezAssetExtensionV1Error::MalformedWireRecord)
+    );
 }

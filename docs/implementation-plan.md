@@ -1596,10 +1596,20 @@ Active M3 refund critical path:
   revealing-leg-first refund order. External-consumer coverage is 42 of 42
   GREEN and strict Clippy, rustdoc, formatting, and diff gates pass. This
   closes the former `PreLockRecovery` and `Recovery` placeholders without
-  claiming node, persistence, or submission I/O. Revision-one-through-four
-  durable resume, chain/store/actor composition, a compiling full example,
-  complete public API documentation, and public
-  discovery/negotiation/activation composition remain open;
+  claiming node, persistence, or submission I/O. The next public lifecycle
+  slice composes application-owned discovery and negotiation, validates the
+  returned countersigned wire, and drops both capabilities from the active
+  type. Complete prepared material then replays exact agreement-bound
+  transitions through revisions one to four in both directions and both roles,
+  including claims, revealing-leg-first refunds, resume after every revision,
+  historical idempotency, and role/agreement/revision/byte substitution. New
+  transitions use clone-validate-commit so a failure leaves the coordinator,
+  revision, effect log, and restart envelope unchanged. The full BTC SDK now
+  passes 15 unit, 16 agreement, 20 external-facade, and 3 example tests plus
+  two doctests, strict Clippy, rustdoc, formatting, and diff gates. This proves
+  deterministic replay from an application-supplied envelope, not a public
+  process-durable store codec, node I/O, or direct actor composition. Those
+  store/chain boundaries and a dedicated full lifecycle example remain open;
 - [x] make the reference actor a thin SDK adapter and move first/second lock
   construction and submission under SDK-owned persist-before-send authority.
   Pushed `79d7e68` adds the dedicated Maker-only revision-one journal with
@@ -1679,10 +1689,17 @@ Active M3 refund critical path:
   validators reject definition, ATA, program, authority, amount, state,
   instruction-order, and unknown-field drift for two definitions while all v1
   JSON and method strings remain unchanged. Thirty-five protocol tests, strict
-  Clippy, rustdoc, formatting, and diff gates pass. Finalized asset
-  initialization/funding/presence classifiers, countersigned token-field
-  agreement mapping, client/sidecar/adapter/SDK composition, and two-direction
-  actual-node token evidence remain open;
+  Clippy, rustdoc, formatting, and diff gates pass. An additive separately
+  countersigned asset-extension record now binds the unchanged agreement-v1
+  commitment to an explicit native or custom-token choice. The custom variant
+  covers the programs, definition, owners, independently derived custody and
+  owner ATAs, amount, deadline, and aggregate authority/key. Both role
+  signatures, bounded canonical wire, exact local asset policy, cross-agreement
+  and network substitution, every field, aliases, and the native-byte
+  compatibility contract pass 16 agreement tests. Official ATA derivation and
+  mapping the extension into bridge terms/request IDs remain actor/sidecar work.
+  Finalized asset classifiers, client/sidecar/adapter composition, and
+  two-direction actual-node token evidence remain open;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
   not recordings and cannot satisfy D1. The repository now supplies a
