@@ -29,10 +29,13 @@ use bitcoin::{
     taproot, transaction,
 };
 use lez_btc_swap_sdk::{
-    AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BtcAgreementBodyV1, BtcAgreementRecordV1,
-    BtcAgreementV1, BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1, BtcLezTermsV1,
-    BtcP2trTermsV1, BtcParticipantIdentityV1, BtcParticipantsV1, BtcRecoveryPlanV1,
-    CooperativeKeyPathSpend, CsvBlockDelay, P2trSwapOutput, RefundXOnlyKey, TwoPartyAggregateKey,
+    AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1,
+    BtcAgreementBodyV1, BtcAgreementRecordV1, BtcAgreementV1, BtcChainPolicyV1, BtcClaimTermsV1,
+    BtcFundingTermsV1, BtcLezAssetExtensionBodyV1, BtcLezAssetExtensionRecordV1,
+    BtcLezAssetExtensionV1, BtcLezAssetV1, BtcLezCustomTokenTermsV1, BtcLezTermsV1, BtcP2trTermsV1,
+    BtcParticipantIdentityV1, BtcParticipantsV1, BtcRecoveryPlanV1, CooperativeKeyPathSpend,
+    CsvBlockDelay, MAX_BTC_AGREEMENT_RECORD_BYTES, P2trSwapOutput, RefundXOnlyKey,
+    TwoPartyAggregateKey,
 };
 use lez_swap_core::{Participant, SwapDirection};
 use serde::{Deserialize, Serialize};
@@ -54,6 +57,8 @@ const TAKER_REFUND_FILE: &str = "taker-refund.key";
 const MAKER_CLAIM_FILE: &str = "maker-claim-destination.key";
 const TAKER_CLAIM_FILE: &str = "taker-claim-destination.key";
 const ADAPTOR_FILE: &str = "adaptor-scalar.key";
+const ASSET_EXTENSION_FILE: &str = "lez-asset-extension.borsh";
+const ASSET_EXTENSION_SUMMARY_FILE: &str = "lez-asset-extension-summary.json";
 
 /// Secret-free result emitted by stage one.
 #[derive(Debug, Serialize)]
@@ -155,6 +160,38 @@ pub struct FundingPreparationSummary {
     bip341_sighash: String,
     private_material_disclosed: bool,
     node_state_asserted: bool,
+}
+
+/// Secret-free result for one agreement-bound, countersigned custom-token extension.
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssetExtensionSummary {
+    schema_version: u16,
+    asset_extension_file: PathBuf,
+    summary_file: PathBuf,
+    base_agreement_sha256: String,
+    base_agreement_commitment: String,
+    asset_commitment: String,
+    token_program_id: String,
+    ata_program_id: String,
+    token_definition_account: String,
+    depositor_owner_account: String,
+    depositor_ata_account: String,
+    claimant_owner_account: String,
+    claimant_ata_account: String,
+    custody_ata_account: String,
+    amount: u128,
+    refund_at_ms: u64,
+    private_material_disclosed: bool,
+    extension_revalidated: bool,
+}
+
+impl AssetExtensionSummary {
+    /// Canonical Borsh countersigned extension path.
+    #[must_use]
+    pub fn asset_extension_file(&self) -> &Path {
+        &self.asset_extension_file
+    }
 }
 
 impl FundingPreparationSummary {
@@ -293,6 +330,20 @@ struct FundingPreparationSpec {
     service_input: ServiceInput,
     contract_value_sat: u64,
     fee_sat: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AssetExtensionSpec {
+    schema_version: u16,
+    expected_agreement_sha256: String,
+    expected_agreement_commitment: String,
+    token_program_id: String,
+    ata_program_id: String,
+    token_definition_account: String,
+    depositor_ata_account: String,
+    claimant_ata_account: String,
+    custody_ata_account: String,
 }
 
 #[derive(Deserialize)]
@@ -944,6 +995,127 @@ pub fn finalize_stage2(spec_file: &Path, output_root: &Path) -> Result<Stage2Sum
     write_private_new(&agreement_file, &wire)?;
     write_private_new(&summary_file, &summary_bytes)?;
     Ok(summary)
+}
+
+/// Constructs, countersigns, validates, and writes one custom-token asset extension.
+///
+/// The already validated base agreement remains unchanged. Common amount, deadline,
+/// role, authority, and aggregate-key fields are reconstructed from it, while the
+/// strict input pins the official token programs, definition, and three holding
+/// accounts selected by the local actor policy.
+///
+/// # Errors
+///
+/// Rejects unsafe material, agreement hash or commitment drift, malformed or aliased
+/// token identities, mismatched private role keys, non-canonical output, or clobbering.
+pub fn finalize_asset_extension(
+    spec_file: &Path,
+    output_root: &Path,
+) -> Result<AssetExtensionSummary> {
+    validate_existing_output_root(output_root)?;
+    let spec: AssetExtensionSpec = read_strict_json(spec_file)?;
+    ensure!(
+        spec.schema_version == SCHEMA_VERSION,
+        "unsupported asset-extension schema"
+    );
+
+    let agreement_file = output_root.join(AGREEMENT_FILE);
+    let agreement_wire = read_stable_file(&agreement_file, MAX_BTC_AGREEMENT_RECORD_BYTES, true)?;
+    ensure!(
+        canonical_hex(
+            &spec.expected_agreement_sha256,
+            32,
+            "expected agreement SHA-256"
+        )? == sha256_hex(&agreement_wire),
+        "base agreement hash mismatch"
+    );
+    let agreement = BtcAgreementV1::from_wire(&agreement_wire).context("invalid base agreement")?;
+    ensure!(
+        canonical_hex(
+            &spec.expected_agreement_commitment,
+            32,
+            "expected agreement commitment"
+        )? == hex::encode(agreement.agreement_commitment()),
+        "base agreement commitment mismatch"
+    );
+
+    let token = custom_token_from_spec(&spec, &agreement)?;
+    let body = BtcLezAssetExtensionBodyV1::new(
+        *agreement.agreement_commitment(),
+        BtcLezAssetV1::CustomToken(Box::new(token)),
+    );
+    let commitment = body.commitment();
+    let secrets = Secrets::load(&output_root.join(PRIVATE_DIRECTORY))?;
+    let maker_secret = secret_key(&secrets.maker_signing, "maker signing key")?;
+    let taker_secret = secret_key(&secrets.taker_signing, "taker signing key")?;
+    let record = BtcLezAssetExtensionRecordV1::from_parts(
+        BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1,
+        body,
+        commitment,
+        sign_commitment(&maker_secret, commitment),
+        sign_commitment(&taker_secret, commitment),
+    );
+    let extension = BtcLezAssetExtensionV1::validate(record, &agreement)
+        .context("constructed asset extension did not validate")?;
+    let wire = extension.encode_wire().context("encode asset extension")?;
+    let replay = BtcLezAssetExtensionV1::from_wire(&wire, &agreement)
+        .context("encoded asset extension did not revalidate")?;
+    ensure!(
+        replay.encode_wire()? == wire,
+        "asset extension canonical replay mismatch"
+    );
+
+    let asset_extension_file = output_root.join(ASSET_EXTENSION_FILE);
+    let summary_file = output_root.join(ASSET_EXTENSION_SUMMARY_FILE);
+    ensure_new_file_path(&asset_extension_file)?;
+    ensure_new_file_path(&summary_file)?;
+    let summary = AssetExtensionSummary {
+        schema_version: SCHEMA_VERSION,
+        asset_extension_file: asset_extension_file.clone(),
+        summary_file: summary_file.clone(),
+        base_agreement_sha256: sha256_hex(&agreement_wire),
+        base_agreement_commitment: hex::encode(agreement.agreement_commitment()),
+        asset_commitment: hex::encode(replay.asset_commitment()),
+        token_program_id: hex::encode(token.token_program_id()),
+        ata_program_id: hex::encode(token.ata_program_id()),
+        token_definition_account: hex::encode(token.token_definition_account()),
+        depositor_owner_account: hex::encode(token.depositor_owner_account()),
+        depositor_ata_account: hex::encode(token.depositor_ata_account()),
+        claimant_owner_account: hex::encode(token.claimant_owner_account()),
+        claimant_ata_account: hex::encode(token.claimant_ata_account()),
+        custody_ata_account: hex::encode(token.custody_ata_account()),
+        amount: token.amount(),
+        refund_at_ms: token.refund_at_ms(),
+        private_material_disclosed: false,
+        extension_revalidated: true,
+    };
+    let mut summary_bytes =
+        serde_json::to_vec_pretty(&summary).context("encode asset-extension summary")?;
+    summary_bytes.push(b'\n');
+    write_private_new(&asset_extension_file, &wire)?;
+    write_private_new(&summary_file, &summary_bytes)?;
+    Ok(summary)
+}
+
+fn custom_token_from_spec(
+    spec: &AssetExtensionSpec,
+    agreement: &BtcAgreementV1,
+) -> Result<BtcLezCustomTokenTermsV1> {
+    let lez = agreement.lez_terms();
+    Ok(BtcLezCustomTokenTermsV1::new(
+        parse_hex32(&spec.token_program_id, "token program ID")?,
+        parse_hex32(&spec.ata_program_id, "ATA program ID")?,
+        parse_hex32(&spec.token_definition_account, "token definition account")?,
+        *lez.depositor_account(),
+        parse_hex32(&spec.depositor_ata_account, "depositor ATA account")?,
+        *lez.claimant_account(),
+        parse_hex32(&spec.claimant_ata_account, "claimant ATA account")?,
+        parse_hex32(&spec.custody_ata_account, "custody ATA account")?,
+        lez.amount(),
+        lez.refund_at_ms(),
+        *lez.aggregate_authority_account(),
+        agreement.p2tr_contract().aggregate_internal_key_bytes(),
+    ))
 }
 
 impl Secrets {

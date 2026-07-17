@@ -1741,6 +1741,17 @@ Active M3 refund critical path:
   finalized tip 17 and exact run-scoped cleanup; its throwaway keys and
   plaintext wallet state were then removed. That rehearsal proves reproducible
   provisioning, not a completed swap or retained certification packet.
+  The existing offline Bitcoin PoC provisioner now has an additive
+  `finalize-asset-extension` command that reconstructs common roles, amount,
+  deadline, aggregate authority, and aggregate key from the already validated
+  base agreement; accepts only the locally selected Token/ATA programs,
+  definition, owner ATAs, and custody ATA; countersigns the canonical extension
+  with the existing separate maker/taker fixture keys; and revalidates the
+  encoded wire before create-new `0600` persistence. Its focused test captured
+  the missing function RED and is GREEN together with all 12 provisioner tests,
+  strict all-target Clippy, rustdoc, and formatting. This supplies the
+  reproducible agreement-to-F7 artifact seam for runner composition; it does
+  not itself submit or observe a token swap.
   Sidecar server routes/finalized token scans plus durable journal/actor
   composition, runner integration, and two-direction actual-node token swap
   evidence remain open;

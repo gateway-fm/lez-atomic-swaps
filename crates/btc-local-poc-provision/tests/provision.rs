@@ -17,8 +17,10 @@ use bitcoin::{
     sighash::{Prevouts, SighashCache, TapSighashType},
     taproot, transaction,
 };
-use btc_local_poc_provision::{finalize_stage2, generate_stage1, prepare_funding};
-use lez_btc_swap_sdk::BtcAgreementV1;
+use btc_local_poc_provision::{
+    finalize_asset_extension, finalize_stage2, generate_stage1, prepare_funding,
+};
+use lez_btc_swap_sdk::{BtcAgreementV1, BtcLezAssetExtensionV1, BtcLezAssetV1};
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 
@@ -243,6 +245,84 @@ fn provision(direction: &str) -> (TempDir, btc_local_poc_provision::Stage2Summar
     write_private_json(&stage2_path, &spec);
     let summary = finalize_stage2(&stage2_path, &output).unwrap();
     (temp, summary, transaction)
+}
+
+fn asset_extension_spec(agreement: &BtcAgreementV1) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": 1,
+        "expected_agreement_sha256": hex::encode(Sha256::digest(
+            agreement.encode_wire().unwrap()
+        )),
+        "expected_agreement_commitment": hex::encode(agreement.agreement_commitment()),
+        "token_program_id": hex::encode([0x40; 32]),
+        "ata_program_id": hex::encode([0x41; 32]),
+        "token_definition_account": hex::encode([0x42; 32]),
+        "depositor_ata_account": hex::encode([0x43; 32]),
+        "claimant_ata_account": hex::encode([0x44; 32]),
+        "custody_ata_account": hex::encode([0x45; 32])
+    })
+}
+
+#[test]
+fn countersigned_custom_token_extension_is_canonical_agreement_bound_and_secret_free() {
+    let (temp, agreement_summary, _) = provision("taker_sells_foreign");
+    let fixture_root = temp.path().join("taker_sells_foreign-fixture");
+    let agreement_wire = fs::read(agreement_summary.agreement_file()).unwrap();
+    let agreement = BtcAgreementV1::from_wire(&agreement_wire).unwrap();
+    let spec_path = temp.path().join("asset-extension.json");
+    write_private_json(&spec_path, &asset_extension_spec(&agreement));
+
+    let summary = finalize_asset_extension(&spec_path, &fixture_root).unwrap();
+    let extension_wire = fs::read(summary.asset_extension_file()).unwrap();
+    let extension = BtcLezAssetExtensionV1::from_wire(&extension_wire, &agreement).unwrap();
+    let BtcLezAssetV1::CustomToken(token) = extension.asset() else {
+        panic!("expected custom-token extension")
+    };
+    assert_eq!(token.token_program_id(), &[0x40; 32]);
+    assert_eq!(token.ata_program_id(), &[0x41; 32]);
+    assert_eq!(token.token_definition_account(), &[0x42; 32]);
+    assert_eq!(
+        token.depositor_owner_account(),
+        agreement.lez_terms().depositor_account()
+    );
+    assert_eq!(token.depositor_ata_account(), &[0x43; 32]);
+    assert_eq!(
+        token.claimant_owner_account(),
+        agreement.lez_terms().claimant_account()
+    );
+    assert_eq!(token.claimant_ata_account(), &[0x44; 32]);
+    assert_eq!(token.custody_ata_account(), &[0x45; 32]);
+    assert_eq!(token.amount(), agreement.lez_terms().amount());
+    assert_eq!(token.refund_at_ms(), agreement.lez_terms().refund_at_ms());
+    assert_eq!(
+        token.aggregate_authority_account(),
+        agreement.lez_terms().aggregate_authority_account()
+    );
+    assert_eq!(
+        token.aggregate_x_only_public_key(),
+        &agreement.p2tr_contract().aggregate_internal_key_bytes()
+    );
+    assert_eq!(extension.encode_wire().unwrap(), extension_wire);
+
+    let persisted_summary: serde_json::Value = serde_json::from_slice(
+        &fs::read(fixture_root.join("lez-asset-extension-summary.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(persisted_summary["private_material_disclosed"], false);
+    assert_eq!(persisted_summary["extension_revalidated"], true);
+    assert_eq!(
+        persisted_summary["asset_commitment"],
+        hex::encode(extension.asset_commitment())
+    );
+    assert_eq!(
+        fs::metadata(summary.asset_extension_file())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o600
+    );
+    assert!(finalize_asset_extension(&spec_path, &fixture_root).is_err());
 }
 
 #[test]

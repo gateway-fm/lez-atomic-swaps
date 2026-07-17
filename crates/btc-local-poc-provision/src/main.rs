@@ -7,7 +7,9 @@ use std::{
 };
 
 use anyhow::{Context as _, Result};
-use btc_local_poc_provision::{finalize_stage2, generate_stage1, prepare_funding};
+use btc_local_poc_provision::{
+    finalize_asset_extension, finalize_stage2, generate_stage1, prepare_funding,
+};
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 
@@ -47,6 +49,15 @@ enum Action {
         #[arg(long)]
         output_root: PathBuf,
     },
+    /// Bind and countersign one custom-token selection to a finalized agreement.
+    FinalizeAssetExtension {
+        /// Strict owner-private custom-token policy JSON.
+        #[arg(long)]
+        spec_file: PathBuf,
+        /// Existing finalized normalized absolute fixture root.
+        #[arg(long)]
+        output_root: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {
@@ -73,6 +84,10 @@ fn execute(arguments: Arguments) -> Result<()> {
             spec_file,
             output_root,
         } => print_json(&finalize_stage2(&spec_file, &output_root)?),
+        Action::FinalizeAssetExtension {
+            spec_file,
+            output_root,
+        } => print_json(&finalize_asset_extension(&spec_file, &output_root)?),
     }
 }
 
