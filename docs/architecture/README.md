@@ -15,6 +15,13 @@ creates and reconciles the exact second lock before locally closing revision
 two. This remains a private local PoC, not an M3 completion or production
 readiness claim.
 
+The M3 component boundary now also contains the checked witnessed-token guest
+from commit `66d5e26` and the agreement-derived claim-only BTC SDK facade from
+commit `28f38c7`. The token guest has a new ELF/ImageID that is intentionally
+not yet admitted by the deployment manifest. The SDK verifies both claim
+presignatures and exact LEZ signature-template substitution, but complete
+pre-lock refund preparation and composed actor/node execution remain open.
+
 ADRs are append-only. Superseded decisions remain here and link to their
 replacement.
 
@@ -44,13 +51,16 @@ flowchart TB
     Scope --> Direction["0008 Bidirectional ordering"]
     Direction --> Bitcoin["0009 Bitcoin refund"]
     Bitcoin --> BitcoinEntry["0029 M3 Bitcoin entry"]
+    BitcoinEntry --> TokenWitness["0042 Witnessed token ATA claims"]
     BitcoinEntry --> FinalizedFunding["0030 Finalized LEZ funding before claim"]
     FinalizedFunding --> BtcActor["0031 Revision-zero BTC actor"]
     BtcActor --> Contexts["0032 Agreement-derived adaptor contexts"]
+    Contexts --> ClaimFacade["0043 Agreement-derived BTC claims"]
     Contexts --> PublicEffects["0033 Durable public effects"]
     PublicEffects --> ActivationGate["0034 Complete activation authority"]
     ActivationGate --> ClaimProjection["0035 Canonical claim projection"]
     ClaimProjection --> ClaimPresence["0036 Bounded LEZ claim absence"]
+    ClaimProjection --> ClaimFacade
     ClaimPresence --> PrelockFunding["0037 Exact pre-lock Bitcoin funding"]
     PrelockFunding --> RefundPlanner["0038 Durable LEZ refund preparation"]
     RefundPlanner --> FirstLockCutoff["0039 Cross-chain first-lock cutoff"]
@@ -60,8 +70,10 @@ flowchart TB
     Deadlines --> Recovery["0011 Recovery triggers"]
     LEZ --> Custody["0012 Escrow custody"]
     Ports --> SDK["0013 SDK layering"]
+    SDK --> ClaimFacade
     Zcash --> ZecPins["0014 M2 ZEC pins"]
     Custody --> ZecPins
+    Custody --> TokenWitness
     SDK --> ZecPins
     ZecPins --> ZecReconcile["0015 ZEC reconciliation"]
     SDK --> Agreement["0016 Concrete ZEC agreement"]
@@ -107,6 +119,7 @@ flowchart TB
     V02Effects --> FinalizedFunding
     FinalizedFunding -.-> Upstream
     V02Effects -.-> Upstream
+    TokenWitness -.-> ClaimFacade
 ```
 
 | ADR | Decision | Status |
@@ -122,8 +135,8 @@ flowchart TB
 | [0009](0009-bitcoin-refund-path.md) | Taproot key-path cooperative claim with script-path CSV refund | Accepted; both actual-node cooperative directions, canonical BIP-342 construction, typed Core maturity/observation/one-send/evidence, role-shaped key custody, and deterministic actor restart composition are GREEN. Actual-node refund, reorg, and fee-bump evidence remain |
 | [0010](0010-typed-cross-chain-deadlines.md) | Typed consensus clocks plus conservative cross-chain safety bounds | Accepted for deadline legs; XMR superseded by 0011 |
 | [0011](0011-event-gated-recovery.md) | Recovery uses typed deadlines or canonical events; XMR has no native timelock | Accepted and represented in core/RPC/CLI |
-| [0012](0012-lez-escrow-custody.md) | Split metadata PDA from authenticated-transfer custody or required custom-token ATA | Native/ATA custody, both local v0.2 happy directions, strict refund wire, durable exact refund preparation, finalized refund observation, and deterministic actor execution are GREEN; actual-node refund and token-corridor hardening remain |
-| [0013](0013-sdk-layering.md) | Deterministic common core plus complete per-pair async facades | Concrete ZEC negotiation, locks, role-local claims/refunds, and schema-v10 replay proven. BTC now has the shared contract plus a role-fixed exact funding-plan facade; its full lifecycle and actor composition remain open |
+| [0012](0012-lez-escrow-custody.md) | Split metadata PDA from authenticated-transfer custody or required custom-token ATA | Native/ATA custody, both local v0.2 happy directions, strict refund wire, durable exact refund preparation, finalized refund observation, and deterministic actor execution are GREEN. ADR 0042 adds checked-guest aggregate-witness claims to exact custom-token ATAs; its new identity and actual-node token corridor remain open |
+| [0013](0013-sdk-layering.md) | Deterministic common core plus complete per-pair async facades | Concrete ZEC negotiation, locks, role-local claims/refunds, and schema-v10 replay proven. ADR 0043 adds the BTC role-fixed exact funding and agreement-derived claim facade; complete pre-lock refunds, revisions 1 through 4 resume, actor/store composition, and the full lifecycle remain open |
 | [0014](0014-zec-m2-implementation-pins.md) | SPEL/LEZ, canonical Zcash crates, and vulnerability-clean minimal Zebra runtime pins for M2 | Accepted; v0.1.2 remains a lower compatibility lane, while the only trusted v0.2 target is Docker-built ELF `c85055...9d2e` and ProgramId `5cf8c5...29c1`. Earlier host-built `f83850...0fbe` evidence is explicitly historical |
 | [0015](0015-durable-zcash-observation-reconciliation.md) | Stable affirmative Zcash canonical/removal evidence plus two-phase durable reconciliation | Binding, journal, role projection, conflicts, terminal alerts, and actual two-Zebra restart/requery proven; production poller pending |
 | [0016](0016-canonical-zec-agreement.md) | Canonical bounded dual-signed LEZ/ZEC terms bind actors, chains, custody, deadlines, and transaction policy | Validator, activation/resume, locks, claims, and ordered refunds proven; the same agreement boundary completed both private local actual-node claim directions. Exact signed public-v0.2 activation is locally contract-proven; live public execution and composed recovery remain open |
@@ -139,7 +152,7 @@ flowchart TB
 | [0026](0026-lez-v02-at-most-once-submission-and-query-finality.md) | Persist AttemptStarted before one v0.2 send and prove inclusion/finality through bounded sequencer and indexer queries | Architecture and durable one-call/restart tests are GREEN. The M3 witnessed-claim bridge now performs bounded finalized block ID/hash and same-containing-BlockId account observation for either participant with client BIP-340 revalidation. Vault query/journal progression, upstream account proofs, and ambiguous multi-effect restart reconciliation remain later hardening |
 | [0027](0027-progressive-jpeg-milestone-delivery.md) | Deliver a reproducible actual-local-devnet milestone PoC first, then owner-controlled QA, chaos, information-security, and production-readiness hardening | Accepted; M2 is certified at its local-functional PoC boundary under `m2-complete`. Accumulated hardening is carried evidence until the owner enters and revalidates its phase; no transition to QA or M3 is implied |
 | [0028](0028-dormant-public-route-portability.md) | Admit exact dormant public LEZ and Zebra routes without exposing the actor-sidecar boundary or weakening agreement-bound pre-effect validation | Canonical Docker target and finalized local deployment binding are GREEN; exact dormant public configuration and bounded-client construction are GREEN without public I/O. Live public execution and official LEZ finalized-tip availability remain production gates |
-| [0029](0029-m3-bitcoin-local-poc-entry.md) | Enter M3 through isolated Bitcoin Core Regtest and LEZ v0.2 actors with aggregate witnessed claim authorities | Accepted and active; clean pushed commit `0e7635f` completed both schema-4 directions in run `m3schema4-20260717d`. The Taker fixture submitted each first lock, the Maker actor submitted each exact second lock once, both role stores reached revision four, and replay added no effects. Concurrent swaps, full accepted SDK/custom-token and recording scope, Testnet4 portability, hardening, and the milestone tag remain |
+| [0029](0029-m3-bitcoin-local-poc-entry.md) | Enter M3 through isolated Bitcoin Core Regtest and LEZ v0.2 actors with aggregate witnessed claim authorities | Accepted and active; clean pushed commit `0e7635f` completed both schema-4 directions in run `m3schema4-20260717d`, and ADR 0041 closes the opposite-direction overlap checkpoint. Full accepted SDK/custom-token integration and recording scope, Testnet4 portability, hardening, and the milestone tag remain |
 | [0030](0030-finalized-lez-funding-before-claim.md) | Preserve the live observer and require distinct finalized LEZ funding evidence before either claim can reveal adaptor material | Accepted and actual-node GREEN in both happy directions. Logos v0.2 end-of-block account reads remain a disclosed production trust limitation; finalized refund observation remains |
 | [0031](0031-one-shot-btc-actor-observe-before-project.md) | Use a public one-shot role-fixed actor that returns from exact chain observation before predecessor-CAS projection | Accepted and actual-node GREEN for both schema-4 directions at `0e7635f`. Exact Maker effects use role-local one-attempt journals, exact mempool or LEZ effect-count reconciliation, and one local transaction for the final intent plus revision-two close. Schema 3 remains observation-only compatibility; crash, reorg, and concurrency hardening remain |
 | [0032](0032-derive-adaptor-contexts-from-agreement.md) | Reconstruct both adaptor signing contexts from the validated agreement plus fresh session IDs | Accepted and actual-node GREEN for both agreement-derived claim sessions. No second actor-side parser exists; refund-session custody and recovery hardening remain |
@@ -152,3 +165,5 @@ flowchart TB
 | [0039](0039-admit-first-lock-recovery-only-after-cross-chain-cutoff.md) | Admit a revision-one refund only after a signed cutoff, two fresh exact maker-lock classifications, and a fresh first-lock unspent/eligibility check | Accepted for the M3 BTC PoC; both live schema-4 timely-Maker paths are actual-node GREEN at `0e7635f`, including fresh exact first-lock eligibility, current/finalized chain evidence, one-attempt Maker submission, exact reconciliation, and atomic local intent/revision-two close. There is no distributed cross-chain commit; concurrency, reorg, adversarial-late-lock, and public production hardening remain |
 | [0040](0040-continue-post-reveal-from-canonical-evidence.md) | Keep revision 3 nonterminal and let fresh maker processes continue from canonical reveal while the taker is absent | Accepted and clean pushed-commit actual-node evidence is GREEN in both directions in `m3survivor-20260716c` |
 | [0041](0041-interleave-overlapping-swaps-with-exact-chain-barriers.md) | Run two independent opposite-direction swaps on shared local nodes while preserving exact singleton-chain assertions | Accepted and clean pushed-commit actual-node GREEN in `m3overlap-20260717a`: distinct mature outpoints, agreements, stores, journals, sessions, escrows, and deadlines were simultaneously at revision two before settlement; arbitrary-N and same-depositor nonce scheduling remain outside this checkpoint |
+| [0042](0042-bind-witnessed-token-claims-to-exact-atas.md) | Bind aggregate-witness custom-token claims to one fungible definition and exact depositor, custody, and claimant ATAs in one recursive LEZ transition | Accepted at checked-guest component boundary in `66d5e26`; new ELF/ImageID, tags 11/12, two-definition claims, substitution rejection, and recursive no-partial-state behavior are GREEN. Manifest/IDL/deployer/sidecar/SDK and actual-node F7 integration remain open |
+| [0043](0043-derive-btc-claims-from-the-agreement.md) | Derive both BTC claim sessions from the countersigned agreement and materialize only agreement-bound exact follow-up effects | Accepted at deterministic SDK component boundary in `28f38c7`; both claim orders, exact evidence, redacted zeroizing recovery, template substitution, replay, and substitution rejection are GREEN. Complete refund preparation, later-revision resume, actor/store/node composition, examples/docs, and F7 integration remain open |
