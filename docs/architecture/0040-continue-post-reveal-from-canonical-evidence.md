@@ -59,7 +59,7 @@ sequenceDiagram
     Maker->>MakerStore: Fresh process commits revision 3 ClaimEvidenceAvailable
     Maker->>FollowChain: Read exact remaining funded leg
     FollowChain-->>Maker: Canonical and claimable before refund boundary
-    Note over Maker,MakerStore: Observer exits; revision 3 remains nonterminal
+    Note over Maker,MakerStore: Observer exits and revision 3 remains nonterminal
     Maker->>MakerStore: New process reloads presignature and revision 3
     Maker->>FollowChain: Submit reconstructed follow-up claim
     FollowChain-->>Maker: Exact canonical claim evidence

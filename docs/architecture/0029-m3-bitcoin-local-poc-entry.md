@@ -1,29 +1,22 @@
 # ADR 0029: M3 uses isolated Bitcoin and LEZ local devnets
 
-Status: Accepted. Repository-owned run `m3actor-20260716n` completed both happy
-directions against fresh actual local Core/LEZ nodes on 2026-07-16 at commit
-`6ded2f9b8ba9ec8e0cfbf06287da92d34256f91a`. Fresh one-shot maker and
-taker actors both reached revision 4 `Completed` in each direction; replay
-added zero submissions. Refunds, process-kill/reorg, concurrency, chaos,
-information-security and production-readiness work, and the milestone tag
-remain separate closure gates.
+Status: Accepted. Repository-owned run `m3schema4-20260717d` completed both
+schema-4 happy directions against fresh actual local Core/LEZ nodes on
+2026-07-17 at clean, already-pushed commit
+`0e7635fc7e50cc6e0612745dcdaf6df8bbcf6f9a`. In each direction the
+runner submitted only the Taker's first lock; the role-fixed Maker actor
+submitted the exact second lock under its one-attempt journal and reconciled
+canonical evidence before local revision two. Both roles then reached revision
+4 `Completed`, and restart plus terminal replay added zero effects.
 
-Reconciled at pushed `8870910`: the historical 2-of-2 packet remains valid for
-the schema-3 actor flow, but it is not evidence for the new schema-4 Maker
-lock path. The schema-4 `BtcPairSdk` plus `SqliteBtcMakerLockJournal` typed seam
-is GREEN at 73 of 73 focused tests and all strict gates. Its live Maker CLI is
-intentionally fail closed, current runner schema-4 edits are uncommitted, and
-there is no actual-node admission packet or `m3-complete` tag for this slice.
-Pushed `3336b6e` makes exact-idempotent LEZ initialization journal admission
-GREEN in focused tests: it grants one same-ID/same-bytes CAS/send,
-does not claim pending-level absence, never rearms `Started` or `Unknown`, and
-still requires canonical evidence. Its live adapter port must separately prove
-the idempotence contract. Pushed `11111dd` maps that distinct observation
-through the typed actor and proves one first-drive submission followed by zero
-submissions after restart; this is not live composition. Pushed `923586b` makes the generic state-only current
-`Funded` escrow proof GREEN for either role/direction under one unchanged
-canonical clock. It does not prove finality or exact transaction bytes, and the
-joined live actor view remains open.
+The retained
+[schema-4 packet](../evidence/m3-schema4-actor-owned-lock-poc-20260717.json)
+records exact Maker effect ownership, current/finalized eligibility, exact
+Bitcoin mempool or LEZ effect-count reconciliation, and atomic local
+Maker-intent/revision-two closure. It does not claim a distributed transaction.
+Two genuinely overlapping swaps, accepted full-lifecycle SDK and custom-token
+scope, recording deliverables, final milestone gates, public/production
+hardening, and the `m3-complete` tag remain open.
 
 ## Context
 
@@ -35,11 +28,13 @@ provenance, a typed P2TR and CSV builder, MuSig2 adaptor signing, crash-safe
 role journals, and a checked LEZ aggregate-witness guest.
 
 Historical run `m3poc-live2-20260715a` first joined those components through
-operator composition. Run `m3actor-20260716n` then proved the supported
-repository-owned runner and role-fixed actor processes against fresh actual
-local nodes. Independent roles used separate stores, signing journals,
-sidecars, and restricted Core RPC credentials. This is a progressive local
-happy-path PoC, not production signing authority or a hardening claim.
+operator composition. Run `m3actor-20260716n` then proved role-fixed claim
+actors against fresh actual local nodes. Run `m3schema4-20260717d` closes the
+next ownership gap: its external fixture creates only the Taker first lock and
+the Maker's fresh one-shot process owns the second-lock send. Independent roles
+use separate stores, signing journals, sidecars, and restricted Core RPC
+credentials. This is a progressive private-local happy-path PoC, not
+production signing authority or a hardening claim.
 
 The accepted Gateway proposal names DLC-specs `AdaptorSignature.md` as a
 conformance source. No such file exists in the current DLC repository or its
@@ -62,9 +57,9 @@ flowchart LR
         Agreement["Validated countersigned agreement v1"]
         Maker["Maker actor and store"]
         Taker["Taker actor and store"]
-        Actor["btc-reference-actor<br/>schema 3 actual-node history<br/>schema 4 typed seam GREEN; live fails closed"]
-        MakerJournal[("Schema 4 Maker lock journal<br/>observe before one attempt")]
-        Runner["Schema 4 runner edits<br/>uncommitted and not evidence"]
+        Actor["btc-reference-actor schema 4<br/>fresh one-shot process per command"]
+        MakerJournal[("Maker lock journal<br/>exact plan and at most one send")]
+        Runner["Run-owned fixture<br/>submits Taker first lock only"]
         MakerSigner["Maker signing journal"]
         TakerSigner["Taker signing journal"]
         Recovery["SqliteBtcRecoveryStore component GREEN"]
@@ -80,56 +75,55 @@ flowchart LR
         Recovery --> TakerRecovery
         Actor -->|"role-selected predecessor projections one through four"| Recovery
         Actor --> MakerJournal
-        Runner -.-> Actor
+        Runner -->|"invoke fresh commands; never submit Maker lock"| Actor
     end
 
     subgraph RoleServices["Role local services"]
         MakerSidecar["Maker sidecar<br/>dynamic literal-loopback port"]
         TakerSidecar["Taker sidecar<br/>dynamic literal-loopback port"]
-        CoreAdapter["Typed Core 31.1 adapter and canonical evidence GREEN"]
-        InitJournal["Exact-idempotent init journal 3336b6e<br/>one same-ID same-bytes CAS and send"]
-        InitActor["Typed actor map 11111dd<br/>restart no-rearm GREEN"]
-        InitGap["Missing live LEZ init admission port<br/>pending absence unavailable"]
-        CurrentLez["Generic current Funded proof 923586b<br/>state-only and not finality"]
-        StateGap["Missing joined current exact-byte finalized view"]
+        CoreAdapter["Typed Core 31.1 adapter<br/>current clock, exact UTXO, mempool and confirmation"]
+        LezAdapter["Live LEZ bridge<br/>current clock and state plus finalized exact history"]
+        InitJournal["Exact-idempotent LEZ journal<br/>same ID and bytes, restart no rearm"]
     end
 
     subgraph Bitcoin["Bitcoin local devnet"]
-        Core["Bitcoin Core 31.1 Regtest<br/>successful run port 32913"]
+        Core["Bitcoin Core 31.1 Regtest<br/>ephemeral loopback RPC"]
         Miner["Run provisioner and miner"]
     end
 
     subgraph Lez["LEZ v0.2.0 local devnet"]
-        Sequencer["Sequencer<br/>successful run port 32915"]
-        Indexer["Indexer<br/>successful run port 32916"]
-        Bedrock["Bedrock<br/>successful run port 32914"]
+        Sequencer["Sequencer<br/>ephemeral loopback RPC"]
+        Indexer["Indexer<br/>ephemeral loopback RPC"]
+        Bedrock["Bedrock<br/>ephemeral loopback RPC"]
         Guest["Witnessed escrow program 39b6a4db"]
         Sequencer --> Guest
         Guest --> Bedrock
         Bedrock --> Indexer
     end
 
-    Actor -->|"maker config"| MakerSidecar
-    Actor -->|"taker config"| TakerSidecar
+    Actor -->|"Maker capability"| MakerSidecar
+    Actor -->|"Taker capability"| TakerSidecar
     MakerSidecar --> Sequencer
-    MakerSidecar -->|"finalized funding and claim reads by ID and hash"| Indexer
+    MakerSidecar -->|"finalized exact history by ID and hash"| Indexer
     TakerSidecar --> Sequencer
-    TakerSidecar -->|"finalized funding and claim reads by ID and hash"| Indexer
-    Actor -->|"exact taker-funding read"| CoreAdapter
-    InitJournal --> InitActor
-    InitActor --> Actor
-    Actor -.-> InitGap
-    InitJournal -.-> InitGap
-    CurrentLez -.-> Actor
-    CurrentLez -.-> StateGap
-    Actor -.-> StateGap
+    TakerSidecar -->|"finalized exact history by ID and hash"| Indexer
+    Actor -->|"fresh eligibility and exact reconciliation"| CoreAdapter
+    Actor --> LezAdapter
+    LezAdapter --> MakerSidecar
+    LezAdapter --> TakerSidecar
+    MakerJournal --> InitJournal
+    InitJournal --> Actor
     CoreAdapter --> Core
     Miner --> Core
     Core --> Evidence["Secret safe evidence"]
     Indexer --> Evidence
 ```
 
-The exact retained topology is:
+The following exact endpoints are retained historical evidence from
+`m3actor-20260716n`. Run `m3schema4-20260717d` allocated a fresh ephemeral
+loopback topology with the same component and trust boundaries; its packet
+intentionally identifies endpoint scope rather than promoting ephemeral ports
+to configuration defaults.
 
 | Component | Version or identity | Retained endpoint | Trust boundary |
 | --- | --- | --- | --- |
@@ -252,26 +246,36 @@ Regtest; Testnet4 admission is production-portability work.
 
 ## Two-lock reference actor
 
-`btc-reference-actor --config PRIVATE_JSON activate|drive|status` is a public
+`btc-reference-actor --config PRIVATE_JSON activate|drive|recover|status` is a public
 one-shot, role-fixed surface. Its strict owner-private configuration binds the
 agreement, role-local database, Core route and credential, and LEZ sidecar
 route, capability, run, runtime, timeout, and finalized discovery window.
-The successful run fixes the LEZ bridge timeout at a finite 30 seconds. The
-controller may start a fresh actor process for bounded read-only observation
-retries, including a moving finalized tip, but it never retries a submission.
-`status` opens no RPC client. At revision zero or one, `drive` selects the
-taker-funded or maker-funded chain from the validated agreement, observes exact
-Bitcoin funding or finalized LEZ funding, returns from that read, and then
-performs the SQLite predecessor CAS. The LEZ evidence retains the finalized tip and binds the returned
-accounts to the signed agreement. Only activation inserts acceptance; absent or
-empty/no-acceptance state is not activated, while corruption or conflicting
-acceptance fails closed. Pre-funding LEZ errors remain retryable
-unavailability. Exact retries retain
-the deterministic request ID; a deliberate window change receives a distinct
-ID and remains evidence-bound. A concurrent CAS loser may reconstruct a valid
-matching winner and return
-`converged_on_existing_projection` without overwriting it; other failures fail
-closed.
+Schema 4 additionally binds the direction-shaped exact Maker lock plan. The
+successful run fixes the LEZ bridge timeout at a finite 30 seconds. `status`
+opens no RPC client. Only activation inserts acceptance; absent or empty state
+is not activated, while corruption or conflicting acceptance fails closed.
+
+At revision zero, each role observes the fixture-submitted exact Taker first
+lock and projects revision one only after the read returns. At the Maker's
+revision one, `drive` revalidates that exact first lock and the signed cutoff
+against a fresh current chain clock before every possible send. It first
+observes the exact Maker plan, consumes one role-local journal attempt only
+when eligible, and then reconciles canonical presence. The LEZ direction orders
+initialization before funding, binds each step to the same exact ID and bytes,
+and joins current state with finalized exact history. The Bitcoin direction
+uses stable-tip exact UTXO eligibility, exact mempool reconciliation, and
+confirmed canonical readback. A moving LEZ tip returns a typed fail-closed
+result; the controller may start a fresh process, but the durable journal
+cannot grant a second send.
+
+Only the final exact Maker observation can close the Maker journal intent and
+revision two in one local SQLite transaction. The Taker independently observes
+the same canonical Maker effect before its own revision-two projection.
+Accepted RPC submission alone never advances either role. Exact retries retain
+the deterministic request ID; a deliberate bounded-window change receives a
+distinct ID and remains evidence-bound. A concurrent CAS loser may reconstruct
+a valid matching winner and return `converged_on_existing_projection`
+without overwriting it; other failures fail closed.
 
 At revision two, the direction-derived revealing claimant revalidates the
 agreement, complete prepared claim, both domain contexts, and its existing
@@ -287,20 +291,20 @@ claim paths are GREEN in source and deterministic adapter tests.
 This ordering is deliberately not a cross-system atomic commit. A crash after
 a read and before SQLite leaves the predecessor revision and a new process
 re-observes. A crash after the one-attempt CAS never grants a second send; the
-actor reconciles exact chain presence. Both actual-node happy directions are
-GREEN in `m3actor-20260716n`; refund and process-kill/reorg paths remain
-pending. ADR 0031 records the process boundary and ADR 0033 records the
-effect-journal boundary.
+actor reconciles exact chain presence. Both schema-4 actual-node happy
+directions are GREEN in `m3schema4-20260717d`; process-kill, reorg, and
+genuinely concurrent paths remain pending. ADR 0031 records the process
+boundary and ADR 0033 records the effect-journal boundary.
 
-The first refund hardening slices now derive the exact BIP-342 transaction from
-the countersigned agreement and extend the existing native-refund bridge wire
-to strict hashlock-or-witnessed terms and metadata without changing legacy JSON
-shape. Mixed authority facts fail closed, and the compatibility sidecar
-explicitly refuses the witnessed variant. The v0.2 guest already enforces its
-permissionless fixed depositor destination and timestamp validity window.
-Durable v0.2 preparation, finalized observation, actor one-attempt submission,
-and lifecycle projection are still pending and are not implied by the protocol
-wire.
+The refund path derives the exact BIP-342 transaction from the countersigned
+agreement and extends the native-refund bridge wire to strict
+hashlock-or-witnessed terms and metadata without changing legacy JSON shape.
+Mixed authority facts fail closed, and the compatibility sidecar explicitly
+refuses the witnessed variant. The v0.2 guest enforces its permissionless fixed
+depositor destination and timestamp validity window. Later evidence under ADRs
+0038 and 0039 makes durable preparation, finalized observation, actor
+one-attempt submission, and lifecycle projection GREEN on actual local nodes;
+process-kill, reorg, and adversarial timing remain hardening scope.
 
 ## Deployed LEZ guest and account onboarding
 
@@ -401,6 +405,27 @@ The LEZ guest derives the aggregate authority account from the aggregate
 x-only key. That authority is distinct from the immutable claimant account.
 The guest accepts one aggregate BIP-340 witness over the exact public claim
 transaction and transfers custody only to the claimant.
+
+## Schema-4 actor-owned Maker-lock checkpoint
+
+Run `m3schema4-20260717d` is the current ownership checkpoint. It began from
+clean pushed commit `0e7635fc7e50cc6e0612745dcdaf6df8bbcf6f9a` and
+used fresh one-shot actor processes, role-local schema-4 configs, independent
+stores and signer journals, distinct restricted Core credentials, and fresh
+ephemeral loopback Core/LEZ services.
+
+| Direction | External Taker first lock | Actor-owned Maker second lock | Exact reconciliation |
+| --- | --- | --- | --- |
+| `TakerSellsForeign` | Bitcoin `6a1d7328...5ec8` confirmed once | LEZ initialize `6e13383d...2110`, then fund `9eb4ce06...3262` | Durable LEZ effect counts advanced 0 to 1 to 2, stayed unchanged across restart, and the full exact pair finalized inside the actor window |
+| `TakerSellsLez` | LEZ initialize `273f4d19...bcbc` and fund `709adebb...b2e` finalized once | Bitcoin `6c2505b3...1dd6` entered the mempool exactly once and then confirmed once | Nine moving-tip attempts granted no unsafe effect; attempt ten succeeded, restart sent zero, and the two existing LEZ effects stayed unchanged |
+
+In both directions the final Maker observation closed the exact Maker intent
+and Maker revision two in one local SQLite transaction. The Taker projected
+revision two only from its own canonical observation. Both roles subsequently
+reached revision four `Completed`; exact Bitcoin and LEZ effect counts were
+unchanged by terminal replay. This proves the private-local schema-4 happy
+path. It does not turn chain submission, chain finality, and either SQLite
+store into one distributed transaction.
 
 ## Completed direction TakerSellsForeign
 
@@ -579,21 +604,30 @@ cryptographic audit and production key custody are not claimed.
 
 The older operator-composed facts remain in
 [M3 local two-direction PoC](../evidence/m3-local-two-direction-poc-20260715.json).
-The repository-owned proof is rooted at
+The historical repository-owned claim-actor proof is rooted at
 `.e2e/m3actor-20260716n/m3-actor-poc/evidence/`. Its summary binds commit
 `6ded2f9b8ba9ec8e0cfbf06287da92d34256f91a`, the three executable
 hashes, fresh local service identities, guest deployment/onboarding, both
 directions, four terminal role states, zero replay resubmissions, no public
 resources, and exact cleanup. Secret material is excluded.
 
-The repository-owned actual-node functional boundary is complete at two of two
-directions. The following are deliberately not accepted by this ADR:
+The current
+[schema-4 actor-owned lock packet](../evidence/m3-schema4-actor-owned-lock-poc-20260717.json)
+binds clean pushed commit
+`0e7635fc7e50cc6e0612745dcdaf6df8bbcf6f9a`, the exact runtime
+packet and direction-driver digests, fresh local topology, two of two
+directions, exact actor ownership and replay counts, four terminal role states,
+no public runtime dependency, and exact run-owned cleanup. Secret material is
+excluded.
 
-- live schema-4 Maker lock admission through the role-local Core and LEZ
-  adapters, including the missing live LEZ exact-idempotence proof and the join
-  of current escrow facts with exact bytes and finalized funding evidence;
-- concurrent swaps, crash recovery, reorgs, chaos, denial-of-service, and
-  adversarial security campaigns;
+The repository-owned private-local schema-4 happy-path boundary is complete at
+two of two directions. The following are deliberately not accepted by this
+ADR:
+
+- two genuinely overlapping swaps, process-kill recovery, reorgs, chaos,
+  denial-of-service, and adversarial security campaigns;
+- completion review for the accepted full-lifecycle public BTC SDK, F7
+  custom-token corridor, and D1 recording deliverables;
 - production key custody, fee management, confirmation policy, public routing,
   public LEZ deployment, monitoring, and operational readiness;
 - a formal cryptographic audit or final production acceptance of `musig2`;
@@ -605,13 +639,14 @@ first-lock-only refunds are now recorded by later M3 evidence. If the maker neve
 second lock, the taker eventually recovers the first leg. If both legs are
 locked and claims do not complete, the maker-funded shorter recovery occurs
 before the taker-funded longer recovery after the conservative cross-chain
-margin. Those refund journeys do not substitute for timely schema-4 Maker lock
-admission against both live local nodes.
+margin. Those refund journeys complement, but do not replace, the now-proven
+timely schema-4 Maker lock admission against both live local nodes.
 
-This ADR accepts the repository-owned private local M3 happy-path PoC proven by
-`m3actor-20260716n`. It does not certify the production-hardening nonclaims or
-create an M3 completion tag; the tag belongs only on the exact pushed commit
-after the selected milestone closure gates pass.
+This ADR accepts the repository-owned private local schema-4 happy-path
+checkpoint proven by `m3schema4-20260717d`. It does not certify the remaining
+accepted M3 scope or production-hardening nonclaims and does not create an M3
+completion tag; the tag belongs only on the exact pushed commit after every
+milestone closure gate passes.
 
 Post-PoC QA, chaos, information-security, and production-readiness work starts
 only under the progressive delivery transition selected by the owner. The

@@ -1,8 +1,11 @@
 # ADR 0037: Finalize exact Bitcoin funding before the first effect
 
-Status: Accepted and GREEN in the run-owned public-actor harness and retained
-two-direction actual-node evidence. Refund timeout eligibility, fee stress, and
-reorg hardening remain active.
+Status: Accepted and GREEN in the run-owned schema-4 actor harness and retained
+two-direction actual-node evidence. Run `m3schema4-20260717d` at clean
+pushed commit `0e7635fc7e50cc6e0612745dcdaf6df8bbcf6f9a` proves that
+the external fixture submits only the Taker's exact first lock and the
+direction-correct Maker actor submits the exact second lock under one-attempt
+authority. Production fee/replacement policy and reorg hardening remain active.
 
 ## Context
 
@@ -41,10 +44,17 @@ For each direction, the local PoC ceremony is:
    canonical countersigned agreement.
 5. Both roles complete and persist the Bitcoin and LEZ presignatures derived
    from that exact agreement. Actor activation revalidates them.
-6. Only then may the direction-correct taker-first chain effect be submitted.
-   When the Bitcoin funding effect is due, the owner sends the persisted exact
-   bytes, mines exactly one block, and requires that block height to equal the
-   signed planned anchor before continuing.
+6. Only then may the run-owned Taker fixture submit the direction-correct exact
+   first lock. It has no authority to submit the Maker second lock.
+7. A fresh schema-4 Maker actor must revalidate the canonical first lock and
+   current signed cutoff, durably reserve at most one exact second-lock attempt,
+   submit through its role-local adapter, and reconcile canonical evidence.
+   The runner may confirm or mine an actor-submitted effect but may not create
+   it.
+8. When a Bitcoin funding effect is due, its authorized submitter sends the
+   persisted exact bytes. The separate provisioner mines exactly one block and
+   requires the containing height to equal the signed planned anchor before the
+   lifecycle continues.
 
 `testmempoolaccept` is deliberately before agreement finalization. It is
 read-only policy evidence, not a reservation, broadcast, confirmation, or
@@ -61,9 +71,11 @@ flowchart TB
     FundingFile[("Exact funding transaction hex")]
     Core["Bitcoin Core 31.1 Regtest"]
     Agreement[("Countersigned canonical agreement")]
-    MakerJournal[("Maker BTC and LEZ journals")]
-    TakerJournal[("Taker BTC and LEZ journals")]
-    Actor["Fresh role fixed actors"]
+    MakerJournal[("Maker signing and one-attempt lock journals")]
+    TakerJournal[("Taker signing journal")]
+    TakerFixture["Run-owned Taker first-lock fixture"]
+    MakerActor["Fresh schema 4 Maker actor"]
+    Recovery[("Maker role-local lifecycle store")]
     Lez["Local LEZ v0.2 sequencer and indexer"]
 
     Operator --> Provisioner
@@ -71,16 +83,21 @@ flowchart TB
     Provisioner --> PublicSpec
     PublicSpec --> Provisioner
     Provisioner --> FundingFile
-    FundingFile --> Core
+    FundingFile -->|"read-only policy input"| Core
     Core -->|"gettxout and testmempoolaccept"| Operator
     Operator --> Provisioner
     Provisioner --> Agreement
     Agreement --> MakerJournal
     Agreement --> TakerJournal
-    MakerJournal --> Actor
-    TakerJournal --> Actor
-    Actor --> Core
-    Actor --> Lez
+    TakerJournal --> TakerFixture
+    MakerJournal --> MakerActor
+    Agreement --> TakerFixture
+    Agreement --> MakerActor
+    TakerFixture -->|"Taker first lock only"| Core
+    TakerFixture -->|"Taker first lock only"| Lez
+    MakerActor -->|"Maker second lock only"| Core
+    MakerActor -->|"Maker second lock only"| Lez
+    MakerActor --> Recovery
 ```
 
 The provisioner emits `contract_merkle_root` in the funding summary so the
@@ -90,35 +107,43 @@ from participant keys and CSV terms.
 
 ```mermaid
 sequenceDiagram
-    participant Operator as Run owned operator
+    participant Fixture as Run owned Taker fixture
     participant Provisioner as Offline provisioner
     participant Core as Bitcoin Core Regtest
     participant Signers as Maker and taker journals
-    participant Chains as Bitcoin and LEZ
+    participant Maker as Fresh schema 4 Maker actor
+    participant Journal as Maker one attempt journal
+    participant Store as Maker lifecycle store
+    participant Lez as LEZ sequencer and indexer
 
-    Operator->>Provisioner: generate planning JSON and fresh root
-    Provisioner-->>Operator: public spec and exact hash
-    Operator->>Core: gettxout service candidate
-    Core-->>Operator: unspent value and rawtr script
-    Operator->>Provisioner: prepare-funding with private key file path
-    Provisioner-->>Operator: create-new exact hex and secret-free summary
-    Operator->>Core: testmempoolaccept exact persisted hex
-    Core-->>Operator: allowed with exact txid and wtxid
-    Operator->>Provisioner: finalize exact bytes, planned anchor, and LEZ facts
-    Provisioner-->>Operator: countersigned canonical agreement
-    Operator->>Signers: complete BTC and LEZ sessions from agreement
-    Signers-->>Operator: both role presignatures durable
+    Fixture->>Provisioner: Generate plan and exact funding bytes
+    Fixture->>Core: Read service output and test exact mempool policy
+    Core-->>Fixture: Unspent candidate and allowed exact transaction
+    Fixture->>Provisioner: Finalize planned anchor and LEZ facts
+    Provisioner-->>Fixture: Countersigned canonical agreement
+    Fixture->>Signers: Complete both chain sessions from agreement
+    Signers-->>Fixture: Both role presignatures durable
     alt Taker funds Bitcoin first
-        Operator->>Chains: send exact Bitcoin funding bytes
-        Operator->>Core: mine one block
-        Core-->>Operator: exact transaction at planned anchor
-        Operator->>Chains: submit direction-correct LEZ lock
+        Fixture->>Core: Submit exact Taker Bitcoin lock
+        Fixture->>Core: Mine planned block
+        Core-->>Maker: Confirm exact first lock at planned anchor
+        Maker->>Lez: Read current clock before cutoff
+        Maker->>Journal: Persist exact initialize attempt
+        Maker->>Lez: Submit exact initialize once
+        Maker->>Journal: Persist exact fund attempt
+        Maker->>Lez: Submit exact fund once
+        Lez-->>Maker: Current Funded and finalized exact pair
+        Maker->>Store: Atomically close final intent and revision two
     else Taker funds LEZ first
-        Operator->>Chains: submit direction-correct LEZ lock
-        Chains-->>Operator: exact finalized LEZ funding
-        Operator->>Chains: send exact Bitcoin funding bytes
-        Operator->>Core: mine one block
-        Core-->>Operator: exact transaction at planned anchor
+        Fixture->>Lez: Submit exact Taker initialize and fund
+        Lez-->>Maker: Current and finalized exact first lock
+        Maker->>Core: Read current clock and exact funding state
+        Maker->>Journal: Persist exact Bitcoin attempt
+        Maker->>Core: Submit exact Maker Bitcoin lock once
+        Core-->>Maker: Exact transaction appears once in mempool
+        Fixture->>Core: Mine planned block
+        Core-->>Maker: Confirm exact lock at planned anchor
+        Maker->>Store: Atomically close final intent and revision two
     end
 ```
 
@@ -161,6 +186,15 @@ Each boundary uses durable exact bytes, one-attempt authority, canonical
 observation, and fail-closed recovery instead. A crash or ambiguous response is
 reconciled by observation, never by blind replacement.
 
+The Maker actor's final journal close and revision-two lifecycle CAS do share
+one local SQLite transaction. That prevents local state from exposing a closed
+Maker intent without its matching `BothLegsLocked` projection, or the
+reverse. It does not include the preceding Core or LEZ send. Run
+`m3schema4-20260717d` demonstrates the intended compensation: one
+conceptual Maker lock per direction, realized as one Bitcoin transaction or the
+ordered LEZ initialize/fund pair, zero restart resubmissions, exact canonical
+reconciliation, and unchanged effect counts after terminal replay.
+
 If Bitcoin mines at any height other than the planned anchor, the run cannot
 claim this agreement's recovery schedule. Do not re-sign or patch terms after
 the effect. Preserve all evidence, stop the swap lifecycle, and recover the
@@ -193,5 +227,10 @@ break the pre-lock authority invariant.
   prove both role journals complete before the first effect, and prove the
   actual Bitcoin containing height equals the signed planned anchor in both
   directions.
+- The retained schema-4 packet proves that the fixture owns only each Taker
+  first lock, the Maker actor owns each second lock, the Bitcoin second lock
+  appears exactly once in the mempool, and the ordered LEZ second-lock effects
+  progress exactly from zero to one to two without restart rearm.
 - Public networks, concurrent writers, replacements, reorgs, production key
-  custody, and full refund execution remain later hardening.
+  custody, and production refund operation remain later hardening. Private-local
+  actual-node refund flows are retained under later M3 ADRs.

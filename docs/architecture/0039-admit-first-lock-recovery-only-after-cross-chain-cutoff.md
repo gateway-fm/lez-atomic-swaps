@@ -1,11 +1,13 @@
 # ADR 0039: Admit first-lock recovery only after a cross-chain cutoff
 
-Status: Accepted for the M3 BTC PoC; refund-side actual-node evidence, canonical
-containing-time admission, exact unspent/submission ports, role-fixed lock
-plans, durable Maker authority, the strict schema-4 typed actor seam, and
-exact-idempotent actor mapping/restart no-rearm are GREEN. Live CLI composition
-plus fresh actual-node admission evidence remain
-pending; there is no milestone tag for this slice
+Status: Accepted for the M3 BTC PoC. Both the absent-Maker recovery path and
+the complementary timely-Maker path are actual-node GREEN in both directions.
+Run `m3schema4-20260717d` at clean pushed commit
+`0e7635fc7e50cc6e0612745dcdaf6df8bbcf6f9a` proves live schema-4
+Maker admission: fresh current/finalized eligibility, exact one-attempt
+submission, exact reconciliation, restart no-rearm, and atomic local final
+intent/revision-two closure. There is no distributed cross-chain transaction
+and no M3 completion tag for this slice.
 
 ## Context
 
@@ -98,120 +100,140 @@ Bitcoin `Ready` means the maker lock exists, `Pending` includes mempool presence
 and remains uncertain, and only stable-tip `Absent` may pass the first gate. The
 LEZ refund observer then revalidates the exact escrow state and signed deadline.
 
-The maker-owned admission flow is direction-specific. Pushed `8870910`
-implements the exact plan/journal/actor contract shown below at the typed seam.
-The diagrams remain the target live-adapter composition: the CLI deliberately
-fails closed until the missing LEZ reads are available, and no actual-node run
-has exercised this schema-4 path. Schema 3 remains observation-only
-compatibility and never receives send authority.
+The maker-owned admission flow is direction-specific. Schema 4 is the live
+path shown below and binds complete direction-shaped Maker material; schema 3
+remains observation-only compatibility and never receives send authority.
+The external runner submits the Taker first lock only. It may advance a local
+chain to confirm or finalize an actor-submitted Maker effect, but it never
+submits that second lock itself.
 
 ### Taker sells Bitcoin and maker funds LEZ
 
 ```mermaid
 sequenceDiagram
     actor Taker
+    participant Runner as Run owned fixture
     participant Bitcoin as Bitcoin Core
-    participant MakerSDK as Maker BTC-pair SDK
+    participant MakerSDK as Fresh Maker actor and SDK
+    participant Journal as Maker one attempt journal
     participant Store as Maker durable store
-    participant Lez as LEZ finalized RPC
+    participant Lez as LEZ sidecar and local nodes
     participant TakerActor as Taker actor
 
-    Note over MakerSDK,Store: Schema 4 typed seam is GREEN at 8870910
-    Taker->>Bitcoin: Submit exact Bitcoin first lock
+    Note over Taker,MakerSDK: Both claim sessions and exact lock plans are durable
+    Taker->>Runner: Authorize exact Taker first lock
+    Runner->>Bitcoin: Submit exact Bitcoin first lock
     Bitcoin-->>MakerSDK: Canonical unspent outpoint at signed depth
-    MakerSDK->>Lez: Read finalized clock before signed cutoff
-    MakerSDK->>Store: Persist exact LEZ initialize and fund plan
+    MakerSDK->>Lez: Read stable current clock before signed cutoff
+    MakerSDK->>Journal: Load exact initialize and fund plan
     MakerSDK->>Lez: Classify exact initialization before one possible send
-    Note over MakerSDK,Lez: LEZ cannot prove pending-level absence<br/>the live exact-idempotent admission port is missing
     alt Exact initialization already finalized
         Lez-->>MakerSDK: Exact canonical initialized escrow
     else ExactIdempotentSubmissionSafe and clock is before cutoff
-        Note over MakerSDK,Store: Pushed 3336b6e binds journal ID and bytes<br/>11111dd maps it through the actor with restart no-rearm<br/>this is not absence and the live port remains open
+        MakerSDK->>Journal: CAS exact ID and bytes to one attempt
         MakerSDK->>Lez: Submit exact initialize step once
-        Lez-->>MakerSDK: Accepted or Unknown remains observation only
+        Runner->>Lez: Advance isolated finality without resubmission
+        Note over MakerSDK,Journal: Restart cannot rearm Started or Unknown
     else Found mismatch or UnknownOrPending
-        MakerSDK->>Store: Preserve journal without send authority
+        MakerSDK-->>Taker: Preserve predecessor and fail closed
     end
     MakerSDK->>Lez: Require exact finalized initialized escrow
     Lez-->>MakerSDK: Exact canonical initialization evidence
     MakerSDK->>Bitcoin: Fresh exact unspent first-lock check
-    MakerSDK->>Lez: Fresh finalized clock before cutoff
+    MakerSDK->>Lez: Fresh stable current clock before cutoff
     alt Still eligible
-        MakerSDK->>Lez: Submit exact fund step
-        Lez-->>MakerSDK: Finalized funding and containing timestamp
+        MakerSDK->>Journal: CAS exact fund ID and bytes to one attempt
+        MakerSDK->>Lez: Submit exact fund step once
+        Runner->>Lez: Advance isolated finality without resubmission
+        MakerSDK->>Lez: Join current Funded state with finalized exact pair
+        Lez-->>MakerSDK: Exact pair, custody, and containing timestamp
         alt Containing timestamp at or before cutoff
-            MakerSDK->>Store: Atomically close final plan ID with revision two
+            MakerSDK->>Store: Atomically close final intent and revision two
             Lez-->>TakerActor: Exact canonical maker lock
-            TakerActor->>TakerActor: Open both-lock claim gate
+            TakerActor->>TakerActor: Project exact evidence in role-local store
         else Funding exists after cutoff
             MakerSDK->>Store: Record uncertain late presence
-            TakerActor->>TakerActor: Withhold claim and first-lock refund
+            TakerActor-->>Taker: Withhold claim and first-lock refund
         end
     else First lock changed or cutoff reached
         MakerSDK->>Store: Keep intent without funding authority
     end
 ```
 
-This direction is conditionally atomic because LEZ funding is the maker's
-value-bearing step. Before that step, only the taker's Bitcoin is locked and it
-has its signed CSV refund. A timely finalized LEZ funding transaction creates
-the two-lock claim path. A late LEZ funding transaction cannot authorize
-revision two, but its presence makes first-lock absence unprovable, so the taker
-cannot simultaneously refund Bitcoin and treat the LEZ leg as nonexistent.
-Initialization without funding holds no maker asset and grants no claim.
+This direction preserves the atomic-swap safety boundary because LEZ funding
+is the Maker's value-bearing step. Before it, only the Taker's Bitcoin is
+locked and the signed CSV refund remains available. Initialization alone holds
+no Maker asset and grants no claim. A timely finalized LEZ funding transaction
+creates the two-lock claim path. A late LEZ funding transaction cannot
+authorize revision two, but its presence makes first-lock absence unprovable,
+so the Taker cannot simultaneously refund Bitcoin and treat the LEZ leg as
+nonexistent. Only the final Maker journal close plus revision-two projection
+is locally atomic; Bitcoin, LEZ, and the two role stores do not share a
+transaction.
 
 ### Taker sells LEZ and maker funds Bitcoin
 
 ```mermaid
 sequenceDiagram
     actor Taker
-    participant Lez as LEZ finalized RPC
-    participant MakerSDK as Maker BTC-pair SDK
+    participant Runner as Run owned fixture
+    participant Lez as LEZ sidecar and local nodes
+    participant MakerSDK as Fresh Maker actor and SDK
+    participant Journal as Maker one attempt journal
     participant Store as Maker durable store
     participant Bitcoin as Bitcoin Core
     participant TakerActor as Taker actor
 
-    Note over MakerSDK,Store: Schema 4 typed seam is GREEN at 8870910
-    Taker->>Lez: Submit exact LEZ initialize and fund steps
-    Lez-->>MakerSDK: Finalized funded escrow and custody balance
-    Note over MakerSDK,Lez: Pushed 923586b proves current Funded state only<br/>the exact init and fund byte plus finality join is still missing
-    MakerSDK->>Bitcoin: Read stable tip clock before signed cutoff
-    MakerSDK->>Store: Persist exact signed Bitcoin funding bytes
-    MakerSDK->>Lez: Fresh finalized funded and custody check
-    MakerSDK->>Bitcoin: Fresh stable tip clock before cutoff
+    Note over Taker,MakerSDK: Both claim sessions and exact lock plans are durable
+    Taker->>Runner: Authorize exact Taker first lock
+    Runner->>Lez: Submit exact LEZ initialize and fund steps
+    Lez-->>MakerSDK: Current Funded state and finalized exact first-lock pair
+    Note over MakerSDK,Lez: Moving or incomplete views grant no send authority
+    MakerSDK->>Journal: Load exact signed Bitcoin funding bytes
+    MakerSDK->>Bitcoin: Read stable current clock before signed cutoff
+    MakerSDK->>Lez: Fresh current custody and finalized exact pair
+    MakerSDK->>Bitcoin: Fresh stable current clock before cutoff
     alt Still eligible
         MakerSDK->>Bitcoin: Observe exact signed maker funding before send
-        alt Exact funding is absent
+        alt Exact funding is absent at a stable tip
+            MakerSDK->>Journal: CAS exact txid and bytes to one attempt
             MakerSDK->>Bitcoin: Submit exact Bitcoin maker lock once
-            Bitcoin-->>MakerSDK: Accepted or Unknown remains observation only
-        else Exact funding is found
+            Bitcoin-->>MakerSDK: Exact transaction appears once in mempool
+            Runner->>Bitcoin: Mine actor-submitted transaction
+            Note over MakerSDK,Journal: Restart cannot rearm the exact attempt
+        else Exact funding is canonical
             Bitcoin-->>MakerSDK: Reuse canonical exact observation
-        else Pending mismatch or uncertain
-            MakerSDK->>Store: Preserve journal without send authority
+        else Exact funding is pending
+            Bitcoin-->>MakerSDK: Reconcile exact mempool transaction without send
+        else Mismatch or uncertain
+            MakerSDK-->>Taker: Preserve predecessor and fail closed
         end
         MakerSDK->>Bitcoin: Require canonical exact funding observation
         Bitcoin-->>MakerSDK: Canonical containing header and median time
         alt Containing median time at or before cutoff
-            MakerSDK->>Store: Atomically close final plan ID with revision two
+            MakerSDK->>Store: Atomically close final intent and revision two
             Bitcoin-->>TakerActor: Exact canonical maker lock
-            TakerActor->>TakerActor: Open both-lock claim gate
+            TakerActor->>TakerActor: Project exact evidence in role-local store
         else Funding exists after cutoff
             MakerSDK->>Store: Record uncertain late presence
-            TakerActor->>TakerActor: Withhold claim and first-lock refund
+            TakerActor-->>Taker: Withhold claim and first-lock refund
         end
     else First lock changed or cutoff reached
         MakerSDK->>Store: Keep intent without funding authority
     end
 ```
 
-This direction is conditionally atomic because the maker's exact Bitcoin
-transaction is persisted before its sole send and the taker's LEZ escrow is
-rechecked immediately before that action. Canonical inclusion no later than the
-cutoff opens the two-lock claim sequence. Mempool presence is never canonical
-admission. Inclusion after cutoff is quarantined as uncertain: the late Bitcoin
-leg may require its own timeout recovery, but the taker cannot use the
-absent-maker branch while it exists. That sacrifices automatic liveness rather
-than permitting incompatible claim and refund histories.
+This direction preserves the atomic-swap safety boundary because the Maker's
+exact Bitcoin transaction is persisted before its sole send and the Taker's
+current and finalized LEZ escrow evidence is rechecked immediately before that
+action. Canonical Bitcoin inclusion no later than the cutoff opens the two-lock
+claim sequence. Mempool presence reconciles the exact attempt but is never
+canonical admission. Inclusion after cutoff is quarantined as uncertain: the
+late Bitcoin leg may require its own timeout recovery, but the Taker cannot use
+the absent-Maker branch while it exists. That sacrifices automatic liveness
+rather than permitting incompatible claim and refund histories. Only the final
+Maker journal close plus revision-two projection is locally atomic; the chain
+send and either role's separate projection remain outside it.
 
 ## Atomicity argument
 
@@ -260,43 +282,54 @@ canonical completion. Only exact confirmed step evidence can close the intent,
 and the Maker's revision-two evidence plus intent close share one SQLite
 transaction. The generic Maker projector cannot bypass that boundary.
 
-Pushed `8870910` composes those prerequisites through the strict schema-4
-typed actor seam. The Maker must supply exact direction-shaped lock material;
-the Taker must not. Before each possible ordered send the actor observes, checks
-the canonical chain clock strictly before the cutoff, and revalidates the exact
-first lock. Node `Accepted` and `Unknown` are durable observation-only states;
-only exact canonical/finalized observation advances. LEZ initialize precedes
-fund, and the final observation ID must equal the final plan ID before the
-journal intent and lifecycle revision close atomically. Schema 3 converts an
-already observed exact maker lock into a no-send intent and closes with
-`attempt_count` zero. The focused actor result is 73 of 73 GREEN with strict
-Clippy, rustdoc, formatting, and diff gates.
+The schema-4 component chain culminates in the live path rather than stopping
+at the earlier typed seam. Commits `5102046` and `2b2781b` add a stable
+current LEZ clock and the exact finalized/current first-lock proof. Commit
+`13d048b` composes direction-shaped live Maker execution. Commits
+`dc07518` and `cd93fb9` keep moving or otherwise transient observations
+fail closed while allowing a fresh one-shot process to obtain a later stable
+view; they do not rearm a consumed journal attempt.
 
-This component result does not supply live evidence. The Core adapter already
-has exact funding observation and authorized submission. LEZ v0.2 cannot prove
-pending-level initialization absence. Pushed `3336b6e` therefore adds a
-distinct journal `ExactIdempotentSubmissionSafe` observation: one CAS/send is available
-only when the adapter and node operation are bound to the same exact ID and
-bytes. It does not claim absence, never rearms after `Started` or `Unknown`, and
-canonical evidence is still required for acceptance. Store-focused tests/gates
-are GREEN, but the live adapter port must still prove that exact idempotence.
-Pushed `11111dd` maps `ExactIdempotentSubmissionSafe` through
-`MakerLockStepChainObservationV1`; a typed actor submits once on the first drive
-and zero times after restart. This closes actor mapping/no-rearm only, not a live
-adapter or actual-node path.
-Pushed `923586b` separately proves the agreement-selected LEZ escrow is
-currently `Funded` with exact metadata and complete custody under one unchanged
-canonical clock for either role/direction. It performs no mutation and does not
-prove finalized inclusion or exact initialize/fund transaction bytes. The live
-actor still needs an adapter joining those current facts with exact bytes and
-finalized fund evidence. Current schema-4 runner edits are uncommitted and are
-not evidence.
+The Maker must supply exact direction-shaped lock material; the Taker must not.
+Before each possible ordered send the actor checks the current Maker-chain clock
+strictly before the cutoff and freshly revalidates the exact first lock. Node
+`Accepted` and `Unknown` remain durable observation-only states; only
+exact canonical or finalized observation advances. LEZ initialization precedes
+funding, and the final observation ID must equal the final plan ID before the
+journal intent and lifecycle revision close atomically. Because LEZ v0.2 cannot
+prove pending initialization absence, the narrower
+`ExactIdempotentSubmissionSafe` result binds one CAS/send to the same exact
+ID and bytes. It is not absence and cannot rearm `Started` or `Unknown`.
+Schema 3 remains no-send observation compatibility with `attempt_count`
+zero.
 
 Run `m3firstlock-20260716h` supplies the isolated two-direction absent-maker
 evidence: no maker second-lock effect, taker-only recovery, revision-two
 `Refunded` convergence, zero replay submission, and exact run-owned cleanup.
-The remaining certifying run must prove the complementary timely maker path
-through the live actor adapters with the fresh eligibility check and durable
-plan consumed by the SDK-owned send action. Until that evidence exists, this
-ADR is an implemented safety decision, not an M3 completion claim. No
-`m3-complete` tag is authorized by `8870910`.
+
+Run `m3schema4-20260717d` supplies the complementary private-local
+two-direction timely-Maker evidence at clean pushed commit
+`0e7635fc7e50cc6e0612745dcdaf6df8bbcf6f9a`:
+
+- In `TakerSellsForeign`, the external Taker Bitcoin lock confirmed once.
+  The Maker actor submitted exact LEZ initialization and funding IDs once each;
+  durable LEZ effects progressed 0 to 1 to 2, stayed unchanged after restart,
+  and the complete exact pair finalized inside the actor's observation window.
+- In `TakerSellsLez`, the external Taker LEZ initialization and funding
+  finalized once. Nine moving-tip attempts granted no Bitcoin effect. Attempt
+  ten submitted the exact Maker Bitcoin transaction, which appeared exactly
+  once in the mempool, was never resubmitted after restart, and confirmed once.
+- Each Maker used current chain-clock and exact first-lock eligibility before
+  any possible send. Each final projection required canonical Bitcoin evidence
+  or current LEZ `Funded` state and custody joined to finalized exact
+  initialization/funding history.
+- In each direction, the final Maker intent and Maker revision two closed in one
+  local SQLite transaction. The Taker made its own independent canonical
+  projection. Both roles reached revision four, and terminal replay left all
+  exact effect counts unchanged.
+
+This is evidence for the implemented private-local safety decision, not a
+distributed cross-chain commit, public deployment, production-readiness claim,
+or full M3 closure. Overlapping swaps, reorg/process-kill and adversarial timing
+hardening, remaining accepted SDK/custom-token/recording scope, final gates,
+and the `m3-complete` tag remain open.
