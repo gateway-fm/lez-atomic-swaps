@@ -4,9 +4,10 @@ Status: Accepted at the checked-guest component boundary. Pushed commit
 `66d5e26cd35c6282c0cd420533f70e6ea3e506c9` adds the implementation and
 focused evidence. The checked manifest, public IDL, deployer assembly, verifier,
 and active M3 runner pins now share the new guest identity. The additive strict
-v2 transaction, finalized-classifier, exact-once client, and official sidecar
-planner boundaries are also implemented. Sidecar routes/scans, adapter/journal/
-actor composition, and actual-node custom-token evidence remain open.
+v2 transaction, finalized-classifier, exact-once client, main-process adapter,
+and official sidecar planner boundaries are also implemented. Sidecar
+routes/scans, durable journal/actor composition, and actual-node custom-token
+evidence remain open.
 
 ## Context
 
@@ -202,6 +203,7 @@ flowchart LR
     Wire --> Claim["Witnessed claim lifecycle"]
     Wire --> Refund["Permissionless refund lifecycle"]
     Client["Exact-once bridge client GREEN"] --> Wire
+    Adapter["Agreement and local-policy adapter GREEN<br/>eleven no-submit operations"] --> Client
     Sidecar["Official v0.2 planner GREEN<br/>tags 11, 7, 8, 12, and 10<br/>four durable v2 reservations"] --> Wire
     Routes["Sidecar routes and finalized token scans open"] -.-> Sidecar
     Finality["Finalized four-effect classifiers"] --> Wire
@@ -238,10 +240,18 @@ v2 durable files and replay after restart without nonce rereads or
 regeneration. Six focused tests cover both roles, two definitions, conflicts,
 program/ATA/authority/order substitution, redaction, and two-stage restart.
 
-Sidecar routes and finalized token scans, adapter/SDK composition, journal
-mapping, and role-owned actual-node execution remain open. In particular, the
-planner alone does not prove that the official node can provide the required
-complete scans.
+The main-process adapter rechecks the extension-to-base-agreement commitment and
+exact local asset policy, maps native or every custom-token field into strict v2
+terms, and exposes all eleven operations through a no-submit transport trait.
+It performs Lee v0.2 chain/program/signer and role preflight before I/O,
+preserves caller-owned IDs/windows/targets/effects/transcripts, and never turns
+transport failure or the four conservative classifier states into send
+authority. Six new external tests and 73 preserved tests pass with strict
+all-target Clippy, rustdoc, doctests, formatting, and diff gates.
+
+Sidecar routes and finalized token scans, durable journal/actor mapping, and
+role-owned actual-node execution remain open. In particular, the planner alone
+does not prove that the official node can provide the required complete scans.
 
 This ADR does not certify an actual-node custom-token swap in either trade
 direction, exact composed balances/effects, restart/no-resubmission, public

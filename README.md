@@ -108,9 +108,12 @@ ordered witnessed-token initialize, permissionless custody creation, funding,
 aggregate-witness claim, and fixed-destination refund transactions. It
 rederives the pinned Token/ATA programs and every owner/custody ATA, preserves
 consecutive signed nonces around the unsigned custody step, and restores four
-distinct v2 reservations byte-for-byte without nonce rereads. Server routes,
-finalized token scans, adapter/journal/actor composition, and actual-node token
-balance/effect evidence remain open.
+distinct v2 reservations byte-for-byte without nonce rereads. The main-process
+adapter now maps the countersigned BTC asset extension and exact local policy
+into all eleven v2 calls, checks chain/program/signer/role before transport, and
+preserves all four conservative classifier outcomes without submit authority.
+Server routes, finalized token scans, durable journal/actor composition, and
+actual-node token balance/effect evidence remain open.
 
 Run `m3refund-20260716h` then passed the two-lock timeout/refund journey
 from base HEAD `ef5f306` with a dirty pre-commit source tree and the packet's

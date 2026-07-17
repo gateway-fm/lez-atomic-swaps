@@ -1696,8 +1696,7 @@ Active M3 refund critical path:
   owner ATAs, amount, deadline, and aggregate authority/key. Both role
   signatures, bounded canonical wire, exact local asset policy, cross-agreement
   and network substitution, every field, aliases, and the native-byte
-  compatibility contract pass 16 agreement tests. Mapping the extension into
-  bridge terms/request IDs remains adapter/actor work.
+  compatibility contract pass 16 agreement tests.
   Four additional finalized classifiers now cover initialization, token-only
   custody-ATA creation, funding, and claim with exact prepared bytes/ID or
   bounded terms discovery. Stable finalized coverage, containing blocks,
@@ -1723,9 +1722,18 @@ Active M3 refund critical path:
   both roles, two definitions, order/program/ATA/authority drift, conflicts,
   redaction, and two-stage restart. The full sidecar regression, strict
   all-target Clippy, rustdoc, formatting, diff, advisory, ban, license, and
-  source gates pass. Sidecar server routes/finalized token scans plus
-  adapter/journal/actor composition and two-direction actual-node token evidence
-  remain open;
+  source gates pass. The main-process adapter now rechecks the
+  extension-to-base-agreement commitment and exact caller-owned asset policy,
+  maps native or every custom-token field into the v2 terms, and exposes one
+  no-submit transport method for each of the eleven client calls. Runtime,
+  chain, program, signer, and depositor/claimant/either-participant checks happen
+  before I/O; caller-owned IDs, windows, targets, effects, and transcripts pass
+  unchanged; transport failures stay distinct from
+  `Found`/`Absent`/`Uncertain`/`Unavailable`. Six external F7 tests and 73
+  preserved adapter tests pass with strict all-target Clippy, rustdoc,
+  doctests, formatting, and diff gates and no dependency change. Sidecar server
+  routes/finalized token scans plus durable journal/actor composition and
+  two-direction actual-node token evidence remain open;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
   not recordings and cannot satisfy D1. The repository now supplies a
@@ -1752,7 +1760,7 @@ Active M3 refund critical path:
   cases beyond the reproducible functional PoC boundary.
 
 Repository-controlled open work, not external blockers, is the F7
-adapter/journal/actor and actual-node custom-token composition, D1 recordings,
+route/scan/journal/actor and actual-node custom-token composition, D1 recordings,
 and synchronized
 closure evidence and gates. The revision-one-to-two store/projector, signed
 cutoff agreement, finalized LEZ classifier, and refund-side live gate are GREEN components, and run H closes the distinct two-lock timeout/refund item; none

@@ -539,11 +539,13 @@ flowchart TB
         M3BC["M3 typed Core 31.1 adapter<br/>exact unspent funding + claim/refund evidence<br/>authorized one-send readback GREEN"]
         M3F7A["F7 countersigned asset extension<br/>strict v2 protocol + four classifiers GREEN"]
         M3F7C["F7 exact-once bridge client<br/>eleven v2 operations + role/window checks GREEN"]
+        M3F7D["F7 agreement and local-policy adapter<br/>eleven no-submit mappings GREEN"]
         M3F7S["F7 official sidecar planner<br/>tags 11, 7, 8, 12, and 10<br/>four durable v2 reservations GREEN"]
         M3RA["btc-reference-actor<br/>schema 4 live Maker lock GREEN<br/>both actual-node directions"]
         M3RUN["Schema 4 private-local runner<br/>external Taker first lock<br/>actor-owned Maker second lock GREEN"]
         M3F7A --> M3F7C
-        M3F7C --> M3F7S
+        M3F7C --> M3F7D
+        M3F7D --> M3F7S
         M3F7S -.->|"routes, scans, adapter, and journal open"| M3RA
     end
 
@@ -1748,10 +1750,10 @@ aEUF-CMA, witness-extractability, and pre-signature-adaptability assumptions.
 Also, “LEZ leg” in the actual-node BTC flows currently means the proved
 witnessed native path. The shared guest ATA/custom-token transition, separately
 countersigned asset extension, strict v2 protocol/classifiers, eleven-call
-exact-once client, and official durable token planner are GREEN component
-boundaries. Official sidecar routes/scans, adapter/journal/actor composition,
-and both-direction custom-token node effects remain open and are not implied by
-the native actual-node diagrams.
+exact-once client, agreement/local-policy adapter, and official durable token
+planner are GREEN component boundaries. Official sidecar routes/scans,
+durable journal/actor composition, and both-direction custom-token node effects
+remain open and are not implied by the native actual-node diagrams.
 
 ### LEZ and transparent Zcash
 
