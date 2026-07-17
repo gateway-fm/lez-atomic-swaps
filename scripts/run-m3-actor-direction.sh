@@ -850,7 +850,8 @@ submit_actor_maker_bitcoin_second_lock() {
     jq -e '.result[0].allowed == true' >/dev/null ||
     fail "Core policy rejected the exact signed Bitcoin Maker second lock"
 
-  actor_invoke maker drive bitcoin-maker-lock-submit
+  actor_invoke_bitcoin_lock_awaiting_retry maker drive "$expected" 0 \
+    bitcoin-maker-lock-submit
   jq -e '
     .schema_version == 1 and .role == "maker" and .command == "drive"
     and .outcome == "awaiting_observation" and .chain == "bitcoin"
@@ -861,7 +862,8 @@ submit_actor_maker_bitcoin_second_lock() {
   jq -e --arg tx "$expected" '.result == [$tx]' <<<"$mempool" >/dev/null ||
     fail "Taker did not observe exactly the actor-submitted Bitcoin Maker lock"
 
-  actor_invoke maker drive bitcoin-maker-lock-accepted-restart
+  actor_invoke_bitcoin_lock_awaiting_retry maker drive "$expected" 1 \
+    bitcoin-maker-lock-accepted-restart
   jq -e '
     .schema_version == 1 and .role == "maker" and .command == "drive"
     and .outcome == "awaiting_observation" and .chain == "bitcoin"
@@ -1165,6 +1167,84 @@ actor_invoke_awaiting_retry() {
     sleep 0.25
   done
   fail "${role} Maker-lock observation remained unavailable after bounded retries"
+}
+
+actor_invoke_bitcoin_lock_awaiting_retry() {
+  local role="$1" command="$2" expected="$3" require_present="$4" label="$5"
+  local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
+  local attempt attempt_output attempt_error error_text mempool mempool_count lez_count
+  assert_survivor_actor_invocation_allowed "$role" "$label"
+  [[ "$M3_POC_DIRECTION" == "taker_sells_lez" && "$role" == "maker" &&
+     "$command" == "drive" ]] ||
+    fail "Bitcoin Maker-lock retry is restricted to the Maker second lock"
+  [[ "$expected" =~ ^[0-9a-f]{64}$ && ! "$expected" =~ ^0+$ ]] ||
+    fail "Bitcoin Maker-lock retry received an invalid exact txid"
+  [[ "$require_present" == 0 || "$require_present" == 1 ]] ||
+    fail "Bitcoin Maker-lock retry presence policy must be zero or one"
+  actor_last_output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-${role}.json"
+  [[ ! -e "$actor_last_output" && ! -L "$actor_last_output" ]] ||
+    fail "refusing to overwrite actor evidence: ${label}/${role}"
+  for attempt in {1..120}; do
+    lez_count="$(lez_successful_submission_count)"
+    [[ "$lez_count" == 2 ]] ||
+      fail "Bitcoin Maker-lock retry observed LEZ effect-count drift"
+    mempool="$(core_rpc taker getrawmempool '[]')"
+    if jq -e --arg tx "$expected" '.error == null and .result == [$tx]' \
+        <<<"$mempool" >/dev/null; then
+      mempool_count=1
+    elif jq -e '.error == null and .result == []' <<<"$mempool" >/dev/null; then
+      mempool_count=0
+    else
+      fail "Bitcoin Maker-lock retry observed a foreign or ambiguous mempool"
+    fi
+    (( require_present == 0 || mempool_count == 1 )) ||
+      fail "Bitcoin Maker-lock accepted restart lost its exact mempool effect"
+
+    attempt_output="${actor_last_output%.json}-attempt-${attempt}.json"
+    attempt_error="${actor_last_output%.json}-attempt-${attempt}.stderr"
+    if "$M3_POC_ACTOR_BIN" --config "$config" "$command" \
+        >"$attempt_output" 2>"$attempt_error"; then
+      chmod 0600 "$attempt_output" "$attempt_error"
+      [[ ! -s "$attempt_error" ]] ||
+        fail "${role} Bitcoin Maker-lock success emitted unexpected stderr"
+      jq -e --arg role "$role" '
+        .schema_version == 1 and .role == $role and .command == "drive"
+        and .outcome == "awaiting_observation" and .chain == "bitcoin"
+        and .phase == "taker_lock_confirmed" and .revision == 1
+      ' "$attempt_output" >/dev/null ||
+        fail "${role} actor returned an unexpected Bitcoin Maker-lock pending state"
+      [[ "$(lez_successful_submission_count)" == 2 ]] ||
+        fail "Bitcoin Maker-lock success changed the LEZ effect count"
+      mempool="$(core_rpc taker getrawmempool '[]')"
+      jq -e --arg tx "$expected" '.error == null and .result == [$tx]' \
+        <<<"$mempool" >/dev/null ||
+        fail "Bitcoin Maker-lock success did not yield exactly the planned mempool tx"
+      mv "$attempt_output" "$actor_last_output"
+      return 0
+    fi
+
+    chmod 0600 "$attempt_output" "$attempt_error"
+    [[ ! -s "$attempt_output" ]] ||
+      fail "${role} Bitcoin Maker-lock retry received ambiguous actor stdout"
+    error_text="$(tr -d '\r\n' <"$attempt_error")"
+    [[ "$error_text" == "actor chain observation is unavailable" ]] ||
+      fail "${role} Bitcoin Maker-lock drive failed with a non-retryable typed error"
+    [[ "$(lez_successful_submission_count)" == 2 ]] ||
+      fail "Bitcoin Maker-lock typed failure changed the LEZ effect count"
+    mempool="$(core_rpc taker getrawmempool '[]')"
+    if jq -e --arg tx "$expected" '.error == null and .result == [$tx]' \
+        <<<"$mempool" >/dev/null; then
+      mempool_count=1
+    elif jq -e '.error == null and .result == []' <<<"$mempool" >/dev/null; then
+      mempool_count=0
+    else
+      fail "Bitcoin Maker-lock typed failure left a foreign or ambiguous mempool"
+    fi
+    (( require_present == 0 || mempool_count == 1 )) ||
+      fail "Bitcoin Maker-lock accepted restart lost its effect during retry"
+    sleep 0.25
+  done
+  fail "${role} Bitcoin Maker-lock observation remained unavailable after bounded retries"
 }
 
 actor_invoke_observation_retry() {

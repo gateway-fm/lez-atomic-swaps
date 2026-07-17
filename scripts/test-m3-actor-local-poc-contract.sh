@@ -9,13 +9,58 @@ if [[ "${M3_ACTOR_CONTRACT_FAKE_ACTOR:-0}" == 1 ]]; then
   while (( $# > 0 )); do
     case "$1" in
       --config) config="$2"; shift 2 ;;
-      recover | status) command_name="$1"; shift ;;
+      drive | recover | status) command_name="$1"; shift ;;
       *) echo "unexpected fake-actor argument: $1" >&2; exit 64 ;;
     esac
   done
   role="$(jq -er '.role' "$config")"
   printf '%s\t%s\n' "$role" "$command_name" >>"${FAKE_ACTOR_LOG}"
   case "$command_name:${FAKE_ACTOR_MODE}" in
+    drive:bitcoin-moving-tip-then-success)
+      attempt="$(<"${FAKE_ACTOR_ATTEMPTS}")"
+      attempt=$((attempt + 1))
+      printf '%s\n' "$attempt" >"${FAKE_ACTOR_ATTEMPTS}"
+      if (( attempt < 3 )); then
+        echo "actor chain observation is unavailable" >&2
+        exit 1
+      fi
+      printf '["%s"]\n' "$FAKE_BITCOIN_EXPECTED" >"$FAKE_BITCOIN_MEMPOOL"
+      jq -n --arg role "$role" '
+        {schema_version:1,role:$role,command:"drive",outcome:"awaiting_observation",
+         chain:"bitcoin",phase:"taker_lock_confirmed",revision:1}'
+      ;;
+    drive:bitcoin-typed-after-send-then-success)
+      attempt="$(<"${FAKE_ACTOR_ATTEMPTS}")"
+      attempt=$((attempt + 1))
+      printf '%s\n' "$attempt" >"${FAKE_ACTOR_ATTEMPTS}"
+      printf '["%s"]\n' "$FAKE_BITCOIN_EXPECTED" >"$FAKE_BITCOIN_MEMPOOL"
+      if (( attempt == 1 )); then
+        echo "actor chain observation is unavailable" >&2
+        exit 1
+      fi
+      jq -n --arg role "$role" '
+        {schema_version:1,role:$role,command:"drive",outcome:"awaiting_observation",
+         chain:"bitcoin",phase:"taker_lock_confirmed",revision:1}'
+      ;;
+    drive:bitcoin-other-error)
+      echo "actor durable state is unavailable" >&2
+      exit 1
+      ;;
+    drive:bitcoin-nonempty-typed)
+      echo '{"ambiguous":"stdout"}'
+      echo "actor chain observation is unavailable" >&2
+      exit 1
+      ;;
+    drive:bitcoin-wrong-mempool)
+      printf '["%064d"]\n' 2 >"$FAKE_BITCOIN_MEMPOOL"
+      echo "actor chain observation is unavailable" >&2
+      exit 1
+      ;;
+    drive:bitcoin-lez-count-drift)
+      printf '3\n' >"$FAKE_LEZ_SUBMISSION_COUNT"
+      echo "actor chain observation is unavailable" >&2
+      exit 1
+      ;;
     recover:lez-moving-tip-then-success)
       attempt="$(<"${FAKE_ACTOR_ATTEMPTS}")"
       attempt=$((attempt + 1))
@@ -937,6 +982,8 @@ lez_external_submission_source="$(sed -n \
   '/^submit_lez_transaction_once() {$/,/^}$/p' "$direction_driver")"
 bitcoin_maker_lock_source="$(sed -n \
   '/^submit_actor_maker_bitcoin_second_lock() {$/,/^}$/p' "$direction_driver")"
+bitcoin_lock_retry_source="$(sed -n \
+  '/^actor_invoke_bitcoin_lock_awaiting_retry() {$/,/^}$/p' "$direction_driver")"
 bitcoin_lock_confirmation_source="$(sed -n \
   '/^confirm_bitcoin_lock_after_submission() {$/,/^}$/p' "$direction_driver")"
 lez_maker_lock_source="$(sed -n \
@@ -945,6 +992,16 @@ maker_lock_awaiting_retry_source="$(sed -n \
   '/^actor_invoke_awaiting_retry() {$/,/^}$/p' "$direction_driver")"
 [[ -n "$maker_lock_awaiting_retry_source" ]] ||
   fail "Maker-lock path lacks a bounded typed observation retry helper"
+[[ -n "$bitcoin_lock_retry_source" ]] ||
+  fail "Bitcoin Maker-lock path lacks effect-specific typed observation reconciliation"
+for term in 'for attempt in {1..120}; do' \
+  'actor chain observation is unavailable' \
+  '[[ ! -s "$attempt_output" ]]' \
+  'lez_successful_submission_count' \
+  'getrawmempool'; do
+  rg -Fq "$term" <<<"$bitcoin_lock_retry_source" ||
+    fail "Bitcoin Maker-lock retry is missing invariant: ${term}"
+done
 rg -Fq 'for attempt in {1..120}; do' <<<"$maker_lock_awaiting_retry_source" ||
   fail "Maker-lock observation retry is not statically bounded"
 rg -Fq 'actor chain observation is unavailable' <<<"$maker_lock_awaiting_retry_source" ||
@@ -972,7 +1029,7 @@ if rg -Fq 'submit_lez_transaction_once' <<<"$lez_maker_lock_source" ||
   fail "runner still submits a Maker LEZ second-lock member externally"
 fi
 for source in "$bitcoin_maker_lock_source" "$lez_maker_lock_source"; do
-  rg -q 'actor_invoke(_awaiting_retry)? maker drive' <<<"$source" ||
+  rg -q 'actor_invoke(_[a-z_]+)? maker drive' <<<"$source" ||
     fail "Maker second-lock path does not use a fresh Maker actor process"
   rg -Fq '.outcome == "awaiting_observation"' <<<"$source" ||
     fail "Maker second-lock path does not validate the settled actor output"
@@ -986,6 +1043,94 @@ rg -Fq 'prove_lez_finalized_transaction' <<<"$lez_maker_lock_source" ||
   fail "runner does not prove actor-submitted LEZ maker-lock finality"
 rg -Fq 'lez_successful_submission_count' <<<"$lez_maker_lock_source" ||
   fail "LEZ maker-lock path does not retain exact submission counts"
+for invocation in \
+  'actor_invoke_bitcoin_lock_awaiting_retry maker drive "$expected" 0' \
+  'actor_invoke_bitcoin_lock_awaiting_retry maker drive "$expected" 1'; do
+  rg -Fq "$invocation" <<<"$bitcoin_maker_lock_source" ||
+    fail "Bitcoin Maker-lock path is missing bounded reconciliation: ${invocation}"
+done
+
+bitcoin_retry_contract_root="$(mktemp -d /tmp/m3-bitcoin-lock-retry-contract.XXXXXX)"
+cleanup_bitcoin_retry_contract_root() {
+  rm -rf -- "$bitcoin_retry_contract_root"
+}
+trap cleanup_bitcoin_retry_contract_root EXIT
+readonly fake_bitcoin_expected="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+run_bitcoin_lock_retry_fixture() {
+  local case_name="$1" mode="$2" require_present="$3" initial_mempool="$4"
+  local fixture_root="${bitcoin_retry_contract_root}/${case_name}"
+  local log="${fixture_root}/actor-calls.tsv" attempts="${fixture_root}/attempts.count"
+  local mempool="${fixture_root}/mempool.json" lez_count="${fixture_root}/lez.count"
+  mkdir -p "${fixture_root}/actors/maker" "${fixture_root}/evidence"
+  jq -n '{role:"maker"}' >"${fixture_root}/actors/maker/actor-config.json"
+  : >"$log"
+  printf '0\n' >"$attempts"
+  printf '%s\n' "$initial_mempool" >"$mempool"
+  printf '2\n' >"$lez_count"
+  M3_ACTOR_CONTRACT_FAKE_ACTOR=1 FAKE_ACTOR_MODE="$mode" FAKE_ACTOR_LOG="$log" \
+    FAKE_ACTOR_ATTEMPTS="$attempts" FAKE_BITCOIN_MEMPOOL="$mempool" \
+    FAKE_BITCOIN_EXPECTED="$fake_bitcoin_expected" \
+    FAKE_LEZ_SUBMISSION_COUNT="$lez_count" \
+    bash -c '
+      set -euo pipefail
+      source "$1" contract >/dev/null
+      export M3_POC_DIRECTION_ROOT="$2"
+      export M3_POC_EVIDENCE_DIR="$2/evidence"
+      export M3_POC_DIRECTION=taker_sells_lez
+      export M3_POC_ACTOR_BIN="$3"
+      core_rpc() {
+        local role="$1" method="$2"
+        [[ "$role" == "taker" && "$method" == "getrawmempool" ]] || return 64
+        jq -n --argjson result "$(<"$FAKE_BITCOIN_MEMPOOL")" \
+          "{error:null,result:\$result}"
+      }
+      lez_successful_submission_count() {
+        tr -d "\\r\\n" <"$FAKE_LEZ_SUBMISSION_COUNT"
+      }
+      actor_invoke_bitcoin_lock_awaiting_retry maker drive "$4" "$5" "$6"
+    ' bitcoin-retry-harness "$direction_driver" "$fixture_root" \
+      "${PWD}/scripts/test-m3-actor-local-poc-contract.sh" \
+      "$fake_bitcoin_expected" "$require_present" "bitcoin-retry-${case_name}"
+}
+
+run_bitcoin_lock_retry_fixture moving-tip bitcoin-moving-tip-then-success 0 '[]' ||
+  fail "Bitcoin Maker-lock retry did not recover from bounded moving-tip reads"
+[[ "$(<"${bitcoin_retry_contract_root}/moving-tip/attempts.count")" == 3 ]] ||
+  fail "Bitcoin Maker-lock moving-tip fixture did not make exactly three attempts"
+jq -e --arg tx "$fake_bitcoin_expected" '. == [$tx]' \
+  "${bitcoin_retry_contract_root}/moving-tip/mempool.json" >/dev/null ||
+  fail "Bitcoin Maker-lock retry did not converge on the exact single mempool tx"
+[[ "$(<"${bitcoin_retry_contract_root}/moving-tip/lez.count")" == 2 ]] ||
+  fail "Bitcoin Maker-lock retry changed the unrelated LEZ effect count"
+
+run_bitcoin_lock_retry_fixture typed-after-send bitcoin-typed-after-send-then-success 0 '[]' ||
+  fail "Bitcoin Maker-lock retry did not reconcile an ambiguous post-send outcome"
+[[ "$(<"${bitcoin_retry_contract_root}/typed-after-send/attempts.count")" == 2 ]] ||
+  fail "Bitcoin Maker-lock post-send fixture did not converge on its second attempt"
+jq -e --arg tx "$fake_bitcoin_expected" '. == [$tx]' \
+  "${bitcoin_retry_contract_root}/typed-after-send/mempool.json" >/dev/null ||
+  fail "Bitcoin Maker-lock post-send retry duplicated or changed the exact effect"
+
+run_bitcoin_lock_retry_fixture accepted-restart bitcoin-moving-tip-then-success 1 \
+  "[\"${fake_bitcoin_expected}\"]" ||
+  fail "Bitcoin Maker-lock accepted restart did not tolerate a transient eligibility read"
+
+if run_bitcoin_lock_retry_fixture other-error bitcoin-other-error 0 '[]'; then
+  fail "Bitcoin Maker-lock retry accepted a non-observation actor error"
+fi
+if run_bitcoin_lock_retry_fixture nonempty bitcoin-nonempty-typed 0 '[]'; then
+  fail "Bitcoin Maker-lock retry accepted typed failure with ambiguous stdout"
+fi
+if run_bitcoin_lock_retry_fixture wrong-mempool bitcoin-wrong-mempool 0 '[]'; then
+  fail "Bitcoin Maker-lock retry accepted a foreign mempool transaction"
+fi
+if run_bitcoin_lock_retry_fixture lez-drift bitcoin-lez-count-drift 0 '[]'; then
+  fail "Bitcoin Maker-lock retry accepted LEZ effect-count drift"
+fi
+
+cleanup_bitcoin_retry_contract_root
+trap - EXIT
 for invocation in \
   'actor_invoke_awaiting_retry maker drive lez taker_lock_confirmed 1 0 1' \
   'actor_invoke_awaiting_retry maker drive lez taker_lock_confirmed 1 1 1' \
