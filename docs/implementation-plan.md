@@ -1616,7 +1616,22 @@ Active M3 refund critical path:
   token definitions plus wrong-definition/ATA/authority and rollback cases.
   Certify at least one actual-node custom-token journey in both trade
   directions with exact balances, effects, and restart/no-resubmission. This
-  is repository-controlled accepted scope, not a Logos dependency blocker;
+  is repository-controlled accepted scope, not a Logos dependency blocker.
+  The first RED-GREEN guest slice now appends witnessed-token initialize and
+  claim as wire tags 11/12 while proving tags 0-10 unchanged. Shared validators
+  compose the existing aggregate BIP-340 authority with exact fungible
+  definition, depositor/claimant ATA, custody amount, and deadline checks;
+  fixed-destination permissionless refund is unchanged. Host tests cover two
+  definitions and substitution negatives, while the recursive checked guest
+  proves exact two-party claims and that wrong-definition, wrong-ATA, unrelated
+  authority, and one-share attempts leave metadata and custody unchanged. The
+  rebuilt guest SHA-256 is
+  `bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7` and
+  ImageID is
+  `f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e`.
+  The checked deployment manifest intentionally remains on the old identity
+  until the IDL, deployer, sidecar, SDK, and actual-node path consume the new
+  instructions; the full verifier must fail rather than silently mix them;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
   not recordings and cannot satisfy D1. The repository now supplies a

@@ -1,8 +1,12 @@
 use borsh::BorshDeserialize as _;
-use lez_zec_escrow_v02::{EscrowMetadata, EscrowStatus, Instruction as EscrowInstruction};
+use lez_zec_escrow_v02::{
+    ClaimAuthority, EscrowMetadata, EscrowStatus, Instruction as EscrowInstruction,
+};
 use lez_zec_escrow_v02_methods::{ZEC_ESCROW_V02_ELF, ZEC_ESCROW_V02_ID};
+use musig2::secp::{Point, Scalar};
+use musig2::{CompactSignature, FirstRound, KeyAggContext, PartialSignature, SecNonceSpices};
 use nssa::{
-    AccountId, PrivateKey, PublicKey, PublicTransaction, V03State,
+    Account, AccountId, PrivateKey, PublicKey, PublicTransaction, Signature, V03State,
     program::Program,
     public_transaction::{Message, WitnessSet},
 };
@@ -15,11 +19,94 @@ const PREIMAGE: [u8; 32] = [12; 32];
 const AMOUNT: u128 = 75;
 const ACTOR_FUNDS: u128 = 500;
 const REFUND_AT: u64 = 10_000;
+const MAKER_SECRET: [u8; 32] = [0x31; 32];
+const TAKER_SECRET: [u8; 32] = [0x42; 32];
+
+struct AggregateFixture {
+    maker_secret: Scalar,
+    taker_secret: Scalar,
+    context: KeyAggContext,
+    aggregate_point: Point,
+    aggregate_public_key: PublicKey,
+    authority: AccountId,
+    maker_key: PrivateKey,
+}
 
 fn actor(key_byte: u8) -> (AccountId, PrivateKey) {
     let key = PrivateKey::try_new([key_byte; 32]).expect("deterministic token actor key");
     let account_id = AccountId::from(&PublicKey::new_from_private_key(&key));
     (account_id, key)
+}
+
+fn aggregate_fixture() -> AggregateFixture {
+    let maker_secret = Scalar::from_slice(&MAKER_SECRET).expect("maker scalar");
+    let taker_secret = Scalar::from_slice(&TAKER_SECRET).expect("taker scalar");
+    let context =
+        KeyAggContext::new([maker_secret.base_point_mul(), taker_secret.base_point_mul()])
+            .expect("BIP-327 two-party key aggregation");
+    let aggregate_point: Point = context.aggregated_pubkey();
+    let aggregate_public_key = PublicKey::try_new(aggregate_point.serialize_xonly())
+        .expect("MuSig2 aggregate is a LEZ BIP-340 key");
+    let authority = AccountId::from(&aggregate_public_key);
+    let maker_key = PrivateKey::try_new(MAKER_SECRET).expect("maker LEZ key");
+    AggregateFixture {
+        maker_secret,
+        taker_secret,
+        context,
+        aggregate_point,
+        aggregate_public_key,
+        authority,
+        maker_key,
+    }
+}
+
+fn aggregate_witness(aggregate: &AggregateFixture, message: &Message) -> WitnessSet {
+    let message_hash = message.hash();
+    let maker_spices = SecNonceSpices::new()
+        .with_seckey(aggregate.maker_secret)
+        .with_message(&message_hash);
+    let taker_spices = SecNonceSpices::new()
+        .with_seckey(aggregate.taker_secret)
+        .with_message(&message_hash);
+    let mut maker_first = FirstRound::new(aggregate.context.clone(), [0x71; 32], 0, maker_spices)
+        .expect("maker first round");
+    let mut taker_first = FirstRound::new(aggregate.context.clone(), [0x82; 32], 1, taker_spices)
+        .expect("taker first round");
+    let maker_nonce = maker_first.our_public_nonce();
+    let taker_nonce = taker_first.our_public_nonce();
+    maker_first
+        .receive_nonce(1, taker_nonce)
+        .expect("maker receives taker nonce");
+    taker_first
+        .receive_nonce(0, maker_nonce)
+        .expect("taker receives maker nonce");
+
+    let mut maker_second = maker_first
+        .finalize(aggregate.maker_secret, message_hash)
+        .expect("maker partial signature");
+    let mut taker_second = taker_first
+        .finalize(aggregate.taker_secret, message_hash)
+        .expect("taker partial signature");
+    let maker_partial: PartialSignature = maker_second.our_signature();
+    let taker_partial: PartialSignature = taker_second.our_signature();
+    maker_second
+        .receive_signature(1, taker_partial)
+        .expect("maker verifies taker partial");
+    taker_second
+        .receive_signature(0, maker_partial)
+        .expect("taker verifies maker partial");
+    let maker_signature: CompactSignature = maker_second.finalize().expect("maker aggregate");
+    let taker_signature: CompactSignature = taker_second.finalize().expect("taker aggregate");
+    assert_eq!(maker_signature, taker_signature);
+    musig2::verify_single(aggregate.aggregate_point, maker_signature, message_hash)
+        .expect("completed aggregate signature verifies under the MuSig2 key");
+
+    WitnessSet::from_raw_parts(vec![(
+        Signature {
+            value: maker_signature.serialize(),
+        },
+        aggregate.aggregate_public_key.clone(),
+    )])
 }
 
 fn transaction<T: Serialize>(
@@ -204,6 +291,101 @@ fn initialize_and_fund_escrow(
     (metadata, custody)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn initialize_and_fund_witnessed_escrow(
+    state: &mut V03State,
+    block: &mut u64,
+    swap_id: [u8; 32],
+    definition: AccountId,
+    depositor: AccountId,
+    depositor_key: &PrivateKey,
+    claimant: AccountId,
+    depositor_ata: AccountId,
+    aggregate: &AggregateFixture,
+) -> (AccountId, AccountId) {
+    let ata_program = programs::ata().id();
+    let metadata = compute_pda(&ZEC_ESCROW_V02_ID, &[&swap_id]);
+    let custody = ata(ata_program, metadata, definition);
+    let initialize = transaction(
+        state,
+        ZEC_ESCROW_V02_ID,
+        vec![
+            metadata,
+            depositor,
+            claimant,
+            definition,
+            aggregate.authority,
+        ],
+        &[(depositor, depositor_key)],
+        EscrowInstruction::InitializeTokenWitnessed {
+            swap_id,
+            terms_hash: [31; 32],
+            aggregate_x_only_public_key: *aggregate.aggregate_public_key.value(),
+            amount: AMOUNT,
+            refund_at: REFUND_AT,
+            ata_program,
+        },
+    );
+    state
+        .transition_from_public_transaction(&initialize, *block, 100)
+        .expect("checked guest initializes witnessed custom-token terms");
+    *block += 1;
+    assert_eq!(
+        escrow_metadata(state, metadata).claim_authority,
+        ClaimAuthority::AggregateWitness {
+            x_only_public_key: *aggregate.aggregate_public_key.value(),
+            account_id: aggregate.authority,
+        }
+    );
+
+    let create = transaction(
+        state,
+        ZEC_ESCROW_V02_ID,
+        vec![metadata, definition, custody],
+        &[],
+        EscrowInstruction::CreateTokenCustody { swap_id },
+    );
+    state
+        .transition_from_public_transaction(&create, *block, 100)
+        .expect("permissionless call creates the witnessed escrow custody ATA");
+    *block += 1;
+    let fund = transaction(
+        state,
+        ZEC_ESCROW_V02_ID,
+        vec![metadata, depositor, depositor_ata, custody],
+        &[(depositor, depositor_key)],
+        EscrowInstruction::FundToken { swap_id },
+    );
+    state
+        .transition_from_public_transaction(&fund, *block, 100)
+        .expect("owner recursively funds witnessed token custody");
+    *block += 1;
+    assert_eq!(
+        escrow_metadata(state, metadata).status,
+        EscrowStatus::Funded
+    );
+    assert_eq!(holding_balance(state, custody, definition), AMOUNT);
+    (metadata, custody)
+}
+
+fn witnessed_token_claim_message(
+    state: &V03State,
+    swap_id: [u8; 32],
+    metadata: AccountId,
+    custody: AccountId,
+    claimant: AccountId,
+    claimant_ata: AccountId,
+    authority: AccountId,
+) -> Message {
+    Message::try_new(
+        ZEC_ESCROW_V02_ID,
+        vec![metadata, custody, claimant, claimant_ata, authority],
+        vec![state.get_account_by_id(authority).nonce],
+        EscrowInstruction::ClaimTokenWitnessed { swap_id },
+    )
+    .expect("serialize exact witnessed custom-token claim")
+}
+
 #[test]
 fn checked_guest_executes_two_definition_claim_and_permissionless_refund_through_ata() {
     let escrow = Program::new(ZEC_ESCROW_V02_ELF.into()).expect("checked guest is canonical ELF");
@@ -300,4 +482,198 @@ fn checked_guest_executes_two_definition_claim_and_permissionless_refund_through
         holding_balance(&state, refund_depositor_ata, refund_definition),
         ACTOR_FUNDS
     );
+}
+
+#[test]
+fn checked_guest_witnessed_token_claims_require_exact_definition_ata_authority_and_witness() {
+    let aggregate = aggregate_fixture();
+    let (wrong_authority, wrong_authority_key) = actor(99);
+    let escrow = Program::new(ZEC_ESCROW_V02_ELF.into()).expect("checked guest is canonical ELF");
+    assert_eq!(escrow.id(), ZEC_ESCROW_V02_ID);
+    let mut state = V03State::new()
+        .with_public_accounts([
+            (aggregate.authority, Account::default()),
+            (wrong_authority, Account::default()),
+        ])
+        .with_programs([escrow, programs::ata(), programs::token()]);
+    let (depositor, depositor_key) = actor(1);
+    let (claimant, claimant_key) = actor(2);
+    let mut block = 1;
+
+    let (definition_a, depositor_ata_a, claimant_ata_a) = create_funded_definition(
+        &mut state,
+        &mut block,
+        41,
+        51,
+        depositor,
+        &depositor_key,
+        claimant,
+        &claimant_key,
+    );
+    let (definition_b, depositor_ata_b, claimant_ata_b) = create_funded_definition(
+        &mut state,
+        &mut block,
+        42,
+        52,
+        depositor,
+        &depositor_key,
+        claimant,
+        &claimant_key,
+    );
+    let (metadata_a, custody_a) = initialize_and_fund_witnessed_escrow(
+        &mut state,
+        &mut block,
+        [73; 32],
+        definition_a,
+        depositor,
+        &depositor_key,
+        claimant,
+        depositor_ata_a,
+        &aggregate,
+    );
+    let (metadata_b, custody_b) = initialize_and_fund_witnessed_escrow(
+        &mut state,
+        &mut block,
+        [74; 32],
+        definition_b,
+        depositor,
+        &depositor_key,
+        claimant,
+        depositor_ata_b,
+        &aggregate,
+    );
+    assert_ne!(custody_a, custody_b);
+
+    let wrong_definition = witnessed_token_claim_message(
+        &state,
+        [73; 32],
+        metadata_a,
+        custody_a,
+        claimant,
+        claimant_ata_b,
+        aggregate.authority,
+    );
+    let wrong_definition_witness = aggregate_witness(&aggregate, &wrong_definition);
+    assert!(
+        state
+            .transition_from_public_transaction(
+                &PublicTransaction::new(wrong_definition, wrong_definition_witness),
+                block,
+                100,
+            )
+            .is_err(),
+        "a holding for another token definition must fail closed",
+    );
+
+    let wrong_ata = witnessed_token_claim_message(
+        &state,
+        [73; 32],
+        metadata_a,
+        custody_a,
+        claimant,
+        depositor_ata_a,
+        aggregate.authority,
+    );
+    let wrong_ata_witness = aggregate_witness(&aggregate, &wrong_ata);
+    assert!(
+        state
+            .transition_from_public_transaction(
+                &PublicTransaction::new(wrong_ata, wrong_ata_witness),
+                block,
+                100,
+            )
+            .is_err(),
+        "a non-claimant ATA for the right definition must fail closed",
+    );
+
+    let wrong_authority_message = witnessed_token_claim_message(
+        &state,
+        [73; 32],
+        metadata_a,
+        custody_a,
+        claimant,
+        claimant_ata_a,
+        wrong_authority,
+    );
+    let wrong_authority_witness =
+        WitnessSet::for_message(&wrong_authority_message, &[&wrong_authority_key]);
+    assert!(
+        state
+            .transition_from_public_transaction(
+                &PublicTransaction::new(wrong_authority_message, wrong_authority_witness),
+                block,
+                100,
+            )
+            .is_err(),
+        "an unrelated signing account must not replace the aggregate authority",
+    );
+
+    let one_share_message = witnessed_token_claim_message(
+        &state,
+        [73; 32],
+        metadata_a,
+        custody_a,
+        claimant,
+        claimant_ata_a,
+        aggregate.authority,
+    );
+    let one_share_witness = WitnessSet::for_message(&one_share_message, &[&aggregate.maker_key]);
+    assert!(
+        state
+            .transition_from_public_transaction(
+                &PublicTransaction::new(one_share_message, one_share_witness),
+                block,
+                100,
+            )
+            .is_err(),
+        "one MuSig2 key share must not authorize the aggregate account",
+    );
+    assert_eq!(
+        escrow_metadata(&state, metadata_a).status,
+        EscrowStatus::Funded,
+        "every rejected proof leaves metadata and recursive token state untouched",
+    );
+    assert_eq!(holding_balance(&state, custody_a, definition_a), AMOUNT);
+
+    for (swap_id, metadata, custody, definition, claimant_ata) in [
+        (
+            [73; 32],
+            metadata_a,
+            custody_a,
+            definition_a,
+            claimant_ata_a,
+        ),
+        (
+            [74; 32],
+            metadata_b,
+            custody_b,
+            definition_b,
+            claimant_ata_b,
+        ),
+    ] {
+        let message = witnessed_token_claim_message(
+            &state,
+            swap_id,
+            metadata,
+            custody,
+            claimant,
+            claimant_ata,
+            aggregate.authority,
+        );
+        let witness = aggregate_witness(&aggregate, &message);
+        state
+            .transition_from_public_transaction(
+                &PublicTransaction::new(message, witness),
+                block,
+                100,
+            )
+            .expect("exact two-party aggregate witness claims the fixed claimant ATA");
+        block += 1;
+        assert_eq!(
+            escrow_metadata(&state, metadata).status,
+            EscrowStatus::Claimed
+        );
+        assert_eq!(holding_balance(&state, custody, definition), 0);
+        assert_eq!(holding_balance(&state, claimant_ata, definition), AMOUNT);
+    }
 }

@@ -289,7 +289,7 @@ fn native_initial_state(
     })
 }
 
-enum NativeClaimProof {
+enum ClaimProof {
     Sha256Preimage([u8; 32]),
     AggregateWitness(AccountId),
 }
@@ -299,7 +299,7 @@ fn validated_native_claim_state(
     custody: &AccountWithMetadata,
     claimant: &AccountWithMetadata,
     swap_id: [u8; 32],
-    proof: NativeClaimProof,
+    proof: ClaimProof,
 ) -> Result<EscrowMetadata, SpelError> {
     let mut state = read_metadata(metadata)?;
     require_funded(&state)?;
@@ -318,10 +318,102 @@ fn validated_native_claim_state(
         ));
     }
     match proof {
-        NativeClaimProof::Sha256Preimage(preimage) => {
+        ClaimProof::Sha256Preimage(preimage) => {
             require_preimage_authority(&state, preimage)?;
         }
-        NativeClaimProof::AggregateWitness(aggregate_authority) => {
+        ClaimProof::AggregateWitness(aggregate_authority) => {
+            require_aggregate_witness_authority(&state, aggregate_authority)?;
+        }
+    }
+    state.status = EscrowStatus::Claimed;
+    Ok(state)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn token_initial_state(
+    ctx: &ProgramContext,
+    metadata: &AccountWithMetadata,
+    depositor_owner: &AccountWithMetadata,
+    claimant_owner: &AccountWithMetadata,
+    token_definition: &AccountWithMetadata,
+    swap_id: [u8; 32],
+    terms_hash: [u8; 32],
+    claim_authority: ClaimAuthority,
+    amount: u128,
+    refund_at: u64,
+    ata_program: ProgramId,
+) -> Result<EscrowMetadata, SpelError> {
+    let token_program = token_definition.account.program_owner;
+    if amount == 0
+        || refund_at == 0
+        || terms_hash == [0; 32]
+        || !valid_claim_authority(claim_authority, claimant_owner.account_id)
+        || token_program == DEFAULT_PROGRAM_ID
+        || token_program == ctx.self_program_id
+        || ata_program == DEFAULT_PROGRAM_ID
+        || ata_program == ctx.self_program_id
+        || ata_program == token_program
+    {
+        return Err(custom_error(ERROR_INVALID_TERMS, "invalid token terms"));
+    }
+    require_fungible_definition(token_definition, token_program)?;
+
+    let definition = token_definition.account_id;
+    Ok(EscrowMetadata {
+        version: ESCROW_METADATA_VERSION,
+        swap_id,
+        terms_hash,
+        claim_authority,
+        depositor: depositor_owner.account_id,
+        depositor_asset: associated_token_account(
+            ata_program,
+            depositor_owner.account_id,
+            definition,
+        ),
+        claimant: claimant_owner.account_id,
+        claimant_asset: associated_token_account(
+            ata_program,
+            claimant_owner.account_id,
+            definition,
+        ),
+        custody: associated_token_account(ata_program, metadata.account_id, definition),
+        asset_program: token_program,
+        custody_program: ata_program,
+        asset_definition: definition.into_value(),
+        amount,
+        refund_at,
+        status: EscrowStatus::Empty,
+    })
+}
+
+fn validated_token_claim_state(
+    metadata: &AccountWithMetadata,
+    custody: &AccountWithMetadata,
+    claimant_owner: &AccountWithMetadata,
+    claimant_asset: &AccountWithMetadata,
+    swap_id: [u8; 32],
+    proof: ClaimProof,
+) -> Result<EscrowMetadata, SpelError> {
+    let mut state = read_metadata(metadata)?;
+    require_funded(&state)?;
+    if state.swap_id != swap_id
+        || state.claimant != claimant_owner.account_id
+        || state.claimant_asset != claimant_asset.account_id
+        || state.custody != custody.account_id
+        || claimant_asset.account.program_owner != state.asset_program
+        || custody.account.program_owner != state.asset_program
+        || token_definition(claimant_asset)?.into_value() != state.asset_definition
+        || token_definition(custody)?.into_value() != state.asset_definition
+        || fungible_balance(custody)? != state.amount
+    {
+        return Err(custom_error(
+            ERROR_ACCOUNT_BINDING,
+            "token claim account binding mismatch",
+        ));
+    }
+    match proof {
+        ClaimProof::Sha256Preimage(preimage) => require_preimage_authority(&state, preimage)?,
+        ClaimProof::AggregateWitness(aggregate_authority) => {
             require_aggregate_witness_authority(&state, aggregate_authority)?;
         }
     }
@@ -544,7 +636,7 @@ mod zec_escrow {
             &custody,
             &claimant,
             swap_id,
-            NativeClaimProof::Sha256Preimage(preimage),
+            ClaimProof::Sha256Preimage(preimage),
         )?;
         let transfer = native_transfer_call(
             state.asset_program,
@@ -577,7 +669,7 @@ mod zec_escrow {
             &custody,
             &claimant,
             swap_id,
-            NativeClaimProof::AggregateWitness(aggregate_authority.account_id),
+            ClaimProof::AggregateWitness(aggregate_authority.account_id),
         )?;
         let transfer = native_transfer_call(
             state.asset_program,
@@ -654,45 +746,20 @@ mod zec_escrow {
         refund_at: u64,
         ata_program: [u32; 8],
     ) -> SpelResult {
-        let token_program = token_definition.account.program_owner;
-        if amount == 0
-            || refund_at == 0
-            || terms_hash == [0; 32]
-            || secret_digest == [0; 32]
-            || token_program == DEFAULT_PROGRAM_ID
-            || token_program == ctx.self_program_id
-            || ata_program == DEFAULT_PROGRAM_ID
-            || ata_program == ctx.self_program_id
-            || ata_program == token_program
-        {
-            return Err(custom_error(ERROR_INVALID_TERMS, "invalid token terms"));
-        }
-        require_fungible_definition(&token_definition, token_program)?;
-
         let mut metadata = metadata;
-        let definition = token_definition.account_id;
-        let custody = associated_token_account(ata_program, metadata.account_id, definition);
-        let depositor_asset =
-            associated_token_account(ata_program, depositor_owner.account_id, definition);
-        let claimant_asset =
-            associated_token_account(ata_program, claimant_owner.account_id, definition);
-        let state = EscrowMetadata {
-            version: ESCROW_METADATA_VERSION,
+        let state = token_initial_state(
+            &ctx,
+            &metadata,
+            &depositor_owner,
+            &claimant_owner,
+            &token_definition,
             swap_id,
             terms_hash,
-            claim_authority: ClaimAuthority::Sha256Preimage { secret_digest },
-            depositor: depositor_owner.account_id,
-            depositor_asset,
-            claimant: claimant_owner.account_id,
-            claimant_asset,
-            custody,
-            asset_program: token_program,
-            custody_program: ata_program,
-            asset_definition: definition.into_value(),
+            ClaimAuthority::Sha256Preimage { secret_digest },
             amount,
             refund_at,
-            status: EscrowStatus::Empty,
-        };
+            ata_program,
+        )?;
         write_metadata(&mut metadata, &state)?;
         Ok(SpelOutput::execute(
             vec![metadata, depositor_owner, claimant_owner, token_definition],
@@ -805,27 +872,15 @@ mod zec_escrow {
         swap_id: [u8; 32],
         preimage: [u8; 32],
     ) -> SpelResult {
+        let state = validated_token_claim_state(
+            &metadata,
+            &custody,
+            &claimant_owner,
+            &claimant_asset,
+            swap_id,
+            ClaimProof::Sha256Preimage(preimage),
+        )?;
         let mut metadata = metadata;
-        let mut state = read_metadata(&metadata)?;
-        require_funded(&state)?;
-        if state.swap_id != swap_id
-            || state.claimant != claimant_owner.account_id
-            || state.claimant_asset != claimant_asset.account_id
-            || state.custody != custody.account_id
-            || claimant_asset.account.program_owner != state.asset_program
-            || custody.account.program_owner != state.asset_program
-            || token_definition(&claimant_asset)?.into_value() != state.asset_definition
-            || token_definition(&custody)?.into_value() != state.asset_definition
-            || fungible_balance(&custody)? != state.amount
-        {
-            return Err(custom_error(
-                ERROR_ACCOUNT_BINDING,
-                "token claim account binding mismatch",
-            ));
-        }
-        require_preimage_authority(&state, preimage)?;
-
-        state.status = EscrowStatus::Claimed;
         write_metadata(&mut metadata, &state)?;
         let transfer = ata_transfer_call(
             state.custody_program,
@@ -885,6 +940,100 @@ mod zec_escrow {
             SpelOutput::execute(vec![metadata, custody, depositor_asset], vec![transfer])
                 .with_timestamp_validity_window(state.refund_at..),
         )
+    }
+
+    // These witnessed-token instructions are intentionally appended after every
+    // pre-existing instruction. The program macro derives the public instruction
+    // discriminants from declaration order, so appending preserves the v0.2
+    // wire encoding of the native and SHA-256 token surfaces.
+    #[instruction]
+    #[allow(clippy::too_many_arguments)]
+    pub fn initialize_token_witnessed(
+        ctx: ProgramContext,
+        #[account(init, pda = arg("swap_id"))] metadata: AccountWithMetadata,
+        #[account(signer)] depositor_owner: AccountWithMetadata,
+        claimant_owner: AccountWithMetadata,
+        token_definition: AccountWithMetadata,
+        aggregate_authority: AccountWithMetadata,
+        swap_id: [u8; 32],
+        terms_hash: [u8; 32],
+        aggregate_x_only_public_key: [u8; 32],
+        amount: u128,
+        refund_at: u64,
+        ata_program: [u32; 8],
+    ) -> SpelResult {
+        let mut metadata = metadata;
+        let state = token_initial_state(
+            &ctx,
+            &metadata,
+            &depositor_owner,
+            &claimant_owner,
+            &token_definition,
+            swap_id,
+            terms_hash,
+            ClaimAuthority::AggregateWitness {
+                x_only_public_key: aggregate_x_only_public_key,
+                account_id: aggregate_authority.account_id,
+            },
+            amount,
+            refund_at,
+            ata_program,
+        )?;
+        write_metadata(&mut metadata, &state)?;
+        Ok(SpelOutput::execute(
+            vec![
+                metadata,
+                depositor_owner,
+                claimant_owner,
+                token_definition,
+                aggregate_authority,
+            ],
+            vec![],
+        )
+        .with_timestamp_validity_window(..refund_at))
+    }
+
+    #[instruction]
+    pub fn claim_token_witnessed(
+        _ctx: ProgramContext,
+        #[account(mut, owner = self_program_id, pda = arg("swap_id"))]
+        metadata: AccountWithMetadata,
+        #[account(mut)] custody: AccountWithMetadata,
+        claimant_owner: AccountWithMetadata,
+        #[account(mut)] claimant_asset: AccountWithMetadata,
+        #[account(signer)] aggregate_authority: AccountWithMetadata,
+        swap_id: [u8; 32],
+    ) -> SpelResult {
+        let state = validated_token_claim_state(
+            &metadata,
+            &custody,
+            &claimant_owner,
+            &claimant_asset,
+            swap_id,
+            ClaimProof::AggregateWitness(aggregate_authority.account_id),
+        )?;
+        let mut metadata = metadata;
+        write_metadata(&mut metadata, &state)?;
+        let transfer = ata_transfer_call(
+            state.custody_program,
+            metadata.clone(),
+            custody.clone(),
+            claimant_asset.clone(),
+            state.amount,
+            true,
+            &swap_id,
+        );
+        Ok(SpelOutput::execute(
+            vec![
+                metadata,
+                custody,
+                claimant_owner,
+                claimant_asset,
+                aggregate_authority,
+            ],
+            vec![transfer],
+        )
+        .with_timestamp_validity_window(..state.refund_at))
     }
 }
 
@@ -1066,6 +1215,45 @@ mod tests {
         .expect("signed owner funds the exact custody ATA")
     }
 
+    fn token_initialized_witnessed(
+        definition: AccountId,
+        aggregate_x_only_public_key: [u8; 32],
+    ) -> SpelOutput {
+        let aggregate_authority = witnessed_account_id(&aggregate_x_only_public_key);
+        zec_escrow::initialize_token_witnessed(
+            context(),
+            empty_account(metadata_id()),
+            actor([1; 32], true),
+            actor([2; 32], false),
+            definition_account(definition),
+            actor(aggregate_authority.into_value(), false),
+            SWAP_ID,
+            [31; 32],
+            aggregate_x_only_public_key,
+            AMOUNT,
+            REFUND_AT,
+            ATA_PROGRAM,
+        )
+        .expect("valid witnessed custom-token escrow initialize")
+    }
+
+    fn token_funded_witnessed(
+        definition: AccountId,
+        aggregate_x_only_public_key: [u8; 32],
+    ) -> SpelOutput {
+        let initialized = token_initialized_witnessed(definition, aggregate_x_only_public_key);
+        let state = metadata_from(&initialized);
+        zec_escrow::fund_token(
+            context(),
+            committed_metadata(&initialized),
+            actor([1; 32], true),
+            holding(state.depositor_asset, definition, 500),
+            holding(state.custody, definition, 0),
+            SWAP_ID,
+        )
+        .expect("signed owner funds the exact witnessed custody ATA")
+    }
+
     fn assert_timestamp_only_window(output: &SpelOutput, start: Option<u64>, end: Option<u64>) {
         assert_eq!(output.block_validity_window.start(), None);
         assert_eq!(output.block_validity_window.end(), None);
@@ -1238,6 +1426,8 @@ mod tests {
                 "fund_token",
                 "claim_token",
                 "refund_token",
+                "initialize_token_witnessed",
+                "claim_token_witnessed",
             ]
         );
         for instruction_name in ["refund_native", "create_token_custody", "refund_token"] {
@@ -1256,6 +1446,159 @@ mod tests {
                 .expect("owner-authorized instruction in generated IDL");
             assert!(instruction.accounts.iter().any(|account| account.signer));
         }
+        for instruction_name in ["initialize_token_witnessed", "claim_token_witnessed"] {
+            let instruction = idl
+                .instructions
+                .iter()
+                .find(|instruction| instruction.name == instruction_name)
+                .expect("aggregate-authorized token instruction in generated IDL");
+            assert!(instruction.accounts.iter().any(|account| account.signer));
+        }
+    }
+
+    #[test]
+    fn witnessed_token_variants_are_append_only_on_the_public_wire() {
+        let tag = |instruction: Instruction| {
+            ChainedCall::new(ESCROW_PROGRAM, vec![], &instruction).instruction_data[0]
+        };
+        assert_eq!(
+            tag(Instruction::InitializeToken {
+                swap_id: SWAP_ID,
+                terms_hash: [31; 32],
+                secret_digest: Sha256::digest(PREIMAGE).into(),
+                amount: AMOUNT,
+                refund_at: REFUND_AT,
+                ata_program: ATA_PROGRAM,
+            }),
+            6,
+        );
+        assert_eq!(tag(Instruction::RefundToken { swap_id: SWAP_ID }), 10);
+        assert_eq!(
+            tag(Instruction::InitializeTokenWitnessed {
+                swap_id: SWAP_ID,
+                terms_hash: [31; 32],
+                aggregate_x_only_public_key: [44; 32],
+                amount: AMOUNT,
+                refund_at: REFUND_AT,
+                ata_program: ATA_PROGRAM,
+            }),
+            11,
+        );
+        assert_eq!(
+            tag(Instruction::ClaimTokenWitnessed { swap_id: SWAP_ID }),
+            12,
+        );
+    }
+
+    #[test]
+    fn witnessed_token_claims_bind_two_definitions_exact_atas_and_aggregate_authority() {
+        let aggregate_x_only_public_key = [44; 32];
+        let aggregate_authority = witnessed_account_id(&aggregate_x_only_public_key);
+        let mut custody_ids = Vec::new();
+
+        for definition_bytes in [[41; 32], [42; 32]] {
+            let definition = AccountId::new(definition_bytes);
+            let funded = token_funded_witnessed(definition, aggregate_x_only_public_key);
+            let state = metadata_from(&funded);
+            assert_eq!(state.asset_definition, definition_bytes);
+            assert_eq!(state.custody, exact_ata(metadata_id(), definition));
+            assert_eq!(state.claimant_asset, exact_ata(state.claimant, definition));
+            assert_eq!(
+                state.claim_authority,
+                ClaimAuthority::AggregateWitness {
+                    x_only_public_key: aggregate_x_only_public_key,
+                    account_id: aggregate_authority,
+                }
+            );
+
+            let claim = zec_escrow::claim_token_witnessed(
+                context(),
+                committed_metadata(&funded),
+                holding(state.custody, definition, AMOUNT),
+                actor([2; 32], false),
+                holding(state.claimant_asset, definition, 0),
+                actor(aggregate_authority.into_value(), true),
+                SWAP_ID,
+            )
+            .expect("aggregate witness claims to the fixed claimant ATA");
+            assert_eq!(metadata_from(&claim).status, EscrowStatus::Claimed);
+            assert_eq!(
+                claim.chained_calls[0].pre_states[2].account_id,
+                state.claimant_asset
+            );
+            assert_timestamp_only_window(&claim, None, Some(REFUND_AT));
+            custody_ids.push(state.custody);
+        }
+
+        assert_ne!(custody_ids[0], custody_ids[1]);
+    }
+
+    #[test]
+    fn witnessed_token_paths_reject_wrong_definition_ata_and_aggregate_authority() {
+        let definition = AccountId::new([41; 32]);
+        let other_definition = AccountId::new([42; 32]);
+        let aggregate_x_only_public_key = [44; 32];
+        let aggregate_authority = witnessed_account_id(&aggregate_x_only_public_key);
+
+        assert!(
+            zec_escrow::initialize_token_witnessed(
+                context(),
+                empty_account(metadata_id()),
+                actor([1; 32], true),
+                actor([2; 32], false),
+                definition_account(definition),
+                actor([99; 32], false),
+                SWAP_ID,
+                [31; 32],
+                aggregate_x_only_public_key,
+                AMOUNT,
+                REFUND_AT,
+                ATA_PROGRAM,
+            )
+            .is_err(),
+            "initialize must bind the aggregate account to its exact BIP-340 key"
+        );
+
+        let funded = token_funded_witnessed(definition, aggregate_x_only_public_key);
+        let state = metadata_from(&funded);
+        let claim = |custody, claimant_asset, authority| {
+            zec_escrow::claim_token_witnessed(
+                context(),
+                committed_metadata(&funded),
+                custody,
+                actor([2; 32], false),
+                claimant_asset,
+                authority,
+                SWAP_ID,
+            )
+        };
+        assert!(
+            claim(
+                holding(state.custody, other_definition, AMOUNT),
+                holding(state.claimant_asset, definition, 0),
+                actor(aggregate_authority.into_value(), true),
+            )
+            .is_err(),
+            "custody for another definition must fail closed"
+        );
+        assert!(
+            claim(
+                holding(state.custody, definition, AMOUNT),
+                holding(AccountId::new([98; 32]), definition, 0),
+                actor(aggregate_authority.into_value(), true),
+            )
+            .is_err(),
+            "a non-canonical claimant ATA must fail closed"
+        );
+        assert!(
+            claim(
+                holding(state.custody, definition, AMOUNT),
+                holding(state.claimant_asset, definition, 0),
+                actor([99; 32], true),
+            )
+            .is_err(),
+            "an unrelated signer must not replace the aggregate authority"
+        );
     }
 
     #[test]
