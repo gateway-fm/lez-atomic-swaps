@@ -54,6 +54,24 @@ use lez_bridge_protocol::{
     WitnessedNativeInitializeInstructionFacts, WitnessedTokenEscrowTermsV2,
     WitnessedTokenEscrowTermsV2Input,
 };
+use lez_bridge_protocol::{
+    ClassifyFinalizedWitnessedAssetClaimV2Request, ClassifyFinalizedWitnessedAssetClaimV2Result,
+    ClassifyFinalizedWitnessedAssetCustodyCreationV2Request,
+    ClassifyFinalizedWitnessedAssetCustodyCreationV2Result,
+    ClassifyFinalizedWitnessedAssetFundingV2Request,
+    ClassifyFinalizedWitnessedAssetFundingV2Result,
+    ClassifyFinalizedWitnessedAssetInitializationV2Request,
+    ClassifyFinalizedWitnessedAssetInitializationV2Result,
+    FinalizedWitnessedAssetCustodyCreationFactsV2, FinalizedWitnessedAssetFundingFactsV2,
+    FinalizedWitnessedAssetInitializationFactsV2, FinalizedWitnessedAssetTransactionTargetV2,
+    FinalizedWitnessedAssetUnavailableReasonV2, METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CUSTODY_CREATION_V2,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_FUNDING_V2,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_INITIALIZATION_V2,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM, METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION, WitnessedAssetEffectInstructionFactsV2,
+    WitnessedAssetInitializationCustodyFactsV2,
+};
 
 #[test]
 fn current_clock_wire_is_strict_and_runtime_bound() {
@@ -2472,6 +2490,894 @@ fn witnessed_asset_v2_refund_models_are_exact_and_token_bound() {
     );
 }
 
+#[test]
+fn finalized_witnessed_asset_classifier_methods_are_additive_and_v1_stays_exact() {
+    for (actual, expected) in [
+        (
+            METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_INITIALIZATION_V2,
+            "lez_bridge.v2.classify_finalized_witnessed_asset_initialization",
+        ),
+        (
+            METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_FUNDING_V2,
+            "lez_bridge.v2.classify_finalized_witnessed_asset_funding",
+        ),
+        (
+            METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CUSTODY_CREATION_V2,
+            "lez_bridge.v2.classify_finalized_witnessed_asset_custody_creation",
+        ),
+        (
+            METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
+            "lez_bridge.v2.classify_finalized_witnessed_asset_claim",
+        ),
+    ] {
+        assert_eq!(actual, expected);
+        assert!(!actual.starts_with("lez_bridge.v1."));
+    }
+    assert_eq!(
+        METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION,
+        "lez_bridge.v1.classify_finalized_witnessed_initialization"
+    );
+    assert_eq!(
+        METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
+        "lez_bridge.v1.classify_finalized_witnessed_funding"
+    );
+    assert_eq!(
+        METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM,
+        "lez_bridge.v1.classify_finalized_witnessed_claim"
+    );
+}
+
+#[test]
+fn finalized_asset_initialization_binds_exact_bytes_accounts_state_and_coverage() {
+    for definition in [h(82), h(83)] {
+        let terms = token_asset(definition);
+        let window = finalized_asset_window();
+        let exact = ClassifyFinalizedWitnessedAssetInitializationV2Request::new(
+            context(),
+            runtime(),
+            terms.clone(),
+            tx(105),
+            window,
+        );
+        let discovery = ClassifyFinalizedWitnessedAssetInitializationV2Request::discover_by_terms(
+            context(),
+            runtime(),
+            terms.clone(),
+            window,
+        );
+        assert_asset_classifier_requests_roundtrip(&exact, &discovery);
+        let target = if definition == h(82) {
+            exact.target.clone()
+        } else {
+            discovery.target.clone()
+        };
+        let found = ClassifyFinalizedWitnessedAssetInitializationV2Result::found(
+            context(),
+            terms,
+            target,
+            finalized_asset_clock(),
+            window,
+            finalized_token_initialization_facts(definition),
+        )
+        .unwrap();
+        let encoded = serde_json::to_value(&found).unwrap();
+        assert_eq!(
+            serde_json::from_value::<ClassifyFinalizedWitnessedAssetInitializationV2Result>(
+                encoded.clone()
+            )
+            .unwrap(),
+            found
+        );
+        assert_finalized_initialization_substitutions_fail(&encoded);
+    }
+}
+
+#[test]
+fn finalized_asset_initialization_statuses_separate_absence_uncertainty_and_unavailability() {
+    let terms = token_asset(h(82));
+    let target = FinalizedWitnessedAssetTransactionTargetV2::exact(tx(105));
+    let window = finalized_asset_window();
+    let absent = ClassifyFinalizedWitnessedAssetInitializationV2Result::absent(
+        context(),
+        terms.clone(),
+        target.clone(),
+        finalized_asset_clock(),
+        window,
+    )
+    .unwrap();
+    let uncertain = ClassifyFinalizedWitnessedAssetInitializationV2Result::uncertain(
+        context(),
+        terms.clone(),
+        target.clone(),
+        finalized_asset_clock(),
+        window,
+    )
+    .unwrap();
+    let unavailable = ClassifyFinalizedWitnessedAssetInitializationV2Result::unavailable(
+        context(),
+        terms,
+        target,
+        FinalizedWitnessedAssetUnavailableReasonV2::MovingTip,
+    );
+    assert_asset_scan_statuses_roundtrip(absent, uncertain, unavailable);
+}
+
+#[test]
+fn finalized_asset_funding_binds_exact_or_discovered_token_effects() {
+    let terms = token_asset(h(83));
+    let window = finalized_asset_window();
+    let exact = ClassifyFinalizedWitnessedAssetFundingV2Request::new(
+        context(),
+        runtime(),
+        terms.clone(),
+        tx(107),
+        window,
+    );
+    let discovery = ClassifyFinalizedWitnessedAssetFundingV2Request::discover_by_terms(
+        context(),
+        runtime(),
+        terms.clone(),
+        window,
+    );
+    assert_asset_classifier_requests_roundtrip(&exact, &discovery);
+    let result = ClassifyFinalizedWitnessedAssetFundingV2Result::found(
+        context(),
+        terms,
+        exact.target.clone(),
+        finalized_asset_clock(),
+        window,
+        finalized_token_funding_facts(h(83)),
+    )
+    .unwrap();
+    let encoded = serde_json::to_value(result).unwrap();
+    assert!(
+        serde_json::from_value::<ClassifyFinalizedWitnessedAssetFundingV2Result>(encoded.clone())
+            .is_ok()
+    );
+    assert_finalized_funding_substitutions_fail(&encoded);
+}
+
+#[test]
+fn finalized_token_custody_creation_is_restart_safe_exact_and_token_only() {
+    let terms = token_asset(h(82));
+    let window = finalized_asset_window();
+    let exact = ClassifyFinalizedWitnessedAssetCustodyCreationV2Request::new(
+        context(),
+        runtime(),
+        terms.clone(),
+        tx(106),
+        window,
+    )
+    .unwrap();
+    let discovery = ClassifyFinalizedWitnessedAssetCustodyCreationV2Request::discover_by_terms(
+        context(),
+        runtime(),
+        terms.clone(),
+        window,
+    )
+    .unwrap();
+    assert_asset_classifier_requests_roundtrip(&exact, &discovery);
+    assert!(
+        ClassifyFinalizedWitnessedAssetCustodyCreationV2Request::new(
+            context(),
+            runtime(),
+            WitnessedLezAssetTermsV2::native(witnessed_native_terms()),
+            tx(106),
+            window,
+        )
+        .is_err()
+    );
+    let found = ClassifyFinalizedWitnessedAssetCustodyCreationV2Result::found(
+        context(),
+        terms,
+        exact.target.clone(),
+        finalized_asset_clock(),
+        window,
+        finalized_token_custody_creation_facts(h(82)),
+    )
+    .unwrap();
+    let encoded = serde_json::to_value(found).unwrap();
+    assert!(
+        serde_json::from_value::<ClassifyFinalizedWitnessedAssetCustodyCreationV2Result>(
+            encoded.clone()
+        )
+        .is_ok()
+    );
+    assert_finalized_custody_creation_substitutions_fail(&encoded);
+}
+
+#[test]
+fn finalized_token_custody_creation_has_four_nonoverlapping_statuses() {
+    let terms = token_asset(h(82));
+    let target = FinalizedWitnessedAssetTransactionTargetV2::exact(tx(106));
+    let window = finalized_asset_window();
+    assert_wire_roundtrip(
+        &ClassifyFinalizedWitnessedAssetCustodyCreationV2Result::absent(
+            context(),
+            terms.clone(),
+            target.clone(),
+            finalized_asset_clock(),
+            window,
+        )
+        .unwrap(),
+    );
+    assert_wire_roundtrip(
+        &ClassifyFinalizedWitnessedAssetCustodyCreationV2Result::uncertain(
+            context(),
+            terms.clone(),
+            target.clone(),
+            finalized_asset_clock(),
+            window,
+        )
+        .unwrap(),
+    );
+    let unavailable = ClassifyFinalizedWitnessedAssetCustodyCreationV2Result::unavailable(
+        context(),
+        terms,
+        target,
+        FinalizedWitnessedAssetUnavailableReasonV2::HistoryUnavailable,
+    )
+    .unwrap();
+    let encoded = serde_json::to_value(&unavailable).unwrap();
+    assert!(encoded["outcome"].get("finalized_clock").is_none());
+    assert!(encoded["outcome"].get("scanned_window").is_none());
+    assert_wire_roundtrip(&unavailable);
+}
+
+#[test]
+fn finalized_asset_claim_presence_is_conservative_exact_and_conflict_typed() {
+    let terms = token_asset(h(82));
+    let claim = asset_claim_transcript();
+    let window = finalized_asset_window();
+    let request = ClassifyFinalizedWitnessedAssetClaimV2Request::new(
+        context(),
+        runtime(),
+        terms.clone(),
+        claim.clone(),
+        tx(124),
+        window,
+    );
+    let discovery = ClassifyFinalizedWitnessedAssetClaimV2Request::discover_by_terms(
+        context(),
+        runtime(),
+        terms.clone(),
+        claim.clone(),
+        window,
+    );
+    assert_asset_classifier_requests_roundtrip(&request, &discovery);
+    let found = ClassifyFinalizedWitnessedAssetClaimV2Result::found(
+        context(),
+        terms.clone(),
+        claim.clone(),
+        request.target.clone(),
+        finalized_asset_clock(),
+        window,
+        finalized_token_claim_facts(h(82), claim),
+    )
+    .unwrap();
+    let encoded = serde_json::to_value(&found).unwrap();
+    assert_eq!(
+        serde_json::from_value::<ClassifyFinalizedWitnessedAssetClaimV2Result>(encoded.clone())
+            .unwrap(),
+        found
+    );
+    assert_finalized_claim_substitutions_fail(&encoded);
+
+    let unavailable = ClassifyFinalizedWitnessedAssetClaimV2Result::unavailable(
+        context(),
+        terms,
+        asset_claim_transcript(),
+        discovery.target,
+        FinalizedWitnessedAssetUnavailableReasonV2::ConflictingMatches,
+    );
+    assert_eq!(
+        serde_json::to_value(unavailable).unwrap()["outcome"],
+        serde_json::json!({"status":"unavailable","reason":"conflicting_matches"})
+    );
+}
+
+#[test]
+fn finalized_asset_classifiers_preserve_native_found_path_parity() {
+    let terms = WitnessedLezAssetTermsV2::native(witnessed_native_terms());
+    let window = finalized_asset_window();
+    let initialization = ClassifyFinalizedWitnessedAssetInitializationV2Result::found(
+        context(),
+        terms.clone(),
+        FinalizedWitnessedAssetTransactionTargetV2::exact(tx(132)),
+        finalized_asset_clock(),
+        window,
+        finalized_native_initialization_facts(),
+    )
+    .unwrap();
+    let funding = ClassifyFinalizedWitnessedAssetFundingV2Result::found(
+        context(),
+        terms.clone(),
+        FinalizedWitnessedAssetTransactionTargetV2::exact(tx(133)),
+        finalized_asset_clock(),
+        window,
+        finalized_native_funding_facts(),
+    )
+    .unwrap();
+    let claim = asset_claim_transcript();
+    let claimed = ClassifyFinalizedWitnessedAssetClaimV2Result::found(
+        context(),
+        terms,
+        claim.clone(),
+        FinalizedWitnessedAssetTransactionTargetV2::exact(tx(134)),
+        finalized_asset_clock(),
+        window,
+        finalized_native_claim_facts(claim),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::from_value::<ClassifyFinalizedWitnessedAssetInitializationV2Result>(
+            serde_json::to_value(&initialization).unwrap()
+        )
+        .unwrap(),
+        initialization
+    );
+    assert_eq!(
+        serde_json::from_value::<ClassifyFinalizedWitnessedAssetFundingV2Result>(
+            serde_json::to_value(&funding).unwrap()
+        )
+        .unwrap(),
+        funding
+    );
+    assert_eq!(
+        serde_json::from_value::<ClassifyFinalizedWitnessedAssetClaimV2Result>(
+            serde_json::to_value(&claimed).unwrap()
+        )
+        .unwrap(),
+        claimed
+    );
+}
+
+#[test]
+fn finalized_asset_funding_and_claim_keep_absent_uncertain_unavailable_distinct() {
+    let terms = token_asset(h(82));
+    let target = FinalizedWitnessedAssetTransactionTargetV2::exact(tx(107));
+    let window = finalized_asset_window();
+    assert_wire_roundtrip(
+        &ClassifyFinalizedWitnessedAssetFundingV2Result::absent(
+            context(),
+            terms.clone(),
+            target.clone(),
+            finalized_asset_clock(),
+            window,
+        )
+        .unwrap(),
+    );
+    assert_wire_roundtrip(
+        &ClassifyFinalizedWitnessedAssetFundingV2Result::uncertain(
+            context(),
+            terms.clone(),
+            target.clone(),
+            finalized_asset_clock(),
+            window,
+        )
+        .unwrap(),
+    );
+    assert_wire_roundtrip(
+        &ClassifyFinalizedWitnessedAssetFundingV2Result::unavailable(
+            context(),
+            terms.clone(),
+            target.clone(),
+            FinalizedWitnessedAssetUnavailableReasonV2::FinalityUnavailable,
+        ),
+    );
+    let claim = asset_claim_transcript();
+    assert_wire_roundtrip(
+        &ClassifyFinalizedWitnessedAssetClaimV2Result::absent(
+            context(),
+            terms.clone(),
+            claim.clone(),
+            target.clone(),
+            finalized_asset_clock(),
+            window,
+        )
+        .unwrap(),
+    );
+    assert_wire_roundtrip(
+        &ClassifyFinalizedWitnessedAssetClaimV2Result::uncertain(
+            context(),
+            terms.clone(),
+            claim.clone(),
+            target.clone(),
+            finalized_asset_clock(),
+            window,
+        )
+        .unwrap(),
+    );
+    assert_wire_roundtrip(&ClassifyFinalizedWitnessedAssetClaimV2Result::unavailable(
+        context(),
+        terms,
+        claim,
+        target,
+        FinalizedWitnessedAssetUnavailableReasonV2::MovingTip,
+    ));
+}
+
+fn assert_asset_classifier_requests_roundtrip<T>(exact: &T, discovery: &T)
+where
+    T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+{
+    for request in [exact, discovery] {
+        assert_eq!(
+            serde_json::from_value::<T>(serde_json::to_value(request).unwrap()).unwrap(),
+            *request
+        );
+    }
+    let mut unknown = serde_json::to_value(exact).unwrap();
+    unknown["unexpected"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<T>(unknown).is_err());
+}
+
+fn assert_wire_roundtrip<T>(value: &T)
+where
+    T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+{
+    assert_eq!(
+        &serde_json::from_value::<T>(serde_json::to_value(value).unwrap()).unwrap(),
+        value
+    );
+}
+
+fn assert_asset_scan_statuses_roundtrip(
+    absent: ClassifyFinalizedWitnessedAssetInitializationV2Result,
+    uncertain: ClassifyFinalizedWitnessedAssetInitializationV2Result,
+    unavailable: ClassifyFinalizedWitnessedAssetInitializationV2Result,
+) {
+    for result in [absent, uncertain, unavailable] {
+        assert_eq!(
+            serde_json::from_value::<ClassifyFinalizedWitnessedAssetInitializationV2Result>(
+                serde_json::to_value(&result).unwrap()
+            )
+            .unwrap(),
+            result
+        );
+    }
+}
+
+fn finalized_asset_window() -> DiscoveryWindow {
+    DiscoveryWindow::new(90, 3).unwrap()
+}
+
+fn finalized_asset_clock() -> ChainClock {
+    ChainClock::new(h(150), 92, 1_850_000_001_900)
+}
+
+fn finalized_token_initialization_facts(
+    definition: Hex32,
+) -> FinalizedWitnessedAssetInitializationFactsV2 {
+    let terms = token_asset(definition);
+    let token = terms.asset().custom_token().unwrap();
+    let metadata = WitnessedEscrowMetadataFacts::from_witnessed_token_terms(
+        h(141),
+        h(103),
+        token,
+        EscrowState::Empty,
+    );
+    FinalizedWitnessedAssetInitializationFactsV2::new(
+        finalized_observed_tx(105, h(140), 90, h(73)),
+        WitnessedAssetEffectInstructionFactsV2::new(
+            WitnessedAssetPrepareStepV2::InitializeWitnessed,
+            h(103),
+            AccountIds::new(vec![
+                metadata.account_id,
+                token.depositor_owner_account_id(),
+                token.claimant_owner_account_id(),
+                token.token_definition_account_id(),
+                token.aggregate_authority_account_id(),
+            ])
+            .unwrap(),
+            token.swap_id(),
+        ),
+        FinalizedBlockIdentity::new(900, h(140), 1_850_000_001_700),
+        metadata,
+        WitnessedAssetInitializationCustodyFactsV2::custom_token_ata_absent(
+            token.custody_ata_account_id(),
+        ),
+    )
+}
+
+fn finalized_token_funding_facts(definition: Hex32) -> FinalizedWitnessedAssetFundingFactsV2 {
+    let terms = token_asset(definition);
+    let token = terms.asset().custom_token().unwrap();
+    let metadata = WitnessedEscrowMetadataFacts::from_witnessed_token_terms(
+        h(141),
+        h(103),
+        token,
+        EscrowState::Funded,
+    );
+    FinalizedWitnessedAssetFundingFactsV2::new(
+        finalized_observed_tx(107, h(142), 92, h(73)),
+        WitnessedAssetEffectInstructionFactsV2::new(
+            WitnessedAssetPrepareStepV2::Fund,
+            h(103),
+            AccountIds::new(vec![
+                metadata.account_id,
+                token.depositor_owner_account_id(),
+                token.depositor_ata_account_id(),
+                token.custody_ata_account_id(),
+            ])
+            .unwrap(),
+            token.swap_id(),
+        ),
+        FinalizedBlockIdentity::new(902, h(142), 1_850_000_001_800),
+        metadata,
+        WitnessedAssetCustodyFactsV2::CustomToken(TokenHoldingFactsV2::new(
+            token.custody_ata_account_id(),
+            token.token_program_id(),
+            token.token_definition_account_id(),
+            token.amount().as_u128(),
+        )),
+    )
+}
+
+fn finalized_token_custody_creation_facts(
+    definition: Hex32,
+) -> FinalizedWitnessedAssetCustodyCreationFactsV2 {
+    let terms = token_asset(definition);
+    let token = terms.asset().custom_token().unwrap();
+    let metadata = WitnessedEscrowMetadataFacts::from_witnessed_token_terms(
+        h(141),
+        h(103),
+        token,
+        EscrowState::Empty,
+    );
+    FinalizedWitnessedAssetCustodyCreationFactsV2::new(
+        finalized_observed_tx(106, h(144), 91, h(73)),
+        WitnessedAssetEffectInstructionFactsV2::new(
+            WitnessedAssetPrepareStepV2::CreateCustodyAta,
+            h(103),
+            AccountIds::new(vec![
+                metadata.account_id,
+                token.token_definition_account_id(),
+                token.custody_ata_account_id(),
+            ])
+            .unwrap(),
+            token.swap_id(),
+        ),
+        FinalizedBlockIdentity::new(901, h(144), 1_850_000_001_750),
+        metadata,
+        TokenHoldingFactsV2::new(
+            token.custody_ata_account_id(),
+            token.token_program_id(),
+            token.token_definition_account_id(),
+            0,
+        ),
+    )
+}
+
+fn finalized_token_claim_facts(
+    definition: Hex32,
+    claim: PreparedWitnessedClaim,
+) -> FinalizedWitnessedAssetClaimFactsV2 {
+    let terms = token_asset(definition);
+    let token = terms.asset().custom_token().unwrap();
+    let metadata = WitnessedEscrowMetadataFacts::from_witnessed_token_terms(
+        h(141),
+        h(103),
+        token,
+        EscrowState::Claimed,
+    );
+    FinalizedWitnessedAssetClaimFactsV2::new(
+        finalized_observed_tx(124, h(143), 91, h(78)),
+        WitnessedAssetClaimInstructionFactsV2::new(
+            h(103),
+            AccountIds::new(vec![
+                metadata.account_id,
+                token.custody_ata_account_id(),
+                token.claimant_owner_account_id(),
+                token.claimant_ata_account_id(),
+                token.aggregate_authority_account_id(),
+            ])
+            .unwrap(),
+            token.swap_id(),
+            claim,
+        ),
+        AggregateBip340Signature::from_bytes([123; 64]),
+        FinalizedBlockIdentity::new(901, h(143), 1_850_000_001_750),
+        metadata,
+        WitnessedAssetCustodyFactsV2::CustomToken(TokenHoldingFactsV2::new(
+            token.custody_ata_account_id(),
+            token.token_program_id(),
+            token.token_definition_account_id(),
+            0,
+        )),
+    )
+}
+
+fn finalized_native_initialization_facts() -> FinalizedWitnessedAssetInitializationFactsV2 {
+    let terms = witnessed_native_terms();
+    let metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+        h(145),
+        h(103),
+        h(146),
+        &terms,
+        EscrowState::Empty,
+    );
+    FinalizedWitnessedAssetInitializationFactsV2::new(
+        finalized_observed_tx(132, h(147), 90, terms.depositor_account_id()),
+        WitnessedAssetEffectInstructionFactsV2::new(
+            WitnessedAssetPrepareStepV2::InitializeWitnessed,
+            h(103),
+            AccountIds::new(vec![
+                metadata.account_id,
+                metadata.custody_account_id,
+                terms.depositor_account_id(),
+                terms.claimant_account_id(),
+                terms.aggregate_authority_account_id(),
+            ])
+            .unwrap(),
+            terms.swap_id(),
+        ),
+        FinalizedBlockIdentity::new(900, h(147), 1_850_000_001_700),
+        metadata,
+        WitnessedAssetInitializationCustodyFactsV2::native(NativeCustodyFacts::new(
+            h(146),
+            terms.authenticated_transfer_program_id(),
+            0,
+        )),
+    )
+}
+
+fn finalized_native_funding_facts() -> FinalizedWitnessedAssetFundingFactsV2 {
+    let terms = witnessed_native_terms();
+    let metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+        h(145),
+        h(103),
+        h(146),
+        &terms,
+        EscrowState::Funded,
+    );
+    FinalizedWitnessedAssetFundingFactsV2::new(
+        finalized_observed_tx(133, h(148), 91, terms.depositor_account_id()),
+        WitnessedAssetEffectInstructionFactsV2::new(
+            WitnessedAssetPrepareStepV2::Fund,
+            h(103),
+            AccountIds::new(vec![
+                metadata.account_id,
+                metadata.custody_account_id,
+                terms.depositor_account_id(),
+            ])
+            .unwrap(),
+            terms.swap_id(),
+        ),
+        FinalizedBlockIdentity::new(901, h(148), 1_850_000_001_750),
+        metadata,
+        WitnessedAssetCustodyFactsV2::Native(NativeCustodyFacts::new(
+            h(146),
+            terms.authenticated_transfer_program_id(),
+            terms.amount().as_u128(),
+        )),
+    )
+}
+
+fn finalized_native_claim_facts(
+    claim: PreparedWitnessedClaim,
+) -> FinalizedWitnessedAssetClaimFactsV2 {
+    let terms = witnessed_native_terms();
+    let metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+        h(145),
+        h(103),
+        h(146),
+        &terms,
+        EscrowState::Claimed,
+    );
+    FinalizedWitnessedAssetClaimFactsV2::new(
+        finalized_observed_tx(134, h(149), 92, terms.aggregate_authority_account_id()),
+        WitnessedAssetClaimInstructionFactsV2::new(
+            h(103),
+            AccountIds::new(vec![
+                metadata.account_id,
+                metadata.custody_account_id,
+                terms.claimant_account_id(),
+                terms.aggregate_authority_account_id(),
+            ])
+            .unwrap(),
+            terms.swap_id(),
+            claim,
+        ),
+        AggregateBip340Signature::from_bytes([123; 64]),
+        FinalizedBlockIdentity::new(902, h(149), 1_850_000_001_800),
+        metadata,
+        WitnessedAssetCustodyFactsV2::Native(NativeCustodyFacts::new(
+            h(146),
+            terms.authenticated_transfer_program_id(),
+            0,
+        )),
+    )
+}
+
+fn finalized_observed_tx(
+    byte: u8,
+    block_hash: Hex32,
+    height: u64,
+    signer: Hex32,
+) -> ObservedTransactionFacts {
+    ObservedTransactionFacts::new(
+        TransactionId::from_bytes([byte; 32]),
+        ExactTransactionBytes::new(vec![byte; 128]).unwrap(),
+        ChainPosition::new(block_hash, height, 0),
+        AccountIds::new(vec![signer]).unwrap(),
+        true,
+    )
+}
+
+fn asset_claim_transcript() -> PreparedWitnessedClaim {
+    PreparedWitnessedClaim::new(
+        RequestId::new("asset-v2-claim-prepare").unwrap(),
+        h(120),
+        ExactMessageBytes::new(vec![121; 128]).unwrap(),
+    )
+}
+
+fn assert_finalized_initialization_substitutions_fail(encoded: &serde_json::Value) {
+    assert_json_mutations_fail::<ClassifyFinalizedWitnessedAssetInitializationV2Result>(
+        encoded,
+        vec![
+            (
+                vec!["target", "transaction"],
+                serde_json::to_value(tx(220)).unwrap(),
+            ),
+            (
+                vec![
+                    "outcome",
+                    "facts",
+                    "instruction",
+                    "ordered_account_ids",
+                    "1",
+                ],
+                serde_json::to_value(h(221)).unwrap(),
+            ),
+            (
+                vec!["outcome", "facts", "metadata", "asset_definition"],
+                serde_json::to_value(h(222)).unwrap(),
+            ),
+            (
+                vec!["outcome", "facts", "containing_block", "block_hash"],
+                serde_json::to_value(h(223)).unwrap(),
+            ),
+            (
+                vec!["outcome", "finalized_clock", "height"],
+                serde_json::json!(91),
+            ),
+            (
+                vec!["outcome", "facts", "transaction", "position", "height"],
+                serde_json::json!(93),
+            ),
+            (
+                vec!["outcome", "facts", "unexpected"],
+                serde_json::json!(true),
+            ),
+        ],
+    );
+}
+
+fn assert_finalized_funding_substitutions_fail(encoded: &serde_json::Value) {
+    assert_json_mutations_fail::<ClassifyFinalizedWitnessedAssetFundingV2Result>(
+        encoded,
+        vec![
+            (
+                vec!["target", "transaction"],
+                serde_json::to_value(tx(221)).unwrap(),
+            ),
+            (
+                vec![
+                    "outcome",
+                    "facts",
+                    "custody",
+                    "facts",
+                    "token_definition_account_id",
+                ],
+                serde_json::to_value(h(222)).unwrap(),
+            ),
+            (
+                vec![
+                    "outcome",
+                    "facts",
+                    "instruction",
+                    "ordered_account_ids",
+                    "2",
+                ],
+                serde_json::to_value(h(223)).unwrap(),
+            ),
+            (
+                vec![
+                    "outcome",
+                    "facts",
+                    "metadata",
+                    "aggregate_authority_account_id",
+                ],
+                serde_json::to_value(h(224)).unwrap(),
+            ),
+            (
+                vec!["outcome", "facts", "transaction", "exact_bytes"],
+                serde_json::to_value(ExactTransactionBytes::new(vec![225; 128]).unwrap()).unwrap(),
+            ),
+        ],
+    );
+}
+
+fn assert_finalized_custody_creation_substitutions_fail(encoded: &serde_json::Value) {
+    assert_json_mutations_fail::<ClassifyFinalizedWitnessedAssetCustodyCreationV2Result>(
+        encoded,
+        vec![
+            (
+                vec!["target", "transaction"],
+                serde_json::to_value(tx(221)).unwrap(),
+            ),
+            (
+                vec![
+                    "outcome",
+                    "facts",
+                    "instruction",
+                    "ordered_account_ids",
+                    "1",
+                ],
+                serde_json::to_value(h(222)).unwrap(),
+            ),
+            (
+                vec!["outcome", "facts", "metadata", "custody_program_id"],
+                serde_json::to_value(h(223)).unwrap(),
+            ),
+            (
+                vec!["outcome", "facts", "custody", "token_definition_account_id"],
+                serde_json::to_value(h(224)).unwrap(),
+            ),
+            (
+                vec!["outcome", "facts", "containing_block", "block_hash"],
+                serde_json::to_value(h(225)).unwrap(),
+            ),
+        ],
+    );
+}
+
+fn assert_finalized_claim_substitutions_fail(encoded: &serde_json::Value) {
+    assert_json_mutations_fail::<ClassifyFinalizedWitnessedAssetClaimV2Result>(
+        encoded,
+        vec![
+            (
+                vec!["target", "transaction"],
+                serde_json::to_value(tx(221)).unwrap(),
+            ),
+            (
+                vec![
+                    "outcome",
+                    "facts",
+                    "instruction",
+                    "ordered_account_ids",
+                    "4",
+                ],
+                serde_json::to_value(h(222)).unwrap(),
+            ),
+            (
+                vec!["outcome", "facts", "metadata", "claimant_asset_account_id"],
+                serde_json::to_value(h(223)).unwrap(),
+            ),
+            (vec!["outcome", "facts"], serde_json::json!([])),
+            (vec!["outcome", "unexpected"], serde_json::json!(true)),
+        ],
+    );
+}
+
+fn assert_json_mutations_fail<T>(
+    encoded: &serde_json::Value,
+    mutations: Vec<(Vec<&str>, serde_json::Value)>,
+) where
+    T: serde::de::DeserializeOwned,
+{
+    for (path, replacement) in mutations {
+        let mut changed = encoded.clone();
+        json_set(&mut changed, &path, replacement);
+        assert!(
+            serde_json::from_value::<T>(changed).is_err(),
+            "mutation at {path:?} was accepted"
+        );
+    }
+}
+
 fn token_asset(definition: Hex32) -> WitnessedLezAssetTermsV2 {
     WitnessedLezAssetTermsV2::custom_token(
         WitnessedTokenEscrowTermsV2::new(witnessed_token_input(definition)).unwrap(),
@@ -2547,7 +3453,15 @@ fn json_set(value: &mut serde_json::Value, path: &[&str], replacement: serde_jso
     let (last, parents) = path.split_last().unwrap();
     let mut current = value;
     for key in parents {
-        current = &mut current[*key];
+        current = if current.is_array() {
+            &mut current[key.parse::<usize>().unwrap()]
+        } else {
+            &mut current[*key]
+        };
     }
-    current[*last] = replacement;
+    if current.is_array() {
+        current[last.parse::<usize>().unwrap()] = replacement;
+    } else {
+        current[*last] = replacement;
+    }
 }

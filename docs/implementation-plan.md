@@ -1698,7 +1698,14 @@ Active M3 refund critical path:
   and network substitution, every field, aliases, and the native-byte
   compatibility contract pass 16 agreement tests. Official ATA derivation and
   mapping the extension into bridge terms/request IDs remain actor/sidecar work.
-  Finalized asset classifiers, client/sidecar/adapter composition, and
+  Four additional finalized classifiers now cover initialization, token-only
+  custody-ATA creation, funding, and claim with exact prepared bytes/ID or
+  bounded terms discovery. Stable finalized coverage, containing blocks,
+  instructions, metadata, custody, two definitions, native parity, and strict
+  `Found`/`Absent`/`Uncertain`/`Unavailable` separation pass 44 total protocol
+  tests plus Clippy, rustdoc, formatting, and diff gates. This closes the typed
+  four-effect restart model without claiming the official sidecar can yet
+  produce its complete scans. Client/sidecar/adapter/journal composition and
   two-direction actual-node token evidence remain open;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are

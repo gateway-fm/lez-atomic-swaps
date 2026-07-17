@@ -77,6 +77,18 @@ pub const METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2: &str =
 /// Additive v2 method for observing witnessed-asset state and refund evidence.
 pub const METHOD_OBSERVE_WITNESSED_ASSET_REFUND_V2: &str =
     "lez_bridge.v2.observe_witnessed_asset_refund";
+/// Additive v2 method for classifying exact finalized witnessed-asset initialization.
+pub const METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_INITIALIZATION_V2: &str =
+    "lez_bridge.v2.classify_finalized_witnessed_asset_initialization";
+/// Additive v2 method for classifying token custody-ATA creation presence.
+pub const METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CUSTODY_CREATION_V2: &str =
+    "lez_bridge.v2.classify_finalized_witnessed_asset_custody_creation";
+/// Additive v2 method for classifying finalized witnessed-asset funding presence.
+pub const METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_FUNDING_V2: &str =
+    "lez_bridge.v2.classify_finalized_witnessed_asset_funding";
+/// Additive v2 method for classifying finalized witnessed-asset claim presence.
+pub const METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CLAIM_V2: &str =
+    "lez_bridge.v2.classify_finalized_witnessed_asset_claim";
 
 /// HTTP header binding a connection to one composed run.
 pub const RUN_ID_HEADER: &str = "x-lez-bridge-run-id";
@@ -86,13 +98,22 @@ pub const SIDECAR_ROLE_HEADER: &str = "x-lez-bridge-sidecar-role";
 pub const MAX_RPC_BODY_BYTES: u32 = 5_500_000;
 
 pub use messages::{
-    ClassifyFinalizedWitnessedClaimResult, ClassifyFinalizedWitnessedFundingResult,
-    ClassifyFinalizedWitnessedInitializationRequest,
+    ClassifyFinalizedWitnessedAssetClaimV2Request, ClassifyFinalizedWitnessedAssetClaimV2Result,
+    ClassifyFinalizedWitnessedAssetCustodyCreationV2Request,
+    ClassifyFinalizedWitnessedAssetCustodyCreationV2Result,
+    ClassifyFinalizedWitnessedAssetFundingV2Request,
+    ClassifyFinalizedWitnessedAssetFundingV2Result,
+    ClassifyFinalizedWitnessedAssetInitializationV2Request,
+    ClassifyFinalizedWitnessedAssetInitializationV2Result, ClassifyFinalizedWitnessedClaimResult,
+    ClassifyFinalizedWitnessedFundingResult, ClassifyFinalizedWitnessedInitializationRequest,
     ClassifyFinalizedWitnessedInitializationResult, CompleteWitnessedAssetClaimV2Request,
     CompleteWitnessedAssetClaimV2Result, CompleteWitnessedClaimRequest,
     CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult,
     EscrowMetadataFacts, EscrowObservationTarget, EscrowState, FinalizedBlockIdentity,
-    FinalizedWitnessedAssetClaimFactsV2, FinalizedWitnessedClaimFacts,
+    FinalizedWitnessedAssetClaimFactsV2, FinalizedWitnessedAssetCustodyCreationFactsV2,
+    FinalizedWitnessedAssetFundingFactsV2, FinalizedWitnessedAssetInitializationFactsV2,
+    FinalizedWitnessedAssetScanOutcomeV2, FinalizedWitnessedAssetTransactionTargetV2,
+    FinalizedWitnessedAssetUnavailableReasonV2, FinalizedWitnessedClaimFacts,
     FinalizedWitnessedClaimObservationTarget, FinalizedWitnessedClaimScanOutcome,
     FinalizedWitnessedFundingFacts, FinalizedWitnessedFundingObservationTarget,
     FinalizedWitnessedFundingScanOutcome, FinalizedWitnessedInitializationFacts,
@@ -121,6 +142,7 @@ pub use messages::{
     RevealingClaimObservation, RevealingClaimObservationTarget, RuntimeCompatibility,
     RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
     TokenHoldingFactsV2, WitnessedAssetClaimInstructionFactsV2, WitnessedAssetCustodyFactsV2,
+    WitnessedAssetEffectInstructionFactsV2, WitnessedAssetInitializationCustodyFactsV2,
     WitnessedAssetObservedPrepareEffectV2, WitnessedAssetPrepareStepV2,
     WitnessedAssetPreparedEffectV2, WitnessedAssetRefundFoundFactsV2,
     WitnessedAssetRefundInstructionFactsV2, WitnessedAssetRefundObservationV2,

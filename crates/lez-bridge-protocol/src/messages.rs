@@ -4360,3 +4360,1424 @@ fn ensure(condition: bool, field: &'static str) -> Result<(), ProtocolValueError
         Err(ProtocolValueError::WitnessedAssetFactsMismatch(field))
     }
 }
+
+/// Selects exact persisted bytes or peerless discovery for one finalized asset effect.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+#[must_use]
+pub enum FinalizedWitnessedAssetTransactionTargetV2 {
+    /// Require the exact persisted transaction identity and signed bytes.
+    Exact {
+        /// Exact official transaction persisted before any send attempt.
+        transaction: PreparedTransaction,
+    },
+    /// Discover the unique canonical transaction from the signed asset terms.
+    DiscoverByTerms {},
+}
+
+impl FinalizedWitnessedAssetTransactionTargetV2 {
+    /// Creates one exact persisted-transaction target.
+    pub const fn exact(transaction: PreparedTransaction) -> Self {
+        Self::Exact { transaction }
+    }
+}
+
+/// Why a finalized asset classification could not obtain stable complete coverage.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[must_use]
+pub enum FinalizedWitnessedAssetUnavailableReasonV2 {
+    /// The canonical tip changed across the bracketed scan.
+    MovingTip,
+    /// The node could not expose the required finalized boundary.
+    FinalityUnavailable,
+    /// Required historical blocks or account state were unavailable.
+    HistoryUnavailable,
+    /// More than one canonical candidate matched terms or transcript.
+    ConflictingMatches,
+}
+
+/// Conservative finalized scan outcome shared by asset-specific classifiers.
+///
+/// Stable clock and exact window exist only when a complete stable scan ran.
+/// `Unavailable` therefore cannot be confused with affirmative absence.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+#[must_use]
+pub enum FinalizedWitnessedAssetScanOutcomeV2<T> {
+    /// One exact, validated effect was found in the stable finalized window.
+    Found {
+        /// Stable finalized clock completely covering `scanned_window`.
+        finalized_clock: ChainClock,
+        /// Exact inclusive bounded range completely scanned.
+        scanned_window: DiscoveryWindow,
+        /// Complete asset-specific finalized facts.
+        facts: Box<T>,
+    },
+    /// A complete stable finalized scan and current-state check proved absence.
+    Absent {
+        /// Stable finalized clock completely covering `scanned_window`.
+        finalized_clock: ChainClock,
+        /// Exact inclusive bounded range completely scanned.
+        scanned_window: DiscoveryWindow,
+    },
+    /// Finalized absence could not exclude pending or unknown current presence.
+    Uncertain {
+        /// Stable finalized clock completely covering `scanned_window`.
+        finalized_clock: ChainClock,
+        /// Exact inclusive bounded range completely scanned.
+        scanned_window: DiscoveryWindow,
+    },
+    /// No complete stable finalized scan was available.
+    Unavailable {
+        /// Typed reason no stable affirmative classification exists.
+        reason: FinalizedWitnessedAssetUnavailableReasonV2,
+    },
+}
+
+/// Exact decoded initialization or funding instruction facts.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct WitnessedAssetEffectInstructionFactsV2 {
+    /// Required semantic effect represented by the instruction.
+    pub step: WitnessedAssetPrepareStepV2,
+    /// Runtime escrow program targeted by the instruction.
+    pub program_id: Hex32,
+    /// Exact native or custom-token instruction account order.
+    pub ordered_account_ids: AccountIds,
+    /// Swap identifier encoded by the instruction.
+    pub swap_id: Hex32,
+}
+
+impl WitnessedAssetEffectInstructionFactsV2 {
+    /// Creates exact decoded witnessed-asset effect instruction facts.
+    pub const fn new(
+        step: WitnessedAssetPrepareStepV2,
+        program_id: Hex32,
+        ordered_account_ids: AccountIds,
+        swap_id: Hex32,
+    ) -> Self {
+        Self {
+            step,
+            program_id,
+            ordered_account_ids,
+            swap_id,
+        }
+    }
+}
+
+/// Historical custody state immediately after finalized initialization.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[must_use]
+pub enum WitnessedAssetInitializationCustodyFactsV2 {
+    /// Native initialization created exact zero-balance custody.
+    Native {
+        /// Exact historical native custody facts.
+        facts: NativeCustodyFacts,
+    },
+    /// Token initialization precedes permissionless custody-ATA creation.
+    CustomTokenAtaAbsent {
+        /// Exact custody ATA whose historical absence was observed.
+        expected_account_id: Hex32,
+    },
+}
+
+impl WitnessedAssetInitializationCustodyFactsV2 {
+    /// Wraps exact historical native custody facts.
+    pub const fn native(facts: NativeCustodyFacts) -> Self {
+        Self::Native { facts }
+    }
+
+    /// Records historical absence of the exact future custom-token custody ATA.
+    pub const fn custom_token_ata_absent(expected_account_id: Hex32) -> Self {
+        Self::CustomTokenAtaAbsent {
+            expected_account_id,
+        }
+    }
+}
+
+/// Complete finalized initialization evidence at its exact containing block.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct FinalizedWitnessedAssetInitializationFactsV2 {
+    /// Canonical transaction bytes, identity, signers, and position.
+    pub transaction: ObservedTransactionFacts,
+    /// Exact decoded initialization program, accounts, and swap identity.
+    pub instruction: WitnessedAssetEffectInstructionFactsV2,
+    /// Explicit identity and timestamp of the containing finalized block.
+    pub containing_block: FinalizedBlockIdentity,
+    /// Empty historical metadata at that exact block.
+    pub metadata: WitnessedEscrowMetadataFacts,
+    /// Native zero custody or exact historical token-ATA absence.
+    pub custody: WitnessedAssetInitializationCustodyFactsV2,
+}
+
+impl FinalizedWitnessedAssetInitializationFactsV2 {
+    /// Creates one complete finalized initialization fact bundle.
+    pub const fn new(
+        transaction: ObservedTransactionFacts,
+        instruction: WitnessedAssetEffectInstructionFactsV2,
+        containing_block: FinalizedBlockIdentity,
+        metadata: WitnessedEscrowMetadataFacts,
+        custody: WitnessedAssetInitializationCustodyFactsV2,
+    ) -> Self {
+        Self {
+            transaction,
+            instruction,
+            containing_block,
+            metadata,
+            custody,
+        }
+    }
+}
+
+/// Complete finalized funding evidence at its exact containing block.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct FinalizedWitnessedAssetFundingFactsV2 {
+    /// Canonical transaction bytes, identity, signers, and position.
+    pub transaction: ObservedTransactionFacts,
+    /// Exact decoded funding program, accounts, and swap identity.
+    pub instruction: WitnessedAssetEffectInstructionFactsV2,
+    /// Explicit identity and timestamp of the containing finalized block.
+    pub containing_block: FinalizedBlockIdentity,
+    /// Funded historical metadata at that exact block.
+    pub metadata: WitnessedEscrowMetadataFacts,
+    /// Exact funded native custody or custom-token holding.
+    pub custody: WitnessedAssetCustodyFactsV2,
+}
+
+impl FinalizedWitnessedAssetFundingFactsV2 {
+    /// Creates one complete finalized funding fact bundle.
+    pub const fn new(
+        transaction: ObservedTransactionFacts,
+        instruction: WitnessedAssetEffectInstructionFactsV2,
+        containing_block: FinalizedBlockIdentity,
+        metadata: WitnessedEscrowMetadataFacts,
+        custody: WitnessedAssetCustodyFactsV2,
+    ) -> Self {
+        Self {
+            transaction,
+            instruction,
+            containing_block,
+            metadata,
+            custody,
+        }
+    }
+}
+
+/// Requests conservative finalized classification of witnessed-asset initialization.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ClassifyFinalizedWitnessedAssetInitializationV2Request {
+    /// Version, isolation, correlation, and destination-role fields.
+    pub context: MessageContext,
+    /// Expected pinned LEZ v0.2 runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// Exact v2 native-or-token agreement terms.
+    pub terms: WitnessedLezAssetTermsV2,
+    /// Exact persisted transaction or terms-based peerless discovery.
+    pub target: FinalizedWitnessedAssetTransactionTargetV2,
+    /// Inclusive bounded range that must be entirely finalized and scanned.
+    pub window: DiscoveryWindow,
+}
+
+impl ClassifyFinalizedWitnessedAssetInitializationV2Request {
+    /// Creates one exact persisted-initialization classification request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedLezAssetTermsV2,
+        initialization: PreparedTransaction,
+        window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+            target: FinalizedWitnessedAssetTransactionTargetV2::exact(initialization),
+            window,
+        }
+    }
+
+    /// Creates one peerless terms-based initialization discovery request.
+    pub const fn discover_by_terms(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedLezAssetTermsV2,
+        window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+            target: FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {},
+            window,
+        }
+    }
+}
+
+/// Validated finalized classification of witnessed-asset initialization.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ClassifyFinalizedWitnessedAssetInitializationV2Result {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Exact terms validated against any found facts.
+    pub terms: WitnessedLezAssetTermsV2,
+    /// Echoed exact or terms-based classification target.
+    pub target: FinalizedWitnessedAssetTransactionTargetV2,
+    /// Exact presence, affirmative absence, uncertainty, or unavailable coverage.
+    pub outcome: FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetInitializationFactsV2>,
+}
+
+impl ClassifyFinalizedWitnessedAssetInitializationV2Result {
+    /// Creates and validates exact found initialization evidence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unstable coverage or any byte, ID, block, account, or state drift.
+    pub fn found(
+        context: MessageContext,
+        terms: WitnessedLezAssetTermsV2,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+        facts: FinalizedWitnessedAssetInitializationFactsV2,
+    ) -> Result<Self, ProtocolValueError> {
+        let result = Self {
+            context,
+            terms,
+            target,
+            outcome: FinalizedWitnessedAssetScanOutcomeV2::Found {
+                finalized_clock,
+                scanned_window,
+                facts: Box::new(facts),
+            },
+        };
+        validate_initialization_result(&result)?;
+        Ok(result)
+    }
+
+    /// Creates affirmative initialization absence after stable complete coverage.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a finalized clock that does not cover the entire window.
+    pub fn absent(
+        context: MessageContext,
+        terms: WitnessedLezAssetTermsV2,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+    ) -> Result<Self, ProtocolValueError> {
+        validate_scan_coverage(finalized_clock, scanned_window)?;
+        Ok(Self {
+            context,
+            terms,
+            target,
+            outcome: FinalizedWitnessedAssetScanOutcomeV2::Absent {
+                finalized_clock,
+                scanned_window,
+            },
+        })
+    }
+
+    /// Creates conservative uncertainty after stable finalized absence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a finalized clock that does not cover the entire window.
+    pub fn uncertain(
+        context: MessageContext,
+        terms: WitnessedLezAssetTermsV2,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+    ) -> Result<Self, ProtocolValueError> {
+        validate_scan_coverage(finalized_clock, scanned_window)?;
+        Ok(Self {
+            context,
+            terms,
+            target,
+            outcome: FinalizedWitnessedAssetScanOutcomeV2::Uncertain {
+                finalized_clock,
+                scanned_window,
+            },
+        })
+    }
+
+    /// Creates an explicit no-stable-coverage result without fake absence evidence.
+    pub const fn unavailable(
+        context: MessageContext,
+        terms: WitnessedLezAssetTermsV2,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        reason: FinalizedWitnessedAssetUnavailableReasonV2,
+    ) -> Self {
+        Self {
+            context,
+            terms,
+            target,
+            outcome: FinalizedWitnessedAssetScanOutcomeV2::Unavailable { reason },
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClassifyFinalizedWitnessedAssetInitializationV2ResultWire {
+    context: MessageContext,
+    terms: WitnessedLezAssetTermsV2,
+    target: FinalizedWitnessedAssetTransactionTargetV2,
+    outcome: FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetInitializationFactsV2>,
+}
+
+impl<'de> Deserialize<'de> for ClassifyFinalizedWitnessedAssetInitializationV2Result {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire =
+            ClassifyFinalizedWitnessedAssetInitializationV2ResultWire::deserialize(deserializer)?;
+        let result = Self {
+            context: wire.context,
+            terms: wire.terms,
+            target: wire.target,
+            outcome: wire.outcome,
+        };
+        validate_initialization_result(&result).map_err(serde::de::Error::custom)?;
+        Ok(result)
+    }
+}
+
+/// Requests conservative finalized classification of witnessed-asset funding.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ClassifyFinalizedWitnessedAssetFundingV2Request {
+    /// Version, isolation, correlation, and destination-role fields.
+    pub context: MessageContext,
+    /// Expected pinned LEZ v0.2 runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// Exact v2 native-or-token agreement terms.
+    pub terms: WitnessedLezAssetTermsV2,
+    /// Exact persisted transaction or terms-based peerless discovery.
+    pub target: FinalizedWitnessedAssetTransactionTargetV2,
+    /// Inclusive bounded range that must be entirely finalized and scanned.
+    pub window: DiscoveryWindow,
+}
+
+impl ClassifyFinalizedWitnessedAssetFundingV2Request {
+    /// Creates one exact persisted-funding classification request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedLezAssetTermsV2,
+        funding: PreparedTransaction,
+        window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+            target: FinalizedWitnessedAssetTransactionTargetV2::exact(funding),
+            window,
+        }
+    }
+
+    /// Creates one peerless terms-based funding discovery request.
+    pub const fn discover_by_terms(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedLezAssetTermsV2,
+        window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+            target: FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {},
+            window,
+        }
+    }
+}
+
+/// Validated finalized classification of witnessed-asset funding.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ClassifyFinalizedWitnessedAssetFundingV2Result {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Exact terms validated against any found facts.
+    pub terms: WitnessedLezAssetTermsV2,
+    /// Echoed exact or terms-based classification target.
+    pub target: FinalizedWitnessedAssetTransactionTargetV2,
+    /// Exact presence, affirmative absence, uncertainty, or unavailable coverage.
+    pub outcome: FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetFundingFactsV2>,
+}
+
+impl ClassifyFinalizedWitnessedAssetFundingV2Result {
+    /// Creates and validates exact found funding evidence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unstable coverage or any byte, ID, block, account, or state drift.
+    pub fn found(
+        context: MessageContext,
+        terms: WitnessedLezAssetTermsV2,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+        facts: FinalizedWitnessedAssetFundingFactsV2,
+    ) -> Result<Self, ProtocolValueError> {
+        let result = Self {
+            context,
+            terms,
+            target,
+            outcome: FinalizedWitnessedAssetScanOutcomeV2::Found {
+                finalized_clock,
+                scanned_window,
+                facts: Box::new(facts),
+            },
+        };
+        validate_funding_result(&result)?;
+        Ok(result)
+    }
+
+    /// Creates affirmative funding absence after stable complete coverage.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a finalized clock that does not cover the entire window.
+    pub fn absent(
+        context: MessageContext,
+        terms: WitnessedLezAssetTermsV2,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+    ) -> Result<Self, ProtocolValueError> {
+        validate_scan_coverage(finalized_clock, scanned_window)?;
+        Ok(Self {
+            context,
+            terms,
+            target,
+            outcome: FinalizedWitnessedAssetScanOutcomeV2::Absent {
+                finalized_clock,
+                scanned_window,
+            },
+        })
+    }
+
+    /// Creates conservative uncertainty after stable finalized absence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a finalized clock that does not cover the entire window.
+    pub fn uncertain(
+        context: MessageContext,
+        terms: WitnessedLezAssetTermsV2,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+    ) -> Result<Self, ProtocolValueError> {
+        validate_scan_coverage(finalized_clock, scanned_window)?;
+        Ok(Self {
+            context,
+            terms,
+            target,
+            outcome: FinalizedWitnessedAssetScanOutcomeV2::Uncertain {
+                finalized_clock,
+                scanned_window,
+            },
+        })
+    }
+
+    /// Creates an explicit no-stable-coverage result without fake absence evidence.
+    pub const fn unavailable(
+        context: MessageContext,
+        terms: WitnessedLezAssetTermsV2,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        reason: FinalizedWitnessedAssetUnavailableReasonV2,
+    ) -> Self {
+        Self {
+            context,
+            terms,
+            target,
+            outcome: FinalizedWitnessedAssetScanOutcomeV2::Unavailable { reason },
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClassifyFinalizedWitnessedAssetFundingV2ResultWire {
+    context: MessageContext,
+    terms: WitnessedLezAssetTermsV2,
+    target: FinalizedWitnessedAssetTransactionTargetV2,
+    outcome: FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetFundingFactsV2>,
+}
+
+impl<'de> Deserialize<'de> for ClassifyFinalizedWitnessedAssetFundingV2Result {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = ClassifyFinalizedWitnessedAssetFundingV2ResultWire::deserialize(deserializer)?;
+        let result = Self {
+            context: wire.context,
+            terms: wire.terms,
+            target: wire.target,
+            outcome: wire.outcome,
+        };
+        validate_funding_result(&result).map_err(serde::de::Error::custom)?;
+        Ok(result)
+    }
+}
+
+/// Requests conservative finalized classification of a witnessed-asset claim.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ClassifyFinalizedWitnessedAssetClaimV2Request {
+    /// Version, isolation, correlation, and destination-role fields.
+    pub context: MessageContext,
+    /// Expected pinned LEZ v0.2 runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// Exact v2 native-or-token agreement terms.
+    pub terms: WitnessedLezAssetTermsV2,
+    /// Exact immutable unsigned claim transcript.
+    pub claim: PreparedWitnessedClaim,
+    /// Exact persisted completed transaction or terms-based peerless discovery.
+    pub target: FinalizedWitnessedAssetTransactionTargetV2,
+    /// Inclusive bounded range that must be entirely finalized and scanned.
+    pub window: DiscoveryWindow,
+}
+
+impl ClassifyFinalizedWitnessedAssetClaimV2Request {
+    /// Creates one exact persisted-claim classification request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedLezAssetTermsV2,
+        claim: PreparedWitnessedClaim,
+        completed_claim: PreparedTransaction,
+        window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+            claim,
+            target: FinalizedWitnessedAssetTransactionTargetV2::exact(completed_claim),
+            window,
+        }
+    }
+
+    /// Creates one peerless terms-and-transcript claim discovery request.
+    pub const fn discover_by_terms(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedLezAssetTermsV2,
+        claim: PreparedWitnessedClaim,
+        window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+            claim,
+            target: FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {},
+            window,
+        }
+    }
+}
+
+/// Validated finalized presence classification of a witnessed-asset claim.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ClassifyFinalizedWitnessedAssetClaimV2Result {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Exact terms validated against any found facts.
+    pub terms: WitnessedLezAssetTermsV2,
+    /// Exact immutable unsigned claim transcript.
+    pub claim: PreparedWitnessedClaim,
+    /// Echoed exact or terms-based classification target.
+    pub target: FinalizedWitnessedAssetTransactionTargetV2,
+    /// Exact presence, affirmative absence, uncertainty, or unavailable coverage.
+    pub outcome: FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetClaimFactsV2>,
+}
+
+impl ClassifyFinalizedWitnessedAssetClaimV2Result {
+    /// Creates and validates exact found claim evidence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unstable coverage or any transcript, byte, ID, block, or state drift.
+    #[allow(clippy::too_many_arguments)]
+    pub fn found(
+        context: MessageContext,
+        terms: WitnessedLezAssetTermsV2,
+        claim: PreparedWitnessedClaim,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+        facts: FinalizedWitnessedAssetClaimFactsV2,
+    ) -> Result<Self, ProtocolValueError> {
+        let result = Self {
+            context,
+            terms,
+            claim,
+            target,
+            outcome: FinalizedWitnessedAssetScanOutcomeV2::Found {
+                finalized_clock,
+                scanned_window,
+                facts: Box::new(facts),
+            },
+        };
+        validate_claim_classification_result(&result)?;
+        Ok(result)
+    }
+
+    /// Creates affirmative claim absence after stable complete coverage.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a finalized clock that does not cover the entire window.
+    #[allow(clippy::too_many_arguments)]
+    pub fn absent(
+        context: MessageContext,
+        terms: WitnessedLezAssetTermsV2,
+        claim: PreparedWitnessedClaim,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+    ) -> Result<Self, ProtocolValueError> {
+        validate_scan_coverage(finalized_clock, scanned_window)?;
+        Ok(Self {
+            context,
+            terms,
+            claim,
+            target,
+            outcome: FinalizedWitnessedAssetScanOutcomeV2::Absent {
+                finalized_clock,
+                scanned_window,
+            },
+        })
+    }
+
+    /// Creates conservative uncertainty after stable finalized absence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a finalized clock that does not cover the entire window.
+    #[allow(clippy::too_many_arguments)]
+    pub fn uncertain(
+        context: MessageContext,
+        terms: WitnessedLezAssetTermsV2,
+        claim: PreparedWitnessedClaim,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+    ) -> Result<Self, ProtocolValueError> {
+        validate_scan_coverage(finalized_clock, scanned_window)?;
+        Ok(Self {
+            context,
+            terms,
+            claim,
+            target,
+            outcome: FinalizedWitnessedAssetScanOutcomeV2::Uncertain {
+                finalized_clock,
+                scanned_window,
+            },
+        })
+    }
+
+    /// Creates an explicit no-stable-coverage result without fake absence evidence.
+    pub const fn unavailable(
+        context: MessageContext,
+        terms: WitnessedLezAssetTermsV2,
+        claim: PreparedWitnessedClaim,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        reason: FinalizedWitnessedAssetUnavailableReasonV2,
+    ) -> Self {
+        Self {
+            context,
+            terms,
+            claim,
+            target,
+            outcome: FinalizedWitnessedAssetScanOutcomeV2::Unavailable { reason },
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClassifyFinalizedWitnessedAssetClaimV2ResultWire {
+    context: MessageContext,
+    terms: WitnessedLezAssetTermsV2,
+    claim: PreparedWitnessedClaim,
+    target: FinalizedWitnessedAssetTransactionTargetV2,
+    outcome: FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetClaimFactsV2>,
+}
+
+impl<'de> Deserialize<'de> for ClassifyFinalizedWitnessedAssetClaimV2Result {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = ClassifyFinalizedWitnessedAssetClaimV2ResultWire::deserialize(deserializer)?;
+        let result = Self {
+            context: wire.context,
+            terms: wire.terms,
+            claim: wire.claim,
+            target: wire.target,
+            outcome: wire.outcome,
+        };
+        validate_claim_classification_result(&result).map_err(serde::de::Error::custom)?;
+        Ok(result)
+    }
+}
+
+fn validate_initialization_result(
+    result: &ClassifyFinalizedWitnessedAssetInitializationV2Result,
+) -> Result<(), ProtocolValueError> {
+    match &result.outcome {
+        FinalizedWitnessedAssetScanOutcomeV2::Found {
+            finalized_clock,
+            scanned_window,
+            facts,
+        } => {
+            validate_scan_coverage(*finalized_clock, *scanned_window)?;
+            validate_finalized_placement(
+                &facts.transaction,
+                facts.containing_block,
+                *finalized_clock,
+                *scanned_window,
+            )?;
+            validate_exact_target(&result.target, &facts.transaction)?;
+            validate_initialization_state(&result.terms, facts)?;
+            validate_asset_effect_instruction(
+                &result.terms,
+                &facts.metadata,
+                &facts.instruction,
+                WitnessedAssetPrepareStepV2::InitializeWitnessed,
+            )?;
+            validate_depositor_signer(&result.terms, &facts.transaction)
+        }
+        FinalizedWitnessedAssetScanOutcomeV2::Absent {
+            finalized_clock,
+            scanned_window,
+        }
+        | FinalizedWitnessedAssetScanOutcomeV2::Uncertain {
+            finalized_clock,
+            scanned_window,
+        } => validate_scan_coverage(*finalized_clock, *scanned_window),
+        FinalizedWitnessedAssetScanOutcomeV2::Unavailable { .. } => Ok(()),
+    }
+}
+
+fn validate_funding_result(
+    result: &ClassifyFinalizedWitnessedAssetFundingV2Result,
+) -> Result<(), ProtocolValueError> {
+    match &result.outcome {
+        FinalizedWitnessedAssetScanOutcomeV2::Found {
+            finalized_clock,
+            scanned_window,
+            facts,
+        } => {
+            validate_scan_coverage(*finalized_clock, *scanned_window)?;
+            validate_finalized_placement(
+                &facts.transaction,
+                facts.containing_block,
+                *finalized_clock,
+                *scanned_window,
+            )?;
+            validate_exact_target(&result.target, &facts.transaction)?;
+            validate_asset_state(
+                &result.terms,
+                &facts.metadata,
+                &facts.custody,
+                Some(EscrowState::Funded),
+                Some(asset_amount(&result.terms)),
+            )?;
+            validate_asset_effect_instruction(
+                &result.terms,
+                &facts.metadata,
+                &facts.instruction,
+                WitnessedAssetPrepareStepV2::Fund,
+            )?;
+            validate_depositor_signer(&result.terms, &facts.transaction)
+        }
+        FinalizedWitnessedAssetScanOutcomeV2::Absent {
+            finalized_clock,
+            scanned_window,
+        }
+        | FinalizedWitnessedAssetScanOutcomeV2::Uncertain {
+            finalized_clock,
+            scanned_window,
+        } => validate_scan_coverage(*finalized_clock, *scanned_window),
+        FinalizedWitnessedAssetScanOutcomeV2::Unavailable { .. } => Ok(()),
+    }
+}
+
+fn validate_claim_classification_result(
+    result: &ClassifyFinalizedWitnessedAssetClaimV2Result,
+) -> Result<(), ProtocolValueError> {
+    match &result.outcome {
+        FinalizedWitnessedAssetScanOutcomeV2::Found {
+            finalized_clock,
+            scanned_window,
+            facts,
+        } => {
+            validate_scan_coverage(*finalized_clock, *scanned_window)?;
+            validate_finalized_placement(
+                &facts.transaction,
+                facts.containing_block,
+                *finalized_clock,
+                *scanned_window,
+            )?;
+            validate_exact_target(&result.target, &facts.transaction)?;
+            validate_asset_state(
+                &result.terms,
+                &facts.metadata,
+                &facts.custody,
+                Some(EscrowState::Claimed),
+                Some(NativeAmount::new(0)),
+            )?;
+            validate_claim_facts(&result.terms, &facts.instruction, &facts.metadata)?;
+            ensure(facts.instruction.claim == result.claim, "claim transcript")?;
+            validate_authority_signer(&result.terms, &facts.transaction)
+        }
+        FinalizedWitnessedAssetScanOutcomeV2::Absent {
+            finalized_clock,
+            scanned_window,
+        }
+        | FinalizedWitnessedAssetScanOutcomeV2::Uncertain {
+            finalized_clock,
+            scanned_window,
+        } => validate_scan_coverage(*finalized_clock, *scanned_window),
+        FinalizedWitnessedAssetScanOutcomeV2::Unavailable { .. } => Ok(()),
+    }
+}
+
+fn validate_scan_coverage(
+    finalized_clock: ChainClock,
+    scanned_window: DiscoveryWindow,
+) -> Result<(), ProtocolValueError> {
+    let end_height =
+        scanned_window.start_height() + u64::from(scanned_window.max_blocks().saturating_sub(1));
+    ensure(
+        finalized_clock.height >= end_height,
+        "finalized window coverage",
+    )
+}
+
+fn validate_finalized_placement(
+    transaction: &ObservedTransactionFacts,
+    containing_block: FinalizedBlockIdentity,
+    finalized_clock: ChainClock,
+    scanned_window: DiscoveryWindow,
+) -> Result<(), ProtocolValueError> {
+    let end_height =
+        scanned_window.start_height() + u64::from(scanned_window.max_blocks().saturating_sub(1));
+    ensure(transaction.is_public, "public transaction")?;
+    ensure(
+        transaction.position.height >= scanned_window.start_height()
+            && transaction.position.height <= end_height,
+        "transaction scan window",
+    )?;
+    ensure(
+        transaction.position.block_hash == containing_block.block_hash,
+        "containing block hash",
+    )?;
+    ensure(
+        transaction.position.height <= finalized_clock.height
+            && containing_block.timestamp_ms <= finalized_clock.timestamp_ms,
+        "finalized transaction placement",
+    )
+}
+
+fn validate_exact_target(
+    target: &FinalizedWitnessedAssetTransactionTargetV2,
+    transaction: &ObservedTransactionFacts,
+) -> Result<(), ProtocolValueError> {
+    if let FinalizedWitnessedAssetTransactionTargetV2::Exact {
+        transaction: expected,
+    } = target
+    {
+        ensure(
+            transaction.transaction_id == expected.transaction_id,
+            "exact transaction id",
+        )?;
+        ensure(
+            transaction.exact_bytes == expected.exact_bytes,
+            "exact transaction bytes",
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_initialization_state(
+    terms: &WitnessedLezAssetTermsV2,
+    facts: &FinalizedWitnessedAssetInitializationFactsV2,
+) -> Result<(), ProtocolValueError> {
+    match (terms.asset(), &facts.custody) {
+        (
+            WitnessedLezAssetV2::Native(_),
+            WitnessedAssetInitializationCustodyFactsV2::Native { facts: custody },
+        ) => validate_asset_state(
+            terms,
+            &facts.metadata,
+            &WitnessedAssetCustodyFactsV2::Native(custody.clone()),
+            Some(EscrowState::Empty),
+            Some(NativeAmount::new(0)),
+        ),
+        (
+            WitnessedLezAssetV2::CustomToken(token),
+            WitnessedAssetInitializationCustodyFactsV2::CustomTokenAtaAbsent {
+                expected_account_id,
+            },
+        ) => {
+            ensure(
+                *expected_account_id == token.custody_ata_account_id(),
+                "initial token custody ATA",
+            )?;
+            let expected = WitnessedAssetCustodyFactsV2::CustomToken(TokenHoldingFactsV2::new(
+                token.custody_ata_account_id(),
+                token.token_program_id(),
+                token.token_definition_account_id(),
+                0,
+            ));
+            validate_asset_state(
+                terms,
+                &facts.metadata,
+                &expected,
+                Some(EscrowState::Empty),
+                None,
+            )
+        }
+        _ => Err(ProtocolValueError::WitnessedAssetFactsMismatch(
+            "initial custody kind",
+        )),
+    }
+}
+
+fn validate_asset_effect_instruction(
+    terms: &WitnessedLezAssetTermsV2,
+    metadata: &WitnessedEscrowMetadataFacts,
+    instruction: &WitnessedAssetEffectInstructionFactsV2,
+    expected_step: WitnessedAssetPrepareStepV2,
+) -> Result<(), ProtocolValueError> {
+    ensure(instruction.step == expected_step, "asset effect step")?;
+    ensure(
+        instruction.program_id == metadata.owner_program_id,
+        "asset effect program",
+    )?;
+    ensure(
+        instruction.swap_id == metadata.swap_id,
+        "asset effect swap id",
+    )?;
+    let expected = match (terms.asset(), expected_step) {
+        (WitnessedLezAssetV2::Native(terms), WitnessedAssetPrepareStepV2::InitializeWitnessed) => {
+            vec![
+                metadata.account_id,
+                metadata.custody_account_id,
+                terms.depositor_account_id(),
+                terms.claimant_account_id(),
+                terms.aggregate_authority_account_id(),
+            ]
+        }
+        (WitnessedLezAssetV2::Native(terms), WitnessedAssetPrepareStepV2::Fund) => vec![
+            metadata.account_id,
+            metadata.custody_account_id,
+            terms.depositor_account_id(),
+        ],
+        (
+            WitnessedLezAssetV2::CustomToken(terms),
+            WitnessedAssetPrepareStepV2::InitializeWitnessed,
+        ) => vec![
+            metadata.account_id,
+            terms.depositor_owner_account_id(),
+            terms.claimant_owner_account_id(),
+            terms.token_definition_account_id(),
+            terms.aggregate_authority_account_id(),
+        ],
+        (
+            WitnessedLezAssetV2::CustomToken(terms),
+            WitnessedAssetPrepareStepV2::CreateCustodyAta,
+        ) => vec![
+            metadata.account_id,
+            terms.token_definition_account_id(),
+            terms.custody_ata_account_id(),
+        ],
+        (WitnessedLezAssetV2::CustomToken(terms), WitnessedAssetPrepareStepV2::Fund) => vec![
+            metadata.account_id,
+            terms.depositor_owner_account_id(),
+            terms.depositor_ata_account_id(),
+            terms.custody_ata_account_id(),
+        ],
+        _ => return Err(ProtocolValueError::InvalidWitnessedAssetPrepareEffects),
+    };
+    ensure(
+        instruction.ordered_account_ids.as_slice() == expected,
+        "asset effect account order",
+    )
+}
+
+fn validate_depositor_signer(
+    terms: &WitnessedLezAssetTermsV2,
+    transaction: &ObservedTransactionFacts,
+) -> Result<(), ProtocolValueError> {
+    let expected = match terms.asset() {
+        WitnessedLezAssetV2::Native(terms) => terms.depositor_account_id(),
+        WitnessedLezAssetV2::CustomToken(terms) => terms.depositor_owner_account_id(),
+    };
+    ensure(
+        transaction.signer_account_ids.as_slice() == [expected],
+        "depositor signer",
+    )
+}
+
+fn validate_authority_signer(
+    terms: &WitnessedLezAssetTermsV2,
+    transaction: &ObservedTransactionFacts,
+) -> Result<(), ProtocolValueError> {
+    let expected = match terms.asset() {
+        WitnessedLezAssetV2::Native(terms) => terms.aggregate_authority_account_id(),
+        WitnessedLezAssetV2::CustomToken(terms) => terms.aggregate_authority_account_id(),
+    };
+    ensure(
+        transaction.signer_account_ids.as_slice() == [expected],
+        "aggregate authority signer",
+    )
+}
+
+/// Complete finalized token custody-ATA creation evidence at its containing block.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct FinalizedWitnessedAssetCustodyCreationFactsV2 {
+    /// Canonical transaction bytes, identity, signers, and position.
+    pub transaction: ObservedTransactionFacts,
+    /// Exact decoded custody-creation program, accounts, and swap identity.
+    pub instruction: WitnessedAssetEffectInstructionFactsV2,
+    /// Explicit identity and timestamp of the containing finalized block.
+    pub containing_block: FinalizedBlockIdentity,
+    /// Empty token metadata at that exact block.
+    pub metadata: WitnessedEscrowMetadataFacts,
+    /// Exact zero-balance custody ATA created by the effect.
+    pub custody: TokenHoldingFactsV2,
+}
+
+impl FinalizedWitnessedAssetCustodyCreationFactsV2 {
+    /// Creates one complete finalized custody-creation fact bundle.
+    pub const fn new(
+        transaction: ObservedTransactionFacts,
+        instruction: WitnessedAssetEffectInstructionFactsV2,
+        containing_block: FinalizedBlockIdentity,
+        metadata: WitnessedEscrowMetadataFacts,
+        custody: TokenHoldingFactsV2,
+    ) -> Self {
+        Self {
+            transaction,
+            instruction,
+            containing_block,
+            metadata,
+            custody,
+        }
+    }
+}
+
+/// Requests token-only finalized classification of custody-ATA creation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ClassifyFinalizedWitnessedAssetCustodyCreationV2Request {
+    /// Version, isolation, correlation, and destination-role fields.
+    pub context: MessageContext,
+    /// Expected pinned LEZ v0.2 runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// Exact v2 custom-token agreement terms; native is rejected.
+    pub terms: WitnessedLezAssetTermsV2,
+    /// Exact persisted transaction or terms-based peerless discovery.
+    pub target: FinalizedWitnessedAssetTransactionTargetV2,
+    /// Inclusive bounded range that must be entirely finalized and scanned.
+    pub window: DiscoveryWindow,
+}
+
+impl ClassifyFinalizedWitnessedAssetCustodyCreationV2Request {
+    /// Creates one exact persisted custody-creation classification request.
+    ///
+    /// # Errors
+    ///
+    /// Rejects native terms because native initialization creates custody itself.
+    pub fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedLezAssetTermsV2,
+        custody_creation: PreparedTransaction,
+        window: DiscoveryWindow,
+    ) -> Result<Self, ProtocolValueError> {
+        ensure_custom_token_terms(&terms)?;
+        Ok(Self {
+            context,
+            runtime,
+            terms,
+            target: FinalizedWitnessedAssetTransactionTargetV2::exact(custody_creation),
+            window,
+        })
+    }
+
+    /// Creates one peerless token custody-creation discovery request.
+    ///
+    /// # Errors
+    ///
+    /// Rejects native terms because native has no separate custody-ATA effect.
+    pub fn discover_by_terms(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: WitnessedLezAssetTermsV2,
+        window: DiscoveryWindow,
+    ) -> Result<Self, ProtocolValueError> {
+        ensure_custom_token_terms(&terms)?;
+        Ok(Self {
+            context,
+            runtime,
+            terms,
+            target: FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {},
+            window,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClassifyFinalizedWitnessedAssetCustodyCreationV2RequestWire {
+    context: MessageContext,
+    runtime: RuntimeDescriptor,
+    terms: WitnessedLezAssetTermsV2,
+    target: FinalizedWitnessedAssetTransactionTargetV2,
+    window: DiscoveryWindow,
+}
+
+impl<'de> Deserialize<'de> for ClassifyFinalizedWitnessedAssetCustodyCreationV2Request {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire =
+            ClassifyFinalizedWitnessedAssetCustodyCreationV2RequestWire::deserialize(deserializer)?;
+        ensure_custom_token_terms(&wire.terms).map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            context: wire.context,
+            runtime: wire.runtime,
+            terms: wire.terms,
+            target: wire.target,
+            window: wire.window,
+        })
+    }
+}
+
+/// Validated token-only finalized classification of custody-ATA creation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct ClassifyFinalizedWitnessedAssetCustodyCreationV2Result {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Exact custom-token terms validated against any found facts.
+    pub terms: WitnessedLezAssetTermsV2,
+    /// Echoed exact or terms-based classification target.
+    pub target: FinalizedWitnessedAssetTransactionTargetV2,
+    /// Exact presence, affirmative absence, uncertainty, or unavailable coverage.
+    pub outcome:
+        FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetCustodyCreationFactsV2>,
+}
+
+impl ClassifyFinalizedWitnessedAssetCustodyCreationV2Result {
+    /// Creates and validates exact found custody-creation evidence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects native terms or any byte, ID, block, definition, ATA, or order drift.
+    pub fn found(
+        context: MessageContext,
+        terms: WitnessedLezAssetTermsV2,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+        facts: FinalizedWitnessedAssetCustodyCreationFactsV2,
+    ) -> Result<Self, ProtocolValueError> {
+        let result = Self {
+            context,
+            terms,
+            target,
+            outcome: FinalizedWitnessedAssetScanOutcomeV2::Found {
+                finalized_clock,
+                scanned_window,
+                facts: Box::new(facts),
+            },
+        };
+        validate_custody_creation_result(&result)?;
+        Ok(result)
+    }
+
+    /// Creates affirmative custody-creation absence after stable complete coverage.
+    ///
+    /// # Errors
+    ///
+    /// Rejects native terms or an incompletely covered window.
+    pub fn absent(
+        context: MessageContext,
+        terms: WitnessedLezAssetTermsV2,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+    ) -> Result<Self, ProtocolValueError> {
+        ensure_custom_token_terms(&terms)?;
+        validate_scan_coverage(finalized_clock, scanned_window)?;
+        Ok(Self {
+            context,
+            terms,
+            target,
+            outcome: FinalizedWitnessedAssetScanOutcomeV2::Absent {
+                finalized_clock,
+                scanned_window,
+            },
+        })
+    }
+
+    /// Creates conservative uncertainty after stable finalized absence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects native terms or an incompletely covered window.
+    pub fn uncertain(
+        context: MessageContext,
+        terms: WitnessedLezAssetTermsV2,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+    ) -> Result<Self, ProtocolValueError> {
+        ensure_custom_token_terms(&terms)?;
+        validate_scan_coverage(finalized_clock, scanned_window)?;
+        Ok(Self {
+            context,
+            terms,
+            target,
+            outcome: FinalizedWitnessedAssetScanOutcomeV2::Uncertain {
+                finalized_clock,
+                scanned_window,
+            },
+        })
+    }
+
+    /// Creates explicit unavailable token custody-creation coverage.
+    ///
+    /// # Errors
+    ///
+    /// Rejects native terms because they have no separate custody-creation effect.
+    pub fn unavailable(
+        context: MessageContext,
+        terms: WitnessedLezAssetTermsV2,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        reason: FinalizedWitnessedAssetUnavailableReasonV2,
+    ) -> Result<Self, ProtocolValueError> {
+        ensure_custom_token_terms(&terms)?;
+        Ok(Self {
+            context,
+            terms,
+            target,
+            outcome: FinalizedWitnessedAssetScanOutcomeV2::Unavailable { reason },
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClassifyFinalizedWitnessedAssetCustodyCreationV2ResultWire {
+    context: MessageContext,
+    terms: WitnessedLezAssetTermsV2,
+    target: FinalizedWitnessedAssetTransactionTargetV2,
+    outcome: FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetCustodyCreationFactsV2>,
+}
+
+impl<'de> Deserialize<'de> for ClassifyFinalizedWitnessedAssetCustodyCreationV2Result {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire =
+            ClassifyFinalizedWitnessedAssetCustodyCreationV2ResultWire::deserialize(deserializer)?;
+        let result = Self {
+            context: wire.context,
+            terms: wire.terms,
+            target: wire.target,
+            outcome: wire.outcome,
+        };
+        validate_custody_creation_result(&result).map_err(serde::de::Error::custom)?;
+        Ok(result)
+    }
+}
+
+fn ensure_custom_token_terms(terms: &WitnessedLezAssetTermsV2) -> Result<(), ProtocolValueError> {
+    ensure(
+        matches!(terms.asset(), WitnessedLezAssetV2::CustomToken(_)),
+        "custom-token-only effect",
+    )
+}
+
+fn validate_custody_creation_result(
+    result: &ClassifyFinalizedWitnessedAssetCustodyCreationV2Result,
+) -> Result<(), ProtocolValueError> {
+    ensure_custom_token_terms(&result.terms)?;
+    match &result.outcome {
+        FinalizedWitnessedAssetScanOutcomeV2::Found {
+            finalized_clock,
+            scanned_window,
+            facts,
+        } => {
+            validate_scan_coverage(*finalized_clock, *scanned_window)?;
+            validate_finalized_placement(
+                &facts.transaction,
+                facts.containing_block,
+                *finalized_clock,
+                *scanned_window,
+            )?;
+            validate_exact_target(&result.target, &facts.transaction)?;
+            let custody = WitnessedAssetCustodyFactsV2::CustomToken(facts.custody.clone());
+            validate_asset_state(
+                &result.terms,
+                &facts.metadata,
+                &custody,
+                Some(EscrowState::Empty),
+                Some(NativeAmount::new(0)),
+            )?;
+            validate_asset_effect_instruction(
+                &result.terms,
+                &facts.metadata,
+                &facts.instruction,
+                WitnessedAssetPrepareStepV2::CreateCustodyAta,
+            )?;
+            validate_depositor_signer(&result.terms, &facts.transaction)
+        }
+        FinalizedWitnessedAssetScanOutcomeV2::Absent {
+            finalized_clock,
+            scanned_window,
+        }
+        | FinalizedWitnessedAssetScanOutcomeV2::Uncertain {
+            finalized_clock,
+            scanned_window,
+        } => validate_scan_coverage(*finalized_clock, *scanned_window),
+        FinalizedWitnessedAssetScanOutcomeV2::Unavailable { .. } => Ok(()),
+    }
+}

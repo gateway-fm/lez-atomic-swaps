@@ -4,8 +4,8 @@ Status: Accepted at the checked-guest component boundary. Pushed commit
 `66d5e26cd35c6282c0cd420533f70e6ea3e506c9` adds the implementation and
 focused evidence. The checked manifest, public IDL, deployer assembly, verifier,
 and active M3 runner pins now share the new guest identity. The additive strict
-v2 transaction-message boundary is also implemented. Finalized classifiers,
-sidecar/SDK composition, and actual-node custom-token evidence remain open.
+v2 transaction and finalized-classifier boundaries are also implemented.
+Sidecar/SDK composition and actual-node custom-token evidence remain open.
 
 ## Context
 
@@ -202,15 +202,24 @@ flowchart LR
     Wire --> Refund["Permissionless refund lifecycle"]
     Client["Bridge client integration open"] -.-> Wire
     Sidecar["Official sidecar integration open"] -.-> Wire
-    Finality["Finalized funding and presence classifiers open"] -.-> Current
+    Finality["Finalized four-effect classifiers"] --> Wire
 ```
 
-The current-state escrow observation cannot certify finalized funding or an
-exact absent-versus-unknown submission outcome. Finalized asset initialization,
-funding, claim-presence, and recovery classifiers therefore remain required
-before actor-owned persist-before-send and restart/no-resubmission claims.
-Client, sidecar, adapter, SDK composition, countersigned token-field mapping,
-and role-owned actual-node execution also remain open.
+The current-state escrow observation alone cannot certify finalized funding or
+an exact absent-versus-unknown submission outcome. Four additional v2 methods
+therefore classify initialization, token-only permissionless custody creation,
+funding, and claim. Each uses exact prepared bytes and ID or terms discovery,
+stable finalized window coverage, containing-block identity, instruction
+accounts, metadata, and custody. The nonoverlapping `Found`, `Absent`,
+`Uncertain`, and `Unavailable` outcomes prevent a moving tip, incomplete
+history, unavailable finality, conflict, or possible pending transaction from
+becoming send authority. Native initialization, funding, and claim parity plus
+two custom definitions pass; custody creation rejects native terms.
+
+Client, sidecar, adapter, SDK composition, journal mapping, and role-owned
+actual-node execution remain open. In particular, protocol types do not prove
+that the official node can provide the required complete scans until the
+sidecar implements and exercises them.
 
 This ADR does not certify an actual-node custom-token swap in either trade
 direction, exact composed balances/effects, restart/no-resubmission, public
