@@ -22,7 +22,9 @@ enum CliError {
 impl Display for CliError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::Usage => "expected exactly one canonical Base58 LEZ account ID",
+            Self::Usage => {
+                "expected one canonical Base58 account ID or --from-hex plus one 32-byte hex ID"
+            }
             Self::NonCanonicalAccountId => "account ID is not canonical 32-byte Base58",
             Self::ZeroAccountId => "the all-zero account ID is forbidden",
             Self::Serialization => "could not serialize public result",
@@ -40,37 +42,57 @@ struct PublicAccountEncoding {
     account_id_hex: String,
 }
 
-fn parse_argument(mut arguments: impl Iterator<Item = OsString>) -> Result<String, CliError> {
-    let value = arguments.next().ok_or(CliError::Usage)?;
+fn parse_arguments(mut arguments: impl Iterator<Item = OsString>) -> Result<AccountId, CliError> {
+    let first = arguments.next().ok_or(CliError::Usage)?;
+    let first = first
+        .into_string()
+        .map_err(|_| CliError::NonCanonicalAccountId)?;
+    if first == "--from-hex" {
+        let encoded = arguments.next().ok_or(CliError::Usage)?;
+        if arguments.next().is_some() {
+            return Err(CliError::Usage);
+        }
+        let encoded = encoded
+            .into_string()
+            .map_err(|_| CliError::NonCanonicalAccountId)?;
+        if encoded.len() != 64
+            || !encoded
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(CliError::NonCanonicalAccountId);
+        }
+        let mut value = [0_u8; 32];
+        hex::decode_to_slice(&encoded, &mut value).map_err(|_| CliError::NonCanonicalAccountId)?;
+        return Ok(AccountId::new(value));
+    }
     if arguments.next().is_some() {
         return Err(CliError::Usage);
     }
-    value
-        .into_string()
-        .map_err(|_| CliError::NonCanonicalAccountId)
-}
-
-fn encode_account(input: &str) -> Result<PublicAccountEncoding, CliError> {
-    let account = input
+    let account = first
         .parse::<AccountId>()
         .map_err(|_| CliError::NonCanonicalAccountId)?;
-    if account.to_string() != input {
+    if account.to_string() != first {
         return Err(CliError::NonCanonicalAccountId);
     }
+    Ok(account)
+}
+
+fn encode_account(account: AccountId) -> Result<PublicAccountEncoding, CliError> {
     if account.value() == &[0; 32] {
         return Err(CliError::ZeroAccountId);
     }
     Ok(PublicAccountEncoding {
         schema: SCHEMA,
         version: VERSION,
-        account_id_base58: input.to_owned(),
+        account_id_base58: account.to_string(),
         account_id_hex: hex::encode(account.value()),
     })
 }
 
 fn execute(arguments: impl IntoIterator<Item = OsString>) -> Result<String, CliError> {
-    let input = parse_argument(arguments.into_iter())?;
-    serde_json::to_string(&encode_account(&input)?).map_err(|_| CliError::Serialization)
+    let account = parse_arguments(arguments.into_iter())?;
+    serde_json::to_string(&encode_account(account)?).map_err(|_| CliError::Serialization)
 }
 
 fn main() -> ExitCode {
@@ -102,6 +124,13 @@ mod tests {
                 "01".repeat(32),
             )
         );
+        assert_eq!(
+            execute([
+                OsString::from("--from-hex"),
+                OsString::from("01".repeat(32))
+            ]),
+            Ok(output),
+        );
     }
 
     #[test]
@@ -119,6 +148,10 @@ mod tests {
         assert_eq!(
             execute([OsString::from("one"), OsString::from("two")]),
             Err(CliError::Usage)
+        );
+        assert_eq!(
+            execute([OsString::from("--from-hex"), OsString::from("AA")]),
+            Err(CliError::NonCanonicalAccountId)
         );
         #[cfg(unix)]
         {
