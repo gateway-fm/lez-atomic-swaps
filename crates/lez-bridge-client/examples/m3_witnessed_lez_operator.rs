@@ -18,7 +18,8 @@ use lez_bridge_client::{
 use lez_bridge_protocol::{
     CompleteWitnessedClaimRequest, DescribeRuntimeRequest, ErrorCode,
     ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedFundingRequest,
-    ObserveWitnessedEscrowRequest, Participant, PrepareWitnessedClaimRequest,
+    ObserveWitnessedEscrowRequest, Participant, PrepareWitnessedAssetClaimV2Request,
+    PrepareWitnessedAssetEscrowV2Request, PrepareWitnessedClaimRequest,
     PrepareWitnessedEscrowRequest, RunId, RuntimeDescriptor, SubmitTransactionRequest,
 };
 use serde::{Serialize, de::DeserializeOwned};
@@ -28,16 +29,18 @@ const REQUEST_TIMEOUT: Duration = Duration::from_mins(1);
 const MAX_RUNTIME_FILE_BYTES: usize = 16 * 1024;
 const MAX_CAPABILITY_FILE_BYTES: usize = 130;
 const MAX_CAPABILITY_FILE_BYTES_U64: u64 = 130;
-const USAGE: &str = "usage: m3_witnessed_lez_operator <describe-runtime|prepare-witnessed-escrow|observe-witnessed-escrow|observe-finalized-witnessed-funding|submit-transaction|prepare-witnessed-claim|complete-witnessed-claim|observe-finalized-witnessed-claim> --endpoint <http://loopback:port/> --run-id <id> --sidecar-role <maker|taker> --capability-file <private-file> --runtime-file <json-file> --request-file <json-file>";
+const USAGE: &str = "usage: m3_witnessed_lez_operator <describe-runtime|prepare-witnessed-escrow|prepare-witnessed-asset-escrow-v2|observe-witnessed-escrow|observe-finalized-witnessed-funding|submit-transaction|prepare-witnessed-claim|prepare-witnessed-asset-claim-v2|complete-witnessed-claim|observe-finalized-witnessed-claim> --endpoint <http://loopback:port/> --run-id <id> --sidecar-role <maker|taker> --capability-file <private-file> --runtime-file <json-file> --request-file <json-file>";
 
 #[derive(Clone, Copy)]
 enum Command {
     DescribeRuntime,
     PrepareWitnessedEscrow,
+    PrepareWitnessedAssetEscrowV2,
     ObserveWitnessedEscrow,
     ObserveFinalizedWitnessedFunding,
     SubmitTransaction,
     PrepareWitnessedClaim,
+    PrepareWitnessedAssetClaimV2,
     CompleteWitnessedClaim,
     ObserveFinalizedWitnessedClaim,
 }
@@ -47,10 +50,12 @@ impl Command {
         match value {
             "describe-runtime" => Ok(Self::DescribeRuntime),
             "prepare-witnessed-escrow" => Ok(Self::PrepareWitnessedEscrow),
+            "prepare-witnessed-asset-escrow-v2" => Ok(Self::PrepareWitnessedAssetEscrowV2),
             "observe-witnessed-escrow" => Ok(Self::ObserveWitnessedEscrow),
             "observe-finalized-witnessed-funding" => Ok(Self::ObserveFinalizedWitnessedFunding),
             "submit-transaction" => Ok(Self::SubmitTransaction),
             "prepare-witnessed-claim" => Ok(Self::PrepareWitnessedClaim),
+            "prepare-witnessed-asset-claim-v2" => Ok(Self::PrepareWitnessedAssetClaimV2),
             "complete-witnessed-claim" => Ok(Self::CompleteWitnessedClaim),
             "observe-finalized-witnessed-claim" => Ok(Self::ObserveFinalizedWitnessedClaim),
             _ => Err(CliError::InvalidArguments),
@@ -162,6 +167,9 @@ async fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), CliErr
                 .map_err(|_| CliError::BridgeOperationFailed)?;
             print_result(&result)
         }
+        Command::PrepareWitnessedAssetEscrowV2 => {
+            prepare_witnessed_asset_escrow_v2(&client, &cli.request_file).await
+        }
         Command::ObserveWitnessedEscrow => {
             let request = read_request::<ObserveWitnessedEscrowRequest>(&cli.request_file)?;
             let result = client
@@ -195,6 +203,9 @@ async fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), CliErr
                 .map_err(|_| CliError::BridgeOperationFailed)?;
             print_result(&result)
         }
+        Command::PrepareWitnessedAssetClaimV2 => {
+            prepare_witnessed_asset_claim_v2(&client, &cli.request_file).await
+        }
         Command::CompleteWitnessedClaim => {
             let request = read_request::<CompleteWitnessedClaimRequest>(&cli.request_file)?;
             let result = client
@@ -212,6 +223,30 @@ async fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), CliErr
             print_result(&result)
         }
     }
+}
+
+async fn prepare_witnessed_asset_escrow_v2(
+    client: &BridgeClient,
+    request_file: &Path,
+) -> Result<(), CliError> {
+    let request = read_request::<PrepareWitnessedAssetEscrowV2Request>(request_file)?;
+    let result = client
+        .prepare_witnessed_asset_escrow_v2(request)
+        .await
+        .map_err(|_| CliError::BridgeOperationFailed)?;
+    print_result(&result)
+}
+
+async fn prepare_witnessed_asset_claim_v2(
+    client: &BridgeClient,
+    request_file: &Path,
+) -> Result<(), CliError> {
+    let request = read_request::<PrepareWitnessedAssetClaimV2Request>(request_file)?;
+    let result = client
+        .prepare_witnessed_asset_claim_v2(request)
+        .await
+        .map_err(|_| CliError::BridgeOperationFailed)?;
+    print_result(&result)
 }
 
 fn map_finalized_funding_observation_error(error: BridgeClientError) -> CliError {
@@ -454,6 +489,15 @@ mod tests {
         let mut finalized_funding = valid.clone();
         finalized_funding[1] = OsString::from("observe-finalized-witnessed-funding");
         parse_arguments(finalized_funding).expect("finalized funding command");
+
+        for command in [
+            "prepare-witnessed-asset-escrow-v2",
+            "prepare-witnessed-asset-claim-v2",
+        ] {
+            let mut asset = valid.clone();
+            asset[1] = OsString::from(command);
+            parse_arguments(asset).expect("asset-v2 preparation command");
+        }
 
         let mut trailing = valid.clone();
         trailing.push(OsString::from("unexpected"));
