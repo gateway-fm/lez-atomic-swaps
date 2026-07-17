@@ -2,8 +2,8 @@
 //!
 //! This module performs no node, discovery, negotiation, persistence, claim,
 //! or refund I/O. It validates exact lock and revealing-claim evidence, then
-//! deterministically constructs the material-consuming follow-up claim. The
-//! still-unsupported recovery selector remains an explicit typed gap.
+//! deterministically constructs the material-consuming follow-up claim and
+//! projects exact signed refunds from stable canonical timeout evidence.
 
 use bitcoin::consensus::{deserialize, serialize};
 use bitcoin::hashes::Hash as _;
@@ -19,8 +19,9 @@ use zeroize::Zeroizing;
 
 use crate::{
     AdaptorSessionError, BtcAdaptorSessionDomain, BtcAgreementRecordV1, BtcAgreementV1,
-    BtcAgreementV1Error, BtcChainPolicyV1, CooperativeKeyPathSpendError, adapt_presignature,
-    extract_adaptor_secret, verify_adaptor_presignature, verify_final_signature,
+    BtcAgreementV1Error, BtcChainPolicyV1, CooperativeKeyPathSpendError,
+    RefundScriptPathSpendError, adapt_presignature, extract_adaptor_secret,
+    verify_adaptor_presignature, verify_final_signature,
 };
 
 const BITCOIN_FUNDING_STEP: &str = "bitcoin.funding";
@@ -28,6 +29,8 @@ const LEZ_INITIALIZE_STEP: &str = "lez.initialize";
 const LEZ_FUND_STEP: &str = "lez.fund";
 const BITCOIN_CLAIM_STEP: &str = "bitcoin.claim";
 const LEZ_CLAIM_STEP: &str = "lez.claim";
+const BITCOIN_REFUND_STEP: &str = "bitcoin.refund";
+const LEZ_REFUND_STEP: &str = "lez.refund";
 const SCHNORR_SIGNATURE_BYTES: usize = 64;
 
 /// Exact signed Bitcoin funding effect supplied before activation.
@@ -293,6 +296,154 @@ impl BtcPreparedClaimEffectsV1 {
     }
 }
 
+/// Agreement-bound exact signed Bitcoin script-path refund.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct PreparedBitcoinRefundV1 {
+    agreement_commitment: [u8; 32],
+    signature: [u8; SCHNORR_SIGNATURE_BYTES],
+    transaction_id: Txid,
+    plan: ExactPublicEffectPlanV1,
+}
+
+impl PreparedBitcoinRefundV1 {
+    /// Finalizes the agreement-reconstructed BIP-342 refund with the funder's
+    /// signature and captures the exact canonical transaction.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an invalid signature or exact-effect construction failure.
+    pub fn new(
+        agreement: &BtcAgreementV1,
+        signature: [u8; SCHNORR_SIGNATURE_BYTES],
+    ) -> Result<Self, BtcSdkError> {
+        let transaction = agreement
+            .bitcoin_refund()
+            .clone()
+            .finalize(signature)
+            .map_err(BtcSdkError::InvalidBitcoinRefund)?;
+        let transaction_id = transaction.compute_txid();
+        let plan = ExactPublicEffectPlanV1::new(vec![PublicEffectStepV1::new(
+            PublicEffectStepId::new(BITCOIN_REFUND_STEP)?,
+            ExpectedPublicEffectId::new(transaction_id.to_string())?,
+            ExactPublicEffectBytes::new(serialize(&transaction))?,
+        )])?;
+        Ok(Self {
+            agreement_commitment: *agreement.agreement_commitment(),
+            signature,
+            transaction_id,
+            plan,
+        })
+    }
+
+    /// Canonical signed refund transaction ID.
+    #[must_use]
+    pub const fn transaction_id(&self) -> Txid {
+        self.transaction_id
+    }
+
+    /// Exact immutable signed refund plan.
+    pub const fn plan(&self) -> &ExactPublicEffectPlanV1 {
+        &self.plan
+    }
+
+    fn validate(&self, agreement: &BtcAgreementV1) -> Result<(), BtcSdkError> {
+        if self.agreement_commitment != *agreement.agreement_commitment() {
+            return Err(BtcSdkError::RecoveryPreparationAgreementMismatch);
+        }
+        let reconstructed = Self::new(agreement, self.signature)?;
+        if reconstructed.transaction_id != self.transaction_id || reconstructed.plan != self.plan {
+            return Err(BtcSdkError::BitcoinRefundPlanMismatch);
+        }
+        Ok(())
+    }
+}
+
+/// Agreement-bound exact signed LEZ refund effect supplied by the LEZ adapter.
+///
+/// The BTC SDK does not reinterpret LEZ transaction encoding. It preserves the
+/// adapter-produced signed envelope byte-for-byte and binds it to the validated
+/// agreement before any first lock can be constructed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct PreparedLezRefundV1 {
+    agreement_commitment: [u8; 32],
+    plan: ExactPublicEffectPlanV1,
+}
+
+impl PreparedLezRefundV1 {
+    /// Captures one bounded exact signed LEZ refund effect.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an invalid public ID or empty/oversized exact bytes.
+    pub fn new(
+        agreement: &BtcAgreementV1,
+        expected_public_id: impl Into<Box<str>>,
+        exact_signed_refund: impl Into<Box<[u8]>>,
+    ) -> Result<Self, BtcSdkError> {
+        let plan = ExactPublicEffectPlanV1::new(vec![PublicEffectStepV1::new(
+            PublicEffectStepId::new(LEZ_REFUND_STEP)?,
+            ExpectedPublicEffectId::new(expected_public_id)?,
+            ExactPublicEffectBytes::new(exact_signed_refund)?,
+        )])?;
+        Ok(Self {
+            agreement_commitment: *agreement.agreement_commitment(),
+            plan,
+        })
+    }
+
+    /// Exact immutable signed LEZ refund plan.
+    pub const fn plan(&self) -> &ExactPublicEffectPlanV1 {
+        &self.plan
+    }
+
+    fn validate(&self, agreement: &BtcAgreementV1) -> Result<(), BtcSdkError> {
+        if self.agreement_commitment != *agreement.agreement_commitment() {
+            return Err(BtcSdkError::RecoveryPreparationAgreementMismatch);
+        }
+        Ok(())
+    }
+}
+
+/// Complete agreement-bound signed recovery effects required before locking.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct BtcPreparedRecoveryEffectsV1 {
+    bitcoin: PreparedBitcoinRefundV1,
+    lez: PreparedLezRefundV1,
+}
+
+impl BtcPreparedRecoveryEffectsV1 {
+    /// Combines both already signed refund effects.
+    pub const fn new(bitcoin: PreparedBitcoinRefundV1, lez: PreparedLezRefundV1) -> Self {
+        Self { bitcoin, lez }
+    }
+
+    /// Exact signed Bitcoin refund.
+    pub const fn bitcoin(&self) -> &PreparedBitcoinRefundV1 {
+        &self.bitcoin
+    }
+
+    /// Exact signed LEZ refund.
+    pub const fn lez(&self) -> &PreparedLezRefundV1 {
+        &self.lez
+    }
+
+    fn plan_for_chain(&self, chain: Chain) -> &ExactPublicEffectPlanV1 {
+        match chain {
+            Chain::Bitcoin => self.bitcoin.plan(),
+            Chain::Lez => self.lez.plan(),
+            Chain::Monero | Chain::Zcash => unreachable!("validated BTC agreement"),
+        }
+    }
+
+    fn validate(&self, agreement: &BtcAgreementV1) -> Result<(), BtcSdkError> {
+        self.bitcoin.validate(agreement)?;
+        self.lez.validate(agreement)
+    }
+}
+
 /// Untrusted terms consumed by the deterministic common lifecycle contract.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[must_use]
@@ -300,6 +451,7 @@ pub struct BtcProtocolTermsV1 {
     agreement: BtcAgreementRecordV1,
     lock_effects: BtcPreparedLockEffectsV1,
     claim_effects: Option<BtcPreparedClaimEffectsV1>,
+    recovery_effects: Option<BtcPreparedRecoveryEffectsV1>,
 }
 
 impl BtcProtocolTermsV1 {
@@ -312,12 +464,19 @@ impl BtcProtocolTermsV1 {
             agreement,
             lock_effects,
             claim_effects: None,
+            recovery_effects: None,
         }
     }
 
     /// Adds complete public claim preparation for the common lifecycle trait.
     pub fn with_claim_effects(mut self, claim_effects: BtcPreparedClaimEffectsV1) -> Self {
         self.claim_effects = Some(claim_effects);
+        self
+    }
+
+    /// Adds both agreement-bound signed refund effects required by full prepare.
+    pub fn with_recovery_effects(mut self, recovery_effects: BtcPreparedRecoveryEffectsV1) -> Self {
+        self.recovery_effects = Some(recovery_effects);
         self
     }
 }
@@ -329,6 +488,7 @@ pub struct ValidatedBtcProtocolTermsV1 {
     agreement: BtcAgreementV1,
     lock_effects: BtcPreparedLockEffectsV1,
     claim_effects: Option<BtcPreparedClaimEffectsV1>,
+    recovery_effects: Option<BtcPreparedRecoveryEffectsV1>,
 }
 
 impl ValidatedBtcProtocolTermsV1 {
@@ -339,11 +499,12 @@ impl ValidatedBtcProtocolTermsV1 {
     }
 }
 
-/// Claim-ready deterministic protocol state.
+/// Deterministic protocol state prepared for claims and, when present, refunds.
 ///
 /// Both agreement-bound adaptor presignatures and the exact LEZ substitution
-/// template have been verified. Construction-ordered refund selection remains
-/// an explicit [`BtcSdkError::UnsupportedCapability`].
+/// template have been verified. Values returned by [`SwapProtocol::prepare`]
+/// also contain both exact signed refunds; [`BtcPairSdk::prepare_claims`]
+/// intentionally creates the smaller claim-only form.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[must_use]
 pub struct BtcPreparedProtocolV1 {
@@ -362,6 +523,20 @@ impl BtcPreparedProtocolV1 {
             .claim_effects
             .as_ref()
             .expect("prepare proves complete claim effects")
+    }
+
+    /// Exact signed refund effects proven present by full preparation.
+    ///
+    /// Returning a plan grants no submission authority; role-fixed recovery
+    /// projection determines when one local effect is safe.
+    #[must_use]
+    pub const fn recovery_effects(&self) -> Option<&BtcPreparedRecoveryEffectsV1> {
+        self.terms.recovery_effects.as_ref()
+    }
+
+    fn required_recovery_effects(&self) -> Result<&BtcPreparedRecoveryEffectsV1, BtcSdkError> {
+        self.recovery_effects()
+            .ok_or(BtcSdkError::MissingRecoveryEffects)
     }
 }
 
@@ -970,24 +1145,221 @@ impl std::fmt::Debug for BtcRecoveredClaimMaterialV1 {
     }
 }
 
-/// Full-lifecycle capabilities intentionally absent from this slice.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[must_use]
-pub enum BtcProtocolCapabilityGapV1 {
-    /// Complete dual-chain adaptor presignatures and signed recovery effects
-    /// cannot yet be proven durable before the first public lock.
-    PreLockRecovery,
-    /// Construction-ordered recovery selection is not exposed yet.
-    Recovery,
+enum CanonicalRecoveryStatusV1 {
+    Absent,
+    Locked,
+    Refunded,
 }
 
-/// Placeholder state accepted only to return a typed recovery capability gap.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BtcUnsupportedCanonicalStateV1;
+/// Canonical Bitcoin adapter snapshot used only for deterministic recovery selection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct BitcoinCanonicalRecoveryStateV1 {
+    status: CanonicalRecoveryStatusV1,
+    genesis_block_hash: Option<[u8; 32]>,
+    funding_transaction_id: Option<[u8; 32]>,
+    refund_transaction_id: Option<[u8; 32]>,
+    confirmations: u32,
+    funding_output_unspent: bool,
+}
 
-/// Placeholder recovery result that is never successfully constructed.
+impl BitcoinCanonicalRecoveryStateV1 {
+    /// The agreement funding output is canonically absent.
+    pub const fn absent() -> Self {
+        Self {
+            status: CanonicalRecoveryStatusV1::Absent,
+            genesis_block_hash: None,
+            funding_transaction_id: None,
+            refund_transaction_id: None,
+            confirmations: 0,
+            funding_output_unspent: false,
+        }
+    }
+
+    /// The exact agreement funding output is canonical and currently unspent.
+    pub const fn locked(
+        genesis_block_hash: [u8; 32],
+        funding_transaction_id: [u8; 32],
+        confirmations: u32,
+        funding_output_unspent: bool,
+    ) -> Self {
+        Self {
+            status: CanonicalRecoveryStatusV1::Locked,
+            genesis_block_hash: Some(genesis_block_hash),
+            funding_transaction_id: Some(funding_transaction_id),
+            refund_transaction_id: None,
+            confirmations,
+            funding_output_unspent,
+        }
+    }
+
+    /// The exact prepared Bitcoin refund is canonical.
+    pub const fn refunded(
+        genesis_block_hash: [u8; 32],
+        funding_transaction_id: [u8; 32],
+        refund_transaction_id: [u8; 32],
+        confirmations: u32,
+    ) -> Self {
+        Self {
+            status: CanonicalRecoveryStatusV1::Refunded,
+            genesis_block_hash: Some(genesis_block_hash),
+            funding_transaction_id: Some(funding_transaction_id),
+            refund_transaction_id: Some(refund_transaction_id),
+            confirmations,
+            funding_output_unspent: false,
+        }
+    }
+}
+
+/// Canonical finalized LEZ adapter snapshot used for recovery selection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct LezCanonicalRecoveryStateV1 {
+    status: CanonicalRecoveryStatusV1,
+    genesis_block_hash: Option<[u8; 32]>,
+    initialization_public_id: Option<ExpectedPublicEffectId>,
+    funding_public_id: Option<ExpectedPublicEffectId>,
+    refund_public_id: Option<ExpectedPublicEffectId>,
+    finalized: bool,
+    custody_unspent: bool,
+}
+
+impl LezCanonicalRecoveryStateV1 {
+    /// The agreement escrow is finalized absent.
+    pub const fn absent() -> Self {
+        Self {
+            status: CanonicalRecoveryStatusV1::Absent,
+            genesis_block_hash: None,
+            initialization_public_id: None,
+            funding_public_id: None,
+            refund_public_id: None,
+            finalized: true,
+            custody_unspent: false,
+        }
+    }
+
+    /// The exact initialized/funded agreement escrow is observed.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed public effect identities.
+    pub fn locked(
+        genesis_block_hash: [u8; 32],
+        initialization_public_id: impl Into<Box<str>>,
+        funding_public_id: impl Into<Box<str>>,
+        finalized: bool,
+        custody_unspent: bool,
+    ) -> Result<Self, BtcSdkError> {
+        Ok(Self {
+            status: CanonicalRecoveryStatusV1::Locked,
+            genesis_block_hash: Some(genesis_block_hash),
+            initialization_public_id: Some(ExpectedPublicEffectId::new(initialization_public_id)?),
+            funding_public_id: Some(ExpectedPublicEffectId::new(funding_public_id)?),
+            refund_public_id: None,
+            finalized,
+            custody_unspent,
+        })
+    }
+
+    /// The exact prepared LEZ refund is finalized.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed public effect identities.
+    pub fn refunded(
+        genesis_block_hash: [u8; 32],
+        initialization_public_id: impl Into<Box<str>>,
+        funding_public_id: impl Into<Box<str>>,
+        refund_public_id: impl Into<Box<str>>,
+        finalized: bool,
+    ) -> Result<Self, BtcSdkError> {
+        Ok(Self {
+            status: CanonicalRecoveryStatusV1::Refunded,
+            genesis_block_hash: Some(genesis_block_hash),
+            initialization_public_id: Some(ExpectedPublicEffectId::new(initialization_public_id)?),
+            funding_public_id: Some(ExpectedPublicEffectId::new(funding_public_id)?),
+            refund_public_id: Some(ExpectedPublicEffectId::new(refund_public_id)?),
+            finalized,
+            custody_unspent: false,
+        })
+    }
+}
+
+/// Agreement-bound stable two-chain snapshot with each native deadline clock.
+///
+/// This value contains no node handles and performs no I/O. Adapters must form
+/// it from one stable canonical view; recovery selection validates every
+/// identity, finality bit, direction, and deadline against the prepared swap.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct BtcCanonicalRecoveryStateV1 {
+    agreement_commitment: [u8; 32],
+    direction: SwapDirection,
+    bitcoin_best_height: u32,
+    lez_unix_seconds: u64,
+    bitcoin: BitcoinCanonicalRecoveryStateV1,
+    lez: LezCanonicalRecoveryStateV1,
+}
+
+impl BtcCanonicalRecoveryStateV1 {
+    /// Binds canonical adapter snapshots and both native clocks to one agreement.
+    pub fn new(
+        agreement: &BtcAgreementV1,
+        bitcoin_best_height: u32,
+        lez_unix_seconds: u64,
+        bitcoin: BitcoinCanonicalRecoveryStateV1,
+        lez: LezCanonicalRecoveryStateV1,
+    ) -> Self {
+        Self {
+            agreement_commitment: *agreement.agreement_commitment(),
+            direction: agreement.direction(),
+            bitcoin_best_height,
+            lez_unix_seconds,
+            bitcoin,
+            lez,
+        }
+    }
+}
+
+/// Why a pure recovery projection returns no local public effect yet.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BtcUnsupportedRecoveryActionV1;
+#[must_use]
+pub enum BtcRecoveryWaitReasonV1 {
+    /// Neither agreement lock exists canonically.
+    NoRecoverableLock,
+    /// The applicable native-chain refund deadline is not reached.
+    AwaitRefundDeadline,
+    /// The earlier revealing-leg refund must become canonical first.
+    AwaitEarlierRefund,
+    /// The eligible refund belongs to the other fixed protocol role.
+    CounterpartyRefund {
+        /// Role that owns the exact refund effect.
+        owner: Participant,
+        /// Chain on which that role recovers.
+        chain: Chain,
+    },
+}
+
+/// Deterministic recovery projection with no submission authority or I/O.
+///
+/// Bitcoin recovery is direction-dependent, unlike the fixed LEZ-first Zcash
+/// profile: `TakerSellsForeign` refunds LEZ then Bitcoin, while
+/// `TakerSellsLez` refunds Bitcoin then LEZ. In both cases the Maker-funded
+/// revealing leg is earlier and must be canonical before the Taker-funded
+/// follow-up leg is returned.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum BtcRecoveryActionV1 {
+    /// No local exact public effect is safe yet.
+    Wait(BtcRecoveryWaitReasonV1),
+    /// Persist/submit the exact signed Bitcoin refund through the Bitcoin port.
+    SubmitBitcoinRefund(ExactPublicEffectPlanV1),
+    /// Persist/submit the exact signed LEZ refund through the LEZ port.
+    SubmitLezRefund(ExactPublicEffectPlanV1),
+    /// Every canonically present lock has already been refunded.
+    Recovered,
+}
 
 /// Structured public facade and deterministic protocol errors.
 #[derive(Debug, thiserror::Error)]
@@ -1019,6 +1391,9 @@ pub enum BtcSdkError {
     /// Claim-only preparation requires both presignatures and the LEZ template.
     #[error("BTC SDK claim preparation is incomplete")]
     MissingClaimEffects,
+    /// Recovery projection requires both exact signed refund effects.
+    #[error("BTC SDK recovery preparation is incomplete")]
+    MissingRecoveryEffects,
     /// Prepared claim effects were created for another countersigned agreement.
     #[error("prepared claim effects belong to another countersigned agreement")]
     ClaimPreparationAgreementMismatch,
@@ -1074,6 +1449,15 @@ pub enum BtcSdkError {
     /// Exact signed Bitcoin follow-up construction failed canonical verification.
     #[error("Bitcoin follow-up claim signature or transaction is invalid")]
     InvalidBitcoinClaim(#[source] CooperativeKeyPathSpendError),
+    /// The Bitcoin funder's BIP-342 refund signature is invalid.
+    #[error("Bitcoin pre-lock refund signature is invalid")]
+    InvalidBitcoinRefund(#[source] RefundScriptPathSpendError),
+    /// Revalidated Bitcoin refund bytes differ from their prepared exact plan.
+    #[error("Bitcoin signed refund differs from the prepared exact plan")]
+    BitcoinRefundPlanMismatch,
+    /// Signed recovery effects belong to another countersigned agreement.
+    #[error("prepared recovery effects belong to another countersigned agreement")]
+    RecoveryPreparationAgreementMismatch,
     /// A claim presignature, signature, or extracted scalar failed verification.
     #[error("claim adaptor transcript is invalid")]
     InvalidAdaptorClaim(#[source] AdaptorSessionError),
@@ -1116,9 +1500,34 @@ pub enum BtcSdkError {
     /// Recovered material belongs to another agreement, direction, or role.
     #[error("recovered claim material is not bound to this prepared swap")]
     RecoveredClaimMaterialMismatch,
-    /// Remaining full-lifecycle behavior is deliberately unavailable.
-    #[error("BTC SDK capability is not implemented in this lifecycle slice: {0:?}")]
-    UnsupportedCapability(BtcProtocolCapabilityGapV1),
+    /// Canonical recovery state belongs to another agreement or direction.
+    #[error("canonical recovery state is not bound to this prepared swap")]
+    RecoveryStateAgreementMismatch,
+    /// Canonical recovery evidence identifies another chain network.
+    #[error("canonical recovery state identifies a different network")]
+    RecoveryNetworkMismatch,
+    /// Canonical recovery evidence identifies different prepared effects.
+    #[error("canonical recovery state differs from prepared lock/refund effects")]
+    RecoveryPlanMismatch,
+    /// A canonical recovery observation has insufficient finality.
+    #[error("{chain:?} recovery observation has {actual} confirmations; requires {required}")]
+    RecoveryObservationLag {
+        /// Chain whose evidence is lagging.
+        chain: Chain,
+        /// Required canonical confirmation units.
+        required: u32,
+        /// Observed confirmation units.
+        actual: u32,
+    },
+    /// LEZ recovery evidence is not finalized.
+    #[error("LEZ recovery observation is not finalized")]
+    RecoveryNotFinalized,
+    /// Canonical lock/spend combinations violate the protocol lifecycle.
+    #[error("canonical recovery state is contradictory")]
+    RecoveryStateContradiction,
+    /// The later follow-up-leg refund appeared before the revealing-leg refund.
+    #[error("canonical refunds violate the signed revealing-before-follow-up order")]
+    RecoveryOrderViolation,
 }
 
 impl ProtocolError for BtcSdkError {
@@ -1132,6 +1541,7 @@ impl ProtocolError for BtcSdkError {
             | Self::BitcoinFundingAgreementMismatch
             | Self::DuplicateLezEffectIdentity
             | Self::MissingClaimEffects
+            | Self::MissingRecoveryEffects
             | Self::ClaimPreparationAgreementMismatch
             | Self::LocalRoleMismatch { .. }
             | Self::WrongFirstLockChain
@@ -1142,27 +1552,32 @@ impl ProtocolError for BtcSdkError {
             | Self::MalformedBitcoinClaim(_)
             | Self::InvalidBitcoinClaimWitness
             | Self::InvalidBitcoinClaim(_)
+            | Self::InvalidBitcoinRefund(_)
+            | Self::BitcoinRefundPlanMismatch
+            | Self::RecoveryPreparationAgreementMismatch
             | Self::InvalidAdaptorClaim(_)
             | Self::WrongRevealingClaimChain
             | Self::RevealingClaimRoleMismatch { .. }
             | Self::FollowupClaimRoleMismatch { .. }
             | Self::RevealingClaimPlanMismatch
-            | Self::RecoveredClaimMaterialMismatch => ErrorCategory::TranscriptMismatch,
+            | Self::RecoveredClaimMaterialMismatch
+            | Self::RecoveryStateAgreementMismatch
+            | Self::RecoveryPlanMismatch
+            | Self::RecoveryStateContradiction
+            | Self::RecoveryOrderViolation => ErrorCategory::TranscriptMismatch,
             Self::BitcoinFundingOutputMismatch | Self::FirstLockTermsMismatch => {
                 ErrorCategory::WrongValue
             }
-            Self::UnsupportedResumeRevision(_) | Self::UnsupportedCapability(_) => {
-                ErrorCategory::UnsupportedCapability
-            }
-            Self::FirstLockNetworkMismatch | Self::RevealingClaimNetworkMismatch => {
-                ErrorCategory::WrongNetwork
-            }
-            Self::FirstLockConfirmationLag { .. } | Self::RevealingClaimConfirmationLag { .. } => {
-                ErrorCategory::ObservationLag
-            }
-            Self::FirstLockNotFinalized | Self::RevealingClaimNotFinalized => {
-                ErrorCategory::NonCanonicalEvidence
-            }
+            Self::UnsupportedResumeRevision(_) => ErrorCategory::UnsupportedCapability,
+            Self::FirstLockNetworkMismatch
+            | Self::RevealingClaimNetworkMismatch
+            | Self::RecoveryNetworkMismatch => ErrorCategory::WrongNetwork,
+            Self::FirstLockConfirmationLag { .. }
+            | Self::RevealingClaimConfirmationLag { .. }
+            | Self::RecoveryObservationLag { .. } => ErrorCategory::ObservationLag,
+            Self::FirstLockNotFinalized
+            | Self::RevealingClaimNotFinalized
+            | Self::RecoveryNotFinalized => ErrorCategory::NonCanonicalEvidence,
         }
     }
 }
@@ -1178,8 +1593,8 @@ impl SwapProtocol for BtcPairSdk {
     type RevealingClaimEvidence = BtcRevealingClaimEvidenceV1;
     type RecoveredClaimMaterial = BtcRecoveredClaimMaterialV1;
     type FollowupClaimTemplate = ExactPublicEffectPlanV1;
-    type CanonicalChainState = BtcUnsupportedCanonicalStateV1;
-    type RecoveryAction = BtcUnsupportedRecoveryActionV1;
+    type CanonicalChainState = BtcCanonicalRecoveryStateV1;
+    type RecoveryAction = BtcRecoveryActionV1;
     type Error = BtcSdkError;
 
     fn validate_terms(&self, terms: &Self::Terms) -> Result<Self::ValidatedTerms, Self::Error> {
@@ -1191,17 +1606,25 @@ impl SwapProtocol for BtcPairSdk {
         if let Some(claim_effects) = &terms.claim_effects {
             claim_effects.validate(&agreement)?;
         }
+        if let Some(recovery_effects) = &terms.recovery_effects {
+            recovery_effects.validate(&agreement)?;
+        }
         Ok(ValidatedBtcProtocolTermsV1 {
             agreement,
             lock_effects: terms.lock_effects.clone(),
             claim_effects: terms.claim_effects.clone(),
+            recovery_effects: terms.recovery_effects.clone(),
         })
     }
 
-    fn prepare(&self, _terms: Self::ValidatedTerms) -> Result<Self::Prepared, Self::Error> {
-        Err(BtcSdkError::UnsupportedCapability(
-            BtcProtocolCapabilityGapV1::PreLockRecovery,
-        ))
+    fn prepare(&self, terms: Self::ValidatedTerms) -> Result<Self::Prepared, Self::Error> {
+        if terms.claim_effects.is_none() {
+            return Err(BtcSdkError::MissingClaimEffects);
+        }
+        if terms.recovery_effects.is_none() {
+            return Err(BtcSdkError::MissingRecoveryEffects);
+        }
+        Ok(BtcPreparedProtocolV1 { terms })
     }
 
     fn build_first_lock(
@@ -1262,12 +1685,225 @@ impl SwapProtocol for BtcPairSdk {
 
     fn recovery_action(
         &self,
-        _prepared: &Self::Prepared,
-        _state: &Self::CanonicalChainState,
+        prepared: &Self::Prepared,
+        state: &Self::CanonicalChainState,
     ) -> Result<Self::RecoveryAction, Self::Error> {
-        Err(BtcSdkError::UnsupportedCapability(
-            BtcProtocolCapabilityGapV1::Recovery,
-        ))
+        recovery_action(self, prepared, state)
+    }
+}
+
+fn recovery_action(
+    sdk: &BtcPairSdk,
+    prepared: &BtcPreparedProtocolV1,
+    state: &BtcCanonicalRecoveryStateV1,
+) -> Result<BtcRecoveryActionV1, BtcSdkError> {
+    validate_recovery_state(prepared, state)?;
+    let agreement = prepared.agreement();
+    let earlier_chain = agreement.coordinator().funded_chain(Participant::Maker);
+    let later_chain = agreement.coordinator().funded_chain(Participant::Taker);
+    let earlier = recovery_status(state, earlier_chain);
+    let later = recovery_status(state, later_chain);
+
+    match (earlier, later) {
+        (CanonicalRecoveryStatusV1::Absent, CanonicalRecoveryStatusV1::Absent) => Ok(
+            BtcRecoveryActionV1::Wait(BtcRecoveryWaitReasonV1::NoRecoverableLock),
+        ),
+        (
+            CanonicalRecoveryStatusV1::Absent | CanonicalRecoveryStatusV1::Refunded,
+            CanonicalRecoveryStatusV1::Locked,
+        ) => {
+            if !refund_deadline_reached(state, agreement, later_chain)? {
+                return Ok(BtcRecoveryActionV1::Wait(
+                    BtcRecoveryWaitReasonV1::AwaitRefundDeadline,
+                ));
+            }
+            refund_action(sdk, prepared, later_chain)
+        }
+        (
+            CanonicalRecoveryStatusV1::Absent | CanonicalRecoveryStatusV1::Refunded,
+            CanonicalRecoveryStatusV1::Refunded,
+        ) => Ok(BtcRecoveryActionV1::Recovered),
+        (CanonicalRecoveryStatusV1::Locked, CanonicalRecoveryStatusV1::Locked) => {
+            if !refund_deadline_reached(state, agreement, earlier_chain)? {
+                return Ok(BtcRecoveryActionV1::Wait(
+                    BtcRecoveryWaitReasonV1::AwaitRefundDeadline,
+                ));
+            }
+            if sdk.local_participant == owner_for_chain(agreement, later_chain)
+                && refund_deadline_reached(state, agreement, later_chain)?
+            {
+                return Ok(BtcRecoveryActionV1::Wait(
+                    BtcRecoveryWaitReasonV1::AwaitEarlierRefund,
+                ));
+            }
+            refund_action(sdk, prepared, earlier_chain)
+        }
+        (CanonicalRecoveryStatusV1::Locked, CanonicalRecoveryStatusV1::Refunded) => {
+            Err(BtcSdkError::RecoveryOrderViolation)
+        }
+        (
+            CanonicalRecoveryStatusV1::Refunded | CanonicalRecoveryStatusV1::Locked,
+            CanonicalRecoveryStatusV1::Absent,
+        ) => Err(BtcSdkError::RecoveryStateContradiction),
+    }
+}
+
+fn refund_action(
+    sdk: &BtcPairSdk,
+    prepared: &BtcPreparedProtocolV1,
+    chain: Chain,
+) -> Result<BtcRecoveryActionV1, BtcSdkError> {
+    let owner = owner_for_chain(prepared.agreement(), chain);
+    if sdk.local_participant != owner {
+        return Ok(BtcRecoveryActionV1::Wait(
+            BtcRecoveryWaitReasonV1::CounterpartyRefund { owner, chain },
+        ));
+    }
+    let plan = prepared
+        .required_recovery_effects()?
+        .plan_for_chain(chain)
+        .clone();
+    Ok(match chain {
+        Chain::Bitcoin => BtcRecoveryActionV1::SubmitBitcoinRefund(plan),
+        Chain::Lez => BtcRecoveryActionV1::SubmitLezRefund(plan),
+        Chain::Monero | Chain::Zcash => unreachable!("validated BTC agreement"),
+    })
+}
+
+fn validate_recovery_state(
+    prepared: &BtcPreparedProtocolV1,
+    state: &BtcCanonicalRecoveryStateV1,
+) -> Result<(), BtcSdkError> {
+    let agreement = prepared.agreement();
+    if state.agreement_commitment != *agreement.agreement_commitment()
+        || state.direction != agreement.direction()
+    {
+        return Err(BtcSdkError::RecoveryStateAgreementMismatch);
+    }
+    validate_bitcoin_recovery_state(prepared, &state.bitcoin)?;
+    validate_lez_recovery_state(prepared, &state.lez)
+}
+
+fn validate_bitcoin_recovery_state(
+    prepared: &BtcPreparedProtocolV1,
+    state: &BitcoinCanonicalRecoveryStateV1,
+) -> Result<(), BtcSdkError> {
+    if state.status == CanonicalRecoveryStatusV1::Absent {
+        return Ok(());
+    }
+    let agreement = prepared.agreement();
+    if state.genesis_block_hash != Some(*agreement.bitcoin_genesis_hash()) {
+        return Err(BtcSdkError::RecoveryNetworkMismatch);
+    }
+    if state.funding_transaction_id != Some(*agreement.funding_terms().transaction_id()) {
+        return Err(BtcSdkError::RecoveryPlanMismatch);
+    }
+    let required = agreement.required_bitcoin_confirmations();
+    if state.confirmations < required {
+        return Err(BtcSdkError::RecoveryObservationLag {
+            chain: Chain::Bitcoin,
+            required,
+            actual: state.confirmations,
+        });
+    }
+    match state.status {
+        CanonicalRecoveryStatusV1::Absent => unreachable!("returned above"),
+        CanonicalRecoveryStatusV1::Locked => {
+            if !state.funding_output_unspent || state.refund_transaction_id.is_some() {
+                return Err(BtcSdkError::RecoveryStateContradiction);
+            }
+        }
+        CanonicalRecoveryStatusV1::Refunded => {
+            let expected = prepared
+                .required_recovery_effects()?
+                .bitcoin()
+                .transaction_id()
+                .to_byte_array();
+            if state.funding_output_unspent || state.refund_transaction_id != Some(expected) {
+                return Err(BtcSdkError::RecoveryPlanMismatch);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_lez_recovery_state(
+    prepared: &BtcPreparedProtocolV1,
+    state: &LezCanonicalRecoveryStateV1,
+) -> Result<(), BtcSdkError> {
+    if state.status == CanonicalRecoveryStatusV1::Absent {
+        return Ok(());
+    }
+    let agreement = prepared.agreement();
+    if state.genesis_block_hash != Some(*agreement.lez_terms().genesis_block_hash()) {
+        return Err(BtcSdkError::RecoveryNetworkMismatch);
+    }
+    if !state.finalized {
+        return Err(BtcSdkError::RecoveryNotFinalized);
+    }
+    let [initialization, funding] = prepared.terms.lock_effects.lez().plan().steps() else {
+        return Err(BtcSdkError::RecoveryPlanMismatch);
+    };
+    if state.initialization_public_id.as_ref() != Some(initialization.expected_public_id())
+        || state.funding_public_id.as_ref() != Some(funding.expected_public_id())
+    {
+        return Err(BtcSdkError::RecoveryPlanMismatch);
+    }
+    match state.status {
+        CanonicalRecoveryStatusV1::Absent => unreachable!("returned above"),
+        CanonicalRecoveryStatusV1::Locked => {
+            if !state.custody_unspent || state.refund_public_id.is_some() {
+                return Err(BtcSdkError::RecoveryStateContradiction);
+            }
+        }
+        CanonicalRecoveryStatusV1::Refunded => {
+            let [refund] = prepared.required_recovery_effects()?.lez().plan().steps() else {
+                return Err(BtcSdkError::RecoveryPlanMismatch);
+            };
+            if state.custody_unspent
+                || state.refund_public_id.as_ref() != Some(refund.expected_public_id())
+            {
+                return Err(BtcSdkError::RecoveryPlanMismatch);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn recovery_status(state: &BtcCanonicalRecoveryStateV1, chain: Chain) -> CanonicalRecoveryStatusV1 {
+    match chain {
+        Chain::Bitcoin => state.bitcoin.status,
+        Chain::Lez => state.lez.status,
+        Chain::Monero | Chain::Zcash => unreachable!("validated BTC agreement"),
+    }
+}
+
+fn refund_deadline_reached(
+    state: &BtcCanonicalRecoveryStateV1,
+    agreement: &BtcAgreementV1,
+    chain: Chain,
+) -> Result<bool, BtcSdkError> {
+    let deadline = agreement
+        .recovery_schedule()
+        .deadline_for_chain(chain)
+        .ok_or(BtcSdkError::RecoveryPlanMismatch)?;
+    let observed = match chain {
+        Chain::Bitcoin => u64::from(state.bitcoin_best_height),
+        Chain::Lez => state.lez_unix_seconds,
+        Chain::Monero | Chain::Zcash => unreachable!("validated BTC agreement"),
+    };
+    Ok(observed >= deadline.value())
+}
+
+fn owner_for_chain(agreement: &BtcAgreementV1, chain: Chain) -> Participant {
+    if agreement.coordinator().funded_chain(Participant::Maker) == chain {
+        Participant::Maker
+    } else {
+        debug_assert_eq!(
+            agreement.coordinator().funded_chain(Participant::Taker),
+            chain
+        );
+        Participant::Taker
     }
 }
 

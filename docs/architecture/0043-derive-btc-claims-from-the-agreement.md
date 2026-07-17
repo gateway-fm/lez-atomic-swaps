@@ -2,8 +2,9 @@
 
 Status: Accepted at the deterministic public-SDK component boundary. Pushed
 commit `28f38c700b0d0acbbee06b06dab8ef79d20067a8` implements and tests this
-claim-only slice. Complete pre-lock recovery, post-activation persistence, and
-actual-node facade composition remain open.
+claim-only slice. ADR 0044 subsequently completes deterministic signed pre-lock
+refund preparation and recovery selection. Post-activation persistence,
+later-revision resume, and actual-node facade composition remain open.
 
 ## Context
 
@@ -45,9 +46,10 @@ Require claim preparation to contain:
   slot and an expected public effect identity.
 
 `BtcPairSdk::prepare_claims` creates a claim-ready value only after those
-checks. The generic `SwapProtocol::prepare` continues to return the typed
-`PreLockRecovery` capability gap because complete signed refund preparation is
-not composed.
+checks. At this claim-only decision boundary, the generic
+`SwapProtocol::prepare` returned the typed `PreLockRecovery` capability gap
+because complete signed refund preparation was not yet composed. ADR 0044
+removes that gap while retaining this narrower claim-only entry point.
 
 For revealing evidence, enforce the direction-selected claim chain and
 claimant. Bitcoin evidence must use the signed genesis and confirmation policy,
@@ -188,12 +190,9 @@ placeholders are removed from this slice.
 ## Consequences and remaining integration
 
 This decision establishes the public deterministic claim contract but not the
-accepted full-lifecycle BTC SDK. The following remain open:
+accepted full-lifecycle BTC SDK. ADR 0044 subsequently closes signed refund
+preparation and pure canonical recovery selection. The following remain open:
 
-- complete signed refund preparation so common `SwapProtocol::prepare` can
-  succeed instead of returning `PreLockRecovery`;
-- canonical recovery state and `recovery_action` rather than the typed
-  `Recovery` gap;
 - durable resume and state/action reconstruction for revisions 1 through 4;
 - role-local store, chain-adapter, journal, and one-shot actor composition
   through the new facade;

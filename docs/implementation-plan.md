@@ -1587,10 +1587,18 @@ Active M3 refund critical path:
   bounded LEZ signature-substitution envelope are verified before claim-ready
   preparation. External-consumer tests reject role, agreement, network,
   finality, byte, presignature, and adaptor-domain substitution and prove
-  deterministic replay. The shared `SwapProtocol::prepare` still returns the
-  honest `PreLockRecovery` gap because complete signed refund preparation is
-  not yet composed; canonical recovery state/action, revision-one-through-four
-  resume, chain/store orchestration, a compiling full example, and the public
+  deterministic replay. The next RED-GREEN slice supplies agreement-bound
+  signed Bitcoin and LEZ refund effects before the first lock, so the shared
+  `SwapProtocol::prepare` now succeeds only with both claim and recovery
+  material. Its pure canonical-state projection validates exact funding and
+  refund identities, Bitcoin network/confirmations, LEZ network/finality and
+  custody, native deadlines, role ownership, and the direction-dependent
+  revealing-leg-first refund order. External-consumer coverage is 42 of 42
+  GREEN and strict Clippy, rustdoc, formatting, and diff gates pass. This
+  closes the former `PreLockRecovery` and `Recovery` placeholders without
+  claiming node, persistence, or submission I/O. Revision-one-through-four
+  durable resume, chain/store/actor composition, a compiling full example,
+  complete public API documentation, and public
   discovery/negotiation/activation composition remain open;
 - [x] make the reference actor a thin SDK adapter and move first/second lock
   construction and submission under SDK-owned persist-before-send authority.

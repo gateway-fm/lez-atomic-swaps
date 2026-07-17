@@ -5,16 +5,18 @@ use bitcoin::secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use bitcoin::transaction::Version;
 use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness};
 use lez_btc_swap_sdk::{
-    AdaptorSessionContext, AdaptorSigner, BTC_AGREEMENT_SCHEMA_V1, BitcoinFirstLockEvidenceV1,
-    BitcoinRevealingClaimEvidenceV1, BtcActiveSwapEnvelopeV1, BtcAgreementBodyV1,
-    BtcAgreementRecordV1, BtcChainPolicyV1, BtcClaimTermsV1, BtcFirstLockEvidenceV1,
-    BtcFundingTermsV1, BtcLezTermsV1, BtcLifecycleActionV1, BtcP2trTermsV1, BtcPairSdk,
-    BtcParticipantIdentityV1, BtcParticipantsV1, BtcPreparedClaimEffectsV1,
-    BtcPreparedLockEffectsV1, BtcProtocolCapabilityGapV1, BtcProtocolTermsV1, BtcRecoveryPlanV1,
-    BtcRevealingClaimEvidenceV1, BtcSdkError, CooperativeKeyPathSpend, CsvBlockDelay,
-    LezFirstLockEvidenceV1, LezRevealingClaimEvidenceV1, P2trSwapOutput, PreparedBitcoinFundingV1,
-    PreparedLezClaimTemplateV1, PreparedLezFundingV1, RefundXOnlyKey, SigningRole,
-    TwoPartyAggregateKey, adapt_presignature,
+    AdaptorSessionContext, AdaptorSigner, BTC_AGREEMENT_SCHEMA_V1, BitcoinCanonicalRecoveryStateV1,
+    BitcoinFirstLockEvidenceV1, BitcoinRevealingClaimEvidenceV1, BtcActiveSwapEnvelopeV1,
+    BtcAgreementBodyV1, BtcAgreementRecordV1, BtcCanonicalRecoveryStateV1, BtcChainPolicyV1,
+    BtcClaimTermsV1, BtcFirstLockEvidenceV1, BtcFundingTermsV1, BtcLezTermsV1,
+    BtcLifecycleActionV1, BtcP2trTermsV1, BtcPairSdk, BtcParticipantIdentityV1, BtcParticipantsV1,
+    BtcPreparedClaimEffectsV1, BtcPreparedLockEffectsV1, BtcPreparedProtocolV1,
+    BtcPreparedRecoveryEffectsV1, BtcProtocolTermsV1, BtcRecoveryActionV1, BtcRecoveryPlanV1,
+    BtcRecoveryWaitReasonV1, BtcRevealingClaimEvidenceV1, BtcSdkError, CooperativeKeyPathSpend,
+    CsvBlockDelay, LezCanonicalRecoveryStateV1, LezFirstLockEvidenceV1,
+    LezRevealingClaimEvidenceV1, P2trSwapOutput, PreparedBitcoinFundingV1, PreparedBitcoinRefundV1,
+    PreparedLezClaimTemplateV1, PreparedLezFundingV1, PreparedLezRefundV1, RefundXOnlyKey,
+    SigningRole, TwoPartyAggregateKey, adapt_presignature,
 };
 use lez_swap_core::{Participant, Phase, SwapDirection};
 use lez_swap_sdk_core::{ClaimOrder, SwapProtocol};
@@ -29,6 +31,10 @@ const LEZ_INITIALIZATION_ID: &str = "lez-init-01";
 const LEZ_FUNDING_ID: &str = "lez-fund-02";
 const LEZ_CLAIM_ID: &str = "lez-claim-03";
 const LEZ_CLAIM_SIGNATURE_OFFSET: usize = 9;
+const LEZ_REFUND_ID: &str = "lez-refund-04";
+const BITCOIN_REFUND_HEIGHT: u32 = 1_144;
+const LEZ_FOREIGN_REFUND_SECONDS: u64 = 1_700_000_100;
+const LEZ_REVERSE_REFUND_SECONDS: u64 = 1_700_000_500;
 
 struct Fixture {
     record: BtcAgreementRecordV1,
@@ -337,6 +343,87 @@ fn prepared_claims(fixture: &Fixture) -> (BtcPreparedClaimEffectsV1, [u8; 65], [
     (claims, bitcoin_presignature, lez_presignature, lez_template)
 }
 
+fn fully_prepared(
+    direction: SwapDirection,
+    role: Participant,
+) -> (BtcPairSdk, BtcPreparedProtocolV1) {
+    let fixture = fixture(direction);
+    let agreement = lez_btc_swap_sdk::BtcAgreementV1::validate(fixture.record.clone())
+        .expect("validated agreement");
+    let (claims, ..) = prepared_claims(&fixture);
+    let refund_secret = match direction {
+        SwapDirection::TakerSellsForeign => secret(4),
+        SwapDirection::TakerSellsLez => secret(3),
+    };
+    let signature = Secp256k1::new()
+        .sign_schnorr_no_aux_rand(
+            &Message::from_digest(agreement.bitcoin_refund().sighash_bytes()),
+            &Keypair::from_secret_key(&Secp256k1::new(), &refund_secret),
+        )
+        .serialize();
+    let recovery = BtcPreparedRecoveryEffectsV1::new(
+        PreparedBitcoinRefundV1::new(&agreement, signature)
+            .expect("canonical signed Bitcoin refund"),
+        PreparedLezRefundV1::new(&agreement, LEZ_REFUND_ID, b"signed.lez.refund.v1".to_vec())
+            .expect("bounded signed LEZ refund"),
+    );
+    let sdk = BtcPairSdk::new(
+        role,
+        BtcChainPolicyV1::new(BITCOIN_GENESIS, REQUIRED_CONFIRMATIONS),
+    );
+    let terms = BtcProtocolTermsV1::new(fixture.record, fixture.lock_effects)
+        .with_claim_effects(claims)
+        .with_recovery_effects(recovery);
+    let validated = sdk.validate_terms(&terms).expect("validated full terms");
+    let prepared = sdk.prepare(validated).expect("fully prepared protocol");
+    (sdk, prepared)
+}
+
+fn bitcoin_locked(prepared: &BtcPreparedProtocolV1) -> BitcoinCanonicalRecoveryStateV1 {
+    BitcoinCanonicalRecoveryStateV1::locked(
+        BITCOIN_GENESIS,
+        *prepared.agreement().funding_terms().transaction_id(),
+        REQUIRED_CONFIRMATIONS,
+        true,
+    )
+}
+
+fn bitcoin_refunded(prepared: &BtcPreparedProtocolV1) -> BitcoinCanonicalRecoveryStateV1 {
+    BitcoinCanonicalRecoveryStateV1::refunded(
+        BITCOIN_GENESIS,
+        *prepared.agreement().funding_terms().transaction_id(),
+        prepared
+            .recovery_effects()
+            .expect("full recovery effects")
+            .bitcoin()
+            .transaction_id()
+            .to_byte_array(),
+        REQUIRED_CONFIRMATIONS,
+    )
+}
+
+fn lez_locked() -> LezCanonicalRecoveryStateV1 {
+    LezCanonicalRecoveryStateV1::locked(
+        LEZ_GENESIS,
+        LEZ_INITIALIZATION_ID,
+        LEZ_FUNDING_ID,
+        true,
+        true,
+    )
+    .expect("canonical LEZ lock")
+}
+
+fn lez_refunded() -> LezCanonicalRecoveryStateV1 {
+    LezCanonicalRecoveryStateV1::refunded(
+        LEZ_GENESIS,
+        LEZ_INITIALIZATION_ID,
+        LEZ_FUNDING_ID,
+        LEZ_REFUND_ID,
+        true,
+    )
+    .expect("canonical LEZ refund")
+}
+
 #[test]
 fn both_directions_expose_role_fixed_exact_plans_and_restart() {
     for direction in [
@@ -574,9 +661,7 @@ fn common_protocol_validates_terms_but_refuses_incomplete_recovery_preparation()
     let validated = sdk.validate_terms(&terms).expect("validated terms");
     assert!(matches!(
         sdk.prepare(validated),
-        Err(BtcSdkError::UnsupportedCapability(
-            BtcProtocolCapabilityGapV1::PreLockRecovery
-        ))
+        Err(BtcSdkError::MissingRecoveryEffects)
     ));
 }
 
@@ -714,6 +799,7 @@ fn common_protocol_extracts_and_builds_exact_claims_in_both_directions() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn claim_lifecycle_rejects_role_byte_and_adaptor_substitution() {
     let fixture = fixture(SwapDirection::TakerSellsForeign);
     let (claims, bitcoin_presignature, lez_presignature, mut lez_template) =
@@ -767,6 +853,36 @@ fn claim_lifecycle_rejects_role_byte_and_adaptor_substitution() {
     let mut exact = b"lez.claim".to_vec();
     exact.extend_from_slice(&valid_signature);
     exact.extend_from_slice(b".v1");
+    let wrong_network = BtcRevealingClaimEvidenceV1::Lez(
+        LezRevealingClaimEvidenceV1::new(
+            Participant::Taker,
+            [0xff; 32],
+            LEZ_CLAIM_ID,
+            exact.clone(),
+            valid_signature,
+            true,
+        )
+        .expect("bounded wrong-network LEZ evidence"),
+    );
+    assert!(matches!(
+        sdk.validate_revealing_claim(&prepared, &wrong_network),
+        Err(BtcSdkError::RevealingClaimNetworkMismatch)
+    ));
+    let nonfinal = BtcRevealingClaimEvidenceV1::Lez(
+        LezRevealingClaimEvidenceV1::new(
+            Participant::Taker,
+            LEZ_GENESIS,
+            LEZ_CLAIM_ID,
+            exact.clone(),
+            valid_signature,
+            false,
+        )
+        .expect("bounded non-final LEZ evidence"),
+    );
+    assert!(matches!(
+        sdk.validate_revealing_claim(&prepared, &nonfinal),
+        Err(BtcSdkError::RevealingClaimNotFinalized)
+    ));
     exact[0] ^= 1;
     let byte_drift = BtcRevealingClaimEvidenceV1::Lez(
         LezRevealingClaimEvidenceV1::new(
@@ -849,6 +965,33 @@ fn bitcoin_revealing_claim_rejects_role_byte_adaptor_and_sdk_substitution() {
     let _material = maker
         .validate_revealing_claim(&prepared, &valid)
         .expect("valid revealing claim");
+
+    let wrong_network = BtcRevealingClaimEvidenceV1::Bitcoin(
+        BitcoinRevealingClaimEvidenceV1::new(
+            Participant::Taker,
+            [0xff; 32],
+            serialize(&bitcoin_claim),
+            REQUIRED_CONFIRMATIONS,
+        )
+        .expect("bounded wrong-network Bitcoin evidence"),
+    );
+    assert!(matches!(
+        maker.validate_revealing_claim(&prepared, &wrong_network),
+        Err(BtcSdkError::RevealingClaimNetworkMismatch)
+    ));
+    let lagging = BtcRevealingClaimEvidenceV1::Bitcoin(
+        BitcoinRevealingClaimEvidenceV1::new(
+            Participant::Taker,
+            BITCOIN_GENESIS,
+            serialize(&bitcoin_claim),
+            REQUIRED_CONFIRMATIONS - 1,
+        )
+        .expect("bounded lagging Bitcoin evidence"),
+    );
+    assert!(matches!(
+        maker.validate_revealing_claim(&prepared, &lagging),
+        Err(BtcSdkError::RevealingClaimConfirmationLag { .. })
+    ));
 
     let wrong_role = BtcRevealingClaimEvidenceV1::Bitcoin(
         BitcoinRevealingClaimEvidenceV1::new(
@@ -947,5 +1090,381 @@ fn protocol_terms_reject_substituted_claim_presignatures_before_prepare() {
     assert!(matches!(
         sdk.validate_terms(&substituted_agreement),
         Err(BtcSdkError::ClaimPreparationAgreementMismatch)
+    ));
+}
+
+#[test]
+fn common_prepare_requires_and_accepts_agreement_bound_signed_refunds() {
+    let fixture = fixture(SwapDirection::TakerSellsForeign);
+    let agreement = lez_btc_swap_sdk::BtcAgreementV1::validate(fixture.record.clone())
+        .expect("validated agreement");
+    let (claims, ..) = prepared_claims(&fixture);
+    let refund_message = Message::from_digest(agreement.bitcoin_refund().sighash_bytes());
+    let refund_signature = Secp256k1::new()
+        .sign_schnorr_no_aux_rand(
+            &refund_message,
+            &Keypair::from_secret_key(&Secp256k1::new(), &secret(4)),
+        )
+        .serialize();
+    let recovery = BtcPreparedRecoveryEffectsV1::new(
+        PreparedBitcoinRefundV1::new(&agreement, refund_signature)
+            .expect("canonical signed Bitcoin refund"),
+        PreparedLezRefundV1::new(&agreement, LEZ_REFUND_ID, b"signed.lez.refund.v1".to_vec())
+            .expect("bounded signed LEZ refund"),
+    );
+    let sdk = BtcPairSdk::new(
+        Participant::Taker,
+        BtcChainPolicyV1::new(BITCOIN_GENESIS, REQUIRED_CONFIRMATIONS),
+    );
+    let terms = BtcProtocolTermsV1::new(fixture.record, fixture.lock_effects)
+        .with_claim_effects(claims)
+        .with_recovery_effects(recovery);
+    let validated = sdk.validate_terms(&terms).expect("validated full terms");
+    let prepared = sdk.prepare(validated).expect("fully prepared protocol");
+    let state = BtcCanonicalRecoveryStateV1::new(
+        prepared.agreement(),
+        1_143,
+        1_700_000_499,
+        BitcoinCanonicalRecoveryStateV1::locked(
+            BITCOIN_GENESIS,
+            prepared
+                .agreement()
+                .funding_terms()
+                .transaction_id()
+                .to_owned(),
+            REQUIRED_CONFIRMATIONS,
+            true,
+        ),
+        LezCanonicalRecoveryStateV1::absent(),
+    );
+    assert_eq!(
+        sdk.recovery_action(&prepared, &state)
+            .expect("pure recovery selection"),
+        BtcRecoveryActionV1::Wait(BtcRecoveryWaitReasonV1::AwaitRefundDeadline)
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn recovery_boundaries_cover_first_lock_and_ordered_two_lock_timeouts() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let (taker, prepared) = fully_prepared(direction, Participant::Taker);
+        let maker = BtcPairSdk::new(
+            Participant::Maker,
+            BtcChainPolicyV1::new(BITCOIN_GENESIS, REQUIRED_CONFIRMATIONS),
+        );
+        let (first_before, first_boundary, expected_first) = match direction {
+            SwapDirection::TakerSellsForeign => (
+                BtcCanonicalRecoveryStateV1::new(
+                    prepared.agreement(),
+                    BITCOIN_REFUND_HEIGHT - 1,
+                    LEZ_FOREIGN_REFUND_SECONDS,
+                    bitcoin_locked(&prepared),
+                    LezCanonicalRecoveryStateV1::absent(),
+                ),
+                BtcCanonicalRecoveryStateV1::new(
+                    prepared.agreement(),
+                    BITCOIN_REFUND_HEIGHT,
+                    LEZ_FOREIGN_REFUND_SECONDS,
+                    bitcoin_locked(&prepared),
+                    LezCanonicalRecoveryStateV1::absent(),
+                ),
+                "bitcoin.refund",
+            ),
+            SwapDirection::TakerSellsLez => (
+                BtcCanonicalRecoveryStateV1::new(
+                    prepared.agreement(),
+                    BITCOIN_REFUND_HEIGHT,
+                    LEZ_REVERSE_REFUND_SECONDS - 1,
+                    BitcoinCanonicalRecoveryStateV1::absent(),
+                    lez_locked(),
+                ),
+                BtcCanonicalRecoveryStateV1::new(
+                    prepared.agreement(),
+                    BITCOIN_REFUND_HEIGHT,
+                    LEZ_REVERSE_REFUND_SECONDS,
+                    BitcoinCanonicalRecoveryStateV1::absent(),
+                    lez_locked(),
+                ),
+                "lez.refund",
+            ),
+        };
+        assert_eq!(
+            taker
+                .recovery_action(&prepared, &first_before)
+                .expect("pre-boundary first-lock recovery"),
+            BtcRecoveryActionV1::Wait(BtcRecoveryWaitReasonV1::AwaitRefundDeadline)
+        );
+        let first_action = taker
+            .recovery_action(&prepared, &first_boundary)
+            .expect("boundary first-lock recovery");
+        assert_eq!(
+            first_action,
+            taker
+                .recovery_action(&prepared, &first_boundary)
+                .expect("deterministic first-lock replay")
+        );
+        let first_plan = match first_action {
+            BtcRecoveryActionV1::SubmitBitcoinRefund(plan)
+            | BtcRecoveryActionV1::SubmitLezRefund(plan) => plan,
+            other => panic!("unexpected boundary first-lock action: {other:?}"),
+        };
+        assert_eq!(first_plan.steps()[0].step().as_str(), expected_first);
+
+        let (two_before, two_boundary, expected_earlier, after_earlier, expected_later) =
+            match direction {
+                SwapDirection::TakerSellsForeign => (
+                    BtcCanonicalRecoveryStateV1::new(
+                        prepared.agreement(),
+                        BITCOIN_REFUND_HEIGHT,
+                        LEZ_FOREIGN_REFUND_SECONDS - 1,
+                        bitcoin_locked(&prepared),
+                        lez_locked(),
+                    ),
+                    BtcCanonicalRecoveryStateV1::new(
+                        prepared.agreement(),
+                        BITCOIN_REFUND_HEIGHT,
+                        LEZ_FOREIGN_REFUND_SECONDS,
+                        bitcoin_locked(&prepared),
+                        lez_locked(),
+                    ),
+                    "lez.refund",
+                    BtcCanonicalRecoveryStateV1::new(
+                        prepared.agreement(),
+                        BITCOIN_REFUND_HEIGHT,
+                        LEZ_FOREIGN_REFUND_SECONDS,
+                        bitcoin_locked(&prepared),
+                        lez_refunded(),
+                    ),
+                    "bitcoin.refund",
+                ),
+                SwapDirection::TakerSellsLez => (
+                    BtcCanonicalRecoveryStateV1::new(
+                        prepared.agreement(),
+                        BITCOIN_REFUND_HEIGHT - 1,
+                        LEZ_REVERSE_REFUND_SECONDS,
+                        bitcoin_locked(&prepared),
+                        lez_locked(),
+                    ),
+                    BtcCanonicalRecoveryStateV1::new(
+                        prepared.agreement(),
+                        BITCOIN_REFUND_HEIGHT,
+                        LEZ_REVERSE_REFUND_SECONDS,
+                        bitcoin_locked(&prepared),
+                        lez_locked(),
+                    ),
+                    "bitcoin.refund",
+                    BtcCanonicalRecoveryStateV1::new(
+                        prepared.agreement(),
+                        BITCOIN_REFUND_HEIGHT,
+                        LEZ_REVERSE_REFUND_SECONDS,
+                        bitcoin_refunded(&prepared),
+                        lez_locked(),
+                    ),
+                    "lez.refund",
+                ),
+            };
+        assert_eq!(
+            maker
+                .recovery_action(&prepared, &two_before)
+                .expect("pre-boundary two-lock recovery"),
+            BtcRecoveryActionV1::Wait(BtcRecoveryWaitReasonV1::AwaitRefundDeadline)
+        );
+        assert_eq!(
+            taker
+                .recovery_action(&prepared, &two_boundary)
+                .expect("later owner cannot bypass earlier refund"),
+            BtcRecoveryActionV1::Wait(BtcRecoveryWaitReasonV1::AwaitEarlierRefund)
+        );
+        let earlier = maker
+            .recovery_action(&prepared, &two_boundary)
+            .expect("earlier revealing-leg refund at boundary");
+        let earlier_plan = match earlier {
+            BtcRecoveryActionV1::SubmitBitcoinRefund(plan)
+            | BtcRecoveryActionV1::SubmitLezRefund(plan) => plan,
+            other => panic!("unexpected earlier refund action: {other:?}"),
+        };
+        assert_eq!(earlier_plan.steps()[0].step().as_str(), expected_earlier);
+        let later = taker
+            .recovery_action(&prepared, &after_earlier)
+            .expect("later follow-up-leg refund at boundary");
+        let later_plan = match later {
+            BtcRecoveryActionV1::SubmitBitcoinRefund(plan)
+            | BtcRecoveryActionV1::SubmitLezRefund(plan) => plan,
+            other => panic!("unexpected later refund action: {other:?}"),
+        };
+        assert_eq!(later_plan.steps()[0].step().as_str(), expected_later);
+    }
+}
+
+#[test]
+fn claim_only_preparation_cannot_project_refunds() {
+    let fixture = fixture(SwapDirection::TakerSellsForeign);
+    let (claims, ..) = prepared_claims(&fixture);
+    let sdk = BtcPairSdk::new(
+        Participant::Taker,
+        BtcChainPolicyV1::new(BITCOIN_GENESIS, REQUIRED_CONFIRMATIONS),
+    );
+    let terms =
+        BtcProtocolTermsV1::new(fixture.record, fixture.lock_effects).with_claim_effects(claims);
+    let validated = sdk.validate_terms(&terms).expect("validated claim terms");
+    let prepared = sdk
+        .prepare_claims(validated)
+        .expect("claim-only prepared protocol");
+    let state = BtcCanonicalRecoveryStateV1::new(
+        prepared.agreement(),
+        BITCOIN_REFUND_HEIGHT,
+        LEZ_FOREIGN_REFUND_SECONDS,
+        bitcoin_locked(&prepared),
+        LezCanonicalRecoveryStateV1::absent(),
+    );
+    assert!(matches!(
+        sdk.recovery_action(&prepared, &state),
+        Err(BtcSdkError::MissingRecoveryEffects)
+    ));
+}
+
+#[test]
+fn recovery_rejects_state_finality_identity_order_and_agreement_substitution() {
+    let (taker, prepared) = fully_prepared(SwapDirection::TakerSellsForeign, Participant::Taker);
+    let lagging = BtcCanonicalRecoveryStateV1::new(
+        prepared.agreement(),
+        BITCOIN_REFUND_HEIGHT,
+        LEZ_FOREIGN_REFUND_SECONDS,
+        BitcoinCanonicalRecoveryStateV1::locked(
+            BITCOIN_GENESIS,
+            *prepared.agreement().funding_terms().transaction_id(),
+            REQUIRED_CONFIRMATIONS - 1,
+            true,
+        ),
+        LezCanonicalRecoveryStateV1::absent(),
+    );
+    assert!(matches!(
+        taker.recovery_action(&prepared, &lagging),
+        Err(BtcSdkError::RecoveryObservationLag { .. })
+    ));
+
+    let wrong_network = BtcCanonicalRecoveryStateV1::new(
+        prepared.agreement(),
+        BITCOIN_REFUND_HEIGHT,
+        LEZ_FOREIGN_REFUND_SECONDS,
+        BitcoinCanonicalRecoveryStateV1::locked(
+            [0xff; 32],
+            *prepared.agreement().funding_terms().transaction_id(),
+            REQUIRED_CONFIRMATIONS,
+            true,
+        ),
+        LezCanonicalRecoveryStateV1::absent(),
+    );
+    assert!(matches!(
+        taker.recovery_action(&prepared, &wrong_network),
+        Err(BtcSdkError::RecoveryNetworkMismatch)
+    ));
+
+    let wrong_identity = BtcCanonicalRecoveryStateV1::new(
+        prepared.agreement(),
+        BITCOIN_REFUND_HEIGHT,
+        LEZ_FOREIGN_REFUND_SECONDS,
+        BitcoinCanonicalRecoveryStateV1::locked(
+            BITCOIN_GENESIS,
+            [0xee; 32],
+            REQUIRED_CONFIRMATIONS,
+            true,
+        ),
+        LezCanonicalRecoveryStateV1::absent(),
+    );
+    assert!(matches!(
+        taker.recovery_action(&prepared, &wrong_identity),
+        Err(BtcSdkError::RecoveryPlanMismatch)
+    ));
+
+    let wrong_order = BtcCanonicalRecoveryStateV1::new(
+        prepared.agreement(),
+        BITCOIN_REFUND_HEIGHT,
+        LEZ_FOREIGN_REFUND_SECONDS,
+        bitcoin_refunded(&prepared),
+        lez_locked(),
+    );
+    assert!(matches!(
+        taker.recovery_action(&prepared, &wrong_order),
+        Err(BtcSdkError::RecoveryOrderViolation)
+    ));
+
+    let (_, other) = fully_prepared(SwapDirection::TakerSellsLez, Participant::Taker);
+    let substituted = BtcCanonicalRecoveryStateV1::new(
+        other.agreement(),
+        BITCOIN_REFUND_HEIGHT,
+        LEZ_REVERSE_REFUND_SECONDS,
+        BitcoinCanonicalRecoveryStateV1::absent(),
+        lez_locked(),
+    );
+    assert!(matches!(
+        taker.recovery_action(&prepared, &substituted),
+        Err(BtcSdkError::RecoveryStateAgreementMismatch)
+    ));
+
+    let (reverse_taker, reverse) = fully_prepared(SwapDirection::TakerSellsLez, Participant::Taker);
+    let nonfinal = BtcCanonicalRecoveryStateV1::new(
+        reverse.agreement(),
+        BITCOIN_REFUND_HEIGHT,
+        LEZ_REVERSE_REFUND_SECONDS,
+        BitcoinCanonicalRecoveryStateV1::absent(),
+        LezCanonicalRecoveryStateV1::locked(
+            LEZ_GENESIS,
+            LEZ_INITIALIZATION_ID,
+            LEZ_FUNDING_ID,
+            false,
+            true,
+        )
+        .expect("bounded non-final LEZ observation"),
+    );
+    assert!(matches!(
+        reverse_taker.recovery_action(&reverse, &nonfinal),
+        Err(BtcSdkError::RecoveryNotFinalized)
+    ));
+}
+
+#[test]
+fn signed_refund_preparation_rejects_wrong_role_and_cross_agreement_material() {
+    for (direction, wrong_refund_secret) in [
+        (SwapDirection::TakerSellsForeign, secret(3)),
+        (SwapDirection::TakerSellsLez, secret(4)),
+    ] {
+        let fixture = fixture(direction);
+        let agreement = lez_btc_swap_sdk::BtcAgreementV1::validate(fixture.record)
+            .expect("validated agreement");
+        let wrong_signature = Secp256k1::new()
+            .sign_schnorr_no_aux_rand(
+                &Message::from_digest(agreement.bitcoin_refund().sighash_bytes()),
+                &Keypair::from_secret_key(&Secp256k1::new(), &wrong_refund_secret),
+            )
+            .serialize();
+        assert!(matches!(
+            PreparedBitcoinRefundV1::new(&agreement, wrong_signature),
+            Err(BtcSdkError::InvalidBitcoinRefund(_))
+        ));
+    }
+
+    let current = fixture(SwapDirection::TakerSellsForeign);
+    let (claims, ..) = prepared_claims(&current);
+    let (_, other) = fully_prepared(SwapDirection::TakerSellsLez, Participant::Taker);
+    let sdk = BtcPairSdk::new(
+        Participant::Taker,
+        BtcChainPolicyV1::new(BITCOIN_GENESIS, REQUIRED_CONFIRMATIONS),
+    );
+    let substituted = BtcProtocolTermsV1::new(current.record, current.lock_effects)
+        .with_claim_effects(claims)
+        .with_recovery_effects(
+            other
+                .recovery_effects()
+                .expect("full recovery effects")
+                .clone(),
+        );
+    assert!(matches!(
+        sdk.validate_terms(&substituted),
+        Err(BtcSdkError::RecoveryPreparationAgreementMismatch)
     ));
 }
