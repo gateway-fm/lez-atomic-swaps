@@ -10,11 +10,11 @@ use bitcoin::{
 };
 use lez_bridge_adapter::{
     BtcLezAssetBridgeBindingV2, BtcLezAssetBridgeBindingV2Error, BtcLezAssetBridgeV2Error,
-    LezBridgeAdapter, LezBridgeAssetV2Transport,
+    BtcLezAssetFirstLockProofV2Error, LezBridgeAdapter, LezBridgeAssetV2Transport,
 };
 use lez_bridge_client::BridgeClient;
 use lez_bridge_protocol::{
-    AccountIds, AggregateBip340Signature, ChainClock, ChainPosition,
+    AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip,
     ClassifyFinalizedWitnessedAssetClaimV2Request, ClassifyFinalizedWitnessedAssetClaimV2Result,
     ClassifyFinalizedWitnessedAssetCustodyCreationV2Request,
     ClassifyFinalizedWitnessedAssetCustodyCreationV2Result,
@@ -26,7 +26,7 @@ use lez_bridge_protocol::{
     ExactTransactionBytes, FinalizedBlockIdentity, FinalizedWitnessedAssetInitializationFactsV2,
     FinalizedWitnessedAssetScanOutcomeV2, FinalizedWitnessedAssetTransactionTargetV2,
     FinalizedWitnessedAssetUnavailableReasonV2, FinalizedWitnessedClaimObservationTarget, Hex32,
-    NativeCustodyFacts, NativeRefundObservationTarget,
+    MessageContext, NativeAmount, NativeCustodyFacts, NativeRefundObservationTarget,
     ObserveFinalizedWitnessedAssetClaimV2Request, ObserveFinalizedWitnessedAssetClaimV2Result,
     ObserveWitnessedAssetEscrowV2Request, ObserveWitnessedAssetEscrowV2Result,
     ObserveWitnessedAssetRefundV2Request, ObserveWitnessedAssetRefundV2Result,
@@ -35,8 +35,9 @@ use lez_bridge_protocol::{
     PrepareWitnessedAssetEscrowV2Request, PrepareWitnessedAssetEscrowV2Result,
     PrepareWitnessedAssetRefundV2Request, PrepareWitnessedAssetRefundV2Result, PreparedTransaction,
     PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
-    TransactionId, WitnessedAssetEffectInstructionFactsV2,
-    WitnessedAssetInitializationCustodyFactsV2, WitnessedAssetPrepareStepV2,
+    TokenHoldingFactsV2, TransactionId, WitnessedAssetCustodyFactsV2,
+    WitnessedAssetEffectInstructionFactsV2, WitnessedAssetInitializationCustodyFactsV2,
+    WitnessedAssetObservedPrepareEffectV2, WitnessedAssetPrepareStepV2,
     WitnessedAssetPreparedEffectV2, WitnessedEscrowMetadataFacts, WitnessedLezAssetV2,
 };
 use lez_btc_swap_sdk::{
@@ -504,6 +505,183 @@ async fn finalized_classification_preserves_all_four_conservative_outcomes() {
     }
 }
 
+#[tokio::test]
+async fn custom_token_first_lock_proof_returns_exact_sdk_material() {
+    let agreement = agreement(SwapDirection::TakerSellsLez);
+    let selected = token_asset(&agreement, 40);
+    let binding = BtcLezAssetBridgeBindingV2::new(
+        &agreement,
+        &extension(&agreement, selected.clone()),
+        &selected,
+    )
+    .expect("binding");
+    let preparation = asset_preparation(&binding, token_effects());
+    let transport = RecordingTransport::with_asset_proof(AssetProofMutation::None);
+    let proof = adapter(
+        transport.clone(),
+        Participant::Maker,
+        runtime(Participant::Maker),
+    )
+    .prove_btc_asset_first_lock_v2(
+        &binding,
+        rid("prove-token-first-lock"),
+        &preparation,
+        proof_window(),
+    )
+    .await
+    .expect("exact token proof");
+
+    assert_eq!(proof.finalized_tip().height, 73);
+    assert_eq!(proof.prepared().plan(), proof.evidence().observed_plan());
+    assert_eq!(
+        proof
+            .prepared()
+            .plan()
+            .steps()
+            .iter()
+            .map(|step| step.step().as_str())
+            .collect::<Vec<_>>(),
+        ["lez.initialize", "lez.create_custody_ata", "lez.fund"]
+    );
+    assert_eq!(
+        proof
+            .prepared()
+            .plan()
+            .steps()
+            .iter()
+            .map(|step| step.expected_public_id().as_str())
+            .collect::<Vec<_>>(),
+        vec!["01".repeat(32), "02".repeat(32), "03".repeat(32)]
+    );
+    assert_eq!(proof.evidence().metadata_account(), &[13; 32]);
+    assert_eq!(proof.evidence().amount(), LEZ_AMOUNT);
+    let (prepared, evidence) = proof.into_sdk_parts();
+    assert_eq!(prepared.plan(), evidence.observed_plan());
+    assert_eq!(transport.requests.lock().expect("request log").len(), 1);
+}
+
+#[tokio::test]
+async fn native_first_lock_proof_preserves_two_step_parity() {
+    let agreement = agreement(SwapDirection::TakerSellsLez);
+    let selected = BtcLezAssetV1::Native;
+    let binding = BtcLezAssetBridgeBindingV2::new(
+        &agreement,
+        &extension(&agreement, selected.clone()),
+        &selected,
+    )
+    .expect("binding");
+    let preparation = asset_preparation(
+        &binding,
+        vec![
+            WitnessedAssetPreparedEffectV2::new(
+                WitnessedAssetPrepareStepV2::InitializeWitnessed,
+                tx(4),
+            ),
+            WitnessedAssetPreparedEffectV2::new(WitnessedAssetPrepareStepV2::Fund, tx(5)),
+        ],
+    );
+    let proof = adapter(
+        RecordingTransport::with_asset_proof(AssetProofMutation::None),
+        Participant::Maker,
+        runtime(Participant::Maker),
+    )
+    .prove_btc_asset_first_lock_v2(
+        &binding,
+        rid("prove-native-first-lock"),
+        &preparation,
+        proof_window(),
+    )
+    .await
+    .expect("exact native proof");
+
+    assert_eq!(proof.prepared().plan().steps().len(), 2);
+    assert!(matches!(
+        proof.evidence().custody(),
+        lez_btc_swap_sdk::LezAssetCustodyEvidenceV1::Native { custody_account }
+            if *custody_account == CUSTODY_ACCOUNT
+    ));
+}
+
+#[tokio::test]
+async fn first_lock_proof_fails_closed_on_finality_placement_and_exact_effect_drift() {
+    for (mutation, expected) in [
+        (AssetProofMutation::TipDrift, "tip"),
+        (AssetProofMutation::IncompleteWindow, "window"),
+        (AssetProofMutation::PlacementOutsideWindow, "placement"),
+        (AssetProofMutation::PlacementOrder, "chronological"),
+        (AssetProofMutation::StepDrift, "step"),
+        (AssetProofMutation::IdentityDrift, "identity"),
+        (AssetProofMutation::BytesDrift, "bytes"),
+        (AssetProofMutation::NonPublic, "public transaction"),
+        (AssetProofMutation::SameHeightFork, "canonical block"),
+        (AssetProofMutation::CustodyDrift, "observation"),
+        (AssetProofMutation::AmountDrift, "observation"),
+        (AssetProofMutation::MetadataDrift, "metadata account"),
+    ] {
+        let agreement = agreement(SwapDirection::TakerSellsLez);
+        let selected = token_asset(&agreement, 40);
+        let binding = BtcLezAssetBridgeBindingV2::new(
+            &agreement,
+            &extension(&agreement, selected.clone()),
+            &selected,
+        )
+        .expect("binding");
+        let preparation = asset_preparation(&binding, token_effects());
+        let error = adapter(
+            RecordingTransport::with_asset_proof(mutation),
+            Participant::Maker,
+            runtime(Participant::Maker),
+        )
+        .prove_btc_asset_first_lock_v2(
+            &binding,
+            rid(&format!("prove-drift-{mutation:?}").to_lowercase()),
+            &preparation,
+            proof_window(),
+        )
+        .await
+        .expect_err("drift must not produce SDK material");
+        assert!(
+            error.to_string().contains(expected),
+            "{mutation:?}: {error}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn first_lock_proof_never_turns_missing_or_unavailable_reads_into_evidence() {
+    let agreement = agreement(SwapDirection::TakerSellsLez);
+    let selected = token_asset(&agreement, 40);
+    let binding = BtcLezAssetBridgeBindingV2::new(
+        &agreement,
+        &extension(&agreement, selected.clone()),
+        &selected,
+    )
+    .expect("binding");
+    let preparation = asset_preparation(&binding, token_effects());
+
+    for outcome in [AssetProofMutation::Missing, AssetProofMutation::Unavailable] {
+        let error = adapter(
+            RecordingTransport::with_asset_proof(outcome),
+            Participant::Maker,
+            runtime(Participant::Maker),
+        )
+        .prove_btc_asset_first_lock_v2(
+            &binding,
+            rid(&format!("prove-no-result-{outcome:?}").to_lowercase()),
+            &preparation,
+            proof_window(),
+        )
+        .await
+        .expect_err("no result must not produce SDK material");
+        assert!(matches!(
+            error,
+            BtcLezAssetFirstLockProofV2Error::Bridge(BtcLezAssetBridgeV2Error::Transport(
+                TestTransportError
+            ))
+        ));
+    }
+}
+
 fn assert_transport_error<T>(result: &Result<T, BtcLezAssetBridgeV2Error<TestTransportError>>) {
     assert!(matches!(
         result,
@@ -611,6 +789,26 @@ impl RecordedRequest {
 struct RecordingTransport {
     requests: Arc<Mutex<Vec<RecordedRequest>>>,
     initialization_outcome: Option<InitializationOutcome>,
+    asset_proof: Option<AssetProofMutation>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum AssetProofMutation {
+    None,
+    TipDrift,
+    IncompleteWindow,
+    PlacementOutsideWindow,
+    PlacementOrder,
+    StepDrift,
+    IdentityDrift,
+    BytesDrift,
+    NonPublic,
+    SameHeightFork,
+    CustodyDrift,
+    AmountDrift,
+    MetadataDrift,
+    Missing,
+    Unavailable,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -658,7 +856,14 @@ impl LezBridgeAssetV2Transport for RecordingTransport {
         &self,
         request: ObserveWitnessedAssetEscrowV2Request,
     ) -> Result<ObserveWitnessedAssetEscrowV2Result, Self::Error> {
-        self.record(RecordedRequest::ObserveEscrow(Box::new(request)))
+        let Some(mutation) = self.asset_proof else {
+            return self.record(RecordedRequest::ObserveEscrow(Box::new(request)));
+        };
+        self.requests
+            .lock()
+            .expect("request log")
+            .push(RecordedRequest::ObserveEscrow(Box::new(request.clone())));
+        asset_observation(&request, mutation)
     }
 
     async fn prepare_witnessed_asset_claim_v2(
@@ -738,6 +943,13 @@ impl RecordingTransport {
     fn with_initialization_outcome(initialization_outcome: InitializationOutcome) -> Self {
         Self {
             initialization_outcome: Some(initialization_outcome),
+            ..Self::default()
+        }
+    }
+
+    fn with_asset_proof(asset_proof: AssetProofMutation) -> Self {
+        Self {
+            asset_proof: Some(asset_proof),
             ..Self::default()
         }
     }
@@ -859,6 +1071,215 @@ fn token_effects() -> Vec<WitnessedAssetPreparedEffectV2> {
         WitnessedAssetPreparedEffectV2::new(WitnessedAssetPrepareStepV2::CreateCustodyAta, tx(2)),
         WitnessedAssetPreparedEffectV2::new(WitnessedAssetPrepareStepV2::Fund, tx(3)),
     ]
+}
+
+fn proof_window() -> DiscoveryWindow {
+    DiscoveryWindow::new(70, 4).expect("proof window")
+}
+
+fn asset_preparation(
+    binding: &BtcLezAssetBridgeBindingV2,
+    effects: Vec<WitnessedAssetPreparedEffectV2>,
+) -> PrepareWitnessedAssetEscrowV2Result {
+    PrepareWitnessedAssetEscrowV2Result::new(
+        MessageContext::new(run_id(), rid("proof-preparation"), BridgeParticipant::Taker),
+        binding.terms().clone(),
+        effects,
+    )
+    .expect("valid proof preparation")
+}
+
+fn asset_observation(
+    request: &ObserveWitnessedAssetEscrowV2Request,
+    mutation: AssetProofMutation,
+) -> Result<ObserveWitnessedAssetEscrowV2Result, TestTransportError> {
+    if matches!(
+        mutation,
+        AssetProofMutation::Missing | AssetProofMutation::Unavailable
+    ) {
+        return Err(TestTransportError);
+    }
+    let mut result = baseline_asset_observation(request);
+    mutate_asset_observation(&mut result, mutation);
+    Ok(result)
+}
+
+fn baseline_asset_observation(
+    request: &ObserveWitnessedAssetEscrowV2Request,
+) -> ObserveWitnessedAssetEscrowV2Result {
+    let (metadata, custody) = match request.terms.asset() {
+        WitnessedLezAssetV2::Native(terms) => (
+            WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+                Hex32::from_bytes(METADATA_ACCOUNT),
+                request.runtime.escrow_program_id,
+                Hex32::from_bytes(CUSTODY_ACCOUNT),
+                terms,
+                EscrowState::Funded,
+            ),
+            WitnessedAssetCustodyFactsV2::Native(NativeCustodyFacts::new(
+                Hex32::from_bytes(CUSTODY_ACCOUNT),
+                terms.authenticated_transfer_program_id(),
+                terms.amount().as_u128(),
+            )),
+        ),
+        WitnessedLezAssetV2::CustomToken(terms) => (
+            WitnessedEscrowMetadataFacts::from_witnessed_token_terms(
+                Hex32::from_bytes(METADATA_ACCOUNT),
+                request.runtime.escrow_program_id,
+                terms,
+                EscrowState::Funded,
+            ),
+            WitnessedAssetCustodyFactsV2::CustomToken(TokenHoldingFactsV2::new(
+                terms.custody_ata_account_id(),
+                terms.token_program_id(),
+                terms.token_definition_account_id(),
+                terms.amount().as_u128(),
+            )),
+        ),
+    };
+    let effects = request
+        .prepared_effects
+        .iter()
+        .enumerate()
+        .map(|(index, effect)| {
+            let height = 70 + u64::try_from(index).expect("bounded effect index");
+            let block_byte = 100 + u8::try_from(index).expect("bounded effect index");
+            WitnessedAssetObservedPrepareEffectV2::new(
+                effect.step,
+                ObservedTransactionFacts::new(
+                    effect.transaction.transaction_id,
+                    effect.transaction.exact_bytes.clone(),
+                    ChainPosition::new(Hex32::from_bytes([block_byte; 32]), height, 0),
+                    AccountIds::new(vec![]).expect("empty signer list is valid"),
+                    true,
+                ),
+                request.runtime.escrow_program_id,
+                prepare_accounts(request.terms.asset(), effect.step),
+            )
+        })
+        .collect::<Vec<_>>();
+    let tip = ChainTip::new(Hex32::from_bytes([120; 32]), 73);
+    ObserveWitnessedAssetEscrowV2Result::new(
+        request.context.clone(),
+        request.terms.clone(),
+        tip,
+        effects,
+        metadata,
+        custody,
+        tip,
+    )
+    .expect("valid baseline observation")
+}
+
+fn mutate_asset_observation(
+    result: &mut ObserveWitnessedAssetEscrowV2Result,
+    mutation: AssetProofMutation,
+) {
+    match mutation {
+        AssetProofMutation::None => {}
+        AssetProofMutation::TipDrift => {
+            result.tip_after = ChainTip::new(Hex32::from_bytes([121; 32]), 74);
+        }
+        AssetProofMutation::IncompleteWindow => {
+            let incomplete_tip = ChainTip::new(Hex32::from_bytes([119; 32]), 72);
+            result.tip_before = incomplete_tip;
+            result.tip_after = incomplete_tip;
+        }
+        AssetProofMutation::PlacementOutsideWindow => {
+            result.effects[0].transaction.position =
+                ChainPosition::new(Hex32::from_bytes([98; 32]), 69, 0);
+        }
+        AssetProofMutation::PlacementOrder => {
+            result.effects[1].transaction.position =
+                ChainPosition::new(Hex32::from_bytes([100; 32]), 70, 0);
+        }
+        AssetProofMutation::StepDrift => {
+            result.effects[0].step = WitnessedAssetPrepareStepV2::Fund;
+        }
+        AssetProofMutation::IdentityDrift => {
+            result.effects[0].transaction.transaction_id = TransactionId::from_bytes([77; 32]);
+        }
+        AssetProofMutation::BytesDrift => {
+            result.effects[0].transaction.exact_bytes =
+                ExactTransactionBytes::new(vec![77; 64]).expect("drift bytes");
+        }
+        AssetProofMutation::NonPublic => {
+            result.effects[0].transaction.is_public = false;
+        }
+        AssetProofMutation::SameHeightFork => {
+            result.effects[1].transaction.position =
+                ChainPosition::new(Hex32::from_bytes([101; 32]), 70, 1);
+        }
+        AssetProofMutation::CustodyDrift => {
+            let WitnessedAssetCustodyFactsV2::CustomToken(custody) = &mut result.custody else {
+                unreachable!("token fixture")
+            };
+            custody.account_id = Hex32::from_bytes([77; 32]);
+        }
+        AssetProofMutation::AmountDrift => {
+            let WitnessedAssetCustodyFactsV2::CustomToken(custody) = &mut result.custody else {
+                unreachable!("token fixture")
+            };
+            custody.balance = NativeAmount::new(LEZ_AMOUNT + 1);
+        }
+        AssetProofMutation::MetadataDrift => {
+            result.metadata.account_id = Hex32::from_bytes([78; 32]);
+            for effect in &mut result.effects {
+                let mut accounts: Vec<_> = effect.ordered_account_ids.clone().into();
+                accounts[0] = result.metadata.account_id;
+                effect.ordered_account_ids =
+                    AccountIds::new(accounts).expect("drift account order remains bounded");
+            }
+        }
+        AssetProofMutation::Missing | AssetProofMutation::Unavailable => unreachable!("returned"),
+    }
+}
+
+fn prepare_accounts(asset: &WitnessedLezAssetV2, step: WitnessedAssetPrepareStepV2) -> AccountIds {
+    let accounts = match (asset, step) {
+        (WitnessedLezAssetV2::Native(terms), WitnessedAssetPrepareStepV2::InitializeWitnessed) => {
+            vec![
+                Hex32::from_bytes(METADATA_ACCOUNT),
+                Hex32::from_bytes(CUSTODY_ACCOUNT),
+                terms.depositor_account_id(),
+                terms.claimant_account_id(),
+                terms.aggregate_authority_account_id(),
+            ]
+        }
+        (WitnessedLezAssetV2::Native(terms), WitnessedAssetPrepareStepV2::Fund) => vec![
+            Hex32::from_bytes(METADATA_ACCOUNT),
+            Hex32::from_bytes(CUSTODY_ACCOUNT),
+            terms.depositor_account_id(),
+        ],
+        (
+            WitnessedLezAssetV2::CustomToken(terms),
+            WitnessedAssetPrepareStepV2::InitializeWitnessed,
+        ) => vec![
+            Hex32::from_bytes(METADATA_ACCOUNT),
+            terms.depositor_owner_account_id(),
+            terms.claimant_owner_account_id(),
+            terms.token_definition_account_id(),
+            terms.aggregate_authority_account_id(),
+        ],
+        (
+            WitnessedLezAssetV2::CustomToken(terms),
+            WitnessedAssetPrepareStepV2::CreateCustodyAta,
+        ) => vec![
+            Hex32::from_bytes(METADATA_ACCOUNT),
+            terms.token_definition_account_id(),
+            terms.custody_ata_account_id(),
+        ],
+        (WitnessedLezAssetV2::CustomToken(terms), WitnessedAssetPrepareStepV2::Fund) => vec![
+            Hex32::from_bytes(METADATA_ACCOUNT),
+            terms.depositor_owner_account_id(),
+            terms.depositor_ata_account_id(),
+            terms.custody_ata_account_id(),
+        ],
+        (WitnessedLezAssetV2::Native(_), WitnessedAssetPrepareStepV2::CreateCustodyAta) => {
+            unreachable!("native plan has no custody ATA")
+        }
+    };
+    AccountIds::new(accounts).expect("prepare account order")
 }
 
 fn tx(byte: u8) -> PreparedTransaction {

@@ -1603,6 +1603,7 @@ dependencies = [
  "lez-bridge-protocol",
  "lez-btc-swap-sdk",
  "lez-swap-core",
+ "lez-swap-sdk-core",
  "lez-swap-store",
  "lez-zec-swap-sdk",
  "rusqlite",

@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod btc_asset_first_lock_proof_v2;
 mod btc_asset_v2;
 mod btc_current_first_lock;
 mod btc_first_lock_proof;
@@ -10,6 +11,9 @@ mod client_factory;
 mod request_context;
 mod sdk_ports;
 
+pub use btc_asset_first_lock_proof_v2::{
+    BtcLezAssetFirstLockProofV2, BtcLezAssetFirstLockProofV2Error,
+};
 pub use btc_asset_v2::{
     BtcLezAssetBridgeBindingV2, BtcLezAssetBridgeBindingV2Error, BtcLezAssetBridgeV2Error,
     LezBridgeAssetV2Transport,

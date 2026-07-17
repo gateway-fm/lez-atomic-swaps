@@ -47,6 +47,7 @@ pub struct BtcLezAssetBridgeBindingV2 {
     channel_id: [u8; 32],
     genesis_block_hash: [u8; 32],
     escrow_program_id: [u8; 32],
+    metadata_account_id: [u8; 32],
     maker_account_id: [u8; 32],
     taker_account_id: [u8; 32],
     depositor: Participant,
@@ -139,6 +140,7 @@ impl BtcLezAssetBridgeBindingV2 {
             channel_id: *signed.channel_id(),
             genesis_block_hash: *signed.genesis_block_hash(),
             escrow_program_id: *signed.escrow_program_id(),
+            metadata_account_id: *signed.metadata_account(),
             maker_account_id: *agreement
                 .participant(Participant::Maker)
                 .lez_owner_account(),
@@ -153,6 +155,18 @@ impl BtcLezAssetBridgeBindingV2 {
     /// Exact additive v2 terms passed unchanged to every bridge operation.
     pub const fn terms(&self) -> &WitnessedLezAssetTermsV2 {
         &self.terms
+    }
+
+    /// Finalized LEZ network identity bound by the accepted base agreement.
+    #[must_use]
+    pub const fn genesis_block_hash(&self) -> &[u8; 32] {
+        &self.genesis_block_hash
+    }
+
+    /// Exact witnessed-escrow metadata account bound by the base agreement.
+    #[must_use]
+    pub const fn metadata_account_id(&self) -> &[u8; 32] {
+        &self.metadata_account_id
     }
 
     /// Agreement-derived LEZ depositor role.
