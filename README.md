@@ -1173,6 +1173,111 @@ the Bedrock process is not claimed to make zero egress attempts. See the
 [M3 operator guide](docs/m3-local-poc-operator-guide.md) for exact builds,
 proof boundaries, private evidence handling, and failure recovery.
 
+### Private M3 terminal-recording candidate quick start
+
+Commits `a3c6b21` and `269bbad` provide the fail-closed recorder and complete
+three-scenario bundle verifier. Their contract tests are GREEN. No live
+actual-node recording has been generated, so D1 artifacts and D1 itself remain
+open. In particular, the runner's JSON evidence packet is not a recording: it
+is a hash-bound input to the replayable terminal output and timing stream.
+
+Run from a clean committed checkout on a Linux host with the M3 runner's Docker,
+Rust/Cargo, LEZ, and native-library prerequisites. The recording layer also
+requires Git, jq, util-linux `script`/`scriptreplay`, `sha256sum`, `stat`, and
+`realpath`. Keep the verified values below unchanged across all three runs.
+Replace only the absolute paths with the locally verified pinned inputs:
+
+```sh
+export LEZ_V02_SOURCE_DIR=/absolute/path/to/clean/logos-execution-zone-v0.2.0
+export LEZ_V02_SERVICES_DIR=/absolute/path/to/locked/release-binaries
+export LEZ_V02_R0VM=/absolute/path/to/verified/risc0-3.0.5-r0vm
+export LEZ_V02_ARTIFACT_TARGET_DIR=/absolute/path/to/verified/lez-artifact-target
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+
+unset M3_RECORDING_TESTING M3_RECORDING_TEST_DRIVER
+unset M3_RECORDING_TEST_EVIDENCE_FILE M3_RECORDING_BUNDLE_TESTING
+test -z "$(git status --porcelain=v1 --untracked-files=normal)"
+export D1_COMMIT="$(git rev-parse --verify HEAD)"
+export D1_STAMP="$(date -u +%Y%m%d%H%M%S)"
+export HAPPY_RUN_ID="m3record-happy-${D1_STAMP}"
+export REFUND_RUN_ID="m3record-refund-${D1_STAMP}"
+export CONCURRENT_RUN_ID="m3record-concurrent-${D1_STAMP}"
+```
+
+Use these exact three live commands. Each fresh ID is valid for one attempt
+only; a failed run deliberately retains its private diagnostics and must not be
+overwritten or reused.
+
+```sh
+RUN_ID="$HAPPY_RUN_ID" M3_RECORDING_SCENARIO=happy ./scripts/record-m3-private-demo.sh
+RUN_ID="$REFUND_RUN_ID" M3_RECORDING_SCENARIO=refund ./scripts/record-m3-private-demo.sh
+RUN_ID="$CONCURRENT_RUN_ID" M3_RECORDING_SCENARIO=concurrent ./scripts/record-m3-private-demo.sh
+```
+
+The scenario bindings are exact: `happy` runs the sequential two-direction
+claim journey, `refund` runs the sequential two-lock timeout/refund journey,
+and `concurrent` runs the claim journey with the opposite-direction
+revision-two overlap barrier. The corresponding packet kinds are
+`m3_actor_two_direction_local_poc`,
+`m3_actor_two_direction_refund_local_poc`, and
+`m3_actor_overlapping_two_swap_local_poc`.
+
+By default each private directory is
+`.e2e/<RUN_ID>/m3-recordings/<scenario>/` with mode `0700`. It contains
+`terminal.typescript`, `terminal.timing`, and `recording.json`, each mode
+`0600`. The separately retained and hash-bound actual-node packet is
+`.e2e/<RUN_ID>/m3-actor-poc/evidence/m3-actor-local-poc.json`. Keep the whole
+`.e2e` tree private; it can also contain credentials, signer material,
+transactions, and actor databases. An optional `M3_RECORDING_PRIVATE_ROOT`
+must be an absolute non-symlink path; an in-repository root must be ignored by
+Git.
+
+Replay from each recording directory, for example:
+
+```sh
+(cd ".e2e/$HAPPY_RUN_ID/m3-recordings/happy" && scriptreplay --log-timing terminal.timing --log-out terminal.typescript)
+(cd ".e2e/$REFUND_RUN_ID/m3-recordings/refund" && scriptreplay --log-timing terminal.timing --log-out terminal.typescript)
+(cd ".e2e/$CONCURRENT_RUN_ID/m3-recordings/concurrent" && scriptreplay --log-timing terminal.timing --log-out terminal.typescript)
+```
+
+Do not change commits or tracked files between runs. After all three pass, this
+exact command verifies modes, replayability, all hashes, scenario/evidence
+bindings, node versions, three unique run IDs, and one shared repository commit
+before atomically creating a private mode-`0600` bundle index:
+
+```sh
+export D1_BUNDLE="$PWD/.e2e/m3record-bundle-${D1_STAMP}/recording-bundle.json"
+M3_RECORDING_BUNDLE_OUTPUT="$D1_BUNDLE" \
+  ./scripts/verify-m3-private-recording-bundle.sh \
+  "$PWD/.e2e/$HAPPY_RUN_ID/m3-recordings/happy/recording.json" \
+  "$PWD/.e2e/$REFUND_RUN_ID/m3-recordings/refund/recording.json" \
+  "$PWD/.e2e/$CONCURRENT_RUN_ID/m3-recordings/concurrent/recording.json"
+test "$(jq -er '.repository_commit' "$D1_BUNDLE")" = "$D1_COMMIT"
+```
+
+The bundle JSON is a verifier-produced index, not a recording. Live verification
+rejects fixture/test-contract manifests, a dirty or different current HEAD,
+mixed commits or node versions, duplicate scenarios/runs, changed bytes,
+missing evidence, unsafe modes, non-replayable output, and an existing bundle
+path. A failed driver leaves the terminal stream and timing file as private
+diagnostics but creates no passing `recording.json`; a failed bundle creates no
+passing bundle.
+
+All three journeys start actual run-owned Bitcoin Core 31.1 Regtest and LEZ
+v0.2 private-local Bedrock/sequencer/indexer services on isolated loopback
+endpoints. Funds are deterministic local Regtest coinbase and LEZ genesis/Vault
+outputs. No public chain RPC, peer, faucet, deployment, or public funds are
+used. Pinned Bedrock may make best-effort UDP NTP requests to
+`pool.ntp.org:123`; success is neither required nor trusted, and finalized
+chain timestamps remain authoritative. The refund recording intentionally
+waits through both signed recovery schedules. The retained reference took
+54 minutes 5 seconds at 3.0-second LEZ slots; host load, finality, and bounded
+moving-tip retries can extend it without authorizing another send.
+
+The detailed failure contract and operator checks are in
+[the M3 local PoC operator guide](docs/m3-local-poc-operator-guide.md#private-d1-btc-recording-candidate-bundle).
+
 ### M2 corridor and route-selection quick start
 
 After provisioning fresh isolated LEZ v0.2 and Zebra Regtest nodes with the

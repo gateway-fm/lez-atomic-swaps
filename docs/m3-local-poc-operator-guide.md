@@ -1266,6 +1266,189 @@ complete transactions, and signer/actor databases. If the run fails, the
 cleanup attestation should still prove exact cleanup; no terminal success packet
 exists, and the same run ID and run root must never be reused.
 
+## Private D1 BTC recording candidate bundle
+
+Status: recorder and bundle-verifier tooling is GREEN at pushed commits
+`a3c6b21` and `269bbad`. Live actual-node terminal recordings have not been
+generated. This section is a reproducible operator procedure for the three BTC
+candidate artifacts; it does not certify D1, substitute a JSON packet for a
+recording, or claim the remaining ZEC/XMR recordings.
+
+### Preflight and one-commit rule
+
+Use a Linux host that satisfies [Prerequisites and builds](#prerequisites-and-builds)
+and can run the complete actual-node entry point above. The recorder additionally
+checks Git, jq, util-linux `script` and `scriptreplay`, `sha256sum`, and `stat`;
+the bundle verifier also checks `realpath`. Warm the pinned Cargo/git, Bitcoin,
+Risc0, and Logos circuit caches before beginning. A setup download is not live
+chain evidence.
+
+Live mode rejects any dirty tracked or untracked file before each recording.
+All three manifests must name the same 40-hex repository commit, and the bundle
+verifier requires that commit to remain the clean current `HEAD`. The ignored
+`.e2e` outputs do not dirty Git. Commit or remove reviewed source changes before
+starting, then make no checkout, build-generated tracked change, or source edit
+until bundle verification completes.
+
+Use the current pinned LEZ v0.2.0/Risc0 3.0.5 environment, one already verified
+artifact target, Rapidsnark v0.0.8 libraries, and the explicit libclang include
+argument. The actual-node runner independently hashes all four required native
+archives. Substitute only locally verified absolute paths:
+
+~~~sh
+export LEZ_V02_SOURCE_DIR=/absolute/path/to/clean/logos-execution-zone-v0.2.0
+export LEZ_V02_SERVICES_DIR=/absolute/path/to/locked/release-binaries
+export LEZ_V02_R0VM=/absolute/path/to/verified/risc0-3.0.5-r0vm
+export LEZ_V02_ARTIFACT_TARGET_DIR=/absolute/path/to/verified/lez-artifact-target
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+
+unset M3_RECORDING_TESTING M3_RECORDING_TEST_DRIVER
+unset M3_RECORDING_TEST_EVIDENCE_FILE M3_RECORDING_BUNDLE_TESTING
+test -z "$(git status --porcelain=v1 --untracked-files=normal)"
+export D1_COMMIT="$(git rev-parse --verify HEAD)"
+export D1_STAMP="$(date -u +%Y%m%d%H%M%S)"
+export HAPPY_RUN_ID="m3record-happy-${D1_STAMP}"
+export REFUND_RUN_ID="m3record-refund-${D1_STAMP}"
+export CONCURRENT_RUN_ID="m3record-concurrent-${D1_STAMP}"
+~~~
+
+Do not enable `M3_RECORDING_TESTING` or supply the fixture-driver/evidence
+overrides for a live artifact. Those variables exist only for the contract
+suite, and the production bundle verifier rejects `test_contract` manifests.
+
+### Record the three exact scenarios
+
+Run these commands in order from the repository root. The timestamp supplies
+three fresh valid 8-to-48-character runner IDs. Every ID and output path is
+one-shot: whether a run succeeds or fails, generate a new stamp for a retry.
+
+~~~sh
+RUN_ID="$HAPPY_RUN_ID" M3_RECORDING_SCENARIO=happy ./scripts/record-m3-private-demo.sh
+RUN_ID="$REFUND_RUN_ID" M3_RECORDING_SCENARIO=refund ./scripts/record-m3-private-demo.sh
+RUN_ID="$CONCURRENT_RUN_ID" M3_RECORDING_SCENARIO=concurrent ./scripts/record-m3-private-demo.sh
+~~~
+
+| Recorder scenario | Actual-node runner selection | Required evidence kind | User-visible behavior |
+|---|---|---|---|
+| `happy` | `M3_ACTOR_POC_JOURNEY=claim`, sequential schedule | `m3_actor_two_direction_local_poc` | Both economic directions claim through revision 4 |
+| `refund` | `M3_ACTOR_POC_JOURNEY=refund`, sequential schedule | `m3_actor_two_direction_refund_local_poc` | Both two-lock directions wait for and execute ordered refunds |
+| `concurrent` | claim journey, `M3_ACTOR_POC_SCHEDULE=overlap` | `m3_actor_overlapping_two_swap_local_poc` | Opposite-direction swaps share nodes, reach revision 2 together, then settle independently |
+
+The wrapper exports only the selected journey and schedule into the fixed
+repository-owned driver. In live mode an alternate driver or evidence path is
+forbidden. It verifies the resulting packet's run ID, exact current commit,
+scenario kind, journey, schedule, pass result, and node/external-resource facts
+before it can emit a passing manifest.
+
+### Private outputs and replay
+
+The default layout for each run is:
+
+~~~text
+.e2e/<RUN_ID>/
+├── m3-actor-poc/evidence/m3-actor-local-poc.json
+└── m3-recordings/<scenario>/
+    ├── recording.json
+    ├── terminal.timing
+    └── terminal.typescript
+~~~
+
+`m3-recordings/<scenario>` is mode `0700`; its three files are mode `0600`.
+`terminal.typescript` is the terminal byte stream and `terminal.timing` is its
+classic util-linux timing stream. Together they are the replayable recording.
+`recording.json` binds their SHA-256 hashes, exact tool versions, evidence hash,
+scenario, node versions, current commit, and replay argv. The actor packet is
+evidence consumed by the recorder, not a recording. The final bundle JSON is
+also an index and verification result, not a recording.
+
+An optional `M3_RECORDING_PRIVATE_ROOT` moves the recording root only. It must
+be an absolute non-symlink path; the scenario output must not already exist. A
+live root below the repository must be ignored by Git. The actual-node evidence
+and other secret-bearing state remain under `.e2e/<RUN_ID>/m3-actor-poc`, so
+keep both trees private even when recordings are stored elsewhere.
+
+Replay each successful stream from its own directory:
+
+~~~sh
+(cd ".e2e/$HAPPY_RUN_ID/m3-recordings/happy" && scriptreplay --log-timing terminal.timing --log-out terminal.typescript)
+(cd ".e2e/$REFUND_RUN_ID/m3-recordings/refund" && scriptreplay --log-timing terminal.timing --log-out terminal.typescript)
+(cd ".e2e/$CONCURRENT_RUN_ID/m3-recordings/concurrent" && scriptreplay --log-timing terminal.timing --log-out terminal.typescript)
+~~~
+
+Use `scriptreplay --summary --log-timing terminal.timing --log-out
+terminal.typescript` for a non-playing structural check. The recorder and
+bundle verifier run that check themselves.
+
+### Verify the complete candidate bundle
+
+After all three recordings pass, preserve the same clean checkout and execute:
+
+~~~sh
+export D1_BUNDLE="$PWD/.e2e/m3record-bundle-${D1_STAMP}/recording-bundle.json"
+M3_RECORDING_BUNDLE_OUTPUT="$D1_BUNDLE" \
+  ./scripts/verify-m3-private-recording-bundle.sh \
+  "$PWD/.e2e/$HAPPY_RUN_ID/m3-recordings/happy/recording.json" \
+  "$PWD/.e2e/$REFUND_RUN_ID/m3-recordings/refund/recording.json" \
+  "$PWD/.e2e/$CONCURRENT_RUN_ID/m3-recordings/concurrent/recording.json"
+test "$(jq -er '.repository_commit' "$D1_BUNDLE")" = "$D1_COMMIT"
+~~~
+
+The verifier accepts exactly three mode-`0600`, non-symlink manifests and
+requires one each of `happy`, `refund`, and `concurrent`, three distinct run
+IDs, identical live certification mode, repository commit, and Bitcoin/LEZ
+network versions. It re-hashes both terminal files and the actual-node packet,
+checks replayability, and revalidates the exact scenario-to-packet mapping. It
+also requires a clean current `HEAD` equal to the recorded commit. Only then
+does it atomically create the mode-`0600` bundle index; an existing output path
+is never overwritten.
+
+### Runtime resources, duration, and failure diagnostics
+
+Each recording starts a run-owned Bitcoin Core 31.1 Regtest daemon and LEZ
+v0.2 private-local Bedrock, sequencer, indexer, and role sidecars on isolated
+loopback endpoints. These are real local nodes, not RPC doubles. Funds are
+deterministic local Regtest coinbase and LEZ genesis/Vault outputs whose chain
+facts are re-read before use. No public blockchain RPC, peer, faucet, public
+deployment, or public funds participate, and successful certification does not
+depend on an external network.
+
+Pinned Bedrock can nevertheless make best-effort UDP NTP attempts to
+`pool.ntp.org:123`. A reply is optional and is neither trusted nor required;
+the runner records attempts and relies on canonical finalized chain timestamps.
+Cold cache population is a separate setup dependency and can fail on DNS,
+registries, release hosts, or rate limits.
+
+The happy and concurrent runtimes depend on local build speed and finality.
+The refund scenario deliberately waits for both directions' countersigned
+recovery schedules and uses 3.0-second LEZ slots. The retained reference run
+took 54 minutes 5 seconds from first evidence through cleanup. Allow at least
+about an hour; host load, finalized-tip movement, and bounded read-only retries
+can extend it. Timeout or `moving_tip` is uncertainty, never absence or renewed
+submission authority.
+
+Failure behavior is intentionally conservative:
+
+- invalid scenario, unsafe driver, dirty tree, unsafe/custom evidence path, or
+  reused output fails closed;
+- if the actual-node driver exits nonzero, no passing `recording.json` is
+  written, while nonempty mode-`0600` terminal output/timing are retained for
+  private diagnosis;
+- if evidence validation fails after a terminal capture, the capture remains
+  diagnostic-only and no passing manifest is created;
+- bundle verification rejects missing/duplicate scenarios, duplicate runs,
+  fixture manifests, mixed commits or networks, dirty/changed `HEAD`, unsafe
+  modes/symlinks, missing files, non-replayable streams, hash/evidence drift,
+  or a pre-existing output; and
+- failed bundle creation leaves no passing bundle because publication uses a
+  private temporary file followed by one atomic move.
+
+Never edit a captured stream or manifest to repair a run. Retain diagnostics
+privately, use a new stamp and three new IDs, and repeat from the same chosen
+clean commit. A passing three-recording BTC bundle would close only the BTC
+artifact slice. D1 still requires the remaining pair recordings and final M7
+regeneration/acceptance.
+
 ## Historical schema-3 observation-only actor inspection
 
 This section retains the exact lower-level recipe used to inspect the
