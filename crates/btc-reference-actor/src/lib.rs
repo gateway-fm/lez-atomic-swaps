@@ -37,18 +37,20 @@ use lez_bridge_protocol::{
     AggregateBip340Signature, ChainClock, ChainTip,
     ClassifyFinalizedWitnessedInitializationRequest, CompleteWitnessedClaimRequest,
     CompleteWitnessedClaimResult, DiscoveryWindow, EscrowObservationTarget, EscrowState,
-    ExactTransactionBytes, FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
-    Hex32, MessageContext, NativeEscrowAccountObservation, NativeRefundObservation,
-    NativeRefundObservationTarget, ObserveCurrentClockRequest,
-    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedFundingRequest,
-    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveWitnessedEscrowRequest,
-    Participant as BridgeParticipant, PrepareNativeRefundRequest, PrepareNativeRefundResult,
-    PrepareWitnessedAssetEscrowV2Request, PrepareWitnessedAssetEscrowV2Result,
-    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
-    PreparedTransaction, PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
-    TransactionId, WitnessedAssetPrepareStepV2, WitnessedEscrowMetadataFacts,
-    WitnessedFundingObservation, WitnessedInitializationObservation, WitnessedNativeEscrowTerms,
+    ExactTransactionBytes, FinalizedWitnessedAssetScanOutcomeV2,
+    FinalizedWitnessedAssetTransactionTargetV2, FinalizedWitnessedClaimFacts,
+    FinalizedWitnessedClaimObservationTarget, Hex32, MessageContext,
+    NativeEscrowAccountObservation, NativeRefundObservation, NativeRefundObservationTarget,
+    ObserveCurrentClockRequest, ObserveFinalizedWitnessedClaimRequest,
+    ObserveFinalizedWitnessedFundingRequest, ObserveNativeRefundRequest, ObserveNativeRefundResult,
+    ObserveWitnessedEscrowRequest, Participant as BridgeParticipant, PrepareNativeRefundRequest,
+    PrepareNativeRefundResult, PrepareWitnessedAssetEscrowV2Request,
+    PrepareWitnessedAssetEscrowV2Result, PrepareWitnessedClaimResult,
+    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
+    PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
+    WitnessedAssetPrepareStepV2, WitnessedEscrowMetadataFacts, WitnessedFundingObservation,
+    WitnessedInitializationObservation, WitnessedNativeEscrowTerms,
     WitnessedNativeEscrowTermsInput,
 };
 use lez_btc_core_adapter::{
@@ -60,10 +62,12 @@ use lez_btc_core_adapter::{
 };
 use lez_btc_swap_sdk::{
     AdaptorSessionContext, BitcoinFirstLockEvidenceV1, BtcAdaptorSessionDomain, BtcAgreementV1,
-    BtcFirstLockEvidenceV1, BtcLezAssetExtensionV1, BtcPairSdk, BtcPreparedLockEffectsV1,
+    BtcFirstLockEvidenceV1, BtcLezAssetExtensionV1, BtcLezAssetFirstLockEvidenceV1,
+    BtcLezAssetPreparedLockEffectsV1, BtcPairSdk, BtcPreparedLockEffectsV1,
     MAX_BTC_AGREEMENT_RECORD_BYTES, MAX_BTC_LEZ_ASSET_EXTENSION_RECORD_BYTES,
-    PreparedBitcoinFundingV1, PreparedLezFundingV1, adapt_presignature, extract_adaptor_secret,
-    verify_adaptor_presignature, verify_adaptor_secret, verify_final_signature,
+    PreparedBitcoinFundingV1, PreparedLezAssetFundingV1, PreparedLezFundingV1, adapt_presignature,
+    extract_adaptor_secret, verify_adaptor_presignature, verify_adaptor_secret,
+    verify_final_signature,
 };
 use lez_swap_core::{
     Chain, ChainPosition as SwapChainPosition, ClaimEvidence, LezUnixMilliseconds, Participant,
@@ -261,6 +265,18 @@ enum MakerLockMaterialConfig {
     },
 }
 
+/// Exact taker-owned F7 first-lock preparation needed by the schema-5 Maker
+/// before it can authorize its Bitcoin second lock.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "chain", rename_all = "snake_case", deny_unknown_fields)]
+enum TakerFirstLockMaterialConfig {
+    /// Exact LEZ asset-v2 preparation request and ordered result.
+    LezAssetV2 {
+        preparation_request_file: PathBuf,
+        preparation_result_file: PathBuf,
+    },
+}
+
 /// Locally pinned countersigned asset extension introduced by schema 5.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -285,6 +301,15 @@ where
     D: serde::Deserializer<'de>,
 {
     AssetExtensionConfig::deserialize(deserializer).map(Some)
+}
+
+fn deserialize_present_taker_first_lock_material<'de, D>(
+    deserializer: D,
+) -> Result<Option<TakerFirstLockMaterialConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    TakerFirstLockMaterialConfig::deserialize(deserializer).map(Some)
 }
 
 fn deserialize_present_path<'de, D>(deserializer: D) -> Result<Option<PathBuf>, D::Error>
@@ -315,6 +340,12 @@ pub struct ActorConfig {
     maker_lock: Option<MakerLockMaterialConfig>,
     #[serde(
         default,
+        deserialize_with = "deserialize_present_taker_first_lock_material",
+        skip_serializing_if = "Option::is_none"
+    )]
+    taker_first_lock: Option<TakerFirstLockMaterialConfig>,
+    #[serde(
+        default,
         deserialize_with = "deserialize_present_asset_extension",
         skip_serializing_if = "Option::is_none"
     )]
@@ -335,6 +366,7 @@ impl fmt::Debug for ActorConfig {
             .field("signing", &"[REDACTED]")
             .field("refund", &"[REDACTED]")
             .field("maker_lock", &"[REDACTED]")
+            .field("taker_first_lock", &"[REDACTED]")
             .field("asset_extension", &"[REDACTED]")
             .finish()
     }
@@ -432,6 +464,13 @@ impl ActorConfig {
             ) => paths.extend([preparation_request_file, preparation_result_file]),
             None => {}
         }
+        if let Some(TakerFirstLockMaterialConfig::LezAssetV2 {
+            preparation_request_file,
+            preparation_result_file,
+        }) = &self.taker_first_lock
+        {
+            paths.extend([preparation_request_file, preparation_result_file]);
+        }
         if let Some(asset_extension) = &self.asset_extension {
             paths.push(&asset_extension.record_file);
         }
@@ -452,9 +491,10 @@ impl ActorConfig {
                 self.schema_version,
                 self.role,
                 &self.maker_lock,
+                &self.taker_first_lock,
                 &self.asset_extension,
             ),
-            (LEGACY_CONFIG_SCHEMA_VERSION, _, None, None)
+            (LEGACY_CONFIG_SCHEMA_VERSION, _, None, None, None)
                 | (
                     CONFIG_SCHEMA_VERSION,
                     ActorRole::Maker,
@@ -463,8 +503,9 @@ impl ActorConfig {
                             | MakerLockMaterialConfig::Lez { .. },
                     ),
                     None,
+                    None,
                 )
-                | (CONFIG_SCHEMA_VERSION, ActorRole::Taker, None, None)
+                | (CONFIG_SCHEMA_VERSION, ActorRole::Taker, None, None, None)
                 | (
                     ASSET_CONFIG_SCHEMA_VERSION,
                     ActorRole::Maker,
@@ -472,9 +513,16 @@ impl ActorConfig {
                         MakerLockMaterialConfig::Bitcoin { .. }
                             | MakerLockMaterialConfig::LezAssetV2 { .. },
                     ),
+                    None | Some(TakerFirstLockMaterialConfig::LezAssetV2 { .. }),
                     Some(_),
                 )
-                | (ASSET_CONFIG_SCHEMA_VERSION, ActorRole::Taker, None, Some(_))
+                | (
+                    ASSET_CONFIG_SCHEMA_VERSION,
+                    ActorRole::Taker,
+                    None,
+                    None,
+                    Some(_),
+                )
         )
     }
 
@@ -873,6 +921,15 @@ trait FundingObservationPort: Send + Sync {
 enum PreparedFirstLockMaterialV1 {
     Bitcoin(PreparedBitcoinFundingV1),
     Lez(PreparedLezFundingV1),
+    LezAsset(PreparedLezAssetFundingV1),
+}
+
+/// Legacy schema-4 or additive schema-5 first-lock evidence.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum MakerFirstLockEvidenceV1 {
+    Legacy(BtcFirstLockEvidenceV1),
+    Asset(BtcLezAssetFirstLockEvidenceV1),
 }
 
 /// One fresh first-lock check plus the exact facts independently validated by the SDK.
@@ -880,7 +937,7 @@ enum PreparedFirstLockMaterialV1 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FreshMakerLockEligibilityV1 {
     prepared_first_lock: PreparedFirstLockMaterialV1,
-    evidence: BtcFirstLockEvidenceV1,
+    evidence: MakerFirstLockEvidenceV1,
     current_maker_chain_time: CanonicalInclusionTimeV1,
 }
 
@@ -1161,6 +1218,323 @@ async fn observe_live_lez_maker_step(
     }
 }
 
+fn asset_scan_step_observation<T>(
+    step: &PublicEffectStepV1,
+    outcome: FinalizedWitnessedAssetScanOutcomeV2<T>,
+    transaction: impl FnOnce(&T) -> &lez_bridge_protocol::ObservedTransactionFacts,
+) -> MakerLockStepChainObservationV1 {
+    match outcome {
+        FinalizedWitnessedAssetScanOutcomeV2::Found { facts, .. } => {
+            if lez_step_is_exact(step, transaction(&facts)) {
+                MakerLockStepChainObservationV1::PresentExactCanonical {
+                    expected_public_id: step.expected_public_id().as_str().into(),
+                    exact_public_bytes: step.exact_bytes().as_slice().to_vec(),
+                }
+            } else {
+                MakerLockStepChainObservationV1::ConflictingPresence
+            }
+        }
+        FinalizedWitnessedAssetScanOutcomeV2::Absent { .. } => {
+            MakerLockStepChainObservationV1::Absent
+        }
+        FinalizedWitnessedAssetScanOutcomeV2::Uncertain { .. }
+        | FinalizedWitnessedAssetScanOutcomeV2::Unavailable { .. } => {
+            MakerLockStepChainObservationV1::Uncertain
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct AssetMakerStepRequestIdentityV1<'a> {
+    schema_version: u16,
+    operation: &'static str,
+    asset_commitment: String,
+    run_id: &'a RunId,
+    sidecar_role: BridgeParticipant,
+    expected_public_id: &'a str,
+    exact_bytes_hash: String,
+    window: DiscoveryWindow,
+}
+
+fn asset_maker_step_request_id(
+    config: &ActorConfig,
+    asset_commitment: [u8; 32],
+    step: &PublicEffectStepV1,
+    operation: &'static str,
+) -> Result<RequestId, ActorCommandError> {
+    deterministic_request_id(&AssetMakerStepRequestIdentityV1 {
+        schema_version: 1,
+        operation,
+        asset_commitment: hex::encode(asset_commitment),
+        run_id: &config.lez_bridge.run_id,
+        sidecar_role: config.role.bridge(),
+        expected_public_id: step.expected_public_id().as_str(),
+        exact_bytes_hash: hex::encode(Sha256::digest(step.exact_bytes().as_slice())),
+        window: config.discovery_window()?,
+    })
+}
+
+async fn observe_live_lez_asset_maker_step(
+    adapter: &LezBridgeAdapter<BridgeClient>,
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    step: &PublicEffectStepV1,
+) -> Result<MakerLockStepChainObservationV1, ActorCommandError> {
+    let PreparedMakerLockMaterialV1::LezAssetV2 {
+        asset_commitment,
+        preparation,
+        ..
+    } = load_prepared_maker_lock_material(config, agreement)?
+    else {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    };
+    let (extension, _) = validated_asset_extension_material(config, agreement)
+        .map_err(|()| ActorCommandError::AgreementBindingInvalid)?;
+    let binding = BtcLezAssetBridgeBindingV2::new(agreement, &extension, extension.asset())
+        .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    let effect = preparation
+        .effects
+        .iter()
+        .find(|effect| {
+            let semantic = match effect.step {
+                WitnessedAssetPrepareStepV2::InitializeWitnessed => "lez.initialize",
+                WitnessedAssetPrepareStepV2::CreateCustodyAta => "lez.create_custody_ata",
+                WitnessedAssetPrepareStepV2::Fund => "lez.fund",
+            };
+            semantic == step.step().as_str()
+                && hex::encode(effect.transaction.transaction_id.as_bytes())
+                    == step.expected_public_id().as_str()
+                && effect.transaction.exact_bytes.as_slice() == step.exact_bytes().as_slice()
+        })
+        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+    let target = FinalizedWitnessedAssetTransactionTargetV2::exact(effect.transaction.clone());
+    let window = config.discovery_window()?;
+    match effect.step {
+        WitnessedAssetPrepareStepV2::InitializeWitnessed => {
+            let request_id = asset_maker_step_request_id(
+                config,
+                asset_commitment,
+                step,
+                "classify_asset_initialization",
+            )?;
+            let outcome = adapter
+                .classify_finalized_btc_asset_initialization_v2(
+                    &binding, request_id, target, window,
+                )
+                .await
+                .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+            Ok(asset_scan_step_observation(step, outcome, |facts| {
+                &facts.transaction
+            }))
+        }
+        WitnessedAssetPrepareStepV2::CreateCustodyAta => {
+            let request_id = asset_maker_step_request_id(
+                config,
+                asset_commitment,
+                step,
+                "classify_asset_custody_creation",
+            )?;
+            let outcome = adapter
+                .classify_finalized_btc_asset_custody_creation_v2(
+                    &binding, request_id, target, window,
+                )
+                .await
+                .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+            Ok(asset_scan_step_observation(step, outcome, |facts| {
+                &facts.transaction
+            }))
+        }
+        WitnessedAssetPrepareStepV2::Fund => {
+            let request_id = asset_maker_step_request_id(
+                config,
+                asset_commitment,
+                step,
+                "classify_asset_funding",
+            )?;
+            let outcome = adapter
+                .classify_finalized_btc_asset_funding_v2(&binding, request_id, target, window)
+                .await
+                .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+            Ok(asset_scan_step_observation(step, outcome, |facts| {
+                &facts.transaction
+            }))
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct FinalizedLezAssetFundingEvidenceV1 {
+    schema_version: u16,
+    asset_commitment: String,
+    classification_request_id: RequestId,
+    proof_request_id: RequestId,
+    recheck_request_id: RequestId,
+    target: FinalizedWitnessedAssetTransactionTargetV2,
+    window: DiscoveryWindow,
+    finalized_clock_before: ChainClock,
+    finalized_tip: ChainTip,
+    finalized_clock_after: ChainClock,
+    funding: lez_bridge_protocol::FinalizedWitnessedAssetFundingFactsV2,
+    prepared_plan_commitment: [u8; 32],
+}
+
+fn asset_complete_request_id(
+    config: &ActorConfig,
+    asset_commitment: [u8; 32],
+    operation: &'static str,
+    preparation: &PrepareWitnessedAssetEscrowV2Result,
+) -> Result<RequestId, ActorCommandError> {
+    #[derive(Serialize)]
+    struct Identity<'a> {
+        schema_version: u16,
+        operation: &'static str,
+        asset_commitment: String,
+        run_id: &'a RunId,
+        sidecar_role: BridgeParticipant,
+        preparation_context: &'a MessageContext,
+        effect_ids: Vec<String>,
+        window: DiscoveryWindow,
+    }
+    deterministic_request_id(&Identity {
+        schema_version: 1,
+        operation,
+        asset_commitment: hex::encode(asset_commitment),
+        run_id: &config.lez_bridge.run_id,
+        sidecar_role: config.role.bridge(),
+        preparation_context: &preparation.context,
+        effect_ids: preparation
+            .effects
+            .iter()
+            .map(|effect| hex::encode(effect.transaction.transaction_id.as_bytes()))
+            .collect(),
+        window: config.discovery_window()?,
+    })
+}
+
+#[allow(clippy::too_many_lines)] // Keep classifier-proof-classifier ordering linear and auditable.
+async fn observe_finalized_lez_asset_funding(
+    adapter: &LezBridgeAdapter<BridgeClient>,
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+) -> Result<ActorFundingObservation, ActorCommandError> {
+    let PreparedMakerLockMaterialV1::LezAssetV2 {
+        asset_commitment,
+        prepared,
+        preparation,
+    } = load_prepared_maker_lock_material(config, agreement)?
+    else {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    };
+    let (extension, _) = validated_asset_extension_material(config, agreement)
+        .map_err(|()| ActorCommandError::AgreementBindingInvalid)?;
+    let binding = BtcLezAssetBridgeBindingV2::new(agreement, &extension, extension.asset())
+        .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    let funding_effect = preparation
+        .effects
+        .iter()
+        .find(|effect| effect.step == WitnessedAssetPrepareStepV2::Fund)
+        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+    let target =
+        FinalizedWitnessedAssetTransactionTargetV2::exact(funding_effect.transaction.clone());
+    let window = config.discovery_window()?;
+    let classification_request_id = asset_complete_request_id(
+        config,
+        asset_commitment,
+        "classify_complete_asset_funding",
+        &preparation,
+    )?;
+    let outcome = adapter
+        .classify_finalized_btc_asset_funding_v2(
+            &binding,
+            classification_request_id.clone(),
+            target.clone(),
+            window,
+        )
+        .await
+        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    let FinalizedWitnessedAssetScanOutcomeV2::Found {
+        finalized_clock,
+        facts,
+        ..
+    } = outcome
+    else {
+        return Ok(ActorFundingObservation::Pending { chain: Chain::Lez });
+    };
+    let expected_funding = prepared
+        .plan()
+        .steps()
+        .last()
+        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+    if !lez_step_is_exact(expected_funding, &facts.transaction) {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    let proof_request_id = asset_complete_request_id(
+        config,
+        asset_commitment,
+        "prove_complete_asset_funding",
+        &preparation,
+    )?;
+    let proof = adapter
+        .prove_btc_asset_first_lock_v2(&binding, proof_request_id.clone(), &preparation, window)
+        .await
+        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    if proof.prepared() != &prepared {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    let finalized_tip = proof.finalized_tip();
+    let recheck_request_id = asset_complete_request_id(
+        config,
+        asset_commitment,
+        "recheck_complete_asset_funding",
+        &preparation,
+    )?;
+    let recheck = adapter
+        .classify_finalized_btc_asset_funding_v2(
+            &binding,
+            recheck_request_id.clone(),
+            target.clone(),
+            window,
+        )
+        .await
+        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    let FinalizedWitnessedAssetScanOutcomeV2::Found {
+        finalized_clock: finalized_clock_after,
+        facts: rechecked_facts,
+        ..
+    } = recheck
+    else {
+        return Ok(ActorFundingObservation::Pending { chain: Chain::Lez });
+    };
+    if rechecked_facts != facts {
+        return Err(ActorCommandError::ObservationUnavailable);
+    }
+    let transaction_id = hex::encode(facts.transaction.transaction_id.as_bytes());
+    let timestamp_ms = facts.containing_block.timestamp_ms;
+    let chain_evidence = serde_json::to_vec(&FinalizedLezAssetFundingEvidenceV1 {
+        schema_version: 1,
+        asset_commitment: hex::encode(asset_commitment),
+        classification_request_id,
+        proof_request_id,
+        recheck_request_id,
+        target,
+        window,
+        finalized_clock_before: finalized_clock,
+        finalized_tip,
+        finalized_clock_after,
+        funding: *facts,
+        prepared_plan_commitment: prepared.plan().commitment(),
+    })
+    .map_err(|_| ActorCommandError::ProjectionUnavailable)?;
+    Ok(ActorFundingObservation::Ready {
+        chain: Chain::Lez,
+        transaction_id: transaction_id.into_boxed_str(),
+        confirmations: FINALIZED_LEZ_CONFIRMATION_UNITS,
+        canonical_inclusion_time: CanonicalInclusionTimeV1::Lez { timestamp_ms },
+        chain_evidence,
+    })
+}
+
 async fn submit_live_bitcoin_maker_step<R>(
     adapter: &BitcoinCoreAdapter<R>,
     agreement: &BtcAgreementV1,
@@ -1315,12 +1689,24 @@ impl MakerLockExecutionPort for LiveMakerLockExecutionPort<'_> {
         match agreement.coordinator().funded_chain(Participant::Maker) {
             Chain::Bitcoin => observe_live_bitcoin_maker_step(&self.bitcoin, agreement, step).await,
             Chain::Lez => {
-                observe_live_lez_maker_step(&self.lez, self.config, agreement, step).await
+                if self.config.schema_version == ASSET_CONFIG_SCHEMA_VERSION {
+                    let adapter = LezBridgeAdapter::new(
+                        self.fresh_lez_transport()?,
+                        self.config.lez_bridge.run_id.clone(),
+                        self.config.lez_bridge.runtime.clone(),
+                        Participant::Maker,
+                    )
+                    .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+                    observe_live_lez_asset_maker_step(&adapter, self.config, agreement, step).await
+                } else {
+                    observe_live_lez_maker_step(&self.lez, self.config, agreement, step).await
+                }
             }
             Chain::Zcash | Chain::Monero => Err(ActorCommandError::AgreementBindingInvalid),
         }
     }
 
+    #[allow(clippy::too_many_lines)] // Keep both role-fixed last-read sequences visibly linear.
     async fn fresh_eligibility(
         &self,
         agreement: &BtcAgreementV1,
@@ -1342,6 +1728,16 @@ impl MakerLockExecutionPort for LiveMakerLockExecutionPort<'_> {
                     )?)
                     .await
                     .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                let evidence = if self.config.schema_version == ASSET_CONFIG_SCHEMA_VERSION {
+                    let BtcFirstLockEvidenceV1::Bitcoin(evidence) = evidence else {
+                        return Err(ActorCommandError::AgreementBindingInvalid);
+                    };
+                    MakerFirstLockEvidenceV1::Asset(BtcLezAssetFirstLockEvidenceV1::Bitcoin(
+                        evidence,
+                    ))
+                } else {
+                    MakerFirstLockEvidenceV1::Legacy(evidence)
+                };
                 Ok(FreshMakerLockEligibilityV1 {
                     prepared_first_lock: PreparedFirstLockMaterialV1::Bitcoin(prepared),
                     evidence,
@@ -1351,6 +1747,53 @@ impl MakerLockExecutionPort for LiveMakerLockExecutionPort<'_> {
                 })
             }
             SwapDirection::TakerSellsLez => {
+                if self.config.schema_version == ASSET_CONFIG_SCHEMA_VERSION {
+                    let prepared = load_prepared_taker_asset_first_lock(self.config, agreement)?;
+                    let (extension, _) = validated_asset_extension_material(self.config, agreement)
+                        .map_err(|()| ActorCommandError::AgreementBindingInvalid)?;
+                    let binding =
+                        BtcLezAssetBridgeBindingV2::new(agreement, &extension, extension.asset())
+                            .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+                    let adapter = LezBridgeAdapter::new(
+                        self.fresh_lez_transport()?,
+                        self.config.lez_bridge.run_id.clone(),
+                        self.config.lez_bridge.runtime.clone(),
+                        Participant::Maker,
+                    )
+                    .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+                    let request_id = asset_first_lock_proof_request_id(
+                        self.config,
+                        &extension,
+                        &prepared.preparation,
+                        read_ordinal,
+                    )?;
+                    let proof = adapter
+                        .prove_btc_asset_first_lock_v2(
+                            &binding,
+                            request_id,
+                            &prepared.preparation,
+                            self.config.discovery_window()?,
+                        )
+                        .await
+                        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                    let (prepared, evidence) = proof.into_sdk_parts();
+                    // Bitcoin is the Maker chain. The stable-tip MTP read remains
+                    // the final node operation before SDK cutoff admission.
+                    let current_tip = self
+                        .bitcoin
+                        .ensure_ready(agreement)
+                        .await
+                        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                    return Ok(FreshMakerLockEligibilityV1 {
+                        prepared_first_lock: PreparedFirstLockMaterialV1::LezAsset(prepared),
+                        evidence: MakerFirstLockEvidenceV1::Asset(
+                            BtcLezAssetFirstLockEvidenceV1::Lez(evidence),
+                        ),
+                        current_maker_chain_time: CanonicalInclusionTimeV1::Bitcoin {
+                            median_time_unix_seconds: current_tip.median_time_unix_seconds(),
+                        },
+                    });
+                }
                 let finalized_request =
                     first_lock_lez_funding_request(self.config, agreement, read_ordinal)?;
                 let current_request_id =
@@ -1382,7 +1825,9 @@ impl MakerLockExecutionPort for LiveMakerLockExecutionPort<'_> {
                     .map_err(|_| ActorCommandError::ObservationUnavailable)?;
                 Ok(FreshMakerLockEligibilityV1 {
                     prepared_first_lock: PreparedFirstLockMaterialV1::Lez(prepared),
-                    evidence: BtcFirstLockEvidenceV1::Lez(evidence),
+                    evidence: MakerFirstLockEvidenceV1::Legacy(BtcFirstLockEvidenceV1::Lez(
+                        evidence,
+                    )),
                     current_maker_chain_time: CanonicalInclusionTimeV1::Bitcoin {
                         median_time_unix_seconds: current_tip.median_time_unix_seconds(),
                     },
@@ -1410,6 +1855,17 @@ impl MakerLockExecutionPort for LiveMakerLockExecutionPort<'_> {
         match agreement.coordinator().funded_chain(Participant::Maker) {
             Chain::Bitcoin => observe_current_bitcoin_funding(&self.bitcoin, agreement).await,
             Chain::Lez => {
+                if self.config.schema_version == ASSET_CONFIG_SCHEMA_VERSION {
+                    let adapter = LezBridgeAdapter::new(
+                        self.fresh_lez_transport()?,
+                        self.config.lez_bridge.run_id.clone(),
+                        self.config.lez_bridge.runtime.clone(),
+                        Participant::Maker,
+                    )
+                    .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+                    return observe_finalized_lez_asset_funding(&adapter, self.config, agreement)
+                        .await;
+                }
                 let finalized =
                     observe_finalized_lez_funding(self.config, &self.lez, agreement).await?;
                 if matches!(finalized, ActorFundingObservation::Pending { .. }) {
@@ -1434,6 +1890,45 @@ impl MakerLockExecutionPort for LiveMakerLockExecutionPort<'_> {
             Chain::Zcash | Chain::Monero => Err(ActorCommandError::AgreementBindingInvalid),
         }
     }
+}
+
+#[derive(Serialize)]
+struct AssetFirstLockProofRequestIdentityV1<'a> {
+    schema_version: u16,
+    operation: &'static str,
+    asset_commitment: String,
+    read_ordinal: u8,
+    run_id: &'a RunId,
+    sidecar_role: BridgeParticipant,
+    preparation_context: &'a MessageContext,
+    effect_ids: Vec<String>,
+    window: DiscoveryWindow,
+}
+
+fn asset_first_lock_proof_request_id(
+    config: &ActorConfig,
+    extension: &BtcLezAssetExtensionV1,
+    preparation: &PrepareWitnessedAssetEscrowV2Result,
+    read_ordinal: u8,
+) -> Result<RequestId, ActorCommandError> {
+    if !matches!(read_ordinal, 1 | 2) {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    deterministic_request_id(&AssetFirstLockProofRequestIdentityV1 {
+        schema_version: 1,
+        operation: "prove_asset_first_lock",
+        asset_commitment: hex::encode(extension.asset_commitment()),
+        read_ordinal,
+        run_id: &config.lez_bridge.run_id,
+        sidecar_role: config.role.bridge(),
+        preparation_context: &preparation.context,
+        effect_ids: preparation
+            .effects
+            .iter()
+            .map(|effect| hex::encode(effect.transaction.transaction_id.as_bytes()))
+            .collect(),
+        window: config.discovery_window()?,
+    })
 }
 
 /// Claim transition selected only from the durable predecessor revision.
@@ -1939,6 +2434,15 @@ fn validate_activation_material(
     if config.schema_version == ASSET_CONFIG_SCHEMA_VERSION {
         let _ = validated_asset_extension_material(config, agreement)
             .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?;
+        if config.role == ActorRole::Maker {
+            match (agreement.direction(), &config.taker_first_lock) {
+                (SwapDirection::TakerSellsForeign, None) => {}
+                (SwapDirection::TakerSellsLez, Some(_)) => {
+                    let _ = load_prepared_taker_asset_first_lock(config, agreement)?;
+                }
+                _ => return Err(ActorCommandError::ActivationMaterialUnavailable),
+            }
+        }
     }
     if matches!(
         config.schema_version,
@@ -1957,7 +2461,8 @@ enum PreparedMakerLockMaterialV1 {
     Lez(PreparedLezFundingV1),
     LezAssetV2 {
         asset_commitment: [u8; 32],
-        plan: ExactPublicEffectPlanV1,
+        prepared: PreparedLezAssetFundingV1,
+        preparation: Box<PrepareWitnessedAssetEscrowV2Result>,
     },
 }
 
@@ -1966,7 +2471,7 @@ impl PreparedMakerLockMaterialV1 {
         match self {
             Self::Bitcoin(prepared) => prepared.plan(),
             Self::Lez(prepared) => prepared.plan(),
-            Self::LezAssetV2 { plan, .. } => plan,
+            Self::LezAssetV2 { prepared, .. } => prepared.plan(),
         }
     }
 
@@ -2072,11 +2577,86 @@ fn load_prepared_maker_lock_material(
             }
             Ok(PreparedMakerLockMaterialV1::LezAssetV2 {
                 asset_commitment: *extension.asset_commitment(),
-                plan: witnessed_asset_effect_plan(&result)?,
+                prepared: prepared_lez_asset_funding(extension.asset(), &result)?,
+                preparation: Box::new(result),
             })
         }
         _ => Err(ActorCommandError::ActivationMaterialUnavailable),
     }
+}
+
+/// Exact peer-prepared LEZ first-lock material retained by a schema-5 Maker.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreparedTakerAssetFirstLockV2 {
+    preparation: PrepareWitnessedAssetEscrowV2Result,
+    prepared: PreparedLezAssetFundingV1,
+}
+
+fn load_prepared_taker_asset_first_lock(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+) -> Result<PreparedTakerAssetFirstLockV2, ActorCommandError> {
+    let TakerFirstLockMaterialConfig::LezAssetV2 {
+        preparation_request_file,
+        preparation_result_file,
+    } = config
+        .taker_first_lock
+        .as_ref()
+        .ok_or(ActorCommandError::ActivationMaterialUnavailable)?;
+    if config.schema_version != ASSET_CONFIG_SCHEMA_VERSION
+        || config.role != ActorRole::Maker
+        || agreement.direction() != SwapDirection::TakerSellsLez
+    {
+        return Err(ActorCommandError::ActivationMaterialUnavailable);
+    }
+    let (extension, _) = validated_asset_extension_material(config, agreement)
+        .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?;
+    let binding = BtcLezAssetBridgeBindingV2::new(agreement, &extension, extension.asset())
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+    if binding.depositor() != Participant::Taker {
+        return Err(ActorCommandError::ActivationMaterialUnavailable);
+    }
+    let request =
+        read_strict_material::<PrepareWitnessedAssetEscrowV2Request>(preparation_request_file)?;
+    let result =
+        read_strict_material::<PrepareWitnessedAssetEscrowV2Result>(preparation_result_file)?;
+    let local_runtime = &config.lez_bridge.runtime;
+    let peer_runtime = &request.runtime;
+    if request.context.sidecar_role != BridgeParticipant::Taker
+        || peer_runtime.sidecar_role != BridgeParticipant::Taker
+        || peer_runtime.compatibility != local_runtime.compatibility
+        || peer_runtime.chain_id != local_runtime.chain_id
+        || peer_runtime.channel_id != local_runtime.channel_id
+        || peer_runtime.genesis_block_hash != local_runtime.genesis_block_hash
+        || peer_runtime.escrow_program_id != local_runtime.escrow_program_id
+        || peer_runtime.signer_account_id.as_bytes()
+            != agreement
+                .participant(Participant::Taker)
+                .lez_owner_account()
+        || request.terms != *binding.terms()
+        || result.context != request.context
+        || result.terms != request.terms
+    {
+        return Err(ActorCommandError::ActivationMaterialUnavailable);
+    }
+    Ok(PreparedTakerAssetFirstLockV2 {
+        prepared: prepared_lez_asset_funding(extension.asset(), &result)?,
+        preparation: result,
+    })
+}
+
+fn prepared_lez_asset_funding(
+    asset: &lez_btc_swap_sdk::BtcLezAssetV1,
+    result: &PrepareWitnessedAssetEscrowV2Result,
+) -> Result<PreparedLezAssetFundingV1, ActorCommandError> {
+    let plan = witnessed_asset_effect_plan(result)?;
+    match asset {
+        lez_btc_swap_sdk::BtcLezAssetV1::Native => PreparedLezAssetFundingV1::native(plan),
+        lez_btc_swap_sdk::BtcLezAssetV1::CustomToken(_) => {
+            PreparedLezAssetFundingV1::custom_token(plan)
+        }
+    }
+    .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)
 }
 
 fn witnessed_asset_effect_plan(
@@ -2513,40 +3093,85 @@ fn validate_fresh_maker_lock_plan(
     {
         return Err(ActorCommandError::ObservationUnavailable);
     }
-    let effects = match (
-        agreement.direction(),
-        eligibility.prepared_first_lock,
-        maker.clone(),
-    ) {
-        (
-            SwapDirection::TakerSellsForeign,
-            PreparedFirstLockMaterialV1::Bitcoin(first),
-            PreparedMakerLockMaterialV1::Lez(second),
-        ) => BtcPreparedLockEffectsV1::new(first, second),
-        (
-            SwapDirection::TakerSellsLez,
-            PreparedFirstLockMaterialV1::Lez(first),
-            PreparedMakerLockMaterialV1::Bitcoin(second),
-        ) => BtcPreparedLockEffectsV1::new(second, first),
-        _ => return Err(ActorCommandError::AgreementBindingInvalid),
-    };
     let sdk = BtcPairSdk::new(Participant::Maker, *agreement.bitcoin_chain_policy());
     let accepted = sdk
         .accept_wire(agreement_wire)
         .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
-    let active = sdk
-        .activate(accepted, effects)
-        .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
-    let confirmed = active
-        .validate_first_lock(&eligibility.evidence)
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
-    let validated = active
-        .second_lock_plan(&confirmed)
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
-    if validated != maker.plan() {
+    let validated = match config.schema_version {
+        CONFIG_SCHEMA_VERSION => {
+            let effects = match (
+                agreement.direction(),
+                eligibility.prepared_first_lock,
+                maker.clone(),
+            ) {
+                (
+                    SwapDirection::TakerSellsForeign,
+                    PreparedFirstLockMaterialV1::Bitcoin(first),
+                    PreparedMakerLockMaterialV1::Lez(second),
+                ) => BtcPreparedLockEffectsV1::new(first, second),
+                (
+                    SwapDirection::TakerSellsLez,
+                    PreparedFirstLockMaterialV1::Lez(first),
+                    PreparedMakerLockMaterialV1::Bitcoin(second),
+                ) => BtcPreparedLockEffectsV1::new(second, first),
+                _ => return Err(ActorCommandError::AgreementBindingInvalid),
+            };
+            let MakerFirstLockEvidenceV1::Legacy(evidence) = eligibility.evidence else {
+                return Err(ActorCommandError::AgreementBindingInvalid);
+            };
+            let active = sdk
+                .activate(accepted, effects)
+                .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+            let confirmed = active
+                .validate_first_lock(&evidence)
+                .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+            active
+                .second_lock_plan(&confirmed)
+                .map_err(|_| ActorCommandError::ObservationUnavailable)?
+                .clone()
+        }
+        ASSET_CONFIG_SCHEMA_VERSION => {
+            let (extension, _) = validated_asset_extension_material(config, agreement)
+                .map_err(|()| ActorCommandError::AgreementBindingInvalid)?;
+            let ((
+                SwapDirection::TakerSellsForeign,
+                PreparedFirstLockMaterialV1::Bitcoin(bitcoin),
+                PreparedMakerLockMaterialV1::LezAssetV2 { prepared: lez, .. },
+            )
+            | (
+                SwapDirection::TakerSellsLez,
+                PreparedFirstLockMaterialV1::LezAsset(lez),
+                PreparedMakerLockMaterialV1::Bitcoin(bitcoin),
+            )) = (
+                agreement.direction(),
+                eligibility.prepared_first_lock,
+                maker.clone(),
+            )
+            else {
+                return Err(ActorCommandError::AgreementBindingInvalid);
+            };
+            let MakerFirstLockEvidenceV1::Asset(evidence) = eligibility.evidence else {
+                return Err(ActorCommandError::AgreementBindingInvalid);
+            };
+            let effects = BtcLezAssetPreparedLockEffectsV1::new(agreement, extension, bitcoin, lez)
+                .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+            let active = sdk
+                .activate_asset(accepted, effects)
+                .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+            let confirmed = active
+                .validate_first_lock(&evidence)
+                .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+            active
+                .second_lock_plan(&confirmed)
+                .map_err(|_| ActorCommandError::ObservationUnavailable)?
+                .clone()
+        }
+        _ => return Err(ActorCommandError::AgreementBindingInvalid),
+    };
+    if &validated != maker.plan() {
         return Err(ActorCommandError::AgreementBindingInvalid);
     }
-    Ok(validated.clone())
+    Ok(validated)
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -6175,7 +6800,10 @@ fn finalized_lez_funding_request(
 fn prepared_lez_maker_step(
     step: &PublicEffectStepV1,
 ) -> Result<PreparedTransaction, ActorCommandError> {
-    if !matches!(step.step().as_str(), "lez.initialize" | "lez.fund") {
+    if !matches!(
+        step.step().as_str(),
+        "lez.initialize" | "lez.create_custody_ata" | "lez.fund"
+    ) {
         return Err(ActorCommandError::AgreementBindingInvalid);
     }
     let transaction_id = hex::decode(step.expected_public_id().as_str())
@@ -6429,19 +7057,27 @@ fn maker_lez_submit_request(
     step: &PublicEffectStepV1,
 ) -> Result<SubmitTransactionRequest, ActorCommandError> {
     validate_actor_binding(config, agreement)?;
-    let PreparedMakerLockMaterialV1::Lez(prepared) =
-        load_prepared_maker_lock_material(config, agreement)?
-    else {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+    let material = load_prepared_maker_lock_material(config, agreement)?;
+    let binding_commitment = match &material {
+        PreparedMakerLockMaterialV1::Lez(prepared) if prepared.plan().steps().contains(step) => {
+            *agreement.agreement_commitment()
+        }
+        PreparedMakerLockMaterialV1::LezAssetV2 {
+            asset_commitment,
+            prepared,
+            ..
+        } if prepared.plan().steps().contains(step) => *asset_commitment,
+        PreparedMakerLockMaterialV1::Bitcoin(_)
+        | PreparedMakerLockMaterialV1::Lez(_)
+        | PreparedMakerLockMaterialV1::LezAssetV2 { .. } => {
+            return Err(ActorCommandError::AgreementBindingInvalid);
+        }
     };
-    if !prepared.plan().steps().contains(step) {
-        return Err(ActorCommandError::AgreementBindingInvalid);
-    }
     let transaction = prepared_lez_maker_step(step)?;
     let identity = MakerLezSubmitRequestIdentityV1 {
         schema_version: 1,
         operation: "submit_maker_lock_step",
-        agreement_commitment: hex::encode(agreement.agreement_commitment()),
+        agreement_commitment: hex::encode(binding_commitment),
         step: step.step().as_str(),
         run_id: &config.lez_bridge.run_id,
         sidecar_role: config.role.bridge(),

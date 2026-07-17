@@ -155,6 +155,7 @@ impl ActorFixture {
                     .then(|| directory.path().join("adaptor-secret.key")),
             },
             maker_lock: None,
+            taker_first_lock: None,
             asset_extension: None,
             refund: RefundAuthorityConfig {
                 bitcoin_refund_key_file: (role.sdk() == agreement.bitcoin_funder())
@@ -766,6 +767,80 @@ fn configure_schema5_asset_material(fixture: &mut ActorFixture) -> BtcLezAssetEx
 fn configure_schema5_bitcoin_asset_material(fixture: &mut ActorFixture) -> BtcLezAssetExtensionV1 {
     let extension = configure_schema5_asset_extension(fixture);
     assert_eq!(fixture.agreement.direction(), SwapDirection::TakerSellsLez);
+    let binding =
+        BtcLezAssetBridgeBindingV2::new(&fixture.agreement, &extension, extension.asset())
+            .expect("asset bridge binding");
+    let request_path = fixture
+        .directory
+        .path()
+        .join("taker-lez-asset-v2-request.json");
+    let result_path = fixture
+        .directory
+        .path()
+        .join("taker-lez-asset-v2-result.json");
+    let mut taker_runtime = fixture.config.lez_bridge.runtime.clone();
+    taker_runtime.sidecar_role = BridgeParticipant::Taker;
+    taker_runtime.signer_account_id = Hex32::from_bytes(
+        *fixture
+            .agreement
+            .participant(Participant::Taker)
+            .lez_owner_account(),
+    );
+    let context = MessageContext::new(
+        fixture.config.lez_bridge.run_id.clone(),
+        RequestId::new("taker-first-lock-asset-v2-preparation").expect("request ID"),
+        BridgeParticipant::Taker,
+    );
+    let request = PrepareWitnessedAssetEscrowV2Request::new(
+        context.clone(),
+        taker_runtime,
+        binding.terms().clone(),
+    );
+    let result = PrepareWitnessedAssetEscrowV2Result::new(
+        context,
+        binding.terms().clone(),
+        vec![
+            WitnessedAssetPreparedEffectV2::new(
+                WitnessedAssetPrepareStepV2::InitializeWitnessed,
+                PreparedTransaction::new(
+                    TransactionId::from_bytes([50; 32]),
+                    ExactTransactionBytes::new(b"exact-taker-token-initialize".to_vec())
+                        .expect("initialization bytes"),
+                ),
+            ),
+            WitnessedAssetPreparedEffectV2::new(
+                WitnessedAssetPrepareStepV2::CreateCustodyAta,
+                PreparedTransaction::new(
+                    TransactionId::from_bytes([51; 32]),
+                    ExactTransactionBytes::new(b"exact-taker-token-custody".to_vec())
+                        .expect("custody bytes"),
+                ),
+            ),
+            WitnessedAssetPreparedEffectV2::new(
+                WitnessedAssetPrepareStepV2::Fund,
+                PreparedTransaction::new(
+                    TransactionId::from_bytes([52; 32]),
+                    ExactTransactionBytes::new(b"exact-taker-token-funding".to_vec())
+                        .expect("funding bytes"),
+                ),
+            ),
+        ],
+    )
+    .expect("valid taker asset preparation");
+    fs::write(
+        &request_path,
+        serde_json::to_vec(&request).expect("request JSON"),
+    )
+    .expect("write request");
+    fs::write(
+        &result_path,
+        serde_json::to_vec(&result).expect("result JSON"),
+    )
+    .expect("write result");
+    fixture.config.taker_first_lock = Some(TakerFirstLockMaterialConfig::LezAssetV2 {
+        preparation_request_file: request_path,
+        preparation_result_file: result_path,
+    });
     let funding_path = fixture
         .directory
         .path()
@@ -781,6 +856,7 @@ fn configure_schema5_bitcoin_asset_material(fixture: &mut ActorFixture) -> BtcLe
     extension
 }
 
+#[allow(clippy::too_many_lines)] // One fixture mirrors both legacy and additive SDK input shapes.
 fn fresh_maker_eligibility(fixture: &ActorFixture) -> FreshMakerLockEligibilityV1 {
     let before_cutoff = fixture
         .agreement
@@ -801,6 +877,73 @@ fn fresh_maker_eligibility(fixture: &ActorFixture) -> FreshMakerLockEligibilityV
         },
         Chain::Zcash | Chain::Monero => unreachable!("Bitcoin agreement chain set"),
     };
+    if fixture.config.schema_version == ASSET_CONFIG_SCHEMA_VERSION {
+        return match fixture.agreement.direction() {
+            SwapDirection::TakerSellsForeign => {
+                let funding = exact_directional_funding(&fixture.agreement);
+                let exact = serialize(&funding);
+                FreshMakerLockEligibilityV1 {
+                    prepared_first_lock: PreparedFirstLockMaterialV1::Bitcoin(
+                        PreparedBitcoinFundingV1::new(
+                            funding.compute_txid().to_string(),
+                            exact.clone(),
+                        )
+                        .expect("prepared Bitcoin first lock"),
+                    ),
+                    evidence: MakerFirstLockEvidenceV1::Asset(
+                        BtcLezAssetFirstLockEvidenceV1::Bitcoin(
+                            lez_btc_swap_sdk::BitcoinFirstLockEvidenceV1::new(
+                                *fixture.agreement.bitcoin_genesis_hash(),
+                                exact,
+                                fixture.agreement.required_bitcoin_confirmations(),
+                            )
+                            .expect("Bitcoin first-lock evidence"),
+                        ),
+                    ),
+                    current_maker_chain_time,
+                }
+            }
+            SwapDirection::TakerSellsLez => {
+                let prepared =
+                    load_prepared_taker_asset_first_lock(&fixture.config, &fixture.agreement)
+                        .expect("prepared taker asset first lock");
+                let (extension, _) =
+                    validated_asset_extension_material(&fixture.config, &fixture.agreement)
+                        .expect("asset extension");
+                let (custody, amount) = match extension.asset() {
+                    lez_btc_swap_sdk::BtcLezAssetV1::Native => (
+                        lez_btc_swap_sdk::LezAssetCustodyEvidenceV1::Native {
+                            custody_account: *fixture.agreement.lez_terms().custody_account(),
+                        },
+                        fixture.agreement.lez_terms().amount(),
+                    ),
+                    lez_btc_swap_sdk::BtcLezAssetV1::CustomToken(token) => (
+                        lez_btc_swap_sdk::LezAssetCustodyEvidenceV1::CustomToken {
+                            custody_ata_account: *token.custody_ata_account(),
+                            token_definition_account: *token.token_definition_account(),
+                        },
+                        token.amount(),
+                    ),
+                };
+                FreshMakerLockEligibilityV1 {
+                    prepared_first_lock: PreparedFirstLockMaterialV1::LezAsset(
+                        prepared.prepared.clone(),
+                    ),
+                    evidence: MakerFirstLockEvidenceV1::Asset(BtcLezAssetFirstLockEvidenceV1::Lez(
+                        lez_btc_swap_sdk::LezAssetFirstLockEvidenceV1::new(
+                            *fixture.agreement.lez_terms().genesis_block_hash(),
+                            prepared.prepared.plan().clone(),
+                            *fixture.agreement.lez_terms().metadata_account(),
+                            custody,
+                            amount,
+                            true,
+                        ),
+                    )),
+                    current_maker_chain_time,
+                }
+            }
+        };
+    }
     match fixture.agreement.direction() {
         SwapDirection::TakerSellsForeign => {
             let funding = exact_directional_funding(&fixture.agreement);
@@ -813,14 +956,14 @@ fn fresh_maker_eligibility(fixture: &ActorFixture) -> FreshMakerLockEligibilityV
                     )
                     .expect("prepared Bitcoin first lock"),
                 ),
-                evidence: BtcFirstLockEvidenceV1::Bitcoin(
+                evidence: MakerFirstLockEvidenceV1::Legacy(BtcFirstLockEvidenceV1::Bitcoin(
                     lez_btc_swap_sdk::BitcoinFirstLockEvidenceV1::new(
                         *fixture.agreement.bitcoin_genesis_hash(),
                         exact,
                         fixture.agreement.required_bitcoin_confirmations(),
                     )
                     .expect("Bitcoin first-lock evidence"),
-                ),
+                )),
                 current_maker_chain_time,
             }
         }
@@ -834,7 +977,7 @@ fn fresh_maker_eligibility(fixture: &ActorFixture) -> FreshMakerLockEligibilityV
                 )
                 .expect("prepared LEZ first lock"),
             ),
-            evidence: BtcFirstLockEvidenceV1::Lez(
+            evidence: MakerFirstLockEvidenceV1::Legacy(BtcFirstLockEvidenceV1::Lez(
                 lez_btc_swap_sdk::LezFirstLockEvidenceV1::new(
                     *fixture.agreement.lez_terms().genesis_block_hash(),
                     TEST_TAKER_LEZ_INITIALIZATION_ID,
@@ -847,7 +990,7 @@ fn fresh_maker_eligibility(fixture: &ActorFixture) -> FreshMakerLockEligibilityV
                     true,
                 )
                 .expect("LEZ first-lock evidence"),
-            ),
+            )),
             current_maker_chain_time,
         },
     }
@@ -859,29 +1002,31 @@ fn mismatched_fresh_maker_eligibility(fixture: &ActorFixture) -> FreshMakerLockE
         SwapDirection::TakerSellsForeign => {
             let mut changed = exact_directional_funding(&fixture.agreement);
             changed.input[0].witness.push([0xaa]);
-            BtcFirstLockEvidenceV1::Bitcoin(
+            MakerFirstLockEvidenceV1::Legacy(BtcFirstLockEvidenceV1::Bitcoin(
                 lez_btc_swap_sdk::BitcoinFirstLockEvidenceV1::new(
                     *fixture.agreement.bitcoin_genesis_hash(),
                     serialize(&changed),
                     fixture.agreement.required_bitcoin_confirmations(),
                 )
                 .expect("changed-witness Bitcoin evidence"),
-            )
+            ))
         }
-        SwapDirection::TakerSellsLez => BtcFirstLockEvidenceV1::Lez(
-            lez_btc_swap_sdk::LezFirstLockEvidenceV1::new(
-                *fixture.agreement.lez_terms().genesis_block_hash(),
-                TEST_TAKER_LEZ_INITIALIZATION_ID,
-                b"changed-exact-taker-lez-initialize".to_vec(),
-                TEST_TAKER_LEZ_FUNDING_ID,
-                TEST_TAKER_LEZ_FUNDING_BYTES.to_vec(),
-                *fixture.agreement.lez_terms().metadata_account(),
-                *fixture.agreement.lez_terms().custody_account(),
-                fixture.agreement.lez_terms().amount(),
-                true,
-            )
-            .expect("changed-byte LEZ evidence"),
-        ),
+        SwapDirection::TakerSellsLez => {
+            MakerFirstLockEvidenceV1::Legacy(BtcFirstLockEvidenceV1::Lez(
+                lez_btc_swap_sdk::LezFirstLockEvidenceV1::new(
+                    *fixture.agreement.lez_terms().genesis_block_hash(),
+                    TEST_TAKER_LEZ_INITIALIZATION_ID,
+                    b"changed-exact-taker-lez-initialize".to_vec(),
+                    TEST_TAKER_LEZ_FUNDING_ID,
+                    TEST_TAKER_LEZ_FUNDING_BYTES.to_vec(),
+                    *fixture.agreement.lez_terms().metadata_account(),
+                    *fixture.agreement.lez_terms().custody_account(),
+                    fixture.agreement.lez_terms().amount(),
+                    true,
+                )
+                .expect("changed-byte LEZ evidence"),
+            ))
+        }
     };
     eligibility
 }
@@ -1301,6 +1446,31 @@ fn schema5_asset_extension_maps_and_stages_exact_three_step_f7_plan() {
         plan.steps()[1].exact_bytes().as_slice(),
         TEST_LEZ_CUSTODY_CREATION_BYTES
     );
+    let submissions = plan
+        .steps()
+        .iter()
+        .map(|step| {
+            maker_lez_submit_request(&fixture.config, &fixture.agreement, step)
+                .expect("asset step is an exact submit request")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(submissions.len(), 3);
+    assert_eq!(
+        submissions[1].transaction.transaction_id.as_bytes(),
+        &TEST_LEZ_CUSTODY_CREATION_ID
+    );
+    assert_eq!(
+        submissions[1].transaction.exact_bytes.as_slice(),
+        TEST_LEZ_CUSTODY_CREATION_BYTES
+    );
+    assert_eq!(
+        submissions
+            .iter()
+            .map(|request| request.context.request_id.as_str())
+            .collect::<HashSet<_>>()
+            .len(),
+        3
+    );
 
     let first = activate(&fixture.config).expect("asset-bound activation");
     assert!(matches!(
@@ -1447,6 +1617,306 @@ fn schema5_reverse_bitcoin_plan_stages_with_asset_commitment_and_replays() {
         .expect("load reverse replay intent")
         .expect("reverse replay intent");
     assert_eq!(replay_snapshot, snapshot);
+}
+
+fn schema5_reverse_asset_eligibility(
+    fixture: &ActorFixture,
+    observed_plan: ExactPublicEffectPlanV1,
+    custody_ata: [u8; 32],
+    token_definition: [u8; 32],
+    amount: u128,
+    finalized: bool,
+) -> FreshMakerLockEligibilityV1 {
+    let retained = load_prepared_taker_asset_first_lock(&fixture.config, &fixture.agreement)
+        .expect("retained taker first lock");
+    FreshMakerLockEligibilityV1 {
+        prepared_first_lock: PreparedFirstLockMaterialV1::LezAsset(retained.prepared),
+        evidence: MakerFirstLockEvidenceV1::Asset(BtcLezAssetFirstLockEvidenceV1::Lez(
+            lez_btc_swap_sdk::LezAssetFirstLockEvidenceV1::new(
+                *fixture.agreement.lez_terms().genesis_block_hash(),
+                observed_plan,
+                *fixture.agreement.lez_terms().metadata_account(),
+                lez_btc_swap_sdk::LezAssetCustodyEvidenceV1::CustomToken {
+                    custody_ata_account: custody_ata,
+                    token_definition_account: token_definition,
+                },
+                amount,
+                finalized,
+            ),
+        )),
+        current_maker_chain_time: CanonicalInclusionTimeV1::Bitcoin {
+            median_time_unix_seconds: fixture
+                .agreement
+                .body()
+                .recovery_plan()
+                .maker_second_lock_cutoff_unix_seconds()
+                - 1,
+        },
+    }
+}
+
+#[test]
+fn schema5_asset_sdk_authorizes_exact_fresh_first_lock_in_both_directions() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let mut fixture = ActorFixture::for_direction(direction, ActorRole::Maker);
+        match direction {
+            SwapDirection::TakerSellsForeign => {
+                let _ = configure_schema5_asset_material(&mut fixture);
+            }
+            SwapDirection::TakerSellsLez => {
+                let _ = configure_schema5_bitcoin_asset_material(&mut fixture);
+            }
+        }
+        let expected = load_prepared_maker_lock_material(&fixture.config, &fixture.agreement)
+            .expect("schema-5 maker material")
+            .plan()
+            .clone();
+        assert_eq!(
+            validate_fresh_maker_lock_plan(
+                &fixture.config,
+                &fixture.agreement,
+                &fixture.agreement_wire,
+                fresh_maker_eligibility(&fixture),
+                true,
+            )
+            .expect("exact schema-5 first lock authorizes Maker plan"),
+            expected
+        );
+    }
+}
+
+#[test]
+fn schema5_asset_sdk_rejects_finality_bytes_custody_amount_and_asset_drift() {
+    let mut fixture = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Maker);
+    let extension = configure_schema5_bitcoin_asset_material(&mut fixture);
+    let lez_btc_swap_sdk::BtcLezAssetV1::CustomToken(token) = extension.asset() else {
+        panic!("custom-token fixture")
+    };
+    let retained = load_prepared_taker_asset_first_lock(&fixture.config, &fixture.agreement)
+        .expect("retained taker first lock");
+    let exact_plan = retained.prepared.plan().clone();
+    let exact_custody = *token.custody_ata_account();
+    let exact_definition = *token.token_definition_account();
+    let exact_amount = token.amount();
+
+    let mut changed_steps = exact_plan.steps().to_vec();
+    let first = &changed_steps[0];
+    changed_steps[0] = PublicEffectStepV1::new(
+        first.step().clone(),
+        first.expected_public_id().clone(),
+        ExactPublicEffectBytes::new(b"different-canonical-initialization".to_vec())
+            .expect("changed exact bytes"),
+    );
+    let changed_plan = ExactPublicEffectPlanV1::new(changed_steps).expect("changed observed plan");
+    let cases = [
+        schema5_reverse_asset_eligibility(
+            &fixture,
+            exact_plan.clone(),
+            exact_custody,
+            exact_definition,
+            exact_amount,
+            false,
+        ),
+        schema5_reverse_asset_eligibility(
+            &fixture,
+            changed_plan,
+            exact_custody,
+            exact_definition,
+            exact_amount,
+            true,
+        ),
+        schema5_reverse_asset_eligibility(
+            &fixture,
+            exact_plan.clone(),
+            [0xa1; 32],
+            exact_definition,
+            exact_amount,
+            true,
+        ),
+        schema5_reverse_asset_eligibility(
+            &fixture,
+            exact_plan.clone(),
+            exact_custody,
+            exact_definition,
+            exact_amount + 1,
+            true,
+        ),
+        schema5_reverse_asset_eligibility(
+            &fixture,
+            exact_plan,
+            exact_custody,
+            [0xa2; 32],
+            exact_amount,
+            true,
+        ),
+    ];
+    for eligibility in cases {
+        assert_eq!(
+            validate_fresh_maker_lock_plan(
+                &fixture.config,
+                &fixture.agreement,
+                &fixture.agreement_wire,
+                eligibility,
+                true,
+            ),
+            Err(ActorCommandError::ObservationUnavailable)
+        );
+    }
+}
+
+#[test]
+fn schema5_asset_scan_never_turns_uncertainty_unavailability_or_conflict_into_send_authority() {
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    let _ = configure_schema5_asset_material(&mut fixture);
+    let plan = load_prepared_maker_lock_material(&fixture.config, &fixture.agreement)
+        .expect("asset maker material")
+        .plan()
+        .clone();
+    let step = &plan.steps()[0];
+    let window = fixture.config.discovery_window().expect("window");
+    let height = window.start_height() + u64::from(window.max_blocks()) - 1;
+    let clock = ChainClock::new(Hex32::from_bytes([0xb0; 32]), height, 1_800_000_000_000);
+    for outcome in [
+        FinalizedWitnessedAssetScanOutcomeV2::<()>::Uncertain {
+            finalized_clock: clock,
+            scanned_window: window,
+        },
+        FinalizedWitnessedAssetScanOutcomeV2::<()>::Unavailable {
+            reason:
+                lez_bridge_protocol::FinalizedWitnessedAssetUnavailableReasonV2::HistoryUnavailable,
+        },
+    ] {
+        let observation = asset_scan_step_observation(step, outcome, |()| unreachable!());
+        assert_eq!(observation, MakerLockStepChainObservationV1::Uncertain);
+        assert!(!observation.can_authorize_submission());
+    }
+
+    let conflicting = ObservedTransactionFacts::new(
+        TransactionId::from_bytes(
+            <[u8; 32]>::try_from(
+                hex::decode(step.expected_public_id().as_str()).expect("hex transaction ID"),
+            )
+            .expect("32-byte transaction ID"),
+        ),
+        ExactTransactionBytes::new(b"conflicting-canonical-bytes".to_vec())
+            .expect("conflicting bytes"),
+        ChainPosition::new(Hex32::from_bytes([0xb1; 32]), height, 0),
+        AccountIds::new(vec![Hex32::from_bytes([0xb2; 32])]).expect("signer"),
+        true,
+    );
+    let observation = asset_scan_step_observation(
+        step,
+        FinalizedWitnessedAssetScanOutcomeV2::Found {
+            finalized_clock: clock,
+            scanned_window: window,
+            facts: Box::new(conflicting),
+        },
+        |facts| facts,
+    );
+    assert_eq!(
+        observation,
+        MakerLockStepChainObservationV1::ConflictingPresence
+    );
+    assert!(!observation.can_authorize_submission());
+}
+
+#[tokio::test]
+async fn schema5_three_step_asset_lock_is_ordered_and_uncertainty_never_submits() {
+    for observation in [
+        MakerLockStepChainObservationV1::Uncertain,
+        MakerLockStepChainObservationV1::ConflictingPresence,
+    ] {
+        let mut fixture =
+            ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+        let _ = configure_schema5_asset_material(&mut fixture);
+        activate_and_project_taker_lock(&fixture).await;
+        let plan = load_prepared_maker_lock_material(&fixture.config, &fixture.agreement)
+            .expect("asset maker material")
+            .plan()
+            .clone();
+        let port = FixedMakerLockPort::new(
+            observation,
+            fresh_maker_eligibility(&fixture),
+            exact_maker_lock_complete_observation(&fixture.agreement, &plan, 0xa3),
+        );
+        let output = drive_maker_lock_with_port(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &port,
+        )
+        .await
+        .expect("uncertainty remains observation-only");
+        assert_eq!(output.revision, 1);
+        assert_eq!(port.submissions(), 0);
+        assert_eq!(port.eligibility_checks(), 0);
+    }
+
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    let _ = configure_schema5_asset_material(&mut fixture);
+    activate_and_project_taker_lock(&fixture).await;
+    let plan = load_prepared_maker_lock_material(&fixture.config, &fixture.agreement)
+        .expect("asset maker material")
+        .plan()
+        .clone();
+    let eligibility = fresh_maker_eligibility(&fixture);
+    let complete = exact_maker_lock_complete_observation(&fixture.agreement, &plan, 0xa4);
+    for (index, step) in plan.steps().iter().enumerate() {
+        let absent = FixedMakerLockPort::new(
+            MakerLockStepChainObservationV1::Absent,
+            eligibility.clone(),
+            complete.clone(),
+        )
+        .with_submission_result(BtcMakerLockSubmissionResult::Accepted(
+            step.expected_public_id().as_str().into(),
+        ));
+        let sent = drive_maker_lock_with_port(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &absent,
+        )
+        .await
+        .expect("exact asset step submitted once");
+        assert_eq!(sent.revision, 1);
+        assert_eq!(absent.submissions(), 1);
+        assert_eq!(absent.eligibility_checks(), 1);
+
+        let present = FixedMakerLockPort::new(
+            MakerLockStepChainObservationV1::PresentExactCanonical {
+                expected_public_id: step.expected_public_id().as_str().into(),
+                exact_public_bytes: step.exact_bytes().as_slice().to_vec(),
+            },
+            eligibility.clone(),
+            complete.clone(),
+        );
+        let observed = drive_maker_lock_with_port(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &present,
+        )
+        .await
+        .unwrap_or_else(|error| {
+            panic!(
+                "asset step {index} failed: {error:?}; observed {:?}",
+                present.observed_steps()
+            )
+        });
+        assert_eq!(
+            observed.revision,
+            if index + 1 == plan.steps().len() {
+                2
+            } else {
+                1
+            }
+        );
+    }
 }
 
 #[tokio::test]
