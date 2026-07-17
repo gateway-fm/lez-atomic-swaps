@@ -1619,7 +1619,17 @@ Active M3 refund critical path:
   is repository-controlled accepted scope, not a Logos dependency blocker;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
-  not recordings and cannot satisfy D1;
+  not recordings and cannot satisfy D1. The repository now supplies a
+  private recorder with no new project dependency around the installed util-linux
+  `script`/`scriptreplay` pair. Its RED-GREEN contract covers all three exact
+  scenario mappings, replayable output/timing files, SHA-256 binding to the
+  passing actual-node packet, commit and Core/LEZ version metadata, `0700`/`0600`
+  permissions, no-clobber behavior, failed-driver propagation, and a forbidden
+  production test-driver override. Test fixtures are marked
+  `certification_mode: test_contract`; only a clean-worktree run through the
+  fixed actual-node driver may emit `live_actual_nodes`. The contract runs in
+  the pinned CI quality gate. The three fresh live recordings and their
+  retained private bundle still remain;
 - [ ] synchronize retained secret-safe evidence, manual reproduction,
   architecture/atomicity diagrams, traceability, and the milestone packet,
   then run the exact lint, test, vulnerability, license, source, security, and
