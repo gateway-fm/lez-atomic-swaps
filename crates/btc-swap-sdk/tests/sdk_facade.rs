@@ -1990,3 +1990,604 @@ async fn pre_lock_ports_compose_then_activation_loses_negotiation_capability() {
         Err(BtcSdkError::LifecycleAgreementMismatch)
     ));
 }
+
+use lez_btc_swap_sdk::{
+    BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1, BtcAgreementV1, BtcLezAssetExtensionBodyV1,
+    BtcLezAssetExtensionRecordV1, BtcLezAssetExtensionV1, BtcLezAssetFirstLockEvidenceV1,
+    BtcLezAssetPreparedLockEffectsV1, BtcLezAssetSdkError, BtcLezAssetV1, BtcLezCustomTokenTermsV1,
+    LezAssetCustodyEvidenceV1, LezAssetFirstLockEvidenceV1, PreparedLezAssetFundingV1,
+};
+use lez_swap_sdk_core::{
+    ExactPublicEffectBytes, ExactPublicEffectPlanV1, ExpectedPublicEffectId, PublicEffectStepId,
+    PublicEffectStepV1,
+};
+
+fn f7_asset(agreement: &BtcAgreementV1, custom: bool) -> BtcLezAssetV1 {
+    if !custom {
+        return BtcLezAssetV1::Native;
+    }
+    BtcLezAssetV1::CustomToken(Box::new(BtcLezCustomTokenTermsV1::new(
+        [40; 32],
+        [41; 32],
+        [42; 32],
+        *agreement.lez_terms().depositor_account(),
+        [43; 32],
+        *agreement.lez_terms().claimant_account(),
+        [44; 32],
+        [45; 32],
+        agreement.lez_terms().amount(),
+        agreement.lez_terms().refund_at_ms(),
+        *agreement.lez_terms().aggregate_authority_account(),
+        agreement.p2tr_contract().aggregate_internal_key_bytes(),
+    )))
+}
+
+fn f7_extension(agreement: &BtcAgreementV1, asset: BtcLezAssetV1) -> BtcLezAssetExtensionV1 {
+    let body = BtcLezAssetExtensionBodyV1::new(*agreement.agreement_commitment(), asset);
+    let commitment = body.commitment();
+    let record = BtcLezAssetExtensionRecordV1::from_parts(
+        BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1,
+        body,
+        commitment,
+        agreement_signature(&secret(1), commitment),
+        agreement_signature(&secret(2), commitment),
+    );
+    BtcLezAssetExtensionV1::validate(record, agreement).expect("valid F7 extension")
+}
+
+fn f7_step(step: &str, public_id: &str, bytes: Vec<u8>) -> PublicEffectStepV1 {
+    PublicEffectStepV1::new(
+        PublicEffectStepId::new(step).expect("F7 step"),
+        ExpectedPublicEffectId::new(public_id).expect("F7 transaction ID"),
+        ExactPublicEffectBytes::new(bytes).expect("F7 exact bytes"),
+    )
+}
+
+fn f7_plan(custom: bool, nonce: u8) -> ExactPublicEffectPlanV1 {
+    let mut steps = vec![f7_step(
+        "lez.initialize",
+        &format!("f7-initialize-{nonce}"),
+        vec![0xa0, nonce],
+    )];
+    if custom {
+        steps.push(f7_step(
+            "lez.create_custody_ata",
+            &format!("f7-custody-{nonce}"),
+            vec![0xb0, nonce],
+        ));
+    }
+    steps.push(f7_step(
+        "lez.fund",
+        &format!("f7-fund-{nonce}"),
+        vec![0xc0, nonce],
+    ));
+    ExactPublicEffectPlanV1::new(steps).expect("exact F7 plan")
+}
+
+fn f7_prepared_lez(
+    extension: &BtcLezAssetExtensionV1,
+    plan: ExactPublicEffectPlanV1,
+) -> PreparedLezAssetFundingV1 {
+    match extension.asset() {
+        BtcLezAssetV1::Native => PreparedLezAssetFundingV1::native(plan).expect("native F7 plan"),
+        BtcLezAssetV1::CustomToken(_) => {
+            PreparedLezAssetFundingV1::custom_token(plan).expect("token F7 plan")
+        }
+    }
+}
+
+fn f7_locks(
+    fixture: &Fixture,
+    agreement: &BtcAgreementV1,
+    extension: &BtcLezAssetExtensionV1,
+    plan: ExactPublicEffectPlanV1,
+) -> BtcLezAssetPreparedLockEffectsV1 {
+    let bitcoin = PreparedBitcoinFundingV1::new(
+        fixture.funding.compute_txid().to_string(),
+        serialize(&fixture.funding),
+    )
+    .expect("exact Bitcoin funding");
+    BtcLezAssetPreparedLockEffectsV1::new(
+        agreement,
+        extension.clone(),
+        bitcoin,
+        f7_prepared_lez(extension, plan),
+    )
+    .expect("agreement-bound F7 locks")
+}
+
+fn f7_custody(extension: &BtcLezAssetExtensionV1) -> LezAssetCustodyEvidenceV1 {
+    match extension.asset() {
+        BtcLezAssetV1::Native => LezAssetCustodyEvidenceV1::Native {
+            custody_account: [14; 32],
+        },
+        BtcLezAssetV1::CustomToken(token) => LezAssetCustodyEvidenceV1::CustomToken {
+            custody_ata_account: *token.custody_ata_account(),
+            token_definition_account: *token.token_definition_account(),
+        },
+    }
+}
+
+fn f7_lez_evidence(
+    _extension: &BtcLezAssetExtensionV1,
+    observed_plan: ExactPublicEffectPlanV1,
+    genesis: [u8; 32],
+    metadata: [u8; 32],
+    custody: LezAssetCustodyEvidenceV1,
+    amount: u128,
+    finalized: bool,
+) -> BtcLezAssetFirstLockEvidenceV1 {
+    BtcLezAssetFirstLockEvidenceV1::Lez(LezAssetFirstLockEvidenceV1::new(
+        genesis,
+        observed_plan,
+        metadata,
+        custody,
+        amount,
+        finalized,
+    ))
+}
+
+#[test]
+fn f7_asset_activation_authorizes_both_directions_and_both_asset_kinds() {
+    for (direction, custom) in [
+        (SwapDirection::TakerSellsForeign, false),
+        (SwapDirection::TakerSellsForeign, true),
+        (SwapDirection::TakerSellsLez, false),
+        (SwapDirection::TakerSellsLez, true),
+    ] {
+        let fixture = fixture(direction);
+        let sdk = BtcPairSdk::new(
+            Participant::Maker,
+            BtcChainPolicyV1::new(BITCOIN_GENESIS, REQUIRED_CONFIRMATIONS),
+        );
+        let accepted = sdk.accept_wire(&fixture.wire).expect("accepted agreement");
+        let agreement = accepted.agreement().clone();
+        let extension = f7_extension(&agreement, f7_asset(&agreement, custom));
+        let lez_plan = f7_plan(custom, 1);
+        let locks = f7_locks(&fixture, &agreement, &extension, lez_plan.clone());
+        let active = sdk
+            .activate_asset(accepted, locks)
+            .expect("role-fixed asset activation");
+        assert_eq!(active.local_participant(), Participant::Maker);
+        assert_eq!(
+            active.asset_extension().asset_commitment(),
+            extension.asset_commitment()
+        );
+
+        let evidence = match direction {
+            SwapDirection::TakerSellsForeign => BtcLezAssetFirstLockEvidenceV1::Bitcoin(
+                BitcoinFirstLockEvidenceV1::new(
+                    BITCOIN_GENESIS,
+                    serialize(&fixture.funding),
+                    REQUIRED_CONFIRMATIONS,
+                )
+                .expect("final Bitcoin first lock"),
+            ),
+            SwapDirection::TakerSellsLez => f7_lez_evidence(
+                &extension,
+                lez_plan.clone(),
+                LEZ_GENESIS,
+                [13; 32],
+                f7_custody(&extension),
+                LEZ_AMOUNT,
+                true,
+            ),
+        };
+        let confirmed = active
+            .validate_first_lock(&evidence)
+            .expect("exact finalized taker first lock");
+        assert_eq!(
+            confirmed.base_agreement_commitment(),
+            agreement.agreement_commitment()
+        );
+        assert_eq!(confirmed.asset_commitment(), extension.asset_commitment());
+        assert_eq!(
+            confirmed.first_plan_commitment(),
+            &active.first_lock_plan().commitment()
+        );
+        assert_eq!(confirmed.direction(), direction);
+
+        let second = active
+            .second_lock_plan(&confirmed)
+            .expect("maker second-lock authorization");
+        match direction {
+            SwapDirection::TakerSellsForeign => assert_eq!(second, &lez_plan),
+            SwapDirection::TakerSellsLez => {
+                assert_eq!(second, active.prepared_lock_effects().bitcoin().plan());
+            }
+        }
+    }
+}
+
+#[test]
+fn f7_prepared_lock_validation_rejects_shape_duplicates_and_substitution() {
+    let reordered = ExactPublicEffectPlanV1::new(vec![
+        f7_step("lez.fund", "fund-a", vec![1]),
+        f7_step("lez.initialize", "init-a", vec![2]),
+    ])
+    .expect("well-formed but reordered plan");
+    assert_eq!(
+        PreparedLezAssetFundingV1::native(reordered),
+        Err(BtcLezAssetSdkError::LezAssetPlanShape)
+    );
+
+    let duplicate_ids = ExactPublicEffectPlanV1::new(vec![
+        f7_step("lez.initialize", "same-id", vec![1]),
+        f7_step("lez.fund", "same-id", vec![2]),
+    ])
+    .expect("semantic steps with duplicate transaction IDs");
+    assert_eq!(
+        PreparedLezAssetFundingV1::native(duplicate_ids),
+        Err(BtcLezAssetSdkError::DuplicateLezAssetEffectIdentity)
+    );
+
+    let duplicate_bytes = ExactPublicEffectPlanV1::new(vec![
+        f7_step("lez.initialize", "init-b", vec![9]),
+        f7_step("lez.fund", "fund-b", vec![9]),
+    ])
+    .expect("semantic steps with duplicate exact bytes");
+    assert_eq!(
+        PreparedLezAssetFundingV1::native(duplicate_bytes),
+        Err(BtcLezAssetSdkError::DuplicateLezAssetEffectBytes)
+    );
+    assert_eq!(
+        PreparedLezAssetFundingV1::custom_token(f7_plan(false, 3)),
+        Err(BtcLezAssetSdkError::LezAssetPlanShape)
+    );
+
+    let forward = fixture(SwapDirection::TakerSellsForeign);
+    let reverse = fixture(SwapDirection::TakerSellsLez);
+    let forward_agreement = BtcAgreementV1::validate(forward.record.clone()).expect("forward");
+    let reverse_agreement = BtcAgreementV1::validate(reverse.record.clone()).expect("reverse");
+    let native_extension = f7_extension(&forward_agreement, BtcLezAssetV1::Native);
+    let reverse_bitcoin = PreparedBitcoinFundingV1::new(
+        reverse.funding.compute_txid().to_string(),
+        serialize(&reverse.funding),
+    )
+    .expect("reverse Bitcoin funding");
+    assert_eq!(
+        BtcLezAssetPreparedLockEffectsV1::new(
+            &reverse_agreement,
+            native_extension.clone(),
+            reverse_bitcoin,
+            PreparedLezAssetFundingV1::native(f7_plan(false, 4)).expect("native plan"),
+        ),
+        Err(BtcLezAssetSdkError::AssetExtensionAgreementMismatch)
+    );
+
+    let forward_bitcoin = PreparedBitcoinFundingV1::new(
+        forward.funding.compute_txid().to_string(),
+        serialize(&forward.funding),
+    )
+    .expect("forward Bitcoin funding");
+    assert_eq!(
+        BtcLezAssetPreparedLockEffectsV1::new(
+            &forward_agreement,
+            native_extension.clone(),
+            forward_bitcoin,
+            PreparedLezAssetFundingV1::custom_token(f7_plan(true, 5)).expect("token plan"),
+        ),
+        Err(BtcLezAssetSdkError::AssetPlanKindMismatch)
+    );
+
+    let substituted_bitcoin = PreparedBitcoinFundingV1::new(
+        reverse.funding.compute_txid().to_string(),
+        serialize(&reverse.funding),
+    )
+    .expect("substituted Bitcoin funding");
+    assert_eq!(
+        BtcLezAssetPreparedLockEffectsV1::new(
+            &forward_agreement,
+            native_extension,
+            substituted_bitcoin,
+            PreparedLezAssetFundingV1::native(f7_plan(false, 6)).expect("native plan"),
+        ),
+        Err(BtcLezAssetSdkError::BitcoinFundingAgreementMismatch)
+    );
+}
+
+struct F7ActiveFixture {
+    fixture: Fixture,
+    sdk: BtcPairSdk,
+    agreement: BtcAgreementV1,
+    extension: BtcLezAssetExtensionV1,
+    lez_plan: ExactPublicEffectPlanV1,
+    active: lez_btc_swap_sdk::ActiveBtcLezAssetSwapV1,
+}
+
+fn f7_active_fixture(direction: SwapDirection, custom: bool, nonce: u8) -> F7ActiveFixture {
+    let fixture = fixture(direction);
+    let sdk = BtcPairSdk::new(
+        Participant::Maker,
+        BtcChainPolicyV1::new(BITCOIN_GENESIS, REQUIRED_CONFIRMATIONS),
+    );
+    let accepted = sdk.accept_wire(&fixture.wire).expect("accepted agreement");
+    let agreement = accepted.agreement().clone();
+    let extension = f7_extension(&agreement, f7_asset(&agreement, custom));
+    let lez_plan = f7_plan(custom, nonce);
+    let active = sdk
+        .activate_asset(
+            accepted,
+            f7_locks(&fixture, &agreement, &extension, lez_plan.clone()),
+        )
+        .expect("asset activation");
+    F7ActiveFixture {
+        fixture,
+        sdk,
+        agreement,
+        extension,
+        lez_plan,
+        active,
+    }
+}
+
+fn valid_f7_lez_evidence(f7: &F7ActiveFixture) -> BtcLezAssetFirstLockEvidenceV1 {
+    f7_lez_evidence(
+        &f7.extension,
+        f7.lez_plan.clone(),
+        LEZ_GENESIS,
+        [13; 32],
+        f7_custody(&f7.extension),
+        LEZ_AMOUNT,
+        true,
+    )
+}
+
+#[test]
+fn f7_lez_evidence_rejects_finality_network_and_plan_substitution() {
+    let f7 = f7_active_fixture(SwapDirection::TakerSellsLez, true, 7);
+    let custody = f7_custody(&f7.extension);
+    for (evidence, expected) in [
+        (
+            f7_lez_evidence(
+                &f7.extension,
+                f7.lez_plan.clone(),
+                LEZ_GENESIS,
+                [13; 32],
+                custody.clone(),
+                LEZ_AMOUNT,
+                false,
+            ),
+            BtcLezAssetSdkError::AssetFirstLockNotFinalized,
+        ),
+        (
+            f7_lez_evidence(
+                &f7.extension,
+                f7.lez_plan.clone(),
+                [99; 32],
+                [13; 32],
+                custody.clone(),
+                LEZ_AMOUNT,
+                true,
+            ),
+            BtcLezAssetSdkError::AssetFirstLockNetworkMismatch,
+        ),
+        (
+            f7_lez_evidence(
+                &f7.extension,
+                f7_plan(true, 8),
+                LEZ_GENESIS,
+                [13; 32],
+                custody,
+                LEZ_AMOUNT,
+                true,
+            ),
+            BtcLezAssetSdkError::AssetFirstLockPlanMismatch,
+        ),
+    ] {
+        assert_eq!(f7.active.validate_first_lock(&evidence), Err(expected));
+    }
+}
+
+#[test]
+fn f7_lez_evidence_rejects_metadata_custody_definition_and_amount_substitution() {
+    let f7 = f7_active_fixture(SwapDirection::TakerSellsLez, true, 9);
+    let custody = f7_custody(&f7.extension);
+    for (evidence, expected) in [
+        (
+            f7_lez_evidence(
+                &f7.extension,
+                f7.lez_plan.clone(),
+                LEZ_GENESIS,
+                [99; 32],
+                custody.clone(),
+                LEZ_AMOUNT,
+                true,
+            ),
+            BtcLezAssetSdkError::AssetFirstLockTermsMismatch,
+        ),
+        (
+            f7_lez_evidence(
+                &f7.extension,
+                f7.lez_plan.clone(),
+                LEZ_GENESIS,
+                [13; 32],
+                LezAssetCustodyEvidenceV1::CustomToken {
+                    custody_ata_account: [99; 32],
+                    token_definition_account: [42; 32],
+                },
+                LEZ_AMOUNT,
+                true,
+            ),
+            BtcLezAssetSdkError::AssetFirstLockTermsMismatch,
+        ),
+        (
+            f7_lez_evidence(
+                &f7.extension,
+                f7.lez_plan.clone(),
+                LEZ_GENESIS,
+                [13; 32],
+                custody,
+                LEZ_AMOUNT + 1,
+                true,
+            ),
+            BtcLezAssetSdkError::AssetFirstLockTermsMismatch,
+        ),
+    ] {
+        assert_eq!(f7.active.validate_first_lock(&evidence), Err(expected));
+    }
+}
+
+#[test]
+fn f7_confirmation_token_rejects_asset_and_first_plan_substitution() {
+    let f7 = f7_active_fixture(SwapDirection::TakerSellsLez, true, 10);
+    let confirmed = f7
+        .active
+        .validate_first_lock(&valid_f7_lez_evidence(&f7))
+        .expect("valid custom-token first lock");
+
+    let native_extension = f7_extension(&f7.agreement, BtcLezAssetV1::Native);
+    let native_accepted = f7
+        .sdk
+        .accept_wire(&f7.fixture.wire)
+        .expect("same accepted agreement");
+    let native_active = f7
+        .sdk
+        .activate_asset(
+            native_accepted,
+            f7_locks(
+                &f7.fixture,
+                &f7.agreement,
+                &native_extension,
+                f7_plan(false, 11),
+            ),
+        )
+        .expect("native activation");
+    assert_eq!(
+        native_active.second_lock_plan(&confirmed),
+        Err(BtcLezAssetSdkError::AssetFirstLockConfirmationMismatch)
+    );
+
+    let changed_plan_accepted = f7
+        .sdk
+        .accept_wire(&f7.fixture.wire)
+        .expect("same accepted agreement");
+    let changed_plan_active = f7
+        .sdk
+        .activate_asset(
+            changed_plan_accepted,
+            f7_locks(&f7.fixture, &f7.agreement, &f7.extension, f7_plan(true, 12)),
+        )
+        .expect("changed-plan activation");
+    assert_eq!(
+        changed_plan_active.second_lock_plan(&confirmed),
+        Err(BtcLezAssetSdkError::AssetFirstLockConfirmationMismatch)
+    );
+}
+
+#[test]
+fn f7_direction_finality_and_role_substitution_fail_closed() {
+    let reverse = f7_active_fixture(SwapDirection::TakerSellsLez, true, 13);
+    let reverse_confirmed = reverse
+        .active
+        .validate_first_lock(&valid_f7_lez_evidence(&reverse))
+        .expect("valid reverse first lock");
+    let forward = f7_active_fixture(SwapDirection::TakerSellsForeign, false, 14);
+    let lagging = BtcLezAssetFirstLockEvidenceV1::Bitcoin(
+        BitcoinFirstLockEvidenceV1::new(
+            BITCOIN_GENESIS,
+            serialize(&forward.fixture.funding),
+            REQUIRED_CONFIRMATIONS - 1,
+        )
+        .expect("lagging Bitcoin evidence"),
+    );
+    assert_eq!(
+        forward.active.validate_first_lock(&lagging),
+        Err(BtcLezAssetSdkError::AssetFirstLockConfirmationLag {
+            required: REQUIRED_CONFIRMATIONS,
+            actual: REQUIRED_CONFIRMATIONS - 1,
+        })
+    );
+    assert_eq!(
+        forward.active.second_lock_plan(&reverse_confirmed),
+        Err(BtcLezAssetSdkError::AssetFirstLockConfirmationMismatch)
+    );
+
+    let wrong_role = BtcPairSdk::new(
+        Participant::Taker,
+        BtcChainPolicyV1::new(BITCOIN_GENESIS, REQUIRED_CONFIRMATIONS),
+    );
+    let maker_accepted = forward
+        .sdk
+        .accept_wire(&forward.fixture.wire)
+        .expect("maker accepted");
+    let wrong_role_locks = f7_locks(
+        &forward.fixture,
+        &forward.agreement,
+        &forward.extension,
+        f7_plan(false, 15),
+    );
+    assert_eq!(
+        wrong_role.activate_asset(maker_accepted, wrong_role_locks),
+        Err(BtcLezAssetSdkError::LocalRoleMismatch {
+            expected: Participant::Taker,
+            actual: Participant::Maker,
+        })
+    );
+}
+#[test]
+fn f7_prepared_locks_reject_txid_matching_wrong_bitcoin_output() {
+    let fixture = fixture(SwapDirection::TakerSellsForeign);
+    let base = BtcAgreementV1::validate(fixture.record.clone()).expect("base agreement");
+    let mut wrong_output_funding = fixture.funding.clone();
+    wrong_output_funding.output[0].value = Amount::from_sat(FUNDING_VALUE_SAT + 1);
+    let bitcoin_claimant = base.bitcoin_funder().other();
+    let claim = CooperativeKeyPathSpend::new(
+        base.p2tr_contract(),
+        OutPoint {
+            txid: wrong_output_funding.compute_txid(),
+            vout: 0,
+        },
+        Amount::from_sat(FUNDING_VALUE_SAT),
+        vec![TxOut {
+            value: Amount::from_sat(CLAIM_VALUE_SAT),
+            script_pubkey: ScriptBuf::from_bytes(
+                base.participant(bitcoin_claimant)
+                    .claim_destination_script_pubkey()
+                    .to_vec(),
+            ),
+        }],
+    )
+    .expect("agreement-consistent claim");
+    let original = fixture.record.body();
+    let body = BtcAgreementBodyV1::new(
+        *original.swap_id(),
+        original.direction(),
+        *original.bitcoin_chain_policy(),
+        original.participants().clone(),
+        *original.adaptor_point(),
+        original.lez_terms().clone(),
+        original.p2tr_terms().clone(),
+        BtcFundingTermsV1::new(
+            wrong_output_funding.compute_txid().to_byte_array(),
+            0,
+            FUNDING_VALUE_SAT,
+        ),
+        BtcClaimTermsV1::from_spend(&claim).expect("claim terms"),
+        *original.recovery_plan(),
+    );
+    let commitment = body.commitment();
+    let record = BtcAgreementRecordV1::from_parts(
+        BTC_AGREEMENT_SCHEMA_V1,
+        body,
+        commitment,
+        agreement_signature(&secret(1), commitment),
+        agreement_signature(&secret(2), commitment),
+    );
+    let agreement = BtcAgreementV1::validate(record).expect("wrong-output agreement");
+    let extension = f7_extension(&agreement, BtcLezAssetV1::Native);
+    let bitcoin = PreparedBitcoinFundingV1::new(
+        wrong_output_funding.compute_txid().to_string(),
+        serialize(&wrong_output_funding),
+    )
+    .expect("exact wrong-output funding");
+    assert_eq!(
+        BtcLezAssetPreparedLockEffectsV1::new(
+            &agreement,
+            extension,
+            bitcoin,
+            PreparedLezAssetFundingV1::native(f7_plan(false, 16)).expect("native plan"),
+        ),
+        Err(BtcLezAssetSdkError::BitcoinFundingOutputMismatch)
+    );
+}

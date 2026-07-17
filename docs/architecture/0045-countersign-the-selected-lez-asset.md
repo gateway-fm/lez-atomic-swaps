@@ -1,8 +1,9 @@
 # ADR 0045: Countersign the selected LEZ asset separately from agreement v1
 
-Status: Accepted at the deterministic BTC SDK component boundary. Actor,
-sidecar, official ATA derivation, journal, and actual-node composition remain
-open.
+Status: Accepted at the deterministic BTC SDK, bridge-adapter, and official
+sidecar-planner component boundaries. Exact asset-bound first-lock validation
+and Maker-plan authorization are GREEN. Live actor, finalized route/scan,
+journal, and actual-node composition remain open.
 
 ## Context
 
@@ -50,7 +51,40 @@ flowchart LR
     Base --> Validator
     Policy["Local official programs and expected ATAs"] --> Validator
     Validator --> Terms["Witnessed LEZ asset terms v2"]
-    Terms -.-> Sidecar["Official derivation and transaction mapping open"]
+    Terms --> Sidecar["Official ATA derivation and transaction planning"]
+    Sidecar --> Prepared["Exact native two-step or token three-step plan"]
+    Prepared --> Active["Role-fixed asset SDK activation"]
+```
+
+## First-lock authorization sequence
+
+The asset extension is also part of the lock-order authorization boundary. The
+SDK receives complete exact Bitcoin and LEZ preparation, validates both legs,
+and exposes no node client. Adapter-produced evidence must match the exact
+Taker plan and finalized asset state before the Maker plan is returned.
+
+```mermaid
+sequenceDiagram
+    participant A as Application actor
+    participant S as Role-fixed BTC asset SDK
+    participant L as LEZ finalized adapter
+    participant B as Bitcoin adapter
+
+    A->>S: Accepted agreement, countersigned asset, and both exact plans
+    S->>S: Validate extension, asset plan shape, Bitcoin output, IDs, and bytes
+    alt Taker locks Bitcoin first
+        B-->>A: Canonical transaction and signed confirmation policy
+        A->>S: Exact Bitcoin first-lock evidence
+    else Taker locks LEZ asset first
+        L-->>A: Finalized ordered effects, metadata, custody, definition, and amount
+        A->>S: Exact LEZ asset first-lock evidence
+    end
+    S->>S: Bind base commitment, asset commitment, Taker plan, and direction
+    alt every exact first-lock fact matches
+        S-->>A: Opaque confirmation and exact Maker plan
+    else any chain, finality, plan, byte, account, definition, or role drifts
+        S-->>A: Reject with no submission capability
+    end
 ```
 
 ## Pre-effect validation sequence
@@ -91,5 +125,8 @@ The custom variant is boxed so the public enum remains reasonably sized. The
 wire remains canonical and bounded. Sixteen agreement tests cover native
 compatibility, independent custom custody, every custom field, exact local
 policy, cross-agreement and network substitution, aliases, schemas, signatures,
-and malformed or trailing wire. Full BTC SDK tests, strict Clippy, rustdoc,
-formatting, and diff checks pass.
+and malformed or trailing wire. The additive activation facade adds exact
+native/token plan shapes, Bitcoin output validation, adapter-produced finalized
+evidence, and an opaque asset-bound first-lock confirmation. Seven focused F7
+facade cases and all 61 SDK all-target tests pass with strict all-feature
+Clippy, rustdoc, doctests, formatting, and diff checks.

@@ -17,10 +17,12 @@ readiness claim.
 
 The M3 component boundary now also contains the checked witnessed-token guest,
 its synchronized manifest/IDL/deployer/verifier/runner identity, the complete
-deterministic BTC SDK lifecycle, and the additive exact-once v2 asset client.
-The client enforces operation-specific actor roles and conservative exact or
-discovery observation without retries. Official sidecar scans, adapter/journal
-composition, and role-owned actual-node custom-token execution remain open.
+deterministic BTC SDK lifecycle, the asset-bound lock-authorization facade, and
+the additive exact-once v2 asset client. The SDK requires exact finalized
+Taker-plan evidence before releasing the exact Maker plan. The client enforces
+operation-specific actor roles and conservative exact or discovery observation
+without retries. Official sidecar scans, actor/journal composition, and
+role-owned actual-node custom-token execution remain open.
 
 ADRs are append-only. Superseded decisions remain here and link to their
 replacement.
@@ -168,5 +170,5 @@ flowchart TB
 | [0042](0042-bind-witnessed-token-claims-to-exact-atas.md) | Bind aggregate-witness custom-token claims to one fungible definition and exact depositor, custody, and claimant ATAs in one recursive LEZ transition | Accepted at checked-guest/protocol/client/adapter/sidecar-planner component boundaries; new ELF/ImageID, tags 11/12, two-definition claims, recursive rollback, strict v2 asset terms and transactions, manifest/IDL/deployer assembly, four finalized effect classifiers, the eleven-operation exact-once client and no-submit agreement adapter, and four durable official-token planner reservations are GREEN. Routes/scans, journal/actor composition, and actual-node F7 integration remain open |
 | [0043](0043-derive-btc-claims-from-the-agreement.md) | Derive both BTC claim sessions from the countersigned agreement and materialize only agreement-bound exact follow-up effects | Accepted at deterministic SDK component boundary in `28f38c7`; both claim orders, exact evidence, redacted zeroizing recovery, template substitution, replay, and substitution rejection are GREEN. ADR 0044 extends it with signed refunds and pure recovery selection; later-revision resume, actor/store/node composition, examples/docs, and F7 integration remain open |
 | [0044](0044-presign-btc-recovery-and-project-revealing-leg-first.md) | Require both signed refunds before BTC locking and project the Maker-funded revealing-leg refund before the Taker-funded follow-up leg | Accepted at the deterministic SDK component boundary; both directions, first-lock abandonment, exact timeout boundaries, replay, role ownership, network/finality/confirmation checks, and invalid ordering are GREEN. Durable later-revision resume and actor/store/node composition remain open |
-| [0045](0045-countersign-the-selected-lez-asset.md) | Preserve agreement-v1 bytes and separately countersign the exact native or custom-token selection, programs, definition, ATAs, amount, deadline, and aggregate authority | Accepted at the deterministic SDK and adapter boundaries; independent custom custody, both role signatures, exact local policy, the substitution matrix, and exact v2 terms/call mapping are GREEN. Official ATA derivation is GREEN in the sidecar planner; actor journals, route/scan mapping, and actual-node F7 evidence remain open |
+| [0045](0045-countersign-the-selected-lez-asset.md) | Preserve agreement-v1 bytes and separately countersign the exact native or custom-token selection, programs, definition, ATAs, amount, deadline, and aggregate authority | Accepted at deterministic SDK, adapter, and sidecar-planner boundaries; independent custom custody, both role signatures, exact local policy, exact v2 mapping, native/token plan validation, and opaque asset-bound first-lock authorization are GREEN. Actor journals, route/scan mapping, and actual-node F7 evidence remain open |
 | [0046](0046-replay-btc-sdk-lifecycle-from-exact-transitions.md) | Reconstruct revisions one through four from exact ordered chain transitions and remove discovery/negotiation capability after activation | Accepted at the deterministic SDK boundary; both directions/roles, claims, ordered refunds, replay, and clone-validate-commit rollback are GREEN. Public process-durable store and direct actor/node composition remain open |

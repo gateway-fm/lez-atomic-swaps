@@ -533,7 +533,7 @@ flowchart TB
         M3RK[("M3 Bitcoin-funder refund scalar<br/>mode 0600 + x-only agreement match GREEN")]
         M3PE[("M3 role-local public-effect journal<br/>claim absence or refund eligibility before CAS<br/>refund race guard GREEN")]
         M3BR[("M3 BTC lifecycle recovery store<br/>four evidence revisions + hash chain<br/>offline Completed or Refunded GREEN")]
-        M3SDK["M3 role-fixed BTC funding facade<br/>exact Bitcoin and ordered LEZ plans<br/>byte-bound first-lock validation GREEN"]
+        M3SDK["M3 role-fixed BTC funding facade<br/>native and F7 asset-bound exact plans<br/>opaque first-lock authorization GREEN"]
         M3ML[("M3 Maker second-lock journal<br/>ordered one-attempt steps<br/>atomic revision-two close GREEN")]
         M3ID[("M3 exact-idempotent LEZ init path<br/>role-local reserve before official RPC<br/>actual-node restart no-rearm GREEN")]
         M3BC["M3 typed Core 31.1 adapter<br/>exact unspent funding + claim/refund evidence<br/>authorized one-send readback GREEN"]

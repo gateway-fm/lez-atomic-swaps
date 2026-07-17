@@ -1731,7 +1731,19 @@ Active M3 refund critical path:
   unchanged; transport failures stay distinct from
   `Found`/`Absent`/`Uncertain`/`Unavailable`. Six external F7 tests and 73
   preserved adapter tests pass with strict all-target Clippy, rustdoc,
-  doctests, formatting, and diff gates and no dependency change. A separate
+  doctests, formatting, and diff gates and no dependency change. The additive
+  role-fixed F7 SDK now accepts only a complete agreement-bound Bitcoin lock
+  plus an explicit native two-step or custom-token three-step LEZ plan. It
+  revalidates the countersigned extension, exact Bitcoin transaction/output,
+  asset-specific step order, unique IDs/bytes, and adapter-produced finalized
+  first-lock facts. Its opaque confirmation binds the base agreement, asset
+  commitment, exact Taker plan, and direction before releasing the Maker plan;
+  it cannot be constructed from a boolean finality assertion or evidence for a
+  different asset. Seven F7 facade cases cover both directions and both asset
+  kinds plus plan, byte, output, finality, network, metadata, custody, definition,
+  amount, role, and confirmation substitution. All 61 SDK all-target tests,
+  strict all-feature Clippy, rustdoc, doctests, formatting, and diff checks pass
+  without a dependency or agreement-v1 wire change. A separate
   official-wallet fixture now provisions two independent v0.2 token
   definitions, four exact actor ATAs, and opposite-role `250/0` and `0/250`
   starting balances through eight unique local-chain transactions. Its

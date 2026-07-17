@@ -8,6 +8,7 @@
 
 mod adaptor;
 mod agreement_v1;
+mod asset_sdk;
 mod p2tr;
 mod sdk;
 mod transaction;
@@ -28,6 +29,11 @@ pub use agreement_v1::{
     BtcOutputKeyParityV1, BtcP2trTermsV1, BtcParticipantIdentityV1, BtcParticipantsV1,
     BtcRecoveryPlanV1, MAX_BITCOIN_REQUIRED_CONFIRMATIONS, MAX_BTC_AGREEMENT_RECORD_BYTES,
     MAX_BTC_LEZ_ASSET_EXTENSION_RECORD_BYTES,
+};
+pub use asset_sdk::{
+    ActiveBtcLezAssetSwapV1, BtcLezAssetFirstLockEvidenceV1, BtcLezAssetPreparedLockEffectsV1,
+    BtcLezAssetSdkError, ConfirmedBtcLezAssetFirstLockV1, LezAssetCustodyEvidenceV1,
+    LezAssetFirstLockEvidenceV1, PreparedLezAssetFundingV1,
 };
 pub use p2tr::{
     CsvBlockDelay, CsvBlockDelayError, InvalidXOnlyKey, OutputKeyParity, P2trSwapOutput,

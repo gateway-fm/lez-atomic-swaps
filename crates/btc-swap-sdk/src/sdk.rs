@@ -1499,6 +1499,18 @@ impl BitcoinFirstLockEvidenceV1 {
     pub const fn exact_transaction(&self) -> &ExactPublicEffectBytes {
         &self.exact_transaction
     }
+
+    /// Bitcoin genesis hash observed by the adapter.
+    #[must_use]
+    pub const fn genesis_block_hash(&self) -> &[u8; 32] {
+        &self.genesis_block_hash
+    }
+
+    /// Canonical confirmation count observed by the adapter.
+    #[must_use]
+    pub const fn confirmations(&self) -> u32 {
+        self.confirmations
+    }
 }
 
 /// Adapter-produced finalized LEZ first-lock facts.
