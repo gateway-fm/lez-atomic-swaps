@@ -1,6 +1,6 @@
 # System architecture and actor flows
 
-Status: Living target architecture — 2026-07-16
+Status: Living target architecture — 2026-07-17
 
 This is the canonical whole-system view. ADRs record why individual choices
 were made; this document shows how the choices compose into the product that
@@ -78,24 +78,32 @@ accepted by current manifests, actor configuration, or the corridor runner.
 All displayed host ports are retained-proof addresses for one isolated run,
 not defaults or reusable discovery values.
 
-## M3 repository-owned actor PoC and retained operator evidence
+## M3 schema-4 actor-owned Maker-lock PoC and retained evidence
 
-Run `m3actor-20260716n`, completed at `2026-07-16T01:00:30Z` from repository
-commit `6ded2f9b8ba9ec8e0cfbf06287da92d34256f91a`, is the successful
-repository-owned end-to-end actor PoC. Fresh one-shot maker and taker actor
-processes completed both `TakerSellsForeign` and `TakerSellsLez` against one
-run-owned Bitcoin Core 31.1 Regtest and LEZ v0.2 service tuple. Both role stores
-reached revision 4 `Completed` in both directions, and the replay pass added
-zero submissions. The older 2026-07-15 operator-composed packet remains valid
-historical component and protocol evidence, but is no longer substituted for
-the repository-owned actor proof.
+Run `m3schema4-20260717d`, completed at `2026-07-17T07:45:38Z` from the clean,
+already-pushed repository commit
+`0e7635fc7e50cc6e0612745dcdaf6df8bbcf6f9a`, is the current private-local
+schema-4 checkpoint. Fresh one-shot Maker and Taker actor processes completed
+both `TakerSellsForeign` and `TakerSellsLez` against one run-owned Bitcoin Core
+31.1 Regtest and LEZ v0.2 service tuple. The test fixture submitted only the
+Taker's direction-selected first lock. The schema-4 Maker actor independently
+validated that exact first lock, consumed its role-local durable authority,
+and submitted the opposite-chain second lock. The runner only mined or waited
+for, and then confirmed, the Maker-submitted effect. Both role stores reached
+revision 4 `Completed` in both directions; Maker restart and terminal replay
+added zero submissions. The previous `m3actor-20260716n` and 2026-07-15
+operator-composed packets remain historical evidence, not substitutes for this
+actor-owned second-lock proof.
 
-The successful run also closed two actual-version integration gaps. Core 31.1
-requires `gettxspendingprevout` flags in one options object
+Core 31.1 requires `gettxspendingprevout` flags in one options object
 `{mempool_only:false,return_spending_tx:true}`, rather than the older positional
 boolean form. Finalized LEZ scans use bounded windows and each actor-sidecar
-request has a finite 30-second timeout. Bounded fresh-process observation
-retries may repeat reads only; they never re-arm or repeat a submission.
+request has a finite 30-second timeout. In `TakerSellsLez`, nine typed
+`moving_tip` results were returned while the local finalized tip advanced; a
+tenth fresh-process observation obtained one stable exact first-lock proof and
+then permitted the one Maker Bitcoin send. A `moving_tip` payload carries no
+chain fact and grants no send authority. Bounded retries repeat reads only and
+cannot re-arm a `Started`, `Unknown`, `Accepted`, or completed journal step.
 
 The current runner allocates every host port dynamically on literal loopback.
 Bitcoin publishes no P2P port. Core, Bedrock, the sequencer, the indexer, both
@@ -120,8 +128,8 @@ flowchart TB
     subgraph MakerHost["Maker role boundary"]
         Maker["Maker operator"]
         MakerRunner["Maker role runner"]
-        MakerActor["btc-reference-actor"]
-        MakerStore[("Maker lifecycle, effect, BTC, and LEZ signer journals")]
+        MakerActor["schema-4 btc-reference-actor<br/>owns second lock and claims"]
+        MakerStore[("Maker SQLite<br/>lifecycle, Maker-lock, effect, BTC, and LEZ journals")]
         MakerSidecar["Maker sidecar<br/>capability-authenticated loopback"]
         Maker --> MakerRunner
         MakerRunner --> MakerActor
@@ -132,8 +140,8 @@ flowchart TB
     subgraph TakerHost["Taker role boundary"]
         Taker["Taker operator"]
         TakerRunner["Taker role runner"]
-        TakerActor["btc-reference-actor"]
-        TakerStore[("Taker lifecycle, effect, BTC, and LEZ signer journals")]
+        TakerActor["schema-4 btc-reference-actor<br/>observes Maker lock and owns reveal"]
+        TakerStore[("Taker SQLite<br/>lifecycle, effect, BTC, and LEZ journals")]
         TakerSidecar["Taker sidecar<br/>capability-authenticated loopback"]
         Taker --> TakerRunner
         TakerRunner --> TakerActor
@@ -142,7 +150,7 @@ flowchart TB
     end
 
     subgraph BitcoinStack["Run-owned Bitcoin Core 31.1 Regtest"]
-        Core["JSON-RPC<br/>dynamic literal-loopback port"]
+        Core["JSON-RPC<br/>dynamic literal-loopback port<br/>restricted actor Basic credentials"]
         CoreState[("Run-owned chain, wallet, and deterministic Regtest funds")]
         Core --> CoreState
     end
@@ -165,7 +173,14 @@ flowchart TB
     LezBootstrap --> Sequencer
     LezBootstrap --> Indexer
     LezBootstrap --> Vaults
-    CoreProvisioner -->|"cookie RPC for setup, mining, and funding only"| Core
+    TakerFirst["Taker external first-lock fixture<br/>only PoC ownership exception"]
+    Confirmer["Run controller<br/>mines or waits and confirms only"]
+    CoreProvisioner -->|"cookie RPC for setup and deterministic funds"| Core
+    TakerFirst -->|"Bitcoin first lock"| Core
+    TakerFirst -->|"LEZ first lock"| TakerSidecar
+    Confirmer -->|"fixture-only mining"| Core
+    Confirmer -->|"confirmation reads"| Core
+    Confirmer -->|"finality reads"| Indexer
     MakerActor -->|"restricted role Basic RPC"| Core
     TakerActor -->|"restricted role Basic RPC"| Core
     MakerSidecar -->|"signed transactions"| Sequencer
@@ -173,7 +188,7 @@ flowchart TB
     MakerSidecar -->|"finalized observations"| Indexer
     TakerSidecar -->|"finalized observations"| Indexer
 
-    Terminal["Run m3actor-20260716n<br/>two of two directions revision 4 Completed"]
+    Terminal["Run m3schema4-20260717d<br/>schema-4 Maker locks actor-owned<br/>two of two directions revision 4 Completed"]
     MakerActor --> Terminal
     TakerActor --> Terminal
     Core --> Terminal
@@ -191,104 +206,218 @@ Vault identifier.
 The runner independently hashes the supplied guest artifact, requires
 `a199c5be...e293`, deploys ProgramId `39b6a4db...4dec` exactly once, and uses
 sequential bounded indexer reads to prove the deployment and both Vault Claims
-finalized. Node acceptance alone is not finality. Run `m3actor-20260716n`
-proved this bootstrap in the same fresh composition as both complete actor
+finalized. Node acceptance alone is not finality. Run `m3schema4-20260717d`
+proved this bootstrap in the same fresh composition as both complete schema-4
 directions: deployment finalized once in block 6, the maker Vault Claim in
 block 9, and the taker Vault Claim in block 12.
 
 ```mermaid
 sequenceDiagram
-    actor Maker as Maker operator
-    participant Provisioner as Run provisioner
-    participant Locks as Run-owned lock operator
-    participant MakerJournal as Maker BTC and LEZ journals
-    participant MakerActor as Maker reference actor
-    participant Core as Bitcoin Core
-    participant Sequencer as LEZ sequencer
-    participant Indexer as LEZ indexer
-    participant TakerActor as Taker reference actor
-    participant TakerJournal as Taker BTC and LEZ journals
-    actor Taker as Taker operator
+    participant Controller as Local run controller
+    participant FirstLock as Taker external first-lock fixture
+    participant CoreAdmin as Core fixture authority
+    participant Core as Core restricted actor JSON-RPC
+    participant Maker as Schema-4 Maker actor
+    participant MakerDb as Maker SQLite and journals
+    participant MakerSidecar as Maker LEZ sidecar
+    participant Sequencer as LEZ sequencer JSON-RPC
+    participant Bedrock as Bedrock HTTP
+    participant Indexer as LEZ finalized indexer JSON-RPC
+    participant Taker as Schema-4 Taker actor
+    participant TakerDb as Taker SQLite and journals
+    participant TakerSidecar as Taker LEZ sidecar
 
-    Provisioner->>Provisioner: Generate fresh terms and actor identities
-    Provisioner->>Provisioner: Prepare exact signed Bitcoin funding offline
-    Provisioner->>Core: testmempoolaccept exact funding bytes
-    Core-->>Provisioner: Read-only policy result
-    Provisioner->>Maker: Finalize countersigned agreement
-    Provisioner->>Taker: Finalize countersigned agreement
-    Maker->>MakerJournal: Complete both domain signer sessions
-    Taker->>TakerJournal: Complete both domain signer sessions
-    Note over MakerJournal,TakerJournal: Agreement and both journals are durable before first effect
-    Taker->>Locks: Authorize direction-derived first lock
+    Controller->>Controller: Generate signed terms and fresh role identities
+    Controller->>CoreAdmin: Prepare exact Bitcoin transaction and testmempoolaccept
+    Controller->>MakerDb: Persist agreement and complete both signer sessions
+    Controller->>TakerDb: Persist agreement and complete both signer sessions
+    Note over MakerDb,TakerDb: Role-local durable recovery precedes every chain effect
     alt First lock is Bitcoin
-        Locks->>Core: Broadcast exact pre-admitted funding bytes
-        Provisioner->>Core: Mine exactly the planned next block
-        Core-->>MakerActor: Agreement-bound anchor and confirmation
-        Core-->>TakerActor: Agreement-bound anchor and confirmation
+        FirstLock->>CoreAdmin: Submit exact Taker Bitcoin funding
+        Controller->>CoreAdmin: Mine the planned local block
+        Maker->>Core: Observe exact confirmed and unspent Taker lock
+        Taker->>Core: Observe own exact confirmed lock
     else First lock is LEZ
-        Locks->>Sequencer: Initialize and fund witnessed escrow
-        Indexer-->>MakerActor: Finalized exact funding evidence
-        Indexer-->>TakerActor: Finalized exact funding evidence
+        FirstLock->>TakerSidecar: Submit exact Taker initialize and fund
+        TakerSidecar->>Sequencer: Official signed transactions
+        Sequencer->>Bedrock: Publish signed channel blocks
+        Indexer->>Bedrock: Read finalized channel
+        Maker->>MakerSidecar: Observe exact finalized Taker funding
+        MakerSidecar->>Indexer: Bounded ID and hash ancestry reads
+        Taker->>TakerSidecar: Observe own finalized funding
     end
-    MakerActor->>MakerActor: Drive and project matching revision 1
-    TakerActor->>TakerActor: Drive and project matching revision 1
-    Maker->>Locks: Authorize direction-derived second lock
+    Maker->>MakerDb: Project exact first-lock revision 1
+    Taker->>TakerDb: Project exact first-lock revision 1
     alt Second lock is Bitcoin
-        Locks->>Core: Broadcast exact pre-admitted funding bytes
-        Provisioner->>Core: Mine exactly the planned next block
-        Core-->>MakerActor: Agreement-bound anchor and confirmation
-        Core-->>TakerActor: Agreement-bound anchor and confirmation
+        Maker->>MakerSidecar: Recheck fresh exact finalized LEZ first lock
+        MakerSidecar->>Indexer: Stable bracketed finalized reads
+        Indexer-->>Maker: Exact proof or typed moving_tip
+        Maker->>MakerDb: CAS exact Bitcoin Maker-lock step to Started
+        Maker->>Core: Submit exact Maker funding once
+        Controller->>CoreAdmin: Confirm only the actor-submitted transaction
+        Maker->>Core: Reconcile exact confirmed and unspent funding
+        Taker->>Core: Observe exact Maker funding
     else Second lock is LEZ
-        Locks->>Sequencer: Initialize and fund witnessed escrow
-        Indexer-->>MakerActor: Finalized exact funding evidence
-        Indexer-->>TakerActor: Finalized exact funding evidence
+        Maker->>Core: Recheck fresh exact unspent Bitcoin first lock
+        Maker->>MakerSidecar: Read stable current LEZ clock and prepare exact pair
+        Maker->>MakerDb: CAS initialize step before one send
+        Maker->>MakerSidecar: Submit exact initialization once
+        MakerSidecar->>Sequencer: Official initialization transaction
+        Maker->>MakerDb: Reconcile initialization then CAS funding step
+        Maker->>MakerSidecar: Submit exact funding once
+        MakerSidecar->>Sequencer: Official funding transaction
+        Sequencer->>Bedrock: Publish signed channel blocks
+        MakerSidecar->>Indexer: Prove full pair finalized in actor window
+        Taker->>TakerSidecar: Observe exact finalized Maker funding
     end
-    MakerActor->>MakerActor: Drive and project matching revision 2
-    TakerActor->>TakerActor: Drive and project matching revision 2
-    Note over MakerActor,TakerActor: Both lock gates are canonical before scalar use
-    Taker->>TakerActor: Drive actor-owned revealing claim
+    Maker->>MakerDb: Close Maker intent and revision 2 in one local transaction
+    Taker->>TakerDb: Project observed Maker lock at revision 2
+    Note over Maker,Taker: Both exact lock gates are canonical before scalar use
     alt TakerSellsLez reveals on Bitcoin
-        TakerActor->>Core: Submit exact Bitcoin claim once
-        Provisioner->>Core: Mine one local claim block
-        Core-->>TakerActor: Confirmed exact claim bytes
+        Taker->>Core: Submit exact Bitcoin revealing claim once
+        Controller->>CoreAdmin: Mine one local claim block
+        Maker->>Core: Observe exact signature and adaptor material
     else TakerSellsForeign reveals on LEZ
-        TakerActor->>Sequencer: Submit exact LEZ claim once
-        Indexer-->>TakerActor: Finalized exact claim bytes
+        Taker->>TakerSidecar: Submit exact witnessed LEZ claim once
+        TakerSidecar->>Sequencer: Official claim transaction
+        MakerSidecar->>Indexer: Observe finalized claim and adaptor material
     end
-    TakerActor->>TakerActor: Project revision 3
-    MakerActor->>MakerActor: Observe revealing claim and project revision 3
-    Maker->>MakerActor: Drive actor-owned follow-up claim
+    Taker->>TakerDb: Project revision 3
+    Maker->>MakerDb: Observe reveal and project revision 3
     alt TakerSellsLez follows up on LEZ
-        MakerActor->>Sequencer: Submit exact LEZ claim once
-        Indexer-->>MakerActor: Finalized exact claim bytes
+        Maker->>MakerSidecar: Submit exact witnessed LEZ follow-up once
+        MakerSidecar->>Sequencer: Official claim transaction
+        MakerSidecar->>Indexer: Observe exact finalized claim
     else TakerSellsForeign follows up on Bitcoin
-        MakerActor->>Core: Submit exact Bitcoin claim once
-        Provisioner->>Core: Mine one local claim block
-        Core-->>MakerActor: Confirmed exact claim bytes
+        Maker->>Core: Submit exact Bitcoin follow-up once
+        Controller->>CoreAdmin: Mine one local claim block
+        Maker->>Core: Observe exact confirmed claim
     end
-    MakerActor->>MakerActor: Project revision 4 Completed
-    TakerActor->>TakerActor: Observe follow-up and project revision 4 Completed
-    Note over Maker,Taker: Delivery and Chat are absent after lock and no cross-chain atomic commit is claimed
+    Maker->>MakerDb: Project revision 4 Completed
+    Taker->>TakerDb: Observe follow-up and project revision 4 Completed
+    Note over MakerDb,TakerDb: Local CAS is not a Core LEZ or cross-chain transaction
 ```
 
-At the current PoC boundary, the run-owned operator constructs and submits both
-locks and owns local mining. Each public actor independently observes those
-exact lock facts for revisions one and two. Claim construction, durable
-one-attempt authority, submission, canonical observation, and revisions three
-and four are actor-owned. Production work may move lock construction behind a
-product SDK without changing the agreement or chain-adapter contracts.
+### Schema-4 `TakerSellsForeign` local flow
+
+```mermaid
+sequenceDiagram
+    participant Controller as Local run controller
+    participant FirstLock as Taker external first-lock fixture
+    participant Core as Bitcoin Core JSON-RPC
+    participant Maker as Schema-4 Maker actor
+    participant MakerDb as Maker SQLite
+    participant MakerSidecar as Maker LEZ sidecar
+    participant Sequencer as LEZ sequencer JSON-RPC
+    participant Bedrock as Bedrock HTTP
+    participant Indexer as LEZ indexer JSON-RPC
+    participant Taker as Schema-4 Taker actor
+    participant TakerDb as Taker SQLite
+    participant TakerSidecar as Taker LEZ sidecar
+
+    FirstLock->>Core: Submit exact Taker Bitcoin first lock
+    Controller->>Core: Fixture-only mine planned block
+    Maker->>Core: Restricted RPC proves confirmed exact unspent first lock
+    Taker->>Core: Restricted RPC observes own first lock
+    Maker->>MakerDb: Project revision 1
+    Taker->>TakerDb: Project revision 1
+    Maker->>MakerSidecar: Read stable current LEZ clock and prepare exact pair
+    Maker->>Core: Freshly recheck first lock and signed cutoff
+    Maker->>MakerDb: Reserve initialization before network I/O
+    Maker->>MakerSidecar: Submit exact initialization once
+    MakerSidecar->>Sequencer: Official signed initialization
+    Sequencer->>Bedrock: Publish signed channel block
+    Indexer->>Bedrock: Read finalized channel
+    MakerSidecar->>Indexer: Reconcile exact finalized initialization
+    Maker->>MakerDb: Close initialization and reserve funding
+    Maker->>MakerSidecar: Submit exact funding once
+    MakerSidecar->>Sequencer: Official signed funding
+    Sequencer->>Bedrock: Publish signed channel block
+    MakerSidecar->>Indexer: Prove full pair in exact finalized actor window
+    Maker->>MakerDb: Close intent and revision 2 locally
+    Taker->>TakerSidecar: Observe finalized exact Maker funding
+    TakerSidecar->>Indexer: Bounded ID and hash ancestry reads
+    Taker->>TakerDb: Project observed revision 2
+    Taker->>TakerSidecar: Submit witnessed LEZ revealing claim once
+    TakerSidecar->>Sequencer: Official claim transaction
+    MakerSidecar->>Indexer: Observe finalized adaptor disclosure
+    Maker->>Core: Submit Bitcoin follow-up claim once
+    Controller->>Core: Fixture-only mine claim block
+    Maker->>MakerDb: Project revision 4 Completed
+    Taker->>TakerDb: Observe and project revision 4 Completed
+    Note over MakerDb,TakerDb: No distributed Core LEZ SQLite transaction exists
+```
+
+### Schema-4 `TakerSellsLez` local flow
+
+```mermaid
+sequenceDiagram
+    participant Controller as Local run controller
+    participant FirstLock as Taker external first-lock fixture
+    participant Core as Bitcoin Core JSON-RPC
+    participant Maker as Schema-4 Maker actor
+    participant MakerDb as Maker SQLite
+    participant MakerSidecar as Maker LEZ sidecar
+    participant Sequencer as LEZ sequencer JSON-RPC
+    participant Bedrock as Bedrock HTTP
+    participant Indexer as LEZ indexer JSON-RPC
+    participant Taker as Schema-4 Taker actor
+    participant TakerDb as Taker SQLite
+    participant TakerSidecar as Taker LEZ sidecar
+
+    FirstLock->>TakerSidecar: Submit exact Taker LEZ initialize and fund
+    TakerSidecar->>Sequencer: Official signed transactions
+    Sequencer->>Bedrock: Publish signed channel blocks
+    Indexer->>Bedrock: Read finalized channel
+    Maker->>MakerSidecar: Bracket exact first-lock state and finality
+    MakerSidecar->>Indexer: Bounded ID hash and account reads
+    MakerSidecar-->>Maker: Typed moving_tip carries no authority
+    Maker->>MakerSidecar: Retry reads in a fresh actor process
+    MakerSidecar-->>Maker: Stable exact finalized and currently Funded proof
+    Maker->>MakerDb: Project revision 1 then reserve Bitcoin step
+    Taker->>TakerDb: Project own revision 1
+    Maker->>Core: Restricted RPC submits exact Maker funding once
+    Controller->>Core: Confirm only actor-submitted Maker transaction
+    Maker->>Core: Reconcile exact confirmed unspent funding
+    Maker->>MakerDb: Close intent and revision 2 locally
+    Taker->>Core: Restricted RPC observes exact Maker funding
+    Taker->>TakerDb: Project observed revision 2
+    Taker->>Core: Submit Bitcoin revealing claim once
+    Controller->>Core: Fixture-only mine claim block
+    Maker->>Core: Observe adaptor disclosure and project revision 3
+    Maker->>MakerSidecar: Submit witnessed LEZ follow-up claim once
+    MakerSidecar->>Sequencer: Official claim transaction
+    MakerSidecar->>Indexer: Observe exact finalized claim
+    Maker->>MakerDb: Project revision 4 Completed
+    Taker->>TakerDb: Observe and project revision 4 Completed
+    Note over MakerDb,TakerDb: No distributed Core LEZ SQLite transaction exists
+```
+
+At the current PoC boundary, a Taker external fixture still constructs and
+submits the first lock and the run controller owns deterministic local mining.
+The schema-4 Maker actor constructs and submits the second lock through its
+restricted Core RPC or role-local LEZ sidecar; the controller does not submit
+that effect. The Maker's complete intent and revision-two close are atomic only
+inside Maker SQLite. Chain submission is outside that transaction. Claims,
+durable one-attempt authority, exact reconciliation, canonical observation,
+and revisions three and four are actor-owned. A product Taker SDK must replace
+the external first-lock fixture without changing the agreement or chain-adapter
+contracts.
 
 The older operator facts remain in the
 [M3 local evidence packet](../evidence/m3-local-two-direction-poc-20260715.json).
-The repository-owned proof is the secret-safe packet rooted at
-`.e2e/m3actor-20260716n/m3-actor-poc/evidence/`, whose summary binds the exact
+The current secret-safe retained summary is
+[the schema-4 checkpoint packet](../evidence/m3-schema4-actor-owned-lock-poc-20260717.json);
+the full run packet is rooted at
+`.e2e/m3schema4-20260717d/m3-actor-poc/evidence/`. It binds the exact pushed
 commit and executable hashes. It retains dynamic local endpoints, fresh
 owner-derived Vault onboarding, the checked guest deployment, both role
-journals, five unique effects per direction, four terminal role states, replay
-submission counts, and exact cleanup attestation. It records no public RPC,
-faucet, public funds, or private-material disclosure. Refund, concurrent,
-process-kill, reorg, chaos, production key custody, and public deployment
-journeys remain outside this happy-path PoC proof.
+journals, one actor-owned Maker-lock effect per direction, five unique effects
+per direction, four terminal role states, replay submission counts, and exact
+cleanup attestation. It records no public RPC, faucet, public funds, or
+private-material disclosure. Two genuinely overlapping swaps, process-kill,
+reorg, chaos, production key custody, and public deployment remain outside this
+checkpoint. Public deployment is intentionally not required for M3.
 
 ## Actors, runtime components, and trust boundaries
 
@@ -335,10 +464,10 @@ flowchart TB
         M3BR[("M3 BTC lifecycle recovery store<br/>four evidence revisions + hash chain<br/>offline Completed or Refunded GREEN")]
         M3SDK["M3 role-fixed BTC funding facade<br/>exact Bitcoin and ordered LEZ plans<br/>byte-bound first-lock validation GREEN"]
         M3ML[("M3 Maker second-lock journal<br/>ordered one-attempt steps<br/>atomic revision-two close GREEN")]
-        M3ID[("M3 exact-idempotent init path<br/>journal 3336b6e; actor map 11111dd<br/>restart no-rearm GREEN; live port unclaimed")]
+        M3ID[("M3 exact-idempotent LEZ init path<br/>role-local reserve before official RPC<br/>actual-node restart no-rearm GREEN")]
         M3BC["M3 typed Core 31.1 adapter<br/>exact unspent funding + claim/refund evidence<br/>authorized one-send readback GREEN"]
-        M3RA["btc-reference-actor<br/>schema 4 typed Maker seam GREEN<br/>live Maker CLI fails closed"]
-        M3RUN["Schema 4 runner edits uncommitted<br/>not milestone evidence"]
+        M3RA["btc-reference-actor<br/>schema 4 live Maker lock GREEN<br/>both actual-node directions"]
+        M3RUN["Schema 4 private-local runner<br/>external Taker first lock<br/>actor-owned Maker second lock GREEN"]
     end
 
     subgraph LezSidecars["Role-isolated official LEZ v0.1.2 processes"]
@@ -363,8 +492,8 @@ flowchart TB
         M3CF["M3 generic current funded-escrow proof<br/>stable state-only clock and custody GREEN<br/>923586b; not finality"]
         M3FO["M3 finalized witnessed-claim observer<br/>parent-linked stable-tip ancestry<br/>dual role + BIP340 GREEN"]
         M3RF["M3 native-refund planner + finalized observer<br/>state-only, exact, and discovery GREEN"]
-        M3LI["Missing live LEZ init admission port<br/>pending absence unavailable"]
-        M3LC["Missing live LEZ first lock view<br/>current Funded plus exact bytes plus finality"]
+        M3LI["Live LEZ init admission<br/>exact same ID and bytes<br/>one role-local send GREEN"]
+        M3LC["Joined LEZ first-lock view<br/>stable current state plus exact bytes<br/>and finalized ancestry GREEN"]
         MBRJ[("Maker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         TBRJ[("Taker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]
         MSL2 --> V02J
@@ -476,19 +605,19 @@ flowchart TB
     M3WB -->|"full prepared claim result"| M3RA
     M3SDK -->|"schema 4 exact plans"| M3RA
     M3ML -->|"observe before one send; close with revision two"| M3RA
-    M3ID -->|"typed exact-idempotent mapping; live proof missing"| M3RA
-    M3RUN -.->|"uncommitted composition only"| M3RA
+    M3ID -->|"typed exact-idempotent live mapping"| M3RA
+    M3RUN -->|"schema-4 live composition"| M3RA
     M3RA -->|"predecessor CAS projections one through four"| M3BR
     M3RA -->|"agreement-derived Bitcoin funding, claim, and refund"| M3BC
     M3RA -->|"signed-account finalized LEZ funding read"| M3FF
-    M3RA -.->|"current funded proof needs joined live view"| M3CF
+    M3RA -->|"current funded proof in joined live view"| M3CF
     M3RA -->|"signed transcript finalized LEZ claim read"| M3FO
     M3RA -->|"state-only, prepare, exact, submit, finalized discovery"| M3RF
-    M3RA -.->|"live LEZ maker path needs safe init admission"| M3LI
-    M3RA -.->|"live Bitcoin maker path needs joined first-lock view"| M3LC
-    M3LI -.-> M3WB
-    M3ID -.->|"adapter and node idempotence not composed"| M3LI
-    M3LC -.-> M3FF
+    M3RA -->|"LEZ Maker initialization and funding"| M3LI
+    M3RA -->|"Bitcoin Maker send gate"| M3LC
+    M3LI --> M3WB
+    M3ID -->|"same request ID and bytes"| M3LI
+    M3LC --> M3FF
     M3CF -->|"current Funded facts only"| M3LC
     M3RA -->|"persist exact actor-owned claim or refund before authority"| M3PE
     PCM -->|"encrypted envelope + journal"| DB
@@ -594,8 +723,8 @@ flowchart TB
     classDef implemented fill:#ddf4ff,stroke:#0969da;
     classDef running fill:#e6ffec,stroke:#1a7f37;
     class MM,LC,CA,TM,LRR,PublicLezRisk planned;
-    class TC,M3RA,M3AS,M3RK,M3PE,M3RF,M3BR,M3BC,M3SDK,M3ML,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
-    class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02Full,V02State,MSL2,TLS2,V02J,MBR2,TBR2,M3FF,M3FO running;
+    class TC,M3AS,M3RK,M3PE,M3RF,M3BR,M3BC,M3SDK,M3ML,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
+    class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02Full,V02State,MSL2,TLS2,V02J,MBR2,TBR2,M3FF,M3FO,M3CF,M3ID,M3LI,M3LC,M3RA,M3RUN running;
 ```
 
 The maker operator owns maker policy, keys, node selection, and the daemon
@@ -616,25 +745,26 @@ taker projection, maker-independent observation replay, confirmed maker funding,
 and the taker-local observed-maker transition. Schema-v10 claim and refund
 journals protect exact owner material, keep observer paths secret-free, and
 replay separate role stores to `Completed` or `Refunded` in both directions.
-The BTC pair now also exposes a dependency-light role-fixed funding facade with
-exact Bitcoin and ordered LEZ plans, byte-bound first-lock validation, and
-typed capability gaps for the still-open full lifecycle. Its dedicated
+The BTC pair exposes a dependency-light role-fixed funding facade with exact
+Bitcoin and ordered LEZ plans and byte-bound first-lock validation. Its dedicated
 Maker-only revision-one SQLite journal persists the complete second-lock plan,
 consumes one authority per step, retains node-admitted versus ambiguous outcomes
 without rearming, and accepts completion only from exact canonical observation.
 Maker revision-two projection and intent close share one transaction; Taker
-projection remains observation-only. Pushed `8870910` composes that contract at
-the typed schema-4 actor seam while leaving the live CLI fail closed. Pushed
-`3336b6e` additionally permits one journal attempt from exact-idempotent
-same-ID/same-bytes admission without calling it absence; a live adapter still
-has to prove the node operation satisfies that contract. Pushed `11111dd` maps
-that distinct observation through the typed actor and proves one first-drive
-submission followed by zero submissions after actor restart; it still does not
-compose a live port. Pushed `923586b`
-generalizes the separate state-only current `Funded` check to the agreement-
-selected LEZ escrow in either direction and for either role under one unchanged
-canonical clock. It complements rather than replaces exact transaction bytes
-and finalized funding evidence.
+projection remains observation-only. Run `m3schema4-20260717d` composes that
+contract through the live schema-4 CLI in both directions. For a LEZ Maker
+lock, the role-local journal reserves exact initialization and funding steps
+before the sidecar's official sequencer calls; identical request IDs and bytes
+never re-arm, without pretending that LEZ exposes pending-transaction absence.
+For a Bitcoin Maker lock, the actor joins a stable current `Funded` state and
+custody read with exact transaction bytes and independently bounded finalized
+ancestry before its Core send CAS. State-only evidence does not replace bytes
+or finality. Both paths re-read the exact Taker first lock and current
+Maker-chain clock before any possible send, and only a strictly pre-cutoff result can grant
+fresh authority. The retained run proves one live Maker-lock effect per
+direction, restart with zero re-submission, exact reconciliation, and
+revision-two closure; it does not make the local-node semantics a production
+endorsement.
 The official native-refund sidecar, main revealing-claim/refund validation
 adapters, both-direction agreement-bound Zebra funding discovery, and
 context-owning LEZ SDK ports are now GREEN. The production fresh-client
@@ -1237,9 +1367,12 @@ and admission/race enforcement that prevents a late second lock from crossing
 the refund decision. A local timer or an assumption that the maker disappeared
 is insufficient. The BTC actor now implements and actual-node proves the
 refund-side cutoff branch and the post-reveal follower-survivor branch in both
-directions. The live maker-lock admission side of that boundary race remains
-open, although its exact ports, plans, and durable one-attempt authority are
-now GREEN prerequisites. The public ZEC SDK survivor branches shown below
+directions. Run `m3schema4-20260717d` additionally proves the live happy-path
+Maker-lock admission side: the actor rechecks the exact first lock and a
+strictly pre-cutoff current clock immediately before its role-local one-send
+CAS. The separate cutoff and admission proofs establish the fail-closed
+boundary, but genuinely concurrent cutoff/refund/late-admission chaos remains
+an open hardening item. The public ZEC SDK survivor branches shown below
 remain unimplemented or unproved; the XMR flow remains an M4 target.
 
 This is not a distributed transaction and there is no cross-chain atomic commit.
@@ -1439,16 +1572,14 @@ the Bitcoin leg safely claimable but unspent.
 
 **Implementation status:** happy claims, ordered two-lock refunds, the
 absent-maker refund-side branch, and direct post-reveal maker continuation are
-actual-node GREEN. Clean pushed-commit run `m3survivor-20260716c` certifies the
-survivor branch in both directions. Canonical maker-lock containing-time
-enforcement is GREEN at `3d202f7`; exact unspent/submission ports and durable
-SDK plans/authority are GREEN at `4fb6950` and `79d7e68`. Commit `8870910`
-wires them through the strict schema-4 typed actor seam; 73 of 73 focused tests
-and all strict gates are GREEN. Pushed `3336b6e`, `11111dd`, and `923586b`
-additionally close exact-idempotent journal admission, typed actor mapping with
-restart no-rearm, and generic current-`Funded` proof as components. The live Maker CLI remains fail closed because adapter/node
-idempotence and the exact-byte/finality join are not composed, and no
-actual-node admission packet exists for this seam.
+actual-node GREEN. Run `m3schema4-20260717d` at tested pushed commit
+`0e7635f` additionally proves this direction's external Taker Bitcoin first
+lock followed by the live Maker actor's exact LEZ initialization and funding.
+Both LEZ steps were role-locally reserved before official RPC, finalized inside
+the exact actor window, and never re-armed after restart. Both actors reached
+revision 4 `Completed`; replay added zero submissions. This is a
+private-local happy-path checkpoint, not a public deployment or production
+readiness claim.
 
 <!-- atomicity-argument: lez-btc/taker-sells-lez -->
 
@@ -1472,16 +1603,14 @@ leave the remaining LEZ leg safely claimable but not terminal.
 
 **Implementation status:** happy claims, ordered two-lock refunds, the
 absent-maker refund-side branch, and direct post-reveal maker continuation are
-actual-node GREEN. Clean pushed-commit run `m3survivor-20260716c` certifies the
-survivor branch in both directions. Canonical maker-lock containing-time
-enforcement is GREEN at `3d202f7`; exact unspent/submission ports and durable
-SDK plans/authority are GREEN at `4fb6950` and `79d7e68`. Commit `8870910`
-wires them through the strict schema-4 typed actor seam; 73 of 73 focused tests
-and all strict gates are GREEN. Pushed `3336b6e`, `11111dd`, and `923586b`
-additionally close exact-idempotent journal admission, typed actor mapping with
-restart no-rearm, and generic current-`Funded` proof as components. The live Maker CLI remains fail closed because adapter/node
-idempotence and the exact-byte/finality join are not composed, and no
-actual-node admission packet exists for this seam.
+actual-node GREEN. Run `m3schema4-20260717d` at tested pushed commit
+`0e7635f` additionally proves this direction's external Taker LEZ first lock
+followed by the live Maker actor's one exact Bitcoin funding send. Nine
+payload-free `moving_tip` observations granted no authority; the tenth stable
+joined current, exact-byte, and finalized proof allowed one role-local CAS and
+send. Both actors reached revision 4 `Completed`; restart and replay added
+zero submissions. This is a private-local happy-path checkpoint, not a public
+deployment or production readiness claim.
 
 The BTC construction is atomic under these explicit conditions:
 
@@ -1491,12 +1620,12 @@ The BTC construction is atomic under these explicit conditions:
   fresh canonical absence and unspent observations, and race-safe late-lock
   admission. Run `m3firstlock-20260716h` proves the refund-side actor gate in
   both actual-node directions; `3d202f7` rejects late canonical inclusion and
-  quarantines late presence. The exact ports, plans, and one-attempt journal are
-  GREEN, and `8870910` integrates them at the typed schema-4 actor seam.
-  Commits `3336b6e`, `11111dd`, and `923586b` close exact-idempotent journal
-  admission, actor mapping/restart no-rearm, and generic current-funded state
-  proof, but not the live idempotence proof or the
-  exact-byte/finality join. Complementary actual-node admission remains pending.
+  quarantines late presence. Run `m3schema4-20260717d` proves the complementary
+  live admission path in both directions: exact-idempotent LEZ initialization
+  and funding or exact unspent Bitcoin funding, each behind a fresh first-lock
+  and strict pre-cutoff check. Genuinely overlapping cutoff/refund/admission
+  chaos remains pending and therefore is not inferred from the two separate
+  actual-node proofs.
 - Both domain-separated aggregate adaptor presignatures and the Bitcoin CSV
   refund commitment are verified and persisted before funding. Neither actor
   has a standalone claim key that bypasses the two-party transcript.
@@ -1531,8 +1660,9 @@ revision four `Refunded` and replay added zero submissions. Signed-cutoff and
 first-lock-only refund-side recovery are actual-node GREEN in run
 `m3firstlock-20260716h`. Post-reveal survivor continuation is clean
 pushed-commit GREEN in `m3survivor-20260716c`; nonowner refund surfaces,
-maker-lock admission, process-kill,
-concurrent, fee-bump, and reorg evidence remain pending.
+concurrent cutoff/refund/admission chaos, process-kill, fee-bump, and reorg
+evidence remain pending. The schema-4 happy-path Maker-lock admission itself is
+actual-node GREEN in `m3schema4-20260717d`.
 
 This is an engineering safety argument, not the accepted proposal's promised
 formal theorem. M7 must connect the implemented aggregate adaptor construction
@@ -1966,8 +2096,18 @@ evidence before projection. Normal pre-effect observer errors are retryable
 unavailability, not false absence. Exact retries retain their deterministic
 identity. A concurrent CAS loser may converge only on a valid matching winner;
 other projection failures fail closed. Revisions one through four are GREEN in
-source, deterministic adapter tests, and actual-node run `m3actor-20260716n`.
-The alternative branch now exposes explicit `recover`. LEZ owners perform state-only eligibility, durable deterministic preparation, exact observation, one journal-authorized submit, and later finalized projection; LEZ nonowners use terms discovery only. Bitcoin owners use the agreement-matched refund scalar and the typed Core adapter. Both chains recompute or revalidate exact public identity before projection. Deterministic tests cover both transitions, both directions, owner/observer separation, and `Started`/`Unknown`/`Accepted` restart no-rearm through terminal `Refunded`. Fresh actual-node refund, process-kill, reorg, concurrency, and chaos evidence remain pending.
+source, deterministic adapter tests, and schema-4 actual-node run
+`m3schema4-20260717d`. In that current PoC, the Taker first lock is still
+external-fixture owned; the Maker actor owns the exact opposite-chain second
+lock and both actors own subsequent claim observation/effects. The alternative
+branch exposes explicit `recover`. LEZ owners perform state-only eligibility,
+durable deterministic preparation, exact observation, one journal-authorized
+submit, and later finalized projection; LEZ nonowners use terms discovery only.
+Bitcoin owners use the agreement-matched refund scalar and typed Core adapter.
+Both chains recompute or revalidate exact public identity before projection.
+Run `m3refund-20260716h` proves both actual-node refund orders through terminal
+`Refunded` with restart no-rearm. Process-kill, reorg, genuinely concurrent
+swaps, cutoff/refund/admission chaos, and production custody remain pending.
 
 ADR 0033 supplies the reusable effect boundary used by actor-owned claim and
 refund revisions. Both adaptor session databases reopen existing-only; a missing path
@@ -1990,11 +2130,14 @@ flowchart LR
     Sidecar["Role LEZ sidecar loopback RPC"]
     Lifecycle[("BTC recovery lifecycle<br/>Completed or Refunded replay")]
     RefundStore["Both-direction and both-role<br/>Refunded component tests"]
-    Evidence["m3actor-20260716n<br/>2 of 2 actual-node directions Completed"]
+    MakerLock[("Schema-4 Maker-lock journal<br/>one actor-owned second lock")]
+    Evidence["m3schema4-20260717d<br/>2 of 2 schema-4 directions Completed"]
+    RefundEvidence["m3refund-20260716h<br/>2 of 2 actual-node refund orders"]
 
     Agreement --> Actor
     Signers --> Actor
     Actor --> Prepared
+    Actor --> MakerLock
     Prepared --> Effects
     Effects --> Observe
     Observe --> Core
@@ -2006,6 +2149,7 @@ flowchart LR
     Lifecycle --> Actor
     Lifecycle --> RefundStore
     Actor --> Evidence
+    Lifecycle --> RefundEvidence
 ```
 
 Pushed `0177151` adds a production-shaped in-memory boundary alongside that
@@ -2031,10 +2175,13 @@ terms, and recovery schedule before accepting both role signatures. The public
 actor activates that validated record, observes the agreement-derived taker and
 maker locks through typed chain adapters, completes the direction-derived
 Bitcoin or LEZ revealing and follow-up claims under the local role, and
-persists all four transitions. Run `m3actor-20260716n` executes that
-repository-owned workflow against fresh actual Core/LEZ services and proves
-both actors terminal `Completed` in both directions. This closes the local
-happy-path PoC only; the production-hardening nonclaims above still apply.
+persists all four transitions. Run `m3schema4-20260717d` executes that
+repository-owned workflow against fresh actual Core/LEZ services, proves the
+Maker owns the second lock in each direction, and leaves both actors terminal
+`Completed`. The Taker first lock remains an external PoC fixture. This closes
+the schema-4 private-local checkpoint only; overlapping swaps, accepted SDK and
+custom-token scope, process-kill/reorg/chaos, public deployment, and production
+readiness remain outside the claim.
 
 ## Abandonment and autonomous recovery flow
 
