@@ -1098,9 +1098,24 @@ without targeting foreign resources. Pushed `dc07518` adds a bounded
 typed-error-only fresh-actor retry across all five LEZ Maker-lock drive phases.
 Each failure must have empty stdout and keep the durable submission count within
 that phase's one-send bound; success must reach its exact target count. Any
-other error, ambiguous stdout, or excess effect still fails closed. A fresh
-actual-node rerun is the active checkpoint; attempt B is diagnostic evidence,
-not milestone acceptance evidence. The
+other error, ambiguous stdout, or excess effect still fails closed.
+
+Actual-node attempt `m3schema4-20260716c` crossed attempt B's boundary,
+completed the full actor-owned LEZ Maker pair and the `TakerSellsForeign`
+claim direction, then finalized both Taker-owned LEZ first-lock transactions
+for `TakerSellsLez`. The Maker's fresh eligibility classification returned
+typed `moving_tip` before Bitcoin intent creation or broadcast. Both actors
+remained revision one, the Bitcoin Maker-lock intent/step tables remained
+empty, the Bitcoin mempool had no Maker effect, LEZ retained exactly its two
+Taker effects, and exact-run cleanup again passed without targeting foreign
+resources. Pushed `cd93fb9` adds the Bitcoin-specific sibling reconciliation:
+each fresh actor attempt requires the LEZ count to remain exactly two and the
+mempool to be either empty or exactly the planned funding txid; success and
+accepted restart require exactly that single txid. The RED/GREEN matrix covers
+pre-send moving-tip, ambiguous post-send convergence, restart, non-typed error,
+nonempty failed stdout, foreign mempool content, and LEZ-count drift. A fresh
+actual-node rerun is the active checkpoint; attempts B and C are diagnostic
+evidence, not milestone acceptance evidence. The
 canonical countersigned agreement, finalized LEZ funding/claim
 adapters, typed Core adapter, and reference-actor revisions zero through four
 are GREEN in source, deterministic tests, and run `m3actor-20260716n`. The
@@ -1524,8 +1539,9 @@ Active M3 refund critical path:
   Pushed `923586b` supplies generic current-funded state-only evidence, not
   finality or the exact transaction-byte join. Pushed `13d048b`, `6c8e459`, and
   `9b2bce2` compose the missing live ports and move Maker submissions under
-  schema-4 actors with exact count/restart checks. `dc07518` closes the transient
-  stable-tip retry found by actual-node attempt B. Source and contract work are
+  schema-4 actors with exact count/restart checks. `dc07518` and `cd93fb9` close
+  the chain-specific transient stable-tip retries found by actual-node attempts
+  B and C without weakening effect counts. Source and contract work are
   GREEN; keep this item open until a clean actual-node admission packet proves
   both actor-owned Maker legs;
 - [ ] resolve F7 at the BTC pair boundary. Shared LEZ native/custom-token guest
