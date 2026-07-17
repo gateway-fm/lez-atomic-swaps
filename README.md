@@ -99,8 +99,11 @@ exact agreement-bound claim or ordered-refund transitions through revisions one
 to four in both directions and roles. A separate two-role-signed asset extension
 binds the unchanged agreement-v1 commitment to an explicit native or exact
 custom-token selection without aliasing custom custody to native custody. These
-are component gates, not new actual-node evidence: the public process-durable
-store/chain composition and F7 client/sidecar/actor mapping remain open.
+are component gates, not new actual-node evidence. The bounded loopback bridge
+client now maps all eleven additive v2 asset operations with one-call/no-retry
+semantics, depositor/claimant/permissionless role checks, and strict
+term/target/window/effect validation. Public process-durable store/chain
+composition and the F7 sidecar/adapter/actor mapping remain open.
 
 Run `m3refund-20260716h` then passed the two-lock timeout/refund journey
 from base HEAD `ef5f306` with a dirty pre-commit source tree and the packet's

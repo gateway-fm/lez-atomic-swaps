@@ -537,8 +537,12 @@ flowchart TB
         M3ML[("M3 Maker second-lock journal<br/>ordered one-attempt steps<br/>atomic revision-two close GREEN")]
         M3ID[("M3 exact-idempotent LEZ init path<br/>role-local reserve before official RPC<br/>actual-node restart no-rearm GREEN")]
         M3BC["M3 typed Core 31.1 adapter<br/>exact unspent funding + claim/refund evidence<br/>authorized one-send readback GREEN"]
+        M3F7A["F7 countersigned asset extension<br/>strict v2 protocol + four classifiers GREEN"]
+        M3F7C["F7 exact-once bridge client<br/>eleven v2 operations + role/window checks GREEN<br/>sidecar and actor composition open"]
         M3RA["btc-reference-actor<br/>schema 4 live Maker lock GREEN<br/>both actual-node directions"]
         M3RUN["Schema 4 private-local runner<br/>external Taker first lock<br/>actor-owned Maker second lock GREEN"]
+        M3F7A --> M3F7C
+        M3F7C -.-> M3RA
     end
 
     subgraph LezSidecars["Role-isolated official LEZ v0.1.2 processes"]
@@ -1739,9 +1743,12 @@ This is an engineering safety argument, not the accepted proposal's promised
 formal theorem. M7 must connect the implemented aggregate adaptor construction
 to the Aumayr et al. and Fournier one-time-VES analyses and state the exact
 aEUF-CMA, witness-extractability, and pre-signature-adaptability assumptions.
-Also, “LEZ leg” in the BTC flows currently means the proved witnessed native
-path. Shared guest ATA/custom-token support is GREEN, but BTC pair-specific F7
-custom-token parity remains unresolved and is not implied by these diagrams.
+Also, “LEZ leg” in the actual-node BTC flows currently means the proved
+witnessed native path. The shared guest ATA/custom-token transition, separately
+countersigned asset extension, strict v2 protocol/classifiers, and eleven-call
+exact-once client are GREEN component boundaries. Official sidecar scans,
+adapter/journal/actor composition, and both-direction custom-token node effects
+remain open and are not implied by the native actual-node diagrams.
 
 ### LEZ and transparent Zcash
 
@@ -2254,9 +2261,9 @@ Maker owns the second lock in each direction, and leaves both actors terminal
 `Completed`. The Taker first lock remains an external PoC fixture. This closes
 the schema-4 private-local checkpoint only. Run `m3overlap-20260717a`
 separately closes the accepted opposite-direction two-swap execution item;
-arbitrary-N/same-direction scheduling, accepted SDK and custom-token scope,
-process-kill/reorg/chaos, public deployment, and production readiness remain
-outside the claim.
+arbitrary-N/same-direction scheduling, the remaining F7 sidecar/adapter/actor
+and actual-node custom-token scope, process-kill/reorg/chaos, public deployment,
+and production readiness remain outside the claim.
 
 ## Abandonment and autonomous recovery flow
 

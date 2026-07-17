@@ -15,12 +15,12 @@ creates and reconciles the exact second lock before locally closing revision
 two. This remains a private local PoC, not an M3 completion or production
 readiness claim.
 
-The M3 component boundary now also contains the checked witnessed-token guest
-from commit `66d5e26` and the agreement-derived claim-only BTC SDK facade from
-commit `28f38c7`. The token guest has a new ELF/ImageID that is intentionally
-not yet admitted by the deployment manifest. The SDK verifies both claim
-presignatures and exact LEZ signature-template substitution, but complete
-pre-lock refund preparation and composed actor/node execution remain open.
+The M3 component boundary now also contains the checked witnessed-token guest,
+its synchronized manifest/IDL/deployer/verifier/runner identity, the complete
+deterministic BTC SDK lifecycle, and the additive exact-once v2 asset client.
+The client enforces operation-specific actor roles and conservative exact or
+discovery observation without retries. Official sidecar scans, adapter/journal
+composition, and role-owned actual-node custom-token execution remain open.
 
 ADRs are append-only. Superseded decisions remain here and link to their
 replacement.
@@ -165,7 +165,7 @@ flowchart TB
 | [0039](0039-admit-first-lock-recovery-only-after-cross-chain-cutoff.md) | Admit a revision-one refund only after a signed cutoff, two fresh exact maker-lock classifications, and a fresh first-lock unspent/eligibility check | Accepted for the M3 BTC PoC; both live schema-4 timely-Maker paths are actual-node GREEN at `0e7635f`, including fresh exact first-lock eligibility, current/finalized chain evidence, one-attempt Maker submission, exact reconciliation, and atomic local intent/revision-two close. There is no distributed cross-chain commit; concurrency, reorg, adversarial-late-lock, and public production hardening remain |
 | [0040](0040-continue-post-reveal-from-canonical-evidence.md) | Keep revision 3 nonterminal and let fresh maker processes continue from canonical reveal while the taker is absent | Accepted and clean pushed-commit actual-node evidence is GREEN in both directions in `m3survivor-20260716c` |
 | [0041](0041-interleave-overlapping-swaps-with-exact-chain-barriers.md) | Run two independent opposite-direction swaps on shared local nodes while preserving exact singleton-chain assertions | Accepted and clean pushed-commit actual-node GREEN in `m3overlap-20260717a`: distinct mature outpoints, agreements, stores, journals, sessions, escrows, and deadlines were simultaneously at revision two before settlement; arbitrary-N and same-depositor nonce scheduling remain outside this checkpoint |
-| [0042](0042-bind-witnessed-token-claims-to-exact-atas.md) | Bind aggregate-witness custom-token claims to one fungible definition and exact depositor, custody, and claimant ATAs in one recursive LEZ transition | Accepted at checked-guest/protocol component boundaries; new ELF/ImageID, tags 11/12, two-definition claims, recursive rollback, strict v2 asset terms and transactions, manifest/IDL/deployer assembly, and four finalized effect classifiers are GREEN. Sidecar/SDK and actual-node F7 integration remain open |
+| [0042](0042-bind-witnessed-token-claims-to-exact-atas.md) | Bind aggregate-witness custom-token claims to one fungible definition and exact depositor, custody, and claimant ATAs in one recursive LEZ transition | Accepted at checked-guest/protocol/client component boundaries; new ELF/ImageID, tags 11/12, two-definition claims, recursive rollback, strict v2 asset terms and transactions, manifest/IDL/deployer assembly, four finalized effect classifiers, and the eleven-operation exact-once client are GREEN. Sidecar/SDK and actual-node F7 integration remain open |
 | [0043](0043-derive-btc-claims-from-the-agreement.md) | Derive both BTC claim sessions from the countersigned agreement and materialize only agreement-bound exact follow-up effects | Accepted at deterministic SDK component boundary in `28f38c7`; both claim orders, exact evidence, redacted zeroizing recovery, template substitution, replay, and substitution rejection are GREEN. ADR 0044 extends it with signed refunds and pure recovery selection; later-revision resume, actor/store/node composition, examples/docs, and F7 integration remain open |
 | [0044](0044-presign-btc-recovery-and-project-revealing-leg-first.md) | Require both signed refunds before BTC locking and project the Maker-funded revealing-leg refund before the Taker-funded follow-up leg | Accepted at the deterministic SDK component boundary; both directions, first-lock abandonment, exact timeout boundaries, replay, role ownership, network/finality/confirmation checks, and invalid ordering are GREEN. Durable later-revision resume and actor/store/node composition remain open |
 | [0045](0045-countersign-the-selected-lez-asset.md) | Preserve agreement-v1 bytes and separately countersign the exact native or custom-token selection, programs, definition, ATAs, amount, deadline, and aggregate authority | Accepted at the deterministic SDK boundary; independent custom custody, both role signatures, exact local policy, and the substitution matrix are GREEN. Official ATA derivation, actor journals, sidecar mapping, and actual-node F7 evidence remain open |

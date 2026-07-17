@@ -4,8 +4,9 @@ Status: Accepted at the checked-guest component boundary. Pushed commit
 `66d5e26cd35c6282c0cd420533f70e6ea3e506c9` adds the implementation and
 focused evidence. The checked manifest, public IDL, deployer assembly, verifier,
 and active M3 runner pins now share the new guest identity. The additive strict
-v2 transaction and finalized-classifier boundaries are also implemented.
-Sidecar/SDK composition and actual-node custom-token evidence remain open.
+v2 transaction, finalized-classifier, and exact-once client boundaries are also
+implemented. Sidecar/SDK composition and actual-node custom-token evidence
+remain open.
 
 ## Context
 
@@ -200,7 +201,7 @@ flowchart LR
     Wire --> Current["Stable current-state observation"]
     Wire --> Claim["Witnessed claim lifecycle"]
     Wire --> Refund["Permissionless refund lifecycle"]
-    Client["Bridge client integration open"] -.-> Wire
+    Client["Exact-once bridge client GREEN"] --> Wire
     Sidecar["Official sidecar integration open"] -.-> Wire
     Finality["Finalized four-effect classifiers"] --> Wire
 ```
@@ -216,9 +217,20 @@ history, unavailable finality, conflict, or possible pending transaction from
 becoming send authority. Native initialization, funding, and claim parity plus
 two custom definitions pass; custody creation rejects native terms.
 
-Client, sidecar, adapter, SDK composition, journal mapping, and role-owned
-actual-node execution remain open. In particular, protocol types do not prove
-that the official node can provide the required complete scans until the
+The bounded loopback client now exposes all seven v2 lifecycle methods and all
+four finalized classifiers without internal retries. It consumes each request
+ID once, validates the exact Lee v0.2 runtime and response echoes, and enforces
+depositor-only preparation, claimant-only claim preparation/completion, and
+either-bound-participant observation/classification and permissionless refund
+preparation. Stable-tip/current-clock checks, exact/discovery windows, public
+placements, ordered effects, exact IDs/bytes, and claimant/outsider negatives
+pass without weakening any v1 method. Five unit, five external v2, 32 preserved
+bridge-contract, and four example tests are GREEN, as are strict all-target
+Clippy, rustdoc, doctests, formatting, and diff gates.
+
+Sidecar, adapter, SDK composition, journal mapping, and role-owned actual-node
+execution remain open. In particular, the typed client and protocol do not
+prove that the official node can provide the required complete scans until the
 sidecar implements and exercises them.
 
 This ADR does not certify an actual-node custom-token swap in either trade

@@ -1705,8 +1705,17 @@ Active M3 refund critical path:
   `Found`/`Absent`/`Uncertain`/`Unavailable` separation pass 44 total protocol
   tests plus Clippy, rustdoc, formatting, and diff gates. This closes the typed
   four-effect restart model without claiming the official sidecar can yet
-  produce its complete scans. Client/sidecar/adapter/journal composition and
-  two-direction actual-node token evidence remain open;
+  produce its complete scans. The exact-once bridge client now maps all eleven
+  v2 lifecycle/classifier methods without retries. Its operation-specific role
+  matrix permits only the depositor to prepare funding, only the claimant to
+  prepare/complete a claim, and either bound participant to read/classify or
+  prepare the permissionless fixed-destination refund. Strict response checks
+  bind context, Lee v0.2 runtime, terms, target, window, transcript, ordered
+  effects, public placement, stable tips/clocks, and exact IDs/bytes. Five unit,
+  five external v2, 32 preserved bridge-contract, and four example tests pass,
+  together with strict all-target Clippy, rustdoc, doctests, formatting, and
+  diff gates. Sidecar/adapter/journal composition and two-direction actual-node
+  token evidence remain open;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
   not recordings and cannot satisfy D1. The repository now supplies a

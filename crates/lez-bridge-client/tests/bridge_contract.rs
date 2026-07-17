@@ -64,6 +64,31 @@ const TIMEOUT_TEST_CLIENT_DEADLINE: Duration = Duration::from_millis(100);
 const TIMEOUT_TEST_SERVER_DELAY: Duration = Duration::from_millis(500);
 const TIMEOUT_TEST_DRAIN: Duration = Duration::from_millis(520);
 
+#[test]
+fn v2_asset_operations_are_distinct_client_classifications() {
+    let operations = [
+        BridgeOperation::PrepareWitnessedAssetEscrowV2,
+        BridgeOperation::ObserveWitnessedAssetEscrowV2,
+        BridgeOperation::PrepareWitnessedAssetClaimV2,
+        BridgeOperation::CompleteWitnessedAssetClaimV2,
+        BridgeOperation::ObserveFinalizedWitnessedAssetClaimV2,
+        BridgeOperation::PrepareWitnessedAssetRefundV2,
+        BridgeOperation::ObserveWitnessedAssetRefundV2,
+        BridgeOperation::ClassifyFinalizedWitnessedAssetInitializationV2,
+        BridgeOperation::ClassifyFinalizedWitnessedAssetCustodyCreationV2,
+        BridgeOperation::ClassifyFinalizedWitnessedAssetFundingV2,
+        BridgeOperation::ClassifyFinalizedWitnessedAssetClaimV2,
+    ];
+    let names = operations.map(|operation| format!("{operation:?}"));
+    assert_eq!(
+        names
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        11
+    );
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 enum Behavior {
     #[default]

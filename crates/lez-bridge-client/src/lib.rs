@@ -8,7 +8,13 @@
 
 #![forbid(unsafe_code)]
 
-use std::{collections::HashSet, fmt, net::IpAddr, sync::Mutex, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    net::IpAddr,
+    sync::Mutex,
+    time::Duration,
+};
 
 use jsonrpsee::{
     core::{ClientError, client::ClientT},
@@ -16,35 +22,59 @@ use jsonrpsee::{
 };
 use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClient, HttpClientBuilder};
 use lez_bridge_protocol::{
-    ChainClock, ChainTip, ClassifyFinalizedWitnessedClaimResult,
+    ChainClock, ChainTip, ClassifyFinalizedWitnessedAssetClaimV2Request,
+    ClassifyFinalizedWitnessedAssetClaimV2Result,
+    ClassifyFinalizedWitnessedAssetCustodyCreationV2Request,
+    ClassifyFinalizedWitnessedAssetCustodyCreationV2Result,
+    ClassifyFinalizedWitnessedAssetFundingV2Request,
+    ClassifyFinalizedWitnessedAssetFundingV2Result,
+    ClassifyFinalizedWitnessedAssetInitializationV2Request,
+    ClassifyFinalizedWitnessedAssetInitializationV2Result, ClassifyFinalizedWitnessedClaimResult,
     ClassifyFinalizedWitnessedFundingResult, ClassifyFinalizedWitnessedInitializationRequest,
-    ClassifyFinalizedWitnessedInitializationResult, CompleteWitnessedClaimRequest,
+    ClassifyFinalizedWitnessedInitializationResult, CompleteWitnessedAssetClaimV2Request,
+    CompleteWitnessedAssetClaimV2Result, CompleteWitnessedClaimRequest,
     CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult, DiscoveryWindow,
-    ErrorCode, ErrorMessage, EscrowState, FinalizedWitnessedClaimFacts,
+    ErrorCode, ErrorMessage, EscrowState, FinalizedWitnessedAssetScanOutcomeV2,
+    FinalizedWitnessedAssetTransactionTargetV2, FinalizedWitnessedClaimFacts,
     FinalizedWitnessedClaimObservationTarget, FinalizedWitnessedClaimScanOutcome,
     FinalizedWitnessedFundingObservationTarget, FinalizedWitnessedFundingScanOutcome,
     FinalizedWitnessedInitializationFacts, FinalizedWitnessedInitializationScanOutcome,
-    MessageContext, ObserveCurrentClockRequest, ObserveCurrentClockResult, ObserveEscrowRequest,
-    ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
-    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
-    ObserveFinalizedWitnessedFundingResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
-    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
+    MessageContext, NativeRefundObservationTarget, ObserveCurrentClockRequest,
+    ObserveCurrentClockResult, ObserveEscrowRequest, ObserveEscrowResult,
+    ObserveFinalizedWitnessedAssetClaimV2Request, ObserveFinalizedWitnessedAssetClaimV2Result,
+    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
+    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
+    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
+    ObserveRevealingClaimResult, ObserveWitnessedAssetEscrowV2Request,
+    ObserveWitnessedAssetEscrowV2Result, ObserveWitnessedAssetRefundV2Request,
+    ObserveWitnessedAssetRefundV2Result, ObserveWitnessedEscrowRequest,
     ObserveWitnessedEscrowResult, Participant, PrepareNativeEscrowRequest,
     PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
-    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
-    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
-    PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RunId,
-    RuntimeDescriptor, SubmitTransactionRequest, SubmitTransactionResult,
-    WitnessedEscrowMetadataFacts, WitnessedNativeEscrowTerms,
+    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedAssetClaimV2Request,
+    PrepareWitnessedAssetClaimV2Result, PrepareWitnessedAssetEscrowV2Request,
+    PrepareWitnessedAssetEscrowV2Result, PrepareWitnessedAssetRefundV2Request,
+    PrepareWitnessedAssetRefundV2Result, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
+    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
+    PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RunId, RuntimeDescriptor,
+    SubmitTransactionRequest, SubmitTransactionResult, WitnessedAssetPreparedEffectV2,
+    WitnessedAssetRefundObservationV2, WitnessedEscrowMetadataFacts, WitnessedLezAssetTermsV2,
+    WitnessedLezAssetV2, WitnessedNativeEscrowTerms,
 };
 pub use lez_bridge_protocol::{
-    MAX_RPC_BODY_BYTES, METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM,
-    METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
-    METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION, METHOD_COMPLETE_WITNESSED_CLAIM,
-    METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_CURRENT_CLOCK, METHOD_OBSERVE_ESCROW,
+    MAX_RPC_BODY_BYTES, METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CUSTODY_CREATION_V2,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_FUNDING_V2,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_INITIALIZATION_V2,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM, METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION, METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2,
+    METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_CURRENT_CLOCK,
+    METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
     METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
-    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
-    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
+    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM,
+    METHOD_OBSERVE_WITNESSED_ASSET_ESCROW_V2, METHOD_OBSERVE_WITNESSED_ASSET_REFUND_V2,
+    METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND,
+    METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2,
+    METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2, METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2,
     METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
     RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
 };
@@ -203,6 +233,28 @@ pub enum BridgeOperation {
     ObserveNativeRefund,
     /// Exact transaction submission.
     SubmitTransaction,
+    /// Ordered native-or-token witnessed escrow preparation.
+    PrepareWitnessedAssetEscrowV2,
+    /// Exact ordered witnessed-asset escrow observation.
+    ObserveWitnessedAssetEscrowV2,
+    /// Unsigned witnessed-asset claim reservation.
+    PrepareWitnessedAssetClaimV2,
+    /// Exact witnessed-asset claim completion.
+    CompleteWitnessedAssetClaimV2,
+    /// Exact finalized witnessed-asset claim observation.
+    ObserveFinalizedWitnessedAssetClaimV2,
+    /// Fixed-destination witnessed-asset refund preparation.
+    PrepareWitnessedAssetRefundV2,
+    /// Witnessed-asset state and refund observation.
+    ObserveWitnessedAssetRefundV2,
+    /// Finalized witnessed-asset initialization classification.
+    ClassifyFinalizedWitnessedAssetInitializationV2,
+    /// Finalized token custody-ATA creation classification.
+    ClassifyFinalizedWitnessedAssetCustodyCreationV2,
+    /// Finalized witnessed-asset funding classification.
+    ClassifyFinalizedWitnessedAssetFundingV2,
+    /// Finalized witnessed-asset claim classification.
+    ClassifyFinalizedWitnessedAssetClaimV2,
 }
 
 /// Actor-facing finalized witnessed-funding classification.
@@ -710,6 +762,470 @@ impl BridgeClient {
             )
             .await?;
         Self::validate_response_context(operation, &context, &result.context)?;
+        Ok(result)
+    }
+
+    /// Prepares one ordered native or custom-token witnessed escrow plan exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime/terms drift, request-ID reuse, duplicate
+    /// or malformed prepared effects, timeout, transport uncertainty, or strict response errors.
+    pub async fn prepare_witnessed_asset_escrow_v2(
+        &self,
+        request: PrepareWitnessedAssetEscrowV2Request,
+    ) -> Result<PrepareWitnessedAssetEscrowV2Result, BridgeClientError> {
+        let operation = BridgeOperation::PrepareWitnessedAssetEscrowV2;
+        let context = request.context.clone();
+        let expected_terms = request.terms.clone();
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_asset_operation_role(
+            operation,
+            &request.runtime,
+            &request.terms,
+            AssetOperationRole::Depositor,
+        )?;
+        self.reserve_context(operation, &context)?;
+        let result: PrepareWitnessedAssetEscrowV2Result = self
+            .request(
+                operation,
+                METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_terms_echo(operation, &expected_terms, &result.terms)?;
+        validate_asset_prepared_effects(operation, &result.effects)?;
+        Ok(result)
+    }
+
+    /// Observes one exact persisted native or token preparation plan exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime/terms drift, substituted prepared bytes or
+    /// IDs, malformed ordered observations, timeout, transport, or strict response errors.
+    pub async fn observe_witnessed_asset_escrow_v2(
+        &self,
+        request: ObserveWitnessedAssetEscrowV2Request,
+    ) -> Result<ObserveWitnessedAssetEscrowV2Result, BridgeClientError> {
+        let operation = BridgeOperation::ObserveWitnessedAssetEscrowV2;
+        let context = request.context.clone();
+        let expected_terms = request.terms.clone();
+        let expected_effects = request.prepared_effects.clone();
+        let expected_window = request.window;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_asset_operation_role(
+            operation,
+            &request.runtime,
+            &request.terms,
+            AssetOperationRole::EitherParticipant,
+        )?;
+        validate_asset_prepared_effects(operation, &request.prepared_effects)?;
+        self.reserve_context(operation, &context)?;
+        let result: ObserveWitnessedAssetEscrowV2Result = self
+            .request(
+                operation,
+                METHOD_OBSERVE_WITNESSED_ASSET_ESCROW_V2,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_terms_echo(operation, &expected_terms, &result.terms)?;
+        validate_asset_escrow_observation(operation, expected_window, &result)?;
+        if result.effects.len() != expected_effects.len()
+            || result
+                .effects
+                .iter()
+                .zip(&expected_effects)
+                .any(|(actual, expected)| {
+                    actual.step != expected.step
+                        || actual.transaction.transaction_id != expected.transaction.transaction_id
+                        || actual.transaction.exact_bytes != expected.transaction.exact_bytes
+                })
+        {
+            return Err(BridgeClientError::MalformedObservation { operation });
+        }
+        Ok(result)
+    }
+
+    /// Reserves one exact witnessed native-or-token claim transcript exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime/terms drift, malformed message bytes,
+    /// timeout, transport uncertainty, or strict response errors.
+    pub async fn prepare_witnessed_asset_claim_v2(
+        &self,
+        request: PrepareWitnessedAssetClaimV2Request,
+    ) -> Result<PrepareWitnessedAssetClaimV2Result, BridgeClientError> {
+        let operation = BridgeOperation::PrepareWitnessedAssetClaimV2;
+        let context = request.context.clone();
+        let expected_terms = request.terms.clone();
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_asset_operation_role(
+            operation,
+            &request.runtime,
+            &request.terms,
+            AssetOperationRole::Claimant,
+        )?;
+        self.reserve_context(operation, &context)?;
+        let result: PrepareWitnessedAssetClaimV2Result = self
+            .request(
+                operation,
+                METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_terms_echo(operation, &expected_terms, &result.terms)?;
+        validate_witnessed_preparation(operation, &result.claim)?;
+        Ok(result)
+    }
+
+    /// Completes one exact witnessed-asset claim transcript exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime/terms drift, malformed transcript or
+    /// transaction bytes, timeout, transport uncertainty, or strict response errors.
+    pub async fn complete_witnessed_asset_claim_v2(
+        &self,
+        request: CompleteWitnessedAssetClaimV2Request,
+    ) -> Result<CompleteWitnessedAssetClaimV2Result, BridgeClientError> {
+        let operation = BridgeOperation::CompleteWitnessedAssetClaimV2;
+        let context = request.context.clone();
+        let expected_terms = request.terms.clone();
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_asset_operation_role(
+            operation,
+            &request.runtime,
+            &request.terms,
+            AssetOperationRole::Claimant,
+        )?;
+        validate_witnessed_preparation(operation, &request.claim)?;
+        self.reserve_context(operation, &context)?;
+        let result: CompleteWitnessedAssetClaimV2Result = self
+            .request(
+                operation,
+                METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_terms_echo(operation, &expected_terms, &result.terms)?;
+        validate_prepared(operation, &result.claim)?;
+        Ok(result)
+    }
+
+    /// Observes one exact finalized witnessed-asset claim exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime/terms/transcript drift, incomplete finalized
+    /// coverage, substituted transaction identity, timeout, transport, or strict errors.
+    pub async fn observe_finalized_witnessed_asset_claim_v2(
+        &self,
+        request: ObserveFinalizedWitnessedAssetClaimV2Request,
+    ) -> Result<ObserveFinalizedWitnessedAssetClaimV2Result, BridgeClientError> {
+        let operation = BridgeOperation::ObserveFinalizedWitnessedAssetClaimV2;
+        let context = request.context.clone();
+        let expected_terms = request.terms.clone();
+        let expected_claim = request.claim.clone();
+        let expected_transaction_id = match request.target {
+            FinalizedWitnessedClaimObservationTarget::Exact {
+                claim_transaction_id,
+            } => Some(claim_transaction_id),
+            FinalizedWitnessedClaimObservationTarget::DiscoverByTerms => None,
+        };
+        let expected_window = request.window;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_asset_operation_role(
+            operation,
+            &request.runtime,
+            &request.terms,
+            AssetOperationRole::EitherParticipant,
+        )?;
+        validate_witnessed_preparation(operation, &request.claim)?;
+        self.reserve_context(operation, &context)?;
+        let result: ObserveFinalizedWitnessedAssetClaimV2Result = self
+            .request(
+                operation,
+                METHOD_OBSERVE_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_terms_echo(operation, &expected_terms, &result.terms)?;
+        validate_asset_finalized_claim_echo(
+            operation,
+            expected_transaction_id,
+            &expected_claim,
+            expected_window,
+            result.finalized_tip,
+            &result.claim,
+        )?;
+        Ok(result)
+    }
+
+    /// Prepares one fixed-destination witnessed-asset refund exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime/terms drift, malformed prepared bytes,
+    /// timeout, transport uncertainty, or strict response errors.
+    pub async fn prepare_witnessed_asset_refund_v2(
+        &self,
+        request: PrepareWitnessedAssetRefundV2Request,
+    ) -> Result<PrepareWitnessedAssetRefundV2Result, BridgeClientError> {
+        let operation = BridgeOperation::PrepareWitnessedAssetRefundV2;
+        let context = request.context.clone();
+        let expected_terms = request.terms.clone();
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_asset_operation_role(
+            operation,
+            &request.runtime,
+            &request.terms,
+            AssetOperationRole::EitherParticipant,
+        )?;
+        self.reserve_context(operation, &context)?;
+        let result: PrepareWitnessedAssetRefundV2Result = self
+            .request(
+                operation,
+                METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_terms_echo(operation, &expected_terms, &result.terms)?;
+        validate_prepared(operation, &result.refund)?;
+        Ok(result)
+    }
+
+    /// Observes witnessed-asset state and optional refund evidence exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime/terms drift, malformed account/effect facts,
+    /// timeout, transport uncertainty, or strict response errors.
+    pub async fn observe_witnessed_asset_refund_v2(
+        &self,
+        request: ObserveWitnessedAssetRefundV2Request,
+    ) -> Result<ObserveWitnessedAssetRefundV2Result, BridgeClientError> {
+        let operation = BridgeOperation::ObserveWitnessedAssetRefundV2;
+        let context = request.context.clone();
+        let expected_terms = request.terms.clone();
+        let expected_target = request.target;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_asset_operation_role(
+            operation,
+            &request.runtime,
+            &request.terms,
+            AssetOperationRole::EitherParticipant,
+        )?;
+        self.reserve_context(operation, &context)?;
+        let result: ObserveWitnessedAssetRefundV2Result = self
+            .request(
+                operation,
+                METHOD_OBSERVE_WITNESSED_ASSET_REFUND_V2,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_terms_echo(operation, &expected_terms, &result.terms)?;
+        validate_asset_refund_observation(operation, expected_target, &result)?;
+        Ok(result)
+    }
+
+    /// Classifies finalized witnessed-asset initialization exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on request/response echoes, malformed exact bytes, incomplete
+    /// stable coverage, timeout, transport uncertainty, or strict response errors.
+    pub async fn classify_finalized_witnessed_asset_initialization_v2(
+        &self,
+        request: ClassifyFinalizedWitnessedAssetInitializationV2Request,
+    ) -> Result<ClassifyFinalizedWitnessedAssetInitializationV2Result, BridgeClientError> {
+        let operation = BridgeOperation::ClassifyFinalizedWitnessedAssetInitializationV2;
+        let context = request.context.clone();
+        let expected_terms = request.terms.clone();
+        let expected_target = request.target.clone();
+        let expected_window = request.window;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_asset_operation_role(
+            operation,
+            &request.runtime,
+            &request.terms,
+            AssetOperationRole::EitherParticipant,
+        )?;
+        validate_asset_target(operation, &request.target)?;
+        self.reserve_context(operation, &context)?;
+        let result: ClassifyFinalizedWitnessedAssetInitializationV2Result = self
+            .request(
+                operation,
+                METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_INITIALIZATION_V2,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_asset_classifier_echo(
+            operation,
+            &expected_terms,
+            &expected_target,
+            expected_window,
+            &result.terms,
+            &result.target,
+            &result.outcome,
+        )?;
+        Ok(result)
+    }
+
+    /// Classifies finalized custom-token custody-ATA creation exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on native terms, request/response echoes, malformed exact
+    /// bytes, incomplete coverage, timeout, transport, or strict response errors.
+    pub async fn classify_finalized_witnessed_asset_custody_creation_v2(
+        &self,
+        request: ClassifyFinalizedWitnessedAssetCustodyCreationV2Request,
+    ) -> Result<ClassifyFinalizedWitnessedAssetCustodyCreationV2Result, BridgeClientError> {
+        let operation = BridgeOperation::ClassifyFinalizedWitnessedAssetCustodyCreationV2;
+        let context = request.context.clone();
+        let expected_terms = request.terms.clone();
+        let expected_target = request.target.clone();
+        let expected_window = request.window;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_asset_operation_role(
+            operation,
+            &request.runtime,
+            &request.terms,
+            AssetOperationRole::EitherParticipant,
+        )?;
+        validate_asset_target(operation, &request.target)?;
+        self.reserve_context(operation, &context)?;
+        let result: ClassifyFinalizedWitnessedAssetCustodyCreationV2Result = self
+            .request(
+                operation,
+                METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CUSTODY_CREATION_V2,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_asset_classifier_echo(
+            operation,
+            &expected_terms,
+            &expected_target,
+            expected_window,
+            &result.terms,
+            &result.target,
+            &result.outcome,
+        )?;
+        Ok(result)
+    }
+
+    /// Classifies finalized witnessed-asset funding exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on request/response echoes, malformed exact bytes, incomplete
+    /// stable coverage, timeout, transport uncertainty, or strict response errors.
+    pub async fn classify_finalized_witnessed_asset_funding_v2(
+        &self,
+        request: ClassifyFinalizedWitnessedAssetFundingV2Request,
+    ) -> Result<ClassifyFinalizedWitnessedAssetFundingV2Result, BridgeClientError> {
+        let operation = BridgeOperation::ClassifyFinalizedWitnessedAssetFundingV2;
+        let context = request.context.clone();
+        let expected_terms = request.terms.clone();
+        let expected_target = request.target.clone();
+        let expected_window = request.window;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_asset_operation_role(
+            operation,
+            &request.runtime,
+            &request.terms,
+            AssetOperationRole::EitherParticipant,
+        )?;
+        validate_asset_target(operation, &request.target)?;
+        self.reserve_context(operation, &context)?;
+        let result: ClassifyFinalizedWitnessedAssetFundingV2Result = self
+            .request(
+                operation,
+                METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_FUNDING_V2,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_asset_classifier_echo(
+            operation,
+            &expected_terms,
+            &expected_target,
+            expected_window,
+            &result.terms,
+            &result.target,
+            &result.outcome,
+        )?;
+        Ok(result)
+    }
+
+    /// Classifies finalized witnessed-asset claim presence exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on request/response echoes, malformed transcript/exact bytes,
+    /// incomplete stable coverage, timeout, transport, or strict response errors.
+    pub async fn classify_finalized_witnessed_asset_claim_v2(
+        &self,
+        request: ClassifyFinalizedWitnessedAssetClaimV2Request,
+    ) -> Result<ClassifyFinalizedWitnessedAssetClaimV2Result, BridgeClientError> {
+        let operation = BridgeOperation::ClassifyFinalizedWitnessedAssetClaimV2;
+        let context = request.context.clone();
+        let expected_terms = request.terms.clone();
+        let expected_claim = request.claim.clone();
+        let expected_target = request.target.clone();
+        let expected_window = request.window;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_asset_operation_role(
+            operation,
+            &request.runtime,
+            &request.terms,
+            AssetOperationRole::EitherParticipant,
+        )?;
+        validate_witnessed_preparation(operation, &request.claim)?;
+        validate_asset_target(operation, &request.target)?;
+        self.reserve_context(operation, &context)?;
+        let result: ClassifyFinalizedWitnessedAssetClaimV2Result = self
+            .request(
+                operation,
+                METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_asset_classifier_echo(
+            operation,
+            &expected_terms,
+            &expected_target,
+            expected_window,
+            &result.terms,
+            &result.target,
+            &result.outcome,
+        )?;
+        if result.claim != expected_claim {
+            return Err(BridgeClientError::MalformedObservation { operation });
+        }
         Ok(result)
     }
 
@@ -1335,6 +1851,292 @@ impl BridgeClient {
     }
 }
 
+fn validate_terms_echo(
+    operation: BridgeOperation,
+    expected: &WitnessedLezAssetTermsV2,
+    actual: &WitnessedLezAssetTermsV2,
+) -> Result<(), BridgeClientError> {
+    if expected != actual {
+        return Err(BridgeClientError::MalformedObservation { operation });
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AssetOperationRole {
+    Depositor,
+    Claimant,
+    EitherParticipant,
+}
+
+fn validate_asset_operation_role(
+    operation: BridgeOperation,
+    runtime: &RuntimeDescriptor,
+    terms: &WitnessedLezAssetTermsV2,
+    required_role: AssetOperationRole,
+) -> Result<(), BridgeClientError> {
+    let (depositor, depositor_account, claimant, claimant_account) = match terms.asset() {
+        WitnessedLezAssetV2::Native(terms) => (
+            terms.depositor(),
+            terms.depositor_account_id(),
+            terms.claimant(),
+            terms.claimant_account_id(),
+        ),
+        WitnessedLezAssetV2::CustomToken(terms) => (
+            terms.depositor(),
+            terms.depositor_owner_account_id(),
+            terms.claimant(),
+            terms.claimant_owner_account_id(),
+        ),
+    };
+    let depositor_valid =
+        runtime.sidecar_role == depositor && runtime.signer_account_id == depositor_account;
+    let claimant_valid =
+        runtime.sidecar_role == claimant && runtime.signer_account_id == claimant_account;
+    let valid = match required_role {
+        AssetOperationRole::Depositor => depositor_valid,
+        AssetOperationRole::Claimant => claimant_valid,
+        AssetOperationRole::EitherParticipant => depositor_valid || claimant_valid,
+    };
+    if !valid {
+        return Err(BridgeClientError::MalformedObservation { operation });
+    }
+    Ok(())
+}
+
+fn validate_asset_prepared_effects(
+    operation: BridgeOperation,
+    effects: &[WitnessedAssetPreparedEffectV2],
+) -> Result<(), BridgeClientError> {
+    let mut transaction_ids = HashSet::with_capacity(effects.len());
+    let mut exact_bytes = HashSet::with_capacity(effects.len());
+    for effect in effects {
+        validate_prepared(operation, &effect.transaction)?;
+        if !transaction_ids.insert(effect.transaction.transaction_id)
+            || !exact_bytes.insert(effect.transaction.exact_bytes.as_slice())
+        {
+            return Err(BridgeClientError::MalformedPreparedTransaction { operation });
+        }
+    }
+    Ok(())
+}
+
+fn discovery_window_end(
+    operation: BridgeOperation,
+    window: DiscoveryWindow,
+) -> Result<u64, BridgeClientError> {
+    window
+        .start_height()
+        .checked_add(u64::from(window.max_blocks().saturating_sub(1)))
+        .ok_or(BridgeClientError::MalformedObservation { operation })
+}
+
+fn validate_asset_escrow_observation(
+    operation: BridgeOperation,
+    expected_window: DiscoveryWindow,
+    result: &ObserveWitnessedAssetEscrowV2Result,
+) -> Result<(), BridgeClientError> {
+    validate_asset_effect_positions(
+        operation,
+        expected_window,
+        result.tip_before,
+        result.tip_after,
+        result
+            .effects
+            .iter()
+            .map(|effect| (effect.transaction.is_public, effect.transaction.position)),
+    )
+}
+
+fn validate_asset_effect_positions(
+    operation: BridgeOperation,
+    expected_window: DiscoveryWindow,
+    tip_before: ChainTip,
+    tip_after: ChainTip,
+    effects: impl IntoIterator<Item = (bool, lez_bridge_protocol::ChainPosition)>,
+) -> Result<(), BridgeClientError> {
+    if tip_before != tip_after {
+        return Err(BridgeClientError::MalformedObservation { operation });
+    }
+    let window_end = discovery_window_end(operation, expected_window)?;
+    let mut block_hashes = HashMap::new();
+    for (is_public, position) in effects {
+        if !is_public
+            || position.height < expected_window.start_height()
+            || position.height > window_end
+            || position.height > tip_after.height
+            || (position.height == tip_after.height && position.block_hash != tip_after.block_hash)
+        {
+            return Err(BridgeClientError::MalformedObservation { operation });
+        }
+        if block_hashes
+            .insert(position.height, position.block_hash)
+            .is_some_and(|expected| expected != position.block_hash)
+        {
+            return Err(BridgeClientError::MalformedObservation { operation });
+        }
+    }
+    Ok(())
+}
+
+fn validate_asset_refund_observation(
+    operation: BridgeOperation,
+    expected_target: NativeRefundObservationTarget,
+    result: &ObserveWitnessedAssetRefundV2Result,
+) -> Result<(), BridgeClientError> {
+    if result.clock_before != result.clock_after {
+        return Err(BridgeClientError::MalformedObservation { operation });
+    }
+    validate_asset_refund_target(
+        operation,
+        expected_target,
+        result.clock_after,
+        &result.refund,
+    )
+}
+
+fn validate_asset_refund_target(
+    operation: BridgeOperation,
+    expected_target: NativeRefundObservationTarget,
+    clock: ChainClock,
+    refund: &WitnessedAssetRefundObservationV2,
+) -> Result<(), BridgeClientError> {
+    match (expected_target, refund) {
+        (
+            NativeRefundObservationTarget::StateOnly,
+            WitnessedAssetRefundObservationV2::NotRequested,
+        )
+        | (
+            NativeRefundObservationTarget::Exact { .. }
+            | NativeRefundObservationTarget::DiscoverByTerms { .. },
+            WitnessedAssetRefundObservationV2::UnknownOrPending,
+        ) => Ok(()),
+        (
+            NativeRefundObservationTarget::DiscoverByTerms { window },
+            WitnessedAssetRefundObservationV2::Absent,
+        ) => {
+            if clock.height < discovery_window_end(operation, window)? {
+                return Err(BridgeClientError::MalformedObservation { operation });
+            }
+            Ok(())
+        }
+        (
+            NativeRefundObservationTarget::Exact {
+                refund_transaction_id,
+                window,
+            },
+            WitnessedAssetRefundObservationV2::Found(facts),
+        ) => {
+            if facts.transaction.transaction_id != refund_transaction_id {
+                return Err(BridgeClientError::MalformedObservation { operation });
+            }
+            validate_asset_refund_found(operation, window, clock, facts)
+        }
+        (
+            NativeRefundObservationTarget::DiscoverByTerms { window },
+            WitnessedAssetRefundObservationV2::Found(facts),
+        ) => validate_asset_refund_found(operation, window, clock, facts),
+        _ => Err(BridgeClientError::MalformedObservation { operation }),
+    }
+}
+
+fn validate_asset_refund_found(
+    operation: BridgeOperation,
+    window: DiscoveryWindow,
+    clock: ChainClock,
+    facts: &lez_bridge_protocol::WitnessedAssetRefundFoundFactsV2,
+) -> Result<(), BridgeClientError> {
+    let position = facts.transaction.position;
+    if !facts.transaction.is_public
+        || position.height < window.start_height()
+        || position.height > discovery_window_end(operation, window)?
+        || position.height > clock.height
+        || (position.height == clock.height && position.block_hash != clock.block_hash)
+    {
+        return Err(BridgeClientError::MalformedObservation { operation });
+    }
+    Ok(())
+}
+
+fn validate_asset_target(
+    operation: BridgeOperation,
+    target: &FinalizedWitnessedAssetTransactionTargetV2,
+) -> Result<(), BridgeClientError> {
+    if let FinalizedWitnessedAssetTransactionTargetV2::Exact { transaction } = target {
+        validate_prepared(operation, transaction)?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_asset_classifier_echo<T>(
+    operation: BridgeOperation,
+    expected_terms: &WitnessedLezAssetTermsV2,
+    expected_target: &FinalizedWitnessedAssetTransactionTargetV2,
+    expected_window: DiscoveryWindow,
+    actual_terms: &WitnessedLezAssetTermsV2,
+    actual_target: &FinalizedWitnessedAssetTransactionTargetV2,
+    outcome: &FinalizedWitnessedAssetScanOutcomeV2<T>,
+) -> Result<(), BridgeClientError> {
+    validate_terms_echo(operation, expected_terms, actual_terms)?;
+    if expected_target != actual_target {
+        return Err(BridgeClientError::MalformedObservation { operation });
+    }
+    let coverage = match outcome {
+        FinalizedWitnessedAssetScanOutcomeV2::Found {
+            finalized_clock,
+            scanned_window,
+            ..
+        }
+        | FinalizedWitnessedAssetScanOutcomeV2::Absent {
+            finalized_clock,
+            scanned_window,
+        }
+        | FinalizedWitnessedAssetScanOutcomeV2::Uncertain {
+            finalized_clock,
+            scanned_window,
+        } => Some((*finalized_clock, *scanned_window)),
+        FinalizedWitnessedAssetScanOutcomeV2::Unavailable { .. } => None,
+    };
+    if let Some((clock, window)) = coverage {
+        let window_end = expected_window
+            .start_height()
+            .checked_add(u64::from(expected_window.max_blocks().saturating_sub(1)));
+        if window != expected_window
+            || clock.timestamp_ms == 0
+            || window_end.is_none_or(|end| clock.height < end)
+        {
+            return Err(BridgeClientError::MalformedObservation { operation });
+        }
+    }
+    Ok(())
+}
+
+fn validate_asset_finalized_claim_echo(
+    operation: BridgeOperation,
+    expected_transaction_id: Option<lez_bridge_protocol::TransactionId>,
+    expected_claim: &PreparedWitnessedClaim,
+    expected_window: DiscoveryWindow,
+    finalized_tip: ChainTip,
+    facts: &lez_bridge_protocol::FinalizedWitnessedAssetClaimFactsV2,
+) -> Result<(), BridgeClientError> {
+    let window_end = expected_window
+        .start_height()
+        .checked_add(u64::from(expected_window.max_blocks().saturating_sub(1)))
+        .ok_or(BridgeClientError::MalformedObservation { operation })?;
+    if finalized_tip.height < window_end
+        || facts.transaction.position.height < expected_window.start_height()
+        || facts.transaction.position.height > window_end
+        || facts.transaction.position.block_hash != facts.containing_block.block_hash
+        || facts.instruction.claim != *expected_claim
+        || expected_transaction_id
+            .is_some_and(|expected| facts.transaction.transaction_id != expected)
+    {
+        return Err(BridgeClientError::MalformedObservation { operation });
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn validate_finalized_witnessed_funding_facts(
     operation: BridgeOperation,
@@ -1632,7 +2434,10 @@ const fn configuration(reason: ConfigurationError) -> BridgeClientError {
 
 #[cfg(test)]
 mod tests {
-    use lez_bridge_protocol::{ExactMessageBytes, Hex32};
+    use lez_bridge_protocol::{
+        ChainPosition, ExactMessageBytes, Hex32, RuntimeCompatibility, TransactionId,
+        WitnessedNativeEscrowTermsInput,
+    };
 
     use super::*;
 
@@ -1662,5 +2467,236 @@ mod tests {
                 .unwrap_err();
 
         assert_eq!(error, PreparedWitnessedClaimValidationError);
+    }
+
+    #[test]
+    fn asset_operation_roles_accept_only_the_required_bound_signer() {
+        let depositor_account = Hex32::from_bytes([1; 32]);
+        let claimant_account = Hex32::from_bytes([2; 32]);
+        let terms = WitnessedLezAssetTermsV2::native(
+            WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
+                swap_id: Hex32::from_bytes([3; 32]),
+                terms_hash: Hex32::from_bytes([4; 32]),
+                depositor: Participant::Maker,
+                depositor_account_id: depositor_account,
+                claimant: Participant::Taker,
+                claimant_account_id: claimant_account,
+                aggregate_authority_account_id: Hex32::from_bytes([5; 32]),
+                aggregate_x_only_public_key: Hex32::from_bytes([6; 32]),
+                amount: 7,
+                refund_at_ms: 8,
+                authenticated_transfer_program_id: Hex32::from_bytes([9; 32]),
+            })
+            .unwrap(),
+        );
+        let runtime = |role, signer_account_id| {
+            RuntimeDescriptor::new(
+                role,
+                RuntimeCompatibility::LeeV0_2_0,
+                Hex32::from_bytes([10; 32]),
+                Hex32::from_bytes([11; 32]),
+                Hex32::from_bytes([12; 32]),
+                Hex32::from_bytes([13; 32]),
+                signer_account_id,
+            )
+        };
+        let validates = |operation, role, signer_account_id, required_role| {
+            validate_asset_operation_role(
+                operation,
+                &runtime(role, signer_account_id),
+                &terms,
+                required_role,
+            )
+        };
+
+        assert!(
+            validates(
+                BridgeOperation::PrepareWitnessedAssetEscrowV2,
+                Participant::Maker,
+                depositor_account,
+                AssetOperationRole::Depositor,
+            )
+            .is_ok()
+        );
+        assert!(
+            validates(
+                BridgeOperation::PrepareWitnessedAssetEscrowV2,
+                Participant::Taker,
+                claimant_account,
+                AssetOperationRole::Depositor,
+            )
+            .is_err()
+        );
+        assert!(
+            validates(
+                BridgeOperation::PrepareWitnessedAssetClaimV2,
+                Participant::Taker,
+                claimant_account,
+                AssetOperationRole::Claimant,
+            )
+            .is_ok()
+        );
+        assert!(
+            validates(
+                BridgeOperation::PrepareWitnessedAssetClaimV2,
+                Participant::Maker,
+                depositor_account,
+                AssetOperationRole::Claimant,
+            )
+            .is_err()
+        );
+        assert!(
+            validates(
+                BridgeOperation::PrepareWitnessedAssetRefundV2,
+                Participant::Maker,
+                depositor_account,
+                AssetOperationRole::EitherParticipant,
+            )
+            .is_ok()
+        );
+        assert!(
+            validates(
+                BridgeOperation::PrepareWitnessedAssetRefundV2,
+                Participant::Taker,
+                claimant_account,
+                AssetOperationRole::EitherParticipant,
+            )
+            .is_ok()
+        );
+        assert!(
+            validates(
+                BridgeOperation::PrepareWitnessedAssetRefundV2,
+                Participant::Taker,
+                Hex32::from_bytes([14; 32]),
+                AssetOperationRole::EitherParticipant,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn asset_escrow_effect_positions_require_one_stable_public_canonical_window() {
+        let operation = BridgeOperation::ObserveWitnessedAssetEscrowV2;
+        let window = DiscoveryWindow::new(10, 3).unwrap();
+        let tip = ChainTip::new(Hex32::from_bytes([12; 32]), 12);
+        let position = |hash, height| ChainPosition::new(Hex32::from_bytes([hash; 32]), height, 0);
+
+        assert!(
+            validate_asset_effect_positions(
+                operation,
+                window,
+                tip,
+                tip,
+                [(true, position(10, 10)), (true, position(12, 12))],
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_asset_effect_positions(
+                operation,
+                window,
+                ChainTip::new(Hex32::from_bytes([11; 32]), 11),
+                tip,
+                [(true, position(10, 10))],
+            )
+            .is_err()
+        );
+        assert!(
+            validate_asset_effect_positions(
+                operation,
+                window,
+                tip,
+                tip,
+                [(false, position(10, 10))],
+            )
+            .is_err()
+        );
+        assert!(
+            validate_asset_effect_positions(
+                operation,
+                window,
+                tip,
+                tip,
+                [(true, position(13, 13))],
+            )
+            .is_err()
+        );
+        assert!(
+            validate_asset_effect_positions(
+                operation,
+                window,
+                tip,
+                tip,
+                [(true, position(21, 11)), (true, position(22, 11))],
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn asset_refund_target_modes_do_not_overstate_lookup_evidence() {
+        let operation = BridgeOperation::ObserveWitnessedAssetRefundV2;
+        let window = DiscoveryWindow::new(10, 3).unwrap();
+        let clock = ChainClock::new(Hex32::from_bytes([12; 32]), 12, 1_000);
+        let exact = NativeRefundObservationTarget::Exact {
+            refund_transaction_id: TransactionId::from_bytes([21; 32]),
+            window,
+        };
+        let discovery = NativeRefundObservationTarget::DiscoverByTerms { window };
+
+        assert!(
+            validate_asset_refund_target(
+                operation,
+                NativeRefundObservationTarget::StateOnly,
+                clock,
+                &WitnessedAssetRefundObservationV2::NotRequested,
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_asset_refund_target(
+                operation,
+                NativeRefundObservationTarget::StateOnly,
+                clock,
+                &WitnessedAssetRefundObservationV2::UnknownOrPending,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_asset_refund_target(
+                operation,
+                exact,
+                clock,
+                &WitnessedAssetRefundObservationV2::UnknownOrPending,
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_asset_refund_target(
+                operation,
+                exact,
+                clock,
+                &WitnessedAssetRefundObservationV2::Absent,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_asset_refund_target(
+                operation,
+                discovery,
+                clock,
+                &WitnessedAssetRefundObservationV2::Absent,
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_asset_refund_target(
+                operation,
+                discovery,
+                ChainClock::new(Hex32::from_bytes([11; 32]), 11, 900),
+                &WitnessedAssetRefundObservationV2::Absent,
+            )
+            .is_err()
+        );
     }
 }
