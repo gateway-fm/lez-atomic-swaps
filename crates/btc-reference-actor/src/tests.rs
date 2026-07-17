@@ -13,18 +13,23 @@ use bitcoin::{
     secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey},
     transaction,
 };
+use lez_bridge_adapter::BtcLezAssetBridgeBindingV2;
 use lez_bridge_protocol::{
     AccountIds, ChainPosition, CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult,
     EscrowState, ExactMessageBytes, ExactTransactionBytes, FinalizedBlockIdentity,
     FinalizedWitnessedFundingFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
     NativeFundInstructionFacts, NativeRefundFoundFacts, NativeRefundInstructionFacts,
-    ObservedTransactionFacts, PrepareWitnessedClaimResult, PreparedTransaction,
+    ObservedTransactionFacts, PrepareWitnessedAssetEscrowV2Request,
+    PrepareWitnessedAssetEscrowV2Result, PrepareWitnessedClaimResult, PreparedTransaction,
     PreparedWitnessedClaim, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
-    TransactionId, WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
+    TransactionId, WitnessedAssetPrepareStepV2, WitnessedAssetPreparedEffectV2,
+    WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
 };
 use lez_btc_swap_sdk::{
-    AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BtcAgreementBodyV1, BtcAgreementRecordV1,
-    BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1, BtcLezTermsV1, BtcP2trTermsV1,
+    AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1,
+    BtcAgreementBodyV1, BtcAgreementRecordV1, BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1,
+    BtcLezAssetExtensionBodyV1, BtcLezAssetExtensionRecordV1, BtcLezAssetExtensionV1,
+    BtcLezAssetV1, BtcLezCustomTokenTermsV1, BtcLezTermsV1, BtcP2trTermsV1,
     BtcParticipantIdentityV1, BtcParticipantsV1, BtcRecoveryPlanV1, CsvBlockDelay,
     FreshAdaptorNonce, P2trSwapOutput, PersistedAdaptorSigningMaterial, RefundXOnlyKey,
     SigningRole, TwoPartyAggregateKey, aggregate_adaptor_presignature,
@@ -150,6 +155,7 @@ impl ActorFixture {
                     .then(|| directory.path().join("adaptor-secret.key")),
             },
             maker_lock: None,
+            asset_extension: None,
             refund: RefundAuthorityConfig {
                 bitcoin_refund_key_file: (role.sdk() == agreement.bitcoin_funder())
                     .then(|| directory.path().join("bitcoin-refund.key")),
@@ -563,6 +569,8 @@ fn directional_agreement(direction: SwapDirection) -> BtcAgreementV1 {
 const TEST_LEZ_INITIALIZATION_ID: [u8; 32] = [81; 32];
 const TEST_LEZ_FUNDING_ID: [u8; 32] = [82; 32];
 const TEST_LEZ_INITIALIZATION_BYTES: &[u8] = b"exact-lez-initialize";
+const TEST_LEZ_CUSTODY_CREATION_ID: [u8; 32] = [83; 32];
+const TEST_LEZ_CUSTODY_CREATION_BYTES: &[u8] = b"exact-lez-create-custody-ata";
 const TEST_LEZ_FUNDING_BYTES: &[u8] = b"exact-lez-fund";
 const TEST_TAKER_LEZ_INITIALIZATION_ID: &str = "taker-lez-initialize";
 const TEST_TAKER_LEZ_FUNDING_ID: &str = "taker-lez-fund";
@@ -626,6 +634,151 @@ fn configure_schema4_maker_material(fixture: &mut ActorFixture) {
         }
     });
     fixture.config.validate().expect("schema-4 maker config");
+}
+
+fn custom_token_asset_extension(fixture: &ActorFixture) -> BtcLezAssetExtensionV1 {
+    assert_eq!(fixture.config.role, ActorRole::Maker);
+    let token = BtcLezCustomTokenTermsV1::new(
+        [40; 32],
+        [41; 32],
+        [42; 32],
+        *fixture.agreement.lez_terms().depositor_account(),
+        [43; 32],
+        *fixture.agreement.lez_terms().claimant_account(),
+        [44; 32],
+        [45; 32],
+        fixture.agreement.lez_terms().amount(),
+        fixture.agreement.lez_terms().refund_at_ms(),
+        *fixture.agreement.lez_terms().aggregate_authority_account(),
+        fixture
+            .agreement
+            .p2tr_contract()
+            .aggregate_internal_key_bytes(),
+    );
+    let body = BtcLezAssetExtensionBodyV1::new(
+        *fixture.agreement.agreement_commitment(),
+        BtcLezAssetV1::CustomToken(Box::new(token)),
+    );
+    let commitment = body.commitment();
+    let record = BtcLezAssetExtensionRecordV1::from_parts(
+        BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1,
+        body,
+        commitment,
+        agreement_signature(&test_secret(1), commitment),
+        agreement_signature(&test_secret(2), commitment),
+    );
+    BtcLezAssetExtensionV1::validate(record, &fixture.agreement).expect("valid asset extension")
+}
+
+fn configure_schema5_asset_extension(fixture: &mut ActorFixture) -> BtcLezAssetExtensionV1 {
+    let extension = custom_token_asset_extension(fixture);
+    let commitment = *extension.asset_commitment();
+    let extension_path = fixture.directory.path().join("lez-asset-extension.borsh");
+    fs::write(
+        &extension_path,
+        extension.encode_wire().expect("extension wire"),
+    )
+    .expect("write extension");
+    fixture.config.asset_extension = Some(AssetExtensionConfig {
+        record_file: extension_path,
+        expected_asset_commitment: Hex32::from_bytes(commitment),
+    });
+    fixture.config.schema_version = ASSET_CONFIG_SCHEMA_VERSION;
+    extension
+}
+
+fn configure_schema5_asset_material(fixture: &mut ActorFixture) -> BtcLezAssetExtensionV1 {
+    let extension = configure_schema5_asset_extension(fixture);
+    assert_eq!(
+        fixture.agreement.direction(),
+        SwapDirection::TakerSellsForeign
+    );
+    let binding =
+        BtcLezAssetBridgeBindingV2::new(&fixture.agreement, &extension, extension.asset())
+            .expect("asset bridge binding");
+    let request_path = fixture
+        .directory
+        .path()
+        .join("maker-lez-asset-v2-request.json");
+    let result_path = fixture
+        .directory
+        .path()
+        .join("maker-lez-asset-v2-result.json");
+    let context = MessageContext::new(
+        fixture.config.lez_bridge.run_id.clone(),
+        RequestId::new("maker-lock-asset-v2-preparation").expect("request ID"),
+        BridgeParticipant::Maker,
+    );
+    let request = PrepareWitnessedAssetEscrowV2Request::new(
+        context.clone(),
+        fixture.config.lez_bridge.runtime.clone(),
+        binding.terms().clone(),
+    );
+    let result = PrepareWitnessedAssetEscrowV2Result::new(
+        context,
+        binding.terms().clone(),
+        vec![
+            WitnessedAssetPreparedEffectV2::new(
+                WitnessedAssetPrepareStepV2::InitializeWitnessed,
+                PreparedTransaction::new(
+                    TransactionId::from_bytes(TEST_LEZ_INITIALIZATION_ID),
+                    ExactTransactionBytes::new(TEST_LEZ_INITIALIZATION_BYTES.to_vec())
+                        .expect("initialization bytes"),
+                ),
+            ),
+            WitnessedAssetPreparedEffectV2::new(
+                WitnessedAssetPrepareStepV2::CreateCustodyAta,
+                PreparedTransaction::new(
+                    TransactionId::from_bytes(TEST_LEZ_CUSTODY_CREATION_ID),
+                    ExactTransactionBytes::new(TEST_LEZ_CUSTODY_CREATION_BYTES.to_vec())
+                        .expect("custody bytes"),
+                ),
+            ),
+            WitnessedAssetPreparedEffectV2::new(
+                WitnessedAssetPrepareStepV2::Fund,
+                PreparedTransaction::new(
+                    TransactionId::from_bytes(TEST_LEZ_FUNDING_ID),
+                    ExactTransactionBytes::new(TEST_LEZ_FUNDING_BYTES.to_vec())
+                        .expect("funding bytes"),
+                ),
+            ),
+        ],
+    )
+    .expect("valid asset preparation");
+    fs::write(
+        &request_path,
+        serde_json::to_vec(&request).expect("request JSON"),
+    )
+    .expect("write request");
+    fs::write(
+        &result_path,
+        serde_json::to_vec(&result).expect("result JSON"),
+    )
+    .expect("write result");
+    fixture.config.maker_lock = Some(MakerLockMaterialConfig::LezAssetV2 {
+        preparation_request_file: request_path,
+        preparation_result_file: result_path,
+    });
+    fixture.config.validate().expect("schema-5 maker config");
+    extension
+}
+
+fn configure_schema5_bitcoin_asset_material(fixture: &mut ActorFixture) -> BtcLezAssetExtensionV1 {
+    let extension = configure_schema5_asset_extension(fixture);
+    assert_eq!(fixture.agreement.direction(), SwapDirection::TakerSellsLez);
+    let funding_path = fixture
+        .directory
+        .path()
+        .join("maker-bitcoin-asset-funding.hex");
+    let mut encoded =
+        hex::encode(serialize(&exact_directional_funding(&fixture.agreement))).into_bytes();
+    encoded.extend_from_slice(b"\n");
+    fs::write(&funding_path, encoded).expect("write exact asset-bound Bitcoin funding");
+    fixture.config.maker_lock = Some(MakerLockMaterialConfig::Bitcoin {
+        exact_funding_transaction_file: funding_path,
+    });
+    fixture.config.validate().expect("schema-5 maker config");
+    extension
 }
 
 fn fresh_maker_eligibility(fixture: &ActorFixture) -> FreshMakerLockEligibilityV1 {
@@ -1072,7 +1225,9 @@ fn schema4_maker_material_is_role_shaped_and_agreement_direction_bound() {
             preparation_request_file.clone(),
             preparation_result_file.clone(),
         ),
-        MakerLockMaterialConfig::Bitcoin { .. } => unreachable!("forward maker uses LEZ"),
+        MakerLockMaterialConfig::Bitcoin { .. } | MakerLockMaterialConfig::LezAssetV2 { .. } => {
+            unreachable!("schema-4 forward maker uses native LEZ material")
+        }
     };
     let original_request = fs::read(&request_path).expect("original request");
     let mut changed_request: PrepareWitnessedEscrowRequest =
@@ -1122,6 +1277,178 @@ fn schema4_maker_material_is_role_shaped_and_agreement_direction_bound() {
     assert_eq!(taker.config.validate(), Err(ActorConfigError::Invalid));
 }
 
+#[test]
+fn schema5_asset_extension_maps_and_stages_exact_three_step_f7_plan() {
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    let extension = configure_schema5_asset_material(&mut fixture);
+    let prepared = load_prepared_maker_lock_material(&fixture.config, &fixture.agreement)
+        .expect("asset maker material");
+    let plan = prepared.plan();
+    assert_eq!(plan.steps().len(), 3);
+    assert_eq!(
+        plan.steps()
+            .iter()
+            .map(|step| step.step().as_str())
+            .collect::<Vec<_>>(),
+        ["lez.initialize", "lez.create_custody_ata", "lez.fund"]
+    );
+    assert_eq!(
+        plan.steps()[1].expected_public_id().as_str(),
+        hex::encode(TEST_LEZ_CUSTODY_CREATION_ID)
+    );
+    assert_eq!(
+        plan.steps()[1].exact_bytes().as_slice(),
+        TEST_LEZ_CUSTODY_CREATION_BYTES
+    );
+
+    let first = activate(&fixture.config).expect("asset-bound activation");
+    assert!(matches!(
+        first.outcome,
+        ActorEffectOutcomeV1::Activated { was_replay: false }
+    ));
+    let journal = SqliteBtcMakerLockJournal::open(&fixture.config.state_db)
+        .expect("open staged maker journal");
+    let snapshot = journal
+        .load_intent(fixture.agreement.coordinator().id())
+        .expect("load intent")
+        .expect("asset intent staged during activation");
+    assert_eq!(
+        snapshot.intent().agreement_commitment(),
+        extension.asset_commitment()
+    );
+    assert_eq!(snapshot.intent().plan(), plan);
+    assert!(snapshot.steps().iter().all(|step| {
+        step.state() == BtcMakerLockStepState::Prepared
+            && step.attempt_count() == 0
+            && step.revision() == 0
+            && step.submission_result().is_none()
+    }));
+    drop(journal);
+
+    let replay = activate(&fixture.config).expect("asset activation replay");
+    assert!(matches!(
+        replay.outcome,
+        ActorEffectOutcomeV1::Activated { was_replay: true }
+    ));
+    let replay_snapshot = SqliteBtcMakerLockJournal::open(&fixture.config.state_db)
+        .expect("reopen staged maker journal")
+        .load_intent(fixture.agreement.coordinator().id())
+        .expect("load replay intent")
+        .expect("replay intent");
+    assert_eq!(replay_snapshot, snapshot);
+
+    fixture
+        .config
+        .asset_extension
+        .as_mut()
+        .expect("asset config")
+        .expected_asset_commitment = Hex32::from_bytes([0x99; 32]);
+    assert_eq!(
+        load_prepared_maker_lock_material(&fixture.config, &fixture.agreement),
+        Err(ActorCommandError::ActivationMaterialUnavailable)
+    );
+}
+
+#[test]
+fn schema5_untrusted_asset_plan_rejects_duplicate_transaction_ids_or_exact_bytes() {
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    let _ = configure_schema5_asset_material(&mut fixture);
+    let result_path = match fixture.config.maker_lock.as_ref().expect("maker material") {
+        MakerLockMaterialConfig::LezAssetV2 {
+            preparation_result_file,
+            ..
+        } => preparation_result_file,
+        MakerLockMaterialConfig::Bitcoin { .. } | MakerLockMaterialConfig::Lez { .. } => {
+            unreachable!("schema-5 forward maker uses asset-v2 material")
+        }
+    };
+    let result: PrepareWitnessedAssetEscrowV2Result =
+        serde_json::from_slice(&fs::read(result_path).expect("read valid preparation result"))
+            .expect("decode valid preparation result");
+
+    let mut duplicate_id = result.clone();
+    let first_id = duplicate_id.effects[0].transaction.transaction_id;
+    duplicate_id.effects[1].transaction.transaction_id = first_id;
+    assert_eq!(
+        witnessed_asset_effect_plan(&duplicate_id),
+        Err(ActorCommandError::ActivationMaterialUnavailable)
+    );
+    fs::write(
+        result_path,
+        serde_json::to_vec(&duplicate_id).expect("duplicate-ID result JSON"),
+    )
+    .expect("persist duplicate-ID result");
+    assert_eq!(
+        load_prepared_maker_lock_material(&fixture.config, &fixture.agreement),
+        Err(ActorCommandError::ActivationMaterialUnavailable)
+    );
+
+    let mut duplicate_bytes = result;
+    let first_bytes = duplicate_bytes.effects[0].transaction.exact_bytes.clone();
+    duplicate_bytes.effects[1].transaction.exact_bytes = first_bytes;
+    assert_eq!(
+        witnessed_asset_effect_plan(&duplicate_bytes),
+        Err(ActorCommandError::ActivationMaterialUnavailable)
+    );
+    fs::write(
+        result_path,
+        serde_json::to_vec(&duplicate_bytes).expect("duplicate-bytes result JSON"),
+    )
+    .expect("persist duplicate-bytes result");
+    assert_eq!(
+        load_prepared_maker_lock_material(&fixture.config, &fixture.agreement),
+        Err(ActorCommandError::ActivationMaterialUnavailable)
+    );
+}
+
+#[test]
+fn schema5_reverse_bitcoin_plan_stages_with_asset_commitment_and_replays() {
+    let mut fixture = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Maker);
+    let extension = configure_schema5_bitcoin_asset_material(&mut fixture);
+    assert_ne!(
+        extension.asset_commitment(),
+        fixture.agreement.agreement_commitment(),
+        "fixture must distinguish the base and extension commitments"
+    );
+    let first = activate(&fixture.config).expect("reverse asset-bound activation");
+    assert!(matches!(
+        first.outcome,
+        ActorEffectOutcomeV1::Activated { was_replay: false }
+    ));
+    let journal = SqliteBtcMakerLockJournal::open(&fixture.config.state_db)
+        .expect("open reverse staged maker journal");
+    let snapshot = journal
+        .load_intent(fixture.agreement.coordinator().id())
+        .expect("load reverse intent")
+        .expect("reverse intent staged during activation");
+    assert_eq!(snapshot.intent().plan().steps().len(), 1);
+    assert!(snapshot.steps().iter().all(|step| {
+        step.state() == BtcMakerLockStepState::Prepared
+            && step.attempt_count() == 0
+            && step.revision() == 0
+            && step.submission_result().is_none()
+    }));
+    assert_eq!(
+        snapshot.intent().agreement_commitment(),
+        extension.asset_commitment()
+    );
+    drop(journal);
+
+    let replay = activate(&fixture.config).expect("reverse asset activation replay");
+    assert!(matches!(
+        replay.outcome,
+        ActorEffectOutcomeV1::Activated { was_replay: true }
+    ));
+    let replay_snapshot = SqliteBtcMakerLockJournal::open(&fixture.config.state_db)
+        .expect("reopen reverse staged maker journal")
+        .load_intent(fixture.agreement.coordinator().id())
+        .expect("load reverse replay intent")
+        .expect("reverse replay intent");
+    assert_eq!(replay_snapshot, snapshot);
+}
+
 #[tokio::test]
 async fn schema4_changed_lez_preparation_result_conflicts_with_durable_intent() {
     let mut fixture =
@@ -1154,7 +1481,9 @@ async fn schema4_changed_lez_preparation_result_conflicts_with_durable_intent() 
             preparation_result_file,
             ..
         } => preparation_result_file,
-        MakerLockMaterialConfig::Bitcoin { .. } => unreachable!("forward maker uses LEZ"),
+        MakerLockMaterialConfig::Bitcoin { .. } | MakerLockMaterialConfig::LezAssetV2 { .. } => {
+            unreachable!("schema-4 forward maker uses native LEZ material")
+        }
     };
     let mut changed: PrepareWitnessedEscrowResult =
         serde_json::from_slice(&fs::read(result_path).expect("result bytes"))

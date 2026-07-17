@@ -6,6 +6,7 @@
 compile_error!("btc-reference-actor requires Unix file permissions and inode identity");
 
 use std::{
+    collections::HashSet,
     fmt,
     fs::{self, File},
     io::Read as _,
@@ -23,7 +24,8 @@ use bitcoin::{
 };
 use clap::{Parser, Subcommand};
 use lez_bridge_adapter::{
-    CapabilityFileBridgeClientFactory, FreshLezBridgeTransportFactory, LezBridgeAdapter,
+    BtcLezAssetBridgeBindingV2, CapabilityFileBridgeClientFactory, FreshLezBridgeTransportFactory,
+    LezBridgeAdapter,
 };
 use lez_bridge_client::{
     BridgeClient, FinalizedWitnessedClaimPresence, FinalizedWitnessedFundingPresence,
@@ -41,11 +43,12 @@ use lez_bridge_protocol::{
     ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedFundingRequest,
     ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveWitnessedEscrowRequest,
     Participant as BridgeParticipant, PrepareNativeRefundRequest, PrepareNativeRefundResult,
+    PrepareWitnessedAssetEscrowV2Request, PrepareWitnessedAssetEscrowV2Result,
     PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
     PreparedTransaction, PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility,
     RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
-    TransactionId, WitnessedEscrowMetadataFacts, WitnessedFundingObservation,
-    WitnessedInitializationObservation, WitnessedNativeEscrowTerms,
+    TransactionId, WitnessedAssetPrepareStepV2, WitnessedEscrowMetadataFacts,
+    WitnessedFundingObservation, WitnessedInitializationObservation, WitnessedNativeEscrowTerms,
     WitnessedNativeEscrowTermsInput,
 };
 use lez_btc_core_adapter::{
@@ -57,7 +60,8 @@ use lez_btc_core_adapter::{
 };
 use lez_btc_swap_sdk::{
     AdaptorSessionContext, BitcoinFirstLockEvidenceV1, BtcAdaptorSessionDomain, BtcAgreementV1,
-    BtcFirstLockEvidenceV1, BtcPairSdk, BtcPreparedLockEffectsV1, MAX_BTC_AGREEMENT_RECORD_BYTES,
+    BtcFirstLockEvidenceV1, BtcLezAssetExtensionV1, BtcPairSdk, BtcPreparedLockEffectsV1,
+    MAX_BTC_AGREEMENT_RECORD_BYTES, MAX_BTC_LEZ_ASSET_EXTENSION_RECORD_BYTES,
     PreparedBitcoinFundingV1, PreparedLezFundingV1, adapt_presignature, extract_adaptor_secret,
     verify_adaptor_presignature, verify_adaptor_secret, verify_final_signature,
 };
@@ -85,6 +89,7 @@ use zeroize::Zeroizing;
 
 const LEGACY_CONFIG_SCHEMA_VERSION: u16 = 3;
 const CONFIG_SCHEMA_VERSION: u16 = 4;
+const ASSET_CONFIG_SCHEMA_VERSION: u16 = 5;
 const OUTPUT_SCHEMA_VERSION: u16 = 1;
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_PREPARED_CLAIM_RESULT_BYTES: usize = 4 * 1024 * 1024;
@@ -249,6 +254,19 @@ enum MakerLockMaterialConfig {
         preparation_request_file: PathBuf,
         preparation_result_file: PathBuf,
     },
+    /// Exact F7 native-or-token preparation bound to a countersigned extension.
+    LezAssetV2 {
+        preparation_request_file: PathBuf,
+        preparation_result_file: PathBuf,
+    },
+}
+
+/// Locally pinned countersigned asset extension introduced by schema 5.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AssetExtensionConfig {
+    record_file: PathBuf,
+    expected_asset_commitment: Hex32,
 }
 
 fn deserialize_present_maker_lock_material<'de, D>(
@@ -258,6 +276,15 @@ where
     D: serde::Deserializer<'de>,
 {
     MakerLockMaterialConfig::deserialize(deserializer).map(Some)
+}
+
+fn deserialize_present_asset_extension<'de, D>(
+    deserializer: D,
+) -> Result<Option<AssetExtensionConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    AssetExtensionConfig::deserialize(deserializer).map(Some)
 }
 
 fn deserialize_present_path<'de, D>(deserializer: D) -> Result<Option<PathBuf>, D::Error>
@@ -286,6 +313,12 @@ pub struct ActorConfig {
         skip_serializing_if = "Option::is_none"
     )]
     maker_lock: Option<MakerLockMaterialConfig>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_asset_extension",
+        skip_serializing_if = "Option::is_none"
+    )]
+    asset_extension: Option<AssetExtensionConfig>,
 }
 
 impl fmt::Debug for ActorConfig {
@@ -302,6 +335,7 @@ impl fmt::Debug for ActorConfig {
             .field("signing", &"[REDACTED]")
             .field("refund", &"[REDACTED]")
             .field("maker_lock", &"[REDACTED]")
+            .field("asset_extension", &"[REDACTED]")
             .finish()
     }
 }
@@ -324,7 +358,7 @@ impl ActorConfig {
     fn validate(&self) -> Result<(), ActorConfigError> {
         if !matches!(
             self.schema_version,
-            LEGACY_CONFIG_SCHEMA_VERSION | CONFIG_SCHEMA_VERSION
+            LEGACY_CONFIG_SCHEMA_VERSION | CONFIG_SCHEMA_VERSION | ASSET_CONFIG_SCHEMA_VERSION
         ) || self.accepted_at_unix_seconds == 0
             || self.lez_bridge.request_timeout_millis == 0
             || self.lez_bridge.request_timeout_millis > MAX_REQUEST_TIMEOUT_MILLIS
@@ -362,11 +396,8 @@ impl ActorConfig {
         {
             return Err(ActorConfigError::Invalid);
         }
-        match (self.schema_version, self.role, &self.maker_lock) {
-            (LEGACY_CONFIG_SCHEMA_VERSION, _, None)
-            | (CONFIG_SCHEMA_VERSION, ActorRole::Maker, Some(_))
-            | (CONFIG_SCHEMA_VERSION, ActorRole::Taker, None) => {}
-            _ => return Err(ActorConfigError::Invalid),
+        if !self.schema_shape_is_valid() {
+            return Err(ActorConfigError::Invalid);
         }
         match (self.role, &self.signing.adaptor_secret_file) {
             (ActorRole::Taker, Some(_)) | (ActorRole::Maker, None) => {}
@@ -389,11 +420,20 @@ impl ActorConfig {
             Some(MakerLockMaterialConfig::Bitcoin {
                 exact_funding_transaction_file,
             }) => paths.push(exact_funding_transaction_file),
-            Some(MakerLockMaterialConfig::Lez {
-                preparation_request_file,
-                preparation_result_file,
-            }) => paths.extend([preparation_request_file, preparation_result_file]),
+            Some(
+                MakerLockMaterialConfig::Lez {
+                    preparation_request_file,
+                    preparation_result_file,
+                }
+                | MakerLockMaterialConfig::LezAssetV2 {
+                    preparation_request_file,
+                    preparation_result_file,
+                },
+            ) => paths.extend([preparation_request_file, preparation_result_file]),
             None => {}
+        }
+        if let Some(asset_extension) = &self.asset_extension {
+            paths.push(&asset_extension.record_file);
         }
         if paths.iter().any(|path| !is_normalized_absolute(path)) {
             return Err(ActorConfigError::Invalid);
@@ -404,6 +444,38 @@ impl ActorConfig {
             }
         }
         Ok(())
+    }
+
+    fn schema_shape_is_valid(&self) -> bool {
+        matches!(
+            (
+                self.schema_version,
+                self.role,
+                &self.maker_lock,
+                &self.asset_extension,
+            ),
+            (LEGACY_CONFIG_SCHEMA_VERSION, _, None, None)
+                | (
+                    CONFIG_SCHEMA_VERSION,
+                    ActorRole::Maker,
+                    Some(
+                        MakerLockMaterialConfig::Bitcoin { .. }
+                            | MakerLockMaterialConfig::Lez { .. },
+                    ),
+                    None,
+                )
+                | (CONFIG_SCHEMA_VERSION, ActorRole::Taker, None, None)
+                | (
+                    ASSET_CONFIG_SCHEMA_VERSION,
+                    ActorRole::Maker,
+                    Some(
+                        MakerLockMaterialConfig::Bitcoin { .. }
+                            | MakerLockMaterialConfig::LezAssetV2 { .. },
+                    ),
+                    Some(_),
+                )
+                | (ASSET_CONFIG_SCHEMA_VERSION, ActorRole::Taker, None, Some(_))
+        )
     }
 
     fn discovery_window(&self) -> Result<DiscoveryWindow, ActorCommandError> {
@@ -1810,6 +1882,9 @@ fn activate(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommandErr
     let (agreement, wire) = load_agreement(config)?;
     validate_activation_material(config, &agreement)?;
     let store = open_store(config, &agreement, wire)?;
+    if config.schema_version == ASSET_CONFIG_SCHEMA_VERSION && config.role == ActorRole::Maker {
+        stage_asset_maker_lock_intent(config, &agreement)?;
+    }
     let was_replay = store.acceptance_was_replay();
     let status = store
         .status()
@@ -1820,6 +1895,26 @@ fn activate(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommandErr
         ActorEffectOutcomeV1::Activated { was_replay },
         &status,
     ))
+}
+
+fn validated_asset_extension_material(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+) -> Result<(BtcLezAssetExtensionV1, Vec<u8>), ()> {
+    if config.schema_version != ASSET_CONFIG_SCHEMA_VERSION {
+        return Err(());
+    }
+    let policy = config.asset_extension.as_ref().ok_or(())?;
+    let wire = read_stable_file(
+        &policy.record_file,
+        MAX_BTC_LEZ_ASSET_EXTENSION_RECORD_BYTES,
+        false,
+    )?;
+    let extension = BtcLezAssetExtensionV1::from_wire(&wire, agreement).map_err(|_| ())?;
+    if extension.asset_commitment() != policy.expected_asset_commitment.as_bytes() {
+        return Err(());
+    }
+    Ok((extension, wire))
 }
 
 fn validate_activation_material(
@@ -1841,17 +1936,29 @@ fn validate_activation_material(
     )?;
     validate_taker_adaptor_secret(config, agreement)?;
     validate_bitcoin_refund_authority(config, agreement)?;
-    if config.schema_version == CONFIG_SCHEMA_VERSION && config.role == ActorRole::Maker {
+    if config.schema_version == ASSET_CONFIG_SCHEMA_VERSION {
+        let _ = validated_asset_extension_material(config, agreement)
+            .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?;
+    }
+    if matches!(
+        config.schema_version,
+        CONFIG_SCHEMA_VERSION | ASSET_CONFIG_SCHEMA_VERSION
+    ) && config.role == ActorRole::Maker
+    {
         let _ = load_prepared_maker_lock_material(config, agreement)?;
     }
     Ok(())
 }
 
-/// Agreement-bound maker second-lock material reconstructed from schema-4 files.
+/// Agreement-bound maker second-lock material reconstructed from schema-4 or schema-5 files.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PreparedMakerLockMaterialV1 {
     Bitcoin(PreparedBitcoinFundingV1),
     Lez(PreparedLezFundingV1),
+    LezAssetV2 {
+        asset_commitment: [u8; 32],
+        plan: ExactPublicEffectPlanV1,
+    },
 }
 
 impl PreparedMakerLockMaterialV1 {
@@ -1859,6 +1966,16 @@ impl PreparedMakerLockMaterialV1 {
         match self {
             Self::Bitcoin(prepared) => prepared.plan(),
             Self::Lez(prepared) => prepared.plan(),
+            Self::LezAssetV2 { plan, .. } => plan,
+        }
+    }
+
+    fn binding_commitment(&self, agreement: &BtcAgreementV1) -> [u8; 32] {
+        match self {
+            Self::Bitcoin(_) | Self::Lez(_) => *agreement.agreement_commitment(),
+            Self::LezAssetV2 {
+                asset_commitment, ..
+            } => *asset_commitment,
         }
     }
 }
@@ -1867,11 +1984,20 @@ fn load_prepared_maker_lock_material(
     config: &ActorConfig,
     agreement: &BtcAgreementV1,
 ) -> Result<PreparedMakerLockMaterialV1, ActorCommandError> {
-    if config.schema_version != CONFIG_SCHEMA_VERSION || config.role != ActorRole::Maker {
+    if !matches!(
+        config.schema_version,
+        CONFIG_SCHEMA_VERSION | ASSET_CONFIG_SCHEMA_VERSION
+    ) || config.role != ActorRole::Maker
+    {
         return Err(ActorCommandError::ActivationMaterialUnavailable);
     }
-    match (agreement.direction(), config.maker_lock.as_ref()) {
+    match (
+        config.schema_version,
+        agreement.direction(),
+        config.maker_lock.as_ref(),
+    ) {
         (
+            CONFIG_SCHEMA_VERSION | ASSET_CONFIG_SCHEMA_VERSION,
             SwapDirection::TakerSellsLez,
             Some(MakerLockMaterialConfig::Bitcoin {
                 exact_funding_transaction_file,
@@ -1887,6 +2013,7 @@ fn load_prepared_maker_lock_material(
                 .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)
         }
         (
+            CONFIG_SCHEMA_VERSION,
             SwapDirection::TakerSellsForeign,
             Some(MakerLockMaterialConfig::Lez {
                 preparation_request_file,
@@ -1915,8 +2042,78 @@ fn load_prepared_maker_lock_material(
             .map(PreparedMakerLockMaterialV1::Lez)
             .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)
         }
+        (
+            ASSET_CONFIG_SCHEMA_VERSION,
+            SwapDirection::TakerSellsForeign,
+            Some(MakerLockMaterialConfig::LezAssetV2 {
+                preparation_request_file,
+                preparation_result_file,
+            }),
+        ) => {
+            let (extension, _) = validated_asset_extension_material(config, agreement)
+                .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?;
+            let binding = BtcLezAssetBridgeBindingV2::new(agreement, &extension, extension.asset())
+                .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+            let request = read_strict_material::<PrepareWitnessedAssetEscrowV2Request>(
+                preparation_request_file,
+            )?;
+            let result = read_strict_material::<PrepareWitnessedAssetEscrowV2Result>(
+                preparation_result_file,
+            )?;
+            if binding.depositor() != Participant::Maker
+                || request.context.run_id != config.lez_bridge.run_id
+                || request.context.sidecar_role != BridgeParticipant::Maker
+                || request.runtime != config.lez_bridge.runtime
+                || request.terms != *binding.terms()
+                || result.context != request.context
+                || result.terms != request.terms
+            {
+                return Err(ActorCommandError::ActivationMaterialUnavailable);
+            }
+            Ok(PreparedMakerLockMaterialV1::LezAssetV2 {
+                asset_commitment: *extension.asset_commitment(),
+                plan: witnessed_asset_effect_plan(&result)?,
+            })
+        }
         _ => Err(ActorCommandError::ActivationMaterialUnavailable),
     }
+}
+
+fn witnessed_asset_effect_plan(
+    result: &PrepareWitnessedAssetEscrowV2Result,
+) -> Result<ExactPublicEffectPlanV1, ActorCommandError> {
+    let mut transaction_ids = HashSet::with_capacity(result.effects.len());
+    let mut exact_bytes = HashSet::with_capacity(result.effects.len());
+    for effect in &result.effects {
+        if !transaction_ids.insert(effect.transaction.transaction_id)
+            || !exact_bytes.insert(effect.transaction.exact_bytes.as_slice())
+        {
+            return Err(ActorCommandError::ActivationMaterialUnavailable);
+        }
+    }
+    let steps = result
+        .effects
+        .iter()
+        .map(|effect| {
+            let step_id = match effect.step {
+                WitnessedAssetPrepareStepV2::InitializeWitnessed => "lez.initialize",
+                WitnessedAssetPrepareStepV2::CreateCustodyAta => "lez.create_custody_ata",
+                WitnessedAssetPrepareStepV2::Fund => "lez.fund",
+            };
+            Ok(PublicEffectStepV1::new(
+                PublicEffectStepId::new(step_id)
+                    .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?,
+                ExpectedPublicEffectId::new(hex::encode(
+                    effect.transaction.transaction_id.as_bytes(),
+                ))
+                .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?,
+                ExactPublicEffectBytes::new(effect.transaction.exact_bytes.as_slice().to_vec())
+                    .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, ActorCommandError>>()?;
+    ExactPublicEffectPlanV1::new(steps)
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)
 }
 
 fn read_strict_lower_hex_material(
@@ -2102,7 +2299,10 @@ async fn drive_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCo
     drop(store);
     if let Some(transition) = FundingTransition::from_predecessor(durable.revision()) {
         if transition == FundingTransition::MakerLock
-            && config.schema_version == CONFIG_SCHEMA_VERSION
+            && matches!(
+                config.schema_version,
+                CONFIG_SCHEMA_VERSION | ASSET_CONFIG_SCHEMA_VERSION
+            )
             && config.role == ActorRole::Maker
         {
             let port = LiveMakerLockExecutionPort::new(config)?;
@@ -2354,14 +2554,55 @@ fn maker_lock_intent(
     agreement: &BtcAgreementV1,
     plan: ExactPublicEffectPlanV1,
 ) -> Result<BtcMakerLockIntentV1, ActorCommandError> {
+    maker_lock_intent_with_binding(agreement, *agreement.agreement_commitment(), plan)
+}
+
+fn maker_lock_intent_with_binding(
+    agreement: &BtcAgreementV1,
+    binding_commitment: [u8; 32],
+    plan: ExactPublicEffectPlanV1,
+) -> Result<BtcMakerLockIntentV1, ActorCommandError> {
     BtcMakerLockIntentV1::new(
         agreement.coordinator().id().clone(),
-        *agreement.agreement_commitment(),
+        binding_commitment,
         Participant::Maker,
         1,
         plan,
     )
     .map_err(|_| ActorCommandError::ProjectionUnavailable)
+}
+
+fn configured_maker_lock_intent(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    material: &PreparedMakerLockMaterialV1,
+) -> Result<BtcMakerLockIntentV1, ActorCommandError> {
+    let binding_commitment = if config.schema_version == ASSET_CONFIG_SCHEMA_VERSION {
+        let (extension, _) = validated_asset_extension_material(config, agreement)
+            .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?;
+        *extension.asset_commitment()
+    } else {
+        material.binding_commitment(agreement)
+    };
+    maker_lock_intent_with_binding(agreement, binding_commitment, material.plan().clone())
+}
+
+fn stage_asset_maker_lock_intent(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+) -> Result<(), ActorCommandError> {
+    let material = load_prepared_maker_lock_material(config, agreement)?;
+    let intent = configured_maker_lock_intent(config, agreement, &material)?;
+    let mut journal = SqliteBtcMakerLockJournal::open(&config.state_db)
+        .map_err(|_| ActorCommandError::StateUnavailable)?;
+    match journal
+        .create_intent(&intent)
+        .map_err(|_| ActorCommandError::ProjectionUnavailable)?
+    {
+        BtcMakerLockIntentCreateOutcome::Created
+        | BtcMakerLockIntentCreateOutcome::ExistingSame => Ok(()),
+        BtcMakerLockIntentCreateOutcome::Conflict => Err(ActorCommandError::ProjectionUnavailable),
+    }
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -2380,7 +2621,7 @@ fn maker_lock_awaiting_output(
     )
 }
 
-/// Drives one schema-4 maker-owned second lock through exact SDK validation,
+/// Drives one schema-4 or schema-5 maker-owned second lock through exact SDK validation,
 /// durable one-attempt authority, and atomic lifecycle projection plus intent close.
 #[allow(clippy::too_many_lines)] // Keep the audited observe-check-CAS-send order linear.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -2390,7 +2631,11 @@ async fn drive_maker_lock_with_port(
     agreement_wire: Vec<u8>,
     port: &dyn MakerLockExecutionPort,
 ) -> Result<ActorEffectOutputV1, ActorCommandError> {
-    if config.schema_version != CONFIG_SCHEMA_VERSION || config.role != ActorRole::Maker {
+    if !matches!(
+        config.schema_version,
+        CONFIG_SCHEMA_VERSION | ASSET_CONFIG_SCHEMA_VERSION
+    ) || config.role != ActorRole::Maker
+    {
         return Err(ActorCommandError::ActivationMaterialUnavailable);
     }
     if !state_file_exists(&config.state_db)? {
@@ -2410,7 +2655,7 @@ async fn drive_maker_lock_with_port(
     }
     let maker_chain = agreement.coordinator().funded_chain(Participant::Maker);
     let configured = load_prepared_maker_lock_material(config, &agreement)?;
-    let expected_intent = maker_lock_intent(&agreement, configured.plan().clone())?;
+    let expected_intent = configured_maker_lock_intent(config, &agreement, &configured)?;
     let mut journal = SqliteBtcMakerLockJournal::open(&config.state_db)
         .map_err(|_| ActorCommandError::StateUnavailable)?;
     let existing = journal
@@ -6415,14 +6660,27 @@ fn actor_acceptance(
     agreement: &BtcAgreementV1,
     agreement_wire: Vec<u8>,
 ) -> Result<BtcAgreementAcceptance, BtcRecoveryError> {
-    let acceptance = BtcAgreementAcceptance::new(
-        agreement.coordinator(),
-        config.role.sdk(),
-        agreement_wire,
-        *agreement.agreement_commitment(),
-        config.accepted_at_unix_seconds,
-    )?;
-    Ok(acceptance)
+    if config.schema_version == ASSET_CONFIG_SCHEMA_VERSION {
+        let (extension, extension_wire) = validated_asset_extension_material(config, agreement)
+            .map_err(|()| BtcRecoveryError::InvalidAgreementAcceptance)?;
+        BtcAgreementAcceptance::new_with_asset_extension(
+            agreement.coordinator(),
+            config.role.sdk(),
+            agreement_wire,
+            *agreement.agreement_commitment(),
+            extension_wire,
+            *extension.asset_commitment(),
+            config.accepted_at_unix_seconds,
+        )
+    } else {
+        BtcAgreementAcceptance::new(
+            agreement.coordinator(),
+            config.role.sdk(),
+            agreement_wire,
+            *agreement.agreement_commitment(),
+            config.accepted_at_unix_seconds,
+        )
+    }
 }
 
 fn effect_output(

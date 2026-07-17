@@ -21,11 +21,14 @@ const EVIDENCE_PAYLOAD_VERSION: i64 = 1;
 const EVIDENCE_CHAIN_VERSION: i64 = 1;
 const SNAPSHOT_PAYLOAD_VERSION: i64 = 1;
 const MAX_AGREEMENT_WIRE_BYTES: usize = 16 * 1024;
+const MAX_ASSET_EXTENSION_WIRE_BYTES: usize = 16 * 1024;
 const MAX_CHAIN_EVIDENCE_BYTES: usize = 64 * 1024;
 const MAX_ENCODED_EVIDENCE_BYTES: usize = 320 * 1024;
 const REVEALING_WITNESS_BYTES: usize = 64;
 const EVIDENCE_CHAIN_GENESIS_DOMAIN: &[u8] =
     b"lez-atomic-swaps/btc-recovery/evidence-chain/v1/genesis";
+const ASSET_EXTENSION_GENESIS_DOMAIN: &[u8] =
+    b"lez-atomic-swaps/btc-recovery/evidence-chain/v1/asset-extension";
 const EVIDENCE_CHAIN_APPEND_DOMAIN: &[u8] =
     b"lez-atomic-swaps/btc-recovery/evidence-chain/v1/append";
 
@@ -41,6 +44,8 @@ pub struct BtcAgreementAcceptance {
     local_role: Participant,
     agreement_wire: Box<[u8]>,
     agreement_commitment: [u8; 32],
+    asset_extension_wire: Option<Box<[u8]>>,
+    asset_commitment: Option<[u8; 32]>,
     initial_snapshot_digest: [u8; 32],
     accepted_at_unix_seconds: u64,
 }
@@ -53,6 +58,8 @@ impl std::fmt::Debug for BtcAgreementAcceptance {
             .field("local_role", &self.local_role)
             .field("agreement_wire", &"[REDACTED]")
             .field("agreement_commitment", &"[REDACTED]")
+            .field("asset_extension_wire", &"[REDACTED]")
+            .field("asset_commitment", &"[REDACTED]")
             .field("initial_snapshot_digest", &"[REDACTED]")
             .field("accepted_at_unix_seconds", &self.accepted_at_unix_seconds)
             .finish()
@@ -73,22 +80,76 @@ impl BtcAgreementAcceptance {
         agreement_commitment: [u8; 32],
         accepted_at_unix_seconds: u64,
     ) -> Result<Self, BtcRecoveryError> {
+        Self::new_inner(
+            initial,
+            local_role,
+            agreement_wire,
+            agreement_commitment,
+            None,
+            accepted_at_unix_seconds,
+        )
+    }
+
+    /// Retains an exact agreement plus one caller-validated countersigned asset extension.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BtcRecoveryError::InvalidAgreementAcceptance`] when either wire value is empty
+    /// or oversized, either commitment is zero, or the timestamp is not representable by `SQLite`.
+    pub fn new_with_asset_extension(
+        initial: &SwapCoordinator,
+        local_role: Participant,
+        agreement_wire: Vec<u8>,
+        agreement_commitment: [u8; 32],
+        asset_extension_wire: Vec<u8>,
+        asset_commitment: [u8; 32],
+        accepted_at_unix_seconds: u64,
+    ) -> Result<Self, BtcRecoveryError> {
+        Self::new_inner(
+            initial,
+            local_role,
+            agreement_wire,
+            agreement_commitment,
+            Some((asset_extension_wire, asset_commitment)),
+            accepted_at_unix_seconds,
+        )
+    }
+
+    fn new_inner(
+        initial: &SwapCoordinator,
+        local_role: Participant,
+        agreement_wire: Vec<u8>,
+        agreement_commitment: [u8; 32],
+        asset_extension: Option<(Vec<u8>, [u8; 32])>,
+        accepted_at_unix_seconds: u64,
+    ) -> Result<Self, BtcRecoveryError> {
         if initial.pair() != Pair::Bitcoin || initial.phase() != Phase::Offered {
             return Err(BtcRecoveryError::InitialCoordinatorMismatch);
         }
         if agreement_wire.is_empty()
             || agreement_wire.len() > MAX_AGREEMENT_WIRE_BYTES
             || agreement_commitment.iter().all(|byte| *byte == 0)
+            || asset_extension.as_ref().is_some_and(|(wire, commitment)| {
+                wire.is_empty()
+                    || wire.len() > MAX_ASSET_EXTENSION_WIRE_BYTES
+                    || commitment.iter().all(|byte| *byte == 0)
+            })
             || i64::try_from(accepted_at_unix_seconds).is_err()
         {
             return Err(BtcRecoveryError::InvalidAgreementAcceptance);
         }
         let initial_snapshot_digest = canonical_initial_snapshot_digest(initial)?;
+        let (asset_extension_wire, asset_commitment) = asset_extension
+            .map_or((None, None), |(wire, commitment)| {
+                (Some(wire.into_boxed_slice()), Some(commitment))
+            });
         Ok(Self {
             swap_id: initial.id().clone(),
             local_role,
             agreement_wire: agreement_wire.into_boxed_slice(),
             agreement_commitment,
+            asset_extension_wire,
+            asset_commitment,
             initial_snapshot_digest,
             accepted_at_unix_seconds,
         })
@@ -116,6 +177,18 @@ impl BtcAgreementAcceptance {
     #[must_use]
     pub const fn agreement_commitment(&self) -> &[u8; 32] {
         &self.agreement_commitment
+    }
+
+    /// Exact validated countersigned asset-extension wire, when selected.
+    #[must_use]
+    pub fn asset_extension_wire(&self) -> Option<&[u8]> {
+        self.asset_extension_wire.as_deref()
+    }
+
+    /// Caller-validated commitment to the countersigned asset extension.
+    #[must_use]
+    pub const fn asset_commitment(&self) -> Option<&[u8; 32]> {
+        self.asset_commitment.as_ref()
     }
 
     /// SHA-256 binding to the canonical serialized agreement-derived initial coordinator.
@@ -750,33 +823,27 @@ impl SqliteBtcRecoveryStore {
         let accepted_at = i64::try_from(acceptance.accepted_at_unix_seconds)
             .map_err(|_| BtcRecoveryError::InvalidAgreementAcceptance)?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let existing = transaction
-            .query_row(
-                "
-                SELECT local_role, agreement_wire, agreement_commitment,
-                       initial_snapshot_digest, accepted_at_unix_seconds
-                FROM btc_actor_agreements WHERE swap_id = ?1
-                ",
-                params![acceptance.swap_id.as_str()],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, Vec<u8>>(1)?,
-                        row.get::<_, Vec<u8>>(2)?,
-                        row.get::<_, Vec<u8>>(3)?,
-                        row.get::<_, i64>(4)?,
-                    ))
-                },
-            )
-            .optional()?;
+        let existing = load_durable_acceptance(&transaction, acceptance.swap_id())?;
 
         let acceptance_was_replay = existing.is_some();
-        if let Some((role, wire, commitment, initial_digest, durable_accepted_at)) = existing {
+        if let Some((
+            role,
+            wire,
+            commitment,
+            asset_extension_wire,
+            asset_commitment,
+            initial_digest,
+            durable_accepted_at,
+        )) = existing
+        {
             if role != participant_name(acceptance.local_role) {
                 return Err(BtcRecoveryError::RolePathAlias);
             }
             if wire.as_slice() != acceptance.agreement_wire()
                 || commitment.as_slice() != acceptance.agreement_commitment()
+                || asset_extension_wire.as_deref() != acceptance.asset_extension_wire()
+                || asset_commitment.as_deref()
+                    != acceptance.asset_commitment().map(<[u8; 32]>::as_slice)
                 || initial_digest.as_slice() != acceptance.initial_snapshot_digest()
                 || durable_accepted_at != accepted_at
             {
@@ -795,14 +862,17 @@ impl SqliteBtcRecoveryStore {
                 "
                     INSERT INTO btc_actor_agreements (
                         swap_id, local_role, agreement_wire, agreement_commitment,
+                        asset_extension_wire, asset_commitment,
                         initial_snapshot_digest, accepted_at_unix_seconds
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                     ",
                 params![
                     acceptance.swap_id.as_str(),
                     participant_name(acceptance.local_role),
                     acceptance.agreement_wire(),
                     acceptance.agreement_commitment().as_slice(),
+                    acceptance.asset_extension_wire(),
+                    acceptance.asset_commitment().map(<[u8; 32]>::as_slice),
                     acceptance.initial_snapshot_digest().as_slice(),
                     accepted_at,
                 ],
@@ -1197,6 +1267,14 @@ fn evidence_chain_genesis(acceptance: &BtcAgreementAcceptance) -> [u8; 32] {
     );
     hash_field(&mut hasher, acceptance.agreement_wire());
     hash_field(&mut hasher, acceptance.agreement_commitment());
+    if let (Some(extension_wire), Some(asset_commitment)) = (
+        acceptance.asset_extension_wire(),
+        acceptance.asset_commitment(),
+    ) {
+        hash_field(&mut hasher, ASSET_EXTENSION_GENESIS_DOMAIN);
+        hash_field(&mut hasher, extension_wire);
+        hash_field(&mut hasher, asset_commitment);
+    }
     hash_field(&mut hasher, acceptance.initial_snapshot_digest());
     hasher.update(acceptance.accepted_at_unix_seconds.to_be_bytes());
     hasher.finalize().into()
@@ -1242,6 +1320,14 @@ fn migrate_btc_recovery(connection: &mut Connection) -> Result<(), BtcRecoveryEr
             agreement_commitment BLOB NOT NULL CHECK (
                 length(agreement_commitment) = 32 AND agreement_commitment != zeroblob(32)
             ),
+            asset_extension_wire BLOB CHECK (
+                asset_extension_wire IS NULL
+                OR length(asset_extension_wire) BETWEEN 1 AND 16384
+            ),
+            asset_commitment BLOB CHECK (
+                asset_commitment IS NULL
+                OR (length(asset_commitment) = 32 AND asset_commitment != zeroblob(32))
+            ),
             initial_snapshot_digest BLOB NOT NULL CHECK (length(initial_snapshot_digest) = 32),
             accepted_at_unix_seconds INTEGER NOT NULL CHECK (accepted_at_unix_seconds >= 0)
         );
@@ -1278,6 +1364,7 @@ fn migrate_btc_recovery(connection: &mut Connection) -> Result<(), BtcRecoveryEr
         );
         ",
     )?;
+    migrate_btc_asset_acceptance_columns(connection)?;
     let evidence_schema: String = connection.query_row(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'btc_actor_evidence'",
         [],
@@ -1320,29 +1407,74 @@ fn migrate_btc_recovery(connection: &mut Connection) -> Result<(), BtcRecoveryEr
     Ok(())
 }
 
+fn migrate_btc_asset_acceptance_columns(connection: &Connection) -> Result<(), BtcRecoveryError> {
+    for (column, alteration) in [
+        (
+            "asset_extension_wire",
+            "ALTER TABLE btc_actor_agreements ADD COLUMN asset_extension_wire BLOB \
+             CHECK (asset_extension_wire IS NULL OR length(asset_extension_wire) BETWEEN 1 AND 16384)",
+        ),
+        (
+            "asset_commitment",
+            "ALTER TABLE btc_actor_agreements ADD COLUMN asset_commitment BLOB \
+             CHECK (asset_commitment IS NULL OR (length(asset_commitment) = 32 \
+                    AND asset_commitment != zeroblob(32)))",
+        ),
+    ] {
+        let exists: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('btc_actor_agreements') \
+             WHERE name = ?1)",
+            [column],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            connection.execute(alteration, [])?;
+        }
+    }
+    Ok(())
+}
+
+type DurableBtcAcceptanceRow = (
+    String,
+    Vec<u8>,
+    Vec<u8>,
+    Option<Vec<u8>>,
+    Option<Vec<u8>>,
+    Vec<u8>,
+    i64,
+);
+
+fn load_durable_acceptance(
+    connection: &Connection,
+    swap_id: &SwapId,
+) -> Result<Option<DurableBtcAcceptanceRow>, BtcRecoveryError> {
+    Ok(connection
+        .query_row(
+            "SELECT local_role, agreement_wire, agreement_commitment,
+                    asset_extension_wire, asset_commitment,
+                    initial_snapshot_digest, accepted_at_unix_seconds
+             FROM btc_actor_agreements WHERE swap_id = ?1",
+            [swap_id.as_str()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .optional()?)
+}
+
 fn verify_acceptance(
     connection: &Connection,
     acceptance: &BtcAgreementAcceptance,
 ) -> Result<(), BtcRecoveryError> {
-    let durable = connection
-        .query_row(
-            "
-            SELECT local_role, agreement_wire, agreement_commitment,
-                   initial_snapshot_digest, accepted_at_unix_seconds
-            FROM btc_actor_agreements WHERE swap_id = ?1
-            ",
-            params![acceptance.swap_id.as_str()],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, Vec<u8>>(1)?,
-                    row.get::<_, Vec<u8>>(2)?,
-                    row.get::<_, Vec<u8>>(3)?,
-                    row.get::<_, i64>(4)?,
-                ))
-            },
-        )
-        .optional()?
+    let durable = load_durable_acceptance(connection, acceptance.swap_id())?
         .ok_or(BtcRecoveryError::AgreementConflict)?;
     if durable.0 != participant_name(acceptance.local_role) {
         return Err(BtcRecoveryError::RolePathAlias);
@@ -1351,8 +1483,10 @@ fn verify_acceptance(
         .map_err(|_| BtcRecoveryError::InvalidAgreementAcceptance)?;
     if durable.1.as_slice() != acceptance.agreement_wire()
         || durable.2.as_slice() != acceptance.agreement_commitment()
-        || durable.3.as_slice() != acceptance.initial_snapshot_digest()
-        || durable.4 != accepted_at
+        || durable.3.as_deref() != acceptance.asset_extension_wire()
+        || durable.4.as_deref() != acceptance.asset_commitment().map(<[u8; 32]>::as_slice)
+        || durable.5.as_slice() != acceptance.initial_snapshot_digest()
+        || durable.6 != accepted_at
     {
         return Err(BtcRecoveryError::AgreementConflict);
     }

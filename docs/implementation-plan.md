@@ -1752,6 +1752,20 @@ Active M3 refund critical path:
   strict all-target Clippy, rustdoc, and formatting. This supplies the
   reproducible agreement-to-F7 artifact seam for runner composition; it does
   not itself submit or observe a token swap.
+  Actor schema 5 now requires that exact countersigned extension for both
+  roles, retains its canonical wire and commitment as part of the durable
+  agreement acceptance/evidence-chain identity, and preserves schema-3/4
+  reopen behavior through an explicit pre-asset-column SQLite migration test.
+  A custom-token LEZ maker lock maps the strict v2 preparation result into the
+  exact ordered initialize/custody-ATA/fund journal, while the reverse Bitcoin
+  maker lock is also bound to the asset rather than only the base agreement.
+  Activation stages both directions without send authority; replay is exact;
+  duplicate transaction IDs or exact bytes in the untrusted preparation file
+  fail before journal creation. All 80 actor and 107 store tests, strict
+  all-target Clippy, rustdoc, doctests, formatting, and diff checks pass. Live
+  schema-5 taker-first submission, observation, claim, and refund composition
+  remains part of the runner work rather than being implied by this durable
+  mapping slice.
   Sidecar server routes/finalized token scans plus durable journal/actor
   composition, runner integration, and two-direction actual-node token swap
   evidence remain open;

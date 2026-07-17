@@ -281,6 +281,183 @@ fn private_empty_database_is_not_activation_and_first_acceptance_is_not_a_replay
 }
 
 #[test]
+fn countersigned_asset_extension_is_part_of_durable_acceptance_identity() {
+    let directory = tempdir().expect("temporary actor store");
+    let path = directory.path().join("asset-extension.sqlite");
+    let initial = coordinator("btc-asset-extension", SwapDirection::TakerSellsForeign);
+    let agreement_wire = b"exact-base-agreement-wire".to_vec();
+    let extension_wire = b"exact-countersigned-asset-extension-wire".to_vec();
+    let accepted = BtcAgreementAcceptance::new_with_asset_extension(
+        &initial,
+        Participant::Maker,
+        agreement_wire.clone(),
+        [0x42; 32],
+        extension_wire.clone(),
+        [0x71; 32],
+        1_785_000_000,
+    )
+    .expect("bounded asset acceptance");
+    assert_eq!(
+        accepted.asset_extension_wire(),
+        Some(extension_wire.as_slice())
+    );
+    assert_eq!(accepted.asset_commitment(), Some(&[0x71; 32]));
+
+    let first = SqliteBtcRecoveryStore::open(&path, &accepted, &initial)
+        .expect("first asset-bound activation");
+    assert!(!first.acceptance_was_replay());
+    drop(first);
+    let replay = SqliteBtcRecoveryStore::open_existing(&path, &accepted, &initial)
+        .expect("exact asset-bound replay");
+    assert!(replay.acceptance_was_replay());
+    drop(replay);
+
+    let changed = BtcAgreementAcceptance::new_with_asset_extension(
+        &initial,
+        Participant::Maker,
+        agreement_wire,
+        [0x42; 32],
+        b"different-countersigned-asset-extension-wire".to_vec(),
+        [0x72; 32],
+        1_785_000_000,
+    )
+    .expect("changed asset acceptance");
+    assert!(matches!(
+        SqliteBtcRecoveryStore::open_existing(&path, &changed, &initial),
+        Err(BtcRecoveryError::AgreementConflict)
+    ));
+    assert!(matches!(
+        SqliteBtcRecoveryStore::open_existing(
+            &path,
+            &BtcAgreementAcceptance::new(
+                &initial,
+                Participant::Maker,
+                b"exact-base-agreement-wire".to_vec(),
+                [0x42; 32],
+                1_785_000_000,
+            )
+            .expect("legacy acceptance"),
+            &initial,
+        ),
+        Err(BtcRecoveryError::AgreementConflict)
+    ));
+
+    let connection = Connection::open(&path).expect("inspect durable acceptance");
+    let durable: (Vec<u8>, Vec<u8>) = connection
+        .query_row(
+            "SELECT asset_extension_wire, asset_commitment
+             FROM btc_actor_agreements WHERE swap_id = ?1",
+            [initial.id().as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("durable asset columns");
+    assert_eq!(durable.0, extension_wire);
+    assert_eq!(durable.1, [0x71; 32]);
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct LegacyRecoveryMaterial {
+    agreement_wire: Vec<u8>,
+    agreement_commitment: Vec<u8>,
+    initial_snapshot_digest: Vec<u8>,
+    accepted_at_unix_seconds: i64,
+    evidence_payload: String,
+    evidence_chain_head: Vec<u8>,
+}
+
+fn load_legacy_recovery_material(connection: &Connection, swap_id: &str) -> LegacyRecoveryMaterial {
+    let (agreement_wire, agreement_commitment, initial_snapshot_digest, accepted_at_unix_seconds) =
+        connection
+            .query_row(
+                "SELECT agreement_wire, agreement_commitment, initial_snapshot_digest,
+                        accepted_at_unix_seconds
+                 FROM btc_actor_agreements WHERE swap_id = ?1",
+                [swap_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("exact legacy acceptance");
+    let evidence_payload = connection
+        .query_row(
+            "SELECT payload_json FROM btc_actor_evidence
+             WHERE swap_id = ?1 AND aggregate_revision = 1",
+            [swap_id],
+            |row| row.get(0),
+        )
+        .expect("exact legacy evidence");
+    let evidence_chain_head = connection
+        .query_row(
+            "SELECT evidence_chain_head FROM btc_actor_aggregates WHERE swap_id = ?1",
+            [swap_id],
+            |row| row.get(0),
+        )
+        .expect("legacy evidence chain");
+    LegacyRecoveryMaterial {
+        agreement_wire,
+        agreement_commitment,
+        initial_snapshot_digest,
+        accepted_at_unix_seconds,
+        evidence_payload,
+        evidence_chain_head,
+    }
+}
+
+#[test]
+fn legacy_acceptance_table_migrates_with_exact_evidence_and_null_asset_columns() {
+    let directory = tempdir().expect("temporary actor store");
+    let path = directory.path().join("legacy-acceptance.sqlite");
+    let initial = coordinator(
+        "btc-legacy-acceptance-columns",
+        SwapDirection::TakerSellsForeign,
+    );
+    let accepted = acceptance(&initial, Participant::Taker);
+    let mut store =
+        SqliteBtcRecoveryStore::open(&path, &accepted, &initial).expect("activate legacy store");
+    let first_evidence = &happy_path(&initial)[0];
+    let _ = store
+        .project(0, first_evidence)
+        .expect("project exact evidence");
+    assert_eq!(store.status().expect("pre-migration status").revision(), 1);
+    drop(store);
+
+    let connection = Connection::open(&path).expect("open legacy migration fixture");
+    let before = load_legacy_recovery_material(&connection, initial.id().as_str());
+    connection
+        .execute_batch(
+            "ALTER TABLE btc_actor_agreements DROP COLUMN asset_commitment;
+             ALTER TABLE btc_actor_agreements DROP COLUMN asset_extension_wire;",
+        )
+        .expect("recreate pre-asset acceptance shape");
+    let asset_columns: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('btc_actor_agreements')
+             WHERE name IN ('asset_extension_wire', 'asset_commitment')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("legacy acceptance columns");
+    assert_eq!(asset_columns, 0);
+    drop(connection);
+
+    let reopened = SqliteBtcRecoveryStore::open_existing(&path, &accepted, &initial)
+        .expect("migrate and reopen exact legacy acceptance");
+    assert_eq!(reopened.status().expect("migrated status").revision(), 1);
+    drop(reopened);
+
+    let connection = Connection::open(&path).expect("inspect migrated acceptance");
+    let after = load_legacy_recovery_material(&connection, initial.id().as_str());
+    let asset_material: (Option<Vec<u8>>, Option<Vec<u8>>) = connection
+        .query_row(
+            "SELECT asset_extension_wire, asset_commitment
+             FROM btc_actor_agreements WHERE swap_id = ?1",
+            [initial.id().as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("nullable migrated asset material");
+    assert_eq!(after, before);
+    assert_eq!(asset_material, (None, None));
+}
+
+#[test]
 fn interrupted_or_incomplete_existing_activation_fails_closed() {
     let directory = tempdir().expect("temporary actor stores");
     let initial = coordinator("btc-existing-orphan", SwapDirection::TakerSellsForeign);
