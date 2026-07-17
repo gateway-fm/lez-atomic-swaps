@@ -3026,7 +3026,7 @@ fn finalized_token_custody_creation_facts(
         EscrowState::Empty,
     );
     FinalizedWitnessedAssetCustodyCreationFactsV2::new(
-        finalized_observed_tx(106, h(144), 91, h(73)),
+        finalized_permissionless_observed_tx(106, h(144), 91),
         WitnessedAssetEffectInstructionFactsV2::new(
             WitnessedAssetPrepareStepV2::CreateCustodyAta,
             h(103),
@@ -3187,6 +3187,20 @@ fn finalized_native_claim_facts(
             terms.authenticated_transfer_program_id(),
             0,
         )),
+    )
+}
+
+fn finalized_permissionless_observed_tx(
+    byte: u8,
+    block_hash: Hex32,
+    height: u64,
+) -> ObservedTransactionFacts {
+    ObservedTransactionFacts::new(
+        TransactionId::from_bytes([byte; 32]),
+        ExactTransactionBytes::new(vec![byte; 128]).unwrap(),
+        ChainPosition::new(block_hash, height, 0),
+        AccountIds::new(Vec::new()).unwrap(),
+        true,
     )
 }
 

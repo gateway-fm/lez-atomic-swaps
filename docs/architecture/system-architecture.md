@@ -541,12 +541,14 @@ flowchart TB
         M3F7C["F7 exact-once bridge client<br/>eleven v2 operations + role/window checks GREEN"]
         M3F7D["F7 agreement and local-policy adapter<br/>eleven no-submit mappings GREEN"]
         M3F7S["F7 official sidecar planner<br/>tags 11, 7, 8, 12, and 10<br/>four durable v2 reservations GREEN"]
+        M3F7R["F7 sidecar server and finalized scanner<br/>eleven authenticated routes<br/>fork-safe exact state evidence GREEN"]
         M3RA["btc-reference-actor<br/>schema 4 live Maker lock GREEN<br/>both actual-node directions"]
         M3RUN["Schema 4 private-local runner<br/>external Taker first lock<br/>actor-owned Maker second lock GREEN"]
         M3F7A --> M3F7C
         M3F7C --> M3F7D
         M3F7D --> M3F7S
-        M3F7S -.->|"routes, scans, adapter, and journal open"| M3RA
+        M3F7S --> M3F7R
+        M3F7R -.->|"live schema 5 actor composition open"| M3RA
     end
 
     subgraph LezSidecars["Role-isolated official LEZ v0.1.2 processes"]
@@ -1750,10 +1752,11 @@ aEUF-CMA, witness-extractability, and pre-signature-adaptability assumptions.
 Also, “LEZ leg” in the actual-node BTC flows currently means the proved
 witnessed native path. The shared guest ATA/custom-token transition, separately
 countersigned asset extension, strict v2 protocol/classifiers, eleven-call
-exact-once client, agreement/local-policy adapter, and official durable token
-planner are GREEN component boundaries. Official sidecar routes/scans,
-durable journal/actor composition, and both-direction custom-token node effects
-remain open and are not implied by the native actual-node diagrams.
+exact-once client, agreement/local-policy adapter, official durable token
+planner, authenticated sidecar routes, and fork-safe finalized scans are GREEN
+component boundaries. Durable journal/actor composition and both-direction
+custom-token node effects remain open and are not implied by the native
+actual-node diagrams.
 
 ### LEZ and transparent Zcash
 
@@ -2266,9 +2269,9 @@ Maker owns the second lock in each direction, and leaves both actors terminal
 `Completed`. The Taker first lock remains an external PoC fixture. This closes
 the schema-4 private-local checkpoint only. Run `m3overlap-20260717a`
 separately closes the accepted opposite-direction two-swap execution item;
-arbitrary-N/same-direction scheduling, the remaining F7 sidecar/adapter/actor
-and actual-node custom-token scope, process-kill/reorg/chaos, public deployment,
-and production readiness remain outside the claim.
+arbitrary-N/same-direction scheduling, the remaining F7 actor/journal and
+actual-node custom-token scope, process-kill/reorg/chaos, public deployment, and
+production readiness remain outside the claim.
 
 ## Abandonment and autonomous recovery flow
 

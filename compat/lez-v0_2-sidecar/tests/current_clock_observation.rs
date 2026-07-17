@@ -12,7 +12,7 @@ use common::{
     HashType,
     block::{BedrockStatus, Block, BlockBody, BlockHeader},
 };
-use indexer_service_protocol::{Account as IndexedAccount, Block as IndexedBlock};
+use indexer_service_protocol::Block as IndexedBlock;
 use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
 use lez_bridge_protocol::{
@@ -21,8 +21,8 @@ use lez_bridge_protocol::{
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
-    FinalizedIndexerApi, NativeEscrowPlanner, NativePrepareError, NonceSource, OfficialNodeRpc,
-    program_id_to_hex, start_bridge_server,
+    FinalizedIndexerApi, HistoricalAccount, NativeEscrowPlanner, NativePrepareError, NonceSource,
+    OfficialNodeRpc, program_id_to_hex, start_bridge_server,
 };
 use nssa::{AccountId, PrivateKey, PublicKey, Signature};
 
@@ -80,7 +80,7 @@ impl FinalizedIndexerApi for NeverIndexer {
         &self,
         _account_id: [u8; 32],
         _block_id: u64,
-    ) -> Result<IndexedAccount, BridgeRuntimeError> {
+    ) -> Result<HistoricalAccount, BridgeRuntimeError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Err(BridgeRuntimeError::InvalidObservation)
     }

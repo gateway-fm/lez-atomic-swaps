@@ -5,8 +5,8 @@ Status: Accepted at the checked-guest component boundary. Pushed commit
 focused evidence. The checked manifest, public IDL, deployer assembly, verifier,
 and active M3 runner pins now share the new guest identity. The additive strict
 v2 transaction, finalized-classifier, exact-once client, main-process adapter,
-and official sidecar planner boundaries are also implemented. Sidecar
-routes/scans, durable journal/actor composition, and actual-node custom-token
+and official sidecar planner, route, replay, and finalized-scan boundaries are
+also implemented. Live journal/actor composition and actual-node custom-token
 evidence remain open.
 
 ## Context
@@ -205,7 +205,7 @@ flowchart LR
     Client["Exact-once bridge client GREEN"] --> Wire
     Adapter["Agreement and local-policy adapter GREEN<br/>eleven no-submit operations"] --> Client
     Sidecar["Official v0.2 planner GREEN<br/>tags 11, 7, 8, 12, and 10<br/>four durable v2 reservations"] --> Wire
-    Routes["Sidecar routes and finalized token scans open"] -.-> Sidecar
+    Routes["Eleven authenticated routes and finalized token scans GREEN"] --> Sidecar
     Finality["Finalized four-effect classifiers"] --> Wire
 ```
 
@@ -249,9 +249,23 @@ transport failure or the four conservative classifier states into send
 authority. Six new external tests and 73 preserved tests pass with strict
 all-target Clippy, rustdoc, doctests, formatting, and diff gates.
 
-Sidecar routes and finalized token scans, durable journal/actor mapping, and
-role-owned actual-node execution remain open. In particular, the planner alone
-does not prove that the official node can provide the required complete scans.
+All eleven v2 methods are now registered on the capability-authenticated
+sidecar server. The four preparation/completion methods restore exact durable
+requests and results in dependency order. The finalized scanner validates
+canonical bytes, hash, stateless transaction rules, signer and account order,
+instruction, programs, official ATAs, metadata, fungible definition, holdings,
+stable ID/hash block ancestry, and a post-account-read unchanged tip. A
+same-height refund fork found during root review now forces
+`UnknownOrPending`; it cannot combine transaction evidence and terminal state
+from different finalized views. Historical default-account absence remains
+distinct from an unavailable RPC. Official planner effects pass the complete
+init/custody/fund scanner journey, authenticated client/restart coverage, all
+122 sidecar tests, and strict documentation, lint, dependency, license, source,
+formatting, and diff gates.
+
+Durable live journal/actor mapping and role-owned actual-node execution remain
+open. Component tests do not by themselves prove that the actual local node
+provides every required token state transition and finalized scan together.
 
 This ADR does not certify an actual-node custom-token swap in either trade
 direction, exact composed balances/effects, restart/no-resubmission, public

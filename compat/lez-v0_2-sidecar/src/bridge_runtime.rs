@@ -32,7 +32,8 @@ use crate::{
     FinalizedWitnessedInitializationObserver, FinalizedWitnessedRefundObserver, HealthProbe,
     NativeEscrowPlanner, NativePrepareError, OfficialNativeEscrowFacts, OfficialNodeRpc,
     RuntimeBoundaryError, ZecEscrowInstruction, compute_custody_pda, compute_metadata_pda,
-    decode_prepared_for_signer, prepared_from_transaction, program_id_from_hex, program_id_to_hex,
+    decode_prepared_for_signer, finalized_asset_observation::FinalizedAssetObserver,
+    prepared_from_transaction, program_id_from_hex, program_id_to_hex,
 };
 
 /// Fail-closed failures at the `PoC` bridge observation and submission boundary.
@@ -109,6 +110,7 @@ pub struct BridgeRuntime {
     runtime: RuntimeDescriptor,
     planner: Arc<NativeEscrowPlanner>,
     node: Arc<OfficialNodeRpc>,
+    finalized_asset_observer: FinalizedAssetObserver,
     finalized_claim_observer: FinalizedWitnessedClaimObserver,
     finalized_funding_observer: FinalizedWitnessedFundingObserver,
     finalized_initialization_observer: FinalizedWitnessedInitializationObserver,
@@ -133,6 +135,8 @@ impl BridgeRuntime {
         node: Arc<OfficialNodeRpc>,
         indexer: Arc<dyn FinalizedIndexerApi>,
     ) -> Self {
+        let finalized_asset_observer =
+            FinalizedAssetObserver::new(runtime.clone(), Arc::clone(&indexer));
         let finalized_claim_observer =
             FinalizedWitnessedClaimObserver::new(runtime.clone(), Arc::clone(&indexer));
         let finalized_refund_observer = FinalizedWitnessedRefundObserver::new(
@@ -148,6 +152,7 @@ impl BridgeRuntime {
             runtime,
             planner,
             node,
+            finalized_asset_observer,
             finalized_claim_observer,
             finalized_funding_observer,
             finalized_initialization_observer,
@@ -232,6 +237,54 @@ impl BridgeRuntime {
             .map_err(Into::into)
     }
 
+    /// Prepares one exact additive v2 native-or-token witnessed escrow plan.
+    ///
+    /// Native requests reuse the established v1 planner and are only wrapped
+    /// in the additive envelope. Custom-token requests use the official v2
+    /// planner and its durable three-effect reservation.
+    ///
+    /// # Errors
+    ///
+    /// Preserves every planner, role, runtime, nonce, and durable-state error.
+    pub async fn prepare_witnessed_asset_escrow_v2(
+        &self,
+        request: &lez_bridge_protocol::PrepareWitnessedAssetEscrowV2Request,
+    ) -> Result<lez_bridge_protocol::PrepareWitnessedAssetEscrowV2Result, BridgeRuntimeError> {
+        match request.terms.asset() {
+            lez_bridge_protocol::WitnessedLezAssetV2::Native(terms) => {
+                let native_request = lez_bridge_protocol::PrepareWitnessedEscrowRequest::new(
+                    request.context.clone(),
+                    request.runtime.clone(),
+                    terms.clone(),
+                );
+                let native = self
+                    .planner
+                    .prepare_witnessed_escrow(&native_request)
+                    .await?;
+                lez_bridge_protocol::PrepareWitnessedAssetEscrowV2Result::new(
+                    request.context.clone(),
+                    request.terms.clone(),
+                    vec![
+                        lez_bridge_protocol::WitnessedAssetPreparedEffectV2::new(
+                            lez_bridge_protocol::WitnessedAssetPrepareStepV2::InitializeWitnessed,
+                            native.initialization,
+                        ),
+                        lez_bridge_protocol::WitnessedAssetPreparedEffectV2::new(
+                            lez_bridge_protocol::WitnessedAssetPrepareStepV2::Fund,
+                            native.funding,
+                        ),
+                    ],
+                )
+                .map_err(|_| BridgeRuntimeError::InvalidObservation)
+            }
+            lez_bridge_protocol::WitnessedLezAssetV2::CustomToken(_) => self
+                .planner
+                .prepare_witnessed_asset_escrow_v2(request)
+                .await
+                .map_err(Into::into),
+        }
+    }
+
     /// Prepares one exact native revealing claim.
     ///
     /// # Errors
@@ -303,6 +356,113 @@ impl BridgeRuntime {
             .complete_witnessed_claim(request)
             .await
             .map_err(Into::into)
+    }
+
+    /// Reserves one exact additive v2 native-or-token witnessed claim transcript.
+    ///
+    /// # Errors
+    ///
+    /// Preserves every planner, role, runtime, nonce, and durable-state error.
+    pub async fn prepare_witnessed_asset_claim_v2(
+        &self,
+        request: &lez_bridge_protocol::PrepareWitnessedAssetClaimV2Request,
+    ) -> Result<lez_bridge_protocol::PrepareWitnessedAssetClaimV2Result, BridgeRuntimeError> {
+        match request.terms.asset() {
+            lez_bridge_protocol::WitnessedLezAssetV2::Native(terms) => {
+                let native_request = lez_bridge_protocol::PrepareWitnessedClaimRequest::new(
+                    request.context.clone(),
+                    request.runtime.clone(),
+                    terms.clone(),
+                    request.funding_transaction_id,
+                );
+                let native = self
+                    .planner
+                    .prepare_witnessed_claim(&native_request)
+                    .await?;
+                Ok(
+                    lez_bridge_protocol::PrepareWitnessedAssetClaimV2Result::new(
+                        request.context.clone(),
+                        request.terms.clone(),
+                        native.claim,
+                    ),
+                )
+            }
+            lez_bridge_protocol::WitnessedLezAssetV2::CustomToken(_) => self
+                .planner
+                .prepare_witnessed_asset_claim_v2(request)
+                .await
+                .map_err(Into::into),
+        }
+    }
+
+    /// Completes one exact additive v2 native-or-token witnessed claim.
+    ///
+    /// # Errors
+    ///
+    /// Preserves transcript, aggregate-signature, canonical-byte, and durable errors.
+    pub async fn complete_witnessed_asset_claim_v2(
+        &self,
+        request: &lez_bridge_protocol::CompleteWitnessedAssetClaimV2Request,
+    ) -> Result<lez_bridge_protocol::CompleteWitnessedAssetClaimV2Result, BridgeRuntimeError> {
+        match request.terms.asset() {
+            lez_bridge_protocol::WitnessedLezAssetV2::Native(_) => {
+                let native_request = lez_bridge_protocol::CompleteWitnessedClaimRequest::new(
+                    request.context.clone(),
+                    request.runtime.clone(),
+                    request.claim.clone(),
+                    request.aggregate_signature,
+                );
+                let native = self
+                    .planner
+                    .complete_witnessed_claim(&native_request)
+                    .await?;
+                Ok(
+                    lez_bridge_protocol::CompleteWitnessedAssetClaimV2Result::new(
+                        request.context.clone(),
+                        request.terms.clone(),
+                        native.claim,
+                    ),
+                )
+            }
+            lez_bridge_protocol::WitnessedLezAssetV2::CustomToken(_) => self
+                .planner
+                .complete_witnessed_asset_claim_v2(request)
+                .await
+                .map_err(Into::into),
+        }
+    }
+
+    /// Prepares one exact fixed-destination additive v2 witnessed-asset refund.
+    ///
+    /// # Errors
+    ///
+    /// Preserves role, runtime, destination, canonical-byte, and durable errors.
+    pub async fn prepare_witnessed_asset_refund_v2(
+        &self,
+        request: &lez_bridge_protocol::PrepareWitnessedAssetRefundV2Request,
+    ) -> Result<lez_bridge_protocol::PrepareWitnessedAssetRefundV2Result, BridgeRuntimeError> {
+        match request.terms.asset() {
+            lez_bridge_protocol::WitnessedLezAssetV2::Native(terms) => {
+                let native_request = lez_bridge_protocol::PrepareNativeRefundRequest::new_witnessed(
+                    request.context.clone(),
+                    request.runtime.clone(),
+                    terms.clone(),
+                );
+                let native = self.planner.prepare_native_refund(&native_request).await?;
+                Ok(
+                    lez_bridge_protocol::PrepareWitnessedAssetRefundV2Result::new(
+                        request.context.clone(),
+                        request.terms.clone(),
+                        native.refund,
+                    ),
+                )
+            }
+            lez_bridge_protocol::WitnessedLezAssetV2::CustomToken(_) => self
+                .planner
+                .prepare_witnessed_asset_refund_v2(request)
+                .await
+                .map_err(Into::into),
+        }
     }
 
     /// Observes one exact witnessed claim in a stable, fully finalized indexer window.
@@ -413,6 +573,262 @@ impl BridgeRuntime {
                 )
             }
         })
+    }
+
+    /// Conservatively classifies finalized v2 initialization evidence.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on invalid terms, unstable or unavailable history, malformed
+    /// chain facts, conflicting matches, and every state or identity mismatch.
+    pub async fn classify_finalized_witnessed_asset_initialization_v2(
+        &self,
+        request: &lez_bridge_protocol::ClassifyFinalizedWitnessedAssetInitializationV2Request,
+    ) -> Result<
+        lez_bridge_protocol::ClassifyFinalizedWitnessedAssetInitializationV2Result,
+        BridgeRuntimeError,
+    > {
+        self.finalized_asset_observer
+            .classify_initialization(request)
+            .await
+    }
+
+    /// Conservatively classifies finalized token custody-ATA creation evidence.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on invalid terms, unstable or unavailable history, malformed
+    /// chain facts, conflicting matches, and every state or identity mismatch.
+    pub async fn classify_finalized_witnessed_asset_custody_creation_v2(
+        &self,
+        request: &lez_bridge_protocol::ClassifyFinalizedWitnessedAssetCustodyCreationV2Request,
+    ) -> Result<
+        lez_bridge_protocol::ClassifyFinalizedWitnessedAssetCustodyCreationV2Result,
+        BridgeRuntimeError,
+    > {
+        self.finalized_asset_observer
+            .classify_custody_creation(request)
+            .await
+    }
+
+    /// Conservatively classifies finalized v2 funding evidence.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on invalid terms, unstable or unavailable history, malformed
+    /// chain facts, conflicting matches, and every state or identity mismatch.
+    pub async fn classify_finalized_witnessed_asset_funding_v2(
+        &self,
+        request: &lez_bridge_protocol::ClassifyFinalizedWitnessedAssetFundingV2Request,
+    ) -> Result<
+        lez_bridge_protocol::ClassifyFinalizedWitnessedAssetFundingV2Result,
+        BridgeRuntimeError,
+    > {
+        self.finalized_asset_observer
+            .classify_funding(request)
+            .await
+    }
+
+    /// Conservatively classifies finalized v2 witnessed-claim evidence.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on invalid terms, unstable or unavailable history, malformed
+    /// chain facts, conflicting matches, and every state or identity mismatch.
+    pub async fn classify_finalized_witnessed_asset_claim_v2(
+        &self,
+        request: &lez_bridge_protocol::ClassifyFinalizedWitnessedAssetClaimV2Request,
+    ) -> Result<lez_bridge_protocol::ClassifyFinalizedWitnessedAssetClaimV2Result, BridgeRuntimeError>
+    {
+        self.finalized_asset_observer.classify_claim(request).await
+    }
+
+    /// Observes every exact finalized effect in one additive v2 escrow plan.
+    ///
+    /// # Errors
+    ///
+    /// Requires every prepared effect to be found with one identical finalized
+    /// clock and exact bytes; missing, conflicting, or unavailable evidence fails closed.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the complete ordered asset plan stays visibly joined at one finality boundary"
+    )]
+    pub async fn observe_witnessed_asset_escrow_v2(
+        &self,
+        request: &lez_bridge_protocol::ObserveWitnessedAssetEscrowV2Request,
+    ) -> Result<lez_bridge_protocol::ObserveWitnessedAssetEscrowV2Result, BridgeRuntimeError> {
+        let _ = lez_bridge_protocol::PrepareWitnessedAssetEscrowV2Result::new(
+            request.context.clone(),
+            request.terms.clone(),
+            request.prepared_effects.clone(),
+        )
+        .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
+        let initialization_request =
+            lez_bridge_protocol::ClassifyFinalizedWitnessedAssetInitializationV2Request::new(
+                request.context.clone(),
+                request.runtime.clone(),
+                request.terms.clone(),
+                request.prepared_effects[0].transaction.clone(),
+                request.window,
+            );
+        let initialization = self
+            .finalized_asset_observer
+            .classify_initialization(&initialization_request)
+            .await?;
+        let lez_bridge_protocol::FinalizedWitnessedAssetScanOutcomeV2::Found {
+            finalized_clock,
+            facts: initialization,
+            ..
+        } = initialization.outcome
+        else {
+            return Err(BridgeRuntimeError::Unavailable);
+        };
+        let mut effects = vec![
+            lez_bridge_protocol::WitnessedAssetObservedPrepareEffectV2::new(
+                lez_bridge_protocol::WitnessedAssetPrepareStepV2::InitializeWitnessed,
+                initialization.transaction.clone(),
+                initialization.instruction.program_id,
+                initialization.instruction.ordered_account_ids.clone(),
+            ),
+        ];
+        let funding_index = match request.terms.asset() {
+            lez_bridge_protocol::WitnessedLezAssetV2::Native(_) => 1,
+            lez_bridge_protocol::WitnessedLezAssetV2::CustomToken(_) => {
+                let custody_request = lez_bridge_protocol::
+                    ClassifyFinalizedWitnessedAssetCustodyCreationV2Request::new(
+                        request.context.clone(),
+                        request.runtime.clone(),
+                        request.terms.clone(),
+                        request.prepared_effects[1].transaction.clone(),
+                        request.window,
+                    )
+                    .map_err(|_| BridgeRuntimeError::Planner)?;
+                let custody = self
+                    .finalized_asset_observer
+                    .classify_custody_creation(&custody_request)
+                    .await?;
+                let lez_bridge_protocol::FinalizedWitnessedAssetScanOutcomeV2::Found {
+                    finalized_clock: custody_clock,
+                    facts: custody,
+                    ..
+                } = custody.outcome
+                else {
+                    return Err(BridgeRuntimeError::Unavailable);
+                };
+                if custody_clock != finalized_clock {
+                    return Err(BridgeRuntimeError::MovingTip);
+                }
+                effects.push(
+                    lez_bridge_protocol::WitnessedAssetObservedPrepareEffectV2::new(
+                        lez_bridge_protocol::WitnessedAssetPrepareStepV2::CreateCustodyAta,
+                        custody.transaction.clone(),
+                        custody.instruction.program_id,
+                        custody.instruction.ordered_account_ids.clone(),
+                    ),
+                );
+                2
+            }
+        };
+        let funding_request =
+            lez_bridge_protocol::ClassifyFinalizedWitnessedAssetFundingV2Request::new(
+                request.context.clone(),
+                request.runtime.clone(),
+                request.terms.clone(),
+                request.prepared_effects[funding_index].transaction.clone(),
+                request.window,
+            );
+        let funding = self
+            .finalized_asset_observer
+            .classify_funding(&funding_request)
+            .await?;
+        let lez_bridge_protocol::FinalizedWitnessedAssetScanOutcomeV2::Found {
+            finalized_clock: funding_clock,
+            facts: funding,
+            ..
+        } = funding.outcome
+        else {
+            return Err(BridgeRuntimeError::Unavailable);
+        };
+        if funding_clock != finalized_clock {
+            return Err(BridgeRuntimeError::MovingTip);
+        }
+        effects.push(
+            lez_bridge_protocol::WitnessedAssetObservedPrepareEffectV2::new(
+                lez_bridge_protocol::WitnessedAssetPrepareStepV2::Fund,
+                funding.transaction.clone(),
+                funding.instruction.program_id,
+                funding.instruction.ordered_account_ids.clone(),
+            ),
+        );
+        let tip = ChainTip::new(finalized_clock.block_hash, finalized_clock.height);
+        lez_bridge_protocol::ObserveWitnessedAssetEscrowV2Result::new(
+            request.context.clone(),
+            request.terms.clone(),
+            tip,
+            effects,
+            funding.metadata.clone(),
+            funding.custody.clone(),
+            tip,
+        )
+        .map_err(|_| BridgeRuntimeError::InvalidObservation)
+    }
+
+    /// Observes one exact or uniquely discovered finalized v2 witnessed claim.
+    ///
+    /// # Errors
+    ///
+    /// Missing, conflicting, transcript-drifted, or unavailable finalized evidence fails closed.
+    pub async fn observe_finalized_witnessed_asset_claim_v2(
+        &self,
+        request: &lez_bridge_protocol::ObserveFinalizedWitnessedAssetClaimV2Request,
+    ) -> Result<lez_bridge_protocol::ObserveFinalizedWitnessedAssetClaimV2Result, BridgeRuntimeError>
+    {
+        let classified_request =
+            lez_bridge_protocol::ClassifyFinalizedWitnessedAssetClaimV2Request::discover_by_terms(
+                request.context.clone(),
+                request.runtime.clone(),
+                request.terms.clone(),
+                request.claim.clone(),
+                request.window,
+            );
+        let classified = self
+            .finalized_asset_observer
+            .classify_claim(&classified_request)
+            .await?;
+        let lez_bridge_protocol::FinalizedWitnessedAssetScanOutcomeV2::Found {
+            finalized_clock,
+            facts,
+            ..
+        } = classified.outcome
+        else {
+            return Err(BridgeRuntimeError::Unavailable);
+        };
+        if let lez_bridge_protocol::FinalizedWitnessedClaimObservationTarget::Exact {
+            claim_transaction_id,
+        } = request.target
+            && facts.transaction.transaction_id != claim_transaction_id
+        {
+            return Err(BridgeRuntimeError::ConflictingDiscovery);
+        }
+        lez_bridge_protocol::ObserveFinalizedWitnessedAssetClaimV2Result::new(
+            request.context.clone(),
+            request.terms.clone(),
+            ChainTip::new(finalized_clock.block_hash, finalized_clock.height),
+            *facts,
+        )
+        .map_err(|_| BridgeRuntimeError::InvalidObservation)
+    }
+
+    /// Observes finalized v2 refund state and optional exact/discovered effect.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role/runtime/terms drift and unavailable or contradictory finalized facts.
+    pub async fn observe_witnessed_asset_refund_v2(
+        &self,
+        request: &lez_bridge_protocol::ObserveWitnessedAssetRefundV2Request,
+    ) -> Result<lez_bridge_protocol::ObserveWitnessedAssetRefundV2Result, BridgeRuntimeError> {
+        self.finalized_asset_observer.observe_refund(request).await
     }
 
     /// Observes one witnessed funding effect in a stable, fully finalized indexer window.

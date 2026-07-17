@@ -5768,7 +5768,10 @@ fn validate_custody_creation_result(
                 &facts.instruction,
                 WitnessedAssetPrepareStepV2::CreateCustodyAta,
             )?;
-            validate_depositor_signer(&result.terms, &facts.transaction)
+            ensure(
+                facts.transaction.signer_account_ids.as_slice().is_empty(),
+                "permissionless custody signer",
+            )
         }
         FinalizedWitnessedAssetScanOutcomeV2::Absent {
             finalized_clock,

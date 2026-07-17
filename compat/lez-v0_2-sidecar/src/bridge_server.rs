@@ -20,15 +20,25 @@ use lez_bridge_protocol::{
     METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
     METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
     METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
-    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
-    MessageContext, ObserveCurrentClockRequest, ObserveEscrowRequest,
-    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedFundingRequest,
-    ObserveNativeRefundRequest, ObserveRevealingClaimRequest, ObserveWitnessedEscrowRequest,
-    Participant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2, METHOD_PREPARE_WITNESSED_CLAIM,
+    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, MessageContext,
+    ObserveCurrentClockRequest, ObserveEscrowRequest, ObserveFinalizedWitnessedClaimRequest,
+    ObserveFinalizedWitnessedFundingRequest, ObserveNativeRefundRequest,
+    ObserveRevealingClaimRequest, ObserveWitnessedEscrowRequest, Participant,
+    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
     PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
     PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
     PrepareWitnessedEscrowResult, ProtocolErrorReply, RUN_ID_HEADER, RunId, SIDECAR_ROLE_HEADER,
     SubmitTransactionRequest,
+};
+use lez_bridge_protocol::{
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CUSTODY_CREATION_V2,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_FUNDING_V2,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_INITIALIZATION_V2,
+    METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2, METHOD_OBSERVE_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
+    METHOD_OBSERVE_WITNESSED_ASSET_ESCROW_V2, METHOD_OBSERVE_WITNESSED_ASSET_REFUND_V2,
+    METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2, METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -241,6 +251,22 @@ type RestoredRequests = (
     Option<(PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult)>,
     Option<(CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult)>,
     Option<(PrepareNativeRefundRequest, PrepareNativeRefundResult)>,
+    Option<(
+        lez_bridge_protocol::PrepareWitnessedAssetEscrowV2Request,
+        lez_bridge_protocol::PrepareWitnessedAssetEscrowV2Result,
+    )>,
+    Option<(
+        lez_bridge_protocol::PrepareWitnessedAssetClaimV2Request,
+        lez_bridge_protocol::PrepareWitnessedAssetClaimV2Result,
+    )>,
+    Option<(
+        lez_bridge_protocol::CompleteWitnessedAssetClaimV2Request,
+        lez_bridge_protocol::CompleteWitnessedAssetClaimV2Result,
+    )>,
+    Option<(
+        lez_bridge_protocol::PrepareWitnessedAssetRefundV2Request,
+        lez_bridge_protocol::PrepareWitnessedAssetRefundV2Result,
+    )>,
 );
 
 impl DurableStore {
@@ -296,6 +322,10 @@ impl DurableStore {
                                 | METHOD_PREPARE_WITNESSED_CLAIM
                                 | METHOD_COMPLETE_WITNESSED_CLAIM
                                 | METHOD_PREPARE_NATIVE_REFUND
+                                | METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2
+                                | METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2
+                                | METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2
+                                | METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2
                         )
                     })
             })
@@ -425,6 +455,10 @@ impl DurableStore {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "every durable protocol method is restored through one exhaustive typed match"
+    )]
     fn restore_requests(&self) -> Result<RestoredRequests, BridgeServerError> {
         let mut prepare = None;
         let mut witnessed_escrow = None;
@@ -432,6 +466,10 @@ impl DurableStore {
         let mut witnessed = None;
         let mut completed_witnessed = None;
         let mut refund = None;
+        let mut asset_escrow_v2 = None;
+        let mut asset_claim_v2 = None;
+        let mut completed_asset_claim_v2 = None;
+        let mut asset_refund_v2 = None;
         for entry in self.persisted.entries.values() {
             let PersistedOutcome::Success(value) = &entry.outcome else {
                 continue;
@@ -494,12 +532,48 @@ impl DurableStore {
                             .map_err(|_| BridgeServerError::InvalidDurableState)?,
                     ));
                 }
+                METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2 if asset_escrow_v2.is_none() => {
+                    asset_escrow_v2 = Some((
+                        serde_json::from_value(request)
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                        serde_json::from_value(value.clone())
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                    ));
+                }
+                METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2 if asset_claim_v2.is_none() => {
+                    asset_claim_v2 = Some((
+                        serde_json::from_value(request)
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                        serde_json::from_value(value.clone())
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                    ));
+                }
+                METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2 if completed_asset_claim_v2.is_none() => {
+                    completed_asset_claim_v2 = Some((
+                        serde_json::from_value(request)
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                        serde_json::from_value(value.clone())
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                    ));
+                }
+                METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2 if asset_refund_v2.is_none() => {
+                    asset_refund_v2 = Some((
+                        serde_json::from_value(request)
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                        serde_json::from_value(value.clone())
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                    ));
+                }
                 METHOD_PREPARE_NATIVE_ESCROW
                 | METHOD_PREPARE_WITNESSED_ESCROW
                 | METHOD_PREPARE_REVEALING_CLAIM
                 | METHOD_PREPARE_WITNESSED_CLAIM
                 | METHOD_COMPLETE_WITNESSED_CLAIM
-                | METHOD_PREPARE_NATIVE_REFUND => {
+                | METHOD_PREPARE_NATIVE_REFUND
+                | METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2
+                | METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2
+                | METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2
+                | METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2 => {
                     return Err(BridgeServerError::InvalidDurableState);
                 }
                 _ => {}
@@ -512,6 +586,10 @@ impl DurableStore {
             witnessed,
             completed_witnessed,
             refund,
+            asset_escrow_v2,
+            asset_claim_v2,
+            completed_asset_claim_v2,
+            asset_refund_v2,
         ))
     }
 }
@@ -599,7 +677,11 @@ pub async fn start_bridge_server(
         &config.run_id,
         runtime.descriptor(),
     )?;
-    restore_runtime_requests(&runtime, store.restore_requests()?).await?;
+    Box::pin(restore_runtime_requests(
+        &runtime,
+        store.restore_requests()?,
+    ))
+    .await?;
 
     let role = match runtime.descriptor().sidecar_role {
         Participant::Maker => "maker",
@@ -651,6 +733,10 @@ pub async fn start_bridge_server(
     })
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "each restored planner result is rederived and compared in explicit dependency order"
+)]
 async fn restore_runtime_requests(
     runtime: &Arc<BridgeRuntime>,
     restored: RestoredRequests,
@@ -662,6 +748,10 @@ async fn restore_runtime_requests(
         restored_witnessed,
         restored_completion,
         restored_refund,
+        restored_asset_escrow_v2,
+        restored_asset_claim_v2,
+        restored_asset_completion_v2,
+        restored_asset_refund_v2,
     ) = restored;
     if let Some((request, expected)) = restored_prepare {
         let observed = runtime
@@ -711,6 +801,42 @@ async fn restore_runtime_requests(
     if let Some((request, expected)) = restored_refund {
         let observed = runtime
             .prepare_native_refund(&request)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+        if observed != expected {
+            return Err(BridgeServerError::InvalidDurableState);
+        }
+    }
+    if let Some((request, expected)) = restored_asset_escrow_v2 {
+        let observed = runtime
+            .prepare_witnessed_asset_escrow_v2(&request)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+        if observed != expected {
+            return Err(BridgeServerError::InvalidDurableState);
+        }
+    }
+    if let Some((request, expected)) = restored_asset_claim_v2 {
+        let observed = runtime
+            .prepare_witnessed_asset_claim_v2(&request)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+        if observed != expected {
+            return Err(BridgeServerError::InvalidDurableState);
+        }
+    }
+    if let Some((request, expected)) = restored_asset_completion_v2 {
+        let observed = runtime
+            .complete_witnessed_asset_claim_v2(&request)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+        if observed != expected {
+            return Err(BridgeServerError::InvalidDurableState);
+        }
+    }
+    if let Some((request, expected)) = restored_asset_refund_v2 {
+        let observed = runtime
+            .prepare_witnessed_asset_refund_v2(&request)
             .await
             .map_err(|_| BridgeServerError::InvalidDurableState)?;
         if observed != expected {
@@ -778,6 +904,31 @@ fn register_methods(
                     || async move {
                         runtime
                             .prepare_native_escrow(operation)
+                            .await
+                            .map_err(Into::into)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
+    module.register_async_method(
+        METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2,
+        |params, state, _| async move {
+            let request = Arc::new(
+                params.one::<lez_bridge_protocol::PrepareWitnessedAssetEscrowV2Request>()?,
+            );
+            state.validate_runtime(&request.context, &request.runtime)?;
+            let operation = Arc::clone(&request);
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2,
+                    &request.context,
+                    request.as_ref(),
+                    || async move {
+                        runtime
+                            .prepare_witnessed_asset_escrow_v2(operation.as_ref())
                             .await
                             .map_err(Into::into)
                             .and_then(to_value)
@@ -1131,6 +1282,82 @@ fn register_refund_methods(
                 .await
         },
     )?;
+    register_asset_v2_methods(module)
+}
+
+fn register_asset_v2_methods(
+    module: &mut RpcModule<ServerState>,
+) -> Result<(), jsonrpsee::core::RegisterMethodError> {
+    macro_rules! register {
+        ($method:expr, $request:ty, $operation:ident) => {
+            module.register_async_method($method, |params, state, _| async move {
+                let request = Arc::new(params.one::<$request>()?);
+                state.validate_runtime(&request.context, &request.runtime)?;
+                let operation = Arc::clone(&request);
+                let runtime = Arc::clone(&state.runtime);
+                state
+                    .execute($method, &request.context, request.as_ref(), || async move {
+                        runtime
+                            .$operation(operation.as_ref())
+                            .await
+                            .map_err(Into::into)
+                            .and_then(to_value)
+                    })
+                    .await
+            })?;
+        };
+    }
+
+    register!(
+        METHOD_OBSERVE_WITNESSED_ASSET_ESCROW_V2,
+        lez_bridge_protocol::ObserveWitnessedAssetEscrowV2Request,
+        observe_witnessed_asset_escrow_v2
+    );
+    register!(
+        METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2,
+        lez_bridge_protocol::PrepareWitnessedAssetClaimV2Request,
+        prepare_witnessed_asset_claim_v2
+    );
+    register!(
+        METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2,
+        lez_bridge_protocol::CompleteWitnessedAssetClaimV2Request,
+        complete_witnessed_asset_claim_v2
+    );
+    register!(
+        METHOD_OBSERVE_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
+        lez_bridge_protocol::ObserveFinalizedWitnessedAssetClaimV2Request,
+        observe_finalized_witnessed_asset_claim_v2
+    );
+    register!(
+        METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2,
+        lez_bridge_protocol::PrepareWitnessedAssetRefundV2Request,
+        prepare_witnessed_asset_refund_v2
+    );
+    register!(
+        METHOD_OBSERVE_WITNESSED_ASSET_REFUND_V2,
+        lez_bridge_protocol::ObserveWitnessedAssetRefundV2Request,
+        observe_witnessed_asset_refund_v2
+    );
+    register!(
+        METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_INITIALIZATION_V2,
+        lez_bridge_protocol::ClassifyFinalizedWitnessedAssetInitializationV2Request,
+        classify_finalized_witnessed_asset_initialization_v2
+    );
+    register!(
+        METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CUSTODY_CREATION_V2,
+        lez_bridge_protocol::ClassifyFinalizedWitnessedAssetCustodyCreationV2Request,
+        classify_finalized_witnessed_asset_custody_creation_v2
+    );
+    register!(
+        METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_FUNDING_V2,
+        lez_bridge_protocol::ClassifyFinalizedWitnessedAssetFundingV2Request,
+        classify_finalized_witnessed_asset_funding_v2
+    );
+    register!(
+        METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
+        lez_bridge_protocol::ClassifyFinalizedWitnessedAssetClaimV2Request,
+        classify_finalized_witnessed_asset_claim_v2
+    );
     Ok(())
 }
 
@@ -1213,6 +1440,10 @@ impl ServerState {
                 | METHOD_PREPARE_WITNESSED_CLAIM
                 | METHOD_COMPLETE_WITNESSED_CLAIM
                 | METHOD_PREPARE_NATIVE_REFUND
+                | METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2
+                | METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2
+                | METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2
+                | METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2
         );
         let repeatable = method != METHOD_SUBMIT_TRANSACTION
             && (!prepare || matches!(&outcome, PersistedOutcome::Error(_)));
@@ -1280,6 +1511,10 @@ fn encode_request<Request: Serialize>(
             | METHOD_PREPARE_WITNESSED_CLAIM
             | METHOD_COMPLETE_WITNESSED_CLAIM
             | METHOD_PREPARE_NATIVE_REFUND
+            | METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2
+            | METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2
+            | METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2
+            | METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2
     )
     .then_some(request_value);
     Ok((request_sha256, replay_request))
@@ -1322,5 +1557,16 @@ fn valid_method(method: &str) -> bool {
             | METHOD_PREPARE_NATIVE_REFUND
             | METHOD_OBSERVE_NATIVE_REFUND
             | METHOD_SUBMIT_TRANSACTION
+            | METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2
+            | METHOD_OBSERVE_WITNESSED_ASSET_ESCROW_V2
+            | METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2
+            | METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2
+            | METHOD_OBSERVE_FINALIZED_WITNESSED_ASSET_CLAIM_V2
+            | METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2
+            | METHOD_OBSERVE_WITNESSED_ASSET_REFUND_V2
+            | METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_INITIALIZATION_V2
+            | METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CUSTODY_CREATION_V2
+            | METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_FUNDING_V2
+            | METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CLAIM_V2
     )
 }

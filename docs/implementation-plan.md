@@ -1778,9 +1778,26 @@ Active M3 refund critical path:
   schema-5 taker-first submission, observation, claim, and refund composition
   remains part of the runner work rather than being implied by this durable
   mapping slice.
-  Sidecar server routes/finalized token scans plus durable journal/actor
-  composition, runner integration, and two-direction actual-node token swap
-  evidence remain open;
+  The official v0.2 sidecar server now authenticates and registers all eleven
+  v2 asset methods, restores the four preparation/completion reservations in
+  dependency order, and replays their exact results after process restart.
+  Its bounded finalized scanner independently checks block ID/hash equality,
+  parent-linked ancestry, canonical public bytes/hash, stateless validity,
+  signer and account order, instruction/program/ATA identities, metadata,
+  fungible definition, and historical holdings for initialization, custody
+  creation, funding, claim, and refund. A pinned-indexer default account is
+  treated as authoritative absence while an RPC failure remains unavailable;
+  permissionless custody creation requires no fabricated signer. Root review
+  reproduced a refund scan/state same-height fork that previously could join
+  facts from different finalized views. The RED regression is GREEN after the
+  scanner retained one stable witness, read state at that exact tip, rechecked
+  its identity, and downgraded movement/history loss to `UnknownOrPending`.
+  Official planner bytes pass a complete init/custody/fund finalized journey,
+  authenticated real-client route/restart coverage, five focused scanner
+  cases, and all 122 sidecar tests plus 44 protocol contracts, strict Clippy,
+  rustdoc/doctests, formatting, diff, advisory, ban, license, and source gates.
+  Live schema-5 journal/actor composition, runner integration, and
+  two-direction actual-node token swap evidence remain open;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
   not recordings and cannot satisfy D1. The repository now supplies a
@@ -1806,9 +1823,9 @@ Active M3 refund critical path:
 - [ ] after the owner enters later hardening, add restart, reorg, fee, and chaos
   cases beyond the reproducible functional PoC boundary.
 
-Repository-controlled open work, not external blockers, is the F7
-route/scan/journal/actor, runner integration, and actual-node custom-token
-composition, D1 recordings, and synchronized closure evidence and gates. The
+Repository-controlled open work, not external blockers, is the F7 live
+journal/actor and runner composition, two-direction actual-node custom-token
+evidence, D1 recordings, and synchronized closure evidence and gates. The
 official-wallet starting fixture is GREEN but cannot substitute for
 actor-owned escrow/claim/refund effects or finalized balance evidence. The
 revision-one-to-two store/projector, signed

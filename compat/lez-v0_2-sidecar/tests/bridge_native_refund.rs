@@ -13,7 +13,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use indexer_service_protocol::{Account as IndexedAccount, Block};
+use indexer_service_protocol::Block;
 use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
 use lez_bridge_protocol::{
@@ -23,8 +23,8 @@ use lez_bridge_protocol::{
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
-    FinalizedIndexerApi, NativeEscrowPlanner, NativePrepareError, NonceSource, OfficialNodeRpc,
-    start_bridge_server,
+    FinalizedIndexerApi, HistoricalAccount, NativeEscrowPlanner, NativePrepareError, NonceSource,
+    OfficialNodeRpc, start_bridge_server,
 };
 use nssa::{AccountId, PrivateKey, PublicKey};
 
@@ -94,7 +94,7 @@ impl FinalizedIndexerApi for UnusedIndexer {
         &self,
         _account_id: [u8; 32],
         _block_id: u64,
-    ) -> Result<IndexedAccount, BridgeRuntimeError> {
+    ) -> Result<HistoricalAccount, BridgeRuntimeError> {
         Err(BridgeRuntimeError::Unavailable)
     }
 }

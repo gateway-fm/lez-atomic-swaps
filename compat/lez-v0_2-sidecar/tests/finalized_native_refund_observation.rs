@@ -26,9 +26,9 @@ use lez_bridge_protocol::{
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
-    FinalizedIndexerApi, FinalizedWitnessedRefundObserver, NativeEscrowPlanner, NativePrepareError,
-    NonceSource, OfficialNodeRpc, ZecEscrowInstruction, compute_custody_pda, compute_metadata_pda,
-    prepared_from_transaction, program_id_from_hex, start_bridge_server,
+    FinalizedIndexerApi, FinalizedWitnessedRefundObserver, HistoricalAccount, NativeEscrowPlanner,
+    NativePrepareError, NonceSource, OfficialNodeRpc, ZecEscrowInstruction, compute_custody_pda,
+    compute_metadata_pda, prepared_from_transaction, program_id_from_hex, start_bridge_server,
 };
 use lez_zec_escrow_v02::{ClaimAuthority, EscrowMetadata, EscrowStatus};
 use nssa::{
@@ -87,10 +87,11 @@ impl FinalizedIndexerApi for MockIndexer {
         &self,
         account_id: [u8; 32],
         block_id: u64,
-    ) -> Result<IndexedAccount, BridgeRuntimeError> {
+    ) -> Result<HistoricalAccount, BridgeRuntimeError> {
         self.accounts
             .get(&(account_id, block_id))
             .cloned()
+            .map(HistoricalAccount::Present)
             .ok_or(BridgeRuntimeError::Unavailable)
     }
 }
@@ -141,7 +142,7 @@ impl FinalizedIndexerApi for ReplacingPinnedBlockIndexer {
         &self,
         account_id: [u8; 32],
         block_id: u64,
-    ) -> Result<IndexedAccount, BridgeRuntimeError> {
+    ) -> Result<HistoricalAccount, BridgeRuntimeError> {
         self.base.account_at_block(account_id, block_id).await
     }
 }

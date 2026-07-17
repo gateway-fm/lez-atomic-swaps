@@ -1,9 +1,10 @@
 # ADR 0045: Countersign the selected LEZ asset separately from agreement v1
 
 Status: Accepted at the deterministic BTC SDK, bridge-adapter, and official
-sidecar-planner component boundaries. Exact asset-bound first-lock validation
-and Maker-plan authorization are GREEN. Live actor, finalized route/scan,
-journal, and actual-node composition remain open.
+sidecar component boundaries. Exact asset-bound first-lock validation,
+Maker-plan authorization, all eleven authenticated routes, durable replay, and
+fork-safe finalized scans are GREEN. Live actor, journal, and actual-node
+composition remain open.
 
 ## Context
 

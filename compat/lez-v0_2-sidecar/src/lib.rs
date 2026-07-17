@@ -10,6 +10,7 @@ mod bridge_server;
 mod durable_reservation;
 #[cfg(target_os = "linux")]
 mod effect_submission;
+mod finalized_asset_observation;
 mod finalized_claim_observation;
 mod finalized_refund_observation;
 mod native_prepare;
@@ -36,7 +37,7 @@ pub use bridge_server::{
 };
 pub use finalized_claim_observation::{
     FinalizedIndexerApi, FinalizedWitnessedClaimObserver, FinalizedWitnessedFundingObserver,
-    FinalizedWitnessedInitializationObserver, OfficialIndexerRpc,
+    FinalizedWitnessedInitializationObserver, HistoricalAccount, OfficialIndexerRpc,
 };
 pub use finalized_refund_observation::FinalizedWitnessedRefundObserver;
 pub use native_prepare::{

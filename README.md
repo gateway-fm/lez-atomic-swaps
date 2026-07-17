@@ -112,8 +112,11 @@ distinct v2 reservations byte-for-byte without nonce rereads. The main-process
 adapter now maps the countersigned BTC asset extension and exact local policy
 into all eleven v2 calls, checks chain/program/signer/role before transport, and
 preserves all four conservative classifier outcomes without submit authority.
-Server routes, finalized token scans, durable journal/actor composition, and
-actual-node token balance/effect evidence remain open.
+The sidecar exposes all eleven capability-authenticated routes, restores those
+reservations in dependency order, and scans finalized initialization, custody,
+funding, claim, and refund evidence without joining state across a moving or
+same-height replacement fork. Durable journal/actor composition and actual-node
+token balance/effect evidence remain open.
 
 Run `m3refund-20260716h` then passed the two-lock timeout/refund journey
 from base HEAD `ef5f306` with a dirty pre-commit source tree and the packet's

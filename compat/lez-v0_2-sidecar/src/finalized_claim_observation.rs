@@ -41,6 +41,24 @@ const MAX_INDEXER_REQUEST_BYTES: u32 = 2_800_000;
 const MAX_INDEXER_RESPONSE_BYTES: u32 = 8 * 1024 * 1024;
 const INDEXER_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Provenance-preserving historical account state from pinned indexer v0.2.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum HistoricalAccount {
+    /// The pinned state machine returned its canonical default for a missing account.
+    Absent,
+    /// The historical account existed with these exact indexed fields.
+    Present(IndexedAccount),
+}
+
+impl HistoricalAccount {
+    pub(crate) fn require_present(self) -> Result<IndexedAccount, BridgeRuntimeError> {
+        match self {
+            Self::Present(account) => Ok(account),
+            Self::Absent => Err(BridgeRuntimeError::InvalidObservation),
+        }
+    }
+}
+
 /// Narrow read-only official indexer boundary used by finalized claim observation.
 #[async_trait]
 pub trait FinalizedIndexerApi: Send + Sync + fmt::Debug {
@@ -61,18 +79,18 @@ pub trait FinalizedIndexerApi: Send + Sync + fmt::Debug {
         &self,
         account_id: [u8; 32],
         block_id: u64,
-    ) -> Result<IndexedAccount, BridgeRuntimeError>;
+    ) -> Result<HistoricalAccount, BridgeRuntimeError>;
 }
 
-struct StableFinalizedWindow {
-    blocks: Vec<Block>,
-    finalized_clock: ChainClock,
-    finalized_tip: Block,
-    requested_end: u64,
+pub(crate) struct StableFinalizedWindow {
+    pub(crate) blocks: Vec<Block>,
+    pub(crate) finalized_clock: ChainClock,
+    pub(crate) finalized_tip: Block,
+    pub(crate) requested_end: u64,
 }
 
 impl StableFinalizedWindow {
-    async fn confirm_unchanged(
+    pub(crate) async fn confirm_unchanged(
         &self,
         indexer: &dyn FinalizedIndexerApi,
     ) -> Result<(), BridgeRuntimeError> {
@@ -91,7 +109,7 @@ impl StableFinalizedWindow {
     }
 }
 
-async fn read_stable_finalized_window(
+pub(crate) async fn read_stable_finalized_window(
     indexer: &dyn FinalizedIndexerApi,
     window: lez_bridge_protocol::DiscoveryWindow,
 ) -> Result<StableFinalizedWindow, BridgeRuntimeError> {
@@ -240,11 +258,23 @@ impl FinalizedIndexerApi for OfficialIndexerRpc {
         &self,
         account_id: [u8; 32],
         block_id: u64,
-    ) -> Result<IndexedAccount, BridgeRuntimeError> {
-        self.client
+    ) -> Result<HistoricalAccount, BridgeRuntimeError> {
+        let account = self
+            .client
             .get_account_at_block(IndexedAccountId { value: account_id }, block_id)
             .await
-            .map_err(|_| BridgeRuntimeError::Unavailable)
+            .map_err(|_| BridgeRuntimeError::Unavailable)?;
+        Ok(
+            if account.program_owner.0 == [0; 8]
+                && account.balance == 0
+                && account.data.0.is_empty()
+                && account.nonce == 0
+            {
+                HistoricalAccount::Absent
+            } else {
+                HistoricalAccount::Present(account)
+            },
+        )
     }
 }
 
@@ -637,11 +667,13 @@ impl FinalizedWitnessedClaimObserver {
         let metadata_account = self
             .indexer
             .account_at_block(metadata_id.into_value(), block_id)
-            .await?;
+            .await?
+            .require_present()?;
         let custody_account = self
             .indexer
             .account_at_block(custody_id.into_value(), block_id)
-            .await?;
+            .await?
+            .require_present()?;
         let metadata = EscrowMetadata::try_from_slice(metadata_account.data.0.as_ref())
             .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
         let ClaimAuthority::AggregateWitness {
@@ -983,11 +1015,13 @@ impl FinalizedWitnessedInitializationObserver {
         let metadata_account = self
             .indexer
             .account_at_block(metadata_id.into_value(), block_id)
-            .await?;
+            .await?
+            .require_present()?;
         let custody_account = self
             .indexer
             .account_at_block(custody_id.into_value(), block_id)
-            .await?;
+            .await?
+            .require_present()?;
         let metadata = EscrowMetadata::try_from_slice(metadata_account.data.0.as_ref())
             .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
         let ClaimAuthority::AggregateWitness {
@@ -1333,11 +1367,13 @@ impl FinalizedWitnessedFundingObserver {
         let metadata_account = self
             .indexer
             .account_at_block(metadata_id.into_value(), block_id)
-            .await?;
+            .await?
+            .require_present()?;
         let custody_account = self
             .indexer
             .account_at_block(custody_id.into_value(), block_id)
-            .await?;
+            .await?
+            .require_present()?;
         let metadata = EscrowMetadata::try_from_slice(metadata_account.data.0.as_ref())
             .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
         let ClaimAuthority::AggregateWitness {

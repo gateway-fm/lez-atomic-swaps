@@ -453,11 +453,13 @@ impl FinalizedWitnessedRefundObserver {
         let metadata_account = self
             .indexer
             .account_at_block(metadata_id.into_value(), block_id)
-            .await?;
+            .await?
+            .require_present()?;
         let custody_account = self
             .indexer
             .account_at_block(custody_id.into_value(), block_id)
-            .await?;
+            .await?
+            .require_present()?;
         let metadata = EscrowMetadata::try_from_slice(metadata_account.data.0.as_ref())
             .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
         let ClaimAuthority::AggregateWitness {
