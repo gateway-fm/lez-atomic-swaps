@@ -76,7 +76,8 @@ emit_contract() {
       pre_lock_presignature_domains: ["bitcoin", "lez"],
       expected_unique_effects: {bitcoin: 2, lez: 3},
       submission_count_semantics: "unique_effects_plus_durable_one_shot_authority",
-      commands: ["preflight","effect-plan","prepare-stage-two-spec","run-actor-flow","submission-counts"]
+      commands: ["preflight","effect-plan","prepare-stage-two-spec","run-actor-flow",
+        "run-overlap-actor-flow","submission-counts"]
     }'
 }
 
@@ -220,7 +221,8 @@ require_environment() {
     M3_POC_LEZ_NATIVE_ESCROW_BIN M3_POC_BITCOIN_MANIFEST M3_POC_BITCOIN_RPC_URL
     M3_POC_BITCOIN_MAKER_CURL_CONFIG M3_POC_BITCOIN_TAKER_CURL_CONFIG
     M3_POC_BITCOIN_MAKER_BASIC M3_POC_BITCOIN_TAKER_BASIC
-    M3_POC_BITCOIN_FUNDING_CREDENTIALS M3_POC_BITCOIN_CONTAINER_ID
+    M3_POC_BITCOIN_FUNDING_CREDENTIALS M3_POC_BITCOIN_FUNDING_SOURCES
+    M3_POC_BITCOIN_PLANNED_ANCHOR_HEIGHT M3_POC_BITCOIN_CONTAINER_ID
     M3_POC_LEZ_MANIFEST M3_POC_LEZ_SEQUENCER_RPC_URL M3_POC_LEZ_INDEXER_RPC_URL
     M3_POC_LEZ_CHANNEL_ID M3_POC_LEZ_ESCROW_PROGRAM_ID
     M3_POC_LEZ_AUTH_TRANSFER_PROGRAM_ID M3_POC_LEZ_GENESIS_BLOCK_HASH
@@ -244,11 +246,14 @@ require_environment() {
     M3_POC_BITCOIN_MANIFEST M3_POC_BITCOIN_MAKER_CURL_CONFIG \
     M3_POC_BITCOIN_TAKER_CURL_CONFIG M3_POC_BITCOIN_MAKER_BASIC \
     M3_POC_BITCOIN_TAKER_BASIC M3_POC_BITCOIN_FUNDING_CREDENTIALS \
+    M3_POC_BITCOIN_FUNDING_SOURCES \
     M3_POC_LEZ_MANIFEST M3_POC_MAKER_LEZ_IDENTITY M3_POC_MAKER_LEZ_PRIVATE_KEY \
     M3_POC_TAKER_LEZ_IDENTITY M3_POC_TAKER_LEZ_PRIVATE_KEY; do
     value="${!variable}"
     [[ "$value" == /* ]] || fail "path environment must be absolute: ${variable}"
   done
+  [[ "$M3_POC_BITCOIN_PLANNED_ANCHOR_HEIGHT" =~ ^[1-9][0-9]*$ ]] ||
+    fail "planned Bitcoin funding anchor must be a positive height"
   [[ "$M3_POC_SECURE_STATE_ROOT" == \
      "/tmp/lez-atomic-swaps-m3-${M3_POC_RUN_ID}-secure-state/directions/${M3_POC_DIRECTION}" ]] ||
     fail "secure state root is not the exact run-owned direction root"
@@ -472,7 +477,7 @@ prepare_stage_two_spec() {
   local depositor claimant amount now maker_cutoff refund_seconds refund_at_ms swap_id terms_file
   local earlier later
   local source_tx source_vout source_value source_script secret_hex secret_file
-  local funding_spec funding_summary funding_hex funder mempool genesis height anchor first_summary
+  local funding_spec funding_summary funding_hex funder mempool genesis height anchor source
   local funding_source_evidence funding_policy_evidence
   local pda_evidence metadata custody claim_hash earlier later
   public_spec="${M3_POC_DIRECTION_ROOT}/fixture/public-spec.json"
@@ -547,27 +552,22 @@ prepare_stage_two_spec() {
   secret_file="${M3_POC_DIRECTION_ROOT}/service-funding.key"
   printf '%s' "$secret_hex" | xxd -r -p >"$secret_file"
   chmod 0600 "$secret_file"
-  if [[ "$M3_POC_DIRECTION" == "taker_sells_foreign" ]]; then
-    source_tx="$(file_value "$M3_POC_BITCOIN_FUNDING_CREDENTIALS" BITCOIN_CORE_FUNDING_TXID)"
-    source_vout="$(file_value "$M3_POC_BITCOIN_FUNDING_CREDENTIALS" BITCOIN_CORE_FUNDING_VOUT)"
-    source_value="$(file_value "$M3_POC_BITCOIN_FUNDING_CREDENTIALS" BITCOIN_CORE_FUNDING_VALUE_SAT)"
-  else
-    first_summary="${M3_POC_EVIDENCE_DIR}/taker_sells_foreign-funding-prepared.json"
-    source_tx="$(jq -er '.transaction_id' "$first_summary")"
-    source_vout="$(jq -er '.change_output_index' "$first_summary")"
-    source_value="$(jq -er '.change_value_sat' "$first_summary")"
-    source_script="$(jq -er '.input_script_pubkey' "$first_summary")"
-  fi
+  source="$(jq -ec --arg direction "$M3_POC_DIRECTION" '
+    [.sources[] | select(.direction == $direction)] |
+    if length == 1 then .[0] else error("direction funding source") end
+  ' "$M3_POC_BITCOIN_FUNDING_SOURCES")"
+  source_tx="$(jq -er '.source.transaction_id' <<<"$source")"
+  source_vout="$(jq -er '.source.output_index | numbers' <<<"$source")"
+  source_value="$(jq -er '.source.value_sat | numbers' <<<"$source")"
+  source_script="$(jq -er '.source.script_pubkey' <<<"$source")"
+  [[ "$(jq -er '.planned_bitcoin_funding_anchor_height | numbers' <<<"$source")" == "$M3_POC_BITCOIN_PLANNED_ANCHOR_HEIGHT" ]] ||
+    fail "direction funding source and planned anchor disagree"
   funding_source_evidence="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-funding-source-gettxout.json"
   [[ ! -e "$funding_source_evidence" && ! -L "$funding_source_evidence" ]] ||
     fail "refusing to overwrite Core funding-source evidence"
   core_rpc maker gettxout "[\"${source_tx}\",${source_vout},true]" \
     >"$funding_source_evidence"
   chmod 0600 "$funding_source_evidence"
-  if [[ "$M3_POC_DIRECTION" == "taker_sells_foreign" ]]; then
-    source_script="$(jq -ser \
-      'select(length == 1) | .[0].result.scriptPubKey.hex' "$funding_source_evidence")"
-  fi
   jq -se --argjson value "$source_value" --arg script "$source_script" '
     length == 1
     and .[0].error == null
@@ -614,7 +614,9 @@ prepare_stage_two_spec() {
   genesis="$(core_rpc maker getblockhash '[0]' | jq -er '.result')"
   height="$(core_rpc maker getblockchaininfo '[]' |
     jq -ser 'select(length == 1) | .[0].result.blocks | numbers')"
-  anchor=$((height + 1))
+  anchor="$M3_POC_BITCOIN_PLANNED_ANCHOR_HEIGHT"
+  (( anchor >= height + 1 && anchor <= height + 2 )) ||
+    fail "planned Bitcoin funding anchor is outside the two-swap execution window"
 
   jq -n --arg stage1 "$stage1_sha" --arg swap "$swap_id" --arg direction "$M3_POC_DIRECTION" \
     --arg genesis "$genesis" --arg funding_hex "$funding_hex" \
@@ -3075,7 +3077,7 @@ run_actor_refund_flow() {
   esac
 }
 
-run_actor_flow() {
+prepare_actor_flow_runtime() {
   local initial_tip
   prepare_final_transcript
   provision_signing_material
@@ -3086,36 +3088,104 @@ run_actor_flow() {
   actor_prelock_lez_tip="$initial_tip"
   write_actor_configs "$initial_tip" 1
   activate_actors
+}
 
-  case "$M3_POC_JOURNEY" in
-    first_lock_refund)
-      run_actor_first_lock_refund_flow
+run_actor_two_lock_phase() {
+  case "$M3_POC_DIRECTION" in
+    taker_sells_foreign)
+      submit_taker_bitcoin_first_lock
+      project_both_to_revision 1 bitcoin bitcoin-first-lock
+      submit_actor_maker_lez_second_lock_pair
+      project_both_to_revision 2 lez lez-second-lock
       ;;
-    claim | survivor_claim | refund)
-      case "$M3_POC_DIRECTION" in
-        taker_sells_foreign)
-          submit_taker_bitcoin_first_lock
-          project_both_to_revision 1 bitcoin bitcoin-first-lock
-          submit_actor_maker_lez_second_lock_pair
-          project_both_to_revision 2 lez lez-second-lock
-          ;;
-        taker_sells_lez)
-          submit_taker_lez_first_lock_pair
-          project_both_to_revision 1 lez lez-first-lock
-          submit_actor_maker_bitcoin_second_lock
-          project_both_to_revision 2 bitcoin bitcoin-second-lock
-          ;;
-      esac
-      write_dual_lock_gate
-      case "$M3_POC_JOURNEY" in
-        claim) run_actor_claim_flow ;;
-        survivor_claim) run_actor_survivor_claim_flow ;;
-        refund) run_actor_refund_flow ;;
-      esac
-      capture_both_statuses 4 terminal-status
+    taker_sells_lez)
+      submit_taker_lez_first_lock_pair
+      project_both_to_revision 1 lez lez-first-lock
+      submit_actor_maker_bitcoin_second_lock
+      project_both_to_revision 2 bitcoin bitcoin-second-lock
       ;;
   esac
+  write_dual_lock_gate
+}
+
+run_actor_settlement_phase() {
+  case "$M3_POC_JOURNEY" in
+    claim) run_actor_claim_flow ;;
+    survivor_claim) run_actor_survivor_claim_flow ;;
+    refund) run_actor_refund_flow ;;
+    *) fail "two-lock settlement is unavailable for ${M3_POC_JOURNEY}" ;;
+  esac
+  capture_both_statuses 4 terminal-status
   write_actual_effect_manifest
+}
+
+run_actor_flow() {
+  prepare_actor_flow_runtime
+  if [[ "$M3_POC_JOURNEY" == "first_lock_refund" ]]; then
+    run_actor_first_lock_refund_flow
+    write_actual_effect_manifest
+    return
+  fi
+  run_actor_two_lock_phase
+  run_actor_settlement_phase
+}
+
+overlap_gate_path() {
+  printf '%s/overlap-%s-permit.json\n' "$M3_POC_DIRECTION_ROOT" "$1"
+}
+
+overlap_marker_path() {
+  printf '%s/overlap-%s-arrived.json\n' "$M3_POC_DIRECTION_ROOT" "$1"
+}
+
+write_overlap_marker() {
+  local phase="$1" revision="$2" marker partial
+  marker="$(overlap_marker_path "$phase")"
+  partial="${marker}.partial"
+  [[ ! -e "$marker" && ! -L "$marker" && ! -e "$partial" && ! -L "$partial" ]] ||
+    fail "refusing to overwrite overlap ${phase} marker"
+  jq -n --arg run "$M3_POC_RUN_ID" --arg direction "$M3_POC_DIRECTION" \
+    --arg phase "$phase" --argjson revision "$revision" \
+    --arg recorded_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+    {schema_version:1,run_id:$run,direction:$direction,phase:$phase,
+     revision:$revision,recorded_at:$recorded_at}
+  ' >"$partial"
+  chmod 0600 "$partial"
+  mv "$partial" "$marker"
+}
+
+await_overlap_permit() {
+  local phase="$1" expected_revision="$2" permit
+  permit="$(overlap_gate_path "$phase")"
+  for _ in {1..14400}; do
+    if [[ -f "$permit" && ! -L "$permit" ]]; then
+      [[ "$(stat -c '%a' "$permit")" == 600 ]] ||
+        fail "overlap ${phase} permit is not owner private"
+      jq -e --arg run "$M3_POC_RUN_ID" --arg direction "$M3_POC_DIRECTION" \
+        --arg phase "$phase" --argjson revision "$expected_revision" '
+        .schema_version == 1 and .run_id == $run and .direction == $direction
+        and .phase == $phase and .expected_revision == $revision
+      ' "$permit" >/dev/null || fail "overlap ${phase} permit is inconsistent"
+      return
+    fi
+    sleep 0.25
+  done
+  fail "overlap ${phase} permit timed out"
+}
+
+run_overlap_actor_flow() {
+  [[ "$M3_POC_JOURNEY" == "claim" ]] ||
+    fail "overlap actor flow currently supports only the claim journey"
+  prepare_actor_flow_runtime
+  capture_both_statuses 0 overlap-ready-status
+  write_overlap_marker ready 0
+  await_overlap_permit lock 0
+  run_actor_two_lock_phase
+  capture_both_statuses 2 overlap-locked-status
+  write_overlap_marker locked 2
+  await_overlap_permit settle 2
+  run_actor_settlement_phase
+  write_overlap_marker terminal 4
 }
 
 submission_counts() {
@@ -3193,10 +3263,15 @@ case "$command_name" in
     require_environment
     run_actor_flow
     ;;
+  run-overlap-actor-flow)
+    [[ "$#" == 1 ]] || fail "run-overlap-actor-flow accepts no arguments"
+    require_environment
+    run_overlap_actor_flow
+    ;;
   submission-counts)
     [[ "$#" == 1 ]] || fail "submission-counts accepts no arguments"
     require_environment
     submission_counts
     ;;
-  *) fail "expected contract, preflight, effect-plan, prepare-stage-two-spec, run-actor-flow, or submission-counts" ;;
+  *) fail "expected contract, preflight, effect-plan, prepare-stage-two-spec, run-actor-flow, run-overlap-actor-flow, or submission-counts" ;;
 esac

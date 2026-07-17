@@ -1255,12 +1255,23 @@ fi
 [[ ! -e ".e2e/${invalid_journey_run_id}" && ! -L ".e2e/${invalid_journey_run_id}" ]] ||
   fail "invalid journey created run state"
 
+invalid_schedule_run_id="m3badschedule-$RANDOM-$$"
+if invalid_schedule_output="$(RUN_ID="$invalid_schedule_run_id" \
+  M3_ACTOR_POC_SCHEDULE=invalid-schedule M3_ACTOR_POC_MODE=contract "$runner" 2>&1)"; then
+  fail "an invalid schedule reached contract output"
+fi
+[[ "$invalid_schedule_output" == *"M3_ACTOR_POC_SCHEDULE must be sequential or overlap"* ]] ||
+  fail "invalid schedule did not fail with the bounded validation error"
+[[ ! -e ".e2e/${invalid_schedule_run_id}" && ! -L ".e2e/${invalid_schedule_run_id}" ]] ||
+  fail "invalid schedule created run state"
+
 contract_run_id="m3contract-$RANDOM-$$"
 contract_json="$(RUN_ID="$contract_run_id" M3_ACTOR_POC_MODE=contract "$runner")"
 jq -e --arg run_id "$contract_run_id" '
   .schema_version == 1
   and .kind == "m3_actor_local_poc_contract"
   and .execution_performed == false
+  and .schedule == "sequential"
   and .run_id == $run_id
   and .run_root == (".e2e/" + $run_id + "/m3-actor-poc")
   and .service_runs.bitcoin_core == ($run_id + "-btc")
@@ -1277,6 +1288,8 @@ jq -e --arg run_id "$contract_run_id" '
   and .ordering.taker_first_effects == true
   and .ordering.dual_locks_before_scalar_use == true
   and .ordering.directions_are_sequential == true
+  and .ordering.overlapping_revision_two_barrier == false
+  and .ordering.settlements_released_only_after_both_locks == false
   and .survivor == null
   and .finality.bitcoin == "exact_signed_confirmation_depth"
   and .finality.lez == "exact_finalized_indexer_ancestry"
@@ -1309,6 +1322,33 @@ jq -e --arg run_id "$contract_run_id" '
     required_for_certification:false
   }
 ' <<<"$contract_json" >/dev/null || fail "contract JSON does not prove the M3 invariants"
+
+overlap_contract_run_id="m3overlapcontract-$RANDOM-$$"
+overlap_contract_json="$(RUN_ID="$overlap_contract_run_id" \
+  M3_ACTOR_POC_SCHEDULE=overlap M3_ACTOR_POC_MODE=contract "$runner")"
+jq -e --arg run_id "$overlap_contract_run_id" '
+  .schema_version == 1 and .kind == "m3_actor_local_poc_contract"
+  and .execution_performed == false and .run_id == $run_id
+  and .journey == "claim" and .schedule == "overlap"
+  and .evidence_packet_kind == "m3_actor_overlapping_two_swap_local_poc"
+  and .ordering.directions_are_sequential == false
+  and .ordering.overlapping_revision_two_barrier == true
+  and .ordering.settlements_released_only_after_both_locks == true
+  and .process_model.state == "separate_role_configs_state_dbs_and_signing_journals"
+  and .external_resources.public_rpc == false
+  and .external_resources.faucet == false
+  and .external_resources.public_funds == false
+' <<<"$overlap_contract_json" >/dev/null ||
+  fail "overlap contract does not require the explicit revision-two barrier"
+
+invalid_overlap_journey_run_id="m3overlaprefund-$RANDOM-$$"
+if invalid_overlap_journey_output="$(RUN_ID="$invalid_overlap_journey_run_id" \
+  M3_ACTOR_POC_SCHEDULE=overlap M3_ACTOR_POC_JOURNEY=refund \
+  M3_ACTOR_POC_MODE=contract "$runner" 2>&1)"; then
+  fail "overlap schedule accepted a non-claim journey"
+fi
+[[ "$invalid_overlap_journey_output" == *"overlap currently requires the claim journey"* ]] ||
+  fail "overlap non-claim rejection was not explicit"
 
 survivor_contract_run_id="m3survivorcontract-$RANDOM-$$"
 survivor_contract_json="$(RUN_ID="$survivor_contract_run_id" \
@@ -1869,8 +1909,13 @@ required_terms=(
   'run_stage_one'
   'run_official_nssa_mapping'
   'start_actual_nodes'
+  'provision_bitcoin_funding_sources'
+  'bitcoin-funding-sources.json'
   'run_stage_two'
   'run_direction_actor_flow'
+  'run_overlapping_actor_flows'
+  'run-overlap-actor-flow'
+  'overlap-revision-two-window.json'
   'assert_terminal_and_replay'
   'write_cleanup_attestation'
   'capture_owned_resources'
@@ -1893,7 +1938,7 @@ done
 
 stage_one_line="$(rg -n -F 'run_stage_one "$direction"' "$runner" | head -n1 | cut -d: -f1)"
 nodes_line="$(rg -n -F 'start_actual_nodes' "$runner" | tail -n1 | cut -d: -f1)"
-stage_two_line="$(rg -n -F 'run_stage_two "$direction"' "$runner" | head -n1 | cut -d: -f1)"
+stage_two_line="$(rg -n -F 'run_stage_two "$direction"' "$runner" | tail -n1 | cut -d: -f1)"
 if [[ ! "$stage_one_line" =~ ^[0-9]+$ || ! "$nodes_line" =~ ^[0-9]+$ ||
       ! "$stage_two_line" =~ ^[0-9]+$ ]]; then
   fail "could not locate the stage-one/node/stage-two execution order"

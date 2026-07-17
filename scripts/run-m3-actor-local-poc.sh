@@ -7,6 +7,11 @@ export LC_ALL=C
 umask 077
 
 readonly mode="${M3_ACTOR_POC_MODE:-execute}"
+schedule="${M3_ACTOR_POC_SCHEDULE:-sequential}"
+if [[ "$schedule" != "sequential" && "$schedule" != "overlap" ]]; then
+  echo "M3_ACTOR_POC_SCHEDULE must be sequential or overlap" >&2
+  exit 2
+fi
 run_id="${RUN_ID:-m3local-$(date -u +%Y%m%d%H%M%S)-$$}"
 if [[ ! "$run_id" =~ ^[a-z0-9][a-z0-9_-]{7,47}$ ]]; then
   echo "RUN_ID must be 8..48 lowercase letters, numbers, underscores, or hyphens" >&2
@@ -23,14 +28,23 @@ if [[ "$journey" != "claim" && "$journey" != "survivor_claim" &&
   echo "M3_ACTOR_POC_JOURNEY must be claim, survivor_claim, refund, or first_lock_refund" >&2
   exit 2
 fi
+if [[ "$schedule" == "overlap" && "$journey" != "claim" ]]; then
+  echo "M3_ACTOR_POC_SCHEDULE=overlap currently requires the claim journey" >&2
+  exit 2
+fi
 case "$journey" in
   claim)
     terminal_revision=4
     terminal_phase="completed"
     replay_command="drive"
-    packet_kind="m3_actor_two_direction_local_poc"
+    if [[ "$schedule" == "overlap" ]]; then
+      packet_kind="m3_actor_overlapping_two_swap_local_poc"
+      success_label="M3 actor overlapping two-swap local PoC"
+    else
+      packet_kind="m3_actor_two_direction_local_poc"
+      success_label="M3 actor two-direction local PoC"
+    fi
     actor_owned_effect_semantics="claim"
-    success_label="M3 actor two-direction local PoC"
     lez_slot_duration_seconds="1.0"
     ;;
   survivor_claim)
@@ -62,7 +76,7 @@ case "$journey" in
     ;;
 esac
 
-readonly journey terminal_revision terminal_phase replay_command packet_kind
+readonly schedule journey terminal_revision terminal_phase replay_command packet_kind
 readonly actor_owned_effect_semantics success_label
 readonly lez_slot_duration_seconds
 readonly run_id
@@ -81,6 +95,7 @@ readonly secure_state_root="/tmp/lez-atomic-swaps-m3-${run_id}-secure-state"
 readonly lez_bootstrap_root="${secure_state_root}/bootstrap"
 readonly lez_bootstrap_manifest="${private_dir}/lez-bootstrap.env"
 readonly bitcoin_manifest="${repo_root}/.e2e/${bitcoin_run_id}/bitcoin-core/run.env"
+readonly bitcoin_funding_sources="${private_dir}/bitcoin-funding-sources.json"
 readonly lez_manifest="${repo_root}/.e2e/${lez_run_id}/lez-v02/run.env"
 readonly bitcoin_container_ids="${private_dir}/bitcoin-containers.ids"
 readonly lez_container_ids="${private_dir}/lez-containers.ids"
@@ -93,6 +108,8 @@ readonly toolchain="${M3_RUST_TOOLCHAIN:-1.96.0}"
 readonly direction_driver="${repo_root}/scripts/run-m3-actor-direction.sh"
 readonly lez_bootstrap_driver="${repo_root}/scripts/run-m3-lez-bootstrap.sh"
 readonly -a directions=(taker_sells_foreign taker_sells_lez)
+declare -A overlap_pids=()
+declare -A overlap_logs=()
 readonly rapidsnark_sha="d4133227f845ff5bfa3672eb5b9c018a6a086bfa164b176bdaf76949c7d1f423"
 readonly gmp_sha="0a910b420c3ad603c83c9dc2818c7ae05394c231ca23135c7b873e8e680ea41b"
 readonly fq_sha="797b5d24bb8e8b088f811bddfff35f33973af9c797fb3812489cd42ba6a957d0"
@@ -106,6 +123,7 @@ emit_contract() {
     --arg lez_run "$lez_run_id" \
     --arg lez_slot_duration_seconds "$lez_slot_duration_seconds" \
     --arg journey "$journey" \
+    --arg schedule "$schedule" \
     --argjson terminal_revision "$terminal_revision" \
     --arg terminal_phase "$terminal_phase" \
     --arg replay_command "$replay_command" \
@@ -116,6 +134,7 @@ emit_contract() {
       kind: "m3_actor_local_poc_contract",
       execution_performed: false,
       journey: $journey,
+      schedule: $schedule,
       evidence_packet_kind: $packet_kind,
       run_id: $run_id,
       run_root: $run_root,
@@ -140,7 +159,9 @@ emit_contract() {
         dual_locks_before_scalar_use: ($journey != "first_lock_refund"),
         first_lock_refund_has_no_second_lock_or_dual_lock_gate:
           ($journey == "first_lock_refund"),
-        directions_are_sequential: true
+        directions_are_sequential: ($schedule == "sequential"),
+        overlapping_revision_two_barrier: ($schedule == "overlap"),
+        settlements_released_only_after_both_locks: ($schedule == "overlap")
       },
       survivor:
         (if $journey == "survivor_claim" then {
@@ -777,6 +798,101 @@ start_actual_nodes() {
   chmod 0600 "${evidence_dir}/bitcoin-service.log" "${evidence_dir}/lez-service.log"
 }
 
+core_admin() {
+  local container_id actual_run
+  container_id="$(sed -n '1p' "$bitcoin_container_ids")"
+  [[ -n "$container_id" ]] || fail "Bitcoin container inventory is empty"
+  actual_run="$(docker container inspect --format \
+    '{{ index .Config.Labels "org.logos-co.atomic-swaps.run" }}' "$container_id")"
+  [[ "$actual_run" == "$bitcoin_run_id" ]] ||
+    fail "captured Bitcoin container ownership label drifted"
+  docker exec "$container_id" bitcoin-cli \
+    -conf=/run-config/bitcoin.conf -datadir=/var/lib/bitcoin "$@"
+}
+
+provision_bitcoin_funding_sources() {
+  local address before_height after_height mined block_hash block txid vout utxo
+  local direction height source_file mempool
+  local -a source_files=()
+  address="$(manifest_value \
+    "$(manifest_value "$bitcoin_manifest" BITCOIN_CORE_FUNDING_CREDENTIALS)" \
+    BITCOIN_CORE_FUNDING_ADDRESS)"
+  before_height="$(core_admin getblockcount)"
+  [[ "$before_height" == 101 ]] ||
+    fail "Bitcoin funding-source allocation requires the clean service tip at height 101"
+  mempool="$(core_admin getrawmempool)"
+  jq -e 'type == "array" and length == 0' <<<"$mempool" >/dev/null ||
+    fail "Bitcoin funding-source allocation requires an empty mempool"
+
+  mined="$(core_admin generatetoaddress 1 "$address")"
+  jq -e 'type == "array" and length == 1 and
+    (.[0] | test("^[0-9a-f]{64}$"))' <<<"$mined" >/dev/null ||
+    fail "Bitcoin funding-source maturity extension did not mine exactly one block"
+  block_hash="$(jq -er '.[0]' <<<"$mined")"
+  after_height="$(core_admin getblockcount)"
+  [[ "$after_height" == 102 ]] ||
+    fail "Bitcoin funding-source maturity extension did not reach height 102"
+  block="$(core_admin getblock "$block_hash" 2)"
+  jq -e --arg hash "$block_hash" --argjson previous "$before_height" '
+    .hash == $hash and .height == ($previous + 1)
+    and (.tx | length) == 1 and .tx[0].vin[0].coinbase != null
+  ' <<<"$block" >/dev/null ||
+    fail "Bitcoin maturity extension was not an exact coinbase-only child block"
+
+  for direction in "${directions[@]}"; do
+    case "$direction" in
+      taker_sells_foreign) height=1 ;;
+      taker_sells_lez) height=2 ;;
+    esac
+    block_hash="$(core_admin getblockhash "$height")"
+    block="$(core_admin getblock "$block_hash" 2)"
+    txid="$(jq -er '.tx[0].txid' <<<"$block")"
+    vout="$(jq -er --arg address "$address" '
+      [.tx[0].vout[] | select(.scriptPubKey.address == $address) | .n]
+      | if length == 1 then .[0] else error("funding output") end
+    ' <<<"$block")"
+    utxo="$(core_admin gettxout "$txid" "$vout" true)"
+    jq -e --arg address "$address" '
+      .value == 50 and .confirmations >= 101 and .coinbase == true
+      and .scriptPubKey.type == "witness_v1_taproot"
+      and .scriptPubKey.address == $address
+      and .scriptPubKey.hex ==
+        "512079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    ' <<<"$utxo" >/dev/null ||
+      fail "${direction} Bitcoin funding source is not an exact mature local coinbase UTXO"
+    source_file="${private_dir}/${direction}-bitcoin-funding-source.json"
+    jq -n --arg direction "$direction" --arg txid "$txid" \
+      --argjson vout "$vout" --arg script "$(jq -er '.scriptPubKey.hex' <<<"$utxo")" \
+      --arg block_hash "$block_hash" --argjson block_height "$height" \
+      --argjson confirmations "$(jq -er '.confirmations | numbers' <<<"$utxo")" \
+      --argjson planned_anchor "$((after_height + height))" '
+      {direction:$direction,source:{transaction_id:$txid,output_index:$vout,
+       value_sat:5000000000,script_pubkey:$script,coinbase:true,
+       containing_block_hash:$block_hash,containing_block_height:$block_height,
+       confirmations:$confirmations},planned_bitcoin_funding_anchor_height:$planned_anchor}
+    ' >"$source_file"
+    chmod 0600 "$source_file"
+    source_files+=("$source_file")
+  done
+
+  jq -s --argjson base_height "$after_height" \
+    '{schema_version:1,network:"regtest",allocation:"two_distinct_mature_coinbase_outpoints",
+      shared_fixture_custody_key:true,base_height:$base_height,sources:.}' \
+    "${source_files[@]}" >"${bitcoin_funding_sources}.partial"
+  chmod 0600 "${bitcoin_funding_sources}.partial"
+  mv "${bitcoin_funding_sources}.partial" "$bitcoin_funding_sources"
+  jq -e '
+    .schema_version == 1 and .network == "regtest" and .base_height == 102
+    and (.sources | length) == 2
+    and ([.sources[].direction] | unique | length) == 2
+    and ([.sources[].source.transaction_id] | unique | length) == 2
+    and ([.sources[] | [.source.transaction_id,.source.output_index]] | unique | length) == 2
+    and [.sources[].planned_bitcoin_funding_anchor_height] == [103,104]
+    and all(.sources[]; .source.confirmations >= 101)
+  ' "$bitcoin_funding_sources" >/dev/null ||
+    fail "independent Bitcoin funding-source manifest is inconsistent"
+}
+
 bootstrap_lez_runtime() {
   M3_POC_RUN_ID="$run_id" \
   M3_POC_EVIDENCE_DIR="$evidence_dir" \
@@ -829,6 +945,10 @@ with_direction_environment() {
   M3_POC_BITCOIN_MAKER_BASIC="$(manifest_value "$bitcoin_manifest" BITCOIN_CORE_MAKER_BASIC_CREDENTIALS)" \
   M3_POC_BITCOIN_TAKER_BASIC="$(manifest_value "$bitcoin_manifest" BITCOIN_CORE_TAKER_BASIC_CREDENTIALS)" \
   M3_POC_BITCOIN_FUNDING_CREDENTIALS="$(manifest_value "$bitcoin_manifest" BITCOIN_CORE_FUNDING_CREDENTIALS)" \
+  M3_POC_BITCOIN_FUNDING_SOURCES="$bitcoin_funding_sources" \
+  M3_POC_BITCOIN_PLANNED_ANCHOR_HEIGHT="$(jq -er --arg direction "$direction" \
+    '.sources[] | select(.direction == $direction) |
+     .planned_bitcoin_funding_anchor_height' "$bitcoin_funding_sources")" \
   M3_POC_BITCOIN_CONTAINER_ID="$(sed -n '1p' "$bitcoin_container_ids")" \
   M3_POC_LEZ_MANIFEST="$lez_manifest" \
   M3_POC_LEZ_SEQUENCER_RPC_URL="$(manifest_value "$lez_manifest" LEZ_SEQUENCER_RPC_URL)" \
@@ -869,6 +989,182 @@ run_stage_two() {
 run_direction_actor_flow() {
   local direction="$1"
   with_direction_environment "$direction" "$direction_driver" run-actor-flow
+}
+
+register_overlap_driver_process() {
+  local direction="$1" pid="$2" start executable
+  for _ in {1..100}; do
+    if [[ -r "/proc/${pid}/stat" ]]; then
+      start="$(awk '{print $22}' "/proc/${pid}/stat")"
+      executable="$(readlink -f "/proc/${pid}/exe")"
+      if [[ -n "$start" && "$executable" == /* ]]; then break; fi
+    fi
+    sleep 0.01
+  done
+  [[ -n "${start:-}" && "${executable:-}" == /* ]] ||
+    fail "overlap ${direction} driver exited before registration"
+  jq -nc --arg role "controller-${direction}" --arg phase overlap-driver \
+    --argjson pid "$pid" --arg start "$start" --arg executable "$executable" \
+    '{role:$role,phase:$phase,pid:$pid,start_ticks:$start,executable:$executable}' \
+    >>"$process_registry"
+}
+
+start_overlap_direction() {
+  local direction="$1" log pid
+  log="${evidence_dir}/${direction}-overlap-driver.log"
+  [[ ! -e "$log" && ! -L "$log" ]] ||
+    fail "refusing to overwrite overlap driver log"
+  with_direction_environment "$direction" "$direction_driver" \
+    run-overlap-actor-flow >"$log" 2>&1 &
+  pid=$!
+  chmod 0600 "$log"
+  overlap_pids["$direction"]="$pid"
+  overlap_logs["$direction"]="$log"
+  register_overlap_driver_process "$direction" "$pid"
+}
+
+wait_overlap_arrival() {
+  local direction="$1" phase="$2" revision="$3" marker pid
+  marker="${directions_dir}/${direction}/overlap-${phase}-arrived.json"
+  pid="${overlap_pids[$direction]:-}"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || fail "overlap ${direction} driver PID is unavailable"
+  for _ in {1..14400}; do
+    if [[ -f "$marker" && ! -L "$marker" ]]; then
+      [[ "$(stat -c '%a' "$marker")" == 600 ]] ||
+        fail "overlap ${direction} ${phase} marker is not owner private"
+      jq -e --arg run "$run_id" --arg direction "$direction" --arg phase "$phase" \
+        --argjson revision "$revision" '
+        .schema_version == 1 and .run_id == $run and .direction == $direction
+        and .phase == $phase and .revision == $revision
+        and (.recorded_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))
+      ' "$marker" >/dev/null || fail "overlap ${direction} ${phase} marker is inconsistent"
+      return
+    fi
+    kill -0 "$pid" 2>/dev/null ||
+      fail "overlap ${direction} driver exited before ${phase}: ${overlap_logs[$direction]}"
+    sleep 0.25
+  done
+  fail "overlap ${direction} ${phase} arrival timed out"
+}
+
+release_overlap_phase() {
+  local direction="$1" phase="$2" revision="$3" permit partial
+  permit="${directions_dir}/${direction}/overlap-${phase}-permit.json"
+  partial="${permit}.partial"
+  [[ ! -e "$permit" && ! -L "$permit" && ! -e "$partial" && ! -L "$partial" ]] ||
+    fail "refusing to overwrite overlap ${direction} ${phase} permit"
+  jq -n --arg run "$run_id" --arg direction "$direction" --arg phase "$phase" \
+    --argjson revision "$revision" '
+    {schema_version:1,run_id:$run,direction:$direction,phase:$phase,
+     expected_revision:$revision}
+  ' >"$partial"
+  chmod 0600 "$partial"
+  mv "$partial" "$permit"
+}
+
+wait_overlap_driver_exit() {
+  local direction="$1" pid
+  pid="${overlap_pids[$direction]}"
+  if ! wait "$pid"; then
+    fail "overlap ${direction} driver failed: ${overlap_logs[$direction]}"
+  fi
+}
+
+assert_overlap_revision_two_window() {
+  local direction role status config
+  local inventory="${evidence_dir}/overlap-isolation-inventory.ndjson"
+  : >"$inventory"
+  chmod 0600 "$inventory"
+  for direction in "${directions[@]}"; do
+    for role in maker taker; do
+      status="${evidence_dir}/${direction}-overlap-locked-status-${role}.json"
+      config="${directions_dir}/${direction}/actors/${role}/actor-config.json"
+      jq -e --arg role "$role" '
+        .schema_version == 1 and .role == $role and .state == "active"
+        and .revision == 2 and .phase == "both_legs_locked"
+        and .next_action == "observe_revealing_claim"
+      ' "$status" >/dev/null ||
+        fail "${direction} ${role} was not simultaneously in flight at revision two"
+      jq -nc --arg direction "$direction" --arg role "$role" \
+        --arg config "$config" \
+        --arg state_db "$(jq -er '.state_db' "$config")" \
+        --arg btc_journal "$(jq -er '.signing.bitcoin.journal_db' "$config")" \
+        --arg lez_journal "$(jq -er '.signing.lez.journal_db' "$config")" \
+        --arg btc_session "$(jq -er '.signing.bitcoin.session_id' "$config")" \
+        --arg lez_session "$(jq -er '.signing.lez.session_id' "$config")" \
+        --argjson state_inode "$(stat -c '%i' "$(jq -er '.state_db' "$config")")" \
+        --argjson btc_inode "$(stat -c '%i' "$(jq -er '.signing.bitcoin.journal_db' "$config")")" \
+        --argjson lez_inode "$(stat -c '%i' "$(jq -er '.signing.lez.journal_db' "$config")")" '
+        {direction:$direction,role:$role,config:$config,state_db:$state_db,
+         state_inode:$state_inode,btc_signing_journal:$btc_journal,
+         btc_signing_inode:$btc_inode,lez_signing_journal:$lez_journal,
+         lez_signing_inode:$lez_inode,btc_session_id:$btc_session,
+         lez_session_id:$lez_session}
+      ' >>"$inventory"
+    done
+  done
+  jq -s --slurpfile funding "$bitcoin_funding_sources" \
+    --slurpfile foreign "${directions_dir}/taker_sells_foreign/stage-two.json" \
+    --slurpfile lez "${directions_dir}/taker_sells_lez/stage-two.json" \
+    --slurpfile foreign_summary "${evidence_dir}/taker_sells_foreign-stage-two.json" \
+    --slurpfile lez_summary "${evidence_dir}/taker_sells_lez-stage-two.json" '
+    {schema_version:1,kind:"m3_overlapping_revision_two_window",
+     simultaneous_in_flight:true,revision:2,phase:"both_legs_locked",
+     chain_mutations_serialized_for_exact_observation:true,
+     funding_sources:$funding[0],actors:.,agreements:[
+       {direction:"taker_sells_foreign",swap_id:$foreign[0].swap_id,
+        agreement_sha256:$foreign_summary[0].agreement_sha256,
+        bitcoin_funding_transaction_id:$foreign[0].bitcoin.funding_transaction_id,
+        metadata_account:$foreign[0].lez_terms.metadata_account,
+        custody_account:$foreign[0].lez_terms.custody_account,
+        refund_at_ms:$foreign[0].lez_terms.refund_at_ms,
+        bitcoin_refund_height:$foreign[0].recovery.bitcoin_refund_height},
+       {direction:"taker_sells_lez",swap_id:$lez[0].swap_id,
+        agreement_sha256:$lez_summary[0].agreement_sha256,
+        bitcoin_funding_transaction_id:$lez[0].bitcoin.funding_transaction_id,
+        metadata_account:$lez[0].lez_terms.metadata_account,
+        custody_account:$lez[0].lez_terms.custody_account,
+        refund_at_ms:$lez[0].lez_terms.refund_at_ms,
+        bitcoin_refund_height:$lez[0].recovery.bitcoin_refund_height}]}
+  ' "$inventory" >"${evidence_dir}/overlap-revision-two-window.json"
+  chmod 0600 "${evidence_dir}/overlap-revision-two-window.json"
+  jq -e '
+    .simultaneous_in_flight == true and (.actors | length) == 4
+    and ([.actors[].state_db] | unique | length) == 4
+    and ([.actors[].state_inode] | unique | length) == 4
+    and ([.actors[].btc_signing_journal] | unique | length) == 4
+    and ([.actors[].lez_signing_journal] | unique | length) == 4
+    and ([.actors[] | .btc_session_id] | unique | length) == 2
+    and ([.actors[] | .lez_session_id] | unique | length) == 2
+    and ([.agreements[].swap_id] | unique | length) == 2
+    and ([.agreements[].agreement_sha256] | unique | length) == 2
+    and ([.agreements[].bitcoin_funding_transaction_id] | unique | length) == 2
+    and ([.agreements[].metadata_account] | unique | length) == 2
+    and ([.agreements[].custody_account] | unique | length) == 2
+    and ([.agreements[].refund_at_ms] | unique | length) == 2
+    and ([.agreements[].bitcoin_refund_height] | unique | length) == 2
+  ' "${evidence_dir}/overlap-revision-two-window.json" >/dev/null ||
+    fail "overlap revision-two isolation packet is inconsistent"
+}
+
+run_overlapping_actor_flows() {
+  local direction
+  for direction in "${directions[@]}"; do run_stage_two "$direction"; done
+  for direction in "${directions[@]}"; do
+    start_overlap_direction "$direction"
+    wait_overlap_arrival "$direction" ready 0
+  done
+  for direction in "${directions[@]}"; do
+    release_overlap_phase "$direction" lock 0
+    wait_overlap_arrival "$direction" locked 2
+  done
+  assert_overlap_revision_two_window
+  for direction in "${directions[@]}"; do
+    release_overlap_phase "$direction" settle 2
+    wait_overlap_arrival "$direction" terminal 4
+    wait_overlap_driver_exit "$direction"
+    assert_terminal_and_replay "$direction"
+  done
 }
 
 assert_actor_terminal_status() {
@@ -991,6 +1287,13 @@ validate_actual_effect_manifests() {
     ' "$manifest" >/dev/null ||
       fail "${direction} actual-effect manifest does not match the ${journey} journey"
   done
+  jq -e --slurpfile foreign "${evidence_dir}/taker_sells_foreign-actual-effects.json" \
+    --slurpfile lez "${evidence_dir}/taker_sells_lez-actual-effects.json" '
+    (($foreign[0].bitcoin_effect_ids + $lez[0].bitcoin_effect_ids) as $ids |
+      ($ids | unique | length) == ($ids | length))
+    and (($foreign[0].lez_effect_ids + $lez[0].lez_effect_ids) as $ids |
+      ($ids | unique | length) == ($ids | length))
+  ' <<<null >/dev/null || fail "direction effect IDs overlap across independent swaps"
 }
 
 validate_survivor_direction_evidence() {
@@ -1193,6 +1496,7 @@ write_run_evidence() {
   local repository_commit completed_at outer_runner_sha direction_driver_sha lez_bootstrap_sha
   local bedrock_log bedrock_ntp_timeout_count
   local foreign_survivor_summary="null" lez_survivor_summary="null"
+  local overlap_summary="null"
   repository_commit="$(git rev-parse HEAD)"
   completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   outer_runner_sha="$(sha256sum scripts/run-m3-actor-local-poc.sh | sed 's/ .*//')"
@@ -1209,9 +1513,13 @@ write_run_evidence() {
     foreign_survivor_summary="$(validate_survivor_direction_evidence taker_sells_foreign lez bitcoin)"
     lez_survivor_summary="$(validate_survivor_direction_evidence taker_sells_lez bitcoin lez)"
   fi
+  if [[ "$schedule" == "overlap" ]]; then
+    overlap_summary="$(jq -c . "${evidence_dir}/overlap-revision-two-window.json")"
+  fi
   jq -n \
     --arg run_id "$run_id" \
     --arg journey "$journey" \
+    --arg schedule "$schedule" \
     --arg packet_kind "$packet_kind" \
     --argjson terminal_revision "$terminal_revision" \
     --arg terminal_phase "$terminal_phase" \
@@ -1235,12 +1543,14 @@ write_run_evidence() {
     --argjson bedrock_ntp_timeout_count "$bedrock_ntp_timeout_count" \
     --argjson foreign_survivor "$foreign_survivor_summary" \
     --argjson lez_survivor "$lez_survivor_summary" \
+    --argjson overlap "$overlap_summary" \
     --arg foreign_stage2_sha "$(sha256sum "${evidence_dir}/taker_sells_foreign-stage-two.json" | sed 's/ .*//')" \
     --arg lez_stage2_sha "$(sha256sum "${evidence_dir}/taker_sells_lez-stage-two.json" | sed 's/ .*//')" '
     {
       schema_version: 1,
       kind: $packet_kind,
       journey: $journey,
+      schedule: $schedule,
       result: "passed",
       run_id: $run_id,
       repository_commit: $repository_commit,
@@ -1286,6 +1596,37 @@ write_run_evidence() {
          stage_two_evidence_sha256: $lez_stage2_sha}
       ],
       actor_process_model: "fresh_one_shot_process_per_command",
+      concurrency:
+        (if $schedule == "overlap" then {
+          simultaneous_in_flight:$overlap.simultaneous_in_flight,
+          overlap_revision:$overlap.revision,
+          overlap_phase:$overlap.phase,
+          distinct_funding_outpoints:
+            (([$overlap.funding_sources.sources[] |
+              [.source.transaction_id,.source.output_index]] | unique | length) == 2),
+          distinct_agreements:
+            (([$overlap.agreements[].agreement_sha256] | unique | length) == 2),
+          distinct_actor_state_dbs:
+            (([$overlap.actors[].state_db] | unique | length) == 4),
+          distinct_signing_journals:
+            (([$overlap.actors[].btc_signing_journal,
+               $overlap.actors[].lez_signing_journal] | unique | length) == 8),
+          distinct_signer_sessions_per_domain:
+            (([$overlap.actors[].btc_session_id] | unique | length) == 2 and
+             ([$overlap.actors[].lez_session_id] | unique | length) == 2),
+          distinct_escrows:
+            (([$overlap.agreements[].metadata_account] | unique | length) == 2 and
+             ([$overlap.agreements[].custody_account] | unique | length) == 2),
+          distinct_deadlines:
+            (([$overlap.agreements[].refund_at_ms] | unique | length) == 2 and
+             ([$overlap.agreements[].bitcoin_refund_height] | unique | length) == 2),
+          chain_mutations_serialized_for_exact_observation:
+            $overlap.chain_mutations_serialized_for_exact_observation,
+          shared_local_nodes:true,
+          shared_fixture_custody_key:
+            $overlap.funding_sources.shared_fixture_custody_key,
+          arbitrary_n_or_same_direction_scheduler_proven:false
+        } else null end),
       actor_owned_effect_semantics: $actor_owned_effect_semantics,
       first_lock_refund_admission:
         (if $journey == "first_lock_refund" then {
@@ -1391,18 +1732,35 @@ write_run_evidence() {
     }' >"${run_evidence}.partial"
   chmod 0600 "${run_evidence}.partial"
   mv "${run_evidence}.partial" "$run_evidence"
-  jq -e --arg journey "$journey" --arg packet_kind "$packet_kind" \
+  jq -e --arg journey "$journey" --arg schedule "$schedule" \
+    --arg packet_kind "$packet_kind" \
     --argjson terminal_revision "$terminal_revision" \
     --arg terminal_phase "$terminal_phase" --arg replay_command "$replay_command" \
     --arg actor_owned_effect_semantics "$actor_owned_effect_semantics" '
     .schema_version == 1
     and .kind == $packet_kind
     and .journey == $journey
+    and .schedule == $schedule
     and .result == "passed"
     and (.directions | length == 2)
     and all(.directions[];
       .terminal_revision == $terminal_revision and .terminal_phase == $terminal_phase)
     and .actor_owned_effect_semantics == $actor_owned_effect_semantics
+    and (if $schedule == "overlap" then
+      .concurrency.simultaneous_in_flight == true
+      and .concurrency.overlap_revision == 2
+      and .concurrency.overlap_phase == "both_legs_locked"
+      and .concurrency.distinct_funding_outpoints == true
+      and .concurrency.distinct_agreements == true
+      and .concurrency.distinct_actor_state_dbs == true
+      and .concurrency.distinct_signing_journals == true
+      and .concurrency.distinct_signer_sessions_per_domain == true
+      and .concurrency.distinct_escrows == true
+      and .concurrency.distinct_deadlines == true
+      and .concurrency.chain_mutations_serialized_for_exact_observation == true
+      and .concurrency.shared_local_nodes == true
+      and .concurrency.arbitrary_n_or_same_direction_scheduler_proven == false
+    else .concurrency == null end)
     and .expected_unique_effects_by_direction ==
       (if $journey == "first_lock_refund" then
          {taker_sells_foreign:{bitcoin:2,lez:0},
@@ -1481,16 +1839,22 @@ for direction in "${directions[@]}"; do
 done
 
 start_actual_nodes
+provision_bitcoin_funding_sources
 bootstrap_lez_runtime
 
-# Directions share only the actual local nodes. The driver contract requires
-# fresh sidecars, actor stores, role journals, and one-shot processes per
-# direction; the second direction cannot begin until the first proves replay.
-for direction in "${directions[@]}"; do
-  run_stage_two "$direction"
-  run_direction_actor_flow "$direction"
-  assert_terminal_and_replay "$direction"
-done
+# Directions share only the actual local nodes. The sequential schedule retains
+# the historical one-direction-at-a-time proof. The overlap schedule keeps both
+# direction controllers alive and withholds settlement until both independent
+# swaps have durably reached revision two.
+if [[ "$schedule" == "overlap" ]]; then
+  run_overlapping_actor_flows
+else
+  for direction in "${directions[@]}"; do
+    run_stage_two "$direction"
+    run_direction_actor_flow "$direction"
+    assert_terminal_and_replay "$direction"
+  done
+fi
 
 validate_actual_effect_manifests
 write_run_evidence
