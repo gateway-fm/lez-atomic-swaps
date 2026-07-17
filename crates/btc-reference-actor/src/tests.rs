@@ -17,13 +17,14 @@ use lez_bridge_adapter::BtcLezAssetBridgeBindingV2;
 use lez_bridge_protocol::{
     AccountIds, ChainPosition, CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult,
     EscrowState, ExactMessageBytes, ExactTransactionBytes, FinalizedBlockIdentity,
-    FinalizedWitnessedFundingFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
-    NativeFundInstructionFacts, NativeRefundFoundFacts, NativeRefundInstructionFacts,
-    ObservedTransactionFacts, PrepareWitnessedAssetEscrowV2Request,
+    FinalizedWitnessedAssetUnavailableReasonV2, FinalizedWitnessedFundingFacts, NativeCustodyFacts,
+    NativeEscrowAccountFacts, NativeFundInstructionFacts, NativeRefundFoundFacts,
+    NativeRefundInstructionFacts, ObservedTransactionFacts, PrepareWitnessedAssetEscrowV2Request,
     PrepareWitnessedAssetEscrowV2Result, PrepareWitnessedClaimResult, PreparedTransaction,
     PreparedWitnessedClaim, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
-    TransactionId, WitnessedAssetPrepareStepV2, WitnessedAssetPreparedEffectV2,
-    WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
+    TokenHoldingFactsV2, TransactionId, WitnessedAssetClaimInstructionFactsV2,
+    WitnessedAssetCustodyFactsV2, WitnessedAssetPrepareStepV2, WitnessedAssetPreparedEffectV2,
+    WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts, WitnessedLezAssetV2,
 };
 use lez_btc_swap_sdk::{
     AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1,
@@ -638,7 +639,6 @@ fn configure_schema4_maker_material(fixture: &mut ActorFixture) {
 }
 
 fn custom_token_asset_extension(fixture: &ActorFixture) -> BtcLezAssetExtensionV1 {
-    assert_eq!(fixture.config.role, ActorRole::Maker);
     let token = BtcLezCustomTokenTermsV1::new(
         [40; 32],
         [41; 32],
@@ -672,6 +672,11 @@ fn custom_token_asset_extension(fixture: &ActorFixture) -> BtcLezAssetExtensionV
 }
 
 fn configure_schema5_asset_extension(fixture: &mut ActorFixture) -> BtcLezAssetExtensionV1 {
+    let legacy: PrepareWitnessedClaimResult = serde_json::from_slice(
+        &fs::read(&fixture.config.signing.prepared_witnessed_claim_result_file)
+            .expect("legacy prepared claim"),
+    )
+    .expect("legacy prepared claim JSON");
     let extension = custom_token_asset_extension(fixture);
     let commitment = *extension.asset_commitment();
     let extension_path = fixture.directory.path().join("lez-asset-extension.borsh");
@@ -685,6 +690,29 @@ fn configure_schema5_asset_extension(fixture: &mut ActorFixture) -> BtcLezAssetE
         expected_asset_commitment: Hex32::from_bytes(commitment),
     });
     fixture.config.schema_version = ASSET_CONFIG_SCHEMA_VERSION;
+    let binding =
+        BtcLezAssetBridgeBindingV2::new(&fixture.agreement, &extension, extension.asset())
+            .expect("asset claim binding");
+    let local_is_claimant = fixture.config.role.sdk() == fixture.agreement.lez_claimant();
+    let run_id = if local_is_claimant {
+        fixture.config.lez_bridge.run_id.clone()
+    } else {
+        RunId::new("peer-claimant-run").expect("peer claimant run")
+    };
+    let prepared = PrepareWitnessedAssetClaimV2Result::new(
+        MessageContext::new(
+            run_id,
+            legacy.claim.preparation_request_id.clone(),
+            bridge_participant(fixture.agreement.lez_claimant()),
+        ),
+        binding.terms().clone(),
+        legacy.claim,
+    );
+    fs::write(
+        &fixture.config.signing.prepared_witnessed_claim_result_file,
+        serde_json::to_vec(&prepared).expect("asset prepared claim JSON"),
+    )
+    .expect("write asset prepared claim");
     extension
 }
 
@@ -853,6 +881,20 @@ fn configure_schema5_bitcoin_asset_material(fixture: &mut ActorFixture) -> BtcLe
         exact_funding_transaction_file: funding_path,
     });
     fixture.config.validate().expect("schema-5 maker config");
+    extension
+}
+
+fn configure_schema5_asset_claim(fixture: &mut ActorFixture) -> BtcLezAssetExtensionV1 {
+    let extension = match (fixture.config.role, fixture.agreement.direction()) {
+        (ActorRole::Maker, SwapDirection::TakerSellsForeign) => {
+            configure_schema5_asset_material(fixture)
+        }
+        (ActorRole::Maker, SwapDirection::TakerSellsLez) => {
+            configure_schema5_bitcoin_asset_material(fixture)
+        }
+        (ActorRole::Taker, _) => configure_schema5_asset_extension(fixture),
+    };
+    fixture.config.validate().expect("schema-5 claim config");
     extension
 }
 
@@ -3849,6 +3891,49 @@ async fn activate_and_project_both_locks(fixture: &ActorFixture) {
     .expect("project maker lock");
 }
 
+async fn activate_and_project_schema5_both_locks(fixture: &ActorFixture) {
+    assert_eq!(fixture.config.schema_version, ASSET_CONFIG_SCHEMA_VERSION);
+    if fixture.config.role == ActorRole::Taker {
+        activate_and_project_both_locks(fixture).await;
+        return;
+    }
+
+    activate_and_project_taker_lock(fixture).await;
+    let plan = load_prepared_maker_lock_material(&fixture.config, &fixture.agreement)
+        .expect("schema-5 maker material")
+        .plan()
+        .clone();
+    let eligibility = fresh_maker_eligibility(fixture);
+    let complete = exact_maker_lock_complete_observation(&fixture.agreement, &plan, 0xc1);
+    for (index, step) in plan.steps().iter().enumerate() {
+        let present = FixedMakerLockPort::new(
+            MakerLockStepChainObservationV1::PresentExactCanonical {
+                expected_public_id: step.expected_public_id().as_str().into(),
+                exact_public_bytes: step.exact_bytes().as_slice().to_vec(),
+            },
+            eligibility.clone(),
+            complete.clone(),
+        );
+        let output = drive_maker_lock_with_port(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &present,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("schema-5 maker step {index} failed: {error:?}"));
+        assert_eq!(
+            output.revision,
+            if index + 1 == plan.steps().len() {
+                2
+            } else {
+                1
+            }
+        );
+    }
+    assert_eq!(durable_status(fixture).phase(), Phase::BothLegsLocked);
+}
+
 fn revealing_signature(fixture: &ActorFixture) -> [u8; 64] {
     let chain = fixture
         .agreement
@@ -4786,6 +4871,628 @@ fn valid_lez_claim_signature(fixture: &ActorFixture, transition: ClaimTransition
             .expect("verified LEZ presignature");
     adapt_presignature(&lez_context, lez_presignature, secret)
         .expect("adapt LEZ followup signature")
+}
+
+#[derive(Clone)]
+struct FixedLezAssetClaimPort {
+    run_id: RunId,
+    role: BridgeParticipant,
+    completed: PreparedTransaction,
+    outcome: FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetClaimFactsV2>,
+    submission: Result<SubmissionOutcome, ActorCommandError>,
+    complete_calls: Arc<AtomicUsize>,
+    classify_calls: Arc<AtomicUsize>,
+    submit_calls: Arc<AtomicUsize>,
+    targets: Arc<Mutex<Vec<FinalizedWitnessedAssetTransactionTargetV2>>>,
+}
+
+impl FixedLezAssetClaimPort {
+    fn new(
+        config: &ActorConfig,
+        completed: PreparedTransaction,
+        outcome: FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetClaimFactsV2>,
+        submission: Result<SubmissionOutcome, ActorCommandError>,
+    ) -> Self {
+        Self {
+            run_id: config.lez_bridge.run_id.clone(),
+            role: config.role.bridge(),
+            completed,
+            outcome,
+            submission,
+            complete_calls: Arc::new(AtomicUsize::new(0)),
+            classify_calls: Arc::new(AtomicUsize::new(0)),
+            submit_calls: Arc::new(AtomicUsize::new(0)),
+            targets: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn complete_calls(&self) -> usize {
+        self.complete_calls.load(Ordering::SeqCst)
+    }
+
+    fn classify_calls(&self) -> usize {
+        self.classify_calls.load(Ordering::SeqCst)
+    }
+
+    fn submit_calls(&self) -> usize {
+        self.submit_calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl LezAssetClaimChainPort for FixedLezAssetClaimPort {
+    async fn complete_asset_claim(
+        &self,
+        binding: &BtcLezAssetBridgeBindingV2,
+        request_id: RequestId,
+        _claim: PreparedWitnessedClaim,
+        _aggregate_signature: AggregateBip340Signature,
+    ) -> Result<CompleteWitnessedAssetClaimV2Result, ActorCommandError> {
+        self.complete_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(CompleteWitnessedAssetClaimV2Result::new(
+            MessageContext::new(self.run_id.clone(), request_id, self.role),
+            binding.terms().clone(),
+            self.completed.clone(),
+        ))
+    }
+
+    async fn classify_finalized_asset_claim(
+        &self,
+        _binding: &BtcLezAssetBridgeBindingV2,
+        _request_id: RequestId,
+        _claim: PreparedWitnessedClaim,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        _window: DiscoveryWindow,
+    ) -> Result<
+        FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetClaimFactsV2>,
+        ActorCommandError,
+    > {
+        self.classify_calls.fetch_add(1, Ordering::SeqCst);
+        self.targets.lock().expect("asset target lock").push(target);
+        Ok(self.outcome.clone())
+    }
+
+    async fn submit_transaction(
+        &self,
+        request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, ActorCommandError> {
+        self.submit_calls.fetch_add(1, Ordering::SeqCst);
+        self.submission.map(|outcome| {
+            SubmitTransactionResult::new(
+                request.context,
+                request.transaction.transaction_id,
+                outcome,
+            )
+        })
+    }
+}
+
+fn prepared_lez_asset_claim(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+) -> PreparedWitnessedClaim {
+    load_prepared_asset_witnessed_claim(config, agreement)
+        .expect("load prepared LEZ asset claim")
+        .claim
+}
+
+fn asset_claim_transaction() -> PreparedTransaction {
+    PreparedTransaction::new(
+        TransactionId::from_bytes([0xd1; 32]),
+        ExactTransactionBytes::new(b"exact-schema-5-token-claim".to_vec())
+            .expect("asset claim bytes"),
+    )
+}
+
+fn finalized_asset_clock(window: DiscoveryWindow) -> ChainClock {
+    ChainClock::new(
+        Hex32::from_bytes([0xd2; 32]),
+        window.start_height() + u64::from(window.max_blocks() - 1),
+        1_800_000_000_000,
+    )
+}
+
+fn absent_asset_claim_outcome(
+    config: &ActorConfig,
+) -> FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetClaimFactsV2> {
+    let window = config.discovery_window().expect("asset window");
+    FinalizedWitnessedAssetScanOutcomeV2::Absent {
+        finalized_clock: finalized_asset_clock(window),
+        scanned_window: window,
+    }
+}
+
+fn uncertain_asset_claim_outcome(
+    config: &ActorConfig,
+) -> FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetClaimFactsV2> {
+    let window = config.discovery_window().expect("asset window");
+    FinalizedWitnessedAssetScanOutcomeV2::Uncertain {
+        finalized_clock: finalized_asset_clock(window),
+        scanned_window: window,
+    }
+}
+
+fn unavailable_asset_claim_outcome()
+-> FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetClaimFactsV2> {
+    FinalizedWitnessedAssetScanOutcomeV2::Unavailable {
+        reason: FinalizedWitnessedAssetUnavailableReasonV2::HistoryUnavailable,
+    }
+}
+
+fn exact_asset_claim_outcome(
+    fixture: &ActorFixture,
+    transaction: PreparedTransaction,
+    aggregate_signature: [u8; 64],
+    exact_target: bool,
+) -> FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetClaimFactsV2> {
+    let (extension, _) = validated_asset_extension_material(&fixture.config, &fixture.agreement)
+        .expect("asset extension");
+    let binding =
+        BtcLezAssetBridgeBindingV2::new(&fixture.agreement, &extension, extension.asset())
+            .expect("asset binding");
+    let WitnessedLezAssetV2::CustomToken(token) = binding.terms().asset() else {
+        panic!("custom-token claim fixture");
+    };
+    let prepared = prepared_lez_asset_claim(&fixture.config, &fixture.agreement);
+    let window = fixture.config.discovery_window().expect("asset window");
+    let height = window.start_height() + 1;
+    let block_hash = Hex32::from_bytes([0xd3; 32]);
+    let metadata_account = Hex32::from_bytes(*binding.metadata_account_id());
+    let authority = token.aggregate_authority_account_id();
+    let facts = FinalizedWitnessedAssetClaimFactsV2::new(
+        ObservedTransactionFacts::new(
+            transaction.transaction_id,
+            transaction.exact_bytes.clone(),
+            ChainPosition::new(block_hash, height, 0),
+            AccountIds::new(vec![authority]).expect("asset claim signer"),
+            true,
+        ),
+        WitnessedAssetClaimInstructionFactsV2::new(
+            fixture.config.lez_bridge.runtime.escrow_program_id,
+            AccountIds::new(vec![
+                metadata_account,
+                token.custody_ata_account_id(),
+                token.claimant_owner_account_id(),
+                token.claimant_ata_account_id(),
+                authority,
+            ])
+            .expect("asset claim accounts"),
+            token.swap_id(),
+            prepared.clone(),
+        ),
+        AggregateBip340Signature::from_bytes(aggregate_signature),
+        FinalizedBlockIdentity::new(height, block_hash, 1_700_000_001_000),
+        WitnessedEscrowMetadataFacts::from_witnessed_token_terms(
+            metadata_account,
+            fixture.config.lez_bridge.runtime.escrow_program_id,
+            token,
+            EscrowState::Claimed,
+        ),
+        WitnessedAssetCustodyFactsV2::CustomToken(TokenHoldingFactsV2::new(
+            token.custody_ata_account_id(),
+            token.token_program_id(),
+            token.token_definition_account_id(),
+            0,
+        )),
+    );
+    let target = if exact_target {
+        FinalizedWitnessedAssetTransactionTargetV2::exact(transaction)
+    } else {
+        FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {}
+    };
+    ClassifyFinalizedWitnessedAssetClaimV2Result::found(
+        MessageContext::new(
+            fixture.config.lez_bridge.run_id.clone(),
+            RequestId::new("asset-claim-fixture").expect("asset fixture request"),
+            fixture.config.role.bridge(),
+        ),
+        binding.terms().clone(),
+        prepared,
+        target,
+        finalized_asset_clock(window),
+        window,
+        facts,
+    )
+    .expect("valid finalized asset claim")
+    .outcome
+}
+
+#[test]
+fn schema5_claim_material_is_strict_and_bound_to_context_terms_and_transcript() {
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    let _ = configure_schema5_asset_claim(&mut fixture);
+    let exact = load_prepared_asset_witnessed_claim(&fixture.config, &fixture.agreement)
+        .expect("exact schema-5 claim material");
+    assert_eq!(
+        exact.context.run_id, fixture.config.lez_bridge.run_id,
+        "claim owner must use its local isolated sidecar run"
+    );
+
+    let path = &fixture.config.signing.prepared_witnessed_claim_result_file;
+    let mut changed_context = exact.clone();
+    changed_context.context.request_id =
+        RequestId::new("changed-asset-claim-request").expect("changed request ID");
+    fs::write(
+        path,
+        serde_json::to_vec(&changed_context).expect("changed context JSON"),
+    )
+    .expect("write changed context");
+    assert_eq!(
+        load_prepared_asset_witnessed_claim(&fixture.config, &fixture.agreement),
+        Err(ActorCommandError::ActivationMaterialUnavailable)
+    );
+
+    let mut changed_terms = serde_json::to_value(&exact).expect("asset claim value");
+    changed_terms["terms"]["asset"]["terms"]["token_definition_account_id"] =
+        Value::String(hex::encode([0x2e; 32]));
+    fs::write(
+        path,
+        serde_json::to_vec(&changed_terms).expect("changed terms JSON"),
+    )
+    .expect("write changed terms");
+    assert_eq!(
+        load_prepared_asset_witnessed_claim(&fixture.config, &fixture.agreement),
+        Err(ActorCommandError::ActivationMaterialUnavailable)
+    );
+
+    let mut unknown = serde_json::to_value(exact).expect("strict asset claim value");
+    unknown["unexpected_private_material"] = Value::String("forbidden".to_owned());
+    fs::write(
+        path,
+        serde_json::to_vec(&unknown).expect("unknown-field JSON"),
+    )
+    .expect("write unknown field");
+    assert_eq!(
+        load_prepared_asset_witnessed_claim(&fixture.config, &fixture.agreement),
+        Err(ActorCommandError::ActivationMaterialUnavailable)
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[allow(clippy::too_many_lines)]
+async fn schema5_asset_claim_owner_sends_once_restart_never_rearms_and_exact_finality_projects() {
+    for (direction, role, transition) in [
+        (
+            SwapDirection::TakerSellsForeign,
+            ActorRole::Taker,
+            ClaimTransition::RevealingClaim,
+        ),
+        (
+            SwapDirection::TakerSellsLez,
+            ActorRole::Maker,
+            ClaimTransition::FollowupClaim,
+        ),
+    ] {
+        let mut fixture = ActorFixture::for_direction(direction, role);
+        let extension = configure_schema5_asset_claim(&mut fixture);
+        activate_and_project_schema5_both_locks(&fixture).await;
+        if transition == ClaimTransition::FollowupClaim {
+            project_revealing_claim(&fixture).await;
+        }
+        let transaction = asset_claim_transaction();
+        let preparation = FixedLezAssetClaimPort::new(
+            &fixture.config,
+            transaction.clone(),
+            unavailable_asset_claim_outcome(),
+            Ok(SubmissionOutcome::Accepted),
+        );
+        let effect = prepare_lez_asset_claim_effect(
+            &fixture.config,
+            &fixture.agreement,
+            transition,
+            &durable_status(&fixture),
+            &preparation,
+        )
+        .await
+        .expect("prepare exact asset claim")
+        .expect("claimant owns exact asset claim");
+        let repeated = prepare_lez_asset_claim_effect(
+            &fixture.config,
+            &fixture.agreement,
+            transition,
+            &durable_status(&fixture),
+            &preparation,
+        )
+        .await
+        .expect("repeat exact asset completion")
+        .expect("claimant remains owner");
+        assert_eq!(effect, repeated);
+        assert_eq!(preparation.complete_calls(), 2);
+        assert_eq!(
+            effect.effect.agreement_commitment(),
+            *extension.asset_commitment()
+        );
+
+        let absent = FixedLezAssetClaimPort::new(
+            &fixture.config,
+            transaction.clone(),
+            absent_asset_claim_outcome(&fixture.config),
+            Ok(SubmissionOutcome::Accepted),
+        );
+        let observer = LezAssetClaimObserver {
+            config: &fixture.config,
+            chain: absent.clone(),
+            effect: Some(effect.clone()),
+            prepared_claim: prepared_lez_asset_claim(&fixture.config, &fixture.agreement),
+            state_db: fixture.config.state_db.clone(),
+        };
+        let pending = output_json(
+            drive_claim_with_observer(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &observer,
+            )
+            .await
+            .expect("affirmative absence grants one asset claim send"),
+        );
+        assert_eq!(pending["outcome"], "awaiting_observation");
+        assert_eq!(pending["revision"], transition.predecessor_revision());
+        assert_eq!(absent.submit_calls(), 1);
+
+        let restarted = FixedLezAssetClaimPort::new(
+            &fixture.config,
+            transaction.clone(),
+            absent_asset_claim_outcome(&fixture.config),
+            Ok(SubmissionOutcome::Accepted),
+        );
+        let restarted_observer = LezAssetClaimObserver {
+            config: &fixture.config,
+            chain: restarted.clone(),
+            effect: Some(effect.clone()),
+            prepared_claim: prepared_lez_asset_claim(&fixture.config, &fixture.agreement),
+            state_db: fixture.config.state_db.clone(),
+        };
+        drive_claim_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &restarted_observer,
+        )
+        .await
+        .expect("accepted asset claim restart is observe-only");
+        assert_eq!(restarted.submit_calls(), 0);
+
+        let found = FixedLezAssetClaimPort::new(
+            &fixture.config,
+            transaction.clone(),
+            exact_asset_claim_outcome(&fixture, transaction, effect.aggregate_signature, true),
+            Err(ActorCommandError::ObservationUnavailable),
+        );
+        let found_observer = LezAssetClaimObserver {
+            config: &fixture.config,
+            chain: found.clone(),
+            effect: Some(effect),
+            prepared_claim: prepared_lez_asset_claim(&fixture.config, &fixture.agreement),
+            state_db: fixture.config.state_db.clone(),
+        };
+        let projected = output_json(
+            drive_claim_with_observer(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &found_observer,
+            )
+            .await
+            .expect("exact finalized asset claim projects"),
+        );
+        assert_eq!(projected["outcome"], "observed_then_projected");
+        assert_eq!(projected["revision"], transition.revision());
+        assert_eq!(found.submit_calls(), 0);
+        assert_eq!(found.classify_calls(), 1);
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn schema5_asset_claim_nonowner_discovers_without_completion_send_or_peer_private_material() {
+    for (direction, role, transition) in [
+        (
+            SwapDirection::TakerSellsForeign,
+            ActorRole::Maker,
+            ClaimTransition::RevealingClaim,
+        ),
+        (
+            SwapDirection::TakerSellsLez,
+            ActorRole::Taker,
+            ClaimTransition::FollowupClaim,
+        ),
+    ] {
+        let mut fixture = ActorFixture::for_direction(direction, role);
+        let _ = configure_schema5_asset_claim(&mut fixture);
+        let prepared = load_prepared_asset_witnessed_claim(&fixture.config, &fixture.agreement)
+            .expect("peer-public prepared claim");
+        assert_ne!(prepared.context.run_id, fixture.config.lez_bridge.run_id);
+        activate_and_project_schema5_both_locks(&fixture).await;
+        if transition == ClaimTransition::FollowupClaim {
+            project_revealing_claim(&fixture).await;
+        }
+        let transaction = asset_claim_transaction();
+        let port = FixedLezAssetClaimPort::new(
+            &fixture.config,
+            transaction.clone(),
+            exact_asset_claim_outcome(
+                &fixture,
+                transaction,
+                valid_lez_claim_signature(&fixture, transition),
+                false,
+            ),
+            Err(ActorCommandError::ObservationUnavailable),
+        );
+        let effect = prepare_lez_asset_claim_effect(
+            &fixture.config,
+            &fixture.agreement,
+            transition,
+            &durable_status(&fixture),
+            &port,
+        )
+        .await
+        .expect("nonowner remains observation-only");
+        assert!(effect.is_none());
+        let observer = LezAssetClaimObserver {
+            config: &fixture.config,
+            chain: port.clone(),
+            effect: None,
+            prepared_claim: prepared.claim,
+            state_db: fixture.config.state_db.clone(),
+        };
+        let projected = output_json(
+            drive_claim_with_observer(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &observer,
+            )
+            .await
+            .expect("peerless asset claim discovery projects"),
+        );
+        assert_eq!(projected["revision"], transition.revision());
+        assert_eq!(port.complete_calls(), 0);
+        assert_eq!(port.submit_calls(), 0);
+        assert!(matches!(
+            port.targets.lock().expect("asset targets").as_slice(),
+            [FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {}]
+        ));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[allow(clippy::too_many_lines)]
+async fn schema5_asset_claim_uncertainty_unavailability_and_conflict_never_authorize_send() {
+    for outcome in ["uncertain", "unavailable"] {
+        let mut fixture =
+            ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+        let _ = configure_schema5_asset_claim(&mut fixture);
+        activate_and_project_schema5_both_locks(&fixture).await;
+        let transaction = asset_claim_transaction();
+        let preparation = FixedLezAssetClaimPort::new(
+            &fixture.config,
+            transaction.clone(),
+            unavailable_asset_claim_outcome(),
+            Ok(SubmissionOutcome::Accepted),
+        );
+        let effect = prepare_lez_asset_claim_effect(
+            &fixture.config,
+            &fixture.agreement,
+            ClaimTransition::RevealingClaim,
+            &durable_status(&fixture),
+            &preparation,
+        )
+        .await
+        .expect("prepare asset claim")
+        .expect("taker owns revealing claim");
+        let scan = match outcome {
+            "uncertain" => uncertain_asset_claim_outcome(&fixture.config),
+            "unavailable" => unavailable_asset_claim_outcome(),
+            _ => unreachable!("fixed outcomes"),
+        };
+        let port = FixedLezAssetClaimPort::new(
+            &fixture.config,
+            transaction,
+            scan,
+            Ok(SubmissionOutcome::Accepted),
+        );
+        let observer = LezAssetClaimObserver {
+            config: &fixture.config,
+            chain: port.clone(),
+            effect: Some(effect),
+            prepared_claim: prepared_lez_asset_claim(&fixture.config, &fixture.agreement),
+            state_db: fixture.config.state_db.clone(),
+        };
+        let pending = output_json(
+            drive_claim_with_observer(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &observer,
+            )
+            .await
+            .expect("non-authoritative asset scan remains pending"),
+        );
+        assert_eq!(pending["revision"], 2, "outcome: {outcome}");
+        assert_eq!(port.submit_calls(), 0, "outcome: {outcome}");
+    }
+
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    let _ = configure_schema5_asset_claim(&mut fixture);
+    activate_and_project_schema5_both_locks(&fixture).await;
+    let transaction = asset_claim_transaction();
+    let preparation = FixedLezAssetClaimPort::new(
+        &fixture.config,
+        transaction.clone(),
+        unavailable_asset_claim_outcome(),
+        Ok(SubmissionOutcome::Accepted),
+    );
+    let effect = prepare_lez_asset_claim_effect(
+        &fixture.config,
+        &fixture.agreement,
+        ClaimTransition::RevealingClaim,
+        &durable_status(&fixture),
+        &preparation,
+    )
+    .await
+    .expect("prepare conflicting asset claim")
+    .expect("taker owns revealing claim");
+    let mut conflicting = exact_asset_claim_outcome(
+        &fixture,
+        transaction.clone(),
+        effect.aggregate_signature,
+        true,
+    );
+    let FinalizedWitnessedAssetScanOutcomeV2::Found { facts, .. } = &mut conflicting else {
+        unreachable!("exact found fixture")
+    };
+    facts.transaction.exact_bytes =
+        ExactTransactionBytes::new(b"conflicting-canonical-asset-claim".to_vec())
+            .expect("conflicting bytes");
+    let conflict_port = FixedLezAssetClaimPort::new(
+        &fixture.config,
+        transaction.clone(),
+        conflicting,
+        Ok(SubmissionOutcome::Accepted),
+    );
+    let conflict_observer = LezAssetClaimObserver {
+        config: &fixture.config,
+        chain: conflict_port.clone(),
+        effect: Some(effect.clone()),
+        prepared_claim: prepared_lez_asset_claim(&fixture.config, &fixture.agreement),
+        state_db: fixture.config.state_db.clone(),
+    };
+    assert_eq!(
+        drive_claim_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &conflict_observer,
+        )
+        .await,
+        Err(ActorCommandError::AgreementBindingInvalid)
+    );
+    assert_eq!(conflict_port.submit_calls(), 0);
+
+    let absent_restart = FixedLezAssetClaimPort::new(
+        &fixture.config,
+        transaction,
+        absent_asset_claim_outcome(&fixture.config),
+        Ok(SubmissionOutcome::Accepted),
+    );
+    let restarted_observer = LezAssetClaimObserver {
+        config: &fixture.config,
+        chain: absent_restart.clone(),
+        effect: Some(effect),
+        prepared_claim: prepared_lez_asset_claim(&fixture.config, &fixture.agreement),
+        state_db: fixture.config.state_db.clone(),
+    };
+    drive_claim_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &restarted_observer,
+    )
+    .await
+    .expect("conflict-burned authority remains observe-only");
+    assert_eq!(absent_restart.submit_calls(), 0);
 }
 
 #[tokio::test(flavor = "current_thread")]

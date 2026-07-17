@@ -34,23 +34,24 @@ use lez_bridge_client::{
 #[cfg(test)]
 use lez_bridge_protocol::FinalizedWitnessedFundingObservationTarget;
 use lez_bridge_protocol::{
-    AggregateBip340Signature, ChainClock, ChainTip,
-    ClassifyFinalizedWitnessedInitializationRequest, CompleteWitnessedClaimRequest,
-    CompleteWitnessedClaimResult, DiscoveryWindow, EscrowObservationTarget, EscrowState,
-    ExactTransactionBytes, FinalizedWitnessedAssetScanOutcomeV2,
+    AggregateBip340Signature, ChainClock, ChainTip, ClassifyFinalizedWitnessedAssetClaimV2Result,
+    ClassifyFinalizedWitnessedInitializationRequest, CompleteWitnessedAssetClaimV2Result,
+    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DiscoveryWindow,
+    EscrowObservationTarget, EscrowState, ExactTransactionBytes,
+    FinalizedWitnessedAssetClaimFactsV2, FinalizedWitnessedAssetScanOutcomeV2,
     FinalizedWitnessedAssetTransactionTargetV2, FinalizedWitnessedClaimFacts,
     FinalizedWitnessedClaimObservationTarget, Hex32, MessageContext,
     NativeEscrowAccountObservation, NativeRefundObservation, NativeRefundObservationTarget,
     ObserveCurrentClockRequest, ObserveFinalizedWitnessedClaimRequest,
     ObserveFinalizedWitnessedFundingRequest, ObserveNativeRefundRequest, ObserveNativeRefundResult,
     ObserveWitnessedEscrowRequest, Participant as BridgeParticipant, PrepareNativeRefundRequest,
-    PrepareNativeRefundResult, PrepareWitnessedAssetEscrowV2Request,
-    PrepareWitnessedAssetEscrowV2Result, PrepareWitnessedClaimResult,
-    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
-    PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
-    SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
-    WitnessedAssetPrepareStepV2, WitnessedEscrowMetadataFacts, WitnessedFundingObservation,
-    WitnessedInitializationObservation, WitnessedNativeEscrowTerms,
+    PrepareNativeRefundResult, PrepareWitnessedAssetClaimV2Result,
+    PrepareWitnessedAssetEscrowV2Request, PrepareWitnessedAssetEscrowV2Result,
+    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
+    PreparedTransaction, PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility,
+    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
+    TransactionId, WitnessedAssetPrepareStepV2, WitnessedEscrowMetadataFacts,
+    WitnessedFundingObservation, WitnessedInitializationObservation, WitnessedNativeEscrowTerms,
     WitnessedNativeEscrowTermsInput,
 };
 use lez_btc_core_adapter::{
@@ -2349,6 +2350,84 @@ impl LezClaimChainPort for BridgeClient {
     }
 }
 
+/// Additive F7 claim boundary. Completion and classification stay behind the
+/// policy-bound adapter; only a previously authorized exact transaction reaches
+/// the generic submission route.
+#[async_trait]
+trait LezAssetClaimChainPort: Send + Sync {
+    async fn complete_asset_claim(
+        &self,
+        binding: &BtcLezAssetBridgeBindingV2,
+        request_id: RequestId,
+        claim: PreparedWitnessedClaim,
+        aggregate_signature: AggregateBip340Signature,
+    ) -> Result<CompleteWitnessedAssetClaimV2Result, ActorCommandError>;
+
+    async fn classify_finalized_asset_claim(
+        &self,
+        binding: &BtcLezAssetBridgeBindingV2,
+        request_id: RequestId,
+        claim: PreparedWitnessedClaim,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        window: DiscoveryWindow,
+    ) -> Result<
+        FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetClaimFactsV2>,
+        ActorCommandError,
+    >;
+
+    async fn submit_transaction(
+        &self,
+        request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, ActorCommandError>;
+}
+
+struct LiveLezAssetClaimPort {
+    adapter: LezBridgeAdapter<BridgeClient>,
+    submit: BridgeClient,
+}
+
+#[async_trait]
+impl LezAssetClaimChainPort for LiveLezAssetClaimPort {
+    async fn complete_asset_claim(
+        &self,
+        binding: &BtcLezAssetBridgeBindingV2,
+        request_id: RequestId,
+        claim: PreparedWitnessedClaim,
+        aggregate_signature: AggregateBip340Signature,
+    ) -> Result<CompleteWitnessedAssetClaimV2Result, ActorCommandError> {
+        self.adapter
+            .complete_btc_asset_claim_v2(binding, request_id, claim, aggregate_signature)
+            .await
+            .map_err(|_| ActorCommandError::ObservationUnavailable)
+    }
+
+    async fn classify_finalized_asset_claim(
+        &self,
+        binding: &BtcLezAssetBridgeBindingV2,
+        request_id: RequestId,
+        claim: PreparedWitnessedClaim,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        window: DiscoveryWindow,
+    ) -> Result<
+        FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetClaimFactsV2>,
+        ActorCommandError,
+    > {
+        self.adapter
+            .classify_finalized_btc_asset_claim_v2(binding, request_id, claim, target, window)
+            .await
+            .map_err(|_| ActorCommandError::ObservationUnavailable)
+    }
+
+    async fn submit_transaction(
+        &self,
+        request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, ActorCommandError> {
+        BridgeClient::submit_transaction(&self.submit, request)
+            .await
+            .map_err(|_| ActorCommandError::ObservationUnavailable)
+    }
+}
+
 /// Executes one disk-configured role-fixed command.
 ///
 /// `Status` never constructs a chain client. `Drive` performs one observation,
@@ -2369,7 +2448,9 @@ pub async fn execute_actor_command(
         ActorCommand::Recover => Box::pin(recover_live(config))
             .await
             .map(ActorCommandOutputV1::Effect),
-        ActorCommand::Drive => drive_live(config).await.map(ActorCommandOutputV1::Effect),
+        ActorCommand::Drive => Box::pin(drive_live(config))
+            .await
+            .map(ActorCommandOutputV1::Effect),
     }
 }
 
@@ -2416,7 +2497,11 @@ fn validate_activation_material(
     config: &ActorConfig,
     agreement: &BtcAgreementV1,
 ) -> Result<(), ActorCommandError> {
-    let _ = load_prepared_witnessed_claim(config, agreement)?;
+    if config.schema_version == ASSET_CONFIG_SCHEMA_VERSION {
+        let _ = load_prepared_asset_witnessed_claim(config, agreement)?;
+    } else {
+        let _ = load_prepared_witnessed_claim(config, agreement)?;
+    }
     validate_signer_journal(
         config,
         agreement,
@@ -2752,6 +2837,33 @@ fn load_prepared_witnessed_claim(
     Ok(prepared)
 }
 
+fn load_prepared_asset_witnessed_claim(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+) -> Result<PrepareWitnessedAssetClaimV2Result, ActorCommandError> {
+    if config.schema_version != ASSET_CONFIG_SCHEMA_VERSION {
+        return Err(ActorCommandError::ActivationMaterialUnavailable);
+    }
+    let prepared = read_strict_material::<PrepareWitnessedAssetClaimV2Result>(
+        &config.signing.prepared_witnessed_claim_result_file,
+    )?;
+    let (extension, _) = validated_asset_extension_material(config, agreement)
+        .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?;
+    let binding = BtcLezAssetBridgeBindingV2::new(agreement, &extension, extension.asset())
+        .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)?;
+    let local_is_claimant = config.role.sdk() == agreement.lez_claimant();
+    if prepared.context.sidecar_role != bridge_participant(agreement.lez_claimant())
+        || (local_is_claimant && prepared.context.run_id != config.lez_bridge.run_id)
+        || prepared.context.request_id != prepared.claim.preparation_request_id
+        || prepared.terms != *binding.terms()
+        || validate_prepared_witnessed_claim(&prepared.claim).is_err()
+        || prepared.claim.message_hash.as_bytes() != agreement.lez_terms().claim_message_hash()
+    {
+        return Err(ActorCommandError::ActivationMaterialUnavailable);
+    }
+    Ok(prepared)
+}
+
 fn validate_taker_adaptor_secret(
     config: &ActorConfig,
     agreement: &BtcAgreementV1,
@@ -3056,6 +3168,34 @@ async fn drive_live_lez_claim(
         config.lez_bridge.runtime.clone(),
         Duration::from_millis(config.lez_bridge.request_timeout_millis),
     );
+    if config.schema_version == ASSET_CONFIG_SCHEMA_VERSION {
+        let adapter = LezBridgeAdapter::new(
+            factory
+                .fresh_transport()
+                .map_err(|_| ActorCommandError::ConfigurationUnavailable)?,
+            config.lez_bridge.run_id.clone(),
+            config.lez_bridge.runtime.clone(),
+            config.role.sdk(),
+        )
+        .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+        let port = LiveLezAssetClaimPort {
+            adapter,
+            submit: factory
+                .fresh_transport()
+                .map_err(|_| ActorCommandError::ConfigurationUnavailable)?,
+        };
+        let prepared = load_prepared_asset_witnessed_claim(config, &agreement)?;
+        let effect =
+            prepare_lez_asset_claim_effect(config, &agreement, transition, durable, &port).await?;
+        let observer = LezAssetClaimObserver {
+            config,
+            chain: port,
+            effect,
+            prepared_claim: prepared.claim,
+            state_db: config.state_db.clone(),
+        };
+        return drive_claim_with_observer(config, agreement, wire, &observer).await;
+    }
     let client = factory
         .fresh_transport()
         .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
@@ -4415,40 +4555,7 @@ where
         return Err(ActorCommandError::AgreementBindingInvalid);
     }
 
-    let adaptor_secret = match transition {
-        ClaimTransition::RevealingClaim => {
-            let path = config
-                .signing
-                .adaptor_secret_file
-                .as_ref()
-                .ok_or(ActorCommandError::ActivationMaterialUnavailable)?;
-            read_private_adaptor_secret(path)
-                .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?
-        }
-        ClaimTransition::FollowupClaim => {
-            let public_signature: [u8; 64] = before
-                .revealing_public_witness()
-                .and_then(|bytes| bytes.try_into().ok())
-                .ok_or(ActorCommandError::ActivationMaterialUnavailable)?;
-            let revealing_chain = agreement
-                .coordinator()
-                .funded_chain(ClaimTransition::RevealingClaim.funded_participant());
-            if revealing_chain != Chain::Bitcoin {
-                return Err(ActorCommandError::AgreementBindingInvalid);
-            }
-            let (context, presignature) =
-                verified_chain_presignature(config, agreement, Chain::Bitcoin)?;
-            // Extraction verifies the final Bitcoin signature and point-checks
-            // the recovered scalar against the signed agreement adaptor point.
-            extract_adaptor_secret(&context, presignature, public_signature)
-                .map_err(|_| ActorCommandError::ObservationUnavailable)?
-        }
-    };
-    let (context, presignature) = verified_chain_presignature(config, agreement, Chain::Lez)?;
-    let aggregate_signature = adapt_presignature(&context, presignature, adaptor_secret)
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
-    verify_final_signature(&context, aggregate_signature)
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    let aggregate_signature = lez_claim_aggregate_signature(config, agreement, transition, before)?;
     let request = complete_lez_claim_request(
         config,
         agreement,
@@ -4486,6 +4593,168 @@ where
         transaction: completed.claim,
         aggregate_signature,
     }))
+}
+
+fn lez_claim_aggregate_signature(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: ClaimTransition,
+    before: &BtcOfflineStatus,
+) -> Result<[u8; 64], ActorCommandError> {
+    let adaptor_secret = match transition {
+        ClaimTransition::RevealingClaim => {
+            let path = config
+                .signing
+                .adaptor_secret_file
+                .as_ref()
+                .ok_or(ActorCommandError::ActivationMaterialUnavailable)?;
+            read_private_adaptor_secret(path)
+                .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?
+        }
+        ClaimTransition::FollowupClaim => {
+            let public_signature: [u8; 64] = before
+                .revealing_public_witness()
+                .and_then(|bytes| bytes.try_into().ok())
+                .ok_or(ActorCommandError::ActivationMaterialUnavailable)?;
+            let revealing_chain = agreement
+                .coordinator()
+                .funded_chain(ClaimTransition::RevealingClaim.funded_participant());
+            if revealing_chain != Chain::Bitcoin {
+                return Err(ActorCommandError::AgreementBindingInvalid);
+            }
+            let (context, presignature) =
+                verified_chain_presignature(config, agreement, Chain::Bitcoin)?;
+            // Extraction verifies the final Bitcoin signature and point-checks
+            // the recovered scalar against the signed agreement adaptor point.
+            extract_adaptor_secret(&context, presignature, public_signature)
+                .map_err(|_| ActorCommandError::ObservationUnavailable)?
+        }
+    };
+    let (context, presignature) = verified_chain_presignature(config, agreement, Chain::Lez)?;
+    let aggregate_signature = adapt_presignature(&context, presignature, adaptor_secret)
+        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    verify_final_signature(&context, aggregate_signature)
+        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    Ok(aggregate_signature)
+}
+
+async fn prepare_lez_asset_claim_effect<P>(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: ClaimTransition,
+    before: &BtcOfflineStatus,
+    chain: &P,
+) -> Result<Option<PreparedLezClaimEffect>, ActorCommandError>
+where
+    P: LezAssetClaimChainPort,
+{
+    if config.schema_version != ASSET_CONFIG_SCHEMA_VERSION
+        || before.revision() != transition.predecessor_revision()
+        || agreement
+            .coordinator()
+            .funded_chain(transition.funded_participant())
+            != Chain::Lez
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    if config.role.sdk() != transition.submitter() {
+        return Ok(None);
+    }
+    let prepared = load_prepared_asset_witnessed_claim(config, agreement)?;
+    if prepared.context.sidecar_role != config.role.bridge()
+        || prepared.context.run_id != config.lez_bridge.run_id
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    let (extension, _) = validated_asset_extension_material(config, agreement)
+        .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?;
+    let binding = BtcLezAssetBridgeBindingV2::new(agreement, &extension, extension.asset())
+        .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    let aggregate_signature = lez_claim_aggregate_signature(config, agreement, transition, before)?;
+    let request_id = complete_lez_asset_claim_request_id(
+        config,
+        agreement,
+        transition,
+        &prepared,
+        aggregate_signature,
+    )?;
+    let expected_context = MessageContext::new(
+        config.lez_bridge.run_id.clone(),
+        request_id.clone(),
+        config.role.bridge(),
+    );
+    let completed = chain
+        .complete_asset_claim(
+            &binding,
+            request_id,
+            prepared.claim,
+            AggregateBip340Signature::from_bytes(aggregate_signature),
+        )
+        .await?;
+    if completed.context != expected_context
+        || completed.terms != *binding.terms()
+        || completed.claim.transaction_id.as_bytes() == &[0; 32]
+        || completed.claim.exact_bytes.as_slice().is_empty()
+    {
+        return Err(ActorCommandError::ObservationUnavailable);
+    }
+    let swap_id = SwapId::new(hex::encode(agreement.body().swap_id()))
+        .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    let key = PublicEffectKey::new(
+        swap_id,
+        config.role.sdk(),
+        PublicEffectChain::Lez,
+        PublicEffectOperation::Claim,
+        transition.predecessor_revision(),
+    );
+    let effect = PreparedPublicEffect::new(
+        key,
+        *extension.asset_commitment(),
+        hex::encode(completed.claim.transaction_id.as_bytes()),
+        completed.claim.exact_bytes.as_slice().to_vec(),
+    )
+    .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    Ok(Some(PreparedLezClaimEffect {
+        effect,
+        transaction: completed.claim,
+        aggregate_signature,
+    }))
+}
+
+fn complete_lez_asset_claim_request_id(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: ClaimTransition,
+    prepared: &PrepareWitnessedAssetClaimV2Result,
+    aggregate_signature: [u8; 64],
+) -> Result<RequestId, ActorCommandError> {
+    #[derive(Serialize)]
+    struct Identity<'a> {
+        schema_version: u16,
+        operation: &'static str,
+        asset_commitment: String,
+        transition: ClaimTransition,
+        run_id: &'a RunId,
+        sidecar_role: BridgeParticipant,
+        runtime: &'a RuntimeDescriptor,
+        terms: &'a lez_bridge_protocol::WitnessedLezAssetTermsV2,
+        claim: &'a PreparedWitnessedClaim,
+        aggregate_signature: AggregateBip340Signature,
+    }
+    let (extension, _) = validated_asset_extension_material(config, agreement)
+        .map_err(|()| ActorCommandError::AgreementBindingInvalid)?;
+    deterministic_request_id(&Identity {
+        schema_version: 1,
+        operation: "complete_witnessed_asset_claim",
+        asset_commitment: hex::encode(extension.asset_commitment()),
+        transition,
+        run_id: &config.lez_bridge.run_id,
+        sidecar_role: config.role.bridge(),
+        runtime: &config.lez_bridge.runtime,
+        terms: &prepared.terms,
+        claim: &prepared.claim,
+        aggregate_signature: AggregateBip340Signature::from_bytes(aggregate_signature),
+    })
 }
 
 fn complete_lez_claim_request(
@@ -5910,6 +6179,388 @@ where
     }
 }
 
+struct LezAssetClaimObserver<'a, P> {
+    config: &'a ActorConfig,
+    chain: P,
+    effect: Option<PreparedLezClaimEffect>,
+    prepared_claim: PreparedWitnessedClaim,
+    state_db: PathBuf,
+}
+
+#[async_trait]
+impl<P> ClaimObservationPort for LezAssetClaimObserver<'_, P>
+where
+    P: LezAssetClaimChainPort,
+{
+    async fn observe(
+        &self,
+        agreement: &BtcAgreementV1,
+        transition: ClaimTransition,
+    ) -> Result<ActorClaimObservation, ActorCommandError> {
+        let (extension, _) = validated_asset_extension_material(self.config, agreement)
+            .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?;
+        let binding = BtcLezAssetBridgeBindingV2::new(agreement, &extension, extension.asset())
+            .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+        if let Some(effect) = &self.effect {
+            validate_prepared_lez_asset_effect(self.config, agreement, effect, transition)?;
+            let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
+                .map_err(|_| ActorCommandError::StateUnavailable)?;
+            let _ = journal
+                .record_prepared(&effect.effect)
+                .map_err(|_| ActorCommandError::StateUnavailable)?;
+        }
+        let target = self.effect.as_ref().map_or(
+            FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {},
+            |effect| FinalizedWitnessedAssetTransactionTargetV2::exact(effect.transaction.clone()),
+        );
+        let window = self.config.discovery_window()?;
+        let request_id = finalized_lez_asset_claim_request_id(
+            self.config,
+            agreement,
+            transition,
+            &binding,
+            &self.prepared_claim,
+            &target,
+            window,
+        )?;
+        let outcome = self
+            .chain
+            .classify_finalized_asset_claim(
+                &binding,
+                request_id.clone(),
+                self.prepared_claim.clone(),
+                target.clone(),
+                window,
+            )
+            .await?;
+
+        // A canonical conflicting public transaction burns authority before
+        // deeper decoding can fail; no later absence may rearm this effect.
+        if let (Some(effect), FinalizedWitnessedAssetScanOutcomeV2::Found { .. }) =
+            (&self.effect, &outcome)
+        {
+            self.reconcile_asset_and_maybe_submit(agreement, transition, effect, &outcome)
+                .await?;
+        }
+        validate_lez_asset_claim_outcome(
+            self.config,
+            agreement,
+            transition,
+            &binding,
+            &self.prepared_claim,
+            &target,
+            window,
+            &outcome,
+            self.effect.as_ref(),
+        )?;
+        if let (Some(effect), outcome) = (&self.effect, &outcome)
+            && !matches!(outcome, FinalizedWitnessedAssetScanOutcomeV2::Found { .. })
+        {
+            self.reconcile_asset_and_maybe_submit(agreement, transition, effect, outcome)
+                .await?;
+        }
+
+        let FinalizedWitnessedAssetScanOutcomeV2::Found {
+            finalized_clock,
+            scanned_window,
+            facts,
+        } = outcome
+        else {
+            return Ok(ActorClaimObservation::Pending { chain: Chain::Lez });
+        };
+        let chain_evidence = encode_finalized_lez_asset_claim_evidence(
+            agreement,
+            &extension,
+            transition,
+            request_id,
+            &self.config.lez_bridge.runtime,
+            self.prepared_claim.clone(),
+            target,
+            finalized_clock,
+            scanned_window,
+            &facts,
+        )?;
+        Ok(ActorClaimObservation::Ready {
+            chain: Chain::Lez,
+            transaction_id: hex::encode(facts.transaction.transaction_id.as_bytes())
+                .into_boxed_str(),
+            confirmations: FINALIZED_LEZ_CONFIRMATION_UNITS,
+            chain_evidence,
+            revealing_public_signature: (transition == ClaimTransition::RevealingClaim)
+                .then_some(*facts.aggregate_signature.as_bytes()),
+        })
+    }
+}
+
+impl<P> LezAssetClaimObserver<'_, P>
+where
+    P: LezAssetClaimChainPort,
+{
+    async fn reconcile_asset_and_maybe_submit(
+        &self,
+        agreement: &BtcAgreementV1,
+        transition: ClaimTransition,
+        effect: &PreparedLezClaimEffect,
+        outcome: &FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetClaimFactsV2>,
+    ) -> Result<(), ActorCommandError> {
+        let observation = match outcome {
+            FinalizedWitnessedAssetScanOutcomeV2::Found { facts, .. }
+                if facts.transaction.transaction_id == effect.transaction.transaction_id
+                    && facts.transaction.exact_bytes.as_slice()
+                        == effect.effect.exact_public_bytes()
+                    && facts.aggregate_signature.as_bytes() == &effect.aggregate_signature =>
+            {
+                PublicEffectObservation::PresentExact(
+                    facts.transaction.exact_bytes.as_slice().to_vec(),
+                )
+            }
+            FinalizedWitnessedAssetScanOutcomeV2::Absent { .. } => PublicEffectObservation::Absent,
+            FinalizedWitnessedAssetScanOutcomeV2::Found { .. } => {
+                PublicEffectObservation::ConflictingPresence
+            }
+            FinalizedWitnessedAssetScanOutcomeV2::Uncertain { .. }
+            | FinalizedWitnessedAssetScanOutcomeV2::Unavailable { .. } => {
+                PublicEffectObservation::Uncertain
+            }
+        };
+        let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        let decision = journal
+            .reconcile(effect.effect.key(), observation)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        let PublicEffectDecision::SubmitOnce(_) = decision else {
+            return Ok(());
+        };
+        drop(journal);
+
+        let request = submit_lez_claim_request(self.config, agreement, transition, effect)?;
+        let expected_context = request.context.clone();
+        let submission = self.chain.submit_transaction(request).await;
+        let (result, deferred_error) = match submission {
+            Ok(result)
+                if result.context == expected_context
+                    && result.transaction_id == effect.transaction.transaction_id
+                    && matches!(
+                        result.outcome,
+                        SubmissionOutcome::Accepted | SubmissionOutcome::AlreadyKnown
+                    ) =>
+            {
+                (
+                    PublicEffectSubmissionResult::Accepted(
+                        hex::encode(result.transaction_id.as_bytes()).into_boxed_str(),
+                    ),
+                    None,
+                )
+            }
+            Ok(_) => (
+                PublicEffectSubmissionResult::Unknown,
+                Some(ActorCommandError::AgreementBindingInvalid),
+            ),
+            Err(error) => (PublicEffectSubmissionResult::Unknown, Some(error)),
+        };
+        let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        let _ = journal
+            .record_submission_result(effect.effect.key(), &result)
+            .map_err(|_| ActorCommandError::StateUnavailable)?;
+        if let Some(error) = deferred_error {
+            return Err(error);
+        }
+        Ok(())
+    }
+}
+
+fn validate_prepared_lez_asset_effect(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    effect: &PreparedLezClaimEffect,
+    transition: ClaimTransition,
+) -> Result<(), ActorCommandError> {
+    validate_prepared_lez_effect(effect, transition)?;
+    let (extension, _) = validated_asset_extension_material(config, agreement)
+        .map_err(|()| ActorCommandError::AgreementBindingInvalid)?;
+    if effect.effect.agreement_commitment() != *extension.asset_commitment() {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    Ok(())
+}
+
+fn finalized_lez_asset_claim_request_id(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: ClaimTransition,
+    binding: &BtcLezAssetBridgeBindingV2,
+    claim: &PreparedWitnessedClaim,
+    target: &FinalizedWitnessedAssetTransactionTargetV2,
+    window: DiscoveryWindow,
+) -> Result<RequestId, ActorCommandError> {
+    #[derive(Serialize)]
+    struct Identity<'a> {
+        schema_version: u16,
+        operation: &'static str,
+        asset_commitment: String,
+        transition: ClaimTransition,
+        run_id: &'a RunId,
+        sidecar_role: BridgeParticipant,
+        runtime: &'a RuntimeDescriptor,
+        terms: &'a lez_bridge_protocol::WitnessedLezAssetTermsV2,
+        claim: &'a PreparedWitnessedClaim,
+        target: &'a FinalizedWitnessedAssetTransactionTargetV2,
+        window: DiscoveryWindow,
+    }
+    let (extension, _) = validated_asset_extension_material(config, agreement)
+        .map_err(|()| ActorCommandError::AgreementBindingInvalid)?;
+    deterministic_request_id(&Identity {
+        schema_version: 1,
+        operation: "classify_finalized_witnessed_asset_claim",
+        asset_commitment: hex::encode(extension.asset_commitment()),
+        transition,
+        run_id: &config.lez_bridge.run_id,
+        sidecar_role: config.role.bridge(),
+        runtime: &config.lez_bridge.runtime,
+        terms: binding.terms(),
+        claim,
+        target,
+        window,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_lez_asset_claim_outcome(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: ClaimTransition,
+    binding: &BtcLezAssetBridgeBindingV2,
+    claim: &PreparedWitnessedClaim,
+    target: &FinalizedWitnessedAssetTransactionTargetV2,
+    window: DiscoveryWindow,
+    outcome: &FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetClaimFactsV2>,
+    effect: Option<&PreparedLezClaimEffect>,
+) -> Result<(), ActorCommandError> {
+    if config.schema_version != ASSET_CONFIG_SCHEMA_VERSION
+        || agreement
+            .coordinator()
+            .funded_chain(transition.funded_participant())
+            != Chain::Lez
+    {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    let context = MessageContext::new(
+        config.lez_bridge.run_id.clone(),
+        finalized_lez_asset_claim_request_id(
+            config, agreement, transition, binding, claim, target, window,
+        )?,
+        config.role.bridge(),
+    );
+    match outcome {
+        FinalizedWitnessedAssetScanOutcomeV2::Found {
+            finalized_clock,
+            scanned_window,
+            facts,
+        } => {
+            let _ = ClassifyFinalizedWitnessedAssetClaimV2Result::found(
+                context,
+                binding.terms().clone(),
+                claim.clone(),
+                target.clone(),
+                *finalized_clock,
+                *scanned_window,
+                (**facts).clone(),
+            )
+            .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+            let (signature_context, _) =
+                verified_chain_presignature(config, agreement, Chain::Lez)?;
+            let signature = *facts.aggregate_signature.as_bytes();
+            if verify_final_signature(&signature_context, signature).is_err()
+                || effect.is_some_and(|expected| {
+                    facts.transaction.transaction_id != expected.transaction.transaction_id
+                        || facts.transaction.exact_bytes.as_slice()
+                            != expected.effect.exact_public_bytes()
+                        || signature != expected.aggregate_signature
+                })
+            {
+                return Err(ActorCommandError::AgreementBindingInvalid);
+            }
+        }
+        FinalizedWitnessedAssetScanOutcomeV2::Absent {
+            finalized_clock,
+            scanned_window,
+        } => {
+            let _ = ClassifyFinalizedWitnessedAssetClaimV2Result::absent(
+                context,
+                binding.terms().clone(),
+                claim.clone(),
+                target.clone(),
+                *finalized_clock,
+                *scanned_window,
+            )
+            .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+        }
+        FinalizedWitnessedAssetScanOutcomeV2::Uncertain {
+            finalized_clock,
+            scanned_window,
+        } => {
+            let _ = ClassifyFinalizedWitnessedAssetClaimV2Result::uncertain(
+                context,
+                binding.terms().clone(),
+                claim.clone(),
+                target.clone(),
+                *finalized_clock,
+                *scanned_window,
+            )
+            .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+        }
+        FinalizedWitnessedAssetScanOutcomeV2::Unavailable { .. } => {}
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct FinalizedLezAssetClaimEvidenceV2 {
+    schema_version: u16,
+    asset_commitment: String,
+    transition: ClaimTransition,
+    request_id: RequestId,
+    runtime: RuntimeDescriptor,
+    claim: PreparedWitnessedClaim,
+    target: FinalizedWitnessedAssetTransactionTargetV2,
+    finalized_clock: ChainClock,
+    scanned_window: DiscoveryWindow,
+    facts: FinalizedWitnessedAssetClaimFactsV2,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_finalized_lez_asset_claim_evidence(
+    agreement: &BtcAgreementV1,
+    extension: &BtcLezAssetExtensionV1,
+    transition: ClaimTransition,
+    request_id: RequestId,
+    runtime: &RuntimeDescriptor,
+    claim: PreparedWitnessedClaim,
+    target: FinalizedWitnessedAssetTransactionTargetV2,
+    finalized_clock: ChainClock,
+    scanned_window: DiscoveryWindow,
+    facts: &FinalizedWitnessedAssetClaimFactsV2,
+) -> Result<Vec<u8>, ActorCommandError> {
+    if extension.base_agreement_commitment() != agreement.agreement_commitment() {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
+    serde_json::to_vec(&FinalizedLezAssetClaimEvidenceV2 {
+        schema_version: 2,
+        asset_commitment: hex::encode(extension.asset_commitment()),
+        transition,
+        request_id,
+        runtime: runtime.clone(),
+        claim,
+        target,
+        finalized_clock,
+        scanned_window,
+        facts: facts.clone(),
+    })
+    .map_err(|_| ActorCommandError::ObservationUnavailable)
+}
+
 fn validate_prepared_lez_effect(
     effect: &PreparedLezClaimEffect,
     transition: ClaimTransition,
@@ -6016,11 +6667,19 @@ fn submit_lez_claim_request(
     transition: ClaimTransition,
     effect: &PreparedLezClaimEffect,
 ) -> Result<SubmitTransactionRequest, ActorCommandError> {
-    validate_prepared_lez_effect(effect, transition)?;
+    let binding_commitment = if config.schema_version == ASSET_CONFIG_SCHEMA_VERSION {
+        validate_prepared_lez_asset_effect(config, agreement, effect, transition)?;
+        let (extension, _) = validated_asset_extension_material(config, agreement)
+            .map_err(|()| ActorCommandError::AgreementBindingInvalid)?;
+        *extension.asset_commitment()
+    } else {
+        validate_prepared_lez_effect(effect, transition)?;
+        *agreement.agreement_commitment()
+    };
     let identity = SubmitLezClaimRequestIdentityV1 {
         schema_version: 1,
         operation: "submit_transaction",
-        agreement_commitment: hex::encode(agreement.agreement_commitment()),
+        agreement_commitment: hex::encode(binding_commitment),
         transition,
         run_id: &config.lez_bridge.run_id,
         sidecar_role: config.role.bridge(),
