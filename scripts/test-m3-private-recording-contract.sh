@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 readonly recorder="scripts/record-m3-private-demo.sh"
+readonly bundle_verifier="scripts/verify-m3-private-recording-bundle.sh"
 fixture="$(pwd)/scripts/fixtures/m3-recording-test-driver.sh"
 readonly fixture
 
@@ -13,8 +14,10 @@ fail() {
 }
 
 [[ -x "$recorder" ]] || fail "recorder is missing or not executable"
+[[ -x "$bundle_verifier" ]] || fail "bundle verifier is missing or not executable"
 [[ -x "$fixture" ]] || fail "test driver is missing or not executable"
 bash -n "$recorder"
+bash -n "$bundle_verifier"
 bash -n "$fixture"
 
 test_root="$(mktemp -d /tmp/m3-private-recording-contract.XXXXXX)"
@@ -25,6 +28,7 @@ trap cleanup EXIT
 
 expected_commit="$(git rev-parse HEAD)"
 readonly expected_commit
+recording_manifests=()
 
 run_fixture() {
   local scenario="$1" run_id="$2"
@@ -90,6 +94,7 @@ for scenario in happy refund concurrent; do
     fail "${scenario} timing hash drifted"
   scriptreplay --summary --log-timing "$timing" --log-out "$typescript" >/dev/null ||
     fail "${scenario} recording is not replayable"
+  recording_manifests+=("$manifest")
 
   case "$scenario" in
     happy)
@@ -113,6 +118,51 @@ for scenario in happy refund concurrent; do
     fail "${scenario} recording allowed output overwrite"
   fi
 done
+
+bundle="${test_root}/private/recording-bundle.json"
+env M3_RECORDING_BUNDLE_TESTING=1 M3_RECORDING_BUNDLE_OUTPUT="$bundle" \
+  "$bundle_verifier" "${recording_manifests[@]}"
+[[ -f "$bundle" && ! -L "$bundle" ]] || fail "recording bundle is missing"
+[[ "$(stat -c '%a' "$bundle")" == 600 ]] || fail "recording bundle is not private"
+jq -e --arg commit "$expected_commit" '
+  .schema_version == 1 and
+  .kind == "m3_private_terminal_recording_bundle" and
+  .result == "passed" and
+  .certification_mode == "test_contract" and
+  .privacy == "private_local_stealth" and
+  .repository_commit == $commit and
+  (.recordings | length == 3) and
+  ([.recordings[].scenario] | sort == ["concurrent","happy","refund"]) and
+  ([.recordings[].run_id] | unique | length == 3) and
+  all(.recordings[];
+    (.manifest_sha256 | test("^[0-9a-f]{64}$")) and
+    (.output_sha256 | test("^[0-9a-f]{64}$")) and
+    (.timing_sha256 | test("^[0-9a-f]{64}$")) and
+    (.evidence_sha256 | test("^[0-9a-f]{64}$")))
+' "$bundle" >/dev/null || fail "recording bundle contract drifted"
+
+if env M3_RECORDING_BUNDLE_OUTPUT="${test_root}/private/live-rejected.json" \
+    "$bundle_verifier" "${recording_manifests[@]}" >/dev/null 2>&1; then
+  fail "production bundle verifier accepted test-contract recordings"
+fi
+if env M3_RECORDING_BUNDLE_TESTING=1 \
+    M3_RECORDING_BUNDLE_OUTPUT="${test_root}/private/duplicate-rejected.json" \
+    "$bundle_verifier" "${recording_manifests[0]}" "${recording_manifests[0]}" \
+      "${recording_manifests[2]}" >/dev/null 2>&1; then
+  fail "bundle verifier accepted a duplicate scenario/run"
+fi
+if env M3_RECORDING_BUNDLE_TESTING=1 M3_RECORDING_BUNDLE_OUTPUT="$bundle" \
+    "$bundle_verifier" "${recording_manifests[@]}" >/dev/null 2>&1; then
+  fail "bundle verifier overwrote an existing bundle"
+fi
+printf '%s\n' 'tampered recording' >>"$(dirname "${recording_manifests[0]}")/terminal.typescript"
+if env M3_RECORDING_BUNDLE_TESTING=1 \
+    M3_RECORDING_BUNDLE_OUTPUT="${test_root}/private/tamper-rejected.json" \
+    "$bundle_verifier" "${recording_manifests[@]}" >/dev/null 2>&1; then
+  fail "bundle verifier accepted tampered terminal output"
+fi
+[[ ! -e "${test_root}/private/tamper-rejected.json" ]] ||
+  fail "tampered bundle attempt created output"
 
 if env \
     RUN_ID=m3-recording-invalid-contract \

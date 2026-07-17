@@ -1656,8 +1656,13 @@ Active M3 refund critical path:
   production test-driver override. Test fixtures are marked
   `certification_mode: test_contract`; only a clean-worktree run through the
   fixed actual-node driver may emit `live_actual_nodes`. The contract runs in
-  the pinned CI quality gate. The three fresh live recordings and their
-  retained private bundle still remain;
+  the pinned CI quality gate. A second GREEN verifier accepts exactly one
+  happy, refund, and concurrent recording; requires distinct run IDs, the same
+  clean repository commit and node versions, exact scenario-to-evidence
+  mappings, replayable `0600` output/timing pairs, and byte-identical manifest,
+  evidence, output, and timing hashes. It rejects test fixtures in production
+  mode, duplicates, tampering, public dependencies, and output overwrite. The
+  three fresh live recordings and their resulting private bundle still remain;
 - [ ] synchronize retained secret-safe evidence, manual reproduction,
   architecture/atomicity diagrams, traceability, and the milestone packet,
   then run the exact lint, test, vulnerability, license, source, security, and
