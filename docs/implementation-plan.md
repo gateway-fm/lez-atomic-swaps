@@ -1731,9 +1731,19 @@ Active M3 refund critical path:
   unchanged; transport failures stay distinct from
   `Found`/`Absent`/`Uncertain`/`Unavailable`. Six external F7 tests and 73
   preserved adapter tests pass with strict all-target Clippy, rustdoc,
-  doctests, formatting, and diff gates and no dependency change. Sidecar server
-  routes/finalized token scans plus durable journal/actor composition and
-  two-direction actual-node token evidence remain open;
+  doctests, formatting, and diff gates and no dependency change. A separate
+  official-wallet fixture now provisions two independent v0.2 token
+  definitions, four exact actor ATAs, and opposite-role `250/0` and `0/250`
+  starting balances through eight unique local-chain transactions. Its
+  RED-GREEN contract fixes the 20-command role/order surface, literal-loopback
+  routes, no-reuse behavior, `0700`/`0600` state, and secret-safe evidence.
+  Rehearsal `m3f7fixture20260717a-lez` passed on fresh pinned local nodes through
+  finalized tip 17 and exact run-scoped cleanup; its throwaway keys and
+  plaintext wallet state were then removed. That rehearsal proves reproducible
+  provisioning, not a completed swap or retained certification packet.
+  Sidecar server routes/finalized token scans plus durable journal/actor
+  composition, runner integration, and two-direction actual-node token swap
+  evidence remain open;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
   not recordings and cannot satisfy D1. The repository now supplies a
@@ -1760,9 +1770,11 @@ Active M3 refund critical path:
   cases beyond the reproducible functional PoC boundary.
 
 Repository-controlled open work, not external blockers, is the F7
-route/scan/journal/actor and actual-node custom-token composition, D1 recordings,
-and synchronized
-closure evidence and gates. The revision-one-to-two store/projector, signed
+route/scan/journal/actor, runner integration, and actual-node custom-token
+composition, D1 recordings, and synchronized closure evidence and gates. The
+official-wallet starting fixture is GREEN but cannot substitute for
+actor-owned escrow/claim/refund effects or finalized balance evidence. The
+revision-one-to-two store/projector, signed
 cutoff agreement, finalized LEZ classifier, and refund-side live gate are GREEN components, and run H closes the distinct two-lock timeout/refund item; none
 substitutes for those open actor/chain and deliverable gates. Logos-owned limitations listed below
 remain production-release blockers/nonblocking milestone caveats; they do not

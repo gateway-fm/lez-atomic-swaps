@@ -108,6 +108,7 @@ require_fixed 'b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6'
 require_fixed '"$shellcheck" --severity=warning' "$quality_runner"
 require_fixed 'M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.sh' \
   "$quality_runner"
+require_fixed './scripts/test-m3-f7-token-fixture-contract.sh' "$quality_runner"
 require_fixed './scripts/test-m3-private-recording-contract.sh' "$quality_runner"
 require_fixed 'git ls-files --cached --others --exclude-standard -z' "$quality_runner"
 require_fixed 'config --quiet' "$quality_runner"
