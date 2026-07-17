@@ -259,10 +259,14 @@ check_locked_sources \
   "guest" \
   "compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.lock" \
   yes
+# The deployer embeds the checked methods crate so it can validate the exact
+# witnessed-token public assembly and ImageID. That requires the same pinned
+# SPEL core graph; the focused deployer policy test separately keeps the full
+# upstream wallet graph out of the deployment binary.
 check_locked_sources \
   "deployer" \
   "compat/lez-v0.2-provisional/escrow/deployer/Cargo.lock" \
-  no
+  yes
 
 expected_root_advisories="$(printf '%s\n' \
   RUSTSEC-2023-0071 \
