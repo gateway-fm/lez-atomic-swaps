@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-07-17",
+  "milestone": "M3",
+  "classification": "private_local_schema4_actor_owned_maker_lock_two_direction_poc",
+  "result": "passed",
+  "run_id": "m3schema4-20260717d",
+  "provenance": {
+    "repository_commit": "0e7635fc7e50cc6e0612745dcdaf6df8bbcf6f9a",
+    "origin_main_commit_before_run": "0e7635fc7e50cc6e0612745dcdaf6df8bbcf6f9a",
+    "worktree_clean_during_run": true,
+    "commit_pushed_before_run": true,
+    "completed_at": "2026-07-17T07:45:38Z",
+    "runtime_packet_sha256": "971122f8212879eeb5022687c79c14bf8dbb6f11e89931416b73fad5f4408067",
+    "cleanup_packet_sha256": "0bb4c2c9cfe740579c8c483dc6c31d21cb5ac21278c38909683f02e1a05df457",
+    "direction_driver_sha256": "eedd0e5c1b392c083d5982e1d9fb17a53f6e439a15d4154e0e60968c0fc0f5c3"
+  },
+  "milestone_boundary": {
+    "schema4_actor_owned_maker_lock_checkpoint_complete": true,
+    "happy_directions_completed": 2,
+    "happy_directions_required": 2,
+    "accepted_m3_scope_complete": false,
+    "production_ready": false,
+    "public_deployment_required": false,
+    "m3_completion_tag_created": false
+  },
+  "topology": {
+    "bitcoin": {
+      "implementation": "Bitcoin Core",
+      "version": "31.1",
+      "network": "Regtest",
+      "rpc_scope": "allocated_ephemeral_loopback",
+      "actor_credentials": "distinct_restricted_maker_and_taker_rpcauth",
+      "provisioner_authority": "separate_full_authority_local_fixture"
+    },
+    "lez": {
+      "version": "v0.2.0",
+      "network": "private_local",
+      "components": [
+        "Bedrock node",
+        "sequencer",
+        "indexer",
+        "Maker role sidecar",
+        "Taker role sidecar"
+      ],
+      "rpc_scope": "allocated_ephemeral_loopback",
+      "slot_duration_seconds": "1.0"
+    },
+    "actors": {
+      "process_model": "fresh_one_shot_process_per_command",
+      "roles": [
+        "maker",
+        "taker"
+      ],
+      "configs": "schema_version_4",
+      "stores_and_signing_journals": "role_local_and_independent"
+    },
+    "isolation": {
+      "docker_resources_run_owned": true,
+      "broad_cleanup_used": false,
+      "foreign_resources_targeted": false,
+      "all_exact_run_resources_absent_after_run": true
+    }
+  },
+  "ownership_contract": {
+    "taker_first_lock_external_runner_submission": true,
+    "maker_second_lock_actor_submission": true,
+    "runner_only_confirms_actor_submitted_maker_lock": true,
+    "maker_restart_never_rearms_or_resubmits": true,
+    "maker_lock_effect_count_per_direction": 1,
+    "terminal_replay_resubmission_count": 0
+  },
+  "directions": [
+    {
+      "direction": "TakerSellsForeign",
+      "stage_two_evidence_sha256": "632215828a54710e6ec55743669fd317e023937a58395419d1600f748138bcbd",
+      "taker_first_lock": {
+        "chain": "bitcoin",
+        "transaction_id": "6a1d73285811e1c1ed4cc81893a2d41880d833a1f891cc83a984091d62e25ec8",
+        "submitted_by": "taker_external_fixture",
+        "confirmed_unique_effect": true
+      },
+      "maker_second_lock": {
+        "chain": "lez",
+        "submitted_by": "maker_actor",
+        "initialization_transaction_id": "6e13383d839653beb03f3a14d6d9628f60c463a872d6f7275338f8391ef72110",
+        "funding_transaction_id": "9eb4ce06abef34bc135cf1a316c1cb44ff3827d2556a51ca1b7b4df032553262",
+        "initialization_actor_output_sha256": "44b6a04a16a77f298ba2c8a181aab6351aecff7bb2a41acf251e729de36f401b",
+        "funding_actor_output_sha256": "44b6a04a16a77f298ba2c8a181aab6351aecff7bb2a41acf251e729de36f401b",
+        "durable_submission_counts": [
+          0,
+          1,
+          2
+        ],
+        "restart_resubmission_count": 0,
+        "full_pair_finalized_inside_exact_actor_window": true
+      },
+      "terminal": {
+        "maker_revision": 4,
+        "taker_revision": 4,
+        "phase": "completed",
+        "confirmed_unique_bitcoin_effects": 2,
+        "exact_durable_lez_effects": 3,
+        "effect_counts_before_and_after_replay_equal": true
+      }
+    },
+    {
+      "direction": "TakerSellsLez",
+      "stage_two_evidence_sha256": "781a8b4c97e88b59001d002ef47277158a7f734885dcc7adf4296b4ed57305be",
+      "taker_first_lock": {
+        "chain": "lez",
+        "initialization_transaction_id": "273f4d199ca606ffe82368ca12e32aca79ec9bc9a14c8aacb02a604767fbdcbc",
+        "funding_transaction_id": "709adebbd7089873830306483d6d7220460cf629e3d292db3ba77df0ce489b2e",
+        "submitted_by": "taker_external_fixture",
+        "both_transactions_finalized_once": true
+      },
+      "maker_second_lock": {
+        "chain": "bitcoin",
+        "transaction_id": "6c2505b3335d134306e62971d871c5d1c7bf3d0f74db26c9a359d4f29c511dd6",
+        "submitted_by": "maker_actor",
+        "actor_output_sha256": "902fd12ac5f7056cfeb7d8f61bb9ffe9833a5fb26d21652f894221d56fe47987",
+        "typed_moving_tip_attempts_before_success": 9,
+        "successful_attempt": 10,
+        "mempool_after_success": "exactly_one_planned_transaction",
+        "restart_resubmission_count": 0,
+        "confirmed_unique_effect": true,
+        "lez_effect_count_during_reconciliation": 2
+      },
+      "terminal": {
+        "maker_revision": 4,
+        "taker_revision": 4,
+        "phase": "completed",
+        "confirmed_unique_bitcoin_effects": 2,
+        "exact_durable_lez_effects": 3,
+        "effect_counts_before_and_after_replay_equal": true
+      }
+    }
+  ],
+  "atomicity_boundary": {
+    "cross_chain_or_chain_database_atomic_transaction": false,
+    "both_presignature_sessions_complete_before_first_effect": true,
+    "taker_first_lock_precedes_maker_second_lock": true,
+    "maker_send_requires_fresh_exact_first_lock_eligibility_and_signed_cutoff": true,
+    "both_locks_required_before_scalar_reveal": true,
+    "maker_intent_and_revision_two_close_in_one_local_sqlite_transaction": true,
+    "chain_submission_and_sqlite_are_not_one_transaction": true,
+    "ambiguous_submission_fails_closed_and_reconciles_by_exact_observation": true,
+    "refunds_and_claims_remain_chain_ordered": true
+  },
+  "runtime_external_resources": {
+    "public_rpc_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "certification_success_depends_on_external_network": false,
+    "bedrock_ntp": {
+      "endpoint": "pool.ntp.org:123/udp",
+      "attempted_by_pinned_component": true,
+      "required": false,
+      "observed_timeout_count": 45
+    },
+    "moving_tip": {
+      "source": "live_local_LEZ_finalized_tip_advancing_during_bracketed_reads",
+      "handling": "bounded_fresh_actor_retry_with_exact_effect_guards",
+      "can_cause_latency": true,
+      "can_grant_new_send_authority": false
+    }
+  },
+  "secret_safety": {
+    "private_material_disclosed": false,
+    "retained_packet_contains_private_keys_or_adaptor_scalar": false
+  },
+  "open_scope": [
+    "Two genuinely overlapping swaps remain an M3 acceptance item.",
+    "The accepted full-lifecycle public BTC SDK and F7 custom-token scope remain under completion review.",
+    "D1 recording deliverables and synchronized manual/architecture documentation remain open.",
+    "Final lint, test, vulnerability, license, source, security, and Mermaid gates remain open.",
+    "Public deployment and production readiness are intentionally outside this private-local checkpoint.",
+    "This file alone does not authorize an M3 completion tag."
+  ]
+}

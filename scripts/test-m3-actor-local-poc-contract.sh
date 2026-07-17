@@ -1906,6 +1906,63 @@ if rg -n 'docker[[:space:]]+(system[[:space:]]+prune|container[[:space:]]+prune|
   fail "runner contains a broad or foreign-resource cleanup primitive"
 fi
 
+retained_schema4="docs/evidence/m3-schema4-actor-owned-lock-poc-20260717.json"
+[[ -f "$retained_schema4" && ! -L "$retained_schema4" ]] ||
+  fail "schema-4 actor-owned Maker-lock certification packet is missing or unsafe"
+jq -e '
+  .schema_version == 1 and .milestone == "M3" and .result == "passed"
+  and .classification == "private_local_schema4_actor_owned_maker_lock_two_direction_poc"
+  and .run_id == "m3schema4-20260717d"
+  and .provenance.repository_commit == "0e7635fc7e50cc6e0612745dcdaf6df8bbcf6f9a"
+  and .provenance.origin_main_commit_before_run == .provenance.repository_commit
+  and .provenance.worktree_clean_during_run == true
+  and .provenance.commit_pushed_before_run == true
+  and .milestone_boundary.schema4_actor_owned_maker_lock_checkpoint_complete == true
+  and .milestone_boundary.happy_directions_completed == 2
+  and .milestone_boundary.accepted_m3_scope_complete == false
+  and .milestone_boundary.m3_completion_tag_created == false
+  and .ownership_contract.taker_first_lock_external_runner_submission == true
+  and .ownership_contract.maker_second_lock_actor_submission == true
+  and .ownership_contract.runner_only_confirms_actor_submitted_maker_lock == true
+  and .ownership_contract.maker_restart_never_rearms_or_resubmits == true
+  and .ownership_contract.maker_lock_effect_count_per_direction == 1
+  and .ownership_contract.terminal_replay_resubmission_count == 0
+  and (.directions | length) == 2
+  and all(.directions[];
+    .terminal.maker_revision == 4 and .terminal.taker_revision == 4
+    and .terminal.phase == "completed"
+    and .terminal.confirmed_unique_bitcoin_effects == 2
+    and .terminal.exact_durable_lez_effects == 3
+    and .terminal.effect_counts_before_and_after_replay_equal == true)
+  and .directions[0].direction == "TakerSellsForeign"
+  and .directions[0].maker_second_lock.chain == "lez"
+  and .directions[0].maker_second_lock.submitted_by == "maker_actor"
+  and .directions[0].maker_second_lock.durable_submission_counts == [0,1,2]
+  and .directions[0].maker_second_lock.restart_resubmission_count == 0
+  and .directions[1].direction == "TakerSellsLez"
+  and .directions[1].maker_second_lock.chain == "bitcoin"
+  and .directions[1].maker_second_lock.submitted_by == "maker_actor"
+  and .directions[1].maker_second_lock.typed_moving_tip_attempts_before_success == 9
+  and .directions[1].maker_second_lock.successful_attempt == 10
+  and .directions[1].maker_second_lock.restart_resubmission_count == 0
+  and .atomicity_boundary.cross_chain_or_chain_database_atomic_transaction == false
+  and .atomicity_boundary.both_presignature_sessions_complete_before_first_effect == true
+  and .atomicity_boundary.taker_first_lock_precedes_maker_second_lock == true
+  and .atomicity_boundary.both_locks_required_before_scalar_reveal == true
+  and .atomicity_boundary.chain_submission_and_sqlite_are_not_one_transaction == true
+  and .atomicity_boundary.ambiguous_submission_fails_closed_and_reconciles_by_exact_observation == true
+  and .runtime_external_resources.public_rpc_used == false
+  and .runtime_external_resources.faucet_used == false
+  and .runtime_external_resources.public_funds_used == false
+  and .runtime_external_resources.certification_success_depends_on_external_network == false
+  and .runtime_external_resources.moving_tip.can_grant_new_send_authority == false
+  and .topology.isolation.all_exact_run_resources_absent_after_run == true
+  and .topology.isolation.foreign_resources_targeted == false
+  and .secret_safety.private_material_disclosed == false
+  and .open_scope[-1] == "This file alone does not authorize an M3 completion tag."
+' "$retained_schema4" >/dev/null ||
+  fail "schema-4 actor-owned Maker-lock certification packet is incomplete or overclaims M3 closure"
+
 retained_survivor="docs/evidence/m3-local-two-direction-survivor-claim-poc-20260716.json"
 [[ -f "$retained_survivor" && ! -L "$retained_survivor" ]] ||
   fail "clean survivor certification packet is missing or unsafe"
