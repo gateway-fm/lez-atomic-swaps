@@ -1650,6 +1650,17 @@ Active M3 refund critical path:
   `bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7` and
   ImageID is
   `f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e`.
+  The next RED-GREEN public-wire slice adds an explicit
+  `asset_terms_version: 2` native-or-custom-token envelope without widening
+  any existing `lez_bridge.v1.*` method or changing witnessed-native JSON.
+  Strict custom-token terms bind the two roles, owners, exact owner/custody
+  ATAs, token/ATA programs, fungible definition, amount, deadline, agreement,
+  and aggregate authority/key. Thirty protocol tests cover two definitions,
+  every field, aliases, zero/malformed/unknown input, exact v1 compatibility,
+  and deterministic round trips; Clippy, rustdoc, formatting, and diff gates
+  are GREEN. Official ATA/key derivation remains a sidecar duty, and distinct
+  v2 request/results plus ordered token effects and observation facts are the
+  next wire slice;
   The checked deployment manifest intentionally remains on the old identity
   until the IDL, deployer, sidecar, SDK, and actual-node path consume the new
   instructions; the full verifier must fail rather than silently mix them;

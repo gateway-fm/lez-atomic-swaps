@@ -7,6 +7,8 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Exact protocol schema understood by this crate.
 pub const SCHEMA_VERSION: u16 = 1;
+/// Additive BTC witnessed-asset terms version; v1 native RPC messages stay unchanged.
+pub const WITNESSED_LEZ_ASSET_TERMS_VERSION: u16 = 2;
 /// Maximum decoded transaction size accepted at the process boundary.
 pub const MAX_TRANSACTION_BYTES: usize = 2_000_000;
 /// Maximum account or signer entries accepted in one field.
@@ -73,6 +75,20 @@ pub enum ProtocolValueError {
     /// The witnessed aggregate public key was the invalid all-zero sentinel.
     #[error("witnessed aggregate x-only public key must be nonzero")]
     ZeroAggregatePublicKey,
+    /// The witnessed token agreement commitment was the invalid all-zero sentinel.
+    #[error("witnessed token terms hash must be nonzero")]
+    ZeroWitnessedTokenTermsHash,
+    /// One account or program identity in witnessed token terms was all zeroes.
+    #[error("witnessed token {0} must be nonzero")]
+    ZeroWitnessedTokenIdentity(&'static str),
+    /// Two semantically distinct token accounts or programs used the same identity.
+    #[error("witnessed token {0} and {1} must be distinct")]
+    AliasedWitnessedTokenIdentities(&'static str, &'static str),
+    /// The additive witnessed-asset envelope used an unsupported exact version.
+    #[error(
+        "unsupported witnessed LEZ asset terms version {0}; expected {WITNESSED_LEZ_ASSET_TERMS_VERSION}"
+    )]
+    UnsupportedWitnessedLezAssetTermsVersion(u16),
     /// A discovery window was empty, oversized, or overflowed its height range.
     #[error("discovery window must cover 1..={MAX_DISCOVERY_BLOCKS} non-overflowing blocks")]
     InvalidDiscoveryWindow,
@@ -970,6 +986,401 @@ impl TryFrom<WitnessedNativeEscrowTermsWire> for WitnessedNativeEscrowTerms {
 
 impl From<WitnessedNativeEscrowTerms> for WitnessedNativeEscrowTermsWire {
     fn from(value: WitnessedNativeEscrowTerms) -> Self {
+        value.0
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WitnessedTokenEscrowTermsV2Wire {
+    swap_id: Hex32,
+    terms_hash: Hex32,
+    depositor: Participant,
+    depositor_owner_account_id: Hex32,
+    depositor_ata_account_id: Hex32,
+    claimant: Participant,
+    claimant_owner_account_id: Hex32,
+    claimant_ata_account_id: Hex32,
+    custody_ata_account_id: Hex32,
+    token_program_id: Hex32,
+    ata_program_id: Hex32,
+    token_definition_account_id: Hex32,
+    aggregate_authority_account_id: Hex32,
+    aggregate_x_only_public_key: Hex32,
+    amount: NativeAmount,
+    refund_at_ms: u64,
+}
+
+/// Complete input for one aggregate-witness custom-token escrow.
+///
+/// The protocol binds the exact official account identities but deliberately
+/// does not reimplement ATA derivation or the LEZ aggregate-key mapping. The
+/// official sidecar must rederive and compare both before preparing bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct WitnessedTokenEscrowTermsV2Input {
+    /// Swap identifier used by the metadata PDA seed.
+    pub swap_id: Hex32,
+    /// Exact nonzero countersigned agreement commitment stored by the guest.
+    pub terms_hash: Hex32,
+    /// Role depositing the custom token.
+    pub depositor: Participant,
+    /// Exact depositor owner that signs initialization and funding.
+    pub depositor_owner_account_id: Hex32,
+    /// Exact depositor ATA for the selected definition.
+    pub depositor_ata_account_id: Hex32,
+    /// Role receiving the custom token.
+    pub claimant: Participant,
+    /// Immutable claimant owner; it is not the witnessed claim signer.
+    pub claimant_owner_account_id: Hex32,
+    /// Exact immutable claimant ATA for the selected definition.
+    pub claimant_ata_account_id: Hex32,
+    /// Exact custody `ATA(metadata, definition)`.
+    pub custody_ata_account_id: Hex32,
+    /// Token program that owns the definition and all three token holdings.
+    pub token_program_id: Hex32,
+    /// Official ATA program that derives custody and owner holdings.
+    pub ata_program_id: Hex32,
+    /// Exact fungible token definition account.
+    pub token_definition_account_id: Hex32,
+    /// Aggregate public account that alone signs the witnessed claim.
+    pub aggregate_authority_account_id: Hex32,
+    /// Exact aggregate x-only BIP340 key mapped to the authority account.
+    pub aggregate_x_only_public_key: Hex32,
+    /// Full-width custom-token amount.
+    pub amount: u128,
+    /// LEZ wall-clock refund timestamp in Unix milliseconds.
+    pub refund_at_ms: u64,
+}
+
+/// Strict v2 wire terms for one aggregate-witness custom-token escrow.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    try_from = "WitnessedTokenEscrowTermsV2Wire",
+    into = "WitnessedTokenEscrowTermsV2Wire"
+)]
+#[must_use]
+pub struct WitnessedTokenEscrowTermsV2(WitnessedTokenEscrowTermsV2Wire);
+
+impl WitnessedTokenEscrowTermsV2 {
+    /// Validates exact custom-token terms before sidecar or chain I/O.
+    ///
+    /// # Errors
+    ///
+    /// Rejects same-role terms, zero values required nonzero by the guest, and
+    /// every alias among programs, definition, owners, ATAs, custody, and
+    /// aggregate authority. Official ATA/key derivation remains a sidecar duty.
+    pub fn new(input: WitnessedTokenEscrowTermsV2Input) -> Result<Self, ProtocolValueError> {
+        if input.depositor == input.claimant {
+            return Err(ProtocolValueError::SameEscrowRoles);
+        }
+        if input.terms_hash == Hex32::from_bytes([0; 32]) {
+            return Err(ProtocolValueError::ZeroWitnessedTokenTermsHash);
+        }
+        if input.aggregate_x_only_public_key == Hex32::from_bytes([0; 32]) {
+            return Err(ProtocolValueError::ZeroAggregatePublicKey);
+        }
+        if input.amount == 0 {
+            return Err(ProtocolValueError::ZeroEscrowAmount);
+        }
+        if input.refund_at_ms == 0 {
+            return Err(ProtocolValueError::ZeroRefundAt);
+        }
+
+        let identities = [
+            ("token program id", input.token_program_id),
+            ("ATA program id", input.ata_program_id),
+            (
+                "token definition account id",
+                input.token_definition_account_id,
+            ),
+            (
+                "depositor owner account id",
+                input.depositor_owner_account_id,
+            ),
+            ("depositor ATA account id", input.depositor_ata_account_id),
+            ("claimant owner account id", input.claimant_owner_account_id),
+            ("claimant ATA account id", input.claimant_ata_account_id),
+            ("custody ATA account id", input.custody_ata_account_id),
+            (
+                "aggregate authority account id",
+                input.aggregate_authority_account_id,
+            ),
+        ];
+        for (index, (name, identity)) in identities.iter().copied().enumerate() {
+            if identity == Hex32::from_bytes([0; 32]) {
+                return Err(ProtocolValueError::ZeroWitnessedTokenIdentity(name));
+            }
+            for (other_name, other_identity) in identities.iter().copied().skip(index + 1) {
+                if identity == other_identity {
+                    return Err(ProtocolValueError::AliasedWitnessedTokenIdentities(
+                        name, other_name,
+                    ));
+                }
+            }
+        }
+
+        Ok(Self(WitnessedTokenEscrowTermsV2Wire {
+            swap_id: input.swap_id,
+            terms_hash: input.terms_hash,
+            depositor: input.depositor,
+            depositor_owner_account_id: input.depositor_owner_account_id,
+            depositor_ata_account_id: input.depositor_ata_account_id,
+            claimant: input.claimant,
+            claimant_owner_account_id: input.claimant_owner_account_id,
+            claimant_ata_account_id: input.claimant_ata_account_id,
+            custody_ata_account_id: input.custody_ata_account_id,
+            token_program_id: input.token_program_id,
+            ata_program_id: input.ata_program_id,
+            token_definition_account_id: input.token_definition_account_id,
+            aggregate_authority_account_id: input.aggregate_authority_account_id,
+            aggregate_x_only_public_key: input.aggregate_x_only_public_key,
+            amount: NativeAmount::new(input.amount),
+            refund_at_ms: input.refund_at_ms,
+        }))
+    }
+
+    /// Returns the swap identifier.
+    pub const fn swap_id(&self) -> Hex32 {
+        self.0.swap_id
+    }
+
+    /// Returns the exact countersigned agreement commitment.
+    pub const fn terms_hash(&self) -> Hex32 {
+        self.0.terms_hash
+    }
+
+    /// Returns the depositor role.
+    pub const fn depositor(&self) -> Participant {
+        self.0.depositor
+    }
+
+    /// Returns the exact depositor owner.
+    pub const fn depositor_owner_account_id(&self) -> Hex32 {
+        self.0.depositor_owner_account_id
+    }
+
+    /// Returns the exact depositor ATA.
+    pub const fn depositor_ata_account_id(&self) -> Hex32 {
+        self.0.depositor_ata_account_id
+    }
+
+    /// Returns the claimant role.
+    pub const fn claimant(&self) -> Participant {
+        self.0.claimant
+    }
+
+    /// Returns the exact immutable claimant owner.
+    pub const fn claimant_owner_account_id(&self) -> Hex32 {
+        self.0.claimant_owner_account_id
+    }
+
+    /// Returns the exact immutable claimant ATA.
+    pub const fn claimant_ata_account_id(&self) -> Hex32 {
+        self.0.claimant_ata_account_id
+    }
+
+    /// Returns the exact metadata-owned custody ATA.
+    pub const fn custody_ata_account_id(&self) -> Hex32 {
+        self.0.custody_ata_account_id
+    }
+
+    /// Returns the exact token program.
+    pub const fn token_program_id(&self) -> Hex32 {
+        self.0.token_program_id
+    }
+
+    /// Returns the exact ATA program.
+    pub const fn ata_program_id(&self) -> Hex32 {
+        self.0.ata_program_id
+    }
+
+    /// Returns the exact fungible definition account.
+    pub const fn token_definition_account_id(&self) -> Hex32 {
+        self.0.token_definition_account_id
+    }
+
+    /// Returns the aggregate witnessed-claim authority account.
+    pub const fn aggregate_authority_account_id(&self) -> Hex32 {
+        self.0.aggregate_authority_account_id
+    }
+
+    /// Returns the exact aggregate x-only BIP340 key.
+    pub const fn aggregate_x_only_public_key(&self) -> Hex32 {
+        self.0.aggregate_x_only_public_key
+    }
+
+    /// Returns the custom-token amount.
+    pub const fn amount(&self) -> NativeAmount {
+        self.0.amount
+    }
+
+    /// Returns the LEZ refund timestamp in Unix milliseconds.
+    #[must_use]
+    pub const fn refund_at_ms(&self) -> u64 {
+        self.0.refund_at_ms
+    }
+}
+
+impl TryFrom<WitnessedTokenEscrowTermsV2Wire> for WitnessedTokenEscrowTermsV2 {
+    type Error = ProtocolValueError;
+
+    fn try_from(value: WitnessedTokenEscrowTermsV2Wire) -> Result<Self, Self::Error> {
+        Self::new(WitnessedTokenEscrowTermsV2Input {
+            swap_id: value.swap_id,
+            terms_hash: value.terms_hash,
+            depositor: value.depositor,
+            depositor_owner_account_id: value.depositor_owner_account_id,
+            depositor_ata_account_id: value.depositor_ata_account_id,
+            claimant: value.claimant,
+            claimant_owner_account_id: value.claimant_owner_account_id,
+            claimant_ata_account_id: value.claimant_ata_account_id,
+            custody_ata_account_id: value.custody_ata_account_id,
+            token_program_id: value.token_program_id,
+            ata_program_id: value.ata_program_id,
+            token_definition_account_id: value.token_definition_account_id,
+            aggregate_authority_account_id: value.aggregate_authority_account_id,
+            aggregate_x_only_public_key: value.aggregate_x_only_public_key,
+            amount: value.amount.as_u128(),
+            refund_at_ms: value.refund_at_ms,
+        })
+    }
+}
+
+impl From<WitnessedTokenEscrowTermsV2> for WitnessedTokenEscrowTermsV2Wire {
+    fn from(value: WitnessedTokenEscrowTermsV2) -> Self {
+        value.0
+    }
+}
+
+/// Native or custom-token LEZ terms selected by the additive v2 envelope.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", content = "terms", rename_all = "snake_case")]
+#[must_use]
+pub enum WitnessedLezAssetV2 {
+    /// Existing witnessed-native terms, byte-for-byte unchanged inside the envelope.
+    Native(WitnessedNativeEscrowTerms),
+    /// Exact witnessed custom-token owner, ATA, definition, program, and authority terms.
+    CustomToken(WitnessedTokenEscrowTermsV2),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum NativeAssetKindV2 {
+    Native,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum CustomTokenAssetKindV2 {
+    CustomToken,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAssetV2Wire {
+    kind: NativeAssetKindV2,
+    terms: WitnessedNativeEscrowTerms,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CustomTokenAssetV2Wire {
+    kind: CustomTokenAssetKindV2,
+    terms: WitnessedTokenEscrowTermsV2,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum WitnessedLezAssetV2Wire {
+    Native(NativeAssetV2Wire),
+    CustomToken(CustomTokenAssetV2Wire),
+}
+
+impl<'de> Deserialize<'de> for WitnessedLezAssetV2 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match WitnessedLezAssetV2Wire::deserialize(deserializer)? {
+            WitnessedLezAssetV2Wire::Native(wire) => {
+                let NativeAssetKindV2::Native = wire.kind;
+                Ok(Self::Native(wire.terms))
+            }
+            WitnessedLezAssetV2Wire::CustomToken(wire) => {
+                let CustomTokenAssetKindV2::CustomToken = wire.kind;
+                Ok(Self::CustomToken(wire.terms))
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WitnessedLezAssetTermsV2Wire {
+    asset_terms_version: u16,
+    asset: WitnessedLezAssetV2,
+}
+
+/// Explicitly versioned additive BTC witnessed-LEZ asset terms envelope.
+///
+/// This model does not replace `WitnessedNativeEscrowTerms` or any existing
+/// `lez_bridge.v1.*` request. It gives later v2 RPC methods one unambiguous
+/// native-or-token boundary while v1 JSON stays byte-for-byte compatible.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    try_from = "WitnessedLezAssetTermsV2Wire",
+    into = "WitnessedLezAssetTermsV2Wire"
+)]
+#[must_use]
+pub struct WitnessedLezAssetTermsV2(WitnessedLezAssetTermsV2Wire);
+
+impl WitnessedLezAssetTermsV2 {
+    /// Wraps established witnessed-native terms without changing their inner JSON.
+    pub const fn native(terms: WitnessedNativeEscrowTerms) -> Self {
+        Self(WitnessedLezAssetTermsV2Wire {
+            asset_terms_version: WITNESSED_LEZ_ASSET_TERMS_VERSION,
+            asset: WitnessedLezAssetV2::Native(terms),
+        })
+    }
+
+    /// Wraps strict witnessed custom-token terms.
+    pub const fn custom_token(terms: WitnessedTokenEscrowTermsV2) -> Self {
+        Self(WitnessedLezAssetTermsV2Wire {
+            asset_terms_version: WITNESSED_LEZ_ASSET_TERMS_VERSION,
+            asset: WitnessedLezAssetV2::CustomToken(terms),
+        })
+    }
+
+    /// Returns the exact additive terms version.
+    #[must_use]
+    pub const fn asset_terms_version(&self) -> u16 {
+        self.0.asset_terms_version
+    }
+
+    /// Borrows the exact native or custom-token selection.
+    pub const fn asset(&self) -> &WitnessedLezAssetV2 {
+        &self.0.asset
+    }
+}
+
+impl TryFrom<WitnessedLezAssetTermsV2Wire> for WitnessedLezAssetTermsV2 {
+    type Error = ProtocolValueError;
+
+    fn try_from(value: WitnessedLezAssetTermsV2Wire) -> Result<Self, Self::Error> {
+        if value.asset_terms_version != WITNESSED_LEZ_ASSET_TERMS_VERSION {
+            return Err(
+                ProtocolValueError::UnsupportedWitnessedLezAssetTermsVersion(
+                    value.asset_terms_version,
+                ),
+            );
+        }
+        Ok(Self(value))
+    }
+}
+
+impl From<WitnessedLezAssetTermsV2> for WitnessedLezAssetTermsV2Wire {
+    fn from(value: WitnessedLezAssetTermsV2) -> Self {
         value.0
     }
 }

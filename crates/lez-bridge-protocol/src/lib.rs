@@ -99,5 +99,7 @@ pub use primitives::{
     ErrorCode, ErrorMessage, ExactMessageBytes, ExactTransactionBytes, Hex32, MAX_DISCOVERY_BLOCKS,
     MessageContext, NativeAmount, NativeEscrowTerms, NativeEscrowTermsInput, Participant,
     ProtocolValueError, RequestId, RevealingPreimage, RunId, SchemaVersion, TransactionId,
-    WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
+    WITNESSED_LEZ_ASSET_TERMS_VERSION, WitnessedLezAssetTermsV2, WitnessedLezAssetV2,
+    WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput, WitnessedTokenEscrowTermsV2,
+    WitnessedTokenEscrowTermsV2Input,
 };

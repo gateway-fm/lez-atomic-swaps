@@ -10,8 +10,10 @@ use lez_bridge_protocol::{
     FinalizedWitnessedFundingFacts, FinalizedWitnessedFundingObservationTarget,
     FinalizedWitnessedFundingScanOutcome, FinalizedWitnessedInitializationFacts,
     FinalizedWitnessedInitializationScanOutcome, FundingFoundFacts, FundingObservation, Hex32,
-    InitializationFoundFacts, InitializationObservation, MAX_DISCOVERY_BLOCKS, MessageContext,
-    NativeAmount, NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
+    InitializationFoundFacts, InitializationObservation, MAX_DISCOVERY_BLOCKS,
+    METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
+    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, MessageContext, NativeAmount,
+    NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
     NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
     NativeFundInstructionFacts, NativeInitializeInstructionFacts, NativeRefundFoundFacts,
     NativeRefundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
@@ -28,11 +30,13 @@ use lez_bridge_protocol::{
     RequestId, RevealingClaimFoundFacts, RevealingClaimObservation,
     RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
     RuntimeDescriptor, SchemaVersion, SubmissionOutcome, SubmitTransactionRequest,
-    SubmitTransactionResult, TransactionId, WitnessedClaimInstructionFacts,
-    WitnessedEscrowMetadataFacts, WitnessedFundingFoundFacts, WitnessedFundingObservation,
-    WitnessedInitializationFoundFacts, WitnessedInitializationObservation,
+    SubmitTransactionResult, TransactionId, WITNESSED_LEZ_ASSET_TERMS_VERSION,
+    WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts, WitnessedFundingFoundFacts,
+    WitnessedFundingObservation, WitnessedInitializationFoundFacts,
+    WitnessedInitializationObservation, WitnessedLezAssetTermsV2, WitnessedLezAssetV2,
     WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
-    WitnessedNativeInitializeInstructionFacts,
+    WitnessedNativeInitializeInstructionFacts, WitnessedTokenEscrowTermsV2,
+    WitnessedTokenEscrowTermsV2Input,
 };
 
 #[test]
@@ -1790,4 +1794,275 @@ fn rejects_oversize_bytes_accounts_signers_and_error_messages_during_decode() {
     let signers = serde_json::to_value(vec!["01".repeat(32); 17]).unwrap();
     assert!(serde_json::from_value::<AccountIds>(signers).is_err());
     assert!(serde_json::from_value::<ErrorMessage>(serde_json::json!("x".repeat(257))).is_err());
+}
+
+#[test]
+fn witnessed_asset_v2_adds_native_without_changing_v1_json_or_methods() {
+    let native = witnessed_native_terms();
+    let legacy_json = serde_json::to_value(&native).unwrap();
+    assert_eq!(
+        legacy_json,
+        serde_json::json!({
+            "swap_id": "28".repeat(32),
+            "terms_hash": "29".repeat(32),
+            "depositor": "taker",
+            "depositor_account_id": "2a".repeat(32),
+            "claimant": "maker",
+            "claimant_account_id": "2b".repeat(32),
+            "aggregate_authority_account_id": "2c".repeat(32),
+            "aggregate_x_only_public_key": "2d".repeat(32),
+            "amount": "75",
+            "refund_at_ms": 1_850_000_000_123_u64,
+            "authenticated_transfer_program_id": "2e".repeat(32),
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<WitnessedNativeEscrowTerms>(legacy_json.clone()).unwrap(),
+        native
+    );
+    assert_eq!(
+        METHOD_PREPARE_WITNESSED_ESCROW,
+        "lez_bridge.v1.prepare_witnessed_escrow"
+    );
+    assert_eq!(
+        METHOD_OBSERVE_WITNESSED_ESCROW,
+        "lez_bridge.v1.observe_witnessed_escrow"
+    );
+    assert_eq!(
+        METHOD_PREPARE_WITNESSED_CLAIM,
+        "lez_bridge.v1.prepare_witnessed_claim"
+    );
+    assert_eq!(
+        METHOD_COMPLETE_WITNESSED_CLAIM,
+        "lez_bridge.v1.complete_witnessed_claim"
+    );
+
+    let versioned = WitnessedLezAssetTermsV2::native(native.clone());
+    assert_eq!(
+        versioned.asset_terms_version(),
+        WITNESSED_LEZ_ASSET_TERMS_VERSION
+    );
+    assert_eq!(
+        versioned.asset(),
+        &WitnessedLezAssetV2::Native(native.clone())
+    );
+    let versioned_json = serde_json::to_value(&versioned).unwrap();
+    assert_eq!(
+        versioned_json,
+        serde_json::json!({
+            "asset_terms_version": 2,
+            "asset": {
+                "kind": "native",
+                "terms": legacy_json,
+            },
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<WitnessedLezAssetTermsV2>(versioned_json.clone()).unwrap(),
+        versioned
+    );
+    assert!(
+        serde_json::from_value::<WitnessedNativeEscrowTerms>(versioned_json).is_err(),
+        "the established unversioned v1 terms must not silently accept v2"
+    );
+}
+
+#[test]
+fn witnessed_asset_v2_token_terms_bind_two_definitions_and_every_substitution() {
+    let first = WitnessedTokenEscrowTermsV2::new(witnessed_token_input(h(82))).unwrap();
+    let second = WitnessedTokenEscrowTermsV2::new(witnessed_token_input(h(83))).unwrap();
+    assert_ne!(first, second);
+    assert_eq!(first.token_definition_account_id(), h(82));
+    assert_eq!(second.token_definition_account_id(), h(83));
+    assert_eq!(first.token_program_id(), h(70));
+    assert_eq!(first.ata_program_id(), h(71));
+    assert_eq!(first.depositor_owner_account_id(), h(73));
+    assert_eq!(first.depositor_ata_account_id(), h(74));
+    assert_eq!(first.claimant_owner_account_id(), h(75));
+    assert_eq!(first.claimant_ata_account_id(), h(76));
+    assert_eq!(first.custody_ata_account_id(), h(77));
+    assert_eq!(first.aggregate_authority_account_id(), h(78));
+    assert_eq!(first.aggregate_x_only_public_key(), h(79));
+    assert_eq!(first.swap_id(), h(80));
+    assert_eq!(first.terms_hash(), h(81));
+    assert_eq!(first.amount(), NativeAmount::new(125));
+    assert_eq!(first.refund_at_ms(), 1_850_000_000_456);
+
+    for terms in [first.clone(), second] {
+        let versioned = WitnessedLezAssetTermsV2::custom_token(terms.clone());
+        assert_eq!(versioned.asset(), &WitnessedLezAssetV2::CustomToken(terms));
+        assert_eq!(
+            serde_json::from_value::<WitnessedLezAssetTermsV2>(
+                serde_json::to_value(&versioned).unwrap()
+            )
+            .unwrap(),
+            versioned
+        );
+    }
+
+    let expected = first.clone();
+    let expected_json = serde_json::to_value(&expected).unwrap();
+    for (field, replacement) in [
+        ("swap_id", h(90)),
+        ("terms_hash", h(91)),
+        ("token_program_id", h(92)),
+        ("ata_program_id", h(93)),
+        ("token_definition_account_id", h(94)),
+        ("depositor_owner_account_id", h(95)),
+        ("depositor_ata_account_id", h(96)),
+        ("claimant_owner_account_id", h(97)),
+        ("claimant_ata_account_id", h(98)),
+        ("custody_ata_account_id", h(99)),
+        ("aggregate_authority_account_id", h(100)),
+        ("aggregate_x_only_public_key", h(101)),
+    ] {
+        let mut changed = expected_json.clone();
+        changed[field] = serde_json::to_value(replacement).unwrap();
+        let changed = serde_json::from_value::<WitnessedTokenEscrowTermsV2>(changed).unwrap();
+        assert_ne!(changed, expected, "token field {field} was not bound");
+    }
+    for (field, replacement) in [
+        ("amount", serde_json::json!("126")),
+        ("refund_at_ms", serde_json::json!(1_850_000_000_457_u64)),
+    ] {
+        let mut changed = expected_json.clone();
+        changed[field] = replacement;
+        let changed = serde_json::from_value::<WitnessedTokenEscrowTermsV2>(changed).unwrap();
+        assert_ne!(changed, expected, "token field {field} was not bound");
+    }
+    let mut changed_roles = expected_json;
+    changed_roles["depositor"] = serde_json::json!("taker");
+    changed_roles["claimant"] = serde_json::json!("maker");
+    let changed_roles =
+        serde_json::from_value::<WitnessedTokenEscrowTermsV2>(changed_roles).unwrap();
+    assert_ne!(changed_roles, expected, "token roles were not bound");
+}
+
+#[test]
+fn witnessed_asset_v2_rejects_zero_alias_malformed_and_unknown_token_json() {
+    let valid = WitnessedTokenEscrowTermsV2::new(witnessed_token_input(h(82))).unwrap();
+    let valid_json = serde_json::to_value(&valid).unwrap();
+    for field in [
+        "terms_hash",
+        "token_program_id",
+        "ata_program_id",
+        "token_definition_account_id",
+        "depositor_owner_account_id",
+        "depositor_ata_account_id",
+        "claimant_owner_account_id",
+        "claimant_ata_account_id",
+        "custody_ata_account_id",
+        "aggregate_authority_account_id",
+        "aggregate_x_only_public_key",
+    ] {
+        let mut zero = valid_json.clone();
+        zero[field] = serde_json::json!("00".repeat(32));
+        assert!(
+            serde_json::from_value::<WitnessedTokenEscrowTermsV2>(zero).is_err(),
+            "zero {field} was accepted"
+        );
+    }
+    for (target, source) in [
+        ("claimant_owner_account_id", "depositor_owner_account_id"),
+        ("claimant_ata_account_id", "depositor_ata_account_id"),
+        ("custody_ata_account_id", "claimant_ata_account_id"),
+        ("depositor_ata_account_id", "depositor_owner_account_id"),
+        (
+            "aggregate_authority_account_id",
+            "claimant_owner_account_id",
+        ),
+        ("aggregate_authority_account_id", "claimant_ata_account_id"),
+        ("ata_program_id", "token_program_id"),
+        ("token_definition_account_id", "token_program_id"),
+    ] {
+        let mut aliased = valid_json.clone();
+        aliased[target] = aliased[source].clone();
+        assert!(
+            serde_json::from_value::<WitnessedTokenEscrowTermsV2>(aliased).is_err(),
+            "alias {target}={source} was accepted"
+        );
+    }
+
+    for (field, invalid) in [
+        ("amount", serde_json::json!("0")),
+        ("amount", serde_json::json!(125)),
+        ("refund_at_ms", serde_json::json!(0)),
+        ("depositor", serde_json::json!("taker")),
+        ("claimant", serde_json::json!("maker")),
+    ] {
+        let mut malformed = valid_json.clone();
+        malformed[field] = invalid;
+        assert!(
+            serde_json::from_value::<WitnessedTokenEscrowTermsV2>(malformed).is_err(),
+            "invalid {field} was accepted"
+        );
+    }
+    let mut unknown_terms = valid_json;
+    unknown_terms["surprise"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<WitnessedTokenEscrowTermsV2>(unknown_terms).is_err());
+
+    let versioned = WitnessedLezAssetTermsV2::custom_token(valid);
+    let versioned_json = serde_json::to_value(versioned).unwrap();
+    for invalid in [
+        {
+            let mut value = versioned_json.clone();
+            value["asset_terms_version"] = serde_json::json!(1);
+            value
+        },
+        {
+            let mut value = versioned_json.clone();
+            value["surprise"] = serde_json::json!(true);
+            value
+        },
+        {
+            let mut value = versioned_json.clone();
+            value["asset"]["surprise"] = serde_json::json!(true);
+            value
+        },
+        {
+            let mut value = versioned_json.clone();
+            value["asset"]["kind"] = serde_json::json!("fungible");
+            value
+        },
+    ] {
+        assert!(serde_json::from_value::<WitnessedLezAssetTermsV2>(invalid).is_err());
+    }
+}
+
+fn witnessed_native_terms() -> WitnessedNativeEscrowTerms {
+    WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
+        swap_id: h(40),
+        terms_hash: h(41),
+        depositor: Participant::Taker,
+        depositor_account_id: h(42),
+        claimant: Participant::Maker,
+        claimant_account_id: h(43),
+        aggregate_authority_account_id: h(44),
+        aggregate_x_only_public_key: h(45),
+        amount: 75,
+        refund_at_ms: 1_850_000_000_123,
+        authenticated_transfer_program_id: h(46),
+    })
+    .unwrap()
+}
+
+fn witnessed_token_input(definition: Hex32) -> WitnessedTokenEscrowTermsV2Input {
+    WitnessedTokenEscrowTermsV2Input {
+        swap_id: h(80),
+        terms_hash: h(81),
+        depositor: Participant::Maker,
+        depositor_owner_account_id: h(73),
+        depositor_ata_account_id: h(74),
+        claimant: Participant::Taker,
+        claimant_owner_account_id: h(75),
+        claimant_ata_account_id: h(76),
+        custody_ata_account_id: h(77),
+        token_program_id: h(70),
+        ata_program_id: h(71),
+        token_definition_account_id: definition,
+        aggregate_authority_account_id: h(78),
+        aggregate_x_only_public_key: h(79),
+        amount: 125,
+        refund_at_ms: 1_850_000_000_456,
+    }
 }
