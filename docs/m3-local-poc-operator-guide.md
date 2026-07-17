@@ -2,8 +2,9 @@
 
 Last verified: 2026-07-17
 
-This guide reproduces the current schema-4 public-actor M3 happy path and the
-retained two-lock refund, absent-maker, and post-reveal survivor paths. Clean,
+This guide reproduces the current schema-4 public-actor M3 happy path, the
+two-swap overlapping happy path, and the retained two-lock refund,
+absent-maker, and post-reveal survivor paths. Clean,
 already-pushed run `m3schema4-20260717d` passed both happy directions at commit
 `0e7635fc7e50cc6e0612745dcdaf6df8bbcf6f9a`. It uses Bitcoin Core 31.1
 Regtest, the pinned LEZ v0.2 Bedrock/sequencer/indexer stack, the checked
@@ -32,11 +33,22 @@ Retained runs `m3refund-20260716h`, `m3firstlock-20260716h`, and
 `m3survivor-20260716c` remain the current timeout/refund and survivor evidence;
 their historical schema/config boundaries are stated in their sections.
 
+Clean already-pushed-commit run `m3overlap-20260717a` at `1e6d5f1` executed
+one swap in each economic direction over the same local Core and LEZ nodes.
+All four role stores were simultaneously revision 2 `both_legs_locked` before
+either settlement. Two distinct mature coinbase outpoints, agreements, actor
+databases, two signer sessions per domain, eight signer journals, escrow
+account pairs, and deadlines remained isolated. Both swaps then reached
+revision 4, their effects were pairwise disjoint, replay added zero effects,
+and exact cleanup passed.
+
 Run D closes the schema-4 actor-owned Maker-lock checkpoint, not all accepted
-M3 scope. Two genuinely overlapping swaps, full-lifecycle SDK/custom-token
-review, synchronized remaining architecture, final CI/security/Mermaid gates,
-process-kill/reorg/chaos hardening, public deployment, and production readiness
-remain open. No `m3-complete` tag is authorized by this run alone.
+M3 scope. The overlap run closes the accepted opposite-direction two-swap
+checkpoint, but arbitrary-N and same-direction LEZ nonce scheduling remain
+open, together with full-lifecycle SDK/custom-token review, final
+CI/security/Mermaid gates, process-kill/reorg/chaos hardening, public
+deployment, and production readiness. No `m3-complete` tag is authorized by
+these runs alone.
 
 The earlier operator-composed reference result is
 [m3-local-two-direction-poc-20260715.json](evidence/m3-local-two-direction-poc-20260715.json).
@@ -49,6 +61,8 @@ Run D's audited terminal and cleanup packets remain locally below
 `.e2e/m3schema4-20260717d/m3-actor-poc/evidence/`; the entire run root remains
 owner-private. Its secret-safe retained checkpoint is
 [m3-schema4-actor-owned-lock-poc-20260717.json](evidence/m3-schema4-actor-owned-lock-poc-20260717.json).
+The corresponding secret-safe overlap checkpoint is
+[m3-overlapping-two-swap-poc-20260717.json](evidence/m3-overlapping-two-swap-poc-20260717.json).
 Run H's corresponding private evidence root is
 `.e2e/m3refund-20260716h/m3-actor-poc/evidence/`.
 
@@ -995,9 +1009,10 @@ The repository-owned composition enters through
 `scripts/run-m3-actor-local-poc.sh` and delegates each direction to
 `scripts/run-m3-actor-direction.sh`. Do not start the retained manual services
 above when using this entry point; it creates fresh Core and LEZ child runs,
-executes the directions sequentially, and cleans only resources whose exact IDs
-it captured. After the pinned verifier has produced the deployer target and all
-offline graphs are cached, run:
+defaults to sequential directions, and cleans only resources whose exact IDs
+it captured. The explicit overlap schedule instead holds both swaps at a
+revision-two barrier before settlement. After the pinned verifier has produced
+the deployer target and all offline graphs are cached, run:
 
 ~~~sh
 export RUN_ID=m3schema4-manual-001
@@ -1097,6 +1112,88 @@ prevents an apparently successful terminal packet from being interpreted as
 schema 4 if the direction driver instead lets the controller submit a Maker
 lock. The runner itself validates the same contract before starting either
 service and records the exact direction-driver hash in its terminal packet.
+
+### Reproduce two overlapping opposite-direction swaps
+
+Keep the same verified prerequisite variables, choose a new run ID, and select
+the overlap schedule. The overlap schedule currently supports only the `claim`
+journey:
+
+~~~sh
+export RUN_ID=m3overlap-manual-001
+export M3_ACTOR_POC_SCHEDULE=overlap
+./scripts/run-m3-actor-local-poc.sh
+
+export M3_EVIDENCE="$PWD/.e2e/$RUN_ID/m3-actor-poc/evidence"
+jq -e '.kind == "m3_actor_overlapping_two_swap_local_poc" and
+  .journey == "claim" and .schedule == "overlap" and .result == "passed" and
+  (.directions | map(.direction) ==
+    ["taker_sells_foreign", "taker_sells_lez"]) and
+  all(.directions[];
+    .terminal_revision == 4 and .terminal_phase == "completed" and
+    .maker_second_lock_effect_count == 1 and
+    .expected_unique_effects == {bitcoin:2,lez:3}) and
+  .actor_process_model == "fresh_one_shot_process_per_command" and
+  .concurrency == {
+    simultaneous_in_flight:true,overlap_revision:2,
+    overlap_phase:"both_legs_locked",distinct_funding_outpoints:true,
+    distinct_agreements:true,distinct_actor_state_dbs:true,
+    distinct_signing_journals:true,distinct_signer_sessions_per_domain:true,
+    distinct_escrows:true,distinct_deadlines:true,
+    chain_mutations_serialized_for_exact_observation:true,
+    shared_local_nodes:true,shared_fixture_custody_key:true,
+    arbitrary_n_or_same_direction_scheduler_proven:false} and
+  .expected_unique_effects_by_direction == {
+    taker_sells_foreign:{bitcoin:2,lez:3},
+    taker_sells_lez:{bitcoin:2,lez:3}} and
+  .replay_resubmission_count == 0 and
+  .external_resources.certification_success_depends_on_external_network == false and
+  .public_rpc_used == false and .faucet_used == false and
+  .public_funds_used == false and .private_material_disclosed == false' \
+  "$M3_EVIDENCE/m3-actor-local-poc.json"
+
+jq -e '.result == "passed" and .all_exact_run_resources_absent == true and
+  .foreign_resources_targeted == false and .broad_cleanup_used == false' \
+  "$M3_EVIDENCE/cleanup-attestation.json"
+unset M3_ACTOR_POC_SCHEDULE
+~~~
+
+One deterministic fixture custody key owns both local source outputs, but the
+runner assigns the swaps two distinct mature coinbase outpoints. The retained
+run used source outputs from heights 1 and 2 and planned the two contract
+funding anchors at heights 103 and 104. Sharing that fixture-only key does not
+share an outpoint, agreement, actor state, escrow, deadline, or signer session.
+Before settlement, the runner proves four distinct actor database paths and
+inodes, eight distinct signer journal paths and inodes, two Bitcoin sessions,
+two LEZ sessions, two agreements, and two escrow metadata/custody pairs.
+
+Both direction controllers remain in flight together, but the runner
+deliberately serializes chain-mutating phases. That preserves strict exact
+empty/singleton mempool and finalized-history assertions while proving the
+protocol-relevant overlap: both swaps reached revision 2 `both_legs_locked`
+before either was allowed to reveal or settle. This checkpoint does not claim
+simultaneous RPC mutation, arbitrary-N throughput, or two same-direction swaps
+sharing one LEZ depositor nonce stream.
+
+Assert the retained secret-safe run independently with one command:
+
+~~~sh
+jq -e '.result == "passed" and .run_id == "m3overlap-20260717a" and
+  .provenance.repository_commit == "1e6d5f1b9205aafb2df427f5285ff0920406b7d1" and
+  .milestone_boundary.simultaneously_in_flight_swaps == 2 and
+  .milestone_boundary.terminal_swaps == 2 and
+  .funding_sources.allocation == "two_distinct_mature_coinbase_outpoints" and
+  ([.funding_sources.sources[].planned_bitcoin_funding_anchor_height] == [103,104]) and
+  .concurrency_contract.actor_state_database_count == 4 and
+  .concurrency_contract.signing_journal_count == 8 and
+  .concurrency_contract.distinct_bitcoin_sessions == 2 and
+  .concurrency_contract.distinct_lez_sessions == 2 and
+  .cross_swap_effect_isolation.bitcoin_effect_ids_pairwise_disjoint == true and
+  .cross_swap_effect_isolation.lez_effect_ids_pairwise_disjoint == true and
+  .cross_swap_effect_isolation.terminal_replay_resubmission_count == 0 and
+  .topology.isolation.all_exact_run_resources_absent_after_run == true' \
+  docs/evidence/m3-overlapping-two-swap-poc-20260717.json
+~~~
 
 The default journey is `claim`. To reproduce Run H's actual-node refund
 boundary, keep the same verified prerequisite variables, select `refund`, and
@@ -2382,8 +2479,10 @@ The retained secret-safe result is
 Keep the full `.e2e` root private because it contains credentials, keys, raw
 transactions, and role state. This journey proves the refund side when the
 maker is absent. Run D separately proves timely schema-4 Maker-lock admission;
-neither run proves overlapping admission/refund races, concurrent swaps, reorg,
-or production readiness.
+run `m3overlap-20260717a` separately proves two opposite-direction swaps at a
+shared revision-two barrier. Adversarial overlapping admission/refund races,
+arbitrary-N/same-direction scheduling, reorg, and production readiness remain
+open.
 
 ## Manual actor post-reveal survivor continuation
 
@@ -2474,9 +2573,11 @@ Run `m3refund-20260716h` proves ordered actual-node refund after both locks, and
 `m3firstlock-20260716h` proves refund-side first-lock absent-maker abandonment.
 Run `m3survivor-20260716c` separately certifies clean post-reveal survivor
 recovery. Run `m3schema4-20260717d` proves the complementary timely Maker-lock
-branch through schema-4 actors in both directions. It does not prove two
-genuinely overlapping swaps, adversarial admission/refund races, reorg handling,
-process-kill or crash recovery across the full lifecycle, chaos behavior,
+branch through schema-4 actors in both directions. Run
+`m3overlap-20260717a` proves two opposite-direction swaps simultaneously at
+revision two on shared local nodes. It does not prove arbitrary-N or
+same-direction nonce scheduling, adversarial admission/refund races, reorg
+handling, process-kill or crash recovery across the full lifecycle, chaos behavior,
 denial-of-service resistance, secure transport between actors, HSM custody, key
 rotation, backup, formal cryptographic audit, public deployment, or production
 readiness.

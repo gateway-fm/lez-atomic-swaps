@@ -415,9 +415,80 @@ owner-derived Vault onboarding, the checked guest deployment, both role
 journals, one actor-owned Maker-lock effect per direction, five unique effects
 per direction, four terminal role states, replay submission counts, and exact
 cleanup attestation. It records no public RPC, faucet, public funds, or
-private-material disclosure. Two genuinely overlapping swaps, process-kill,
-reorg, chaos, production key custody, and public deployment remain outside this
+private-material disclosure. The separate overlap checkpoint below closes the
+accepted two-swap opposite-direction execution item. Process-kill, reorg,
+chaos, production key custody, and public deployment remain outside this
 checkpoint. Public deployment is intentionally not required for M3.
+
+### M3 opposite-direction overlap checkpoint
+
+Clean run `m3overlap-20260717a` completed from already-pushed commit
+`1e6d5f1b9205aafb2df427f5285ff0920406b7d1` against the same run-owned Core
+31.1 Regtest and LEZ v0.2 Bedrock/sequencer/indexer tuple. One controller per
+economic direction stayed alive while every individual actor command used a
+fresh one-shot process. Both swaps and all four actor stores reached revision
+2 `both_legs_locked` before the controller issued either settlement permit.
+
+```mermaid
+flowchart TB
+    Controller["Run-owned overlap controller"]
+    Core["Bitcoin Core 31.1 Regtest<br/>shared loopback JSON-RPC"]
+    Lez["LEZ v0.2 devnet<br/>shared loopback Bedrock, sequencer, and indexer RPCs"]
+    Barrier["Revision-two barrier<br/>both swaps locked before settlement"]
+
+    subgraph ForeignSwap["Swap A: TakerSellsForeign"]
+        ForeignActors["Fresh Maker and Taker actor processes"]
+        ForeignState[("Two actor databases<br/>four signer journals")]
+        ForeignAgreement["Agreement, sessions, escrow, and deadlines A"]
+        ForeignActors --> ForeignState
+        ForeignAgreement --> ForeignActors
+    end
+
+    subgraph LezSwap["Swap B: TakerSellsLez"]
+        LezActors["Fresh Maker and Taker actor processes"]
+        LezState[("Two actor databases<br/>four signer journals")]
+        LezAgreement["Agreement, sessions, escrow, and deadlines B"]
+        LezActors --> LezState
+        LezAgreement --> LezActors
+    end
+
+    Controller --> ForeignActors
+    Controller --> LezActors
+    ForeignActors --> Core
+    ForeignActors --> Lez
+    LezActors --> Core
+    LezActors --> Lez
+    ForeignState --> Barrier
+    LezState --> Barrier
+    Barrier -->|"release settlement A"| ForeignActors
+    Barrier -->|"release settlement B"| LezActors
+```
+
+The funding fixture uses one deterministic local test-custody key but assigns
+two distinct mature coinbase outpoints. Run A's source outpoint was mined at
+height 1 and its planned contract anchor was 103; Run B's source was mined at
+height 2 and its planned anchor was 104. Sharing the fixture key does not share
+an outpoint, agreement, actor state, signer session, escrow, deadline, or
+protocol authority. The revision-two inventory proved four distinct actor
+database paths and inodes, eight distinct signer journal paths and inodes, two
+Bitcoin and two LEZ sessions, two agreements, two escrow metadata/custody
+pairs, and distinct refund bounds.
+
+After the barrier, both roles in both swaps reached revision 4 `Completed`.
+Each swap retained two Bitcoin and three LEZ effects; the effect ID sets were
+pairwise disjoint and terminal replay added zero submissions. Exact cleanup
+removed every captured run resource, used no broad cleanup, and targeted no
+foreign activity. The secret-safe packet is
+[m3-overlapping-two-swap-poc-20260717.json](../evidence/m3-overlapping-two-swap-poc-20260717.json).
+
+This is protocol overlap, not one distributed transaction or a throughput
+claim. Chain-mutating phases are deliberately serialized so each exact
+mempool/finality assertion remains strict. Atomicity remains per swap:
+presignatures are durable before its first effect, its Taker locks first, both
+of its locks are canonical before reveal, and its claims/refunds follow the
+signed chain order. Arbitrary-N scheduling, two same-direction swaps sharing a
+LEZ depositor nonce stream, adversarial cutoff/refund races, reorg, and
+production/public operation remain open.
 
 ## Actors, runtime components, and trust boundaries
 
@@ -2106,8 +2177,10 @@ submit, and later finalized projection; LEZ nonowners use terms discovery only.
 Bitcoin owners use the agreement-matched refund scalar and typed Core adapter.
 Both chains recompute or revalidate exact public identity before projection.
 Run `m3refund-20260716h` proves both actual-node refund orders through terminal
-`Refunded` with restart no-rearm. Process-kill, reorg, genuinely concurrent
-swaps, cutoff/refund/admission chaos, and production custody remain pending.
+`Refunded` with restart no-rearm. Run `m3overlap-20260717a` separately proves
+two opposite-direction swaps simultaneously at revision two on shared nodes.
+Process-kill, reorg, arbitrary-N/same-direction nonce scheduling,
+cutoff/refund/admission chaos, and production custody remain pending.
 
 ADR 0033 supplies the reusable effect boundary used by actor-owned claim and
 refund revisions. Both adaptor session databases reopen existing-only; a missing path
@@ -2179,9 +2252,11 @@ persists all four transitions. Run `m3schema4-20260717d` executes that
 repository-owned workflow against fresh actual Core/LEZ services, proves the
 Maker owns the second lock in each direction, and leaves both actors terminal
 `Completed`. The Taker first lock remains an external PoC fixture. This closes
-the schema-4 private-local checkpoint only; overlapping swaps, accepted SDK and
-custom-token scope, process-kill/reorg/chaos, public deployment, and production
-readiness remain outside the claim.
+the schema-4 private-local checkpoint only. Run `m3overlap-20260717a`
+separately closes the accepted opposite-direction two-swap execution item;
+arbitrary-N/same-direction scheduling, accepted SDK and custom-token scope,
+process-kill/reorg/chaos, public deployment, and production readiness remain
+outside the claim.
 
 ## Abandonment and autonomous recovery flow
 
