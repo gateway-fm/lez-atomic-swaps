@@ -5,6 +5,7 @@ fn main() {
     let generated = spel_client_gen::generate_from_idl_json(lez_zec_escrow_v02::PROGRAM_IDL_JSON)
         .expect("the exact pinned SPEL generator must accept the v0.2 escrow IDL");
     assert_native_prepare_surface(&generated.client_code);
+    assert_token_prepare_surface(lez_zec_escrow_v02::PROGRAM_IDL_JSON, &generated.client_code);
     let destination = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo provides OUT_DIR"))
         .join("zec_escrow_client.rs");
     fs::write(&destination, generated.client_code)
@@ -60,6 +61,96 @@ fn assert_native_prepare_surface(client: &str) {
         assert!(
             claim_witnessed.contains(expected),
             "pinned generated claim_native_witnessed role/account order changed"
+        );
+    }
+}
+
+fn assert_token_prepare_surface(idl_json: &str, client: &str) {
+    let idl: serde_json::Value =
+        serde_json::from_str(idl_json).expect("pinned escrow IDL must be valid JSON");
+    let instructions = idl["instructions"]
+        .as_array()
+        .expect("pinned escrow IDL must expose instructions");
+    let names = instructions
+        .iter()
+        .map(|instruction| {
+            instruction["name"]
+                .as_str()
+                .expect("every pinned escrow instruction must have a name")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        [
+            "initialize_native",
+            "initialize_native_witnessed",
+            "fund_native",
+            "claim_native",
+            "claim_native_witnessed",
+            "refund_native",
+            "initialize_token",
+            "create_token_custody",
+            "fund_token",
+            "claim_token",
+            "refund_token",
+            "initialize_token_witnessed",
+            "claim_token_witnessed",
+        ],
+        "pinned official instruction tags changed"
+    );
+
+    let custody = generated_method(client, "create_token_custody", "fund_token");
+    let funding = generated_method(client, "fund_token", "claim_token");
+    let refund = generated_method(client, "refund_token", "initialize_token_witnessed");
+    let initialize = generated_method(
+        client,
+        "initialize_token_witnessed",
+        "claim_token_witnessed",
+    );
+    let claim_start = client
+        .find("    pub async fn claim_token_witnessed(")
+        .expect("pinned generated client is missing claim_token_witnessed");
+    let claim_tail = &client[claim_start..];
+    let claim_end = claim_tail
+        .find("    /// Fetch and deserialize")
+        .expect("pinned generated client claim_token_witnessed tail changed");
+    let claim = &claim_tail[..claim_end];
+
+    for (surface, accounts, signer, operation) in [
+        (
+            custody,
+            "accounts.metadata,\n            accounts.token_definition,\n            accounts.custody,",
+            "let signer_ids: Vec<AccountId> = vec![\n        ];",
+            "create_token_custody",
+        ),
+        (
+            funding,
+            "accounts.metadata,\n            accounts.depositor_owner,\n            accounts.depositor_asset,\n            accounts.custody,",
+            "let signer_ids: Vec<AccountId> = vec![\n            accounts.depositor_owner,\n        ];",
+            "fund_token",
+        ),
+        (
+            refund,
+            "accounts.metadata,\n            accounts.custody,\n            accounts.depositor_asset,",
+            "let signer_ids: Vec<AccountId> = vec![\n        ];",
+            "refund_token",
+        ),
+        (
+            initialize,
+            "accounts.metadata,\n            accounts.depositor_owner,\n            accounts.claimant_owner,\n            accounts.token_definition,\n            accounts.aggregate_authority,",
+            "let signer_ids: Vec<AccountId> = vec![\n            accounts.depositor_owner,\n        ];",
+            "initialize_token_witnessed",
+        ),
+        (
+            claim,
+            "accounts.metadata,\n            accounts.custody,\n            accounts.claimant_owner,\n            accounts.claimant_asset,\n            accounts.aggregate_authority,",
+            "let signer_ids: Vec<AccountId> = vec![\n            accounts.aggregate_authority,\n        ];",
+            "claim_token_witnessed",
+        ),
+    ] {
+        assert!(
+            surface.contains(accounts) && surface.contains(signer),
+            "pinned generated {operation} account order or signer role changed"
         );
     }
 }

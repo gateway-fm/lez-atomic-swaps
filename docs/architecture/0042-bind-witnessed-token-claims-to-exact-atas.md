@@ -4,9 +4,9 @@ Status: Accepted at the checked-guest component boundary. Pushed commit
 `66d5e26cd35c6282c0cd420533f70e6ea3e506c9` adds the implementation and
 focused evidence. The checked manifest, public IDL, deployer assembly, verifier,
 and active M3 runner pins now share the new guest identity. The additive strict
-v2 transaction, finalized-classifier, and exact-once client boundaries are also
-implemented. Sidecar/SDK composition and actual-node custom-token evidence
-remain open.
+v2 transaction, finalized-classifier, exact-once client, and official sidecar
+planner boundaries are also implemented. Sidecar routes/scans, adapter/journal/
+actor composition, and actual-node custom-token evidence remain open.
 
 ## Context
 
@@ -202,7 +202,8 @@ flowchart LR
     Wire --> Claim["Witnessed claim lifecycle"]
     Wire --> Refund["Permissionless refund lifecycle"]
     Client["Exact-once bridge client GREEN"] --> Wire
-    Sidecar["Official sidecar integration open"] -.-> Wire
+    Sidecar["Official v0.2 planner GREEN<br/>tags 11, 7, 8, 12, and 10<br/>four durable v2 reservations"] --> Wire
+    Routes["Sidecar routes and finalized token scans open"] -.-> Sidecar
     Finality["Finalized four-effect classifiers"] --> Wire
 ```
 
@@ -228,10 +229,19 @@ pass without weakening any v1 method. Five unit, five external v2, 32 preserved
 bridge-contract, and four example tests are GREEN, as are strict all-target
 Clippy, rustdoc, doctests, formatting, and diff gates.
 
-Sidecar, adapter, SDK composition, journal mapping, and role-owned actual-node
-execution remain open. In particular, the typed client and protocol do not
-prove that the official node can provide the required complete scans until the
-sidecar implements and exercises them.
+The official v0.2 sidecar planner rederives the pinned Token and ATA programs,
+definition-specific depositor, claimant, and custody ATAs, exact guest account
+order, tags 11/7/8/12/10, and signer sets. Signed initialization and funding use
+consecutive nonces around a nonce-free permissionless custody transaction.
+Escrow, claim reservation, claim completion, and refund bytes occupy separate
+v2 durable files and replay after restart without nonce rereads or
+regeneration. Six focused tests cover both roles, two definitions, conflicts,
+program/ATA/authority/order substitution, redaction, and two-stage restart.
+
+Sidecar routes and finalized token scans, adapter/SDK composition, journal
+mapping, and role-owned actual-node execution remain open. In particular, the
+planner alone does not prove that the official node can provide the required
+complete scans.
 
 This ADR does not certify an actual-node custom-token swap in either trade
 direction, exact composed balances/effects, restart/no-resubmission, public

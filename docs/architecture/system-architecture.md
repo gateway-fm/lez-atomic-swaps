@@ -538,11 +538,13 @@ flowchart TB
         M3ID[("M3 exact-idempotent LEZ init path<br/>role-local reserve before official RPC<br/>actual-node restart no-rearm GREEN")]
         M3BC["M3 typed Core 31.1 adapter<br/>exact unspent funding + claim/refund evidence<br/>authorized one-send readback GREEN"]
         M3F7A["F7 countersigned asset extension<br/>strict v2 protocol + four classifiers GREEN"]
-        M3F7C["F7 exact-once bridge client<br/>eleven v2 operations + role/window checks GREEN<br/>sidecar and actor composition open"]
+        M3F7C["F7 exact-once bridge client<br/>eleven v2 operations + role/window checks GREEN"]
+        M3F7S["F7 official sidecar planner<br/>tags 11, 7, 8, 12, and 10<br/>four durable v2 reservations GREEN"]
         M3RA["btc-reference-actor<br/>schema 4 live Maker lock GREEN<br/>both actual-node directions"]
         M3RUN["Schema 4 private-local runner<br/>external Taker first lock<br/>actor-owned Maker second lock GREEN"]
         M3F7A --> M3F7C
-        M3F7C -.-> M3RA
+        M3F7C --> M3F7S
+        M3F7S -.->|"routes, scans, adapter, and journal open"| M3RA
     end
 
     subgraph LezSidecars["Role-isolated official LEZ v0.1.2 processes"]
@@ -1745,10 +1747,11 @@ to the Aumayr et al. and Fournier one-time-VES analyses and state the exact
 aEUF-CMA, witness-extractability, and pre-signature-adaptability assumptions.
 Also, “LEZ leg” in the actual-node BTC flows currently means the proved
 witnessed native path. The shared guest ATA/custom-token transition, separately
-countersigned asset extension, strict v2 protocol/classifiers, and eleven-call
-exact-once client are GREEN component boundaries. Official sidecar scans,
-adapter/journal/actor composition, and both-direction custom-token node effects
-remain open and are not implied by the native actual-node diagrams.
+countersigned asset extension, strict v2 protocol/classifiers, eleven-call
+exact-once client, and official durable token planner are GREEN component
+boundaries. Official sidecar routes/scans, adapter/journal/actor composition,
+and both-direction custom-token node effects remain open and are not implied by
+the native actual-node diagrams.
 
 ### LEZ and transparent Zcash
 

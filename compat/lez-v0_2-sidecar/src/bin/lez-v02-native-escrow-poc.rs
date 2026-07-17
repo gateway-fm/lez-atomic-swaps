@@ -241,7 +241,7 @@ struct LifecycleEvidence {
 
 #[tokio::main]
 async fn main() {
-    match execute(Arguments::parse()).await {
+    match Box::pin(execute(Arguments::parse())).await {
         Ok(evidence) => match serde_json::to_string(&evidence) {
             Ok(json) => println!("{json}"),
             Err(error) => {
@@ -258,8 +258,8 @@ async fn main() {
 
 async fn execute(arguments: Arguments) -> Result<LifecycleEvidence> {
     match arguments.action {
-        Action::Deposit(arguments) => execute_deposit(arguments).await,
-        Action::Claim(arguments) => execute_claim(arguments).await,
+        Action::Deposit(arguments) => Box::pin(execute_deposit(arguments)).await,
+        Action::Claim(arguments) => Box::pin(execute_claim(arguments)).await,
         Action::Observe(arguments) => execute_observe(arguments).await,
     }
 }

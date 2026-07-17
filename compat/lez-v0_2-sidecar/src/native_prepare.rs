@@ -7,13 +7,17 @@ use async_trait::async_trait;
 use borsh::BorshDeserialize as _;
 use common::transaction::LeeTransaction;
 use lez_bridge_protocol::{
+    CompleteWitnessedAssetClaimV2Request, CompleteWitnessedAssetClaimV2Result,
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, ExactMessageBytes,
     ExactTransactionBytes, Hex32, Participant, PrepareNativeEscrowRequest,
     PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
-    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
-    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
-    PreparedTransaction, PreparedWitnessedClaim, ProtocolValueError, RuntimeCompatibility,
-    RuntimeDescriptor, TransactionId,
+    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedAssetClaimV2Request,
+    PrepareWitnessedAssetClaimV2Result, PrepareWitnessedAssetEscrowV2Request,
+    PrepareWitnessedAssetEscrowV2Result, PrepareWitnessedAssetRefundV2Request,
+    PrepareWitnessedAssetRefundV2Result, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
+    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
+    PreparedWitnessedClaim, ProtocolValueError, RuntimeCompatibility, RuntimeDescriptor,
+    TransactionId, WitnessedAssetPrepareStepV2, WitnessedAssetPreparedEffectV2,
 };
 use nssa::{
     AccountId, PrivateKey, PublicKey, PublicTransaction, Signature,
@@ -80,6 +84,30 @@ pub enum NativePrepareError {
     /// A witnessed claim was already completed with different bytes.
     #[error("the witnessed claim reservation was already completed differently")]
     ActiveWitnessedClaimCompletion,
+    /// The additive planner accepts only custom-token terms in this slice.
+    #[error("witnessed asset preparation requires custom-token v2 terms")]
+    WrongAssetKind,
+    /// Custom-token terms do not select the pinned official token program.
+    #[error("custom-token terms select the wrong official token program")]
+    WrongTokenProgram,
+    /// Custom-token terms do not select the pinned official ATA program.
+    #[error("custom-token terms select the wrong official ATA program")]
+    WrongAtaProgram,
+    /// One custom-token ATA is not the official owner/definition derivation.
+    #[error("custom-token account does not match the official ATA derivation")]
+    WrongTokenAccount,
+    /// Another v2 custom-token plan already owns this signer's nonce pair.
+    #[error("a distinct witnessed-asset escrow preparation already owns the reservation")]
+    ActiveWitnessedAssetEscrowPrepare,
+    /// Another v2 custom-token claim owns the aggregate-authority nonce.
+    #[error("a distinct witnessed-asset claim already owns the reservation")]
+    ActiveWitnessedAssetClaimPrepare,
+    /// A v2 custom-token claim was completed with different bytes.
+    #[error("the witnessed-asset claim reservation was already completed differently")]
+    ActiveWitnessedAssetClaimCompletion,
+    /// Another v2 custom-token refund owns this planner reservation.
+    #[error("a distinct witnessed-asset refund already owns the reservation")]
+    ActiveWitnessedAssetRefundPrepare,
     /// The claim is assigned to another role or signer.
     #[error("native revealing claim does not belong to this isolated claimant")]
     WrongClaimant,
@@ -144,6 +172,10 @@ struct PlannerState {
     active_witnessed_claim: Option<ActiveWitnessedClaimPrepare>,
     completed_witnessed_claim: Option<ActiveWitnessedClaimCompletion>,
     active_refund: Option<ActiveRefundPrepare>,
+    active_witnessed_asset_escrow_v2: Option<ActiveWitnessedAssetEscrowV2>,
+    active_witnessed_asset_claim_v2: Option<ActiveWitnessedAssetClaimV2>,
+    completed_witnessed_asset_claim_v2: Option<ActiveWitnessedAssetClaimCompletionV2>,
+    active_witnessed_asset_refund_v2: Option<ActiveWitnessedAssetRefundV2>,
 }
 
 #[derive(Clone)]
@@ -177,6 +209,30 @@ struct ActiveWitnessedClaimCompletion {
 struct ActiveRefundPrepare {
     request: PrepareNativeRefundRequest,
     result: PrepareNativeRefundResult,
+}
+
+#[derive(Clone)]
+struct ActiveWitnessedAssetEscrowV2 {
+    request: PrepareWitnessedAssetEscrowV2Request,
+    result: PrepareWitnessedAssetEscrowV2Result,
+}
+
+#[derive(Clone)]
+struct ActiveWitnessedAssetClaimV2 {
+    request: PrepareWitnessedAssetClaimV2Request,
+    result: PrepareWitnessedAssetClaimV2Result,
+}
+
+#[derive(Clone)]
+struct ActiveWitnessedAssetClaimCompletionV2 {
+    request: CompleteWitnessedAssetClaimV2Request,
+    result: CompleteWitnessedAssetClaimV2Result,
+}
+
+#[derive(Clone)]
+struct ActiveWitnessedAssetRefundV2 {
+    request: PrepareWitnessedAssetRefundV2Request,
+    result: PrepareWitnessedAssetRefundV2Result,
 }
 
 /// One-role, one-signer official v0.2 native escrow planner.
@@ -454,6 +510,199 @@ impl NativeEscrowPlanner {
             return Err(error.into());
         }
         state.active_witnessed_escrow = Some(ActiveWitnessedEscrowPrepare {
+            request: request.clone(),
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
+    /// Prepares the exact official custom-token witnessed escrow sequence.
+    ///
+    /// Initialization and funding are signed under consecutive depositor
+    /// nonces. Custody ATA creation is permissionless and consumes no nonce.
+    /// The complete ordered plan is durably installed before any bytes are
+    /// exposed; identical replay returns those bytes without regeneration.
+    ///
+    /// # Errors
+    ///
+    /// Rejects native terms, role/runtime/program/authority/ATA drift, nonce
+    /// overflow, noncanonical bytes, durable failure, or a conflicting plan.
+    pub async fn prepare_witnessed_asset_escrow_v2(
+        &self,
+        request: &PrepareWitnessedAssetEscrowV2Request,
+    ) -> Result<PrepareWitnessedAssetEscrowV2Result, NativePrepareError> {
+        self.validate_witnessed_asset_escrow_v2_request(request)?;
+        let mut state = self.state.lock().await;
+        if let Some(active) = state.active_witnessed_asset_escrow_v2.as_ref() {
+            return if active.request == *request {
+                self.validate_prepared_witnessed_asset_escrow_v2(&active.request, &active.result)?;
+                Ok(active.result.clone())
+            } else {
+                Err(NativePrepareError::ActiveWitnessedAssetEscrowPrepare)
+            };
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(recovered) = self.recover_durable_witnessed_asset_escrow_v2(request)? {
+            state.active_witnessed_asset_escrow_v2 = Some(ActiveWitnessedAssetEscrowV2 {
+                request: request.clone(),
+                result: recovered.clone(),
+            });
+            return Ok(recovered);
+        }
+
+        let initialization_nonce = self
+            .nonce_source
+            .account_nonce(self.signer_account_id)
+            .await?;
+        let funding_nonce = initialization_nonce
+            .checked_add(1)
+            .ok_or(NativePrepareError::NonceOverflow)?;
+        let result =
+            self.plan_witnessed_token_escrow_v2(request, initialization_nonce, funding_nonce)?;
+        self.validate_prepared_witnessed_asset_escrow_v2(request, &result)?;
+        #[cfg(target_os = "linux")]
+        if let Some(store) = self.durable_store.as_ref()
+            && let Err(error) =
+                store.create(ReservationKind::WitnessedAssetEscrowV2, request, &result)
+        {
+            if error == DurableReservationError::AlreadyReserved {
+                let recovered = self
+                    .recover_durable_witnessed_asset_escrow_v2(request)?
+                    .ok_or(DurableReservationError::Filesystem)?;
+                state.active_witnessed_asset_escrow_v2 = Some(ActiveWitnessedAssetEscrowV2 {
+                    request: request.clone(),
+                    result: recovered.clone(),
+                });
+                return Ok(recovered);
+            }
+            return Err(error.into());
+        }
+        state.active_witnessed_asset_escrow_v2 = Some(ActiveWitnessedAssetEscrowV2 {
+            request: request.clone(),
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
+    /// Reserves the exact unsigned official custom-token witnessed claim.
+    ///
+    /// # Errors
+    ///
+    /// Rejects identity/ATA/program drift, a missing funding ID, unavailable
+    /// aggregate-authority nonce, noncanonical bytes, or conflicting durable state.
+    pub async fn prepare_witnessed_asset_claim_v2(
+        &self,
+        request: &PrepareWitnessedAssetClaimV2Request,
+    ) -> Result<PrepareWitnessedAssetClaimV2Result, NativePrepareError> {
+        let authority = self.validate_witnessed_asset_claim_v2_request(request)?;
+        let mut state = self.state.lock().await;
+        if let Some(active) = state.active_witnessed_asset_claim_v2.as_ref() {
+            return if active.request == *request {
+                self.validate_prepared_witnessed_asset_claim_v2(&active.request, &active.result)?;
+                Ok(active.result.clone())
+            } else {
+                Err(NativePrepareError::ActiveWitnessedAssetClaimPrepare)
+            };
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(recovered) = self.recover_durable_witnessed_asset_claim_v2(request)? {
+            state.active_witnessed_asset_claim_v2 = Some(ActiveWitnessedAssetClaimV2 {
+                request: request.clone(),
+                result: recovered.clone(),
+            });
+            return Ok(recovered);
+        }
+
+        let nonce = self.nonce_source.account_nonce(authority).await?;
+        let message = self.witnessed_asset_claim_v2_message(request, nonce)?;
+        let result = PrepareWitnessedAssetClaimV2Result::new(
+            request.context.clone(),
+            request.terms.clone(),
+            prepared_witnessed_from_message(request.context.request_id.clone(), &message)?,
+        );
+        self.validate_prepared_witnessed_asset_claim_v2(request, &result)?;
+        #[cfg(target_os = "linux")]
+        if let Some(store) = self.durable_store.as_ref()
+            && let Err(error) =
+                store.create(ReservationKind::WitnessedAssetClaimV2, request, &result)
+        {
+            if error == DurableReservationError::AlreadyReserved {
+                let recovered = self
+                    .recover_durable_witnessed_asset_claim_v2(request)?
+                    .ok_or(DurableReservationError::Filesystem)?;
+                state.active_witnessed_asset_claim_v2 = Some(ActiveWitnessedAssetClaimV2 {
+                    request: request.clone(),
+                    result: recovered.clone(),
+                });
+                return Ok(recovered);
+            }
+            return Err(error.into());
+        }
+        state.active_witnessed_asset_claim_v2 = Some(ActiveWitnessedAssetClaimV2 {
+            request: request.clone(),
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
+    /// Prepares one exact permissionless fixed-destination custom-token refund.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role/runtime/program/ATA/authority drift, noncanonical bytes,
+    /// durable-state failure, or a conflicting refund reservation.
+    pub async fn prepare_witnessed_asset_refund_v2(
+        &self,
+        request: &PrepareWitnessedAssetRefundV2Request,
+    ) -> Result<PrepareWitnessedAssetRefundV2Result, NativePrepareError> {
+        self.validate_witnessed_asset_refund_v2_request(request)?;
+        let mut state = self.state.lock().await;
+        if let Some(active) = state.active_witnessed_asset_refund_v2.as_ref() {
+            return if active.request == *request {
+                self.validate_prepared_witnessed_asset_refund_v2(&active.request, &active.result)?;
+                Ok(active.result.clone())
+            } else {
+                Err(NativePrepareError::ActiveWitnessedAssetRefundPrepare)
+            };
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(recovered) = self.recover_durable_witnessed_asset_refund_v2(request)? {
+            state.active_witnessed_asset_refund_v2 = Some(ActiveWitnessedAssetRefundV2 {
+                request: request.clone(),
+                result: recovered.clone(),
+            });
+            return Ok(recovered);
+        }
+
+        let message = self.witnessed_asset_refund_v2_message(request)?;
+        let transaction = PublicTransaction::new(message, WitnessSet::from_raw_parts(Vec::new()));
+        let result = PrepareWitnessedAssetRefundV2Result::new(
+            request.context.clone(),
+            request.terms.clone(),
+            prepared_from_transaction(&transaction)?,
+        );
+        self.validate_prepared_witnessed_asset_refund_v2(request, &result)?;
+        #[cfg(target_os = "linux")]
+        if let Some(store) = self.durable_store.as_ref()
+            && let Err(error) =
+                store.create(ReservationKind::WitnessedAssetRefundV2, request, &result)
+        {
+            if error == DurableReservationError::AlreadyReserved {
+                let recovered = self
+                    .recover_durable_witnessed_asset_refund_v2(request)?
+                    .ok_or(DurableReservationError::Filesystem)?;
+                state.active_witnessed_asset_refund_v2 = Some(ActiveWitnessedAssetRefundV2 {
+                    request: request.clone(),
+                    result: recovered.clone(),
+                });
+                return Ok(recovered);
+            }
+            return Err(error.into());
+        }
+        state.active_witnessed_asset_refund_v2 = Some(ActiveWitnessedAssetRefundV2 {
             request: request.clone(),
             result: result.clone(),
         });
@@ -754,6 +1003,105 @@ impl NativeEscrowPlanner {
         Ok(result)
     }
 
+    /// Completes one exact custom-token claim reservation with its aggregate signature.
+    ///
+    /// # Errors
+    ///
+    /// Rejects absent or mutated preparation state, role/runtime/terms drift,
+    /// invalid BIP340 signature, noncanonical output, or conflicting completion.
+    pub async fn complete_witnessed_asset_claim_v2(
+        &self,
+        request: &CompleteWitnessedAssetClaimV2Request,
+    ) -> Result<CompleteWitnessedAssetClaimV2Result, NativePrepareError> {
+        let mut state = self.state.lock().await;
+        #[cfg(target_os = "linux")]
+        if state.active_witnessed_asset_claim_v2.is_none()
+            && let Some(recovered) =
+                self.load_durable_witnessed_asset_claim_v2_for_completion(request)?
+        {
+            state.active_witnessed_asset_claim_v2 = Some(recovered);
+        }
+        let active = state
+            .active_witnessed_asset_claim_v2
+            .clone()
+            .ok_or(NativePrepareError::ActiveWitnessedAssetClaimPrepare)?;
+        self.validate_witnessed_asset_completion_v2_request(&active, request)?;
+        if let Some(completed) = state.completed_witnessed_asset_claim_v2.as_ref() {
+            return if completed.request == *request {
+                self.validate_completed_witnessed_asset_claim_v2(
+                    &active,
+                    request,
+                    &completed.result,
+                )?;
+                Ok(completed.result.clone())
+            } else {
+                Err(NativePrepareError::ActiveWitnessedAssetClaimCompletion)
+            };
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(recovered) =
+            self.recover_durable_witnessed_asset_claim_completion_v2(&active, request)?
+        {
+            state.completed_witnessed_asset_claim_v2 =
+                Some(ActiveWitnessedAssetClaimCompletionV2 {
+                    request: request.clone(),
+                    result: recovered.clone(),
+                });
+            return Ok(recovered);
+        }
+
+        let message = decode_witnessed_message(&active.result.claim)?;
+        let terms = active
+            .request
+            .terms
+            .asset()
+            .custom_token()
+            .ok_or(NativePrepareError::WrongAssetKind)?;
+        let public_key = PublicKey::try_new(*terms.aggregate_x_only_public_key().as_bytes())
+            .map_err(|_| NativePrepareError::WrongAggregateAuthority)?;
+        let signature = Signature {
+            value: *request.aggregate_signature.as_bytes(),
+        };
+        if !signature.is_valid_for(&message.hash(), &public_key) {
+            return Err(NativePrepareError::InvalidSignature);
+        }
+        let witness = WitnessSet::from_raw_parts(vec![(signature, public_key)]);
+        let prepared = prepared_from_transaction(&PublicTransaction::new(message, witness))?;
+        let result = CompleteWitnessedAssetClaimV2Result::new(
+            request.context.clone(),
+            request.terms.clone(),
+            prepared,
+        );
+        self.validate_completed_witnessed_asset_claim_v2(&active, request, &result)?;
+        #[cfg(target_os = "linux")]
+        if let Some(store) = self.durable_store.as_ref()
+            && let Err(error) = store.create(
+                ReservationKind::WitnessedAssetClaimCompletionV2,
+                request,
+                &result,
+            )
+        {
+            if error == DurableReservationError::AlreadyReserved {
+                let recovered = self
+                    .recover_durable_witnessed_asset_claim_completion_v2(&active, request)?
+                    .ok_or(DurableReservationError::Filesystem)?;
+                state.completed_witnessed_asset_claim_v2 =
+                    Some(ActiveWitnessedAssetClaimCompletionV2 {
+                        request: request.clone(),
+                        result: recovered.clone(),
+                    });
+                return Ok(recovered);
+            }
+            return Err(error.into());
+        }
+        state.completed_witnessed_asset_claim_v2 = Some(ActiveWitnessedAssetClaimCompletionV2 {
+            request: request.clone(),
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
     /// Returns the exact owned initialization/funding pair after checking the
     /// complete observation request and both persisted transaction identities.
     ///
@@ -901,6 +1249,22 @@ impl NativeEscrowPlanner {
             self.validate_prepared_witnessed_escrow(&active.request, &active.result)?;
             return Ok(());
         }
+        if let Some(active) = state.active_witnessed_asset_escrow_v2.as_ref()
+            && active
+                .result
+                .effects
+                .iter()
+                .any(|effect| &effect.transaction == prepared)
+        {
+            self.validate_prepared_witnessed_asset_escrow_v2(&active.request, &active.result)?;
+            return Ok(());
+        }
+        if let Some(active) = state.active_witnessed_asset_refund_v2.as_ref()
+            && &active.result.refund == prepared
+        {
+            self.validate_prepared_witnessed_asset_refund_v2(&active.request, &active.result)?;
+            return Ok(());
+        }
         if let Some(active) = state.active_refund.as_ref()
             && &active.result.refund == prepared
         {
@@ -926,6 +1290,18 @@ impl NativeEscrowPlanner {
         ) && &completed.result.claim == prepared
         {
             self.validate_completed_witnessed_claim(active, &completed.request, &completed.result)?;
+            return Ok(());
+        }
+        if let (Some(active), Some(completed)) = (
+            state.active_witnessed_asset_claim_v2.as_ref(),
+            state.completed_witnessed_asset_claim_v2.as_ref(),
+        ) && &completed.result.claim == prepared
+        {
+            self.validate_completed_witnessed_asset_claim_v2(
+                active,
+                &completed.request,
+                &completed.result,
+            )?;
             return Ok(());
         }
         Err(NativePrepareError::InvalidTransactionBytes)
@@ -988,6 +1364,127 @@ impl NativeEscrowPlanner {
         self.validate_prepared_witnessed_escrow(&stored_request, &stored_result)?;
         if &stored_request != request {
             return Err(NativePrepareError::ActiveWitnessedEscrowPrepare);
+        }
+        Ok(Some(stored_result))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn recover_durable_witnessed_asset_escrow_v2(
+        &self,
+        request: &PrepareWitnessedAssetEscrowV2Request,
+    ) -> Result<Option<PrepareWitnessedAssetEscrowV2Result>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some((stored_request, stored_result)) = store
+            .load::<PrepareWitnessedAssetEscrowV2Request, PrepareWitnessedAssetEscrowV2Result>(
+                ReservationKind::WitnessedAssetEscrowV2,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_prepared_witnessed_asset_escrow_v2(&stored_request, &stored_result)?;
+        if &stored_request != request {
+            return Err(NativePrepareError::ActiveWitnessedAssetEscrowPrepare);
+        }
+        Ok(Some(stored_result))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn recover_durable_witnessed_asset_claim_v2(
+        &self,
+        request: &PrepareWitnessedAssetClaimV2Request,
+    ) -> Result<Option<PrepareWitnessedAssetClaimV2Result>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some((stored_request, stored_result)) = store
+            .load::<PrepareWitnessedAssetClaimV2Request, PrepareWitnessedAssetClaimV2Result>(
+                ReservationKind::WitnessedAssetClaimV2,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_prepared_witnessed_asset_claim_v2(&stored_request, &stored_result)?;
+        if &stored_request != request {
+            return Err(NativePrepareError::ActiveWitnessedAssetClaimPrepare);
+        }
+        Ok(Some(stored_result))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn load_durable_witnessed_asset_claim_v2_for_completion(
+        &self,
+        completion: &CompleteWitnessedAssetClaimV2Request,
+    ) -> Result<Option<ActiveWitnessedAssetClaimV2>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some((stored_request, stored_result)) = store
+            .load::<PrepareWitnessedAssetClaimV2Request, PrepareWitnessedAssetClaimV2Result>(
+                ReservationKind::WitnessedAssetClaimV2,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_prepared_witnessed_asset_claim_v2(&stored_request, &stored_result)?;
+        if stored_request.context.request_id != completion.claim.preparation_request_id
+            || stored_request.context.run_id != completion.context.run_id
+            || stored_request.context.sidecar_role != completion.context.sidecar_role
+            || stored_request.runtime != completion.runtime
+            || stored_request.terms != completion.terms
+            || stored_result.claim != completion.claim
+        {
+            return Err(NativePrepareError::ActiveWitnessedAssetClaimPrepare);
+        }
+        Ok(Some(ActiveWitnessedAssetClaimV2 {
+            request: stored_request,
+            result: stored_result,
+        }))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn recover_durable_witnessed_asset_claim_completion_v2(
+        &self,
+        active: &ActiveWitnessedAssetClaimV2,
+        request: &CompleteWitnessedAssetClaimV2Request,
+    ) -> Result<Option<CompleteWitnessedAssetClaimV2Result>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some((stored_request, stored_result)) = store
+            .load::<CompleteWitnessedAssetClaimV2Request, CompleteWitnessedAssetClaimV2Result>(
+                ReservationKind::WitnessedAssetClaimCompletionV2,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_witnessed_asset_completion_v2_request(active, &stored_request)?;
+        self.validate_completed_witnessed_asset_claim_v2(active, &stored_request, &stored_result)?;
+        if &stored_request != request {
+            return Err(NativePrepareError::ActiveWitnessedAssetClaimCompletion);
+        }
+        Ok(Some(stored_result))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn recover_durable_witnessed_asset_refund_v2(
+        &self,
+        request: &PrepareWitnessedAssetRefundV2Request,
+    ) -> Result<Option<PrepareWitnessedAssetRefundV2Result>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some((stored_request, stored_result)) = store
+            .load::<PrepareWitnessedAssetRefundV2Request, PrepareWitnessedAssetRefundV2Result>(
+                ReservationKind::WitnessedAssetRefundV2,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_prepared_witnessed_asset_refund_v2(&stored_request, &stored_result)?;
+        if &stored_request != request {
+            return Err(NativePrepareError::ActiveWitnessedAssetRefundPrepare);
         }
         Ok(Some(stored_result))
     }
@@ -1202,6 +1699,163 @@ impl NativeEscrowPlanner {
         {
             return Err(NativePrepareError::InvalidTransactionBytes);
         }
+        Ok(())
+    }
+
+    /// Validates one complete recovered v2 custom-token plan.
+    ///
+    /// # Errors
+    ///
+    /// Rejects terms, ordered steps, exact bytes, IDs, account order, signer,
+    /// nonce continuity, permissionless witness, or instruction drift.
+    pub fn validate_prepared_witnessed_asset_escrow_v2(
+        &self,
+        request: &PrepareWitnessedAssetEscrowV2Request,
+        result: &PrepareWitnessedAssetEscrowV2Result,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_witnessed_asset_escrow_v2_request(request)?;
+        let [initialization_effect, custody_effect, funding_effect] = result.effects.as_slice()
+        else {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        };
+        if result.context != request.context
+            || result.terms != request.terms
+            || initialization_effect.step != WitnessedAssetPrepareStepV2::InitializeWitnessed
+            || custody_effect.step != WitnessedAssetPrepareStepV2::CreateCustodyAta
+            || funding_effect.step != WitnessedAssetPrepareStepV2::Fund
+            || initialization_effect.transaction == custody_effect.transaction
+            || initialization_effect.transaction == funding_effect.transaction
+            || custody_effect.transaction == funding_effect.transaction
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let initialization =
+            decode_prepared_for_signer(&initialization_effect.transaction, self.signer_account_id)?;
+        let funding =
+            decode_prepared_for_signer(&funding_effect.transaction, self.signer_account_id)?;
+        let [initialization_nonce] = initialization.message().nonces.as_slice() else {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        };
+        let initialization_nonce = u128::from(*initialization_nonce);
+        let funding_nonce = initialization_nonce
+            .checked_add(1)
+            .ok_or(NativePrepareError::NonceOverflow)?;
+        let [observed_funding_nonce] = funding.message().nonces.as_slice() else {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        };
+        if u128::from(*observed_funding_nonce) != funding_nonce {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let (expected_initialization, expected_custody, expected_funding) =
+            self.witnessed_token_escrow_v2_messages(request, initialization_nonce, funding_nonce)?;
+        if initialization.message() != &expected_initialization
+            || funding.message() != &expected_funding
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        decode_unsigned_refund(&custody_effect.transaction, &expected_custody)?;
+        Ok(())
+    }
+
+    /// Validates one recovered unsigned v2 custom-token claim transcript.
+    ///
+    /// # Errors
+    ///
+    /// Rejects request identity, role, runtime, authority, nonce, message hash,
+    /// instruction, account order, or canonical message-byte drift.
+    pub fn validate_prepared_witnessed_asset_claim_v2(
+        &self,
+        request: &PrepareWitnessedAssetClaimV2Request,
+        result: &PrepareWitnessedAssetClaimV2Result,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_witnessed_asset_claim_v2_request(request)?;
+        if result.context != request.context
+            || result.terms != request.terms
+            || result.claim.preparation_request_id != request.context.request_id
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let message = decode_witnessed_message(&result.claim)?;
+        let [nonce] = message.nonces.as_slice() else {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        };
+        if message != self.witnessed_asset_claim_v2_message(request, u128::from(*nonce))? {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
+    }
+
+    fn validate_witnessed_asset_completion_v2_request(
+        &self,
+        active: &ActiveWitnessedAssetClaimV2,
+        request: &CompleteWitnessedAssetClaimV2Request,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_prepared_witnessed_asset_claim_v2(&active.request, &active.result)?;
+        if request.context.run_id != active.request.context.run_id
+            || request.context.sidecar_role != self.role
+            || request.context.request_id == active.request.context.request_id
+            || request.runtime != active.request.runtime
+            || request.runtime != self.expected_runtime
+            || request.terms != active.request.terms
+            || request.claim != active.result.claim
+            || request.claim.preparation_request_id != active.request.context.request_id
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
+    }
+
+    fn validate_completed_witnessed_asset_claim_v2(
+        &self,
+        active: &ActiveWitnessedAssetClaimV2,
+        request: &CompleteWitnessedAssetClaimV2Request,
+        result: &CompleteWitnessedAssetClaimV2Result,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_witnessed_asset_completion_v2_request(active, request)?;
+        if result.context != request.context || result.terms != request.terms {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let terms = active
+            .request
+            .terms
+            .asset()
+            .custom_token()
+            .ok_or(NativePrepareError::WrongAssetKind)?;
+        let authority = AccountId::new(*terms.aggregate_authority_account_id().as_bytes());
+        let transaction = decode_prepared_for_signer(&result.claim, authority)?;
+        let expected_message = decode_witnessed_message(&active.result.claim)?;
+        if transaction.message() != &expected_message {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let [(signature, public_key)] = transaction.witness_set().signatures_and_public_keys()
+        else {
+            return Err(NativePrepareError::InvalidSignature);
+        };
+        if signature.value != *request.aggregate_signature.as_bytes()
+            || public_key.value() != terms.aggregate_x_only_public_key().as_bytes()
+        {
+            return Err(NativePrepareError::InvalidSignature);
+        }
+        Ok(())
+    }
+
+    /// Validates one recovered permissionless v2 custom-token refund.
+    ///
+    /// # Errors
+    ///
+    /// Rejects context, terms, programs, ATAs, accounts, instruction, nonce,
+    /// witness, exact-byte, or transaction-ID drift.
+    pub fn validate_prepared_witnessed_asset_refund_v2(
+        &self,
+        request: &PrepareWitnessedAssetRefundV2Request,
+        result: &PrepareWitnessedAssetRefundV2Result,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_witnessed_asset_refund_v2_request(request)?;
+        if result.context != request.context || result.terms != request.terms {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let expected = self.witnessed_asset_refund_v2_message(request)?;
+        decode_unsigned_refund(&result.refund, &expected)?;
         Ok(())
     }
 
@@ -1524,6 +2178,214 @@ impl NativeEscrowPlanner {
         Ok(authority)
     }
 
+    fn validate_witnessed_asset_escrow_v2_request(
+        &self,
+        request: &PrepareWitnessedAssetEscrowV2Request,
+    ) -> Result<(), NativePrepareError> {
+        if request.context.sidecar_role != self.role || request.runtime.sidecar_role != self.role {
+            return Err(NativePrepareError::WrongRole);
+        }
+        if request.runtime != self.expected_runtime
+            || request.runtime.compatibility != RuntimeCompatibility::LeeV0_2_0
+        {
+            return Err(NativePrepareError::WrongRuntime);
+        }
+        let Some(terms) = request.terms.asset().custom_token() else {
+            return Err(NativePrepareError::WrongAssetKind);
+        };
+        let signer = Hex32::from_bytes(self.signer_account_id.into_value());
+        if terms.depositor() != self.role
+            || request.runtime.signer_account_id != signer
+            || terms.depositor_owner_account_id() != signer
+        {
+            return Err(NativePrepareError::WrongSigner);
+        }
+        if request.runtime.escrow_program_id != program_id_to_hex(self.escrow_program_id) {
+            return Err(NativePrepareError::WrongEscrowProgram);
+        }
+        if terms.token_program_id() != program_id_to_hex(programs::token().id()) {
+            return Err(NativePrepareError::WrongTokenProgram);
+        }
+        let official_ata_program = programs::ata().id();
+        if terms.ata_program_id() != program_id_to_hex(official_ata_program) {
+            return Err(NativePrepareError::WrongAtaProgram);
+        }
+
+        let definition = AccountId::new(*terms.token_definition_account_id().as_bytes());
+        let depositor = AccountId::new(*terms.depositor_owner_account_id().as_bytes());
+        let claimant = AccountId::new(*terms.claimant_owner_account_id().as_bytes());
+        let metadata = compute_metadata_pda(&self.escrow_program_id, terms.swap_id().as_bytes());
+        if official_ata(depositor, definition, official_ata_program).into_value()
+            != *terms.depositor_ata_account_id().as_bytes()
+            || official_ata(claimant, definition, official_ata_program).into_value()
+                != *terms.claimant_ata_account_id().as_bytes()
+            || official_ata(metadata, definition, official_ata_program).into_value()
+                != *terms.custody_ata_account_id().as_bytes()
+        {
+            return Err(NativePrepareError::WrongTokenAccount);
+        }
+        let aggregate_key = PublicKey::try_new(*terms.aggregate_x_only_public_key().as_bytes())
+            .map_err(|_| NativePrepareError::WrongAggregateAuthority)?;
+        let authority = AccountId::from(&aggregate_key);
+        if authority.into_value() != *terms.aggregate_authority_account_id().as_bytes() {
+            return Err(NativePrepareError::WrongAggregateAuthority);
+        }
+        Ok(())
+    }
+
+    fn validate_witnessed_token_terms_v2(
+        &self,
+        terms: &lez_bridge_protocol::WitnessedTokenEscrowTermsV2,
+    ) -> Result<AccountId, NativePrepareError> {
+        if terms.token_program_id() != program_id_to_hex(programs::token().id()) {
+            return Err(NativePrepareError::WrongTokenProgram);
+        }
+        let ata_program = programs::ata().id();
+        if terms.ata_program_id() != program_id_to_hex(ata_program) {
+            return Err(NativePrepareError::WrongAtaProgram);
+        }
+        let definition = AccountId::new(*terms.token_definition_account_id().as_bytes());
+        let depositor = AccountId::new(*terms.depositor_owner_account_id().as_bytes());
+        let claimant = AccountId::new(*terms.claimant_owner_account_id().as_bytes());
+        let metadata = compute_metadata_pda(&self.escrow_program_id, terms.swap_id().as_bytes());
+        if official_ata(depositor, definition, ata_program).into_value()
+            != *terms.depositor_ata_account_id().as_bytes()
+            || official_ata(claimant, definition, ata_program).into_value()
+                != *terms.claimant_ata_account_id().as_bytes()
+            || official_ata(metadata, definition, ata_program).into_value()
+                != *terms.custody_ata_account_id().as_bytes()
+        {
+            return Err(NativePrepareError::WrongTokenAccount);
+        }
+        let aggregate_key = PublicKey::try_new(*terms.aggregate_x_only_public_key().as_bytes())
+            .map_err(|_| NativePrepareError::WrongAggregateAuthority)?;
+        let authority = AccountId::from(&aggregate_key);
+        if authority.into_value() != *terms.aggregate_authority_account_id().as_bytes() {
+            return Err(NativePrepareError::WrongAggregateAuthority);
+        }
+        Ok(authority)
+    }
+
+    fn validate_witnessed_asset_claim_v2_request(
+        &self,
+        request: &PrepareWitnessedAssetClaimV2Request,
+    ) -> Result<AccountId, NativePrepareError> {
+        if request.context.sidecar_role != self.role || request.runtime.sidecar_role != self.role {
+            return Err(NativePrepareError::WrongRole);
+        }
+        if request.runtime != self.expected_runtime
+            || request.runtime.compatibility != RuntimeCompatibility::LeeV0_2_0
+        {
+            return Err(NativePrepareError::WrongRuntime);
+        }
+        let Some(terms) = request.terms.asset().custom_token() else {
+            return Err(NativePrepareError::WrongAssetKind);
+        };
+        let signer = Hex32::from_bytes(self.signer_account_id.into_value());
+        if terms.claimant() != self.role
+            || request.runtime.signer_account_id != signer
+            || terms.claimant_owner_account_id() != signer
+        {
+            return Err(NativePrepareError::WrongClaimant);
+        }
+        if request.runtime.escrow_program_id != program_id_to_hex(self.escrow_program_id) {
+            return Err(NativePrepareError::WrongEscrowProgram);
+        }
+        if request.funding_transaction_id.as_bytes() == &[0; 32] {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        self.validate_witnessed_token_terms_v2(terms)
+    }
+
+    fn validate_witnessed_asset_refund_v2_request(
+        &self,
+        request: &PrepareWitnessedAssetRefundV2Request,
+    ) -> Result<(), NativePrepareError> {
+        if request.context.sidecar_role != self.role || request.runtime.sidecar_role != self.role {
+            return Err(NativePrepareError::WrongRole);
+        }
+        if request.runtime != self.expected_runtime
+            || request.runtime.compatibility != RuntimeCompatibility::LeeV0_2_0
+        {
+            return Err(NativePrepareError::WrongRuntime);
+        }
+        let Some(terms) = request.terms.asset().custom_token() else {
+            return Err(NativePrepareError::WrongAssetKind);
+        };
+        let signer = Hex32::from_bytes(self.signer_account_id.into_value());
+        if terms.depositor() != self.role
+            || request.runtime.signer_account_id != signer
+            || terms.depositor_owner_account_id() != signer
+        {
+            return Err(NativePrepareError::WrongSigner);
+        }
+        if request.runtime.escrow_program_id != program_id_to_hex(self.escrow_program_id) {
+            return Err(NativePrepareError::WrongEscrowProgram);
+        }
+        self.validate_witnessed_token_terms_v2(terms)?;
+        Ok(())
+    }
+
+    fn witnessed_asset_claim_v2_message(
+        &self,
+        request: &PrepareWitnessedAssetClaimV2Request,
+        nonce: u128,
+    ) -> Result<Message, NativePrepareError> {
+        self.validate_witnessed_asset_claim_v2_request(request)?;
+        let terms = request
+            .terms
+            .asset()
+            .custom_token()
+            .ok_or(NativePrepareError::WrongAssetKind)?;
+        let swap_id = *terms.swap_id().as_bytes();
+        let metadata = compute_metadata_pda(&self.escrow_program_id, &swap_id);
+        let definition = AccountId::new(*terms.token_definition_account_id().as_bytes());
+        let claimant = AccountId::new(*terms.claimant_owner_account_id().as_bytes());
+        let authority = AccountId::new(*terms.aggregate_authority_account_id().as_bytes());
+        let ata_program = programs::ata().id();
+        Message::try_new(
+            self.escrow_program_id,
+            vec![
+                metadata,
+                official_ata(metadata, definition, ata_program),
+                claimant,
+                official_ata(claimant, definition, ata_program),
+                authority,
+            ],
+            vec![nonce.into()],
+            ZecEscrowInstruction::ClaimTokenWitnessed { swap_id },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)
+    }
+
+    fn witnessed_asset_refund_v2_message(
+        &self,
+        request: &PrepareWitnessedAssetRefundV2Request,
+    ) -> Result<Message, NativePrepareError> {
+        self.validate_witnessed_asset_refund_v2_request(request)?;
+        let terms = request
+            .terms
+            .asset()
+            .custom_token()
+            .ok_or(NativePrepareError::WrongAssetKind)?;
+        let swap_id = *terms.swap_id().as_bytes();
+        let metadata = compute_metadata_pda(&self.escrow_program_id, &swap_id);
+        let definition = AccountId::new(*terms.token_definition_account_id().as_bytes());
+        let depositor = AccountId::new(*terms.depositor_owner_account_id().as_bytes());
+        let ata_program = programs::ata().id();
+        Message::try_new(
+            self.escrow_program_id,
+            vec![
+                metadata,
+                official_ata(metadata, definition, ata_program),
+                official_ata(depositor, definition, ata_program),
+            ],
+            Vec::new(),
+            ZecEscrowInstruction::RefundToken { swap_id },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)
+    }
+
     fn refund_message(
         &self,
         request: &PrepareNativeRefundRequest,
@@ -1576,6 +2438,89 @@ impl NativeEscrowPlanner {
             initialization,
             funding,
         ))
+    }
+
+    fn plan_witnessed_token_escrow_v2(
+        &self,
+        request: &PrepareWitnessedAssetEscrowV2Request,
+        initialization_nonce: u128,
+        funding_nonce: u128,
+    ) -> Result<PrepareWitnessedAssetEscrowV2Result, NativePrepareError> {
+        let (initialization, custody, funding) =
+            self.witnessed_token_escrow_v2_messages(request, initialization_nonce, funding_nonce)?;
+        let custody = PublicTransaction::new(custody, WitnessSet::from_raw_parts(Vec::new()));
+        PrepareWitnessedAssetEscrowV2Result::new(
+            request.context.clone(),
+            request.terms.clone(),
+            vec![
+                WitnessedAssetPreparedEffectV2::new(
+                    WitnessedAssetPrepareStepV2::InitializeWitnessed,
+                    self.prepare_message(initialization)?,
+                ),
+                WitnessedAssetPreparedEffectV2::new(
+                    WitnessedAssetPrepareStepV2::CreateCustodyAta,
+                    prepared_from_transaction(&custody)?,
+                ),
+                WitnessedAssetPreparedEffectV2::new(
+                    WitnessedAssetPrepareStepV2::Fund,
+                    self.prepare_message(funding)?,
+                ),
+            ],
+        )
+        .map_err(Into::into)
+    }
+
+    fn witnessed_token_escrow_v2_messages(
+        &self,
+        request: &PrepareWitnessedAssetEscrowV2Request,
+        initialization_nonce: u128,
+        funding_nonce: u128,
+    ) -> Result<(Message, Message, Message), NativePrepareError> {
+        self.validate_witnessed_asset_escrow_v2_request(request)?;
+        let terms = request
+            .terms
+            .asset()
+            .custom_token()
+            .ok_or(NativePrepareError::WrongAssetKind)?;
+        let swap_id = *terms.swap_id().as_bytes();
+        let metadata = compute_metadata_pda(&self.escrow_program_id, &swap_id);
+        let definition = AccountId::new(*terms.token_definition_account_id().as_bytes());
+        let depositor = AccountId::new(*terms.depositor_owner_account_id().as_bytes());
+        let claimant = AccountId::new(*terms.claimant_owner_account_id().as_bytes());
+        let authority = AccountId::new(*terms.aggregate_authority_account_id().as_bytes());
+        let ata_program = programs::ata().id();
+        let depositor_ata = official_ata(depositor, definition, ata_program);
+        let custody_ata = official_ata(metadata, definition, ata_program);
+
+        let initialization = Message::try_new(
+            self.escrow_program_id,
+            vec![metadata, depositor, claimant, definition, authority],
+            vec![initialization_nonce.into()],
+            ZecEscrowInstruction::InitializeTokenWitnessed {
+                swap_id,
+                terms_hash: *terms.terms_hash().as_bytes(),
+                aggregate_x_only_public_key: *terms.aggregate_x_only_public_key().as_bytes(),
+                amount: terms.amount().as_u128(),
+                refund_at: terms.refund_at_ms(),
+                ata_program,
+            },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)?;
+        let custody = Message::try_new(
+            self.escrow_program_id,
+            vec![metadata, definition, custody_ata],
+            Vec::new(),
+            ZecEscrowInstruction::CreateTokenCustody { swap_id },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)?;
+        let funding = Message::try_new(
+            self.escrow_program_id,
+            vec![metadata, depositor, depositor_ata, custody_ata],
+            vec![funding_nonce.into()],
+            ZecEscrowInstruction::FundToken { swap_id },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)?;
+        Ok((initialization, custody, funding))
     }
 
     fn plan_witnessed_pair(
@@ -1749,6 +2694,11 @@ fn decode_unsigned_refund(
         return Err(NativePrepareError::InvalidTransactionBytes);
     }
     Ok(transaction)
+}
+
+fn official_ata(owner: AccountId, definition: AccountId, ata_program: [u32; 8]) -> AccountId {
+    let seed = ata_core::compute_ata_seed(owner, definition);
+    ata_core::get_associated_token_account_id(&ata_program, &seed)
 }
 
 fn claim_request_sha256(

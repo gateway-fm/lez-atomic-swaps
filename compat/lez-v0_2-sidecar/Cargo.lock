@@ -3452,6 +3452,7 @@ name = "lez-v0-2-sidecar"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "associated_token_account_core",
  "async-trait",
  "borsh",
  "clap",
@@ -3476,6 +3477,7 @@ dependencies = [
  "spel-framework-core",
  "tempfile",
  "thiserror 2.0.18",
+ "token_core",
  "tokio",
  "tower",
  "tower-http 0.7.0",

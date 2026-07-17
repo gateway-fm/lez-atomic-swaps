@@ -103,7 +103,14 @@ are component gates, not new actual-node evidence. The bounded loopback bridge
 client now maps all eleven additive v2 asset operations with one-call/no-retry
 semantics, depositor/claimant/permissionless role checks, and strict
 term/target/window/effect validation. Public process-durable store/chain
-composition and the F7 sidecar/adapter/actor mapping remain open.
+composition remains open. The official v0.2 sidecar planner now prepares the
+ordered witnessed-token initialize, permissionless custody creation, funding,
+aggregate-witness claim, and fixed-destination refund transactions. It
+rederives the pinned Token/ATA programs and every owner/custody ATA, preserves
+consecutive signed nonces around the unsigned custody step, and restores four
+distinct v2 reservations byte-for-byte without nonce rereads. Server routes,
+finalized token scans, adapter/journal/actor composition, and actual-node token
+balance/effect evidence remain open.
 
 Run `m3refund-20260716h` then passed the two-lock timeout/refund journey
 from base HEAD `ef5f306` with a dirty pre-commit source tree and the packet's

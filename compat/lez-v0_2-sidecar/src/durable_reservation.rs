@@ -56,6 +56,10 @@ pub(crate) enum ReservationKind {
     WitnessedClaim,
     WitnessedClaimCompletion,
     NativeRefund,
+    WitnessedAssetEscrowV2,
+    WitnessedAssetClaimV2,
+    WitnessedAssetClaimCompletionV2,
+    WitnessedAssetRefundV2,
     VaultClaim,
 }
 
@@ -68,6 +72,10 @@ impl ReservationKind {
             Self::WitnessedClaim => "witnessed-claim-reservation.v1.json",
             Self::WitnessedClaimCompletion => "witnessed-claim-completion.v1.json",
             Self::NativeRefund => "native-refund-reservation.v1.json",
+            Self::WitnessedAssetEscrowV2 => "witnessed-asset-escrow-reservation.v2.json",
+            Self::WitnessedAssetClaimV2 => "witnessed-asset-claim-reservation.v2.json",
+            Self::WitnessedAssetClaimCompletionV2 => "witnessed-asset-claim-completion.v2.json",
+            Self::WitnessedAssetRefundV2 => "witnessed-asset-refund-reservation.v2.json",
             Self::VaultClaim => "vault-claim-reservation.v1.json",
         }
     }

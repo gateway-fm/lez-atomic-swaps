@@ -181,13 +181,21 @@ impl From<NativePrepareError> for VaultClaimPrepareError {
             | NativePrepareError::ActiveClaimPrepare
             | NativePrepareError::ActiveWitnessedClaimPrepare
             | NativePrepareError::ActiveRefundPrepare
-            | NativePrepareError::ActiveWitnessedClaimCompletion => Self::ActivePrepare,
+            | NativePrepareError::ActiveWitnessedClaimCompletion
+            | NativePrepareError::ActiveWitnessedAssetEscrowPrepare
+            | NativePrepareError::ActiveWitnessedAssetClaimPrepare
+            | NativePrepareError::ActiveWitnessedAssetClaimCompletion
+            | NativePrepareError::ActiveWitnessedAssetRefundPrepare => Self::ActivePrepare,
             NativePrepareError::NonceUnavailable => Self::NonceUnavailable,
             NativePrepareError::ProtocolEncoding => Self::ProtocolEncoding,
             NativePrepareError::InvalidTransactionBytes
             | NativePrepareError::WrongDepositorRole
             | NativePrepareError::WrongClaimant
             | NativePrepareError::WrongAggregateAuthority
+            | NativePrepareError::WrongAssetKind
+            | NativePrepareError::WrongTokenProgram
+            | NativePrepareError::WrongAtaProgram
+            | NativePrepareError::WrongTokenAccount
             | NativePrepareError::WrongPreimage
             | NativePrepareError::WrongEscrowProgram
             | NativePrepareError::WrongAuthenticatedTransferProgram
