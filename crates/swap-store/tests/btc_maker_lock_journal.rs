@@ -41,9 +41,17 @@ fn bitcoin_plan() -> ExactPublicEffectPlanV1 {
 }
 
 fn intent(swap: &str, plan: ExactPublicEffectPlanV1) -> BtcMakerLockIntentV1 {
+    intent_with_binding(swap, [0x42; 32], plan)
+}
+
+fn intent_with_binding(
+    swap: &str,
+    binding_commitment: [u8; 32],
+    plan: ExactPublicEffectPlanV1,
+) -> BtcMakerLockIntentV1 {
     BtcMakerLockIntentV1::new(
         SwapId::new(swap).expect("valid swap ID"),
-        [0x42; 32],
+        binding_commitment,
         Participant::Maker,
         1,
         plan,
@@ -664,6 +672,79 @@ fn maker_projection_and_intent_close_share_one_revision_cas_transaction() {
             .closed_revision(),
         Some(2)
     );
+}
+
+#[test]
+fn asset_bound_maker_projection_closes_only_with_the_accepted_extension_commitment() {
+    let directory = tempdir().expect("temporary store");
+    for (case, intent_binding, should_close) in
+        [("asset", [0x71; 32], true), ("base", [0x42; 32], false)]
+    {
+        let swap = format!("btc-maker-asset-close-{case}");
+        let path = directory.path().join(format!("{case}.sqlite3"));
+        let initial = coordinator(&swap);
+        let accepted = BtcAgreementAcceptance::new_with_asset_extension(
+            &initial,
+            Participant::Maker,
+            b"exact-bitcoin-agreement".to_vec(),
+            [0x42; 32],
+            b"exact-countersigned-asset-extension".to_vec(),
+            [0x71; 32],
+            1_785_000_000,
+        )
+        .expect("valid asset-bound acceptance");
+        let mut recovery = SqliteBtcRecoveryStore::open(&path, &accepted, &initial)
+            .expect("activate asset recovery");
+        let _ = recovery
+            .project(
+                0,
+                &BtcLifecycleEvidenceV1::taker_lock(
+                    Chain::Bitcoin,
+                    "taker-lock-txid",
+                    1,
+                    b"canonical taker lock".to_vec(),
+                )
+                .expect("taker lock evidence"),
+            )
+            .expect("project taker lock");
+
+        let candidate = intent_with_binding(&swap, intent_binding, bitcoin_plan());
+        let step = candidate.plan().steps()[0].clone();
+        let mut journal = SqliteBtcMakerLockJournal::open(&path).expect("open maker journal");
+        let _ = journal.create_intent(&candidate).expect("create intent");
+        let _ = journal
+            .reconcile_step(&candidate, step.step(), exact(&step))
+            .expect("accept exact maker effect");
+        drop(journal);
+
+        let maker_evidence = BtcLifecycleEvidenceV1::maker_lock(
+            Chain::Lez,
+            "maker-lock-txid",
+            1,
+            b"canonical maker lock".to_vec(),
+        )
+        .expect("maker lock evidence");
+        let projected = recovery.project_maker_lock_and_close(1, &maker_evidence);
+        assert_eq!(projected.is_ok(), should_close, "{case}");
+        assert_eq!(
+            recovery
+                .status()
+                .expect("status after close attempt")
+                .revision(),
+            if should_close { 2 } else { 1 },
+            "{case}",
+        );
+        let journal = SqliteBtcMakerLockJournal::open(&path).expect("reopen maker journal");
+        assert_eq!(
+            journal
+                .load_intent(candidate.swap_id())
+                .expect("load intent")
+                .expect("intent exists")
+                .closed_revision(),
+            should_close.then_some(2),
+            "{case}",
+        );
+    }
 }
 
 #[test]

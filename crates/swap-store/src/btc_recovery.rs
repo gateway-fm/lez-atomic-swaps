@@ -1116,10 +1116,13 @@ fn maybe_close_maker_intent(
     requested: bool,
 ) -> Result<(), BtcRecoveryError> {
     if requested {
+        let execution_binding = acceptance
+            .asset_commitment()
+            .unwrap_or(acceptance.agreement_commitment());
         close_ready_btc_maker_lock_intent(
             transaction,
             acceptance.swap_id(),
-            acceptance.agreement_commitment(),
+            execution_binding,
             predecessor_revision,
             committed_revision,
         )?;
