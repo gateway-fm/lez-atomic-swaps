@@ -2008,6 +2008,73 @@ jq -e '
 ' "$retained_schema4" >/dev/null ||
   fail "schema-4 actor-owned Maker-lock certification packet is incomplete or overclaims M3 closure"
 
+retained_overlap="docs/evidence/m3-overlapping-two-swap-poc-20260717.json"
+[[ -f "$retained_overlap" && ! -L "$retained_overlap" ]] ||
+  fail "overlapping two-swap certification packet is missing or unsafe"
+jq -e '
+  .schema_version == 1 and .milestone == "M3" and .result == "passed"
+  and .classification == "private_local_two_swap_overlapping_revision_two_poc"
+  and .run_id == "m3overlap-20260717a"
+  and .provenance.repository_commit == "1e6d5f1b9205aafb2df427f5285ff0920406b7d1"
+  and .provenance.origin_main_commit_before_run == .provenance.repository_commit
+  and .provenance.worktree_clean_during_run == true
+  and .provenance.commit_pushed_before_run == true
+  and .milestone_boundary.opposite_direction_overlapping_swap_checkpoint_complete == true
+  and .milestone_boundary.simultaneously_in_flight_swaps == 2
+  and .milestone_boundary.terminal_swaps == 2
+  and .milestone_boundary.accepted_m3_scope_complete == false
+  and .milestone_boundary.m3_completion_tag_created == false
+  and .concurrency_contract.simultaneous_in_flight == true
+  and .concurrency_contract.overlap_revision == 2
+  and .concurrency_contract.overlap_phase == "both_legs_locked"
+  and .concurrency_contract.settlement_released_only_after_both_swaps_reached_overlap_barrier == true
+  and .concurrency_contract.chain_mutations_serialized_for_exact_observation == true
+  and .concurrency_contract.actor_state_database_count == 4
+  and .concurrency_contract.distinct_actor_state_database_paths_and_inodes == true
+  and .concurrency_contract.signing_journal_count == 8
+  and .concurrency_contract.distinct_signing_journal_paths_and_inodes == true
+  and .concurrency_contract.distinct_bitcoin_sessions == 2
+  and .concurrency_contract.distinct_lez_sessions == 2
+  and .concurrency_contract.distinct_agreements == true
+  and .concurrency_contract.distinct_escrow_metadata_accounts == true
+  and .concurrency_contract.distinct_escrow_custody_accounts == true
+  and .concurrency_contract.distinct_refund_deadlines == true
+  and .concurrency_contract.arbitrary_n_or_same_direction_scheduler_proven == false
+  and .funding_sources.allocation == "two_distinct_mature_coinbase_outpoints"
+  and .funding_sources.shared_deterministic_fixture_custody_key == true
+  and (.funding_sources.sources | length) == 2
+  and ([.funding_sources.sources[] | [.transaction_id,.output_index]] | unique | length) == 2
+  and [.funding_sources.sources[].planned_bitcoin_funding_anchor_height] == [103,104]
+  and (.directions | length) == 2
+  and ([.directions[].swap_id] | unique | length) == 2
+  and ([.directions[].agreement_sha256] | unique | length) == 2
+  and all(.directions[];
+    .terminal.maker_revision == 4 and .terminal.taker_revision == 4
+    and .terminal.phase == "completed"
+    and .terminal.confirmed_unique_bitcoin_effects == 2
+    and .terminal.exact_durable_lez_effects == 3
+    and .terminal.effect_counts_before_and_after_replay_equal == true)
+  and (([.directions[].effect_ids.bitcoin[]]) as $ids |
+    ($ids | unique | length) == ($ids | length))
+  and (([.directions[].effect_ids.lez[]]) as $ids |
+    ($ids | unique | length) == ($ids | length))
+  and .cross_swap_effect_isolation.bitcoin_effect_ids_pairwise_disjoint == true
+  and .cross_swap_effect_isolation.lez_effect_ids_pairwise_disjoint == true
+  and .cross_swap_effect_isolation.terminal_replay_resubmission_count == 0
+  and .atomicity_boundary.cross_chain_or_chain_database_atomic_transaction == false
+  and .atomicity_boundary.both_swaps_reached_both_locks_before_either_settlement == true
+  and .atomicity_boundary.chain_submission_and_sqlite_are_not_one_transaction == true
+  and .runtime_external_resources.public_rpc_used == false
+  and .runtime_external_resources.faucet_used == false
+  and .runtime_external_resources.public_funds_used == false
+  and .runtime_external_resources.certification_success_depends_on_external_network == false
+  and .topology.isolation.all_exact_run_resources_absent_after_run == true
+  and .topology.isolation.foreign_resources_targeted == false
+  and .secret_safety.private_material_disclosed == false
+  and .open_scope[-1] == "This file alone does not authorize an M3 completion tag."
+' "$retained_overlap" >/dev/null ||
+  fail "overlapping two-swap certification packet is incomplete or overclaims M3 closure"
+
 retained_survivor="docs/evidence/m3-local-two-direction-survivor-claim-poc-20260716.json"
 [[ -f "$retained_survivor" && ! -L "$retained_survivor" ]] ||
   fail "clean survivor certification packet is missing or unsafe"

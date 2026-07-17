@@ -1072,8 +1072,9 @@ schema-4 live Maker-lock port. Pushed `6c8e459` and `9b2bce2` move both Maker
 second locks under the actor while leaving only the Taker first lock as an
 external runner submission. The binary-aware orchestration contract is GREEN.
 The secret-safe actual-node schema-4 admission packet is GREEN in both
-directions at run `m3schema4-20260717d`; the concurrent-swap demo remains the
-open functional M3 execution gate. LEZ v0.2 cannot prove pending-level initialization
+directions at run `m3schema4-20260717d`. Clean pushed-commit run
+`m3overlap-20260717a` now closes the opposite-direction overlapping-swap
+execution gate at a simultaneous revision-two barrier. LEZ v0.2 cannot prove pending-level initialization
 absence. Pushed `3336b6e` adds a distinct journal
 `ExactIdempotentSubmissionSafe` observation that may grant one CAS/send only
 for an adapter/node operation bound to the same exact ID and bytes; it is not
@@ -1131,7 +1132,21 @@ targeted no foreign resource. The secret-safe retained packet is
 explicitly leaves accepted-M3 completion, production readiness, concurrency,
 SDK/F7, recordings, documentation closure, and final gates open. Attempts B
 and C remain diagnostic evidence, not milestone acceptance evidence. The
-canonical countersigned agreement, finalized LEZ funding/claim
+
+Pushed `1e6d5f1` replaces the sequential runner's chained-change Bitcoin
+fixture with two direction-private mature coinbase outpoints and adds an
+opt-in deterministic overlap schedule. Clean run `m3overlap-20260717a` at that
+already-pushed commit passes both directions on the same Core/LEZ topology.
+Both controllers and all four actor stores reached revision two
+`both_legs_locked` before either settlement was released. The retained packet
+binds distinct inputs, agreements, actor databases, signer sessions/journals,
+escrows, deadlines, and pairwise-disjoint effect IDs; each role then reached
+revision four and replay added zero effects. This closes the accepted
+opposite-direction overlap checkpoint without claiming simultaneous RPC
+mutation, arbitrary-N scheduling, same-direction LEZ nonce scheduling, public
+deployment, or production readiness.
+
+The canonical countersigned agreement, finalized LEZ funding/claim
 adapters, typed Core adapter, and reference-actor revisions zero through four
 are GREEN in source, deterministic tests, and run `m3actor-20260716n`. The
 exact Core 31.1 release verifier, minimal isolated image fixture, role-aware Regtest boundary,
@@ -1488,10 +1503,27 @@ Active M3 refund critical path:
   views, exact transaction joins, node-level idempotence, moving-tip
   reconciliation, and one Maker effect per direction; only the dedicated
   adversarial near-cutoff race remains in this item;
-- [ ] run the accepted concurrent-swap demo with independent funding inputs,
+- [x] run the accepted concurrent-swap demo with independent funding inputs,
   agreements, actor stores, effect journals, and overlapping in-flight phases;
   this is not satisfied by sequential swaps, either timeout branch, or a
-  two-store unit isolation test;
+  two-store unit isolation test. Pushed `1e6d5f1` adds an explicit overlap
+  schedule without weakening the sequential runner: it mines one verified
+  coinbase-only maturity block, assigns two distinct mature Regtest outpoints,
+  pins consecutive anchors 103 and 104, prepares two independent agreements,
+  and runs two long-lived controllers whose actual actor commands remain fresh
+  one-shot processes. Chain mutations remain deliberately serialized so each
+  exact empty/singleton-mempool and finalized-history assertion stays strict.
+  Clean already-pushed-commit run `m3overlap-20260717a` proves both swaps were
+  simultaneously at revision two `both_legs_locked` before either settlement
+  permit. Its isolation packet proves four distinct state databases, eight
+  distinct signing journals, two BTC and two LEZ sessions, two agreements,
+  two escrow metadata/custody pairs, distinct deadlines, and pairwise-disjoint
+  Bitcoin and LEZ effect IDs. Both swaps then reached revision four for both
+  roles, replay added zero effects, and exact cleanup targeted no foreign
+  resource. The retained secret-safe packet is
+  `docs/evidence/m3-overlapping-two-swap-poc-20260717.json`. This checkpoint
+  covers one opposite-direction pair; it does not claim arbitrary-N or two
+  same-direction swaps sharing one LEZ depositor nonce stream;
 - [x] close the survivor-specific nuance: after both locks, the taker publishes
   the direction-correct reveal and is then barred from every harnessed taker
   actor invocation until maker terminality. A fresh maker observes the
@@ -1533,7 +1565,20 @@ Active M3 refund critical path:
   typed unsupported capability gaps. Its same-txid/different-witness and
   same-LEZ-ID/different-byte regressions prove that a caller cannot assert a
   plan commitment without the observed bytes. This is a GREEN prerequisite,
-  not the accepted full-lifecycle SDK;
+  not the accepted full-lifecycle SDK. The 2026-07-17 code/RFP audit confirms
+  the remaining gap is a public-boundary/refactor task, not missing protocol
+  machinery: stores, Core/LEZ adapters, actor claims/refunds, revisions zero
+  through four, and restart behavior already exist. Replace the four public
+  `BtcUnsupported*` associated types and the `prepare`,
+  `validate_revealing_claim`, `build_followup_claim`, and `recovery_action`
+  placeholders with real SDK evidence/material/state/action types. Add public
+  chain/store ports plus a lifecycle facade for offer discovery, negotiation,
+  activation, status/resume, both locks, both claims, and both refund paths;
+  then make the reference actor a thin adapter. External-consumer tests must
+  cover both directions, resume at every revision, role/byte substitution,
+  replay, and loss of negotiation capability after activation. A compiling
+  lifecycle example and API docs are required. Real Delivery/Chat adapters are
+  M5 scope; typed ports and realistic in-memory M3 implementations are enough;
 - [x] make the reference actor a thin SDK adapter and move first/second lock
   construction and submission under SDK-owned persist-before-send authority.
   Pushed `79d7e68` adds the dedicated Maker-only revision-one journal with
@@ -1559,11 +1604,19 @@ Active M3 refund critical path:
   B and C without weakening effect counts. Clean run D proves both actor-owned
   Maker legs, exact restart/no-rearm behavior, one effect per direction, and
   terminal replay without resubmission;
-- [ ] resolve F7 at the BTC pair boundary. Shared LEZ native/custom-token guest
-  support is GREEN, but the current BTC witnessed terms appear native-only.
-  Obtain owner/Logos interpretation or implement and actually prove a witnessed
-  custom-token BTC path; track this as repository-controlled scope, not a Logos
-  dependency blocker;
+- [ ] implement F7 at the BTC pair boundary. The 2026-07-17 actual RFP,
+  accepted Gateway architecture, code, and test audit confirms F7 applies and
+  the current witnessed BTC path is native-only. Existing token initialize and
+  claim use SHA-preimage authority, while BTC requires the aggregate witnessed
+  authority. Reuse both proven implementations to add witnessed-token
+  initialize/claim while preserving fixed-destination permissionless refund;
+  introduce versioned BTC LEZ asset terms for token program, ATA program,
+  definition, owner ATAs, and custody; generalize bridge/client/adapter and the
+  funding plan beyond two native steps; regenerate IDL/client; and cover two
+  token definitions plus wrong-definition/ATA/authority and rollback cases.
+  Certify at least one actual-node custom-token journey in both trade
+  directions with exact balances, effects, and restart/no-resubmission. This
+  is repository-controlled accepted scope, not a Logos dependency blocker;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
   not recordings and cannot satisfy D1;
@@ -1574,9 +1627,8 @@ Active M3 refund critical path:
 - [ ] after the owner enters later hardening, add restart, reorg, fee, and chaos
   cases beyond the reproducible functional PoC boundary.
 
-Repository-controlled open work, not external blockers, is two genuinely
-overlapping swaps, the full-lifecycle public BTC SDK surface beyond the proven
-funding facade, the F7 witnessed
+Repository-controlled open work, not external blockers, is the full-lifecycle
+public BTC SDK surface beyond the proven funding facade, the F7 witnessed
 custom-token interpretation or implementation, D1 recordings, and synchronized
 closure evidence and gates. The revision-one-to-two store/projector, signed
 cutoff agreement, finalized LEZ classifier, and refund-side live gate are GREEN components, and run H closes the distinct two-lock timeout/refund item; none
@@ -2104,8 +2156,11 @@ historical schema-3 happy-path PoC has no remaining execution task. Run
 `m3firstlock-20260716h` closes actual-node absent-maker recovery. Clean
 post-reveal survivor execution is GREEN in `m3survivor-20260716c`. Clean run
 `m3schema4-20260717d` closes live schema-4 Maker-lock composition and
-actual-node admission in both directions. Two genuinely overlapping swaps
-remain the active functional M3 execution work before the broader
+actual-node admission in both directions. Clean run `m3overlap-20260717a`
+closes the accepted opposite-direction overlapping-swap execution item with
+both swaps simultaneously at revision two before either settlement. The
+public full-lifecycle SDK, F7 witnessed custom-token path, and D1 recordings
+remain the active functional/deliverable M3 work before the broader
 owner-selected hardening below.
 
 ### Later owner-selected hardening
