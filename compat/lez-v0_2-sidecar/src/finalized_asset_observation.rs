@@ -61,6 +61,26 @@ enum Scan {
     Unavailable(FinalizedWitnessedAssetUnavailableReasonV2),
 }
 
+enum MissingEffectClassification {
+    Absent,
+    Uncertain,
+    Unavailable(FinalizedWitnessedAssetUnavailableReasonV2),
+}
+
+fn missing_state_error(
+    error: BridgeRuntimeError,
+) -> Result<MissingEffectClassification, BridgeRuntimeError> {
+    match error {
+        BridgeRuntimeError::MovingTip => Ok(MissingEffectClassification::Unavailable(
+            FinalizedWitnessedAssetUnavailableReasonV2::MovingTip,
+        )),
+        BridgeRuntimeError::Unavailable => Ok(MissingEffectClassification::Unavailable(
+            FinalizedWitnessedAssetUnavailableReasonV2::HistoryUnavailable,
+        )),
+        error => Err(error),
+    }
+}
+
 /// Stable finalized native-or-token effect classifier for additive v2 routes.
 pub(crate) struct FinalizedAssetObserver {
     runtime: RuntimeDescriptor,
@@ -128,14 +148,43 @@ impl FinalizedAssetObserver {
                 }
                 Scan::Missing(stable) => {
                     let clock = stable.finalized_clock;
-                    ClassifyFinalizedWitnessedAssetInitializationV2Result::uncertain(
-                        request.context.clone(),
-                        request.terms.clone(),
-                        target,
-                        clock,
-                        request.window,
-                    )
-                    .map_err(|_| BridgeRuntimeError::InvalidObservation)?
+                    match self
+                        .classify_missing_effect(
+                            &request.terms,
+                            EffectKind::Initialization,
+                            &stable,
+                        )
+                        .await?
+                    {
+                        MissingEffectClassification::Absent => {
+                            ClassifyFinalizedWitnessedAssetInitializationV2Result::absent(
+                                request.context.clone(),
+                                request.terms.clone(),
+                                target,
+                                clock,
+                                request.window,
+                            )
+                            .map_err(|_| BridgeRuntimeError::InvalidObservation)?
+                        }
+                        MissingEffectClassification::Uncertain => {
+                            ClassifyFinalizedWitnessedAssetInitializationV2Result::uncertain(
+                                request.context.clone(),
+                                request.terms.clone(),
+                                target,
+                                clock,
+                                request.window,
+                            )
+                            .map_err(|_| BridgeRuntimeError::InvalidObservation)?
+                        }
+                        MissingEffectClassification::Unavailable(reason) => {
+                            ClassifyFinalizedWitnessedAssetInitializationV2Result::unavailable(
+                                request.context.clone(),
+                                request.terms.clone(),
+                                target,
+                                reason,
+                            )
+                        }
+                    }
                 }
                 Scan::Unavailable(reason) => {
                     ClassifyFinalizedWitnessedAssetInitializationV2Result::unavailable(
@@ -215,14 +264,44 @@ impl FinalizedAssetObserver {
                 }
                 Scan::Missing(stable) => {
                     let clock = stable.finalized_clock;
-                    ClassifyFinalizedWitnessedAssetCustodyCreationV2Result::uncertain(
-                        request.context.clone(),
-                        request.terms.clone(),
-                        target,
-                        clock,
-                        request.window,
-                    )
-                    .map_err(|_| BridgeRuntimeError::InvalidObservation)?
+                    match self
+                        .classify_missing_effect(
+                            &request.terms,
+                            EffectKind::CustodyCreation,
+                            &stable,
+                        )
+                        .await?
+                    {
+                        MissingEffectClassification::Absent => {
+                            ClassifyFinalizedWitnessedAssetCustodyCreationV2Result::absent(
+                                request.context.clone(),
+                                request.terms.clone(),
+                                target,
+                                clock,
+                                request.window,
+                            )
+                            .map_err(|_| BridgeRuntimeError::InvalidObservation)?
+                        }
+                        MissingEffectClassification::Uncertain => {
+                            ClassifyFinalizedWitnessedAssetCustodyCreationV2Result::uncertain(
+                                request.context.clone(),
+                                request.terms.clone(),
+                                target,
+                                clock,
+                                request.window,
+                            )
+                            .map_err(|_| BridgeRuntimeError::InvalidObservation)?
+                        }
+                        MissingEffectClassification::Unavailable(reason) => {
+                            ClassifyFinalizedWitnessedAssetCustodyCreationV2Result::unavailable(
+                                request.context.clone(),
+                                request.terms.clone(),
+                                target,
+                                reason,
+                            )
+                            .map_err(|_| BridgeRuntimeError::InvalidObservation)?
+                        }
+                    }
                 }
                 Scan::Unavailable(reason) => {
                     ClassifyFinalizedWitnessedAssetCustodyCreationV2Result::unavailable(
@@ -297,14 +376,39 @@ impl FinalizedAssetObserver {
                 }
                 Scan::Missing(stable) => {
                     let clock = stable.finalized_clock;
-                    ClassifyFinalizedWitnessedAssetFundingV2Result::uncertain(
-                        request.context.clone(),
-                        request.terms.clone(),
-                        target,
-                        clock,
-                        request.window,
-                    )
-                    .map_err(|_| BridgeRuntimeError::InvalidObservation)?
+                    match self
+                        .classify_missing_effect(&request.terms, EffectKind::Funding, &stable)
+                        .await?
+                    {
+                        MissingEffectClassification::Absent => {
+                            ClassifyFinalizedWitnessedAssetFundingV2Result::absent(
+                                request.context.clone(),
+                                request.terms.clone(),
+                                target,
+                                clock,
+                                request.window,
+                            )
+                            .map_err(|_| BridgeRuntimeError::InvalidObservation)?
+                        }
+                        MissingEffectClassification::Uncertain => {
+                            ClassifyFinalizedWitnessedAssetFundingV2Result::uncertain(
+                                request.context.clone(),
+                                request.terms.clone(),
+                                target,
+                                clock,
+                                request.window,
+                            )
+                            .map_err(|_| BridgeRuntimeError::InvalidObservation)?
+                        }
+                        MissingEffectClassification::Unavailable(reason) => {
+                            ClassifyFinalizedWitnessedAssetFundingV2Result::unavailable(
+                                request.context.clone(),
+                                request.terms.clone(),
+                                target,
+                                reason,
+                            )
+                        }
+                    }
                 }
                 Scan::Unavailable(reason) => {
                     ClassifyFinalizedWitnessedAssetFundingV2Result::unavailable(
@@ -386,15 +490,42 @@ impl FinalizedAssetObserver {
                 }
                 Scan::Missing(stable) => {
                     let clock = stable.finalized_clock;
-                    ClassifyFinalizedWitnessedAssetClaimV2Result::uncertain(
-                        request.context.clone(),
-                        request.terms.clone(),
-                        request.claim.clone(),
-                        target,
-                        clock,
-                        request.window,
-                    )
-                    .map_err(|_| BridgeRuntimeError::InvalidObservation)?
+                    match self
+                        .classify_missing_effect(&request.terms, EffectKind::Claim, &stable)
+                        .await?
+                    {
+                        MissingEffectClassification::Absent => {
+                            ClassifyFinalizedWitnessedAssetClaimV2Result::absent(
+                                request.context.clone(),
+                                request.terms.clone(),
+                                request.claim.clone(),
+                                target,
+                                clock,
+                                request.window,
+                            )
+                            .map_err(|_| BridgeRuntimeError::InvalidObservation)?
+                        }
+                        MissingEffectClassification::Uncertain => {
+                            ClassifyFinalizedWitnessedAssetClaimV2Result::uncertain(
+                                request.context.clone(),
+                                request.terms.clone(),
+                                request.claim.clone(),
+                                target,
+                                clock,
+                                request.window,
+                            )
+                            .map_err(|_| BridgeRuntimeError::InvalidObservation)?
+                        }
+                        MissingEffectClassification::Unavailable(reason) => {
+                            ClassifyFinalizedWitnessedAssetClaimV2Result::unavailable(
+                                request.context.clone(),
+                                request.terms.clone(),
+                                request.claim.clone(),
+                                target,
+                                reason,
+                            )
+                        }
+                    }
                 }
                 Scan::Unavailable(reason) => {
                     ClassifyFinalizedWitnessedAssetClaimV2Result::unavailable(
@@ -550,6 +681,65 @@ impl FinalizedAssetObserver {
                 FinalizedWitnessedAssetUnavailableReasonV2::HistoryUnavailable,
             )),
             Err(error) => Err(error),
+        }
+    }
+
+    async fn classify_missing_effect(
+        &self,
+        terms: &WitnessedLezAssetTermsV2,
+        kind: EffectKind,
+        stable: &StableFinalizedWindow,
+    ) -> Result<MissingEffectClassification, BridgeRuntimeError> {
+        let tip = stable.finalized_tip.header.block_id;
+        let state_proves_absence = match kind {
+            EffectKind::Initialization => {
+                let metadata_id = compute_metadata_pda(
+                    &program_id_from_hex(self.runtime.escrow_program_id),
+                    swap_id(terms).as_bytes(),
+                );
+                match self
+                    .indexer
+                    .account_at_block(metadata_id.into_value(), tip)
+                    .await
+                {
+                    Ok(HistoricalAccount::Absent) => true,
+                    Ok(HistoricalAccount::Present(_)) => false,
+                    Err(error) => return missing_state_error(error),
+                }
+            }
+            EffectKind::CustodyCreation => match self.read_initialization_state(terms, tip).await {
+                Ok(_) => true,
+                Err(BridgeRuntimeError::InvalidObservation) => false,
+                Err(error) => return missing_state_error(error),
+            },
+            EffectKind::Funding => {
+                match self
+                    .read_asset_state(terms, tip, EscrowState::Empty, 0)
+                    .await
+                {
+                    Ok(_) => true,
+                    Err(BridgeRuntimeError::InvalidObservation) => false,
+                    Err(error) => return missing_state_error(error),
+                }
+            }
+            EffectKind::Claim => {
+                match self
+                    .read_asset_state(terms, tip, EscrowState::Funded, amount(terms))
+                    .await
+                {
+                    Ok(_) => true,
+                    Err(BridgeRuntimeError::InvalidObservation) => false,
+                    Err(error) => return missing_state_error(error),
+                }
+            }
+            EffectKind::Refund => false,
+        };
+        if !state_proves_absence {
+            return Ok(MissingEffectClassification::Uncertain);
+        }
+        match stable.confirm_unchanged(self.indexer.as_ref()).await {
+            Ok(()) => Ok(MissingEffectClassification::Absent),
+            Err(error) => missing_state_error(error),
         }
     }
 
@@ -1736,6 +1926,118 @@ mod tests {
             ),
             nonce: 0,
         })
+    }
+
+    fn empty_scan_observer(fixture: &TokenFixture) -> FinalizedAssetObserver {
+        let block = finalized_block(10, Vec::new());
+        FinalizedAssetObserver::new(
+            fixture.runtime.clone(),
+            Arc::new(ScanIndexer {
+                tip: 10,
+                by_id: BTreeMap::from([(10, block.clone())]),
+                by_hash: BTreeMap::from([(block.header.hash.0, block)]),
+                accounts: fixture.accounts.clone(),
+            }),
+        )
+    }
+
+    #[tokio::test]
+    async fn missing_asset_effect_requires_exact_stable_predecessor_state() {
+        let window = DiscoveryWindow::new(10, 1).unwrap();
+
+        let mut initialization = token_fixture(EscrowStatus::Empty, HistoricalAccount::Absent);
+        initialization
+            .accounts
+            .insert((initialization.metadata_id, 10), HistoricalAccount::Absent);
+        let observer = empty_scan_observer(&initialization);
+        let stable = read_stable_finalized_window(observer.indexer.as_ref(), window)
+            .await
+            .unwrap();
+        assert!(matches!(
+            observer
+                .classify_missing_effect(
+                    &initialization.terms,
+                    EffectKind::Initialization,
+                    &stable,
+                )
+                .await
+                .unwrap(),
+            MissingEffectClassification::Absent
+        ));
+
+        let custody = token_fixture(EscrowStatus::Empty, HistoricalAccount::Absent);
+        let observer = empty_scan_observer(&custody);
+        let stable = read_stable_finalized_window(observer.indexer.as_ref(), window)
+            .await
+            .unwrap();
+        assert!(matches!(
+            observer
+                .classify_missing_effect(&custody.terms, EffectKind::CustodyCreation, &stable,)
+                .await
+                .unwrap(),
+            MissingEffectClassification::Absent
+        ));
+
+        let funding_seed = token_fixture(EscrowStatus::Empty, HistoricalAccount::Absent);
+        let mut funding_accounts = funding_seed.accounts.clone();
+        funding_accounts.insert(
+            (funding_seed.custody_id, 10),
+            holding(funding_seed.definition_id, 0),
+        );
+        let funding = TokenFixture {
+            accounts: funding_accounts,
+            ..funding_seed
+        };
+        let observer = empty_scan_observer(&funding);
+        let stable = read_stable_finalized_window(observer.indexer.as_ref(), window)
+            .await
+            .unwrap();
+        assert!(matches!(
+            observer
+                .classify_missing_effect(&funding.terms, EffectKind::Funding, &stable)
+                .await
+                .unwrap(),
+            MissingEffectClassification::Absent
+        ));
+
+        let claim_seed = token_fixture(EscrowStatus::Funded, HistoricalAccount::Absent);
+        let mut claim_accounts = claim_seed.accounts.clone();
+        claim_accounts.insert(
+            (claim_seed.custody_id, 10),
+            holding(claim_seed.definition_id, 75),
+        );
+        let claim = TokenFixture {
+            accounts: claim_accounts,
+            ..claim_seed
+        };
+        let observer = empty_scan_observer(&claim);
+        let stable = read_stable_finalized_window(observer.indexer.as_ref(), window)
+            .await
+            .unwrap();
+        assert!(matches!(
+            observer
+                .classify_missing_effect(&claim.terms, EffectKind::Claim, &stable)
+                .await
+                .unwrap(),
+            MissingEffectClassification::Absent
+        ));
+
+        let already_initialized = token_fixture(EscrowStatus::Empty, HistoricalAccount::Absent);
+        let observer = empty_scan_observer(&already_initialized);
+        let stable = read_stable_finalized_window(observer.indexer.as_ref(), window)
+            .await
+            .unwrap();
+        assert!(matches!(
+            observer
+                .classify_missing_effect(
+                    &already_initialized.terms,
+                    EffectKind::Initialization,
+                    &stable,
+                )
+                .await
+                .unwrap(),
+            MissingEffectClassification::Uncertain
+        ));
     }
 
     #[tokio::test]

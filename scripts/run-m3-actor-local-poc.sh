@@ -61,7 +61,14 @@ case "$journey" in
       success_label="M3 actor two-direction local PoC"
     fi
     actor_owned_effect_semantics="claim"
-    lez_slot_duration_seconds="1.0"
+    if [[ "$asset_mode" == "custom_token" ]]; then
+      # Four-effect token proof performs independent stable finalized scans.
+      # A slower run-owned devnet slot gives those fail-closed brackets a
+      # deterministic quiet interval without changing protocol semantics.
+      lez_slot_duration_seconds="10.0"
+    else
+      lez_slot_duration_seconds="1.0"
+    fi
     ;;
   survivor_claim)
     terminal_revision=4
@@ -663,7 +670,7 @@ verify_direction_driver_contract() {
   contract="$(M3_POC_ASSET_MODE="$asset_mode" M3_POC_JOURNEY="$journey" \
     "$direction_driver" contract)" ||
     fail "direction-driver contract is unavailable"
-  jq -e --arg journey "$journey" '
+  jq -e --arg journey "$journey" --arg asset_mode "$asset_mode" '
     .schema_version == 1
     and .kind == "m3_actor_direction_driver_contract"
     and .stage_two_spec_uses_actual_node_facts == true
@@ -696,7 +703,16 @@ verify_direction_driver_contract() {
          elif $journey == "survivor_claim" then .actor_owned_survivor_claim_effects
          elif $journey == "refund" then .actor_owned_refund_effects
          else .actor_owned_first_lock_refund_effects end) == true
-    and .actor_config_schema_version == 4
+    and .asset_mode == $asset_mode
+    and .actor_config_schema_version ==
+      (if $asset_mode == "custom_token" then 5 else 4 end)
+    and .asset_extension_required == ($asset_mode == "custom_token")
+    and .official_token_ata_derivation_required == ($asset_mode == "custom_token")
+    and .expected_unique_effects ==
+      {bitcoin:2,lez:(if $asset_mode == "custom_token" then 4 else 3 end)}
+    and .asset_first_lock_order ==
+      (if $asset_mode == "custom_token" then
+        ["initialize_witnessed","create_custody_ata","fund"] else [] end)
     and .role_shaped_bitcoin_refund_authority == true
     and .submission_count_query == true
     and .owned_process_registry == true

@@ -9,6 +9,7 @@ umask 077
 readonly initial_terms_hash="1111111111111111111111111111111111111111111111111111111111111111"
 readonly pda_probe_secret_digest="2222222222222222222222222222222222222222222222222222222222222222"
 readonly actor_lez_bridge_request_timeout_millis=30000
+readonly asset_mode="${M3_POC_ASSET_MODE:-native}"
 
 fail() {
   echo "M3 actor direction failed: $*" >&2
@@ -16,7 +17,8 @@ fail() {
 }
 
 emit_contract() {
-  jq -n --argjson bridge_timeout "$actor_lez_bridge_request_timeout_millis" '
+  jq -n --arg asset_mode "$asset_mode" \
+    --argjson bridge_timeout "$actor_lez_bridge_request_timeout_millis" '
     {
       schema_version: 1,
       kind: "m3_actor_direction_driver_contract",
@@ -60,7 +62,13 @@ emit_contract() {
       },
       default_journey: "claim",
       timeout_terminal_phase: "refunded",
-      actor_config_schema_version: 4,
+      asset_mode: $asset_mode,
+      actor_config_schema_version: (if $asset_mode == "custom_token" then 5 else 4 end),
+      asset_extension_required: ($asset_mode == "custom_token"),
+      official_token_ata_derivation_required: ($asset_mode == "custom_token"),
+      asset_first_lock_order:
+        (if $asset_mode == "custom_token" then ["initialize_witnessed","create_custody_ata","fund"]
+         else [] end),
       role_shaped_bitcoin_refund_authority: true,
       secure_sidecar_state_root_required: true,
       single_core_rpc_response_per_call: true,
@@ -74,7 +82,8 @@ emit_contract() {
       submission_count_query: true,
       owned_process_registry: true,
       pre_lock_presignature_domains: ["bitcoin", "lez"],
-      expected_unique_effects: {bitcoin: 2, lez: 3},
+      expected_unique_effects:
+        {bitcoin: 2, lez:(if $asset_mode == "custom_token" then 4 else 3 end)},
       submission_count_semantics: "unique_effects_plus_durable_one_shot_authority",
       commands: ["preflight","effect-plan","prepare-stage-two-spec","run-actor-flow",
         "run-overlap-actor-flow","submission-counts"]
@@ -86,24 +95,42 @@ emit_effect_plan() {
   local journey="${2:-claim}"
   case "$journey:$direction" in
     claim:taker_sells_foreign)
-      jq -n --arg direction "$direction" '
+      jq -n --arg direction "$direction" --arg asset_mode "$asset_mode" '
         {schema_version:1,journey:"claim",direction:$direction,
-         before_first_effect:["finalize_agreement","prepare_exact_lez_claim",
-           "bitcoin_presignature_verified","lez_presignature_verified","activate_both_roles"],
-         public_effect_order:["bitcoin_lock_by_taker","lez_initialize_by_maker",
-           "lez_fund_by_maker","dual_lock_gate","lez_claim_by_taker",
-           "bitcoin_claim_by_maker"],
+         before_first_effect:
+           (if $asset_mode == "custom_token" then
+             ["finalize_agreement","finalize_asset_extension","prepare_exact_lez_asset_claim",
+              "bitcoin_presignature_verified","lez_presignature_verified","activate_both_roles"]
+            else ["finalize_agreement","prepare_exact_lez_claim",
+              "bitcoin_presignature_verified","lez_presignature_verified","activate_both_roles"] end),
+         public_effect_order:
+           (if $asset_mode == "custom_token" then
+             ["bitcoin_lock_by_taker","lez_initialize_by_maker",
+              "lez_create_custody_ata_by_maker","lez_fund_by_maker","dual_lock_gate",
+              "lez_claim_by_taker","bitcoin_claim_by_maker"]
+            else ["bitcoin_lock_by_taker","lez_initialize_by_maker",
+              "lez_fund_by_maker","dual_lock_gate","lez_claim_by_taker",
+              "bitcoin_claim_by_maker"] end),
          terminal:{maker_revision:4,taker_revision:4}}
       '
       ;;
     claim:taker_sells_lez)
-      jq -n --arg direction "$direction" '
+      jq -n --arg direction "$direction" --arg asset_mode "$asset_mode" '
         {schema_version:1,journey:"claim",direction:$direction,
-         before_first_effect:["finalize_agreement","prepare_exact_lez_claim",
-           "bitcoin_presignature_verified","lez_presignature_verified","activate_both_roles"],
-         public_effect_order:["lez_initialize_by_taker","lez_fund_by_taker",
-           "bitcoin_lock_by_maker","dual_lock_gate","bitcoin_claim_by_taker",
-           "lez_claim_by_maker"],
+         before_first_effect:
+           (if $asset_mode == "custom_token" then
+             ["finalize_agreement","finalize_asset_extension","prepare_exact_lez_asset_claim",
+              "bitcoin_presignature_verified","lez_presignature_verified","activate_both_roles"]
+            else ["finalize_agreement","prepare_exact_lez_claim",
+              "bitcoin_presignature_verified","lez_presignature_verified","activate_both_roles"] end),
+         public_effect_order:
+           (if $asset_mode == "custom_token" then
+             ["lez_initialize_by_taker","lez_create_custody_ata_by_taker","lez_fund_by_taker",
+              "bitcoin_lock_by_maker","dual_lock_gate","bitcoin_claim_by_taker",
+              "lez_claim_by_maker"]
+            else ["lez_initialize_by_taker","lez_fund_by_taker",
+              "bitcoin_lock_by_maker","dual_lock_gate","bitcoin_claim_by_taker",
+              "lez_claim_by_maker"] end),
          terminal:{maker_revision:4,taker_revision:4}}
       '
       ;;
@@ -196,7 +223,7 @@ emit_effect_plan() {
 preflight() {
   local command_name binary
   for command_name in awk chmod cmp cp curl date docker jq kill mkdir mv openssl perl printf \
-    readlink rg sed sha256sum sleep stat tr xxd; do
+    readlink rg sed sha256sum sleep stat timeout tr xxd; do
     command -v "$command_name" >/dev/null || fail "missing required tool: ${command_name}"
   done
   for binary in scripts/run-m3-actor-direction.sh target/debug/btc-local-poc-provision \
@@ -209,6 +236,16 @@ preflight() {
   done
   target/debug/btc-local-poc-provision --help 2>&1 |
     rg -q 'prepare-funding' || fail "provisioner lacks the pre-lock funding command"
+  if [[ "$asset_mode" == "custom_token" ]]; then
+    [[ -x compat/lez-v0_2-sidecar/target/debug/examples/lez-v02-account-codec &&
+       ! -L compat/lez-v0_2-sidecar/target/debug/examples/lez-v02-account-codec ]] ||
+      fail "required repository-owned LEZ account codec is unavailable"
+    target/debug/btc-local-poc-provision --help 2>&1 |
+      rg -q 'finalize-asset-extension' ||
+      fail "provisioner lacks the countersigned asset-extension command"
+  elif [[ "$asset_mode" != "native" ]]; then
+    fail "M3_POC_ASSET_MODE must be native or custom_token"
+  fi
 }
 
 require_environment() {
@@ -239,6 +276,18 @@ require_environment() {
      "$M3_POC_JOURNEY" == "refund" ||
      "$M3_POC_JOURNEY" == "first_lock_refund" ]] ||
     fail "unsupported actor journey"
+  [[ "$asset_mode" == "native" || "$asset_mode" == "custom_token" ]] ||
+    fail "M3_POC_ASSET_MODE must be native or custom_token"
+  [[ "$asset_mode" != "custom_token" || "$M3_POC_JOURNEY" == "claim" ]] ||
+    fail "custom_token currently requires the claim journey"
+  if [[ "$asset_mode" == "custom_token" ]]; then
+    for variable in M3_POC_LEZ_ACCOUNT_CODEC_BIN M3_POC_F7_FIXTURE_ROOT \
+      M3_POC_F7_FIXTURE_EVIDENCE M3_POC_F7_FIXTURE_PRIVATE_DIR \
+      M3_POC_F7_WALLET_BIN M3_POC_F7_TOKEN_PROGRAM_ID M3_POC_F7_ATA_PROGRAM_ID; do
+      value="${!variable:-}"
+      [[ -n "$value" ]] || fail "required custom-token environment is missing: ${variable}"
+    done
+  fi
   for variable in M3_POC_DIRECTION_ROOT M3_POC_SECURE_STATE_ROOT M3_POC_EVIDENCE_DIR \
     M3_POC_PROCESS_REGISTRY \
     M3_POC_ACTOR_BIN M3_POC_PROVISIONER_BIN M3_POC_ROLE_RUNNER_BIN \
@@ -252,6 +301,22 @@ require_environment() {
     value="${!variable}"
     [[ "$value" == /* ]] || fail "path environment must be absolute: ${variable}"
   done
+  if [[ "$asset_mode" == "custom_token" ]]; then
+    for variable in M3_POC_LEZ_ACCOUNT_CODEC_BIN M3_POC_F7_FIXTURE_ROOT \
+      M3_POC_F7_FIXTURE_EVIDENCE M3_POC_F7_FIXTURE_PRIVATE_DIR M3_POC_F7_WALLET_BIN; do
+      value="${!variable}"
+      [[ "$value" == /* ]] || fail "custom-token path environment must be absolute: ${variable}"
+    done
+    [[ -x "$M3_POC_LEZ_ACCOUNT_CODEC_BIN" && ! -L "$M3_POC_LEZ_ACCOUNT_CODEC_BIN" &&
+       -x "$M3_POC_F7_WALLET_BIN" && ! -L "$M3_POC_F7_WALLET_BIN" &&
+       -f "$M3_POC_F7_FIXTURE_EVIDENCE" && ! -L "$M3_POC_F7_FIXTURE_EVIDENCE" &&
+       -d "$M3_POC_F7_FIXTURE_PRIVATE_DIR" && ! -L "$M3_POC_F7_FIXTURE_PRIVATE_DIR" ]] ||
+      fail "custom-token fixture or runtime material is unavailable"
+    [[ "$M3_POC_F7_TOKEN_PROGRAM_ID" =~ ^[0-9a-f]{64}$ &&
+       "$M3_POC_F7_ATA_PROGRAM_ID" =~ ^[0-9a-f]{64}$ &&
+       "$M3_POC_F7_TOKEN_PROGRAM_ID" != "$M3_POC_F7_ATA_PROGRAM_ID" ]] ||
+      fail "custom-token program IDs are invalid or aliased"
+  fi
   [[ "$M3_POC_BITCOIN_PLANNED_ANCHOR_HEIGHT" =~ ^[1-9][0-9]*$ ]] ||
     fail "planned Bitcoin funding anchor must be a positive height"
   [[ "$M3_POC_SECURE_STATE_ROOT" == \
@@ -452,6 +517,132 @@ prepare_witnessed_pair() {
     fail "prepared witnessed claim is invalid"
 }
 
+prepare_witnessed_asset_pair() {
+  local phase="$1" terms="$2" depositor="$3" claimant="$4" prefix="$5"
+  local depositor_root claimant_root escrow_request escrow_result claim_request claim_result
+  local funding_tx
+  depositor_root="${M3_POC_DIRECTION_ROOT}/sidecars/${phase}/${depositor}"
+  claimant_root="${M3_POC_DIRECTION_ROOT}/sidecars/${phase}/${claimant}"
+  escrow_request="${M3_POC_DIRECTION_ROOT}/${prefix}-prepare-asset-escrow-request.json"
+  escrow_result="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${prefix}-prepared-asset-escrow.json"
+  claim_request="${M3_POC_DIRECTION_ROOT}/${prefix}-prepare-asset-claim-request.json"
+  claim_result="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${prefix}-prepared-asset-claim.json"
+  jq -n --arg run "$M3_POC_RUN_ID" --arg request "$(new_request_id)" \
+    --arg role "$depositor" --slurpfile runtime "$depositor_root/runtime.json" \
+    --slurpfile terms "$terms" '
+    {context:{schema_version:1,run_id:$run,request_id:$request,sidecar_role:$role},
+     runtime:$runtime[0],terms:$terms[0]}' >"$escrow_request"
+  chmod 0600 "$escrow_request"
+  operator_call "$phase" "$depositor" prepare-witnessed-asset-escrow-v2 \
+    "$escrow_request" "$escrow_result"
+  funding_tx="$(jq -er '
+    [.effects[] | select(.step == "fund") | .transaction.transaction_id] |
+    if length == 1 then .[0] else error("exactly one custom-token funding effect required") end
+  ' "$escrow_result")"
+  jq -n --arg run "$M3_POC_RUN_ID" --arg request "$(new_request_id)" \
+    --arg role "$claimant" --arg funding "$funding_tx" \
+    --slurpfile runtime "$claimant_root/runtime.json" --slurpfile terms "$terms" '
+    {context:{schema_version:1,run_id:$run,request_id:$request,sidecar_role:$role},
+     runtime:$runtime[0],terms:$terms[0],funding_transaction_id:$funding}' >"$claim_request"
+  chmod 0600 "$claim_request"
+  operator_call "$phase" "$claimant" prepare-witnessed-asset-claim-v2 \
+    "$claim_request" "$claim_result"
+  jq -e '
+    .terms.asset_terms_version == 2
+    and .terms.asset.kind == "custom_token"
+    and (.claim.message_hash | test("^[0-9a-f]{64}$"))
+    # ExactMessageBytes uses Serde Base64 on the public JSON wire. The sidecar
+    # has already decoded and re-encoded these bytes canonically before it
+    # returns the result; this boundary check rejects empty or malformed wire
+    # values without incorrectly treating the representation as hex.
+    and ((.claim.exact_message_bytes | type) == "string")
+    and (.claim.exact_message_bytes |
+      length > 0
+      and test("^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"))
+  ' "$claim_result" >/dev/null || fail "prepared witnessed asset claim is invalid"
+}
+
+account_codec() {
+  local output
+  output="$("$M3_POC_LEZ_ACCOUNT_CODEC_BIN" "$@")" ||
+    fail "official LEZ account codec rejected an F7 account"
+  jq -e '
+    .schema == "lez-v0.2-account-id-codec" and .version == 1
+    and (.account_id_base58 | test("^[1-9A-HJ-NP-Za-km-z]{43,44}$"))
+    and (.account_id_hex | test("^[0-9a-f]{64}$"))
+  ' <<<"$output" >/dev/null || fail "official LEZ account codec returned invalid output"
+  printf '%s\n' "$output"
+}
+
+write_custom_token_terms() {
+  local terms_hash="$1" metadata_hex="$2" swap_id="$3" refund_at_ms="$4"
+  local aggregate_account="$5" aggregate_key="$6" output="$7"
+  local asset_name depositor claimant definition_base58 depositor_ata_base58 claimant_ata_base58
+  local definition_hex depositor_ata_hex claimant_ata_hex metadata_base58 custody_base58 custody_hex
+  local depositor_owner claimant_owner wallet_home wallet_output wallet_log
+  local -a custody_values=()
+  case "$M3_POC_DIRECTION" in
+    taker_sells_foreign) asset_name=M3F7A; depositor=maker; claimant=taker ;;
+    taker_sells_lez) asset_name=M3F7B; depositor=taker; claimant=maker ;;
+  esac
+  jq -e --arg run "$M3_POC_RUN_ID" --arg asset "$asset_name" \
+    --arg depositor "$depositor" '
+    .schema_version == 1 and .kind == "m3_f7_official_token_fixture"
+    and .result == "passed" and .run_id == $run
+    and .assets[$asset].depositor == $depositor
+    and .assets[$asset].initial_balances[$depositor] == 250
+    and .external_resources.public_rpc == false and .external_resources.faucet == false
+    and .finality.swap_certification_requires_finalized_indexer_evidence == true
+  ' "$M3_POC_F7_FIXTURE_EVIDENCE" >/dev/null || fail "F7 fixture evidence is incompatible"
+  definition_base58="$(jq -er --arg asset "$asset_name" '.assets[$asset].definition' \
+    "$M3_POC_F7_FIXTURE_EVIDENCE")"
+  depositor_ata_base58="$(jq -er --arg asset "$asset_name" --arg role "$depositor" \
+    '.assets[$asset].atas[$role]' "$M3_POC_F7_FIXTURE_EVIDENCE")"
+  claimant_ata_base58="$(jq -er --arg asset "$asset_name" --arg role "$claimant" \
+    '.assets[$asset].atas[$role]' "$M3_POC_F7_FIXTURE_EVIDENCE")"
+  definition_hex="$(account_codec "$definition_base58" | jq -er '.account_id_hex')"
+  depositor_ata_hex="$(account_codec "$depositor_ata_base58" | jq -er '.account_id_hex')"
+  claimant_ata_hex="$(account_codec "$claimant_ata_base58" | jq -er '.account_id_hex')"
+  metadata_base58="$(account_codec --from-hex "$metadata_hex" | jq -er '.account_id_base58')"
+  wallet_home="${M3_POC_F7_FIXTURE_PRIVATE_DIR}/wallets/maker"
+  [[ -d "$wallet_home" && ! -L "$wallet_home" ]] || fail "official Maker wallet state is unavailable"
+  wallet_output="$(
+    printf '%s\n' 'local-poc-password-unused-upstream' |
+      timeout --preserve-status 180s env LEE_WALLET_HOME_DIR="$wallet_home" \
+        "$M3_POC_F7_WALLET_BIN" ata address --owner "$metadata_base58" \
+        --token-definition "$definition_base58"
+  )" || fail "official wallet could not derive the metadata custody ATA"
+  wallet_log="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-f7-custody-ata.log"
+  printf '%s\n' "$wallet_output" >"$wallet_log"
+  chmod 0600 "$wallet_log"
+  mapfile -t custody_values < <(sed -n '/^[1-9A-HJ-NP-Za-km-z]\{43,44\}$/p' <<<"$wallet_output")
+  [[ "${#custody_values[@]}" == 1 ]] || fail "official custody ATA output is ambiguous"
+  custody_base58="${custody_values[0]}"
+  custody_hex="$(account_codec "$custody_base58" | jq -er '.account_id_hex')"
+  depositor_owner="$(jq -er '.account_id_hex' \
+    "${M3_POC_DIRECTION_ROOT}/actors/${depositor}/identity.json")"
+  claimant_owner="$(jq -er '.account_id_hex' \
+    "${M3_POC_DIRECTION_ROOT}/actors/${claimant}/identity.json")"
+  jq -n --arg swap "$swap_id" \
+    --arg terms "$terms_hash" --arg depositor "$depositor" --arg claimant "$claimant" \
+    --arg depositor_owner "$depositor_owner" --arg claimant_owner "$claimant_owner" \
+    --arg depositor_ata "$depositor_ata_hex" --arg claimant_ata "$claimant_ata_hex" \
+    --arg custody "$custody_hex" --arg token "$M3_POC_F7_TOKEN_PROGRAM_ID" \
+    --arg ata "$M3_POC_F7_ATA_PROGRAM_ID" --arg definition "$definition_hex" \
+    --arg authority "$aggregate_account" --arg aggregate "$aggregate_key" \
+    --argjson refund "$refund_at_ms" '
+    {asset_terms_version:2,asset:{kind:"custom_token",terms:{
+      swap_id:$swap,terms_hash:$terms,depositor:$depositor,
+      depositor_owner_account_id:$depositor_owner,depositor_ata_account_id:$depositor_ata,
+      claimant:$claimant,claimant_owner_account_id:$claimant_owner,
+      claimant_ata_account_id:$claimant_ata,custody_ata_account_id:$custody,
+      token_program_id:$token,ata_program_id:$ata,token_definition_account_id:$definition,
+      aggregate_authority_account_id:$authority,aggregate_x_only_public_key:$aggregate,
+      amount:"75",refund_at_ms:$refund}}}
+  ' >"$output"
+  chmod 0600 "$output"
+}
+
 prepare_direction_layout() {
   local role source_identity source_key
   [[ ! -e "$M3_POC_SECURE_STATE_ROOT" && ! -L "$M3_POC_SECURE_STATE_ROOT" ]] ||
@@ -479,7 +670,7 @@ prepare_stage_two_spec() {
   local source_tx source_vout source_value source_script secret_hex secret_file
   local funding_spec funding_summary funding_hex funder mempool genesis height anchor source
   local funding_source_evidence funding_policy_evidence
-  local pda_evidence metadata custody claim_hash earlier later
+  local pda_evidence metadata custody claim_hash earlier later asset_terms_file planning_claim_result
   public_spec="${M3_POC_DIRECTION_ROOT}/fixture/public-spec.json"
   stage1_sha="$(sha256sum "$public_spec" | sed 's/ .*//')"
   authority_mapping="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-official-nssa-mapping.json"
@@ -490,7 +681,7 @@ prepare_stage_two_spec() {
     taker_sells_foreign) depositor=maker; claimant=taker ;;
     taker_sells_lez) depositor=taker; claimant=maker ;;
   esac
-  amount=1000
+  if [[ "$asset_mode" == "custom_token" ]]; then amount=75; else amount=1000; fi
   now="$(date -u +%s)"
   case "$M3_POC_JOURNEY" in
     claim | survivor_claim)
@@ -530,7 +721,9 @@ prepare_stage_two_spec() {
   chmod 0600 "$terms_file"
 
   start_sidecars planning
-  prepare_witnessed_pair planning "$terms_file" "$depositor" "$claimant" planning
+  if [[ "$asset_mode" == "native" ]]; then
+    prepare_witnessed_pair planning "$terms_file" "$depositor" "$claimant" planning
+  fi
 
   pda_evidence="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-pda-observation.json"
   "$M3_POC_LEZ_NATIVE_ESCROW_BIN" observe --sequencer-url "$M3_POC_LEZ_SEQUENCER_RPC_URL" \
@@ -545,8 +738,17 @@ prepare_stage_two_spec() {
     fail "fresh witnessed escrow PDA accounts are not absent"
   metadata="$(jq -er '.after.metadata.account_id' "$pda_evidence")"
   custody="$(jq -er '.after.custody.account_id' "$pda_evidence")"
-  claim_hash="$(jq -er '.claim.message_hash' \
-    "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-planning-prepared-claim.json")"
+  if [[ "$asset_mode" == "custom_token" ]]; then
+    asset_terms_file="${M3_POC_DIRECTION_ROOT}/planning-asset-terms.json"
+    write_custom_token_terms "$initial_terms_hash" "$metadata" "$swap_id" "$refund_at_ms" \
+      "$aggregate_account" "$aggregate_key" "$asset_terms_file"
+    prepare_witnessed_asset_pair planning "$asset_terms_file" "$depositor" "$claimant" \
+      planning
+    planning_claim_result="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-planning-prepared-asset-claim.json"
+  else
+    planning_claim_result="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-planning-prepared-claim.json"
+  fi
+  claim_hash="$(jq -er '.claim.message_hash' "$planning_claim_result")"
 
   secret_hex="$(file_value "$M3_POC_BITCOIN_FUNDING_CREDENTIALS" BITCOIN_CORE_FUNDING_SECRET_KEY_HEX)"
   secret_file="${M3_POC_DIRECTION_ROOT}/service-funding.key"
@@ -882,35 +1084,84 @@ submit_actor_maker_bitcoin_second_lock() {
 final_terms=""
 final_prepared_escrow=""
 final_prepared_claim=""
+asset_commitment=""
 prepare_final_transcript() {
   local commitment planning_claim_hash final_claim_hash planning_claim_bytes final_claim_bytes
+  local planning_claim asset_spec asset_summary
   commitment="$(jq -er '.agreement_commitment' \
     "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-stage-two.json")"
-  final_terms="${M3_POC_DIRECTION_ROOT}/final-terms.json"
-  jq --arg terms "$commitment" '.terms_hash = $terms' \
-    "${M3_POC_DIRECTION_ROOT}/planning-terms.json" >"$final_terms"
+  if [[ "$asset_mode" == "custom_token" ]]; then
+    asset_spec="${M3_POC_DIRECTION_ROOT}/asset-extension-spec.json"
+    asset_summary="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-asset-extension.json"
+    jq -n --slurpfile stage2 \
+      "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-stage-two.json" \
+      --slurpfile terms "${M3_POC_DIRECTION_ROOT}/planning-asset-terms.json" '
+      {schema_version:1,
+       expected_agreement_sha256:$stage2[0].agreement_sha256,
+       expected_agreement_commitment:$stage2[0].agreement_commitment,
+       token_program_id:$terms[0].asset.terms.token_program_id,
+       ata_program_id:$terms[0].asset.terms.ata_program_id,
+       token_definition_account:$terms[0].asset.terms.token_definition_account_id,
+       depositor_ata_account:$terms[0].asset.terms.depositor_ata_account_id,
+       claimant_ata_account:$terms[0].asset.terms.claimant_ata_account_id,
+       custody_ata_account:$terms[0].asset.terms.custody_ata_account_id}
+    ' >"$asset_spec"
+    chmod 0600 "$asset_spec"
+    "$M3_POC_PROVISIONER_BIN" finalize-asset-extension --spec-file "$asset_spec" \
+      --output-root "${M3_POC_DIRECTION_ROOT}/fixture" >"$asset_summary"
+    chmod 0600 "$asset_summary"
+    jq -e --arg base "$commitment" '
+      .schema_version == 1 and .base_agreement_commitment == $base
+      and .extension_revalidated == true and .private_material_disclosed == false
+      and .amount == 75 and (.asset_commitment | test("^[0-9a-f]{64}$"))
+    ' "$asset_summary" >/dev/null || fail "countersigned custom-token extension is invalid"
+    asset_commitment="$(jq -er '.asset_commitment' "$asset_summary")"
+    final_terms="${M3_POC_DIRECTION_ROOT}/final-asset-terms.json"
+    jq --arg terms "$asset_commitment" '.asset.terms.terms_hash = $terms' \
+      "${M3_POC_DIRECTION_ROOT}/planning-asset-terms.json" >"$final_terms"
+    planning_claim="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-planning-prepared-asset-claim.json"
+  else
+    final_terms="${M3_POC_DIRECTION_ROOT}/final-terms.json"
+    jq --arg terms "$commitment" '.terms_hash = $terms' \
+      "${M3_POC_DIRECTION_ROOT}/planning-terms.json" >"$final_terms"
+    planning_claim="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-planning-prepared-claim.json"
+  fi
   chmod 0600 "$final_terms"
   start_sidecars final
-  case "$M3_POC_DIRECTION" in
-    taker_sells_foreign)
-      prepare_witnessed_pair final "$final_terms" maker taker final
-      ;;
-    taker_sells_lez)
-      prepare_witnessed_pair final "$final_terms" taker maker final
-      ;;
-  esac
-  final_prepared_escrow="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-final-prepared-escrow.json"
-  final_prepared_claim="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-final-prepared-claim.json"
-  planning_claim_hash="$(jq -er '.claim.message_hash' \
-    "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-planning-prepared-claim.json")"
+  if [[ "$asset_mode" == "custom_token" ]]; then
+    case "$M3_POC_DIRECTION" in
+      taker_sells_foreign)
+        prepare_witnessed_asset_pair final "$final_terms" maker taker final
+        ;;
+      taker_sells_lez)
+        prepare_witnessed_asset_pair final "$final_terms" taker maker final
+        ;;
+    esac
+    final_prepared_escrow="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-final-prepared-asset-escrow.json"
+    final_prepared_claim="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-final-prepared-asset-claim.json"
+  else
+    case "$M3_POC_DIRECTION" in
+      taker_sells_foreign)
+        prepare_witnessed_pair final "$final_terms" maker taker final
+        ;;
+      taker_sells_lez)
+        prepare_witnessed_pair final "$final_terms" taker maker final
+        ;;
+    esac
+    final_prepared_escrow="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-final-prepared-escrow.json"
+    final_prepared_claim="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-final-prepared-claim.json"
+  fi
+  planning_claim_hash="$(jq -er '.claim.message_hash' "$planning_claim")"
   final_claim_hash="$(jq -er '.claim.message_hash' "$final_prepared_claim")"
-  planning_claim_bytes="$(jq -er '.claim.exact_message_bytes' \
-    "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-planning-prepared-claim.json")"
+  planning_claim_bytes="$(jq -er '.claim.exact_message_bytes' "$planning_claim")"
   final_claim_bytes="$(jq -er '.claim.exact_message_bytes' "$final_prepared_claim")"
   [[ "$planning_claim_hash" == "$final_claim_hash" &&
      "$planning_claim_bytes" == "$final_claim_bytes" ]] ||
     fail "final agreement binding changed the pre-lock official LEZ claim transcript"
-  jq -e --arg terms "$commitment" '.terms_hash == $terms' "$final_terms" >/dev/null ||
+  jq -e --arg terms "${asset_commitment:-$commitment}" '
+    if .asset_terms_version == 2 then .asset.terms.terms_hash == $terms
+    else .terms_hash == $terms end
+  ' "$final_terms" >/dev/null ||
     fail "final witnessed terms do not use the countersigned agreement commitment"
 }
 
@@ -1024,11 +1275,26 @@ write_actor_configs() {
   local start_height="$1" max_blocks="$2"
   local role basic endpoint config partial adaptor refund
   local maker_bitcoin_funding maker_lez_request maker_lez_result
+  local schema asset_record current_asset_commitment
   [[ "$start_height" =~ ^[0-9]+$ && "$max_blocks" =~ ^[0-9]+$ ]] ||
     fail "actor LEZ window is not numeric"
   (( max_blocks >= 1 && max_blocks <= 4096 )) || fail "actor LEZ window is out of bounds"
   maker_bitcoin_funding="${M3_POC_DIRECTION_ROOT}/fixture/funding-transaction.hex"
-  maker_lez_request="${M3_POC_DIRECTION_ROOT}/final-prepare-escrow-request.json"
+  if [[ "$asset_mode" == "custom_token" ]]; then
+    schema=5
+    maker_lez_request="${M3_POC_DIRECTION_ROOT}/final-prepare-asset-escrow-request.json"
+    asset_record="${M3_POC_DIRECTION_ROOT}/fixture/lez-asset-extension.borsh"
+    current_asset_commitment="${asset_commitment:-$(jq -er '.asset_commitment' \
+      "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-asset-extension.json")}"
+    [[ -f "$asset_record" && ! -L "$asset_record" &&
+       "$current_asset_commitment" =~ ^[0-9a-f]{64}$ ]] ||
+      fail "exact countersigned asset extension is unavailable"
+  else
+    schema=4
+    maker_lez_request="${M3_POC_DIRECTION_ROOT}/final-prepare-escrow-request.json"
+    asset_record=""
+    current_asset_commitment=""
+  fi
   maker_lez_result="$final_prepared_escrow"
   [[ -f "$maker_bitcoin_funding" && ! -L "$maker_bitcoin_funding" ]] ||
     fail "exact signed Bitcoin maker-lock material is unavailable"
@@ -1055,7 +1321,7 @@ write_actor_configs() {
     endpoint="$(file_value "${M3_POC_DIRECTION_ROOT}/final-endpoints.env" "$role")"
     config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
     partial="${config}.partial"
-    jq -n --arg role "$role" \
+    jq -n --arg role "$role" --argjson schema "$schema" \
       --arg agreement "${M3_POC_DIRECTION_ROOT}/fixture/agreement.borsh" \
       --arg state "${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-state.sqlite" \
       --argjson accepted "$accepted_at" --arg core "$M3_POC_BITCOIN_RPC_URL" \
@@ -1069,11 +1335,13 @@ write_actor_configs() {
       --arg lez_journal "${M3_POC_DIRECTION_ROOT}/actors/${role}/lez-journal.sqlite" \
       --arg prepared "$final_prepared_claim" --arg adaptor "$adaptor" --arg refund "$refund" \
       --arg direction "$M3_POC_DIRECTION" \
+      --arg asset_mode "$asset_mode" --arg asset_record "$asset_record" \
+      --arg asset_commitment "$current_asset_commitment" \
       --arg maker_bitcoin_funding "$maker_bitcoin_funding" \
       --arg maker_lez_request "$maker_lez_request" --arg maker_lez_result "$maker_lez_result" \
       --slurpfile runtime "${M3_POC_DIRECTION_ROOT}/sidecars/final/${role}/runtime.json" '
       {
-        schema_version:4,role:$role,agreement_file:$agreement,state_db:$state,
+        schema_version:$schema,role:$role,agreement_file:$agreement,state_db:$state,
         accepted_at_unix_seconds:$accepted,
         bitcoin_core:{endpoint:$core,cookie_file:$basic,connectivity:"isolated_local"},
         lez_bridge:{endpoint:$bridge,capability_file:$capability,run_id:$run,
@@ -1085,13 +1353,27 @@ write_actor_configs() {
           prepared_witnessed_claim_result_file:$prepared
         } + (if $role == "taker" then {adaptor_secret_file:$adaptor} else {} end)),
         refund:(if $refund == "" then {} else {bitcoin_refund_key_file:$refund} end)
-      } + (if $role == "maker" then {maker_lock:
-        (if $direction == "taker_sells_lez" then
-          {chain:"bitcoin",exact_funding_transaction_file:$maker_bitcoin_funding}
-         elif $direction == "taker_sells_foreign" then
-          {chain:"lez",preparation_request_file:$maker_lez_request,
-           preparation_result_file:$maker_lez_result}
-         else error("unsupported maker-lock direction") end)} else {} end)
+      }
+      + (if $asset_mode == "custom_token" then
+          {asset_extension:{record_file:$asset_record,
+            expected_asset_commitment:$asset_commitment}}
+         else {} end)
+      + (if $role == "maker" then {maker_lock:
+          (if $direction == "taker_sells_lez" then
+            {chain:"bitcoin",exact_funding_transaction_file:$maker_bitcoin_funding}
+           elif $direction == "taker_sells_foreign" and $asset_mode == "custom_token" then
+            {chain:"lez_asset_v2",preparation_request_file:$maker_lez_request,
+             preparation_result_file:$maker_lez_result}
+           elif $direction == "taker_sells_foreign" then
+            {chain:"lez",preparation_request_file:$maker_lez_request,
+             preparation_result_file:$maker_lez_result}
+           else error("unsupported maker-lock direction") end)} else {} end)
+      + (if $role == "maker" and $direction == "taker_sells_lez"
+             and $asset_mode == "custom_token" then
+          {taker_first_lock:{chain:"lez_asset_v2",
+            preparation_request_file:$maker_lez_request,
+            preparation_result_file:$maker_lez_result}}
+         else {} end)
     ' >"$partial"
     chmod 0600 "$partial"
     mv "$partial" "$config"
@@ -1104,6 +1386,33 @@ write_actor_configs() {
 
 actor_last_output=""
 survivor_taker_absence_guard=0
+
+write_lez_submission_count_diagnostic() {
+  local label="$1" observed="$2" expected="$3" role journal
+  local output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-submission-count-diagnostic.json"
+  local entries="[]"
+  [[ ! -e "$output" && ! -L "$output" ]] || return 1
+  for role in maker taker; do
+    journal="${M3_POC_SECURE_STATE_ROOT}/sidecars/final/${role}/bridge-requests.v1.json"
+    [[ -f "$journal" && ! -L "$journal" ]] || return 1
+    entries="$(jq -c --arg role "$role" --argjson existing "$entries" '
+      $existing + [.entries[] |
+        select(.method == "lez_bridge.v1.submit_transaction") |
+        {role:$role,method,outcome_kind:.outcome.kind,
+         transaction_id:(.outcome.value.transaction_id // null)}]
+    ' "$journal")" || return 1
+  done
+  jq -n --arg direction "$M3_POC_DIRECTION" --arg label "$label" \
+    --argjson observed "$observed" --argjson expected "$expected" \
+    --argjson entries "$entries" '
+    {schema_version:1,direction:$direction,label:$label,
+     observed_successful_submission_count:$observed,
+     expected_successful_submission_count:$expected,
+     generic_submit_entries:$entries}
+  ' >"$output" || return 1
+  chmod 0600 "$output"
+}
+
 assert_survivor_actor_invocation_allowed() {
   local role="$1" label="$2"
   if [[ "${M3_POC_JOURNEY:-}" == "survivor_claim" &&
@@ -1137,6 +1446,19 @@ actor_invoke_awaiting_retry() {
   [[ ! -e "$actor_last_output" && ! -L "$actor_last_output" ]] ||
     fail "refusing to overwrite actor evidence: ${label}/${role}"
   for attempt in {1..120}; do
+    if [[ "$asset_mode" == "custom_token" ]]; then
+      case "$label" in
+        lez-initialization-submit | lez-initialization-accepted-restart | \
+          lez-custody-submit | lez-custody-accepted-restart | \
+          lez-funding-submit | lez-funding-accepted-restart)
+          # The official scanner verifies ancestry from start through the
+          # current tip. Refresh absence/restart reads immediately before the
+          # fresh actor process so a fast local devnet cannot age the window.
+          # Finalized-observe labels deliberately keep their containing range.
+          write_actor_configs "$(finalized_tip)" 1
+          ;;
+      esac
+    fi
     durable_count="$(lez_successful_submission_count)"
     (( durable_count >= minimum_count && durable_count <= target_count )) ||
       fail "Maker-lock retry observed an out-of-bound durable submission count"
@@ -1145,6 +1467,8 @@ actor_invoke_awaiting_retry() {
     if "$M3_POC_ACTOR_BIN" --config "$config" "$command" \
         >"$attempt_output" 2>"$attempt_error"; then
       chmod 0600 "$attempt_output" "$attempt_error"
+      [[ ! -s "$attempt_error" ]] ||
+        fail "${role} Maker-lock retry succeeded with unexpected stderr"
       jq -e --arg role "$role" --arg chain "$chain" --arg phase "$phase" \
           --argjson revision "$revision" '
         .schema_version == 1 and .role == $role and .command == "drive"
@@ -1152,10 +1476,21 @@ actor_invoke_awaiting_retry() {
         and .phase == $phase and .revision == $revision
       ' "$attempt_output" >/dev/null ||
         fail "${role} actor returned an unexpected Maker-lock pending state"
-      [[ "$(lez_successful_submission_count)" == "$target_count" ]] ||
-        fail "Maker-lock actor success did not reach the exact durable submission count"
-      mv "$attempt_output" "$actor_last_output"
-      return 0
+      durable_count="$(lez_successful_submission_count)"
+      if [[ "$durable_count" == "$target_count" ]]; then
+        mv "$attempt_output" "$actor_last_output"
+        return 0
+      fi
+      if (( durable_count >= minimum_count && durable_count < target_count )); then
+        # Awaiting-observation represents a successful typed actor state, not
+        # proof that the current step was authorized for submission. Retry the
+        # fresh process until the durable journal reaches the exact target;
+        # every zero-effect wait keeps its attempt-specific evidence file.
+        sleep 0.25
+        continue
+      fi
+      write_lez_submission_count_diagnostic "$label" "$durable_count" "$target_count" || true
+      fail "Maker-lock actor success expected ${target_count} durable submissions, observed ${durable_count}"
     fi
     chmod 0600 "$attempt_output" "$attempt_error"
     [[ ! -s "$attempt_output" ]] ||
@@ -1568,6 +1903,7 @@ capture_both_statuses() {
 }
 
 lez_initialization_tx=""
+lez_custody_tx=""
 lez_funding_tx=""
 lez_claim_tx=""
 lez_refund_tx=""
@@ -1600,6 +1936,45 @@ submit_lez_transaction_once() {
   prove_lez_finalized_transaction "$label" "$expected" "$start_height"
 }
 
+asset_prepared_transaction_id() {
+  local step="$1"
+  jq -er --arg step "$step" '
+    [.effects[] | select(.step == $step) | .transaction.transaction_id] |
+    if length == 1 then .[0] else error("exactly one prepared asset effect required") end
+  ' "$final_prepared_escrow"
+}
+
+submit_lez_asset_transaction_once() {
+  local role="$1" step="$2" label="$3" start_height="$4"
+  local request output expected returned
+  [[ "$asset_mode" == "custom_token" && "$M3_POC_DIRECTION" == "taker_sells_lez" &&
+     "$role" == "taker" ]] ||
+    fail "external LEZ asset submission is reserved for the custom-token Taker first lock"
+  [[ "$step" == "initialize_witnessed" || "$step" == "create_custody_ata" ||
+     "$step" == "fund" ]] || fail "external LEZ asset first-lock step is invalid"
+  request="${M3_POC_DIRECTION_ROOT}/${label}-submit-request.json"
+  output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-submission.json"
+  expected="$(asset_prepared_transaction_id "$step")"
+  jq -n --arg run "$M3_POC_RUN_ID" --arg request "$(new_request_id)" \
+    --arg role "$role" --arg step "$step" \
+    --slurpfile runtime "${M3_POC_DIRECTION_ROOT}/sidecars/final/${role}/runtime.json" \
+    --slurpfile prepared "$final_prepared_escrow" '
+    {context:{schema_version:1,run_id:$run,request_id:$request,sidecar_role:$role},
+     runtime:$runtime[0],
+     transaction:([ $prepared[0].effects[] | select(.step == $step) ] |
+       if length == 1 then .[0].transaction else error("exactly one asset step") end)}
+  ' >"$request"
+  chmod 0600 "$request"
+  operator_call final "$role" submit-transaction "$request" "$output"
+  returned="$(jq -er '.transaction_id' "$output")"
+  [[ "$returned" == "$expected" ]] || fail "${label} submission returned a different ID"
+  jq -e --arg role "$role" '
+    .context.sidecar_role == $role
+    and (.outcome == "accepted" or .outcome == "already_known")
+  ' "$output" >/dev/null || fail "${label} was not accepted by the exact sidecar"
+  prove_lez_finalized_transaction "$label" "$expected" "$start_height"
+}
+
 lez_lock_window_start=0
 lez_lock_window_blocks=0
 submit_taker_lez_first_lock_pair() {
@@ -1616,6 +1991,28 @@ submit_taker_lez_first_lock_pair() {
   lez_lock_window_blocks=$((lez_proved_tip - initial_start))
   (( lez_lock_window_blocks >= 1 && lez_lock_window_blocks <= 4096 )) ||
     fail "finalized LEZ funding window is out of bounds"
+  write_actor_configs "$lez_lock_window_start" "$lez_lock_window_blocks"
+}
+
+submit_taker_lez_asset_first_lock() {
+  local initial_start custody_start funding_start
+  [[ "$asset_mode" == "custom_token" && "$M3_POC_DIRECTION" == "taker_sells_lez" ]] ||
+    fail "external LEZ asset lock submission is reserved for the Taker first lock"
+  initial_start="$(finalized_tip)"
+  submit_lez_asset_transaction_once taker initialize_witnessed lez-initialization "$initial_start"
+  lez_initialization_tx="$(asset_prepared_transaction_id initialize_witnessed)"
+  custody_start="$lez_proved_tip"
+  submit_lez_asset_transaction_once taker create_custody_ata lez-custody "$custody_start"
+  lez_custody_tx="$(asset_prepared_transaction_id create_custody_ata)"
+  funding_start="$lez_proved_tip"
+  submit_lez_asset_transaction_once taker fund lez-funding "$funding_start"
+  lez_funding_tx="$(asset_prepared_transaction_id fund)"
+  lez_lock_window_start=$((initial_start + 1))
+  lez_lock_window_blocks=$((lez_proved_tip - initial_start))
+  (( lez_lock_window_blocks >= 1 && lez_lock_window_blocks <= 4096 )) ||
+    fail "finalized LEZ asset funding window is out of bounds"
+  [[ "$(lez_successful_submission_count)" == 3 ]] ||
+    fail "custom-token Taker first lock did not submit exactly three durable effects"
   write_actor_configs "$lez_lock_window_start" "$lez_lock_window_blocks"
 }
 
@@ -1734,6 +2131,70 @@ submit_actor_maker_lez_second_lock_pair() {
     fail "finalized actor-owned LEZ funding window is out of bounds"
   write_actor_configs "$lez_lock_window_start" "$lez_lock_window_blocks"
   assert_lez_pair_inside_actor_window
+}
+
+submit_actor_maker_lez_asset_second_lock() {
+  local initial_start step_start before_count after_count window_blocks index step label tx
+  local -a steps=(initialize_witnessed create_custody_ata fund)
+  local -a labels=(lez-initialization lez-custody lez-funding)
+  [[ "$asset_mode" == "custom_token" && "$M3_POC_DIRECTION" == "taker_sells_foreign" ]] ||
+    fail "actor-owned LEZ asset Maker lock is only valid for the custom-token forward direction"
+  initial_start="$(finalized_tip)"
+  before_count="$(lez_successful_submission_count)"
+  [[ "$before_count" == 0 ]] ||
+    fail "LEZ asset Maker second lock began with an unexpected durable submission count"
+  for index in 0 1 2; do
+    step="${steps[$index]}"
+    label="${labels[$index]}"
+    step_start="$(finalized_tip)"
+    # Accepted predecessors are skipped from the durable journal. Give the
+    # next prepared effect a fresh fixed one-block absence window so the
+    # official scanner does not have to chase an ever-growing ancestry while
+    # the local devnet advances. Finalized acceptance below uses the exact
+    # containing range, and the last step restores the complete-plan range.
+    write_actor_configs "$step_start" 1
+    tx="$(asset_prepared_transaction_id "$step")"
+    actor_invoke_awaiting_retry maker drive lez taker_lock_confirmed 1 \
+      "$index" "$((index + 1))" "${label}-submit"
+    jq -e '
+      .schema_version == 1 and .role == "maker" and .command == "drive"
+      and .outcome == "awaiting_observation" and .chain == "lez"
+      and .phase == "taker_lock_confirmed" and .revision == 1
+    ' "$actor_last_output" >/dev/null ||
+      fail "Maker actor did not submit ${step} from revision one"
+    after_count="$(lez_successful_submission_count)"
+    [[ "$after_count" == "$((index + 1))" ]] ||
+      fail "Maker actor did not add exactly one ${step} submission"
+    actor_invoke_awaiting_retry maker drive lez taker_lock_confirmed 1 \
+      "$after_count" "$after_count" "${label}-accepted-restart"
+    [[ "$(lez_successful_submission_count)" == "$after_count" ]] ||
+      fail "fresh Maker restart resubmitted ${step}"
+    prove_lez_finalized_transaction "$label" "$tx" "$step_start"
+    case "$step" in
+      initialize_witnessed) lez_initialization_tx="$tx" ;;
+      create_custody_ata) lez_custody_tx="$tx" ;;
+      fund) lez_funding_tx="$tx" ;;
+    esac
+    window_blocks=$((lez_proved_tip - step_start))
+    (( window_blocks >= 1 && window_blocks <= 4096 )) ||
+      fail "finalized actor-owned LEZ asset window is out of bounds"
+    if (( index < 2 )); then
+      write_actor_configs "$((step_start + 1))" "$window_blocks"
+      actor_invoke_awaiting_retry maker drive lez taker_lock_confirmed 1 \
+        "$after_count" "$after_count" "${label}-finalized-observe"
+      [[ "$(lez_successful_submission_count)" == "$after_count" ]] ||
+        fail "finalized ${step} observation changed the submission count"
+    else
+      window_blocks=$((lez_proved_tip - initial_start))
+      (( window_blocks >= 1 && window_blocks <= 4096 )) ||
+        fail "complete actor-owned LEZ asset window is out of bounds"
+      write_actor_configs "$((initial_start + 1))" "$window_blocks"
+    fi
+  done
+  lez_lock_window_start=$((initial_start + 1))
+  lez_lock_window_blocks=$((lez_proved_tip - initial_start))
+  [[ "$(lez_successful_submission_count)" == 3 ]] ||
+    fail "custom-token Maker second lock did not submit exactly three durable effects"
 }
 
 submit_actor_bitcoin_claim_effect() {
@@ -1912,12 +2373,13 @@ actor_lez_claim_transaction_id() {
   local owner="$1" journal
   journal="${M3_POC_SECURE_STATE_ROOT}/sidecars/final/${owner}/bridge-requests.v1.json"
   [[ -f "$journal" && ! -L "$journal" ]] || fail "${owner} sidecar request journal is unavailable"
-  jq -er --arg initialization "$lez_initialization_tx" --arg funding "$lez_funding_tx" '
+  jq -er --arg initialization "$lez_initialization_tx" --arg custody "$lez_custody_tx" \
+    --arg funding "$lez_funding_tx" '
     [.entries[] |
       select(.method == "lez_bridge.v1.submit_transaction"
              and .outcome.kind == "success") |
       .outcome.value.transaction_id |
-      select(. != $initialization and . != $funding)] |
+      select(. != $initialization and . != $custody and . != $funding)] |
     unique | select(length == 1) | .[0]
   ' "$journal"
 }
@@ -1940,12 +2402,13 @@ actor_lez_refund_transaction_id() {
   local owner="$1" journal
   journal="${M3_POC_SECURE_STATE_ROOT}/sidecars/final/${owner}/bridge-requests.v1.json"
   [[ -f "$journal" && ! -L "$journal" ]] || fail "${owner} sidecar request journal is unavailable"
-  jq -er --arg initialization "$lez_initialization_tx" --arg funding "$lez_funding_tx" '
+  jq -er --arg initialization "$lez_initialization_tx" --arg custody "$lez_custody_tx" \
+    --arg funding "$lez_funding_tx" '
     [.entries[] |
       select(.method == "lez_bridge.v1.submit_transaction"
              and .outcome.kind == "success") |
       .outcome.value.transaction_id |
-      select(. != $initialization and . != $funding)] |
+      select(. != $initialization and . != $custody and . != $funding)] |
     unique | select(length == 1) | .[0]
   ' "$journal"
 }
@@ -2082,17 +2545,33 @@ submit_actor_lez_refund() {
 
 submit_actor_lez_claim_effect() {
   local owner="$1" expected_revision="$2" label="$3"
-  local claim_start claim_window_blocks
+  local claim_start claim_window_blocks before_count after_count expected_before
   claim_start="$(finalized_tip)"
+  if [[ "$asset_mode" == "custom_token" ]]; then expected_before=3; else expected_before=2; fi
+  before_count="$(lez_successful_submission_count)"
+  [[ "$before_count" == "$expected_before" ]] ||
+    fail "actor-owned LEZ claim began with an unexpected durable submission count"
   actor_invoke "$owner" drive "${label}-submit"
   jq -e --arg role "$owner" --argjson revision "$((expected_revision - 1))" '
     .schema_version == 1 and .role == $role and .command == "drive"
     and .outcome == "awaiting_observation" and .chain == "lez"
     and .revision == $revision
   ' "$actor_last_output" >/dev/null || fail "${owner} did not submit the actor-owned LEZ claim"
+  after_count="$(lez_successful_submission_count)"
+  [[ "$after_count" == "$((expected_before + 1))" ]] ||
+    fail "actor-owned LEZ claim did not add exactly one durable submission"
   lez_claim_tx="$(actor_lez_claim_transaction_id "$owner")"
   [[ "$lez_claim_tx" =~ ^[0-9a-f]{64}$ ]] ||
     fail "actor-owned LEZ claim ID is invalid"
+  actor_invoke "$owner" drive "${label}-accepted-restart"
+  jq -e --arg role "$owner" --argjson revision "$((expected_revision - 1))" '
+    .schema_version == 1 and .role == $role and .command == "drive"
+    and .outcome == "awaiting_observation" and .chain == "lez"
+    and .revision == $revision
+  ' "$actor_last_output" >/dev/null ||
+    fail "fresh ${owner} restart changed the accepted LEZ claim state"
+  [[ "$(lez_successful_submission_count)" == "$after_count" ]] ||
+    fail "fresh ${owner} restart resubmitted the LEZ claim"
   if [[ "$M3_POC_JOURNEY" == "survivor_claim" && "$owner" == "taker" ]]; then
     survivor_taker_absence_guard=1
   fi
@@ -2112,7 +2591,9 @@ submit_actor_lez_claim() {
 write_dual_lock_gate() {
   capture_both_statuses 2 dual-lock-status
   jq -n --arg direction "$M3_POC_DIRECTION" --arg bitcoin "$bitcoin_lock_tx" \
-    --arg initialization "$lez_initialization_tx" --arg funding "$lez_funding_tx" \
+    --arg initialization "$lez_initialization_tx" --arg custody "$lez_custody_tx" \
+    --arg funding "$lez_funding_tx" --arg asset_mode "$asset_mode" \
+    --arg asset_commitment "$asset_commitment" \
     --argjson window_start "$lez_lock_window_start" \
     --argjson window_blocks "$lez_lock_window_blocks" \
     --arg opened_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
@@ -2120,7 +2601,11 @@ write_dual_lock_gate() {
      actor_revision:{maker:2,taker:2},
      bitcoin:{transaction_id:$bitcoin,confirmation_policy_satisfied:true},
      lez:{initialization_transaction_id:$initialization,funding_transaction_id:$funding,
-          finality:"Finalized",discovery_window:{start_height:$window_start,max_blocks:$window_blocks}},
+          finality:"Finalized",discovery_window:{start_height:$window_start,max_blocks:$window_blocks}}
+       + (if $asset_mode == "custom_token" then
+          {custody_creation_transaction_id:$custody,asset_commitment:$asset_commitment,
+           exact_effect_order:["initialize_witnessed","create_custody_ata","fund"]}
+          else {} end),
      adaptor_authority_eligible_only_after_this_evidence:true,opened_at:$opened_at}
   ' >"${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-dual-lock-gate.json"
   chmod 0600 "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-dual-lock-gate.json"
@@ -2593,13 +3078,22 @@ write_actual_effect_manifest() {
     claim | survivor_claim)
       jq -n --arg direction "$M3_POC_DIRECTION" --arg bitcoin_lock "$bitcoin_lock_tx" \
         --arg bitcoin_claim "$bitcoin_claim_tx" --arg lez_initialization "$lez_initialization_tx" \
-        --arg lez_funding "$lez_funding_tx" --arg lez_claim "$lez_claim_tx" \
-        --arg journey "$M3_POC_JOURNEY" '
+        --arg lez_custody "$lez_custody_tx" --arg lez_funding "$lez_funding_tx" \
+        --arg lez_claim "$lez_claim_tx" --arg journey "$M3_POC_JOURNEY" \
+        --arg asset_mode "$asset_mode" --arg asset_commitment "$asset_commitment" '
         {schema_version:1,journey:$journey,direction:$direction,
          bitcoin_effect_ids:[$bitcoin_lock,$bitcoin_claim],
-         lez_effect_ids:[$lez_initialization,$lez_funding,$lez_claim],
-         expected_unique_effects:{bitcoin:2,lez:3},
+         lez_effect_ids:
+           (if $asset_mode == "custom_token" then
+             [$lez_initialization,$lez_custody,$lez_funding,$lez_claim]
+            else [$lez_initialization,$lez_funding,$lez_claim] end),
+         expected_unique_effects:
+           {bitcoin:2,lez:(if $asset_mode == "custom_token" then 4 else 3 end)},
          actor_owned_claims:{bitcoin:$bitcoin_claim,lez:$lez_claim}}
+        + (if $asset_mode == "custom_token" then
+          {asset:{kind:"custom_token",asset_commitment:$asset_commitment,
+            first_lock_order:["initialize_witnessed","create_custody_ata","fund"]}}
+          else {} end)
         + (if $journey == "survivor_claim" then {
           survivor_evidence_file:($direction + "-survivor-claim.json"),
           revealer:"taker",follower:"maker",
@@ -3095,11 +3589,19 @@ run_actor_two_lock_phase() {
     taker_sells_foreign)
       submit_taker_bitcoin_first_lock
       project_both_to_revision 1 bitcoin bitcoin-first-lock
-      submit_actor_maker_lez_second_lock_pair
+      if [[ "$asset_mode" == "custom_token" ]]; then
+        submit_actor_maker_lez_asset_second_lock
+      else
+        submit_actor_maker_lez_second_lock_pair
+      fi
       project_both_to_revision 2 lez lez-second-lock
       ;;
     taker_sells_lez)
-      submit_taker_lez_first_lock_pair
+      if [[ "$asset_mode" == "custom_token" ]]; then
+        submit_taker_lez_asset_first_lock
+      else
+        submit_taker_lez_first_lock_pair
+      fi
       project_both_to_revision 1 lez lez-first-lock
       submit_actor_maker_bitcoin_second_lock
       project_both_to_revision 2 bitcoin bitcoin-second-lock

@@ -16,9 +16,9 @@ readonly upstream_genesis_time_hex="2c04626900000000"
 readonly upstream_slot_duration_seconds="1.0"
 slot_duration_seconds="${LEZ_V02_SLOT_DURATION_SECONDS:-$upstream_slot_duration_seconds}"
 case "$slot_duration_seconds" in
-  1.0 | 3.0) ;;
+  1.0 | 3.0 | 10.0) ;;
   *)
-    echo "LEZ_V02_SLOT_DURATION_SECONDS must be exactly 1.0 or 3.0" >&2
+    echo "LEZ_V02_SLOT_DURATION_SECONDS must be exactly 1.0, 3.0, or 10.0" >&2
     exit 1
     ;;
 esac
@@ -190,9 +190,9 @@ render_bedrock_deployment_settings() {
     return 1
   }
   case "$slot_duration" in
-    1.0 | 3.0) ;;
+    1.0 | 3.0 | 10.0) ;;
     *)
-      echo "Bedrock slot duration must be exactly 1.0 or 3.0 seconds" >&2
+      echo "Bedrock slot duration must be exactly 1.0, 3.0, or 10.0 seconds" >&2
       return 1
       ;;
   esac
@@ -218,7 +218,7 @@ render_bedrock_deployment_settings() {
   generated_stale_slot_count="$(count_fixed_occurrences "  slot_duration: '1.0'" "$temporary")"
   if [[ "$generated_genesis_count" != 1 || "$generated_stale_count" != 0 ||
         "$generated_slot_count" != 1 ||
-        ( "$slot_duration" == 3.0 && "$generated_stale_slot_count" != 0 ) ]]; then
+        ( "$slot_duration" != 1.0 && "$generated_stale_slot_count" != 0 ) ]]; then
     rm -f -- "$temporary"
     echo "generated Bedrock fixture failed exact audited replacement" >&2
     return 1

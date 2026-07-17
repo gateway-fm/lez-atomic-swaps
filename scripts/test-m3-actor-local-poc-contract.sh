@@ -218,7 +218,7 @@ run_bedrock_renderer() {
 
 valid_bedrock_source="${bedrock_renderer_root}/valid.yaml"
 write_bedrock_source "$valid_bedrock_source"
-for cadence in 1.0 3.0; do
+for cadence in 1.0 3.0 10.0; do
   output="${bedrock_renderer_root}/valid-${cadence}.yaml"
   run_bedrock_renderer "$valid_bedrock_source" "$output" \
     "$rendered_genesis_hex" "$cadence" ||
@@ -374,6 +374,38 @@ jq -e '
     "bitcoin_lock_by_maker","dual_lock_gate","bitcoin_claim_by_taker","lez_claim_by_maker"]
   and .terminal == {maker_revision:4,taker_revision:4}
 ' <<<"$lez_plan" >/dev/null || fail "LEZ direction effect plan is not role-correct"
+
+custom_direction_contract="$(M3_POC_ASSET_MODE=custom_token "$direction_driver" contract)"
+jq -e '
+  .schema_version == 1 and .asset_mode == "custom_token"
+  and .actor_config_schema_version == 5 and .asset_extension_required == true
+  and .official_token_ata_derivation_required == true
+  and .asset_first_lock_order == ["initialize_witnessed","create_custody_ata","fund"]
+  and .expected_unique_effects == {bitcoin:2,lez:4}
+' <<<"$custom_direction_contract" >/dev/null ||
+  fail "custom-token direction boundary contract is incomplete"
+custom_foreign_plan="$(M3_POC_ASSET_MODE=custom_token \
+  "$direction_driver" effect-plan taker_sells_foreign claim)"
+jq -e '
+  .before_first_effect == ["finalize_agreement","finalize_asset_extension",
+    "prepare_exact_lez_asset_claim","bitcoin_presignature_verified",
+    "lez_presignature_verified","activate_both_roles"]
+  and .public_effect_order == ["bitcoin_lock_by_taker","lez_initialize_by_maker",
+    "lez_create_custody_ata_by_maker","lez_fund_by_maker","dual_lock_gate",
+    "lez_claim_by_taker","bitcoin_claim_by_maker"]
+' <<<"$custom_foreign_plan" >/dev/null ||
+  fail "custom-token foreign direction effect plan omits its custody step"
+custom_lez_plan="$(M3_POC_ASSET_MODE=custom_token \
+  "$direction_driver" effect-plan taker_sells_lez claim)"
+jq -e '
+  .before_first_effect == ["finalize_agreement","finalize_asset_extension",
+    "prepare_exact_lez_asset_claim","bitcoin_presignature_verified",
+    "lez_presignature_verified","activate_both_roles"]
+  and .public_effect_order == ["lez_initialize_by_taker","lez_create_custody_ata_by_taker",
+    "lez_fund_by_taker","bitcoin_lock_by_maker","dual_lock_gate",
+    "bitcoin_claim_by_taker","lez_claim_by_maker"]
+' <<<"$custom_lez_plan" >/dev/null ||
+  fail "custom-token LEZ direction effect plan omits its custody step"
 
 foreign_survivor_plan="$("$direction_driver" effect-plan taker_sells_foreign survivor_claim)"
 jq -e '
@@ -947,8 +979,12 @@ rg -Fq 'planned_bitcoin_funding_anchor_height' "$direction_driver" ||
 rg -Fq 'exact_transaction_occurrences:1' "$direction_driver" ||
   fail "Bitcoin lock path does not retain exact containing-block membership"
 actor_config_source="$(sed -n '/^write_actor_configs() {$/,/^}$/p' "$direction_driver")"
-rg -Fq 'schema_version:4,role:$role' <<<"$actor_config_source" ||
-  fail "actor configs do not use schema version 4"
+for term in 'schema=5' 'schema=4' 'schema_version:$schema,role:$role' \
+  'chain:"lez_asset_v2"' 'asset_extension:{record_file:$asset_record' \
+  'expected_asset_commitment:$asset_commitment' 'taker_first_lock:{chain:"lez_asset_v2"'; do
+  rg -Fq "$term" <<<"$actor_config_source" ||
+    fail "actor configs omit native/schema-5 role shaping: ${term}"
+done
 rg -Fq 'exact_funding_transaction_file:$maker_bitcoin_funding' \
   <<<"$actor_config_source" ||
   fail "Bitcoin Maker config does not name the exact signed funding transaction"
@@ -963,9 +999,12 @@ top_level_direction_contract_source="$(sed -n \
   '/^verify_direction_driver_contract() {$/,/^}$/p' "$runner")"
 [[ -n "$top_level_direction_contract_source" ]] ||
   fail "top-level runner lacks its embedded direction-contract verifier"
-rg -Fq '.actor_config_schema_version == 4' \
+rg -Fq '.actor_config_schema_version ==' \
   <<<"$top_level_direction_contract_source" ||
-  fail "top-level runner still rejects schema-4 actor configs"
+  fail "top-level runner does not verify the selected actor config schema"
+rg -Fq 'if $asset_mode == "custom_token" then 5 else 4 end' \
+  <<<"$top_level_direction_contract_source" ||
+  fail "top-level runner does not distinguish schema 5 from preserved schema 4"
 for term in '.actor_owned_maker_lock_effects == true' \
   '.taker_first_lock_external_runner_submission == true' \
   '.maker_lock_restart_never_resubmits == true' \
@@ -988,12 +1027,25 @@ bitcoin_lock_confirmation_source="$(sed -n \
   '/^confirm_bitcoin_lock_after_submission() {$/,/^}$/p' "$direction_driver")"
 lez_maker_lock_source="$(sed -n \
   '/^submit_actor_maker_lez_second_lock_pair() {$/,/^}$/p' "$direction_driver")"
+lez_asset_maker_lock_source="$(sed -n \
+  "/^submit_actor_maker_lez_asset_second_lock() {$/,/^}$/p" "$direction_driver")"
 maker_lock_awaiting_retry_source="$(sed -n \
   '/^actor_invoke_awaiting_retry() {$/,/^}$/p' "$direction_driver")"
 [[ -n "$maker_lock_awaiting_retry_source" ]] ||
   fail "Maker-lock path lacks a bounded typed observation retry helper"
 [[ -n "$bitcoin_lock_retry_source" ]] ||
   fail "Bitcoin Maker-lock path lacks effect-specific typed observation reconciliation"
+[[ -n "$lez_asset_maker_lock_source" ]] ||
+  fail "custom-token LEZ Maker-lock path is unavailable"
+for term in \
+  "write_actor_configs \"\$step_start\" 1" \
+  "window_blocks=\$((lez_proved_tip - step_start))" \
+  "write_actor_configs \"\$((step_start + 1))\" \"\$window_blocks\"" \
+  "window_blocks=\$((lez_proved_tip - initial_start))" \
+  "write_actor_configs \"\$((initial_start + 1))\" \"\$window_blocks\""; do
+  rg -Fq "$term" <<<"$lez_asset_maker_lock_source" ||
+    fail "custom-token LEZ Maker-lock window discipline is missing: ${term}"
+done
 for term in 'for attempt in {1..120}; do' \
   'actor chain observation is unavailable' \
   '[[ ! -s "$attempt_output" ]]' \
@@ -1004,13 +1056,23 @@ for term in 'for attempt in {1..120}; do' \
 done
 rg -Fq 'for attempt in {1..120}; do' <<<"$maker_lock_awaiting_retry_source" ||
   fail "Maker-lock observation retry is not statically bounded"
+for term in \
+  "\"\$asset_mode\" == \"custom_token\"" \
+  "lez-custody-submit" \
+  "lez-funding-accepted-restart" \
+  "write_actor_configs \"\$(finalized_tip)\" 1"; do
+  rg -Fq "$term" <<<"$maker_lock_awaiting_retry_source" ||
+    fail "custom-token Maker-lock retry does not refresh its live window: ${term}"
+done
 rg -Fq 'actor chain observation is unavailable' <<<"$maker_lock_awaiting_retry_source" ||
   fail "Maker-lock retry does not restrict itself to typed observation unavailability"
 rg -Fq '[[ ! -s "$attempt_output" ]]' <<<"$maker_lock_awaiting_retry_source" ||
   fail "Maker-lock retry can continue after an ambiguous actor stdout"
 for term in \
   'durable_count >= minimum_count && durable_count <= target_count' \
-  '[[ "$(lez_successful_submission_count)" == "$target_count" ]]'; do
+  '[[ "$durable_count" == "$target_count" ]]' \
+  'durable_count >= minimum_count && durable_count < target_count' \
+  'write_lez_submission_count_diagnostic "$label" "$durable_count" "$target_count"'; do
   rg -Fq "$term" <<<"$maker_lock_awaiting_retry_source" ||
     fail "Maker-lock retry does not enforce its durable submission bound: ${term}"
 done
@@ -1367,6 +1429,7 @@ jq -e --arg run_id "$custom_token_contract_run_id" '
   and .asset_mode == "custom_token"
   and .journey == "claim"
   and .schedule == "sequential"
+  and .service_configuration.lez_v0_2.slot_duration_seconds == "10.0"
   and .evidence_packet_kind == "m3_actor_two_direction_custom_token_local_poc"
   and .ordering.official_token_fixture_after_bootstrap_before_stage_two == true
   and .ordering.directions_are_sequential == true
