@@ -7,6 +7,11 @@ export LC_ALL=C
 umask 077
 
 readonly mode="${M3_ACTOR_POC_MODE:-execute}"
+asset_mode="${M3_ACTOR_POC_ASSET_MODE:-native}"
+if [[ "$asset_mode" != "native" && "$asset_mode" != "custom_token" ]]; then
+  echo "M3_ACTOR_POC_ASSET_MODE must be native or custom_token" >&2
+  exit 2
+fi
 schedule="${M3_ACTOR_POC_SCHEDULE:-sequential}"
 if [[ "$schedule" != "sequential" && "$schedule" != "overlap" ]]; then
   echo "M3_ACTOR_POC_SCHEDULE must be sequential or overlap" >&2
@@ -32,12 +37,23 @@ if [[ "$schedule" == "overlap" && "$journey" != "claim" ]]; then
   echo "M3_ACTOR_POC_SCHEDULE=overlap currently requires the claim journey" >&2
   exit 2
 fi
+if [[ "$asset_mode" == "custom_token" && "$journey" != "claim" ]]; then
+  echo "M3_ACTOR_POC_ASSET_MODE=custom_token currently requires the claim journey" >&2
+  exit 2
+fi
+if [[ "$asset_mode" == "custom_token" && "$schedule" != "sequential" ]]; then
+  echo "M3_ACTOR_POC_ASSET_MODE=custom_token currently requires the sequential schedule" >&2
+  exit 2
+fi
 case "$journey" in
   claim)
     terminal_revision=4
     terminal_phase="completed"
     replay_command="drive"
-    if [[ "$schedule" == "overlap" ]]; then
+    if [[ "$asset_mode" == "custom_token" ]]; then
+      packet_kind="m3_actor_two_direction_custom_token_local_poc"
+      success_label="M3 actor two-direction custom-token local PoC"
+    elif [[ "$schedule" == "overlap" ]]; then
       packet_kind="m3_actor_overlapping_two_swap_local_poc"
       success_label="M3 actor overlapping two-swap local PoC"
     else
@@ -76,7 +92,7 @@ case "$journey" in
     ;;
 esac
 
-readonly schedule journey terminal_revision terminal_phase replay_command packet_kind
+readonly asset_mode schedule journey terminal_revision terminal_phase replay_command packet_kind
 readonly actor_owned_effect_semantics success_label
 readonly lez_slot_duration_seconds
 readonly run_id
@@ -94,6 +110,9 @@ readonly process_registry="${private_dir}/owned-processes.ndjson"
 readonly secure_state_root="/tmp/lez-atomic-swaps-m3-${run_id}-secure-state"
 readonly lez_bootstrap_root="${secure_state_root}/bootstrap"
 readonly lez_bootstrap_manifest="${private_dir}/lez-bootstrap.env"
+readonly f7_token_fixture_root="${private_dir}/f7-token-fixture"
+readonly f7_token_fixture_evidence="${f7_token_fixture_root}/evidence/f7-token-fixture.json"
+readonly f7_token_fixture_private="${f7_token_fixture_root}/private"
 readonly bitcoin_manifest="${repo_root}/.e2e/${bitcoin_run_id}/bitcoin-core/run.env"
 readonly bitcoin_funding_sources="${private_dir}/bitcoin-funding-sources.json"
 readonly lez_manifest="${repo_root}/.e2e/${lez_run_id}/lez-v02/run.env"
@@ -107,6 +126,15 @@ readonly run_evidence="${evidence_dir}/m3-actor-local-poc.json"
 readonly toolchain="${M3_RUST_TOOLCHAIN:-1.96.0}"
 readonly direction_driver="${repo_root}/scripts/run-m3-actor-direction.sh"
 readonly lez_bootstrap_driver="${repo_root}/scripts/run-m3-lez-bootstrap.sh"
+readonly f7_token_fixture_driver="${repo_root}/scripts/run-m3-f7-token-fixture.sh"
+readonly lez_source_dir="${LEZ_V02_SOURCE_DIR:-/tmp/lez-v020-native-investigation}"
+readonly official_wallet_target="${secure_state_root}/official-wallet-target"
+readonly official_wallet_bin="${official_wallet_target}/debug/wallet"
+readonly lez_v02_source_commit="a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
+readonly lez_token_program_id="c5d50f88bfe7cb14b421673e9441aade7571e522eef035cc24d80b2e53c69a7c"
+readonly lez_ata_program_id="95841cc8bd2c87d7111bc5c7f3aa2a85d35e90f7217e82a397aa05acd51500f8"
+readonly official_token_id_declaration='pub const TOKEN_ID: [u32; 8] = [2282739141, 348907455, 1046946228, 3735699860, 585462133, 3426087150, 772528164, 2090518099];'
+readonly official_ata_id_declaration='pub const ASSOCIATED_TOKEN_ACCOUNT_ID: [u32; 8] = [3357312149, 3615960253, 3351583505, 2234166003, 4153433811, 2743238177, 2886052503, 4160755157];'
 readonly -a directions=(taker_sells_foreign taker_sells_lez)
 declare -A overlap_pids=()
 declare -A overlap_logs=()
@@ -124,6 +152,9 @@ emit_contract() {
     --arg lez_slot_duration_seconds "$lez_slot_duration_seconds" \
     --arg journey "$journey" \
     --arg schedule "$schedule" \
+    --arg asset_mode "$asset_mode" \
+    --arg token_program_id "$lez_token_program_id" \
+    --arg ata_program_id "$lez_ata_program_id" \
     --argjson terminal_revision "$terminal_revision" \
     --arg terminal_phase "$terminal_phase" \
     --arg replay_command "$replay_command" \
@@ -133,6 +164,7 @@ emit_contract() {
       schema_version: 1,
       kind: "m3_actor_local_poc_contract",
       execution_performed: false,
+      asset_mode: $asset_mode,
       journey: $journey,
       schedule: $schedule,
       evidence_packet_kind: $packet_kind,
@@ -161,7 +193,9 @@ emit_contract() {
           ($journey == "first_lock_refund"),
         directions_are_sequential: ($schedule == "sequential"),
         overlapping_revision_two_barrier: ($schedule == "overlap"),
-        settlements_released_only_after_both_locks: ($schedule == "overlap")
+        settlements_released_only_after_both_locks: ($schedule == "overlap"),
+        official_token_fixture_after_bootstrap_before_stage_two:
+          ($asset_mode == "custom_token")
       },
       survivor:
         (if $journey == "survivor_claim" then {
@@ -182,7 +216,10 @@ emit_contract() {
       effect_semantics: {
         actor_owned: $actor_owned_effect_semantics,
         expected_unique_effects_by_direction:
-          (if $journey == "first_lock_refund" then
+          (if $asset_mode == "custom_token" then
+             {taker_sells_foreign:{bitcoin:2,lez:4},
+              taker_sells_lez:{bitcoin:2,lez:4}}
+           elif $journey == "first_lock_refund" then
              {taker_sells_foreign:{bitcoin:2,lez:0},
               taker_sells_lez:{bitcoin:0,lez:3}}
            else
@@ -205,6 +242,16 @@ emit_contract() {
           maker_offline_after_activation_until_refund_finality:true,
           taker_only_revision_one_and_refund_projection:true
         } else null end),
+      asset:
+        (if $asset_mode == "custom_token" then {
+          custom_token:{fixture:"official_lez_v0_2_wallet",
+            provisioned_once_after_bootstrap:true,
+            directions_use_distinct_definitions_and_depositors:true,
+            evidence_path_passed_to_direction:true,
+            private_path_passed_to_direction:true,
+            token_program_id:$token_program_id,
+            ata_program_id:$ata_program_id}
+        } else {native:{base_agreement_terms:true}} end),
       terminal: {
         required_revision: $terminal_revision,
         required_phase: $terminal_phase,
@@ -220,6 +267,9 @@ emit_contract() {
         dynamic_literal_loopback_ports: true,
         private_e2e_roots: true,
         secure_reservation_state: "exact_run_owned_tmp_root",
+        official_wallet_build_target:
+          (if $asset_mode == "custom_token" then
+             "exact_run_owned_secure_state_root" else null end),
         foreign_resource_mutation: false
       },
       cleanup: {
@@ -232,19 +282,29 @@ emit_contract() {
       evidence: {
         secret_safe_json: true,
         cleanup_attestation: true,
-        executable_script_sha256s: ["outer_runner", "direction_driver", "lez_bootstrap"]
+        executable_script_sha256s:
+          (["outer_runner", "direction_driver", "lez_bootstrap"] +
+           (if $asset_mode == "custom_token" then ["f7_token_fixture"] else [] end))
       },
       build_prerequisites: {
         rapidsnark_lib_dir: "explicit_absolute_canonical_verified_v0_0_8",
         rapidsnark_files: ["librapidsnark.a","libgmp.a","libfq.a","libfr.a"],
         bindgen_extra_clang_args: "explicit_nonempty",
-        inherited_by_offline_sidecar_build: true
+        inherited_by_offline_sidecar_build: true,
+        official_wallet:
+          (if $asset_mode == "custom_token" then {
+            source:"same_exact_clean_pinned_lez_v0_2_checkout",
+            cargo:"locked_offline",target:"exact_run_owned_secure_state_root"
+          } else null end)
       },
       external_resources: {
         public_rpc: false,
         faucet: false,
         public_funds: false,
-        test_funds: "deterministic_local_genesis_and_regtest_outputs",
+        test_funds:
+          (if $asset_mode == "custom_token" then
+             "deterministic_local_genesis_regtest_and_official_tokens"
+           else "deterministic_local_genesis_and_regtest_outputs" end),
         bedrock_ntp: {
           endpoint: "pool.ntp.org:123/udp",
           attempted_by_pinned_component: true,
@@ -268,7 +328,7 @@ fail() {
   exit 2
 }
 
-for command_name in cargo chmod curl date docker git id jq kill mkdir mv readlink rg rm sed sha256sum sleep stat; do
+for command_name in cargo chmod curl date docker find git id jq kill mkdir mv readlink rg rm sed sha256sum sleep stat; do
   command -v "$command_name" >/dev/null || fail "missing required tool: ${command_name}"
 done
 
@@ -280,6 +340,12 @@ done
   fail "M3 actor direction driver path is not canonical"
 [[ -x "$lez_bootstrap_driver" && ! -L "$lez_bootstrap_driver" ]] ||
   fail "M3 LEZ bootstrap driver is missing or unsafe"
+if [[ "$asset_mode" == "custom_token" ]]; then
+  [[ -x "$f7_token_fixture_driver" && ! -L "$f7_token_fixture_driver" ]] ||
+    fail "M3 F7 token-fixture driver is missing or unsafe"
+  [[ "$(readlink -f "$f7_token_fixture_driver")" == "$f7_token_fixture_driver" ]] ||
+    fail "M3 F7 token-fixture driver path is not canonical"
+fi
 [[ -n "${LEZ_V02_ARTIFACT_TARGET_DIR:-}" && "$LEZ_V02_ARTIFACT_TARGET_DIR" == /* &&
    -d "$LEZ_V02_ARTIFACT_TARGET_DIR" && ! -L "$LEZ_V02_ARTIFACT_TARGET_DIR" ]] ||
   fail "set LEZ_V02_ARTIFACT_TARGET_DIR to one verified absolute artifact target"
@@ -312,6 +378,22 @@ validate_native_build_prerequisites() {
 }
 
 validate_native_build_prerequisites
+
+validate_official_wallet_source() {
+  [[ "$lez_source_dir" == /* && -d "$lez_source_dir/.git" && ! -L "$lez_source_dir" &&
+     "$(readlink -f "$lez_source_dir")" == "$lez_source_dir" ]] ||
+    fail "LEZ v0.2 source must be one canonical absolute Git checkout"
+  [[ -z "$(git -C "$lez_source_dir" status --porcelain --untracked-files=all)" ]] ||
+    fail "LEZ v0.2 source checkout is dirty"
+  [[ "$(git -C "$lez_source_dir" rev-parse HEAD)" == "$lez_v02_source_commit" ]] ||
+    fail "LEZ v0.2 source checkout is not the pinned commit"
+  [[ "$(git -C "$lez_source_dir" rev-parse 'refs/tags/v0.2.0^{}')" == \
+     "$lez_v02_source_commit" ]] || fail "LEZ v0.2 source tag does not match the pinned commit"
+}
+
+if [[ "$asset_mode" == "custom_token" ]]; then
+  validate_official_wallet_source
+fi
 
 for path in "$run_root" ".e2e/${bitcoin_run_id}" ".e2e/${lez_run_id}" \
   "$secure_state_root"; do
@@ -578,7 +660,8 @@ verify_direction_driver_contract() {
   local contract driver_sha
   driver_sha="$(sha256sum "$direction_driver" | sed 's/ .*//')"
   [[ "$driver_sha" =~ ^[0-9a-f]{64}$ ]] || fail "direction-driver SHA-256 is invalid"
-  contract="$(M3_POC_JOURNEY="$journey" "$direction_driver" contract)" ||
+  contract="$(M3_POC_ASSET_MODE="$asset_mode" M3_POC_JOURNEY="$journey" \
+    "$direction_driver" contract)" ||
     fail "direction-driver contract is unavailable"
   jq -e --arg journey "$journey" '
     .schema_version == 1
@@ -618,7 +701,8 @@ verify_direction_driver_contract() {
     and .submission_count_query == true
     and .owned_process_registry == true
   ' <<<"$contract" >/dev/null || fail "direction-driver contract is incomplete"
-  M3_POC_JOURNEY="$journey" "$direction_driver" preflight ||
+  M3_POC_ASSET_MODE="$asset_mode" M3_POC_JOURNEY="$journey" \
+    "$direction_driver" preflight ||
     fail "direction runtime backend is not ready"
 }
 
@@ -640,6 +724,8 @@ verify_lez_bootstrap_contract() {
 }
 
 prebuild() {
+  local registry
+  local -a program_registries=()
   echo "Prebuilding every M3 actor binary before service startup"
   if ! cargo +"$toolchain" build --locked --offline \
       -p btc-local-poc-provision -p btc-reference-actor -p lez-adaptor-role-runner --bins; then
@@ -659,6 +745,28 @@ prebuild() {
       --example lez-v02-local-actor-identity --example lez-v02-account-id; then
     fail "offline LEZ sidecar prebuild failed; populate its pinned Cargo cache before certification"
   fi
+  if [[ "$asset_mode" == "custom_token" ]]; then
+    if ! cargo +"$toolchain" build --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+        --locked --offline --example lez-v02-account-codec; then
+      fail "offline LEZ account-codec prebuild failed; populate the pinned Cargo cache"
+    fi
+    mkdir -m 0700 "$official_wallet_target"
+    if ! cargo +"$toolchain" build --manifest-path "${lez_source_dir}/Cargo.toml" \
+        --locked --offline -p wallet --target-dir "$official_wallet_target"; then
+      fail "offline official LEZ v0.2 wallet build failed; populate the pinned Cargo cache"
+    fi
+    mapfile -t program_registries < <(find "${official_wallet_target}/debug/build" \
+      -path '*/out/lez/programs/mod.rs' -type f -print)
+    [[ "${#program_registries[@]}" -ge 1 ]] ||
+      fail "official wallet build did not retain its generated program registry"
+    for registry in "${program_registries[@]}"; do
+      [[ ! -L "$registry" ]] || fail "official program registry became a symlink"
+      rg -Fqx "$official_token_id_declaration" "$registry" ||
+        fail "official Token program ID differs from the verified v0.2 value"
+      rg -Fqx "$official_ata_id_declaration" "$registry" ||
+        fail "official ATA program ID differs from the verified v0.2 value"
+    done
+  fi
 }
 
 readonly actor_bin="${repo_root}/target/debug/btc-reference-actor"
@@ -672,6 +780,7 @@ readonly vault_claim_bin="${sidecar_target}/lez-v02-vault-claim-poc"
 readonly native_escrow_bin="${sidecar_target}/lez-v02-native-escrow-poc"
 readonly identity_bin="${sidecar_target}/examples/lez-v02-local-actor-identity"
 readonly nssa_mapping_bin="${sidecar_target}/examples/lez-v02-account-id"
+readonly account_codec_bin="${sidecar_target}/examples/lez-v02-account-codec"
 
 assert_prebuilt() {
   local binary
@@ -680,6 +789,14 @@ assert_prebuilt() {
     "$native_escrow_bin" "$identity_bin" "$nssa_mapping_bin" "$lez_deployer"; do
     [[ -x "$binary" && ! -L "$binary" ]] || fail "prebuilt binary is missing: ${binary}"
   done
+  if [[ "$asset_mode" == "custom_token" ]]; then
+    [[ -x "$account_codec_bin" && ! -L "$account_codec_bin" ]] ||
+      fail "prebuilt LEZ account codec is missing"
+    [[ -x "$official_wallet_bin" && -f "$official_wallet_bin" &&
+       ! -L "$official_wallet_bin" ]] || fail "official LEZ v0.2 wallet binary is missing"
+    [[ "$(readlink -f "$official_wallet_target")" == "$official_wallet_target" ]] ||
+      fail "official wallet target is not canonical"
+  fi
 }
 
 provision_actor_identities() {
@@ -781,7 +898,7 @@ start_actual_nodes() {
   capture_owned_resources volume "$bitcoin_run_id" 1 "$volume_resources"
   capture_owned_resources image "$bitcoin_run_id" 1 "$image_resources"
 
-  RUN_ID="$lez_run_id" LEZ_V02_KEEP_RUNNING=1 \
+  RUN_ID="$lez_run_id" LEZ_V02_KEEP_RUNNING=1 LEZ_V02_SOURCE_DIR="$lez_source_dir" \
     LEZ_V02_SLOT_DURATION_SECONDS="$lez_slot_duration_seconds" \
     LEZ_V02_MAKER_ACCOUNT_ID="$maker_account" LEZ_V02_MAKER_VAULT_ACCOUNT_ID="$maker_vault" \
     LEZ_V02_TAKER_ACCOUNT_ID="$taker_account" LEZ_V02_TAKER_VAULT_ACCOUNT_ID="$taker_vault" \
@@ -910,6 +1027,37 @@ bootstrap_lez_runtime() {
     fail "LEZ bootstrap manifest is unavailable"
 }
 
+provision_f7_token_fixture() {
+  [[ "$asset_mode" == "custom_token" ]] || return 0
+  M3_F7_TOKEN_FIXTURE_RUN_ID="$run_id" \
+  M3_F7_TOKEN_FIXTURE_OUTPUT_ROOT="$f7_token_fixture_root" \
+  M3_F7_TOKEN_FIXTURE_WALLET_BIN="$official_wallet_bin" \
+  M3_F7_TOKEN_FIXTURE_SOURCE_DIR="$lez_source_dir" \
+  M3_F7_TOKEN_FIXTURE_LEZ_MANIFEST="$lez_manifest" \
+  M3_F7_TOKEN_FIXTURE_MAKER_IDENTITY="${identities_dir}/maker/identity.json" \
+  M3_F7_TOKEN_FIXTURE_MAKER_KEY="${identities_dir}/maker/lez-signer.key" \
+  M3_F7_TOKEN_FIXTURE_TAKER_IDENTITY="${identities_dir}/taker/identity.json" \
+  M3_F7_TOKEN_FIXTURE_TAKER_KEY="${identities_dir}/taker/lez-signer.key" \
+  "$f7_token_fixture_driver"
+  [[ -f "$f7_token_fixture_evidence" && ! -L "$f7_token_fixture_evidence" &&
+     -d "$f7_token_fixture_private" && ! -L "$f7_token_fixture_private" ]] ||
+    fail "official F7 token fixture did not retain its evidence and private state"
+  [[ "$(stat -c '%a' "$f7_token_fixture_evidence")" == 600 &&
+     "$(stat -c '%a' "$f7_token_fixture_private")" == 700 ]] ||
+    fail "official F7 token fixture paths are not owner-private"
+  jq -e --arg commit "$lez_v02_source_commit" '
+    .schema_version == 1 and .kind == "m3_f7_official_token_fixture"
+    and .result == "passed" and .upstream.source_commit == $commit
+    and (.transactions | length) == 8
+    and .assets.M3F7A.depositor == "maker"
+    and .assets.M3F7B.depositor == "taker"
+    and .external_resources.public_rpc == false
+    and .external_resources.faucet == false
+    and .external_resources.public_funds == false
+  ' "$f7_token_fixture_evidence" >/dev/null ||
+    fail "official F7 token fixture evidence is inconsistent"
+}
+
 manifest_value() {
   local manifest="$1"
   local key="$2"
@@ -918,6 +1066,22 @@ manifest_value() {
   [[ "${#values[@]}" == 1 && -n "${values[0]}" ]] ||
     fail "manifest ${manifest} does not contain exactly one ${key}"
   printf '%s\n' "${values[0]}"
+}
+
+direction_command() {
+  if [[ "$asset_mode" == "custom_token" ]]; then
+    M3_POC_ASSET_MODE="$asset_mode" \
+    M3_POC_LEZ_ACCOUNT_CODEC_BIN="$account_codec_bin" \
+    M3_POC_F7_FIXTURE_ROOT="$f7_token_fixture_root" \
+    M3_POC_F7_FIXTURE_EVIDENCE="$f7_token_fixture_evidence" \
+    M3_POC_F7_FIXTURE_PRIVATE_DIR="$f7_token_fixture_private" \
+    M3_POC_F7_WALLET_BIN="$official_wallet_bin" \
+    M3_POC_F7_TOKEN_PROGRAM_ID="$lez_token_program_id" \
+    M3_POC_F7_ATA_PROGRAM_ID="$lez_ata_program_id" \
+    "$@"
+  else
+    M3_POC_ASSET_MODE="$asset_mode" "$@"
+  fi
 }
 
 with_direction_environment() {
@@ -962,7 +1126,7 @@ with_direction_environment() {
   M3_POC_MAKER_LEZ_PRIVATE_KEY="${identities_dir}/maker/lez-signer.key" \
   M3_POC_TAKER_LEZ_IDENTITY="${identities_dir}/taker/identity.json" \
   M3_POC_TAKER_LEZ_PRIVATE_KEY="${identities_dir}/taker/lez-signer.key" \
-  "$@"
+  direction_command "$@"
 }
 
 run_stage_two() {
@@ -1235,12 +1399,14 @@ validate_actual_effect_manifests() {
     manifest="${evidence_dir}/${direction}-actual-effects.json"
     [[ -f "$manifest" && ! -L "$manifest" ]] ||
       fail "${direction} actual-effect manifest is unavailable"
-    jq -e --arg direction "$direction" --arg journey "$journey" '
+    jq -e --arg direction "$direction" --arg journey "$journey" \
+      --arg asset_mode "$asset_mode" '
       .schema_version == 1
       and .direction == $direction
       and .journey == $journey
       and .expected_unique_effects ==
-        (if $journey == "first_lock_refund" and $direction == "taker_sells_foreign"
+        (if $asset_mode == "custom_token" then {bitcoin:2,lez:4}
+         elif $journey == "first_lock_refund" and $direction == "taker_sells_foreign"
          then {bitcoin:2,lez:0}
          elif $journey == "first_lock_refund"
          then {bitcoin:0,lez:3}
@@ -1256,7 +1422,8 @@ validate_actual_effect_manifests() {
       and all(.lez_effect_ids[]; type == "string" and test("^[0-9a-f]{64}$"))
       and if ($journey == "claim" or $journey == "survivor_claim") then
         .actor_owned_claims == {
-          bitcoin:.bitcoin_effect_ids[1], lez:.lez_effect_ids[2]
+          bitcoin:.bitcoin_effect_ids[1],
+          lez:.lez_effect_ids[(if $asset_mode == "custom_token" then 3 else 2 end)]
         }
         and (has("actor_owned_refunds") | not)
         and (if $journey == "survivor_claim" then
@@ -1497,11 +1664,31 @@ write_run_evidence() {
   local bedrock_log bedrock_ntp_timeout_count
   local foreign_survivor_summary="null" lez_survivor_summary="null"
   local overlap_summary="null"
+  local f7_token_fixture_summary="null" f7_token_fixture_sha=""
+  local f7_token_fixture_driver_sha=""
   repository_commit="$(git rev-parse HEAD)"
   completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   outer_runner_sha="$(sha256sum scripts/run-m3-actor-local-poc.sh | sed 's/ .*//')"
   direction_driver_sha="$(sha256sum "$direction_driver" | sed 's/ .*//')"
   lez_bootstrap_sha="$(sha256sum "$lez_bootstrap_driver" | sed 's/ .*//')"
+  if [[ "$asset_mode" == "custom_token" ]]; then
+    f7_token_fixture_sha="$(sha256sum "$f7_token_fixture_evidence" | sed 's/ .*//')"
+    f7_token_fixture_driver_sha="$(sha256sum "$f7_token_fixture_driver" | sed 's/ .*//')"
+    f7_token_fixture_summary="$(jq -c \
+      --arg evidence_path "${relative_run_root}/private/f7-token-fixture/evidence/f7-token-fixture.json" \
+      --arg private_path "${relative_run_root}/private/f7-token-fixture/private" \
+      --arg evidence_sha "$f7_token_fixture_sha" \
+      --arg token_program_id "$lez_token_program_id" \
+      --arg ata_program_id "$lez_ata_program_id" '
+      {kind:.kind,result:.result,upstream:.upstream,assets:.assets,
+       transaction_count:(.transactions | length),evidence_path:$evidence_path,
+       private_path:$private_path,evidence_sha256:$evidence_sha,
+       token_program_id:$token_program_id,ata_program_id:$ata_program_id,
+       provisioned_once_after_bootstrap:true,
+       passed_to_each_direction:{fixture_root:true,evidence:true,private_dir:true,
+         wallet_binary:true,account_codec:true,program_ids:true}}
+    ' "$f7_token_fixture_evidence")"
+  fi
   bedrock_log="${repo_root}/.e2e/${lez_run_id}/lez-v02/bedrock/logs/logos-blockchain.log"
   [[ -f "$bedrock_log" && ! -L "$bedrock_log" ]] ||
     fail "run-owned Bedrock log is unavailable for external-resource evidence"
@@ -1520,6 +1707,7 @@ write_run_evidence() {
     --arg run_id "$run_id" \
     --arg journey "$journey" \
     --arg schedule "$schedule" \
+    --arg asset_mode "$asset_mode" \
     --arg packet_kind "$packet_kind" \
     --argjson terminal_revision "$terminal_revision" \
     --arg terminal_phase "$terminal_phase" \
@@ -1533,6 +1721,8 @@ write_run_evidence() {
     --arg direction_driver_sha "$direction_driver_sha" \
     --arg lez_bootstrap "scripts/run-m3-lez-bootstrap.sh" \
     --arg lez_bootstrap_sha "$lez_bootstrap_sha" \
+    --arg f7_token_fixture "scripts/run-m3-f7-token-fixture.sh" \
+    --arg f7_token_fixture_driver_sha "$f7_token_fixture_driver_sha" \
     --arg rapidsnark_dir "$RAPIDSNARK_LIB_DIR" \
     --arg rapidsnark_sha "$rapidsnark_sha" --arg gmp_sha "$gmp_sha" \
     --arg fq_sha "$fq_sha" --arg fr_sha "$fr_sha" \
@@ -1544,6 +1734,7 @@ write_run_evidence() {
     --argjson foreign_survivor "$foreign_survivor_summary" \
     --argjson lez_survivor "$lez_survivor_summary" \
     --argjson overlap "$overlap_summary" \
+    --argjson f7_token_fixture_summary "$f7_token_fixture_summary" \
     --arg foreign_stage2_sha "$(sha256sum "${evidence_dir}/taker_sells_foreign-stage-two.json" | sed 's/ .*//')" \
     --arg lez_stage2_sha "$(sha256sum "${evidence_dir}/taker_sells_lez-stage-two.json" | sed 's/ .*//')" '
     {
@@ -1551,17 +1742,21 @@ write_run_evidence() {
       kind: $packet_kind,
       journey: $journey,
       schedule: $schedule,
+      asset_mode: $asset_mode,
       result: "passed",
       run_id: $run_id,
       repository_commit: $repository_commit,
       completed_at: $completed_at,
-      certified_executable_scripts: {
+      certified_executable_scripts: ({
         outer_runner: {repository_path:$outer_runner,sha256:$outer_runner_sha},
         direction_driver: {repository_path:$direction_driver,sha256:$direction_driver_sha},
         lez_bootstrap: {repository_path:$lez_bootstrap,sha256:$lez_bootstrap_sha},
         external_override_allowed: false
-      },
-      native_build_prerequisites: {
+      } + (if $asset_mode == "custom_token" then {
+        f7_token_fixture:{repository_path:$f7_token_fixture,
+          sha256:$f7_token_fixture_driver_sha}
+      } else {} end)),
+      native_build_prerequisites: ({
         rapidsnark_lib_dir: $rapidsnark_dir,
         files: {
           "librapidsnark.a": $rapidsnark_sha,
@@ -1571,7 +1766,14 @@ write_run_evidence() {
         },
         bindgen_extra_clang_args: $bindgen_extra_clang_args,
         verified_before_offline_build: true
-      },
+      } + (if $asset_mode == "custom_token" then {
+        official_wallet:{source_commit:"a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+          source_same_as_local_stack:true,source_clean_and_tag_verified:true,
+          cargo_locked_offline:true,target_in_exact_cleaned_secure_root:true}
+      } else {} end)),
+      asset:
+        (if $asset_mode == "custom_token" then {custom_token:$f7_token_fixture_summary}
+         else {native:{base_agreement_terms:true}} end),
       services: {
         bitcoin_core: {run_id: $bitcoin_run, version: "31.1", network: "regtest"},
         lez: {run_id: $lez_run, version: "v0.2.0", network: "private_local",
@@ -1581,7 +1783,8 @@ write_run_evidence() {
         {direction: "taker_sells_foreign", terminal_revision: $terminal_revision,
          terminal_phase: $terminal_phase,
          expected_unique_effects:
-           (if $journey == "first_lock_refund" then {bitcoin:2,lez:0}
+           (if $asset_mode == "custom_token" then {bitcoin:2,lez:4}
+            elif $journey == "first_lock_refund" then {bitcoin:2,lez:0}
             else {bitcoin:2,lez:3} end),
          maker_second_lock_effect_count:
            (if $journey == "first_lock_refund" then 0 else 1 end),
@@ -1589,7 +1792,8 @@ write_run_evidence() {
         {direction: "taker_sells_lez", terminal_revision: $terminal_revision,
          terminal_phase: $terminal_phase,
          expected_unique_effects:
-           (if $journey == "first_lock_refund" then {bitcoin:0,lez:3}
+           (if $asset_mode == "custom_token" then {bitcoin:2,lez:4}
+            elif $journey == "first_lock_refund" then {bitcoin:0,lez:3}
             else {bitcoin:2,lez:3} end),
          maker_second_lock_effect_count:
            (if $journey == "first_lock_refund" then 0 else 1 end),
@@ -1699,7 +1903,10 @@ write_run_evidence() {
             ($foreign_survivor.secret_recorded or $lez_survivor.secret_recorded)
         } else null end),
       expected_unique_effects_by_direction:
-        (if $journey == "first_lock_refund" then
+        (if $asset_mode == "custom_token" then
+           {taker_sells_foreign:{bitcoin:2,lez:4},
+            taker_sells_lez:{bitcoin:2,lez:4}}
+         elif $journey == "first_lock_refund" then
            {taker_sells_foreign:{bitcoin:2,lez:0},
             taker_sells_lez:{bitcoin:0,lez:3}}
          else
@@ -1717,6 +1924,10 @@ write_run_evidence() {
         public_rpc:false,
         faucet:false,
         public_funds:false,
+        test_funds:
+          (if $asset_mode == "custom_token" then
+             "deterministic_local_genesis_regtest_and_official_tokens"
+           else "deterministic_local_genesis_and_regtest_outputs" end),
         bedrock_ntp:{
           endpoint:"pool.ntp.org:123/udp",
           attempted_by_pinned_component:true,
@@ -1733,6 +1944,7 @@ write_run_evidence() {
   chmod 0600 "${run_evidence}.partial"
   mv "${run_evidence}.partial" "$run_evidence"
   jq -e --arg journey "$journey" --arg schedule "$schedule" \
+    --arg asset_mode "$asset_mode" \
     --arg packet_kind "$packet_kind" \
     --argjson terminal_revision "$terminal_revision" \
     --arg terminal_phase "$terminal_phase" --arg replay_command "$replay_command" \
@@ -1741,6 +1953,7 @@ write_run_evidence() {
     and .kind == $packet_kind
     and .journey == $journey
     and .schedule == $schedule
+    and .asset_mode == $asset_mode
     and .result == "passed"
     and (.directions | length == 2)
     and all(.directions[];
@@ -1762,7 +1975,10 @@ write_run_evidence() {
       and .concurrency.arbitrary_n_or_same_direction_scheduler_proven == false
     else .concurrency == null end)
     and .expected_unique_effects_by_direction ==
-      (if $journey == "first_lock_refund" then
+      (if $asset_mode == "custom_token" then
+         {taker_sells_foreign:{bitcoin:2,lez:4},
+          taker_sells_lez:{bitcoin:2,lez:4}}
+       elif $journey == "first_lock_refund" then
          {taker_sells_foreign:{bitcoin:2,lez:0},
           taker_sells_lez:{bitcoin:0,lez:3}}
        else
@@ -1811,11 +2027,33 @@ write_run_evidence() {
       and .survivor.caller_supplied_secret == false
       and .survivor.secret_recorded == false
     else .survivor == null end)
+    and (if $asset_mode == "custom_token" then
+      .asset.custom_token.kind == "m3_f7_official_token_fixture"
+      and .asset.custom_token.result == "passed"
+      and .asset.custom_token.transaction_count == 8
+      and (.asset.custom_token.evidence_sha256 | test("^[0-9a-f]{64}$"))
+      and .asset.custom_token.provisioned_once_after_bootstrap == true
+      and .asset.custom_token.passed_to_each_direction == {
+        fixture_root:true,evidence:true,private_dir:true,wallet_binary:true,
+        account_codec:true,program_ids:true}
+      and .asset.custom_token.token_program_id ==
+        "c5d50f88bfe7cb14b421673e9441aade7571e522eef035cc24d80b2e53c69a7c"
+      and .asset.custom_token.ata_program_id ==
+        "95841cc8bd2c87d7111bc5c7f3aa2a85d35e90f7217e82a397aa05acd51500f8"
+      and .native_build_prerequisites.official_wallet.source_same_as_local_stack == true
+      and .native_build_prerequisites.official_wallet.cargo_locked_offline == true
+      and .native_build_prerequisites.official_wallet.target_in_exact_cleaned_secure_root == true
+    else .asset == {native:{base_agreement_terms:true}}
+      and (.native_build_prerequisites | has("official_wallet") | not) end)
     and .replay_command == $replay_command
     and .replay_resubmission_count == 0
     and .external_resources.public_rpc == false
     and .external_resources.faucet == false
     and .external_resources.public_funds == false
+    and .external_resources.test_funds ==
+      (if $asset_mode == "custom_token" then
+         "deterministic_local_genesis_regtest_and_official_tokens"
+       else "deterministic_local_genesis_and_regtest_outputs" end)
     and .external_resources.bedrock_ntp.endpoint == "pool.ntp.org:123/udp"
     and .external_resources.bedrock_ntp.attempted_by_pinned_component == true
     and .external_resources.bedrock_ntp.required_for_certification == false
@@ -1841,6 +2079,7 @@ done
 start_actual_nodes
 provision_bitcoin_funding_sources
 bootstrap_lez_runtime
+provision_f7_token_fixture
 
 # Directions share only the actual local nodes. The sequential schedule retains
 # the historical one-direction-at-a-time proof. The overlap schedule keeps both

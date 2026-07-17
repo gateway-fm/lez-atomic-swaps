@@ -1265,12 +1265,45 @@ fi
 [[ ! -e ".e2e/${invalid_schedule_run_id}" && ! -L ".e2e/${invalid_schedule_run_id}" ]] ||
   fail "invalid schedule created run state"
 
+invalid_asset_run_id="m3badasset-$RANDOM-$$"
+if invalid_asset_output="$(RUN_ID="$invalid_asset_run_id" \
+  M3_ACTOR_POC_ASSET_MODE=invalid-asset M3_ACTOR_POC_MODE=contract "$runner" 2>&1)"; then
+  fail "an invalid asset mode reached contract output"
+fi
+[[ "$invalid_asset_output" == *"M3_ACTOR_POC_ASSET_MODE must be native or custom_token"* ]] ||
+  fail "invalid asset mode did not fail with the bounded validation error"
+[[ ! -e ".e2e/${invalid_asset_run_id}" && ! -L ".e2e/${invalid_asset_run_id}" ]] ||
+  fail "invalid asset mode created run state"
+
+for invalid_combination in refund overlap; do
+  invalid_asset_combo_run_id="m3badassetcombo-$RANDOM-$$"
+  if [[ "$invalid_combination" == refund ]]; then
+    invalid_asset_combo_output="$(RUN_ID="$invalid_asset_combo_run_id" \
+      M3_ACTOR_POC_ASSET_MODE=custom_token M3_ACTOR_POC_JOURNEY=refund \
+      M3_ACTOR_POC_MODE=contract "$runner" 2>&1)" &&
+      fail "custom-token mode accepted the refund journey"
+    [[ "$invalid_asset_combo_output" == *"custom_token currently requires the claim journey"* ]] ||
+      fail "custom-token non-claim rejection was not explicit"
+  else
+    invalid_asset_combo_output="$(RUN_ID="$invalid_asset_combo_run_id" \
+      M3_ACTOR_POC_ASSET_MODE=custom_token M3_ACTOR_POC_SCHEDULE=overlap \
+      M3_ACTOR_POC_MODE=contract "$runner" 2>&1)" &&
+      fail "custom-token mode accepted the overlap schedule"
+    [[ "$invalid_asset_combo_output" == *"custom_token currently requires the sequential schedule"* ]] ||
+      fail "custom-token overlap rejection was not explicit"
+  fi
+  [[ ! -e ".e2e/${invalid_asset_combo_run_id}" && \
+     ! -L ".e2e/${invalid_asset_combo_run_id}" ]] ||
+    fail "invalid custom-token combination created run state"
+done
+
 contract_run_id="m3contract-$RANDOM-$$"
 contract_json="$(RUN_ID="$contract_run_id" M3_ACTOR_POC_MODE=contract "$runner")"
 jq -e --arg run_id "$contract_run_id" '
   .schema_version == 1
   and .kind == "m3_actor_local_poc_contract"
   and .execution_performed == false
+  and .asset_mode == "native"
   and .schedule == "sequential"
   and .run_id == $run_id
   and .run_root == (".e2e/" + $run_id + "/m3-actor-poc")
@@ -1323,6 +1356,87 @@ jq -e --arg run_id "$contract_run_id" '
   }
 ' <<<"$contract_json" >/dev/null || fail "contract JSON does not prove the M3 invariants"
 
+custom_token_contract_run_id="m3tokencontract-$RANDOM-$$"
+custom_token_contract_json="$(RUN_ID="$custom_token_contract_run_id" \
+  M3_ACTOR_POC_ASSET_MODE=custom_token M3_ACTOR_POC_MODE=contract "$runner")"
+jq -e --arg run_id "$custom_token_contract_run_id" '
+  .schema_version == 1
+  and .kind == "m3_actor_local_poc_contract"
+  and .execution_performed == false
+  and .run_id == $run_id
+  and .asset_mode == "custom_token"
+  and .journey == "claim"
+  and .schedule == "sequential"
+  and .evidence_packet_kind == "m3_actor_two_direction_custom_token_local_poc"
+  and .ordering.official_token_fixture_after_bootstrap_before_stage_two == true
+  and .ordering.directions_are_sequential == true
+  and .effect_semantics.expected_unique_effects_by_direction == {
+    taker_sells_foreign:{bitcoin:2,lez:4},
+    taker_sells_lez:{bitcoin:2,lez:4}}
+  and .asset.custom_token == {
+    fixture:"official_lez_v0_2_wallet",
+    provisioned_once_after_bootstrap:true,
+    directions_use_distinct_definitions_and_depositors:true,
+    evidence_path_passed_to_direction:true,
+    private_path_passed_to_direction:true,
+    token_program_id:"c5d50f88bfe7cb14b421673e9441aade7571e522eef035cc24d80b2e53c69a7c",
+    ata_program_id:"95841cc8bd2c87d7111bc5c7f3aa2a85d35e90f7217e82a397aa05acd51500f8"
+  }
+  and .isolation.official_wallet_build_target == "exact_run_owned_secure_state_root"
+  and .cleanup.secure_reservation_state_root_removed == true
+  and .evidence.executable_script_sha256s ==
+    ["outer_runner","direction_driver","lez_bootstrap","f7_token_fixture"]
+  and .build_prerequisites.official_wallet == {
+    source:"same_exact_clean_pinned_lez_v0_2_checkout",
+    cargo:"locked_offline",
+    target:"exact_run_owned_secure_state_root"
+  }
+  and .external_resources.public_rpc == false
+  and .external_resources.faucet == false
+  and .external_resources.public_funds == false
+  and .external_resources.test_funds == "deterministic_local_genesis_regtest_and_official_tokens"
+' <<<"$custom_token_contract_json" >/dev/null ||
+  fail "custom-token contract omits its official fixture, isolation, or direction inputs"
+
+wallet_prebuild_source="$(sed -n '/^prebuild() {$/,/^}$/p' "$runner")"
+fixture_source="$(sed -n '/^provision_f7_token_fixture() {$/,/^}$/p' "$runner")"
+direction_environment_source="$(sed -n '/^direction_command() {$/,/^}$/p' "$runner")"
+[[ -n "$wallet_prebuild_source" && -n "$fixture_source" &&
+   -n "$direction_environment_source" ]] ||
+  fail "custom-token runner helpers are incomplete"
+for term in \
+  '--locked --offline --example lez-v02-account-codec' \
+  '--manifest-path "${lez_source_dir}/Cargo.toml"' \
+  '--locked --offline -p wallet --target-dir "$official_wallet_target"' \
+  'official_token_id_declaration' 'official_ata_id_declaration'; do
+  rg -Fq -- "$term" <<<"$wallet_prebuild_source" ||
+    fail "custom-token prebuild is missing: ${term}"
+done
+for term in \
+  'M3_F7_TOKEN_FIXTURE_OUTPUT_ROOT="$f7_token_fixture_root"' \
+  'M3_F7_TOKEN_FIXTURE_WALLET_BIN="$official_wallet_bin"' \
+  'M3_F7_TOKEN_FIXTURE_SOURCE_DIR="$lez_source_dir"' \
+  'M3_F7_TOKEN_FIXTURE_MAKER_IDENTITY="${identities_dir}/maker/identity.json"' \
+  'M3_F7_TOKEN_FIXTURE_TAKER_IDENTITY="${identities_dir}/taker/identity.json"'; do
+  rg -Fq -- "$term" <<<"$fixture_source" ||
+    fail "one-time official token fixture is missing input: ${term}"
+done
+for variable in M3_POC_LEZ_ACCOUNT_CODEC_BIN M3_POC_F7_FIXTURE_ROOT \
+  M3_POC_F7_FIXTURE_EVIDENCE M3_POC_F7_FIXTURE_PRIVATE_DIR M3_POC_F7_WALLET_BIN \
+  M3_POC_F7_TOKEN_PROGRAM_ID M3_POC_F7_ATA_PROGRAM_ID; do
+  rg -Fq -- "${variable}=" <<<"$direction_environment_source" ||
+    fail "direction custom-token environment omits ${variable}"
+done
+[[ "$(rg -Fc 'provision_f7_token_fixture' "$runner")" == 2 ]] ||
+  fail "official token fixture is not defined and invoked exactly once"
+bootstrap_call_line="$(rg -n '^bootstrap_lez_runtime$' "$runner" | cut -d: -f1)"
+fixture_call_line="$(rg -n '^provision_f7_token_fixture$' "$runner" | cut -d: -f1)"
+flow_call_line="$(rg -n -F 'if [[ "$schedule" == "overlap" ]]; then' "$runner" |
+  tail -1 | cut -d: -f1)"
+[[ "$bootstrap_call_line" =~ ^[0-9]+$ && "$fixture_call_line" =~ ^[0-9]+$ &&
+   "$flow_call_line" =~ ^[0-9]+$ && "$bootstrap_call_line" -lt "$fixture_call_line" &&
+   "$fixture_call_line" -lt "$flow_call_line" ]] ||
+  fail "official token fixture is not ordered once after bootstrap and before stage two"
 overlap_contract_run_id="m3overlapcontract-$RANDOM-$$"
 overlap_contract_json="$(RUN_ID="$overlap_contract_run_id" \
   M3_ACTOR_POC_SCHEDULE=overlap M3_ACTOR_POC_MODE=contract "$runner")"
@@ -1451,6 +1565,14 @@ rg -Fq 'slot_duration_seconds:$lez_slot_duration_seconds' "$runner" ||
   fail "M3 evidence does not record the selected LEZ slot cadence"
 run_evidence_source="$(sed -n '/^write_run_evidence() {$/,/^}$/p' "$runner")"
 [[ -n "$run_evidence_source" ]] || fail "outer runner is missing final run evidence"
+for term in 'asset_mode: $asset_mode' 'f7_token_fixture_summary' \
+  'target_in_exact_cleaned_secure_root:true' \
+  'deterministic_local_genesis_regtest_and_official_tokens' \
+  'taker_sells_foreign:{bitcoin:2,lez:4}' \
+  'taker_sells_lez:{bitcoin:2,lez:4}'; do
+  rg -Fq -- "$term" <<<"$run_evidence_source" ||
+    fail "final run evidence omits custom-token invariant: ${term}"
+done
 rg -Fq 'revealer:$foreign_survivor.revealer' <<<"$run_evidence_source" ||
   fail "final survivor packet does not derive the revealer from validated evidence"
 rg -Fq 'follower_role:$foreign_survivor.follower_role' <<<"$run_evidence_source" ||
@@ -1700,11 +1822,13 @@ cleanup_manifest_validation_root() {
 trap cleanup_manifest_validation_root EXIT
 
 write_effect_manifest_fixture() {
-  local direction="$1" shape="$2" output btc_lock btc_terminal lez_initialization lez_funding lez_terminal
+  local direction="$1" shape="$2" output btc_lock btc_terminal
+  local lez_initialization lez_custody lez_funding lez_terminal
   output="${manifest_validation_root}/${direction}-actual-effects.json"
   btc_lock="$(printf '%s' "${direction}-${shape}-bitcoin-lock" | sha256sum | cut -d' ' -f1)"
   btc_terminal="$(printf '%s' "${direction}-${shape}-bitcoin-terminal" | sha256sum | cut -d' ' -f1)"
   lez_initialization="$(printf '%s' "${direction}-${shape}-lez-initialization" | sha256sum | cut -d' ' -f1)"
+  lez_custody="$(printf '%s' "${direction}-${shape}-lez-custody" | sha256sum | cut -d' ' -f1)"
   lez_funding="$(printf '%s' "${direction}-${shape}-lez-funding" | sha256sum | cut -d' ' -f1)"
   lez_terminal="$(printf '%s' "${direction}-${shape}-lez-terminal" | sha256sum | cut -d' ' -f1)"
   case "$shape" in
@@ -1716,6 +1840,18 @@ write_effect_manifest_fixture() {
          bitcoin_effect_ids:[$bitcoin_lock,$bitcoin_claim],
          lez_effect_ids:[$lez_initialization,$lez_funding,$lez_claim],
          expected_unique_effects:{bitcoin:2,lez:3},
+         actor_owned_claims:{bitcoin:$bitcoin_claim,lez:$lez_claim}}
+      ' >"$output"
+      ;;
+    custom_token_claim)
+      jq -n --arg direction "$direction" --arg bitcoin_lock "$btc_lock" \
+        --arg bitcoin_claim "$btc_terminal" --arg lez_initialization "$lez_initialization" \
+        --arg lez_custody "$lez_custody" --arg lez_funding "$lez_funding" \
+        --arg lez_claim "$lez_terminal" '
+        {schema_version:1,journey:"claim",direction:$direction,
+         bitcoin_effect_ids:[$bitcoin_lock,$bitcoin_claim],
+         lez_effect_ids:[$lez_initialization,$lez_custody,$lez_funding,$lez_claim],
+         expected_unique_effects:{bitcoin:2,lez:4},
          actor_owned_claims:{bitcoin:$bitcoin_claim,lez:$lez_claim}}
       ' >"$output"
       ;;
@@ -1783,16 +1919,18 @@ write_effect_manifest_pair() {
 }
 
 validate_effect_manifest_pair() {
-  local selected_journey="$1"
+  local selected_journey="$1" selected_asset_mode="${2:-native}"
   bash -c '
     set -euo pipefail
     journey="$1"
-    evidence_dir="$2"
+    asset_mode="$2"
+    evidence_dir="$3"
     directions=(taker_sells_foreign taker_sells_lez)
     fail() { echo "isolated actual-effect validator failed: $*" >&2; exit 2; }
-    eval "$3"
+    eval "$4"
     validate_actual_effect_manifests
-  ' manifest-validator "$selected_journey" "$manifest_validation_root" "$manifest_validator_source"
+  ' manifest-validator "$selected_journey" "$selected_asset_mode" \
+    "$manifest_validation_root" "$manifest_validator_source"
 }
 
 write_effect_manifest_pair claim
@@ -1800,6 +1938,13 @@ validate_effect_manifest_pair claim >/dev/null ||
   fail "outer runner rejected two claim-shaped manifests for the claim journey"
 if validate_effect_manifest_pair refund >/dev/null 2>&1; then
   fail "outer runner accepted claim-shaped manifests for the refund journey"
+fi
+
+write_effect_manifest_pair custom_token_claim
+validate_effect_manifest_pair claim custom_token >/dev/null ||
+  fail "outer runner rejected two custom-token claim manifests"
+if validate_effect_manifest_pair claim native >/dev/null 2>&1; then
+  fail "outer runner accepted custom-token effect counts as native claim evidence"
 fi
 
 write_effect_manifest_pair survivor_claim
