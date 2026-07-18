@@ -12,6 +12,16 @@ readonly pda_probe_secret_digest="2222222222222222222222222222222222222222222222
 # reconstruction budget without turning one bridge request into a retry.
 readonly actor_lez_bridge_request_timeout_millis=120000
 readonly asset_mode="${M3_POC_ASSET_MODE:-native}"
+direction_timing_execution_mode=""
+direction_timing_dir=""
+direction_timing_journal=""
+direction_timing_evidence=""
+direction_timing_now_ms=0
+direction_timing_origin_ms=0
+direction_timing_started_at_utc=""
+direction_timing_active_phase=""
+direction_timing_active_start_ms=0
+direction_timing_sequence=0
 
 fail() {
   echo "M3 actor direction failed: $*" >&2
@@ -329,6 +339,308 @@ require_environment() {
     [[ "$endpoint" =~ ^http://127\.0\.0\.1:[1-9][0-9]{0,4}/?$ ]] ||
       fail "node endpoints must be explicit literal-loopback HTTP"
   done
+}
+
+parse_direction_proc_uptime_ms() {
+  local raw="$1" output_name="$2"
+  local seconds fraction fraction_ms seconds_number milliseconds
+  [[ "$output_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+  [[ "$raw" =~ ^(0|[1-9][0-9]*)\.([0-9]+)$ ]] || return 1
+  seconds="${BASH_REMATCH[1]}"
+  fraction="${BASH_REMATCH[2]}"
+  if (( ${#seconds} > 13 )); then
+    return 1
+  fi
+  if (( ${#seconds} == 13 && 10#$seconds > 9007199254740 )); then
+    return 1
+  fi
+  fraction_ms="${fraction}000"
+  fraction_ms="${fraction_ms:0:3}"
+  seconds_number=$((10#$seconds))
+  milliseconds=$((10#$fraction_ms))
+  if (( seconds_number == 9007199254740 && milliseconds > 991 )); then
+    return 1
+  fi
+  printf -v "$output_name" '%d' "$((seconds_number * 1000 + milliseconds))"
+}
+
+read_direction_monotonic_ms() {
+  local uptime_value _ignored
+  IFS=' ' read -r uptime_value _ignored </proc/uptime || return 1
+  parse_direction_proc_uptime_ms "$uptime_value" direction_timing_now_ms
+}
+
+expected_direction_phase_timings_json() {
+  [[ "$M3_POC_DIRECTION" == "taker_sells_foreign" ||
+     "$M3_POC_DIRECTION" == "taker_sells_lez" ]] || return 1
+  [[ "$asset_mode" == "native" || "$asset_mode" == "custom_token" ]] || return 1
+  [[ "$direction_timing_execution_mode" == "sequential" ||
+     "$direction_timing_execution_mode" == "overlap" ]] || return 1
+  if [[ "$direction_timing_execution_mode" == "overlap" ]]; then
+    [[ "$M3_POC_JOURNEY" == "claim" ]] || return 1
+    jq -cn '[
+      {phase_id:"final_transcript"},
+      {phase_id:"presign_and_activate"},
+      {phase_id:"overlap_ready_barrier"},
+      {phase_id:"first_lock_to_revision_one"},
+      {phase_id:"second_lock_to_revision_two"},
+      {phase_id:"dual_lock_gate"},
+      {phase_id:"overlap_locked_barrier"},
+      {phase_id:"revealing_claim_to_revision_three"},
+      {phase_id:"followup_claim_to_revision_four"},
+      {phase_id:"terminal_evidence"},
+      {phase_id:"overlap_terminal_marker"}
+    ]'
+    return
+  fi
+  case "$M3_POC_JOURNEY" in
+    claim)
+      jq -cn '[
+        {phase_id:"final_transcript"},
+        {phase_id:"presign_and_activate"},
+        {phase_id:"first_lock_to_revision_one"},
+        {phase_id:"second_lock_to_revision_two"},
+        {phase_id:"dual_lock_gate"},
+        {phase_id:"revealing_claim_to_revision_three"},
+        {phase_id:"followup_claim_to_revision_four"},
+        {phase_id:"terminal_evidence"}
+      ]'
+      ;;
+    survivor_claim)
+      jq -cn '[
+        {phase_id:"final_transcript"},
+        {phase_id:"presign_and_activate"},
+        {phase_id:"first_lock_to_revision_one"},
+        {phase_id:"second_lock_to_revision_two"},
+        {phase_id:"dual_lock_gate"},
+        {phase_id:"survivor_settlement_to_revision_four"},
+        {phase_id:"terminal_evidence"}
+      ]'
+      ;;
+    refund)
+      jq -cn '[
+        {phase_id:"final_transcript"},
+        {phase_id:"presign_and_activate"},
+        {phase_id:"first_lock_to_revision_one"},
+        {phase_id:"second_lock_to_revision_two"},
+        {phase_id:"dual_lock_gate"},
+        {phase_id:"refund_settlement_to_revision_four"},
+        {phase_id:"terminal_evidence"}
+      ]'
+      ;;
+    first_lock_refund)
+      jq -cn '[
+        {phase_id:"final_transcript"},
+        {phase_id:"presign_and_activate"},
+        {phase_id:"first_lock_refund_to_revision_two"},
+        {phase_id:"terminal_evidence"}
+      ]'
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+initialize_direction_phase_timings() {
+  local expected
+  direction_timing_dir="${M3_POC_DIRECTION_ROOT}/timings"
+  direction_timing_journal="${direction_timing_dir}/actor.ndjson.partial"
+  direction_timing_evidence="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-actor-phase-timings.json"
+  expected="$(expected_direction_phase_timings_json)" || return 1
+  jq -e 'length > 0' <<<"$expected" >/dev/null || return 1
+  [[ -d "$M3_POC_DIRECTION_ROOT" && ! -L "$M3_POC_DIRECTION_ROOT" &&
+     -d "$M3_POC_EVIDENCE_DIR" && ! -L "$M3_POC_EVIDENCE_DIR" ]] || return 1
+  [[ ! -e "$direction_timing_dir" && ! -L "$direction_timing_dir" &&
+     ! -e "$direction_timing_evidence" && ! -L "$direction_timing_evidence" &&
+     ! -e "${direction_timing_evidence}.partial" &&
+     ! -L "${direction_timing_evidence}.partial" ]] || return 1
+  mkdir -m 0700 "$direction_timing_dir" || return 1
+  [[ -d "$direction_timing_dir" && ! -L "$direction_timing_dir" &&
+     "$(stat -c '%u:%a' "$direction_timing_dir")" == "$(id -u):700" ]] || return 1
+  : >"$direction_timing_journal" || return 1
+  chmod 0600 "$direction_timing_journal" || return 1
+  [[ -f "$direction_timing_journal" && ! -L "$direction_timing_journal" &&
+     "$(stat -c '%u:%a' "$direction_timing_journal")" == "$(id -u):600" ]] || return 1
+  read_direction_monotonic_ms || return 1
+  direction_timing_origin_ms="$direction_timing_now_ms"
+  direction_timing_started_at_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
+  direction_timing_active_phase=""
+  direction_timing_active_start_ms=0
+  direction_timing_sequence=0
+}
+
+direction_phase_begin() {
+  local phase_id="$1" expected expected_phase
+  [[ -z "$direction_timing_active_phase" ]] || return 1
+  [[ -f "$direction_timing_journal" && ! -L "$direction_timing_journal" &&
+     "$(stat -c '%u:%a' "$direction_timing_journal")" == "$(id -u):600" ]] || return 1
+  expected="$(expected_direction_phase_timings_json)" || return 1
+  expected_phase="$(jq -er --argjson index "$direction_timing_sequence" \
+    '.[$index].phase_id // empty' <<<"$expected")" || return 1
+  [[ "$phase_id" == "$expected_phase" ]] || return 1
+  read_direction_monotonic_ms || return 1
+  (( direction_timing_now_ms >= direction_timing_origin_ms )) || return 1
+  direction_timing_active_phase="$phase_id"
+  direction_timing_active_start_ms=$((direction_timing_now_ms - direction_timing_origin_ms))
+}
+
+direction_phase_end() {
+  local phase_id="$1" end_offset duration next_sequence
+  [[ -n "$direction_timing_active_phase" &&
+     "$phase_id" == "$direction_timing_active_phase" ]] || return 1
+  [[ -f "$direction_timing_journal" && ! -L "$direction_timing_journal" &&
+     "$(stat -c '%u:%a' "$direction_timing_journal")" == "$(id -u):600" ]] || return 1
+  read_direction_monotonic_ms || return 1
+  (( direction_timing_now_ms >= direction_timing_origin_ms )) || return 1
+  end_offset=$((direction_timing_now_ms - direction_timing_origin_ms))
+  (( end_offset >= direction_timing_active_start_ms )) || return 1
+  duration=$((end_offset - direction_timing_active_start_ms))
+  next_sequence=$((direction_timing_sequence + 1))
+  printf '{"schema_version":1,"sequence":%d,"producer":"direction_actor","phase_id":"%s","start_offset_ms":%d,"end_offset_ms":%d,"duration_ms":%d,"outcome":"passed"}\n' \
+    "$next_sequence" "$direction_timing_active_phase" \
+    "$direction_timing_active_start_ms" "$end_offset" "$duration" \
+    >>"$direction_timing_journal" || return 1
+  direction_timing_sequence="$next_sequence"
+  direction_timing_active_phase=""
+  direction_timing_active_start_ms=0
+}
+
+finalize_direction_phase_timings() {
+  local expected effects effects_sha completed_at total_duration partial
+  [[ -z "$direction_timing_active_phase" ]] || return 1
+  [[ -f "$direction_timing_journal" && ! -L "$direction_timing_journal" &&
+     "$(stat -c '%u:%a' "$direction_timing_journal")" == "$(id -u):600" ]] || return 1
+  jq -s -e '
+    type == "array" and length > 0
+    and ([.[] | (keys | sort) == (["schema_version","sequence","producer",
+      "phase_id","start_offset_ms","end_offset_ms","duration_ms","outcome"]
+      | sort)] | all)
+  ' "$direction_timing_journal" >/dev/null || return 1
+  effects="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-actual-effects.json"
+  [[ -f "$effects" && ! -L "$effects" &&
+     "$(stat -c '%u:%a' "$effects")" == "$(id -u):600" ]] || return 1
+  jq -e --arg direction "$M3_POC_DIRECTION" '
+    .schema_version == 1 and .direction == $direction
+    and (.bitcoin_effect_ids | type) == "array"
+    and (.lez_effect_ids | type) == "array"
+    and (.expected_unique_effects | type) == "object"
+  ' "$effects" >/dev/null || return 1
+  effects_sha="$(sha256sum "$effects")" || return 1
+  effects_sha="${effects_sha%% *}"
+  [[ "$effects_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  expected="$(expected_direction_phase_timings_json)" || return 1
+  read_direction_monotonic_ms || return 1
+  (( direction_timing_now_ms >= direction_timing_origin_ms )) || return 1
+  total_duration=$((direction_timing_now_ms - direction_timing_origin_ms))
+  completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
+  partial="${direction_timing_evidence}.partial"
+  [[ ! -e "$direction_timing_evidence" && ! -L "$direction_timing_evidence" &&
+     ! -e "$partial" && ! -L "$partial" ]] || return 1
+  jq -s --argjson expected "$expected" \
+    --arg run_id "$M3_POC_RUN_ID" --arg direction "$M3_POC_DIRECTION" \
+    --arg journey "$M3_POC_JOURNEY" --arg asset_mode "$asset_mode" \
+    --arg execution_mode "$direction_timing_execution_mode" \
+    --arg effects_sha "$effects_sha" \
+    --arg started_at "$direction_timing_started_at_utc" \
+    --arg completed_at "$completed_at" --argjson total_duration "$total_duration" '
+    def exact_keys($keys): (keys | sort) == ($keys | sort);
+    . as $records
+    | ($expected | length) as $count
+    | if
+        ($records | length) == $count
+        and ([$records[] |
+          exact_keys(["schema_version","sequence","producer","phase_id",
+            "start_offset_ms","end_offset_ms","duration_ms","outcome"])
+          and .schema_version == 1 and .producer == "direction_actor"
+          and .outcome == "passed"
+          and (.sequence | type) == "number" and .sequence == (.sequence | floor)
+          and (.phase_id | type) == "string"
+          and (.start_offset_ms | type) == "number"
+          and .start_offset_ms == (.start_offset_ms | floor)
+          and (.end_offset_ms | type) == "number"
+          and .end_offset_ms == (.end_offset_ms | floor)
+          and (.duration_ms | type) == "number"
+          and .duration_ms == (.duration_ms | floor)
+          and .start_offset_ms >= 0 and .end_offset_ms >= .start_offset_ms
+          and .duration_ms == (.end_offset_ms - .start_offset_ms)
+          and .end_offset_ms <= $total_duration] | all)
+        and [$records[].sequence] == [range(1; $count + 1)]
+        and [$records[].phase_id] == [$expected[].phase_id]
+        and ([range(1; $count) as $index
+          | $records[$index].start_offset_ms >=
+            $records[$index - 1].end_offset_ms] | all)
+      then
+        ([$records[].duration_ms] | add // 0) as $measured
+        | {
+            schema_version:1,
+            kind:"m3_actor_direction_phase_timings",
+            result:"actor_flow_passed",
+            run_id:$run_id,
+            direction:$direction,
+            journey:$journey,
+            asset_mode:$asset_mode,
+            execution_mode:$execution_mode,
+            actual_effects_sha256:$effects_sha,
+            coverage:{
+              starts_before_final_transcript:true,
+              ends_after_actual_effect_manifest:true,
+              excludes_outer_stage_two_replay_and_balances:true
+            },
+            clock:{
+              source:"linux_proc_uptime",
+              unit:"milliseconds",
+              resolution_ms:10,
+              includes_suspend:true,
+              wall_clock_used_for_duration:false
+            },
+            started_at_utc:$started_at,
+            completed_at_utc:$completed_at,
+            total_duration_ms:$total_duration,
+            unattributed_duration_ms:($total_duration - $measured),
+            phases:$records,
+            private_material_disclosed:false
+          }
+      else error("invalid direction timing journal") end
+  ' "$direction_timing_journal" >"$partial" || {
+    rm -f -- "$partial"
+    return 1
+  }
+  chmod 0600 "$partial" || {
+    rm -f -- "$partial"
+    return 1
+  }
+  [[ -f "$partial" && ! -L "$partial" &&
+     "$(stat -c '%u:%a' "$partial")" == "$(id -u):600" ]] || {
+    rm -f -- "$partial"
+    return 1
+  }
+  jq -e --arg direction "$M3_POC_DIRECTION" --arg effects_sha "$effects_sha" '
+    (keys | sort) == (["schema_version","kind","result","run_id","direction",
+      "journey","asset_mode","execution_mode","actual_effects_sha256","coverage",
+      "clock","started_at_utc","completed_at_utc","total_duration_ms",
+      "unattributed_duration_ms","phases","private_material_disclosed"] | sort)
+    and .schema_version == 1 and .kind == "m3_actor_direction_phase_timings"
+    and .result == "actor_flow_passed" and .direction == $direction
+    and .actual_effects_sha256 == $effects_sha
+    and (.phases | type) == "array"
+    and .unattributed_duration_ms >= 0
+    and .private_material_disclosed == false
+    and (try (.started_at_utc | fromdateiso8601 | type == "number") catch false)
+    and (try (.completed_at_utc | fromdateiso8601 | type == "number") catch false)
+  ' "$partial" >/dev/null || {
+    rm -f -- "$partial"
+    return 1
+  }
+  [[ "$(sha256sum "$effects" | sed 's/ .*//')" == "$effects_sha" ]] || {
+    rm -f -- "$partial"
+    return 1
+  }
+  mv -n -- "$partial" "$direction_timing_evidence" || {
+    rm -f -- "$partial"
+    return 1
+  }
+  [[ ! -e "$partial" && ! -L "$partial" &&
+     -f "$direction_timing_evidence" && ! -L "$direction_timing_evidence" &&
+     "$(stat -c '%u:%a' "$direction_timing_evidence")" == "$(id -u):600" ]]
 }
 
 file_value() {
@@ -3158,12 +3470,28 @@ write_actual_effect_manifest() {
 run_actor_claim_flow() {
   case "$M3_POC_DIRECTION" in
     taker_sells_foreign)
+      direction_phase_begin revealing_claim_to_revision_three ||
+        fail "could not begin revealing-claim timing"
       submit_actor_lez_claim taker 3 lez-revealing-claim
+      direction_phase_end revealing_claim_to_revision_three ||
+        fail "could not end revealing-claim timing"
+      direction_phase_begin followup_claim_to_revision_four ||
+        fail "could not begin follow-up-claim timing"
       submit_actor_bitcoin_claim maker 4 bitcoin-followup-claim
+      direction_phase_end followup_claim_to_revision_four ||
+        fail "could not end follow-up-claim timing"
       ;;
     taker_sells_lez)
+      direction_phase_begin revealing_claim_to_revision_three ||
+        fail "could not begin revealing-claim timing"
       submit_actor_bitcoin_claim taker 3 bitcoin-revealing-claim
+      direction_phase_end revealing_claim_to_revision_three ||
+        fail "could not end revealing-claim timing"
+      direction_phase_begin followup_claim_to_revision_four ||
+        fail "could not begin follow-up-claim timing"
       submit_actor_lez_claim maker 4 lez-followup-claim
+      direction_phase_end followup_claim_to_revision_four ||
+        fail "could not end follow-up-claim timing"
       ;;
   esac
 }
@@ -3582,7 +3910,13 @@ run_actor_refund_flow() {
 
 prepare_actor_flow_runtime() {
   local initial_tip
+  direction_phase_begin final_transcript ||
+    fail "could not begin final-transcript timing"
   prepare_final_transcript
+  direction_phase_end final_transcript ||
+    fail "could not end final-transcript timing"
+  direction_phase_begin presign_and_activate ||
+    fail "could not begin presign-and-activate timing"
   provision_signing_material
   run_signing_ceremony btc "$btc_session_file"
   run_signing_ceremony lez "$lez_session_file"
@@ -3591,54 +3925,107 @@ prepare_actor_flow_runtime() {
   actor_prelock_lez_tip="$initial_tip"
   write_actor_configs "$initial_tip" 1
   activate_actors
+  direction_phase_end presign_and_activate ||
+    fail "could not end presign-and-activate timing"
 }
 
 run_actor_two_lock_phase() {
   case "$M3_POC_DIRECTION" in
     taker_sells_foreign)
+      direction_phase_begin first_lock_to_revision_one ||
+        fail "could not begin first-lock timing"
       submit_taker_bitcoin_first_lock
       project_both_to_revision 1 bitcoin bitcoin-first-lock
+      direction_phase_end first_lock_to_revision_one ||
+        fail "could not end first-lock timing"
+      direction_phase_begin second_lock_to_revision_two ||
+        fail "could not begin second-lock timing"
       if [[ "$asset_mode" == "custom_token" ]]; then
         submit_actor_maker_lez_asset_second_lock
       else
         submit_actor_maker_lez_second_lock_pair
       fi
       project_both_to_revision 2 lez lez-second-lock
+      direction_phase_end second_lock_to_revision_two ||
+        fail "could not end second-lock timing"
       ;;
     taker_sells_lez)
+      direction_phase_begin first_lock_to_revision_one ||
+        fail "could not begin first-lock timing"
       if [[ "$asset_mode" == "custom_token" ]]; then
         submit_taker_lez_asset_first_lock
       else
         submit_taker_lez_first_lock_pair
       fi
       project_both_to_revision 1 lez lez-first-lock
+      direction_phase_end first_lock_to_revision_one ||
+        fail "could not end first-lock timing"
+      direction_phase_begin second_lock_to_revision_two ||
+        fail "could not begin second-lock timing"
       submit_actor_maker_bitcoin_second_lock
       project_both_to_revision 2 bitcoin bitcoin-second-lock
+      direction_phase_end second_lock_to_revision_two ||
+        fail "could not end second-lock timing"
       ;;
   esac
+  direction_phase_begin dual_lock_gate ||
+    fail "could not begin dual-lock-gate timing"
   write_dual_lock_gate
+  direction_phase_end dual_lock_gate ||
+    fail "could not end dual-lock-gate timing"
 }
 
 run_actor_settlement_phase() {
   case "$M3_POC_JOURNEY" in
     claim) run_actor_claim_flow ;;
-    survivor_claim) run_actor_survivor_claim_flow ;;
-    refund) run_actor_refund_flow ;;
+    survivor_claim)
+      direction_phase_begin survivor_settlement_to_revision_four ||
+        fail "could not begin survivor-settlement timing"
+      run_actor_survivor_claim_flow
+      direction_phase_end survivor_settlement_to_revision_four ||
+        fail "could not end survivor-settlement timing"
+      ;;
+    refund)
+      direction_phase_begin refund_settlement_to_revision_four ||
+        fail "could not begin refund-settlement timing"
+      run_actor_refund_flow
+      direction_phase_end refund_settlement_to_revision_four ||
+        fail "could not end refund-settlement timing"
+      ;;
     *) fail "two-lock settlement is unavailable for ${M3_POC_JOURNEY}" ;;
   esac
+  direction_phase_begin terminal_evidence ||
+    fail "could not begin terminal-evidence timing"
   capture_both_statuses 4 terminal-status
   write_actual_effect_manifest
+  direction_phase_end terminal_evidence ||
+    fail "could not end terminal-evidence timing"
 }
 
 run_actor_flow() {
+  direction_timing_execution_mode="sequential"
+  initialize_direction_phase_timings ||
+    fail "could not initialize direction phase timings"
   prepare_actor_flow_runtime
   if [[ "$M3_POC_JOURNEY" == "first_lock_refund" ]]; then
+    direction_phase_begin first_lock_refund_to_revision_two ||
+      fail "could not begin first-lock-refund timing"
     run_actor_first_lock_refund_flow
+    direction_phase_end first_lock_refund_to_revision_two ||
+      fail "could not end first-lock-refund timing"
+    direction_phase_begin terminal_evidence ||
+      fail "could not begin terminal-evidence timing"
     write_actual_effect_manifest
+    direction_phase_end terminal_evidence ||
+      fail "could not end terminal-evidence timing"
+    finalize_direction_phase_timings ||
+      fail "could not publish direction phase timings"
     return
   fi
   run_actor_two_lock_phase
   run_actor_settlement_phase
+  finalize_direction_phase_timings ||
+    fail "could not publish direction phase timings"
 }
 
 overlap_gate_path() {
@@ -3687,16 +4074,33 @@ await_overlap_permit() {
 run_overlap_actor_flow() {
   [[ "$M3_POC_JOURNEY" == "claim" ]] ||
     fail "overlap actor flow currently supports only the claim journey"
+  direction_timing_execution_mode="overlap"
+  initialize_direction_phase_timings ||
+    fail "could not initialize overlap direction phase timings"
   prepare_actor_flow_runtime
+  direction_phase_begin overlap_ready_barrier ||
+    fail "could not begin overlap-ready-barrier timing"
   capture_both_statuses 0 overlap-ready-status
   write_overlap_marker ready 0
   await_overlap_permit lock 0
+  direction_phase_end overlap_ready_barrier ||
+    fail "could not end overlap-ready-barrier timing"
   run_actor_two_lock_phase
+  direction_phase_begin overlap_locked_barrier ||
+    fail "could not begin overlap-locked-barrier timing"
   capture_both_statuses 2 overlap-locked-status
   write_overlap_marker locked 2
   await_overlap_permit settle 2
+  direction_phase_end overlap_locked_barrier ||
+    fail "could not end overlap-locked-barrier timing"
   run_actor_settlement_phase
+  direction_phase_begin overlap_terminal_marker ||
+    fail "could not begin overlap-terminal-marker timing"
   write_overlap_marker terminal 4
+  direction_phase_end overlap_terminal_marker ||
+    fail "could not end overlap-terminal-marker timing"
+  finalize_direction_phase_timings ||
+    fail "could not publish overlap direction phase timings"
 }
 
 submission_counts() {

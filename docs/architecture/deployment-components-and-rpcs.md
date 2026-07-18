@@ -723,8 +723,11 @@ used to claim this checkpoint.
 flowchart TB
     FirstLock["Taker external fixture<br/>submits first lock only"]
     Runner["Run controller<br/>mines waits and confirms only"]
+    DirectionRunner["Two direction orchestrators"]
     Clock["Linux monotonic uptime"]
-    Timing["Strict owner-private phase packet"]
+    Timing["Strict owner-private outer timing packet"]
+    DirectionTiming["Two strict owner-private direction timing packets"]
+    ActualEffects["Two direction actual-effect manifests"]
     MainEvidence["Main run packet"]
     TakerActor["Schema-4 Taker actor<br/>observes Maker lock"]
     TakerSidecar["Taker official-wire sidecar"]
@@ -769,17 +772,24 @@ flowchart TB
     Runner -->|"fixture-only mining and confirmation"| Core
     Runner -->|"finality confirmation only"| Indexer
     Clock --> Runner
+    Clock --> DirectionRunner
     Runner --> Timing
+    Runner --> DirectionRunner
+    DirectionRunner --> DirectionTiming
     TakerActor -->|"restricted observation"| Core
     TakerActor -->|"own capability bridge"| TakerSidecar
     TakerSidecar -->|"bounded finalized observation"| Indexer
     TakerActor --> TakerDb
     Actor --> Evidence
     TakerActor --> Evidence
+    Actor --> ActualEffects
+    TakerActor --> ActualEffects
     Core --> Evidence
     Indexer --> Evidence
     Evidence --> MainEvidence
     Timing -->|"Path and SHA 256"| MainEvidence
+    ActualEffects --> DirectionTiming
+    DirectionTiming -->|"Paths hashes and parent containment"| MainEvidence
 ```
 
 ADR 0048 adds one exact node-start coordinator ahead of every M3 bootstrap and
@@ -797,11 +807,13 @@ with exact cleanup. ADR 0049 adds fixed monotonic outer phases without adding
 an RPC, port, actor credential, or chain authority. Its strict private packet
 is path-and-SHA-bound into main evidence. Clean pushed Run AE measures
 1,023,100 ms with 280 ms unattributed; the two complete direction phases
-consume 75.2 percent.
+consume 75.2 percent. Child semantic packets are now contract-GREEN, bind the
+current effect manifests, and must fit inside their exact outer parent phases.
+A clean actual-node child measurement remains pending.
 
 | Component | Status | Endpoints and local services | Role/authority boundary | Current proof and nonclaim |
 |---|---|---|---|---|
-| M3 monotonic phase evidence | Implementation and pinned CI GREEN; clean pushed Run AE measured | Reads only Linux `/proc/uptime` in the outer runner. It opens no RPC, port, peer, faucet, or public service | Fixed phase identifiers and optional direction are allowlisted. No command, endpoint, account, transaction, actor output, or secret enters the journal. Timing never grants send, retry, finality, deadline, CAS, or cleanup authority | Exact ordering/arithmetic, supported schedule shapes, 0600 modes, symlink and tamper rejection, no-clobber publication, full schema revalidation, main-packet path/SHA summary binding, and before/after rehash are contract- and CI-GREEN. Run AE measured 1,023,100 ms with 280 ms unattributed; the directions were 363,660 and 405,810 ms and both swaps plus cleanup passed. Direction-internal decomposition is next; no speculative speedup is claimed |
+| M3 monotonic phase evidence | Outer implementation measured by clean pushed Run AE; child implementation and complete pinned CI GREEN, clean child measurement pending | Reads only Linux `/proc/uptime` in the outer and direction runners. It opens no RPC, port, peer, faucet, or public service | Fixed outer and journey-specific child phase identifiers are allowlisted. No command, endpoint, account, transaction, actor output, or secret enters a journal. Timing never grants send, retry, finality, deadline, CAS, or cleanup authority | Exact ordering/arithmetic, supported schedule shapes, 0600 modes, symlink/tamper/malformed-effect rejection, no-clobber publication, effect SHA binding, parent-duration containment, main-packet path/SHA equality, and rehash of the outer packet, both children, and both effects before/after main publication are pinned-CI-GREEN. Run AE remains the 1,023,100 ms outer baseline; no child speedup is claimed before a clean measured run |
 | M3 exact-idempotent LEZ initialization journal | Actual-node GREEN in `TakerSellsForeign` at run `m3schema4-20260717d` | Maker actor calls its capability-authenticated loopback sidecar; the sidecar uses official RPC on the run-owned sequencer and finalized reads on the indexer | `ExactIdempotentSubmissionSafe` is distinct from absence. The role-local Maker journal reserves the exact initialization ID and bytes before one send; `Started`, `Unknown`, and accepted states never rearm. Exact canonical evidence is still required to close | Durable LEZ Maker-lock counts advanced 0 to 1 to 2 for initialization and funding, stayed unchanged across restart, and the full pair finalized inside the exact actor window. This proves the private-local operation, not generic production idempotence for an arbitrary future LEZ endpoint |
 | M3 exact-idempotent typed actor mapping | Actual-node GREEN in the live schema-4 Maker CLI | `MakerLockStepChainObservationV1` carries exact IDs and bytes between the direction-shaped SDK, role-local SQLite, and live Core or LEZ adapter | Only the Maker role receives second-lock material. The first eligible drive can consume one journal authority; a restarted actor observes durable state and submits zero times. Taker is observation-only for the Maker lock | Each direction recorded exactly one Maker-lock economic effect and zero restart or terminal-replay re-submissions. Chain observation, rather than accepted submission, closes revision two |
 | M3 joined current and finalized LEZ first-lock proof | Actual-node GREEN in `TakerSellsLez` | One role-local sidecar brackets a stable current LEZ clock, exact witnessed metadata and custody, exact initialize/fund bytes, and independently bounded finalized indexer ancestry | Runtime, chain, program, signer, accounts, custody owner/program, amount, response context, block identity, and stable clock are fail-closed. A payload-free `moving_tip` grants no chain fact or send authority | Nine `moving_tip` reads caused fresh-process read-only retries; attempt ten returned the stable joined proof and permitted one Maker Bitcoin send. State-only evidence alone remains insufficient and is never described as finality |

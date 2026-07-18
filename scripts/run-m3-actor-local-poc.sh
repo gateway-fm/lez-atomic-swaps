@@ -873,6 +873,306 @@ validate_phase_timings_for_run_evidence() {
   printf -v "$output_name" '%s' "$summary"
 }
 
+expected_actor_direction_phase_ids_json() {
+  local direction="$1"
+  [[ "$direction" == "taker_sells_foreign" ||
+     "$direction" == "taker_sells_lez" ]] || return 1
+  [[ "$asset_mode" == "native" || "$asset_mode" == "custom_token" ]] || return 1
+  if [[ "$schedule" == "overlap" ]]; then
+    [[ "$journey" == "claim" ]] || return 1
+    jq -cn '[
+      "final_transcript",
+      "presign_and_activate",
+      "overlap_ready_barrier",
+      "first_lock_to_revision_one",
+      "second_lock_to_revision_two",
+      "dual_lock_gate",
+      "overlap_locked_barrier",
+      "revealing_claim_to_revision_three",
+      "followup_claim_to_revision_four",
+      "terminal_evidence",
+      "overlap_terminal_marker"
+    ]'
+    return
+  fi
+  [[ "$schedule" == "sequential" ]] || return 1
+  case "$journey" in
+    claim)
+      jq -cn '[
+        "final_transcript",
+        "presign_and_activate",
+        "first_lock_to_revision_one",
+        "second_lock_to_revision_two",
+        "dual_lock_gate",
+        "revealing_claim_to_revision_three",
+        "followup_claim_to_revision_four",
+        "terminal_evidence"
+      ]'
+      ;;
+    survivor_claim)
+      jq -cn '[
+        "final_transcript",
+        "presign_and_activate",
+        "first_lock_to_revision_one",
+        "second_lock_to_revision_two",
+        "dual_lock_gate",
+        "survivor_settlement_to_revision_four",
+        "terminal_evidence"
+      ]'
+      ;;
+    refund)
+      jq -cn '[
+        "final_transcript",
+        "presign_and_activate",
+        "first_lock_to_revision_one",
+        "second_lock_to_revision_two",
+        "dual_lock_gate",
+        "refund_settlement_to_revision_four",
+        "terminal_evidence"
+      ]'
+      ;;
+    first_lock_refund)
+      jq -cn '[
+        "final_transcript",
+        "presign_and_activate",
+        "first_lock_refund_to_revision_two",
+        "terminal_evidence"
+      ]'
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_actor_direction_phase_timing_for_run_evidence() {
+  local direction="$1" output_name="$2" expected_parent_sha="$3"
+  local child_path effects_path expected_phase_ids expected_execution_mode
+  local parent_phase_id parent_duration parent_fd parent_fd_path
+  local parent_sha_before parent_sha_after child_sha_before child_sha_after
+  local effects_sha_before effects_sha_after summary
+  [[ "$direction" == "taker_sells_foreign" ||
+     "$direction" == "taker_sells_lez" ]] || return 1
+  [[ "$output_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+  [[ "$expected_parent_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  child_path="${evidence_dir}/${direction}-actor-phase-timings.json"
+  effects_path="${evidence_dir}/${direction}-actual-effects.json"
+  [[ -f "$child_path" && ! -L "$child_path" &&
+     "$(stat -c '%u:%a' "$child_path")" == "$(id -u):600" &&
+     -f "$effects_path" && ! -L "$effects_path" &&
+     "$(stat -c '%u:%a' "$effects_path")" == "$(id -u):600" &&
+     -f "$phase_timings_evidence" && ! -L "$phase_timings_evidence" &&
+     "$(stat -c '%u:%a' "$phase_timings_evidence")" == "$(id -u):600" ]] ||
+    return 1
+  expected_phase_ids="$(expected_actor_direction_phase_ids_json "$direction")" ||
+    return 1
+  if [[ "$schedule" == "overlap" ]]; then
+    expected_execution_mode="overlap"
+    parent_phase_id="directions_overlap"
+  else
+    expected_execution_mode="sequential"
+    parent_phase_id="direction_${direction}_actor_flow"
+  fi
+  exec {parent_fd}<"$phase_timings_evidence" || return 1
+  parent_fd_path="/proc/$$/fd/${parent_fd}"
+  parent_sha_before="$(sha256sum "$parent_fd_path")" || {
+    exec {parent_fd}<&-
+    return 1
+  }
+  parent_sha_before="${parent_sha_before%% *}"
+  if [[ "$parent_sha_before" != "$expected_parent_sha" ]]; then
+    exec {parent_fd}<&-
+    return 1
+  fi
+  if ! parent_duration="$(jq -er --arg run_id "$run_id" --arg journey "$journey" \
+      --arg schedule "$schedule" --arg asset_mode "$asset_mode" \
+      --arg phase_id "$parent_phase_id" '
+    . as $packet
+    | ($packet.schema_version == 1
+    and $packet.kind == "m3_monotonic_phase_timings"
+    and $packet.run_id == $run_id and $packet.journey == $journey
+    and $packet.schedule == $schedule and $packet.asset_mode == $asset_mode
+    and ($packet.phases | type) == "array"
+    and ([$packet.phases[] | select(.phase_id == $phase_id)] | length) == 1
+    and ([$packet.phases[] | select(.phase_id == $phase_id)][0].duration_ms | type) ==
+      "number"
+    and ([$packet.phases[] | select(.phase_id == $phase_id)][0].duration_ms | floor) ==
+      [$packet.phases[] | select(.phase_id == $phase_id)][0].duration_ms
+    and [$packet.phases[] | select(.phase_id == $phase_id)][0].duration_ms >= 0)
+    | if . then
+        [$packet.phases[] | select(.phase_id == $phase_id)][0].duration_ms
+      else empty end
+  ' "$parent_fd_path")"; then
+    exec {parent_fd}<&-
+    return 1
+  fi
+  parent_sha_after="$(sha256sum "$parent_fd_path")" || {
+    exec {parent_fd}<&-
+    return 1
+  }
+  parent_sha_after="${parent_sha_after%% *}"
+  exec {parent_fd}<&-
+  [[ "$parent_sha_after" == "$parent_sha_before" &&
+     "$parent_sha_after" == "$expected_parent_sha" ]] || return 1
+  [[ "$parent_duration" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
+  child_sha_before="$(sha256sum "$child_path")" || return 1
+  child_sha_before="${child_sha_before%% *}"
+  effects_sha_before="$(sha256sum "$effects_path")" || return 1
+  effects_sha_before="${effects_sha_before%% *}"
+  [[ "$child_sha_before" =~ ^[0-9a-f]{64}$ &&
+     "$effects_sha_before" =~ ^[0-9a-f]{64}$ ]] || return 1
+  jq -e --arg run_id "$run_id" --arg direction "$direction" \
+    --arg journey "$journey" --arg asset_mode "$asset_mode" \
+    --arg execution_mode "$expected_execution_mode" \
+    --arg effects_sha "$effects_sha_before" \
+    --argjson expected_phase_ids "$expected_phase_ids" \
+    --argjson parent_duration "$parent_duration" '
+    def exact_keys($allowed): (keys | sort) == ($allowed | sort);
+    . as $packet
+    | exact_keys(["schema_version","kind","result","run_id","direction","journey",
+      "asset_mode","execution_mode","actual_effects_sha256","coverage","clock",
+      "started_at_utc","completed_at_utc","total_duration_ms",
+      "unattributed_duration_ms","phases","private_material_disclosed"])
+    and .schema_version == 1
+    and .kind == "m3_actor_direction_phase_timings"
+    and .result == "actor_flow_passed"
+    and .run_id == $run_id and .direction == $direction
+    and .journey == $journey and .asset_mode == $asset_mode
+    and .execution_mode == $execution_mode
+    and .actual_effects_sha256 == $effects_sha
+    and .coverage == {
+      starts_before_final_transcript:true,
+      ends_after_actual_effect_manifest:true,
+      excludes_outer_stage_two_replay_and_balances:true
+    }
+    and .clock == {
+      source:"linux_proc_uptime",
+      unit:"milliseconds",
+      resolution_ms:10,
+      includes_suspend:true,
+      wall_clock_used_for_duration:false
+    }
+    and (.started_at_utc | type) == "string"
+    and (.started_at_utc |
+      test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+    and (try (.started_at_utc | fromdateiso8601 | type == "number") catch false)
+    and (.completed_at_utc | type) == "string"
+    and (.completed_at_utc |
+      test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+    and (try (.completed_at_utc | fromdateiso8601 | type == "number") catch false)
+    and ((.completed_at_utc | fromdateiso8601) >=
+      (.started_at_utc | fromdateiso8601))
+    and (.total_duration_ms | type) == "number"
+    and .total_duration_ms == (.total_duration_ms | floor)
+    and .total_duration_ms >= 0 and .total_duration_ms <= $parent_duration
+    and .total_duration_ms <= 9007199254740991
+    and (.unattributed_duration_ms | type) == "number"
+    and .unattributed_duration_ms == (.unattributed_duration_ms | floor)
+    and .unattributed_duration_ms >= 0
+    and .private_material_disclosed == false
+    and (.phases | type) == "array"
+    and [.phases[].phase_id] == $expected_phase_ids
+    and [.phases[].sequence] == [range(1; ($expected_phase_ids | length) + 1)]
+    and ([$packet.phases[] |
+      exact_keys(["schema_version","sequence","producer","phase_id",
+        "start_offset_ms","end_offset_ms","duration_ms","outcome"])
+      and .schema_version == 1 and .producer == "direction_actor"
+      and .outcome == "passed"
+      and (.sequence | type) == "number" and .sequence == (.sequence | floor)
+      and (.phase_id | type) == "string"
+      and (.start_offset_ms | type) == "number"
+      and .start_offset_ms == (.start_offset_ms | floor)
+      and (.end_offset_ms | type) == "number"
+      and .end_offset_ms == (.end_offset_ms | floor)
+      and (.duration_ms | type) == "number"
+      and .duration_ms == (.duration_ms | floor)
+      and .start_offset_ms >= 0 and .end_offset_ms >= .start_offset_ms
+      and .duration_ms == (.end_offset_ms - .start_offset_ms)
+      and .end_offset_ms <= $packet.total_duration_ms
+      and .end_offset_ms <= 9007199254740991] | all)
+    and ([range(1; ($packet.phases | length)) as $index |
+      $packet.phases[$index].start_offset_ms >=
+        $packet.phases[$index - 1].end_offset_ms] | all)
+    and .unattributed_duration_ms ==
+      (.total_duration_ms - ([.phases[].duration_ms] | add // 0))
+  ' "$child_path" >/dev/null || return 1
+  jq -e --arg direction "$direction" '
+    .schema_version == 1 and .direction == $direction
+    and (.bitcoin_effect_ids | type) == "array"
+    and (.lez_effect_ids | type) == "array"
+    and (.expected_unique_effects | type) == "object"
+  ' "$effects_path" >/dev/null || return 1
+  summary="$(jq -ce \
+    --arg evidence_path "${relative_run_root}/evidence/${direction}-actor-phase-timings.json" \
+    --arg evidence_sha "$child_sha_before" \
+    --arg effects_path "${relative_run_root}/evidence/${direction}-actual-effects.json" \
+    --arg effects_sha "$effects_sha_before" \
+    --arg parent_phase_id "$parent_phase_id" \
+    --argjson parent_duration "$parent_duration" '
+    {
+      kind:.kind,
+      result:.result,
+      direction:.direction,
+      journey:.journey,
+      asset_mode:.asset_mode,
+      execution_mode:.execution_mode,
+      evidence_path:$evidence_path,
+      evidence_sha256:$evidence_sha,
+      actual_effects_path:$effects_path,
+      actual_effects_sha256:$effects_sha,
+      clock:.clock,
+      coverage:.coverage,
+      total_duration_ms:.total_duration_ms,
+      unattributed_duration_ms:.unattributed_duration_ms,
+      phase_count:(.phases | length),
+      parent:{
+        phase_id:$parent_phase_id,
+        duration_ms:$parent_duration,
+        contains_child:true,
+        residual_ms:($parent_duration - .total_duration_ms)
+      }
+    }
+  ' "$child_path")" || return 1
+  child_sha_after="$(sha256sum "$child_path")" || return 1
+  child_sha_after="${child_sha_after%% *}"
+  effects_sha_after="$(sha256sum "$effects_path")" || return 1
+  effects_sha_after="${effects_sha_after%% *}"
+  [[ "$child_sha_after" == "$child_sha_before" &&
+     "$effects_sha_after" == "$effects_sha_before" ]] || return 1
+  printf -v "$output_name" '%s' "$summary"
+}
+
+actor_direction_phase_timings_hash_stable() {
+  local expected="$1" direction child_path effects_path
+  local expected_child_sha expected_effects_sha child_sha effects_sha
+  jq -e '
+    (keys | sort) == (["taker_sells_foreign","taker_sells_lez"] | sort)
+    and .taker_sells_foreign.direction == "taker_sells_foreign"
+    and .taker_sells_lez.direction == "taker_sells_lez"
+    and ([.[] |
+      (.evidence_sha256 | type) == "string"
+      and (.evidence_sha256 | test("^[0-9a-f]{64}$"))
+      and (.actual_effects_sha256 | type) == "string"
+      and (.actual_effects_sha256 | test("^[0-9a-f]{64}$"))] | all)
+  ' <<<"$expected" >/dev/null || return 1
+  for direction in taker_sells_foreign taker_sells_lez; do
+    child_path="${evidence_dir}/${direction}-actor-phase-timings.json"
+    effects_path="${evidence_dir}/${direction}-actual-effects.json"
+    [[ -f "$child_path" && ! -L "$child_path" &&
+       "$(stat -c '%u:%a' "$child_path")" == "$(id -u):600" &&
+       -f "$effects_path" && ! -L "$effects_path" &&
+       "$(stat -c '%u:%a' "$effects_path")" == "$(id -u):600" ]] || return 1
+    expected_child_sha="$(jq -er --arg direction "$direction" \
+      '.[$direction].evidence_sha256' <<<"$expected")" || return 1
+    expected_effects_sha="$(jq -er --arg direction "$direction" \
+      '.[$direction].actual_effects_sha256' <<<"$expected")" || return 1
+    child_sha="$(sha256sum "$child_path")" || return 1
+    child_sha="${child_sha%% *}"
+    effects_sha="$(sha256sum "$effects_path")" || return 1
+    effects_sha="${effects_sha%% *}"
+    [[ "$child_sha" == "$expected_child_sha" &&
+       "$effects_sha" == "$expected_effects_sha" ]] || return 1
+  done
+}
+
 for path in "$run_root" ".e2e/${bitcoin_run_id}" ".e2e/${lez_run_id}" \
   "$secure_state_root"; do
   [[ ! -e "$path" && ! -L "$path" ]] || fail "refusing to reuse run state: ${path}"
@@ -3086,8 +3386,24 @@ write_run_evidence() {
   local foreign_terminal_balance_summary="null" lez_terminal_balance_summary="null"
   local terminal_file terminal_sha effects_sha
   local phase_timing_summary="" phase_timing_sha=""
+  local foreign_actor_direction_timing_summary=""
+  local lez_actor_direction_timing_summary=""
+  local actor_direction_timing_summary=""
   validate_phase_timings_for_run_evidence phase_timing_summary ||
     fail "finalized phase timing evidence is invalid"
+  validate_actor_direction_phase_timing_for_run_evidence \
+    taker_sells_foreign foreign_actor_direction_timing_summary "$phase_timing_sha" ||
+    fail "forward actor direction timing evidence is invalid"
+  validate_actor_direction_phase_timing_for_run_evidence \
+    taker_sells_lez lez_actor_direction_timing_summary "$phase_timing_sha" ||
+    fail "reverse actor direction timing evidence is invalid"
+  actor_direction_timing_summary="$(jq -cn \
+    --argjson foreign "$foreign_actor_direction_timing_summary" \
+    --argjson lez "$lez_actor_direction_timing_summary" \
+    '{taker_sells_foreign:$foreign,taker_sells_lez:$lez}')" ||
+    fail "actor direction timing summary construction failed"
+  actor_direction_phase_timings_hash_stable "$actor_direction_timing_summary" ||
+    fail "actor direction timing evidence changed during validation"
   service_launcher_hashes_stable ||
     fail "service launcher changed before terminal evidence publication"
   repository_status="$(git status --porcelain --untracked-files=all)" ||
@@ -3259,6 +3575,7 @@ write_run_evidence() {
     --argjson f7_token_fixture_summary "$f7_token_fixture_summary" \
     --argjson official_wallet_cache_summary "$official_wallet_cache_summary" \
     --argjson phase_timing_summary "$phase_timing_summary" \
+    --argjson actor_direction_timing_summary "$actor_direction_timing_summary" \
     --arg foreign_stage2_sha "$(sha256sum "${evidence_dir}/taker_sells_foreign-stage-two.json" | sed 's/ .*//')" \
     --arg lez_stage2_sha "$(sha256sum "${evidence_dir}/taker_sells_lez-stage-two.json" | sed 's/ .*//')" --argjson foreign_terminal_balance "$foreign_terminal_balance_summary" --argjson lez_terminal_balance "$lez_terminal_balance_summary" '
     {
@@ -3462,7 +3779,8 @@ write_run_evidence() {
         network_dependency_during_certification: false,
         cold_cache_is_a_setup_prerequisite_not_a_runtime_rpc: true
       },
-      performance:{phase_timings:$phase_timing_summary},
+      performance:{phase_timings:$phase_timing_summary,
+        actor_direction_timings:$actor_direction_timing_summary},
       external_resources: {
         public_rpc:false,
         faucet:false,
@@ -3486,6 +3804,8 @@ write_run_evidence() {
     }' >"${run_evidence}.partial"
   phase_timings_hash_stable "$phase_timing_sha" ||
     fail "phase timing evidence changed before main packet publication"
+  actor_direction_phase_timings_hash_stable "$actor_direction_timing_summary" ||
+    fail "actor direction timing evidence changed before main packet publication"
   chmod 0600 "${run_evidence}.partial"
   mv "${run_evidence}.partial" "$run_evidence"
   jq -e --arg journey "$journey" --arg schedule "$schedule" \
@@ -3498,6 +3818,7 @@ write_run_evidence() {
     --arg bitcoin_service_driver_sha "$bitcoin_service_driver_sha_at_start" \
     --arg lez_service_driver_sha "$lez_service_driver_sha_at_start" \
     --argjson phase_timing_summary "$phase_timing_summary" \
+    --argjson actor_direction_timing_summary "$actor_direction_timing_summary" \
     --argjson terminal_revision "$terminal_revision" \
     --arg terminal_phase "$terminal_phase" --arg replay_command "$replay_command" \
     --arg actor_owned_effect_semantics "$actor_owned_effect_semantics" '
@@ -3511,7 +3832,8 @@ write_run_evidence() {
     and .execution_provenance == {repository_clean_exact_head:true,
       origin_main_equals_head:true,
       executable_hashes_stable_from_start_to_publication:true}
-    and .performance == {phase_timings:$phase_timing_summary}
+    and .performance == {phase_timings:$phase_timing_summary,
+      actor_direction_timings:$actor_direction_timing_summary}
     and .certified_executable_scripts.outer_runner.sha256 == $outer_runner_sha
     and .certified_executable_scripts.direction_driver.sha256 == $direction_driver_sha
     and .certified_executable_scripts.lez_bootstrap.sha256 == $lez_bootstrap_sha
@@ -3684,6 +4006,8 @@ write_run_evidence() {
   ' "$run_evidence" >/dev/null || fail "final journey evidence packet is inconsistent"
   phase_timings_hash_stable "$phase_timing_sha" ||
     fail "phase timing evidence changed after main packet publication"
+  actor_direction_phase_timings_hash_stable "$actor_direction_timing_summary" ||
+    fail "actor direction timing evidence changed after main packet publication"
 }
 
 phase_timing_begin contract_validation || fail "contract-validation timing start failed"

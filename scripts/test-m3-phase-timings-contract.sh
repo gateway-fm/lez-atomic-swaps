@@ -303,7 +303,8 @@ fi
 write_run_evidence_source="$(sed -n '/^write_run_evidence() {$/,/^}$/p' "$runner")"
 for binding_term in 'validate_phase_timings_for_run_evidence phase_timing_summary' \
   '--argjson phase_timing_summary "$phase_timing_summary"' \
-  'performance:{phase_timings:$phase_timing_summary}' \
+  'performance:{phase_timings:$phase_timing_summary,' \
+  'actor_direction_timings:$actor_direction_timing_summary}' \
   'phase_timings_hash_stable "$phase_timing_sha"'; do
   rg -Fq -- "$binding_term" <<<"$write_run_evidence_source" ||
     fail "main run packet omits timing binding: ${binding_term}"

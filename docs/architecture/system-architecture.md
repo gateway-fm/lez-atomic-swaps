@@ -126,8 +126,11 @@ now records fixed outer phases from Linux monotonic uptime, publishes an exact
 owner-private packet, and binds its path and SHA-256 into the main run packet.
 Clean pushed Run AE now measures 17 minutes 3.10 seconds before main
 publication with only 280 ms unattributed. Its two complete user-direction
-phases consume 75.2 percent; the remaining Run-AA-to-Run-AD variance cannot be
-assigned further until direction-internal timing is available.
+phases consume 75.2 percent. Direction-internal semantic timing and the
+complete pinned CI quality suite are now GREEN: both child packets bind their
+effect manifests and must fit inside their outer actor-flow or overlap parent
+before main publication. The remaining variance will not be assigned until a
+clean pushed actual-node run measures those new packets.
 
 ```mermaid
 flowchart TB
@@ -137,8 +140,10 @@ flowchart TB
 
     subgraph Bootstrap["Run-owned bootstrap authority"]
         OuterRunner["M3 outer runner"]
+        DirectionRunner["Two direction orchestrators"]
         Clock["Linux monotonic uptime"]
-        Timing["Strict phase timing packet"]
+        Timing["Strict outer timing packet"]
+        DirectionTiming["Two strict direction timing packets"]
         NodeCoordinator["Exact concurrent node-start coordinator"]
         Identity["Fresh maker and taker owner identities"]
         VaultDerive["Official owner-derived Vault account IDs"]
@@ -146,8 +151,11 @@ flowchart TB
         LezProvisioner["LEZ Bedrock, sequencer, and indexer provisioner"]
         LezBootstrap["Exact guest deploy, finality audit, and Vault Claims"]
         Clock --> OuterRunner
+        Clock --> DirectionRunner
         OuterRunner --> NodeCoordinator
         OuterRunner --> Timing
+        OuterRunner --> DirectionRunner
+        DirectionRunner --> DirectionTiming
         NodeCoordinator --> CoreProvisioner
         NodeCoordinator --> LezProvisioner
         Identity --> VaultDerive
@@ -221,6 +229,7 @@ flowchart TB
 
     Terminal["Run m3schema4-20260717d<br/>schema-4 Maker locks actor-owned<br/>two of two directions revision 4 Completed"]
     Timing -->|"Path and SHA 256 bound before success"| Terminal
+    DirectionTiming -->|"Paths effect hashes and containment"| Terminal
     MakerActor --> Terminal
     TakerActor --> Terminal
     Core --> Terminal

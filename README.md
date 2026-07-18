@@ -135,13 +135,17 @@ evidence checks, cache trust and
 repair guidance are in the
 [M3 operator guide](docs/m3-local-poc-operator-guide.md#reproduce-the-custom-token-f7-happy-pair-with-the-verified-wallet-cache).
 Timing-enabled M3 runs also publish an owner-private monotonic phase packet and
-bind its path and SHA-256 into the main run packet. The
+two owner-private actor-direction packets. The main run packet binds all three
+paths and SHA-256 values; each child also binds its current actual-effect
+manifest and must fit inside the correct outer actor-flow or overlap duration.
+All five bound files are rehashed before and after main publication. The
 [manual timing checks](docs/m3-local-poc-operator-guide.md#inspect-bound-monotonic-phase-timings)
 show how to validate and compare phases without exposing private actor data.
 Clean pushed Run AE measured 17m03.10s before main publication with only
 280 ms unattributed; the two complete real user directions consumed 75.2
-percent. That result selects finer direction measurement as the next
-optimization step and does not justify weakening local finality.
+percent. Child semantic timing and the complete pinned CI quality suite are
+GREEN; a clean pushed actual-node measurement remains. No optimization or
+weaker local finality is justified until that evidence exists.
 
 The public BTC SDK now deterministically validates application-owned
 discovery/negotiation, drops those peer capabilities at activation, and replays

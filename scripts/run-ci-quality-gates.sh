@@ -68,6 +68,7 @@ bash -n "${shell_files[@]}"
 M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.sh
 ./scripts/test-m3-node-startup-coordinator.sh
 ./scripts/test-m3-phase-timings-contract.sh
+./scripts/test-m3-direction-phase-timings-contract.sh
 ./scripts/test-m3-official-wallet-cache-contract.sh
 ./scripts/test-m3-f7-token-fixture-contract.sh
 ./scripts/test-m3-private-recording-contract.sh

@@ -1,8 +1,9 @@
 # ADR 0049: Bind monotonic phase evidence
 
-Status: Accepted, implementation GREEN, and measured by clean pushed Run AE.
-No new speedup is claimed from the measurement alone; direction-internal
-decomposition is the next measurement boundary.
+Status: Accepted. Outer measurement is GREEN in clean pushed Run AE; child
+semantic timing, strict parent binding, and the complete pinned CI quality
+suite are GREEN. A new clean actual-node measurement remains pending. No
+speedup is claimed from instrumentation alone.
 
 ## Context
 
@@ -19,10 +20,11 @@ chain-effect order, swap authority, or cleanup ownership.
 
 ## Decision
 
-The outer M3 runner is the only timing producer. It reads Linux
-`/proc/uptime`, truncates to milliseconds, and accepts only canonical values
-within the exact JSON integer range. The origin is captured after the fresh run
-directories exist. The runner records these fixed outer phases in order:
+The outer M3 runner and the two direction runners are independent timing
+producers. Each reads Linux `/proc/uptime`, truncates to milliseconds, and
+accepts only canonical values within the exact JSON integer range. The outer
+origin is captured after fresh run directories exist. It records these fixed
+outer phases in order:
 
 1. contract validation;
 2. prebuild and immutable assertions;
@@ -35,36 +37,69 @@ directories exist. The runner records these fixed outer phases in order:
    terminal replay, and custom-token balance read, or one overlap window; and
 9. final effect validation.
 
-The owner-private journal accepts one completed allowlisted record at a time.
-Publication rejects missing, duplicate, reordered, overlapping, regressing,
-non-integer, extra-field, wrong-direction, wrong-mode, symlink, and existing
-destination inputs. The final packet is published with no-clobber semantics.
-It contains no child output and no command, endpoint, account, transaction, or
-secret field.
+Each direction captures an origin immediately before final transcript
+preparation and records eight fixed happy-claim phases: final transcript;
+presign and activation; first lock through revision one; second lock through
+revision two; dual-lock gate; revealing claim through revision three;
+follow-up claim through revision four; and terminal status/effect evidence.
+Survivor, two-lock refund, and first-lock refund use smaller fixed
+journey-specific plans. Overlap adds ready, locked, and terminal coordination
+phases, for eleven records per direction. It never adds concurrent child
+durations as sequential wall time.
+
+All three owner-private journals accept one completed allowlisted record at a
+time. Publication rejects missing, duplicate, reordered, overlapping,
+regressing, non-integer, extra-field, wrong-direction, wrong-mode, symlink,
+unsafe-permission, malformed-effect, and existing-destination inputs. Every
+final packet is published with no-clobber semantics. No packet contains a
+command, endpoint, account, transaction, actor output, private path, or secret.
 
 The main run packet independently validates the full timing schema, binds its
-relative path and SHA-256, and includes only clock, coverage, totals, and phase
-count. The runner rehashes the timing packet immediately before and after main
+relative path and SHA-256, and includes only clock, coverage, totals, phase
+count, and parent containment. Each child packet binds the current
+direction-specific actual-effect manifest SHA-256. The outer runner requires a
+sequential child total to fit inside that direction's outer actor-flow phase,
+or an overlap child total to fit inside the shared overlap window. It records
+the nonnegative parent residual. The runner rehashes the outer packet, both
+child packets, and both effect manifests immediately before and after main
 packet publication. Cleanup remains a separate attestation because execution
 success and resource cleanup are different certification claims.
 
 ## Component flow
 
 ```mermaid
-flowchart LR
+flowchart TB
     Clock["Linux proc uptime"]
     Runner["M3 outer runner"]
-    Journal["Private phase journal"]
-    Validator["Strict timing validator"]
-    Timing["Phase timing packet"]
+    Foreign["Foreign selling direction runner"]
+    Lez["LEZ selling direction runner"]
+    OuterJournal["Private outer journal"]
+    ForeignJournal["Private foreign direction journal"]
+    LezJournal["Private LEZ direction journal"]
+    OuterTiming["Outer timing packet"]
+    ForeignTiming["Foreign direction timing packet"]
+    LezTiming["LEZ direction timing packet"]
+    Effects["Direction actual effect manifests"]
+    Validator["Strict parent and child validator"]
     Main["Main run packet"]
     Cleanup["Cleanup attestation"]
 
     Clock --> Runner
-    Runner --> Journal
-    Journal --> Validator
-    Validator --> Timing
-    Timing -->|"Path and SHA 256"| Main
+    Clock --> Foreign
+    Clock --> Lez
+    Runner --> OuterJournal
+    Foreign --> ForeignJournal
+    Lez --> LezJournal
+    OuterJournal --> OuterTiming
+    ForeignJournal --> ForeignTiming
+    LezJournal --> LezTiming
+    Effects --> ForeignTiming
+    Effects --> LezTiming
+    OuterTiming --> Validator
+    ForeignTiming --> Validator
+    LezTiming --> Validator
+    Effects --> Validator
+    Validator -->|"Paths hashes and containment"| Main
     Main --> Cleanup
 ```
 
@@ -74,8 +109,10 @@ flowchart LR
 sequenceDiagram
     participant O as Outer runner
     participant C as Monotonic clock
-    participant J as Private journal
-    participant T as Timing packet
+    participant A as Direction actors
+    participant J as Private journals
+    participant T as Timing packets
+    participant E as Actual effects
     participant M as Main packet
 
     O->>C: Read origin
@@ -85,24 +122,37 @@ sequenceDiagram
         O->>C: Read phase end
         O->>J: Append completed allowlisted record
     end
-    O->>J: Validate exact order and arithmetic
-    O->>T: Publish owner private packet without clobber
-    O->>T: Revalidate and hash
-    O->>M: Bind timing path hash and summary
-    O->>T: Verify hash before publication
+    par Both user directions
+        A->>C: Read child origin
+        loop Fixed journey phases
+            A->>C: Read semantic phase boundaries
+            A->>A: Execute unchanged actor calls
+            A->>J: Append completed allowlisted record
+        end
+        A->>E: Publish actual effect manifest
+        A->>T: Bind effect hash and publish child packet
+    end
+    O->>J: Validate outer exact order and arithmetic
+    O->>T: Publish outer packet without clobber
+    O->>T: Validate paths hashes and parent containment
+    O->>M: Bind outer and both child summaries
+    O->>T: Rehash five bound files before publication
     O->>M: Publish and validate main packet
-    O->>T: Verify hash after publication
+    O->>T: Rehash five bound files after publication
 ```
 
 ## Atomicity and swap-safety argument
 
 This decision does not make the two chains transactionally atomic and does not
-change the existing atomic-swap construction. Phase begin is a read-only clock
-operation. A journal record is appended only after the existing phase returns
-successfully. If the process exits during a phase, the record set is incomplete
-and no timing or main success packet can be certified. Timing publication is
-atomic only at the evidence-file boundary: a complete owner-private partial is
-validated and renamed without overwriting an existing final.
+change the existing atomic-swap construction. Every phase boundary is a
+read-only clock operation wrapped around the same existing call sequence. A
+journal record is appended only after that call sequence returns successfully.
+If the process exits during a phase, or if timing publication fails after a
+chain effect, the record set is incomplete and no main success packet can be
+certified. Cleanup still owns the already-mutated isolated devnet. Timing
+publication is atomic only at the evidence-file boundary: a complete
+owner-private partial is validated and renamed without overwriting an existing
+final.
 
 Swap atomicity remains derived from the countersigned agreement, adaptor
 secret coupling, pre-signed recovery, chain finality, role-local durable
@@ -113,7 +163,7 @@ deadline, transaction, signature, CAS, retry, or cleanup decision.
 ## Consequences
 
 - The next clean actual-node run can identify the longest operator-visible
-  phase without inference from unrelated logs.
+  outer and actor-semantic phases without inference from unrelated logs.
 - Unattributed time remains explicit and prevents phase sums from being
   presented as complete coverage.
 - Cleanup duration is intentionally outside the timing total and remains
@@ -145,9 +195,12 @@ direction spends time; this ADR does not infer that finality, observation,
 actor startup, or evidence validation is responsible.
 
 The first RED after Run AE required those five sequential outer subphases
-instead of one aggregate direction record. GREEN preserves the exact call
-order and keeps native overlap as one concurrent window. Custom-token
-sequential packets contain 18 fixed phases, native sequential packets 15, and
-native overlap packets 8. This separates outer preparation, the child actor
-flow, replay, and balance sampling; semantic phases inside the child actor
-remain the next layer before another actual-node benchmark.
+instead of one aggregate direction record. The next RED required fixed
+journey-specific child plans, exact schemas, effect-manifest binding,
+parent-duration containment, and tamper detection across main publication.
+GREEN preserves the exact call order and keeps native overlap as one
+concurrent window. Custom-token sequential outer packets contain 18 fixed
+phases, native sequential packets 15, and native overlap packets 8. Each happy
+sequential child contains 8 semantic phases; each overlap child contains 11.
+The next clean actual-node run must measure these packets before any further
+optimization is selected.

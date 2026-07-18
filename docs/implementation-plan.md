@@ -2091,6 +2091,21 @@ Active M3 refund critical path:
   concurrent work. The broad actor contract and complete pinned CI quality
   suite pass. Add semantic phases inside the child actor flow before spending
   another 17-minute actual-node iteration;
+- [x] publish strict child actor-flow timings for both directions. The fixed
+  claim plan measures transcript, presign/activation, each lock and revision,
+  the dual-lock gate, each claim and revision, and terminal evidence. Survivor,
+  two-lock refund, first-lock refund, and overlap use fixed journey-specific
+  plans. Each child binds its current actual-effect manifest. The outer runner
+  independently validates exact schemas and permissions, requires child
+  duration containment by the correct outer actor-flow or overlap phase, binds
+  both relative paths and hashes into the main packet, and rehashes both child
+  packets plus both effect manifests before and after main publication.
+  Focused RED-GREEN and the broad actor/CI-policy contracts pass without
+  changing actor order, RPCs, retries, finality, authority, or chain effects;
+- [ ] execute one clean custom-token actual-node pair from the exact pushed
+  child-timing commit with a fresh run ID. Use the measured child phases to
+  select the next optimization; do not infer a speedup or change
+  finality/cadence before that run;
 - [ ] compact or externally reference peerless public transaction facts before
   production. The validated v2 wire can carry transaction bytes larger than
   the recovery store's 64 KiB per-chain-evidence cap. Official PoC transactions

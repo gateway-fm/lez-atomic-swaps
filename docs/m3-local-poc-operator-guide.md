@@ -1227,12 +1227,17 @@ Maker second lock, expected balances, zero replay/custody, and conserved total
 250. The two complete user directions consume 75.2 percent, so decompose those
 internals before changing finality or cadence. Run AE is spent.
 
-Future sequential timing packets replace each of Run AE's aggregate direction
-rows with funding reservation, stage two, actor flow, terminal/replay, and,
-for custom tokens, terminal balances. Native runs omit the balance rows.
-Overlap remains a single concurrent window; do not add child durations as if
-they were sequential wall time. The packet's fixed phase count is 18 for
-custom-token sequential, 15 for native sequential, and 8 for native overlap.
+Current sequential outer timing packets replace each of Run AE's aggregate
+direction rows with funding reservation, stage two, actor flow,
+terminal/replay, and, for custom tokens, terminal balances. Native runs omit
+the balance rows. Each direction also publishes a child packet with eight
+happy-claim semantic phases. Overlap retains one outer concurrent window and
+adds ready, locked, and terminal coordination phases to each eleven-phase
+child. Never add concurrent child durations as sequential wall time. Outer
+phase counts are 18 for custom-token sequential, 15 for native sequential, and
+8 for native overlap. The child implementation and complete pinned CI quality
+suite are GREEN; Run AE predates it, so a clean measured child packet is still
+pending.
 
 After a successful manual run, verify that both launchers completed and their
 resource inventory reconciled before interpreting any swap evidence:
@@ -1485,11 +1490,14 @@ exists, and the same run ID and run root must never be reused.
 
 ## Inspect bound monotonic phase timings
 
-Every successful timing-enabled M3 run publishes
-`.e2e/$RUN_ID/m3-actor-poc/evidence/m3-phase-timings.json` before its main
-packet. The timing total starts after fresh run-directory initialization and
-ends before main evidence publication. Cleanup is intentionally outside that
-total and remains certified by `cleanup-attestation.json`.
+Every successful timing-enabled M3 run publishes the outer
+`.e2e/$RUN_ID/m3-actor-poc/evidence/m3-phase-timings.json` packet and one
+`DIRECTION-actor-phase-timings.json` child per direction before its main
+packet. The outer total starts after fresh run-directory initialization and
+ends before main evidence publication. Each child starts before final
+transcript preparation and ends after its actual-effect manifest. Cleanup is
+intentionally outside every timing total and remains certified by
+`cleanup-attestation.json`.
 
 After the normal manual flow finishes, validate modes, the main-packet binding,
 and the fixed arithmetic:
@@ -1515,6 +1523,38 @@ jq -e '
   and .unattributed_duration_ms ==
     (.total_duration_ms - ([.phases[].duration_ms] | add))
 ' "$TIMING"
+
+for DIRECTION in taker_sells_foreign taker_sells_lez; do
+  CHILD="$M3_ROOT/evidence/$DIRECTION-actor-phase-timings.json"
+  EFFECTS="$M3_ROOT/evidence/$DIRECTION-actual-effects.json"
+  test "$(stat -c '%a' "$CHILD")" = 600
+  CHILD_SHA="$(sha256sum "$CHILD" | sed 's/ .*//')"
+  EFFECTS_SHA="$(sha256sum "$EFFECTS" | sed 's/ .*//')"
+  test "$(jq -er \
+    ".performance.actor_direction_timings.$DIRECTION.evidence_sha256" \
+    "$MAIN")" = "$CHILD_SHA"
+  test "$(jq -er '.actual_effects_sha256' "$CHILD")" = "$EFFECTS_SHA"
+  jq -e --arg direction "$DIRECTION" '
+    .kind == "m3_actor_direction_phase_timings"
+    and .result == "actor_flow_passed"
+    and .direction == $direction
+    and .clock.source == "linux_proc_uptime"
+    and .coverage.ends_after_actual_effect_manifest == true
+    and .private_material_disclosed == false
+    and .unattributed_duration_ms ==
+      (.total_duration_ms - ([.phases[].duration_ms] | add))
+  ' "$CHILD"
+done
+
+jq -e '
+  .performance.actor_direction_timings
+  | [.[] |
+      .parent.contains_child == true
+      and .parent.duration_ms >= .total_duration_ms
+      and .parent.residual_ms ==
+        (.parent.duration_ms - .total_duration_ms)]
+  | all
+' "$MAIN"
 ```
 
 List the measured phases from longest to shortest:
@@ -1527,6 +1567,20 @@ jq -r '
   | [.phase_id, (.direction // "-"), .duration_ms]
   | @tsv
 ' "$TIMING"
+```
+
+List each child actor flow from longest to shortest:
+
+```sh
+for DIRECTION in taker_sells_foreign taker_sells_lez; do
+  jq -r --arg direction "$DIRECTION" '
+    .phases
+    | sort_by(.duration_ms)
+    | reverse[]
+    | [$direction, .phase_id, .duration_ms]
+    | @tsv
+  ' "$M3_ROOT/evidence/$DIRECTION-actor-phase-timings.json"
+done
 ```
 
 Compare only runs with the same journey, asset mode, schedule, pinned commit,

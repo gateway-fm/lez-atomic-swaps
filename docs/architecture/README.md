@@ -60,7 +60,7 @@ flowchart TB
     BitcoinEntry --> TokenWitness["0042 Witnessed token ATA claims"]
     TokenWitness --> FixedWindows["0047 Pinned finality and test lanes"]
     FixedWindows --> ParallelStartup["0048 Exact parallel node provisioning"]
-    ParallelStartup --> PhaseEvidence["0049 Bound monotonic phase evidence"]
+    ParallelStartup --> PhaseEvidence["0049 Bound outer and child phase evidence"]
     BitcoinEntry --> FinalizedFunding["0030 Finalized LEZ funding before claim"]
     FinalizedFunding --> BtcActor["0031 Revision-zero BTC actor"]
     BtcActor --> Contexts["0032 Agreement-derived adaptor contexts"]
@@ -183,4 +183,4 @@ flowchart TB
 | [0046](0046-replay-btc-sdk-lifecycle-from-exact-transitions.md) | Reconstruct revisions one through four from exact ordered chain transitions and remove discovery/negotiation capability after activation | Accepted at the deterministic SDK boundary; both directions/roles, claims, ordered refunds, replay, and clone-validate-commit rollback are GREEN. Public process-durable store and direct actor/node composition remain open |
 | [0047](0047-pin-finalized-windows-and-separate-test-lanes.md) | Read only a pinned requested finalized interval, tolerate monotonic descendants, and separate fast development from fresh certification lanes | Accepted and actual-node GREEN for both custom-token directions at one-second cadence. Runs X, Z, and AA close the requested 3-of-3 repeat gate; AA completed in 18 minutes 13.61 seconds and certified the 7.81-second policy-2 wallet-cache hit plus fail-fast guest/deployer checks |
 | [0048](0048-parallelize-exact-node-provisioning.md) | Start fixed Core and LEZ provisioners concurrently with exact process, component, failure, and cleanup identity | Accepted, behavioral GREEN, and measured by clean pushed Run AD. Core and LEZ completed in one 67-second window versus the 98-second sequential baseline, certifying a 31-second saving with exact cleanup |
-| [0049](0049-bind-monotonic-phase-evidence.md) | Record fixed outer-run phases with a monotonic clock and bind the strict secret-safe packet into main run evidence | Accepted, implementation/CI GREEN, and measured by clean pushed Run AE. Its 17m03.10s packet attributes 75.2 percent to the two complete user-direction phases; direction-internal decomposition is next |
+| [0049](0049-bind-monotonic-phase-evidence.md) | Record fixed outer and actor-direction phases with a monotonic clock and bind strict secret-safe packets into main run evidence | Accepted. Clean pushed Run AE supplies the 17m03.10s outer baseline and attributes 75.2 percent to the user directions. Eight-phase happy children, eleven-phase overlap children, effect binding, parent containment, pre/post main rehash, and the complete pinned CI suite are GREEN; a clean child measurement is pending |
