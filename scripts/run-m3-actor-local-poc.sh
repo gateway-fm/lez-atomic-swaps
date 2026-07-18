@@ -759,8 +759,10 @@ stop_owned_processes() {
     executable="$(jq -er '.executable | strings' <<<"$record" 2>/dev/null)" || { cleanup_failed=1; continue; }
     pgid="$(jq -er '(.pgid // .pid) | numbers' <<<"$record" 2>/dev/null)" || { cleanup_failed=1; continue; }
     sid="$(jq -er '(.sid // .pid) | numbers' <<<"$record" 2>/dev/null)" || { cleanup_failed=1; continue; }
-    group_owned="$(jq -er '(.group_owned // false) | booleans' <<<"$record" 2>/dev/null)" || { cleanup_failed=1; continue; }
-    reap_child="$(jq -er '(.reap_child // false) | booleans' <<<"$record" 2>/dev/null)" || { cleanup_failed=1; continue; }
+    group_owned="$(jq -er '(.group_owned // false) | booleans | tostring' \
+      <<<"$record" 2>/dev/null)" || { cleanup_failed=1; continue; }
+    reap_child="$(jq -er '(.reap_child // false) | booleans | tostring' \
+      <<<"$record" 2>/dev/null)" || { cleanup_failed=1; continue; }
     [[ -n "$pid" && -n "$start" && "$executable" == /* ]] || { cleanup_failed=1; continue; }
     was_present=false
     if [[ "$group_owned" == true ]] &&

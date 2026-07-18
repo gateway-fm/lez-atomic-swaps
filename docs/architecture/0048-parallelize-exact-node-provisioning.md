@@ -156,3 +156,16 @@ newline, malformed IDs, wrong mode, symlink, directory, and missing input. The
 outer runner revalidates run, scope, and component immediately before actor
 handoff; the direction process independently repeats all three live-label
 checks before each Core admin call.
+
+Fresh Run AC on clean pushed `b5bf322` crossed the corrected handoff and
+completed both effect-bearing custom-token directions in 17 minutes 10.41
+seconds. Its service logs measured Core at 45 seconds and LEZ at 82 seconds
+inside one 82-second concurrent window, versus AA's 98-second sequential
+window. The diagnostic saving is therefore 16 seconds, below the original
+25-to-40-second estimate because host contention increased the individual Core
+and LEZ durations. AC does not certify that measurement: terminal cleanup proof
+failed because valid omitted or JSON-false actor ownership flags were parsed
+with `jq -e`, which returns a false shell status for the valid value. Every
+label-filtered Docker category, registered process, listener, and secure state
+was absent. RED-GREEN now distinguishes valid false/omitted booleans from
+malformed types without weakening cleanup, and a fresh pushed rerun is required.

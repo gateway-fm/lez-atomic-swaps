@@ -445,6 +445,26 @@ touch "${test_root}/signal-foreign.release"
 wait "$signal_foreign_pid" || true
 untrack_test_process_group "$signal_foreign_pid"
 
+false_boolean_registry="${test_root}/false-boolean-processes.ndjson"
+jq -nc '{role:"maker",phase:"planning",pid:999999999,start_ticks:"1",
+  executable:"/bin/false",group_owned:false,reap_child:false}' \
+  >"$false_boolean_registry"
+jq -nc '{role:"taker",phase:"planning",pid:999999998,start_ticks:"1",
+  executable:"/bin/false"}' >>"$false_boolean_registry"
+chmod 0600 "$false_boolean_registry"
+process_registry="$false_boolean_registry"
+stop_owned_processes ||
+  fail "valid false or omitted process-ownership booleans failed cleanup"
+invalid_boolean_registry="${test_root}/invalid-boolean-processes.ndjson"
+jq -nc '{role:"maker",phase:"planning",pid:999999999,start_ticks:"1",
+  executable:"/bin/false",group_owned:"false",reap_child:false}' \
+  >"$invalid_boolean_registry"
+chmod 0600 "$invalid_boolean_registry"
+process_registry="$invalid_boolean_registry"
+if stop_owned_processes; then
+  fail "non-boolean process ownership passed cleanup"
+fi
+
 bitcoin_run_id="startup-test-btc"
 lez_run_id="startup-test-lez"
 bitcoin_container_ids="${test_root}/bitcoin-containers.ids"

@@ -1194,6 +1194,17 @@ speedup. The regression now validates the byte-exact private record, exports
 only a canonical Docker ID, and rechecks run, scope, and component at both
 process boundaries. Never reuse Run AB for a manual repetition.
 
+Run AC (`m3f7compose20260718ac`) on pushed `b5bf322` is also spent. It crossed
+the corrected actor boundary and completed both effect-bearing directions in
+17 minutes 10.41 seconds, with the expected terminal results, but the outer
+command exited nonzero because cleanup proof treated valid false/omitted actor
+ownership flags as a parse failure. Exact label queries and the host audit found
+no retained resource. Its 82-second overlapped startup versus AA's 98-second
+sequential window is diagnostic only; do not present the 16-second difference
+as a certified benchmark or count AC as another F7 repetition. The cleanup
+boolean regression is GREEN, and a new run ID on a clean pushed commit is still
+required.
+
 After a successful manual run, verify that both launchers completed and their
 resource inventory reconciled before interpreting any swap evidence:
 

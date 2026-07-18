@@ -2041,8 +2041,20 @@ Active M3 refund critical path:
   GREEN now accepts only one owner-private non-symlink canonical
   `ID<TAB>bitcoin-core` record, exports only the 12- or 64-hex ID, and
   revalidates live run/scope/component labels in both the outer and direction
-  processes. Run AB is spent. A fresh clean pushed actual-node run must still
-  measure the successful-run saving before the plan claims one;
+  processes. Run AB is spent. Run AC on clean pushed `b5bf322` crossed that
+  boundary and completed both effect-bearing directions in 17 minutes 10.41
+  seconds with the expected revisions, effects, balances, conservation, and
+  zero replay. It nevertheless exited nonzero because cleanup parsed valid
+  omitted/false actor ownership booleans with `jq -e`, whose shell status for
+  JSON false is failure. All label-filtered Docker categories, registered
+  processes, listeners, and secure state were absent, but fail-closed policy
+  means AC certifies neither another F7 repetition nor a successful benchmark.
+  RED now reproduces valid false/omitted and invalid typed flags; GREEN converts
+  only validated booleans to strings before exit-status evaluation. AC's
+  diagnostic logs show a concurrent 82-second startup window versus AA's
+  sequential 98 seconds, a provisional 16-second saving with host contention.
+  Run AC is spent. A fresh clean pushed actual-node run must still prove terminal
+  cleanup and measure the certifiable saving before the plan claims one;
 - [ ] compact or externally reference peerless public transaction facts before
   production. The validated v2 wire can carry transaction bytes larger than
   the recovery store's 64 KiB per-chain-evidence cap. Official PoC transactions
