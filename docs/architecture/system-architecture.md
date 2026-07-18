@@ -1816,9 +1816,18 @@ evidence remain pending. The schema-4 happy-path Maker-lock admission itself is
 actual-node GREEN in `m3schema4-20260717d`.
 
 This is an engineering safety argument, not the accepted proposal's promised
-formal theorem. M7 must connect the implemented aggregate adaptor construction
-to the Aumayr et al. and Fournier one-time-VES analyses and state the exact
-aEUF-CMA, witness-extractability, and pre-signature-adaptability assumptions.
+formal theorem. [ADR 0050](0050-map-btc-adaptor-construction-to-security-properties.md)
+now maps the implemented `pSign`, `pVrfy`, `Adapt`, and `Ext` boundaries to
+Aumayr et al.'s aEUF-CMA, pre-signature-adaptability, and
+witness-extractability properties and the Fournier one-time-VES recoverability
+model.
+It also records why neither single-signer analysis is automatically a proof of
+the exact two-party MuSig2, Taproot, and witnessed-LEZ composition. M7 retains
+the independent cryptographic-review and formal-claim decision.
+The BTC pair-specific F7 boundary preserves the same witness relation while
+the countersigned asset extension additionally binds the exact token program,
+definition, depositor/claimant/custody ATAs, amount, and aggregate authority;
+native evidence cannot be relabeled as custom-token evidence.
 Also, “LEZ leg” in the actual-node BTC flows currently means the proved
 witnessed native path. The shared guest ATA/custom-token transition, separately
 countersigned asset extension, strict v2 protocol/classifiers, eleven-call

@@ -2123,7 +2123,7 @@ Active M3 refund critical path:
   are well below the cap; an oversized valid `Found` currently fails closed at
   projection and cannot grant authority, but could deny liveness. This is
   repository-owned production hardening, not an M3 functional-PoC blocker;
-- [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
+- [x] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
   not recordings and cannot satisfy D1. The repository now supplies a
   private recorder with no new project dependency around the installed util-linux
@@ -2140,7 +2140,25 @@ Active M3 refund critical path:
   mappings, replayable `0600` output/timing pairs, and byte-identical manifest,
   evidence, output, and timing hashes. It rejects test fixtures in production
   mode, duplicates, tampering, public dependencies, and output overwrite. The
-  three fresh live recordings and their resulting private bundle still remain;
+  Three fresh owner-private actual-node recordings now bind clean pushed commit
+  `a6eb1ada739f8fcd671feb8fbb41cfc682e5d651`: happy run
+  `m3record-happy-20260718ag`, refund run
+  `m3record-refund-20260718ag`, and concurrent run
+  `m3record-concurrent-20260718ag`. Each is replayable from its mode-`0600`
+  terminal output/timing pair, binds its passing evidence packet and exact
+  isolated Core/LEZ run identities, records no public RPC/faucet/funds, and
+  retains zero terminal replay submissions. The refund recording completes
+  both direction-specific earlier/later recovery orders; the overlap recording
+  proves both swaps simultaneously revision two with disjoint actor authority;
+- [ ] seal the three completed D1 recordings into the private bundle after the
+  active M3 source slices return to a clean committed checkout. The first live
+  bundle attempt exposed a real verifier RED: exact object equality rejected
+  legitimate per-run IDs and the deliberate refund `3.0` versus claim `1.0`
+  slot profiles. Pushed `eb94f91` makes the contract compare invariant chain
+  versions/networks, retains unique topology in each hashed manifest, requires
+  all evidence to bind one commit, permits only an ancestor evidence commit
+  from a clean verifier checkout, and records both evidence and verifier
+  commits. Focused RED-GREEN-REFACTOR, syntax, and whitespace checks pass;
 - [ ] synchronize retained secret-safe evidence, manual reproduction,
   architecture/atomicity diagrams, traceability, and the milestone packet,
   then run the exact lint, test, vulnerability, license, source, security, and
@@ -2148,11 +2166,11 @@ Active M3 refund critical path:
 - [ ] after the owner enters later hardening, add restart, reorg, fee, and chaos
   cases beyond the reproducible functional PoC boundary.
 
-Repository-controlled open work, not external blockers, includes another
-recorded native pair, a clean overlap repeat, D1 recordings, durable public-SDK
-process/chain composition, vectors/Testnet4 closure, and synchronized milestone
-evidence and gates. Runs X, Z, and AA close the requested three exact F7
-terminal balance/finality pairs.
+Repository-controlled open work, not external blockers, is the D1 bundle,
+durable public-SDK process/chain composition, vectors/Testnet4 closure, and
+synchronized milestone evidence and gates. The fresh native happy, refund, and
+overlap recordings are complete. Runs X, Z, and AA close the requested three
+exact F7 terminal balance/finality pairs.
 The official-wallet starting fixture remains a reproducible prerequisite rather
 than a substitute for actor-owned escrow/claim/refund effects or finalized
 balance evidence. The
@@ -2197,6 +2215,14 @@ Accepted issue #112 names six explicit M3-specific outputs:
 4. document self-hosted/public Bitcoin testnet, wallet, and funding setup;
 5. record happy, refund/timeout, and concurrent BTC demos; and
 6. explain the Aumayr and Fournier constructions inline.
+
+Outputs 1, 5, and 6 are now repository-complete at the private functional-PoC
+boundary: the witnessed escrow path is live, all three BTC recordings exist at
+one clean pushed commit, and ADR 0050 maps the exact adaptor operations,
+assumptions, and atomicity conditions to the two primary papers without
+claiming a transferred two-party proof. Outputs 2–4 remain active
+repository-owned work: durable public SDK composition, official/independent
+vector gates, and self-hosted/exact-HTTPS Testnet4 setup.
 
 These six proposal outputs are not the complete acceptance checklist. The
 applicable live RFP contracts remain binding, including F2 and F5–F7, U1/U8,
@@ -2685,10 +2711,11 @@ post-reveal survivor execution is GREEN in `m3survivor-20260716c`. Clean run
 `m3schema4-20260717d` closes live schema-4 Maker-lock composition and
 actual-node admission in both directions. Clean run `m3overlap-20260717a`
 closes the accepted opposite-direction overlapping-swap execution item with
-both swaps simultaneously at revision two before either settlement. The
-public full-lifecycle SDK, F7 witnessed custom-token path, and D1 recordings
-remain the active functional/deliverable M3 work before the broader
-owner-selected hardening below.
+both swaps simultaneously at revision two before either settlement. The F7
+witnessed custom-token path and all three BTC recordings are now GREEN. Public
+lifecycle SDK composition, official/independent vector gates, Testnet4 routes,
+the private D1 bundle, synchronized documentation, and final quality gates
+remain before the broader owner-selected hardening below.
 
 ### Later owner-selected hardening
 

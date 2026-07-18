@@ -598,7 +598,11 @@ The local component and composed-flow gates prove BIP-327 aggregation, Taproot
 tweak handling, adaptor verification and adaptation, final verification under
 the exact output key, Bitcoin Core policy and consensus, extraction with
 committed-point checking, and exact LEZ aggregate-witness completion. Formal
-cryptographic audit and production key custody are not claimed.
+cryptographic audit and production key custody are not claimed. ADR 0050 maps
+those concrete operations to the primary Aumayr et al. and Fournier security
+properties, states the exact assumptions and atomicity link, and explicitly
+does not claim that their single-signer analyses prove this two-party
+composition.
 
 ## PoC result and remaining work
 
