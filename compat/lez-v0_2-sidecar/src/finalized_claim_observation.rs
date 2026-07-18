@@ -150,6 +150,21 @@ impl StableFinalizedWindow {
         }
         Ok(())
     }
+
+    pub(crate) async fn confirm_pinned_snapshot(
+        &self,
+        indexer: &dyn FinalizedIndexerApi,
+    ) -> Result<(), BridgeRuntimeError> {
+        let finalized_after = indexer
+            .last_finalized_block_id()
+            .await?
+            .ok_or(BridgeRuntimeError::Unavailable)?;
+        if finalized_after < self.finalized_tip.header.block_id {
+            return Err(BridgeRuntimeError::MovingTip);
+        }
+        self.confirm_block(indexer, self.finalized_tip.header.block_id)
+            .await
+    }
 }
 
 pub(crate) async fn read_stable_finalized_window(
@@ -198,6 +213,55 @@ pub(crate) async fn read_stable_finalized_window(
             finalized_tip_before.header.timestamp,
         ),
         finalized_tip: finalized_tip_before,
+        blocks,
+        requested_end,
+    })
+}
+
+pub(crate) async fn read_fixed_finalized_window(
+    indexer: &dyn FinalizedIndexerApi,
+    window: lez_bridge_protocol::DiscoveryWindow,
+) -> Result<StableFinalizedWindow, BridgeRuntimeError> {
+    let finalized_tip = indexer
+        .last_finalized_block_id()
+        .await?
+        .ok_or(BridgeRuntimeError::Unavailable)?;
+    let requested_end = window
+        .start_height()
+        .checked_add(u64::from(window.max_blocks() - 1))
+        .ok_or(BridgeRuntimeError::InvalidObservation)?;
+    if requested_end > finalized_tip {
+        return Err(BridgeRuntimeError::Unavailable);
+    }
+
+    let capacity =
+        usize::try_from(window.max_blocks()).map_err(|_| BridgeRuntimeError::Unavailable)?;
+    let mut blocks = Vec::with_capacity(capacity);
+    let mut previous_hash = None;
+    for block_id in window.start_height()..=requested_end {
+        let block = read_finalized_block(indexer, block_id).await?;
+        if previous_hash.is_some_and(|hash| block.header.prev_block_hash != hash) {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+        previous_hash = Some(block.header.hash);
+        blocks.push(block);
+    }
+    let requested_end_block = blocks
+        .last()
+        .cloned()
+        .ok_or(BridgeRuntimeError::Unavailable)?;
+    let confirmed_end = read_finalized_block(indexer, requested_end).await?;
+    if confirmed_end != requested_end_block {
+        return Err(BridgeRuntimeError::MovingTip);
+    }
+
+    Ok(StableFinalizedWindow {
+        finalized_clock: ChainClock::new(
+            Hex32::from_bytes(requested_end_block.header.hash.0),
+            requested_end_block.header.block_id,
+            requested_end_block.header.timestamp,
+        ),
+        finalized_tip: requested_end_block,
         blocks,
         requested_end,
     })

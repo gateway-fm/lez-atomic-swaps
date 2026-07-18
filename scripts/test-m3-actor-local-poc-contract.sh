@@ -1541,7 +1541,7 @@ jq -e --arg run_id "$custom_token_contract_run_id" '
   and .asset_mode == "custom_token"
   and .journey == "claim"
   and .schedule == "sequential"
-  and .service_configuration.lez_v0_2.slot_duration_seconds == "10.0"
+  and .service_configuration.lez_v0_2.slot_duration_seconds == "1.0"
   and .evidence_packet_kind == "m3_actor_two_direction_custom_token_local_poc"
   and .ordering.official_token_fixture_after_bootstrap_before_stage_two == true
   and .ordering.directions_are_sequential == true

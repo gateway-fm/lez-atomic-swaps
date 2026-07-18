@@ -2306,9 +2306,18 @@ finalized forward token initialization, custody, and funding at blocks
 both reached revision two. That proves the scanner repair through actual nodes.
 The immediately following dual-lock evidence serializer had malformed jq syntax
 and stopped before claims or the reverse direction. It is now a directly tested,
-validate-before-publish tracked filter. All 127 sidecar tests and the pre-Docker
-orchestration contract pass, but Runs R, S, and T are bounded REDs rather than
-full F7 evidence.
+validate-before-publish tracked filter. The then-current 127 sidecar tests and
+the pre-Docker orchestration contract pass, but Runs R, S, and T are bounded
+REDs rather than full F7 evidence.
+Run U on exact pushed `65f55c5` was stopped after thirteen minutes because the
+ten-second custom-token slot had reached only bootstrap and no new F7 boundary.
+Exact cleanup left no owned container, network, volume, process, or secure-state
+directory. ADR 0047 replaces the slow quiet-tip workaround with a pinned
+requested finalized interval. Newer finalized descendants are accepted only
+when height does not rewind and the pinned end block still agrees by ID and
+hash after historical state reads. Fixed-window RED-GREEN, all 128 sidecar
+tests, five binary/example tests, strict Clippy, and the one-second orchestration
+contract pass; actual-node validation of that faster cadence remains open.
 The fresh two-direction actual-node custom-token packet,
 arbitrary-N/same-direction scheduling, process-kill/reorg/chaos, public
 deployment, formal review, and production readiness remain outside the claim.

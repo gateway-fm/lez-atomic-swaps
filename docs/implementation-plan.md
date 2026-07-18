@@ -1794,7 +1794,7 @@ Active M3 refund critical path:
   its identity, and downgraded movement/history loss to `UnknownOrPending`.
   Official planner bytes pass a complete init/custody/fund finalized journey,
   authenticated real-client route/restart coverage, five focused scanner
-  cases, and all 127 current sidecar tests plus 44 protocol
+  cases, and all 128 current sidecar tests plus 44 protocol
   contracts, strict Clippy,
   rustdoc/doctests, formatting, diff, advisory, ban, license, and source gates.
   Fresh isolated run `m3f7compose20260717l` then proved the checked guest
@@ -1840,7 +1840,7 @@ Active M3 refund critical path:
   rather than freezing unrelated later finality. A batched or cached upstream
   historical snapshot remains the production improvement, but it is not an M3
   blocker after the local fail-closed fix. Independent GREEN gates are rustfmt,
-  strict Clippy for all targets and features, all 127 current sidecar tests,
+  strict Clippy for all targets and features, all 128 current sidecar tests,
   the actor contract, Mermaid compatibility, and diff check; these component
   gates do not promote run N to PoC evidence. Fresh isolated run
   `m3f7compose20260718o` then passed the checked deployment, fresh-identity
@@ -1913,7 +1913,7 @@ Active M3 refund critical path:
   step plus its ordered accounts and signers before ignoring it, and preserves conflicts for
   same-kind or malformed substitutions. The regression fails on the old code,
   passes on the fix, and a changed same-swap terms hash remains fail-closed.
-  All 127 pinned v0.2 sidecar tests, formatting, and strict all-target/all-feature
+  All 128 pinned v0.2 sidecar tests, formatting, and strict all-target/all-feature
   Clippy pass; all 85 actor tests and the M3 pre-Docker actor contract remain
   green from `ba17e3b`. Fresh isolated Run T (`m3f7compose20260718t`) then
   started from clean pushed commit `50db397`, repeated the checked deployment,
@@ -1931,7 +1931,19 @@ Active M3 refund critical path:
   contract compiles both native and custom-token shapes and asserts every common
   field plus the custom custody, asset commitment, and three-step order. It
   publishes only after successful validation through a private partial file.
-  The full pre-Docker orchestration contract is GREEN. Explicit terminal ATA
+  The full pre-Docker orchestration contract is GREEN. Run U started from exact
+  pushed `65f55c5` but the inherited ten-second custom-token slot spent thirteen
+  minutes only reaching bootstrap and had not crossed any new F7 boundary. It
+  was deliberately interrupted and its exact cleanup left no run-owned Docker
+  resource, process, or secure-state directory. ADR 0047 replaces that quiet-tip
+  workaround with a pinned requested-window observer: it reads only the
+  countersigned interval, accepts monotonic newer finalized descendants, and
+  rechecks both finalized height monotonicity and the pinned end block after
+  historical account reads. Behavioral RED-GREEN covers irrelevant descendants;
+  existing fork and identity-drift tests remain fail-closed. The complete 128-test
+  sidecar suite, five binary/example tests, strict Clippy, and the one-second F7
+  orchestration contract are GREEN. A fresh actual-node run must still validate
+  the faster cadence. Explicit terminal ATA
   balance and packet
   bindings remain forward
   `175/75/0`, reverse `75/175/0`, and conserved total `250`. The remaining

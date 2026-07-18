@@ -61,14 +61,9 @@ case "$journey" in
       success_label="M3 actor two-direction local PoC"
     fi
     actor_owned_effect_semantics="claim"
-    if [[ "$asset_mode" == "custom_token" ]]; then
-      # Four-effect token proof performs independent stable finalized scans.
-      # A slower run-owned devnet slot gives those fail-closed brackets a
-      # deterministic quiet interval without changing protocol semantics.
-      lez_slot_duration_seconds="10.0"
-    else
-      lez_slot_duration_seconds="1.0"
-    fi
+    # Native and custom-token observation both bind to immutable requested
+    # finalized windows; live tip advancement no longer needs a slow slot.
+    lez_slot_duration_seconds="1.0"
     ;;
   survivor_claim)
     terminal_revision=4

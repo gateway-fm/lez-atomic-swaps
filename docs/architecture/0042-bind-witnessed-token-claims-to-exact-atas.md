@@ -455,6 +455,14 @@ reverse direction, terminal balances, and the final reproducibility packet
 still require a fresh uninterrupted run on the fixed pushed commit; Run T is
 not a custom-token PoC pass.
 
+ADR 0047 refines the finalized-read implementation without weakening this
+decision. Asset observation now reads only the requested finalized interval,
+pins its end by independent ID/hash lookup, and revalidates that same block
+after historical account reads. Monotonic newer descendants are accepted;
+rewind, same-height replacement, missing history, and pinned identity drift
+remain fail-closed. The local F7 runner can therefore use one-second slots
+instead of a ten-second quiet-tip workaround, pending fresh actual-node proof.
+
 This ADR does not certify an actual-node custom-token swap in either trade
 direction, exact composed balances/effects, restart/no-resubmission, public
 deployment, production custody, or a cryptographic/security review. It supports

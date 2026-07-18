@@ -34,7 +34,7 @@ use crate::{
     BridgeRuntimeError, FinalizedIndexerApi, HistoricalAccount, ZecEscrowInstruction,
     compute_custody_pda, compute_metadata_pda,
     finalized_claim_observation::{
-        StableFinalizedWindow, decode_indexed_public, read_stable_finalized_window,
+        StableFinalizedWindow, decode_indexed_public, read_fixed_finalized_window,
     },
     prepared_from_transaction, program_id_from_hex, program_id_to_hex,
 };
@@ -668,7 +668,7 @@ impl FinalizedAssetObserver {
             .ok_or(BridgeRuntimeError::Unavailable)?;
         let window =
             DiscoveryWindow::new(tip, 1).map_err(|_| BridgeRuntimeError::InvalidObservation)?;
-        let stable = read_stable_finalized_window(self.indexer.as_ref(), window).await?;
+        let stable = read_fixed_finalized_window(self.indexer.as_ref(), window).await?;
         self.read_asset_state_at_stable_tip(terms, &stable).await
     }
 
@@ -692,7 +692,9 @@ impl FinalizedAssetObserver {
             0
         };
         let (metadata, custody) = self.read_asset_state(terms, tip, state, balance).await?;
-        stable.confirm_unchanged(self.indexer.as_ref()).await?;
+        stable
+            .confirm_pinned_snapshot(self.indexer.as_ref())
+            .await?;
         Ok((stable.finalized_clock, metadata, custody))
     }
 
@@ -783,7 +785,7 @@ impl FinalizedAssetObserver {
         kind: EffectKind,
         claim: Option<&PreparedWitnessedClaim>,
     ) -> Result<Scan, BridgeRuntimeError> {
-        let stable = match read_stable_finalized_window(self.indexer.as_ref(), window).await {
+        let stable = match read_fixed_finalized_window(self.indexer.as_ref(), window).await {
             Ok(stable) => stable,
             Err(BridgeRuntimeError::MovingTip) => {
                 return Ok(Scan::Unavailable(
@@ -2185,7 +2187,7 @@ mod tests {
             .accounts
             .insert((initialization.metadata_id, 10), HistoricalAccount::Absent);
         let observer = empty_scan_observer(&initialization);
-        let stable = read_stable_finalized_window(observer.indexer.as_ref(), window)
+        let stable = read_fixed_finalized_window(observer.indexer.as_ref(), window)
             .await
             .unwrap();
         assert!(matches!(
@@ -2202,7 +2204,7 @@ mod tests {
 
         let custody = token_fixture(EscrowStatus::Empty, HistoricalAccount::Absent);
         let observer = empty_scan_observer(&custody);
-        let stable = read_stable_finalized_window(observer.indexer.as_ref(), window)
+        let stable = read_fixed_finalized_window(observer.indexer.as_ref(), window)
             .await
             .unwrap();
         assert!(matches!(
@@ -2224,7 +2226,7 @@ mod tests {
             ..funding_seed
         };
         let observer = empty_scan_observer(&funding);
-        let stable = read_stable_finalized_window(observer.indexer.as_ref(), window)
+        let stable = read_fixed_finalized_window(observer.indexer.as_ref(), window)
             .await
             .unwrap();
         assert!(matches!(
@@ -2246,7 +2248,7 @@ mod tests {
             ..claim_seed
         };
         let observer = empty_scan_observer(&claim);
-        let stable = read_stable_finalized_window(observer.indexer.as_ref(), window)
+        let stable = read_fixed_finalized_window(observer.indexer.as_ref(), window)
             .await
             .unwrap();
         assert!(matches!(
@@ -2259,7 +2261,7 @@ mod tests {
 
         let already_initialized = token_fixture(EscrowStatus::Empty, HistoricalAccount::Absent);
         let observer = empty_scan_observer(&already_initialized);
-        let stable = read_stable_finalized_window(observer.indexer.as_ref(), window)
+        let stable = read_fixed_finalized_window(observer.indexer.as_ref(), window)
             .await
             .unwrap();
         assert!(matches!(
@@ -2515,6 +2517,74 @@ mod tests {
             result,
             Ok((_, WitnessedAssetCustodyFactsV2::CustomToken(facts)))
                 if facts.balance.as_u128() == 75
+        ));
+    }
+
+    #[tokio::test]
+    async fn asset_scan_ignores_unrequested_finalized_descendants() {
+        let initialization = token_fixture(EscrowStatus::Empty, HistoricalAccount::Absent);
+        let planner = NativeEscrowPlanner::new(
+            Participant::Maker,
+            PrivateKey::try_new([71; 32]).unwrap(),
+            [0x1020_3040; 8],
+            [0x5060_7080; 8],
+            initialization.runtime.clone(),
+            Arc::new(FixedNonce),
+        )
+        .unwrap();
+        let prepared = planner
+            .prepare_witnessed_asset_escrow_v2(&PrepareWitnessedAssetEscrowV2Request::new(
+                MessageContext::new(
+                    RunId::new("asset-fixed-window-run-0001").unwrap(),
+                    RequestId::new("asset-fixed-window-prepare-0001").unwrap(),
+                    Participant::Maker,
+                ),
+                initialization.runtime.clone(),
+                initialization.terms.clone(),
+            ))
+            .await
+            .unwrap();
+        let public = decode_official_public_transaction(
+            prepared.effects[0].transaction.exact_bytes.as_slice(),
+        )
+        .unwrap();
+        let requested = finalized_block(10, vec![Transaction::Public(indexed_public(&public))]);
+        let live_tip = finalized_block(13, Vec::new());
+        let mut accounts = BTreeMap::new();
+        accounts.extend(at_height(initialization.accounts.clone(), 10));
+        let observer = FinalizedAssetObserver::new(
+            initialization.runtime.clone(),
+            Arc::new(ScanIndexer {
+                tip: 13,
+                by_id: BTreeMap::from([(10, requested.clone()), (13, live_tip.clone())]),
+                by_hash: BTreeMap::from([
+                    (requested.header.hash.0, requested),
+                    (live_tip.header.hash.0, live_tip),
+                ]),
+                accounts,
+            }),
+        );
+
+        let result = observer
+            .classify_initialization(
+                &ClassifyFinalizedWitnessedAssetInitializationV2Request::new(
+                    MessageContext::new(
+                        RunId::new("asset-fixed-window-run-0001").unwrap(),
+                        RequestId::new("asset-fixed-window-observe-0001").unwrap(),
+                        Participant::Maker,
+                    ),
+                    initialization.runtime.clone(),
+                    initialization.terms.clone(),
+                    prepared.effects[0].transaction.clone(),
+                    DiscoveryWindow::new(10, 1).unwrap(),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            result.outcome,
+            FinalizedWitnessedAssetScanOutcomeV2::Found { .. }
         ));
     }
 

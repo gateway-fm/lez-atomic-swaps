@@ -55,6 +55,7 @@ flowchart TB
     Direction --> Bitcoin["0009 Bitcoin refund"]
     Bitcoin --> BitcoinEntry["0029 M3 Bitcoin entry"]
     BitcoinEntry --> TokenWitness["0042 Witnessed token ATA claims"]
+    TokenWitness --> FixedWindows["0047 Pinned finality and test lanes"]
     BitcoinEntry --> FinalizedFunding["0030 Finalized LEZ funding before claim"]
     FinalizedFunding --> BtcActor["0031 Revision-zero BTC actor"]
     BtcActor --> Contexts["0032 Agreement-derived adaptor contexts"]
@@ -96,6 +97,7 @@ flowchart TB
     Scope --> Progressive["0027 Progressive milestone delivery"]
     Progressive -.-> LocalM2
     Progressive -.-> V02Effects
+    Progressive -.-> FixedWindows
     ZecPins --> LezSidecar
     LEZ --> LezSidecar
     ZecPins --> Agreement
@@ -173,3 +175,4 @@ flowchart TB
 | [0044](0044-presign-btc-recovery-and-project-revealing-leg-first.md) | Require both signed refunds before BTC locking and project the Maker-funded revealing-leg refund before the Taker-funded follow-up leg | Accepted at the deterministic SDK component boundary; both directions, first-lock abandonment, exact timeout boundaries, replay, role ownership, network/finality/confirmation checks, and invalid ordering are GREEN. Durable later-revision resume and actor/store/node composition remain open |
 | [0045](0045-countersign-the-selected-lez-asset.md) | Preserve agreement-v1 bytes and separately countersign the exact native or custom-token selection, programs, definition, ATAs, amount, deadline, and aggregate authority | Accepted at deterministic SDK, adapter, and sidecar boundaries; independent custom custody, both role signatures, exact local policy, exact v2 mapping, native/token plan validation, opaque asset-bound first-lock authorization, official ATA planning, and finalized route/scan mapping are GREEN. Actor journals and actual-node F7 evidence remain open |
 | [0046](0046-replay-btc-sdk-lifecycle-from-exact-transitions.md) | Reconstruct revisions one through four from exact ordered chain transitions and remove discovery/negotiation capability after activation | Accepted at the deterministic SDK boundary; both directions/roles, claims, ordered refunds, replay, and clone-validate-commit rollback are GREEN. Public process-durable store and direct actor/node composition remain open |
+| [0047](0047-pin-finalized-windows-and-separate-test-lanes.md) | Read only a pinned requested finalized interval, tolerate monotonic descendants, and separate fast development from fresh certification lanes | Accepted at the F7 observer and runner-contract boundaries. Fixed-window advancement, drift, fork, full-suite, strict Clippy, and one-second cadence contracts are GREEN; fresh actual-node evidence and the immutable official-wallet cache remain open |

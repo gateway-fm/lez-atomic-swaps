@@ -121,8 +121,15 @@ scanner fix through the actual-node actor boundary. The subsequent dual-lock
 evidence serializer failed before claims or the reverse direction; exact
 cleanup passed. The serializer is now a directly tested,
 validate-before-publish jq filter and the full CI quality lane is GREEN. Run T
-is bounded RED evidence, not an F7 PoC pass. A fresh two-direction terminal run
-and the owner-requested three-repetitions-per-direction custom-token gate remain.
+is bounded RED evidence, not an F7 PoC pass. Run U was deliberately stopped
+after thirteen minutes at the unchanged bootstrap boundary because the
+custom-token runner's ten-second slot was an artificial stable-tip workaround;
+its exact cleanup left no owned runtime resources. ADR 0047 now reads only the
+pinned requested finalized interval, accepts monotonic descendants while still
+rejecting rewind, fork, and identity drift, and restores the one-second local
+cadence. The 128-test sidecar suite, five binary/example tests, strict Clippy,
+and orchestration contract are GREEN. A fresh two-direction terminal run and
+the owner-requested three-repetitions-per-direction custom-token gate remain.
 
 ## Usability
 
