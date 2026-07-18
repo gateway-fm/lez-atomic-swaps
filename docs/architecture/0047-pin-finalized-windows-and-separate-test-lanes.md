@@ -1,8 +1,10 @@
 # ADR 0047: Pin finalized windows and separate development from certification lanes
 
-Status: Accepted at the F7 observer and local-runner contract boundaries. Run V
-proved one complete actual-node custom-token direction at the one-second slot;
-the second direction, immutable wallet cache, and full packet remain open.
+Status: Accepted at the F7 observer and local-runner contract boundaries. Runs V
+and W each proved one complete actual-node custom-token direction at the
+one-second slot. Run W additionally crossed reverse stage two and all three
+reverse custom-token first-lock effects; the second terminal direction,
+immutable wallet cache, and full packet remain open.
 
 ## Context
 
@@ -124,4 +126,24 @@ finalization: overlap allocation had preassigned reverse funding height 104,
 which the forward settlement had legitimately consumed. No reverse agreement or
 effect existed. Behavioral RED-GREEN now reserves each sequential anchor from
 the fresh stable Core tip, while retaining atomic consecutive reservations for
-overlap. A complete two-direction run is still required for F7 certification.
+overlap. Run `m3f7compose20260718w` on clean pushed `b872b12` then proved the
+fresh reverse anchor 105 after the forward settlement consumed height 104. It
+repeated the complete forward result and finalized reverse custom-token
+initialization, custody, and funding before both actors projected the first
+lock. The next retry guard stopped before reverse Bitcoin submission because it
+encoded the native path's exact LEZ effect count of two. Behavioral RED-GREEN
+now selects two for native and three for custom token, preserves that count
+across retry, and rejects drift in both modes.
+
+Run W measured the remaining safe optimization envelope. Its cold official
+wallet build took 2 minutes 7 seconds and produced about 2.7 GiB of run-private
+target data. Serialized Core and LEZ readiness took about 36 and 58 seconds, so
+starting those already-isolated services concurrently can save approximately
+36 seconds, not minutes. Forward stage two through terminal took 5 minutes 32
+seconds; reverse stage two through the typed RED took 2 minutes 39 seconds.
+The multi-account finalized observation remains the dominant per-effect cost:
+the client already issues its three scalar historical reads concurrently, while
+LEZ v0.2 reconstructs or queues them independently. Slot times below one second
+and JSON-RPC transport batching are therefore not accepted as safe claimed
+speedups without upstream snapshot or single-reconstruction support. A complete
+two-direction run is still required for F7 certification.

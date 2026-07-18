@@ -5,9 +5,11 @@ two-direction actual-node evidence. Run `m3schema4-20260717d` at clean
 pushed commit `0e7635fc7e50cc6e0612745dcdaf6df8bbcf6f9a` proves that
 the external fixture submits only the Taker's exact first lock and the
 direction-correct Maker actor submits the exact second lock under one-attempt
-authority. Schedule-aware just-in-time anchor reservation is locally GREEN and
-awaits a fresh two-direction actual-node rerun. Production fee/replacement
-policy and reorg hardening remain active.
+authority. Schedule-aware just-in-time anchor reservation is actual-node GREEN
+through reverse stage-two finalization: clean Run W used sequential anchors 103
+and 105 around a forward settlement at height 104. The full reverse lifecycle
+still awaits a fresh rerun. Production fee/replacement policy and reorg
+hardening remain active.
 
 ## Context
 

@@ -57,7 +57,7 @@ if [[ "${M3_ACTOR_CONTRACT_FAKE_ACTOR:-0}" == 1 ]]; then
       exit 1
       ;;
     drive:bitcoin-lez-count-drift)
-      printf '3\n' >"$FAKE_LEZ_SUBMISSION_COUNT"
+      printf '%s\n' "${FAKE_LEZ_DRIFT_COUNT:-3}" >"$FAKE_LEZ_SUBMISSION_COUNT"
       echo "actor chain observation is unavailable" >&2
       exit 1
       ;;
@@ -1297,6 +1297,7 @@ readonly fake_bitcoin_expected="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 run_bitcoin_lock_retry_fixture() {
   local case_name="$1" mode="$2" require_present="$3" initial_mempool="$4"
+  local asset_mode="${5:-native}" initial_lez_count="${6:-2}" drift_count="${7:-3}"
   local fixture_root="${bitcoin_retry_contract_root}/${case_name}"
   local log="${fixture_root}/actor-calls.tsv" attempts="${fixture_root}/attempts.count"
   local mempool="${fixture_root}/mempool.json" lez_count="${fixture_root}/lez.count"
@@ -1305,11 +1306,12 @@ run_bitcoin_lock_retry_fixture() {
   : >"$log"
   printf '0\n' >"$attempts"
   printf '%s\n' "$initial_mempool" >"$mempool"
-  printf '2\n' >"$lez_count"
+  printf '%s\n' "$initial_lez_count" >"$lez_count"
   M3_ACTOR_CONTRACT_FAKE_ACTOR=1 FAKE_ACTOR_MODE="$mode" FAKE_ACTOR_LOG="$log" \
     FAKE_ACTOR_ATTEMPTS="$attempts" FAKE_BITCOIN_MEMPOOL="$mempool" \
     FAKE_BITCOIN_EXPECTED="$fake_bitcoin_expected" \
-    FAKE_LEZ_SUBMISSION_COUNT="$lez_count" \
+    FAKE_LEZ_SUBMISSION_COUNT="$lez_count" FAKE_LEZ_DRIFT_COUNT="$drift_count" \
+    M3_POC_ASSET_MODE="$asset_mode" \
     bash -c '
       set -euo pipefail
       source "$1" contract >/dev/null
@@ -1342,6 +1344,12 @@ jq -e --arg tx "$fake_bitcoin_expected" '. == [$tx]' \
 [[ "$(<"${bitcoin_retry_contract_root}/moving-tip/lez.count")" == 2 ]] ||
   fail "Bitcoin Maker-lock retry changed the unrelated LEZ effect count"
 
+run_bitcoin_lock_retry_fixture custom-token bitcoin-moving-tip-then-success 0 '[]' \
+  custom_token 3 4 ||
+  fail "custom-token Bitcoin Maker-lock retry rejected its exact three LEZ effects"
+[[ "$(<"${bitcoin_retry_contract_root}/custom-token/lez.count")" == 3 ]] ||
+  fail "custom-token Bitcoin Maker-lock retry changed the unrelated LEZ effect count"
+
 run_bitcoin_lock_retry_fixture typed-after-send bitcoin-typed-after-send-then-success 0 '[]' ||
   fail "Bitcoin Maker-lock retry did not reconcile an ambiguous post-send outcome"
 [[ "$(<"${bitcoin_retry_contract_root}/typed-after-send/attempts.count")" == 2 ]] ||
@@ -1365,6 +1373,10 @@ if run_bitcoin_lock_retry_fixture wrong-mempool bitcoin-wrong-mempool 0 '[]'; th
 fi
 if run_bitcoin_lock_retry_fixture lez-drift bitcoin-lez-count-drift 0 '[]'; then
   fail "Bitcoin Maker-lock retry accepted LEZ effect-count drift"
+fi
+if run_bitcoin_lock_retry_fixture custom-lez-drift bitcoin-lez-count-drift 0 '[]' \
+    custom_token 3 4; then
+  fail "custom-token Bitcoin Maker-lock retry accepted LEZ effect-count drift"
 fi
 
 cleanup_bitcoin_retry_contract_root

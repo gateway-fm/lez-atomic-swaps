@@ -1957,11 +1957,29 @@ Active M3 refund critical path:
   directions atomically reserve `current tip + 1` immediately before their own
   stage two, while overlap reserves consecutive heights before either stage two.
   Reservations require a stable tip and empty mempool and cannot be rebased
-  after finalization. Explicit terminal ATA
+  after finalization. Fresh isolated Run W (`m3f7compose20260718w`) started from
+  clean pushed `b872b12` and proved that fix against actual nodes: forward used
+  anchor 103, its settlement consumed height 104, and reverse then reserved and
+  finalized stage two with fresh anchor 105. Forward again reached terminal
+  revision four with exact `175/75/0` balances and zero replay submissions.
+  Reverse then finalized custom-token initialization, custody creation, and
+  funding at blocks 57, 61, and 64 and both actors projected that first lock.
+  The run stopped before the reverse Bitcoin second lock because its retry guard
+  still assumed the native path's two LEZ effects instead of the custom-token
+  path's three. No foreign resource was targeted and exact cleanup passed. This
+  bounded RED is now covered by native `2 -> 3` and custom-token `3 -> 4` drift
+  rejection; GREEN derives the invariant from the countersigned asset mode and
+  preserves the exact count across typed retries. Run W is not a complete F7
+  pair. Its private evidence timestamps also establish current iteration costs:
+  the cold official-wallet build took 2 minutes 7 seconds, serialized Core and
+  LEZ readiness took about 36 and 58 seconds, forward stage two through terminal
+  took 5 minutes 32 seconds, and reverse stage two through the typed RED took
+  2 minutes 39 seconds. Explicit terminal ATA
   balance and packet
   bindings remain forward
   `175/75/0`, reverse `75/175/0`, and conserved total `250`. The remaining
-  functional gate is a fresh clean pushed-commit two-direction journey. After
+  functional gate is a fresh clean pushed-commit two-direction journey with the
+  asset-typed retry guard. After
   the first passing F7 pair, the owner-requested repeatability gate requires at
   least three clean custom-token swaps per direction, another recorded native
   pair, and one clean repeat of the opposite-direction overlap checkpoint before

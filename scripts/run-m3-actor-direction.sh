@@ -1512,6 +1512,7 @@ actor_invoke_bitcoin_lock_awaiting_retry() {
   local role="$1" command="$2" expected="$3" require_present="$4" label="$5"
   local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
   local attempt attempt_output attempt_error error_text mempool mempool_count lez_count
+  local expected_lez_count
   assert_survivor_actor_invocation_allowed "$role" "$label"
   [[ "$M3_POC_DIRECTION" == "taker_sells_lez" && "$role" == "maker" &&
      "$command" == "drive" ]] ||
@@ -1520,12 +1521,17 @@ actor_invoke_bitcoin_lock_awaiting_retry() {
     fail "Bitcoin Maker-lock retry received an invalid exact txid"
   [[ "$require_present" == 0 || "$require_present" == 1 ]] ||
     fail "Bitcoin Maker-lock retry presence policy must be zero or one"
+  case "$asset_mode" in
+    native) expected_lez_count=2 ;;
+    custom_token) expected_lez_count=3 ;;
+    *) fail "Bitcoin Maker-lock retry received an unsupported asset mode" ;;
+  esac
   actor_last_output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-${role}.json"
   [[ ! -e "$actor_last_output" && ! -L "$actor_last_output" ]] ||
     fail "refusing to overwrite actor evidence: ${label}/${role}"
   for attempt in {1..120}; do
     lez_count="$(lez_successful_submission_count)"
-    [[ "$lez_count" == 2 ]] ||
+    [[ "$lez_count" == "$expected_lez_count" ]] ||
       fail "Bitcoin Maker-lock retry observed LEZ effect-count drift"
     mempool="$(core_rpc taker getrawmempool '[]')"
     if jq -e --arg tx "$expected" '.error == null and .result == [$tx]' \
@@ -1552,7 +1558,7 @@ actor_invoke_bitcoin_lock_awaiting_retry() {
         and .phase == "taker_lock_confirmed" and .revision == 1
       ' "$attempt_output" >/dev/null ||
         fail "${role} actor returned an unexpected Bitcoin Maker-lock pending state"
-      [[ "$(lez_successful_submission_count)" == 2 ]] ||
+      [[ "$(lez_successful_submission_count)" == "$expected_lez_count" ]] ||
         fail "Bitcoin Maker-lock success changed the LEZ effect count"
       mempool="$(core_rpc taker getrawmempool '[]')"
       jq -e --arg tx "$expected" '.error == null and .result == [$tx]' \
@@ -1568,7 +1574,7 @@ actor_invoke_bitcoin_lock_awaiting_retry() {
     error_text="$(tr -d '\r\n' <"$attempt_error")"
     [[ "$error_text" == "actor chain observation is unavailable" ]] ||
       fail "${role} Bitcoin Maker-lock drive failed with a non-retryable typed error"
-    [[ "$(lez_successful_submission_count)" == 2 ]] ||
+    [[ "$(lez_successful_submission_count)" == "$expected_lez_count" ]] ||
       fail "Bitcoin Maker-lock typed failure changed the LEZ effect count"
     mempool="$(core_rpc taker getrawmempool '[]')"
     if jq -e --arg tx "$expected" '.error == null and .result == [$tx]' \

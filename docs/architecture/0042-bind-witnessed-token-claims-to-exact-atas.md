@@ -6,11 +6,11 @@ focused evidence. The checked manifest, public IDL, deployer assembly, verifier,
 and active M3 runner pins now share the new guest identity. The additive strict
 v2 transaction, finalized-classifier, exact-once client, main-process adapter,
 and official sidecar planner, route, replay, and finalized-scan boundaries are
-also implemented. Live journal/actor composition has crossed finalized
-initialization, custody creation, and funding, and the Maker projected the
-custom-token lock to revision two. Schema-5 peer observation now uses v2
-terms discovery rather than the native-only v1 route. A complete two-direction
-actual-node custom-token packet remains open.
+also implemented. Live journal/actor composition is terminal in the forward
+direction and has crossed finalized initialization, custody creation, and
+funding with both roles at revision two in the reverse direction. Schema-5 peer
+observation now uses v2 terms discovery rather than the native-only v1 route. A
+complete two-direction actual-node custom-token packet remains open.
 
 ## Context
 
@@ -463,9 +463,19 @@ rewind, same-height replacement, missing history, and pinned identity drift
 remain fail-closed. The local F7 runner can therefore use one-second slots
 instead of a ten-second quiet-tip workaround, pending fresh actual-node proof.
 
-This ADR does not certify an actual-node custom-token swap in either trade
-direction, exact composed balances/effects, restart/no-resubmission, public
-deployment, production custody, or a cryptographic/security review. It supports
-fungible definitions only. The accepted F7 integration gate remains open until
-the new guest is deployed and exercised through the same actor, adapter,
-finality, journal, and cleanup boundaries as the native corridor.
+Runs V and W each certify the complete `taker_sells_foreign` custom-token
+direction through four LEZ effects, two Bitcoin effects, terminal revision four,
+exact balances, restart/no-resubmission, and exact cleanup. Run W additionally
+proves the reverse initialization, custody creation, funding, and both first-lock
+projections on actual nodes. Its bounded RED exposed a harness invariant that
+counted only the native path's two LEZ preparation effects while custom token
+has three. The retry guard now derives the exact expected count from the
+countersigned asset mode and rejects any count drift; it does not infer progress
+from the count or widen send authority.
+
+This ADR does not yet certify a complete actual-node custom-token swap in the
+reverse trade direction, a reproducible two-direction packet, public deployment,
+production custody, or a cryptographic/security review. The accepted F7
+integration gate remains open until both directions pass through the same actor,
+adapter, finality, journal, balance, replay, and cleanup boundaries as the native
+corridor.
