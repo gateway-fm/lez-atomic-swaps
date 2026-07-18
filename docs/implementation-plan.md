@@ -1794,7 +1794,8 @@ Active M3 refund critical path:
   its identity, and downgraded movement/history loss to `UnknownOrPending`.
   Official planner bytes pass a complete init/custody/fund finalized journey,
   authenticated real-client route/restart coverage, five focused scanner
-  cases, and all 122 sidecar tests plus 44 protocol contracts, strict Clippy,
+  cases, and all 127 current sidecar tests plus 44 protocol
+  contracts, strict Clippy,
   rustdoc/doctests, formatting, diff, advisory, ban, license, and source gates.
   Fresh isolated run `m3f7compose20260717l` then proved the checked guest
   deployment, both fresh-identity Vault claims, the eight-transaction official
@@ -1821,10 +1822,31 @@ Active M3 refund critical path:
   trade direction started. Its exact cleanup attestation passed and targeted
   no foreign resource. The process correction is mandatory: never edit a
   runner during its live execution; finish, syntax-check, test, and commit the
-  complete patch before starting a new run. Current work adds explicit terminal
-  ATA balance assertions and packet bindings: forward `175/75/0`, reverse
-  `75/175/0`, and conserved total `250`. A fresh two-direction live run follows,
-  then synchronized documentation and milestone-wide closure gates;
+  complete patch before starting a new run. Fresh isolated run
+  `m3f7compose20260717n` then passed the checked deployment, fresh-identity
+  Vault bootstrap, official eight-transaction F7 Token/ATA fixture, forward
+  Bitcoin first lock, and actor-owned LEZ initialization, custody creation, and
+  funding through exact finalized inclusion. It remains bounded RED evidence,
+  not a passed PoC: Maker second-lock observation never closed after the exact
+  funding transaction `b75f...9e7f` finalized once in block 181. All 120 fresh,
+  read-only actor retries failed closed without a duplicate submission. Exact
+  cleanup attestation passed without broad cleanup or a foreign resource
+  target. Read-only diagnosis found two repository-owned liveness couplings:
+  the sidecar's hard 10-second historical-account timeout is shorter than the
+  pinned official indexer's checkpoint replay at that height, and a separately
+  unrelated latest-finalized-tip freeze rejects an unchanged containing block
+  whenever the local chain advances. RED-GREEN work now gives the historical
+  read an explicit bounded budget and revalidates the exact containing block
+  rather than freezing unrelated later finality. A batched or cached upstream
+  historical snapshot remains the production improvement, but it is not an M3
+  blocker after the local fail-closed fix. Independent GREEN gates are rustfmt,
+  strict Clippy for all targets and features, all 127 current sidecar tests,
+  the actor contract, Mermaid compatibility, and diff check; these component
+  gates do not promote run N to PoC evidence. Explicit terminal ATA balance and
+  packet bindings remain forward `175/75/0`, reverse `75/175/0`, and conserved
+  total `250`. The execution ETA has moved by one local fix/gate cycle and one
+  fresh two-direction run; synchronized documentation, D1, and milestone-wide
+  closure gates follow that passing run;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
   not recordings and cannot satisfy D1. The repository now supplies a
@@ -1850,9 +1872,10 @@ Active M3 refund critical path:
 - [ ] after the owner enters later hardening, add restart, reorg, fee, and chaos
   cases beyond the reproducible functional PoC boundary.
 
-Repository-controlled open work, not external blockers, is the F7 fresh
-two-direction actual-node custom-token rerun, exact terminal balance/finality
-packet binding, D1 recordings, and synchronized closure evidence and gates. The
+Repository-controlled open work, not external blockers, is the F7 historical
+read/containing-block liveness fix and gates, exact terminal balance/finality
+packet binding, a fresh two-direction actual-node custom-token run, D1
+recordings, and synchronized closure evidence and gates. The
 official-wallet starting fixture is GREEN but cannot substitute for
 actor-owned escrow/claim/refund effects or finalized balance evidence. The
 revision-one-to-two store/projector, signed

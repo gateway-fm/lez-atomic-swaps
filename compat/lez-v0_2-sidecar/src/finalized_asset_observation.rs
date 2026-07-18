@@ -117,7 +117,10 @@ impl FinalizedAssetObserver {
                     let (metadata, custody) = self
                         .read_initialization_state(&request.terms, candidate.block.block_id)
                         .await?;
-                    if let Some(reason) = self.post_state_unavailable(&stable).await? {
+                    if let Some(reason) = self
+                        .post_candidate_state_unavailable(&stable, candidate.block.block_id)
+                        .await?
+                    {
                         return Ok(
                             ClassifyFinalizedWitnessedAssetInitializationV2Result::unavailable(
                                 request.context.clone(),
@@ -235,7 +238,10 @@ impl FinalizedAssetObserver {
                             0,
                         )
                         .await?;
-                    if let Some(reason) = self.post_state_unavailable(&stable).await? {
+                    if let Some(reason) = self
+                        .post_candidate_state_unavailable(&stable, candidate.block.block_id)
+                        .await?
+                    {
                         return ClassifyFinalizedWitnessedAssetCustodyCreationV2Result::unavailable(
                             request.context.clone(),
                             request.terms.clone(),
@@ -355,7 +361,10 @@ impl FinalizedAssetObserver {
                             amount,
                         )
                         .await?;
-                    if let Some(reason) = self.post_state_unavailable(&stable).await? {
+                    if let Some(reason) = self
+                        .post_candidate_state_unavailable(&stable, candidate.block.block_id)
+                        .await?
+                    {
                         return Ok(ClassifyFinalizedWitnessedAssetFundingV2Result::unavailable(
                             request.context.clone(),
                             request.terms.clone(),
@@ -465,7 +474,10 @@ impl FinalizedAssetObserver {
                             0,
                         )
                         .await?;
-                    if let Some(reason) = self.post_state_unavailable(&stable).await? {
+                    if let Some(reason) = self
+                        .post_candidate_state_unavailable(&stable, candidate.block.block_id)
+                        .await?
+                    {
                         return Ok(ClassifyFinalizedWitnessedAssetClaimV2Result::unavailable(
                             request.context.clone(),
                             request.terms.clone(),
@@ -684,11 +696,15 @@ impl FinalizedAssetObserver {
         Ok((stable.finalized_clock, metadata, custody))
     }
 
-    async fn post_state_unavailable(
+    async fn post_candidate_state_unavailable(
         &self,
         stable: &StableFinalizedWindow,
+        candidate_block_id: u64,
     ) -> Result<Option<FinalizedWitnessedAssetUnavailableReasonV2>, BridgeRuntimeError> {
-        match stable.confirm_unchanged(self.indexer.as_ref()).await {
+        match stable
+            .confirm_block(self.indexer.as_ref(), candidate_block_id)
+            .await
+        {
             Ok(()) => Ok(None),
             Err(BridgeRuntimeError::MovingTip) => {
                 Ok(Some(FinalizedWitnessedAssetUnavailableReasonV2::MovingTip))
@@ -816,7 +832,10 @@ impl FinalizedAssetObserver {
         }
         Ok(match found {
             Some(candidate) => {
-                if let Err(error) = stable.confirm_unchanged(self.indexer.as_ref()).await {
+                if let Err(error) = stable
+                    .confirm_block(self.indexer.as_ref(), candidate.block.block_id)
+                    .await
+                {
                     return Ok(Scan::Unavailable(match error {
                         BridgeRuntimeError::MovingTip => {
                             FinalizedWitnessedAssetUnavailableReasonV2::MovingTip
@@ -1007,15 +1026,13 @@ impl FinalizedAssetObserver {
                 ))
             }
             WitnessedLezAssetV2::CustomToken(token) => {
-                let (metadata, _) = self
-                    .read_metadata(terms, block_id, EscrowState::Empty)
-                    .await?;
-                self.read_token_definition(token, block_id).await?;
-                match self
+                let metadata = self.read_metadata(terms, block_id, EscrowState::Empty);
+                let definition = self.read_token_definition(token, block_id);
+                let custody = self
                     .indexer
-                    .account_at_block(*token.custody_ata_account_id().as_bytes(), block_id)
-                    .await?
-                {
+                    .account_at_block(*token.custody_ata_account_id().as_bytes(), block_id);
+                let ((metadata, _), (), custody) = tokio::try_join!(metadata, definition, custody)?;
+                match custody {
                     HistoricalAccount::Absent => Ok((
                         metadata,
                         WitnessedAssetInitializationCustodyFactsV2::custom_token_ata_absent(
@@ -1036,9 +1053,10 @@ impl FinalizedAssetObserver {
         expected_balance: u128,
     ) -> Result<(WitnessedEscrowMetadataFacts, WitnessedAssetCustodyFactsV2), BridgeRuntimeError>
     {
-        let (metadata, custody_id) = self.read_metadata(terms, block_id, expected_state).await?;
         match terms.asset() {
             WitnessedLezAssetV2::Native(native) => {
+                let (metadata, custody_id) =
+                    self.read_metadata(terms, block_id, expected_state).await?;
                 let account = require_present(
                     self.indexer
                         .account_at_block(*custody_id.as_bytes(), block_id)
@@ -1063,12 +1081,13 @@ impl FinalizedAssetObserver {
                 ))
             }
             WitnessedLezAssetV2::CustomToken(token) => {
-                self.read_token_definition(token, block_id).await?;
-                let account = require_present(
-                    self.indexer
-                        .account_at_block(*token.custody_ata_account_id().as_bytes(), block_id)
-                        .await?,
-                )?;
+                let metadata = self.read_metadata(terms, block_id, expected_state);
+                let definition = self.read_token_definition(token, block_id);
+                let custody = self
+                    .indexer
+                    .account_at_block(*token.custody_ata_account_id().as_bytes(), block_id);
+                let ((metadata, _), (), custody) = tokio::try_join!(metadata, definition, custody)?;
+                let account = require_present(custody)?;
                 if account.program_owner.0 != programs::token().id() {
                     return Err(BridgeRuntimeError::InvalidObservation);
                 }
@@ -1613,6 +1632,51 @@ mod tests {
     }
 
     #[derive(Debug)]
+    struct ConcurrentAccountIndexer {
+        accounts: BTreeMap<([u8; 32], u64), HistoricalAccount>,
+        entered: AtomicUsize,
+        all_entered: tokio::sync::Notify,
+        release: tokio::sync::Semaphore,
+    }
+
+    #[async_trait]
+    impl FinalizedIndexerApi for ConcurrentAccountIndexer {
+        async fn last_finalized_block_id(&self) -> Result<Option<u64>, BridgeRuntimeError> {
+            Err(BridgeRuntimeError::Unavailable)
+        }
+
+        async fn block_by_id(&self, _block_id: u64) -> Result<Option<Block>, BridgeRuntimeError> {
+            Err(BridgeRuntimeError::Unavailable)
+        }
+
+        async fn block_by_hash(
+            &self,
+            _block_hash: [u8; 32],
+        ) -> Result<Option<Block>, BridgeRuntimeError> {
+            Err(BridgeRuntimeError::Unavailable)
+        }
+
+        async fn account_at_block(
+            &self,
+            account_id: [u8; 32],
+            block_id: u64,
+        ) -> Result<HistoricalAccount, BridgeRuntimeError> {
+            if self.entered.fetch_add(1, Ordering::SeqCst) + 1 == 3 {
+                self.all_entered.notify_one();
+            }
+            self.release
+                .acquire()
+                .await
+                .map_err(|_| BridgeRuntimeError::Unavailable)?
+                .forget();
+            self.accounts
+                .get(&(account_id, block_id))
+                .cloned()
+                .ok_or(BridgeRuntimeError::Unavailable)
+        }
+    }
+
+    #[derive(Debug)]
     struct ScanIndexer {
         tip: u64,
         by_id: BTreeMap<u64, Block>,
@@ -1646,43 +1710,6 @@ mod tests {
                 .get(&(account_id, block_id))
                 .cloned()
                 .ok_or(BridgeRuntimeError::Unavailable)
-        }
-    }
-
-    #[derive(Debug)]
-    struct MovingTipAfterStateIndexer {
-        base: ScanIndexer,
-        tip_reads: AtomicUsize,
-    }
-
-    #[async_trait]
-    impl FinalizedIndexerApi for MovingTipAfterStateIndexer {
-        async fn last_finalized_block_id(&self) -> Result<Option<u64>, BridgeRuntimeError> {
-            let read = self.tip_reads.fetch_add(1, Ordering::SeqCst);
-            Ok(Some(if read >= 2 {
-                self.base.tip + 1
-            } else {
-                self.base.tip
-            }))
-        }
-
-        async fn block_by_id(&self, block_id: u64) -> Result<Option<Block>, BridgeRuntimeError> {
-            self.base.block_by_id(block_id).await
-        }
-
-        async fn block_by_hash(
-            &self,
-            block_hash: [u8; 32],
-        ) -> Result<Option<Block>, BridgeRuntimeError> {
-            self.base.block_by_hash(block_hash).await
-        }
-
-        async fn account_at_block(
-            &self,
-            account_id: [u8; 32],
-            block_id: u64,
-        ) -> Result<HistoricalAccount, BridgeRuntimeError> {
-            self.base.account_at_block(account_id, block_id).await
         }
     }
 
@@ -1740,6 +1767,52 @@ mod tests {
         changed: AtomicBool,
     }
 
+    #[derive(Debug)]
+    struct CandidateDriftAfterAccountIndexer {
+        base: ScanIndexer,
+        candidate_height: u64,
+        replacement: Option<Block>,
+        changed: AtomicBool,
+    }
+
+    #[async_trait]
+    impl FinalizedIndexerApi for CandidateDriftAfterAccountIndexer {
+        async fn last_finalized_block_id(&self) -> Result<Option<u64>, BridgeRuntimeError> {
+            Ok(Some(self.base.tip))
+        }
+
+        async fn block_by_id(&self, block_id: u64) -> Result<Option<Block>, BridgeRuntimeError> {
+            if self.changed.load(Ordering::SeqCst) && block_id == self.candidate_height {
+                Ok(self.replacement.clone())
+            } else {
+                self.base.block_by_id(block_id).await
+            }
+        }
+
+        async fn block_by_hash(
+            &self,
+            block_hash: [u8; 32],
+        ) -> Result<Option<Block>, BridgeRuntimeError> {
+            if let Some(replacement) = &self.replacement
+                && block_hash == replacement.header.hash.0
+            {
+                Ok(Some(replacement.clone()))
+            } else {
+                self.base.block_by_hash(block_hash).await
+            }
+        }
+
+        async fn account_at_block(
+            &self,
+            account_id: [u8; 32],
+            block_id: u64,
+        ) -> Result<HistoricalAccount, BridgeRuntimeError> {
+            let account = self.base.account_at_block(account_id, block_id).await?;
+            self.changed.store(true, Ordering::SeqCst);
+            Ok(account)
+        }
+    }
+
     #[async_trait]
     impl FinalizedIndexerApi for RequestedEndDriftAfterAccountIndexer {
         async fn last_finalized_block_id(&self) -> Result<Option<u64>, BridgeRuntimeError> {
@@ -1789,7 +1862,7 @@ mod tests {
     impl FinalizedIndexerApi for ForkAfterScanIndexer {
         async fn last_finalized_block_id(&self) -> Result<Option<u64>, BridgeRuntimeError> {
             let read = self.tip_reads.fetch_add(1, Ordering::SeqCst);
-            if read >= 2 {
+            if read >= 1 {
                 self.changed.store(true, Ordering::SeqCst);
             }
             Ok(Some(self.old.tip))
@@ -2361,6 +2434,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn custom_token_state_reads_metadata_definition_and_custody_concurrently() {
+        let fixture = token_fixture(EscrowStatus::Funded, HistoricalAccount::Absent);
+        let mut accounts = fixture.accounts.clone();
+        accounts.insert((fixture.custody_id, 10), holding(fixture.definition_id, 75));
+        let indexer = Arc::new(ConcurrentAccountIndexer {
+            accounts,
+            entered: AtomicUsize::new(0),
+            all_entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Semaphore::new(0),
+        });
+        let observer = FinalizedAssetObserver::new(fixture.runtime, indexer.clone());
+        let read = observer.read_asset_state(&fixture.terms, 10, EscrowState::Funded, 75);
+        let assert_concurrent = async {
+            indexer.all_entered.notified().await;
+            assert_eq!(indexer.entered.load(Ordering::SeqCst), 3);
+            indexer.release.add_permits(3);
+        };
+        let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            tokio::join!(read, assert_concurrent)
+        })
+        .await
+        .expect("three custom-token historical reads must enter concurrently");
+
+        assert!(matches!(
+            result,
+            Ok((_, WitnessedAssetCustodyFactsV2::CustomToken(facts)))
+                if facts.balance.as_u128() == 75
+        ));
+    }
+
+    #[tokio::test]
     #[allow(
         clippy::too_many_lines,
         reason = "one official planner-to-indexer journey keeps all three ordered effects and the post-state reorg in view"
@@ -2491,22 +2595,94 @@ mod tests {
             FinalizedWitnessedAssetScanOutcomeV2::Found { .. }
         ));
 
-        let moving_observer = FinalizedAssetObserver::new(
+        let advancing_indexer = Arc::new(AdvancingTipAfterAccountIndexer {
+            base: ScanIndexer {
+                tip: 13,
+                by_id: by_id.clone(),
+                by_hash: by_hash.clone(),
+                accounts: accounts.clone(),
+            },
+            next_tip: finalized_block(14, Vec::new()),
+            advanced: AtomicBool::new(false),
+        });
+        let moving_observer =
+            FinalizedAssetObserver::new(initialization.runtime.clone(), advancing_indexer.clone());
+        let moved = moving_observer
+            .classify_initialization(
+                &ClassifyFinalizedWitnessedAssetInitializationV2Request::new(
+                    context("asset-finalized-scan-moving-tip-0001"),
+                    initialization.runtime.clone(),
+                    initialization.terms.clone(),
+                    prepared.effects[0].transaction.clone(),
+                    window,
+                ),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            moved.outcome,
+            FinalizedWitnessedAssetScanOutcomeV2::Found { .. }
+        ));
+        assert!(advancing_indexer.advanced.load(Ordering::SeqCst));
+        assert_eq!(
+            advancing_indexer.last_finalized_block_id().await.unwrap(),
+            Some(14)
+        );
+
+        let mut replacement = by_id.get(&10).unwrap().clone();
+        replacement.header.hash = HashType([203; 32]);
+        replacement.header.signature = IndexedSignature([203; 64]);
+        let changed_candidate = FinalizedAssetObserver::new(
             initialization.runtime.clone(),
-            Arc::new(MovingTipAfterStateIndexer {
+            Arc::new(CandidateDriftAfterAccountIndexer {
+                base: ScanIndexer {
+                    tip: 13,
+                    by_id: by_id.clone(),
+                    by_hash: by_hash.clone(),
+                    accounts: accounts.clone(),
+                },
+                candidate_height: 10,
+                replacement: Some(replacement),
+                changed: AtomicBool::new(false),
+            }),
+        );
+        let changed = changed_candidate
+            .classify_initialization(
+                &ClassifyFinalizedWitnessedAssetInitializationV2Request::new(
+                    context("asset-finalized-scan-candidate-drift-0001"),
+                    initialization.runtime.clone(),
+                    initialization.terms.clone(),
+                    prepared.effects[0].transaction.clone(),
+                    window,
+                ),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            changed.outcome,
+            FinalizedWitnessedAssetScanOutcomeV2::Unavailable {
+                reason: FinalizedWitnessedAssetUnavailableReasonV2::MovingTip
+            }
+        ));
+
+        let missing_candidate = FinalizedAssetObserver::new(
+            initialization.runtime.clone(),
+            Arc::new(CandidateDriftAfterAccountIndexer {
                 base: ScanIndexer {
                     tip: 13,
                     by_id,
                     by_hash,
                     accounts,
                 },
-                tip_reads: AtomicUsize::new(0),
+                candidate_height: 10,
+                replacement: None,
+                changed: AtomicBool::new(false),
             }),
         );
-        let moved = moving_observer
+        let missing = missing_candidate
             .classify_initialization(
                 &ClassifyFinalizedWitnessedAssetInitializationV2Request::new(
-                    context("asset-finalized-scan-moving-tip-0001"),
+                    context("asset-finalized-scan-candidate-missing-0001"),
                     initialization.runtime,
                     initialization.terms,
                     prepared.effects[0].transaction.clone(),
@@ -2516,9 +2692,9 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(
-            moved.outcome,
+            missing.outcome,
             FinalizedWitnessedAssetScanOutcomeV2::Unavailable {
-                reason: FinalizedWitnessedAssetUnavailableReasonV2::MovingTip
+                reason: FinalizedWitnessedAssetUnavailableReasonV2::HistoryUnavailable
             }
         ));
     }

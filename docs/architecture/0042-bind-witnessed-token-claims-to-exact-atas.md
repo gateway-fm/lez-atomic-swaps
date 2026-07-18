@@ -255,38 +255,93 @@ sidecar server. The four preparation/completion methods restore exact durable
 requests and results in dependency order. The finalized scanner validates
 canonical bytes, hash, stateless transaction rules, signer and account order,
 instruction, programs, official ATAs, metadata, fungible definition, holdings,
-and stable ID/hash block ancestry. Found effects and current-state/refund reads
-retain the post-account-read unchanged-tip guard. Missing-effect authorization
-is instead tied to the immutable requested-end block: the scanner proves the
-exact predecessor state there and then re-reads that same boundary by ID and
-hash. A later finalized tip may advance without invalidating the bounded
-snapshot; requested-end identity drift still fails closed. A
-same-height refund fork found during root review now forces
+and stable ID/hash block ancestry.
+
+A `Found` effect is anchored to its immutable finalized containing block, not
+to the latest finalized tip. After reading metadata, the token definition when
+applicable, and custody at that same historical block, the sidecar re-fetches
+the containing block through the official indexer's by-ID and by-hash methods.
+Both responses must still be byte-identical to the retained finalized candidate
+block. An unrelated later tip may advance without invalidating that positive
+observation. A missing block, changed ID/hash response, non-finalized response,
+or changed candidate fails closed and returns no usable `Found` facts.
+
+Missing-effect authorization is separately tied to the immutable requested-end
+block: the scanner proves the exact predecessor state there and then re-reads
+that same boundary by ID and hash. A later finalized tip may advance without
+invalidating the bounded negative snapshot; requested-end identity drift still
+fails closed. A same-height refund fork found during root review now forces
 `UnknownOrPending`; it cannot combine transaction evidence and terminal state
 from different finalized views. Historical default-account absence remains
-distinct from an unavailable RPC. Official planner effects pass the complete
-init/custody/fund scanner journey, authenticated client/restart coverage, all
-122 sidecar tests, and strict documentation, lint, dependency, license, source,
-formatting, and diff gates.
+distinct from an unavailable RPC.
+
+Historical metadata, token-definition, and custody reads use explicit nested
+budgets and bounded concurrency whose aggregate is strictly inside the actor
+bridge's 30-second outer request timeout. This prevents one slow official RPC
+from silently consuming the whole actor budget and prevents an unbounded fanout
+from becoming a new availability failure. The current split keeps ordinary
+block and tip RPCs at 10 seconds with maximum concurrency one, while the
+dedicated historical-account client uses a 20-second request budget and maximum
+concurrency three. Custom-token metadata, definition, and custody reads use one
+bounded `tokio::try_join!`, so their nested wait is bounded at approximately
+20 seconds rather than three sequential 20-second waits. A supported upstream
+batch read or a cached, block-identified historical snapshot remains a
+production improvement. The existing component evidence predates this timing
+correction; it does not certify a fresh actual-node custom-token PoC.
+
+The same-block reads and block revalidation are authoritative-indexer
+consistency checks. `getAccountAtBlock` supplies neither a cryptographic account
+proof nor an atomic multi-account snapshot token, so these checks do not prove
+that metadata, definition, and custody were returned from one cryptographically
+atomic snapshot. The recursive claim transaction itself remains one atomic
+on-chain LEZ transition under the guest rules described above; the observation
+RPCs, actor database, Bitcoin, and LEZ do not share one transaction.
 
 ```mermaid
 sequenceDiagram
-    participant Actor
+    participant SwapActor as Actor
+    participant Sidecar
+    participant Indexer
+
+    SwapActor->>Sidecar: Classify exact finalized asset effect
+    Sidecar->>Indexer: Scan bounded finalized window by ID and hash
+    Indexer-->>Sidecar: Unique exact candidate in block B
+    par Metadata read
+        Sidecar->>Indexer: Read metadata at block B
+    and Token definition read when applicable
+        Sidecar->>Indexer: Read definition at block B
+    and Custody read
+        Sidecar->>Indexer: Read custody at block B
+    end
+    Note over Sidecar,Indexer: All historical reads share one bounded concurrent join
+    Sidecar->>Indexer: Re-read block B by ID and hash
+    alt Both responses equal the retained finalized block B
+        Sidecar-->>SwapActor: Found facts anchored to block B
+    else Block B is missing, changed, or not finalized
+        Sidecar-->>SwapActor: Fail closed with no Found facts
+    end
+    Note over Sidecar,Indexer: An unrelated newer finalized tip does not invalidate block B
+    Note over Sidecar,Indexer: Historical reads are authoritative consistency, not proof or an atomic snapshot
+```
+
+```mermaid
+sequenceDiagram
+    participant SwapActor as Actor
     participant Journal
     participant Sidecar
     participant Indexer
     participant Node
 
-    Actor->>Sidecar: Classify exact effect in fixed window
+    SwapActor->>Sidecar: Classify exact effect in fixed window
     Sidecar->>Indexer: Read requested-end block by ID and hash
     Sidecar->>Indexer: Read predecessor accounts at requested end
     Sidecar->>Indexer: Re-read requested-end block by ID and hash
     Indexer-->>Sidecar: Same immutable boundary
-    Sidecar-->>Actor: Absent at bounded snapshot
-    Actor->>Journal: Consume one send authority with CAS
-    Journal-->>Actor: Exact bytes and transaction ID
-    Actor->>Node: Submit exact transaction once
-    Note over Actor,Node: A newer finalized tip does not rearm the journal
+    Sidecar-->>SwapActor: Absent at bounded snapshot
+    SwapActor->>Journal: Consume one send authority with CAS
+    Journal-->>SwapActor: Exact bytes and transaction ID
+    SwapActor->>Node: Submit exact transaction once
+    Note over SwapActor,Node: A newer finalized tip does not rearm the journal
 ```
 
 The fixed boundary is safe for actor-owned exact submissions because the

@@ -541,7 +541,7 @@ flowchart TB
         M3F7C["F7 exact-once bridge client<br/>eleven v2 operations + role/window checks GREEN"]
         M3F7D["F7 agreement and local-policy adapter<br/>eleven no-submit mappings GREEN"]
         M3F7S["F7 official sidecar planner<br/>tags 11, 7, 8, 12, and 10<br/>four durable v2 reservations GREEN"]
-        M3F7R["F7 sidecar server and finalized scanner<br/>eleven authenticated routes<br/>fork-safe exact state evidence GREEN"]
+        M3F7R["F7 sidecar and finalized scanner<br/>Found containing-block and Absent window anchors<br/>bounded historical reads; actual-node certification open"]
         M3RA["btc-reference-actor<br/>schema 4 live Maker lock GREEN<br/>both actual-node directions"]
         M3RUN["Schema 4 private-local runner<br/>external Taker first lock<br/>actor-owned Maker second lock GREEN"]
         M3F7A --> M3F7C
@@ -725,6 +725,7 @@ flowchart TB
     TBR2 -->|"non-genesis finalized-tip readiness"| IX
     M3FO -->|"bounded ID and hash blocks parent-linked through stable tip<br/>unique transcript + accounts at containing BlockId"| IX
     M3FF -->|"bounded ID and hash blocks parent-linked through stable tip<br/>canonical FundNative + historical Funded accounts"| IX
+    M3F7R -->|"finalized candidate plus metadata, definition, and custody<br/>at one immutable containing BlockId"| IX
     MBR2 -->|"typed outbound profile"| LezProfile
     TBR2 -->|"typed outbound profile"| LezProfile
     LezProfile -->|"local explicit loopback"| SQ
@@ -909,7 +910,21 @@ new witnessed-claim path separately asserts indexer finality through bounded
 fully covered scans, equal by-ID/by-hash finalized blocks, exact aggregate
 witness validation, and terminal accounts read at the containing block. Either
 role-bound participant can observe without submitting, and the client
-independently verifies BIP-340. Historical runs 14d through 14n remain failure
+independently verifies BIP-340. The v2 finalized asset classifiers bind a
+positive candidate to its immutable finalized containing block. After bounded
+historical metadata, token-definition, and custody reads at that block, the
+sidecar revalidates the same block through the official indexer's by-ID and
+by-hash methods. Advancing an unrelated latest tip does not invalidate the
+candidate; a missing or changed candidate fails closed. Those historical reads
+use explicit nested budgets and bounded concurrency strictly inside the
+30-second actor bridge request timeout: ordinary block and tip calls retain a
+10-second, single-request client, while the historical-account client uses a
+20-second budget, maximum concurrency three, and one bounded concurrent join
+for custom-token metadata, definition, and custody. They remain
+authoritative-indexer consistency checks, not cryptographic account proofs or
+one atomic multi-read snapshot. Upstream batch reads or cached block-identified
+snapshots remain a production improvement. No fresh actual-node F7 PoC is
+implied by this component correction. Historical runs 14d through 14n remain failure
 and invariant evidence. Fresh
 pre-canonical run `m2poc-corridor-fresh-20260714o` completed `TakerSellsLez`: the taker
 initialized and funded LEZ, the maker funded Zcash, waited for two
@@ -1526,6 +1541,8 @@ sequenceDiagram
         alt Canonical reveal path
             Taker->>LezSeq: Submit witnessed LEZ claim
             LezIdx-->>Maker: Finalized claim exposes adaptor material
+            Note over Maker,LezIdx: Historical state is read at the claim block within bounded budgets
+            Note over Maker,LezIdx: Revalidate that block by ID and hash, while an unrelated newer tip may advance
             alt Maker follows including after Taker disappears
                 Note over Taker,TakerStore: Taker process exits after reveal submission
                 Maker->>MakerStore: Fresh process observes reveal and commits revision 3
@@ -1604,6 +1621,8 @@ sequenceDiagram
                 Note over Maker,MakerStore: Observer exits then another maker process reloads revision 3
                 Maker->>LezSeq: Submit witnessed LEZ claim
                 LezIdx-->>Maker: Exact claim finalized
+                Note over Maker,LezIdx: Historical state is read at the claim block within bounded budgets
+                Note over Maker,LezIdx: Revalidate that block by ID and hash, while an unrelated newer tip may advance
                 Maker->>MakerStore: Fresh process projects revision 4 Completed
                 Taker->>TakerStore: Later catch up revisions 3 and 4 observation only
             else Maker disappears after reveal

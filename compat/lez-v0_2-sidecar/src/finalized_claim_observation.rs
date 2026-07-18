@@ -40,6 +40,9 @@ use crate::{
 const MAX_INDEXER_REQUEST_BYTES: u32 = 2_800_000;
 const MAX_INDEXER_RESPONSE_BYTES: u32 = 8 * 1024 * 1024;
 const INDEXER_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const INDEXER_MAX_CONCURRENT_REQUESTS: usize = 1;
+const HISTORICAL_ACCOUNT_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+const HISTORICAL_ACCOUNT_MAX_CONCURRENT_REQUESTS: usize = 3;
 
 /// Provenance-preserving historical account state from pinned indexer v0.2.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -90,11 +93,15 @@ pub(crate) struct StableFinalizedWindow {
 }
 
 impl StableFinalizedWindow {
-    pub(crate) fn requested_end_block(&self) -> Result<&Block, BridgeRuntimeError> {
+    pub(crate) fn block(&self, block_id: u64) -> Result<&Block, BridgeRuntimeError> {
         self.blocks
             .iter()
-            .find(|block| block.header.block_id == self.requested_end)
+            .find(|block| block.header.block_id == block_id)
             .ok_or(BridgeRuntimeError::Unavailable)
+    }
+
+    pub(crate) fn requested_end_block(&self) -> Result<&Block, BridgeRuntimeError> {
+        self.block(self.requested_end)
     }
 
     pub(crate) fn requested_end_clock(&self) -> Result<ChainClock, BridgeRuntimeError> {
@@ -110,8 +117,16 @@ impl StableFinalizedWindow {
         &self,
         indexer: &dyn FinalizedIndexerApi,
     ) -> Result<(), BridgeRuntimeError> {
-        let expected = self.requested_end_block()?;
-        let observed = read_finalized_block(indexer, self.requested_end).await?;
+        self.confirm_block(indexer, self.requested_end).await
+    }
+
+    pub(crate) async fn confirm_block(
+        &self,
+        indexer: &dyn FinalizedIndexerApi,
+        block_id: u64,
+    ) -> Result<(), BridgeRuntimeError> {
+        let expected = self.block(block_id)?;
+        let observed = read_finalized_block(indexer, block_id).await?;
         if &observed != expected {
             return Err(BridgeRuntimeError::MovingTip);
         }
@@ -209,10 +224,25 @@ async fn read_finalized_block(
     Ok(by_id)
 }
 
+fn build_indexer_client(
+    endpoint: &str,
+    request_timeout: Duration,
+    max_concurrent_requests: usize,
+) -> Result<SequencerClient, crate::RuntimeBoundaryError> {
+    SequencerClientBuilder::default()
+        .max_request_size(MAX_INDEXER_REQUEST_BYTES)
+        .max_response_size(MAX_INDEXER_RESPONSE_BYTES)
+        .request_timeout(request_timeout)
+        .max_concurrent_requests(max_concurrent_requests)
+        .build(endpoint)
+        .map_err(|_| crate::RuntimeBoundaryError::InvalidNodeEndpoint)
+}
+
 /// Direct, bounded, no-retry client for the pinned official v0.2 indexer RPC.
 #[derive(Clone)]
 pub struct OfficialIndexerRpc {
     client: SequencerClient,
+    historical_account_client: SequencerClient,
 }
 
 impl fmt::Debug for OfficialIndexerRpc {
@@ -245,14 +275,20 @@ impl OfficialIndexerRpc {
     }
 
     fn connect(endpoint: &str) -> Result<Self, crate::RuntimeBoundaryError> {
-        let client = SequencerClientBuilder::default()
-            .max_request_size(MAX_INDEXER_REQUEST_BYTES)
-            .max_response_size(MAX_INDEXER_RESPONSE_BYTES)
-            .request_timeout(INDEXER_REQUEST_TIMEOUT)
-            .max_concurrent_requests(1)
-            .build(endpoint)
-            .map_err(|_| crate::RuntimeBoundaryError::InvalidNodeEndpoint)?;
-        Ok(Self { client })
+        let client = build_indexer_client(
+            endpoint,
+            INDEXER_REQUEST_TIMEOUT,
+            INDEXER_MAX_CONCURRENT_REQUESTS,
+        )?;
+        let historical_account_client = build_indexer_client(
+            endpoint,
+            HISTORICAL_ACCOUNT_REQUEST_TIMEOUT,
+            HISTORICAL_ACCOUNT_MAX_CONCURRENT_REQUESTS,
+        )?;
+        Ok(Self {
+            client,
+            historical_account_client,
+        })
     }
 }
 
@@ -288,7 +324,7 @@ impl FinalizedIndexerApi for OfficialIndexerRpc {
         block_id: u64,
     ) -> Result<HistoricalAccount, BridgeRuntimeError> {
         let account = self
-            .client
+            .historical_account_client
             .get_account_at_block(IndexedAccountId { value: account_id }, block_id)
             .await
             .map_err(|_| BridgeRuntimeError::Unavailable)?;
@@ -1528,4 +1564,125 @@ pub(crate) fn decode_indexed_public(
         message,
         WitnessSet::from_raw_parts(witnesses),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
+    use tokio::sync::Notify;
+
+    use super::*;
+
+    const SLOW_HISTORICAL_ACCOUNT_DELAY: Duration = Duration::from_secs(11);
+    const SCALED_FAST_REQUEST_TIMEOUT: Duration = Duration::from_millis(100);
+
+    #[derive(Debug)]
+    struct SlowHistoricalAccountRpc {
+        entered: AtomicUsize,
+        all_entered: Notify,
+        begin_delay: tokio::sync::Semaphore,
+    }
+
+    #[tokio::test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one production-budget and scaled-timeout RPC regression keeps concurrency and failure behavior together"
+    )]
+    async fn historical_account_rpc_can_exceed_fast_read_budget_within_outer_deadline() {
+        assert_eq!(INDEXER_REQUEST_TIMEOUT, Duration::from_secs(10));
+        assert_eq!(INDEXER_MAX_CONCURRENT_REQUESTS, 1);
+        assert_eq!(HISTORICAL_ACCOUNT_REQUEST_TIMEOUT, Duration::from_secs(20));
+        assert_eq!(HISTORICAL_ACCOUNT_MAX_CONCURRENT_REQUESTS, 3);
+        let state = Arc::new(SlowHistoricalAccountRpc {
+            entered: AtomicUsize::new(0),
+            all_entered: Notify::new(),
+            begin_delay: tokio::sync::Semaphore::new(0),
+        });
+        let server = ServerBuilder::default()
+            .build("127.0.0.1:0")
+            .await
+            .expect("mock indexer binds loopback");
+        let address = server.local_addr().expect("mock indexer address");
+        let mut module = RpcModule::new(Arc::clone(&state));
+        module
+            .register_async_method("getAccountAtBlock", |_params, state, _| async move {
+                if (state.entered.fetch_add(1, Ordering::SeqCst) + 1)
+                    % HISTORICAL_ACCOUNT_MAX_CONCURRENT_REQUESTS
+                    == 0
+                {
+                    state.all_entered.notify_one();
+                }
+                state
+                    .begin_delay
+                    .acquire()
+                    .await
+                    .expect("test delay barrier remains open")
+                    .forget();
+                tokio::time::sleep(SLOW_HISTORICAL_ACCOUNT_DELAY).await;
+                Ok::<_, ErrorObjectOwned>(IndexedAccount {
+                    program_owner: indexer_service_protocol::ProgramId([0; 8]),
+                    balance: 0,
+                    data: indexer_service_protocol::Data(Vec::new()),
+                    nonce: 0,
+                })
+            })
+            .expect("historical account method");
+        let handle = server.start(module);
+        let endpoint = format!("http://{address}");
+        let production =
+            OfficialIndexerRpc::connect_local(&endpoint).expect("loopback indexer client");
+        let indexer = production.historical_account_client.clone();
+        let read = tokio::spawn(async move {
+            tokio::try_join!(
+                indexer.get_account_at_block(IndexedAccountId { value: [7; 32] }, 181),
+                indexer.get_account_at_block(IndexedAccountId { value: [8; 32] }, 181),
+                indexer.get_account_at_block(IndexedAccountId { value: [9; 32] }, 181),
+            )
+        });
+        state.all_entered.notified().await;
+        assert_eq!(
+            state.entered.load(Ordering::SeqCst),
+            HISTORICAL_ACCOUNT_MAX_CONCURRENT_REQUESTS
+        );
+        state
+            .begin_delay
+            .add_permits(HISTORICAL_ACCOUNT_MAX_CONCURRENT_REQUESTS);
+
+        let accounts = read
+            .await
+            .expect("historical account task")
+            .expect("three slow historical accounts succeed concurrently");
+        assert_eq!(accounts.0.program_owner.0, [0; 8]);
+        assert_eq!(accounts.1.program_owner.0, [0; 8]);
+        assert_eq!(accounts.2.program_owner.0, [0; 8]);
+
+        let fast = build_indexer_client(
+            &endpoint,
+            SCALED_FAST_REQUEST_TIMEOUT,
+            HISTORICAL_ACCOUNT_MAX_CONCURRENT_REQUESTS,
+        )
+        .expect("scaled fast client");
+        let fast_read = tokio::spawn(async move {
+            tokio::try_join!(
+                fast.get_account_at_block(IndexedAccountId { value: [17; 32] }, 181),
+                fast.get_account_at_block(IndexedAccountId { value: [18; 32] }, 181),
+                fast.get_account_at_block(IndexedAccountId { value: [19; 32] }, 181),
+            )
+        });
+        state.all_entered.notified().await;
+        assert_eq!(state.entered.load(Ordering::SeqCst), 6);
+        state
+            .begin_delay
+            .add_permits(HISTORICAL_ACCOUNT_MAX_CONCURRENT_REQUESTS);
+        assert!(matches!(
+            fast_read.await.expect("scaled fast account task"),
+            Err(jsonrpsee::core::ClientError::RequestTimeout)
+        ));
+        handle.stop().expect("mock indexer stops");
+    }
 }
