@@ -5,8 +5,9 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::consensus::{deserialize, serialize};
-use bitcoin::{BlockHash, OutPoint, Transaction, Txid};
+use bitcoin::{BlockHash, Network, OutPoint, Transaction, Txid};
 use corepc_types::v31::{
     GetBlockHash, GetBlockHeaderVerbose, GetBlockchainInfo, GetIndexInfo, GetIndexInfoName,
     GetNetworkInfo, GetRawTransactionVerbose, GetTxSpendingPrevout, GetTxSpendingPrevoutItem,
@@ -20,7 +21,10 @@ use lez_btc_core_adapter::{
     SendFailure,
 };
 
-use support::{REGTEST_GENESIS, REQUIRED_CONFIRMATIONS, raw_verbose, swap_fixture};
+use support::{
+    REGTEST_GENESIS, REQUIRED_CONFIRMATIONS, raw_verbose, swap_fixture,
+    swap_fixture_for_bitcoin_network,
+};
 
 const TIP_A: &str = "6f8c2a4d807e31d3f650d7228af87f9e75bfac506bdf9c7730483cf1524e7ac4";
 const TIP_B: &str = "5d7c2a4d807e31d3f650d7228af87f9e75bfac506bdf9c7730483cf1524e7ac4";
@@ -223,6 +227,18 @@ fn isolated_adapter(rpc: MockRpc) -> BitcoinCoreAdapter<MockRpc> {
     BitcoinCoreAdapter::new(rpc, CoreConnectivityPolicy::IsolatedLocal)
 }
 
+fn testnet4_rpc() -> MockRpc {
+    let rpc = MockRpc::ready();
+    let mut inner = rpc.inner.lock().expect("mock lock");
+    inner.network = network_info(310_100, "/Satoshi:31.1.0/", true);
+    for chain in &mut inner.chains {
+        "testnet4".clone_into(&mut chain.chain);
+    }
+    inner.genesis = GetBlockHash(genesis_block(Network::Testnet4).block_hash().to_string());
+    drop(inner);
+    rpc
+}
+
 fn chain_info(tip: &str) -> GetBlockchainInfo {
     chain_info_at(tip, 200)
 }
@@ -415,6 +431,91 @@ async fn readiness_requires_exact_core_network_genesis_and_synced_indexes() {
         .ensure_ready(&fixture.agreement)
         .await
         .expect("explicit networked Core route");
+}
+
+#[tokio::test]
+async fn testnet4_profile_requires_exact_chain_network_and_pinned_genesis() {
+    let fixture = swap_fixture_for_bitcoin_network(Network::Testnet4);
+    let rpc = testnet4_rpc();
+    BitcoinCoreAdapter::new(rpc, CoreConnectivityPolicy::Testnet4Networked)
+        .ensure_ready(&fixture.agreement)
+        .await
+        .expect("exact Testnet4 Core 31.1 route");
+
+    for wrong_chain_name in ["test", "regtest"] {
+        let wrong_chain = testnet4_rpc();
+        for chain in &mut wrong_chain.inner.lock().expect("mock lock").chains {
+            wrong_chain_name.clone_into(&mut chain.chain);
+        }
+        assert!(matches!(
+            BitcoinCoreAdapter::new(wrong_chain, CoreConnectivityPolicy::Testnet4Networked)
+                .ensure_ready(&fixture.agreement)
+                .await,
+            Err(CoreAdapterError::ChainNotReady)
+        ));
+    }
+
+    let inactive = testnet4_rpc();
+    inactive.inner.lock().expect("mock lock").network =
+        network_info(310_100, "/Satoshi:31.1.0/", false);
+    assert!(matches!(
+        BitcoinCoreAdapter::new(inactive, CoreConnectivityPolicy::Testnet4Networked)
+            .ensure_ready(&fixture.agreement)
+            .await,
+        Err(CoreAdapterError::ConnectivityPolicyMismatch)
+    ));
+
+    let wrong_node_genesis = testnet4_rpc();
+    wrong_node_genesis.inner.lock().expect("mock lock").genesis =
+        GetBlockHash(REGTEST_GENESIS.to_owned());
+    assert!(matches!(
+        BitcoinCoreAdapter::new(
+            wrong_node_genesis,
+            CoreConnectivityPolicy::Testnet4Networked,
+        )
+        .ensure_ready(&fixture.agreement)
+        .await,
+        Err(CoreAdapterError::BitcoinGenesisMismatch)
+    ));
+
+    let unsynced_indexes = testnet4_rpc();
+    unsynced_indexes.inner.lock().expect("mock lock").indexes = index_info(true, false);
+    assert!(matches!(
+        BitcoinCoreAdapter::new(unsynced_indexes, CoreConnectivityPolicy::Testnet4Networked,)
+            .ensure_ready(&fixture.agreement)
+            .await,
+        Err(CoreAdapterError::RequiredIndexNotReady("txospenderindex"))
+    ));
+
+    let missing_index = testnet4_rpc();
+    missing_index
+        .inner
+        .lock()
+        .expect("mock lock")
+        .indexes
+        .0
+        .remove("txindex");
+    assert!(matches!(
+        BitcoinCoreAdapter::new(missing_index, CoreConnectivityPolicy::Testnet4Networked)
+            .ensure_ready(&fixture.agreement)
+            .await,
+        Err(CoreAdapterError::RequiredIndexNotReady("txindex"))
+    ));
+
+    let regtest_agreement = swap_fixture();
+    assert!(matches!(
+        BitcoinCoreAdapter::new(testnet4_rpc(), CoreConnectivityPolicy::Testnet4Networked)
+            .ensure_ready(&regtest_agreement.agreement)
+            .await,
+        Err(CoreAdapterError::BitcoinGenesisMismatch)
+    ));
+
+    assert!(matches!(
+        BitcoinCoreAdapter::new(testnet4_rpc(), CoreConnectivityPolicy::Networked)
+            .ensure_ready(&fixture.agreement)
+            .await,
+        Err(CoreAdapterError::ChainNotReady)
+    ));
 }
 
 #[tokio::test]

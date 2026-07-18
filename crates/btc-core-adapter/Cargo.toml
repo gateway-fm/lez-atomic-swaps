@@ -13,7 +13,7 @@ bitcoin = { version = "=0.32.101", default-features = false, features = ["std"] 
 corepc-types = { version = "=0.15.0", default-features = false, features = ["std", "serde-deny-unknown-fields"] }
 hex = "=0.4.3"
 jsonrpsee = { version = "=0.26.0", features = ["client-core"] }
-jsonrpsee-http-client = { version = "=0.26.0", default-features = false }
+jsonrpsee-http-client = { version = "=0.26.0", default-features = false, features = ["tls"] }
 lez-btc-swap-sdk = { version = "0.1.0", path = "../btc-swap-sdk" }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.150"

@@ -20,22 +20,48 @@ use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClient, HttpClientBuilde
 use url::{Host, Url};
 use zeroize::Zeroizing;
 
-use crate::{BitcoinCoreRpc, MAX_RAW_TRANSACTION_BYTES, SendFailure};
+use crate::{
+    BitcoinCoreAdapter, BitcoinCoreRpc, CoreConnectivityPolicy, CoreRpcRoute,
+    MAX_RAW_TRANSACTION_BYTES, SendFailure,
+};
 
 const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_CONCURRENT_REQUESTS: usize = 1;
 const MAX_RPC_TIMEOUT: Duration = Duration::from_mins(5);
 const MAX_CONCURRENT_REQUESTS: usize = 16;
 const MAX_RPC_ENDPOINT_BYTES: usize = 2_048;
-const MAX_COOKIE_FILE_BYTES: usize = 1_024;
+const MAX_BASIC_CREDENTIAL_FILE_BYTES: usize = 1_024;
 const MAX_RPC_REQUEST_BYTES: u32 = 2_100_000;
 const MAX_RPC_RESPONSE_BYTES: u32 = 4_100_000;
 const TRANSACTION_NOT_FOUND_CODE: i32 = -5;
 
-/// Finite, loopback-only Bitcoin Core HTTP JSON-RPC configuration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HttpBitcoinCoreRoute {
+    LiteralLoopback,
+    ExactHttpsBasic,
+}
+
+impl HttpBitcoinCoreRoute {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::LiteralLoopback => "literal_loopback",
+            Self::ExactHttpsBasic => "exact_https_basic",
+        }
+    }
+
+    const fn rpc_route(self) -> CoreRpcRoute {
+        match self {
+            Self::LiteralLoopback => CoreRpcRoute::LiteralLoopback,
+            Self::ExactHttpsBasic => CoreRpcRoute::ExactHttpsBasic,
+        }
+    }
+}
+
+/// Finite Bitcoin Core HTTP JSON-RPC configuration.
 #[derive(Clone, Eq, PartialEq)]
 pub struct HttpBitcoinCoreConfig {
     endpoint: Box<str>,
+    route: HttpBitcoinCoreRoute,
     request_timeout: Duration,
     max_concurrent_requests: usize,
     authorization: Option<HeaderValue>,
@@ -45,9 +71,15 @@ impl std::fmt::Debug for HttpBitcoinCoreConfig {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("HttpBitcoinCoreConfig")
+            .field("route", &self.route.label())
             .field("request_timeout", &self.request_timeout)
             .field("max_concurrent_requests", &self.max_concurrent_requests)
-            .field("cookie_auth_enabled", &self.authorization.is_some())
+            .field("basic_auth_enabled", &self.authorization.is_some())
+            .field(
+                "cookie_auth_enabled",
+                &(self.route == HttpBitcoinCoreRoute::LiteralLoopback
+                    && self.authorization.is_some()),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -69,9 +101,56 @@ impl HttpBitcoinCoreConfig {
         }
         Ok(Self {
             endpoint,
+            route: HttpBitcoinCoreRoute::LiteralLoopback,
             request_timeout: DEFAULT_RPC_TIMEOUT,
             max_concurrent_requests: DEFAULT_MAX_CONCURRENT_REQUESTS,
             authorization: None,
+        })
+    }
+
+    /// Creates a finite TLS client for one exact owner-allowlisted HTTPS origin.
+    ///
+    /// Both endpoint arguments must be the same canonical HTTPS origin root. The
+    /// host must be a DNS name, and explicit ports, credentials, paths, queries,
+    /// fragments, IP literals, `localhost`, and wildcard hosts are rejected.
+    /// Bounded Basic credentials are loaded from an owner-private stable file and
+    /// installed as a sensitive header. Construction performs no network request.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a non-exact or malformed route and an insecure or malformed
+    /// credential file without retaining either input path.
+    pub fn new_exact_https_basic_gateway(
+        endpoint: impl Into<Box<str>>,
+        allowlisted_endpoint: impl Into<Box<str>>,
+        credential_file: impl AsRef<Path>,
+    ) -> Result<Self, HttpBitcoinCoreError> {
+        let endpoint = endpoint.into();
+        let allowlisted_endpoint = allowlisted_endpoint.into();
+        if endpoint != allowlisted_endpoint
+            || !is_exact_https_origin(&endpoint)
+            || !is_exact_https_origin(&allowlisted_endpoint)
+        {
+            return Err(HttpBitcoinCoreError::NonAllowlistedHttpsEndpoint);
+        }
+        let credential = read_private_basic_credentials(credential_file.as_ref()).map_err(
+            |error| match error {
+                PrivateBasicCredentialsError::Insecure => {
+                    HttpBitcoinCoreError::InsecureBasicCredentialsFile
+                }
+                PrivateBasicCredentialsError::Invalid => {
+                    HttpBitcoinCoreError::InvalidBasicCredentialsFile
+                }
+            },
+        )?;
+        let authorization = basic_authorization(&credential)
+            .map_err(|()| HttpBitcoinCoreError::InvalidBasicCredentialsFile)?;
+        Ok(Self {
+            endpoint,
+            route: HttpBitcoinCoreRoute::ExactHttpsBasic,
+            request_timeout: DEFAULT_RPC_TIMEOUT,
+            max_concurrent_requests: DEFAULT_MAX_CONCURRENT_REQUESTS,
+            authorization: Some(authorization),
         })
     }
 
@@ -89,15 +168,18 @@ impl HttpBitcoinCoreConfig {
         mut self,
         path: impl AsRef<Path>,
     ) -> Result<Self, HttpBitcoinCoreError> {
-        let credential = read_private_cookie(path.as_ref())?;
-        let encoded = Zeroizing::new(BASE64_STANDARD.encode(credential.as_slice()));
-        let mut header = Zeroizing::new(Vec::with_capacity(6_usize.saturating_add(encoded.len())));
-        header.extend_from_slice(b"Basic ");
-        header.extend_from_slice(encoded.as_bytes());
-        let mut authorization = HeaderValue::from_bytes(header.as_slice())
-            .map_err(|_| HttpBitcoinCoreError::InvalidCookieFile)?;
-        authorization.set_sensitive(true);
-        self.authorization = Some(authorization);
+        if self.route != HttpBitcoinCoreRoute::LiteralLoopback {
+            return Err(HttpBitcoinCoreError::NonLoopbackEndpoint);
+        }
+        let credential =
+            read_private_basic_credentials(path.as_ref()).map_err(|error| match error {
+                PrivateBasicCredentialsError::Insecure => HttpBitcoinCoreError::InsecureCookieFile,
+                PrivateBasicCredentialsError::Invalid => HttpBitcoinCoreError::InvalidCookieFile,
+            })?;
+        self.authorization = Some(
+            basic_authorization(&credential)
+                .map_err(|()| HttpBitcoinCoreError::InvalidCookieFile)?,
+        );
         Ok(self)
     }
 
@@ -116,29 +198,36 @@ impl HttpBitcoinCoreConfig {
     }
 }
 
-/// Bounded loopback HTTP implementation of [`BitcoinCoreRpc`].
+/// Bounded HTTP implementation of [`BitcoinCoreRpc`].
 ///
-/// The pinned client has TLS disabled and installs no redirect, retry, proxy, or
-/// public-endpoint middleware. Each trait method performs exactly one JSON-RPC call.
+/// Local routes use literal-loopback HTTP. Exact public gateways use the pinned
+/// jsonrpsee Rustls/platform-verifier TLS stack. No redirect, retry, proxy, or
+/// failover middleware is installed. Each trait method performs exactly one
+/// JSON-RPC call.
 #[derive(Clone)]
 pub struct HttpBitcoinCoreRpc {
     client: HttpClient,
+    route: HttpBitcoinCoreRoute,
 }
 
 impl std::fmt::Debug for HttpBitcoinCoreRpc {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("HttpBitcoinCoreRpc")
+            .field("route", &self.route.label())
             .finish_non_exhaustive()
     }
 }
 
-/// Structured local HTTP client, credential, or request failure.
+/// Structured HTTP client, credential, or request failure.
 #[derive(Debug, thiserror::Error)]
 pub enum HttpBitcoinCoreError {
     /// The endpoint was not an exact, bounded loopback HTTP root with a nonzero port.
     #[error("Bitcoin Core endpoint must be literal loopback HTTP with an explicit nonzero port")]
     NonLoopbackEndpoint,
+    /// The public endpoint was not one exact canonical allowlisted HTTPS DNS origin.
+    #[error("Bitcoin Core HTTPS endpoint must exactly match one canonical allowlisted origin")]
+    NonAllowlistedHttpsEndpoint,
     /// A timeout or concurrency bound was zero.
     #[error("Bitcoin Core HTTP timeout and concurrency limits must be nonzero")]
     InvalidTransportBounds,
@@ -148,10 +237,19 @@ pub enum HttpBitcoinCoreError {
     /// Cookie reading or bounded credential validation failed.
     #[error("Bitcoin Core cookie file is unreadable or invalid")]
     InvalidCookieFile,
+    /// Public Basic credentials were not in a stable owner-private regular file.
+    #[error("Bitcoin Core Basic credentials must be owner-private, regular, and non-symlinked")]
+    InsecureBasicCredentialsFile,
+    /// Public Basic credentials were unreadable, oversized, or malformed.
+    #[error("Bitcoin Core Basic credentials are unreadable or invalid")]
+    InvalidBasicCredentialsFile,
+    /// The concrete HTTP route is incompatible with the selected chain profile.
+    #[error("Bitcoin Core HTTP route is incompatible with the selected chain profile")]
+    RouteProfileMismatch,
     /// The client was not configured from a private credential file.
     #[error("Bitcoin Core HTTP requires file-backed Basic credentials")]
     MissingCookieCredentials,
-    /// The bounded local HTTP client could not be constructed.
+    /// The bounded HTTP client could not be constructed.
     #[error("failed to construct bounded Bitcoin Core HTTP client")]
     Build(#[source] ClientError),
     /// One JSON-RPC request failed.
@@ -163,7 +261,7 @@ pub enum HttpBitcoinCoreError {
 }
 
 impl HttpBitcoinCoreRpc {
-    /// Constructs a local client without opening a connection.
+    /// Constructs a bounded client without opening a connection.
     ///
     /// # Errors
     ///
@@ -176,8 +274,17 @@ impl HttpBitcoinCoreRpc {
         {
             return Err(HttpBitcoinCoreError::InvalidTransportBounds);
         }
-        if !is_literal_loopback_endpoint(&config.endpoint) {
-            return Err(HttpBitcoinCoreError::NonLoopbackEndpoint);
+        let route_is_valid = match config.route {
+            HttpBitcoinCoreRoute::LiteralLoopback => is_literal_loopback_endpoint(&config.endpoint),
+            HttpBitcoinCoreRoute::ExactHttpsBasic => is_exact_https_origin(&config.endpoint),
+        };
+        if !route_is_valid {
+            return Err(match config.route {
+                HttpBitcoinCoreRoute::LiteralLoopback => HttpBitcoinCoreError::NonLoopbackEndpoint,
+                HttpBitcoinCoreRoute::ExactHttpsBasic => {
+                    HttpBitcoinCoreError::NonAllowlistedHttpsEndpoint
+                }
+            });
         }
         let mut headers = HeaderMap::new();
         let authorization = config
@@ -193,7 +300,30 @@ impl HttpBitcoinCoreRpc {
             .set_headers(headers)
             .build(&config.endpoint)
             .map_err(HttpBitcoinCoreError::Build)?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            route: config.route,
+        })
+    }
+
+    /// Constructs an adapter only when the concrete HTTP route matches the chain profile.
+    ///
+    /// Literal loopback is valid for both Regtest profiles and self-hosted Testnet4.
+    /// Exact HTTPS is valid only for Testnet4. Construction performs no RPC.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid transport bounds, missing credentials, client construction
+    /// failures, and every route/profile mismatch before network I/O.
+    pub fn connect_profiled(
+        config: &HttpBitcoinCoreConfig,
+        connectivity: CoreConnectivityPolicy,
+    ) -> Result<BitcoinCoreAdapter<Self>, HttpBitcoinCoreError> {
+        let adapter = BitcoinCoreAdapter::new(Self::connect(config)?, connectivity);
+        adapter
+            .ensure_route_compatible()
+            .map_err(|_| HttpBitcoinCoreError::RouteProfileMismatch)?;
+        Ok(adapter)
     }
 }
 
@@ -301,6 +431,10 @@ impl BitcoinCoreRpc for HttpBitcoinCoreRpc {
             .map_err(HttpBitcoinCoreError::Request)
     }
 
+    fn deployment_route(&self) -> Option<CoreRpcRoute> {
+        Some(self.route.rpc_route())
+    }
+
     fn classify_send_failure(error: &Self::Error) -> SendFailure {
         match error {
             HttpBitcoinCoreError::Request(ClientError::Call(error))
@@ -360,57 +494,107 @@ fn is_literal_loopback_endpoint(endpoint: &str) -> bool {
     endpoint == canonical || endpoint.strip_suffix('/') == Some(canonical.as_str())
 }
 
-fn read_private_cookie(path: &Path) -> Result<Zeroizing<Vec<u8>>, HttpBitcoinCoreError> {
+fn is_exact_https_origin(endpoint: &str) -> bool {
+    if endpoint.len() > MAX_RPC_ENDPOINT_BYTES {
+        return false;
+    }
+    let Ok(parsed) = Url::parse(endpoint) else {
+        return false;
+    };
+    if parsed.scheme() != "https"
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.path() != "/"
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || parsed.port().is_some()
+    {
+        return false;
+    }
+    let Some(Host::Domain(domain)) = parsed.host() else {
+        return false;
+    };
+    if domain == "localhost"
+        || domain.ends_with(".localhost")
+        || domain.starts_with("*.")
+        || !domain.contains('.')
+    {
+        return false;
+    }
+    endpoint == format!("https://{domain}/")
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PrivateBasicCredentialsError {
+    Insecure,
+    Invalid,
+}
+
+fn basic_authorization(credential: &[u8]) -> Result<HeaderValue, ()> {
+    let encoded = Zeroizing::new(BASE64_STANDARD.encode(credential));
+    let mut header = Zeroizing::new(Vec::with_capacity(6_usize.saturating_add(encoded.len())));
+    header.extend_from_slice(b"Basic ");
+    header.extend_from_slice(encoded.as_bytes());
+    let mut authorization = HeaderValue::from_bytes(header.as_slice()).map_err(|_| ())?;
+    authorization.set_sensitive(true);
+    Ok(authorization)
+}
+
+fn read_private_basic_credentials(
+    path: &Path,
+) -> Result<Zeroizing<Vec<u8>>, PrivateBasicCredentialsError> {
     let path_metadata =
-        fs::symlink_metadata(path).map_err(|_| HttpBitcoinCoreError::InvalidCookieFile)?;
+        fs::symlink_metadata(path).map_err(|_| PrivateBasicCredentialsError::Invalid)?;
     if path_metadata.file_type().is_symlink() || !path_metadata.is_file() {
-        return Err(HttpBitcoinCoreError::InsecureCookieFile);
+        return Err(PrivateBasicCredentialsError::Insecure);
     }
     #[cfg(not(unix))]
     {
         let _ = path_metadata;
-        return Err(HttpBitcoinCoreError::InsecureCookieFile);
+        return Err(PrivateBasicCredentialsError::Insecure);
     }
     #[cfg(unix)]
     {
-        if !private_cookie_metadata_is_valid(&path_metadata) {
-            return Err(HttpBitcoinCoreError::InsecureCookieFile);
+        if !private_basic_metadata_is_valid(&path_metadata) {
+            return Err(PrivateBasicCredentialsError::Insecure);
         }
-        let file = File::open(path).map_err(|_| HttpBitcoinCoreError::InvalidCookieFile)?;
+        let file = File::open(path).map_err(|_| PrivateBasicCredentialsError::Invalid)?;
         let opened_metadata = file
             .metadata()
-            .map_err(|_| HttpBitcoinCoreError::InvalidCookieFile)?;
-        if !private_cookie_metadata_is_valid(&opened_metadata)
+            .map_err(|_| PrivateBasicCredentialsError::Invalid)?;
+        if !private_basic_metadata_is_valid(&opened_metadata)
             || !same_unchanged_file(&path_metadata, &opened_metadata)
         {
-            return Err(HttpBitcoinCoreError::InsecureCookieFile);
+            return Err(PrivateBasicCredentialsError::Insecure);
         }
-        let mut raw = Zeroizing::new(Vec::with_capacity(MAX_COOKIE_FILE_BYTES.saturating_add(1)));
+        let mut raw = Zeroizing::new(Vec::with_capacity(
+            MAX_BASIC_CREDENTIAL_FILE_BYTES.saturating_add(1),
+        ));
         (&file)
-            .take((MAX_COOKIE_FILE_BYTES + 1) as u64)
+            .take((MAX_BASIC_CREDENTIAL_FILE_BYTES + 1) as u64)
             .read_to_end(raw.as_mut())
-            .map_err(|_| HttpBitcoinCoreError::InvalidCookieFile)?;
-        if raw.len() > MAX_COOKIE_FILE_BYTES {
-            return Err(HttpBitcoinCoreError::InvalidCookieFile);
+            .map_err(|_| PrivateBasicCredentialsError::Invalid)?;
+        if raw.len() > MAX_BASIC_CREDENTIAL_FILE_BYTES {
+            return Err(PrivateBasicCredentialsError::Invalid);
         }
         let opened_after = file
             .metadata()
-            .map_err(|_| HttpBitcoinCoreError::InvalidCookieFile)?;
+            .map_err(|_| PrivateBasicCredentialsError::Invalid)?;
         let path_after =
-            fs::symlink_metadata(path).map_err(|_| HttpBitcoinCoreError::InvalidCookieFile)?;
-        if !private_cookie_metadata_is_valid(&opened_after)
-            || !private_cookie_metadata_is_valid(&path_after)
+            fs::symlink_metadata(path).map_err(|_| PrivateBasicCredentialsError::Invalid)?;
+        if !private_basic_metadata_is_valid(&opened_after)
+            || !private_basic_metadata_is_valid(&path_after)
             || !same_unchanged_file(&opened_metadata, &opened_after)
             || !same_unchanged_file(&opened_metadata, &path_after)
         {
-            return Err(HttpBitcoinCoreError::InsecureCookieFile);
+            return Err(PrivateBasicCredentialsError::Insecure);
         }
-        validate_cookie(&raw)
+        validate_basic_credentials(&raw)
     }
 }
 
 #[cfg(unix)]
-fn private_cookie_metadata_is_valid(metadata: &fs::Metadata) -> bool {
+fn private_basic_metadata_is_valid(metadata: &fs::Metadata) -> bool {
     metadata.is_file() && metadata.permissions().mode() & 0o7777 == 0o600 && metadata.nlink() == 1
 }
 
@@ -427,7 +611,9 @@ fn same_unchanged_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
         && left.ctime_nsec() == right.ctime_nsec()
 }
 
-fn validate_cookie(raw: &[u8]) -> Result<Zeroizing<Vec<u8>>, HttpBitcoinCoreError> {
+fn validate_basic_credentials(
+    raw: &[u8],
+) -> Result<Zeroizing<Vec<u8>>, PrivateBasicCredentialsError> {
     let credential = raw
         .strip_suffix(b"\r\n")
         .or_else(|| raw.strip_suffix(b"\n"))
@@ -437,7 +623,7 @@ fn validate_cookie(raw: &[u8]) -> Result<Zeroizing<Vec<u8>>, HttpBitcoinCoreErro
         || delimiter.is_none_or(|index| index == 0 || index + 1 == credential.len())
         || !credential.iter().all(|byte| (0x21..=0x7e).contains(byte))
     {
-        return Err(HttpBitcoinCoreError::InvalidCookieFile);
+        return Err(PrivateBasicCredentialsError::Invalid);
     }
     Ok(Zeroizing::new(credential.to_vec()))
 }

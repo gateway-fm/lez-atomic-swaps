@@ -1,10 +1,9 @@
-use std::str::FromStr as _;
-
+use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::consensus::serialize;
 use bitcoin::hashes::Hash as _;
 use bitcoin::secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use bitcoin::{
-    Amount, BlockHash, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness, absolute,
+    Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness, absolute,
     transaction,
 };
 use corepc_types::v31::GetRawTransactionVerbose;
@@ -185,6 +184,15 @@ fn agreement_signature(secret_bytes: [u8; 32], commitment: [u8; 32]) -> [u8; 64]
     clippy::too_many_lines
 )]
 pub fn swap_fixture() -> SwapFixture {
+    swap_fixture_for_bitcoin_network(Network::Regtest)
+}
+
+#[allow(
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::too_many_lines
+)]
+pub fn swap_fixture_for_bitcoin_network(network: Network) -> SwapFixture {
     let maker = BtcParticipantIdentityV1::new(
         [10; 32],
         public_key(MAKER_SECRET),
@@ -257,9 +265,7 @@ pub fn swap_fixture() -> SwapFixture {
         [20; 32],
         SwapDirection::TakerSellsForeign,
         BtcChainPolicyV1::new(
-            BlockHash::from_str(REGTEST_GENESIS)
-                .expect("regtest genesis")
-                .to_byte_array(),
+            genesis_block(network).block_hash().to_byte_array(),
             REQUIRED_CONFIRMATIONS,
         ),
         participants,

@@ -66,6 +66,8 @@ flowchart TB
     BtcActor --> Contexts["0032 Agreement-derived adaptor contexts"]
     Contexts --> ClaimFacade["0043 Agreement-derived BTC claims"]
     Contexts --> AdaptorMap["0050 BTC adaptor security map"]
+    BitcoinEntry --> TestnetRoutes["0051 Testnet4 route profile"]
+    TestnetRoutes -.-> AdaptorMap
     Contexts --> PublicEffects["0033 Durable public effects"]
     PublicEffects --> ActivationGate["0034 Complete activation authority"]
     ActivationGate --> ClaimProjection["0035 Canonical claim projection"]
@@ -186,3 +188,4 @@ flowchart TB
 | [0048](0048-parallelize-exact-node-provisioning.md) | Start fixed Core and LEZ provisioners concurrently with exact process, component, failure, and cleanup identity | Accepted, behavioral GREEN, and measured by clean pushed Run AD. Core and LEZ completed in one 67-second window versus the 98-second sequential baseline, certifying a 31-second saving with exact cleanup |
 | [0049](0049-bind-monotonic-phase-evidence.md) | Record fixed outer and actor-direction phases with a monotonic clock and bind strict secret-safe packets into main run evidence | Accepted and actual-node GREEN in clean pushed Run AF. The 1,000,170 ms outer packet has 510 ms unattributed; 346,060/386,060 ms child packets fit their exact parents and bind exact effects. Five finalized lock/claim windows dominate while every other child phase is below one second. The complete pinned CI suite and exact cleanup are GREEN; differing host contention prevents a speedup claim |
 | [0050](0050-map-btc-adaptor-construction-to-security-properties.md) | Map the exact BTC/LEZ aggregate adaptor operations to Aumayr et al. and Fournier security properties and atomicity conditions | Accepted as an engineering-security map. It explicitly does not transfer a single-signer theorem to the exact two-party MuSig2 composition; official-vector gates and M7 independent cryptographic review remain distinct |
+| [0051](0051-bind-bitcoin-testnet4-routes-to-chain-profile.md) | Bind self-hosted loopback and exact HTTPS Bitcoin Testnet4 RPC routes to one fail-closed Core/genesis/index-readiness profile | Accepted for M3 configuration portability. Focused tests make no public call; live public provider, wallet/faucet, fee/reorg, and production-custody evidence remain deferred |

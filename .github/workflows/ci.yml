@@ -80,6 +80,12 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --locked --workspace --all-targets
+      - name: Verify M3 official cryptographic vectors
+        run: |
+          ./scripts/check-m3-cryptographic-vectors.sh
+          cargo test --locked -p lez-btc-swap-sdk --test bip340_vectors --test bip327_vectors --test adaptor_vectors
+      - name: Verify Bitcoin Testnet4 route contract
+        run: ./scripts/test-bitcoin-testnet4-route-contract.sh
       - name: Reject Rust documentation warnings
         env:
           RUSTDOCFLAGS: -D warnings

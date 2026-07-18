@@ -14,9 +14,10 @@ use std::error::Error as StdError;
 use std::str::FromStr as _;
 
 use async_trait::async_trait;
+use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::consensus::{deserialize, serialize};
 use bitcoin::hashes::{Hash as _, sha256};
-use bitcoin::{BlockHash, OutPoint, Transaction, Txid, Witness, Wtxid};
+use bitcoin::{BlockHash, Network, OutPoint, Transaction, Txid, Witness, Wtxid};
 use corepc_types::v31::{
     GetBlockHash, GetBlockHeaderVerbose, GetBlockchainInfo, GetIndexInfo, GetNetworkInfo,
     GetRawTransactionVerbose, GetTxSpendingPrevout, SendRawTransaction, TestMempoolAccept,
@@ -70,6 +71,14 @@ pub trait BitcoinCoreRpc: Send + Sync {
         &self,
         transaction: &[u8],
     ) -> Result<SendRawTransaction, Self::Error>;
+    /// Reports a concrete production transport route when the implementation has one.
+    ///
+    /// Deterministic doubles and alternate trusted ports may leave this unspecified.
+    /// The production HTTP transport always reports an exact route, allowing the
+    /// adapter to reject a public HTTPS gateway paired with a Regtest profile.
+    fn deployment_route(&self) -> Option<CoreRpcRoute> {
+        None
+    }
     /// Distinguishes a definitive node rejection from an outcome that may have reached Core.
     fn classify_send_failure(error: &Self::Error) -> SendFailure;
 }
@@ -83,16 +92,49 @@ pub enum SendFailure {
     Unknown,
 }
 
+/// Concrete production RPC route category used for profile composition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CoreRpcRoute {
+    /// Literal-loopback HTTP with file-backed Basic credentials.
+    LiteralLoopback,
+    /// One exact allowlisted HTTPS DNS origin with file-backed Basic credentials.
+    ExactHttpsBasic,
+}
+
 /// Expected Bitcoin Core P2P connectivity for the selected deployment route.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CoreConnectivityPolicy {
     /// Private Regtest: networking disabled and every connection count exactly zero.
     IsolatedLocal,
     /// Explicit network-enabled Regtest route; peer readiness is external policy.
-    ///
-    /// The current adapter still requires the agreement's Regtest genesis and Core's
-    /// `chain=regtest`; Testnet4 admission is a later configuration-portability slice.
     Networked,
+    /// Public Testnet4 through an explicitly network-enabled Core 31.1 route.
+    ///
+    /// This never admits legacy Testnet3. Readiness requires Core to report
+    /// `chain=testnet4` and the exact Testnet4 genesis pinned by rust-bitcoin.
+    Testnet4Networked,
+}
+
+impl CoreConnectivityPolicy {
+    const fn network(self) -> Network {
+        match self {
+            Self::IsolatedLocal | Self::Networked => Network::Regtest,
+            Self::Testnet4Networked => Network::Testnet4,
+        }
+    }
+
+    const fn admits_route(self, route: CoreRpcRoute) -> bool {
+        matches!(
+            (self, route),
+            (
+                Self::IsolatedLocal | Self::Networked,
+                CoreRpcRoute::LiteralLoopback
+            ) | (
+                Self::Testnet4Networked,
+                CoreRpcRoute::LiteralLoopback | CoreRpcRoute::ExactHttpsBasic
+            )
+        )
+    }
 }
 
 /// Stable chain position bracketing one observation.
@@ -574,12 +616,12 @@ pub enum CoreAdapterError<RpcError: StdError + 'static, StoreError: StdError + '
     #[error("claim submission state persistence failed")]
     Store(#[source] StoreError),
     /// Node version or subversion is not exact Core 31.1.
-    #[error("local node is not exact Bitcoin Core 31.1")]
+    #[error("node is not exact Bitcoin Core 31.1")]
     WrongCoreVersion,
     /// Node P2P connectivity contradicts the explicitly selected deployment route.
     #[error("Bitcoin Core connectivity contradicts the configured deployment policy")]
     ConnectivityPolicyMismatch,
-    /// Node is not a ready, unpruned local regtest chain.
+    /// Node is not ready and unpruned on the selected exact chain profile.
     #[error("Bitcoin Core active chain is not ready")]
     ChainNotReady,
     /// Node genesis differs from the countersigned agreement.
@@ -646,7 +688,27 @@ where
         Self { rpc, connectivity }
     }
 
-    /// Requires exact Core 31.1, regtest genesis, ready chain, and synced indexes.
+    /// Validates the concrete transport route against the exact chain profile.
+    ///
+    /// This is side-effect free. Production HTTP transports always declare their
+    /// route. Exact HTTPS is admitted only for Testnet4; literal loopback remains
+    /// valid for existing Regtest and self-hosted Testnet4 nodes.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an exact HTTPS route paired with either Regtest profile.
+    pub fn ensure_route_compatible(&self) -> Result<(), CoreAdapterError<R::Error>> {
+        if self
+            .rpc
+            .deployment_route()
+            .is_some_and(|route| !self.connectivity.admits_route(route))
+        {
+            return Err(CoreAdapterError::ConnectivityPolicyMismatch);
+        }
+        Ok(())
+    }
+
+    /// Requires exact Core 31.1, profile-pinned genesis, ready chain, and synced indexes.
     ///
     /// # Errors
     ///
@@ -655,6 +717,7 @@ where
         &self,
         agreement: &BtcAgreementV1,
     ) -> Result<StableTip, CoreAdapterError<R::Error>> {
+        self.ensure_route_compatible()?;
         let network = self
             .rpc
             .get_network_info()
@@ -672,7 +735,9 @@ where
                     && network.connections_in == 0
                     && network.connections_out == 0
             }
-            CoreConnectivityPolicy::Networked => network.network_active,
+            CoreConnectivityPolicy::Networked | CoreConnectivityPolicy::Testnet4Networked => {
+                network.network_active
+            }
         };
         if !connectivity_matches {
             return Err(CoreAdapterError::ConnectivityPolicyMismatch);
@@ -682,15 +747,17 @@ where
             .get_blockchain_info()
             .await
             .map_err(CoreAdapterError::Rpc)?;
-        let tip = parse_ready_chain(&chain)?;
+        let profile_network = self.connectivity.network();
+        let tip = parse_ready_chain(&chain, profile_network)?;
         let genesis = self
             .rpc
             .get_genesis_hash()
             .await
             .map_err(CoreAdapterError::Rpc)?;
         let observed_genesis = parse_block_hash(&genesis.0, "genesis hash")?;
-        let expected_genesis = BlockHash::from_byte_array(*agreement.bitcoin_genesis_hash());
-        if observed_genesis != expected_genesis {
+        let agreement_genesis = BlockHash::from_byte_array(*agreement.bitcoin_genesis_hash());
+        let profile_genesis = genesis_block(profile_network).block_hash();
+        if agreement_genesis != profile_genesis || observed_genesis != profile_genesis {
             return Err(CoreAdapterError::BitcoinGenesisMismatch);
         }
         let indexes = self
@@ -1425,7 +1492,7 @@ where
             .get_blockchain_info()
             .await
             .map_err(CoreAdapterError::Rpc)?;
-        parse_ready_chain(&chain)
+        parse_ready_chain(&chain, self.connectivity.network())
     }
 }
 
@@ -1655,11 +1722,14 @@ where
         .map_err(CoreAdapterError::Store)
 }
 
-fn parse_ready_chain<R>(chain: &GetBlockchainInfo) -> Result<StableTip, CoreAdapterError<R>>
+fn parse_ready_chain<R>(
+    chain: &GetBlockchainInfo,
+    network: Network,
+) -> Result<StableTip, CoreAdapterError<R>>
 where
     R: StdError + 'static,
 {
-    if chain.chain != "regtest"
+    if chain.chain != network.to_core_arg()
         || chain.initial_block_download
         || chain.pruned
         || chain.blocks < 0

@@ -14,6 +14,8 @@ provisional_artifact_manifest="${repo_root}/compat/lez-v0.2-provisional/escrow/m
 canonical_evidence="${repo_root}/docs/evidence/m2-canonical-local-certification-20260714.json"
 core_runner="${repo_root}/scripts/run-bitcoin-core-e2e.sh"
 core_isolation="${repo_root}/scripts/check-bitcoin-core-isolation.sh"
+btc_sdk_manifest="${repo_root}/crates/btc-swap-sdk/Cargo.toml"
+core_adapter_manifest="${repo_root}/crates/btc-core-adapter/Cargo.toml"
 
 core_evidence="${repo_root}/docs/evidence/m3-bitcoin-core-smoke-a7393df-20260714.json"
 core_musig_evidence="${repo_root}/docs/evidence/m3-bitcoin-core-musig2-f5a9caa-20260715.json"
@@ -113,6 +115,16 @@ require_fixed './scripts/test-m3-phase-timings-contract.sh' "$quality_runner"
 require_fixed './scripts/test-m3-direction-phase-timings-contract.sh' "$quality_runner"
 require_fixed './scripts/test-m3-f7-token-fixture-contract.sh' "$quality_runner"
 require_fixed './scripts/test-m3-private-recording-contract.sh' "$quality_runner"
+require_fixed './scripts/check-m3-cryptographic-vectors.sh' "$quality_runner"
+require_fixed './scripts/test-bitcoin-testnet4-route-contract.sh' "$quality_runner"
+require_fixed 'Verify M3 official cryptographic vectors' "$workflow"
+require_fixed 'cargo test --locked -p lez-btc-swap-sdk --test bip340_vectors --test bip327_vectors --test adaptor_vectors' "$workflow"
+require_fixed 'Verify Bitcoin Testnet4 route contract' "$workflow"
+require_fixed './scripts/test-bitcoin-testnet4-route-contract.sh' "$workflow"
+require_fixed 'k256 = { version = "=0.13.4", default-features = false, features = ["schnorr"] }' \
+  "$btc_sdk_manifest"
+require_fixed 'jsonrpsee-http-client = { version = "=0.26.0", default-features = false, features = ["tls"] }' \
+  "$core_adapter_manifest"
 require_fixed 'git ls-files --cached --others --exclude-standard -z' "$quality_runner"
 require_fixed 'config --quiet' "$quality_runner"
 

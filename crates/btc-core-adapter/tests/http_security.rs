@@ -6,7 +6,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use jsonrpsee::core::ClientError;
 use jsonrpsee_http_client::types::ErrorObjectOwned;
 use lez_btc_core_adapter::{
-    BitcoinCoreRpc, HttpBitcoinCoreConfig, HttpBitcoinCoreError, HttpBitcoinCoreRpc, SendFailure,
+    BitcoinCoreAdapter, BitcoinCoreRpc, CoreAdapterError, CoreConnectivityPolicy,
+    HttpBitcoinCoreConfig, HttpBitcoinCoreError, HttpBitcoinCoreRpc, SendFailure,
 };
 
 fn authenticated_config(endpoint: &str) -> HttpBitcoinCoreConfig {
@@ -18,6 +19,14 @@ fn authenticated_config(endpoint: &str) -> HttpBitcoinCoreConfig {
         .expect("literal loopback endpoint")
         .with_cookie_file(path)
         .expect("valid file-backed credential")
+}
+
+fn write_private_basic_file(directory: &tempfile::TempDir, contents: &[u8]) -> std::path::PathBuf {
+    let path = directory.path().join("basic-credentials");
+    fs::write(&path, contents).expect("Basic credential file");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+        .expect("owner-only Basic credential mode");
+    path
 }
 
 #[test]
@@ -54,6 +63,127 @@ fn endpoint_is_literal_loopback_http_root_with_explicit_nonzero_port() {
     assert!(matches!(
         HttpBitcoinCoreConfig::new(format!("http://{}.example.test:18443", "a".repeat(2_048))),
         Err(HttpBitcoinCoreError::NonLoopbackEndpoint)
+    ));
+}
+
+#[test]
+fn testnet4_exact_https_basic_gateway_is_allowlisted_bounded_and_secret_free() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let credential_path = write_private_basic_file(&directory, b"actor:top-secret");
+    let endpoint = "https://btc-testnet4.provider.test/";
+    let config =
+        HttpBitcoinCoreConfig::new_exact_https_basic_gateway(endpoint, endpoint, &credential_path)
+            .expect("exact HTTPS Basic gateway");
+
+    let diagnostic = format!("{config:?}");
+    assert!(diagnostic.contains("exact_https_basic"));
+    assert!(diagnostic.contains("basic_auth_enabled: true"));
+    assert!(!diagnostic.contains(endpoint));
+    assert!(!diagnostic.contains("top-secret"));
+    assert!(!diagnostic.contains(credential_path.to_string_lossy().as_ref()));
+    HttpBitcoinCoreRpc::connect(&config)
+        .expect("TLS client construction performs no public request");
+}
+
+#[test]
+fn testnet4_exact_https_and_loopback_profile_composition_is_closed() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let credential_path = write_private_basic_file(&directory, b"actor:top-secret");
+    let endpoint = "https://btc-testnet4.provider.test/";
+    let public_config =
+        HttpBitcoinCoreConfig::new_exact_https_basic_gateway(endpoint, endpoint, &credential_path)
+            .expect("exact HTTPS Basic gateway");
+
+    HttpBitcoinCoreRpc::connect_profiled(&public_config, CoreConnectivityPolicy::Testnet4Networked)
+        .expect("exact HTTPS is an explicit Testnet4 route");
+    assert!(matches!(
+        HttpBitcoinCoreRpc::connect_profiled(&public_config, CoreConnectivityPolicy::Networked,),
+        Err(HttpBitcoinCoreError::RouteProfileMismatch)
+    ));
+    let direct_public =
+        HttpBitcoinCoreRpc::connect(&public_config).expect("bounded nonconnecting client");
+    assert!(matches!(
+        BitcoinCoreAdapter::new(direct_public, CoreConnectivityPolicy::Networked)
+            .ensure_route_compatible(),
+        Err(CoreAdapterError::ConnectivityPolicyMismatch)
+    ));
+
+    let self_hosted = authenticated_config("http://127.0.0.1:18443");
+    HttpBitcoinCoreRpc::connect_profiled(&self_hosted, CoreConnectivityPolicy::Testnet4Networked)
+        .expect("loopback RPC is an explicit self-hosted Testnet4 route");
+    HttpBitcoinCoreRpc::connect_profiled(&self_hosted, CoreConnectivityPolicy::IsolatedLocal)
+        .expect("existing isolated Regtest route remains valid");
+}
+
+#[test]
+fn testnet4_exact_https_gateway_rejects_unallowlisted_and_generic_routes() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let credential_path = write_private_basic_file(&directory, b"actor:secret");
+    let allowed = "https://btc-testnet4.provider.test/";
+
+    let unallowlisted = HttpBitcoinCoreConfig::new_exact_https_basic_gateway(
+        "https://other.provider.test/",
+        allowed,
+        &credential_path,
+    );
+    assert!(matches!(
+        unallowlisted,
+        Err(HttpBitcoinCoreError::NonAllowlistedHttpsEndpoint)
+    ));
+
+    for endpoint in [
+        "http://btc-testnet4.provider.test/",
+        "HTTPS://btc-testnet4.provider.test/",
+        "https://btc-testnet4.provider.test",
+        "https://actor:secret@btc-testnet4.provider.test/",
+        "https://btc-testnet4.provider.test/rpc",
+        "https://btc-testnet4.provider.test/?token=secret",
+        "https://btc-testnet4.provider.test/#fragment",
+        "https://btc-testnet4.provider.test:8443/",
+        "https://127.0.0.1/",
+        "https://[::1]/",
+        "https://localhost/",
+        "https://*.provider.test/",
+        "not-a-url",
+    ] {
+        assert!(matches!(
+            HttpBitcoinCoreConfig::new_exact_https_basic_gateway(
+                endpoint,
+                endpoint,
+                &credential_path,
+            ),
+            Err(HttpBitcoinCoreError::NonAllowlistedHttpsEndpoint)
+        ));
+    }
+
+    assert!(matches!(
+        HttpBitcoinCoreConfig::new_exact_https_basic_gateway(
+            allowed,
+            "https://*.provider.test/",
+            &credential_path,
+        ),
+        Err(HttpBitcoinCoreError::NonAllowlistedHttpsEndpoint)
+    ));
+}
+
+#[test]
+fn testnet4_exact_https_gateway_requires_private_valid_basic_credentials() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let endpoint = "https://btc-testnet4.provider.test/";
+
+    let exposed = directory.path().join("exposed-basic");
+    fs::write(&exposed, b"actor:secret").expect("exposed fixture");
+    fs::set_permissions(&exposed, fs::Permissions::from_mode(0o640))
+        .expect("group-readable fixture mode");
+    assert!(matches!(
+        HttpBitcoinCoreConfig::new_exact_https_basic_gateway(endpoint, endpoint, &exposed),
+        Err(HttpBitcoinCoreError::InsecureBasicCredentialsFile)
+    ));
+
+    let malformed = write_private_basic_file(&directory, b"missing-delimiter");
+    assert!(matches!(
+        HttpBitcoinCoreConfig::new_exact_https_basic_gateway(endpoint, endpoint, &malformed),
+        Err(HttpBitcoinCoreError::InvalidBasicCredentialsFile)
     ));
 }
 
