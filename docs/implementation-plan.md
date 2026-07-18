@@ -2083,6 +2083,14 @@ Active M3 refund critical path:
   other measured phases. Both directions consume 75.2 percent. The next safe
   iteration decomposes direction internals before changing finality, cadence,
   actor scheduling, or evidence semantics; no additional speedup is claimed;
+- [x] split each sequential outer direction into unchanged funding-reservation,
+  stage-two, child actor-flow, terminal/replay, and custom-token balance
+  boundaries. RED required the exact custom-token/native phase matrices and
+  dynamic direction names; GREEN preserves command order, omits the balance
+  phase for native assets, and retains one overlap window rather than summing
+  concurrent work. The broad actor contract and complete pinned CI quality
+  suite pass. Add semantic phases inside the child actor flow before spending
+  another 17-minute actual-node iteration;
 - [ ] compact or externally reference peerless public transaction facts before
   production. The validated v2 wire can carry transaction bytes larger than
   the recovery store's 64 KiB per-chain-evidence cap. Official PoC transactions

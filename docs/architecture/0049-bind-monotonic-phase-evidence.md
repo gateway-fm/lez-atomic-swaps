@@ -31,7 +31,8 @@ directories exist. The runner records these fixed outer phases in order:
 5. Bitcoin funding;
 6. LEZ bootstrap;
 7. F7 fixture provisioning when selected;
-8. each sequential direction, or one overlap window; and
+8. each sequential direction's funding reservation, stage two, actor flow,
+   terminal replay, and custom-token balance read, or one overlap window; and
 9. final effect validation.
 
 The owner-private journal accepts one completed allowlisted record at a time.
@@ -142,3 +143,11 @@ balances. Cleanup reported all exact run resources absent, no broad cleanup,
 and no foreign target. The largest safe next question is therefore where each
 direction spends time; this ADR does not infer that finality, observation,
 actor startup, or evidence validation is responsible.
+
+The first RED after Run AE required those five sequential outer subphases
+instead of one aggregate direction record. GREEN preserves the exact call
+order and keeps native overlap as one concurrent window. Custom-token
+sequential packets contain 18 fixed phases, native sequential packets 15, and
+native overlap packets 8. This separates outer preparation, the child actor
+flow, replay, and balance sampling; semantic phases inside the child actor
+remain the next layer before another actual-node benchmark.

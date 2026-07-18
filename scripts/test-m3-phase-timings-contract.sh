@@ -106,20 +106,30 @@ jq -e '
   and .coverage == {starts_after_run_directory_initialization:true,
     ends_before_run_evidence_publication:true,
     cleanup_in_separate_attestation:true}
-  and (.phases | length) == 10
+  and (.phases | length) == 18
   and [.phases[].phase_id] == ["contract_validation","prebuild",
     "identities_stage_one","node_startup","bitcoin_funding","lez_bootstrap",
-    "f7_fixture","direction_taker_sells_foreign","direction_taker_sells_lez",
+    "f7_fixture",
+    "direction_taker_sells_foreign_reserve_funding",
+    "direction_taker_sells_foreign_stage_two",
+    "direction_taker_sells_foreign_actor_flow",
+    "direction_taker_sells_foreign_terminal_replay",
+    "direction_taker_sells_foreign_terminal_balances",
+    "direction_taker_sells_lez_reserve_funding",
+    "direction_taker_sells_lez_stage_two",
+    "direction_taker_sells_lez_actor_flow",
+    "direction_taker_sells_lez_terminal_replay",
+    "direction_taker_sells_lez_terminal_balances",
     "effect_validation"]
-  and [.phases[].sequence] == [1,2,3,4,5,6,7,8,9,10]
+  and [.phases[].sequence] == [range(1;19)]
   and all(.phases[];
     .producer == "outer" and .outcome == "passed"
     and .start_offset_ms >= 0 and .end_offset_ms >= .start_offset_ms
     and .duration_ms == (.end_offset_ms - .start_offset_ms))
-  and .phases[7].direction == "taker_sells_foreign"
-  and .phases[8].direction == "taker_sells_lez"
+  and all(.phases[7:12][]; .direction == "taker_sells_foreign")
+  and all(.phases[12:17][]; .direction == "taker_sells_lez")
   and all(.phases[0:7][]; .direction == null)
-  and .phases[9].direction == null
+  and .phases[17].direction == null
   and .total_duration_ms >= ([.phases[].duration_ms] | add)
   and .unattributed_duration_ms ==
     (.total_duration_ms - ([.phases[].duration_ms] | add))
@@ -140,7 +150,7 @@ jq -e --arg path "${relative_run_root}/evidence/m3-phase-timings.json" \
   and .coverage.cleanup_in_separate_attestation == true
   and .total_duration_ms >= 0
   and .unattributed_duration_ms >= 0
-  and .phase_count == 10
+  and .phase_count == 18
 ' <<<"$phase_timing_summary" >/dev/null ||
   fail "main-packet timing summary is incomplete"
 phase_timings_hash_stable "$expected_timing_sha" ||
@@ -154,10 +164,13 @@ prepare_case native-sequential native sequential
 record_expected_phases
 finalize_phase_timings || fail "native-sequential timing publication failed"
 jq -e '
-  (.phases | length) == 9
+  (.phases | length) == 15
   and ([.phases[].phase_id] | index("f7_fixture")) == null
-  and [.phases[6].phase_id,.phases[7].phase_id] ==
-    ["direction_taker_sells_foreign","direction_taker_sells_lez"]
+  and [.phases[6].phase_id,.phases[10].phase_id] ==
+    ["direction_taker_sells_foreign_reserve_funding",
+     "direction_taker_sells_lez_reserve_funding"]
+  and ([.phases[].phase_id] | index(
+    "direction_taker_sells_foreign_terminal_balances")) == null
 ' "$phase_timings_evidence" >/dev/null ||
   fail "native-sequential phase schema is wrong"
 
@@ -294,6 +307,13 @@ for binding_term in 'validate_phase_timings_for_run_evidence phase_timing_summar
   'phase_timings_hash_stable "$phase_timing_sha"'; do
   rg -Fq -- "$binding_term" <<<"$write_run_evidence_source" ||
     fail "main run packet omits timing binding: ${binding_term}"
+done
+runner_source="$(<"$runner")"
+for direction_step in reserve_funding stage_two actor_flow terminal_replay \
+  terminal_balances; do
+  direction_phase_probe='direction_${direction}_'"$direction_step"
+  rg -Fq -- "$direction_phase_probe" <<<"$runner_source" ||
+    fail "runner omits direction timing step: ${direction_step}"
 done
 
 prepare_case sentinel

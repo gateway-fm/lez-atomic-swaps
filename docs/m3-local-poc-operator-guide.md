@@ -1227,6 +1227,13 @@ Maker second lock, expected balances, zero replay/custody, and conserved total
 250. The two complete user directions consume 75.2 percent, so decompose those
 internals before changing finality or cadence. Run AE is spent.
 
+Future sequential timing packets replace each of Run AE's aggregate direction
+rows with funding reservation, stage two, actor flow, terminal/replay, and,
+for custom tokens, terminal balances. Native runs omit the balance rows.
+Overlap remains a single concurrent window; do not add child durations as if
+they were sequential wall time. The packet's fixed phase count is 18 for
+custom-token sequential, 15 for native sequential, and 8 for native overlap.
+
 After a successful manual run, verify that both launchers completed and their
 resource inventory reconciled before interpreting any swap evidence:
 

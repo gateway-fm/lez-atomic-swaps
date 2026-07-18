@@ -540,10 +540,36 @@ expected_phase_timings_json() {
       else [] end)
     + (if $schedule == "overlap" then
         [{phase_id:"directions_overlap",direction:null}]
-      else [
-        {phase_id:"direction_taker_sells_foreign",direction:"taker_sells_foreign"},
-        {phase_id:"direction_taker_sells_lez",direction:"taker_sells_lez"}
-      ] end)
+      else
+        ([
+          {phase_id:"direction_taker_sells_foreign_reserve_funding",
+            direction:"taker_sells_foreign"},
+          {phase_id:"direction_taker_sells_foreign_stage_two",
+            direction:"taker_sells_foreign"},
+          {phase_id:"direction_taker_sells_foreign_actor_flow",
+            direction:"taker_sells_foreign"},
+          {phase_id:"direction_taker_sells_foreign_terminal_replay",
+            direction:"taker_sells_foreign"}
+        ]
+        + (if $asset_mode == "custom_token" then
+            [{phase_id:"direction_taker_sells_foreign_terminal_balances",
+              direction:"taker_sells_foreign"}]
+          else [] end)
+        + [
+          {phase_id:"direction_taker_sells_lez_reserve_funding",
+            direction:"taker_sells_lez"},
+          {phase_id:"direction_taker_sells_lez_stage_two",
+            direction:"taker_sells_lez"},
+          {phase_id:"direction_taker_sells_lez_actor_flow",
+            direction:"taker_sells_lez"},
+          {phase_id:"direction_taker_sells_lez_terminal_replay",
+            direction:"taker_sells_lez"}
+        ]
+        + (if $asset_mode == "custom_token" then
+            [{phase_id:"direction_taker_sells_lez_terminal_balances",
+              direction:"taker_sells_lez"}]
+          else [] end))
+      end)
     + [{phase_id:"effect_validation",direction:null}]
   '
 }
@@ -3710,16 +3736,33 @@ if [[ "$schedule" == "overlap" ]]; then
   phase_timing_end directions_overlap || fail "overlap timing end failed"
 else
   for direction in "${directions[@]}"; do
-    phase_timing_begin "direction_${direction}" "$direction" ||
-      fail "${direction} timing start failed"
+    phase_timing_begin "direction_${direction}_reserve_funding" "$direction" ||
+      fail "${direction} funding-reservation timing start failed"
     reserve_bitcoin_funding_anchors sequential "$direction"
+    phase_timing_end "direction_${direction}_reserve_funding" ||
+      fail "${direction} funding-reservation timing end failed"
+    phase_timing_begin "direction_${direction}_stage_two" "$direction" ||
+      fail "${direction} stage-two timing start failed"
     run_stage_two "$direction"
+    phase_timing_end "direction_${direction}_stage_two" ||
+      fail "${direction} stage-two timing end failed"
+    phase_timing_begin "direction_${direction}_actor_flow" "$direction" ||
+      fail "${direction} actor-flow timing start failed"
     run_direction_actor_flow "$direction"
+    phase_timing_end "direction_${direction}_actor_flow" ||
+      fail "${direction} actor-flow timing end failed"
+    phase_timing_begin "direction_${direction}_terminal_replay" "$direction" ||
+      fail "${direction} terminal-replay timing start failed"
     assert_terminal_and_replay "$direction"
+    phase_timing_end "direction_${direction}_terminal_replay" ||
+      fail "${direction} terminal-replay timing end failed"
     if [[ "$asset_mode" == "custom_token" ]]; then
+      phase_timing_begin "direction_${direction}_terminal_balances" "$direction" ||
+        fail "${direction} terminal-balance timing start failed"
       write_custom_token_terminal_balance_evidence "$direction"
+      phase_timing_end "direction_${direction}_terminal_balances" ||
+        fail "${direction} terminal-balance timing end failed"
     fi
-    phase_timing_end "direction_${direction}" || fail "${direction} timing end failed"
   done
 fi
 
