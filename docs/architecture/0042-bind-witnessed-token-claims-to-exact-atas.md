@@ -277,17 +277,20 @@ distinct from an unavailable RPC.
 
 Historical metadata, token-definition, and custody reads use explicit nested
 budgets and bounded concurrency whose aggregate is strictly inside the actor
-bridge's 30-second outer request timeout. This prevents one slow official RPC
+bridge's 120-second outer request timeout. This prevents one slow official RPC
 from silently consuming the whole actor budget and prevents an unbounded fanout
 from becoming a new availability failure. The current split keeps ordinary
 block and tip RPCs at 10 seconds with maximum concurrency one, while the
-dedicated historical-account client uses a 20-second request budget and maximum
+dedicated historical-account client uses a 90-second request budget and maximum
 concurrency three. Custom-token metadata, definition, and custody reads use one
-bounded `tokio::try_join!`, so their nested wait is bounded at approximately
-20 seconds rather than three sequential 20-second waits. A supported upstream
-batch read or a cached, block-identified historical snapshot remains a
-production improvement. The existing component evidence predates this timing
-correction; it does not certify a fresh actual-node custom-token PoC.
+bounded `tokio::try_join!`. Run O demonstrated that the official client can
+issue all three reads concurrently while the upstream service effectively
+serializes or queues their execution. The 90-second nested budget accommodates
+that observed local-PoC behavior inside the 120-second actor deadline; it is not
+a production scalability claim. A supported upstream batch read or a cached,
+block-identified historical snapshot remains the production improvement. Run O
+is diagnostic timing evidence and does not certify a fresh actual-node
+custom-token PoC.
 
 The same-block reads and block revalidation are authoritative-indexer
 consistency checks. `getAccountAtBlock` supplies neither a cryptographic account
@@ -313,7 +316,8 @@ sequenceDiagram
     and Custody read
         Sidecar->>Indexer: Read custody at block B
     end
-    Note over Sidecar,Indexer: All historical reads share one bounded concurrent join
+    Note over Sidecar,Indexer: Client requests share one concurrent join with a 90 second budget
+    Note over Sidecar,Indexer: Run O observed upstream serialization or queueing despite client concurrency
     Sidecar->>Indexer: Re-read block B by ID and hash
     alt Both responses equal the retained finalized block B
         Sidecar-->>SwapActor: Found facts anchored to block B

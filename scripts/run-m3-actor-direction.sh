@@ -8,7 +8,9 @@ umask 077
 
 readonly initial_terms_hash="1111111111111111111111111111111111111111111111111111111111111111"
 readonly pda_probe_secret_digest="2222222222222222222222222222222222222222222222222222222222222222"
-readonly actor_lez_bridge_request_timeout_millis=30000
+# The outer actor call must outlive the sidecar's bounded 90-second historical
+# reconstruction budget without turning one bridge request into a retry.
+readonly actor_lez_bridge_request_timeout_millis=120000
 readonly asset_mode="${M3_POC_ASSET_MODE:-native}"
 
 fail() {

@@ -1842,11 +1842,25 @@ Active M3 refund critical path:
   blocker after the local fail-closed fix. Independent GREEN gates are rustfmt,
   strict Clippy for all targets and features, all 127 current sidecar tests,
   the actor contract, Mermaid compatibility, and diff check; these component
-  gates do not promote run N to PoC evidence. Explicit terminal ATA balance and
-  packet bindings remain forward `175/75/0`, reverse `75/175/0`, and conserved
-  total `250`. The execution ETA has moved by one local fix/gate cycle and one
-  fresh two-direction run; synchronized documentation, D1, and milestone-wide
-  closure gates follow that passing run;
+  gates do not promote run N to PoC evidence. Fresh isolated run
+  `m3f7compose20260718o` then passed the checked deployment, fresh-identity
+  Vault bootstrap, official eight-transaction F7 Token/ATA fixture, forward
+  Bitcoin first lock, and actor-owned finalized LEZ initialization, custody
+  creation, and funding. It also remains bounded RED evidence, not a passed
+  PoC: post-funding Maker observation attempts 1 through 13 each failed closed
+  after roughly 20 seconds without a duplicate submission. The run was stopped
+  intentionally instead of spending approximately 35 minutes on redundant
+  retries. Its exact cleanup attestation passed without broad cleanup or a
+  foreign resource target. The local accommodation now gives each sidecar
+  historical request a bounded 90-second budget and the single outer actor
+  bridge call exactly 120 seconds; it does not add a transport retry or widen
+  any durable submission authority. Batched or cached historical snapshots
+  remain the upstream production improvement, not a milestone blocker after
+  this local bound is GREEN. Explicit terminal ATA balance and packet bindings
+  remain forward `175/75/0`, reverse `75/175/0`, and conserved total `250`. The
+  current execution ETA is one combined 90/120-second gate cycle and one fresh
+  two-direction run; synchronized documentation, D1, and milestone-wide closure
+  gates follow that passing run;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
   not recordings and cannot satisfy D1. The repository now supplies a
@@ -1872,10 +1886,10 @@ Active M3 refund critical path:
 - [ ] after the owner enters later hardening, add restart, reorg, fee, and chaos
   cases beyond the reproducible functional PoC boundary.
 
-Repository-controlled open work, not external blockers, is the F7 historical
-read/containing-block liveness fix and gates, exact terminal balance/finality
-packet binding, a fresh two-direction actual-node custom-token run, D1
-recordings, and synchronized closure evidence and gates. The
+Repository-controlled open work, not external blockers, is the combined F7
+90/120-second liveness gate, exact terminal balance/finality packet binding, a
+fresh two-direction actual-node custom-token run, D1 recordings, and
+synchronized closure evidence and gates. The
 official-wallet starting fixture is GREEN but cannot substitute for
 actor-owned escrow/claim/refund effects or finalized balance evidence. The
 revision-one-to-two store/projector, signed

@@ -331,7 +331,8 @@ jq -e '
   and .bounded_read_only_observation_retries_never_resubmit == true
   and .bounded_pending_observation_retries == true
   and .bounded_prepared_bitcoin_claim_reconciliation == true
-  and .actor_lez_bridge_request_timeout_millis == 30000
+  and .actor_lez_bridge_request_timeout_millis == 120000
+  and .actor_lez_bridge_request_timeout_millis > 90000
   and .submission_count_query == true
   and .owned_process_registry == true
   and .pre_lock_presignature_domains == ["bitcoin", "lez"]

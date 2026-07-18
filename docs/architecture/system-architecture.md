@@ -98,7 +98,7 @@ actor-owned second-lock proof.
 Core 31.1 requires `gettxspendingprevout` flags in one options object
 `{mempool_only:false,return_spending_tx:true}`, rather than the older positional
 boolean form. Finalized LEZ scans use bounded windows and each actor-sidecar
-request has a finite 30-second timeout. In `TakerSellsLez`, nine typed
+request has a finite 120-second timeout. In `TakerSellsLez`, nine typed
 `moving_tip` results were returned while the local finalized tip advanced; a
 tenth fresh-process observation obtained one stable exact first-lock proof and
 then permitted the one Maker Bitcoin send. A `moving_tip` payload carries no
@@ -541,7 +541,7 @@ flowchart TB
         M3F7C["F7 exact-once bridge client<br/>eleven v2 operations + role/window checks GREEN"]
         M3F7D["F7 agreement and local-policy adapter<br/>eleven no-submit mappings GREEN"]
         M3F7S["F7 official sidecar planner<br/>tags 11, 7, 8, 12, and 10<br/>four durable v2 reservations GREEN"]
-        M3F7R["F7 sidecar and finalized scanner<br/>Found containing-block and Absent window anchors<br/>bounded historical reads; actual-node certification open"]
+        M3F7R["F7 sidecar and finalized scanner<br/>Found containing-block and Absent window anchors<br/>90s max3 historical reads in 120s actor budget<br/>actual-node certification open"]
         M3RA["btc-reference-actor<br/>schema 4 live Maker lock GREEN<br/>both actual-node directions"]
         M3RUN["Schema 4 private-local runner<br/>external Taker first lock<br/>actor-owned Maker second lock GREEN"]
         M3F7A --> M3F7C
@@ -917,14 +917,17 @@ sidecar revalidates the same block through the official indexer's by-ID and
 by-hash methods. Advancing an unrelated latest tip does not invalidate the
 candidate; a missing or changed candidate fails closed. Those historical reads
 use explicit nested budgets and bounded concurrency strictly inside the
-30-second actor bridge request timeout: ordinary block and tip calls retain a
+120-second actor bridge request timeout: ordinary block and tip calls retain a
 10-second, single-request client, while the historical-account client uses a
-20-second budget, maximum concurrency three, and one bounded concurrent join
-for custom-token metadata, definition, and custody. They remain
+90-second budget, maximum concurrency three, and one bounded concurrent join
+for custom-token metadata, definition, and custody. Run O showed that these
+client requests can be concurrent while the upstream service effectively
+serializes or queues them. The larger local budget accommodates that behavior
+for PoC diagnostics; upstream batch reads or cached block-identified snapshots
+remain the production improvement. The historical responses remain
 authoritative-indexer consistency checks, not cryptographic account proofs or
-one atomic multi-read snapshot. Upstream batch reads or cached block-identified
-snapshots remain a production improvement. No fresh actual-node F7 PoC is
-implied by this component correction. Historical runs 14d through 14n remain failure
+one atomic multi-read snapshot. No fresh actual-node F7 PoC is implied by this
+component correction or run O. Historical runs 14d through 14n remain failure
 and invariant evidence. Fresh
 pre-canonical run `m2poc-corridor-fresh-20260714o` completed `TakerSellsLez`: the taker
 initialized and funded LEZ, the maker funded Zcash, waited for two
@@ -1541,7 +1544,7 @@ sequenceDiagram
         alt Canonical reveal path
             Taker->>LezSeq: Submit witnessed LEZ claim
             LezIdx-->>Maker: Finalized claim exposes adaptor material
-            Note over Maker,LezIdx: Historical state is read at the claim block within bounded budgets
+            Note over Maker,LezIdx: Historical state uses a 90 second budget inside the 120 second actor deadline
             Note over Maker,LezIdx: Revalidate that block by ID and hash, while an unrelated newer tip may advance
             alt Maker follows including after Taker disappears
                 Note over Taker,TakerStore: Taker process exits after reveal submission
@@ -1621,7 +1624,7 @@ sequenceDiagram
                 Note over Maker,MakerStore: Observer exits then another maker process reloads revision 3
                 Maker->>LezSeq: Submit witnessed LEZ claim
                 LezIdx-->>Maker: Exact claim finalized
-                Note over Maker,LezIdx: Historical state is read at the claim block within bounded budgets
+                Note over Maker,LezIdx: Historical state uses a 90 second budget inside the 120 second actor deadline
                 Note over Maker,LezIdx: Revalidate that block by ID and hash, while an unrelated newer tip may advance
                 Maker->>MakerStore: Fresh process projects revision 4 Completed
                 Taker->>TakerStore: Later catch up revisions 3 and 4 observation only

@@ -41,7 +41,7 @@ const MAX_INDEXER_REQUEST_BYTES: u32 = 2_800_000;
 const MAX_INDEXER_RESPONSE_BYTES: u32 = 8 * 1024 * 1024;
 const INDEXER_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const INDEXER_MAX_CONCURRENT_REQUESTS: usize = 1;
-const HISTORICAL_ACCOUNT_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+const HISTORICAL_ACCOUNT_REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
 const HISTORICAL_ACCOUNT_MAX_CONCURRENT_REQUESTS: usize = 3;
 
 /// Provenance-preserving historical account state from pinned indexer v0.2.
@@ -1586,22 +1586,24 @@ mod tests {
         entered: AtomicUsize,
         all_entered: Notify,
         begin_delay: tokio::sync::Semaphore,
+        serialized_reconstruction: tokio::sync::Semaphore,
     }
 
     #[tokio::test]
     #[allow(
         clippy::too_many_lines,
-        reason = "one production-budget and scaled-timeout RPC regression keeps concurrency and failure behavior together"
+        reason = "one production-budget and scaled-timeout RPC regression keeps serialized server behavior together"
     )]
-    async fn historical_account_rpc_can_exceed_fast_read_budget_within_outer_deadline() {
+    async fn historical_account_rpc_budget_covers_serialized_server_reconstruction() {
         assert_eq!(INDEXER_REQUEST_TIMEOUT, Duration::from_secs(10));
         assert_eq!(INDEXER_MAX_CONCURRENT_REQUESTS, 1);
-        assert_eq!(HISTORICAL_ACCOUNT_REQUEST_TIMEOUT, Duration::from_secs(20));
+        assert_eq!(HISTORICAL_ACCOUNT_REQUEST_TIMEOUT, Duration::from_secs(90));
         assert_eq!(HISTORICAL_ACCOUNT_MAX_CONCURRENT_REQUESTS, 3);
         let state = Arc::new(SlowHistoricalAccountRpc {
             entered: AtomicUsize::new(0),
             all_entered: Notify::new(),
             begin_delay: tokio::sync::Semaphore::new(0),
+            serialized_reconstruction: tokio::sync::Semaphore::new(1),
         });
         let server = ServerBuilder::default()
             .build("127.0.0.1:0")
@@ -1623,6 +1625,11 @@ mod tests {
                     .await
                     .expect("test delay barrier remains open")
                     .forget();
+                let _serialized_reconstruction = state
+                    .serialized_reconstruction
+                    .acquire()
+                    .await
+                    .expect("serialized reconstruction remains open");
                 tokio::time::sleep(SLOW_HISTORICAL_ACCOUNT_DELAY).await;
                 Ok::<_, ErrorObjectOwned>(IndexedAccount {
                     program_owner: indexer_service_protocol::ProgramId([0; 8]),
