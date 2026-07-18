@@ -72,8 +72,14 @@ for scenario in happy refund concurrent; do
       .certification_mode == "test_contract" and
       .privacy == "private_local_stealth" and
       .repository_commit == $commit and
-      .networks.bitcoin_core == {version:"31.1",network:"regtest"} and
-      .networks.lez == {version:"v0.2.0",network:"private_local"} and
+      .networks.bitcoin_core.run_id == ($run_id + "-btc") and
+      .networks.bitcoin_core.version == "31.1" and
+      .networks.bitcoin_core.network == "regtest" and
+      .networks.lez.run_id == ($run_id + "-lez") and
+      .networks.lez.version == "v0.2.0" and
+      .networks.lez.network == "private_local" and
+      .networks.lez.slot_duration_seconds ==
+        (if $scenario == "refund" then "3.0" else "1.0" end) and
       .external_resources.public_rpc == false and
       .external_resources.faucet == false and
       .external_resources.public_funds == false and
@@ -131,6 +137,13 @@ jq -e --arg commit "$expected_commit" '
   .certification_mode == "test_contract" and
   .privacy == "private_local_stealth" and
   .repository_commit == $commit and
+  .verifier_repository_commit == $commit and
+  .networks == {
+    bitcoin_core: {network:"regtest",version:"31.1"},
+    lez: {network:"private_local",version:"v0.2.0"}
+  } and
+  .isolated_run_network_metadata ==
+    "retained_in_each_hashed_recording_manifest" and
   (.recordings | length == 3) and
   ([.recordings[].scenario] | sort == ["concurrent","happy","refund"]) and
   ([.recordings[].run_id] | unique | length == 3) and

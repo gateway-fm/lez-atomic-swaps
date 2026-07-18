@@ -10,6 +10,21 @@ fail() {
   exit 1
 }
 
+network_contract() {
+  jq -cS '
+    {
+      bitcoin_core: {
+        version: .networks.bitcoin_core.version,
+        network: .networks.bitcoin_core.network
+      },
+      lez: {
+        version: .networks.lez.version,
+        network: .networks.lez.network
+      }
+    }
+  ' "$1"
+}
+
 for dependency in git jq realpath scriptreplay sha256sum stat; do
   command -v "$dependency" >/dev/null 2>&1 || fail "missing dependency: ${dependency}"
 done
@@ -37,6 +52,7 @@ declare -A seen_run_ids=()
 entries=()
 bundle_commit=""
 networks_json=""
+readonly verifier_repository_commit="$(git rev-parse --verify HEAD)"
 
 for manifest in "$@"; do
   [[ -f "$manifest" && ! -L "$manifest" ]] || fail "manifest must be a regular non-symlink file"
@@ -53,9 +69,14 @@ for manifest in "$@"; do
     (.run_id | test("^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$")) and
     (.repository_commit | test("^[0-9a-f]{40}$")) and
     (.recorded_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
-    .networks.bitcoin_core == {version:"31.1",network:"regtest"} and
+    .networks.bitcoin_core.run_id == (.run_id + "-btc") and
+    .networks.bitcoin_core.version == "31.1" and
+    .networks.bitcoin_core.network == "regtest" and
+    .networks.lez.run_id == (.run_id + "-lez") and
     .networks.lez.version == "v0.2.0" and
     .networks.lez.network == "private_local" and
+    .networks.lez.slot_duration_seconds ==
+      (if .scenario == "refund" then "3.0" else "1.0" end) and
     .external_resources.public_rpc == false and
     .external_resources.faucet == false and
     .external_resources.public_funds == false and
@@ -86,12 +107,12 @@ for manifest in "$@"; do
 
   if [[ -z "$bundle_commit" ]]; then
     bundle_commit="$repository_commit"
-    networks_json="$(jq -cS '.networks' "$manifest_abs")"
+    networks_json="$(network_contract "$manifest_abs")"
   else
     [[ "$repository_commit" == "$bundle_commit" ]] ||
       fail "all recordings must bind the same repository commit"
-    [[ "$(jq -cS '.networks' "$manifest_abs")" == "$networks_json" ]] ||
-      fail "all recordings must bind the same node versions and networks"
+    [[ "$(network_contract "$manifest_abs")" == "$networks_json" ]] ||
+      fail "all recordings must bind the same chain versions and networks"
   fi
 
   recording_dir="$(dirname "$manifest_abs")"
@@ -208,8 +229,10 @@ for required_scenario in happy refund concurrent; do
 done
 
 if [[ "$testing" == 0 ]]; then
-  [[ "$(git rev-parse --verify HEAD)" == "$bundle_commit" ]] ||
-    fail "live recording bundle commit differs from current HEAD"
+  git cat-file -e "${bundle_commit}^{commit}" >/dev/null 2>&1 ||
+    fail "live recording bundle commit is not present in this repository"
+  git merge-base --is-ancestor "$bundle_commit" "$verifier_repository_commit" ||
+    fail "live recording bundle commit is not an ancestor of the verifier checkout"
   [[ -z "$(git status --porcelain=v1 --untracked-files=normal)" ]] ||
     fail "live recording bundle requires a clean worktree"
   if [[ "$output_file" == "${repository_root}/"* ]]; then
@@ -232,6 +255,7 @@ trap 'rm -f -- "${output_tmp:-}"' EXIT
 jq -n \
   --arg certification_mode "$expected_certification_mode" \
   --arg repository_commit "$bundle_commit" \
+  --arg verifier_repository_commit "$verifier_repository_commit" \
   --arg recorded_at "$recorded_at" \
   --argjson networks "$networks_json" \
   --argjson recordings "$recordings_json" '
@@ -242,8 +266,10 @@ jq -n \
       certification_mode: $certification_mode,
       privacy: "private_local_stealth",
       repository_commit: $repository_commit,
+      verifier_repository_commit: $verifier_repository_commit,
       recorded_at: $recorded_at,
       networks: $networks,
+      isolated_run_network_metadata: "retained_in_each_hashed_recording_manifest",
       recordings: $recordings,
       scenarios: ["happy", "refund", "concurrent"],
       public_rpc_used: false,
