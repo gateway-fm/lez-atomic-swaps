@@ -88,7 +88,7 @@ use url::{Host, Url};
 use zeroize::Zeroize;
 
 /// Longest request timeout accepted in client configuration.
-pub const MAX_REQUEST_TIMEOUT: Duration = Duration::from_mins(1);
+pub const MAX_REQUEST_TIMEOUT: Duration = Duration::from_mins(2);
 const MAX_EXACT_TRANSACTION_BYTES: usize = 2_000_000;
 const OFFICIAL_PUBLIC_MESSAGE_HASH_PREFIX: &[u8; 32] =
     b"/LEE/v0.3/Message/Public/\x00\x00\x00\x00\x00\x00\x00";
@@ -526,8 +526,8 @@ pub enum ConfigurationError {
         "endpoint must be explicit loopback-IP HTTP with a nonzero port and no extra URL parts"
     )]
     NonLoopbackEndpoint,
-    /// Timeouts must be finite and at most 60 seconds.
-    #[error("request timeout must be greater than zero and at most 60 seconds")]
+    /// Timeouts must be finite and at most 120 seconds.
+    #[error("request timeout must be greater than zero and at most 120 seconds")]
     InvalidTimeout,
     /// Capability could not be encoded in a sensitive bearer header.
     #[error("capability header is invalid")]

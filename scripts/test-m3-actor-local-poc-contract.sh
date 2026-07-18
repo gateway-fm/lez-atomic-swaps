@@ -341,17 +341,17 @@ jq -e '
   and .runtime_backend == "repository_owned_actual_node_implementation"
 ' <<<"$direction_contract" >/dev/null || fail "direction boundary contract is incomplete"
 
-# Keep the cheap, pre-Docker direction contract compatible with the actor that
-# consumes the generated config. The actor intentionally rejects out-of-range
-# timeouts while loading its private config, before any command can run.
-assert_actor_timeout_compatible() {
-  local direction_timeout="$1" actor_timeout_maximum="$2"
+# Keep the cheap, pre-Docker direction contract compatible with every layer
+# that consumes the generated timeout. Both the actor and the bridge client
+# reject out-of-range values while loading config, before any command can run.
+assert_timeout_compatible() {
+  local direction_timeout="$1" timeout_maximum="$2" consumer="$3"
   [[ "$direction_timeout" =~ ^[0-9]+$ ]] ||
     fail "direction request timeout is not an unsigned integer"
-  [[ "$actor_timeout_maximum" =~ ^[0-9]+$ ]] ||
-    fail "actor request-timeout maximum is not an unsigned integer"
-  (( direction_timeout <= actor_timeout_maximum )) ||
-    fail "direction request timeout exceeds the actor configuration maximum"
+  [[ "$timeout_maximum" =~ ^[0-9]+$ ]] ||
+    fail "${consumer} request-timeout maximum is not an unsigned integer"
+  (( direction_timeout <= timeout_maximum )) ||
+    fail "direction request timeout exceeds the ${consumer} configuration maximum"
 }
 
 readonly actor_source="crates/btc-reference-actor/src/lib.rs"
@@ -366,7 +366,27 @@ direction_timeout="$(jq -er \
 rg -Fq \
   'self.lez_bridge.request_timeout_millis > MAX_REQUEST_TIMEOUT_MILLIS' \
   "$actor_source" || fail "actor no longer enforces its request-timeout maximum"
-assert_actor_timeout_compatible "$direction_timeout" "$actor_timeout_maximum"
+assert_timeout_compatible "$direction_timeout" "$actor_timeout_maximum" actor
+
+readonly bridge_client_source="crates/lez-bridge-client/src/lib.rs"
+bridge_client_timeout_definition="$(sed -nE \
+  's/^pub const MAX_REQUEST_TIMEOUT: Duration = Duration::from_(secs|mins)\(([0-9][0-9_]*)\);$/\1 \2/p' \
+  "$bridge_client_source")"
+[[ "$bridge_client_timeout_definition" =~ ^(secs|mins)\ ([0-9][0-9_]*)$ ]] ||
+  fail "bridge-client request-timeout maximum is unavailable or ambiguous"
+bridge_client_timeout_unit="${BASH_REMATCH[1]}"
+bridge_client_timeout_value="${BASH_REMATCH[2]//_/}"
+case "$bridge_client_timeout_unit" in
+  secs) bridge_client_timeout_maximum=$((bridge_client_timeout_value * 1000)) ;;
+  mins) bridge_client_timeout_maximum=$((bridge_client_timeout_value * 60 * 1000)) ;;
+  *) fail "bridge-client request-timeout unit is unsupported" ;;
+esac
+rg -Fq \
+  'config.request_timeout.is_zero() || config.request_timeout > MAX_REQUEST_TIMEOUT' \
+  "$bridge_client_source" ||
+  fail "bridge client no longer enforces its request-timeout maximum"
+assert_timeout_compatible \
+  "$direction_timeout" "$bridge_client_timeout_maximum" bridge-client
 if rg -n 'M3_ACTOR_DIRECTION_BACKEND|runtime backend is missing|real actor flow is not yet assembled' \
   "$direction_driver"; then
   fail "direction driver still delegates to an external runtime backend"

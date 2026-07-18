@@ -2887,6 +2887,30 @@ fn endpoint_and_capability_configuration_is_loopback_only_bounded_and_redacted()
 }
 
 #[test]
+fn request_timeout_accepts_actor_deadline_and_rejects_larger_values() {
+    let expected_runtime = runtime(Participant::Maker, 100);
+    let run = RunId::new("timeout-config-run-00001").expect("run id");
+
+    let accepted = BridgeClient::connect(BridgeClientConfig::new(
+        "http://127.0.0.1:1234",
+        SidecarCapability::new(MAKER_CAPABILITY).expect("valid capability"),
+        run.clone(),
+        expected_runtime.clone(),
+        Duration::from_mins(2),
+    ));
+    assert!(accepted.is_ok(), "the actor's exact 120-second deadline");
+
+    let rejected = BridgeClient::connect(BridgeClientConfig::new(
+        "http://127.0.0.1:1234",
+        SidecarCapability::new(MAKER_CAPABILITY).expect("valid capability"),
+        run,
+        expected_runtime,
+        Duration::from_secs(121),
+    ));
+    assert!(rejected.is_err(), "timeouts above 120 seconds must fail");
+}
+
+#[test]
 fn sensitive_protocol_values_are_not_exposed_by_debug() {
     let request = PrepareRevealingClaimRequest::new(
         MessageContext::new(

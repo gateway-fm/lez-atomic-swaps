@@ -1866,8 +1866,19 @@ Active M3 refund critical path:
   a foreign resource target. Run P is bounded RED evidence, not a custom-token
   F7 PoC pass. The current tree locally fixes that exact mismatch by raising the
   enforced actor maximum to 120000 milliseconds. A schema-5 boundary regression
-  accepts 120000 and rejects 120001, while the pre-Docker actor contract extracts
-  both configured values and rejects any future runner/actor drift before node
+  accepts 120000 and rejects 120001. Fresh isolated run
+  `m3f7compose20260718q` then started from clean pushed commit `d2d3bef`,
+  repeated the checked deployment, both fresh-identity Vault bootstraps, and the
+  official eight-transaction F7 Token/ATA fixture, and accepted the actor
+  configuration. Its first Maker-owned LEZ initialization drive still failed
+  before an effect with typed `actor adapter configuration is unavailable`:
+  the bridge client retained its independent one-minute maximum while the
+  runner and actor allowed 120 seconds. Exact cleanup again passed without broad
+  cleanup or a foreign resource target. Run Q is bounded RED evidence, not a
+  custom-token F7 PoC pass. The current tree now also raises the enforced bridge
+  client maximum to two minutes, with a client boundary test accepting 120
+  seconds and rejecting 121. The pre-Docker contract extracts all three
+  configured limits and rejects future runner/actor/client drift before node
   startup. Explicit terminal ATA balance and packet bindings remain forward
   `175/75/0`, reverse `75/175/0`, and conserved total `250`. The remaining
   functional gate is one fresh clean two-direction journey; synchronized
