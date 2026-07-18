@@ -541,7 +541,7 @@ flowchart TB
         M3F7C["F7 exact-once bridge client<br/>eleven v2 operations + role/window checks GREEN"]
         M3F7D["F7 agreement and local-policy adapter<br/>eleven no-submit mappings GREEN"]
         M3F7S["F7 official sidecar planner<br/>tags 11, 7, 8, 12, and 10<br/>four durable v2 reservations GREEN"]
-        M3F7R["F7 sidecar and finalized scanner<br/>Found containing-block and Absent window anchors<br/>90s max3 historical reads in 120s actor budget<br/>actual-node certification open"]
+        M3F7R["F7 sidecar and finalized scanner<br/>lifecycle-aware terms discovery + containing-block anchors GREEN<br/>90s max3 historical reads in 120s actor budget<br/>actual-node certification open"]
         M3F7P["F7 peer funding projection<br/>schema 5 v2 DiscoverByTerms<br/>nonowner has no submit authority GREEN"]
         M3RA["btc-reference-actor<br/>schema 4 live locks and schema 5 peer projection GREEN<br/>complete F7 actual-node packet open"]
         M3RUN["Schema 4 private-local runner<br/>external Taker first lock<br/>actor-owned Maker second lock GREEN"]
@@ -2296,7 +2296,13 @@ separately closes the accepted opposite-direction two-swap execution item;
 the BTC pair-specific F7 component boundary now also includes schema-5
 peerless finalized token-funding projection without Maker-private material or
 submit authority. Run R reached finalized token funding and Maker revision two
-but retained the pre-fix Taker v1-dispatch RED, so it is not full F7 evidence.
+but retained the pre-fix Taker v1-dispatch RED. Run S exercised that v2 route
+and exposed a second bounded RED: the terms scan treated the valid earlier
+same-swap initialization as a funding conflict. The scanner now validates and
+skips only legitimate different lifecycle kinds while retaining malformed,
+same-kind, and duplicate-match conflicts. All 127 sidecar tests pass, but no
+fresh fixed-commit actual-node run exists yet, so neither Run R nor Run S is
+full F7 evidence.
 The fresh two-direction actual-node custom-token packet,
 arbitrary-N/same-direction scheduling, process-kill/reorg/chaos, public
 deployment, formal review, and production readiness remain outside the claim.

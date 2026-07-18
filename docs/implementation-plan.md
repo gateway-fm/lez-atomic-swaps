@@ -1897,11 +1897,29 @@ Active M3 refund critical path:
   agreement, asset commitment, run, role, runtime, full terms, fixed target,
   and discovery window, and exposes no submission method. Forward
   Taker-observes-Maker and reverse Maker-observes-Taker transitions are both
-  covered. All 85 actor tests, strict all-target Clippy, and the M3 pre-Docker
-  actor contract pass. Explicit terminal ATA balance and packet
+  covered. Fresh isolated run `m3f7compose20260718s` started from clean pushed
+  commit `ba17e3b`, repeated the checked deployment, both Vault bootstraps, the
+  official eight-transaction fixture, the forward Bitcoin lock, and unique
+  finalized token initialization, custody creation, and funding. The Maker
+  reached revision two through exact observation. The Taker used the intended
+  v2 peerless classifier but failed closed with `conflicting_discovery`: its
+  funding scan encountered the valid earlier same-swap initialization before
+  reaching the valid funding at block 170. No claim/refund followed. Exact
+  cleanup attests all captured resources absent, no broad cleanup, and no
+  foreign target. Run S is bounded RED evidence, not an F7 PoC pass.
+  RED-GREEN coverage now exercises the official three-effect sequence in one
+  finalized window. Terms discovery classifies each decoded instruction by
+  lifecycle kind, validates every term field encoded by a different same-swap
+  step plus its ordered accounts and signers before ignoring it, and preserves conflicts for
+  same-kind or malformed substitutions. The regression fails on the old code,
+  passes on the fix, and a changed same-swap terms hash remains fail-closed.
+  All 127 pinned v0.2 sidecar tests, formatting, and strict all-target/all-feature
+  Clippy pass; all 85 actor tests and the M3 pre-Docker actor contract remain
+  green from `ba17e3b`. Explicit terminal ATA balance and packet
   bindings remain forward
   `175/75/0`, reverse `75/175/0`, and conserved total `250`. The remaining
-  functional gate is one fresh clean two-direction journey; synchronized
+  functional gate is one fresh clean pushed-commit two-direction journey;
+  synchronized
   documentation, D1, and milestone-wide closure gates follow that passing run;
 - [ ] compact or externally reference peerless public transaction facts before
   production. The validated v2 wire can carry transaction bytes larger than

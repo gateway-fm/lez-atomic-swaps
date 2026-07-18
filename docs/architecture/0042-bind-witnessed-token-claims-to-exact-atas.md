@@ -400,10 +400,53 @@ conflicting transition is rejected by LEZ nonce and monotonic escrow-state
 checks. This remains an authoritative-indexer trust compensation, not a
 cryptographic historical-account proof or an atomic multi-read token.
 
+### Lifecycle-aware peerless discovery
+
+Terms-based discovery scans a bounded finalized window containing the complete
+multi-step escrow lifecycle. A valid initialization or custody transaction for
+the same swap is therefore not a funding conflict. The scanner classifies every
+decoded escrow instruction by lifecycle kind. When it encounters another kind
+for the same swap, it validates every term field encoded by that step plus the
+exact account order and expected signer set, then continues without projecting
+the requested effect. A malformed other step or an incompatible instruction of
+the requested kind remains `ConflictingDiscovery`; two valid requested-kind
+matches remain `ConflictingMatches`.
+
+```mermaid
+sequenceDiagram
+    actor Taker
+    participant SwapActor as Reference actor
+    participant Sidecar as Role-bound v0.2 sidecar
+    participant Indexer as Finalized indexer
+
+    Taker->>SwapActor: Drive after peer funding
+    SwapActor->>Sidecar: Discover funding by signed terms and bounded window
+    Sidecar->>Indexer: Read finalized initialization
+    Indexer-->>Sidecar: Same swap, initialization kind
+    Sidecar->>Sidecar: Validate initialization terms, accounts, and signer
+    Sidecar->>Indexer: Read finalized custody creation
+    Indexer-->>Sidecar: Same swap, custody kind
+    Sidecar->>Sidecar: Validate custody accounts and permissionless signer set
+    Sidecar->>Indexer: Read finalized funding
+    Indexer-->>Sidecar: Same swap, funding kind
+    Sidecar->>Sidecar: Validate funding accounts, signer, state, and block identity
+    Sidecar-->>SwapActor: Found finalized funding
+    SwapActor-->>Taker: Project both legs locked
+```
+
+This observation is read-only and cannot create an on-chain effect. Atomicity
+is preserved at the authority boundary: a different lifecycle step never
+projects funding, and the actor grants claim authority only after one valid
+funding candidate plus its finalized state and block identity are accepted.
+Run `m3f7compose20260718s` is the bounded RED that exposed the pre-fix behavior;
+it is not a custom-token PoC pass.
+
 Fresh role-owned execution has proved Bitcoin first lock plus finalized LEZ
-initialization and custody creation after the checked deployment and official
-Token/ATA fixture. Funding, claims, the reverse direction, terminal balances,
-and the final reproducibility packet still require a fresh uninterrupted run.
+initialization, custody creation, and funding after the checked deployment and
+official Token/ATA fixture. Maker exact observation reached revision two. The
+peer observer, claims, reverse direction, terminal balances, and final
+reproducibility packet still require a fresh uninterrupted run on the fixed
+pushed commit.
 
 This ADR does not certify an actual-node custom-token swap in either trade
 direction, exact composed balances/effects, restart/no-resubmission, public

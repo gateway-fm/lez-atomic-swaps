@@ -39,7 +39,7 @@ use crate::{
     prepared_from_transaction, program_id_from_hex, program_id_to_hex,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 enum EffectKind {
     Initialization,
     CustodyCreation,
@@ -893,16 +893,22 @@ impl FinalizedAssetObserver {
                 BridgeRuntimeError::ConflictingDiscovery
             }
         })?;
-        if !instruction_matches(terms, kind, &instruction) {
-            return if instruction_swap(&instruction) == Some(swap_id(terms)) {
-                Err(BridgeRuntimeError::ConflictingDiscovery)
-            } else if exact.is_some() {
-                Err(BridgeRuntimeError::InvalidObservation)
-            } else {
-                Ok(None)
-            };
-        }
-        let expected_accounts = expected_accounts(terms, self.runtime.escrow_program_id, kind);
+        let observed_kind = if instruction_matches(terms, kind, &instruction) {
+            kind
+        } else if exact.is_some() {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        } else if instruction_swap(&instruction) != Some(swap_id(terms)) {
+            return Ok(None);
+        } else {
+            let observed_kind =
+                instruction_kind(&instruction).ok_or(BridgeRuntimeError::ConflictingDiscovery)?;
+            if observed_kind == kind || !instruction_matches(terms, observed_kind, &instruction) {
+                return Err(BridgeRuntimeError::ConflictingDiscovery);
+            }
+            observed_kind
+        };
+        let expected_accounts =
+            expected_accounts(terms, self.runtime.escrow_program_id, observed_kind);
         let observed_accounts = AccountIds::new(
             public
                 .message()
@@ -928,12 +934,15 @@ impl FinalizedAssetObserver {
                 .collect(),
         )
         .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
-        if signer_ids != expected_signers(terms, kind) {
+        if signer_ids != expected_signers(terms, observed_kind) {
             return Err(if exact.is_some() {
                 BridgeRuntimeError::InvalidObservation
             } else {
                 BridgeRuntimeError::ConflictingDiscovery
             });
+        }
+        if observed_kind != kind {
+            return Ok(None);
         }
         if let Some(claim) = claim {
             let exact_message =
@@ -1402,6 +1411,23 @@ fn instruction_swap(instruction: &ZecEscrowInstruction) -> Option<Hex32> {
         | ZecEscrowInstruction::ClaimTokenWitnessed { swap_id }
         | ZecEscrowInstruction::RefundNative { swap_id }
         | ZecEscrowInstruction::RefundToken { swap_id } => Some(Hex32::from_bytes(*swap_id)),
+        _ => None,
+    }
+}
+
+fn instruction_kind(instruction: &ZecEscrowInstruction) -> Option<EffectKind> {
+    match instruction {
+        ZecEscrowInstruction::InitializeNativeWitnessed { .. }
+        | ZecEscrowInstruction::InitializeTokenWitnessed { .. } => Some(EffectKind::Initialization),
+        ZecEscrowInstruction::CreateTokenCustody { .. } => Some(EffectKind::CustodyCreation),
+        ZecEscrowInstruction::FundNative { .. } | ZecEscrowInstruction::FundToken { .. } => {
+            Some(EffectKind::Funding)
+        }
+        ZecEscrowInstruction::ClaimNativeWitnessed { .. }
+        | ZecEscrowInstruction::ClaimTokenWitnessed { .. } => Some(EffectKind::Claim),
+        ZecEscrowInstruction::RefundNative { .. } | ZecEscrowInstruction::RefundToken { .. } => {
+            Some(EffectKind::Refund)
+        }
         _ => None,
     }
 }
@@ -2094,6 +2120,34 @@ mod tests {
         }
     }
 
+    fn token_terms_with_hash(
+        terms: &WitnessedLezAssetTermsV2,
+        terms_hash: Hex32,
+    ) -> WitnessedLezAssetTermsV2 {
+        let current = terms.asset().custom_token().expect("token fixture terms");
+        WitnessedLezAssetTermsV2::custom_token(
+            WitnessedTokenEscrowTermsV2::new(WitnessedTokenEscrowTermsV2Input {
+                swap_id: current.swap_id(),
+                terms_hash,
+                depositor: current.depositor(),
+                depositor_owner_account_id: current.depositor_owner_account_id(),
+                depositor_ata_account_id: current.depositor_ata_account_id(),
+                claimant: current.claimant(),
+                claimant_owner_account_id: current.claimant_owner_account_id(),
+                claimant_ata_account_id: current.claimant_ata_account_id(),
+                custody_ata_account_id: current.custody_ata_account_id(),
+                token_program_id: current.token_program_id(),
+                ata_program_id: current.ata_program_id(),
+                token_definition_account_id: current.token_definition_account_id(),
+                aggregate_authority_account_id: current.aggregate_authority_account_id(),
+                aggregate_x_only_public_key: current.aggregate_x_only_public_key(),
+                amount: current.amount().as_u128(),
+                refund_at_ms: current.refund_at_ms(),
+            })
+            .expect("distinct nonzero token terms hash"),
+        )
+    }
+
     fn holding(definition_id: [u8; 32], balance: u128) -> HistoricalAccount {
         HistoricalAccount::Present(IndexedAccount {
             program_owner: IndexedProgramId(programs::token().id()),
@@ -2593,6 +2647,38 @@ mod tests {
         assert!(matches!(
             funding_result.outcome,
             FinalizedWitnessedAssetScanOutcomeV2::Found { .. }
+        ));
+
+        let discovered_funding = observer
+            .classify_funding(
+                &ClassifyFinalizedWitnessedAssetFundingV2Request::discover_by_terms(
+                    context("asset-finalized-scan-funding-discovery-0001"),
+                    initialization.runtime.clone(),
+                    initialization.terms.clone(),
+                    window,
+                ),
+            )
+            .await
+            .expect("valid earlier steps for the same swap are not funding conflicts");
+        assert!(matches!(
+            discovered_funding.outcome,
+            FinalizedWitnessedAssetScanOutcomeV2::Found { .. }
+        ));
+
+        let conflicting_terms =
+            token_terms_with_hash(&initialization.terms, Hex32::from_bytes([204; 32]));
+        assert!(matches!(
+            observer
+                .classify_funding(
+                    &ClassifyFinalizedWitnessedAssetFundingV2Request::discover_by_terms(
+                        context("asset-finalized-scan-funding-conflict-0001"),
+                        initialization.runtime.clone(),
+                        conflicting_terms,
+                        window,
+                    ),
+                )
+                .await,
+            Err(BridgeRuntimeError::ConflictingDiscovery)
         ));
 
         let advancing_indexer = Arc::new(AdvancingTipAfterAccountIndexer {
