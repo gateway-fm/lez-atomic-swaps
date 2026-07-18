@@ -129,6 +129,7 @@ readonly toolchain="${M3_RUST_TOOLCHAIN:-1.96.0}"
 readonly direction_driver="${repo_root}/scripts/run-m3-actor-direction.sh"
 readonly lez_bootstrap_driver="${repo_root}/scripts/run-m3-lez-bootstrap.sh"
 readonly f7_token_fixture_driver="${repo_root}/scripts/run-m3-f7-token-fixture.sh"
+readonly bitcoin_anchor_assignment_filter="${repo_root}/scripts/jq/m3-bitcoin-anchor-assignment.jq"
 readonly lez_source_dir="${LEZ_V02_SOURCE_DIR:-/tmp/lez-v020-native-investigation}"
 readonly official_wallet_target="${secure_state_root}/official-wallet-target"
 readonly official_wallet_bin="${official_wallet_target}/debug/wallet"
@@ -999,12 +1000,11 @@ provision_bitcoin_funding_sources() {
     jq -n --arg direction "$direction" --arg txid "$txid" \
       --argjson vout "$vout" --arg script "$(jq -er '.scriptPubKey.hex' <<<"$utxo")" \
       --arg block_hash "$block_hash" --argjson block_height "$height" \
-      --argjson confirmations "$(jq -er '.confirmations | numbers' <<<"$utxo")" \
-      --argjson planned_anchor "$((after_height + height))" '
+      --argjson confirmations "$(jq -er '.confirmations | numbers' <<<"$utxo")" '
       {direction:$direction,source:{transaction_id:$txid,output_index:$vout,
        value_sat:5000000000,script_pubkey:$script,coinbase:true,
        containing_block_hash:$block_hash,containing_block_height:$block_height,
-       confirmations:$confirmations},planned_bitcoin_funding_anchor_height:$planned_anchor}
+       confirmations:$confirmations},planned_bitcoin_funding_anchor_height:null}
     ' >"$source_file"
     chmod 0600 "$source_file"
     source_files+=("$source_file")
@@ -1022,10 +1022,69 @@ provision_bitcoin_funding_sources() {
     and ([.sources[].direction] | unique | length) == 2
     and ([.sources[].source.transaction_id] | unique | length) == 2
     and ([.sources[] | [.source.transaction_id,.source.output_index]] | unique | length) == 2
-    and [.sources[].planned_bitcoin_funding_anchor_height] == [103,104]
+    and all(.sources[]; .planned_bitcoin_funding_anchor_height == null)
     and all(.sources[]; .source.confirmations >= 101)
   ' "$bitcoin_funding_sources" >/dev/null ||
     fail "independent Bitcoin funding-source manifest is inconsistent"
+}
+
+reserve_bitcoin_funding_anchors() {
+  local reservation_mode="$1" direction="${2:-}"
+  local tip_before tip_after mempool partial
+  [[ "$reservation_mode" == "$schedule" ]] ||
+    fail "Bitcoin anchor-reservation mode differs from the execution schedule"
+  case "$reservation_mode" in
+    sequential)
+      [[ "$direction" == "taker_sells_foreign" || "$direction" == "taker_sells_lez" ]] ||
+        fail "sequential Bitcoin anchor reservation requires one exact direction"
+      [[ ! -e "${directions_dir}/${direction}/stage-two.json" &&
+         ! -L "${directions_dir}/${direction}/stage-two.json" &&
+         ! -e "${evidence_dir}/${direction}-stage-two.json" &&
+         ! -L "${evidence_dir}/${direction}-stage-two.json" ]] ||
+        fail "refusing to reserve or rebase an anchor after stage-two finalization"
+      ;;
+    overlap)
+      [[ -z "$direction" ]] ||
+        fail "overlap Bitcoin anchors must be reserved atomically"
+      for direction in "${directions[@]}"; do
+        [[ ! -e "${directions_dir}/${direction}/stage-two.json" &&
+           ! -L "${directions_dir}/${direction}/stage-two.json" &&
+           ! -e "${evidence_dir}/${direction}-stage-two.json" &&
+           ! -L "${evidence_dir}/${direction}-stage-two.json" ]] ||
+          fail "refusing to reserve overlap anchors after stage-two finalization"
+      done
+      direction=""
+      ;;
+    *) fail "invalid Bitcoin anchor-reservation mode" ;;
+  esac
+  [[ -f "$bitcoin_funding_sources" && ! -L "$bitcoin_funding_sources" &&
+     "$(stat -c '%a' "$bitcoin_funding_sources")" == 600 ]] ||
+    fail "Bitcoin funding-source manifest is unavailable or unsafe"
+  [[ -f "$bitcoin_anchor_assignment_filter" &&
+     ! -L "$bitcoin_anchor_assignment_filter" ]] ||
+    fail "Bitcoin anchor-assignment filter is unavailable or unsafe"
+  tip_before="$(core_admin getblockcount)"
+  [[ "$tip_before" =~ ^[0-9]+$ ]] ||
+    fail "Core tip before anchor reservation is malformed"
+  mempool="$(core_admin getrawmempool)"
+  jq -e 'type == "array" and length == 0' <<<"$mempool" >/dev/null ||
+    fail "Bitcoin anchor reservation requires an empty run-owned mempool"
+  tip_after="$(core_admin getblockcount)"
+  [[ "$tip_after" == "$tip_before" ]] ||
+    fail "Core tip moved while reserving Bitcoin funding anchors"
+  partial="${bitcoin_funding_sources}.anchor-partial"
+  [[ ! -e "$partial" && ! -L "$partial" ]] ||
+    fail "refusing an existing Bitcoin anchor-reservation partial"
+  jq -e --arg mode "$reservation_mode" --arg direction "$direction" \
+    --argjson base_height "$tip_before" \
+    -f "$bitcoin_anchor_assignment_filter" "$bitcoin_funding_sources" >"$partial" || {
+      rm -f -- "$partial"
+      fail "Bitcoin anchor reservation was rejected"
+    }
+  chmod 0600 "$partial"
+  mv "$partial" "$bitcoin_funding_sources"
+  [[ "$(core_admin getblockcount)" == "$tip_before" ]] ||
+    fail "Core tip moved after Bitcoin anchor reservation"
 }
 
 bootstrap_lez_runtime() {
@@ -2448,9 +2507,11 @@ provision_f7_token_fixture
 # direction controllers alive and withholds settlement until both independent
 # swaps have durably reached revision two.
 if [[ "$schedule" == "overlap" ]]; then
+  reserve_bitcoin_funding_anchors overlap
   run_overlapping_actor_flows
 else
   for direction in "${directions[@]}"; do
+    reserve_bitcoin_funding_anchors sequential "$direction"
     run_stage_two "$direction"
     run_direction_actor_flow "$direction"
     assert_terminal_and_replay "$direction"

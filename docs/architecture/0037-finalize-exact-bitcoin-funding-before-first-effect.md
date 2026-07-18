@@ -5,7 +5,9 @@ two-direction actual-node evidence. Run `m3schema4-20260717d` at clean
 pushed commit `0e7635fc7e50cc6e0612745dcdaf6df8bbcf6f9a` proves that
 the external fixture submits only the Taker's exact first lock and the
 direction-correct Maker actor submits the exact second lock under one-attempt
-authority. Production fee/replacement policy and reorg hardening remain active.
+authority. Schedule-aware just-in-time anchor reservation is locally GREEN and
+awaits a fresh two-direction actual-node rerun. Production fee/replacement
+policy and reorg hardening remain active.
 
 ## Context
 
@@ -37,21 +39,26 @@ For each direction, the local PoC ceremony is:
 3. Core `gettxout` and `testmempoolaccept` read the actual isolated node without
    submitting. The policy request contains the exact persisted transaction
    bytes.
-4. `finalize` independently verifies the canonical transaction encoding,
+4. Immediately before stage-two finalization, the run-owned controller reads a
+   stable Core tip around an empty-mempool check. Sequential execution atomically
+   reserves `tip + 1` for that direction. Overlap execution atomically reserves
+   `tip + 1` and `tip + 2` before either agreement. A reservation is rejected if
+   stage two already exists and is never rebased afterward.
+5. `finalize` independently verifies the canonical transaction encoding,
    SHA-256, txid, exact contract output, rawtr prevout value/script, one-item
    `SIGHASH_DEFAULT` witness, and BIP-341 Schnorr authorization. It then binds
    the planned next-block anchor, LEZ facts, and recovery schedule and emits the
    canonical countersigned agreement.
-5. Both roles complete and persist the Bitcoin and LEZ presignatures derived
+6. Both roles complete and persist the Bitcoin and LEZ presignatures derived
    from that exact agreement. Actor activation revalidates them.
-6. Only then may the run-owned Taker fixture submit the direction-correct exact
+7. Only then may the run-owned Taker fixture submit the direction-correct exact
    first lock. It has no authority to submit the Maker second lock.
-7. A fresh schema-4 Maker actor must revalidate the canonical first lock and
+8. A fresh schema-4 Maker actor must revalidate the canonical first lock and
    current signed cutoff, durably reserve at most one exact second-lock attempt,
    submit through its role-local adapter, and reconcile canonical evidence.
    The runner may confirm or mine an actor-submitted effect but may not create
    it.
-8. When a Bitcoin funding effect is due, its authorized submitter sends the
+9. When a Bitcoin funding effect is due, its authorized submitter sends the
    persisted exact bytes. The separate provisioner mines exactly one block and
    requires the containing height to equal the signed planned anchor before the
    lifecycle continues.
@@ -69,6 +76,7 @@ flowchart TB
     Provisioner["btc local PoC provisioner"]
     PublicSpec["Direction public specification"]
     FundingFile[("Exact funding transaction hex")]
+    AnchorPlan[("Atomic anchor reservations")]
     Core["Bitcoin Core 31.1 Regtest"]
     Agreement[("Countersigned canonical agreement")]
     MakerJournal[("Maker signing and one-attempt lock journals")]
@@ -85,6 +93,8 @@ flowchart TB
     Provisioner --> FundingFile
     FundingFile -->|"read-only policy input"| Core
     Core -->|"gettxout and testmempoolaccept"| Operator
+    Core -->|"stable tip and empty mempool"| AnchorPlan
+    AnchorPlan --> Operator
     Operator --> Provisioner
     Provisioner --> Agreement
     Agreement --> MakerJournal
@@ -119,6 +129,8 @@ sequenceDiagram
     Fixture->>Provisioner: Generate plan and exact funding bytes
     Fixture->>Core: Read service output and test exact mempool policy
     Core-->>Fixture: Unspent candidate and allowed exact transaction
+    Fixture->>Core: Read tip, empty mempool, and unchanged tip
+    Fixture->>Fixture: Atomically reserve next height before stage two
     Fixture->>Provisioner: Finalize planned anchor and LEZ facts
     Provisioner-->>Fixture: Countersigned canonical agreement
     Fixture->>Signers: Complete both chain sessions from agreement

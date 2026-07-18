@@ -1,8 +1,8 @@
 # ADR 0047: Pin finalized windows and separate development from certification lanes
 
-Status: Accepted at the F7 observer and local-runner contract boundaries. A
-fresh one-second-slot actual-node run and the immutable wallet cache remain
-open evidence gates.
+Status: Accepted at the F7 observer and local-runner contract boundaries. Run V
+proved one complete actual-node custom-token direction at the one-second slot;
+the second direction, immutable wallet cache, and full packet remain open.
 
 ## Context
 
@@ -114,5 +114,14 @@ pre-Docker orchestration contract is GREEN at the one-second cadence.
 
 Actual-node validation still must show the same four custom-token LEZ effects,
 two Bitcoin effects, terminal balances, zero replay submission, and exact
-cleanup in both directions. Until that run passes, the faster cadence is a
-component-level improvement rather than F7 certification evidence.
+cleanup in both directions. Run `m3f7compose20260718v` on clean pushed
+`4b55dda` proved those properties for `taker_sells_foreign`: Bitcoin funding at
+height 103, custom-token initialization/custody/funding, both actors at revision
+two, revealing LEZ claim, Bitcoin follow-up claim at height 104, terminal
+revision four, custody zero, balances `175/75`, replay with zero resubmission,
+and exact cleanup. The same run exposed a schedule bug before reverse stage-two
+finalization: overlap allocation had preassigned reverse funding height 104,
+which the forward settlement had legitimately consumed. No reverse agreement or
+effect existed. Behavioral RED-GREEN now reserves each sequential anchor from
+the fresh stable Core tip, while retaining atomic consecutive reservations for
+overlap. A complete two-direction run is still required for F7 certification.

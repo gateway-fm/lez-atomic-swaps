@@ -146,6 +146,70 @@ bash -n "$direction_driver"
 readonly dual_lock_gate_filter="scripts/jq/m3-dual-lock-gate.jq"
 [[ -f "$dual_lock_gate_filter" && ! -L "$dual_lock_gate_filter" ]] ||
   fail "dual-lock evidence filter is missing or unsafe"
+readonly bitcoin_anchor_assignment_filter="scripts/jq/m3-bitcoin-anchor-assignment.jq"
+[[ -f "$bitcoin_anchor_assignment_filter" && ! -L "$bitcoin_anchor_assignment_filter" ]] ||
+  fail "Bitcoin anchor-assignment filter is missing or unsafe"
+anchor_fixture='{"schema_version":1,"network":"regtest","base_height":102,"sources":[{"direction":"taker_sells_foreign","planned_bitcoin_funding_anchor_height":null},{"direction":"taker_sells_lez","planned_bitcoin_funding_anchor_height":null}]}'
+sequential_first="$(jq -c --arg mode sequential --arg direction taker_sells_foreign \
+  --argjson base_height 102 -f "$bitcoin_anchor_assignment_filter" \
+  <<<"$anchor_fixture")" || fail "sequential first anchor assignment failed"
+sequential_second="$(jq -c --arg mode sequential --arg direction taker_sells_lez \
+  --argjson base_height 104 -f "$bitcoin_anchor_assignment_filter" \
+  <<<"$sequential_first")" || fail "sequential second anchor assignment failed"
+jq -e '
+  [.sources[].planned_bitcoin_funding_anchor_height] == [103,105]
+  and .sources[0].anchor_assignment == {mode:"sequential",core_tip_before_stage_two:102}
+  and .sources[1].anchor_assignment == {mode:"sequential",core_tip_before_stage_two:104}
+' <<<"$sequential_second" >/dev/null ||
+  fail "sequential anchor assignment reused a settlement height"
+post_refund_second="$(jq -c --arg mode sequential --arg direction taker_sells_lez \
+  --argjson base_height 247 -f "$bitcoin_anchor_assignment_filter" \
+  <<<"$sequential_first")" || fail "post-refund anchor assignment failed"
+jq -e '.sources[1].planned_bitcoin_funding_anchor_height == 248' \
+  <<<"$post_refund_second" >/dev/null ||
+  fail "sequential anchor assignment encodes a claim-only cadence"
+overlap_anchors="$(jq -c --arg mode overlap --arg direction '' \
+  --argjson base_height 102 -f "$bitcoin_anchor_assignment_filter" \
+  <<<"$anchor_fixture")" || fail "overlap anchor assignment failed"
+jq -e '
+  [.sources[].planned_bitcoin_funding_anchor_height] == [103,104]
+  and all(.sources[]; .anchor_assignment ==
+    {mode:"overlap",core_tip_before_stage_two:102})
+' <<<"$overlap_anchors" >/dev/null ||
+  fail "overlap anchor assignment lost consecutive pre-settlement heights"
+if jq -e --arg mode sequential --arg direction taker_sells_foreign \
+    --argjson base_height 105 -f "$bitcoin_anchor_assignment_filter" \
+    <<<"$sequential_first" >/dev/null 2>&1; then
+  fail "Bitcoin anchor assignment rebased an already assigned agreement"
+fi
+if jq -e --arg mode overlap --arg direction '' --argjson base_height 104 \
+    -f "$bitcoin_anchor_assignment_filter" <<<"$sequential_first" \
+    >/dev/null 2>&1; then
+  fail "overlap anchor assignment accepted a partial prior reservation"
+fi
+for invalid_base in -1 101 102.5 4294967294; do
+  if jq -e --arg mode overlap --arg direction '' \
+      --argjson base_height "$invalid_base" -f "$bitcoin_anchor_assignment_filter" \
+      <<<"$anchor_fixture" >/dev/null 2>&1; then
+    fail "Bitcoin anchor assignment accepted invalid Core height ${invalid_base}"
+  fi
+done
+anchor_reservation_source="$(sed -n \
+  '/^reserve_bitcoin_funding_anchors() {$/,/^}$/p' "$runner")"
+[[ -n "$anchor_reservation_source" ]] ||
+  fail "runner lacks the pre-stage-two Bitcoin anchor reservation"
+for invariant in 'getrawmempool' 'length == 0' '"$tip_after" == "$tip_before"' \
+  'refusing to reserve or rebase an anchor after stage-two finalization' \
+  'bitcoin_anchor_assignment_filter' '.anchor-partial'; do
+  rg -Fq "$invariant" <<<"$anchor_reservation_source" ||
+    fail "Bitcoin anchor reservation omits invariant: ${invariant}"
+done
+runner_execution_source="$(sed -n '/^if \[\[ "$schedule" == "overlap" \]\]; then$/,$p' "$runner")"
+rg -Fq 'reserve_bitcoin_funding_anchors overlap' <<<"$runner_execution_source" ||
+  fail "overlap stage two does not reserve both anchors first"
+rg -Fq 'reserve_bitcoin_funding_anchors sequential "$direction"' \
+  <<<"$runner_execution_source" ||
+  fail "sequential stage two does not reserve from its fresh Core tip"
 custom_token_dual_lock_gate="$(jq -n \
   --arg direction taker_sells_foreign \
   --arg bitcoin "$(printf '%064d' 1)" \

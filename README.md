@@ -321,9 +321,13 @@ prepared-claim facts, and the recovery plan. The recovery plan contains
 `refund_csv_blocks`, `planned_bitcoin_funding_anchor_height`,
 `bitcoin_refund_height`, both typed cross-chain deadlines, and their safety
 margin. It rejects the former observed-confirmation/observed-anchor/broadcast
-fields. The signed anchor must be the isolated Core tip plus one; when Bitcoin
-funding is due, the harness broadcasts the persisted exact bytes, mines exactly
-one block, and requires the containing height to equal that plan.
+fields. The signed anchor must be reserved before stage-two finalization from a
+stable, empty-mempool isolated Core tip. Sequential execution reserves `tip +
+1` just before each direction is countersigned; overlap execution atomically
+reserves `tip + 1` and `tip + 2` before either agreement. An anchor is never
+rebased after finalization. When Bitcoin funding is due, the harness broadcasts
+the persisted exact bytes, mines exactly one block, and requires the containing
+height to equal that plan.
 
 Stage one creates fresh OS-random maker/taker signing, refund, and claim keys
 plus the adaptor scalar under mode-`0700` directories and single-link,

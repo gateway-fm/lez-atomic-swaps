@@ -820,7 +820,7 @@ prepare_stage_two_spec() {
     jq -ser 'select(length == 1) | .[0].result.blocks | numbers')"
   anchor="$M3_POC_BITCOIN_PLANNED_ANCHOR_HEIGHT"
   (( anchor >= height + 1 && anchor <= height + 2 )) ||
-    fail "planned Bitcoin funding anchor is outside the two-swap execution window"
+    fail "planned Bitcoin funding anchor ${anchor} is outside the current ${height} execution window $((height + 1))..$((height + 2))"
 
   jq -n --arg stage1 "$stage1_sha" --arg swap "$swap_id" --arg direction "$M3_POC_DIRECTION" \
     --arg genesis "$genesis" --arg funding_hex "$funding_hex" \

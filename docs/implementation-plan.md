@@ -1942,8 +1942,22 @@ Active M3 refund critical path:
   historical account reads. Behavioral RED-GREEN covers irrelevant descendants;
   existing fork and identity-drift tests remain fail-closed. The complete 128-test
   sidecar suite, five binary/example tests, strict Clippy, and the one-second F7
-  orchestration contract are GREEN. A fresh actual-node run must still validate
-  the faster cadence. Explicit terminal ATA
+  orchestration contract are GREEN. Fresh isolated Run V
+  (`m3f7compose20260718v`) started from clean pushed `4b55dda` and validated the
+  faster cadence through one complete forward direction. It finalized the
+  Bitcoin first lock at height 103, the four custom-token LEZ effects, the
+  revealing claim, and the Bitcoin follow-up at height 104; both actors reached
+  terminal revision four, custody was zero, balances were conserved at
+  `175/75/0`, and terminal replay submitted nothing. The reverse direction then
+  failed before stage-two finalization because overlap-era allocation had
+  preassigned its funding anchor to height 104, now legitimately occupied by
+  forward settlement. Its source remained unspent, policy-only preparation had
+  no public effect, and exact cleanup passed. Behavioral RED-GREEN now separates
+  immutable source allocation from schedule-aware anchor assignment: sequential
+  directions atomically reserve `current tip + 1` immediately before their own
+  stage two, while overlap reserves consecutive heights before either stage two.
+  Reservations require a stable tip and empty mempool and cannot be rebased
+  after finalization. Explicit terminal ATA
   balance and packet
   bindings remain forward
   `175/75/0`, reverse `75/175/0`, and conserved total `250`. The remaining
