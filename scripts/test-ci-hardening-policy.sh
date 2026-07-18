@@ -94,6 +94,39 @@ require_fixed './scripts/run-ci-quality-gates.sh' "$workflow"
 require_fixed './scripts/test-spin-lock-remediation.sh' "$workflow"
 require_fixed './scripts/check-spin-lock-remediation.sh' "$workflow"
 require_fixed './scripts/check-github-action-pins.sh' "$workflow"
+require_fixed 'npm audit --audit-level=moderate' "$workflow"
+require_fixed 'npm run audit:licenses' "$workflow"
+require_fixed 'cargo fmt --all --check' "$workflow"
+require_fixed 'cargo clippy --locked --workspace --all-targets --all-features -- -D warnings' \
+  "$workflow"
+require_fixed 'cargo test --locked --workspace --all-targets' "$workflow"
+require_fixed 'cargo doc --locked --workspace --all-features --no-deps' "$workflow"
+
+readonly cargo_deny_action='uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe'
+readonly cargo_deny_policy='advisories bans licenses sources'
+readonly expected_cargo_deny_steps=11
+cargo_deny_steps="$(rg -Fc -- "$cargo_deny_action" "$workflow")"
+cargo_deny_policy_steps="$(rg -Fc -- "$cargo_deny_policy" "$workflow")"
+[[ "$cargo_deny_steps" == "$expected_cargo_deny_steps" ]] \
+  || fail "expected ${expected_cargo_deny_steps} pinned cargo-deny steps; found ${cargo_deny_steps}"
+[[ "$cargo_deny_policy_steps" == "$expected_cargo_deny_steps" ]] \
+  || fail "every cargo-deny step must check advisories, bans, licenses, and sources"
+
+cargo_deny_manifests=(
+  compat/spel-zec-escrow/Cargo.toml
+  compat/spel-zec-escrow/methods/guest/Cargo.toml
+  compat/spel-zec-escrow/methods/Cargo.toml
+  compat/lez-standalone-e2e/Cargo.toml
+  compat/lez-v0_1_2-sidecar/Cargo.toml
+  compat/lez-v0_2-sidecar/Cargo.toml
+  compat/lez-v0.2-provisional/Cargo.toml
+  compat/lez-v0.2-provisional/escrow/methods/Cargo.toml
+  compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml
+  compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml
+)
+for manifest in "${cargo_deny_manifests[@]}"; do
+  require_fixed "manifest-path: ${manifest}" "$workflow"
+done
 
 require_fixed './scripts/check-bitcoin-core-isolation.sh' "$workflow"
 require_fixed './scripts/check-lez-v02-docker-isolation.sh' "$workflow"
