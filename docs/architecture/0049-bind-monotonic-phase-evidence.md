@@ -1,8 +1,8 @@
 # ADR 0049: Bind monotonic phase evidence
 
-Status: Accepted and implementation GREEN. The first clean pushed actual-node
-measurement is pending; no new phase speedup is claimed until that run passes
-both execution and cleanup certification.
+Status: Accepted, implementation GREEN, and measured by clean pushed Run AE.
+No new speedup is claimed from the measurement alone; direction-internal
+decomposition is the next measurement boundary.
 
 ## Context
 
@@ -122,3 +122,23 @@ deadline, transaction, signature, CAS, retry, or cleanup decision.
 - CI runs the focused adversarial timing contract plus the existing actor,
   coordinator, ShellCheck, workflow, Dockerfile, Compose, vulnerability, and
   license policy gates.
+
+## First clean measurement
+
+Run `m3f7compose20260718ae` on clean pushed `a82876d` passed both real
+custom-token directions and exact cleanup. Its monotonic packet covers
+1,023,100 ms with only 280 ms unattributed. `TakerSellsForeign` took
+363,660 ms and `TakerSellsLez` took 405,810 ms, together 75.2 percent of
+the measured interval. LEZ bootstrap took 103,820 ms, the F7 fixture 75,400 ms,
+node startup 60,110 ms, prebuild 11,700 ms, Bitcoin funding 2,020 ms,
+identity/stage one 180 ms, contract validation 80 ms, and effect validation
+40 ms. Wall time including evidence publication and cleanup was 1,029.57
+seconds.
+
+The run retained revision four for both roles and directions, exactly two
+Bitcoin and four LEZ effects per direction, one Maker second lock, zero replay,
+zero custody, conserved total 250, and exact `175/75/0` and `75/175/0`
+balances. Cleanup reported all exact run resources absent, no broad cleanup,
+and no foreign target. The largest safe next question is therefore where each
+direction spends time; this ADR does not infer that finality, observation,
+actor startup, or evidence validation is responsible.

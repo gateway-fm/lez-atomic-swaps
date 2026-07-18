@@ -124,8 +124,10 @@ seconds including handoff. Clean pushed Run AD completed startup in one
 16 minutes 6.52 seconds. The certified startup saving is 31 seconds. ADR 0049
 now records fixed outer phases from Linux monotonic uptime, publishes an exact
 owner-private packet, and binds its path and SHA-256 into the main run packet.
-Its first clean pushed actual-node measurement is pending, so the remaining
-Run-AA-to-Run-AD variance is still unattributed.
+Clean pushed Run AE now measures 17 minutes 3.10 seconds before main
+publication with only 280 ms unattributed. Its two complete user-direction
+phases consume 75.2 percent; the remaining Run-AA-to-Run-AD variance cannot be
+assigned further until direction-internal timing is available.
 
 ```mermaid
 flowchart TB

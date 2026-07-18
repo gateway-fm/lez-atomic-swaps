@@ -2074,8 +2074,15 @@ Active M3 refund critical path:
   requires exact summary equality, and rehashes immediately before and after
   publication. Focused RED-GREEN, the actor orchestration contract, the node
   coordinator contract, ShellCheck, actionlint, hadolint, Compose validation,
-  and CI policy are GREEN. The next clean pushed actual-node run is the first
-  timing measurement; no additional successful-run speedup is claimed yet;
+  and CI policy are GREEN. Clean pushed Run AE
+  (`m3f7compose20260718ae` at `a82876d`) passed both custom-token
+  directions and exact cleanup in 17 minutes 9.57 seconds wall time. The
+  pre-publication packet measured 1,023,100 ms with 280 ms unattributed:
+  363,660 ms forward direction, 405,810 ms reverse direction, 103,820 ms LEZ
+  bootstrap, 75,400 ms F7 fixture, 60,110 ms node startup, and 13,800 ms in all
+  other measured phases. Both directions consume 75.2 percent. The next safe
+  iteration decomposes direction internals before changing finality, cadence,
+  actor scheduling, or evidence semantics; no additional speedup is claimed;
 - [ ] compact or externally reference peerless public transaction facts before
   production. The validated v2 wire can carry transaction bytes larger than
   the recovery store's 64 KiB per-chain-evidence cap. Official PoC transactions

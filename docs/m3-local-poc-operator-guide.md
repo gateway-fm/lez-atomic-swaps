@@ -1215,6 +1215,18 @@ cleanup with exit zero in 16 minutes 6.52 seconds. The additional end-to-end
 difference from AA is not attributed to startup without structured phase
 timings. Run AD is spent; use a new run ID for every manual repetition.
 
+Run AE (`m3f7compose20260718ae`) on clean pushed `a82876d` is the first
+bound phase-timing checkpoint. It passed both directions and exact cleanup in
+17 minutes 9.57 seconds wall time. The pre-publication packet measured
+17 minutes 3.10 seconds with 280 ms unattributed: `TakerSellsForeign`
+6 minutes 3.66 seconds, `TakerSellsLez` 6 minutes 45.81 seconds, LEZ
+bootstrap 1 minute 43.82 seconds, F7 fixture 1 minute 15.40 seconds, node
+startup 1 minute 0.11 seconds, and all other phases 13.80 seconds. Both
+directions retained revision four, exact `2 Bitcoin + 4 LEZ` effects, one
+Maker second lock, expected balances, zero replay/custody, and conserved total
+250. The two complete user directions consume 75.2 percent, so decompose those
+internals before changing finality or cadence. Run AE is spent.
+
 After a successful manual run, verify that both launchers completed and their
 resource inventory reconciled before interpreting any swap evidence:
 

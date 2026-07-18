@@ -138,6 +138,10 @@ Timing-enabled M3 runs also publish an owner-private monotonic phase packet and
 bind its path and SHA-256 into the main run packet. The
 [manual timing checks](docs/m3-local-poc-operator-guide.md#inspect-bound-monotonic-phase-timings)
 show how to validate and compare phases without exposing private actor data.
+Clean pushed Run AE measured 17m03.10s before main publication with only
+280 ms unattributed; the two complete real user directions consumed 75.2
+percent. That result selects finer direction measurement as the next
+optimization step and does not justify weakening local finality.
 
 The public BTC SDK now deterministically validates application-owned
 discovery/negotiation, drops those peer capabilities at activation, and replays
