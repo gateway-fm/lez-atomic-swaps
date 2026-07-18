@@ -2053,8 +2053,16 @@ Active M3 refund critical path:
   only validated booleans to strings before exit-status evaluation. AC's
   diagnostic logs show a concurrent 82-second startup window versus AA's
   sequential 98 seconds, a provisional 16-second saving with host contention.
-  Run AC is spent. A fresh clean pushed actual-node run must still prove terminal
-  cleanup and measure the certifiable saving before the plan claims one;
+  Run AC is spent. Fresh Run AD on clean pushed `0826dd5` then completed both
+  directions and terminal cleanup with exit zero in 16 minutes 6.52 seconds.
+  It preserved revision four, `2 Bitcoin + 4 LEZ` effects, one Maker second
+  lock, zero replay, zero custody, total 250, exact `175/75/0` and `75/175/0`
+  balances, a production 7.370-second wallet-cache hit, and no foreign cleanup
+  target. Core took 38 seconds and LEZ 67 seconds in one 67-second concurrent
+  window versus AA's 98-second sequential baseline. The measured and certified
+  startup saving is therefore 31 seconds. AD's 127.09-second end-to-end
+  improvement over AA is retained as context, not attributed wholly to node
+  startup without structured per-phase timings;
 - [ ] compact or externally reference peerless public transaction facts before
   production. The validated v2 wire can carry transaction bytes larger than
   the recovery store's 64 KiB per-chain-evidence cap. Official PoC transactions

@@ -1169,11 +1169,13 @@ BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include \
 ./scripts/run-m3-actor-local-poc.sh
 ~~~
 
-Certification status: Runs X, Z, and AA completed three clean pairs per
-direction. Latest Run AA used exact pushed `df7ed86`, took 18 minutes 13.61
-seconds, retained the same effects and terminal balances, replayed zero sends,
-hit the verified wallet cache in 7.81 seconds, and removed every exact owned
-resource. These retained run IDs are spent; manual repetitions require a new
+Certification status: Runs X, Z, AA, and AD completed four clean pairs per
+direction, exceeding the requested three. Latest Run AD used exact pushed
+`0826dd5`, took 16 minutes 6.52 seconds, retained revision four, exactly two
+Bitcoin and four LEZ effects, balances `175/75/0` and `75/175/0`, total 250,
+zero replay, and zero custody. Its production wallet-cache hit took 7.370
+seconds, and passing cleanup removed every exact owned resource without foreign
+targeting. These retained run IDs are spent; manual repetitions require a new
 identity and run ID.
 
 Node provisioning is now coordinated concurrently after all immutable
@@ -1184,8 +1186,8 @@ The runner rejects missing, duplicate, overcounted, wrong-scope, or
 wrong-component resources and removes only individually authenticated
 identities. Run AA measured the old sequential startup at about 39 seconds for
 Core and 58 seconds for LEZ, or about 98 seconds with handoff. The new behavior
-contract is GREEN, but the successful actual-node saving remains pending until
-the first clean pushed benchmark. Run AB (`m3f7compose20260718ab`) on pushed
+contract was GREEN before actual-node measurement; Run AD below now supplies
+the clean pushed benchmark. Run AB (`m3f7compose20260718ab`) on pushed
 `74c58d1` is a spent failed benchmark: concurrent startup and inventory
 reconciliation passed, but the first actor direction received a complete
 tab-separated inventory record where Docker required only its ID. It failed
@@ -1202,8 +1204,16 @@ ownership flags as a parse failure. Exact label queries and the host audit found
 no retained resource. Its 82-second overlapped startup versus AA's 98-second
 sequential window is diagnostic only; do not present the 16-second difference
 as a certified benchmark or count AC as another F7 repetition. The cleanup
-boolean regression is GREEN, and a new run ID on a clean pushed commit is still
-required.
+boolean regression is GREEN, and AD below satisfies the required clean pushed
+rerun.
+
+Run AD (`m3f7compose20260718ad`) on clean pushed `0826dd5` is the certified
+benchmark. Core took 38 seconds and LEZ 67 seconds inside one 67-second
+concurrent startup window, compared with AA's 98-second sequential window. The
+measured startup saving is 31 seconds. AD passed both directions and terminal
+cleanup with exit zero in 16 minutes 6.52 seconds. The additional end-to-end
+difference from AA is not attributed to startup without structured phase
+timings. Run AD is spent; use a new run ID for every manual repetition.
 
 After a successful manual run, verify that both launchers completed and their
 resource inventory reconciled before interpreting any swap evidence:

@@ -1,8 +1,8 @@
 # ADR 0048: Parallelize exact node provisioning
 
-Status: Accepted. The behavioral and repository contracts are GREEN. An exact
-clean-pushed-commit actual-node benchmark is required before claiming a measured
-successful-run saving.
+Status: Accepted and measured. The behavioral and repository contracts are
+GREEN. Clean pushed Run AD certifies a 31-second actual-node startup-window
+saving without changing chain-effect ordering or cleanup requirements.
 
 ## Context
 
@@ -134,8 +134,8 @@ single-child failure, both-child failure, INT, TERM, overcount, wrong component,
 and Docker-query failure. It proves exact statuses, no sibling cancellation,
 both registrations, descendant termination, exact cleanup, foreign survival,
 and fail-closed attestation. The pre-change 39/58/98-second measurements remain
-the baseline. Documentation must not replace the pending actual-node benchmark
-with the theoretical ceiling.
+the baseline. Only a clean pushed run with passing terminal cleanup may replace
+the theoretical ceiling with a measured claim; AD below satisfies that rule.
 
 Fresh Run AB on clean pushed `74c58d1` reached the actual-node startup join
 with both launchers passed, registered, waited/reaped, exact process groups
@@ -151,8 +151,8 @@ the tab-whitespace ambiguity. The accepted fix requires exactly one canonical
 newline-terminated owner-private non-symlink record, exactly a 12- or
 64-character lowercase hexadecimal Docker ID, and the fixed `bitcoin-core`
 component. It rejects leading, doubled, or trailing tabs, CRLF, extra bytes or
-lines, missing
-newline, malformed IDs, wrong mode, symlink, directory, and missing input. The
+lines, missing newline, malformed IDs, wrong mode, symlink, directory, and
+missing input. The
 outer runner revalidates run, scope, and component immediately before actor
 handoff; the direction process independently repeats all three live-label
 checks before each Core admin call.
@@ -168,4 +168,19 @@ failed because valid omitted or JSON-false actor ownership flags were parsed
 with `jq -e`, which returns a false shell status for the valid value. Every
 label-filtered Docker category, registered process, listener, and secure state
 was absent. RED-GREEN now distinguishes valid false/omitted booleans from
-malformed types without weakening cleanup, and a fresh pushed rerun is required.
+malformed types without weakening cleanup; AD below certifies the correction.
+
+Fresh Run AD on clean pushed `0826dd5` completed both custom-token directions
+and terminal cleanup with process exit zero in 16 minutes 6.52 seconds. Both
+directions reached revision four with exactly two Bitcoin and four LEZ effects,
+one Maker second lock, zero replay, zero custody, conserved total 250, and
+balances `175/75/0` and `75/175/0`. The production wallet-cache hit took 7.370
+seconds. Every exact cleanup-absence flag is true and no foreign resource was
+targeted.
+
+AD's service logs measured Core at 38 seconds and LEZ at 67 seconds inside one
+67-second concurrent window. Against AA's 98-second sequential baseline, the
+certified startup-window saving is 31 seconds. AD's total runtime was 127.09
+seconds below AA, but only the 31-second startup difference is attributed to
+this decision; the rest is ordinary end-to-end variance until structured phase
+timings prove otherwise.
