@@ -1227,6 +1227,30 @@ Maker second lock, expected balances, zero replay/custody, and conserved total
 250. The two complete user directions consume 75.2 percent, so decompose those
 internals before changing finality or cadence. Run AE is spent.
 
+Run AF (`m3f7compose20260718af`) on clean pushed
+`0b54ab68f766ff016741dd6ba2eacade4a1c1e31` is the first bound child
+phase-timing checkpoint. It passed both custom-token directions and exact
+cleanup in 16 minutes 47.57 seconds wall time. The outer packet measured
+16 minutes 40.17 seconds with 510 ms unattributed. The forward child measured
+346.06 seconds inside a 346.28-second parent; the reverse child measured
+386.06 seconds inside a 386.31-second parent.
+
+Forward time is concentrated in the LEZ second lock through revision two
+(243.62 seconds) and LEZ revealing claim through revision three
+(99.48 seconds). Reverse time is concentrated in the Bitcoin second lock
+through revision two (141.01 seconds), LEZ first lock through revision one
+(126.64 seconds), and LEZ follow-up claim through revision four
+(116.11 seconds). Every other child phase is below one second. Both directions
+retained revision four, exact `2 Bitcoin + 4 LEZ` effects, one Maker second
+lock, zero replay/custody, conserved total 250, and exact balances. Exact
+cleanup removed all captured resources, used no broad cleanup, and did not
+target foreign resources.
+
+Run AF overlapped an unrelated active host workload. Its 22-second wall-time
+difference from Run AE is not a certified speedup. Use its phase distribution
+to choose an investigation, but preserve production finality, confirmation,
+atomicity, actor authority, and deadline defaults. Run AF is spent.
+
 Current sequential outer timing packets replace each of Run AE's aggregate
 direction rows with funding reservation, stage two, actor flow,
 terminal/replay, and, for custom tokens, terminal balances. Native runs omit
@@ -1236,8 +1260,7 @@ adds ready, locked, and terminal coordination phases to each eleven-phase
 child. Never add concurrent child durations as sequential wall time. Outer
 phase counts are 18 for custom-token sequential, 15 for native sequential, and
 8 for native overlap. The child implementation and complete pinned CI quality
-suite are GREEN; Run AE predates it, so a clean measured child packet is still
-pending.
+suite are GREEN, and Run AF supplies the clean measured child packets.
 
 After a successful manual run, verify that both launchers completed and their
 resource inventory reconciled before interpreting any swap evidence:

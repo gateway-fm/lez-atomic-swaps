@@ -141,11 +141,16 @@ manifest and must fit inside the correct outer actor-flow or overlap duration.
 All five bound files are rehashed before and after main publication. The
 [manual timing checks](docs/m3-local-poc-operator-guide.md#inspect-bound-monotonic-phase-timings)
 show how to validate and compare phases without exposing private actor data.
-Clean pushed Run AE measured 17m03.10s before main publication with only
-280 ms unattributed; the two complete real user directions consumed 75.2
-percent. Child semantic timing and the complete pinned CI quality suite are
-GREEN; a clean pushed actual-node measurement remains. No optimization or
-weaker local finality is justified until that evidence exists.
+Clean pushed Run AF measured 16m40.17s before main publication with only
+510 ms unattributed and 16m47.57s through exact cleanup. Its forward and
+reverse actor children took 346.06s and 386.06s. The dominant child phases are
+the forward LEZ second lock at 243.62s, forward LEZ revealing claim at 99.48s,
+reverse Bitcoin second lock at 141.01s, reverse LEZ first lock at 126.64s,
+and reverse LEZ follow-up claim at 116.11s; every other child phase is below
+one second. The complete pinned CI quality suite and both actual-node
+directions are GREEN. Run AF overlapped an unrelated host workload, so its
+22-second wall-time difference from Run AE is not a certified speedup and does
+not justify weaker finality.
 
 The public BTC SDK now deterministically validates application-owned
 discovery/negotiation, drops those peer capabilities at activation, and replays

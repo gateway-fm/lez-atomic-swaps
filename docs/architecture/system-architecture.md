@@ -129,8 +129,11 @@ publication with only 280 ms unattributed. Its two complete user-direction
 phases consume 75.2 percent. Direction-internal semantic timing and the
 complete pinned CI quality suite are now GREEN: both child packets bind their
 effect manifests and must fit inside their outer actor-flow or overlap parent
-before main publication. The remaining variance will not be assigned until a
-clean pushed actual-node run measures those new packets.
+before main publication. Clean pushed Run AF now measures those packets:
+346.06 seconds forward and 386.06 seconds reverse inside exact parents, with
+five finalized lock/claim windows accounting for nearly all actor time and
+every other child phase below one second. Differing host contention prevents
+claiming Run AF's lower wall time as a speedup.
 
 ```mermaid
 flowchart TB

@@ -1,9 +1,10 @@
 # ADR 0049: Bind monotonic phase evidence
 
-Status: Accepted. Outer measurement is GREEN in clean pushed Run AE; child
-semantic timing, strict parent binding, and the complete pinned CI quality
-suite are GREEN. A new clean actual-node measurement remains pending. No
-speedup is claimed from instrumentation alone.
+Status: Accepted and actual-node GREEN in clean pushed Run AF. Outer and child
+semantic timing, strict parent/effect binding, the complete pinned CI quality
+suite, both real custom-token directions, and exact cleanup are GREEN. Run AF
+identifies the dominant waits; no speedup is claimed from instrumentation or
+from a run with different host contention.
 
 ## Context
 
@@ -162,8 +163,8 @@ deadline, transaction, signature, CAS, retry, or cleanup decision.
 
 ## Consequences
 
-- The next clean actual-node run can identify the longest operator-visible
-  outer and actor-semantic phases without inference from unrelated logs.
+- Run AF identifies the longest operator-visible outer and actor-semantic
+  phases without inference from unrelated logs.
 - Unattributed time remains explicit and prevents phase sums from being
   presented as complete coverage.
 - Cleanup duration is intentionally outside the timing total and remains
@@ -194,6 +195,31 @@ and no foreign target. The largest safe next question is therefore where each
 direction spends time; this ADR does not infer that finality, observation,
 actor startup, or evidence validation is responsible.
 
+Run `m3f7compose20260718af` on clean pushed
+`0b54ab68f766ff016741dd6ba2eacade4a1c1e31` is the first measured child
+checkpoint. It passed both real custom-token directions and exact cleanup in
+1,007.57 seconds wall time. Its outer packet covers 1,000,170 ms with 510 ms
+unattributed. The forward child covers 346,060 ms inside its 346,280 ms parent;
+the reverse child covers 386,060 ms inside its 386,310 ms parent.
+
+The forward child attributes 243,620 ms to the LEZ second lock through
+revision two and 99,480 ms to the LEZ revealing claim through revision three.
+The reverse child attributes 141,010 ms to the Bitcoin second lock through
+revision two, 126,640 ms to the LEZ first lock through revision one, and
+116,110 ms to the LEZ follow-up claim through revision four. Every other child
+phase is below one second. Both packets bind their exact actual-effect
+manifests; each direction retained revision four, exactly two Bitcoin and four
+LEZ effects, one Maker second lock, zero replay, zero custody, conserved total
+250, and exact terminal balances. Cleanup removed every captured run resource
+without broad or foreign targeting.
+
+Run AF overlapped an unrelated active host workload. Its 22-second wall-time
+improvement over Run AE is therefore context, not a certified speedup. The
+phase distribution is still valid functional evidence and narrows the next
+safe investigation to the exact finalized-observation windows. Timing does not
+authorize reducing finality, confirmations, role isolation, one-attempt
+journals, or atomic-swap deadlines.
+
 The first RED after Run AE required those five sequential outer subphases
 instead of one aggregate direction record. The next RED required fixed
 journey-specific child plans, exact schemas, effect-manifest binding,
@@ -202,5 +228,5 @@ GREEN preserves the exact call order and keeps native overlap as one
 concurrent window. Custom-token sequential outer packets contain 18 fixed
 phases, native sequential packets 15, and native overlap packets 8. Each happy
 sequential child contains 8 semantic phases; each overlap child contains 11.
-The next clean actual-node run must measure these packets before any further
-optimization is selected.
+Run AF measures those packets. The next RED must target an exact dominant wait
+without weakening finality, atomicity, actor authority, or production defaults.

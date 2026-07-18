@@ -2102,10 +2102,21 @@ Active M3 refund critical path:
   packets plus both effect manifests before and after main publication.
   Focused RED-GREEN and the broad actor/CI-policy contracts pass without
   changing actor order, RPCs, retries, finality, authority, or chain effects;
-- [ ] execute one clean custom-token actual-node pair from the exact pushed
-  child-timing commit with a fresh run ID. Use the measured child phases to
-  select the next optimization; do not infer a speedup or change
-  finality/cadence before that run;
+- [x] execute one clean custom-token actual-node pair from the exact pushed
+  child-timing commit. Run `m3f7compose20260718af` on
+  `0b54ab68f766ff016741dd6ba2eacade4a1c1e31` passed both directions and
+  exact cleanup in 1,007.57 seconds wall time. Its 1,000,170 ms outer packet
+  has 510 ms unattributed. The 346,060 ms forward and 386,060 ms reverse
+  children fit exact 346,280/386,310 ms parents, bind exact effect manifests,
+  and retain revision four, `2 Bitcoin + 4 LEZ` effects, one Maker second
+  lock, zero replay/custody, conservation 250, and exact balances. Five
+  finalized lock/claim windows dominate; every other child phase is below one
+  second. Unrelated host contention makes the 22-second Run-AE wall-time
+  difference non-certifiable as a speedup;
+- [ ] map those five dominant waits to their exact finalized-observation and
+  confirmation policies, then write the next RED around the lowest-risk
+  development-only acceleration. Preserve production defaults, chain
+  finality, atomicity, actor authority, one-attempt journals, and deadlines;
 - [ ] compact or externally reference peerless public transaction facts before
   production. The validated v2 wire can carry transaction bytes larger than
   the recovery store's 64 KiB per-chain-evidence cap. Official PoC transactions
