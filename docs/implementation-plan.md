@@ -2032,8 +2032,17 @@ Active M3 refund critical path:
   registration, waits and reaps both statuses, authenticates exact
   run/scope/component resource sets, and retains individually verified
   resources for exact cleanup even when certification fails. The production
-  coordinator behavioral matrix is GREEN; a fresh clean pushed actual-node run
-  must measure the saving before the plan claims one;
+  coordinator behavioral matrix is GREEN. Fresh Run AB on clean pushed
+  `74c58d1` proved both concurrent launchers, the exact join, and reconciled
+  inventory on actual nodes, then failed closed after 4 minutes 24.69 seconds
+  when the first direction received the full tab-separated Core inventory
+  record instead of only its Docker ID. It certified no direction and no
+  successful-run speedup. RED reproduced exact record-boundary failures;
+  GREEN now accepts only one owner-private non-symlink canonical
+  `ID<TAB>bitcoin-core` record, exports only the 12- or 64-hex ID, and
+  revalidates live run/scope/component labels in both the outer and direction
+  processes. Run AB is spent. A fresh clean pushed actual-node run must still
+  measure the successful-run saving before the plan claims one;
 - [ ] compact or externally reference peerless public transaction facts before
   production. The validated v2 wire can carry transaction bytes larger than
   the recovery store's 64 KiB per-chain-evidence cap. Official PoC transactions

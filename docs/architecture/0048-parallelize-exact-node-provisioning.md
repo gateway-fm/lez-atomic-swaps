@@ -136,3 +136,23 @@ both registrations, descendant termination, exact cleanup, foreign survival,
 and fail-closed attestation. The pre-change 39/58/98-second measurements remain
 the baseline. Documentation must not replace the pending actual-node benchmark
 with the theoretical ceiling.
+
+Fresh Run AB on clean pushed `74c58d1` reached the actual-node startup join
+with both launchers passed, registered, waited/reaped, exact process groups
+absent, and inventory reconciled. It then failed closed at 4 minutes 24.69
+seconds because the actor boundary exported the complete
+`ID<TAB>bitcoin-core` inventory record as a Docker operand. No direction was
+certified and AB is not a successful-run benchmark. The retained failure
+attestation reports every exact run-labelled Docker category and the secure
+state root absent; a follow-up host audit found no registered PID or listener.
+
+The regression contract first reproduced the missing record parser and then
+the tab-whitespace ambiguity. The accepted fix requires exactly one canonical
+newline-terminated owner-private non-symlink record, exactly a 12- or
+64-character lowercase hexadecimal Docker ID, and the fixed `bitcoin-core`
+component. It rejects leading, doubled, or trailing tabs, CRLF, extra bytes or
+lines, missing
+newline, malformed IDs, wrong mode, symlink, directory, and missing input. The
+outer runner revalidates run, scope, and component immediately before actor
+handoff; the direction process independently repeats all three live-label
+checks before each Core admin call.

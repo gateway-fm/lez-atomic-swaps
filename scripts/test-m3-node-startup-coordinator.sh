@@ -75,6 +75,7 @@ for function_name in process_matches_registry process_group_matches_registry \
   service_launcher_hashes_stable \
   stop_owned_processes \
   assert_exact_owned_resource \
+  single_owned_container_id \
   remove_exact_container_file remove_exact_resource remove_exact_resource_file \
   collect_owned_containers collect_owned_resources \
   reconcile_node_resource_inventories wait_for_node_child wait_for_node_children \
@@ -113,6 +114,15 @@ for provenance_term in bitcoin_service_driver_sha_at_start lez_service_driver_sh
   rg -Fq "$provenance_term" "$runner" ||
     fail "service-launcher provenance omits ${provenance_term}"
 done
+rg -Fq 'M3_POC_BITCOIN_CONTAINER_ID="$bitcoin_container_id"' "$runner" ||
+  fail "actor handoff does not export the parsed Docker container ID"
+with_direction_source="$(sed -n '/^with_direction_environment() {$/,/^}$/p' "$runner")"
+rg -Fq 'assert_exact_owned_resource container "$bitcoin_container_id"' \
+  <<<"$with_direction_source" ||
+  fail "actor handoff does not revalidate the parsed container's live labels"
+if rg -Fq 'M3_POC_BITCOIN_CONTAINER_ID="$(sed' "$runner"; then
+  fail "actor handoff still exports an unparsed inventory record"
+fi
 rg -Fq 'actual_sid' "$runner" || fail "process registration does not validate SID"
 register_source="$(sed -n '/^register_owned_process() {$/,/^}$/p' "$runner")"
 for registrar_term in first_observed_start first_observed_ppid \
@@ -523,6 +533,79 @@ reconcile_node_resource_inventories passed passed ||
    "$(wc -l <"$volume_resources")" == 1 &&
    "$(wc -l <"$image_resources")" == 2 ]] ||
   fail "success resource reconciliation lost resource cardinality"
+
+container_parser_root="${test_root}/container-parser"
+mkdir -m 0700 "$container_parser_root"
+printf '%s\t%s\n' b47a11d3deea bitcoin-core >"$container_parser_root/valid.tsv"
+chmod 0600 "$container_parser_root/valid.tsv"
+[[ "$(single_owned_container_id "$container_parser_root/valid.tsv" bitcoin-core)" == \
+    b47a11d3deea ]] ||
+  fail "single owned-container parser did not return only the Docker object ID"
+full_container_id="b47a11d3deea8915a402601a7db8da28875f64d521c2a625a024c17614f7a0e6"
+printf '%s\t%s\n' "$full_container_id" bitcoin-core \
+  >"$container_parser_root/valid-full.tsv"
+chmod 0600 "$container_parser_root/valid-full.tsv"
+[[ "$(single_owned_container_id "$container_parser_root/valid-full.tsv" bitcoin-core)" == \
+    "$full_container_id" ]] ||
+  fail "single owned-container parser rejected a canonical full Docker object ID"
+printf '%s\n' b47a11d3deea >"$container_parser_root/legacy-id-only.tsv"
+printf '%s\t%s\n' b47a11d3deea unexpected-component \
+  >"$container_parser_root/wrong-component.tsv"
+printf '%s\t%s\textra\n' b47a11d3deea bitcoin-core \
+  >"$container_parser_root/extra-field.tsv"
+printf '%s\t%s\n%s\t%s\n' b47a11d3deea bitcoin-core c47a11d3deea bitcoin-core \
+  >"$container_parser_root/duplicate.tsv"
+printf '%s\t\t%s\n' b47a11d3deea bitcoin-core \
+  >"$container_parser_root/double-tab.tsv"
+printf '\t%s\t%s\n' b47a11d3deea bitcoin-core \
+  >"$container_parser_root/leading-tab.tsv"
+printf '%s\t%s\t\n' b47a11d3deea bitcoin-core \
+  >"$container_parser_root/trailing-tab.tsv"
+printf '%s\t%s\r\n' b47a11d3deea bitcoin-core \
+  >"$container_parser_root/crlf.tsv"
+printf '%s\t%s\njunk' b47a11d3deea bitcoin-core \
+  >"$container_parser_root/trailing-bytes.tsv"
+printf '%s\t%s\n\n' b47a11d3deea bitcoin-core \
+  >"$container_parser_root/extra-blank-line.tsv"
+printf '%s\t%s' b47a11d3deea bitcoin-core \
+  >"$container_parser_root/no-final-newline.tsv"
+printf '%s\t%s\n' --help bitcoin-core >"$container_parser_root/option-id.tsv"
+printf '%s\t%s\n' not-hex bitcoin-core >"$container_parser_root/nonhex-id.tsv"
+printf '%s\t%s\n' b47a11d3deea8 bitcoin-core \
+  >"$container_parser_root/noncanonical-id-length.tsv"
+: >"$container_parser_root/empty.tsv"
+for invalid_inventory in legacy-id-only wrong-component extra-field duplicate double-tab \
+  leading-tab trailing-tab crlf trailing-bytes extra-blank-line no-final-newline option-id \
+  nonhex-id noncanonical-id-length empty; do
+  chmod 0600 "$container_parser_root/${invalid_inventory}.tsv"
+  invalid_output=""
+  if invalid_output="$(single_owned_container_id \
+      "$container_parser_root/${invalid_inventory}.tsv" bitcoin-core 2>/dev/null)"; then
+    fail "single owned-container parser accepted ${invalid_inventory} inventory"
+  fi
+  [[ -z "$invalid_output" ]] ||
+    fail "single owned-container parser emitted output for ${invalid_inventory} inventory"
+done
+printf '%s\t%s\n' b47a11d3deea bitcoin-core >"$container_parser_root/wrong-mode.tsv"
+chmod 0644 "$container_parser_root/wrong-mode.tsv"
+if single_owned_container_id "$container_parser_root/wrong-mode.tsv" \
+    bitcoin-core >/dev/null 2>&1; then
+  fail "single owned-container parser accepted a non-private inventory"
+fi
+ln -s valid.tsv "$container_parser_root/symlink.tsv"
+if single_owned_container_id "$container_parser_root/symlink.tsv" \
+    bitcoin-core >/dev/null 2>&1; then
+  fail "single owned-container parser accepted a symlink inventory"
+fi
+mkdir "$container_parser_root/directory.tsv"
+if single_owned_container_id "$container_parser_root/directory.tsv" \
+    bitcoin-core >/dev/null 2>&1; then
+  fail "single owned-container parser accepted a directory inventory"
+fi
+if single_owned_container_id "$container_parser_root/missing.tsv" \
+    bitcoin-core >/dev/null 2>&1; then
+  fail "single owned-container parser accepted a missing inventory"
+fi
 
 fake_lists["container:${bitcoin_run_id}"]=""
 fake_lists["network:${bitcoin_run_id}"]=""

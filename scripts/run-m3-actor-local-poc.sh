@@ -830,6 +830,24 @@ assert_exact_owned_resource() {
   [[ "$identity" == "${expected_run}|${expected_scope}|${expected_component}" ]]
 }
 
+single_owned_container_id() {
+  local ids_file="$1"
+  local expected_component="$2"
+  local container_id record byte_count
+  [[ "$expected_component" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || return 1
+  [[ -f "$ids_file" && ! -L "$ids_file" ]] || return 1
+  [[ "$(stat -c '%u' "$ids_file")" == "$(id -u)" &&
+     "$(stat -c '%a' "$ids_file")" == 600 ]] || return 1
+  record="$(<"$ids_file")"
+  byte_count="$(wc -c <"$ids_file")" || return 1
+  [[ "$byte_count" =~ ^[1-9][0-9]*$ &&
+     "$byte_count" == $(( ${#record} + 1 )) ]] || return 1
+  container_id="${record%%$'\t'*}"
+  [[ "$container_id" =~ ^([0-9a-f]{12}|[0-9a-f]{64})$ &&
+     "$record" == "$container_id"$'\t'"$expected_component" ]] || return 1
+  printf '%s\n' "$container_id"
+}
+
 remove_exact_container_file() {
   local ids_file="$1"
   local expected_run="$2"
@@ -1570,9 +1588,8 @@ start_actual_nodes() {
 }
 
 core_admin() {
-  local container_id component extra
-  IFS=$'\t' read -r container_id component extra <"$bitcoin_container_ids"
-  [[ -n "$container_id" && "$component" == bitcoin-core && -z "$extra" ]] ||
+  local container_id
+  container_id="$(single_owned_container_id "$bitcoin_container_ids" bitcoin-core)" ||
     fail "Bitcoin container inventory is malformed"
   assert_exact_owned_resource container "$container_id" "$bitcoin_run_id" \
     bitcoin-core-regtest-e2e bitcoin-core ||
@@ -1800,6 +1817,13 @@ with_direction_environment() {
   local direction="$1"
   shift
   local direction_root="${directions_dir}/${direction}"
+  local bitcoin_container_id
+  bitcoin_container_id="$(single_owned_container_id \
+    "$bitcoin_container_ids" bitcoin-core)" ||
+    fail "Bitcoin container inventory is malformed at actor handoff"
+  assert_exact_owned_resource container "$bitcoin_container_id" "$bitcoin_run_id" \
+    bitcoin-core-regtest-e2e bitcoin-core ||
+    fail "captured Bitcoin container ownership identity drifted at actor handoff"
   M3_POC_RUN_ID="$run_id" \
   M3_POC_JOURNEY="$journey" \
   M3_POC_DIRECTION="$direction" \
@@ -1825,7 +1849,7 @@ with_direction_environment() {
   M3_POC_BITCOIN_PLANNED_ANCHOR_HEIGHT="$(jq -er --arg direction "$direction" \
     '.sources[] | select(.direction == $direction) |
      .planned_bitcoin_funding_anchor_height' "$bitcoin_funding_sources")" \
-  M3_POC_BITCOIN_CONTAINER_ID="$(sed -n '1p' "$bitcoin_container_ids")" \
+  M3_POC_BITCOIN_CONTAINER_ID="$bitcoin_container_id" \
   M3_POC_LEZ_MANIFEST="$lez_manifest" \
   M3_POC_LEZ_SEQUENCER_RPC_URL="$(manifest_value "$lez_manifest" LEZ_SEQUENCER_RPC_URL)" \
   M3_POC_LEZ_INDEXER_RPC_URL="$(manifest_value "$lez_manifest" LEZ_INDEXER_RPC_URL)" \

@@ -951,11 +951,12 @@ prove_lez_finalized_transaction() {
 }
 
 core_admin() {
-  local actual_run
-  actual_run="$(docker inspect --format \
-    '{{ index .Config.Labels "org.logos-co.atomic-swaps.run" }}' \
+  local actual_identity
+  actual_identity="$(docker inspect --format \
+    '{{ index .Config.Labels "org.logos-co.atomic-swaps.run" }}|{{ index .Config.Labels "org.logos-co.atomic-swaps.scope" }}|{{ index .Config.Labels "org.logos-co.atomic-swaps.component" }}' \
     "$M3_POC_BITCOIN_CONTAINER_ID")"
-  [[ "$actual_run" == "${M3_POC_RUN_ID}-btc" ]] ||
+  [[ "$actual_identity" == \
+     "${M3_POC_RUN_ID}-btc|bitcoin-core-regtest-e2e|bitcoin-core" ]] ||
     fail "captured Bitcoin container ownership label drifted"
   docker exec "$M3_POC_BITCOIN_CONTAINER_ID" bitcoin-cli \
     -conf=/run-config/bitcoin.conf -datadir=/var/lib/bitcoin "$@"

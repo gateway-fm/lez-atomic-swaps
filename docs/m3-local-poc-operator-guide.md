@@ -1185,7 +1185,14 @@ wrong-component resources and removes only individually authenticated
 identities. Run AA measured the old sequential startup at about 39 seconds for
 Core and 58 seconds for LEZ, or about 98 seconds with handoff. The new behavior
 contract is GREEN, but the successful actual-node saving remains pending until
-the first clean pushed benchmark.
+the first clean pushed benchmark. Run AB (`m3f7compose20260718ab`) on pushed
+`74c58d1` is a spent failed benchmark: concurrent startup and inventory
+reconciliation passed, but the first actor direction received a complete
+tab-separated inventory record where Docker required only its ID. It failed
+closed at 4 minutes 24.69 seconds and certified neither direction nor a
+speedup. The regression now validates the byte-exact private record, exports
+only a canonical Docker ID, and rechecks run, scope, and component at both
+process boundaries. Never reuse Run AB for a manual repetition.
 
 After a successful manual run, verify that both launchers completed and their
 resource inventory reconciled before interpreting any swap evidence:

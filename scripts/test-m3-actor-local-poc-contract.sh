@@ -143,6 +143,13 @@ require_fixed() {
 bash -n "$runner"
 [[ -x "$direction_driver" ]] || fail "direction boundary is missing or not executable"
 bash -n "$direction_driver"
+direction_core_admin_source="$(sed -n '/^core_admin() {$/,/^}$/p' "$direction_driver")"
+for bitcoin_identity_term in org.logos-co.atomic-swaps.run \
+  org.logos-co.atomic-swaps.scope org.logos-co.atomic-swaps.component \
+  'bitcoin-core-regtest-e2e|bitcoin-core'; do
+  rg -Fq "$bitcoin_identity_term" <<<"$direction_core_admin_source" ||
+    fail "direction Core boundary omits ${bitcoin_identity_term}"
+done
 readonly dual_lock_gate_filter="scripts/jq/m3-dual-lock-gate.jq"
 [[ -f "$dual_lock_gate_filter" && ! -L "$dual_lock_gate_filter" ]] ||
   fail "dual-lock evidence filter is missing or unsafe"
@@ -2429,6 +2436,8 @@ required_terms=(
   'LEZ_V02_MAKER_VAULT_ACCOUNT_ID'
   'LEZ_V02_TAKER_VAULT_ACCOUNT_ID'
   'collect_owned_containers'
+  'single_owned_container_id'
+  'M3_POC_BITCOIN_CONTAINER_ID="$bitcoin_container_id"'
   'wait_for_node_child'
   'assert_exact_owned_resource'
   'org.logos-co.atomic-swaps.run'
