@@ -2063,6 +2063,19 @@ Active M3 refund critical path:
   startup saving is therefore 31 seconds. AD's 127.09-second end-to-end
   improvement over AA is retained as context, not attributed wholly to node
   startup without structured per-phase timings;
+- [x] publish fail-closed structured phase timings before selecting another
+  optimization. ADR 0049 records one outer-run monotonic producer and fixed
+  phase sets for custom-token sequential, native sequential, and native
+  overlap execution. The owner-private journal and final packet reject
+  malformed uptime, unsupported or reordered phases, missing/duplicate
+  records, overlaps/regressions, imprecise integers, extra fields, invalid UTC
+  dates, symlinks, unsafe modes, and final or partial clobber. The main packet
+  independently revalidates the schema, binds the relative path and SHA-256,
+  requires exact summary equality, and rehashes immediately before and after
+  publication. Focused RED-GREEN, the actor orchestration contract, the node
+  coordinator contract, ShellCheck, actionlint, hadolint, Compose validation,
+  and CI policy are GREEN. The next clean pushed actual-node run is the first
+  timing measurement; no additional successful-run speedup is claimed yet;
 - [ ] compact or externally reference peerless public transaction facts before
   production. The validated v2 wire can carry transaction bytes larger than
   the recovery store's 64 KiB per-chain-evidence cap. Official PoC transactions

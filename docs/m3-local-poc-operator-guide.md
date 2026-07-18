@@ -1464,6 +1464,60 @@ complete transactions, and signer/actor databases. If the run fails, the
 cleanup attestation should still prove exact cleanup; no terminal success packet
 exists, and the same run ID and run root must never be reused.
 
+## Inspect bound monotonic phase timings
+
+Every successful timing-enabled M3 run publishes
+`.e2e/$RUN_ID/m3-actor-poc/evidence/m3-phase-timings.json` before its main
+packet. The timing total starts after fresh run-directory initialization and
+ends before main evidence publication. Cleanup is intentionally outside that
+total and remains certified by `cleanup-attestation.json`.
+
+After the normal manual flow finishes, validate modes, the main-packet binding,
+and the fixed arithmetic:
+
+```sh
+M3_ROOT=".e2e/$RUN_ID/m3-actor-poc"
+TIMING="$M3_ROOT/evidence/m3-phase-timings.json"
+MAIN="$M3_ROOT/evidence/m3-actor-local-poc.json"
+
+test "$(stat -c '%a' "$TIMING")" = 600
+TIMING_SHA="$(sha256sum "$TIMING" | sed 's/ .*//')"
+test "$(jq -er '.performance.phase_timings.evidence_sha256' "$MAIN")" = \
+  "$TIMING_SHA"
+test "$(jq -er '.performance.phase_timings.evidence_path' "$MAIN")" = \
+  "$M3_ROOT/evidence/m3-phase-timings.json"
+jq -e '
+  .kind == "m3_monotonic_phase_timings"
+  and .result == "execution_passed_pre_cleanup"
+  and .clock.source == "linux_proc_uptime"
+  and .clock.wall_clock_used_for_duration == false
+  and .coverage.cleanup_in_separate_attestation == true
+  and .private_material_disclosed == false
+  and .unattributed_duration_ms ==
+    (.total_duration_ms - ([.phases[].duration_ms] | add))
+' "$TIMING"
+```
+
+List the measured phases from longest to shortest:
+
+```sh
+jq -r '
+  .phases
+  | sort_by(.duration_ms)
+  | reverse[]
+  | [.phase_id, (.direction // "-"), .duration_ms]
+  | @tsv
+' "$TIMING"
+```
+
+Compare only runs with the same journey, asset mode, schedule, pinned commit,
+host contention policy, and cache state. The clock includes host suspend.
+`unattributed_duration_ms` is real uncovered orchestration time and must not
+be silently assigned to a neighboring phase. A missing or incomplete timing
+packet means the run cannot publish terminal success; it is not a partial
+benchmark. Never move this secret-safe summary out of the run tree without
+separately confirming that sibling evidence remains private.
+
 ## Private D1 BTC recording candidate bundle
 
 Status: recorder and bundle-verifier tooling is GREEN at pushed commits

@@ -119,8 +119,13 @@ authority can proceed. Docker discovery authenticates fixed run, scope, and
 component labels and retains every individually safe identity for cleanup even
 when certification rejects an overcount. Run AA measured the pre-change
 sequential startup at about 39 seconds for Core, 58 seconds for LEZ, and 98
-seconds including handoff. The concurrent contract is GREEN; its exact
-actual-node saving remains unclaimed until the clean pushed benchmark.
+seconds including handoff. Clean pushed Run AD completed startup in one
+67-second concurrent window and the complete two-direction run plus cleanup in
+16 minutes 6.52 seconds. The certified startup saving is 31 seconds. ADR 0049
+now records fixed outer phases from Linux monotonic uptime, publishes an exact
+owner-private packet, and binds its path and SHA-256 into the main run packet.
+Its first clean pushed actual-node measurement is pending, so the remaining
+Run-AA-to-Run-AD variance is still unattributed.
 
 ```mermaid
 flowchart TB
@@ -129,12 +134,18 @@ flowchart TB
     Deployment["Exact ProgramDeployment<br/>ProgramId 39b6a4db...4dec"]
 
     subgraph Bootstrap["Run-owned bootstrap authority"]
+        OuterRunner["M3 outer runner"]
+        Clock["Linux monotonic uptime"]
+        Timing["Strict phase timing packet"]
         NodeCoordinator["Exact concurrent node-start coordinator"]
         Identity["Fresh maker and taker owner identities"]
         VaultDerive["Official owner-derived Vault account IDs"]
         CoreProvisioner["Core service, wallet, miner, and funding provisioner"]
         LezProvisioner["LEZ Bedrock, sequencer, and indexer provisioner"]
         LezBootstrap["Exact guest deploy, finality audit, and Vault Claims"]
+        Clock --> OuterRunner
+        OuterRunner --> NodeCoordinator
+        OuterRunner --> Timing
         NodeCoordinator --> CoreProvisioner
         NodeCoordinator --> LezProvisioner
         Identity --> VaultDerive
@@ -207,6 +218,7 @@ flowchart TB
     TakerSidecar -->|"finalized observations"| Indexer
 
     Terminal["Run m3schema4-20260717d<br/>schema-4 Maker locks actor-owned<br/>two of two directions revision 4 Completed"]
+    Timing -->|"Path and SHA 256 bound before success"| Terminal
     MakerActor --> Terminal
     TakerActor --> Terminal
     Core --> Terminal

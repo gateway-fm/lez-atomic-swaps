@@ -134,6 +134,10 @@ cold/hit comparison remains development performance evidence. Manual commands,
 evidence checks, cache trust and
 repair guidance are in the
 [M3 operator guide](docs/m3-local-poc-operator-guide.md#reproduce-the-custom-token-f7-happy-pair-with-the-verified-wallet-cache).
+Timing-enabled M3 runs also publish an owner-private monotonic phase packet and
+bind its path and SHA-256 into the main run packet. The
+[manual timing checks](docs/m3-local-poc-operator-guide.md#inspect-bound-monotonic-phase-timings)
+show how to validate and compare phases without exposing private actor data.
 
 The public BTC SDK now deterministically validates application-owned
 discovery/negotiation, drops those peer capabilities at activation, and replays
