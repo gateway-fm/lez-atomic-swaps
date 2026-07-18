@@ -2591,26 +2591,26 @@ submit_actor_lez_claim() {
 }
 
 write_dual_lock_gate() {
+  local gate_filter="scripts/jq/m3-dual-lock-gate.jq"
+  local gate_file="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-dual-lock-gate.json"
+  local gate_partial="${gate_file}.partial"
   capture_both_statuses 2 dual-lock-status
+  [[ -f "$gate_filter" && ! -L "$gate_filter" ]] ||
+    fail "dual-lock evidence filter is missing or unsafe"
+  [[ ! -e "$gate_file" && ! -L "$gate_file" && ! -e "$gate_partial" && ! -L "$gate_partial" ]] ||
+    fail "dual-lock evidence output already exists"
   jq -n --arg direction "$M3_POC_DIRECTION" --arg bitcoin "$bitcoin_lock_tx" \
     --arg initialization "$lez_initialization_tx" --arg custody "$lez_custody_tx" \
     --arg funding "$lez_funding_tx" --arg asset_mode "$asset_mode" \
     --arg asset_commitment "$asset_commitment" \
     --argjson window_start "$lez_lock_window_start" \
     --argjson window_blocks "$lez_lock_window_blocks" \
-    --arg opened_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
-    {schema_version:1,direction:$direction,gate:"open",
-     actor_revision:{maker:2,taker:2},
-     bitcoin:{transaction_id:$bitcoin,confirmation_policy_satisfied:true},
-     lez:{initialization_transaction_id:$initialization,funding_transaction_id:$funding,
-          finality:"Finalized",discovery_window:{start_height:$window_start,max_blocks:$window_blocks}}
-       + (if $asset_mode == "custom_token" then
-          {custody_creation_transaction_id:$custody,asset_commitment:$asset_commitment,
-           exact_effect_order:["initialize_witnessed","create_custody_ata","fund"]}
-          else {} end),
-     adaptor_authority_eligible_only_after_this_evidence:true,opened_at:$opened_at}
-  ' >"${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-dual-lock-gate.json"
-  chmod 0600 "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-dual-lock-gate.json"
+    --arg opened_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    -f "$gate_filter" >"$gate_partial"
+  jq -e '.schema_version == 1 and .gate == "open"' "$gate_partial" >/dev/null ||
+    fail "dual-lock evidence filter emitted an invalid object"
+  chmod 0600 "$gate_partial"
+  mv -- "$gate_partial" "$gate_file"
 }
 
 

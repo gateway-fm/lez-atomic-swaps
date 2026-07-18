@@ -443,10 +443,17 @@ it is not a custom-token PoC pass.
 
 Fresh role-owned execution has proved Bitcoin first lock plus finalized LEZ
 initialization, custody creation, and funding after the checked deployment and
-official Token/ATA fixture. Maker exact observation reached revision two. The
-peer observer, claims, reverse direction, terminal balances, and final
-reproducibility packet still require a fresh uninterrupted run on the fixed
-pushed commit.
+official Token/ATA fixture. Run `m3f7compose20260718t` at clean pushed
+`50db397` finalized those effects at blocks 120, 148, and 170. Maker exact
+observation and Taker peerless discovery both reached revision two, so the
+lifecycle-aware scanner is actual-node GREEN in the forward direction. The
+following evidence-only dual-lock serializer had malformed jq syntax and
+stopped the run before either claim or the reverse direction. Exact cleanup
+passed. The serializer is now a directly executable tracked filter with native
+and custom-token contract coverage and validate-before-publish output. Claims,
+reverse direction, terminal balances, and the final reproducibility packet
+still require a fresh uninterrupted run on the fixed pushed commit; Run T is
+not a custom-token PoC pass.
 
 This ADR does not certify an actual-node custom-token swap in either trade
 direction, exact composed balances/effects, restart/no-resubmission, public

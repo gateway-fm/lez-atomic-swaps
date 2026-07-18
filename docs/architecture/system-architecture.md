@@ -2300,8 +2300,14 @@ but retained the pre-fix Taker v1-dispatch RED. Run S exercised that v2 route
 and exposed a second bounded RED: the terms scan treated the valid earlier
 same-swap initialization as a funding conflict. The scanner now validates and
 skips only legitimate different lifecycle kinds while retaining malformed,
-same-kind, and duplicate-match conflicts. All 127 sidecar tests pass, but no
-fresh fixed-commit actual-node run exists yet, so neither Run R nor Run S is
+same-kind, and duplicate-match conflicts. Run T at clean pushed `50db397`
+finalized forward token initialization, custody, and funding at blocks
+120/148/170; Maker exact observation and Taker lifecycle-aware peer discovery
+both reached revision two. That proves the scanner repair through actual nodes.
+The immediately following dual-lock evidence serializer had malformed jq syntax
+and stopped before claims or the reverse direction. It is now a directly tested,
+validate-before-publish tracked filter. All 127 sidecar tests and the pre-Docker
+orchestration contract pass, but Runs R, S, and T are bounded REDs rather than
 full F7 evidence.
 The fresh two-direction actual-node custom-token packet,
 arbitrary-N/same-direction scheduling, process-kill/reorg/chaos, public

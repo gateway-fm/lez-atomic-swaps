@@ -143,6 +143,65 @@ require_fixed() {
 bash -n "$runner"
 [[ -x "$direction_driver" ]] || fail "direction boundary is missing or not executable"
 bash -n "$direction_driver"
+readonly dual_lock_gate_filter="scripts/jq/m3-dual-lock-gate.jq"
+[[ -f "$dual_lock_gate_filter" && ! -L "$dual_lock_gate_filter" ]] ||
+  fail "dual-lock evidence filter is missing or unsafe"
+custom_token_dual_lock_gate="$(jq -n \
+  --arg direction taker_sells_foreign \
+  --arg bitcoin "$(printf '%064d' 1)" \
+  --arg initialization "$(printf '%064d' 2)" \
+  --arg custody "$(printf '%064d' 3)" \
+  --arg funding "$(printf '%064d' 4)" \
+  --arg asset_mode custom_token \
+  --arg asset_commitment "$(printf '%064d' 5)" \
+  --argjson window_start 120 --argjson window_blocks 52 \
+  --arg opened_at 2026-07-18T07:05:00Z \
+  -f "$dual_lock_gate_filter")" ||
+  fail "custom-token dual-lock evidence filter does not compile"
+jq -e '
+  .schema_version == 1 and .direction == "taker_sells_foreign"
+  and .gate == "open" and .actor_revision == {maker:2,taker:2}
+  and .bitcoin == {
+    transaction_id:"0000000000000000000000000000000000000000000000000000000000000001",
+    confirmation_policy_satisfied:true
+  }
+  and .lez.initialization_transaction_id == "0000000000000000000000000000000000000000000000000000000000000002"
+  and .lez.funding_transaction_id == "0000000000000000000000000000000000000000000000000000000000000004"
+  and .lez.finality == "Finalized"
+  and .lez.discovery_window == {start_height:120,max_blocks:52}
+  and .lez.custody_creation_transaction_id == "0000000000000000000000000000000000000000000000000000000000000003"
+  and .lez.asset_commitment == "0000000000000000000000000000000000000000000000000000000000000005"
+  and .lez.exact_effect_order == ["initialize_witnessed","create_custody_ata","fund"]
+  and .adaptor_authority_eligible_only_after_this_evidence == true
+  and .opened_at == "2026-07-18T07:05:00Z"
+' <<<"$custom_token_dual_lock_gate" >/dev/null ||
+  fail "custom-token dual-lock evidence loses its exact authority boundary"
+native_dual_lock_gate="$(jq -n \
+  --arg direction taker_sells_lez \
+  --arg bitcoin "$(printf '%064d' 6)" \
+  --arg initialization "$(printf '%064d' 7)" \
+  --arg custody "" --arg funding "$(printf '%064d' 8)" \
+  --arg asset_mode native --arg asset_commitment "" \
+  --argjson window_start 200 --argjson window_blocks 30 \
+  --arg opened_at 2026-07-18T07:06:00Z \
+  -f "$dual_lock_gate_filter")" ||
+  fail "native dual-lock evidence filter does not compile"
+jq -e '
+  .direction == "taker_sells_lez"
+  and .bitcoin == {
+    transaction_id:"0000000000000000000000000000000000000000000000000000000000000006",
+    confirmation_policy_satisfied:true
+  }
+  and .lez.initialization_transaction_id == "0000000000000000000000000000000000000000000000000000000000000007"
+  and .lez.funding_transaction_id == "0000000000000000000000000000000000000000000000000000000000000008"
+  and .lez.finality == "Finalized"
+  and .lez.discovery_window == {start_height:200,max_blocks:30}
+  and (.lez | has("custody_creation_transaction_id") | not)
+  and (.lez | has("asset_commitment") | not)
+  and (.lez | has("exact_effect_order") | not)
+  and .opened_at == "2026-07-18T07:06:00Z"
+' <<<"$native_dual_lock_gate" >/dev/null ||
+  fail "native dual-lock evidence acquired custom-token-only fields"
 stage_two_spec_source="$(sed -n '/^prepare_stage_two_spec() {$/,/^}$/p' "$direction_driver")"
 [[ -n "$stage_two_spec_source" ]] || fail "direction boundary lacks stage-two agreement construction"
 rg -Fq -- '--argjson maker_cutoff "$maker_cutoff"' <<<"$stage_two_spec_source" ||

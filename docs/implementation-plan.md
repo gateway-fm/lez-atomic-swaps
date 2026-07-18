@@ -15,8 +15,8 @@ architecture, sequencing, risks, or acceptance evidence changes.
 
 The 2026-07-18 authority refresh pins the live RFP repository at master commit
 `121da225de1930c5ba693ebbef80ee788d55542a` and RFP-003 file blob `d0fa52b`.
-Replacement issue #112 is closed with state reason `completed`, retains the
-`accepted` and `RFP-003` labels, and continues to supersede issue #61. These
+Replacement issue #112 is open, retains the `accepted` and `RFP-003` labels,
+and continues to supersede issue #61. These
 immutable source identities anchor this plan; the issue state remains a mutable
 upstream fact that must be reread at milestone closure.
 
@@ -1915,11 +1915,32 @@ Active M3 refund critical path:
   passes on the fix, and a changed same-swap terms hash remains fail-closed.
   All 127 pinned v0.2 sidecar tests, formatting, and strict all-target/all-feature
   Clippy pass; all 85 actor tests and the M3 pre-Docker actor contract remain
-  green from `ba17e3b`. Explicit terminal ATA balance and packet
+  green from `ba17e3b`. Fresh isolated Run T (`m3f7compose20260718t`) then
+  started from clean pushed commit `50db397`, repeated the checked deployment,
+  two Vault Claims, official eight-transaction Token/ATA fixture, Bitcoin lock,
+  and finalized token initialization/custody/funding at LEZ blocks 120/148/170.
+  After two moving-tip fail-closed retries, Maker exact observation reached
+  revision two. Taker peerless lifecycle-aware discovery then also reached
+  revision two on its first projection attempt, proving the Run S scanner fix
+  through the actual node and role boundary. The next evidence-only step failed
+  because the embedded `jq` program tried to add custom-token fields directly
+  inside an unparenthesized object value. No claim or reverse direction followed;
+  exact cleanup removed all captured resources and secure state without a broad
+  or foreign target. Run T is bounded RED evidence, not an F7 PoC pass. The
+  dual-lock serializer is now a tracked directly executable jq filter; its
+  contract compiles both native and custom-token shapes and asserts every common
+  field plus the custom custody, asset commitment, and three-step order. It
+  publishes only after successful validation through a private partial file.
+  The full pre-Docker orchestration contract is GREEN. Explicit terminal ATA
+  balance and packet
   bindings remain forward
   `175/75/0`, reverse `75/175/0`, and conserved total `250`. The remaining
-  functional gate is one fresh clean pushed-commit two-direction journey;
-  synchronized
+  functional gate is a fresh clean pushed-commit two-direction journey. After
+  the first passing F7 pair, the owner-requested repeatability gate requires at
+  least three clean custom-token swaps per direction, another recorded native
+  pair, and one clean repeat of the opposite-direction overlap checkpoint before
+  the M3 tag. Every repetition must use fresh identities and retain exact
+  balance, effect, replay, and cleanup evidence. Synchronized
   documentation, D1, and milestone-wide closure gates follow that passing run;
 - [ ] compact or externally reference peerless public transaction facts before
   production. The validated v2 wire can carry transaction bytes larger than
@@ -1983,8 +2004,8 @@ Logos-owned limitation is disclosed for production without weakening the local
 M3 evidence gate.
 
 Authority was reread again on 2026-07-18: accepted replacement issue #112 is
-closed with state reason `completed`, retains the `accepted` and `RFP-003`
-labels, and explicitly supersedes issue #61. The live RFP repository baseline is
+open, retains the `accepted` and `RFP-003` labels, and explicitly supersedes
+issue #61. The live RFP repository baseline is
 master commit
 `121da225de1930c5ba693ebbef80ee788d55542a` (file blob `d0fa52b`) and accepted
 issue #112, whose newline-normalized body SHA-256 remains
