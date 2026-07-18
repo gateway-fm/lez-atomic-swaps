@@ -1467,13 +1467,19 @@ rg -Fq 'Bitcoin non-funder must not receive refund authority' "$direction_driver
 bash -n "$bootstrap_driver"
 bootstrap_contract="$($bootstrap_driver contract)"
 "$bootstrap_driver" self-test-finality-selector
-jq -e '
+readonly expected_f7_guest_sha256="bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7"
+readonly expected_f7_program_id="f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e"
+readonly expected_f7_deployer_sha256="a7f1e2593844bef8fc61cab4b37566fb5c6b8cb8eba27efb50f985e995ba191c"
+jq -e --arg guest "$expected_f7_guest_sha256" \
+  --arg program "$expected_f7_program_id" '
   .schema_version == 1
   and .kind == "m3_lez_bootstrap_contract"
   and .verified_artifact_target_required == true
   and .canonical_guest_artifact_independently_hashed == true
   and .canonical_guest_source == "compat/lez-v0.2-provisional/escrow/methods/guest/src/bin/zec_escrow_v02.rs"
   and .finality_membership_variants == ["ProgramDeployment", "Public"]
+  and .embedded_guest_sha256 == $guest
+  and .escrow_program_id == $program
   and .deployment_submission_count == 1
   and .fresh_identity_vault_claims == ["maker", "taker"]
   and .vault_claim_submission_count_per_role == 1
@@ -1485,6 +1491,42 @@ guest_source="$(jq -er '.canonical_guest_source' <<<"$bootstrap_contract")"
   fail "LEZ bootstrap contract does not name a tracked canonical guest source"
 git ls-files --error-unmatch -- "$guest_source" >/dev/null ||
   fail "LEZ bootstrap canonical guest source is not tracked"
+
+artifact_file_validator_source="$(sed -n \
+  '/^validate_exact_regular_file_sha256() {$/,/^}$/p' "$runner")"
+artifact_identity_source="$(sed -n \
+  '/^validate_lez_artifact_identity() {$/,/^}$/p' "$runner")"
+[[ -n "$artifact_file_validator_source" && -n "$artifact_identity_source" ]] ||
+  fail "outer runner lacks an early exact LEZ artifact identity preflight"
+for expected_identity in \
+  "$expected_f7_guest_sha256" "$expected_f7_deployer_sha256"; do
+  rg -Fq "$expected_identity" "$runner" ||
+    fail "outer runner does not pin expected F7 artifact identity: ${expected_identity}"
+done
+for required_check in \
+  '[[ -f "$file" && ! -L "$file" ]]' \
+  '[[ "$(readlink -f "$file")" == "$file" ]]' \
+  'actual="$(sha256sum "$file")"' \
+  '[[ "$actual" == "$expected" ]]'; do
+  rg -Fq "$required_check" <<<"$artifact_file_validator_source" ||
+    fail "outer F7 artifact preflight omits: ${required_check}"
+done
+for required_artifact in \
+  'validate_exact_regular_file_sha256 "LEZ deployer" "$lez_deployer" "$expected_lez_deployer_sha256"' \
+  'validate_exact_regular_file_sha256 "LEZ canonical guest ELF" "$lez_guest_elf" "$expected_lez_guest_sha256"'; do
+  rg -Fq "$required_artifact" <<<"$artifact_identity_source" ||
+    fail "outer F7 artifact preflight omits: ${required_artifact}"
+done
+rg -Fq '[[ "$guest_elf_sha256" == "$expected_guest_sha256" ]]' "$bootstrap_driver" ||
+  fail "bootstrap no longer revalidates the independently hashed F7 guest"
+for deployer_stability_check in \
+  'readonly expected_deployer_sha256="a7f1e2593844bef8fc61cab4b37566fb5c6b8cb8eba27efb50f985e995ba191c"' \
+  '[[ "$deployer_sha256_at_start" == "$expected_deployer_sha256" ]]' \
+  '[[ "$(sha256sum "$deployer" | sed '\''s/ .*//'\'')" == "$deployer_sha256_at_start" ]]' \
+  '[[ "$deployer_sha" == "$deployer_sha256_at_start" ]]'; do
+  rg -Fq "$deployer_stability_check" "$bootstrap_driver" ||
+    fail "bootstrap deployer identity is not stable through point of use: ${deployer_stability_check}"
+done
 
 invalid_run_id="M3 invalid $$"
 if invalid_output="$(RUN_ID="$invalid_run_id" M3_ACTOR_POC_MODE=contract "$runner" 2>&1)"; then
@@ -2392,12 +2434,20 @@ for term in "${required_terms[@]}"; do
   require_fixed "$term"
 done
 
+artifact_identity_line="$(rg -n '^validate_lez_artifact_identity$' "$runner" |
+  tail -n1 | cut -d: -f1)"
+prebuild_line="$(rg -n '^prebuild$' "$runner" | tail -n1 | cut -d: -f1)"
 stage_one_line="$(rg -n -F 'run_stage_one "$direction"' "$runner" | head -n1 | cut -d: -f1)"
 nodes_line="$(rg -n -F 'start_actual_nodes' "$runner" | tail -n1 | cut -d: -f1)"
 stage_two_line="$(rg -n -F 'run_stage_two "$direction"' "$runner" | tail -n1 | cut -d: -f1)"
-if [[ ! "$stage_one_line" =~ ^[0-9]+$ || ! "$nodes_line" =~ ^[0-9]+$ ||
+if [[ ! "$artifact_identity_line" =~ ^[0-9]+$ || ! "$prebuild_line" =~ ^[0-9]+$ ||
+      ! "$stage_one_line" =~ ^[0-9]+$ || ! "$nodes_line" =~ ^[0-9]+$ ||
       ! "$stage_two_line" =~ ^[0-9]+$ ]]; then
-  fail "could not locate the stage-one/node/stage-two execution order"
+  fail "could not locate the artifact/prebuild/stage-one/node/stage-two execution order"
+fi
+if (( artifact_identity_line >= prebuild_line ||
+      prebuild_line >= stage_one_line )); then
+  fail "exact F7 artifact identity must precede prebuild and all service startup"
 fi
 if (( stage_one_line >= nodes_line || nodes_line >= stage_two_line )); then
   fail "stage one must precede node facts and stage two must follow actual nodes"

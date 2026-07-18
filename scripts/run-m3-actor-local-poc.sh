@@ -137,6 +137,8 @@ readonly official_wallet_cache_helper="${repo_root}/scripts/prepare-m3-official-
 readonly official_wallet_cache_evidence="${evidence_dir}/official-wallet-artifact.json"
 readonly official_wallet_cache_root="${M3_OFFICIAL_WALLET_CACHE_ROOT:-/tmp/lez-atomic-swaps-cache-$(id -u)/m3-official-wallet-v1}"
 readonly lez_v02_source_commit="a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
+readonly expected_lez_guest_sha256="bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7"
+readonly expected_lez_deployer_sha256="a7f1e2593844bef8fc61cab4b37566fb5c6b8cb8eba27efb50f985e995ba191c"
 readonly lez_token_program_id="c5d50f88bfe7cb14b421673e9441aade7571e522eef035cc24d80b2e53c69a7c"
 readonly lez_ata_program_id="95841cc8bd2c87d7111bc5c7f3aa2a85d35e90f7217e82a397aa05acd51500f8"
 readonly -a directions=(taker_sells_foreign taker_sells_lez)
@@ -399,8 +401,29 @@ readonly f7_token_fixture_driver_sha_at_start official_wallet_cache_helper_sha_a
    -d "$LEZ_V02_ARTIFACT_TARGET_DIR" && ! -L "$LEZ_V02_ARTIFACT_TARGET_DIR" ]] ||
   fail "set LEZ_V02_ARTIFACT_TARGET_DIR to one verified absolute artifact target"
 readonly lez_deployer="${LEZ_V02_ARTIFACT_TARGET_DIR}/debug/lez-zec-escrow-v02-deployer"
+readonly lez_guest_elf="${LEZ_V02_ARTIFACT_TARGET_DIR}/riscv-guest/lez-zec-escrow-v02-methods/lez-zec-escrow-v02-guest/riscv32im-risc0-zkvm-elf/docker/zec_escrow_v02.bin"
 [[ -x "$lez_deployer" && -f "$lez_deployer" && ! -L "$lez_deployer" ]] ||
   fail "verified LEZ deployer is unavailable in the artifact target"
+
+validate_exact_regular_file_sha256() {
+  local label="$1" file="$2" expected="$3" actual
+  [[ -f "$file" && ! -L "$file" ]] ||
+    fail "${label} is missing or is not a regular non-symlink file"
+  [[ "$(readlink -f "$file")" == "$file" ]] ||
+    fail "${label} path is not canonical"
+  actual="$(sha256sum "$file")" ||
+    fail "${label} SHA-256 query failed"
+  actual="${actual%% *}"
+  [[ "$actual" == "$expected" ]] ||
+    fail "${label} SHA-256 does not match the pinned F7 artifact"
+}
+
+validate_lez_artifact_identity() {
+  validate_exact_regular_file_sha256 "LEZ deployer" "$lez_deployer" "$expected_lez_deployer_sha256"
+  validate_exact_regular_file_sha256 "LEZ canonical guest ELF" "$lez_guest_elf" "$expected_lez_guest_sha256"
+}
+
+validate_lez_artifact_identity
 
 validate_native_build_prerequisites() {
   local directory="${RAPIDSNARK_LIB_DIR:-}" bindgen="${BINDGEN_EXTRA_CLANG_ARGS:-}"

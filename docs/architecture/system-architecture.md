@@ -2326,6 +2326,13 @@ pushed `422c72e` then completed both actual-node custom-token directions with
 four LEZ and two Bitcoin effects each, exact `175/75/0` and `75/175/0`
 balances, zero custody/replay, no public resource, and exact cleanup.
 
+Run Z on clean pushed `1555749` repeated both directions in 19 minutes 10.95
+seconds with the same terminal revisions, effects, directional balances,
+finality, zero replay, and exact cleanup. Its production-mode official-wallet
+cache hit took 10.32 seconds. Run Y is not evidence for a swap: the independent
+guest check rejected a mistakenly selected pre-F7 artifact before deployment,
+and exact cleanup passed.
+
 The official-wallet prebuild now passes through a separate owner-only
 content-addressed artifact component. Policy 2 binds the complete secret-free
 source, toolchain, target-library, build-tool, Cargo-config, bindgen,
@@ -2333,7 +2340,8 @@ native-library, expected-output, runtime, and validation-helper identities.
 Only the executable and manifest persist; a fresh run-private non-hardlinked
 copy is triple-rehashed before use. A real cold/hit comparison measured
 202.42/10.35 seconds, saving 192.07 seconds without weakening any chain or
-artifact gate. Clean pushed actor integration, the remaining two repeat pairs,
+artifact gate. Run Z certifies the integrated hit on exact pushed code. The
+remaining repeat pair,
 arbitrary-N/same-direction scheduling, process-kill/reorg/chaos, public
 deployment, formal review, and production readiness remain outside the claim.
 

@@ -2004,9 +2004,23 @@ Active M3 refund critical path:
   saving 192.07 seconds (94.9%) and about 804 MiB peak RSS per repeat. The JSON
   retains monotonic duration, artifact size, canonical secret-free input,
   policy/helper, object-manifest, runtime, and wallet identities. This is
-  dirty-tree development performance evidence, not exact-head chain evidence;
-  the next clean pushed custom-token repetition must prove the integrated hit
-  without changing balances, effects, replay, finality, or cleanup;
+  dirty-tree development performance evidence, not exact-head chain evidence.
+  Run Y (`m3f7compose20260718y`) intentionally counts as no repetition: an
+  operator-selected pre-F7 artifact failed the pinned guest hash before
+  deployment in 1 minute 58 seconds, then exact cleanup removed every owned
+  resource without foreign targeting. Fresh Run Z (`m3f7compose20260718z`) on
+  clean pushed `1555749` used the exact Run-X witnessed-token artifact and
+  completed both directions in 19 minutes 10.95 seconds. It certified a
+  production-mode 10.32-second cache hit while preserving revision four,
+  `2 Bitcoin + 4 LEZ` effects, `175/75/0` and `75/175/0` balances, conserved
+  total 250, zero replay, finalized chain evidence, and exact cleanup. F7 is
+  therefore 2 of 3 clean repetitions per direction; one pair remains. A
+  follow-on RED proved the outer runner lacked early exact artifact identity.
+  GREEN now checks the canonical regular non-symlink guest and deployer hashes
+  before prebuild or node startup, while bootstrap independently rechecks the
+  guest and deployer through point of use and evidence publication. This avoids
+  Run Y's measured 1 minute 58 second late-fail path without relaxing or
+  replacing any bootstrap identity gate;
 - [ ] compact or externally reference peerless public transaction facts before
   production. The validated v2 wire can carry transaction bytes larger than
   the recovery store's 64 KiB per-chain-evidence cap. Official PoC transactions
@@ -2038,9 +2052,10 @@ Active M3 refund critical path:
 - [ ] after the owner enters later hardening, add restart, reorg, fee, and chaos
   cases beyond the reproducible functional PoC boundary.
 
-Repository-controlled open work, not external blockers, is two more fresh
+Repository-controlled open work, not external blockers, is one more fresh
 custom-token repetitions per direction, D1 recordings, and synchronized closure
-evidence and gates. Run X closes the first exact terminal balance/finality pair.
+evidence and gates. Runs X and Z close the first two exact terminal
+balance/finality pairs.
 The official-wallet starting fixture remains a reproducible prerequisite rather
 than a substitute for actor-owned escrow/claim/refund effects or finalized
 balance evidence. The

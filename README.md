@@ -104,6 +104,14 @@ material, and removed only its exact captured resources. This is a private local
 PoC and the first clean F7 repetition, not the M3 tag or a production-readiness
 claim.
 
+Fresh Run `m3f7compose20260718z` on clean pushed `1555749` repeated the
+same two actual-node directions in 19 minutes 10.95 seconds and is the second
+of three requested clean F7 repetitions per direction. It retained the same
+effects, balances, zero replay, finality, and exact cleanup while recording a
+production-mode verified-wallet cache hit. Run `m3f7compose20260718y` is not a
+swap repetition: an accidentally supplied pre-F7 guest target failed its
+pinned ELF check before deployment, and exact cleanup passed.
+
 The official LEZ v0.2 wallet preparation is now content-addressed and
 fail-closed for repeat runs. A hardened production-input cold build measured
 202.42 seconds; the exact validated hit measured 10.35 seconds, saving 192.07
@@ -112,9 +120,10 @@ metadata and effective config, program artifacts, Rust/Cargo and target-library
 tree, build tools, bindgen headers, native libraries, validation helper/policy,
 runtime dependencies, and pinned wallet SHA-256. Only the executable and its
 manifest persist; wallet state, keys, actor databases, journals, agreements,
-transactions, ports, node state, and evidence never enter the cache. These are
-development performance measurements until a clean pushed actor repetition
-records the integrated hit. Manual commands, evidence checks, cache trust and
+transactions, ports, node state, and evidence never enter the cache. Run Z
+certified the integrated hit in 10.32 seconds on exact pushed code; the earlier
+cold/hit comparison remains development performance evidence. Manual commands,
+evidence checks, cache trust and
 repair guidance are in the
 [M3 operator guide](docs/m3-local-poc-operator-guide.md#reproduce-the-custom-token-f7-happy-pair-with-the-verified-wallet-cache).
 

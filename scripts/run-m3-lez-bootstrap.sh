@@ -8,6 +8,7 @@ umask 077
 
 readonly expected_guest_sha256="bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7"
 readonly expected_program_id="f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e"
+readonly expected_deployer_sha256="a7f1e2593844bef8fc61cab4b37566fb5c6b8cb8eba27efb50f985e995ba191c"
 readonly auth_transfer_program_id="dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71"
 
 fail() {
@@ -138,6 +139,10 @@ for binary in "$deployer" "$M3_POC_VAULT_CLAIM_BIN"; do
     fail "required LEZ bootstrap binary is missing or unsafe: ${binary}"
   [[ "$(readlink -f "$binary")" == "$binary" ]] || fail "bootstrap binary path is not canonical"
 done
+deployer_sha256_at_start="$(sha256sum "$deployer" | sed 's/ .*//')"
+readonly deployer_sha256_at_start
+[[ "$deployer_sha256_at_start" == "$expected_deployer_sha256" ]] ||
+  fail "LEZ deployer SHA-256 does not match the pinned F7 artifact"
 [[ -f "$guest_elf" && ! -L "$guest_elf" && "$(readlink -f "$guest_elf")" == "$guest_elf" ]] ||
   fail "canonical checked guest ELF is missing or unsafe"
 guest_elf_sha256="$(sha256sum "$guest_elf" | sed 's/ .*//')"
@@ -260,6 +265,8 @@ prove_finalized_transaction() {
 }
 
 deployment_start="$(finalized_tip)"
+[[ "$(sha256sum "$deployer" | sed 's/ .*//')" == "$deployer_sha256_at_start" ]] ||
+  fail "LEZ deployer changed before point of use"
 "$deployer" deploy-local --rpc-url "$M3_POC_LEZ_SEQUENCER_RPC_URL" \
   --channel-id "$M3_POC_LEZ_CHANNEL_ID" --timeout-seconds 300 >"$deployment_evidence"
 chmod 0600 "$deployment_evidence"
@@ -345,6 +352,8 @@ for role in maker taker; do
 done
 
 deployer_sha="$(sha256sum "$deployer" | sed 's/ .*//')"
+[[ "$deployer_sha" == "$deployer_sha256_at_start" ]] ||
+  fail "LEZ deployer changed before evidence publication"
 vault_claim_sha="$(sha256sum "$M3_POC_VAULT_CLAIM_BIN" | sed 's/ .*//')"
 bootstrap_script_sha="$(sha256sum scripts/run-m3-lez-bootstrap.sh | sed 's/ .*//')"
 deployer_manifest_sha="$(sha256sum "$deployer_manifest" | sed 's/ .*//')"

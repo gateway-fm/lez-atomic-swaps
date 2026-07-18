@@ -1,10 +1,9 @@
 # ADR 0047: Pin finalized windows and separate development from certification lanes
 
 Status: Accepted and actual-node GREEN in both custom-token directions at the
-one-second slot. Clean pushed-commit Run X retains the first complete pair. The
-immutable wallet cache is implementation- and contract-GREEN with measured
-cold/warm production inputs; its clean pushed actor-run integration and the
-remaining repeatability packets remain open.
+one-second slot. Clean pushed-commit Runs X and Z retain the first two complete
+pairs. The immutable wallet cache is implementation-, contract-, and clean
+pushed actor-integration-GREEN; one requested repeat pair remains open.
 
 ## Context
 
@@ -106,7 +105,9 @@ flowchart TB
     Change["Code or contract change"] --> Fast["Fast affected checks"]
     Fast --> Medium["Complete affected workspaces"]
     Medium --> Push["Clean commit pushed to origin/main"]
-    Push --> Cert["Fresh isolated certification run"]
+    Push --> Artifact["Pin guest and deployer before builds or nodes"]
+    Artifact --> Cert["Fresh isolated certification run"]
+    Guest["Canonical witnessed-token guest and deployer<br/>regular, canonical, exact SHA-256"] --> Artifact
     Inputs["Pinned source, lock, tools, target libs,<br/>native libs, policy, expected output"] --> Key["Canonical SHA-256 input key"]
     Key --> Ref["Owner-only atomic reference"]
     Ref --> Object["Wallet plus provenance manifest"]
@@ -181,7 +182,22 @@ hit took 10.35 seconds (10.31 seconds internally) and 33,844 KiB peak RSS: a
 runs had input key `6607d474...ded208`, object-manifest hash
 `27945318...63169`, and runtime hash `697c42f8...675c`. These measurements are
 honest dirty-tree development performance evidence because the helper itself
-was under review; they are not milestone certification. The next clean pushed
-custom-token actor run must report `cache_hit: true`, the same pinned wallet,
-full input/runtime provenance, unchanged effects/balances/replay, and exact
-cleanup before the integration is called certified.
+was under review; they are not milestone certification. Run Y then failed
+closed before deployment because its operator selected the older `a199c5be...`
+guest instead of the pinned F7 `bc2ea18e...` guest; its exact cleanup passed.
+Run Z on clean pushed `1555749` used the correct witnessed-token artifact and
+completed both directions in 19 minutes 10.95 seconds. Its packet reports a
+production-mode 10.32-second cache hit, the same pinned wallet and full
+input/runtime provenance, unchanged effects/balances/replay/finality, and exact
+non-foreign cleanup. The cache integration is therefore certified for the
+private-local PoC; one of three requested F7 repeat pairs remains.
+
+Run Y also exposed avoidable failure latency without weakening the artifact
+gate. The RED contract first failed because the outer runner had no early exact
+artifact identity preflight. GREEN now pins the canonical regular non-symlink
+guest and deployer before prebuild or service startup. Bootstrap independently
+revalidates the guest, and pins the deployer at bootstrap entry, immediately
+before execution, and at evidence publication. Thus a stale target now fails
+before allocating chain services, while mutation between validation and use
+also fails closed. Run Y's 1 minute 58 second failure is the measured late-fail
+cost being avoided; no unmeasured whole-run saving is claimed.

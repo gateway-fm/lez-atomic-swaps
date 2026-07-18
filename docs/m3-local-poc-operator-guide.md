@@ -1133,10 +1133,39 @@ at evidence publication. The cache root is shared only for immutable build
 artifacts; every node, identity, wallet home, actor store, journal, agreement,
 transaction, port, and evidence path remains run-private.
 
+The F7 flow requires the witnessed-token guest ELF
+`bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7`
+and deployer `a7f1e2593844bef8fc61cab4b37566fb5c6b8cb8eba27efb50f985e995ba191c`.
+Do not reuse the older native-only `a199c5be...` artifact target shown in
+historical audit commands. Run Y demonstrated that the independent bootstrap
+check rejects that stale target before deployment and still performs exact
+cleanup. The current outer runner rejects the exact mismatch even earlier,
+before prebuild or node startup; bootstrap still revalidates the guest and the
+deployer through point of use and evidence publication. Supply a target
+produced by the current pinned verifier; retained Run Z used
+`/tmp/lez-v02-provisional-artifact-m3f7artifact20260717a` only as an audited
+example, not as a portable path.
+
 ~~~sh
 export RUN_ID=m3f7-manual-001
 export M3_ACTOR_POC_ASSET_MODE=custom_token
 export M3_OFFICIAL_WALLET_CACHE_ROOT="${TMPDIR:-/tmp}/lez-atomic-swaps-cache-$(id -u)/m3-official-wallet-v1"
+./scripts/run-m3-actor-local-poc.sh
+~~~
+
+For audit only, Run Z used the following already-verified inputs. Never reuse
+its run ID; replace it with a fresh one, and independently verify or rebuild
+every absolute prerequisite on another host:
+
+~~~sh
+RUN_ID=m3f7compose20260718z \
+M3_ACTOR_POC_ASSET_MODE=custom_token \
+LEZ_V02_SOURCE_DIR=/tmp/lez-v020-native-investigation \
+LEZ_V02_SERVICES_DIR=/tmp/lez-v02-services-a58fbce2-20260713/release \
+LEZ_V02_R0VM=/tmp/lez-atomic-swaps-tools/risc0-3.0.5/home/extensions/v3.0.5-cargo-risczero-x86_64-unknown-linux-gnu/r0vm \
+LEZ_V02_ARTIFACT_TARGET_DIR=/tmp/lez-v02-provisional-artifact-m3f7artifact20260717a \
+RAPIDSNARK_LIB_DIR=/tmp/lez-atomic-swaps-tools/rapidsnark-v0.0.8/d4133227 \
+BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include \
 ./scripts/run-m3-actor-local-poc.sh
 ~~~
 
