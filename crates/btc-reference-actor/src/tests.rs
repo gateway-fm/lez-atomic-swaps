@@ -1465,6 +1465,22 @@ fn schema4_maker_material_is_role_shaped_and_agreement_direction_bound() {
 }
 
 #[test]
+fn schema5_bridge_timeout_accepts_actor_outer_deadline_and_rejects_above_it() {
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    configure_schema5_asset_extension(&mut fixture);
+
+    fixture.config.lez_bridge.request_timeout_millis = 120_000;
+    fixture
+        .config
+        .validate()
+        .expect("schema-5 accepts the actor outer request deadline");
+
+    fixture.config.lez_bridge.request_timeout_millis = 120_001;
+    assert_eq!(fixture.config.validate(), Err(ActorConfigError::Invalid));
+}
+
+#[test]
 fn schema5_asset_extension_maps_and_stages_exact_three_step_f7_plan() {
     let mut fixture =
         ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);

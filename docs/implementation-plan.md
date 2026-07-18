@@ -1,6 +1,6 @@
 # Living implementation plan
 
-Last updated: 2026-07-17
+Last updated: 2026-07-18
 
 This file is the delivery control document. It must change whenever scope,
 architecture, sequencing, risks, or acceptance evidence changes.
@@ -13,12 +13,12 @@ architecture, sequencing, risks, or acceptance evidence changes.
 3. Actual pinned upstream source and executable behavior, where prose and code
    disagree.
 
-The 2026-07-16 authority audit pins the live RFP repository at master commit
+The 2026-07-18 authority refresh pins the live RFP repository at master commit
 `121da225de1930c5ba693ebbef80ee788d55542a` and RFP-003 file blob `d0fa52b`.
-Replacement issue #112 is open/reopened with the `accepted` and `RFP-003`
-labels and continues to supersede issue #61. These immutable source identities
-anchor this plan; the issue state remains a mutable upstream fact that must be
-reread at milestone closure.
+Replacement issue #112 is closed with state reason `completed`, retains the
+`accepted` and `RFP-003` labels, and continues to supersede issue #61. These
+immutable source identities anchor this plan; the issue state remains a mutable
+upstream fact that must be reread at milestone closure.
 
 Issue #61 is historical only. The accepted pairs are LEZ-BTC, LEZ-XMR, and
 LEZ-ZEC transparent. ETH and shielded ZEC are out of scope.
@@ -1856,11 +1856,22 @@ Active M3 refund critical path:
   bridge call exactly 120 seconds; it does not add a transport retry or widen
   any durable submission authority. Batched or cached historical snapshots
   remain the upstream production improvement, not a milestone blocker after
-  this local bound is GREEN. Explicit terminal ATA balance and packet bindings
-  remain forward `175/75/0`, reverse `75/175/0`, and conserved total `250`. The
-  current execution ETA is one combined 90/120-second gate cycle and one fresh
-  two-direction run; synchronized documentation, D1, and milestone-wide closure
-  gates follow that passing run;
+  this local bound is GREEN. Fresh isolated run
+  `m3f7compose20260718p` started from clean pushed commit `d8d8f6a` and passed
+  the checked deployment, both fresh-identity Vault bootstraps, and the official
+  eight-transaction F7 Token/ATA fixture. The first actor configuration was
+  rejected before any trade effect because
+  `actor_lez_bridge_request_timeout_millis=120000` exceeded the actor validator
+  maximum of 60000 milliseconds. Exact cleanup passed without broad cleanup or
+  a foreign resource target. Run P is bounded RED evidence, not a custom-token
+  F7 PoC pass. The current tree locally fixes that exact mismatch by raising the
+  enforced actor maximum to 120000 milliseconds. A schema-5 boundary regression
+  accepts 120000 and rejects 120001, while the pre-Docker actor contract extracts
+  both configured values and rejects any future runner/actor drift before node
+  startup. Explicit terminal ATA balance and packet bindings remain forward
+  `175/75/0`, reverse `75/175/0`, and conserved total `250`. The remaining
+  functional gate is one fresh clean two-direction journey; synchronized
+  documentation, D1, and milestone-wide closure gates follow that passing run;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
   not recordings and cannot satisfy D1. The repository now supplies a
@@ -1886,9 +1897,9 @@ Active M3 refund critical path:
 - [ ] after the owner enters later hardening, add restart, reorg, fee, and chaos
   cases beyond the reproducible functional PoC boundary.
 
-Repository-controlled open work, not external blockers, is the combined F7
-90/120-second liveness gate, exact terminal balance/finality packet binding, a
-fresh two-direction actual-node custom-token run, D1 recordings, and
+Repository-controlled open work, not external blockers, is a fresh clean
+two-direction actual-node custom-token run with exact terminal balance/finality
+packet binding, D1 recordings, and
 synchronized closure evidence and gates. The
 official-wallet starting fixture is GREEN but cannot substitute for
 actor-owned escrow/claim/refund effects or finalized balance evidence. The
@@ -1916,9 +1927,10 @@ compensations, not proof-equivalent production finality. Under ADR 0018 this
 Logos-owned limitation is disclosed for production without weakening the local
 M3 evidence gate.
 
-Authority was reread again on 2026-07-16: accepted replacement issue #112 is
-open/reopened with the `accepted` and `RFP-003` labels and explicitly supersedes
-issue #61. The live RFP repository baseline is master commit
+Authority was reread again on 2026-07-18: accepted replacement issue #112 is
+closed with state reason `completed`, retains the `accepted` and `RFP-003`
+labels, and explicitly supersedes issue #61. The live RFP repository baseline is
+master commit
 `121da225de1930c5ba693ebbef80ee788d55542a` (file blob `d0fa52b`) and accepted
 issue #112, whose newline-normalized body SHA-256 remains
 `49356263a762307abc0f8dd2863ac5af8fe13d9b17b674f242d025de655f1c87`.

@@ -101,7 +101,7 @@ const MAX_PREPARED_CLAIM_RESULT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_MAKER_BITCOIN_FUNDING_BYTES: usize = 4 * 1024 * 1024;
 const MAX_MAKER_LEZ_PREPARATION_BYTES: usize = 4 * 1024 * 1024;
 const MAX_ADAPTOR_SECRET_FILE_BYTES: usize = 65;
-const MAX_REQUEST_TIMEOUT_MILLIS: u64 = 60_000;
+const MAX_REQUEST_TIMEOUT_MILLIS: u64 = 120_000;
 const FINALIZED_LEZ_CONFIRMATION_UNITS: u32 = 1;
 
 /// Exactly one lifecycle action performed by a fresh actor process.

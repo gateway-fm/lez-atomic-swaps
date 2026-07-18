@@ -1,6 +1,6 @@
 # Milestone delivery metrics
 
-Last updated: 2026-07-16
+Last updated: 2026-07-18
 
 This is the live evidence scorecard for ADR 0027's progressive milestone
 delivery. It tracks measurements and explicit unknowns; it does not infer a
@@ -34,7 +34,7 @@ evidence instead of assigning a percentage to unlike work items.
 
 | Metric | Current measurement | Evidence or next measurement point |
 |---|---|---|
-| Live authorities reconciled | 2 of 2 | RFP master commit `121da225...5542a` / blob `d0fa52b`; open/reopened accepted issue #112 body SHA-256 `49356263...f1c87`; issue #61 excluded. Re-fetched 2026-07-16 |
+| Live authorities reconciled | 2 of 2 | RFP master commit `121da225...5542a` / blob `d0fa52b`; accepted issue #112 is closed with state reason `completed`, retains the `accepted` and `RFP-003` labels, and has body SHA-256 `49356263...f1c87`; issue #61 excluded. Re-fetched 2026-07-18 |
 | Executable BTC-specific crates/components | 3 BTC crates, 1 actual-node runner, 4 fixture examples/CLIs, 1 role-local journal, 1 role-runner crate, and 2 of 2 live actor directions GREEN | Source tests remain GREEN. Run `m3actor-20260716n` binds commit `6ded2f9`, certified script hashes, fresh one-shot actor processes, four terminal role stores, and exact replay |
 | Typed Bitcoin Core adapter | 29 of 29 all-target test executions plus 2 of 2 happy and 2 of 2 refund actual-node actor integrations GREEN | Run H exercised exact Core 31.1 signed-anchor maturity, next-block eligibility, canonical three-item refund witness, txid/wtxid readback, one-attempt submission, containing-height confirmation, and terminal replay. Fee stress, bounded RBF/CPFP, reorg, and Testnet4 remain |
 | LEZ BTC witnessed path | Fresh checked deployment/onboarding plus 2 of 2 happy and 2 of 2 refund actor directions GREEN | Run-n retains both witnessed claims. Run H separately finalized maker `RefundNative` `a5cbb48a...97e41` in block 111 and taker `RefundNative` `64e1005b...9a6b4` in block 292 under private-local 3.0-second slots. Bounded scans and finite 30-second reads are live-proven; upstream historical-account proof/snapshot limits remain |

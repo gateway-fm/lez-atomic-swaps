@@ -340,6 +340,33 @@ jq -e '
   and .submission_count_semantics == "unique_effects_plus_durable_one_shot_authority"
   and .runtime_backend == "repository_owned_actual_node_implementation"
 ' <<<"$direction_contract" >/dev/null || fail "direction boundary contract is incomplete"
+
+# Keep the cheap, pre-Docker direction contract compatible with the actor that
+# consumes the generated config. The actor intentionally rejects out-of-range
+# timeouts while loading its private config, before any command can run.
+assert_actor_timeout_compatible() {
+  local direction_timeout="$1" actor_timeout_maximum="$2"
+  [[ "$direction_timeout" =~ ^[0-9]+$ ]] ||
+    fail "direction request timeout is not an unsigned integer"
+  [[ "$actor_timeout_maximum" =~ ^[0-9]+$ ]] ||
+    fail "actor request-timeout maximum is not an unsigned integer"
+  (( direction_timeout <= actor_timeout_maximum )) ||
+    fail "direction request timeout exceeds the actor configuration maximum"
+}
+
+readonly actor_source="crates/btc-reference-actor/src/lib.rs"
+actor_timeout_literal="$(sed -n \
+  's/^const MAX_REQUEST_TIMEOUT_MILLIS: u64 = \([0-9][0-9_]*\);$/\1/p' \
+  "$actor_source")"
+[[ "$actor_timeout_literal" =~ ^[0-9][0-9_]*$ ]] ||
+  fail "actor request-timeout maximum is unavailable or ambiguous"
+actor_timeout_maximum="${actor_timeout_literal//_/}"
+direction_timeout="$(jq -er \
+  '.actor_lez_bridge_request_timeout_millis | numbers' <<<"$direction_contract")"
+rg -Fq \
+  'self.lez_bridge.request_timeout_millis > MAX_REQUEST_TIMEOUT_MILLIS' \
+  "$actor_source" || fail "actor no longer enforces its request-timeout maximum"
+assert_actor_timeout_compatible "$direction_timeout" "$actor_timeout_maximum"
 if rg -n 'M3_ACTOR_DIRECTION_BACKEND|runtime backend is missing|real actor flow is not yet assembled' \
   "$direction_driver"; then
   fail "direction driver still delegates to an external runtime backend"
@@ -980,6 +1007,11 @@ rg -Fq 'planned_bitcoin_funding_anchor_height' "$direction_driver" ||
 rg -Fq 'exact_transaction_occurrences:1' "$direction_driver" ||
   fail "Bitcoin lock path does not retain exact containing-block membership"
 actor_config_source="$(sed -n '/^write_actor_configs() {$/,/^}$/p' "$direction_driver")"
+rg -Fq -- '--argjson bridge_timeout "$actor_lez_bridge_request_timeout_millis"' \
+  <<<"$actor_config_source" ||
+  fail "generated actor config does not use the contracted bridge timeout"
+rg -Fq 'request_timeout_millis:$bridge_timeout' <<<"$actor_config_source" ||
+  fail "generated actor config omits the contracted bridge timeout"
 for term in 'schema=5' 'schema=4' 'schema_version:$schema,role:$role' \
   'chain:"lez_asset_v2"' 'asset_extension:{record_file:$asset_record' \
   'expected_asset_commitment:$asset_commitment' 'taker_first_lock:{chain:"lez_asset_v2"'; do
