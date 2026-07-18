@@ -51,8 +51,8 @@ use lez_bridge_protocol::{
     PreparedTransaction, PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility,
     RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
     TransactionId, WitnessedAssetPrepareStepV2, WitnessedEscrowMetadataFacts,
-    WitnessedFundingObservation, WitnessedInitializationObservation, WitnessedNativeEscrowTerms,
-    WitnessedNativeEscrowTermsInput,
+    WitnessedFundingObservation, WitnessedInitializationObservation, WitnessedLezAssetTermsV2,
+    WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
 };
 use lez_btc_core_adapter::{
     AuthorizedClaimSubmission, AuthorizedFundingSubmission, AuthorizedRefundSubmission,
@@ -7367,6 +7367,8 @@ fn peerless_asset_funding_request_id(
     config: &ActorConfig,
     agreement: &BtcAgreementV1,
     asset_commitment: [u8; 32],
+    terms: &WitnessedLezAssetTermsV2,
+    target: &FinalizedWitnessedAssetTransactionTargetV2,
 ) -> Result<RequestId, ActorCommandError> {
     #[derive(Serialize)]
     struct Identity<'a> {
@@ -7376,6 +7378,9 @@ fn peerless_asset_funding_request_id(
         asset_commitment: String,
         run_id: &'a RunId,
         participant: BridgeParticipant,
+        runtime: &'a RuntimeDescriptor,
+        terms: &'a WitnessedLezAssetTermsV2,
+        target: &'a FinalizedWitnessedAssetTransactionTargetV2,
         window: DiscoveryWindow,
     }
 
@@ -7386,6 +7391,9 @@ fn peerless_asset_funding_request_id(
         asset_commitment: hex::encode(asset_commitment),
         run_id: &config.lez_bridge.run_id,
         participant: config.role.bridge(),
+        runtime: &config.lez_bridge.runtime,
+        terms,
+        target,
         window: config.discovery_window()?,
     })
 }
@@ -7400,8 +7408,14 @@ async fn observe_peerless_finalized_lez_asset_funding(
     let asset_commitment = *extension.asset_commitment();
     let binding = BtcLezAssetBridgeBindingV2::new(agreement, &extension, extension.asset())
         .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
-    let request_id = peerless_asset_funding_request_id(config, agreement, asset_commitment)?;
     let target = FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {};
+    let request_id = peerless_asset_funding_request_id(
+        config,
+        agreement,
+        asset_commitment,
+        binding.terms(),
+        &target,
+    )?;
     let window = config.discovery_window()?;
     let outcome = classifier
         .classify(&binding, request_id.clone(), target.clone(), window)

@@ -258,11 +258,20 @@ Schema 5 uses the v2 asset classifier. The Maker can reconcile its exact
 prepared three-step plan, while the Taker deliberately receives no
 Maker-private transaction material: it discovers the peer's finalized funding
 by the countersigned asset terms. Its deterministic request binds the agreement
-commitment, asset commitment, run, role, and complete discovery window, and the
-target is `DiscoverByTerms`. Only an exact `Found` result becomes revision-two
+commitment, asset commitment, run, role, runtime, complete v2 terms, fixed
+target, and complete discovery window; the live target is `DiscoverByTerms`.
+Only an exact `Found` result becomes revision-two
 evidence. `Absent`, `Uncertain`, or `Unavailable` remains pending; transport,
 echo, window, or agreement drift fails closed. This observation-only port has
 no submission or completion method.
+
+The complete validated public transaction facts are currently embedded in
+role-local recovery evidence. The v2 protocol permits a larger exact
+transaction than the recovery store's 64 KiB per-chain-evidence cap. An
+oversized valid `Found` therefore fails closed during projection and grants no
+authority, but could deny liveness. Official local-PoC token transactions are
+well below that limit. Compact commitment plus independently recoverable public
+facts is production hardening, not part of the current functional-PoC claim.
 
 ```mermaid
 sequenceDiagram

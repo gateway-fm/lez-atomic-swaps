@@ -1894,13 +1894,21 @@ Active M3 refund critical path:
   classifier with `DiscoverByTerms`, projects an exact `Found` token funding to
   revision two, and keeps `Absent`, `Uncertain`, and `Unavailable` pending. The
   live selector retains schema 4 on v1, binds the v2 request to the countersigned
-  agreement, asset commitment, run, role, and discovery window, and exposes no
-  submission method. All 83 actor tests, strict all-target Clippy, and the M3
-  pre-Docker actor contract pass. Explicit terminal ATA balance and packet
+  agreement, asset commitment, run, role, runtime, full terms, fixed target,
+  and discovery window, and exposes no submission method. Forward
+  Taker-observes-Maker and reverse Maker-observes-Taker transitions are both
+  covered. All 85 actor tests, strict all-target Clippy, and the M3 pre-Docker
+  actor contract pass. Explicit terminal ATA balance and packet
   bindings remain forward
   `175/75/0`, reverse `75/175/0`, and conserved total `250`. The remaining
   functional gate is one fresh clean two-direction journey; synchronized
   documentation, D1, and milestone-wide closure gates follow that passing run;
+- [ ] compact or externally reference peerless public transaction facts before
+  production. The validated v2 wire can carry transaction bytes larger than
+  the recovery store's 64 KiB per-chain-evidence cap. Official PoC transactions
+  are well below the cap; an oversized valid `Found` currently fails closed at
+  projection and cannot grant authority, but could deny liveness. This is
+  repository-owned production hardening, not an M3 functional-PoC blocker;
 - [ ] create the D1 recordings for BTC happy, refund/timeout, and overlapping
   concurrent journeys. Secret-safe JSON manifests prove machine facts but are
   not recordings and cannot satisfy D1. The repository now supplies a

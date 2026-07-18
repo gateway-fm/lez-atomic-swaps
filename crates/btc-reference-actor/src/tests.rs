@@ -1482,10 +1482,73 @@ fn schema5_bridge_timeout_accepts_actor_outer_deadline_and_rejects_above_it() {
     assert_eq!(fixture.config.validate(), Err(ActorConfigError::Invalid));
 }
 
+#[test]
+fn peerless_asset_funding_request_identity_binds_runtime_and_window() {
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    let extension = configure_schema5_asset_extension(&mut fixture);
+    let binding =
+        BtcLezAssetBridgeBindingV2::new(&fixture.agreement, &extension, extension.asset())
+            .expect("asset binding");
+    let target = FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {};
+    let baseline = peerless_asset_funding_request_id(
+        &fixture.config,
+        &fixture.agreement,
+        *extension.asset_commitment(),
+        binding.terms(),
+        &target,
+    )
+    .expect("baseline request identity");
+
+    let mut changed_runtime = fixture.config.clone();
+    changed_runtime.lez_bridge.runtime.genesis_block_hash = Hex32::from_bytes([0xe0; 32]);
+    assert_ne!(
+        peerless_asset_funding_request_id(
+            &changed_runtime,
+            &fixture.agreement,
+            *extension.asset_commitment(),
+            binding.terms(),
+            &target,
+        )
+        .expect("changed-runtime request identity"),
+        baseline
+    );
+
+    let mut changed_window = fixture.config.clone();
+    changed_window.lez_bridge.discovery_start_height += 1;
+    assert_ne!(
+        peerless_asset_funding_request_id(
+            &changed_window,
+            &fixture.agreement,
+            *extension.asset_commitment(),
+            binding.terms(),
+            &target,
+        )
+        .expect("changed-window request identity"),
+        baseline
+    );
+
+    let exact_target = FinalizedWitnessedAssetTransactionTargetV2::exact(PreparedTransaction::new(
+        TransactionId::from_bytes([0xef; 32]),
+        ExactTransactionBytes::new(b"changed-peer-funding-target".to_vec()).expect("target bytes"),
+    ));
+    assert_ne!(
+        peerless_asset_funding_request_id(
+            &fixture.config,
+            &fixture.agreement,
+            *extension.asset_commitment(),
+            binding.terms(),
+            &exact_target,
+        )
+        .expect("changed-target request identity"),
+        baseline
+    );
+}
+
 #[derive(Clone)]
 struct FixedPeerlessAssetFundingClassifier {
     outcome: FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetFundingFactsV2>,
-    targets: Arc<Mutex<Vec<FinalizedWitnessedAssetTransactionTargetV2>>>,
+    calls: Arc<Mutex<Vec<(RequestId, FinalizedWitnessedAssetTransactionTargetV2)>>>,
 }
 
 #[async_trait]
@@ -1493,7 +1556,7 @@ impl LezAssetFundingClassifierPort for FixedPeerlessAssetFundingClassifier {
     async fn classify(
         &self,
         binding: &BtcLezAssetBridgeBindingV2,
-        _request_id: RequestId,
+        request_id: RequestId,
         target: FinalizedWitnessedAssetTransactionTargetV2,
         window: DiscoveryWindow,
     ) -> Result<
@@ -1515,25 +1578,17 @@ impl LezAssetFundingClassifierPort for FixedPeerlessAssetFundingClassifier {
         if let Some(scanned_window) = scanned_window {
             assert_eq!(window, scanned_window);
         }
-        self.targets.lock().expect("targets").push(target);
+        self.calls
+            .lock()
+            .expect("classifier calls")
+            .push((request_id, target));
         Ok(self.outcome.clone())
     }
 }
 
-#[tokio::test]
-async fn schema5_taker_projects_custom_token_maker_lock_from_v2_peerless_funding() {
-    let mut fixture =
-        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
-    let _ = configure_schema5_asset_extension(&mut fixture);
-    assert_eq!(
-        lez_funding_observation_protocol(&fixture.config),
-        LezFundingObservationProtocol::AssetV2
-    );
-    let legacy = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
-    assert_eq!(
-        lez_funding_observation_protocol(&legacy.config),
-        LezFundingObservationProtocol::NativeV1
-    );
+fn exact_peerless_asset_funding_outcome(
+    fixture: &ActorFixture,
+) -> FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetFundingFactsV2> {
     let (extension, _) = validated_asset_extension_material(&fixture.config, &fixture.agreement)
         .expect("asset extension");
     let binding =
@@ -1590,17 +1645,34 @@ async fn schema5_taker_projects_custom_token_maker_lock_from_v2_peerless_funding
             75,
         )),
     );
-    let outcome = FinalizedWitnessedAssetScanOutcomeV2::Found {
+    FinalizedWitnessedAssetScanOutcomeV2::Found {
         finalized_clock: ChainClock::new(block_hash, height, timestamp_ms),
         scanned_window: window,
         facts: Box::new(facts),
-    };
-    let targets = Arc::new(Mutex::new(Vec::new()));
+    }
+}
+
+#[tokio::test]
+async fn schema5_taker_projects_custom_token_maker_lock_from_v2_peerless_funding() {
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    let _ = configure_schema5_asset_extension(&mut fixture);
+    assert_eq!(
+        lez_funding_observation_protocol(&fixture.config),
+        LezFundingObservationProtocol::AssetV2
+    );
+    let legacy = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    assert_eq!(
+        lez_funding_observation_protocol(&legacy.config),
+        LezFundingObservationProtocol::NativeV1
+    );
+    let outcome = exact_peerless_asset_funding_outcome(&fixture);
+    let calls = Arc::new(Mutex::new(Vec::new()));
     let observer = LezAssetFundingObserver {
         config: &fixture.config,
         classifier: FixedPeerlessAssetFundingClassifier {
             outcome,
-            targets: Arc::clone(&targets),
+            calls: Arc::clone(&calls),
         },
     };
 
@@ -1616,9 +1688,64 @@ async fn schema5_taker_projects_custom_token_maker_lock_from_v2_peerless_funding
 
     assert_eq!(output.revision, 2);
     assert_eq!(output.phase, Phase::BothLegsLocked.into());
+    let calls = calls.lock().expect("classifier calls");
+    assert_eq!(calls.len(), 1);
     assert_eq!(
-        *targets.lock().expect("targets"),
-        [FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {}]
+        calls[0].1,
+        FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {}
+    );
+    let (extension, _) = validated_asset_extension_material(&fixture.config, &fixture.agreement)
+        .expect("asset extension");
+    let binding =
+        BtcLezAssetBridgeBindingV2::new(&fixture.agreement, &extension, extension.asset())
+            .expect("asset binding");
+    assert_eq!(
+        calls[0].0,
+        peerless_asset_funding_request_id(
+            &fixture.config,
+            &fixture.agreement,
+            *extension.asset_commitment(),
+            binding.terms(),
+            &calls[0].1,
+        )
+        .expect("expected request identity")
+    );
+}
+
+#[tokio::test]
+async fn schema5_maker_projects_custom_token_taker_lock_from_v2_peerless_funding() {
+    let mut fixture = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Maker);
+    let _ = configure_schema5_bitcoin_asset_material(&mut fixture);
+    assert_eq!(
+        lez_funding_observation_protocol(&fixture.config),
+        LezFundingObservationProtocol::AssetV2
+    );
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let observer = LezAssetFundingObserver {
+        config: &fixture.config,
+        classifier: FixedPeerlessAssetFundingClassifier {
+            outcome: exact_peerless_asset_funding_outcome(&fixture),
+            calls: Arc::clone(&calls),
+        },
+    };
+
+    execute_actor_command(&fixture.config, ActorCommand::Activate)
+        .await
+        .expect("activate reverse Maker");
+    let output = drive_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &observer,
+    )
+    .await
+    .expect("peerless Taker asset funding projects");
+
+    assert_eq!(output.revision, 1);
+    assert_eq!(output.phase, Phase::TakerLockConfirmed.into());
+    assert_eq!(
+        calls.lock().expect("classifier calls")[0].1,
+        FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {}
     );
 }
 
@@ -1652,7 +1779,7 @@ async fn schema5_peerless_asset_absence_uncertainty_and_unavailability_remain_pe
             config: &fixture.config,
             classifier: FixedPeerlessAssetFundingClassifier {
                 outcome,
-                targets: Arc::new(Mutex::new(Vec::new())),
+                calls: Arc::new(Mutex::new(Vec::new())),
             },
         };
         assert!(matches!(
