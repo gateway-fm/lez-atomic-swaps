@@ -52,7 +52,8 @@ declare -A seen_run_ids=()
 entries=()
 bundle_commit=""
 networks_json=""
-readonly verifier_repository_commit="$(git rev-parse --verify HEAD)"
+verifier_repository_commit="$(git rev-parse --verify HEAD)"
+readonly verifier_repository_commit
 
 for manifest in "$@"; do
   [[ -f "$manifest" && ! -L "$manifest" ]] || fail "manifest must be a regular non-symlink file"
