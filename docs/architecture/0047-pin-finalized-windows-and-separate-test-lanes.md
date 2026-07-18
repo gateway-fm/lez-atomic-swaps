@@ -1,9 +1,10 @@
 # ADR 0047: Pin finalized windows and separate development from certification lanes
 
 Status: Accepted and actual-node GREEN in both custom-token directions at the
-one-second slot. Clean pushed-commit Runs X and Z retain the first two complete
-pairs. The immutable wallet cache is implementation-, contract-, and clean
-pushed actor-integration-GREEN; one requested repeat pair remains open.
+one-second slot. Clean pushed-commit Runs X, Z, and AA retain all three
+requested complete pairs. The immutable wallet cache is implementation-,
+contract-, and clean pushed actor-integration-GREEN; the F7 repeatability gate
+is closed.
 
 ## Context
 
@@ -190,7 +191,13 @@ completed both directions in 19 minutes 10.95 seconds. Its packet reports a
 production-mode 10.32-second cache hit, the same pinned wallet and full
 input/runtime provenance, unchanged effects/balances/replay/finality, and exact
 non-foreign cleanup. The cache integration is therefore certified for the
-private-local PoC; one of three requested F7 repeat pairs remains.
+private-local PoC.
+
+Run AA on clean pushed `df7ed86` completed the third pair in 18 minutes 13.61
+seconds with the same revisions, effects, balances, finality, replay, and exact
+cleanup. Its production-mode cache hit took 7.81 seconds, and the hardened
+guest/deployer checks retained the exact pinned identities through bootstrap.
+The requested F7 repetition gate is therefore 3 of 3 per direction.
 
 Run Y also exposed avoidable failure latency without weakening the artifact
 gate. The RED contract first failed because the outer runner had no early exact

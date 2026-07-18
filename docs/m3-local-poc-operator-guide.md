@@ -1169,6 +1169,13 @@ BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include \
 ./scripts/run-m3-actor-local-poc.sh
 ~~~
 
+Certification status: Runs X, Z, and AA completed three clean pairs per
+direction. Latest Run AA used exact pushed `df7ed86`, took 18 minutes 13.61
+seconds, retained the same effects and terminal balances, replayed zero sends,
+hit the verified wallet cache in 7.81 seconds, and removed every exact owned
+resource. These retained run IDs are spent; manual repetitions require a new
+identity and run ID.
+
 The first invocation for a new validation-policy/input key is an offline cold
 build. It can take about 3 minutes and create roughly 2.7 GiB of private
 temporary Cargo output; missing locked Cargo/Git inputs fail rather than

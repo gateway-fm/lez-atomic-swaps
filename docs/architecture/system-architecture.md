@@ -2333,6 +2333,13 @@ cache hit took 10.32 seconds. Run Y is not evidence for a swap: the independent
 guest check rejected a mistakenly selected pre-F7 artifact before deployment,
 and exact cleanup passed.
 
+Run AA on clean pushed `df7ed86` completed the third pair in 18 minutes 13.61
+seconds with unchanged terminal revisions, effects, directional balances,
+finality, replay, and exact cleanup. The production-mode wallet-cache hit took
+7.81 seconds, and bootstrap retained the exact hardened guest/deployer
+identities. Runs X, Z, and AA therefore close the requested 3-of-3 F7
+repeatability gate.
+
 The official-wallet prebuild now passes through a separate owner-only
 content-addressed artifact component. Policy 2 binds the complete secret-free
 source, toolchain, target-library, build-tool, Cargo-config, bindgen,
@@ -2340,8 +2347,8 @@ native-library, expected-output, runtime, and validation-helper identities.
 Only the executable and manifest persist; a fresh run-private non-hardlinked
 copy is triple-rehashed before use. A real cold/hit comparison measured
 202.42/10.35 seconds, saving 192.07 seconds without weakening any chain or
-artifact gate. Run Z certifies the integrated hit on exact pushed code. The
-remaining repeat pair,
+artifact gate. Runs Z and AA certify integrated hits on exact pushed code. The
+F7 repeat gate is closed;
 arbitrary-N/same-direction scheduling, process-kill/reorg/chaos, public
 deployment, formal review, and production readiness remain outside the claim.
 

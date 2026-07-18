@@ -2014,7 +2014,11 @@ Active M3 refund critical path:
   production-mode 10.32-second cache hit while preserving revision four,
   `2 Bitcoin + 4 LEZ` effects, `175/75/0` and `75/175/0` balances, conserved
   total 250, zero replay, finalized chain evidence, and exact cleanup. F7 is
-  therefore 2 of 3 clean repetitions per direction; one pair remains. A
+  Fresh Run AA (`m3f7compose20260718aa`) on clean pushed `df7ed86` then
+  completed the third pair in 18 minutes 13.61 seconds with the same revisions,
+  effects, balances, finality, zero replay, and exact cleanup; its
+  production-mode cache hit took 7.81 seconds. F7 is therefore 3 of 3 clean
+  repetitions per direction and the requested repeatability gate is closed. A
   follow-on RED proved the outer runner lacked early exact artifact identity.
   GREEN now checks the canonical regular non-symlink guest and deployer hashes
   before prebuild or node startup, while bootstrap independently rechecks the
@@ -2052,10 +2056,11 @@ Active M3 refund critical path:
 - [ ] after the owner enters later hardening, add restart, reorg, fee, and chaos
   cases beyond the reproducible functional PoC boundary.
 
-Repository-controlled open work, not external blockers, is one more fresh
-custom-token repetitions per direction, D1 recordings, and synchronized closure
-evidence and gates. Runs X and Z close the first two exact terminal
-balance/finality pairs.
+Repository-controlled open work, not external blockers, includes another
+recorded native pair, a clean overlap repeat, D1 recordings, durable public-SDK
+process/chain composition, vectors/Testnet4 closure, and synchronized milestone
+evidence and gates. Runs X, Z, and AA close the requested three exact F7
+terminal balance/finality pairs.
 The official-wallet starting fixture remains a reproducible prerequisite rather
 than a substitute for actor-owned escrow/claim/refund effects or finalized
 balance evidence. The

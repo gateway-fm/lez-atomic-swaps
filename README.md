@@ -112,6 +112,13 @@ production-mode verified-wallet cache hit. Run `m3f7compose20260718y` is not a
 swap repetition: an accidentally supplied pre-F7 guest target failed its
 pinned ELF check before deployment, and exact cleanup passed.
 
+Fresh Run `m3f7compose20260718aa` on clean pushed `df7ed86` completed the
+third pair in 18 minutes 13.61 seconds. It preserved the same terminal
+revisions, effects, directional balances, finality, zero replay, and exact
+cleanup, while certifying the fail-fast guest/deployer hardening and a
+7.81-second production cache hit. The requested F7 repeatability gate is now
+3 of 3 per direction; this still does not by itself complete or tag M3.
+
 The official LEZ v0.2 wallet preparation is now content-addressed and
 fail-closed for repeat runs. A hardened production-input cold build measured
 202.42 seconds; the exact validated hit measured 10.35 seconds, saving 192.07
@@ -120,8 +127,9 @@ metadata and effective config, program artifacts, Rust/Cargo and target-library
 tree, build tools, bindgen headers, native libraries, validation helper/policy,
 runtime dependencies, and pinned wallet SHA-256. Only the executable and its
 manifest persist; wallet state, keys, actor databases, journals, agreements,
-transactions, ports, node state, and evidence never enter the cache. Run Z
-certified the integrated hit in 10.32 seconds on exact pushed code; the earlier
+transactions, ports, node state, and evidence never enter the cache. Runs Z
+and AA certified integrated hits in 10.32 and 7.81 seconds on exact pushed
+code; the earlier
 cold/hit comparison remains development performance evidence. Manual commands,
 evidence checks, cache trust and
 repair guidance are in the
