@@ -162,6 +162,7 @@ for term in "${required_runner_network_terms[@]}"; do
 done
 
 required_runner_runtime_terms=(
+  "--label 'org.logos-co.atomic-swaps.component=bitcoin-core-image'"
   'docker volume create'
   'container_id="$(docker create'
   "--publish '127.0.0.1::18443'"

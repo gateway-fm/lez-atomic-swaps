@@ -1176,6 +1176,38 @@ hit the verified wallet cache in 7.81 seconds, and removed every exact owned
 resource. These retained run IDs are spent; manual repetitions require a new
 identity and run ID.
 
+Node provisioning is now coordinated concurrently after all immutable
+prebuild and artifact gates pass. Core and LEZ use separate exact launcher
+sessions and disjoint run-labelled Docker resources; both launchers are waited
+and reaped before deployment, onboarding, agreement creation, or actor effects.
+The runner rejects missing, duplicate, overcounted, wrong-scope, or
+wrong-component resources and removes only individually authenticated
+identities. Run AA measured the old sequential startup at about 39 seconds for
+Core and 58 seconds for LEZ, or about 98 seconds with handoff. The new behavior
+contract is GREEN, but the successful actual-node saving remains pending until
+the first clean pushed benchmark.
+
+After a successful manual run, verify that both launchers completed and their
+resource inventory reconciled before interpreting any swap evidence:
+
+~~~sh
+jq -e '
+  .bitcoin_status == 0
+  and .lez_status == 0
+  and ((.owning_shell_pid | numbers) > 0)
+  and .bitcoin_registered == true
+  and .lez_registered == true
+  and .both_children_waited_and_reaped == true
+  and .exact_process_groups_absent_after_wait == true
+  and .inventory_reconciled == true
+' "$M3_EVIDENCE/node-startup-status.json"
+~~~
+
+This file contains no key, capability, credential, transaction bytes, or
+wallet material. INT, TERM, child failure, Docker-query failure, or resource
+identity drift produces no passing cleanup attestation. No public RPC, faucet,
+peer, or public funds are introduced by concurrent startup.
+
 The first invocation for a new validation-policy/input key is an offline cold
 build. It can take about 3 minutes and create roughly 2.7 GiB of private
 temporary Cargo output; missing locked Cargo/Git inputs fail rather than

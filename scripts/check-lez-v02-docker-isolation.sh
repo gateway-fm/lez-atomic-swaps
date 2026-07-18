@@ -130,10 +130,12 @@ required_runner_terms=(
   'label=org.logos-co.atomic-swaps.run=${run_id}'
   'docker network inspect "$network"'
   'docker image inspect "$LEZ_V02_IMAGE"'
+  'org.logos-co.atomic-swaps.component=lez-v0.2-image'
+  'org.logos-co.atomic-swaps.component=lez-v0.2-network'
   'return "$cleanup_failed"'
   'count_fixed_occurrences'
-  'source_genesis_time_occurrences'
-  'generated_genesis_time_occurrences'
+  'source_genesis_count'
+  'generated_genesis_count'
 )
 
 for term in "${required_runner_terms[@]}"; do

@@ -43,7 +43,7 @@ required_runner_terms=(
   '"$upstream_lez_channel_id" >>"$manifest"'
   'readonly upstream_genesis_time_hex="2c04626900000000"'
   'genesis_time_hex='
-  's/${upstream_genesis_time_hex}/${genesis_time_hex}/'
+  's/${upstream_genesis_time_hex}/${genesis_hex}/'
 )
 
 for term in "${required_runner_terms[@]}"; do

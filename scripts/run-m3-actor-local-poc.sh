@@ -128,6 +128,8 @@ readonly run_evidence="${evidence_dir}/m3-actor-local-poc.json"
 readonly toolchain="${M3_RUST_TOOLCHAIN:-1.96.0}"
 readonly direction_driver="${repo_root}/scripts/run-m3-actor-direction.sh"
 readonly lez_bootstrap_driver="${repo_root}/scripts/run-m3-lez-bootstrap.sh"
+readonly bitcoin_service_driver="${repo_root}/scripts/run-bitcoin-core-e2e.sh"
+readonly lez_service_driver="${repo_root}/scripts/run-lez-v02-stack.sh"
 readonly f7_token_fixture_driver="${repo_root}/scripts/run-m3-f7-token-fixture.sh"
 readonly bitcoin_anchor_assignment_filter="${repo_root}/scripts/jq/m3-bitcoin-anchor-assignment.jq"
 readonly lez_source_dir="${LEZ_V02_SOURCE_DIR:-/tmp/lez-v020-native-investigation}"
@@ -297,7 +299,8 @@ emit_contract() {
         origin_main_equals_head: true,
         executable_hashes_stable_from_start_to_publication: true,
         executable_script_sha256s:
-          (["outer_runner", "direction_driver", "lez_bootstrap"] +
+          (["outer_runner", "direction_driver", "lez_bootstrap",
+            "bitcoin_service_driver", "lez_service_driver"] +
            (if $asset_mode == "custom_token" then
               ["f7_token_fixture","official_wallet_cache"] else [] end))
       },
@@ -345,7 +348,7 @@ fail() {
   exit 2
 }
 
-for command_name in cargo chmod curl date docker find git id jq kill mkdir mv readlink rg rm sed sha256sum sleep stat; do
+for command_name in awk cargo chmod curl date docker find git id jq kill mkdir mv ps readlink rg rm sed setsid sha256sum sleep stat; do
   command -v "$command_name" >/dev/null || fail "missing required tool: ${command_name}"
 done
 
@@ -360,14 +363,18 @@ origin_main_at_start="$(git rev-parse refs/remotes/origin/main)" ||
   fail "M3 actor execution requires HEAD to equal the already-pushed origin/main commit"
 readonly repository_commit_at_start origin_main_at_start
 for tracked_path in scripts/run-m3-actor-local-poc.sh \
-  scripts/run-m3-actor-direction.sh scripts/run-m3-lez-bootstrap.sh; do
+  scripts/run-m3-actor-direction.sh scripts/run-m3-lez-bootstrap.sh \
+  scripts/run-bitcoin-core-e2e.sh scripts/run-lez-v02-stack.sh; do
   git ls-files --error-unmatch "$tracked_path" >/dev/null ||
     fail "M3 executable is not tracked at HEAD: $tracked_path"
 done
 outer_runner_sha_at_start="$(sha256sum scripts/run-m3-actor-local-poc.sh | sed 's/ .*//')"
 direction_driver_sha_at_start="$(sha256sum "$direction_driver" | sed 's/ .*//')"
 lez_bootstrap_sha_at_start="$(sha256sum "$lez_bootstrap_driver" | sed 's/ .*//')"
+bitcoin_service_driver_sha_at_start="$(sha256sum "$bitcoin_service_driver" | sed 's/ .*//')"
+lez_service_driver_sha_at_start="$(sha256sum "$lez_service_driver" | sed 's/ .*//')"
 readonly outer_runner_sha_at_start direction_driver_sha_at_start lez_bootstrap_sha_at_start
+readonly bitcoin_service_driver_sha_at_start lez_service_driver_sha_at_start
 f7_token_fixture_driver_sha_at_start=""
 official_wallet_cache_helper_sha_at_start=""
 
@@ -379,6 +386,12 @@ official_wallet_cache_helper_sha_at_start=""
   fail "M3 actor direction driver path is not canonical"
 [[ -x "$lez_bootstrap_driver" && ! -L "$lez_bootstrap_driver" ]] ||
   fail "M3 LEZ bootstrap driver is missing or unsafe"
+[[ -x "$bitcoin_service_driver" && ! -L "$bitcoin_service_driver" &&
+   "$(readlink -f "$bitcoin_service_driver")" == "$bitcoin_service_driver" ]] ||
+  fail "Bitcoin service driver is missing or unsafe"
+[[ -x "$lez_service_driver" && ! -L "$lez_service_driver" &&
+   "$(readlink -f "$lez_service_driver")" == "$lez_service_driver" ]] ||
+  fail "LEZ service driver is missing or unsafe"
 if [[ "$asset_mode" == "custom_token" ]]; then
   command -v sqlite3 >/dev/null || fail "missing required tool for actor evidence: sqlite3"
   command -v timeout >/dev/null || fail "missing required tool for official wallet reads: timeout"
@@ -477,17 +490,24 @@ for path in "$run_root" ".e2e/${bitcoin_run_id}" ".e2e/${lez_run_id}" \
 done
 
 for child_run in "$bitcoin_run_id" "$lez_run_id"; do
-  if [[ -n "$(docker container ls --all --quiet \
-      --filter "label=org.logos-co.atomic-swaps.run=${child_run}")" ]] ||
-     [[ -n "$(docker network ls --quiet \
-      --filter "label=org.logos-co.atomic-swaps.run=${child_run}")" ]] ||
-     [[ -n "$(docker volume ls --quiet \
-      --filter "label=org.logos-co.atomic-swaps.run=${child_run}")" ]] ||
-     [[ -n "$(docker image ls --quiet \
-      --filter "label=org.logos-co.atomic-swaps.run=${child_run}")" ]]; then
+  child_containers="$(docker container ls --all --quiet \
+    --filter "label=org.logos-co.atomic-swaps.run=${child_run}")" ||
+    fail "Docker container collision query failed for child run ${child_run}"
+  child_networks="$(docker network ls --quiet \
+    --filter "label=org.logos-co.atomic-swaps.run=${child_run}")" ||
+    fail "Docker network collision query failed for child run ${child_run}"
+  child_volumes="$(docker volume ls --quiet \
+    --filter "label=org.logos-co.atomic-swaps.run=${child_run}")" ||
+    fail "Docker volume collision query failed for child run ${child_run}"
+  child_images="$(docker image ls --quiet \
+    --filter "label=org.logos-co.atomic-swaps.run=${child_run}")" ||
+    fail "Docker image collision query failed for child run ${child_run}"
+  if [[ -n "$child_containers" || -n "$child_networks" ||
+        -n "$child_volumes" || -n "$child_images" ]]; then
     fail "refusing to reuse Docker resources for child run ${child_run}"
   fi
 done
+unset child_run child_containers child_networks child_volumes child_images
 
 mkdir -p "$evidence_dir" "$identities_dir" "$directions_dir"
 chmod 0700 "$run_root" "$evidence_dir" "$private_dir" "$identities_dir" "$directions_dir"
@@ -508,64 +528,319 @@ process_matches_registry() {
   [[ "$actual_start" == "$expected_start" && "$actual_executable" == "$expected_executable" ]]
 }
 
+process_group_matches_registry() {
+  local pid="$1"
+  local expected_start="$2"
+  local expected_executable="$3"
+  local expected_pgid="$4"
+  local expected_sid="$5"
+  local actual_pgid actual_sid
+  process_matches_registry "$pid" "$expected_start" "$expected_executable" || return 1
+  [[ "$expected_pgid" =~ ^[1-9][0-9]*$ && "$expected_sid" =~ ^[1-9][0-9]*$ ]] ||
+    return 1
+  actual_pgid="$(awk '{print $5}' "/proc/${pid}/stat" 2>/dev/null || true)"
+  actual_sid="$(awk '{print $6}' "/proc/${pid}/stat" 2>/dev/null || true)"
+  [[ "$actual_pgid" == "$expected_pgid" && "$actual_pgid" == "$pid" &&
+     "$actual_sid" == "$expected_sid" && "$actual_sid" == "$pid" ]]
+}
+
+register_owned_process() {
+  local role="$1"
+  local phase="$2"
+  local pid="$3"
+  local expected_executable="$4"
+  local group_owned="${5:-false}"
+  local reap_child="${6:-false}"
+  local start_variable="${7:-}" ppid_variable="${8:-}" executable_variable="${9:-}"
+  local pgid_variable="${10:-}" sid_variable="${11:-}" output_variable
+  local expected_parent_pid="${12:-$$}"
+  local process_fields state
+  local first_observed_ppid first_observed_pgid first_observed_sid first_observed_start
+  local current_ppid current_pgid current_sid current_start current_executable
+  [[ "$pid" =~ ^[1-9][0-9]*$ && "$expected_executable" == /* ]] || return 1
+  [[ "$group_owned" == true || "$group_owned" == false ]] || return 1
+  [[ "$reap_child" == true || "$reap_child" == false ]] || return 1
+  [[ "$expected_parent_pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  for output_variable in "$start_variable" "$ppid_variable" "$executable_variable" \
+    "$pgid_variable" "$sid_variable"; do
+    [[ -z "$output_variable" ||
+       "$output_variable" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || return 1
+  done
+  [[ -r "/proc/${pid}/stat" ]] || return 1
+  process_fields="$(awk '{print $3, $4, $5, $6, $22}' \
+    "/proc/${pid}/stat" 2>/dev/null)" || return 1
+  read -r state first_observed_ppid first_observed_pgid first_observed_sid \
+    first_observed_start <<<"$process_fields"
+  [[ "$state" != Z && "$first_observed_ppid" == "$expected_parent_pid" &&
+     -n "$first_observed_start" ]] || return 1
+  current_executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+  [[ -z "$start_variable" ]] || printf -v "$start_variable" '%s' "$first_observed_start"
+  [[ -z "$ppid_variable" ]] || printf -v "$ppid_variable" '%s' "$first_observed_ppid"
+  [[ -z "$executable_variable" ]] ||
+    printf -v "$executable_variable" '%s' "$current_executable"
+  [[ -z "$pgid_variable" ]] || printf -v "$pgid_variable" '%s' "$first_observed_pgid"
+  [[ -z "$sid_variable" ]] || printf -v "$sid_variable" '%s' "$first_observed_sid"
+  for _ in {1..200}; do
+    [[ -r "/proc/${pid}/stat" ]] || return 1
+    process_fields="$(awk '{print $3, $4, $5, $6, $22}' \
+      "/proc/${pid}/stat" 2>/dev/null)" || return 1
+    read -r state current_ppid current_pgid current_sid current_start <<<"$process_fields"
+    [[ "$state" != Z && "$current_start" == "$first_observed_start" &&
+       "$current_ppid" == "$first_observed_ppid" &&
+       "$first_observed_ppid" == "$expected_parent_pid" ]] || return 1
+    current_executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null)" || return 1
+    [[ -z "$executable_variable" ]] ||
+      printf -v "$executable_variable" '%s' "$current_executable"
+    [[ -z "$pgid_variable" ]] || printf -v "$pgid_variable" '%s' "$current_pgid"
+    [[ -z "$sid_variable" ]] || printf -v "$sid_variable" '%s' "$current_sid"
+    if [[ "$current_executable" == "$expected_executable" &&
+          ("$group_owned" == false ||
+           ("$current_pgid" == "$pid" && "$current_sid" == "$pid")) ]]; then
+      break
+    fi
+    sleep 0.01
+  done
+  [[ "$state" != Z && "$current_start" == "$first_observed_start" &&
+     "$current_ppid" == "$first_observed_ppid" &&
+     "$current_executable" == "$expected_executable" ]] || return 1
+  if [[ "$group_owned" == true ]]; then
+    [[ "$current_pgid" == "$pid" && "$current_sid" == "$pid" ]] || return 1
+    process_group_matches_registry "$pid" "$first_observed_start" \
+      "$current_executable" "$current_pgid" "$current_sid" ||
+      return 1
+  else
+    process_matches_registry "$pid" "$first_observed_start" "$current_executable" || return 1
+  fi
+  jq -nc --arg role "$role" --arg phase "$phase" --argjson pid "$pid" \
+    --arg start "$first_observed_start" --arg executable "$current_executable" \
+    --argjson ppid "$first_observed_ppid" --argjson pgid "$current_pgid" \
+    --argjson sid "$current_sid" \
+    --argjson group_owned "$group_owned" --argjson reap_child "$reap_child" \
+    '{role:$role,phase:$phase,pid:$pid,start_ticks:$start,executable:$executable,
+      ppid:$ppid,pgid:$pgid,sid:$sid,group_owned:$group_owned,reap_child:$reap_child}' \
+    >>"$process_registry"
+}
+
+stop_provisional_owned_process() {
+  local pid="$1" expected_start="$2" expected_ppid="$3" expected_executable="$4"
+  local expected_pgid="$5" expected_sid="$6"
+  local fields state current_ppid current_pgid current_sid current_start current_executable
+  local wait_status
+  local trusted_group=false
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  if [[ -z "$expected_start" || -z "$expected_ppid" ]]; then
+    [[ ! -e "/proc/${pid}" ]] || return 1
+    wait "$pid" 2>/dev/null
+    wait_status=$?
+    [[ "$wait_status" != 127 ]]
+    return
+  fi
+  [[ "$expected_start" =~ ^[0-9]+$ && "$expected_ppid" =~ ^[1-9][0-9]*$ ]] ||
+    return 1
+  if [[ "$expected_executable" == /* && "$expected_pgid" == "$pid" &&
+        "$expected_sid" == "$pid" ]]; then
+    trusted_group=true
+  fi
+  if [[ -r "/proc/${pid}/stat" ]]; then
+    fields="$(awk '{print $3, $4, $5, $6, $22}' \
+      "/proc/${pid}/stat" 2>/dev/null)" || return 1
+    read -r state current_ppid current_pgid current_sid current_start <<<"$fields"
+    [[ "$current_start" == "$expected_start" && "$current_ppid" == "$expected_ppid" ]] ||
+      return 1
+    if [[ "$state" != Z ]]; then
+      current_executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null)" || return 1
+      [[ "$expected_executable" == /* &&
+         "$current_executable" == "$expected_executable" ]] || return 1
+    fi
+    if [[ "$trusted_group" == true ]]; then
+      [[ "$current_pgid" == "$expected_pgid" &&
+         "$current_sid" == "$expected_sid" ]] || return 1
+      stop_trusted_process_group_members "$expected_pgid" "$expected_sid" || return 1
+    elif [[ "$state" != Z ]]; then
+      kill -TERM "$pid" 2>/dev/null || return 1
+      for _ in {1..100}; do
+        [[ -r "/proc/${pid}/stat" ]] || break
+        fields="$(awk '{print $3, $4, $22}' "/proc/${pid}/stat" 2>/dev/null)" ||
+          return 1
+        read -r state current_ppid current_start <<<"$fields"
+        [[ "$current_start" == "$expected_start" &&
+           "$current_ppid" == "$expected_ppid" ]] || return 1
+        [[ "$state" == Z ]] && break
+        sleep 0.05
+      done
+      if [[ -r "/proc/${pid}/stat" && "$state" != Z ]]; then
+        kill -KILL "$pid" 2>/dev/null || return 1
+      fi
+    fi
+  fi
+  if wait "$pid" 2>/dev/null; then wait_status=0; else wait_status=$?; fi
+  [[ "$wait_status" != 127 ]] || return 1
+  [[ "$trusted_group" == false ]] ||
+    stop_trusted_process_group_members "$expected_pgid" "$expected_sid"
+}
+
+process_group_has_live_members() {
+  local expected_pgid="$1"
+  local expected_sid="$2"
+  local processes
+  [[ "$expected_pgid" =~ ^[1-9][0-9]*$ && "$expected_sid" =~ ^[1-9][0-9]*$ ]] ||
+    return 1
+  processes="$(ps -eo stat=,pgid=,sid=)" || return 2
+  awk -v expected_pgid="$expected_pgid" -v expected_sid="$expected_sid" '
+    $1 !~ /^Z/ && $2 == expected_pgid && $3 == expected_sid { found=1 }
+    END { exit(found ? 0 : 1) }
+  ' <<<"$processes"
+}
+
+process_group_anchor_matches_registry() {
+  local pid="$1"
+  local expected_start="$2"
+  local expected_executable="$3"
+  local expected_pgid="$4"
+  local expected_sid="$5"
+  local fields state pgid sid start executable
+  [[ "$pid" =~ ^[1-9][0-9]*$ && -r "/proc/${pid}/stat" ]] || return 1
+  fields="$(awk '{print $3, $5, $6, $22}' "/proc/${pid}/stat" 2>/dev/null || true)"
+  read -r state pgid sid start <<<"$fields"
+  [[ "$start" == "$expected_start" && "$pgid" == "$expected_pgid" &&
+     "$sid" == "$expected_sid" && "$pgid" == "$pid" && "$sid" == "$pid" ]] ||
+    return 1
+  if [[ "$state" != Z ]]; then
+    executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+    [[ "$executable" == "$expected_executable" ]] || return 1
+  fi
+}
+
+stop_trusted_process_group_members() {
+  local pgid="$1"
+  local sid="$2"
+  local membership_status=0
+  process_group_has_live_members "$pgid" "$sid" || membership_status=$?
+  [[ "$membership_status" != 2 ]] || return 1
+  if [[ "$membership_status" == 0 ]]; then
+    if ! kill -TERM -- "-$pgid" 2>/dev/null; then
+      membership_status=0
+      process_group_has_live_members "$pgid" "$sid" || membership_status=$?
+      [[ "$membership_status" == 1 ]] || return 1
+    fi
+  fi
+  for _ in {1..100}; do
+    membership_status=0
+    process_group_has_live_members "$pgid" "$sid" || membership_status=$?
+    [[ "$membership_status" != 2 ]] || return 1
+    [[ "$membership_status" == 0 ]] || break
+    sleep 0.05
+  done
+  if [[ "$membership_status" == 0 ]]; then
+    if ! kill -KILL -- "-$pgid" 2>/dev/null; then
+      membership_status=0
+      process_group_has_live_members "$pgid" "$sid" || membership_status=$?
+      [[ "$membership_status" == 1 ]] || return 1
+    fi
+  fi
+  for _ in {1..100}; do
+    membership_status=0
+    process_group_has_live_members "$pgid" "$sid" || membership_status=$?
+    [[ "$membership_status" != 2 ]] || return 1
+    [[ "$membership_status" == 0 ]] || break
+    sleep 0.05
+  done
+  [[ "$membership_status" == 1 ]]
+}
+
 stop_owned_processes() {
-  local record pid start executable
+  local record pid start executable pgid sid group_owned reap_child state wait_status
+  local cleanup_failed=0 was_present=false
   [[ -f "$process_registry" ]] || return 0
   while IFS= read -r record; do
     [[ -n "$record" ]] || continue
-    pid="$(jq -er '.pid | numbers' <<<"$record" 2>/dev/null || true)"
-    start="$(jq -er '.start_ticks | strings' <<<"$record" 2>/dev/null || true)"
-    executable="$(jq -er '.executable | strings' <<<"$record" 2>/dev/null || true)"
-    [[ -n "$pid" && -n "$start" && "$executable" == /* ]] || continue
-    if process_matches_registry "$pid" "$start" "$executable"; then
-      kill -TERM "$pid" 2>/dev/null || true
+    pid="$(jq -er '.pid | numbers' <<<"$record" 2>/dev/null)" || { cleanup_failed=1; continue; }
+    start="$(jq -er '.start_ticks | strings' <<<"$record" 2>/dev/null)" || { cleanup_failed=1; continue; }
+    executable="$(jq -er '.executable | strings' <<<"$record" 2>/dev/null)" || { cleanup_failed=1; continue; }
+    pgid="$(jq -er '(.pgid // .pid) | numbers' <<<"$record" 2>/dev/null)" || { cleanup_failed=1; continue; }
+    sid="$(jq -er '(.sid // .pid) | numbers' <<<"$record" 2>/dev/null)" || { cleanup_failed=1; continue; }
+    group_owned="$(jq -er '(.group_owned // false) | booleans' <<<"$record" 2>/dev/null)" || { cleanup_failed=1; continue; }
+    reap_child="$(jq -er '(.reap_child // false) | booleans' <<<"$record" 2>/dev/null)" || { cleanup_failed=1; continue; }
+    [[ -n "$pid" && -n "$start" && "$executable" == /* ]] || { cleanup_failed=1; continue; }
+    was_present=false
+    if [[ "$group_owned" == true ]] &&
+       process_group_anchor_matches_registry "$pid" "$start" "$executable" "$pgid" "$sid"; then
+      was_present=true
+      stop_trusted_process_group_members "$pgid" "$sid" || cleanup_failed=1
+    elif [[ "$group_owned" == false ]] &&
+         process_matches_registry "$pid" "$start" "$executable"; then
+      was_present=true
+      kill -TERM "$pid" 2>/dev/null || cleanup_failed=1
+    fi
+    if [[ "$was_present" == true && "$group_owned" == false ]]; then
       for _ in {1..100}; do
         process_matches_registry "$pid" "$start" "$executable" || break
+        state="$(awk '{print $3}' "/proc/${pid}/stat" 2>/dev/null || true)"
+        [[ "$state" == Z ]] && break
         sleep 0.05
       done
     fi
-    if process_matches_registry "$pid" "$start" "$executable"; then
-      kill -KILL "$pid" 2>/dev/null || true
+    state="$(awk '{print $3}' "/proc/${pid}/stat" 2>/dev/null || true)"
+    if [[ "$state" != Z && "$group_owned" == false ]] &&
+         process_matches_registry "$pid" "$start" "$executable"; then
+      kill -KILL "$pid" 2>/dev/null || cleanup_failed=1
+    fi
+    if [[ "$was_present" == true && "$reap_child" == true ]]; then
+      if wait "$pid" 2>/dev/null; then
+        wait_status=0
+      else
+        wait_status=$?
+      fi
+      [[ "$wait_status" != 127 ]] || cleanup_failed=1
     fi
   done <"$process_registry"
+  return "$cleanup_failed"
 }
 
 assert_exact_owned_resource() {
   local kind="$1"
   local resource="$2"
   local expected_run="$3"
-  local actual_run
+  local expected_scope="$4"
+  local expected_component="$5"
+  local identity
   case "$kind" in
     container)
-      actual_run="$(docker container inspect --format \
-        '{{ index .Config.Labels "org.logos-co.atomic-swaps.run" }}' "$resource")"
+      identity="$(docker container inspect --format \
+        '{{ index .Config.Labels "org.logos-co.atomic-swaps.run" }}|{{ index .Config.Labels "org.logos-co.atomic-swaps.scope" }}|{{ index .Config.Labels "org.logos-co.atomic-swaps.component" }}' \
+        "$resource")" || return 1
       ;;
     image)
-      actual_run="$(docker image inspect --format \
-        '{{ index .Config.Labels "org.logos-co.atomic-swaps.run" }}' "$resource")"
+      identity="$(docker image inspect --format \
+        '{{ index .Config.Labels "org.logos-co.atomic-swaps.run" }}|{{ index .Config.Labels "org.logos-co.atomic-swaps.scope" }}|{{ index .Config.Labels "org.logos-co.atomic-swaps.component" }}' \
+        "$resource")" || return 1
       ;;
     network)
-      actual_run="$(docker network inspect --format \
-        '{{ index .Labels "org.logos-co.atomic-swaps.run" }}' "$resource")"
+      identity="$(docker network inspect --format \
+        '{{ index .Labels "org.logos-co.atomic-swaps.run" }}|{{ index .Labels "org.logos-co.atomic-swaps.scope" }}|{{ index .Labels "org.logos-co.atomic-swaps.component" }}' \
+        "$resource")" || return 1
       ;;
     volume)
-      actual_run="$(docker volume inspect --format \
-        '{{ index .Labels "org.logos-co.atomic-swaps.run" }}' "$resource")"
+      identity="$(docker volume inspect --format \
+        '{{ index .Labels "org.logos-co.atomic-swaps.run" }}|{{ index .Labels "org.logos-co.atomic-swaps.scope" }}|{{ index .Labels "org.logos-co.atomic-swaps.component" }}' \
+        "$resource")" || return 1
       ;;
     *) return 1 ;;
   esac
-  [[ "$actual_run" == "$expected_run" ]]
+  [[ "$identity" == "${expected_run}|${expected_scope}|${expected_component}" ]]
 }
 
 remove_exact_container_file() {
   local ids_file="$1"
   local expected_run="$2"
-  local container_id
+  local expected_scope="$3"
+  local container_id component extra
   [[ -f "$ids_file" ]] || return 0
-  while IFS= read -r container_id; do
-    [[ -n "$container_id" ]] || continue
+  while IFS=$'\t' read -r container_id component extra; do
+    [[ -n "$container_id" && -n "$component" && -z "$extra" ]] || return 1
     if docker container inspect "$container_id" >/dev/null 2>&1; then
-      assert_exact_owned_resource container "$container_id" "$expected_run" || return 1
+      assert_exact_owned_resource container "$container_id" "$expected_run" \
+        "$expected_scope" "$component" || return 1
       docker container rm --force "$container_id" >/dev/null || return 1
     fi
   done <"$ids_file"
@@ -575,48 +850,198 @@ remove_exact_resource() {
   local kind="$1"
   local resource="$2"
   local expected_run="$3"
+  local expected_scope="$4"
+  local expected_component="$5"
   if ! docker "$kind" inspect "$resource" >/dev/null 2>&1; then
     return 0
   fi
-  assert_exact_owned_resource "$kind" "$resource" "$expected_run" || return 1
+  assert_exact_owned_resource "$kind" "$resource" "$expected_run" \
+    "$expected_scope" "$expected_component" || return 1
   docker "$kind" rm "$resource" >/dev/null
 }
 
-capture_owned_resources() {
+collect_owned_containers() {
+  local child_run="$1"
+  local expected_scope="$2"
+  local outcome="$3"
+  local output="$4"
+  shift 4
+  local listing="" container_id component expected_component identity
+  local certification_failed=0 identity_query_failed=0 component_allowed
+  local -a ids=()
+  local -a expected_components=("$@")
+  local -A seen=() component_counts=()
+  [[ "$outcome" == passed || "$outcome" == failed ]] || return 2
+  listing="$(docker container ls --all --quiet \
+    --filter "label=org.logos-co.atomic-swaps.run=${child_run}")" || return 2
+  if [[ -n "$listing" ]]; then
+    mapfile -t ids <<<"$listing"
+  fi
+  for container_id in "${ids[@]}"; do
+    if [[ -z "$container_id" || -n "${seen[$container_id]:-}" ]]; then
+      certification_failed=1
+      continue
+    fi
+    seen["$container_id"]=1
+    identity="$(docker container inspect --format \
+      '{{ index .Config.Labels "org.logos-co.atomic-swaps.run" }}|{{ index .Config.Labels "org.logos-co.atomic-swaps.scope" }}|{{ index .Config.Labels "org.logos-co.atomic-swaps.component" }}' \
+      "$container_id")" || { identity_query_failed=1; continue; }
+    IFS='|' read -r actual_run actual_scope component <<<"$identity"
+    component_allowed=false
+    for expected_component in "${expected_components[@]}"; do
+      [[ "$component" == "$expected_component" ]] && component_allowed=true
+    done
+    if [[ "$actual_run" == "$child_run" && "$actual_scope" == "$expected_scope" &&
+          "$component_allowed" == true ]]; then
+      inventory_line="${container_id}"$'\t'"${component}"
+      rg -Fxq -- "$inventory_line" "$output" 2>/dev/null ||
+        printf '%s\n' "$inventory_line" >>"$output"
+      component_counts["$component"]=$(( ${component_counts[$component]:-0} + 1 ))
+    else
+      certification_failed=1
+    fi
+  done
+  for expected_component in "${expected_components[@]}"; do
+    if [[ "$outcome" == passed && "${component_counts[$expected_component]:-0}" != 1 ]] ||
+       [[ "$outcome" == failed && "${component_counts[$expected_component]:-0}" -gt 1 ]]; then
+      certification_failed=1
+    fi
+  done
+  [[ "$identity_query_failed" == 0 ]] || return 2
+  [[ "$certification_failed" == 0 ]] || return 1
+}
+
+collect_owned_resources() {
   local kind="$1"
   local child_run="$2"
-  local expected_count="$3"
-  local output="$4"
-  local format
+  local expected_scope="$3"
+  local outcome="$4"
+  local output="$5"
+  shift 5
+  local format listing="" resource component expected_component identity
+  local certification_failed=0 identity_query_failed=0 component_allowed
   local -a resources=()
-  local resource
+  local -a expected_components=("$@")
+  local -A seen=() component_counts=()
+  [[ "$outcome" == passed || "$outcome" == failed ]] || return 2
   case "$kind" in
     image) format='{{.Repository}}:{{.Tag}}' ;;
     network) format='{{.ID}}' ;;
     volume) format='{{.Name}}' ;;
-    *) fail "unsupported resource inventory kind: ${kind}" ;;
+    *) return 1 ;;
   esac
-  mapfile -t resources < <(docker "$kind" ls --format "$format" \
-    --filter "label=org.logos-co.atomic-swaps.run=${child_run}")
-  [[ "${#resources[@]}" == "$expected_count" ]] ||
-    fail "child run ${child_run} has ${#resources[@]} ${kind} resources; expected ${expected_count}"
+  listing="$(docker "$kind" ls --format "$format" \
+    --filter "label=org.logos-co.atomic-swaps.run=${child_run}")" || return 2
+  if [[ -n "$listing" ]]; then
+    mapfile -t resources <<<"$listing"
+  fi
   for resource in "${resources[@]}"; do
-    [[ -n "$resource" && "$resource" != '<none>:<none>' ]] ||
-      fail "child run ${child_run} has an unnamed ${kind} resource"
-    assert_exact_owned_resource "$kind" "$resource" "$child_run" ||
-      fail "${kind} ${resource} is not owned by ${child_run}"
-    printf '%s\t%s\n' "$child_run" "$resource" >>"$output"
+    if [[ -z "$resource" || "$resource" == '<none>:<none>' ||
+          -n "${seen[$resource]:-}" ]]; then
+      certification_failed=1
+      continue
+    fi
+    seen["$resource"]=1
+    case "$kind" in
+      image)
+        identity="$(docker image inspect --format \
+          '{{ index .Config.Labels "org.logos-co.atomic-swaps.run" }}|{{ index .Config.Labels "org.logos-co.atomic-swaps.scope" }}|{{ index .Config.Labels "org.logos-co.atomic-swaps.component" }}' \
+          "$resource")" || { identity_query_failed=1; continue; }
+        ;;
+      network | volume)
+        identity="$(docker "$kind" inspect --format \
+          '{{ index .Labels "org.logos-co.atomic-swaps.run" }}|{{ index .Labels "org.logos-co.atomic-swaps.scope" }}|{{ index .Labels "org.logos-co.atomic-swaps.component" }}' \
+          "$resource")" || { identity_query_failed=1; continue; }
+        ;;
+    esac
+    IFS='|' read -r actual_run actual_scope component <<<"$identity"
+    component_allowed=false
+    for expected_component in "${expected_components[@]}"; do
+      [[ "$component" == "$expected_component" ]] && component_allowed=true
+    done
+    if [[ "$actual_run" == "$child_run" && "$actual_scope" == "$expected_scope" &&
+          "$component_allowed" == true ]]; then
+      inventory_line="${child_run}"$'\t'"${expected_scope}"$'\t'"${component}"$'\t'"${resource}"
+      rg -Fxq -- "$inventory_line" "$output" 2>/dev/null ||
+        printf '%s\n' "$inventory_line" >>"$output"
+      component_counts["$component"]=$(( ${component_counts[$component]:-0} + 1 ))
+    else
+      certification_failed=1
+    fi
   done
+  for expected_component in "${expected_components[@]}"; do
+    if [[ "$outcome" == passed && "${component_counts[$expected_component]:-0}" != 1 ]] ||
+       [[ "$outcome" == failed && "${component_counts[$expected_component]:-0}" -gt 1 ]]; then
+      certification_failed=1
+    fi
+  done
+  [[ "$identity_query_failed" == 0 ]] || return 2
+  [[ "$certification_failed" == 0 ]] || return 1
+}
+
+reconcile_node_resource_inventories() {
+  local bitcoin_outcome="$1"
+  local lez_outcome="$2"
+  local reconciliation_failed=0
+  local bitcoin_scope="bitcoin-core-regtest-e2e"
+  local lez_scope="lez-v0.2-local-devnet"
+  local bitcoin_containers_partial="${bitcoin_container_ids}.partial"
+  local lez_containers_partial="${lez_container_ids}.partial"
+  local networks_partial="${network_resources}.partial"
+  local volumes_partial="${volume_resources}.partial"
+  local images_partial="${image_resources}.partial"
+  [[ "$bitcoin_outcome" == passed || "$bitcoin_outcome" == failed ]] || return 1
+  [[ "$lez_outcome" == passed || "$lez_outcome" == failed ]] || return 1
+  for inventory_pair in \
+    "$bitcoin_container_ids:$bitcoin_containers_partial" \
+    "$lez_container_ids:$lez_containers_partial" \
+    "$network_resources:$networks_partial" \
+    "$volume_resources:$volumes_partial" \
+    "$image_resources:$images_partial"; do
+    inventory_source="${inventory_pair%%:*}"
+    inventory_target="${inventory_pair#*:}"
+    : >"$inventory_target"
+    if [[ -f "$inventory_source" ]]; then
+      while IFS= read -r inventory_line; do
+        [[ -n "$inventory_line" ]] && printf '%s\n' "$inventory_line" >>"$inventory_target"
+      done <"$inventory_source"
+    fi
+    chmod 0600 "$inventory_target"
+  done
+  collect_owned_containers "$bitcoin_run_id" "$bitcoin_scope" "$bitcoin_outcome" \
+    "$bitcoin_containers_partial" bitcoin-core || reconciliation_failed=1
+  collect_owned_containers "$lez_run_id" "$lez_scope" "$lez_outcome" \
+    "$lez_containers_partial" bedrock indexer sequencer || reconciliation_failed=1
+  collect_owned_resources network "$bitcoin_run_id" "$bitcoin_scope" "$bitcoin_outcome" \
+    "$networks_partial" bitcoin-core-network || reconciliation_failed=1
+  collect_owned_resources network "$lez_run_id" "$lez_scope" "$lez_outcome" \
+    "$networks_partial" lez-v0.2-network || reconciliation_failed=1
+  collect_owned_resources volume "$bitcoin_run_id" "$bitcoin_scope" "$bitcoin_outcome" \
+    "$volumes_partial" bitcoin-core-data || reconciliation_failed=1
+  collect_owned_resources volume "$lez_run_id" "$lez_scope" "$lez_outcome" \
+    "$volumes_partial" || reconciliation_failed=1
+  collect_owned_resources image "$bitcoin_run_id" "$bitcoin_scope" "$bitcoin_outcome" \
+    "$images_partial" bitcoin-core-image || reconciliation_failed=1
+  collect_owned_resources image "$lez_run_id" "$lez_scope" "$lez_outcome" \
+    "$images_partial" lez-v0.2-image || reconciliation_failed=1
+  mv "$bitcoin_containers_partial" "$bitcoin_container_ids"
+  mv "$lez_containers_partial" "$lez_container_ids"
+  mv "$networks_partial" "$network_resources"
+  mv "$volumes_partial" "$volume_resources"
+  mv "$images_partial" "$image_resources"
+  return "$reconciliation_failed"
 }
 
 remove_exact_resource_file() {
   local kind="$1"
   local resources_file="$2"
-  local expected_run resource extra
+  local expected_run expected_scope expected_component resource extra
   [[ -f "$resources_file" ]] || return 0
-  while IFS=$'\t' read -r expected_run resource extra; do
-    [[ -n "$expected_run" && -n "$resource" && -z "$extra" ]] || return 1
-    remove_exact_resource "$kind" "$resource" "$expected_run" || return 1
+  while IFS=$'\t' read -r expected_run expected_scope expected_component resource extra; do
+    [[ -n "$expected_run" && -n "$expected_scope" && -n "$expected_component" &&
+       -n "$resource" && -z "$extra" ]] || return 1
+    remove_exact_resource "$kind" "$resource" "$expected_run" "$expected_scope" \
+      "$expected_component" || return 1
   done <"$resources_file"
 }
 
@@ -638,21 +1063,21 @@ write_cleanup_attestation() {
   local bitcoin_containers bitcoin_networks bitcoin_volumes bitcoin_images
   local lez_containers lez_networks lez_volumes lez_images secure_state_absent
   bitcoin_containers="$(docker container ls --all --quiet \
-    --filter "label=org.logos-co.atomic-swaps.run=${bitcoin_run_id}" || true)"
+    --filter "label=org.logos-co.atomic-swaps.run=${bitcoin_run_id}")" || return 1
   bitcoin_networks="$(docker network ls --quiet \
-    --filter "label=org.logos-co.atomic-swaps.run=${bitcoin_run_id}" || true)"
+    --filter "label=org.logos-co.atomic-swaps.run=${bitcoin_run_id}")" || return 1
   bitcoin_volumes="$(docker volume ls --quiet \
-    --filter "label=org.logos-co.atomic-swaps.run=${bitcoin_run_id}" || true)"
+    --filter "label=org.logos-co.atomic-swaps.run=${bitcoin_run_id}")" || return 1
   bitcoin_images="$(docker image ls --quiet \
-    --filter "label=org.logos-co.atomic-swaps.run=${bitcoin_run_id}" || true)"
+    --filter "label=org.logos-co.atomic-swaps.run=${bitcoin_run_id}")" || return 1
   lez_containers="$(docker container ls --all --quiet \
-    --filter "label=org.logos-co.atomic-swaps.run=${lez_run_id}" || true)"
+    --filter "label=org.logos-co.atomic-swaps.run=${lez_run_id}")" || return 1
   lez_networks="$(docker network ls --quiet \
-    --filter "label=org.logos-co.atomic-swaps.run=${lez_run_id}" || true)"
+    --filter "label=org.logos-co.atomic-swaps.run=${lez_run_id}")" || return 1
   lez_volumes="$(docker volume ls --quiet \
-    --filter "label=org.logos-co.atomic-swaps.run=${lez_run_id}" || true)"
+    --filter "label=org.logos-co.atomic-swaps.run=${lez_run_id}")" || return 1
   lez_images="$(docker image ls --quiet \
-    --filter "label=org.logos-co.atomic-swaps.run=${lez_run_id}" || true)"
+    --filter "label=org.logos-co.atomic-swaps.run=${lez_run_id}")" || return 1
   secure_state_absent=false
   if [[ ! -e "$secure_state_root" && ! -L "$secure_state_root" ]]; then
     secure_state_absent=true
@@ -703,22 +1128,30 @@ cleanup() {
   local run_status=$?
   local cleanup_failed=0
   local final_status="$run_status"
+  local attestation_result
   trap - EXIT
   set +e
 
   stop_owned_processes || cleanup_failed=1
-  remove_exact_container_file "$bitcoin_container_ids" "$bitcoin_run_id" || cleanup_failed=1
-  remove_exact_container_file "$lez_container_ids" "$lez_run_id" || cleanup_failed=1
+  reconcile_node_resource_inventories failed failed || cleanup_failed=1
+  remove_exact_container_file "$bitcoin_container_ids" "$bitcoin_run_id" \
+    bitcoin-core-regtest-e2e || cleanup_failed=1
+  remove_exact_container_file "$lez_container_ids" "$lez_run_id" \
+    lez-v0.2-local-devnet || cleanup_failed=1
 
   remove_exact_resource_file volume "$volume_resources" || cleanup_failed=1
   remove_exact_resource_file network "$network_resources" || cleanup_failed=1
   remove_exact_resource_file image "$image_resources" || cleanup_failed=1
   remove_secure_state_root || cleanup_failed=1
 
-  if [[ "$cleanup_failed" == "0" ]]; then
-    write_cleanup_attestation passed || cleanup_failed=1
+  if [[ "$cleanup_failed" == 0 ]]; then
+    attestation_result=passed
   else
-    write_cleanup_attestation failed
+    attestation_result=failed
+  fi
+  if ! write_cleanup_attestation "$attestation_result"; then
+    echo "M3 actor local PoC could not publish cleanup attestation" >&2
+    cleanup_failed=1
   fi
   if [[ "$cleanup_failed" != "0" ]]; then
     echo "M3 actor local PoC could not prove exact owned-resource cleanup" >&2
@@ -987,65 +1420,163 @@ run_official_nssa_mapping() {
   ' "$mapping" >/dev/null
 }
 
-capture_owned_containers() {
-  local child_run="$1"
-  local expected_count="$2"
-  local output="$3"
-  local -a ids=()
-  local container_id
-  mapfile -t ids < <(docker container ls --all --quiet \
-    --filter "label=org.logos-co.atomic-swaps.run=${child_run}")
-  [[ "${#ids[@]}" == "$expected_count" ]] ||
-    fail "child run ${child_run} has ${#ids[@]} containers; expected ${expected_count}"
-  : >"$output"
-  chmod 0600 "$output"
-  for container_id in "${ids[@]}"; do
-    assert_exact_owned_resource container "$container_id" "$child_run" ||
-      fail "container ${container_id} is not owned by ${child_run}"
-    printf '%s\n' "$container_id" >>"$output"
-  done
+wait_for_node_child() {
+  local pid="$1"
+  local status_variable="$2"
+  local child_status
+  [[ "$pid" =~ ^[1-9][0-9]*$ && "$status_variable" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] ||
+    return 1
+  if wait "$pid"; then
+    child_status=0
+  else
+    child_status=$?
+  fi
+  printf -v "$status_variable" '%s' "$child_status"
+  [[ "$child_status" == 0 ]]
+}
+
+wait_for_node_children() {
+  local bitcoin_pid="$1"
+  local bitcoin_status_variable="$2"
+  local bitcoin_pgid="$3"
+  local bitcoin_sid="$4"
+  local lez_pid="$5"
+  local lez_status_variable="$6"
+  local lez_pgid="$7"
+  local lez_sid="$8"
+  local groups_absent_variable="$9"
+  local bitcoin_wait_ok=true lez_wait_ok=true groups_absent=true
+  [[ "$groups_absent_variable" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || return 1
+  wait_for_node_child "$bitcoin_pid" "$bitcoin_status_variable" || bitcoin_wait_ok=false
+  stop_trusted_process_group_members "$bitcoin_pgid" "$bitcoin_sid" ||
+    groups_absent=false
+  wait_for_node_child "$lez_pid" "$lez_status_variable" || lez_wait_ok=false
+  stop_trusted_process_group_members "$lez_pgid" "$lez_sid" || groups_absent=false
+  printf -v "$groups_absent_variable" '%s' "$groups_absent"
+  [[ "$bitcoin_wait_ok" == true && "$lez_wait_ok" == true &&
+     "$groups_absent" == true ]]
 }
 
 start_actual_nodes() {
   local maker_account maker_vault taker_account taker_vault
+  local bitcoin_pid lez_pid bitcoin_registered=true lez_registered=true bitcoin_status lez_status
+  local bitcoin_start="" bitcoin_ppid="" bitcoin_executable="" bitcoin_pgid="" bitcoin_sid=""
+  local lez_start="" lez_ppid="" lez_executable="" lez_pgid="" lez_sid=""
+  local bitcoin_outcome lez_outcome inventory_reconciled=true
+  local process_groups_absent=true
+  local bash_executable bitcoin_log lez_log
+  local owning_shell_pid="$BASHPID"
+  local node_start_pending_signal=0
   maker_account="$(jq -er '.account_id' "${evidence_dir}/maker-lez-identity.json")"
   maker_vault="$(jq -er '.vault_account_id' "${evidence_dir}/maker-lez-identity.json")"
   taker_account="$(jq -er '.account_id' "${evidence_dir}/taker-lez-identity.json")"
   taker_vault="$(jq -er '.vault_account_id' "${evidence_dir}/taker-lez-identity.json")"
+  bitcoin_log="${evidence_dir}/bitcoin-service.log"
+  lez_log="${evidence_dir}/lez-service.log"
+  for log_file in "$bitcoin_log" "$lez_log"; do
+    [[ ! -e "$log_file" && ! -L "$log_file" ]] ||
+      fail "refusing to reuse node-service log: ${log_file}"
+    : >"$log_file"
+    chmod 0600 "$log_file"
+  done
+  bash_executable="$(readlink -f "$(command -v bash)")"
 
-  RUN_ID="$bitcoin_run_id" BITCOIN_CORE_E2E_MODE=service \
-    BITCOIN_CORE_E2E_KEEP_RUNNING=1 ./scripts/run-bitcoin-core-e2e.sh \
-    >"${evidence_dir}/bitcoin-service.log" 2>&1
-  capture_owned_containers "$bitcoin_run_id" 1 "$bitcoin_container_ids"
-  capture_owned_resources network "$bitcoin_run_id" 1 "$network_resources"
-  capture_owned_resources volume "$bitcoin_run_id" 1 "$volume_resources"
-  capture_owned_resources image "$bitcoin_run_id" 1 "$image_resources"
+  trap 'node_start_pending_signal=130' INT
+  trap 'node_start_pending_signal=143' TERM
+  setsid env RUN_ID="$bitcoin_run_id" BITCOIN_CORE_E2E_MODE=service \
+    BITCOIN_CORE_E2E_KEEP_RUNNING=1 "$bitcoin_service_driver" \
+    >"$bitcoin_log" 2>&1 &
+  bitcoin_pid=$!
+  register_owned_process node-bitcoin startup "$bitcoin_pid" "$bash_executable" true true \
+    bitcoin_start bitcoin_ppid bitcoin_executable bitcoin_pgid bitcoin_sid "$owning_shell_pid" ||
+    bitcoin_registered=false
+  if [[ "$bitcoin_registered" == false ]]; then
+    stop_provisional_owned_process "$bitcoin_pid" "$bitcoin_start" "$bitcoin_ppid" \
+      "$bitcoin_executable" "$bitcoin_pgid" "$bitcoin_sid" ||
+      fail "unregistered Bitcoin service child could not be terminated exactly"
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    [[ "$node_start_pending_signal" == 0 ]] || exit "$node_start_pending_signal"
+    fail "Bitcoin service child could not be registered exactly"
+  fi
 
-  RUN_ID="$lez_run_id" LEZ_V02_KEEP_RUNNING=1 LEZ_V02_SOURCE_DIR="$lez_source_dir" \
+  setsid env RUN_ID="$lez_run_id" LEZ_V02_KEEP_RUNNING=1 LEZ_V02_SOURCE_DIR="$lez_source_dir" \
     LEZ_V02_SLOT_DURATION_SECONDS="$lez_slot_duration_seconds" \
     LEZ_V02_MAKER_ACCOUNT_ID="$maker_account" LEZ_V02_MAKER_VAULT_ACCOUNT_ID="$maker_vault" \
     LEZ_V02_TAKER_ACCOUNT_ID="$taker_account" LEZ_V02_TAKER_VAULT_ACCOUNT_ID="$taker_vault" \
-    ./scripts/run-lez-v02-stack.sh >"${evidence_dir}/lez-service.log" 2>&1
-  capture_owned_containers "$lez_run_id" 3 "$lez_container_ids"
-  capture_owned_resources network "$lez_run_id" 1 "$network_resources"
-  capture_owned_resources volume "$lez_run_id" 0 "$volume_resources"
-  capture_owned_resources image "$lez_run_id" 1 "$image_resources"
+    "$lez_service_driver" >"$lez_log" 2>&1 &
+  lez_pid=$!
+  register_owned_process node-lez startup "$lez_pid" "$bash_executable" true true \
+    lez_start lez_ppid lez_executable lez_pgid lez_sid "$owning_shell_pid" ||
+    lez_registered=false
+  if [[ "$lez_registered" == false ]]; then
+    stop_provisional_owned_process "$lez_pid" "$lez_start" "$lez_ppid" \
+      "$lez_executable" "$lez_pgid" "$lez_sid" ||
+      fail "unregistered LEZ service child could not be terminated exactly"
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    [[ "$node_start_pending_signal" == 0 ]] || exit "$node_start_pending_signal"
+    fail "LEZ service child could not be registered exactly"
+  fi
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  [[ "$node_start_pending_signal" == 0 ]] || exit "$node_start_pending_signal"
+  if wait_for_node_children "$bitcoin_pid" bitcoin_status "$bitcoin_pgid" "$bitcoin_sid" \
+      "$lez_pid" lez_status "$lez_pgid" "$lez_sid" process_groups_absent; then :; fi
 
-  [[ -f "$bitcoin_manifest" && -f "$lez_manifest" ]] ||
+  if [[ "$bitcoin_status" == 0 ]]; then bitcoin_outcome=passed; else bitcoin_outcome=failed; fi
+  if [[ "$lez_status" == 0 ]]; then lez_outcome=passed; else lez_outcome=failed; fi
+  reconcile_node_resource_inventories "$bitcoin_outcome" "$lez_outcome" ||
+    inventory_reconciled=false
+  jq -n --argjson bitcoin_status "$bitcoin_status" --argjson lez_status "$lez_status" \
+    --argjson owning_shell_pid "$owning_shell_pid" \
+    --argjson bitcoin_registered "$bitcoin_registered" \
+    --argjson lez_registered "$lez_registered" \
+    --argjson inventory_reconciled "$inventory_reconciled" \
+    --argjson process_groups_absent "$process_groups_absent" '
+    {schema_version:1,owning_shell_pid:$owning_shell_pid,
+     bitcoin_status:$bitcoin_status,lez_status:$lez_status,
+     bitcoin_registered:$bitcoin_registered,lez_registered:$lez_registered,
+     both_children_waited_and_reaped:true,
+     exact_process_groups_absent_after_wait:$process_groups_absent,
+     inventory_reconciled:$inventory_reconciled}
+  ' >"${evidence_dir}/node-startup-status.json.partial"
+  chmod 0600 "${evidence_dir}/node-startup-status.json.partial"
+  mv "${evidence_dir}/node-startup-status.json.partial" \
+    "${evidence_dir}/node-startup-status.json"
+  [[ "$bitcoin_registered" == true ]] ||
+    fail "Bitcoin service child could not be registered exactly"
+  [[ "$lez_registered" == true ]] || fail "LEZ service child could not be registered exactly"
+  [[ "$process_groups_absent" == true ]] ||
+    fail "node service process groups were not absent after launcher wait"
+  [[ "$bitcoin_status" == 0 ]] ||
+    fail "Bitcoin service provisioning failed with status ${bitcoin_status}"
+  [[ "$lez_status" == 0 ]] || fail "LEZ service provisioning failed with status ${lez_status}"
+  [[ "$inventory_reconciled" == true ]] || fail "node resource inventory reconciliation failed"
+
+  [[ -f "$bitcoin_manifest" && ! -L "$bitcoin_manifest" &&
+     -f "$lez_manifest" && ! -L "$lez_manifest" ]] ||
     fail "retained node manifests are unavailable"
+  [[ "$(stat -c '%a' "$bitcoin_manifest")" == 600 &&
+     "$(stat -c '%a' "$lez_manifest")" == 600 ]] ||
+    fail "retained node manifests are not owner-private"
+  [[ "$(manifest_value "$bitcoin_manifest" RUN_ID)" == "$bitcoin_run_id" &&
+     "$(manifest_value "$bitcoin_manifest" BITCOIN_CORE_E2E_MODE)" == service ]] ||
+    fail "Bitcoin child manifest does not attest the fixed service run"
+  [[ "$(manifest_value "$lez_manifest" RUN_ID)" == "$lez_run_id" ]] ||
+    fail "LEZ child manifest does not attest the fixed service run"
   [[ "$(manifest_value "$lez_manifest" LEZ_V02_SLOT_DURATION_SECONDS)" == "$lez_slot_duration_seconds" ]] ||
     fail "LEZ child manifest does not attest the journey-selected slot duration"
-  chmod 0600 "${evidence_dir}/bitcoin-service.log" "${evidence_dir}/lez-service.log"
 }
 
 core_admin() {
-  local container_id actual_run
-  container_id="$(sed -n '1p' "$bitcoin_container_ids")"
-  [[ -n "$container_id" ]] || fail "Bitcoin container inventory is empty"
-  actual_run="$(docker container inspect --format \
-    '{{ index .Config.Labels "org.logos-co.atomic-swaps.run" }}' "$container_id")"
-  [[ "$actual_run" == "$bitcoin_run_id" ]] ||
-    fail "captured Bitcoin container ownership label drifted"
+  local container_id component extra
+  IFS=$'\t' read -r container_id component extra <"$bitcoin_container_ids"
+  [[ -n "$container_id" && "$component" == bitcoin-core && -z "$extra" ]] ||
+    fail "Bitcoin container inventory is malformed"
+  assert_exact_owned_resource container "$container_id" "$bitcoin_run_id" \
+    bitcoin-core-regtest-e2e bitcoin-core ||
+    fail "captured Bitcoin container ownership identity drifted"
   docker exec "$container_id" bitcoin-cli \
     -conf=/run-config/bitcoin.conf -datadir=/var/lib/bitcoin "$@"
 }
@@ -1337,21 +1868,19 @@ run_direction_actor_flow() {
 }
 
 register_overlap_driver_process() {
-  local direction="$1" pid="$2" start executable
+  local direction="$1" pid="$2" executable=""
   for _ in {1..100}; do
     if [[ -r "/proc/${pid}/stat" ]]; then
-      start="$(awk '{print $22}' "/proc/${pid}/stat")"
-      executable="$(readlink -f "/proc/${pid}/exe")"
-      if [[ -n "$start" && "$executable" == /* ]]; then break; fi
+      executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+      if [[ "$executable" == /* ]]; then break; fi
     fi
     sleep 0.01
   done
-  [[ -n "${start:-}" && "${executable:-}" == /* ]] ||
+  [[ "$executable" == /* ]] ||
     fail "overlap ${direction} driver exited before registration"
-  jq -nc --arg role "controller-${direction}" --arg phase overlap-driver \
-    --argjson pid "$pid" --arg start "$start" --arg executable "$executable" \
-    '{role:$role,phase:$phase,pid:$pid,start_ticks:$start,executable:$executable}' \
-    >>"$process_registry"
+  register_owned_process "controller-${direction}" overlap-driver "$pid" \
+    "$executable" false true ||
+    fail "overlap ${direction} driver could not be registered exactly"
 }
 
 start_overlap_direction() {
@@ -2115,8 +2644,21 @@ validate_survivor_direction_evidence() {
   ' "$completion"
 }
 
+service_launcher_hashes_stable() {
+  local bitcoin_sha lez_sha
+  [[ -f "$bitcoin_service_driver" && ! -L "$bitcoin_service_driver" &&
+     -f "$lez_service_driver" && ! -L "$lez_service_driver" ]] || return 1
+  bitcoin_sha="$(sha256sum "$bitcoin_service_driver" | sed 's/ .*//')" || return 1
+  lez_sha="$(sha256sum "$lez_service_driver" | sed 's/ .*//')" || return 1
+  [[ "$bitcoin_service_driver_sha_at_start" =~ ^[0-9a-f]{64}$ &&
+     "$lez_service_driver_sha_at_start" =~ ^[0-9a-f]{64}$ &&
+     "$bitcoin_sha" == "$bitcoin_service_driver_sha_at_start" &&
+     "$lez_sha" == "$lez_service_driver_sha_at_start" ]]
+}
+
 write_run_evidence() {
   local repository_commit origin_main completed_at outer_runner_sha direction_driver_sha lez_bootstrap_sha
+  local bitcoin_service_driver_sha lez_service_driver_sha
   local repository_status
   local bedrock_log bedrock_ntp_timeout_count
   local foreign_survivor_summary="null" lez_survivor_summary="null"
@@ -2127,6 +2669,8 @@ write_run_evidence() {
   local official_wallet_cache_helper_sha=""
   local foreign_terminal_balance_summary="null" lez_terminal_balance_summary="null"
   local terminal_file terminal_sha effects_sha
+  service_launcher_hashes_stable ||
+    fail "service launcher changed before terminal evidence publication"
   repository_status="$(git status --porcelain --untracked-files=all)" ||
     fail "final repository status query failed"
   [[ -z "$repository_status" ]] || fail "repository changed during M3 actor execution"
@@ -2142,9 +2686,13 @@ write_run_evidence() {
   outer_runner_sha="$(sha256sum scripts/run-m3-actor-local-poc.sh | sed 's/ .*//')"
   direction_driver_sha="$(sha256sum "$direction_driver" | sed 's/ .*//')"
   lez_bootstrap_sha="$(sha256sum "$lez_bootstrap_driver" | sed 's/ .*//')"
+  bitcoin_service_driver_sha="$(sha256sum "$bitcoin_service_driver" | sed 's/ .*//')"
+  lez_service_driver_sha="$(sha256sum "$lez_service_driver" | sed 's/ .*//')"
   [[ "$outer_runner_sha" == "$outer_runner_sha_at_start" &&
      "$direction_driver_sha" == "$direction_driver_sha_at_start" &&
-     "$lez_bootstrap_sha" == "$lez_bootstrap_sha_at_start" ]] ||
+     "$lez_bootstrap_sha" == "$lez_bootstrap_sha_at_start" &&
+     "$bitcoin_service_driver_sha" == "$bitcoin_service_driver_sha_at_start" &&
+     "$lez_service_driver_sha" == "$lez_service_driver_sha_at_start" ]] ||
     fail "certified executable changed during M3 actor execution"
   if [[ "$asset_mode" == "custom_token" ]]; then
     [[ -f "$official_wallet_cache_evidence" &&
@@ -2270,6 +2818,10 @@ write_run_evidence() {
     --arg direction_driver_sha "$direction_driver_sha" \
     --arg lez_bootstrap "scripts/run-m3-lez-bootstrap.sh" \
     --arg lez_bootstrap_sha "$lez_bootstrap_sha" \
+    --arg bitcoin_service_driver "scripts/run-bitcoin-core-e2e.sh" \
+    --arg bitcoin_service_driver_sha "$bitcoin_service_driver_sha" \
+    --arg lez_service_driver "scripts/run-lez-v02-stack.sh" \
+    --arg lez_service_driver_sha "$lez_service_driver_sha" \
     --arg f7_token_fixture "scripts/run-m3-f7-token-fixture.sh" \
     --arg f7_token_fixture_driver_sha "$f7_token_fixture_driver_sha" \
     --arg official_wallet_cache "scripts/prepare-m3-official-wallet-artifact.sh" \
@@ -2306,6 +2858,10 @@ write_run_evidence() {
         outer_runner: {repository_path:$outer_runner,sha256:$outer_runner_sha},
         direction_driver: {repository_path:$direction_driver,sha256:$direction_driver_sha},
         lez_bootstrap: {repository_path:$lez_bootstrap,sha256:$lez_bootstrap_sha},
+        bitcoin_service_driver: {
+          repository_path:$bitcoin_service_driver,sha256:$bitcoin_service_driver_sha},
+        lez_service_driver: {
+          repository_path:$lez_service_driver,sha256:$lez_service_driver_sha},
         external_override_allowed: false
       } + (if $asset_mode == "custom_token" then {
         f7_token_fixture:{repository_path:$f7_token_fixture,
@@ -2516,6 +3072,8 @@ write_run_evidence() {
     --arg outer_runner_sha "$outer_runner_sha_at_start" \
     --arg direction_driver_sha "$direction_driver_sha_at_start" \
     --arg lez_bootstrap_sha "$lez_bootstrap_sha_at_start" \
+    --arg bitcoin_service_driver_sha "$bitcoin_service_driver_sha_at_start" \
+    --arg lez_service_driver_sha "$lez_service_driver_sha_at_start" \
     --argjson terminal_revision "$terminal_revision" \
     --arg terminal_phase "$terminal_phase" --arg replay_command "$replay_command" \
     --arg actor_owned_effect_semantics "$actor_owned_effect_semantics" '
@@ -2532,6 +3090,9 @@ write_run_evidence() {
     and .certified_executable_scripts.outer_runner.sha256 == $outer_runner_sha
     and .certified_executable_scripts.direction_driver.sha256 == $direction_driver_sha
     and .certified_executable_scripts.lez_bootstrap.sha256 == $lez_bootstrap_sha
+    and .certified_executable_scripts.bitcoin_service_driver.sha256 ==
+      $bitcoin_service_driver_sha
+    and .certified_executable_scripts.lez_service_driver.sha256 == $lez_service_driver_sha
     and (.directions | length == 2)
     and all(.directions[];
       .terminal_revision == $terminal_revision and .terminal_phase == $terminal_phase)

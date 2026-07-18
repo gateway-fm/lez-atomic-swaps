@@ -416,6 +416,8 @@ trap "exit 143" TERM
 docker build \
   --file "$dockerfile" \
   --label "org.logos-co.atomic-swaps.run=${run_id}" \
+  --label "org.logos-co.atomic-swaps.scope=lez-v0.2-local-devnet" \
+  --label "org.logos-co.atomic-swaps.component=lez-v0.2-image" \
   --tag "$LEZ_V02_IMAGE" \
   "$image_context"
 
@@ -424,6 +426,7 @@ docker network create \
   --opt com.docker.network.bridge.enable_ip_masquerade=false \
   --label "org.logos-co.atomic-swaps.run=${run_id}" \
   --label "org.logos-co.atomic-swaps.scope=lez-v0.2-local-devnet" \
+  --label "org.logos-co.atomic-swaps.component=lez-v0.2-network" \
   "$network" >/dev/null
 
 containers[bedrock]="$(docker create \

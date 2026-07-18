@@ -1,6 +1,6 @@
 # System architecture and actor flows
 
-Status: Living target architecture — 2026-07-17
+Status: Living target architecture — 2026-07-18
 
 This is the canonical whole-system view. ADRs record why individual choices
 were made; this document shows how the choices compose into the product that
@@ -111,6 +111,17 @@ sidecars, state roots, credentials, and Docker resources are owned by one
 unique run identifier. The endpoint labels below are protocols and process
 roles, not reusable port numbers.
 
+ADR 0048 starts the independent Core and LEZ service provisioners concurrently
+only after immutable prebuild and artifact gates pass. Both fixed launcher
+scripts are SHA-bound, placed in separate owned sessions, registered by exact
+PID/start/executable/PGID/SID, waited, and reaped before bootstrap or actor
+authority can proceed. Docker discovery authenticates fixed run, scope, and
+component labels and retains every individually safe identity for cleanup even
+when certification rejects an overcount. Run AA measured the pre-change
+sequential startup at about 39 seconds for Core, 58 seconds for LEZ, and 98
+seconds including handoff. The concurrent contract is GREEN; its exact
+actual-node saving remains unclaimed until the clean pushed benchmark.
+
 ```mermaid
 flowchart TB
     Source["Pinned LEZ v0.2 source and witnessed guest"]
@@ -118,10 +129,14 @@ flowchart TB
     Deployment["Exact ProgramDeployment<br/>ProgramId 39b6a4db...4dec"]
 
     subgraph Bootstrap["Run-owned bootstrap authority"]
+        NodeCoordinator["Exact concurrent node-start coordinator"]
         Identity["Fresh maker and taker owner identities"]
         VaultDerive["Official owner-derived Vault account IDs"]
-        CoreProvisioner["Core wallet, miner, and funding provisioner"]
+        CoreProvisioner["Core service, wallet, miner, and funding provisioner"]
+        LezProvisioner["LEZ Bedrock, sequencer, and indexer provisioner"]
         LezBootstrap["Exact guest deploy, finality audit, and Vault Claims"]
+        NodeCoordinator --> CoreProvisioner
+        NodeCoordinator --> LezProvisioner
         Identity --> VaultDerive
     end
 
@@ -176,6 +191,9 @@ flowchart TB
     TakerFirst["Taker external first-lock fixture<br/>only PoC ownership exception"]
     Confirmer["Run controller<br/>mines or waits and confirms only"]
     CoreProvisioner -->|"cookie RPC for setup and deterministic funds"| Core
+    LezProvisioner --> Sequencer
+    LezProvisioner --> Bedrock
+    LezProvisioner --> Indexer
     TakerFirst -->|"Bitcoin first lock"| Core
     TakerFirst -->|"LEZ first lock"| TakerSidecar
     Confirmer -->|"fixture-only mining"| Core

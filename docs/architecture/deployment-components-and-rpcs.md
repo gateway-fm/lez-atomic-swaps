@@ -775,6 +775,16 @@ flowchart TB
     Indexer --> Evidence
 ```
 
+ADR 0048 adds one exact node-start coordinator ahead of every M3 bootstrap and
+actor flow. It starts the fixed Core and LEZ service launchers concurrently in
+separate owned sessions, waits and reaps both exact statuses, then authenticates
+the complete Docker run/scope/component inventory. No deployment, Vault claim,
+agreement, lock, claim, refund, or scalar authority exists before that join.
+The pre-change Run-AA baseline is approximately 39 seconds Core, 58 seconds
+LEZ, and 98 seconds with sequential handoff. Behavioral success, child failure,
+INT, TERM, overcount, wrong-component, query-failure, exact cleanup, and foreign
+survival cases are GREEN; the clean actual-node performance result is pending.
+
 | Component | Status | Endpoints and local services | Role/authority boundary | Current proof and nonclaim |
 |---|---|---|---|---|
 | M3 exact-idempotent LEZ initialization journal | Actual-node GREEN in `TakerSellsForeign` at run `m3schema4-20260717d` | Maker actor calls its capability-authenticated loopback sidecar; the sidecar uses official RPC on the run-owned sequencer and finalized reads on the indexer | `ExactIdempotentSubmissionSafe` is distinct from absence. The role-local Maker journal reserves the exact initialization ID and bytes before one send; `Started`, `Unknown`, and accepted states never rearm. Exact canonical evidence is still required to close | Durable LEZ Maker-lock counts advanced 0 to 1 to 2 for initialization and funding, stayed unchanged across restart, and the full pair finalized inside the exact actor window. This proves the private-local operation, not generic production idempotence for an arbitrary future LEZ endpoint |

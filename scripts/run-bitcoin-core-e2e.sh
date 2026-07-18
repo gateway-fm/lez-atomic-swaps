@@ -807,6 +807,8 @@ write_core_config "$network_cidr" "$maker_auth" "$taker_auth"
 docker build \
   --file "$dockerfile" \
   --label "org.logos-co.atomic-swaps.run=${run_id}" \
+  --label 'org.logos-co.atomic-swaps.scope=bitcoin-core-regtest-e2e' \
+  --label 'org.logos-co.atomic-swaps.component=bitcoin-core-image' \
   --tag "$image" \
   "$build_context"
 

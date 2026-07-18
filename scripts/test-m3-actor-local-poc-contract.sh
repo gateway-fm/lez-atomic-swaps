@@ -1632,7 +1632,9 @@ jq -e --arg run_id "$contract_run_id" '
   and .cleanup.runs_on_success_and_failure == true
   and .evidence.secret_safe_json == true
   and .evidence.cleanup_attestation == true
-  and .evidence.executable_script_sha256s == ["outer_runner","direction_driver","lez_bootstrap"]
+  and .evidence.executable_script_sha256s ==
+    ["outer_runner","direction_driver","lez_bootstrap",
+     "bitcoin_service_driver","lez_service_driver"]
   and .build_prerequisites.rapidsnark_lib_dir == "explicit_absolute_canonical_verified_v0_0_8"
   and .build_prerequisites.rapidsnark_files ==
     ["librapidsnark.a","libgmp.a","libfq.a","libfr.a"]
@@ -1684,8 +1686,8 @@ jq -e --arg run_id "$custom_token_contract_run_id" '
     "verified_cache_copy_in_exact_run_owned_secure_state_root"
   and .cleanup.secure_reservation_state_root_removed == true
   and .evidence.executable_script_sha256s ==
-    ["outer_runner","direction_driver","lez_bootstrap","f7_token_fixture",
-     "official_wallet_cache"]
+    ["outer_runner","direction_driver","lez_bootstrap","bitcoin_service_driver",
+     "lez_service_driver","f7_token_fixture","official_wallet_cache"]
   and .evidence.repository_clean_exact_head == true
   and .evidence.origin_main_equals_head == true
   and .evidence.executable_hashes_stable_from_start_to_publication == true
@@ -2416,7 +2418,8 @@ required_terms=(
   'overlap-revision-two-window.json'
   'assert_terminal_and_replay'
   'write_cleanup_attestation'
-  'capture_owned_resources'
+  'collect_owned_resources'
+  'reconcile_node_resource_inventories'
   'remove_secure_state_root'
   'remove_exact_resource_file'
   'all_exact_run_resources_absent'
@@ -2425,7 +2428,8 @@ required_terms=(
   'LEZ_V02_ARTIFACT_TARGET_DIR'
   'LEZ_V02_MAKER_VAULT_ACCOUNT_ID'
   'LEZ_V02_TAKER_VAULT_ACCOUNT_ID'
-  'capture_owned_containers'
+  'collect_owned_containers'
+  'wait_for_node_child'
   'assert_exact_owned_resource'
   'org.logos-co.atomic-swaps.run'
   '"$direction_driver" preflight'

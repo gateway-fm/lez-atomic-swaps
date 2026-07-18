@@ -2013,7 +2013,7 @@ Active M3 refund critical path:
   completed both directions in 19 minutes 10.95 seconds. It certified a
   production-mode 10.32-second cache hit while preserving revision four,
   `2 Bitcoin + 4 LEZ` effects, `175/75/0` and `75/175/0` balances, conserved
-  total 250, zero replay, finalized chain evidence, and exact cleanup. F7 is
+  total 250, zero replay, finalized chain evidence, and exact cleanup.
   Fresh Run AA (`m3f7compose20260718aa`) on clean pushed `df7ed86` then
   completed the third pair in 18 minutes 13.61 seconds with the same revisions,
   effects, balances, finality, zero replay, and exact cleanup; its
@@ -2025,6 +2025,15 @@ Active M3 refund critical path:
   guest and deployer through point of use and evidence publication. This avoids
   Run Y's measured 1 minute 58 second late-fail path without relaxing or
   replacing any bootstrap identity gate;
+- [x] parallelize independent Core and LEZ node provisioning without weakening
+  isolation or cleanup. Run AA measured the old sequential startup at about
+  39 seconds Core, 58 seconds LEZ, and 98 seconds including handoff. ADR 0048
+  starts both fixed SHA-bound launchers in exact sessions, defers signals across
+  registration, waits and reaps both statuses, authenticates exact
+  run/scope/component resource sets, and retains individually verified
+  resources for exact cleanup even when certification fails. The production
+  coordinator behavioral matrix is GREEN; a fresh clean pushed actual-node run
+  must measure the saving before the plan claims one;
 - [ ] compact or externally reference peerless public transaction facts before
   production. The validated v2 wire can carry transaction bytes larger than
   the recovery store's 64 KiB per-chain-evidence cap. Official PoC transactions

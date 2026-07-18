@@ -22,9 +22,10 @@ the additive exact-once v2 asset client. The SDK requires exact finalized
 Taker-plan evidence before releasing the exact Maker plan. The client enforces
 operation-specific actor roles and conservative exact or discovery observation
 without retries. All eleven authenticated sidecar routes, durable replay, and
-fork-safe finalized asset scans are component GREEN. Clean pushed-commit Run X
-also completes both role-owned actual-node custom-token directions with exact
-balances, effects, terminal replay, and cleanup. Repeatability, recordings, and
+fork-safe finalized asset scans are component GREEN. Clean pushed-commit Runs
+X, Z, and AA complete three exact pairs of both role-owned actual-node
+custom-token directions with exact balances, effects, terminal replay, and
+cleanup. The requested F7 repeatability gate is closed; recordings and
 remaining milestone closure work remain open.
 
 ADRs are append-only. Superseded decisions remain here and link to their
@@ -58,6 +59,7 @@ flowchart TB
     Bitcoin --> BitcoinEntry["0029 M3 Bitcoin entry"]
     BitcoinEntry --> TokenWitness["0042 Witnessed token ATA claims"]
     TokenWitness --> FixedWindows["0047 Pinned finality and test lanes"]
+    FixedWindows --> ParallelStartup["0048 Exact parallel node provisioning"]
     BitcoinEntry --> FinalizedFunding["0030 Finalized LEZ funding before claim"]
     FinalizedFunding --> BtcActor["0031 Revision-zero BTC actor"]
     BtcActor --> Contexts["0032 Agreement-derived adaptor contexts"]
@@ -100,6 +102,7 @@ flowchart TB
     Progressive -.-> LocalM2
     Progressive -.-> V02Effects
     Progressive -.-> FixedWindows
+    Progressive -.-> ParallelStartup
     ZecPins --> LezSidecar
     LEZ --> LezSidecar
     ZecPins --> Agreement
@@ -178,3 +181,4 @@ flowchart TB
 | [0045](0045-countersign-the-selected-lez-asset.md) | Preserve agreement-v1 bytes and separately countersign the exact native or custom-token selection, programs, definition, ATAs, amount, deadline, and aggregate authority | Accepted through deterministic SDK, adapter, sidecar, actor journals, and both actual-node F7 directions. Independent custom custody, both role signatures, exact local policy, exact v2 mapping, native/token plan validation, opaque asset-bound first-lock authorization, official ATA planning, and finalized route/scan mapping are GREEN |
 | [0046](0046-replay-btc-sdk-lifecycle-from-exact-transitions.md) | Reconstruct revisions one through four from exact ordered chain transitions and remove discovery/negotiation capability after activation | Accepted at the deterministic SDK boundary; both directions/roles, claims, ordered refunds, replay, and clone-validate-commit rollback are GREEN. Public process-durable store and direct actor/node composition remain open |
 | [0047](0047-pin-finalized-windows-and-separate-test-lanes.md) | Read only a pinned requested finalized interval, tolerate monotonic descendants, and separate fast development from fresh certification lanes | Accepted and actual-node GREEN for both custom-token directions at one-second cadence. Runs X, Z, and AA close the requested 3-of-3 repeat gate; AA completed in 18 minutes 13.61 seconds and certified the 7.81-second policy-2 wallet-cache hit plus fail-fast guest/deployer checks |
+| [0048](0048-parallelize-exact-node-provisioning.md) | Start fixed Core and LEZ provisioners concurrently with exact process, component, failure, and cleanup identity | Accepted and behavioral GREEN. Pre-change startup measured about 39 seconds Core, 58 seconds LEZ, and 98 seconds sequential; the clean pushed actual-node benchmark remains pending |
