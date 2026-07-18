@@ -22,7 +22,9 @@ cargo build --locked -p lez-btc-swap-sdk -p lez-btc-core-adapter
 ./scripts/check-m3-cryptographic-vectors.sh
 ```
 
-These checks make no public network call. They prove that the adapter requires:
+These checks make no public Bitcoin or LEZ chain-endpoint call. A cold Cargo
+invocation may still fetch the exact locked Rust dependencies. The checks prove
+that the adapter requires:
 
 - Testnet4 means exact `chain=testnet4` and the rust-bitcoin Testnet4
   genesis, never Testnet3's `chain=test`;
@@ -131,8 +133,8 @@ rpcport=48332
 rpcwhitelistdefault=0
 rpcauth=maker:REPLACE_WITH_GENERATED_VERIFIER
 rpcauth=taker:REPLACE_WITH_GENERATED_VERIFIER
-rpcwhitelist=maker:getblockchaininfo,getnetworkinfo,getblockhash,getblock,getblockheader,getrawtransaction,gettxout,gettxspendingprevout,getindexinfo,getmempoolinfo,getrawmempool,getmempoolentry,testmempoolaccept,sendrawtransaction
-rpcwhitelist=taker:getblockchaininfo,getnetworkinfo,getblockhash,getblock,getblockheader,getrawtransaction,gettxout,gettxspendingprevout,getindexinfo,getmempoolinfo,getrawmempool,getmempoolentry,testmempoolaccept,sendrawtransaction
+rpcwhitelist=maker:getblockchaininfo,getnetworkinfo,getblockhash,getblockheader,getrawtransaction,gettxspendingprevout,getindexinfo,testmempoolaccept,sendrawtransaction
+rpcwhitelist=taker:getblockchaininfo,getnetworkinfo,getblockhash,getblockheader,getrawtransaction,gettxspendingprevout,getindexinfo,testmempoolaccept,sendrawtransaction
 ```
 
 The allowlist is the exact method surface used by the typed adapter and denies
@@ -167,6 +169,12 @@ pruned false, blocks equal headers, and both required indexes synchronized at
 that height. The typed adapter repeats these checks and also requires the
 countersigned agreement genesis to equal both the observed and library-pinned
 Testnet4 genesis.
+
+These are fail-closed internal-consistency checks against the node's reported
+header tip. They do not prove that the public Testnet4 tip is fresh, that any
+peer is connected, or that reported chainwork is globally current. The
+self-hosting operator must separately monitor peer connectivity and tip
+freshness before admitting public-value effects.
 
 ### 4. Create and fund an operator wallet
 
