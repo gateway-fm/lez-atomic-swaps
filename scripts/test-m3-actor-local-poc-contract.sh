@@ -1638,14 +1638,20 @@ jq -e --arg run_id "$custom_token_contract_run_id" '
     token_program_id:"c5d50f88bfe7cb14b421673e9441aade7571e522eef035cc24d80b2e53c69a7c",
     ata_program_id:"95841cc8bd2c87d7111bc5c7f3aa2a85d35e90f7217e82a397aa05acd51500f8"
   }
-  and .isolation.official_wallet_build_target == "exact_run_owned_secure_state_root"
+  and .isolation.official_wallet_build_target ==
+    "verified_cache_copy_in_exact_run_owned_secure_state_root"
   and .cleanup.secure_reservation_state_root_removed == true
   and .evidence.executable_script_sha256s ==
-    ["outer_runner","direction_driver","lez_bootstrap","f7_token_fixture"]
+    ["outer_runner","direction_driver","lez_bootstrap","f7_token_fixture",
+     "official_wallet_cache"]
+  and .evidence.repository_clean_exact_head == true
+  and .evidence.origin_main_equals_head == true
+  and .evidence.executable_hashes_stable_from_start_to_publication == true
   and .build_prerequisites.official_wallet == {
     source:"same_exact_clean_pinned_lez_v0_2_checkout",
     cargo:"locked_offline",
-    target:"exact_run_owned_secure_state_root"
+    cache:"content_addressed_executable_only_fail_closed",
+    target:"verified_copy_in_exact_run_owned_secure_state_root"
   }
   and .external_resources.public_rpc == false
   and .external_resources.faucet == false
@@ -1691,9 +1697,18 @@ fi
   fail "custom-token runner helpers are incomplete"
 for term in \
   '--locked --offline --example lez-v02-account-codec' \
-  '--manifest-path "${lez_source_dir}/Cargo.toml"' \
-  '--locked --offline -p wallet --target-dir "$official_wallet_target"' \
-  'official_token_id_declaration' 'official_ata_id_declaration'; do
+  'M3_OFFICIAL_WALLET_CACHE_ROOT="$official_wallet_cache_root"' \
+  'M3_OFFICIAL_WALLET_DESTINATION="$official_wallet_bin"' \
+  'LEZ_V02_SOURCE_DIR="$lez_source_dir"' \
+  'M3_RUST_TOOLCHAIN="$toolchain"' \
+  '"$official_wallet_cache_helper" prepare' \
+  'official-wallet cache test override is forbidden in an actor run' \
+  'and .test_mode == false' \
+  'and .validation_policy_revision == 2' \
+  'and .input.publisher_helper_sha256 == .publisher_helper_sha256' \
+  'and (.runtime_fingerprint_sha256 | strings | test("^[0-9a-f]{64}$"))' \
+  'official-wallet artifact preparation evidence is invalid' \
+  'sha256sum "$official_wallet_bin"'; do
   rg -Fq -- "$term" <<<"$wallet_prebuild_source" ||
     fail "custom-token prebuild is missing: ${term}"
 done

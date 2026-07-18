@@ -1990,6 +1990,23 @@ Active M3 refund critical path:
   the M3 tag. Every repetition must use fresh identities and retain exact
   balance, effect, replay, and cleanup evidence. Synchronized
   documentation, D1, and milestone-wide closure gates follow that passing run;
+  the official-wallet cache is now implementation- and contract-GREEN. Policy
+  revision 2 binds the clean official source/origin/archive and Cargo metadata,
+  lockfile, program artifacts, effective modern/legacy Cargo configs, Rust and
+  Cargo binaries/versions/target-library tree, build tools, bindgen include
+  tree, native libraries, exact recipe, expected wallet SHA-256, and helper
+  hash. Objects contain only the executable and manifest under owner-only
+  modes; private consumers are non-hardlinked and triple-rehashed. Production
+  test overrides, dirty/ignored source, missing runtime libraries, invalid
+  published refs/objects, changed helper bytes, and untracked/dirty actor HEAD
+  all fail closed. A hardened production-input miss measured 202.42 seconds
+  and 856,824 KiB peak RSS; its exact hit measured 10.35 seconds and 33,844 KiB,
+  saving 192.07 seconds (94.9%) and about 804 MiB peak RSS per repeat. The JSON
+  retains monotonic duration, artifact size, canonical secret-free input,
+  policy/helper, object-manifest, runtime, and wallet identities. This is
+  dirty-tree development performance evidence, not exact-head chain evidence;
+  the next clean pushed custom-token repetition must prove the integrated hit
+  without changing balances, effects, replay, finality, or cleanup;
 - [ ] compact or externally reference peerless public transaction facts before
   production. The validated v2 wire can carry transaction bytes larger than
   the recovery store's 64 KiB per-chain-evidence cap. Official PoC transactions

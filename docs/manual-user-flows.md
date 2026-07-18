@@ -658,6 +658,18 @@ Canonical maker-lock containing-time enforcement is GREEN at `3d202f7`.
 SDK-owned same-action maker submission and its actual-node admission packet,
 concurrent swaps, crash/chaos, and adversarial journeys remain open.
 
+The same guide now includes the
+[custom-token F7 pair and verified wallet-cache procedure](m3-local-poc-operator-guide.md#reproduce-the-custom-token-f7-happy-pair-with-the-verified-wallet-cache).
+It selects the real Maker/Taker roles, runs both economic directions through
+fresh isolated Core and LEZ nodes, checks exact `2 Bitcoin + 4 LEZ` effects,
+directional `175/75/0` and `75/175/0` balances, zero replay, and exact cleanup.
+The persistent cache contains only the pinned executable and manifest. It uses
+no RPC or download and cannot introduce faucet/public-endpoint flakiness;
+uncached locked build inputs remain an offline setup availability risk. The
+measured hardened hit saves 192.07 seconds versus cold preparation without
+weakening source, toolchain, native/runtime-library, expected-output, policy,
+or private-copy checks.
+
 ## Can I run the complete M3 happy path myself?
 
 Yes. Follow the [M3 local PoC operator guide](m3-local-poc-operator-guide.md).

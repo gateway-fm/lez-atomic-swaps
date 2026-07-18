@@ -541,16 +541,18 @@ flowchart TB
         M3F7C["F7 exact-once bridge client<br/>eleven v2 operations + role/window checks GREEN"]
         M3F7D["F7 agreement and local-policy adapter<br/>eleven no-submit mappings GREEN"]
         M3F7S["F7 official sidecar planner<br/>tags 11, 7, 8, 12, and 10<br/>four durable v2 reservations GREEN"]
-        M3F7R["F7 sidecar and finalized scanner<br/>lifecycle-aware terms discovery + containing-block anchors GREEN<br/>90s max3 historical reads in 120s actor budget<br/>actual-node certification open"]
+        M3F7R["F7 sidecar and finalized scanner<br/>lifecycle-aware terms discovery + containing-block anchors GREEN<br/>90s max3 historical reads in 120s actor budget<br/>first actual-node pair GREEN"]
         M3F7P["F7 peer funding projection<br/>schema 5 v2 DiscoverByTerms<br/>nonowner has no submit authority GREEN"]
-        M3RA["btc-reference-actor<br/>schema 4 live locks and schema 5 peer projection GREEN<br/>complete F7 actual-node packet open"]
+        M3RA["btc-reference-actor<br/>schema 4 live locks and schema 5 peer projection GREEN<br/>complete F7 actual-node pair GREEN"]
         M3RUN["Schema 4 private-local runner<br/>external Taker first lock<br/>actor-owned Maker second lock GREEN"]
+        M3CACHE["Policy-2 official-wallet artifact cache<br/>executable plus manifest only<br/>202.42s cold and 10.35s hit GREEN"]
         M3F7A --> M3F7C
         M3F7C --> M3F7D
         M3F7D --> M3F7S
         M3F7S --> M3F7R
         M3F7R --> M3F7P
         M3F7P --> M3RA
+        M3CACHE -->|"verified private wallet copy"| M3RUN
     end
 
     subgraph LezSidecars["Role-isolated official LEZ v0.1.2 processes"]
@@ -2317,8 +2319,21 @@ requested finalized interval. Newer finalized descendants are accepted only
 when height does not rewind and the pinned end block still agrees by ID and
 hash after historical state reads. Fixed-window RED-GREEN, all 128 sidecar
 tests, five binary/example tests, strict Clippy, and the one-second orchestration
-contract pass; actual-node validation of that faster cadence remains open.
-The fresh two-direction actual-node custom-token packet,
+contract pass. Run V proved the faster cadence through the complete forward
+direction. Run W proved schedule-aware sequential anchors around the forward
+settlement and exposed the last typed retry-count mismatch. Run X on clean
+pushed `422c72e` then completed both actual-node custom-token directions with
+four LEZ and two Bitcoin effects each, exact `175/75/0` and `75/175/0`
+balances, zero custody/replay, no public resource, and exact cleanup.
+
+The official-wallet prebuild now passes through a separate owner-only
+content-addressed artifact component. Policy 2 binds the complete secret-free
+source, toolchain, target-library, build-tool, Cargo-config, bindgen,
+native-library, expected-output, runtime, and validation-helper identities.
+Only the executable and manifest persist; a fresh run-private non-hardlinked
+copy is triple-rehashed before use. A real cold/hit comparison measured
+202.42/10.35 seconds, saving 192.07 seconds without weakening any chain or
+artifact gate. Clean pushed actor integration, the remaining two repeat pairs,
 arbitrary-N/same-direction scheduling, process-kill/reorg/chaos, public
 deployment, formal review, and production readiness remain outside the claim.
 

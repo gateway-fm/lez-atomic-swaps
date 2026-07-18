@@ -12,7 +12,8 @@ readonly compose_sha256="f9ebc6ebdb19d769b793c245a736caaeb198c62587f13b25c660c13
 readonly shellcheck_version="0.11.0"
 readonly shellcheck_sha256="b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6"
 
-for command in bash curl git jq script scriptreplay sed sha256sum stat tar; do
+for command in bash curl flock git id jq ldd readelf rustup script scriptreplay \
+  sed sha256sum stat tar; do
   command -v "$command" >/dev/null || {
     echo "${command} is required by the CI quality gate" >&2
     exit 1
@@ -65,6 +66,7 @@ fi
 bash -n "${shell_files[@]}"
 "$shellcheck" --severity=warning "${shell_files[@]}"
 M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.sh
+./scripts/test-m3-official-wallet-cache-contract.sh
 ./scripts/test-m3-f7-token-fixture-contract.sh
 ./scripts/test-m3-private-recording-contract.sh
 

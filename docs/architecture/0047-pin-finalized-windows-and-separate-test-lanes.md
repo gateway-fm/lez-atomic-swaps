@@ -2,7 +2,9 @@
 
 Status: Accepted and actual-node GREEN in both custom-token directions at the
 one-second slot. Clean pushed-commit Run X retains the first complete pair. The
-immutable wallet cache and repeatability packet remain open.
+immutable wallet cache is implementation- and contract-GREEN with measured
+cold/warm production inputs; its clean pushed actor-run integration and the
+remaining repeatability packets remain open.
 
 ## Context
 
@@ -56,11 +58,24 @@ Development and evidence use three explicit lanes:
 Immutable compilers, source inputs, native libraries, binaries, and Docker
 layers may be content-addressed and shared. Every cache key must bind the exact
 source revision, lockfile and source digests, toolchain/target, features,
-flags, and native-library identities. A cached official wallet bundle may
-contain only its executable and provenance manifest; the executable is copied
-into the run-private secure root and rehashed before use. Chain databases,
+flags, effective Cargo configuration, target-library tree, build-tool and
+native-library identities, expected output hash, and the validation-policy and
+helper hashes. A cached official wallet object contains only its mode-`0500`
+executable and mode-`0600` provenance manifest under owner-only directories.
+The executable is copied or reflinked, never hardlinked, into the run-private
+secure root and the source-before, source-after, and private destination are
+rehashed before use. A missing reference is a cache miss; a published invalid
+reference, object, mode, manifest, runtime dependency, or hash fails closed
+instead of silently rebuilding. Chain databases,
 wallet homes, keys, credentials, nonces, actor stores, journals, agreements,
 transactions, ports, Docker resources, and evidence are never shared.
+
+Production-mode actor runs reject every cache test override, require a clean
+tracked exact HEAD before any prebuild, retain the complete secret-free input
+manifest plus object/runtime identities and timing, and prove the helper bytes
+did not change from start through packet publication. The cache trusts the
+current UID because that UID already controls the checkout and toolchain; it is
+not a boundary against another malicious process running as the same UID.
 
 Effect-bearing checkpoint/resume is deferred until after the PoC. A checkpoint
 must never grant send authority, and safe reconciliation after an ambiguous
@@ -92,9 +107,12 @@ flowchart TB
     Fast --> Medium["Complete affected workspaces"]
     Medium --> Push["Clean commit pushed to origin/main"]
     Push --> Cert["Fresh isolated certification run"]
-    Cache["Verified immutable artifact cache"] --> Fast
-    Cache --> Medium
-    Cache --> Copy["Copy and rehash binary into run-private root"]
+    Inputs["Pinned source, lock, tools, target libs,<br/>native libs, policy, expected output"] --> Key["Canonical SHA-256 input key"]
+    Key --> Ref["Owner-only atomic reference"]
+    Ref --> Object["Wallet plus provenance manifest"]
+    Object --> Fast
+    Object --> Medium
+    Object --> Copy["Private non-hardlinked copy<br/>triple hash verification"]
     Copy --> Cert
     Private["Fresh nodes, keys, actors, journals, effects"] --> Cert
     Cert --> Packet["Balances, finality, replay, cleanup packet"]
@@ -152,3 +170,18 @@ the cache target. Each direction retained four LEZ and two Bitcoin effects,
 terminal revision four, zero replay resubmission, exact directional balances,
 and exact non-foreign cleanup. This closes the functional two-direction gate;
 the owner-requested fresh repetitions remain certification work.
+
+The implemented official-wallet cache now removes the largest safe repeated
+build cost without relaxing any acceptance check. A real production-input miss
+under validation policy 2 rebuilt the pinned wallet in 202.42 seconds
+(201.41 seconds measured inside the helper), used 856,824 KiB peak RSS, and
+reproduced exact SHA-256 `28245d5f...f96e6` at 118,659,320 bytes. The matching
+hit took 10.35 seconds (10.31 seconds internally) and 33,844 KiB peak RSS: a
+192.07-second, 94.9% wall-time saving and about 804 MiB lower peak RSS. Both
+runs had input key `6607d474...ded208`, object-manifest hash
+`27945318...63169`, and runtime hash `697c42f8...675c`. These measurements are
+honest dirty-tree development performance evidence because the helper itself
+was under review; they are not milestone certification. The next clean pushed
+custom-token actor run must report `cache_hit: true`, the same pinned wallet,
+full input/runtime provenance, unchanged effects/balances/replay, and exact
+cleanup before the integration is called certified.

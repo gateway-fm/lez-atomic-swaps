@@ -133,11 +133,12 @@ readonly bitcoin_anchor_assignment_filter="${repo_root}/scripts/jq/m3-bitcoin-an
 readonly lez_source_dir="${LEZ_V02_SOURCE_DIR:-/tmp/lez-v020-native-investigation}"
 readonly official_wallet_target="${secure_state_root}/official-wallet-target"
 readonly official_wallet_bin="${official_wallet_target}/debug/wallet"
+readonly official_wallet_cache_helper="${repo_root}/scripts/prepare-m3-official-wallet-artifact.sh"
+readonly official_wallet_cache_evidence="${evidence_dir}/official-wallet-artifact.json"
+readonly official_wallet_cache_root="${M3_OFFICIAL_WALLET_CACHE_ROOT:-/tmp/lez-atomic-swaps-cache-$(id -u)/m3-official-wallet-v1}"
 readonly lez_v02_source_commit="a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
 readonly lez_token_program_id="c5d50f88bfe7cb14b421673e9441aade7571e522eef035cc24d80b2e53c69a7c"
 readonly lez_ata_program_id="95841cc8bd2c87d7111bc5c7f3aa2a85d35e90f7217e82a397aa05acd51500f8"
-readonly official_token_id_declaration='pub const TOKEN_ID: [u32; 8] = [2282739141, 348907455, 1046946228, 3735699860, 585462133, 3426087150, 772528164, 2090518099];'
-readonly official_ata_id_declaration='pub const ASSOCIATED_TOKEN_ACCOUNT_ID: [u32; 8] = [3357312149, 3615960253, 3351583505, 2234166003, 4153433811, 2743238177, 2886052503, 4160755157];'
 readonly -a directions=(taker_sells_foreign taker_sells_lez)
 declare -A overlap_pids=()
 declare -A overlap_logs=()
@@ -277,7 +278,7 @@ emit_contract() {
         secure_reservation_state: "exact_run_owned_tmp_root",
         official_wallet_build_target:
           (if $asset_mode == "custom_token" then
-             "exact_run_owned_secure_state_root" else null end),
+             "verified_cache_copy_in_exact_run_owned_secure_state_root" else null end),
         foreign_resource_mutation: false
       },
       cleanup: {
@@ -290,9 +291,13 @@ emit_contract() {
       evidence: {
         secret_safe_json: true,
         cleanup_attestation: true,
+        repository_clean_exact_head: true,
+        origin_main_equals_head: true,
+        executable_hashes_stable_from_start_to_publication: true,
         executable_script_sha256s:
           (["outer_runner", "direction_driver", "lez_bootstrap"] +
-           (if $asset_mode == "custom_token" then ["f7_token_fixture"] else [] end))
+           (if $asset_mode == "custom_token" then
+              ["f7_token_fixture","official_wallet_cache"] else [] end))
       },
       build_prerequisites: {
         rapidsnark_lib_dir: "explicit_absolute_canonical_verified_v0_0_8",
@@ -302,7 +307,9 @@ emit_contract() {
         official_wallet:
           (if $asset_mode == "custom_token" then {
             source:"same_exact_clean_pinned_lez_v0_2_checkout",
-            cargo:"locked_offline",target:"exact_run_owned_secure_state_root"
+            cargo:"locked_offline",
+            cache:"content_addressed_executable_only_fail_closed",
+            target:"verified_copy_in_exact_run_owned_secure_state_root"
           } else null end)
       },
       external_resources: {
@@ -340,6 +347,28 @@ for command_name in cargo chmod curl date docker find git id jq kill mkdir mv re
   command -v "$command_name" >/dev/null || fail "missing required tool: ${command_name}"
 done
 
+repository_status="$(git status --porcelain --untracked-files=all)" ||
+  fail "repository status query failed"
+[[ -z "$repository_status" ]] ||
+  fail "M3 actor execution requires one clean exact-HEAD repository"
+repository_commit_at_start="$(git rev-parse HEAD)" || fail "repository HEAD query failed"
+origin_main_at_start="$(git rev-parse refs/remotes/origin/main)" ||
+  fail "origin/main remote-tracking commit query failed"
+[[ "$origin_main_at_start" == "$repository_commit_at_start" ]] ||
+  fail "M3 actor execution requires HEAD to equal the already-pushed origin/main commit"
+readonly repository_commit_at_start origin_main_at_start
+for tracked_path in scripts/run-m3-actor-local-poc.sh \
+  scripts/run-m3-actor-direction.sh scripts/run-m3-lez-bootstrap.sh; do
+  git ls-files --error-unmatch "$tracked_path" >/dev/null ||
+    fail "M3 executable is not tracked at HEAD: $tracked_path"
+done
+outer_runner_sha_at_start="$(sha256sum scripts/run-m3-actor-local-poc.sh | sed 's/ .*//')"
+direction_driver_sha_at_start="$(sha256sum "$direction_driver" | sed 's/ .*//')"
+lez_bootstrap_sha_at_start="$(sha256sum "$lez_bootstrap_driver" | sed 's/ .*//')"
+readonly outer_runner_sha_at_start direction_driver_sha_at_start lez_bootstrap_sha_at_start
+f7_token_fixture_driver_sha_at_start=""
+official_wallet_cache_helper_sha_at_start=""
+
 [[ -z "${M3_ACTOR_DIRECTION_DRIVER+x}" ]] ||
   fail "M3_ACTOR_DIRECTION_DRIVER overrides are non-certifying and forbidden"
 [[ -x "$direction_driver" && ! -L "$direction_driver" ]] ||
@@ -355,7 +384,17 @@ if [[ "$asset_mode" == "custom_token" ]]; then
     fail "M3 F7 token-fixture driver is missing or unsafe"
   [[ "$(readlink -f "$f7_token_fixture_driver")" == "$f7_token_fixture_driver" ]] ||
     fail "M3 F7 token-fixture driver path is not canonical"
+  for tracked_path in scripts/run-m3-f7-token-fixture.sh \
+    scripts/prepare-m3-official-wallet-artifact.sh; do
+    git ls-files --error-unmatch "$tracked_path" >/dev/null ||
+      fail "M3 custom-token executable is not tracked at HEAD: $tracked_path"
+  done
+  f7_token_fixture_driver_sha_at_start="$(sha256sum "$f7_token_fixture_driver" |
+    sed 's/ .*//')"
+  official_wallet_cache_helper_sha_at_start="$(sha256sum "$official_wallet_cache_helper" |
+    sed 's/ .*//')"
 fi
+readonly f7_token_fixture_driver_sha_at_start official_wallet_cache_helper_sha_at_start
 [[ -n "${LEZ_V02_ARTIFACT_TARGET_DIR:-}" && "$LEZ_V02_ARTIFACT_TARGET_DIR" == /* &&
    -d "$LEZ_V02_ARTIFACT_TARGET_DIR" && ! -L "$LEZ_V02_ARTIFACT_TARGET_DIR" ]] ||
   fail "set LEZ_V02_ARTIFACT_TARGET_DIR to one verified absolute artifact target"
@@ -390,10 +429,14 @@ validate_native_build_prerequisites() {
 validate_native_build_prerequisites
 
 validate_official_wallet_source() {
+  local source_status
   [[ "$lez_source_dir" == /* && -d "$lez_source_dir/.git" && ! -L "$lez_source_dir" &&
      "$(readlink -f "$lez_source_dir")" == "$lez_source_dir" ]] ||
     fail "LEZ v0.2 source must be one canonical absolute Git checkout"
-  [[ -z "$(git -C "$lez_source_dir" status --porcelain --untracked-files=all)" ]] ||
+  source_status="$(git -C "$lez_source_dir" status --porcelain --untracked-files=all \
+    --ignored=matching)" ||
+    fail "LEZ v0.2 source status query failed"
+  [[ -z "$source_status" ]] ||
     fail "LEZ v0.2 source checkout is dirty"
   [[ "$(git -C "$lez_source_dir" rev-parse HEAD)" == "$lez_v02_source_commit" ]] ||
     fail "LEZ v0.2 source checkout is not the pinned commit"
@@ -743,8 +786,7 @@ verify_lez_bootstrap_contract() {
 }
 
 prebuild() {
-  local registry
-  local -a program_registries=()
+  local cache_partial
   echo "Prebuilding every M3 actor binary before service startup"
   if ! cargo +"$toolchain" build --locked --offline \
       -p btc-local-poc-provision -p btc-reference-actor -p lez-adaptor-role-runner --bins; then
@@ -765,26 +807,63 @@ prebuild() {
     fail "offline LEZ sidecar prebuild failed; populate its pinned Cargo cache before certification"
   fi
   if [[ "$asset_mode" == "custom_token" ]]; then
+    for variable in M3_OFFICIAL_WALLET_CACHE_TEST_MODE \
+      M3_OFFICIAL_WALLET_TEST_EXPECTED_COMMIT \
+      M3_OFFICIAL_WALLET_TEST_EXPECTED_ORIGIN \
+      M3_OFFICIAL_WALLET_TEST_WALLET_SHA256 \
+      M3_OFFICIAL_WALLET_TEST_LIBRAPIDSNARK_A_SHA256 \
+      M3_OFFICIAL_WALLET_TEST_LIBGMP_A_SHA256 \
+      M3_OFFICIAL_WALLET_TEST_LIBFQ_A_SHA256 \
+      M3_OFFICIAL_WALLET_TEST_LIBFR_A_SHA256; do
+      [[ ! -v "$variable" ]] ||
+        fail "official-wallet cache test override is forbidden in an actor run: $variable"
+    done
     if ! cargo +"$toolchain" build --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
         --locked --offline --example lez-v02-account-codec; then
       fail "offline LEZ account-codec prebuild failed; populate the pinned Cargo cache"
     fi
-    mkdir -m 0700 "$official_wallet_target"
-    if ! cargo +"$toolchain" build --manifest-path "${lez_source_dir}/Cargo.toml" \
-        --locked --offline -p wallet --target-dir "$official_wallet_target"; then
-      fail "offline official LEZ v0.2 wallet build failed; populate the pinned Cargo cache"
-    fi
-    mapfile -t program_registries < <(find "${official_wallet_target}/debug/build" \
-      -path '*/out/lez/programs/mod.rs' -type f -print)
-    [[ "${#program_registries[@]}" -ge 1 ]] ||
-      fail "official wallet build did not retain its generated program registry"
-    for registry in "${program_registries[@]}"; do
-      [[ ! -L "$registry" ]] || fail "official program registry became a symlink"
-      rg -Fqx "$official_token_id_declaration" "$registry" ||
-        fail "official Token program ID differs from the verified v0.2 value"
-      rg -Fqx "$official_ata_id_declaration" "$registry" ||
-        fail "official ATA program ID differs from the verified v0.2 value"
-    done
+    [[ -x "$official_wallet_cache_helper" &&
+       ! -L "$official_wallet_cache_helper" ]] ||
+      fail "official-wallet cache helper is unavailable"
+    cache_partial="${official_wallet_cache_evidence}.partial"
+    [[ ! -e "$cache_partial" && ! -L "$cache_partial" ]] ||
+      fail "official-wallet cache evidence partial already exists"
+    M3_OFFICIAL_WALLET_CACHE_ROOT="$official_wallet_cache_root" \
+      M3_OFFICIAL_WALLET_DESTINATION="$official_wallet_bin" \
+      LEZ_V02_SOURCE_DIR="$lez_source_dir" \
+      M3_RUST_TOOLCHAIN="$toolchain" \
+      "$official_wallet_cache_helper" prepare >"$cache_partial" ||
+      fail "verified official-wallet artifact preparation failed"
+    chmod 0600 "$cache_partial"
+    jq -e '
+      .schema_version == 1
+      and .kind == "m3_official_wallet_artifact_preparation"
+      and .result == "prepared"
+      and (.cache_hit | type == "boolean")
+      and .test_mode == false
+      and .validation_policy_revision == 2
+      and (.publisher_helper_sha256 | test("^[0-9a-f]{64}$"))
+      and .input.validation_policy_revision == 2
+      and .input.publisher_helper_sha256 == .publisher_helper_sha256
+      and .input.build.expected_wallet_sha256 == .wallet_sha256
+      and (.input.toolchain.target_libdir_sha256 | test("^[0-9a-f]{64}$"))
+      and (.input_key | strings | test("^[0-9a-f]{64}$"))
+      and (.wallet_sha256 | strings | test("^[0-9a-f]{64}$"))
+      and (.object_manifest_sha256 | strings | test("^[0-9a-f]{64}$"))
+      and (.runtime_fingerprint_sha256 | strings | test("^[0-9a-f]{64}$"))
+      and (.duration_ms | numbers) >= 0
+      and (.artifact_bytes | numbers) > 0
+      and .private_copy == true
+      and .hardlink == false
+      and .source_rehashed_after_copy == true
+      and .destination_rehashed == true
+      and .secrets_or_state_cached == false
+    ' "$cache_partial" >/dev/null ||
+      fail "official-wallet artifact preparation evidence is invalid"
+    [[ "$(jq -er '.wallet_sha256' "$cache_partial")" == \
+       "$(sha256sum "$official_wallet_bin" | sed 's/ .*//')" ]] ||
+      fail "official-wallet artifact evidence does not bind the private copy"
+    mv "$cache_partial" "$official_wallet_cache_evidence"
   fi
 }
 
@@ -813,6 +892,8 @@ assert_prebuilt() {
       fail "prebuilt LEZ account codec is missing"
     [[ -x "$official_wallet_bin" && -f "$official_wallet_bin" &&
        ! -L "$official_wallet_bin" ]] || fail "official LEZ v0.2 wallet binary is missing"
+    [[ "$(stat -c %a "$official_wallet_bin")" == 500 ]] ||
+      fail "official LEZ v0.2 wallet binary has an unsafe mode"
     [[ "$(readlink -f "$official_wallet_target")" == "$official_wallet_target" ]] ||
       fail "official wallet target is not canonical"
   fi
@@ -2012,22 +2093,79 @@ validate_survivor_direction_evidence() {
 }
 
 write_run_evidence() {
-  local repository_commit completed_at outer_runner_sha direction_driver_sha lez_bootstrap_sha
+  local repository_commit origin_main completed_at outer_runner_sha direction_driver_sha lez_bootstrap_sha
+  local repository_status
   local bedrock_log bedrock_ntp_timeout_count
   local foreign_survivor_summary="null" lez_survivor_summary="null"
   local overlap_summary="null"
   local f7_token_fixture_summary="null" f7_token_fixture_sha=""
   local f7_token_fixture_driver_sha=""
+  local official_wallet_cache_summary="null" official_wallet_cache_evidence_sha=""
+  local official_wallet_cache_helper_sha=""
   local foreign_terminal_balance_summary="null" lez_terminal_balance_summary="null"
   local terminal_file terminal_sha effects_sha
+  repository_status="$(git status --porcelain --untracked-files=all)" ||
+    fail "final repository status query failed"
+  [[ -z "$repository_status" ]] || fail "repository changed during M3 actor execution"
   repository_commit="$(git rev-parse HEAD)"
+  [[ "$repository_commit" == "$repository_commit_at_start" ]] ||
+    fail "repository HEAD changed during M3 actor execution"
+  origin_main="$(git rev-parse refs/remotes/origin/main)" ||
+    fail "final origin/main remote-tracking commit query failed"
+  [[ "$origin_main" == "$origin_main_at_start" &&
+     "$origin_main" == "$repository_commit" ]] ||
+    fail "origin/main or repository HEAD changed during M3 actor execution"
   completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   outer_runner_sha="$(sha256sum scripts/run-m3-actor-local-poc.sh | sed 's/ .*//')"
   direction_driver_sha="$(sha256sum "$direction_driver" | sed 's/ .*//')"
   lez_bootstrap_sha="$(sha256sum "$lez_bootstrap_driver" | sed 's/ .*//')"
+  [[ "$outer_runner_sha" == "$outer_runner_sha_at_start" &&
+     "$direction_driver_sha" == "$direction_driver_sha_at_start" &&
+     "$lez_bootstrap_sha" == "$lez_bootstrap_sha_at_start" ]] ||
+    fail "certified executable changed during M3 actor execution"
   if [[ "$asset_mode" == "custom_token" ]]; then
+    [[ -f "$official_wallet_cache_evidence" &&
+       ! -L "$official_wallet_cache_evidence" ]] ||
+      fail "official-wallet cache evidence is unavailable"
+    official_wallet_cache_evidence_sha="$(sha256sum "$official_wallet_cache_evidence" |
+      sed 's/ .*//')"
+    official_wallet_cache_helper_sha="$(sha256sum "$official_wallet_cache_helper" |
+      sed 's/ .*//')"
+    [[ "$official_wallet_cache_helper_sha" == \
+       "$official_wallet_cache_helper_sha_at_start" &&
+       "$official_wallet_cache_helper_sha" == \
+       "$(jq -er '.publisher_helper_sha256' "$official_wallet_cache_evidence")" ]] ||
+      fail "official-wallet helper changed after artifact preparation"
+    official_wallet_cache_summary="$(jq -c \
+      --arg evidence_path "${relative_run_root}/evidence/official-wallet-artifact.json" \
+      --arg evidence_sha "$official_wallet_cache_evidence_sha" '
+      {
+        kind:.kind,
+        result:.result,
+        cache_hit:.cache_hit,
+        test_mode:.test_mode,
+        input:.input,
+        validation_policy_revision:.validation_policy_revision,
+        publisher_helper_sha256:.publisher_helper_sha256,
+        input_key:.input_key,
+        wallet_sha256:.wallet_sha256,
+        object_manifest_sha256:.object_manifest_sha256,
+        runtime_fingerprint_sha256:.runtime_fingerprint_sha256,
+        duration_ms:.duration_ms,
+        artifact_bytes:.artifact_bytes,
+        private_copy:.private_copy,
+        hardlink:.hardlink,
+        source_rehashed_after_copy:.source_rehashed_after_copy,
+        destination_rehashed:.destination_rehashed,
+        secrets_or_state_cached:.secrets_or_state_cached,
+        evidence_path:$evidence_path,
+        evidence_sha256:$evidence_sha
+      }
+    ' "$official_wallet_cache_evidence")"
     f7_token_fixture_sha="$(sha256sum "$f7_token_fixture_evidence" | sed 's/ .*//')"
     f7_token_fixture_driver_sha="$(sha256sum "$f7_token_fixture_driver" | sed 's/ .*//')"
+    [[ "$f7_token_fixture_driver_sha" == "$f7_token_fixture_driver_sha_at_start" ]] ||
+      fail "F7 token-fixture driver changed during M3 actor execution"
     f7_token_fixture_summary="$(jq -c \
       --arg evidence_path "${relative_run_root}/private/f7-token-fixture/evidence/f7-token-fixture.json" \
       --arg private_path "${relative_run_root}/private/f7-token-fixture/private" \
@@ -2111,6 +2249,8 @@ write_run_evidence() {
     --arg lez_bootstrap_sha "$lez_bootstrap_sha" \
     --arg f7_token_fixture "scripts/run-m3-f7-token-fixture.sh" \
     --arg f7_token_fixture_driver_sha "$f7_token_fixture_driver_sha" \
+    --arg official_wallet_cache "scripts/prepare-m3-official-wallet-artifact.sh" \
+    --arg official_wallet_cache_helper_sha "$official_wallet_cache_helper_sha" \
     --arg rapidsnark_dir "$RAPIDSNARK_LIB_DIR" \
     --arg rapidsnark_sha "$rapidsnark_sha" --arg gmp_sha "$gmp_sha" \
     --arg fq_sha "$fq_sha" --arg fr_sha "$fr_sha" \
@@ -2123,6 +2263,7 @@ write_run_evidence() {
     --argjson lez_survivor "$lez_survivor_summary" \
     --argjson overlap "$overlap_summary" \
     --argjson f7_token_fixture_summary "$f7_token_fixture_summary" \
+    --argjson official_wallet_cache_summary "$official_wallet_cache_summary" \
     --arg foreign_stage2_sha "$(sha256sum "${evidence_dir}/taker_sells_foreign-stage-two.json" | sed 's/ .*//')" \
     --arg lez_stage2_sha "$(sha256sum "${evidence_dir}/taker_sells_lez-stage-two.json" | sed 's/ .*//')" --argjson foreign_terminal_balance "$foreign_terminal_balance_summary" --argjson lez_terminal_balance "$lez_terminal_balance_summary" '
     {
@@ -2135,6 +2276,9 @@ write_run_evidence() {
       run_id: $run_id,
       repository_commit: $repository_commit,
       completed_at: $completed_at,
+      execution_provenance:{repository_clean_exact_head:true,
+        origin_main_equals_head:true,
+        executable_hashes_stable_from_start_to_publication:true},
       certified_executable_scripts: ({
         outer_runner: {repository_path:$outer_runner,sha256:$outer_runner_sha},
         direction_driver: {repository_path:$direction_driver,sha256:$direction_driver_sha},
@@ -2142,7 +2286,9 @@ write_run_evidence() {
         external_override_allowed: false
       } + (if $asset_mode == "custom_token" then {
         f7_token_fixture:{repository_path:$f7_token_fixture,
-          sha256:$f7_token_fixture_driver_sha}
+          sha256:$f7_token_fixture_driver_sha},
+        official_wallet_cache:{repository_path:$official_wallet_cache,
+          sha256:$official_wallet_cache_helper_sha}
       } else {} end)),
       native_build_prerequisites: ({
         rapidsnark_lib_dir: $rapidsnark_dir,
@@ -2157,7 +2303,10 @@ write_run_evidence() {
       } + (if $asset_mode == "custom_token" then {
         official_wallet:{source_commit:"a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
           source_same_as_local_stack:true,source_clean_and_tag_verified:true,
-          cargo_locked_offline:true,target_in_exact_cleaned_secure_root:true}
+          cargo_locked_offline:true,
+          content_addressed_executable_only_cache:true,
+          target_in_exact_cleaned_secure_root:true,
+          artifact_cache:$official_wallet_cache_summary}
       } else {} end)),
       asset:
         (if $asset_mode == "custom_token" then {custom_token:$f7_token_fixture_summary}
@@ -2340,6 +2489,10 @@ write_run_evidence() {
   jq -e --arg journey "$journey" --arg schedule "$schedule" \
     --arg asset_mode "$asset_mode" \
     --arg packet_kind "$packet_kind" \
+    --arg repository_commit "$repository_commit_at_start" \
+    --arg outer_runner_sha "$outer_runner_sha_at_start" \
+    --arg direction_driver_sha "$direction_driver_sha_at_start" \
+    --arg lez_bootstrap_sha "$lez_bootstrap_sha_at_start" \
     --argjson terminal_revision "$terminal_revision" \
     --arg terminal_phase "$terminal_phase" --arg replay_command "$replay_command" \
     --arg actor_owned_effect_semantics "$actor_owned_effect_semantics" '
@@ -2349,6 +2502,13 @@ write_run_evidence() {
     and .schedule == $schedule
     and .asset_mode == $asset_mode
     and .result == "passed"
+    and .repository_commit == $repository_commit
+    and .execution_provenance == {repository_clean_exact_head:true,
+      origin_main_equals_head:true,
+      executable_hashes_stable_from_start_to_publication:true}
+    and .certified_executable_scripts.outer_runner.sha256 == $outer_runner_sha
+    and .certified_executable_scripts.direction_driver.sha256 == $direction_driver_sha
+    and .certified_executable_scripts.lez_bootstrap.sha256 == $lez_bootstrap_sha
     and (.directions | length == 2)
     and all(.directions[];
       .terminal_revision == $terminal_revision and .terminal_phase == $terminal_phase)
@@ -2463,7 +2623,39 @@ write_run_evidence() {
         "95841cc8bd2c87d7111bc5c7f3aa2a85d35e90f7217e82a397aa05acd51500f8"
       and .native_build_prerequisites.official_wallet.source_same_as_local_stack == true
       and .native_build_prerequisites.official_wallet.cargo_locked_offline == true
+      and .native_build_prerequisites.official_wallet.content_addressed_executable_only_cache == true
       and .native_build_prerequisites.official_wallet.target_in_exact_cleaned_secure_root == true
+      and .native_build_prerequisites.official_wallet.artifact_cache.result == "prepared"
+      and (.native_build_prerequisites.official_wallet.artifact_cache.cache_hit |
+        type == "boolean")
+      and .native_build_prerequisites.official_wallet.artifact_cache.test_mode == false
+      and .native_build_prerequisites.official_wallet.artifact_cache.validation_policy_revision == 2
+      and .native_build_prerequisites.official_wallet.artifact_cache.publisher_helper_sha256 ==
+        .certified_executable_scripts.official_wallet_cache.sha256
+      and .native_build_prerequisites.official_wallet.artifact_cache.input.validation_policy_revision == 2
+      and .native_build_prerequisites.official_wallet.artifact_cache.input.publisher_helper_sha256 ==
+        .native_build_prerequisites.official_wallet.artifact_cache.publisher_helper_sha256
+      and .native_build_prerequisites.official_wallet.artifact_cache.input.build.expected_wallet_sha256 ==
+        .native_build_prerequisites.official_wallet.artifact_cache.wallet_sha256
+      and (.native_build_prerequisites.official_wallet.artifact_cache.input.toolchain.target_libdir_sha256 |
+        test("^[0-9a-f]{64}$"))
+      and (.native_build_prerequisites.official_wallet.artifact_cache.input_key |
+        test("^[0-9a-f]{64}$"))
+      and (.native_build_prerequisites.official_wallet.artifact_cache.wallet_sha256 |
+        test("^[0-9a-f]{64}$"))
+      and (.native_build_prerequisites.official_wallet.artifact_cache.object_manifest_sha256 |
+        test("^[0-9a-f]{64}$"))
+      and (.native_build_prerequisites.official_wallet.artifact_cache.runtime_fingerprint_sha256 |
+        test("^[0-9a-f]{64}$"))
+      and (.native_build_prerequisites.official_wallet.artifact_cache.duration_ms | numbers) >= 0
+      and (.native_build_prerequisites.official_wallet.artifact_cache.artifact_bytes | numbers) > 0
+      and .native_build_prerequisites.official_wallet.artifact_cache.private_copy == true
+      and .native_build_prerequisites.official_wallet.artifact_cache.hardlink == false
+      and .native_build_prerequisites.official_wallet.artifact_cache.source_rehashed_after_copy == true
+      and .native_build_prerequisites.official_wallet.artifact_cache.destination_rehashed == true
+      and .native_build_prerequisites.official_wallet.artifact_cache.secrets_or_state_cached == false
+      and (.native_build_prerequisites.official_wallet.artifact_cache.evidence_sha256 |
+        test("^[0-9a-f]{64}$"))
     else .asset == {native:{base_agreement_terms:true}}
       and (.native_build_prerequisites | has("official_wallet") | not) end)
     and .replay_command == $replay_command

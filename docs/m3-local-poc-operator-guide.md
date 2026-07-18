@@ -1122,6 +1122,99 @@ schema 4 if the direction driver instead lets the controller submit a Maker
 lock. The runner itself validates the same contract before starting either
 service and records the exact direction-driver hash in its terminal packet.
 
+### Reproduce the custom-token F7 happy pair with the verified wallet cache
+
+Use the same verified prerequisites as the combined flow above, but select the
+custom-token asset mode and a fresh run ID. Actual execution now refuses a
+dirty or untracked repository before any prebuild, so commit the exact tree you
+intend to exercise and push it to `origin/main` first. The runner requires the
+local `origin/main` remote-tracking commit to equal `HEAD` at startup and again
+at evidence publication. The cache root is shared only for immutable build
+artifacts; every node, identity, wallet home, actor store, journal, agreement,
+transaction, port, and evidence path remains run-private.
+
+~~~sh
+export RUN_ID=m3f7-manual-001
+export M3_ACTOR_POC_ASSET_MODE=custom_token
+export M3_OFFICIAL_WALLET_CACHE_ROOT="${TMPDIR:-/tmp}/lez-atomic-swaps-cache-$(id -u)/m3-official-wallet-v1"
+./scripts/run-m3-actor-local-poc.sh
+~~~
+
+The first invocation for a new validation-policy/input key is an offline cold
+build. It can take about 3 minutes and create roughly 2.7 GiB of private
+temporary Cargo output; missing locked Cargo/Git inputs fail rather than
+downloading during certification. A matching invocation validates and copies
+the 118,659,320-byte executable in about 10 seconds on the measured host. It
+does not skip source, origin, lockfile, program, Cargo metadata/config,
+toolchain, target-library, build-tool, include-tree, native-library, output,
+runtime-library, mode, policy, or helper checks.
+
+Verify the actual user/chain result and the cache provenance together:
+
+~~~sh
+export M3_EVIDENCE="$PWD/.e2e/$RUN_ID/m3-actor-poc/evidence"
+jq -e '
+  .result == "passed"
+  and .asset_mode == "custom_token"
+  and .execution_provenance == {repository_clean_exact_head:true,
+    origin_main_equals_head:true,
+    executable_hashes_stable_from_start_to_publication:true}
+  and all(.directions[];
+    .terminal_revision == 4 and .terminal_phase == "completed"
+    and .expected_unique_effects == {bitcoin:2,lez:4})
+  and .directions[0].custom_token_terminal_balances.balances ==
+    {maker:175,taker:75,custody:0}
+  and .directions[1].custom_token_terminal_balances.balances ==
+    {maker:75,taker:175,custody:0}
+  and .replay_resubmission_count == 0
+  and .native_build_prerequisites.official_wallet.artifact_cache.test_mode == false
+  and .native_build_prerequisites.official_wallet.artifact_cache.validation_policy_revision == 2
+  and .native_build_prerequisites.official_wallet.artifact_cache.wallet_sha256 ==
+    "28245d5fe1dc2a36a2ec80e9e865f10fa671b2ded8f08d82f4f07445cb9f96e6"
+  and .native_build_prerequisites.official_wallet.artifact_cache.input.build.expected_wallet_sha256 ==
+    .native_build_prerequisites.official_wallet.artifact_cache.wallet_sha256
+  and (.native_build_prerequisites.official_wallet.artifact_cache.duration_ms | numbers) >= 0
+  and .external_resources.certification_success_depends_on_external_network == false' \
+  "$M3_EVIDENCE/m3-actor-local-poc.json"
+
+jq -e '
+  .result == "prepared"
+  and .test_mode == false
+  and .validation_policy_revision == 2
+  and .input.publisher_helper_sha256 == .publisher_helper_sha256
+  and .input.build.expected_wallet_sha256 == .wallet_sha256
+  and (.input.toolchain.target_libdir_sha256 | test("^[0-9a-f]{64}$"))
+  and (.object_manifest_sha256 | test("^[0-9a-f]{64}$"))
+  and (.runtime_fingerprint_sha256 | test("^[0-9a-f]{64}$"))
+  and .private_copy == true and .hardlink == false
+  and .source_rehashed_after_copy == true
+  and .destination_rehashed == true
+  and .secrets_or_state_cached == false' \
+  "$M3_EVIDENCE/official-wallet-artifact.json"
+
+jq -e '.result == "passed" and .all_exact_run_resources_absent == true and
+  .foreign_resources_targeted == false and .broad_cleanup_used == false' \
+  "$M3_EVIDENCE/cleanup-attestation.json"
+~~~
+
+The default cache is owner-only and trusts processes running as the same UID;
+do not place it in a shared-writable directory or use it across mutually
+untrusted jobs. An invalid published reference/object or changed runtime
+library fails closed. Do not delete or repair individual files. After confirming
+that no actor run is using the cache, move the entire root to a unique
+owner-only quarantine path for inspection and rerun to build a fresh root:
+
+~~~sh
+mv "$M3_OFFICIAL_WALLET_CACHE_ROOT" \
+  "${M3_OFFICIAL_WALLET_CACHE_ROOT}.quarantine.$(date -u +%Y%m%d%H%M%S)"
+~~~
+
+This cache uses no RPC, faucet, public funds, peer, or network request. The
+actual F7 flow still uses only the run-owned Core 31.1 Regtest and LEZ v0.2
+Bedrock/sequencer/indexer/sidecar loopback services, deterministic Regtest and
+local-genesis funds, and the optional non-authorizing upstream Bedrock NTP
+attempt already described below.
+
 ### Reproduce two overlapping opposite-direction swaps
 
 Keep the same verified prerequisite variables, choose a new run ID, and select

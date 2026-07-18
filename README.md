@@ -104,6 +104,20 @@ material, and removed only its exact captured resources. This is a private local
 PoC and the first clean F7 repetition, not the M3 tag or a production-readiness
 claim.
 
+The official LEZ v0.2 wallet preparation is now content-addressed and
+fail-closed for repeat runs. A hardened production-input cold build measured
+202.42 seconds; the exact validated hit measured 10.35 seconds, saving 192.07
+seconds (94.9%) while still binding the source/origin/archive, lockfile, Cargo
+metadata and effective config, program artifacts, Rust/Cargo and target-library
+tree, build tools, bindgen headers, native libraries, validation helper/policy,
+runtime dependencies, and pinned wallet SHA-256. Only the executable and its
+manifest persist; wallet state, keys, actor databases, journals, agreements,
+transactions, ports, node state, and evidence never enter the cache. These are
+development performance measurements until a clean pushed actor repetition
+records the integrated hit. Manual commands, evidence checks, cache trust and
+repair guidance are in the
+[M3 operator guide](docs/m3-local-poc-operator-guide.md#reproduce-the-custom-token-f7-happy-pair-with-the-verified-wallet-cache).
+
 The public BTC SDK now deterministically validates application-owned
 discovery/negotiation, drops those peer capabilities at activation, and replays
 exact agreement-bound claim or ordered-refund transitions through revisions one
