@@ -1,7 +1,10 @@
 # ADR 0046: Replay the BTC SDK lifecycle from exact validated transitions
 
-Status: Accepted at the deterministic public SDK component boundary. A public
-process-durable store codec/port and direct actor/node composition remain open.
+Status: Accepted at the deterministic public SDK component boundary. Pushed
+`0c78f3d` subsequently closes the public durable codec, exact CAS store
+port, typed chain ports/runtime, restart/replay coverage, and lifecycle example.
+Production supplies concrete durable storage and persist-before-send journals;
+actual-node actor evidence remains a separate composition boundary.
 
 ## Context
 
@@ -104,8 +107,10 @@ agreement, revision, chain, finality, and byte substitution. An in-memory
 discovery/negotiation test exercises the public pre-lock ports, and a
 compile-fail doctest proves that `ActiveBtcSwap` cannot renegotiate.
 
-The restart envelope is a validation boundary supplied to application-owned
-storage; this decision does not claim a public disk codec, transactional store,
-node submission, or actor integration. Those remain required before the public
-SDK item is fully accepted. The existing reference actor retains the real
-persist-before-send and actual-node evidence while that refactor proceeds.
+The restart envelope in this decision was a validation boundary supplied to
+application-owned storage. Pushed `0c78f3d` adds the canonical disk codec,
+exact create/CAS contract, and typed runtime without embedding an endpoint or
+pretending the reference in-memory store is process-durable. The existing
+reference actor retains the concrete persist-before-send and actual-node
+evidence; production applications provide their durable store and effect
+journals.

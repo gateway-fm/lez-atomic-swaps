@@ -9,7 +9,9 @@ and official sidecar planner, route, replay, and finalized-scan boundaries are
 also implemented. Live journal/actor composition is terminal in both actual-node
 directions. Schema-5 peer observation uses v2 terms discovery rather than the
 native-only v1 route. Clean Run X retains the first complete two-direction
-custom-token packet; repeatability and production hardening remain open.
+custom-token packet. Runs Z, AA, and AD repeat both directions; the requested
+repeatability gate is closed. Process-kill/reorg, production custody, live
+public execution, and formal review remain later hardening.
 
 ## Context
 

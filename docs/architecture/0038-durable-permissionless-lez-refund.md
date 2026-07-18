@@ -1,6 +1,8 @@
 # ADR 0038: Durably prepare the permissionless LEZ refund before actor eligibility
 
-Status: Accepted through the public actor one-attempt LEZ and Bitcoin recovery composition; deterministic tests are GREEN and fresh actual-node timeout/refund evidence remains active -- 2026-07-16
+Status: Accepted through the public actor one-attempt LEZ and Bitcoin recovery
+composition; deterministic tests and fresh both-direction actual-node
+timeout/refund evidence are GREEN -- 2026-07-18
 
 ```mermaid
 flowchart LR
@@ -158,5 +160,7 @@ perform no preparation, eligible LEZ and Bitcoin owners consume one send,
 `Started`/`Unknown`/`Accepted` restart states never rearm, exact finalized
 evidence projects, and nonowners remain observation-only. They use temporary
 owner-private SQLite files and injected chain ports; no RPC, faucet, Docker
-service, or public endpoint is involved. Fresh actual Core/LEZ node evidence is
-therefore still required before the M3 tag.
+service, or public endpoint is involved. Run `m3refund-20260716h`
+subsequently supplies both-direction actual Core/LEZ node evidence with exact
+terminal effects, zero replay sends, and scoped cleanup. Adversarial cutoff
+races, process-kill/reorg, and production hardening remain later work.

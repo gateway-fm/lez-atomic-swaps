@@ -1,8 +1,10 @@
 # ADR 0044: Presign BTC recovery and project the revealing-leg refund first
 
 Status: Accepted at the deterministic public-SDK component boundary. The
-implementation and 42-test crate gate are GREEN. Durable revisions 1 through
-4, actor/store/node composition, and live submission remain open.
+implementation and 42-test crate gate are GREEN. ADR 0046 subsequently closes
+durable revisions one through four, and pushed `0c78f3d` closes the public
+codec/store/typed-port boundary plus lifecycle example. Actual-node actor
+submission evidence is retained separately.
 
 ## Context
 
@@ -197,8 +199,11 @@ later-before-earlier rejection. Strict Clippy, rustdoc, formatting, and diff
 checks pass.
 
 The former pre-lock recovery and recovery-action placeholder types are removed.
-The remaining accepted-M3 SDK work is integration-level: durable resume and
+At this checkpoint, the remaining accepted-M3 SDK work was integration-level:
+durable resume and
 action reconstruction for revisions 1 through 4, public discovery,
 negotiation, activation and status composition, role-local store/chain/journal
 wiring, a compiling lifecycle example, and complete API documentation. F7
-custom-token integration remains governed by ADR 0042.
+custom-token integration remains governed by ADR 0042. ADR 0046 and pushed
+`0c78f3d` later close those public-SDK items; the separate F7 actual-node
+runs close custom-token composition at the private functional boundary.

@@ -14,9 +14,14 @@ The retained
 records exact Maker effect ownership, current/finalized eligibility, exact
 Bitcoin mempool or LEZ effect-count reconciliation, and atomic local
 Maker-intent/revision-two closure. It does not claim a distributed transaction.
-Two genuinely overlapping swaps, accepted full-lifecycle SDK and custom-token
-scope, recording deliverables, final milestone gates, public/production
-hardening, and the `m3-complete` tag remain open.
+At this checkpoint, two genuinely overlapping swaps, accepted full-lifecycle
+SDK and custom-token scope, recording deliverables, final milestone gates,
+public/production hardening, and the `m3-complete` tag remained open.
+Follow-up pushed evidence through `946208a` closes the overlap, F7,
+public-durable-SDK, official/independent-vector, Testnet4-configuration, and
+private BTC-recording outputs at the local functional boundary. Final
+milestone-wide gates still precede the tag; public execution and production
+hardening remain deliberately deferred.
 
 ## Context
 

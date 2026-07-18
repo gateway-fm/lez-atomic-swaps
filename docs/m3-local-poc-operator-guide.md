@@ -1,6 +1,6 @@
 # M3 local LEZ/BTC PoC operator guide
 
-Last verified: 2026-07-17
+Last verified: 2026-07-18
 
 This guide reproduces the current schema-4 public-actor M3 happy path, the
 two-swap overlapping happy path, and the retained two-lock refund,
@@ -45,10 +45,18 @@ and exact cleanup passed.
 Run D closes the schema-4 actor-owned Maker-lock checkpoint, not all accepted
 M3 scope. The overlap run closes the accepted opposite-direction two-swap
 checkpoint, but arbitrary-N and same-direction LEZ nonce scheduling remain
-open, together with full-lifecycle SDK/custom-token review, final
-CI/security/Mermaid gates, process-kill/reorg/chaos hardening, public
-deployment, and production readiness. No `m3-complete` tag is authorized by
-these runs alone.
+open. Subsequent pushed closure commits complete the public durable lifecycle
+SDK, official/independent vectors, custom-token repeatability, explicit
+Testnet4 routes/setup, and all three BTC recordings/private bundle. Final
+CI/security/Mermaid gates still precede the tag. Process-kill/reorg/chaos,
+live public deployment, formal review, and production readiness are later
+owner-selected phases. No historical run alone authorizes `m3-complete`.
+
+Use the separate [Bitcoin Testnet4 setup guide](bitcoin-testnet4-setup.md) for
+exact Core 31.1 release verification, self-hosted node/index readiness,
+operator wallet/funding, exact HTTPS composition, and external flakiness. The
+actual-node procedures in this guide remain isolated Regtest/private LEZ and
+make no public chain call.
 
 The earlier operator-composed reference result is
 [m3-local-two-direction-poc-20260715.json](evidence/m3-local-two-direction-poc-20260715.json).
@@ -254,14 +262,16 @@ Repeat the typed Bitcoin Core boundary independently:
 cargo test --locked -p lez-btc-core-adapter --all-targets
 ~~~
 
-These 29 all-target test executions exercise the exact Core 31.1 typed DTOs,
+These 37 all-target test executions exercise the exact Core 31.1 typed DTOs,
 consensus-byte cross-checks, stable-tip funding/claim observation, canonical scalar-free
 evidence, wtxid/raw-byte-bound one-attempt submission semantics, already-known
 and conflicting-witness outcomes, and a bounded authenticated
 loopback HTTP server. They use deterministic RPC doubles and ephemeral loopback
 servers, not the Dockerized Core service, a faucet, a public RPC, or public
-funds. Run-n supplies actual-node happy integration; service-mode refund
-integration remains a separate composed gate.
+funds. Actual-node actor integrations are GREEN in both happy directions and
+both ordered-refund directions. Five focused cases additionally cover exact
+Testnet4 chain/genesis/index readiness and self-hosted-loopback/exact-HTTPS
+route composition without public I/O.
 
 Repeat exact-ID and peerless finalized LEZ funding and claim observation
 independently:
@@ -1614,13 +1624,18 @@ packet means the run cannot publish terminal success; it is not a partial
 benchmark. Never move this secret-safe summary out of the run tree without
 separately confirming that sibling evidence remains private.
 
-## Private D1 BTC recording candidate bundle
+## Private D1 BTC recording bundle
 
 Status: recorder and bundle-verifier tooling is GREEN at pushed commits
-`a3c6b21` and `269bbad`. Live actual-node terminal recordings have not been
-generated. This section is a reproducible operator procedure for the three BTC
-candidate artifacts; it does not certify D1, substitute a JSON packet for a
-recording, or claim the remaining ZEC/XMR recordings.
+`a3c6b21` and `269bbad`. Three owner-private live actual-node recordings are
+GREEN at evidence commit `a6eb1ad`: happy
+`m3record-happy-20260718ag`, refund `m3record-refund-20260718ag`, and concurrent
+`m3record-concurrent-20260718ag`. Clean verifier commit `946208a` sealed the
+mode-`0600`, result-`passed` private bundle with SHA-256
+`3d7d7adc12571a610be21a18b746e68cb17311ea1224191fcdcdf1b39a86c7cc`.
+This section reproduces those three BTC artifacts with fresh IDs; it does not
+substitute a JSON packet for a recording or claim the remaining ZEC/XMR
+recordings.
 
 ### Preflight and one-commit rule
 
@@ -1728,7 +1743,7 @@ Use `scriptreplay --summary --log-timing terminal.timing --log-out
 terminal.typescript` for a non-playing structural check. The recorder and
 bundle verifier run that check themselves.
 
-### Verify the complete candidate bundle
+### Verify the complete bundle
 
 After all three recordings pass, preserve the same clean checkout and execute:
 
@@ -1793,8 +1808,8 @@ Failure behavior is intentionally conservative:
 
 Never edit a captured stream or manifest to repair a run. Retain diagnostics
 privately, use a new stamp and three new IDs, and repeat from the same chosen
-clean commit. A passing three-recording BTC bundle would close only the BTC
-artifact slice. D1 still requires the remaining pair recordings and final M7
+clean commit. The passing reference bundle closes the BTC artifact slice. D1
+still requires the remaining pair recordings in their milestones and final M7
 regeneration/acceptance.
 
 ## Historical schema-3 observation-only actor inspection

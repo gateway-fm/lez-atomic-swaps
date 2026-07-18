@@ -124,6 +124,25 @@ then exact Zcash follow-up spend. This proves the M2 PoC happy-path adapter and
 actor composition, not actual-node restart/refund/reorg, chaos, public service
 behavior, or production transport hardening.
 
+## 2026-07-18 BTC public lifecycle closure
+
+The BTC facade now exposes a bounded canonical secret-free durable record,
+exact create/compare-exchange store port, role-fixed stored SDK, and typed
+Bitcoin/LEZ runtime ports. It drives both claim orders and both ordered refund
+directions through revision four, resumes after every transition, converges on
+byte-identical replay without another write, and rejects chain, role,
+agreement, revision, and public-effect substitution. Full-range LEZ `u128`
+amounts use canonical decimal strings rather than lossy JSON numbers.
+
+The SDK deliberately does not pretend an in-memory reference store is process
+durable or that a lifecycle CAS is a chain transaction. Applications implement
+the store and chain ports; mutating ports persist exact public bytes before a
+possible node call, observe before another send decision, and keep unknown
+outcomes non-authorizing. The existing schema-4 reference actor supplies that
+concrete local SQLite/effect-journal evidence. Strict rustdoc, public doctests,
+the dedicated `durable-lifecycle.rs` wiring example, and both-direction
+restart/replay tests are GREEN at pushed commit `0c78f3d`.
+
 ## Consequences
 
 Logos modules may use the complete facade or embed the deterministic engine with

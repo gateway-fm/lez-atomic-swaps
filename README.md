@@ -47,8 +47,9 @@ two-direction lock observation plus actor-owned claims. Schema 3 is now legacy
 observation-only compatibility: it may project an already submitted Maker lock
 but cannot submit one. It is not evidence for schema-4 Maker-lock ownership.
 Run D closes that specific actual-node checkpoint; it does not complete all
-accepted M3 scope or production readiness, and there is still no `m3-complete`
-tag.
+accepted M3 scope or production readiness by itself. The later public SDK,
+official-vector, Testnet4-route, and private-recording outputs are summarized
+below; final repository-wide gates still precede any `m3-complete` tag.
 
 ## Current status
 
@@ -63,6 +64,29 @@ are audited in
 nonexistent DLC Schnorr-vector reference is separately tracked as
 [Gateway erratum GW-M3-001](docs/proposal-acceptance-errata.md), with no accepted
 replacement yet.
+
+The six issue-#112 M3 outputs are now implemented at the private functional-PoC
+boundary. Pushed `0c78f3d` adds the public canonical durable lifecycle codec,
+CAS store port, typed Bitcoin/LEZ runtime, restart/replay coverage, dedicated
+example, official BIP-340/BIP-327 corpora, and independently checked
+swap-specific adaptor vectors. Pushed `946208a` adds exact Core 31.1 Testnet4
+readiness plus self-hosted loopback and exact allowlisted HTTPS routes, and
+makes those focused gates mandatory in CI. The
+[Testnet4 setup guide](docs/bitcoin-testnet4-setup.md) documents release
+verification, node/index setup, wallet/funding, SDK composition, external
+resources, and flakiness without claiming a public run. ADR 0050 supplies the
+Aumayr/Fournier mapping and conditional atomicity argument.
+The evidence inventory, claim boundary, remaining hardening, and exact tag rule
+are collected in the [M3 review packet](docs/milestone-3-review.md).
+
+Three owner-private actual-node recordings at evidence commit `a6eb1ad` cover
+happy, both ordered refunds, and the opposite-direction concurrent barrier.
+Their mode-`0600` bundle was sealed by verifier commit `946208a` with SHA-256
+`3d7d7adc12571a610be21a18b746e68cb17311ea1224191fcdcdf1b39a86c7cc`.
+It records Core 31.1 Regtest and private LEZ v0.2, no public RPC/faucet/funds,
+and no certification dependency on an external network. The bundle remains
+owner-private under `.e2e`; the reproduction and independent hash/mode checks
+below are public.
 
 Run `m3schema4-20260717d` passed at clean pushed `origin/main` commit `0e7635f`
 on 2026-07-17. It used schema-4 configs, separate role state and signer
@@ -90,8 +114,8 @@ replayed with zero resubmissions, but its run operator submitted both locks.
 It must not be cited as schema-4 Maker-lock ownership evidence. Run D closes
 that ownership checkpoint. Run `m3overlap-20260717a` separately closes the
 accepted two-swap opposite-direction overlap checkpoint. Arbitrary-N and
-same-direction nonce scheduling, accepted full-lifecycle SDK/custom-token
-review, final milestone gates, and production hardening remain open.
+same-direction nonce scheduling, production SDK/custom-token hardening, public
+live execution, and final milestone-wide gates remain open.
 
 Fresh isolated Run `m3f7compose20260718x` on clean pushed `422c72e`
 closes the functional custom-token checkpoint in both directions against actual
@@ -162,7 +186,11 @@ are component gates, not new actual-node evidence. The bounded loopback bridge
 client now maps all eleven additive v2 asset operations with one-call/no-retry
 semantics, depositor/claimant/permissionless role checks, and strict
 term/target/window/effect validation. Public process-durable store/chain
-composition remains open. The official v0.2 sidecar planner now prepares the
+composition was the remaining public-SDK gap at this checkpoint; pushed
+`0c78f3d` now closes it with the canonical durable codec, exact CAS store
+port, typed chain ports/runtime, restart/replay coverage, and application
+wiring example. Production applications still supply the concrete durable
+store and persist-before-send journals. The official v0.2 sidecar planner now prepares the
 ordered witnessed-token initialize, permissionless custody creation, funding,
 aggregate-witness claim, and fixed-destination refund transactions. It
 rederives the pinned Token/ATA programs and every owner/custody ATA, preserves
@@ -174,8 +202,9 @@ preserves all four conservative classifier outcomes without submit authority.
 The sidecar exposes all eleven capability-authenticated routes, restores those
 reservations in dependency order, and scans finalized initialization, custody,
 funding, claim, and refund evidence without joining state across a moving or
-same-height replacement fork. Durable journal/actor composition and actual-node
-token balance/effect evidence remain open.
+same-height replacement fork. Runs X, Z, AA, and AD subsequently close durable
+actor composition and both-direction actual-node token balance/effect evidence
+at the private functional boundary.
 
 Run `m3refund-20260716h` then passed the two-lock timeout/refund journey
 from base HEAD `ef5f306` with a dirty pre-commit source tree and the packet's
@@ -581,7 +610,7 @@ become terminal `Unknown`, while conflicting witness bytes fail before another
 RPC mutation. The HTTP
 transport is literal-loopback, Basic-file authenticated, bounded, one-request
 concurrent, and rejects non-`0600`, symlinked, hard-linked, replaced, or changed
-credential files. The full 32 all-target test executions plus strict dependency, Clippy, and
+credential files. The full 37 all-target test executions plus strict dependency, Clippy, and
 rustdoc gates are GREEN. Refund observation additionally binds the
 stable-tip-derived funding height to the signed anchor, applies BIP-68 at the
 next-block boundary, and emits finalized evidence at the refund containing
@@ -640,12 +669,14 @@ cryptographic and consensus fixture. The operator-composed run closes live
 witnessed submission, both happy directions, and the PoC atomicity/recovery
 order through separate role processes. The public actor source owns both claim
 effects, and schema-4 run D additionally owns both direction-selected Maker
-locks. This closes that private-local happy checkpoint, but does **not** close
-all accepted M3 or production-ready scope: native/custom-token parity and
-full-lifecycle SDK review, arbitrary-N/same-direction nonce scheduling,
-Testnet4 setup/execution, production key custody/Core adapter,
-QA/chaos/infosec campaigns, and GW-M3-001 disposition remain. There is no
-`m3-complete` tag. CI
+locks. This closes that private-local happy checkpoint. Subsequent pushed work
+closes the accepted native/custom-token, public full-lifecycle SDK, Testnet4
+setup contract, vector, recording, and construction-mapping outputs at the
+private functional boundary. It does **not** claim arbitrary-N/same-direction
+nonce scheduling, live Testnet4 execution, production key custody,
+QA/chaos/infosec, formal review, production readiness, or accepted disposition
+of GW-M3-001. There is no `m3-complete` tag until the exact final gates
+pass. CI
 runs the same P2TR funding/claim
 composition and
 fail-hard scans
@@ -1261,13 +1292,16 @@ the Bedrock process is not claimed to make zero egress attempts. See the
 [M3 operator guide](docs/m3-local-poc-operator-guide.md) for exact builds,
 proof boundaries, private evidence handling, and failure recovery.
 
-### Private M3 terminal-recording candidate quick start
+### Private M3 terminal-recording quick start
 
 Commits `a3c6b21` and `269bbad` provide the fail-closed recorder and complete
-three-scenario bundle verifier. Their contract tests are GREEN. No live
-actual-node recording has been generated, so D1 artifacts and D1 itself remain
-open. In particular, the runner's JSON evidence packet is not a recording: it
-is a hash-bound input to the replayable terminal output and timing stream.
+three-scenario bundle verifier. Three live actual-node recordings are GREEN at
+clean pushed evidence commit `a6eb1ad`; verifier commit `946208a` sealed their
+private bundle. The exact reference run IDs are
+`m3record-happy-20260718ag`, `m3record-refund-20260718ag`, and
+`m3record-concurrent-20260718ag`. The runner's JSON evidence packet is not a
+recording: it is a hash-bound input to the replayable terminal output and timing
+stream.
 
 Run from a clean committed checkout on a Linux host with the M3 runner's Docker,
 Rust/Cargo, LEZ, and native-library prerequisites. The recording layer also
@@ -1352,6 +1386,13 @@ path. A failed driver leaves the terminal stream and timing file as private
 diagnostics but creates no passing `recording.json`; a failed bundle creates no
 passing bundle.
 
+The retained private bundle is mode `0600`, result `passed`, binds evidence
+commit `a6eb1ada739f8fcd671feb8fbb41cfc682e5d651` to verifier commit
+`946208a887709d9b8422f51f8152a3008c6d745a`, and has SHA-256
+`3d7d7adc12571a610be21a18b746e68cb17311ea1224191fcdcdf1b39a86c7cc`.
+It is intentionally ignored rather than published; operators can reproduce
+and verify the same schema with fresh unique run IDs using the commands above.
+
 All three journeys start actual run-owned Bitcoin Core 31.1 Regtest and LEZ
 v0.2 private-local Bedrock/sequencer/indexer services on isolated loopback
 endpoints. Funds are deterministic local Regtest coinbase and LEZ genesis/Vault
@@ -1364,7 +1405,7 @@ waits through both signed recovery schedules. The retained reference took
 moving-tip retries can extend it without authorizing another send.
 
 The detailed failure contract and operator checks are in
-[the M3 local PoC operator guide](docs/m3-local-poc-operator-guide.md#private-d1-btc-recording-candidate-bundle).
+[the M3 local PoC operator guide](docs/m3-local-poc-operator-guide.md#private-d1-btc-recording-bundle).
 
 ### M2 corridor and route-selection quick start
 
@@ -1464,6 +1505,19 @@ recorded 45 timeouts, but certification did not require external-network
 success. An advancing local finalized tip produced bounded typed `moving_tip`
 reconciliation. Every retry checked the exact durable LEZ count or Bitcoin
 mempool transaction; it could delay the run but could not rearm a send.
+
+Bitcoin Testnet4 support is locally contract-tested but was not contacted.
+Self-hosting introduces public P2P synchronization, initial-index time, peer
+partitions, organic reorgs, and disk/network availability. The exact HTTPS
+route introduces DNS, platform CA roots/system clock, credentials, provider
+quota/method/index policy, lag, outage, and ambiguous-broadcast risk. A faucet
+or donor wallet has no SLA and its returned txid is untrusted until confirmed
+through the selected node. The adapter allows no redirect, automatic retry,
+proxy, or route failover; every route must report exact Core 31.1,
+`chain=testnet4`, Testnet4 genesis, and synchronized `txindex` plus
+`txospenderindex`. See the
+[Bitcoin Testnet4 setup guide](docs/bitcoin-testnet4-setup.md). None of these
+external resources can make the private Regtest/LEZ certification pass or fail.
 
 The successful M2 corridor used dynamic-loopback
 Bedrock, sequencer, indexer, Zebra Regtest, and two independently authenticated

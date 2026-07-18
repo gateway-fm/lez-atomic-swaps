@@ -239,6 +239,57 @@ flowchart TB
     Indexer --> Terminal
 ```
 
+The pushed M3 closure adds the application-facing durable SDK and explicit
+Bitcoin Testnet4 routes without changing the retained local-node topology or
+actor authority:
+
+```mermaid
+flowchart LR
+    App["Application composition root"]
+    StoredSdk["Role-fixed stored BTC SDK<br/>canonical codec and exact CAS"]
+    Store[("Process-durable lifecycle store<br/>application implementation")]
+    BtcPort["Bitcoin lifecycle port<br/>persist before send"]
+    LezPort["LEZ lifecycle port<br/>persist before send"]
+    CoreAdapter["Typed Core 31.1 adapter<br/>chain, genesis, tip, indexes"]
+    CoreRoute{"Configured Bitcoin route"}
+    Regtest["Run-owned Core Regtest<br/>actual-node M3 evidence"]
+    SelfHost["Self-hosted Core Testnet4<br/>literal-loopback RPC"]
+    Https["Exact allowlisted HTTPS<br/>Core-compatible gateway"]
+    Sidecar["Role-local LEZ sidecar<br/>capability loopback"]
+    Sequencer2["LEZ v0.2 sequencer JSON-RPC"]
+    Indexer2["LEZ v0.2 finalized indexer JSON-RPC"]
+    Bedrock2["LEZ Bedrock HTTP"]
+    Vectors["Official BIP-340 and BIP-327<br/>plus independent adaptor vectors"]
+    Recordings["Private D1 happy, refund, concurrent<br/>hash-bound replay bundle"]
+
+    App --> StoredSdk
+    StoredSdk --> Store
+    StoredSdk --> BtcPort
+    StoredSdk --> LezPort
+    BtcPort --> CoreAdapter
+    CoreAdapter --> CoreRoute
+    CoreRoute --> Regtest
+    CoreRoute --> SelfHost
+    CoreRoute --> Https
+    LezPort --> Sidecar
+    Sidecar --> Sequencer2
+    Sidecar --> Indexer2
+    Sequencer2 --> Bedrock2
+    Indexer2 --> Bedrock2
+    Vectors --> StoredSdk
+    Regtest --> Recordings
+    Bedrock2 --> Recordings
+```
+
+Only the Regtest and private-LEZ branches were used by actual-node M3
+certification. The Testnet4 branches are configuration/readiness contracts:
+literal loopback is valid for self-hosting, exact HTTPS is admitted only with
+the Testnet4 profile, and both require exact Core 31.1, Testnet4 genesis, and
+synchronized indexes. Neither branch was contacted publicly. The three private
+recordings bind clean evidence commit `a6eb1ad` and verifier commit
+`946208a`; their mode-`0600` bundle hash is
+`3d7d7adc...a86c7cc`.
+
 Fresh LEZ owners are generated for every actor run. The identity provisioner
 derives each Vault account with the official Vault program function and emits
 both owner and derived Vault identities. Genesis supplies the owner identity;
@@ -577,7 +628,7 @@ flowchart TB
         M3RK[("M3 Bitcoin-funder refund scalar<br/>mode 0600 + x-only agreement match GREEN")]
         M3PE[("M3 role-local public-effect journal<br/>claim absence or refund eligibility before CAS<br/>refund race guard GREEN")]
         M3BR[("M3 BTC lifecycle recovery store<br/>four evidence revisions + hash chain<br/>offline Completed or Refunded GREEN")]
-        M3SDK["M3 role-fixed BTC funding facade<br/>native and F7 asset-bound exact plans<br/>opaque first-lock authorization GREEN"]
+        M3SDK["M3 public durable BTC lifecycle SDK<br/>canonical codec and exact CAS store port<br/>typed BTC and LEZ runtime GREEN"]
         M3ML[("M3 Maker second-lock journal<br/>ordered one-attempt steps<br/>atomic revision-two close GREEN")]
         M3ID[("M3 exact-idempotent LEZ init path<br/>role-local reserve before official RPC<br/>actual-node restart no-rearm GREEN")]
         M3BC["M3 typed Core 31.1 adapter<br/>exact unspent funding + claim/refund evidence<br/>authorized one-send readback GREEN"]
@@ -585,9 +636,9 @@ flowchart TB
         M3F7C["F7 exact-once bridge client<br/>eleven v2 operations + role/window checks GREEN"]
         M3F7D["F7 agreement and local-policy adapter<br/>eleven no-submit mappings GREEN"]
         M3F7S["F7 official sidecar planner<br/>tags 11, 7, 8, 12, and 10<br/>four durable v2 reservations GREEN"]
-        M3F7R["F7 sidecar and finalized scanner<br/>lifecycle-aware terms discovery + containing-block anchors GREEN<br/>90s max3 historical reads in 120s actor budget<br/>first actual-node pair GREEN"]
+        M3F7R["F7 sidecar and finalized scanner<br/>lifecycle-aware terms discovery + containing-block anchors GREEN<br/>90s max3 historical reads in 120s actor budget<br/>four actual-node pairs GREEN"]
         M3F7P["F7 peer funding projection<br/>schema 5 v2 DiscoverByTerms<br/>nonowner has no submit authority GREEN"]
-        M3RA["btc-reference-actor<br/>schema 4 live locks and schema 5 peer projection GREEN<br/>complete F7 actual-node pair GREEN"]
+        M3RA["btc-reference-actor<br/>schema 4 live locks and schema 5 peer projection GREEN<br/>four complete F7 actual-node pairs GREEN"]
         M3RUN["Schema 4 private-local runner<br/>external Taker first lock<br/>actor-owned Maker second lock GREEN"]
         M3CACHE["Policy-2 official-wallet artifact cache<br/>executable plus manifest only<br/>202.42s cold and 10.35s hit GREEN"]
         M3F7A --> M3F7C
@@ -1584,7 +1635,7 @@ sequenceDiagram
         Note over Maker,Taker: Required invariant late maker lock admission closes before refund authority
         Taker->>Bitcoin: Refund only funded BTC leg at signed CSV height
         Bitcoin-->>Taker: Exact first lock refund confirmed
-        Note over Maker,Taker: Implementation status Run H proves refund side and maker lock admission remains pending
+        Note over Maker,Taker: Run H proves refund side and Run D proves timely maker lock admission
     else Maker LEZ lock admission succeeds before the cutoff
         Maker->>LezSeq: Initialize and fund maker LEZ leg
         LezIdx-->>Taker: Finalized exact LEZ funding
@@ -1657,7 +1708,7 @@ sequenceDiagram
         Note over Maker,Taker: Required invariant late maker lock admission closes before refund authority
         Taker->>LezSeq: Refund only funded LEZ leg at signed deadline
         LezIdx-->>Taker: Exact first lock refund finalized
-        Note over Maker,Taker: Implementation status Run H proves refund side and maker lock admission remains pending
+        Note over Maker,Taker: Run H proves refund side and Run D proves timely maker lock admission
     else Maker BTC lock admission succeeds before the cutoff
         Maker->>Bitcoin: Fund maker Bitcoin leg
         Bitcoin-->>Taker: Canonical confirmation policy reached

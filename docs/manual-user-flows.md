@@ -1,6 +1,6 @@
 # Manual reproduction guide
 
-Last verified: 2026-07-16
+Last verified: 2026-07-18
 
 This is the living operator guide for the user-visible flows that the repository
 currently proves. Update it in the same change whenever a runner, prerequisite,
@@ -11,6 +11,12 @@ Public-testnet setup and funding prerequisites are maintained in the
 self-hosted Zebra route and Tatum's public-provider Testnet Zebrad route, but
 explicitly leaves live execution pending the project-owned transparent signer,
 HTTPS provider transport, and actor adapter.
+
+Bitcoin self-hosted and exact-HTTPS Testnet4 node, wallet, funding, SDK-route,
+and external-flakiness steps are maintained in the
+[Bitcoin Testnet4 guide](bitcoin-testnet4-setup.md). Its focused checks perform
+no public I/O; actual-node M3 certification remains isolated Regtest plus
+private LEZ v0.2.
 
 ## M3 status: happy, two-lock refund, and absent-maker paths reproduced
 
@@ -28,8 +34,11 @@ retained result is
 [m3-local-two-direction-poc-20260715.json](evidence/m3-local-two-direction-poc-20260715.json).
 No public RPC, faucet, peer, or public funds were used.
 
-This proves a private local happy path, not the whole accepted M3 submission or
-production readiness. The public Bitcoin reference actor now projects injected
+This proves the private local happy path, not production readiness. The later
+issue-#112 SDK, vector, Testnet4 configuration, recording, and construction-
+mapping outputs are now repository-complete; public live execution and the
+owner-selected hardening phases remain deliberately unclaimed. The public
+Bitcoin reference actor now projects injected
 exact canonical revealing and follow-up claim evidence through revisions three
 and four for both roles and directions. Immediately before revision three it
 reruns the strict activation-material gate; the taker reproduces the observed
@@ -62,9 +71,12 @@ directions. Run `m3refund-20260716h` additionally reproduced both two-lock order
 directions through actual nodes with terminal revision four and zero replay
 submissions. Run `m3firstlock-20260716h` also reproduced both first-lock-only
 absent-maker directions through terminal revision 2 with no maker second-lock
-effect and zero replay submissions. Genuinely overlapping swaps, the
-accepted public full-lifecycle BTC SDK, recordings, public-node guidance, chaos
-and adversarial hardening, and upstream DLC vector clarification remain open. Those later items do not reopen the completed progressive M3 local PoC.
+effect and zero replay submissions. The clean overlap run, accepted public
+durable lifecycle SDK, official/independent vectors, three recordings/private
+bundle, and public-node setup guidance are now GREEN. Arbitrary-N/same-
+direction scheduling, chaos/adversarial hardening, live public routes, formal
+review, and upstream DLC vector acceptance remain later work. Those items do
+not reopen the completed progressive M3 local PoC.
 
 ### Repeat the M3 timeout/refund path
 
@@ -655,8 +667,10 @@ Direct post-reveal survivor continuation is clean pushed-commit GREEN in
 `m3survivor-20260716c`; the secret-safe packet is
 `docs/evidence/m3-local-two-direction-survivor-claim-poc-20260716.json`.
 Canonical maker-lock containing-time enforcement is GREEN at `3d202f7`.
-SDK-owned same-action maker submission and its actual-node admission packet,
-concurrent swaps, crash/chaos, and adversarial journeys remain open.
+SDK-owned same-action Maker submission, its actual-node admission packet, and
+the accepted opposite-direction concurrent journey are GREEN. Arbitrary-N,
+same-direction scheduling, process-kill, crash/chaos, and adversarial journeys
+remain later hardening.
 
 The same guide now includes the
 [custom-token F7 pair and verified wallet-cache procedure](m3-local-poc-operator-guide.md#reproduce-the-custom-token-f7-happy-pair-with-the-verified-wallet-cache).
@@ -669,6 +683,42 @@ uncached locked build inputs remain an offline setup availability risk. The
 measured hardened hit saves 192.07 seconds versus cold preparation without
 weakening source, toolchain, native/runtime-library, expected-output, policy,
 or private-copy checks.
+
+## Repeat the M3 SDK, vector, route, and recording gates
+
+The fast application-facing closure checks need no Docker, chain node, public
+RPC, faucet, peer, or funds:
+
+```sh
+cargo test --locked -p lez-btc-swap-sdk --all-targets --all-features
+cargo test --locked -p lez-btc-core-adapter --all-targets --all-features
+./scripts/check-m3-cryptographic-vectors.sh
+./scripts/test-bitcoin-testnet4-route-contract.sh
+```
+
+The SDK suite drives both claim directions and both ordered-refund directions,
+reconstructs the role-fixed lifecycle after every revision, verifies
+byte-identical replay produces no store write, and rejects cross-chain or
+agreement substitutions. The vector gate checks immutable upstream hashes and
+executes official BIP-340/BIP-327 operations plus the independent adaptor
+fixture. The Testnet4 gate constructs self-hosted loopback and exact HTTPS
+clients and validates chain/genesis/index/profile rejection without making a
+request.
+
+Follow the [Bitcoin Testnet4 guide](bitcoin-testnet4-setup.md) when you need to
+install exact Core 31.1, synchronize a self-hosted node, create/fund a separate
+operator wallet, or compose an approved HTTPS route. Those steps use external
+resources and are not local certification prerequisites.
+
+To repeat the actual-node D1 artifacts, use the
+[private recording procedure](../README.md#private-m3-terminal-recording-quick-start)
+with three fresh unique run IDs. The reference private bundle binds happy,
+refund, and concurrent recordings at evidence commit `a6eb1ad` to verifier
+commit `946208a`, is mode `0600`, and has SHA-256
+`3d7d7adc12571a610be21a18b746e68cb17311ea1224191fcdcdf1b39a86c7cc`.
+Never publish the surrounding `.e2e` roots: they contain actor-private
+state. The verifier's output is a hash index, not a replacement for the three
+replayable terminal streams.
 
 ## Can I run the complete M3 happy path myself?
 
@@ -776,12 +826,14 @@ local runner now reproduces either direction through `POC_DIRECTION`.
 | Official-wire LEZ v0.2 effect foundation | Exact upstream types and `lez-v02-bridge-poc` now serve live role-separated actor calls. Pushed `0861117` fixes exact claim absence; startup now uses bounded non-genesis finalized-tip readiness | 14o completed initialize/fund/revealing-claim and observation/submit. The bridge still asserts no finality itself; separate indexer evidence proves finalized blocks 264/265/266 |
 | Local reference-actor fixture readiness | `zec-local-poc-provision` queried retained Zebra, selected one stable mature maker output, built a dual-signed `TakerSellsLez` agreement, wrote separate `0700` maker/taker trees with `0600` files, reloaded both configs and activation material, and validated pair isolation | GREEN for fixture readiness only: `90819e4f...f76f:0`, 625000000 zatoshis, 104 confirmations at tip 104, agreement `b1291931...bb0ed`. The sidecars were not started or called; neither `activate` nor `drive` nor any HTLC/corridor effect ran. Its 1..256 LEZ discovery window is now stale and the retained files are not runnable corridor inputs |
 
-The following are **not complete yet**: Delivery/Chat-loss and restart at the
-actual-node boundaries, recordings, broader hardening, public-testnet
-deployment/provisioning, and live public-route evidence. Dormant route
-selection and transport contracts are locally verified without a public call.
-The two happy directions are complete local PoC evidence; lower fixtures below
-must not be substituted for the remaining gates.
+The following are **not complete yet**: Delivery/Chat-loss and process-kill
+hardening at the actual-node boundaries, the later ZEC/XMR recording set,
+broader hardening, public-testnet deployment/provisioning, and live public-route
+evidence. The BTC happy/refund/concurrent recording set and private bundle are
+GREEN. Dormant route selection and transport contracts are locally verified
+without a public call. The two BTC happy directions are complete local PoC
+evidence; lower fixtures below must not be substituted for later hardening or
+other-pair gates.
 
 The 30 reference-actor boundary cases additionally prove that one Unix-only
 schema-v3 configuration fixes exactly one role/run/swap, exact signed-agreement

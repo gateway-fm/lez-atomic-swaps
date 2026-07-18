@@ -1,6 +1,6 @@
 # Upstream blockers to production
 
-Last rechecked: 2026-07-17
+Last upstream recheck: 2026-07-17; milestone disposition updated: 2026-07-18
 
 This register contains live-release blockers owned by upstream projects or
 services. Logos-owned items follow ADR 0018; other third-party items remain
@@ -49,9 +49,9 @@ cannot confuse the corrected finding with a live upstream blocker.
 
 An M2 or M3 evidence packet may list these items as open while certifying the
 exact repository-controlled implementation. In particular, LOGOS-017 does not
-block deterministic or local milestone certification under the owner policy; it
-remains a production-release caveat and cannot substitute for the fresh
-actual-node refund evidence still required by the M3 plan. These upstream items
+block deterministic or local milestone certification under the owner policy;
+it remains a production-release caveat. The required M3 actual-node refund
+evidence is independently GREEN and is not waived by that exception. These upstream items
 may not be used to waive canonical adapter validation, reorg/restart safety, complete role effects, independent
 actor tests, or the composed corridor. M7 production readiness revisits the
 entire table. Under ADR 0023 the M2 corridor is private and uses source-verified,

@@ -3,8 +3,10 @@
 Status: Accepted at the deterministic public-SDK component boundary. Pushed
 commit `28f38c700b0d0acbbee06b06dab8ef79d20067a8` implements and tests this
 claim-only slice. ADR 0044 subsequently completes deterministic signed pre-lock
-refund preparation and recovery selection. Post-activation persistence,
-later-revision resume, and actual-node facade composition remain open.
+refund preparation and recovery selection. ADR 0046 adds revisions one through
+four, and pushed `0c78f3d` closes the public durable codec/store/typed-port
+boundary, restart/replay coverage, and lifecycle example. Actual-node actor
+evidence is retained separately from this component decision.
 
 ## Context
 
@@ -187,11 +189,12 @@ records, `BtcRecoveredClaimMaterialV1`, `PreparedLezClaimTemplateV1`, and an
 `ExactPublicEffectPlanV1`; the earlier unsupported claim evidence/material
 placeholders are removed from this slice.
 
-## Consequences and remaining integration
+## Consequences and follow-up integration
 
-This decision establishes the public deterministic claim contract but not the
-accepted full-lifecycle BTC SDK. ADR 0044 subsequently closes signed refund
-preparation and pure canonical recovery selection. The following remain open:
+This decision established the public deterministic claim contract but not, by
+itself, the accepted full-lifecycle BTC SDK. ADR 0044 subsequently closed signed
+refund preparation and pure canonical recovery selection. At this checkpoint,
+the following remained open:
 
 - durable resume and state/action reconstruction for revisions 1 through 4;
 - role-local store, chain-adapter, journal, and one-shot actor composition
@@ -201,6 +204,8 @@ preparation and pure canonical recovery selection. The following remain open:
 - integration with ADR 0042's witnessed custom-token envelope, regenerated
   IDL/client/deployer/sidecar, and actual-node custom-token evidence.
 
-Real Delivery/Chat adapters remain M5 scope. This commit does not provide
-public Testnet4/LEZ execution, process-kill/reorg evidence, production key
-custody, formal cryptographic review, or an M3 completion tag.
+Pushed `0c78f3d` later closes the listed public-SDK outputs, and the F7
+actual-node runs close the custom-token evidence at the private functional
+boundary. Real Delivery/Chat adapters remain M5 scope. This decision does not
+provide public Testnet4/LEZ execution, process-kill/reorg evidence, production
+key custody, formal cryptographic review, or an M3 completion tag.
