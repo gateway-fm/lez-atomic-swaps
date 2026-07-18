@@ -8,20 +8,24 @@ use bitcoin::secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use bitcoin::transaction::Version;
 use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness};
 use lez_btc_swap_sdk::{
-    AdaptorSessionContext, AdaptorSigner, BTC_AGREEMENT_SCHEMA_V1, BitcoinCanonicalRecoveryStateV1,
-    BitcoinFirstLockEvidenceV1, BitcoinFollowupClaimEvidenceV1, BitcoinRevealingClaimEvidenceV1,
-    BtcActiveSwapEnvelopeV1, BtcAgreementBodyV1, BtcAgreementRecordV1, BtcCanonicalRecoveryStateV1,
-    BtcChainPolicyV1, BtcClaimTermsV1, BtcFirstLockEvidenceV1, BtcFollowupClaimEvidenceV1,
-    BtcFundingTermsV1, BtcLezTermsV1, BtcLifecycleActionV1, BtcLifecycleSdk,
-    BtcLifecycleTransitionOutcomeV1, BtcLifecycleTransitionV1, BtcP2trTermsV1, BtcPairSdk,
-    BtcParticipantIdentityV1, BtcParticipantsV1, BtcPreparedClaimEffectsV1,
-    BtcPreparedLockEffectsV1, BtcPreparedProtocolV1, BtcPreparedRecoveryEffectsV1,
-    BtcProtocolTermsV1, BtcRecoveryActionV1, BtcRecoveryPlanV1, BtcRecoveryWaitReasonV1,
-    BtcRevealingClaimEvidenceV1, BtcSdkError, CooperativeKeyPathSpend, CsvBlockDelay,
-    LezCanonicalRecoveryStateV1, LezFirstLockEvidenceV1, LezFollowupClaimEvidenceV1,
-    LezRevealingClaimEvidenceV1, P2trSwapOutput, PreparedBitcoinFundingV1, PreparedBitcoinRefundV1,
-    PreparedLezClaimTemplateV1, PreparedLezFundingV1, PreparedLezRefundV1, RefundXOnlyKey,
-    SigningRole, TwoPartyAggregateKey, adapt_presignature,
+    AdaptorSessionContext, AdaptorSigner, BTC_AGREEMENT_SCHEMA_V1, BitcoinBtcLifecyclePort,
+    BitcoinCanonicalRecoveryStateV1, BitcoinFirstLockEvidenceV1, BitcoinFollowupClaimEvidenceV1,
+    BitcoinRevealingClaimEvidenceV1, BtcActiveSwapEnvelopeV1, BtcAgreementBodyV1,
+    BtcAgreementRecordV1, BtcCanonicalRecoveryStateV1, BtcChainPolicyV1, BtcClaimTermsV1,
+    BtcFirstLockEvidenceV1, BtcFollowupClaimEvidenceV1, BtcFundingTermsV1, BtcLezTermsV1,
+    BtcLifecycleActionV1, BtcLifecycleChainOutcomeV1, BtcLifecycleCodecError,
+    BtcLifecycleDriveOutcomeV1, BtcLifecycleDriveRequestV1, BtcLifecycleRecordV1,
+    BtcLifecycleRuntime, BtcLifecycleSdk, BtcLifecycleStore, BtcLifecycleStoreCompareExchangeV1,
+    BtcLifecycleStoreCreateV1, BtcLifecycleTransitionOutcomeV1, BtcLifecycleTransitionV1,
+    BtcP2trTermsV1, BtcPairSdk, BtcParticipantIdentityV1, BtcParticipantsV1,
+    BtcPreparedClaimEffectsV1, BtcPreparedLockEffectsV1, BtcPreparedProtocolV1,
+    BtcPreparedRecoveryEffectsV1, BtcProtocolTermsV1, BtcRecoveryActionV1, BtcRecoveryPlanV1,
+    BtcRecoveryWaitReasonV1, BtcRevealingClaimEvidenceV1, BtcSdkError, CooperativeKeyPathSpend,
+    CsvBlockDelay, InMemoryBtcLifecycleStore, LezBtcLifecyclePort, LezCanonicalRecoveryStateV1,
+    LezFirstLockEvidenceV1, LezFollowupClaimEvidenceV1, LezRevealingClaimEvidenceV1,
+    P2trSwapOutput, PreparedBitcoinFundingV1, PreparedBitcoinRefundV1, PreparedLezClaimTemplateV1,
+    PreparedLezFundingV1, PreparedLezRefundV1, RefundXOnlyKey, SigningRole, StoredBtcLifecycleSdk,
+    TwoPartyAggregateKey, adapt_presignature,
 };
 use lez_swap_core::{Participant, Phase, SwapDirection};
 use lez_swap_sdk_core::{ClaimOrder, NegotiationChannel, OfferDiscovery, SwapProtocol};
@@ -1471,6 +1475,29 @@ fn claim_only_preparation_cannot_project_refunds() {
     ));
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn durable_activation_rejects_claim_only_preparation_without_panicking() {
+    let fixture = fixture(SwapDirection::TakerSellsForeign);
+    let (claims, ..) = prepared_claims(&fixture);
+    let sdk = BtcPairSdk::new(
+        Participant::Taker,
+        BtcChainPolicyV1::new(BITCOIN_GENESIS, REQUIRED_CONFIRMATIONS),
+    );
+    let terms =
+        BtcProtocolTermsV1::new(fixture.record, fixture.lock_effects).with_claim_effects(claims);
+    let validated = sdk.validate_terms(&terms).expect("validated claim terms");
+    let prepared = sdk
+        .prepare_claims(validated)
+        .expect("claim-only prepared protocol");
+    let accepted = sdk
+        .accept_wire(&fixture.wire)
+        .expect("accepted claim-only agreement");
+    let result = StoredBtcLifecycleSdk::new(sdk, InMemoryBtcLifecycleStore::default())
+        .activate(accepted, prepared)
+        .await;
+    assert!(matches!(result, Err(BtcSdkError::MissingRecoveryEffects)));
+}
+
 #[test]
 fn recovery_rejects_state_finality_identity_order_and_agreement_substitution() {
     let (taker, prepared) = fully_prepared(SwapDirection::TakerSellsForeign, Participant::Taker);
@@ -2524,6 +2551,452 @@ fn f7_direction_finality_and_role_substitution_fail_closed() {
             actual: Participant::Maker,
         })
     );
+}
+
+#[derive(Clone, Default)]
+struct ScriptedLifecyclePort {
+    outcomes: Arc<Mutex<Vec<BtcLifecycleChainOutcomeV1>>>,
+    requests: Arc<Mutex<Vec<BtcLifecycleDriveRequestV1>>>,
+}
+
+impl ScriptedLifecyclePort {
+    fn new(outcomes: Vec<BtcLifecycleTransitionV1>) -> Self {
+        Self {
+            outcomes: Arc::new(Mutex::new(
+                outcomes
+                    .into_iter()
+                    .map(|transition| BtcLifecycleChainOutcomeV1::Transition(Box::new(transition)))
+                    .collect(),
+            )),
+            requests: Arc::default(),
+        }
+    }
+
+    fn request_count(&self) -> usize {
+        self.requests.lock().expect("scripted request lock").len()
+    }
+
+    fn next(
+        &self,
+        request: BtcLifecycleDriveRequestV1,
+    ) -> Result<BtcLifecycleChainOutcomeV1, std::io::Error> {
+        self.requests
+            .lock()
+            .map_err(|_| std::io::Error::other("request lock"))?
+            .push(request);
+        let mut outcomes = self
+            .outcomes
+            .lock()
+            .map_err(|_| std::io::Error::other("outcome lock"))?;
+        if outcomes.is_empty() {
+            Ok(BtcLifecycleChainOutcomeV1::Pending)
+        } else {
+            Ok(outcomes.remove(0))
+        }
+    }
+}
+
+#[async_trait]
+impl BitcoinBtcLifecyclePort for ScriptedLifecyclePort {
+    type Error = std::io::Error;
+
+    async fn drive(
+        &self,
+        request: BtcLifecycleDriveRequestV1,
+    ) -> Result<BtcLifecycleChainOutcomeV1, Self::Error> {
+        self.next(request)
+    }
+}
+
+#[async_trait]
+impl LezBtcLifecyclePort for ScriptedLifecyclePort {
+    type Error = std::io::Error;
+
+    async fn drive(
+        &self,
+        request: BtcLifecycleDriveRequestV1,
+    ) -> Result<BtcLifecycleChainOutcomeV1, Self::Error> {
+        self.next(request)
+    }
+}
+
+fn claim_lifecycle_fixture(
+    direction: SwapDirection,
+) -> (
+    Fixture,
+    BtcPairSdk,
+    BtcPreparedProtocolV1,
+    Vec<BtcLifecycleTransitionV1>,
+) {
+    let (fixture, pair, prepared, bitcoin_pre, lez_pre, lez_template) =
+        lifecycle_prepared(direction, Participant::Maker);
+    let revealing =
+        lifecycle_revealing_evidence(direction, &prepared, bitcoin_pre, lez_pre, lez_template);
+    let material = pair
+        .validate_revealing_claim(&prepared, &revealing)
+        .expect("canonical revealing material");
+    let followup_plan = pair
+        .build_followup_claim(&prepared, &material)
+        .expect("canonical follow-up plan");
+    let followup = lifecycle_followup_evidence(direction, &followup_plan);
+    let (first, second) = match direction {
+        SwapDirection::TakerSellsForeign => (
+            bitcoin_evidence(&fixture, REQUIRED_CONFIRMATIONS),
+            lez_evidence(true),
+        ),
+        SwapDirection::TakerSellsLez => (
+            lez_evidence(true),
+            bitcoin_evidence(&fixture, REQUIRED_CONFIRMATIONS),
+        ),
+    };
+    (
+        fixture,
+        pair,
+        prepared,
+        vec![
+            BtcLifecycleTransitionV1::FirstLockConfirmed(first),
+            BtcLifecycleTransitionV1::SecondLockConfirmed(second),
+            BtcLifecycleTransitionV1::RevealingClaimConfirmed(revealing),
+            BtcLifecycleTransitionV1::FollowupClaimConfirmed(followup),
+        ],
+    )
+}
+
+fn refund_lifecycle_fixture(
+    direction: SwapDirection,
+) -> (
+    Fixture,
+    BtcPairSdk,
+    BtcPreparedProtocolV1,
+    Vec<BtcLifecycleTransitionV1>,
+) {
+    let (fixture, pair, prepared, ..) = lifecycle_prepared(direction, Participant::Maker);
+    let (first, second, earlier, both) = match direction {
+        SwapDirection::TakerSellsForeign => (
+            bitcoin_evidence(&fixture, REQUIRED_CONFIRMATIONS),
+            lez_evidence(true),
+            BtcCanonicalRecoveryStateV1::new(
+                prepared.agreement(),
+                BITCOIN_REFUND_HEIGHT,
+                LEZ_FOREIGN_REFUND_SECONDS,
+                bitcoin_locked(&prepared),
+                lez_refunded(),
+            ),
+            BtcCanonicalRecoveryStateV1::new(
+                prepared.agreement(),
+                BITCOIN_REFUND_HEIGHT,
+                LEZ_FOREIGN_REFUND_SECONDS,
+                bitcoin_refunded(&prepared),
+                lez_refunded(),
+            ),
+        ),
+        SwapDirection::TakerSellsLez => (
+            lez_evidence(true),
+            bitcoin_evidence(&fixture, REQUIRED_CONFIRMATIONS),
+            BtcCanonicalRecoveryStateV1::new(
+                prepared.agreement(),
+                BITCOIN_REFUND_HEIGHT,
+                LEZ_REVERSE_REFUND_SECONDS,
+                bitcoin_refunded(&prepared),
+                lez_locked(),
+            ),
+            BtcCanonicalRecoveryStateV1::new(
+                prepared.agreement(),
+                BITCOIN_REFUND_HEIGHT,
+                LEZ_REVERSE_REFUND_SECONDS,
+                bitcoin_refunded(&prepared),
+                lez_refunded(),
+            ),
+        ),
+    };
+    (
+        fixture,
+        pair,
+        prepared,
+        vec![
+            BtcLifecycleTransitionV1::FirstLockConfirmed(first),
+            BtcLifecycleTransitionV1::SecondLockConfirmed(second),
+            BtcLifecycleTransitionV1::RecoveryObserved(earlier),
+            BtcLifecycleTransitionV1::RecoveryObserved(both),
+        ],
+    )
+}
+
+fn split_chain_scripts(
+    direction: SwapDirection,
+    transitions: &[BtcLifecycleTransitionV1],
+) -> (Vec<BtcLifecycleTransitionV1>, Vec<BtcLifecycleTransitionV1>) {
+    match direction {
+        SwapDirection::TakerSellsForeign => (
+            vec![transitions[0].clone(), transitions[3].clone()],
+            vec![transitions[1].clone(), transitions[2].clone()],
+        ),
+        SwapDirection::TakerSellsLez => (
+            vec![transitions[1].clone(), transitions[2].clone()],
+            vec![transitions[0].clone(), transitions[3].clone()],
+        ),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn durable_codec_and_store_are_canonical_secret_free_and_exact_cas() {
+    let (fixture, pair, prepared, transitions) =
+        claim_lifecycle_fixture(SwapDirection::TakerSellsForeign);
+    let active = pair
+        .activate_prepared(
+            pair.accept_wire(&fixture.wire).expect("accepted wire"),
+            prepared,
+        )
+        .expect("active lifecycle");
+    let record = BtcLifecycleRecordV1::from_active(&active).expect("canonical record");
+    assert_eq!(
+        BtcLifecycleRecordV1::from_exact_bytes(record.exact_bytes().to_vec())
+            .expect("canonical replay"),
+        record
+    );
+    assert!(
+        !record
+            .exact_bytes()
+            .windows(32)
+            .any(|window| window == secret(7).secret_bytes())
+    );
+    assert!(format!("{record:?}").contains("[REDACTED]"));
+
+    let mut whitespace = vec![b' '];
+    whitespace.extend_from_slice(record.exact_bytes());
+    assert!(matches!(
+        BtcLifecycleRecordV1::from_exact_bytes(whitespace),
+        Err(BtcLifecycleCodecError::NonCanonical)
+    ));
+    let mut unknown: serde_json::Value =
+        serde_json::from_slice(record.exact_bytes()).expect("record JSON");
+    unknown
+        .as_object_mut()
+        .expect("record object")
+        .insert("unknown".to_owned(), serde_json::Value::Bool(true));
+    assert!(matches!(
+        BtcLifecycleRecordV1::from_exact_bytes(
+            serde_json::to_vec(&unknown).expect("unknown-field JSON")
+        ),
+        Err(BtcLifecycleCodecError::Malformed)
+    ));
+    let mut future: serde_json::Value =
+        serde_json::from_slice(record.exact_bytes()).expect("record JSON");
+    future["schema_version"] = serde_json::Value::from(2);
+    assert!(matches!(
+        BtcLifecycleRecordV1::from_exact_bytes(
+            serde_json::to_vec(&future).expect("future-schema JSON")
+        ),
+        Err(BtcLifecycleCodecError::UnsupportedSchema(2))
+    ));
+
+    let store = InMemoryBtcLifecycleStore::default();
+    assert_eq!(
+        store.create(&record).await.expect("create"),
+        BtcLifecycleStoreCreateV1::Created
+    );
+    assert_eq!(
+        store.create(&record).await.expect("exact create replay"),
+        BtcLifecycleStoreCreateV1::ExistingSame
+    );
+    let mut first = pair
+        .resume(record.decode().expect("revision-zero envelope"))
+        .expect("revision-zero replay");
+    let _ = first
+        .apply_transition(transitions[0].clone())
+        .expect("first transition");
+    let successor = BtcLifecycleRecordV1::from_active(&first).expect("revision one record");
+    assert_eq!(
+        store
+            .compare_exchange(&record, &successor)
+            .await
+            .expect("CAS"),
+        BtcLifecycleStoreCompareExchangeV1::Applied
+    );
+    assert_eq!(
+        store
+            .compare_exchange(&record, &successor)
+            .await
+            .expect("exact CAS replay"),
+        BtcLifecycleStoreCompareExchangeV1::ExistingSame
+    );
+
+    let mut competing = pair
+        .resume(record.decode().expect("competing envelope"))
+        .expect("competing replay");
+    let _ = competing
+        .apply_transition(BtcLifecycleTransitionV1::FirstLockConfirmed(
+            bitcoin_evidence(&fixture, REQUIRED_CONFIRMATIONS + 1),
+        ))
+        .expect("different valid first observation");
+    let competing = BtcLifecycleRecordV1::from_active(&competing).expect("competing record");
+    assert_eq!(
+        store
+            .compare_exchange(&record, &competing)
+            .await
+            .expect("stale CAS"),
+        BtcLifecycleStoreCompareExchangeV1::Conflict {
+            actual_revision: Some(1)
+        }
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn public_runtime_completes_both_claim_directions_with_restart_and_zero_replay() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let (fixture, pair, prepared, transitions) = claim_lifecycle_fixture(direction);
+        let store = InMemoryBtcLifecycleStore::default();
+        let stored = StoredBtcLifecycleSdk::new(pair.clone(), store.clone());
+        let active = stored
+            .activate(
+                pair.accept_wire(&fixture.wire)
+                    .expect("accepted claim wire"),
+                prepared,
+            )
+            .await
+            .expect("durable activation");
+        let swap_id = active.status().swap_id().clone();
+        let (bitcoin_script, lez_script) = split_chain_scripts(direction, &transitions);
+        let bitcoin = ScriptedLifecyclePort::new(bitcoin_script);
+        let lez = ScriptedLifecyclePort::new(lez_script);
+
+        for expected_revision in 1..=4 {
+            let runtime = BtcLifecycleRuntime::new(
+                StoredBtcLifecycleSdk::new(pair.clone(), store.clone()),
+                bitcoin.clone(),
+                lez.clone(),
+            );
+            let BtcLifecycleDriveOutcomeV1::Transition { status, .. } =
+                runtime.drive_once(&swap_id).await.unwrap_or_else(|error| {
+                    panic!("claim drive revision {expected_revision}: {error:?}")
+                })
+            else {
+                panic!("expected one durable transition");
+            };
+            assert_eq!(status.revision(), expected_revision);
+        }
+        let runtime = BtcLifecycleRuntime::new(
+            StoredBtcLifecycleSdk::new(pair.clone(), store.clone()),
+            bitcoin.clone(),
+            lez.clone(),
+        );
+        assert!(matches!(
+            runtime.drive_once(&swap_id).await.expect("terminal replay"),
+            BtcLifecycleDriveOutcomeV1::Complete(status)
+                if status.phase() == Phase::Completed && status.revision() == 4
+        ));
+        assert_eq!(bitcoin.request_count() + lez.request_count(), 4);
+
+        let before = store
+            .load(&swap_id, Participant::Maker)
+            .await
+            .expect("load before replay")
+            .expect("durable terminal");
+        assert_eq!(
+            stored
+                .apply_transition(&swap_id, transitions[0].clone())
+                .await
+                .expect("historical replay"),
+            BtcLifecycleTransitionOutcomeV1::AlreadyApplied { revision: 1 }
+        );
+        let after = store
+            .load(&swap_id, Participant::Maker)
+            .await
+            .expect("load after replay")
+            .expect("durable terminal");
+        assert_eq!(before.sha256(), after.sha256());
+
+        let taker = StoredBtcLifecycleSdk::new(
+            BtcPairSdk::new(
+                Participant::Taker,
+                BtcChainPolicyV1::new(BITCOIN_GENESIS, REQUIRED_CONFIRMATIONS),
+            ),
+            store.clone(),
+        );
+        assert!(taker.resume(&swap_id).await.expect("role lookup").is_none());
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn public_runtime_completes_both_ordered_refund_directions() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let (fixture, pair, prepared, transitions) = refund_lifecycle_fixture(direction);
+        let store = InMemoryBtcLifecycleStore::default();
+        let stored = StoredBtcLifecycleSdk::new(pair.clone(), store.clone());
+        let active = stored
+            .activate(
+                pair.accept_wire(&fixture.wire)
+                    .expect("accepted refund wire"),
+                prepared,
+            )
+            .await
+            .expect("durable refund activation");
+        let swap_id = active.status().swap_id().clone();
+        let (bitcoin_script, lez_script) = split_chain_scripts(direction, &transitions);
+        let runtime = BtcLifecycleRuntime::new(
+            stored,
+            ScriptedLifecyclePort::new(bitcoin_script),
+            ScriptedLifecyclePort::new(lez_script),
+        );
+        for expected_revision in 1..=4 {
+            let BtcLifecycleDriveOutcomeV1::Transition { status, .. } =
+                runtime.drive_once(&swap_id).await.unwrap_or_else(|error| {
+                    panic!("refund drive revision {expected_revision}: {error:?}")
+                })
+            else {
+                panic!("expected refund transition");
+            };
+            assert_eq!(status.revision(), expected_revision);
+        }
+        assert!(matches!(
+            runtime.drive_once(&swap_id).await.expect("terminal refund"),
+            BtcLifecycleDriveOutcomeV1::Complete(status)
+                if status.phase() == Phase::Refunded && status.revision() == 4
+        ));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn public_runtime_rejects_chain_substitution_without_store_change() {
+    let (fixture, pair, prepared, _) = claim_lifecycle_fixture(SwapDirection::TakerSellsForeign);
+    let store = InMemoryBtcLifecycleStore::default();
+    let stored = StoredBtcLifecycleSdk::new(pair.clone(), store.clone());
+    let active = stored
+        .activate(
+            pair.accept_wire(&fixture.wire).expect("accepted wire"),
+            prepared,
+        )
+        .await
+        .expect("durable activation");
+    let swap_id = active.status().swap_id().clone();
+    let before = store
+        .load(&swap_id, Participant::Maker)
+        .await
+        .expect("load before substitution")
+        .expect("durable activation");
+    let runtime = BtcLifecycleRuntime::new(
+        stored,
+        ScriptedLifecyclePort::new(vec![BtcLifecycleTransitionV1::FirstLockConfirmed(
+            lez_evidence(true),
+        )]),
+        ScriptedLifecyclePort::default(),
+    );
+    assert!(matches!(
+        runtime.drive_once(&swap_id).await,
+        Err(BtcSdkError::WrongFirstLockChain)
+    ));
+    let after = store
+        .load(&swap_id, Participant::Maker)
+        .await
+        .expect("load after substitution")
+        .expect("durable activation");
+    assert_eq!(before, after);
 }
 #[test]
 fn f7_prepared_locks_reject_txid_matching_wrong_bitcoin_output() {

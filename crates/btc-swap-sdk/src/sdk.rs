@@ -29,6 +29,19 @@ use crate::{
     verify_adaptor_presignature, verify_final_signature,
 };
 
+mod persistence;
+mod runtime;
+
+pub use persistence::{
+    BtcLifecycleCodecError, BtcLifecycleRecordV1, BtcLifecycleStore,
+    BtcLifecycleStoreCompareExchangeV1, BtcLifecycleStoreCreateV1, InMemoryBtcLifecycleStore,
+    InMemoryBtcLifecycleStoreError, MAX_BTC_LIFECYCLE_RECORD_BYTES, StoredBtcLifecycleSdk,
+};
+pub use runtime::{
+    BitcoinBtcLifecyclePort, BtcLifecycleChainOutcomeV1, BtcLifecycleDriveOutcomeV1,
+    BtcLifecycleDriveRequestV1, BtcLifecycleRuntime, LezBtcLifecyclePort,
+};
+
 const BITCOIN_FUNDING_STEP: &str = "bitcoin.funding";
 const LEZ_INITIALIZE_STEP: &str = "lez.initialize";
 const LEZ_FUND_STEP: &str = "lez.fund";
@@ -1997,6 +2010,27 @@ pub enum BtcSdkError {
     /// Pre-lock negotiation failed in its application adapter.
     #[error("BTC pre-lock negotiation failed")]
     Negotiation(#[source] BtcBoxPortError),
+    /// Canonical lifecycle storage or codec access failed.
+    #[error("BTC lifecycle persistence is unavailable")]
+    LifecyclePersistenceUnavailable,
+    /// Canonical lifecycle bytes failed bounded decoding or deterministic replay.
+    #[error("BTC lifecycle record validation failed")]
+    LifecycleCodec(#[source] Box<BtcLifecycleCodecError>),
+    /// A different concurrent lifecycle record won the exact store CAS.
+    #[error("BTC lifecycle store contains a conflicting record")]
+    LifecycleStoreConflict,
+    /// No durable activation exists for the requested role-local swap.
+    #[error("BTC lifecycle is not durably activated")]
+    LifecycleNotActivated,
+    /// Structural action could not be routed to Bitcoin or LEZ.
+    #[error("BTC lifecycle action has no valid chain route")]
+    LifecycleRouting,
+    /// Bitcoin lifecycle adapter failed.
+    #[error("Bitcoin BTC lifecycle adapter failed")]
+    BitcoinLifecycle(#[source] BtcBoxPortError),
+    /// LEZ lifecycle adapter failed.
+    #[error("LEZ BTC lifecycle adapter failed")]
+    LezLifecycle(#[source] BtcBoxPortError),
     /// Revisioned replay requires complete claim and signed-refund preparation.
     #[error("BTC durable lifecycle preparation is incomplete")]
     MissingLifecyclePreparation,
@@ -2187,6 +2221,8 @@ impl ProtocolError for BtcSdkError {
             | Self::MissingRecoveryEffects
             | Self::ClaimPreparationAgreementMismatch
             | Self::LocalRoleMismatch { .. }
+            | Self::LifecycleStoreConflict
+            | Self::LifecycleRouting
             | Self::MissingLifecyclePreparation
             | Self::LifecycleAgreementMismatch
             | Self::LifecycleEffectMismatch
@@ -2216,12 +2252,18 @@ impl ProtocolError for BtcSdkError {
             | Self::RecoveryStateAgreementMismatch
             | Self::RecoveryPlanMismatch
             | Self::RecoveryStateContradiction
-            | Self::RecoveryOrderViolation => ErrorCategory::TranscriptMismatch,
+            | Self::RecoveryOrderViolation
+            | Self::LifecycleCodec(_) => ErrorCategory::TranscriptMismatch,
             Self::BitcoinFundingOutputMismatch | Self::FirstLockTermsMismatch => {
                 ErrorCategory::WrongValue
             }
             Self::UnsupportedResumeRevision(_) => ErrorCategory::UnsupportedCapability,
-            Self::Discovery(_) | Self::Negotiation(_) => ErrorCategory::DependencyUnavailable,
+            Self::Discovery(_)
+            | Self::Negotiation(_)
+            | Self::LifecyclePersistenceUnavailable
+            | Self::LifecycleNotActivated
+            | Self::BitcoinLifecycle(_)
+            | Self::LezLifecycle(_) => ErrorCategory::DependencyUnavailable,
             Self::FirstLockNetworkMismatch
             | Self::RevealingClaimNetworkMismatch
             | Self::RecoveryNetworkMismatch
