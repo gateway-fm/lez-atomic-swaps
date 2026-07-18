@@ -542,13 +542,15 @@ flowchart TB
         M3F7D["F7 agreement and local-policy adapter<br/>eleven no-submit mappings GREEN"]
         M3F7S["F7 official sidecar planner<br/>tags 11, 7, 8, 12, and 10<br/>four durable v2 reservations GREEN"]
         M3F7R["F7 sidecar and finalized scanner<br/>Found containing-block and Absent window anchors<br/>90s max3 historical reads in 120s actor budget<br/>actual-node certification open"]
-        M3RA["btc-reference-actor<br/>schema 4 live Maker lock GREEN<br/>both actual-node directions"]
+        M3F7P["F7 peer funding projection<br/>schema 5 v2 DiscoverByTerms<br/>nonowner has no submit authority GREEN"]
+        M3RA["btc-reference-actor<br/>schema 4 live locks and schema 5 peer projection GREEN<br/>complete F7 actual-node packet open"]
         M3RUN["Schema 4 private-local runner<br/>external Taker first lock<br/>actor-owned Maker second lock GREEN"]
         M3F7A --> M3F7C
         M3F7C --> M3F7D
         M3F7D --> M3F7S
         M3F7S --> M3F7R
-        M3F7R -.->|"live schema 5 actor composition open"| M3RA
+        M3F7R --> M3F7P
+        M3F7P --> M3RA
     end
 
     subgraph LezSidecars["Role-isolated official LEZ v0.1.2 processes"]
@@ -2291,9 +2293,13 @@ Maker owns the second lock in each direction, and leaves both actors terminal
 `Completed`. The Taker first lock remains an external PoC fixture. This closes
 the schema-4 private-local checkpoint only. Run `m3overlap-20260717a`
 separately closes the accepted opposite-direction two-swap execution item;
-arbitrary-N/same-direction scheduling, the remaining F7 actor/journal and
-actual-node custom-token scope, process-kill/reorg/chaos, public deployment, and
-production readiness remain outside the claim.
+the BTC pair-specific F7 component boundary now also includes schema-5
+peerless finalized token-funding projection without Maker-private material or
+submit authority. Run R reached finalized token funding and Maker revision two
+but retained the pre-fix Taker v1-dispatch RED, so it is not full F7 evidence.
+The fresh two-direction actual-node custom-token packet,
+arbitrary-N/same-direction scheduling, process-kill/reorg/chaos, public
+deployment, formal review, and production readiness remain outside the claim.
 
 ## Abandonment and autonomous recovery flow
 

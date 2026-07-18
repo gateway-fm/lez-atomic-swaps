@@ -17,14 +17,16 @@ use lez_bridge_adapter::BtcLezAssetBridgeBindingV2;
 use lez_bridge_protocol::{
     AccountIds, ChainPosition, CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult,
     EscrowState, ExactMessageBytes, ExactTransactionBytes, FinalizedBlockIdentity,
-    FinalizedWitnessedAssetUnavailableReasonV2, FinalizedWitnessedFundingFacts, NativeCustodyFacts,
-    NativeEscrowAccountFacts, NativeFundInstructionFacts, NativeRefundFoundFacts,
-    NativeRefundInstructionFacts, ObservedTransactionFacts, PrepareWitnessedAssetEscrowV2Request,
+    FinalizedWitnessedAssetFundingFactsV2, FinalizedWitnessedAssetUnavailableReasonV2,
+    FinalizedWitnessedFundingFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
+    NativeFundInstructionFacts, NativeRefundFoundFacts, NativeRefundInstructionFacts,
+    ObservedTransactionFacts, PrepareWitnessedAssetEscrowV2Request,
     PrepareWitnessedAssetEscrowV2Result, PrepareWitnessedClaimResult, PreparedTransaction,
     PreparedWitnessedClaim, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
     TokenHoldingFactsV2, TransactionId, WitnessedAssetClaimInstructionFactsV2,
-    WitnessedAssetCustodyFactsV2, WitnessedAssetPrepareStepV2, WitnessedAssetPreparedEffectV2,
-    WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts, WitnessedLezAssetV2,
+    WitnessedAssetCustodyFactsV2, WitnessedAssetEffectInstructionFactsV2,
+    WitnessedAssetPrepareStepV2, WitnessedAssetPreparedEffectV2, WitnessedClaimInstructionFacts,
+    WitnessedEscrowMetadataFacts, WitnessedLezAssetV2,
 };
 use lez_btc_swap_sdk::{
     AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1,
@@ -1478,6 +1480,189 @@ fn schema5_bridge_timeout_accepts_actor_outer_deadline_and_rejects_above_it() {
 
     fixture.config.lez_bridge.request_timeout_millis = 120_001;
     assert_eq!(fixture.config.validate(), Err(ActorConfigError::Invalid));
+}
+
+#[derive(Clone)]
+struct FixedPeerlessAssetFundingClassifier {
+    outcome: FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetFundingFactsV2>,
+    targets: Arc<Mutex<Vec<FinalizedWitnessedAssetTransactionTargetV2>>>,
+}
+
+#[async_trait]
+impl LezAssetFundingClassifierPort for FixedPeerlessAssetFundingClassifier {
+    async fn classify(
+        &self,
+        binding: &BtcLezAssetBridgeBindingV2,
+        _request_id: RequestId,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        window: DiscoveryWindow,
+    ) -> Result<
+        FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetFundingFactsV2>,
+        ActorCommandError,
+    > {
+        assert!(matches!(
+            binding.terms().asset(),
+            WitnessedLezAssetV2::CustomToken(_)
+        ));
+        let scanned_window = match &self.outcome {
+            FinalizedWitnessedAssetScanOutcomeV2::Found { scanned_window, .. }
+            | FinalizedWitnessedAssetScanOutcomeV2::Absent { scanned_window, .. }
+            | FinalizedWitnessedAssetScanOutcomeV2::Uncertain { scanned_window, .. } => {
+                Some(*scanned_window)
+            }
+            FinalizedWitnessedAssetScanOutcomeV2::Unavailable { .. } => None,
+        };
+        if let Some(scanned_window) = scanned_window {
+            assert_eq!(window, scanned_window);
+        }
+        self.targets.lock().expect("targets").push(target);
+        Ok(self.outcome.clone())
+    }
+}
+
+#[tokio::test]
+async fn schema5_taker_projects_custom_token_maker_lock_from_v2_peerless_funding() {
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    let _ = configure_schema5_asset_extension(&mut fixture);
+    assert_eq!(
+        lez_funding_observation_protocol(&fixture.config),
+        LezFundingObservationProtocol::AssetV2
+    );
+    let legacy = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    assert_eq!(
+        lez_funding_observation_protocol(&legacy.config),
+        LezFundingObservationProtocol::NativeV1
+    );
+    let (extension, _) = validated_asset_extension_material(&fixture.config, &fixture.agreement)
+        .expect("asset extension");
+    let binding =
+        BtcLezAssetBridgeBindingV2::new(&fixture.agreement, &extension, extension.asset())
+            .expect("asset binding");
+    let WitnessedLezAssetV2::CustomToken(token) = binding.terms().asset() else {
+        panic!("custom-token fixture");
+    };
+    let window = fixture.config.discovery_window().expect("asset window");
+    let height = window.start_height() + 1;
+    let block_hash = Hex32::from_bytes([0xe1; 32]);
+    let timestamp_ms = fixture
+        .agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds()
+        .checked_mul(1_000)
+        .and_then(|cutoff| cutoff.checked_sub(1))
+        .expect("pre-cutoff LEZ timestamp");
+    let metadata_account = Hex32::from_bytes(*binding.metadata_account_id());
+    let transaction = ObservedTransactionFacts::new(
+        TransactionId::from_bytes([0xe2; 32]),
+        ExactTransactionBytes::new(b"peerless-custom-token-funding".to_vec())
+            .expect("funding bytes"),
+        ChainPosition::new(block_hash, height, 0),
+        AccountIds::new(vec![token.depositor_owner_account_id()]).expect("depositor signer"),
+        true,
+    );
+    let facts = FinalizedWitnessedAssetFundingFactsV2::new(
+        transaction,
+        WitnessedAssetEffectInstructionFactsV2::new(
+            WitnessedAssetPrepareStepV2::Fund,
+            fixture.config.lez_bridge.runtime.escrow_program_id,
+            AccountIds::new(vec![
+                metadata_account,
+                token.depositor_owner_account_id(),
+                token.depositor_ata_account_id(),
+                token.custody_ata_account_id(),
+            ])
+            .expect("funding accounts"),
+            token.swap_id(),
+        ),
+        FinalizedBlockIdentity::new(height, block_hash, timestamp_ms),
+        WitnessedEscrowMetadataFacts::from_witnessed_token_terms(
+            metadata_account,
+            fixture.config.lez_bridge.runtime.escrow_program_id,
+            token,
+            EscrowState::Funded,
+        ),
+        WitnessedAssetCustodyFactsV2::CustomToken(TokenHoldingFactsV2::new(
+            token.custody_ata_account_id(),
+            token.token_program_id(),
+            token.token_definition_account_id(),
+            75,
+        )),
+    );
+    let outcome = FinalizedWitnessedAssetScanOutcomeV2::Found {
+        finalized_clock: ChainClock::new(block_hash, height, timestamp_ms),
+        scanned_window: window,
+        facts: Box::new(facts),
+    };
+    let targets = Arc::new(Mutex::new(Vec::new()));
+    let observer = LezAssetFundingObserver {
+        config: &fixture.config,
+        classifier: FixedPeerlessAssetFundingClassifier {
+            outcome,
+            targets: Arc::clone(&targets),
+        },
+    };
+
+    activate_and_project_taker_lock(&fixture).await;
+    let output = drive_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &observer,
+    )
+    .await
+    .expect("peerless asset funding projects");
+
+    assert_eq!(output.revision, 2);
+    assert_eq!(output.phase, Phase::BothLegsLocked.into());
+    assert_eq!(
+        *targets.lock().expect("targets"),
+        [FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {}]
+    );
+}
+
+#[tokio::test]
+async fn schema5_peerless_asset_absence_uncertainty_and_unavailability_remain_pending() {
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    let _ = configure_schema5_asset_extension(&mut fixture);
+    let window = fixture.config.discovery_window().expect("asset window");
+    let clock = ChainClock::new(
+        Hex32::from_bytes([0xe3; 32]),
+        window.start_height() + u64::from(window.max_blocks()) - 1,
+        1_700_000_000_000,
+    );
+    let outcomes = [
+        FinalizedWitnessedAssetScanOutcomeV2::Absent {
+            finalized_clock: clock,
+            scanned_window: window,
+        },
+        FinalizedWitnessedAssetScanOutcomeV2::Uncertain {
+            finalized_clock: clock,
+            scanned_window: window,
+        },
+        FinalizedWitnessedAssetScanOutcomeV2::Unavailable {
+            reason: FinalizedWitnessedAssetUnavailableReasonV2::HistoryUnavailable,
+        },
+    ];
+
+    for outcome in outcomes {
+        let observer = LezAssetFundingObserver {
+            config: &fixture.config,
+            classifier: FixedPeerlessAssetFundingClassifier {
+                outcome,
+                targets: Arc::new(Mutex::new(Vec::new())),
+            },
+        };
+        assert!(matches!(
+            observer
+                .observe(&fixture.agreement, FundingTransition::MakerLock)
+                .await
+                .expect("classification remains retryable"),
+            ActorFundingObservation::Pending { chain: Chain::Lez }
+        ));
+    }
 }
 
 #[test]

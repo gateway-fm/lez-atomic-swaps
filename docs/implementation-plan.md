@@ -1879,7 +1879,25 @@ Active M3 refund critical path:
   client maximum to two minutes, with a client boundary test accepting 120
   seconds and rejecting 121. The pre-Docker contract extracts all three
   configured limits and rejects future runner/actor/client drift before node
-  startup. Explicit terminal ATA balance and packet bindings remain forward
+  startup. Fresh isolated run `m3f7compose20260718r` started from clean pushed
+  commit `7fd84fa`, passed the checked deployment, both fresh-identity Vault
+  bootstraps, official eight-transaction F7 Token/ATA fixture, forward Bitcoin
+  first lock, and actor-owned LEZ initialization, permissionless custody-ATA
+  creation, and funding through unique finalized inclusion. The Maker then
+  projected that custom-token lock to revision two. The Taker did not: all 120
+  bounded retries called the legacy native-only
+  `lez_bridge.v1.observe_finalized_witnessed_funding`, which cannot recognize
+  the four-account token funding transaction. No claim or refund followed;
+  exact cleanup removed only the captured run resources and secure state. Run R
+  is bounded RED evidence, not an F7 PoC pass. RED-GREEN coverage now proves
+  that a schema-5 Taker with no Maker-private prepared material uses the v2
+  classifier with `DiscoverByTerms`, projects an exact `Found` token funding to
+  revision two, and keeps `Absent`, `Uncertain`, and `Unavailable` pending. The
+  live selector retains schema 4 on v1, binds the v2 request to the countersigned
+  agreement, asset commitment, run, role, and discovery window, and exposes no
+  submission method. All 83 actor tests, strict all-target Clippy, and the M3
+  pre-Docker actor contract pass. Explicit terminal ATA balance and packet
+  bindings remain forward
   `175/75/0`, reverse `75/175/0`, and conserved total `250`. The remaining
   functional gate is one fresh clean two-direction journey; synchronized
   documentation, D1, and milestone-wide closure gates follow that passing run;

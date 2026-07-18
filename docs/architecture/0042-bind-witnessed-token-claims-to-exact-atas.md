@@ -6,8 +6,10 @@ focused evidence. The checked manifest, public IDL, deployer assembly, verifier,
 and active M3 runner pins now share the new guest identity. The additive strict
 v2 transaction, finalized-classifier, exact-once client, main-process adapter,
 and official sidecar planner, route, replay, and finalized-scan boundaries are
-also implemented. Live journal/actor composition has crossed initialization
-and custody creation on the fresh local nodes; a complete two-direction
+also implemented. Live journal/actor composition has crossed finalized
+initialization, custody creation, and funding, and the Maker projected the
+custom-token lock to revision two. Schema-5 peer observation now uses v2
+terms discovery rather than the native-only v1 route. A complete two-direction
 actual-node custom-token packet remains open.
 
 ## Context
@@ -249,6 +251,40 @@ preserves caller-owned IDs/windows/targets/effects/transcripts, and never turns
 transport failure or the four conservative classifier states into send
 authority. Six new external tests and 73 preserved tests pass with strict
 all-target Clippy, rustdoc, doctests, formatting, and diff gates.
+
+The reference actor selects its finalized LEZ funding observer by validated
+configuration schema. Schema 3/4 native swaps retain the v1 native observer.
+Schema 5 uses the v2 asset classifier. The Maker can reconcile its exact
+prepared three-step plan, while the Taker deliberately receives no
+Maker-private transaction material: it discovers the peer's finalized funding
+by the countersigned asset terms. Its deterministic request binds the agreement
+commitment, asset commitment, run, role, and complete discovery window, and the
+target is `DiscoverByTerms`. Only an exact `Found` result becomes revision-two
+evidence. `Absent`, `Uncertain`, or `Unavailable` remains pending; transport,
+echo, window, or agreement drift fails closed. This observation-only port has
+no submission or completion method.
+
+```mermaid
+sequenceDiagram
+    participant Maker as Maker actor
+    participant Taker as Taker actor
+    participant Sidecar as Taker role sidecar
+    participant Indexer as Finalized indexer
+    participant Store as Taker SQLite
+
+    Maker->>Indexer: Submit and finalize token initialize, custody, funding
+    Maker->>Maker: Project exact prepared plan to revision 2
+    Taker->>Sidecar: Classify funding by countersigned terms and fixed window
+    Sidecar->>Indexer: Scan v2 token funding and historical state
+    alt Exact Found in the stable finalized window
+        Indexer-->>Sidecar: Token funding facts and containing block
+        Sidecar-->>Taker: Found with no submit authority
+        Taker->>Store: CAS revision 1 to revision 2
+    else Absent, Uncertain, Unavailable, or drift
+        Sidecar-->>Taker: No usable funding evidence
+        Taker->>Store: Preserve revision 1
+    end
+```
 
 All eleven v2 methods are now registered on the capability-authenticated
 sidecar server. The four preparation/completion methods restore exact durable

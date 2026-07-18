@@ -38,9 +38,9 @@ use lez_bridge_protocol::{
     ClassifyFinalizedWitnessedInitializationRequest, CompleteWitnessedAssetClaimV2Result,
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, DiscoveryWindow,
     EscrowObservationTarget, EscrowState, ExactTransactionBytes,
-    FinalizedWitnessedAssetClaimFactsV2, FinalizedWitnessedAssetScanOutcomeV2,
-    FinalizedWitnessedAssetTransactionTargetV2, FinalizedWitnessedClaimFacts,
-    FinalizedWitnessedClaimObservationTarget, Hex32, MessageContext,
+    FinalizedWitnessedAssetClaimFactsV2, FinalizedWitnessedAssetFundingFactsV2,
+    FinalizedWitnessedAssetScanOutcomeV2, FinalizedWitnessedAssetTransactionTargetV2,
+    FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget, Hex32, MessageContext,
     NativeEscrowAccountObservation, NativeRefundObservation, NativeRefundObservationTarget,
     ObserveCurrentClockRequest, ObserveFinalizedWitnessedClaimRequest,
     ObserveFinalizedWitnessedFundingRequest, ObserveNativeRefundRequest, ObserveNativeRefundResult,
@@ -2973,6 +2973,43 @@ fn status(config: &ActorConfig) -> Result<ActorStatusV1, ActorCommandError> {
     Ok(status_output(config, &status))
 }
 
+async fn drive_live_lez_funding(
+    config: &ActorConfig,
+    agreement: BtcAgreementV1,
+    wire: Vec<u8>,
+) -> Result<ActorEffectOutputV1, ActorCommandError> {
+    let factory = CapabilityFileBridgeClientFactory::new(
+        config.lez_bridge.endpoint.to_string(),
+        config.lez_bridge.capability_file.clone(),
+        config.lez_bridge.run_id.clone(),
+        config.lez_bridge.runtime.clone(),
+        Duration::from_millis(config.lez_bridge.request_timeout_millis),
+    );
+    let client = factory
+        .fresh_transport()
+        .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+    match lez_funding_observation_protocol(config) {
+        LezFundingObservationProtocol::NativeV1 => {
+            let observer = LezFundingObserver { config, client };
+            drive_with_observer(config, agreement, wire, &observer).await
+        }
+        LezFundingObservationProtocol::AssetV2 => {
+            let adapter = LezBridgeAdapter::new(
+                client,
+                config.lez_bridge.run_id.clone(),
+                config.lez_bridge.runtime.clone(),
+                config.role.sdk(),
+            )
+            .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+            let observer = LezAssetFundingObserver {
+                config,
+                classifier: adapter,
+            };
+            drive_with_observer(config, agreement, wire, &observer).await
+        }
+    }
+}
+
 async fn drive_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommandError> {
     if !state_file_exists(&config.state_db)? {
         return Err(ActorCommandError::NotActivated);
@@ -3013,20 +3050,7 @@ async fn drive_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCo
                 };
                 drive_with_observer(config, agreement, wire, &observer).await
             }
-            Chain::Lez => {
-                let factory = CapabilityFileBridgeClientFactory::new(
-                    config.lez_bridge.endpoint.to_string(),
-                    config.lez_bridge.capability_file.clone(),
-                    config.lez_bridge.run_id.clone(),
-                    config.lez_bridge.runtime.clone(),
-                    Duration::from_millis(config.lez_bridge.request_timeout_millis),
-                );
-                let client = factory
-                    .fresh_transport()
-                    .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
-                let observer = LezFundingObserver { config, client };
-                drive_with_observer(config, agreement, wire, &observer).await
-            }
+            Chain::Lez => drive_live_lez_funding(config, agreement, wire).await,
             Chain::Zcash | Chain::Monero => Err(ActorCommandError::AgreementBindingInvalid),
         };
     }
@@ -7259,6 +7283,161 @@ impl FirstLockRecoverySafetyPort for LiveBitcoinMakerLockSafety {
 struct LezFundingObserver<'a> {
     config: &'a ActorConfig,
     client: BridgeClient,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LezFundingObservationProtocol {
+    NativeV1,
+    AssetV2,
+}
+
+fn lez_funding_observation_protocol(config: &ActorConfig) -> LezFundingObservationProtocol {
+    if config.schema_version == ASSET_CONFIG_SCHEMA_VERSION {
+        LezFundingObservationProtocol::AssetV2
+    } else {
+        LezFundingObservationProtocol::NativeV1
+    }
+}
+
+#[async_trait]
+trait LezAssetFundingClassifierPort: Send + Sync {
+    async fn classify(
+        &self,
+        binding: &BtcLezAssetBridgeBindingV2,
+        request_id: RequestId,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        window: DiscoveryWindow,
+    ) -> Result<
+        FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetFundingFactsV2>,
+        ActorCommandError,
+    >;
+}
+
+#[async_trait]
+impl LezAssetFundingClassifierPort for LezBridgeAdapter<BridgeClient> {
+    async fn classify(
+        &self,
+        binding: &BtcLezAssetBridgeBindingV2,
+        request_id: RequestId,
+        target: FinalizedWitnessedAssetTransactionTargetV2,
+        window: DiscoveryWindow,
+    ) -> Result<
+        FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetFundingFactsV2>,
+        ActorCommandError,
+    > {
+        self.classify_finalized_btc_asset_funding_v2(binding, request_id, target, window)
+            .await
+            .map_err(|_| ActorCommandError::ObservationUnavailable)
+    }
+}
+
+struct LezAssetFundingObserver<'a, C> {
+    config: &'a ActorConfig,
+    classifier: C,
+}
+
+#[async_trait]
+impl<C> FundingObservationPort for LezAssetFundingObserver<'_, C>
+where
+    C: LezAssetFundingClassifierPort,
+{
+    async fn observe(
+        &self,
+        agreement: &BtcAgreementV1,
+        _transition: FundingTransition,
+    ) -> Result<ActorFundingObservation, ActorCommandError> {
+        observe_peerless_finalized_lez_asset_funding(&self.classifier, self.config, agreement).await
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PeerlessFinalizedLezAssetFundingEvidenceV1 {
+    schema_version: u16,
+    asset_commitment: String,
+    participant: BridgeParticipant,
+    request_id: RequestId,
+    target: FinalizedWitnessedAssetTransactionTargetV2,
+    window: DiscoveryWindow,
+    finalized_clock: ChainClock,
+    funding: FinalizedWitnessedAssetFundingFactsV2,
+}
+
+fn peerless_asset_funding_request_id(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    asset_commitment: [u8; 32],
+) -> Result<RequestId, ActorCommandError> {
+    #[derive(Serialize)]
+    struct Identity<'a> {
+        schema_version: u16,
+        operation: &'static str,
+        agreement_commitment: String,
+        asset_commitment: String,
+        run_id: &'a RunId,
+        participant: BridgeParticipant,
+        window: DiscoveryWindow,
+    }
+
+    deterministic_request_id(&Identity {
+        schema_version: 1,
+        operation: "discover_finalized_asset_funding",
+        agreement_commitment: hex::encode(agreement.agreement_commitment()),
+        asset_commitment: hex::encode(asset_commitment),
+        run_id: &config.lez_bridge.run_id,
+        participant: config.role.bridge(),
+        window: config.discovery_window()?,
+    })
+}
+
+async fn observe_peerless_finalized_lez_asset_funding(
+    classifier: &dyn LezAssetFundingClassifierPort,
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+) -> Result<ActorFundingObservation, ActorCommandError> {
+    let (extension, _) = validated_asset_extension_material(config, agreement)
+        .map_err(|()| ActorCommandError::AgreementBindingInvalid)?;
+    let asset_commitment = *extension.asset_commitment();
+    let binding = BtcLezAssetBridgeBindingV2::new(agreement, &extension, extension.asset())
+        .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    let request_id = peerless_asset_funding_request_id(config, agreement, asset_commitment)?;
+    let target = FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {};
+    let window = config.discovery_window()?;
+    let outcome = classifier
+        .classify(&binding, request_id.clone(), target.clone(), window)
+        .await?;
+    let FinalizedWitnessedAssetScanOutcomeV2::Found {
+        finalized_clock,
+        scanned_window,
+        facts,
+    } = outcome
+    else {
+        return Ok(ActorFundingObservation::Pending { chain: Chain::Lez });
+    };
+    if scanned_window != window {
+        return Err(ActorCommandError::ObservationUnavailable);
+    }
+    let funding = *facts;
+    let transaction_id = hex::encode(funding.transaction.transaction_id.as_bytes());
+    let timestamp_ms = funding.containing_block.timestamp_ms;
+    let chain_evidence = serde_json::to_vec(&PeerlessFinalizedLezAssetFundingEvidenceV1 {
+        schema_version: 1,
+        asset_commitment: hex::encode(asset_commitment),
+        participant: config.role.bridge(),
+        request_id,
+        target,
+        window,
+        finalized_clock,
+        funding,
+    })
+    .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    Ok(ActorFundingObservation::Ready {
+        chain: Chain::Lez,
+        transaction_id: transaction_id.into_boxed_str(),
+        confirmations: FINALIZED_LEZ_CONFIRMATION_UNITS,
+        canonical_inclusion_time: CanonicalInclusionTimeV1::Lez { timestamp_ms },
+        chain_evidence,
+    })
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
