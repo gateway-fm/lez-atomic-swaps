@@ -1,10 +1,8 @@
 # ADR 0047: Pin finalized windows and separate development from certification lanes
 
-Status: Accepted at the F7 observer and local-runner contract boundaries. Runs V
-and W each proved one complete actual-node custom-token direction at the
-one-second slot. Run W additionally crossed reverse stage two and all three
-reverse custom-token first-lock effects; the second terminal direction,
-immutable wallet cache, and full packet remain open.
+Status: Accepted and actual-node GREEN in both custom-token directions at the
+one-second slot. Clean pushed-commit Run X retains the first complete pair. The
+immutable wallet cache and repeatability packet remain open.
 
 ## Context
 
@@ -145,5 +143,12 @@ The multi-account finalized observation remains the dominant per-effect cost:
 the client already issues its three scalar historical reads concurrently, while
 LEZ v0.2 reconstructs or queues them independently. Slot times below one second
 and JSON-RPC transport batching are therefore not accepted as safe claimed
-speedups without upstream snapshot or single-reconstruction support. A complete
-two-direction run is still required for F7 certification.
+speedups without upstream snapshot or single-reconstruction support.
+
+Run `m3f7compose20260718x` on clean pushed `422c72e` completed both
+directions in 20 minutes 52 seconds from run-root creation through exact
+cleanup. Its cold official-wallet build took 2 minutes 2 seconds, corroborating
+the cache target. Each direction retained four LEZ and two Bitcoin effects,
+terminal revision four, zero replay resubmission, exact directional balances,
+and exact non-foreign cleanup. This closes the functional two-direction gate;
+the owner-requested fresh repetitions remain certification work.

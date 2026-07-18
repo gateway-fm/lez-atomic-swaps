@@ -1635,7 +1635,7 @@ Active M3 refund critical path:
   B and C without weakening effect counts. Clean run D proves both actor-owned
   Maker legs, exact restart/no-rearm behavior, one effect per direction, and
   terminal replay without resubmission;
-- [ ] implement F7 at the BTC pair boundary. The 2026-07-17 actual RFP,
+- [x] implement F7 at the BTC pair boundary. The 2026-07-17 actual RFP,
   accepted Gateway architecture, code, and test audit confirms F7 applies and
   the current witnessed BTC path is native-only. Existing token initialize and
   claim use SHA-preimage authority, while BTC requires the aggregate witnessed
@@ -1974,13 +1974,17 @@ Active M3 refund critical path:
   the cold official-wallet build took 2 minutes 7 seconds, serialized Core and
   LEZ readiness took about 36 and 58 seconds, forward stage two through terminal
   took 5 minutes 32 seconds, and reverse stage two through the typed RED took
-  2 minutes 39 seconds. Explicit terminal ATA
-  balance and packet
-  bindings remain forward
-  `175/75/0`, reverse `75/175/0`, and conserved total `250`. The remaining
-  functional gate is a fresh clean pushed-commit two-direction journey with the
-  asset-typed retry guard. After
-  the first passing F7 pair, the owner-requested repeatability gate requires at
+  2 minutes 39 seconds. Explicit terminal ATA balance and packet bindings remain
+  forward `175/75/0`, reverse `75/175/0`, and conserved total `250`.
+  Fresh isolated Run X (`m3f7compose20260718x`) on clean pushed `422c72e`
+  closes the functional gate. Both actual-node directions reached revision four
+  `completed`, each retained exactly two Bitcoin and four LEZ effects, both
+  retained one Maker second-lock effect, replay submitted nothing, and exact
+  cleanup removed every captured run resource without targeting a foreign
+  resource. The secret-safe packet records no public RPC, faucet, public funds,
+  or private-material disclosure. Run X took 20 minutes 52 seconds including a
+  2 minute 2 second cold official-wallet build. The owner-requested repeatability
+  gate requires at
   least three clean custom-token swaps per direction, another recorded native
   pair, and one clean repeat of the opposite-direction overlap checkpoint before
   the M3 tag. Every repetition must use fresh identities and retain exact
@@ -2017,12 +2021,12 @@ Active M3 refund critical path:
 - [ ] after the owner enters later hardening, add restart, reorg, fee, and chaos
   cases beyond the reproducible functional PoC boundary.
 
-Repository-controlled open work, not external blockers, is a fresh clean
-two-direction actual-node custom-token run with exact terminal balance/finality
-packet binding, D1 recordings, and
-synchronized closure evidence and gates. The
-official-wallet starting fixture is GREEN but cannot substitute for
-actor-owned escrow/claim/refund effects or finalized balance evidence. The
+Repository-controlled open work, not external blockers, is two more fresh
+custom-token repetitions per direction, D1 recordings, and synchronized closure
+evidence and gates. Run X closes the first exact terminal balance/finality pair.
+The official-wallet starting fixture remains a reproducible prerequisite rather
+than a substitute for actor-owned escrow/claim/refund effects or finalized
+balance evidence. The
 revision-one-to-two store/projector, signed
 cutoff agreement, finalized LEZ classifier, and refund-side live gate are GREEN components, and run H closes the distinct two-lock timeout/refund item; none
 substitutes for those open actor/chain and deliverable gates. Logos-owned limitations listed below

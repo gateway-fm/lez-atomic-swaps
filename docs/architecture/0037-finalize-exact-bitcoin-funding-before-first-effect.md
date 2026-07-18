@@ -7,9 +7,9 @@ the external fixture submits only the Taker's exact first lock and the
 direction-correct Maker actor submits the exact second lock under one-attempt
 authority. Schedule-aware just-in-time anchor reservation is actual-node GREEN
 through reverse stage-two finalization: clean Run W used sequential anchors 103
-and 105 around a forward settlement at height 104. The full reverse lifecycle
-still awaits a fresh rerun. Production fee/replacement policy and reorg
-hardening remain active.
+and 105 around a forward settlement at height 104. Clean Run X then completed
+the full two-direction custom-token lifecycle with the same assignment.
+Production fee/replacement policy and reorg hardening remain active.
 
 ## Context
 

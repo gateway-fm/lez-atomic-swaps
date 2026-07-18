@@ -93,6 +93,17 @@ accepted two-swap opposite-direction overlap checkpoint. Arbitrary-N and
 same-direction nonce scheduling, accepted full-lifecycle SDK/custom-token
 review, final milestone gates, and production hardening remain open.
 
+Fresh isolated Run `m3f7compose20260718x` on clean pushed `422c72e`
+closes the functional custom-token checkpoint in both directions against actual
+Bitcoin Core 31.1 Regtest and LEZ v0.2 nodes. Each direction reached revision 4
+`completed` with exactly two Bitcoin and four LEZ effects, zero replay
+resubmission, zero custody balance, and conserved owner balances:
+`175/75/0` when the Taker sold Bitcoin and `75/175/0` when the Taker sold
+LEZ. The run used no public RPC, faucet, or public funds, disclosed no private
+material, and removed only its exact captured resources. This is a private local
+PoC and the first clean F7 repetition, not the M3 tag or a production-readiness
+claim.
+
 The public BTC SDK now deterministically validates application-owned
 discovery/negotiation, drops those peer capabilities at activation, and replays
 exact agreement-bound claim or ordered-refund transitions through revisions one

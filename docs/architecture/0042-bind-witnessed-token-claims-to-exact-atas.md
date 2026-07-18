@@ -6,11 +6,10 @@ focused evidence. The checked manifest, public IDL, deployer assembly, verifier,
 and active M3 runner pins now share the new guest identity. The additive strict
 v2 transaction, finalized-classifier, exact-once client, main-process adapter,
 and official sidecar planner, route, replay, and finalized-scan boundaries are
-also implemented. Live journal/actor composition is terminal in the forward
-direction and has crossed finalized initialization, custody creation, and
-funding with both roles at revision two in the reverse direction. Schema-5 peer
-observation now uses v2 terms discovery rather than the native-only v1 route. A
-complete two-direction actual-node custom-token packet remains open.
+also implemented. Live journal/actor composition is terminal in both actual-node
+directions. Schema-5 peer observation uses v2 terms discovery rather than the
+native-only v1 route. Clean Run X retains the first complete two-direction
+custom-token packet; repeatability and production hardening remain open.
 
 ## Context
 
@@ -473,9 +472,17 @@ has three. The retry guard now derives the exact expected count from the
 countersigned asset mode and rejects any count drift; it does not infer progress
 from the count or widen send authority.
 
-This ADR does not yet certify a complete actual-node custom-token swap in the
-reverse trade direction, a reproducible two-direction packet, public deployment,
-production custody, or a cryptographic/security review. The accepted F7
-integration gate remains open until both directions pass through the same actor,
-adapter, finality, journal, balance, replay, and cleanup boundaries as the native
-corridor.
+Clean Run X (`m3f7compose20260718x`) on pushed `422c72e` certifies that
+reverse trade direction and the first reproducible two-direction functional
+packet. Both directions passed through the same actor, adapter, finality,
+journal, balance, replay, and cleanup boundaries as the native corridor. Each
+retained exactly two Bitcoin and four LEZ effects, one Maker second lock,
+terminal revision four, zero replay resubmission, zero custody balance, and
+conserved total 250. Directional owner balances were `175/75` and `75/175`.
+The packet declares no public RPC, faucet, public funds, or disclosed private
+material, and exact cleanup attests every captured run resource absent without
+targeting a foreign resource.
+
+This ADR does not certify the owner-requested repetitions, public deployment,
+production custody, or a cryptographic/security review. Those remain separate
+milestone or production-readiness gates.
