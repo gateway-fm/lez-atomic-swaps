@@ -1,7 +1,7 @@
 [package]
 name = "lez-adaptor-role-runner"
 version = "0.1.0"
-description = "PoC one-shot role runner for durable LEZ/Bitcoin adaptor signing"
+description = "PoC one-shot role runner for durable chain adaptor signing"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -13,7 +13,7 @@ workspace = true
 [dependencies]
 clap = { version = "=4.6.1", features = ["derive"] }
 hex = "=0.4.3"
-lez-btc-swap-sdk = { version = "0.1.0", path = "../btc-swap-sdk" }
+lez-adaptor-signature = { version = "0.1.0", path = "../adaptor-signature" }
 lez-swap-store = { version = "0.1.0", path = "../swap-store" }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.150"

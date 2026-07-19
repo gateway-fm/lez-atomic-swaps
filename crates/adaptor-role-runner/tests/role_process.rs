@@ -15,7 +15,7 @@ use std::{
     process::{Command, Output},
 };
 
-use lez_btc_swap_sdk::{
+use lez_adaptor_signature::{
     AdaptorSessionContext, adapt_presignature, aggregate_adaptor_presignature,
     verify_final_signature,
 };

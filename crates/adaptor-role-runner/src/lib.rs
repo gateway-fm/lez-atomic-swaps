@@ -6,7 +6,7 @@ compile_error!("lez-adaptor-role-runner requires Unix file-permission semantics"
 use std::{fmt, io, path::PathBuf};
 
 use clap::{Parser, Subcommand};
-use lez_btc_swap_sdk::{
+use lez_adaptor_signature::{
     FreshAdaptorNonce, PersistedAdaptorSigningMaterial, adapt_presignature,
     aggregate_adaptor_presignature, extract_adaptor_secret, sign_persisted_adaptor_partial,
     verify_adaptor_partial_signature, verify_nonce_commitment,

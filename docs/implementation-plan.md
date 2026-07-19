@@ -2835,14 +2835,16 @@ set is the live RFP plus accepted replacement issue #112, rechecked on
 
 ### Actual entry state
 
-M4 now has three executable entry checkpoints: a bounded canonical two-party
+M4 now has four executable entry checkpoints: a bounded canonical two-party
 cross-curve DLEQ wire and symmetric share-addition boundary; an official Monero
 0.18.5.1 actual-node Regtest topology with one daemon, three independently
 authenticated wallets, locally mined funds, a real funding transaction, ten
 confirmations, secret-safe evidence, and exact cleanup; and a development run
 which funded the derived shared address, rebuilt the Taker wallet from the
 reconstructed spend key with official `generate_from_keys`, and spent the
-output in a second real transaction. The repository still has no complete
+output in a second real transaction; and the proven M3 adaptor implementation
+extracted into pair-neutral `lez-adaptor-signature` with byte-exact BTC
+compatibility and direct durable role-runner use. The repository still has no complete
 agreement-bound adaptor lifecycle, Monero adapter or role actor, XMR-bound LEZ
 claim, XMR-specific signed LEZ refund/punish branches, full swap, U9 guide, D1
 videos, or stagenet CI evidence.
@@ -2866,6 +2868,11 @@ and 32-byte markers into chain authority.
 - [x] Pin and execute the h4sh3d scalar width, endianness, public points,
   subgroup/identity rejection, proof encoding, and transcript commitment behind
   the pair-specific boundary in ADR 0054.
+- [x] Extract nonce commitment, partial signing, aggregation, adaptation,
+  extraction, point checking, and final verification into the dependency-leaf
+  `lez-adaptor-signature` crate. ADR 0056 preserves BTC top-level API and
+  byte-exact hash behavior; leaf, vector, facade, process, and direct-consumer
+  regressions are green.
 - [ ] Pin and execute the exact adaptor pre-signature, adaptation, extraction,
   retained-share addition, and reconstructed Monero spend equations. Both
   DLEQ-bound shares, canonical proof wire, symmetric addition, shared address,
@@ -2929,15 +2936,12 @@ public finality service.
 
 The immediate critical path is now:
 
-1. extract the proven M3 adaptor implementation behind a pair-neutral crate,
-   preserving BTC compatibility while giving XMR distinct claim/refund session
-   types and preventing BTC-SDK routing;
-2. add the countersigned two-proof XMR agreement, post-confirmation claim-partial
+1. add the countersigned two-proof XMR agreement, post-confirmation claim-partial
    release gate, and additive XMR-specific signed refund/punishment LEZ paths;
-3. add typed Monero daemon/wallet RPC observations and builders to
+2. add typed Monero daemon/wallet RPC observations and builders to
    `lez-xmr-swap-sdk`;
-4. add fresh Maker/Taker role processes with durable share/effect records;
-5. compose the sole supported LEZ-first claim and recovery paths through both
+3. add fresh Maker/Taker role processes with durable share/effect records;
+4. compose the sole supported LEZ-first claim and recovery paths through both
    actual local chains,
    then seal evidence and manual reproduction.
 
@@ -2951,8 +2955,8 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The expected remaining focused engineering time is 8 to 14 hours to the first
-reproducible linked claim-path PoC and 18 to 28 hours to an atomicity-capable
+The expected remaining focused engineering time is 7 to 13 hours to the first
+reproducible linked claim-path PoC and 17 to 27 hours to an atomicity-capable
 local PoC with the signed refund and punishment design executed. The latter is
 longer than the prior estimate because source audit proved the existing generic
 permissionless LEZ refund is unsigned and cannot reveal `s_b`; this is concrete

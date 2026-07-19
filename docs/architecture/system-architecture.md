@@ -2109,6 +2109,23 @@ after its canonical confirmation policy, the maker funds the agreed Monero
 output. XMR-first is rejected because the reviewed COMIT construction does not
 supply that direction's safe recovery path.
 
+The shared signing boundary is executable without routing XMR through the BTC
+SDK. Dashed edges remain M4 composition work:
+
+```mermaid
+flowchart LR
+    BtcSdk["BTC pair SDK"] -->|compatibility re-export| Adaptor["Pair-neutral adaptor signatures"]
+    XmrSdk["XMR pair SDK"] -.->|claim and refund contexts pending| Adaptor
+    RoleRunner["Durable role runner"] --> Adaptor
+    Adaptor --> Musig["Pinned MuSig2"]
+    XmrSdk --> Dleq["Two bounded DLEQ envelopes"]
+    Dleq --> SharedKey["Shared Monero spend key"]
+    XmrActor["Fresh XMR role actors"] -.-> RoleRunner
+    XmrActor -.-> XmrSdk
+    XmrActor -.-> WalletRpc["Authenticated wallet RPCs"]
+    WalletRpc --> Monerod["Official monerod Regtest"]
+```
+
 <!-- atomic-sequence: lez-xmr/taker-sells-lez -->
 
 ```mermaid
@@ -2191,9 +2208,11 @@ replace the DLEQ and event-gated economic construction.
 canonical LEZ events, usable Monero RPCs, and transaction inclusion. Lost
 authority may leave a safe nonterminal output indefinitely.
 
-**Implementation status:** both DLEQ/share-addition orders and one official
-Monero reconstructed spend are executable. The LEZ claim-partial gate, signed
-refund, punishment branch, role actors, and composed E2E remain pending.
+**Implementation status:** both DLEQ/share-addition orders, one official Monero
+reconstructed spend, the pair-neutral adaptor leaf, BTC compatibility, and
+durable fresh-process signing are executable. M4 agreement-bound claim/refund
+sessions, the LEZ claim-partial gate, signed refund, punishment branch, role
+actors, and composed E2E remain pending.
 
 The XMR construction’s atomicity argument differs from the deadline-bearing
 pairs:

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/adaptor-signature",
     "crates/adaptor-role-runner",
     "crates/btc-core-adapter",
     "crates/btc-local-poc-provision",

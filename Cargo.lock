@@ -1761,12 +1761,23 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "hex",
- "lez-btc-swap-sdk",
+ "lez-adaptor-signature",
  "lez-swap-store",
  "secp256k1 0.29.1",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
+ "zeroize",
+]
+
+[[package]]
+name = "lez-adaptor-signature"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "musig2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "zeroize",
 ]
@@ -1855,8 +1866,8 @@ dependencies = [
  "async-trait",
  "bitcoin",
  "borsh",
- "getrandom 0.3.4",
  "k256",
+ "lez-adaptor-signature",
  "lez-swap-core",
  "lez-swap-sdk-core",
  "musig2",

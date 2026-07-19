@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use clap::ValueEnum;
-use lez_btc_swap_sdk::{AdaptorSessionContext, SigningRole};
+use lez_adaptor_signature::{AdaptorSessionContext, SigningRole};
 use lez_swap_store::{AdaptorSessionIdentity, AdaptorSessionRole};
 use serde::{Deserialize, Serialize};
 

@@ -5,20 +5,12 @@
 //! lifecycle. Its public signing boundary exchanges canonical byte arrays so
 //! curve-library Rust types remain private to the crate.
 
-mod adaptor;
 mod agreement_v1;
 mod asset_sdk;
 mod p2tr;
 mod sdk;
 mod transaction;
 
-pub use adaptor::{
-    AdaptorSessionContext, AdaptorSessionError, AdaptorSigner, FreshAdaptorNonce,
-    PersistedAdaptorSigningMaterial, SigningRole, adapt_presignature,
-    aggregate_adaptor_presignature, extract_adaptor_secret, sign_persisted_adaptor_partial,
-    verify_adaptor_partial_signature, verify_adaptor_presignature, verify_adaptor_secret,
-    verify_final_signature, verify_nonce_commitment,
-};
 pub use agreement_v1::{
     BTC_AGREEMENT_SCHEMA_V1, BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1, BTC_LEZ_ASSET_EXTENSION_V1_DOMAIN,
     BtcAdaptorSessionDomain, BtcAgreementBodyV1, BtcAgreementRecordV1, BtcAgreementV1,
@@ -33,6 +25,13 @@ pub use asset_sdk::{
     ActiveBtcLezAssetSwapV1, BtcLezAssetFirstLockEvidenceV1, BtcLezAssetPreparedLockEffectsV1,
     BtcLezAssetSdkError, ConfirmedBtcLezAssetFirstLockV1, LezAssetCustodyEvidenceV1,
     LezAssetFirstLockEvidenceV1, PreparedLezAssetFundingV1,
+};
+pub use lez_adaptor_signature::{
+    AdaptorSessionContext, AdaptorSessionError, AdaptorSigner, FreshAdaptorNonce,
+    PersistedAdaptorSigningMaterial, SigningRole, adapt_presignature,
+    aggregate_adaptor_presignature, extract_adaptor_secret, sign_persisted_adaptor_partial,
+    verify_adaptor_partial_signature, verify_adaptor_presignature, verify_adaptor_secret,
+    verify_final_signature, verify_nonce_commitment,
 };
 pub use p2tr::{
     CsvBlockDelay, CsvBlockDelayError, InvalidXOnlyKey, OutputKeyParity, P2trSwapOutput,

@@ -54,10 +54,11 @@ below; final repository-wide gates still precede any `m3-complete` tag.
 ## Current status
 
 M3 is complete, tagged `m3-complete`, and pushed. M4 is now the active
-progressive local-functional PoC. Its first three executable checkpoints are
+progressive local-functional PoC. Its first four executable checkpoints are
 green: bounded canonical proofs for both cross-curve spend-key shares, an
 official Monero 0.18.5.1 actual-node topology, and an official-wallet spend
-from a reconstructed shared key. The one-command topology runner starts one offline
+from a reconstructed shared key, plus the extracted pair-neutral adaptor
+signature leaf with byte-identical BTC compatibility. The one-command topology runner starts one offline
 `monerod` Regtest daemon plus independently authenticated funding, Maker, and
 Taker wallet RPCs; mines funds locally; submits a real two-destination
 transaction; requires ten confirmations, unlocked role balances, wallet/daemon

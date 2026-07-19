@@ -1,14 +1,14 @@
-//! Role-separated `MuSig2` adaptor-signing session boundary.
+//! Pair-neutral role-separated `MuSig2` adaptor-signing session boundary.
 //!
 //! Public methods exchange canonical byte arrays so musig2 curve types remain
 //! private to this crate and independent actors can use a stable wire boundary.
 
-use bitcoin::hashes::{Hash as _, sha256};
 use musig2::secp::{MaybeScalar, Point, Scalar};
 use musig2::{
     AdaptorSignature, AggNonce, KeyAggContext, LiftedSignature, PartialSignature, PubNonce,
     SecNonce,
 };
+use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use zeroize::{Zeroize as _, Zeroizing};
 
@@ -199,7 +199,7 @@ impl AdaptorSessionContext {
             }
             None => bytes.push(0),
         }
-        sha256::Hash::hash(&bytes).to_byte_array()
+        Sha256::digest(&bytes).into()
     }
 
     fn public_key(&self, role: SigningRole) -> Result<Point, AdaptorSessionError> {
@@ -940,7 +940,7 @@ fn nonce_commitment(
     bytes.extend_from_slice(&context.message);
     bytes.extend_from_slice(&context.adaptor_point);
     bytes.extend_from_slice(public_nonce);
-    sha256::Hash::hash(&bytes).to_byte_array()
+    Sha256::digest(&bytes).into()
 }
 
 /// Failures from the `MuSig2` adaptor session boundary.
@@ -1480,6 +1480,33 @@ mod tests {
         assert_ne!(
             first.durable_context_binding(),
             second.durable_context_binding()
+        );
+    }
+
+    #[test]
+    fn durable_hash_bindings_remain_byte_exact() {
+        let context = context([0xa7; 32]);
+        let nonce = FreshAdaptorNonce::generate_with_nonce_seed(
+            &context,
+            SigningRole::Maker,
+            MAKER_SECRET,
+            [0x79; 32],
+        )
+        .unwrap();
+
+        assert_eq!(
+            context.durable_context_binding(),
+            [
+                176, 160, 124, 39, 162, 46, 212, 8, 164, 69, 43, 153, 96, 98, 198, 107, 18, 198, 7,
+                19, 139, 113, 73, 232, 51, 82, 51, 58, 117, 39, 241, 209,
+            ]
+        );
+        assert_eq!(
+            nonce.commitment(),
+            [
+                209, 119, 78, 167, 56, 230, 102, 178, 104, 0, 55, 97, 100, 133, 131, 174, 204, 4,
+                139, 145, 90, 105, 240, 242, 78, 207, 251, 53, 246, 38, 167, 187,
+            ]
         );
     }
 }

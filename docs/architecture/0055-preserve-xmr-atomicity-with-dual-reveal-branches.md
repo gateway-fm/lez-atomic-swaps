@@ -130,9 +130,9 @@ behavior, not the missing LEZ branches or an atomic swap.
   setup; both public shares require DLEQ envelopes.
 - The generic permissionless LEZ refund remains valid for other pairs but is
   not an XMR recovery proof.
-- The proven M3 adaptor implementation should move behind a pair-neutral shared
-  crate with compatibility re-exports instead of making the XMR SDK depend on
-  the BTC SDK.
+- The proven M3 adaptor implementation now lives behind pair-neutral
+  `lez-adaptor-signature` with BTC compatibility re-exports. M4 can depend on
+  the leaf without importing the BTC SDK.
 - Claim-partial release becomes a typed post-XMR-confirmation effect, not
   pre-lock negotiation data.
 - A linked happy transfer may be demonstrated before refund/punish completion,
