@@ -2309,11 +2309,40 @@ It is deliberately **not** an atomic-swap demonstration. A separate development
 experiment has already funded the SDK-derived address, reconstructed the spend
 key through official wallet RPC `generate_from_keys`, and submitted a real
 spend after ten confirmations. That proves official-wallet behavior but is not
-yet exposed as a stable one-command user flow. Focused guest tests now cover
-on-chain claim-partial publication plus claim, signed-refund, and punishment
-source transitions, but the M4 atomic happy PoC still needs the checked guest
-artifact/bridge, canonical extraction, fresh role actors, and both terminal
-stores.
+yet exposed as a stable one-command user flow. The current component checkpoint
+also has a twice-reproduced checked guest artifact, a strict eight-method bridge
+client, and exact non-cloneable Monero output observation. It still needs the
+LEZ sidecar/finalized evidence capability, a Stage-B-bound durable one-shot
+claim-partial release, fresh role actors, and both terminal stores before it is
+an atomic happy PoC.
+
+Reproduce the checked LEZ artifact and focused host boundaries with a fresh run
+ID. The optional shared tool directory below is safe only when it already
+contains the pinned Risc0 3.0.5 tools; omit `LEZ_M4_TOOL_DIR` for a fully
+run-owned cold setup and cleanup:
+
+```sh
+RUN_ID=m4-manual-artifact-20260719a \
+LEZ_M4_TOOL_DIR=/tmp/lez-atomic-swaps-tools/risc0-3.0.5 \
+  ./scripts/run-m4-lez-artifact-tests.sh
+
+cargo test --locked -p lez-bridge-client -p lez-xmr-monero-adapter \
+  --all-targets --all-features
+```
+
+The artifact run must report ELF SHA-256
+`dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292`,
+ImageID
+`4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`,
+and five recursive runtime tests. Two independent clean builds produced the
+same identities. Its runtime external-resource list is empty. A cold run can
+need the pinned circuits release, crates.io and locked Git sources, the
+digest-pinned guest-builder image, and Risc0 tool releases; default run-owned
+cleanup reclaimed about 3.49 GiB in the certification runs. The Rust suites use
+no node, RPC, faucet, peer, or public endpoint after dependencies are present.
+They prove the exact host contracts only: 51 bridge-client tests and seven
+Monero-observation tests currently pass. They do not publish a claim partial or
+replace the role-correct swap journey.
 
 The exact safety boundary matters when reviewing intermediate results. The
 Maker claim must reveal Maker share `s_a`, allowing the Taker to combine it with

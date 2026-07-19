@@ -54,13 +54,14 @@ below; final repository-wide gates still precede any `m3-complete` tag.
 ## Current status
 
 M3 is complete, tagged `m3-complete`, and pushed. M4 is now the active
-progressive local-functional PoC. Its first five executable checkpoints are
-green: bounded canonical proofs for both cross-curve spend-key shares, an
-official Monero 0.18.5.1 actual-node topology, and an official-wallet spend
-from a reconstructed shared key, plus the extracted pair-neutral adaptor
-signature leaf with byte-identical BTC compatibility, plus focused LEZ guest
-source/IDL for on-chain claim-partial publication, claim, signed refund, and
-punishment. The one-command topology runner starts one offline
+progressive local-functional PoC. Component-green checkpoints include bounded
+canonical proofs for both cross-curve spend-key shares, an official Monero
+0.18.5.1 actual-node topology and reconstructed-key spend, the pair-neutral
+adaptor leaf, canonical two-stage XMR activation, guest tags 13 through 17, a
+twice-reproduced checked guest artifact, the strict protocol and eight-call
+bridge client, and a non-cloneable exact Monero output observation. The
+observation is deliberately not claim-partial release authority. The
+one-command topology runner starts one offline
 `monerod` Regtest daemon plus independently authenticated funding, Maker, and
 Taker wallet RPCs; mines funds locally; submits a real two-destination
 transaction; requires ten confirmations, unlocked role balances, wallet/daemon
@@ -90,12 +91,35 @@ RUN_ID=m4-readme-monero-20260719a ./scripts/run-monero-e2e.sh
 Measured run `m4-monero-poc-20260719c` passed in 53 seconds before cleanup
 with no public RPC, peer, faucet, public funds, stagenet, or external finality
 service. This is infrastructure evidence, not an atomic swap: checked LEZ
-artifact/bridge execution, canonical adaptor extraction, trusted XMR release,
-and fresh terminal role actors remain the next happy-path slice. The exact components/RPCs and
-both target and bootstrap sequences are in
+sidecar execution, finalized LEZ capability, Stage-B-bound durable one-shot XMR
+release, exact claim/refund adaptation, and fresh terminal role actors remain
+the next happy-path slice. The exact components/RPCs and both target and
+bootstrap sequences are in
 [ADR 0053](docs/architecture/0053-enter-m4-through-isolated-monero-regtest.md);
 manual run, live inspection, scoped cleanup, and cold-resource flakiness are in
 [Flow 0](docs/manual-user-flows.md#flow-0-m4-official-monero-regtest-topology).
+
+The fresh checked guest and the two new host components can be repeated
+independently before the full actor exists:
+
+```sh
+RUN_ID=m4-readme-artifact-20260719a \
+LEZ_M4_TOOL_DIR=/tmp/lez-atomic-swaps-tools/risc0-3.0.5 \
+  ./scripts/run-m4-lez-artifact-tests.sh
+
+cargo test --locked -p lez-bridge-client -p lez-xmr-monero-adapter \
+  --all-targets --all-features
+```
+
+The artifact run opens no chain RPC, faucet, peer, or public endpoint after
+setup. A cold cache can still require pinned circuits, Cargo/Git sources, the
+digest-pinned Docker builder, and Risc0 release tools. The shared tool directory
+above must already contain the exact verified tools; omit it for an isolated
+cold run that cleans its own tools. The observation component accepts only
+distinct credential-configured literal-loopback daemon/wallet origins and
+public RPC is rejected. Its upstream and view-only-wallet limitations, plus the
+required consume-once actor gate, are in
+[ADR 0059](docs/architecture/0059-separate-monero-observation-from-release-authority.md).
 
 M2 is certified at its private local-functional PoC boundary under
 `m2-complete`. M3 completed with **2 of 2 schema-4 happy directions with actor-owned
@@ -1603,6 +1627,16 @@ therefore delay a cold run. The clearsigned hash manifest and signer key are
 retained locally; the 85 MB verified archive cache avoids repeated downloads
 without bypassing provenance checks. Public stagenet peers, sync, funding, and
 reorg behavior remain unmeasured and are not inferred from Regtest.
+
+The M4 checked-artifact runner also records runtime resources as empty. Its
+fresh recursive test opens no RPC or public service, but cold setup can require
+the pinned circuits release, crates.io and pinned Git sources, the
+digest-pinned guest-builder image, and Risc0 tool releases. Those DNS,
+registry, rate-limit, and availability inputs can delay setup without changing
+the checked ELF identity. Default cleanup retains the small evidence ELF and
+removes the exact run-owned target/tools; the two certification runs reclaimed
+about 3.49 GiB. The bridge-client and Monero-adapter unit/contract suites use
+no node, faucet, or public endpoint after dependencies are present.
 
 Schema-4 run D used one run-owned Bitcoin Core 31.1 Regtest daemon and one
 run-owned LEZ v0.2 Bedrock/sequencer/indexer tuple, all on allocated literal

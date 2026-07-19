@@ -1,8 +1,10 @@
 # ADR 0057: Append XMR-native escrow branches
 
-Status: Accepted and source-executed for the M4 local PoC. Fourteen focused
-guest tests pin the legacy wire and the new state transitions. The checked
-guest artifact, bridge surface, and actual-node branches remain pending.
+Status: Accepted and checked-artifact-executed for the M4 local PoC. Fourteen
+focused guest tests pin the legacy wire and the new state transitions. Two
+fresh digest-pinned builds additionally pass all five recursive branch tests
+against the exact checked ELF and ImageID. The bridge runtime and actual-node
+branches remain pending.
 
 ## Context
 
@@ -71,7 +73,7 @@ flowchart LR
     MakerProof["Maker DLEQ commitment and s_a point"]
     TakerProof["Taker DLEQ commitment and s_b point"]
     Partial["Taker claim-partial commitment"]
-    Guest["LEZ v0.2 additive XMR guest"]
+    Guest["Checked LEZ v0.2 additive XMR guest<br/>ELF dc370bc...b7292"]
     Transfer["Authenticated native transfer"]
     Metadata[("Version-3 XMR metadata")]
 
@@ -127,9 +129,36 @@ transaction signature alone does not reveal a scalar.
 - bridge methods are additive version-3 operations rather than widened
   untagged version-1/version-2 JSON;
 - rebuilding changes the ELF hash, image/program ID, and deployment evidence,
-  so the M4 runner requires a fresh checked local deployment; and
+  so the M4 runner requires a fresh checked local artifact before any
+  deployment; and
 - M2/M3 source/wire compatibility remains a mandatory regression gate, but
   their already certified deployed program identity is not reused for M4.
 
 GW-M4-003 tracks why the punishment branch is economic safety under the cited
 COMIT construction rather than literal RFP F5/F6 refund conformance.
+
+## Checked-artifact evidence
+
+`scripts/run-m4-lez-artifact-tests.sh` binds the exact source, methods, recursive
+test, immutable historical M2/M3 boundary, Risc0 3.0.5/Rust 1.94.1 toolchain,
+and digest-pinned guest builder before building. Both fresh executions
+reproduced:
+
+- ELF SHA-256
+  `dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292`;
+- ImageID
+  `4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`;
+  and
+- five of five serial recursive tests: one preserved native
+  aggregate-witness compatibility case plus four XMR cases covering claim
+  authorization and claim, signed refund, punishment, negative
+  partial/authorization checks, and authenticated-transfer rollback.
+
+The checked-test runtime uses no RPC, faucet, peer, public chain, or public
+deployment. Cold setup may still fetch the pinned circuits release,
+Cargo/Git sources, digest-pinned Docker builder, and Risc0 tools; their DNS,
+registry, rate-limit, and availability behavior can make a cold setup flaky.
+Default scoped cleanup retained the small checked ELF/evidence and removed
+about 3.49 GiB of exact run-owned build/tool state. This closes only the local
+checked-artifact lane; it is not bridge, actor, on-chain deployment, or swap
+evidence.

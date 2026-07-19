@@ -1,6 +1,6 @@
 # Upstream blockers to production
 
-Last upstream recheck: 2026-07-17; milestone disposition updated: 2026-07-18
+Last upstream recheck: 2026-07-19; milestone disposition updated: 2026-07-19
 
 This register contains live-release blockers owned by upstream projects or
 services. Logos-owned items follow ADR 0018; other third-party items remain
@@ -33,6 +33,7 @@ milestone must close or explicitly accept every open item.
 | ID | Upstream owner and immutable input | Production impact | Current compensating control | Exit evidence |
 |---|---|---|---|---|
 | TOOLCHAIN-001 | RISC Zero guest-builder `r0.1.94.1`, exact image digest `sha256:c2f63fdd...617be` | A local Trivy scan on 2026-07-15 reported 232 HIGH/CRITICAL Ubuntu package findings: 213 high and 19 critical. The image executes during the checked guest build, so an unqualified production supply-chain claim is blocked even though it is not shipped as the swap runtime | CI visibly scans the exact digest on every run. The builder is used only for an isolated build, consumes pinned source/tool inputs, and must reproduce ELF `a199c5be...e293` plus ProgramId `39b6a4db...4dec`; runtime images remain fail-hard. This report-only build-tool classification keeps the progressive local PoC testable but does not waive production review | Upstream publishes a compatible builder with an acceptable scan and the repository reproduces the required checked artifact, or an independently patched, reproducibly pinned builder plus formal security review closes every reachable finding |
+| MONERO-RPC-001 | `monero-rpc` 0.5.1 from crates.io, checksum `5995558c390b32b0918621f97fd1c2a47fc84432c9c4d437c80b32892f373bfd` | Its private transport buffers response JSON before decode without a byte limit; single-header calls discard the daemon `untrusted` flag; Digest configuration does not prove the listener enforces authentication; and `get_block` unwraps malformed/missing block fields and can panic. These prevent public/Stagenet release authority and fully fail-closed availability claims | The M4 checkpoint is observation-only, rejects public/DNS RPC and aliased daemon/wallet origins, uses distinct credential-configured literal-loopback services with a run-bound wrong-credential 401, confines accepted headers to the peerless offline Regtest topology, bounds selected decoded collections, and returns a non-cloneable value that cannot itself publish the hidden partial. A panic or transport ambiguity yields no release authority | Upstream adds pre-decode bounds, preserves and exposes trust/status flags, returns typed block-decode errors, and supports verifiable authentication enforcement, or the production integration uses an equivalently typed bounded/isolated transport with independent Stagenet evidence and security review |
 
 ## Resolved repository finding
 

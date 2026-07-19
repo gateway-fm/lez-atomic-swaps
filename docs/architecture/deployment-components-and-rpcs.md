@@ -1,6 +1,6 @@
 # Deployment components, RPCs, and local nodes
 
-Status: Living executable inventory — 2026-07-18
+Status: Living executable inventory — 2026-07-19
 
 This document is the concrete deployment companion to the
 [system architecture](system-architecture.md). It distinguishes processes that
@@ -129,6 +129,72 @@ submits the Zcash follow-up, and reopens both actors at revision 4 and
 `Completed`. Its LEZ and Zcash ports are deterministic test doubles: it starts no
 service, opens no RPC connection, and proves neither `LezClaimPort` nor
 `ZcashClaimPort` against a node.
+
+## M4 checked guest artifact lane
+
+This build/test component is complete independently of the still-pending M4
+bridge, actors, and on-chain deployment. Solid edges below are locally executed;
+the dotted cold-cache edge is a setup availability dependency, not a runtime
+RPC.
+
+```mermaid
+flowchart LR
+    Source["Pinned LEZ and SPEL source boundary"] --> Runner["M4 checked-artifact runner"]
+    Manifest["M4 immutable artifact manifest"] --> Runner
+    Cold["Cold-cache setup only<br/>circuits, Cargo and Git, Docker registry, Risc0 releases"] -.-> Runner
+    Runner --> Builder["Digest-pinned Risc0 guest builder<br/>Rust 1.94.1"]
+    Builder --> Elf["Checked ELF<br/>dc370bc...b7292"]
+    Elf --> Identity["r0vm 3.0.5 identity check<br/>ImageID 4d6590...2c82"]
+    Identity --> Recursive["Five serial recursive guest tests<br/>one native compatibility plus four XMR"]
+    Recursive --> Evidence["Small retained local evidence ELF"]
+    Recursive --> RuntimeBoundary["Runtime RPCs, faucets, peers, public chains<br/>none"]
+    Runner --> Cleanup["Exact run-owned target and tool cleanup<br/>about 3.49 GiB removed"]
+```
+
+Two fresh executions each reproduced ELF SHA-256
+`dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292`
+and ImageID
+`4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`,
+then passed all five recursive cases. No sequencer, indexer, Monero daemon,
+wallet RPC, faucet, peer, or public endpoint participates after setup. Cold
+caches may fetch the pinned circuits archive, Cargo/Git sources, digest-pinned
+builder image, and Risc0 tools; network availability and rate limits can make
+that setup flaky. This is a checked local artifact, not a deployment or a swap.
+
+## M4 integration component and RPC status
+
+Solid green-labelled components have executable source gates. Dotted edges are
+the remaining local-PoC composition; no public endpoint, faucet, peer, or public
+fund participates. Every actor-facing bridge and wallet port will be a unique
+dynamic literal-loopback publication owned by one run.
+
+```mermaid
+flowchart LR
+    Protocol["Strict XMR v3 protocol<br/>52 tests green"] --> Client["Eight-call bridge client<br/>51 package targets green"]
+    CheckedElf["Checked M4 ELF<br/>dc370bc...b7292"] -.-> MakerSidecar["Maker LEZ sidecar<br/>pending"]
+    CheckedElf -.-> TakerSidecar["Taker LEZ sidecar<br/>pending"]
+    MakerActor["Maker actor<br/>pending"] -.-> Client
+    TakerActor["Taker actor<br/>pending"] -.-> Client
+    Client -.-> MakerSidecar
+    Client -.-> TakerSidecar
+    MakerSidecar -.-> Sequencer["Local LEZ v0.2 sequencer<br/>dynamic loopback RPC"]
+    TakerSidecar -.-> Sequencer
+    MakerSidecar -.-> Indexer["Local LEZ v0.2 indexer<br/>dynamic loopback RPC"]
+    TakerSidecar -.-> Indexer
+    Monerod["Official monerod 0.18.5.1<br/>peerless Regtest"] --> Observation["Exact output observation<br/>7 tests green"]
+    WalletRpc["Role wallet RPC<br/>credential-configured loopback"] --> Observation
+    Observation -.-> Release["Stage-B-bound one-shot release<br/>pending"]
+    Release -.-> TakerActor
+    MakerActor -.-> Monerod
+    TakerActor -.-> Monerod
+```
+
+The Monero observation is non-cloneable but is not itself claim-partial
+authority. The Taker actor must consume it durably against the exact Stage B
+activation after binding the run's distinct origins and wrong-credential 401.
+The LEZ sidecars must separately mint finalized metadata/custody and publication
+capabilities. Those two dotted authority gates, then the actor effects, are the
+current critical path.
 
 ## M2 SDK/reference-demo target topology
 
@@ -436,6 +502,9 @@ revalidation, propagation, and finality evidence before release.
 
 | Component | Status | Transport and bind | Authentication / authority | Methods exercised or required | Lifecycle and isolation |
 |---|---|---|---|---|---|
+| M4 checked LEZ guest artifact | Local build/identity and recursive branch execution GREEN twice | Digest-pinned Docker guest builder during cold/fresh build; checked execution opens no socket or RPC | Manifest pins source files, historical M2/M3 boundaries, Risc0 3.0.5/Rust 1.94.1, builder digest, ELF SHA-256 `dc370bc...b7292`, and ImageID `4d6590...2c82` | Fresh methods embedding; exact ELF/ImageID verification; one native aggregate-witness compatibility test plus four XMR initialize/fund/claim, signed-refund, punishment, negative, and rollback tests | Both fresh runs passed 5 of 5. Runtime resources are `[]`; cold setup may use GitHub, Cargo/Git, Docker, and Risc0 endpoints. Default exact cleanup retained the small evidence ELF and removed about 3.49 GiB. No local/public deployment or actor execution is claimed |
+| M4 strict v3 bridge client | All eight XMR methods component-GREEN; 4 of 4 new contracts and 51 of 51 package targets pass | Capability-bearing literal-loopback HTTP, exact run and role headers, one attempt, finite timeout, bounded response body, no redirect/proxy/retry | Dedicated Maker/Taker runtime, signer, ProgramId, terms, request context, and role matrix are checked before transport. Invalid local bindings make zero calls | Prepare/complete claim and refund; prepare punishment, escrow, and claim authorization; classify finalized effect. Exact context/terms/effect/target/window echoes and coverage are required | Client only: no sidecar or actor completion is claimed. Timeout/oversize are single-attempt; distinct escrow transactions and exact prepared transcripts are enforced; strict Clippy/Rustdoc/formatting pass |
+| M4 Monero output observation adapter | Exact receipt observation component-GREEN in 7 of 7 focused tests; release authority intentionally absent | Typed `monero-rpc` 0.5.1 to distinct credential-configured literal-loopback daemon and wallet origins; fixed 30-second request timeout; public/DNS RPC rejected | Exact network/genesis, standard shared address, transaction, amount, wallet-reported availability, canonical decoded-block membership, at least ten confirmations, and stable tip. The result is private-field and non-cloneable, but is not Stage-B or durable-consumption authority | Typed height-zero hash, bracketed last headers, wallet transfer/available outputs, daemon transaction, containing header/block. Selected decoded collections are bounded | The actor must bind the run's wrong-credential 401, consume the observation once against Stage B, and journal it before publication. View-only spent status, upstream pre-decode bounds, discarded header trust flags, and malformed-block panic behavior remain explicit residuals. Peerless Regtest observation is supported; Stagenet/production hardening is pending |
 | Canonical v0.2 guest and deployment | Docker build, exact artifact verification, and private local on-chain deployment GREEN | Guest build runs in pinned Risc0 builder; deployment uses the explicit loopback sequencer and is finalized through the explicit loopback indexer | Immutable builder digest, ELF SHA-256 `c85055...9d2e`, ImageID and ProgramId `5cf8c5...29c1`, source commits, channel, and genesis are fail-closed inputs | Supported Risc0 Docker embed; exact manifest/ELF/ImageID verification; official-type `ProgramDeployment`; sequencer transaction lookup; indexer block-by-ID/hash finality | Deployment tx `bd1680...733f` is Finalized in block 2582, hash `d2c494...6860`. Historical host-built ProgramId `f83850...0fbe` is evidence-only and rejected for current admission |
 | Full local LEZ v0.2 devnet | Services, both Vault Claims, canonical deployment, native lifecycle, and both canonical corridor directions GREEN | Unique no-masquerade bridge: Bedrock HTTP `bedrock:18080`, sequencer JSON-RPC `sequencer:3040`, indexer JSON-RPC `indexer:8779`; retained proof host publications were `127.0.0.1:32831/32832/32833` | Local RPCs are unauthenticated and limited to loopback and the run bridge. Actor signatures authorize Vault and escrow effects; the accredited channel authorizes publication to Bedrock | Bedrock cryptarchia/channel reads; sequencer health/channel/program/block/transaction/account/nonce and submission; indexer finalized tip, transaction, block-by-ID/hash, and account-at-block | Canonical deployment finalized in block 2582. Forward escrow initialize/fund/claim finalized in 2594/2595/2596; reverse finalized in 2605/2606/2607; both actor pairs ended revision 4 `Completed`. Restart, refund, reorg, and composed cleanup remain later hardening |
 | Official-wire LEZ v0.2 native PoC CLIs | Library gate plus actual-node `lez-v02-vault-claim-poc` and role-separated native `deposit`/`claim`/`observe` GREEN | PoC CLIs call the official sequencer at a dynamic literal-loopback URL | Maker and taker use separate key files and owner-only state directories; only the direction-derived Zcash funder and LEZ claimant receives the preimage. Exact official types bind runtime, role, signer, channel, program, terms, and accounts. Secrets are file inputs, never argv/evidence | Vault Claim submission; native initialize/fund/revealing claim; canonical sequencer inclusion and stable same-tip account reads. Separate sequential indexer calls proved finality; CLI output itself does not | Forty-two existing integration tests plus format/Clippy/rustdoc/dependency gates pass. Exact signed bytes and observe-before-submit are GREEN, but native output reports `crash_atomic_submission=false`; integrated finality/journal reconciliation remains later work |
@@ -462,7 +531,7 @@ revalidation, propagation, and finality evidence before release.
 | Official LEZ testnet v0.2 node | Exact dormant sidecar route construction GREEN; public deployment/execution evidence pending | Only HTTPS JSON-RPC `https://testnet.lez.logos.co/` is accepted for both outbound sequencer and indexer clients | Public reads and program deployment transaction; rate limits, reset schedule, and indexer-method surface unspecified | Live gate requires `checkHealth`, `getChannelId`, exact runtime/channel/genesis/program validation, exactly one `sendTransaction`, bounded observation, and a non-genesis finalized tip. Availability of `getLastFinalizedBlockId` at this origin is not established | Official LEZ v0.2.0 commit `a58fbce...`; guest/client use `/LEE/` PDA domain. No public call was made by the contract test; reset/channel drift or missing finalized-tip support fails closed |
 | LEZ v0.2 deployment/query client | Executable engineering lane and authenticated offline provisioning handoff GREEN; live mutation not yet run | Fixed HTTPS JSON-RPC to the official node; loopback `jsonrpsee` server only in exact-once tests; `provision-identity` performs no RPC and creates one no-clobber file in a non-shared-writable directory | Official LEZ transaction/RPC types; program deployment bytes are derived from the checked ELF; the offline trusted target is derived from the immutable manifest plus compiled ELF/ImageID/ProgramId. A separate exact owner-only 32-byte key authenticates observed evidence and is zeroized after use; it is never an actor, wallet, or signing input | Validate endpoint, channel, genesis, built-ins, ATA provenance, ELF SHA-256, ImageID, and ProgramId before RPC; submit deployment once; bind returned/local hash, exact transaction bytes, post-tip block range, block ID, and block hash; timeout or ambiguity forbids retry. The deployer HMAC-SHA256 authenticates retained dynamic facts; offline provisioning verifies that tag before revalidating bounded evidence, its SHA-256, canonical deployment hash/inclusion, and emitting exact environment/compatibility/chain/channel/genesis/program identity | Six native-safe provisioning boundary tests cover happy output, no-clobber, eight authenticated mutations, unauthenticated chain-fact tampering, bounded/non-regular input, and exact owner-only key files without public I/O. Official RPC/type dependencies still pull Logos common/libp2p/Hickory 0.25; graph-local policy constrains that disclosed production blocker |
 | Bitcoin Core and BTC signing boundary | Core 31.1 role infrastructure, exact-pinned MuSig2/adaptor P2TR composition, durable dual-domain sessions, both schema-4 actual-node directions, one opposite-direction overlapping pair, and explicit Testnet4 portability are GREEN | Actual-node evidence uses verified Core 31.1 Regtest on dynamic literal-loopback RPC with no P2P publication. Configuration-only Testnet4 admits self-hosted literal loopback or one exact allowlisted HTTPS DNS origin | Full cookie and wallet/mining RPC belong only to the run provisioner/operator. Maker and Taker use separate restricted mode-`0600` Basic credentials, processes, stores, and journals. HTTPS is Testnet4-only and has no redirect/retry/proxy/failover. Exact-pinned `bitcoin` 0.32.101 and `musig2` 0.4.1 provide production-path primitives; `k256` 0.13.4 is a test-only independent verifier | Core 31.1 spender observation uses the required options object. Testnet4 additionally requires exact chain/genesis/network/index readiness before any effect. In actual-node Regtest, the schema-4 Maker actor submitted the exact second lock once and each exact 64-byte key-path witness spent its contract output once | Actual-node runs retain disjoint effects, zero replay, and cleanup. Five focused Testnet4 tests make no public call. Arbitrary-N/same-direction scheduling, live public execution, process-kill/reorg/chaos, production custody, and audit remain open. Beta unaudited `musig2` is not a production endorsement |
-| `monerod` plus wallet RPC | M4 planned | No ports/images/providers selected | Actor-owned daemon/wallet credentials | Typed `MoneroChain` port | Wallet/key state remains actor-owned |
+| `monerod` plus wallet RPC | Official Monero 0.18.5.1 Regtest topology/funding/reconstruction GREEN; typed observation component GREEN; composed actor pending | One peerless daemon plus provisioner, Maker, and Taker wallet RPCs on unique dynamic literal-loopback ports; no P2P/ZMQ publication | Three distinct wallet credentials/stores; run evidence includes wrong-role credential HTTP 401. Credential configuration alone is not authority, so that topology attestation remains a release input | Local block generation, wallet create/open/refresh, real funding, ten-confirmation and balance checks; typed observation uses exact daemon/wallet/block calls | Five successful topology runs and one reconstructed-key spend development run use no runtime public RPC, peer, faucet, or funds. Exact scoped cleanup passes; self-hosted Stagenet guide/CI and durable Stage-B release remain |
 
 ### M3 local Bitcoin and witnessed-LEZ additions
 

@@ -2111,7 +2111,8 @@ supply that direction's safe recovery path.
 
 The shared signing, two-stage XMR SDK, and focused guest-source boundaries are
 executable without routing XMR through the BTC SDK. Dashed edges remain M4
-checked-artifact and actor composition work:
+bridge-runtime and actor-composition work; the local checked guest artifact is
+now a solid executable component:
 
 ```mermaid
 flowchart LR
@@ -2123,11 +2124,15 @@ flowchart LR
     Dleq --> SharedKey["Shared Monero spend key"]
     XmrActor["Fresh XMR role actors"] -.-> RoleRunner
     XmrActor -.-> XmrSdk
-    XmrActor -.-> BridgeRuntime["LEZ bridge client adapter and sidecar"]
+    XmrActor -.-> BridgeClient["Strict v3 bridge client<br/>eight methods green"]
+    BridgeClient -.-> BridgeRuntime["LEZ adapter and sidecar<br/>pending"]
     BridgeRuntime -.-> BridgeProtocol["Strict additive v3 protocol<br/>eight methods green"]
-    BridgeProtocol -->|binds exact tags and effects| Guest["XMR guest tags 13 through 17"]
-    Guest --> Transfer["Authenticated native transfer"]
-    XmrActor -.-> WalletRpc["Authenticated wallet RPCs"]
+    BridgeProtocol -->|binds exact tags and effects| Guest["XMR guest source tags 13 through 17"]
+    Guest --> CheckedArtifact["Checked local M4 guest<br/>ELF dc370bc...b7292<br/>ImageID 4d6590...2c82"]
+    CheckedArtifact -->|five recursive branch tests| Transfer["Authenticated native transfer"]
+    XmrActor -.-> Release["Stage-B-bound one-shot release<br/>pending"]
+    Release -.-> XmrObservation["Non-cloneable exact XMR observation<br/>component green"]
+    XmrObservation --> WalletRpc["Credential-configured wallet RPCs"]
     WalletRpc --> Monerod["Official monerod Regtest"]
 ```
 
@@ -2157,7 +2162,8 @@ sequenceDiagram
         Note over Maker,Taker: Implementation status M4 cutoff and first lock evidence pending
     else Required M4 target maker XMR lock admission succeeds before the cutoff
         Maker->>Monero: Fund maker Monero output
-        Monero-->>Taker: Canonical Monero confirmation policy reached
+        Monero-->>Taker: Exact output observation reaches canonical confirmation policy
+        Note over Maker,Taker: Taker must consume observation once against the exact Stage B activation
         Taker->>LezSeq: Publish exact committed claim partial after XMR confirmation
         LezIdx-->>Maker: Canonical finalized AuthorizeNativeXmrClaim bytes
         Note over Maker,Taker: Both locks are proven before Maker can aggregate and adapt the claim
@@ -2181,12 +2187,12 @@ sequenceDiagram
                 Taker->>LezSeq: Signed XMR-specific refund adapted with s_b
                 LezIdx-->>Taker: Exact survivor refund finalized
                 Note over Maker,Taker: Canonical signature leaves Maker recovery available from s_a plus s_b
-                Note over Maker,Taker: Focused guest source green and checked bridge and actor execution pending
+                Note over Maker,Taker: Checked guest artifact green and bridge actor execution pending
             else Taker abandons
                 Maker->>LezSeq: Execute Maker punishment after punish_at
                 LezIdx-->>Maker: Exact punishment finalized
                 Note over Maker,Taker: COMIT economic safety fallback, literal RFP both-refund disposition pending review
-                Note over Maker,Taker: Focused guest source green and checked bridge and actor execution pending
+                Note over Maker,Taker: Checked guest artifact green and bridge actor execution pending
             end
         end
     end
@@ -2213,8 +2219,11 @@ pre-funding validity; invalid or withheld publication can force punishment and
 remains part of the disclosed production review.
 
 **Replay/idempotency:** durable shares, event projection, and one-attempt spend
-authority prevent duplicate effects and false terminal state. They do not
-replace the DLEQ and event-gated economic construction.
+authority prevent duplicate effects and false terminal state. The current
+Monero observation is deliberately non-cloneable but not activation authority;
+the pending actor journal must consume it once against exact Stage B before
+publication. These controls do not replace the DLEQ and event-gated economic
+construction.
 
 **Conditional liveness:** the model assumes valid DLEQ proofs, retained shares,
 canonical LEZ events, usable Monero RPCs, and transaction inclusion. Lost
@@ -2224,11 +2233,21 @@ authority may leave a safe nonterminal output indefinitely.
 reconstructed spend, the pair-neutral adaptor leaf, BTC compatibility, durable
 fresh-process signing, canonical Stage-A/Stage-B activation, structural
 LEZ-lock/cutoff validation, and focused guest-source
-publication/claim/refund/punish branches are executable. The fresh checked
-artifact and bridge client/adapter/sidecar runtime, trusted LEZ/Monero
-observations and release capabilities, role actors, and composed E2E remain
-pending. The additive eight-method v3 protocol and all 44 legacy bridge
-protocol cases are green.
+publication/claim/refund/punish branches are executable. Two fresh
+digest-pinned builds reproduce checked ELF
+`dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292`
+and ImageID
+`4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`;
+all five recursive cases pass in both builds. The eight-method bridge client is
+green across 51 package targets, and the exact Monero receipt observation is
+green in seven focused tests. The LEZ adapter/sidecar runtime, trusted finalized
+LEZ capability, Stage-B-bound durable one-shot release, role actors, and
+composed E2E remain pending. The Monero observation does not prove old-output
+unspent state from a view-only wallet or server authentication by credential
+configuration alone; the local run must bind its fresh output, peerless
+topology, and cross-credential rejection. The additive v3 protocol and all 44
+legacy bridge protocol cases are green. The checked artifact uses no runtime
+RPC or external resource and is not an on-chain or public deployment.
 
 The XMR construction’s atomicity argument differs from the deadline-bearing
 pairs:

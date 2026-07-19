@@ -1,0 +1,20 @@
+[package]
+name = "lez-xmr-monero-adapter"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "=1.0.103"
+async-trait = "=0.1.89"
+monero-rpc = { version = "=0.5.1", default-features = false, features = ["rpc_authentication"] }
+thiserror = "=2.0.18"
+url = "=2.5.8"
+
+[dev-dependencies]
+tokio = { version = "=1.52.3", features = ["macros", "rt"] }
+
+[lints]
+workspace = true

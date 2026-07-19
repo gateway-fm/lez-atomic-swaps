@@ -2847,11 +2847,19 @@ extracted into pair-neutral `lez-adaptor-signature` with byte-exact BTC
 compatibility and direct durable role-runner use; focused version-3 XMR guest
 source branches; and a canonical two-stage XMR agreement/activation SDK that
 binds both session transcripts and recovery material before deriving the first
-LEZ lock. The repository still has no fresh checked XMR guest artifact and
-bridge runtime, trusted LEZ/Monero evidence adapter or role actor, full swap, U9
-guide, D1 videos, or stagenet CI evidence. The standalone strict v3 bridge
-protocol now binds eight additive methods and six finalized effects; all 52
-protocol tests preserve the 44 legacy v1/v2 cases.
+LEZ lock. A fresh digest-pinned Risc0 build now checks the additive guest as ELF
+SHA-256 `dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292`
+and ImageID
+`4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`;
+two fresh executions each passed all five recursive guest tests: one preserved
+native aggregate-witness case and four XMR branch/rollback cases. This is a
+local checked artifact, not a public deployment. The eight-call loopback bridge
+client and a non-cloneable exact Monero output observation adapter are also
+component-green. The repository still has no XMR bridge sidecar/runtime,
+trusted finalized LEZ capability, Stage-B-bound at-most-once Monero release
+capability, role actor, full swap, U9 guide, D1 videos, or stagenet CI evidence.
+The standalone strict v3 bridge protocol binds eight additive methods and six
+finalized effects; all 52 protocol tests preserve the 44 legacy v1/v2 cases.
 
 The first implementation may reuse the existing LEZ v0.2 bridge, role stores,
 XChaCha20-Poly1305 secret envelope, one-attempt effect journals, and M3 BIP-340
@@ -2898,8 +2906,10 @@ and 32-byte markers into chain authority.
   public role-fixed XMR actor boundaries with typed secret-safe records. The
   DLEQ scalar/point/proof boundary and canonical Stage-A/Stage-B lifecycle are
   green in six SDK tests with strict Clippy and Rustdoc; trusted chain
-  evidence, Monero RPC builders and one-shot release authority, durable actor
-  records, and actor work remain.
+  evidence and actors remain. The typed Monero RPC observation adapter is green
+  in seven focused tests and the v3 bridge client is green across all eight
+  calls, but neither result is release authority: the actor must consume the
+  non-cloneable observation into a Stage-B-bound durable one-shot capability.
 - [ ] Build the official Monero 0.18.5.1 CLI artifact from its signed hash list
   into a digest-pinned runtime and scan the final image fail-hard.
 - [x] Start one offline `monerod` Regtest daemon plus distinct authenticated
@@ -2916,8 +2926,14 @@ and 32-byte markers into chain authority.
   over an off-chain channel. ADR 0057 now executes additive tags 13 through 17,
   separate claim/refund aggregate authorities, version-3 XMR metadata, exact
   partial-commitment publication, disjoint windows, legacy wire digests, and
-  explicit generic unsigned-refund rejection in 14 focused tests. Checked guest
-  artifact, strict bridge operations, and actual-node branches remain.
+  explicit generic unsigned-refund rejection in 14 focused tests. Two fresh
+  digest-pinned builds reproduce ELF
+  `dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292`
+  and ImageID
+  `4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`;
+  the five recursive initialize/fund/claim, signed-refund, punishment, and
+  rollback cases pass on both executions. Bridge runtime and actual-node
+  branches remain.
 - [ ] Complete the sole reviewed positive direction with fresh actor processes:
   Taker LEZ lock, finalized Maker observation, exact Maker XMR output, signed
   Monero confirmation policy, revealing Maker LEZ claim, Taker extraction and
@@ -2949,10 +2965,35 @@ signer key are retained in the repository; a warm run still rechecks the live
 source tag identity. Runtime uses no peer, public RPC, faucet, public funds, or
 public finality service.
 
+The checked-artifact slice is reproducible through
+`scripts/run-m4-lez-artifact-tests.sh`. Its manifest pins the source boundary,
+Risc0 3.0.5/Rust 1.94.1 toolchain, digest-pinned guest builder, exact ELF and
+ImageID, and the immutable M2/M3 boundary. The checked-test runtime uses no RPC,
+faucet, peer, public chain, or other external resource. A cold cache can still
+need GitHub circuits, crates.io/pinned Git sources, the pinned Docker registry
+object, and Risc0 release tools; DNS, registry, rate-limit, or availability
+failure can therefore block setup without making the recursive execution
+network-dependent. Default exact-run cleanup retained the small checked ELF
+and evidence while removing about 3.49 GiB of run-owned build/tool state.
+
+The Monero adapter checkpoint is deliberately observation-only after an
+independent review. Its exact chain, transaction, address, amount, membership,
+depth, and stable-tip checks are green, but the result is non-cloneable and
+cannot authorize claim-partial publication directly. A view-only wallet cannot
+prove old-output unspent state without composite key images; configured Digest
+credentials do not prove that the service enforces authentication; upstream
+single-header calls discard the daemon untrusted flag; and the upstream block
+decoder can panic on malformed local responses. The private Regtest PoC closes
+the relevant operational assumptions with a peerless daemon, distinct origins,
+run-bound wrong-credential rejection, fresh activation/output uniqueness, and
+a pending durable at-most-once release journal. Stagenet and production must
+add the preserved trust-flag check, bounded or isolated block decode, and a
+reviewed key-image or freshness/consumption argument.
+
 The immediate critical path is now:
 
-1. build and embed a fresh checked M4 guest artifact, then implement the client,
-   adapter, and sidecar runtime for the now-green strict v3 protocol's exact
+1. implement the adapter and sidecar runtime against the fresh checked
+   artifact for the now-green strict v3 protocol's exact
    version-3 initialize, publication, claim, signed-refund, punishment, and
    finalized-effect contracts. The two-stage
    countersigned SDK, profile/deployment bindings, exact Stage-B first-lock
@@ -2960,8 +3001,8 @@ The immediate critical path is now:
    promote canonical evidence rather than caller-supplied status. Pre-funding
    proof of hidden-partial validity remains a disclosed GW-M4-003
    production-review item;
-2. add typed Monero daemon/wallet RPC observations and one-shot release builders to
-   `lez-xmr-swap-sdk`;
+2. bind the now-green typed Monero daemon/wallet observation to Stage B and add
+   a durable one-shot release builder to the XMR SDK;
 3. add fresh Maker/Taker role processes with durable share/effect records;
 4. compose the sole supported LEZ-first claim and recovery paths through both
    actual local chains,
@@ -2977,14 +3018,15 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The expected remaining focused engineering time is 7 to 13 hours to the first
-reproducible independent-actor claim-path PoC and 15 to 24 hours to the local
+The expected remaining focused engineering time is 6 to 11 hours to the first
+reproducible independent-actor claim-path PoC and 12 to 20 hours to the local
 claim/refund/punishment PoC. This estimate starts after the verified two-stage
-SDK checkpoint and includes the fresh RISC Zero artifact/bridge plus trusted
-chain-evidence adapters rather than counting caller-supplied snapshots or
-source-only recursive cases as runtime evidence. GW-M4-001, GW-M4-002, and
-GW-M4-003 remain upstream production/review disclosures and do not block the
-private local implementation.
+SDK, fresh RISC Zero artifact, v3 client, and Monero observation checkpoints.
+It still includes the bridge runtime, trusted finalized LEZ capability,
+activation-bound one-shot release, and actual actors rather than counting
+caller-supplied snapshots or checked recursive cases as runtime evidence.
+GW-M4-001, GW-M4-002, and GW-M4-003 remain upstream production/review
+disclosures and do not block the private local implementation.
 
 ### Post-PoC RED-GREEN-REFACTOR hardening required for M4 closure
 

@@ -22,7 +22,8 @@ use jsonrpsee::{
 };
 use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClient, HttpClientBuilder};
 use lez_bridge_protocol::{
-    ChainClock, ChainTip, ClassifyFinalizedWitnessedAssetClaimV2Request,
+    ChainClock, ChainTip, ClassifyFinalizedNativeXmrEffectV3Request,
+    ClassifyFinalizedNativeXmrEffectV3Result, ClassifyFinalizedWitnessedAssetClaimV2Request,
     ClassifyFinalizedWitnessedAssetClaimV2Result,
     ClassifyFinalizedWitnessedAssetCustodyCreationV2Request,
     ClassifyFinalizedWitnessedAssetCustodyCreationV2Result,
@@ -31,10 +32,13 @@ use lez_bridge_protocol::{
     ClassifyFinalizedWitnessedAssetInitializationV2Request,
     ClassifyFinalizedWitnessedAssetInitializationV2Result, ClassifyFinalizedWitnessedClaimResult,
     ClassifyFinalizedWitnessedFundingResult, ClassifyFinalizedWitnessedInitializationRequest,
-    ClassifyFinalizedWitnessedInitializationResult, CompleteWitnessedAssetClaimV2Request,
+    ClassifyFinalizedWitnessedInitializationResult, CompleteNativeXmrClaimV3Request,
+    CompleteNativeXmrClaimV3Result, CompleteNativeXmrRefundV3Request,
+    CompleteNativeXmrRefundV3Result, CompleteWitnessedAssetClaimV2Request,
     CompleteWitnessedAssetClaimV2Result, CompleteWitnessedClaimRequest,
     CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult, DiscoveryWindow,
-    ErrorCode, ErrorMessage, EscrowState, FinalizedWitnessedAssetScanOutcomeV2,
+    ErrorCode, ErrorMessage, EscrowState, FinalizedNativeXmrScanOutcomeV3,
+    FinalizedNativeXmrTransactionTargetV3, FinalizedWitnessedAssetScanOutcomeV2,
     FinalizedWitnessedAssetTransactionTargetV2, FinalizedWitnessedClaimFacts,
     FinalizedWitnessedClaimObservationTarget, FinalizedWitnessedClaimScanOutcome,
     FinalizedWitnessedFundingObservationTarget, FinalizedWitnessedFundingScanOutcome,
@@ -50,33 +54,42 @@ use lez_bridge_protocol::{
     ObserveWitnessedAssetRefundV2Result, ObserveWitnessedEscrowRequest,
     ObserveWitnessedEscrowResult, Participant, PrepareNativeEscrowRequest,
     PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
-    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedAssetClaimV2Request,
-    PrepareWitnessedAssetClaimV2Result, PrepareWitnessedAssetEscrowV2Request,
-    PrepareWitnessedAssetEscrowV2Result, PrepareWitnessedAssetRefundV2Request,
-    PrepareWitnessedAssetRefundV2Result, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
-    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
-    PreparedWitnessedClaim, ProtocolErrorReply, RequestId, RunId, RuntimeDescriptor,
-    SubmitTransactionRequest, SubmitTransactionResult, WitnessedAssetPreparedEffectV2,
-    WitnessedAssetRefundObservationV2, WitnessedEscrowMetadataFacts, WitnessedLezAssetTermsV2,
-    WitnessedLezAssetV2, WitnessedNativeEscrowTerms,
+    PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimAuthorizationV3Result,
+    PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request,
+    PrepareNativeXmrEscrowV3Result, PrepareNativeXmrPunishV3Request,
+    PrepareNativeXmrPunishV3Result, PrepareNativeXmrRefundV3Request,
+    PrepareNativeXmrRefundV3Result, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
+    PrepareWitnessedAssetClaimV2Request, PrepareWitnessedAssetClaimV2Result,
+    PrepareWitnessedAssetEscrowV2Request, PrepareWitnessedAssetEscrowV2Result,
+    PrepareWitnessedAssetRefundV2Request, PrepareWitnessedAssetRefundV2Result,
+    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
+    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
+    RequestId, RunId, RuntimeDescriptor, SubmitTransactionRequest, SubmitTransactionResult,
+    WitnessedAssetPreparedEffectV2, WitnessedAssetRefundObservationV2,
+    WitnessedEscrowMetadataFacts, WitnessedLezAssetTermsV2, WitnessedLezAssetV2,
+    WitnessedNativeEscrowTerms, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
 };
 pub use lez_bridge_protocol::{
-    MAX_RPC_BODY_BYTES, METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
+    MAX_RPC_BODY_BYTES, METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CUSTODY_CREATION_V2,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_FUNDING_V2,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_INITIALIZATION_V2,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM, METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
-    METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION, METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION, METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3,
+    METHOD_COMPLETE_NATIVE_XMR_REFUND_V3, METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2,
     METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_CURRENT_CLOCK,
     METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
     METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
     METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM,
     METHOD_OBSERVE_WITNESSED_ASSET_ESCROW_V2, METHOD_OBSERVE_WITNESSED_ASSET_REFUND_V2,
     METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND,
-    METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2,
-    METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2, METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2,
-    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
-    RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+    METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_V3,
+    METHOD_PREPARE_NATIVE_XMR_ESCROW_V3, METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
+    METHOD_PREPARE_NATIVE_XMR_REFUND_V3, METHOD_PREPARE_REVEALING_CLAIM,
+    METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2, METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2,
+    METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2, METHOD_PREPARE_WITNESSED_CLAIM,
+    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
 };
 use secp256k1::{
     Message as SecpMessage, Secp256k1, XOnlyPublicKey, schnorr::Signature as SchnorrSignature,
@@ -255,6 +268,22 @@ pub enum BridgeOperation {
     ClassifyFinalizedWitnessedAssetFundingV2,
     /// Finalized witnessed-asset claim classification.
     ClassifyFinalizedWitnessedAssetClaimV2,
+    /// Exact unsigned XMR-native claim preparation.
+    PrepareNativeXmrClaimV3,
+    /// Exact aggregate-witness XMR-native claim completion.
+    CompleteNativeXmrClaimV3,
+    /// Exact unsigned XMR-native refund preparation.
+    PrepareNativeXmrRefundV3,
+    /// Exact aggregate-witness XMR-native refund completion.
+    CompleteNativeXmrRefundV3,
+    /// Unilateral post-window XMR-native punishment preparation.
+    PrepareNativeXmrPunishV3,
+    /// Consecutive XMR-native initialization and funding preparation.
+    PrepareNativeXmrEscrowV3,
+    /// Committed Taker claim-partial publication preparation.
+    PrepareNativeXmrClaimAuthorizationV3,
+    /// Conservative finalized XMR-native effect classification.
+    ClassifyFinalizedNativeXmrEffectV3,
 }
 
 /// Actor-facing finalized witnessed-funding classification.
@@ -1739,6 +1768,312 @@ impl BridgeClient {
         Ok(result)
     }
 
+    /// Prepares the exact unsigned XMR-native claim once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed unless the dedicated Maker runtime, agreement, response
+    /// echo, and returned official message are all exact.
+    pub async fn prepare_native_xmr_claim_v3(
+        &self,
+        request: PrepareNativeXmrClaimV3Request,
+    ) -> Result<PrepareNativeXmrClaimV3Result, BridgeClientError> {
+        let operation = BridgeOperation::PrepareNativeXmrClaimV3;
+        let context = request.context.clone();
+        let expected_terms = request.terms;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_xmr_request_binding(
+            operation,
+            &context,
+            &request.runtime,
+            &request.terms,
+            XmrOperationRole::Maker,
+        )?;
+        self.reserve_context(operation, &context)?;
+        let result: PrepareNativeXmrClaimV3Result = self
+            .request(
+                operation,
+                METHOD_PREPARE_NATIVE_XMR_CLAIM_V3,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_xmr_terms_echo(operation, &expected_terms, &result.terms)?;
+        validate_witnessed_preparation(operation, &result.claim)?;
+        Ok(result)
+    }
+
+    /// Completes the exact XMR-native claim once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed unless the Maker runtime, retained unsigned transcript,
+    /// response echo, and completed transaction are structurally exact.
+    pub async fn complete_native_xmr_claim_v3(
+        &self,
+        request: CompleteNativeXmrClaimV3Request,
+    ) -> Result<CompleteNativeXmrClaimV3Result, BridgeClientError> {
+        let operation = BridgeOperation::CompleteNativeXmrClaimV3;
+        let context = request.context.clone();
+        let expected_terms = request.terms;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_xmr_request_binding(
+            operation,
+            &context,
+            &request.runtime,
+            &request.terms,
+            XmrOperationRole::Maker,
+        )?;
+        validate_witnessed_preparation(operation, &request.claim)?;
+        self.reserve_context(operation, &context)?;
+        let result: CompleteNativeXmrClaimV3Result = self
+            .request(
+                operation,
+                METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_xmr_terms_echo(operation, &expected_terms, &result.terms)?;
+        validate_prepared(operation, &result.claim)?;
+        Ok(result)
+    }
+
+    /// Prepares the exact unsigned XMR-native refund once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed unless the dedicated Taker runtime, agreement, response
+    /// echo, and returned official message are all exact.
+    pub async fn prepare_native_xmr_refund_v3(
+        &self,
+        request: PrepareNativeXmrRefundV3Request,
+    ) -> Result<PrepareNativeXmrRefundV3Result, BridgeClientError> {
+        let operation = BridgeOperation::PrepareNativeXmrRefundV3;
+        let context = request.context.clone();
+        let expected_terms = request.terms;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_xmr_request_binding(
+            operation,
+            &context,
+            &request.runtime,
+            &request.terms,
+            XmrOperationRole::Taker,
+        )?;
+        self.reserve_context(operation, &context)?;
+        let result: PrepareNativeXmrRefundV3Result = self
+            .request(
+                operation,
+                METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_xmr_terms_echo(operation, &expected_terms, &result.terms)?;
+        validate_witnessed_preparation(operation, &result.refund)?;
+        Ok(result)
+    }
+
+    /// Completes the exact XMR-native refund once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed unless the Taker runtime, retained unsigned transcript,
+    /// response echo, and completed transaction are structurally exact.
+    pub async fn complete_native_xmr_refund_v3(
+        &self,
+        request: CompleteNativeXmrRefundV3Request,
+    ) -> Result<CompleteNativeXmrRefundV3Result, BridgeClientError> {
+        let operation = BridgeOperation::CompleteNativeXmrRefundV3;
+        let context = request.context.clone();
+        let expected_terms = request.terms;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_xmr_request_binding(
+            operation,
+            &context,
+            &request.runtime,
+            &request.terms,
+            XmrOperationRole::Taker,
+        )?;
+        validate_witnessed_preparation(operation, &request.refund)?;
+        self.reserve_context(operation, &context)?;
+        let result: CompleteNativeXmrRefundV3Result = self
+            .request(
+                operation,
+                METHOD_COMPLETE_NATIVE_XMR_REFUND_V3,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_xmr_terms_echo(operation, &expected_terms, &result.terms)?;
+        validate_prepared(operation, &result.refund)?;
+        Ok(result)
+    }
+
+    /// Prepares the unilateral post-window XMR-native punishment once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed unless the dedicated Maker runtime, agreement, response
+    /// echo, and returned transaction are all exact.
+    pub async fn prepare_native_xmr_punish_v3(
+        &self,
+        request: PrepareNativeXmrPunishV3Request,
+    ) -> Result<PrepareNativeXmrPunishV3Result, BridgeClientError> {
+        let operation = BridgeOperation::PrepareNativeXmrPunishV3;
+        let context = request.context.clone();
+        let expected_terms = request.terms;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_xmr_request_binding(
+            operation,
+            &context,
+            &request.runtime,
+            &request.terms,
+            XmrOperationRole::Maker,
+        )?;
+        self.reserve_context(operation, &context)?;
+        let result: PrepareNativeXmrPunishV3Result = self
+            .request(
+                operation,
+                METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_xmr_terms_echo(operation, &expected_terms, &result.terms)?;
+        validate_prepared(operation, &result.punish)?;
+        Ok(result)
+    }
+
+    /// Prepares consecutive XMR-native initialization and funding once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed unless the Taker runtime and agreement are exact and the
+    /// two returned transactions are nonempty and distinct.
+    pub async fn prepare_native_xmr_escrow_v3(
+        &self,
+        request: PrepareNativeXmrEscrowV3Request,
+    ) -> Result<PrepareNativeXmrEscrowV3Result, BridgeClientError> {
+        let operation = BridgeOperation::PrepareNativeXmrEscrowV3;
+        let context = request.context.clone();
+        let expected_terms = request.terms;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_xmr_request_binding(
+            operation,
+            &context,
+            &request.runtime,
+            &request.terms,
+            XmrOperationRole::Taker,
+        )?;
+        self.reserve_context(operation, &context)?;
+        let result: PrepareNativeXmrEscrowV3Result = self
+            .request(
+                operation,
+                METHOD_PREPARE_NATIVE_XMR_ESCROW_V3,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_xmr_terms_echo(operation, &expected_terms, &result.terms)?;
+        validate_prepared(operation, &result.initialization)?;
+        validate_prepared(operation, &result.funding)?;
+        if result.initialization.transaction_id == result.funding.transaction_id
+            || result.initialization.exact_bytes == result.funding.exact_bytes
+        {
+            return Err(BridgeClientError::MalformedPreparedTransaction { operation });
+        }
+        Ok(result)
+    }
+
+    /// Prepares publication of the committed Taker claim partial once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed unless the dedicated Taker runtime, agreement, response
+    /// echo, and returned authorization transaction are exact.
+    pub async fn prepare_native_xmr_claim_authorization_v3(
+        &self,
+        request: PrepareNativeXmrClaimAuthorizationV3Request,
+    ) -> Result<PrepareNativeXmrClaimAuthorizationV3Result, BridgeClientError> {
+        let operation = BridgeOperation::PrepareNativeXmrClaimAuthorizationV3;
+        let context = request.context.clone();
+        let expected_terms = request.terms;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_xmr_request_binding(
+            operation,
+            &context,
+            &request.runtime,
+            &request.terms,
+            XmrOperationRole::Taker,
+        )?;
+        self.reserve_context(operation, &context)?;
+        let result: PrepareNativeXmrClaimAuthorizationV3Result = self
+            .request(
+                operation,
+                METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_xmr_terms_echo(operation, &expected_terms, &result.terms)?;
+        validate_prepared(operation, &result.authorization)?;
+        Ok(result)
+    }
+
+    /// Classifies one finalized XMR-native effect exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on runtime, terms, effect, target, coverage, response,
+    /// timeout, transport, or finalized-evidence drift.
+    pub async fn classify_finalized_native_xmr_effect_v3(
+        &self,
+        request: ClassifyFinalizedNativeXmrEffectV3Request,
+    ) -> Result<ClassifyFinalizedNativeXmrEffectV3Result, BridgeClientError> {
+        let operation = BridgeOperation::ClassifyFinalizedNativeXmrEffectV3;
+        let context = request.context.clone();
+        let expected_terms = request.terms;
+        let expected_effect = request.effect;
+        let expected_target = request.target.clone();
+        let expected_window = request.window;
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_xmr_request_binding(
+            operation,
+            &context,
+            &request.runtime,
+            &request.terms,
+            XmrOperationRole::Either,
+        )?;
+        validate_xmr_target(operation, &request.target)?;
+        self.reserve_context(operation, &context)?;
+        let result: ClassifyFinalizedNativeXmrEffectV3Result = self
+            .request(
+                operation,
+                METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_xmr_classifier_echo(
+            operation,
+            &expected_terms,
+            expected_effect,
+            &expected_target,
+            expected_window,
+            &result,
+        )?;
+        Ok(result)
+    }
+
     /// Observes canonical native escrow state and an optional refund lookup once.
     ///
     /// # Errors
@@ -1858,6 +2193,96 @@ fn validate_terms_echo(
 ) -> Result<(), BridgeClientError> {
     if expected != actual {
         return Err(BridgeClientError::MalformedObservation { operation });
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum XmrOperationRole {
+    Maker,
+    Taker,
+    Either,
+}
+
+fn validate_xmr_request_binding(
+    operation: BridgeOperation,
+    context: &MessageContext,
+    runtime: &RuntimeDescriptor,
+    terms: &XmrNativeEscrowTermsV3,
+    required: XmrOperationRole,
+) -> Result<(), BridgeClientError> {
+    let role_matches = match required {
+        XmrOperationRole::Maker => runtime.sidecar_role == Participant::Maker,
+        XmrOperationRole::Taker => runtime.sidecar_role == Participant::Taker,
+        XmrOperationRole::Either => true,
+    };
+    if terms.validate_runtime_binding(context, runtime).is_err() || !role_matches {
+        return Err(BridgeClientError::MalformedObservation { operation });
+    }
+    Ok(())
+}
+
+fn validate_xmr_terms_echo(
+    operation: BridgeOperation,
+    expected: &XmrNativeEscrowTermsV3,
+    actual: &XmrNativeEscrowTermsV3,
+) -> Result<(), BridgeClientError> {
+    if expected != actual {
+        return Err(BridgeClientError::MalformedObservation { operation });
+    }
+    Ok(())
+}
+
+fn validate_xmr_target(
+    operation: BridgeOperation,
+    target: &FinalizedNativeXmrTransactionTargetV3,
+) -> Result<(), BridgeClientError> {
+    if let FinalizedNativeXmrTransactionTargetV3::Exact { transaction } = target {
+        validate_prepared(operation, transaction)?;
+    }
+    Ok(())
+}
+
+fn validate_xmr_classifier_echo(
+    operation: BridgeOperation,
+    expected_terms: &XmrNativeEscrowTermsV3,
+    expected_effect: XmrNativeEffectV3,
+    expected_target: &FinalizedNativeXmrTransactionTargetV3,
+    expected_window: DiscoveryWindow,
+    result: &ClassifyFinalizedNativeXmrEffectV3Result,
+) -> Result<(), BridgeClientError> {
+    if &result.terms != expected_terms
+        || result.effect != expected_effect
+        || &result.target != expected_target
+    {
+        return Err(BridgeClientError::MalformedObservation { operation });
+    }
+    let coverage = match &result.outcome {
+        FinalizedNativeXmrScanOutcomeV3::Found {
+            finalized_clock,
+            scanned_window,
+            ..
+        }
+        | FinalizedNativeXmrScanOutcomeV3::Absent {
+            finalized_clock,
+            scanned_window,
+        }
+        | FinalizedNativeXmrScanOutcomeV3::Uncertain {
+            finalized_clock,
+            scanned_window,
+        } => Some((*finalized_clock, *scanned_window)),
+        FinalizedNativeXmrScanOutcomeV3::Unavailable { .. } => None,
+    };
+    if let Some((clock, window)) = coverage {
+        let window_end = expected_window
+            .start_height()
+            .checked_add(u64::from(expected_window.max_blocks().saturating_sub(1)));
+        if window != expected_window
+            || clock.timestamp_ms == 0
+            || window_end.is_none_or(|end| clock.height < end)
+        {
+            return Err(BridgeClientError::MalformedObservation { operation });
+        }
     }
     Ok(())
 }
