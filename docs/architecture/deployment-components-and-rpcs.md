@@ -171,12 +171,12 @@ dynamic literal-loopback publication owned by one run.
 ```mermaid
 flowchart LR
     Protocol["Strict XMR v3 protocol<br/>52 tests green"] --> Client["Eight-call bridge client<br/>51 package targets green"]
-    CheckedElf["Checked M4 ELF<br/>dc370bc...b7292"] -.-> MakerSidecar["Maker LEZ sidecar<br/>pending"]
-    CheckedElf -.-> TakerSidecar["Taker LEZ sidecar<br/>pending"]
+    CheckedElf["Checked M4 ELF<br/>dc370bc...b7292"] -.-> MakerSidecar["Maker LEZ sidecar<br/>routes authenticated; runtime unavailable"]
+    CheckedElf -.-> TakerSidecar["Taker LEZ sidecar<br/>routes authenticated; runtime unavailable"]
     MakerActor["Maker actor<br/>pending"] -.-> Client
     TakerActor["Taker actor<br/>pending"] -.-> Client
-    Client -.-> MakerSidecar
-    Client -.-> TakerSidecar
+    Client --> MakerSidecar
+    Client --> TakerSidecar
     MakerSidecar -.-> Sequencer["Local LEZ v0.2 sequencer<br/>dynamic loopback RPC"]
     TakerSidecar -.-> Sequencer
     MakerSidecar -.-> Indexer["Local LEZ v0.2 indexer<br/>dynamic loopback RPC"]
@@ -192,9 +192,13 @@ flowchart LR
 The Monero observation is non-cloneable but is not itself claim-partial
 authority. The Taker actor must consume it durably against the exact Stage B
 activation after binding the run's distinct origins and wrong-credential 401.
-The LEZ sidecars must separately mint finalized metadata/custody and publication
-capabilities. Those two dotted authority gates, then the actor effects, are the
-current critical path.
+The LEZ sidecars register all eight authenticated additive v3 routes. Their
+seven transaction-building routes return typed `Unavailable`, and their
+classifier returns only `HistoryUnavailable`; 134 of 134 standalone tests plus
+focused v2/v3, strict Clippy, formatting, and diff gates are green. They must
+still implement the planners and mint finalized metadata/custody/publication
+capabilities. Those authority gates, then the actor effects, are the current
+critical path; the green route boundary is not a functional claim PoC.
 
 ## M2 SDK/reference-demo target topology
 

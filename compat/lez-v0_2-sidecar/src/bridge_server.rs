@@ -11,6 +11,15 @@ use std::{
 
 use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_protocol::{
+    ClassifyFinalizedNativeXmrEffectV3Request, ClassifyFinalizedNativeXmrEffectV3Result,
+    FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrUnavailableReasonV3,
+    METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3, METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3,
+    METHOD_COMPLETE_NATIVE_XMR_REFUND_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+    METHOD_PREPARE_NATIVE_XMR_CLAIM_V3, METHOD_PREPARE_NATIVE_XMR_ESCROW_V3,
+    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
+    XmrNativeEscrowTermsV3,
+};
+use lez_bridge_protocol::{
     ClassifyFinalizedWitnessedInitializationRequest, CompleteWitnessedClaimRequest,
     CompleteWitnessedClaimResult, DescribeRuntimeRequest, DescribeRuntimeResult, ErrorCode,
     ErrorMessage, MAX_RPC_BODY_BYTES, METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM,
@@ -620,6 +629,13 @@ impl OperationFailure {
         Self {
             code: ErrorCode::Internal,
             message: "durable bridge request outcome is unavailable",
+        }
+    }
+
+    const fn xmr_planner_unavailable() -> Self {
+        Self {
+            code: ErrorCode::Unavailable,
+            message: "official v0.2 XMR transaction planner is unavailable",
         }
     }
 }
@@ -1358,6 +1374,102 @@ fn register_asset_v2_methods(
         lez_bridge_protocol::ClassifyFinalizedWitnessedAssetClaimV2Request,
         classify_finalized_witnessed_asset_claim_v2
     );
+    register_xmr_v3_methods(module)
+}
+
+fn register_xmr_v3_methods(
+    module: &mut RpcModule<ServerState>,
+) -> Result<(), jsonrpsee::core::RegisterMethodError> {
+    macro_rules! register_unavailable {
+        ($method:expr, $request:ty, $role:expr) => {
+            module.register_async_method($method, |params, state, _| async move {
+                let request = params.one::<$request>()?;
+                state.validate_xmr_v3_request(
+                    &request.context,
+                    &request.runtime,
+                    &request.terms,
+                    $role,
+                )?;
+                state
+                    .execute($method, &request.context, &request, || async {
+                        Err(OperationFailure::xmr_planner_unavailable())
+                    })
+                    .await
+            })?;
+        };
+    }
+
+    register_unavailable!(
+        METHOD_PREPARE_NATIVE_XMR_CLAIM_V3,
+        lez_bridge_protocol::PrepareNativeXmrClaimV3Request,
+        Participant::Maker
+    );
+    register_unavailable!(
+        METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3,
+        lez_bridge_protocol::CompleteNativeXmrClaimV3Request,
+        Participant::Maker
+    );
+    register_unavailable!(
+        METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
+        lez_bridge_protocol::PrepareNativeXmrRefundV3Request,
+        Participant::Taker
+    );
+    register_unavailable!(
+        METHOD_COMPLETE_NATIVE_XMR_REFUND_V3,
+        lez_bridge_protocol::CompleteNativeXmrRefundV3Request,
+        Participant::Taker
+    );
+    register_unavailable!(
+        METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
+        lez_bridge_protocol::PrepareNativeXmrPunishV3Request,
+        Participant::Maker
+    );
+    register_unavailable!(
+        METHOD_PREPARE_NATIVE_XMR_ESCROW_V3,
+        lez_bridge_protocol::PrepareNativeXmrEscrowV3Request,
+        Participant::Taker
+    );
+    register_unavailable!(
+        METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+        lez_bridge_protocol::PrepareNativeXmrClaimAuthorizationV3Request,
+        Participant::Taker
+    );
+    module.register_async_method(
+        METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
+        |params, state, _| async move {
+            let request: ClassifyFinalizedNativeXmrEffectV3Request = params.one()?;
+            state.validate_xmr_v3_request(
+                &request.context,
+                &request.runtime,
+                &request.terms,
+                request.context.sidecar_role,
+            )?;
+            let context = request.context.clone();
+            let terms = request.terms;
+            let effect = request.effect;
+            let target = request.target.clone();
+            state
+                .execute(
+                    METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
+                    &request.context,
+                    &request,
+                    || async move {
+                        let result = ClassifyFinalizedNativeXmrEffectV3Result::new(
+                            context,
+                            terms,
+                            effect,
+                            target,
+                            FinalizedNativeXmrScanOutcomeV3::unavailable(
+                                FinalizedNativeXmrUnavailableReasonV3::HistoryUnavailable,
+                            ),
+                        )
+                        .map_err(|_| OperationFailure::internal())?;
+                        to_value(result)
+                    },
+                )
+                .await
+        },
+    )?;
     Ok(())
 }
 
@@ -1391,6 +1503,34 @@ impl ServerState {
             return Err(protocol_error(
                 context,
                 OperationFailure::invalid_request("request targets the wrong runtime identity"),
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_xmr_v3_request(
+        &self,
+        context: &MessageContext,
+        runtime: &lez_bridge_protocol::RuntimeDescriptor,
+        terms: &XmrNativeEscrowTermsV3,
+        required_role: Participant,
+    ) -> Result<(), ErrorObjectOwned> {
+        self.validate_runtime(context, runtime)?;
+        if runtime.sidecar_role != required_role {
+            return Err(protocol_error(
+                context,
+                OperationFailure {
+                    code: ErrorCode::WrongSidecarRole,
+                    message: "XMR request targets the wrong sidecar role",
+                },
+            ));
+        }
+        if terms.validate_runtime_binding(context, runtime).is_err() {
+            return Err(protocol_error(
+                context,
+                OperationFailure::invalid_request(
+                    "XMR terms do not match the exact runtime identity",
+                ),
             ));
         }
         Ok(())
@@ -1568,5 +1708,13 @@ fn valid_method(method: &str) -> bool {
             | METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CUSTODY_CREATION_V2
             | METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_FUNDING_V2
             | METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CLAIM_V2
+            | METHOD_PREPARE_NATIVE_XMR_CLAIM_V3
+            | METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3
+            | METHOD_PREPARE_NATIVE_XMR_REFUND_V3
+            | METHOD_COMPLETE_NATIVE_XMR_REFUND_V3
+            | METHOD_PREPARE_NATIVE_XMR_PUNISH_V3
+            | METHOD_PREPARE_NATIVE_XMR_ESCROW_V3
+            | METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
+            | METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3
     )
 }

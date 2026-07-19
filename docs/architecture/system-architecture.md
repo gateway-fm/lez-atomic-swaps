@@ -2125,8 +2125,9 @@ flowchart LR
     XmrActor["Fresh XMR role actors"] -.-> RoleRunner
     XmrActor -.-> XmrSdk
     XmrActor -.-> BridgeClient["Strict v3 bridge client<br/>eight methods green"]
-    BridgeClient -.-> BridgeRuntime["LEZ adapter and sidecar<br/>pending"]
-    BridgeRuntime -.-> BridgeProtocol["Strict additive v3 protocol<br/>eight methods green"]
+    BridgeClient --> BridgeRoutes["Authenticated sidecar v3 routes<br/>all eight registered"]
+    BridgeRoutes -.-> BridgeRuntime["Seven builders and classifier<br/>fail closed and pending"]
+    BridgeRuntime --> BridgeProtocol["Strict additive v3 protocol<br/>eight methods green"]
     BridgeProtocol -->|binds exact tags and effects| Guest["XMR guest source tags 13 through 17"]
     Guest --> CheckedArtifact["Checked local M4 guest<br/>ELF dc370bc...b7292<br/>ImageID 4d6590...2c82"]
     CheckedArtifact -->|five recursive branch tests| Transfer["Authenticated native transfer"]
@@ -2240,9 +2241,13 @@ and ImageID
 `4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`;
 all five recursive cases pass in both builds. The eight-method bridge client is
 green across 51 package targets, and the exact Monero receipt observation is
-green in seven focused tests. The LEZ adapter/sidecar runtime, trusted finalized
-LEZ capability, Stage-B-bound durable one-shot release, role actors, and
-composed E2E remain pending. The Monero observation does not prove old-output
+green in seven focused tests.
+The authenticated eight-route sidecar server boundary is green across 134
+standalone tests and focused v2/v3 regressions. Its seven builders
+still return typed `Unavailable`, and its classifier returns only
+`HistoryUnavailable`; the functional LEZ adapter/runtime, trusted finalized LEZ
+capability, Stage-B-bound durable one-shot release, role actors, and composed
+E2E remain pending. The Monero observation does not prove old-output
 unspent state from a view-only wallet or server authentication by credential
 configuration alone; the local run must bind its fresh output, peerless
 topology, and cross-credential rejection. The additive v3 protocol and all 44

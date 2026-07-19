@@ -1662,6 +1662,9 @@ impl BridgeRuntime {
             EscrowStatus::Funded => EscrowState::Funded,
             EscrowStatus::Claimed => EscrowState::Claimed,
             EscrowStatus::Refunded => EscrowState::Refunded,
+            EscrowStatus::XmrClaimAuthorized => {
+                return Err(BridgeRuntimeError::InvalidObservation);
+            }
         };
         let expected_transfer = program_id_from_hex(terms.authenticated_transfer_program_id());
         let ClaimAuthority::AggregateWitness {
@@ -1743,6 +1746,9 @@ impl BridgeRuntime {
             EscrowStatus::Funded => EscrowState::Funded,
             EscrowStatus::Claimed => EscrowState::Claimed,
             EscrowStatus::Refunded => EscrowState::Refunded,
+            EscrowStatus::XmrClaimAuthorized => {
+                return Err(BridgeRuntimeError::InvalidObservation);
+            }
         };
         let expected_transfer = program_id_from_hex(terms.authenticated_transfer_program_id());
         let ClaimAuthority::Sha256Preimage { secret_digest } = metadata.claim_authority else {

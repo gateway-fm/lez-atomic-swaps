@@ -5,6 +5,7 @@ fn main() {
     let generated = spel_client_gen::generate_from_idl_json(lez_zec_escrow_v02::PROGRAM_IDL_JSON)
         .expect("the exact pinned SPEL generator must accept the v0.2 escrow IDL");
     assert_native_prepare_surface(&generated.client_code);
+    assert_xmr_prepare_surface(&generated.client_code);
     assert_token_prepare_surface(lez_zec_escrow_v02::PROGRAM_IDL_JSON, &generated.client_code);
     let destination = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo provides OUT_DIR"))
         .join("zec_escrow_client.rs");
@@ -65,6 +66,63 @@ fn assert_native_prepare_surface(client: &str) {
     }
 }
 
+fn assert_xmr_prepare_surface(client: &str) {
+    let initialize = generated_method(
+        client,
+        "initialize_native_xmr",
+        "authorize_native_xmr_claim",
+    );
+    let authorize = generated_method(client, "authorize_native_xmr_claim", "claim_native_xmr");
+    let claim = generated_method(client, "claim_native_xmr", "refund_native_xmr");
+    let refund = generated_method(client, "refund_native_xmr", "punish_native_xmr");
+    let punish_start = client
+        .find("    pub async fn punish_native_xmr(")
+        .expect("pinned generated client is missing punish_native_xmr");
+    let punish_tail = &client[punish_start..];
+    let punish_end = punish_tail
+        .find("    /// Fetch and deserialize")
+        .expect("pinned generated client punish_native_xmr tail changed");
+    let punish = &punish_tail[..punish_end];
+
+    for (surface, accounts, signer, operation) in [
+        (
+            initialize,
+            "accounts.metadata,\n            accounts.custody,\n            accounts.depositor,\n            accounts.claimant,\n            accounts.claim_aggregate_authority,\n            accounts.refund_aggregate_authority,",
+            "let signer_ids: Vec<AccountId> = vec![\n            accounts.depositor,\n        ];",
+            "initialize_native_xmr",
+        ),
+        (
+            authorize,
+            "accounts.metadata,\n            accounts.depositor,",
+            "let signer_ids: Vec<AccountId> = vec![\n            accounts.depositor,\n        ];",
+            "authorize_native_xmr_claim",
+        ),
+        (
+            claim,
+            "accounts.metadata,\n            accounts.custody,\n            accounts.claimant,\n            accounts.claim_aggregate_authority,",
+            "let signer_ids: Vec<AccountId> = vec![\n            accounts.claim_aggregate_authority,\n        ];",
+            "claim_native_xmr",
+        ),
+        (
+            refund,
+            "accounts.metadata,\n            accounts.custody,\n            accounts.depositor,\n            accounts.refund_aggregate_authority,",
+            "let signer_ids: Vec<AccountId> = vec![\n            accounts.refund_aggregate_authority,\n        ];",
+            "refund_native_xmr",
+        ),
+        (
+            punish,
+            "accounts.metadata,\n            accounts.custody,\n            accounts.claimant,",
+            "let signer_ids: Vec<AccountId> = vec![\n            accounts.claimant,\n        ];",
+            "punish_native_xmr",
+        ),
+    ] {
+        assert!(
+            surface.contains(accounts) && surface.contains(signer),
+            "pinned generated {operation} account order or signer role changed"
+        );
+    }
+}
+
 fn assert_token_prepare_surface(idl_json: &str, client: &str) {
     let idl: serde_json::Value =
         serde_json::from_str(idl_json).expect("pinned escrow IDL must be valid JSON");
@@ -95,6 +153,11 @@ fn assert_token_prepare_surface(idl_json: &str, client: &str) {
             "refund_token",
             "initialize_token_witnessed",
             "claim_token_witnessed",
+            "initialize_native_xmr",
+            "authorize_native_xmr_claim",
+            "claim_native_xmr",
+            "refund_native_xmr",
+            "punish_native_xmr",
         ],
         "pinned official instruction tags changed"
     );

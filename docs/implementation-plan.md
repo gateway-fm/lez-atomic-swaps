@@ -2854,10 +2854,18 @@ and ImageID
 two fresh executions each passed all five recursive guest tests: one preserved
 native aggregate-witness case and four XMR branch/rollback cases. This is a
 local checked artifact, not a public deployment. The eight-call loopback bridge
-client and a non-cloneable exact Monero output observation adapter are also
-component-green. The repository still has no XMR bridge sidecar/runtime,
-trusted finalized LEZ capability, Stage-B-bound at-most-once Monero release
-capability, role actor, full swap, U9 guide, D1 videos, or stagenet CI evidence.
+client, the authenticated sidecar route boundary, and a non-cloneable exact
+Monero output observation adapter are also component-green.
+The sidecar registers all eight additive v3 methods, but it is
+deliberately fail-closed at this checkpoint: the seven transaction-building
+routes return typed `Unavailable`, and the classifier returns only
+`HistoryUnavailable`. The standalone sidecar gate passes 134 of 134 tests,
+including focused v2/v3 route regressions, plus strict Clippy, formatting, and
+diff checks. The repository still has no functional XMR sidecar builders or
+finalized classifier, trusted finalized LEZ capability, Stage-B-bound
+at-most-once Monero release capability, role actor, full swap, U9 guide, D1
+videos, or stagenet CI evidence.
+
 The standalone strict v3 bridge protocol binds eight additive methods and six
 finalized effects; all 52 protocol tests preserve the 44 legacy v1/v2 cases.
 
@@ -2932,8 +2940,11 @@ and 32-byte markers into chain authority.
   and ImageID
   `4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`;
   the five recursive initialize/fund/claim, signed-refund, punishment, and
-  rollback cases pass on both executions. Bridge runtime and actual-node
-  branches remain.
+  rollback cases pass on both executions. The authenticated sidecar server now
+  registers all eight additive v3 routes without widening legacy v2. Its seven
+  transaction-building routes still return typed `Unavailable`, and its sole
+  classifier result is `HistoryUnavailable`; functional runtime builders,
+  finalized effect classification, and actual-node branches remain.
 - [ ] Complete the sole reviewed positive direction with fresh actor processes:
   Taker LEZ lock, finalized Maker observation, exact Maker XMR output, signed
   Monero confirmation policy, revealing Maker LEZ claim, Taker extraction and
@@ -3043,6 +3054,12 @@ disclosures and do not block the private local implementation.
   including post-reveal Taker continuation without Maker or Chat.
 - [ ] Both recovery cases: absent Maker XMR lock then Taker LEZ refund; funded XMR
   without reveal then canonical LEZ refund event enables only Maker XMR recovery.
+- [ ] RFP F7 native/custom-token parity: execute the complete XMR LEZ lifecycle
+  for native value and at least two independent custom-token definitions through
+  the exact Token/ATA programs and owner, custody, claimant, and depositor ATAs;
+  retain substitution, rollback, replay, and terminal-balance evidence. The
+  native-only progressive PoC may land first, but it cannot satisfy this item or
+  authorize an `m4-complete` tag.
 - [ ] Same-direction concurrent swaps with disjoint addresses, transcripts,
   wallets, stores, request IDs, key images, effects, and no nonce/share reuse.
 - [ ] Secret custody, encryption/AAD/schema/key failures, zeroization, owner-only

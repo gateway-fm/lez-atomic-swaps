@@ -1145,7 +1145,7 @@ impl FinalizedAssetObserver {
         )?;
         let metadata = EscrowMetadata::try_from_slice(account.data.0.as_ref())
             .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
-        Ok(escrow_state(metadata.status))
+        escrow_state(metadata.status)
     }
 
     #[allow(
@@ -1168,7 +1168,7 @@ impl FinalizedAssetObserver {
         )?;
         let metadata = EscrowMetadata::try_from_slice(account.data.0.as_ref())
             .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
-        let state = escrow_state(metadata.status);
+        let state = escrow_state(metadata.status)?;
         if account.program_owner.0 != escrow_program
             || metadata.version != 2
             || state != expected_state
@@ -1579,12 +1579,13 @@ fn amount(terms: &WitnessedLezAssetTermsV2) -> u128 {
     }
 }
 
-const fn escrow_state(status: EscrowStatus) -> EscrowState {
+const fn escrow_state(status: EscrowStatus) -> Result<EscrowState, BridgeRuntimeError> {
     match status {
-        EscrowStatus::Empty => EscrowState::Empty,
-        EscrowStatus::Funded => EscrowState::Funded,
-        EscrowStatus::Claimed => EscrowState::Claimed,
-        EscrowStatus::Refunded => EscrowState::Refunded,
+        EscrowStatus::Empty => Ok(EscrowState::Empty),
+        EscrowStatus::Funded => Ok(EscrowState::Funded),
+        EscrowStatus::Claimed => Ok(EscrowState::Claimed),
+        EscrowStatus::Refunded => Ok(EscrowState::Refunded),
+        EscrowStatus::XmrClaimAuthorized => Err(BridgeRuntimeError::InvalidObservation),
     }
 }
 

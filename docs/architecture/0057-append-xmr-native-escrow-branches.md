@@ -3,8 +3,11 @@
 Status: Accepted and checked-artifact-executed for the M4 local PoC. Fourteen
 focused guest tests pin the legacy wire and the new state transitions. Two
 fresh digest-pinned builds additionally pass all five recursive branch tests
-against the exact checked ELF and ImageID. The bridge runtime and actual-node
-branches remain pending.
+against the exact checked ELF and ImageID. The authenticated sidecar server
+registers all eight additive v3 routes, while all seven transaction-building
+routes fail closed with typed `Unavailable` and the classifier returns only
+`HistoryUnavailable`. Functional builders, finalized classification, and
+actual-node branches remain pending.
 
 ## Context
 
@@ -162,3 +165,21 @@ Default scoped cleanup retained the small checked ELF/evidence and removed
 about 3.49 GiB of exact run-owned build/tool state. This closes only the local
 checked-artifact lane; it is not bridge, actor, on-chain deployment, or swap
 evidence.
+
+## Authenticated sidecar route boundary
+
+The standalone LEZ v0.2 sidecar now registers every strict additive v3 method:
+native-XMR escrow preparation, claim-partial authorization preparation, claim
+prepare/complete, refund prepare/complete, punishment preparation, and
+finalized-effect classification. The focused v3 route test reaches the real
+loopback JSON-RPC server through the production bridge client and capability
+check. The entire standalone sidecar suite passes 134 of 134 tests, including
+focused v2/v3 route regressions, with strict Clippy, formatting, and diff checks
+green.
+
+This is an interface and authentication checkpoint, not a functional claim
+PoC. The seven transaction-building methods intentionally return typed
+`Unavailable`; the classifier intentionally returns only
+`HistoryUnavailable`. No route yet prepares an XMR transaction or promotes a
+finalized chain effect. The functional planners, exact finalized-history scan,
+Stage-B release authority, and actor composition remain on the critical path.

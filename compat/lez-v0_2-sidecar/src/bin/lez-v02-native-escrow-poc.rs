@@ -680,14 +680,19 @@ fn validate_snapshot(
 }
 
 fn escrow_state(facts: &OfficialNativeEscrowFacts) -> Result<Option<EscrowState>> {
-    Ok(
-        decode_metadata(facts)?.map(|metadata| match metadata.status {
-            EscrowStatus::Empty => EscrowState::Empty,
-            EscrowStatus::Funded => EscrowState::Funded,
-            EscrowStatus::Claimed => EscrowState::Claimed,
-            EscrowStatus::Refunded => EscrowState::Refunded,
-        }),
-    )
+    let Some(metadata) = decode_metadata(facts)? else {
+        return Ok(None);
+    };
+    let state = match metadata.status {
+        EscrowStatus::Empty => EscrowState::Empty,
+        EscrowStatus::Funded => EscrowState::Funded,
+        EscrowStatus::Claimed => EscrowState::Claimed,
+        EscrowStatus::Refunded => EscrowState::Refunded,
+        EscrowStatus::XmrClaimAuthorized => {
+            bail!("XMR claim-authorized metadata is not a legacy native escrow state")
+        }
+    };
+    Ok(Some(state))
 }
 
 fn decode_metadata(facts: &OfficialNativeEscrowFacts) -> Result<Option<EscrowMetadata>> {

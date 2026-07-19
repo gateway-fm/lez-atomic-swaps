@@ -2311,15 +2311,24 @@ key through official wallet RPC `generate_from_keys`, and submitted a real
 spend after ten confirmations. That proves official-wallet behavior but is not
 yet exposed as a stable one-command user flow. The current component checkpoint
 also has a twice-reproduced checked guest artifact, a strict eight-method bridge
-client, and exact non-cloneable Monero output observation. It still needs the
-LEZ sidecar/finalized evidence capability, a Stage-B-bound durable one-shot
-claim-partial release, fresh role actors, and both terminal stores before it is
-an atomic happy PoC.
+client, and exact non-cloneable Monero output observation. The authenticated
+sidecar server now registers all eight v3 methods and preserves the legacy v2
+routes. This boundary still fails closed: all seven transaction-building
+methods return typed `Unavailable`
+and the classifier returns only `HistoryUnavailable`. It still needs functional
+LEZ builders/finalized evidence, a Stage-B-bound durable one-shot claim-partial
+release, fresh role actors, and both terminal stores before it is an atomic
+happy PoC.
 
 Reproduce the checked LEZ artifact and focused host boundaries with a fresh run
 ID. The optional shared tool directory below is safe only when it already
 contains the pinned Risc0 3.0.5 tools; omit `LEZ_M4_TOOL_DIR` for a fully
-run-owned cold setup and cleanup:
+run-owned cold setup and cleanup. The separately locked sidecar graph must also
+receive an absolute `RAPIDSNARK_LIB_DIR` containing the already verified v0.0.8
+libraries. Omitting it enters the upstream build-script download and `unzip`
+path; cold network/cache availability and missing archive tooling can therefore
+fail the build before any test runs. Do not treat that implicit path as the
+reproducible gate:
 
 ```sh
 RUN_ID=m4-manual-artifact-20260719a \
@@ -2328,6 +2337,20 @@ LEZ_M4_TOOL_DIR=/tmp/lez-atomic-swaps-tools/risc0-3.0.5 \
 
 cargo test --locked -p lez-bridge-client -p lez-xmr-monero-adapter \
   --all-targets --all-features
+
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+
+cargo test --locked \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --test bridge_asset_v2_routes --test bridge_xmr_v3_routes
+cargo test --locked \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --all-targets --all-features
+cargo clippy --locked \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --all-targets --all-features -- -D warnings
+cargo fmt --manifest-path compat/lez-v0_2-sidecar/Cargo.toml -- --check
+git diff --check
 ```
 
 The artifact run must report ELF SHA-256
@@ -2340,9 +2363,13 @@ need the pinned circuits release, crates.io and locked Git sources, the
 digest-pinned guest-builder image, and Risc0 tool releases; default run-owned
 cleanup reclaimed about 3.49 GiB in the certification runs. The Rust suites use
 no node, RPC, faucet, peer, or public endpoint after dependencies are present.
-They prove the exact host contracts only: 51 bridge-client tests and seven
-Monero-observation tests currently pass. They do not publish a claim partial or
-replace the role-correct swap journey.
+They prove the exact host contracts only: 51 bridge-client tests, seven
+Monero-observation tests, and 134 of 134 standalone sidecar tests currently
+pass. The focused sidecar commands cover both the retained v2 route set and the
+new authenticated v3 route set. The v3 test expects seven typed `Unavailable`
+builder results and one `HistoryUnavailable` classifier result; it does not
+prepare an XMR transaction, publish a claim partial, or replace the role-correct
+swap journey.
 
 The exact safety boundary matters when reviewing intermediate results. The
 Maker claim must reveal Maker share `s_a`, allowing the Taker to combine it with
