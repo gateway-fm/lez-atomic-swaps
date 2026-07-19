@@ -361,7 +361,7 @@ chmod 600 -- "$demo_file"
   printf 'Output demo.mp4\n'
   printf 'Set Width 1280\nSet Height 720\nSet FontSize 20\nSet Framerate 30\n'
   printf 'Set TypingSpeed 1ms\nSet Theme "Catppuccin Frappe"\nSet WindowBar Rings\n'
-  printf 'Type "sh ./demo.sh"\nEnter\nSleep 30s\n'
+  printf 'Type "sh ./demo.sh"\nEnter\nSleep 22s\n'
 } >"$tape_file"
 chmod 600 -- "$tape_file"
 

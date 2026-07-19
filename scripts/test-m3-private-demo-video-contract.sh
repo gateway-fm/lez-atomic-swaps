@@ -147,6 +147,7 @@ for scenario in happy refund concurrent; do
     ([.directions[].role_terminals[].role] | sort == ["maker","maker","taker","taker"])
   ' "$proof" >/dev/null || fail "${scenario} proof contract drifted"
   rg -Fq './demo.sh' "$tape" || fail "${scenario} tape does not execute the role-flow demo"
+  rg -Fq 'Sleep 22s' "$tape" || fail "${scenario} video retains an unsafe idle tail"
   video_manifests+=("$manifest")
   source_manifests+=("$source_manifest")
   source_evidence_files+=("$evidence_file")
