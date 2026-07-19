@@ -115,23 +115,17 @@ final closure gates pass.
 | F8 | Pluggable local and Logos-module C-API price sources | Price-port contract suite; config/CLI mutation E2E; fake and real C-ABI adapter tests including stale/unavailable feeds | Planned M5 |
 | F9 | Headless maker covers configuration, pricing, advertisement, execution, monitoring, and full CLI operation | UJ-007 actual CLI/daemon suite plus restart, history, manual claim/refund, pricing, and advertisement cases | Partial: authenticated create/status and durable alert status/list/ack survive process restart; execution/pricing/advertisement remain |
 
-Current F7 execution update: Run `m3f7compose20260718t` at clean pushed
-`50db397` finalized custom-token initialization, custody creation, and funding
-at LEZ blocks 120, 148, and 170. Maker exact observation and Taker peerless
-lifecycle-aware discovery independently reached revision two, proving the Run S
-scanner fix through the actual-node actor boundary. The subsequent dual-lock
-evidence serializer failed before claims or the reverse direction; exact
-cleanup passed. The serializer is now a directly tested,
-validate-before-publish jq filter and the full CI quality lane is GREEN. Run T
-is bounded RED evidence, not an F7 PoC pass. Run U was deliberately stopped
-after thirteen minutes at the unchanged bootstrap boundary because the
-custom-token runner's ten-second slot was an artificial stable-tip workaround;
-its exact cleanup left no owned runtime resources. ADR 0047 now reads only the
-pinned requested finalized interval, accepts monotonic descendants while still
-rejecting rewind, fork, and identity drift, and restores the one-second local
-cadence. The 128-test sidecar suite, five binary/example tests, strict Clippy,
-and orchestration contract are GREEN. A fresh two-direction terminal run and
-the owner-requested three-repetitions-per-direction custom-token gate remain.
+Current F7 execution update: clean pushed Runs X (`422c72e`), Z (`1555749`),
+AA (`df7ed86`), and AD (`0826dd5`) each completed both actual-node custom-token
+directions at the one-second local cadence. Every direction reached revision
+four with exactly two Bitcoin and four LEZ effects, one Maker second lock, zero
+replay resubmission, zero custody, conserved total 250, direction-correct
+`175/75/0` or `75/175/0` balances, and exact scoped cleanup. Runs X, Z, and AA
+close the requested three-repetitions-per-direction gate; Run AD supplies a
+fourth complete pair and the measured concurrent-startup result. Failed-closed
+Runs Y, AB, and AC count as no repetition. This closes the reproducible private
+local F7 functional and repeatability checkpoint; it does not claim public
+execution, production hardening, or an M3 completion tag.
 
 ## Usability
 
@@ -173,7 +167,7 @@ the owner-requested three-repetitions-per-direction custom-token gate remain.
 |---|---|---|---|
 | S1 | LEZ escrow deployed/tested on testnet 0.2 | Version-pinned deployment manifest and public smoke-test transaction evidence | Partial local deployment GREEN: checked Docker v0.2 ELF `c85055f6...c9d2e`, ImageID/ProgramId `5cf8c5a4...329c1`, generated client, recursive native/token/rollback suites, and fail-closed deployment observation tests pass. Local deployment transaction `bd16808e...733f` is present in finalized block 2582, and both canonical corridor directions used that target. Retained evidence now includes channel, genesis, program, transaction, and containing-block identities; the authorized deployer authenticates those dynamic facts with a separate owner-only HMAC-SHA256 key, and the offline provisioner verifies the tag plus immutable compiled target before atomically emitting one exact runtime identity. The manifest deliberately retains pending public transaction/block fields: the proved local deployment is recorded separately and is not substituted for public evidence. No public deployment evidence exists to provision, and public deployment/smoke actors are not GREEN. Public deployment/smoke evidence is deferred under ADR 0023; Logos-owned upstream disclosures remain production-blocking under ADR 0018. |
 | S2 | Standalone LEZ sequencer E2E is included in CI | Isolated CI job boots sequencer on ephemeral resources and runs guest lifecycle suites | Partial local GREEN: isolated CI builds/checks/deploys the v0.1.2 guest, runs native and two-definition token real-role happy/refund/negative lifecycles through canonical blocks, and gates deterministic recursive costs. The local v0.2 lane separately runs exact Bedrock, non-standalone sequencer, and indexer services; retained evidence proves signed channel onboarding, finalized Vault Claims, checked deployment, and both independent-actor claim directions. Those two corridor runs are private local execution evidence, not proof that the full v0.2 corridor is included in CI. Public deployment remains deferred under ADR 0023. |
-| S3 | Default-branch CI is green | Required checks run format, strict Clippy, workspace tests/docs, traceability, dependencies, strict final-image vulnerability scanning, and isolated E2E | The exact local closure tree and pushed `main` pass the repository gates. This environment has SSH push access but no private Actions API credential, so the remote result is unavailable and not claimed; the tag records that limitation, and any later visible failure requires a corrective commit/tag |
+| S3 | Default-branch CI is green | Required checks run format, strict Clippy, workspace tests/docs, traceability, dependencies, strict final-image vulnerability scanning, and isolated E2E | Repository-local closure gates are GREEN. The exact closure commit/push, an observed default-branch CI result, and the annotated completion tag remain pending; this row does not claim remote CI is green |
 | S4 | Every F/U/R/P hard requirement has a corresponding test | Traceability completeness guard plus test-report manifest rejects missing or skipped requirement IDs | Matrix guard passing; acceptance tests incomplete |
 | S5 | Complete reference integration for every chain | UJ-001/UJ-002/UJ-004 role E2E and runnable reference package for BTC, XMR, and ZEC | Partial across all pairs: ZEC and BTC each have private local happy references in both directions. BTC additionally has actor-owned Maker locks, both ordered two-lock refunds, both absent-maker refunds, both post-reveal survivor continuations, one opposite-direction concurrent pair, the public durable lifecycle SDK boundary, and three replayable private recordings. Arbitrary-N/same-direction scheduling, process-kill/reorg hardening, public live execution, and XMR M4 work remain |
 | S6 | README covers deployment, addresses, prerequisites, and maker/taker CLI/mini-app use | Fresh-machine documentation tests plus link/command validation | Planned incrementally through M6 |
@@ -189,4 +183,4 @@ the owner-requested three-repetitions-per-direction custom-token gate remain.
 
 | ID | Contract | Acceptance evidence | Status / milestone |
 |---|---|---|---|
-| D1 | Happy, abandonment/refund, and concurrent-swap recording for each pair | Nine recordings generated from passing role E2E runs, with commit/testnet/version metadata | BTC M3 recordings and private bundle GREEN: happy `m3record-happy-20260718ag`, refund `m3record-refund-20260718ag`, and concurrent `m3record-concurrent-20260718ag` are replayable mode-`0600` actual-node recordings bound to clean pushed evidence commit `a6eb1ad`, exact passing evidence hashes, Core 31.1 Regtest/LEZ v0.2 isolated identities, zero replay sends, and no public RPC/faucet/funds. Refund covers both ordered timeout legs; concurrent proves simultaneous revision two and disjoint authority. Verifier commit `946208a` sealed the exact three into a mode-`0600`, result-`passed` private bundle with SHA-256 `3d7d7adc12571a610be21a18b746e68cb17311ea1224191fcdcdf1b39a86c7cc`. Other pair recordings remain M4/M7 work; public execution stays deferred under ADR 0023. |
+| D1 | Happy, abandonment/refund, and concurrent-swap recorded demo video for each pair | Nine videos generated from passing role E2E runs, with commit/testnet/version metadata | BTC M3 source evidence GREEN, literal videos pending: happy `m3record-happy-20260718ag`, refund `m3record-refund-20260718ag`, and concurrent `m3record-concurrent-20260718ag` are replayable mode-`0600` actual-node terminal captures bound to clean pushed evidence commit `a6eb1ad`, exact passing evidence hashes, Core 31.1 Regtest/LEZ v0.2 isolated identities, zero replay sends, and no public RPC/faucet/funds. Refund covers both ordered timeout legs; concurrent proves simultaneous revision two and disjoint authority. Verifier commit `946208a` sealed the exact three into a private source bundle with SHA-256 `3d7d7adc12571a610be21a18b746e68cb17311ea1224191fcdcdf1b39a86c7cc`. These source captures are not the required videos. The RED-GREEN private MP4 renderer binds each walkthrough to the source manifest and actual-node packet; all three live MP4s and their bundle remain before BTC D1 is GREEN. Other-pair videos remain M4/M7 work; public execution stays deferred under ADR 0023. |

@@ -110,7 +110,7 @@ sequenceDiagram
         Runner->>Core: TERM then bounded KILL to exact owned session
         Runner->>LEZ: TERM then bounded KILL to exact owned session
         Runner->>Docker: Remove retained exact identities only
-        Runner-->>Operator: Fail; attest only proven absence
+        Runner-->>Operator: Fail and attest only proven absence
     end
 ```
 

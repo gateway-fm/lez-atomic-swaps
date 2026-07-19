@@ -1,8 +1,9 @@
 # Milestone 3 private-local functional review
 
-Status: closure candidate; six M3 outputs and private actual-node evidence are
-GREEN. The exact repository-wide closure gates, clean push, and annotated tag
-remain pending.
+Status: closure candidate under correction. Five outputs and the underlying
+private actual-node evidence are GREEN; the literal D1 three-video deliverable
+is being rendered from that retained evidence. Fresh repository-wide gates,
+the exact push, remote CI, and the annotated tag remain pending.
 
 Review date: 2026-07-18
 
@@ -30,7 +31,7 @@ nonexistent DLC Schnorr vector file.
 | Full-lifecycle LEZ/BTC SDK | Pushed `0c78f3d` exposes the bounded canonical secret-free codec, exact create/CAS store port, role-fixed stored SDK, typed Bitcoin/LEZ ports, both claim/refund directions, restart/replay checks, and a wiring example | [SDK architecture](architecture/0013-sdk-layering.md), [deployment inventory](architecture/deployment-components-and-rpcs.md) |
 | Conformance and swap vectors | Nine focused groups bind official BIP-340/BIP-327 corpora and swap-specific positive/negative adaptor fixtures to immutable checksums and an independent `k256` verifier | [ADR 0050](architecture/0050-map-btc-adaptor-construction-to-security-properties.md), [metrics](milestone-metrics.md) |
 | Bitcoin testnet setup | Pushed `946208a` binds exact Core 31.1 Testnet4 chain/genesis/index readiness to literal-loopback self-hosting or one exact allowlisted HTTPS Basic origin without public I/O | [Testnet4 setup](bitcoin-testnet4-setup.md), [ADR 0051](architecture/0051-bind-bitcoin-testnet4-routes-to-chain-profile.md) |
-| Three BTC recordings | Happy, both ordered refunds, and opposite-direction concurrency were captured from private actual-node runs at evidence commit `a6eb1ad` and sealed by verifier commit `946208a` | [recording procedure](m3-local-poc-operator-guide.md#private-d1-btc-recording-bundle), [traceability D1](requirements-traceability.md) |
+| Three BTC demo videos | Happy, both ordered refunds, and opposite-direction concurrency have hash-bound private actual-node source recordings at evidence commit `a6eb1ad`; the required private MP4 walkthroughs and three-video bundle are pending | [recording and video procedure](m3-local-poc-operator-guide.md#private-d1-btc-recording-bundle), [traceability D1](requirements-traceability.md) |
 | Aumayr/Fournier explanation | Pushed `a0f19ac` maps the implemented nonce, adaptor, tweak/parity, extraction, ordering, and recovery conditions to the two constructions without claiming their proofs transfer automatically | [ADR 0050](architecture/0050-map-btc-adaptor-construction-to-security-properties.md) |
 
 ## User flows and conditional atomicity
@@ -100,18 +101,19 @@ and not shipped as runtime images remain visible report-only scans under the
 documented owner policy; they are not silently waived or represented as
 production-clean.
 
-The tag is not authorized until the final local gates pass on the exact pushed
-closure commit and remote CI is verified when observable. The final results
-will be recorded here before tagging:
+The tag is not authorized until all three private videos and their sealed
+bundle pass, the fresh exact closure gates pass on the resulting tree, that
+commit is pushed, and remote CI is verified when observable. Current results:
 
 | Gate | Closure result |
 | --- | --- |
-| Repository diff, traceability, isolation, action-pin, and CI-hardening policy | pending |
-| Rust format, strict workspace Clippy, all-target tests, and warning-free docs | pending |
-| Cryptographic-vector and Testnet4 focused gates | pending |
-| npm vulnerability and license gates | pending |
-| Rust advisory, ban, license, and source policy | pending |
-| Static GitHub Mermaid compatibility and one exact final render pass | pending |
+| Private D1 MP4s and three-video bundle | pending; the renderer and verifier contract tests are GREEN, but live rendering is deliberately blocked until the implementation is committed on a clean tree |
+| Repository diff, traceability, isolation, action-pin, and CI-hardening policy | prior pass carried; fresh exact-tree pass pending after video-pipeline documentation |
+| Rust format, strict workspace Clippy, all-target tests, and warning-free docs | prior pass carried; fresh exact-tree pass pending |
+| Cryptographic-vector and Testnet4 focused gates | prior pass carried; fresh exact-tree pass pending |
+| npm vulnerability and license gates | prior pass carried; fresh exact-tree pass pending |
+| Rust advisory, ban, license, and source policy | prior pass carried; fresh exact-tree pass pending |
+| Static GitHub Mermaid compatibility and one exact final render pass | prior 148-diagram pass carried; fresh final pass pending after the evidence ADR is added |
 | Exact pushed-commit remote CI, or explicit API-unavailable record | pending |
 
 ## External resources and deferred work
@@ -133,6 +135,13 @@ phases remain later work: adversarial cutoff/refund races, operating-system
 process-kill campaigns, reorg and fee pressure, arbitrary-N and same-direction
 nonce scheduling, production custody, live public execution, monitoring, and
 formal review. They are not missing private-functional M3 outputs.
+
+Current public-provider discovery uses token-in-path or header-key auth shapes
+that the deliberately narrow root-origin Basic adapter does not admit directly.
+Self-hosted Core 31.1 Testnet4 remains actionable; a reviewed translating
+gateway or later adapter work is required for those provider shapes. This is a
+repository-owned later portability item, not a Logos blocker and not part of
+the owner-approved private-local milestone boundary.
 
 `GW-M3-001` remains the nonblocking proposal erratum: the accepted DLC
 Schnorr vector path does not exist, while the implemented replacement evidence

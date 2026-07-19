@@ -202,6 +202,14 @@ agreement:
 Do not reuse the local PoC's deterministic Regtest coinbase fixture or keys on
 Testnet4.
 
+Current discovery examples, last checked 2026-07-18, include
+`https://faucet.testnet4.dev/` and the community list at
+`https://testnet4.dev/resources/`. They are examples, not pinned dependencies
+or endorsements. Availability, identity checks, amount, rate limits, and
+returned transaction correctness have not been certified. Never make a faucet
+a CI prerequisite; independently observe the exact txid and confirmation
+through the selected node.
+
 ### 5. Compose the SDK route
 
 The application loads one role's mode-`0600` Basic credential file and
@@ -262,6 +270,25 @@ HTTPS origin. The client rejects URL credentials, paths, queries, fragments,
 IP literals, localhost, wildcards, explicit ports, mismatches, and Regtest
 pairing. It installs no redirect, automatic-retry, proxy, or failover
 middleware.
+
+The reserved domain is a transport-shape example, not evidence that a current
+public provider is directly compatible. Two current discovery references show
+why admission is explicit:
+
+- QuickNode documents Bitcoin Testnet4, but its normal endpoint places an auth
+  token in the URL path (`https://www.quicknode.com/docs/bitcoin/testnet4`);
+- Xverse documents a Testnet4 RPC under a path with `x-api-key` authentication
+  (`https://docs.xverse.app/sats-connect/bitcoin-provider/testnet4`).
+
+The current adapter intentionally accepts neither shape: it requires one root
+HTTPS DNS origin and file-backed Basic authentication, and readiness also
+requires the exact Core identity plus `getindexinfo`/`txospenderindex` facts.
+An operator may place an independently reviewed, root-origin, Basic-auth
+gateway in front of a provider only if it exposes the exact required method and
+chain profile without changing retry or broadcast semantics. Direct token-path
+or header-key provider authentication is later adapter work, not a Logos
+upstream blocker and not part of the private M3 certification. No listed
+provider was called during M3.
 
 Funding remains separate. Use an operator wallet or faucet, then verify the
 exact confirmed outpoint through the selected route. If a broadcast times out

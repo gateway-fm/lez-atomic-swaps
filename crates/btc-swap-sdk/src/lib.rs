@@ -1,10 +1,9 @@
 //! Bitcoin Taproot protocol adapter for LEZ atomic swaps.
 //!
-//! This first M3 slice owns canonical BIP-341 output and transaction
-//! construction. The current boundary accepts an externally derived aggregate
-//! x-only key and a completed Schnorr signature as canonical bytes. Future
-//! `MuSig2` and adaptor types will remain behind that byte boundary rather than
-//! sharing incompatible curve-library Rust types.
+//! The crate owns canonical BIP-341 output and transaction construction,
+//! role-separated `MuSig2` adaptor signing, and the public durable pair
+//! lifecycle. Its public signing boundary exchanges canonical byte arrays so
+//! curve-library Rust types remain private to the crate.
 
 mod adaptor;
 mod agreement_v1;

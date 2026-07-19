@@ -1050,9 +1050,10 @@ outputs above.
 Status: **progressive private local-devnet PoC complete 2 of 2 through the
 public actor and actual nodes at pushed `origin/main` commit `6ded2f9`; later
 QA, chaos, infosec, public-Testnet, and production-readiness hardening remain
-deferred until owner transition**. All six issue-#112 M3-specific outputs are
-now implemented at the private functional-PoC boundary; synchronized docs and
-the final milestone-wide gate/tag remain active. The pushed claim packet
+deferred until owner transition**. Five issue-#112 M3-specific outputs and the
+underlying actual-node evidence for D1 are implemented at the private
+functional-PoC boundary. The literal three-video D1 output, synchronized docs,
+and the final milestone-wide gate/tag remain active. The pushed claim packet
 certifies both happy directions. Fresh run
 `m3refund-20260716h` now also closes the separate actual-node two-lock
 timeout/refund demo in both directions. Run `m3firstlock-20260716h` closes both
@@ -2742,9 +2743,12 @@ closes the accepted opposite-direction overlapping-swap execution item with
 both swaps simultaneously at revision two before either settlement. The F7
 witnessed custom-token path, public lifecycle SDK boundary,
 official/independent vector gates, Testnet4 route contract, all three BTC
-recordings, and the private D1 bundle are now GREEN. Synchronized documentation
-and the final quality gates remain before the broader owner-selected hardening
-below.
+source recordings, and the private source bundle are GREEN. A literal RFP
+audit found that D1 requires three demo videos, not only replayable terminal
+captures. The network-isolated private MP4 renderer and bundle verifier are
+RED-GREEN; live rendering from the retained evidence, synchronized evidence
+documentation, fresh exact repository gates, push, remote CI audit, and the
+annotated tag remain before the broader owner-selected hardening below.
 
 ### Later owner-selected hardening
 

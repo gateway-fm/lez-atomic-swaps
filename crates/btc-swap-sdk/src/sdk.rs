@@ -1013,9 +1013,9 @@ impl BtcPairSdk {
     /// Creates the deterministic claim-only prepared value used by the claim
     /// methods on [`SwapProtocol`].
     ///
-    /// This deliberately does not implement [`SwapProtocol::prepare`]: the
-    /// common method promises complete pre-lock refund recoverability, while
-    /// this first lifecycle slice has only complete claim preparation.
+    /// This is the claim-only convenience path. [`SwapProtocol::prepare`] is
+    /// implemented separately and requires both claim and recovery effects so
+    /// its prepared value preserves complete pre-lock refund recoverability.
     ///
     /// # Errors
     ///

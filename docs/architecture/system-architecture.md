@@ -1635,7 +1635,7 @@ sequenceDiagram
         Note over Maker,Taker: Required invariant late maker lock admission closes before refund authority
         Taker->>Bitcoin: Refund only funded BTC leg at signed CSV height
         Bitcoin-->>Taker: Exact first lock refund confirmed
-        Note over Maker,Taker: Run H proves refund side and Run D proves timely maker lock admission
+        Note over Maker,Taker: Implementation status Run H proves refund side and Run D proves timely maker lock admission
     else Maker LEZ lock admission succeeds before the cutoff
         Maker->>LezSeq: Initialize and fund maker LEZ leg
         LezIdx-->>Taker: Finalized exact LEZ funding
@@ -1708,7 +1708,7 @@ sequenceDiagram
         Note over Maker,Taker: Required invariant late maker lock admission closes before refund authority
         Taker->>LezSeq: Refund only funded LEZ leg at signed deadline
         LezIdx-->>Taker: Exact first lock refund finalized
-        Note over Maker,Taker: Run H proves refund side and Run D proves timely maker lock admission
+        Note over Maker,Taker: Implementation status Run H proves refund side and Run D proves timely maker lock admission
     else Maker BTC lock admission succeeds before the cutoff
         Maker->>Bitcoin: Fund maker Bitcoin leg
         Bitcoin-->>Taker: Canonical confirmation policy reached

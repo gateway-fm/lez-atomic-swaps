@@ -65,8 +65,11 @@ nonexistent DLC Schnorr-vector reference is separately tracked as
 [Gateway erratum GW-M3-001](docs/proposal-acceptance-errata.md), with no accepted
 replacement yet.
 
-The six issue-#112 M3 outputs are now implemented at the private functional-PoC
-boundary. Pushed `0c78f3d` adds the public canonical durable lifecycle codec,
+Five issue-#112 M3 outputs and all underlying BTC happy/refund/concurrent
+actual-node evidence are implemented at the private functional-PoC boundary.
+The literal D1 three-video output is in closure: replayable source recordings
+are GREEN, while their private MP4 evidence set is pending. Pushed `0c78f3d`
+adds the public canonical durable lifecycle codec,
 CAS store port, typed Bitcoin/LEZ runtime, restart/replay coverage, dedicated
 example, official BIP-340/BIP-327 corpora, and independently checked
 swap-specific adaptor vectors. Pushed `946208a` adds exact Core 31.1 Testnet4
@@ -79,9 +82,9 @@ Aumayr/Fournier mapping and conditional atomicity argument.
 The evidence inventory, claim boundary, remaining hardening, and exact tag rule
 are collected in the [M3 review packet](docs/milestone-3-review.md).
 
-Three owner-private actual-node recordings at evidence commit `a6eb1ad` cover
+Three owner-private actual-node source recordings at evidence commit `a6eb1ad` cover
 happy, both ordered refunds, and the opposite-direction concurrent barrier.
-Their mode-`0600` bundle was sealed by verifier commit `946208a` with SHA-256
+Their mode-`0600` source bundle was sealed by verifier commit `946208a` with SHA-256
 `3d7d7adc12571a610be21a18b746e68cb17311ea1224191fcdcdf1b39a86c7cc`.
 It records Core 31.1 Regtest and private LEZ v0.2, no public RPC/faucet/funds,
 and no certification dependency on an external network. The bundle remains
@@ -1295,13 +1298,13 @@ proof boundaries, private evidence handling, and failure recovery.
 ### Private M3 terminal-recording quick start
 
 Commits `a3c6b21` and `269bbad` provide the fail-closed recorder and complete
-three-scenario bundle verifier. Three live actual-node recordings are GREEN at
+three-scenario bundle verifier. Three live actual-node source recordings are GREEN at
 clean pushed evidence commit `a6eb1ad`; verifier commit `946208a` sealed their
 private bundle. The exact reference run IDs are
 `m3record-happy-20260718ag`, `m3record-refund-20260718ag`, and
 `m3record-concurrent-20260718ag`. The runner's JSON evidence packet is not a
 recording: it is a hash-bound input to the replayable terminal output and timing
-stream.
+stream. They are inputs to, not substitutes for, the RFP's three demo videos.
 
 Run from a clean committed checkout on a Linux host with the M3 runner's Docker,
 Rust/Cargo, LEZ, and native-library prerequisites. The recording layer also
@@ -1377,6 +1380,38 @@ M3_RECORDING_BUNDLE_OUTPUT="$D1_BUNDLE" \
   "$PWD/.e2e/$CONCURRENT_RUN_ID/m3-recordings/concurrent/recording.json"
 test "$(jq -er '.repository_commit' "$D1_BUNDLE")" = "$D1_COMMIT"
 ```
+
+Those source captures are not the literal D1 video deliverable. With the same
+clean checkout, pull the exact MIT-licensed renderer once, generate an animated
+role-flow MP4 from each verified actual-node packet, and seal the three-video
+bundle:
+
+```sh
+export M3_VHS_IMAGE='ghcr.io/charmbracelet/vhs@sha256:9d5fc3dc0c160b0fb1d2212baff07e6bdf3fa9438c504a3237484567302fcf93'
+docker pull "$M3_VHS_IMAGE"
+export D1_VIDEO_ROOT="$PWD/.e2e/m3-private-demo-videos-${D1_STAMP}"
+
+./scripts/render-m3-private-demo-video.sh \
+  "$PWD/.e2e/$HAPPY_RUN_ID/m3-recordings/happy/recording.json" "$D1_VIDEO_ROOT"
+./scripts/render-m3-private-demo-video.sh \
+  "$PWD/.e2e/$REFUND_RUN_ID/m3-recordings/refund/recording.json" "$D1_VIDEO_ROOT"
+./scripts/render-m3-private-demo-video.sh \
+  "$PWD/.e2e/$CONCURRENT_RUN_ID/m3-recordings/concurrent/recording.json" "$D1_VIDEO_ROOT"
+
+M3_PRIVATE_DEMO_VIDEO_BUNDLE_OUTPUT="$D1_VIDEO_ROOT/video-bundle.json" \
+  ./scripts/verify-m3-private-demo-video-bundle.sh \
+  "$D1_VIDEO_ROOT/happy/video.json" \
+  "$D1_VIDEO_ROOT/refund/video.json" \
+  "$D1_VIDEO_ROOT/concurrent/video.json"
+```
+
+Rendering uses the already-pulled digest with no container network, a read-only
+root, dropped capabilities, no-new-privileges, bounded resources, and only the
+private output mounted. The final verifier regenerates the proof from current
+terminal, role, effect, refund, and concurrency packets; re-hashes all inputs;
+and decode-probes every live MP4. Any source or video tamper fails. The image
+pull alone depends on registry/DNS/TLS availability; rendering and milestone
+evidence use no public RPC, faucet, public funds, or chain network.
 
 The bundle JSON is a verifier-produced index, not a recording. Live verification
 rejects fixture/test-contract manifests, a dirty or different current HEAD,

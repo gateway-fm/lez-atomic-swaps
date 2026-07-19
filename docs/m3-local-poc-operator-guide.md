@@ -1626,16 +1626,17 @@ separately confirming that sibling evidence remains private.
 
 ## Private D1 BTC recording bundle
 
-Status: recorder and bundle-verifier tooling is GREEN at pushed commits
+Status: source recorder and bundle-verifier tooling is GREEN at pushed commits
 `a3c6b21` and `269bbad`. Three owner-private live actual-node recordings are
 GREEN at evidence commit `a6eb1ad`: happy
 `m3record-happy-20260718ag`, refund `m3record-refund-20260718ag`, and concurrent
 `m3record-concurrent-20260718ag`. Clean verifier commit `946208a` sealed the
 mode-`0600`, result-`passed` private bundle with SHA-256
 `3d7d7adc12571a610be21a18b746e68cb17311ea1224191fcdcdf1b39a86c7cc`.
-This section reproduces those three BTC artifacts with fresh IDs; it does not
-substitute a JSON packet for a recording or claim the remaining ZEC/XMR
-recordings.
+These are replayable source captures, not the literal D1 demo videos. This
+section reproduces the captures with fresh IDs and then renders one private MP4
+per scenario from their hash-bound actual-node packets. It does not substitute
+a JSON packet for a video or claim the remaining ZEC/XMR videos.
 
 ### Preflight and one-commit rule
 
@@ -1765,6 +1766,72 @@ checks replayability, and revalidates the exact scenario-to-packet mapping. It
 also requires a clean current `HEAD` equal to the recorded commit. Only then
 does it atomically create the mode-`0600` bundle index; an existing output path
 is never overwritten.
+
+### Render and verify the three private demo videos
+
+Video rendering does not rerun either chain. It validates and re-hashes each
+source recording and actual-node packet, then creates a short operator
+walkthrough of the nodes, both role directions, effects, terminal state,
+scenario-specific behavior, and the conditional atomicity boundary. The
+walkthrough is therefore a human-viewable projection of retained actual-node
+evidence, not a synthetic claim that the renderer executed a swap.
+
+Install the exact MIT-licensed VHS 0.11.0 image by digest before returning to
+the clean evidence checkout:
+
+~~~sh
+export M3_VHS_IMAGE='ghcr.io/charmbracelet/vhs@sha256:9d5fc3dc0c160b0fb1d2212baff07e6bdf3fa9438c504a3237484567302fcf93'
+docker pull "$M3_VHS_IMAGE"
+docker image inspect "$M3_VHS_IMAGE" >/dev/null
+~~~
+
+The pull is an external setup dependency and can fail because of registry,
+DNS, TLS, or rate-limit availability. Rendering itself uses the already-pulled
+digest with `--network none`, a read-only root, no Linux capabilities, no-new-
+privileges, bounded PIDs/memory/CPU, and only the selected private output
+directory mounted. It calls no RPC, faucet, peer, or public chain.
+
+From the same clean checkout, render all three manifests and seal the video
+bundle:
+
+~~~sh
+unset M3_PRIVATE_DEMO_VIDEO_TESTING M3_PRIVATE_DEMO_VIDEO_TEST_RENDERER
+unset M3_PRIVATE_DEMO_VIDEO_BUNDLE_TESTING
+export D1_VIDEO_ROOT="$PWD/.e2e/m3-private-demo-videos-${D1_STAMP}"
+
+./scripts/render-m3-private-demo-video.sh \
+  "$PWD/.e2e/$HAPPY_RUN_ID/m3-recordings/happy/recording.json" \
+  "$D1_VIDEO_ROOT"
+./scripts/render-m3-private-demo-video.sh \
+  "$PWD/.e2e/$REFUND_RUN_ID/m3-recordings/refund/recording.json" \
+  "$D1_VIDEO_ROOT"
+./scripts/render-m3-private-demo-video.sh \
+  "$PWD/.e2e/$CONCURRENT_RUN_ID/m3-recordings/concurrent/recording.json" \
+  "$D1_VIDEO_ROOT"
+
+export D1_VIDEO_BUNDLE="$D1_VIDEO_ROOT/video-bundle.json"
+M3_PRIVATE_DEMO_VIDEO_BUNDLE_OUTPUT="$D1_VIDEO_BUNDLE" \
+  ./scripts/verify-m3-private-demo-video-bundle.sh \
+  "$D1_VIDEO_ROOT/happy/video.json" \
+  "$D1_VIDEO_ROOT/refund/video.json" \
+  "$D1_VIDEO_ROOT/concurrent/video.json"
+jq -e '.result == "passed" and (.videos | length == 3)' "$D1_VIDEO_BUNDLE"
+~~~
+
+Each scenario directory is mode `0700`; `demo.mp4`, `video.json`,
+`walkthrough.txt`, `demo.sh`, `proof.json`, and `demo.tape` are mode `0600`.
+Each manifest binds the
+source and renderer commits, source manifest/terminal/timing/evidence hashes,
+exact Core/LEZ identities, renderer image digest, MP4 hash/size/duration, and
+external-resource nonuse. The source proof validates independent Maker/Taker
+terminals and exact effect ownership; refund proof additionally binds no
+cooperative claim, maturity/deadline satisfaction, and the earlier Maker then
+later Taker order. The final verifier regenerates that proof, re-hashes every artifact, rejects
+duplicates, mixed commits/networks, tampering, unsafe modes, missing source
+evidence, dirty `HEAD`, and overwrite, then atomically emits one private mode-
+`0600` bundle. Keep the complete output private; the videos summarize role and
+effect evidence but their source `.e2e` trees can contain signer and actor
+state.
 
 ### Runtime resources, duration, and failure diagnostics
 

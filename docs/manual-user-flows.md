@@ -710,15 +710,19 @@ install exact Core 31.1, synchronize a self-hosted node, create/fund a separate
 operator wallet, or compose an approved HTTPS route. Those steps use external
 resources and are not local certification prerequisites.
 
-To repeat the actual-node D1 artifacts, use the
+To repeat the actual-node D1 artifacts and produce the literal videos, use the
 [private recording procedure](../README.md#private-m3-terminal-recording-quick-start)
 with three fresh unique run IDs. The reference private bundle binds happy,
 refund, and concurrent recordings at evidence commit `a6eb1ad` to verifier
 commit `946208a`, is mode `0600`, and has SHA-256
 `3d7d7adc12571a610be21a18b746e68cb17311ea1224191fcdcdf1b39a86c7cc`.
 Never publish the surrounding `.e2e` roots: they contain actor-private
-state. The verifier's output is a hash index, not a replacement for the three
-replayable terminal streams.
+state. The source verifier's output is a hash index, not a replacement for the
+three replayable terminal streams. After those pass, follow the operator
+guide's `Render and verify the three private demo videos` subsection. It uses
+the digest-pinned VHS container with network disabled and emits one mode-
+`0600` MP4 per scenario plus a sealed three-video bundle; no chain rerun or
+public resource is involved.
 
 ## Can I run the complete M3 happy path myself?
 
