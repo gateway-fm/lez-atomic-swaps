@@ -72,8 +72,10 @@ recordings and their private MP4 projections are GREEN; the sealed video bundle
 has SHA-256
 `7697a27c80c8f90856d6592051805a8923fe564aa01b0dff4109bd5c5f101ba8`.
 The 2026-07-19 local closure run passed the exact lint, test, vulnerability,
-license, source, isolation, traceability, and 150-diagram render gates. The
-closure-evidence push, remote CI observation, and milestone tag remain. Pushed
+license, source, isolation, traceability, and 150-diagram render gates.
+`m3-complete` now certifies exact closure commit `f7fb250`. The private
+Actions result was not observable because this environment has SSH push access
+but no Actions API identity; the annotation makes no remote-green claim. Pushed
 `0c78f3d`
 adds the public canonical durable lifecycle codec,
 CAS store port, typed Bitcoin/LEZ runtime, restart/replay coverage, dedicated
@@ -684,8 +686,8 @@ setup contract, vector, recording, and construction-mapping outputs at the
 private functional boundary. It does **not** claim arbitrary-N/same-direction
 nonce scheduling, live Testnet4 execution, production key custody,
 QA/chaos/infosec, formal review, production readiness, or accepted disposition
-of GW-M3-001. There is no `m3-complete` tag until the exact final gates
-pass. CI
+of GW-M3-001. The exact private-functional boundary is certified by
+`m3-complete`; later hardening remains outside that tag. CI
 runs the same P2TR funding/claim
 composition and
 fail-hard scans

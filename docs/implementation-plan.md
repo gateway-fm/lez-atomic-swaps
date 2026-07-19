@@ -1053,8 +1053,9 @@ QA, chaos, infosec, public-Testnet, and production-readiness hardening remain
 deferred until owner transition**. All six issue-#112 M3-specific outputs,
 including the literal three-video D1 output, and the underlying actual-node
 evidence are implemented at the private functional-PoC boundary. The private
-video bundle is GREEN at `7697a27c...f101ba8`; synchronized docs and the final
-milestone-wide gate/tag remain active. The pushed claim packet
+video bundle is GREEN at `7697a27c...f101ba8`; exact closure commit
+`f7fb250f...dcbb2` is certified and published under `m3-complete`. The
+pushed claim packet
 certifies both happy directions. Fresh run
 `m3refund-20260716h` now also closes the separate actual-node two-lock
 timeout/refund demo in both directions. Run `m3firstlock-20260716h` closes both
@@ -2199,12 +2200,19 @@ Active M3 refund critical path:
   cargo-deny graphs, conservative GitHub parsing, and exact rendering of all
   150 diagrams passed. The remote Trivy and actual-node jobs remain mandatory
   on the pushed closure commit;
+- [x] publish exact closure commit
+  `f7fb250f0491b9c33ed56f2ee02cdbc5ea5dcbb2` and annotated
+  `m3-complete`. SSH verified `origin/main` and the peeled remote tag at that
+  commit. The private Actions API was unavailable because no API identity is
+  configured, so the tag annotation records that fact and makes no remote-green
+  claim;
 - [ ] after the owner enters later hardening, add restart, reorg, fee, and chaos
   cases beyond the reproducible functional PoC boundary.
 
-Repository-controlled open work, not an external blocker, is now the
-closure-evidence push, remote CI observation, and annotated tag. The D1 bundle,
-durable public lifecycle codec/store/typed-port composition,
+No repository-controlled private-functional M3 closure item remains. Later
+owner-selected QA, chaos, information-security, public execution, and
+production-readiness phases remain separate work. The D1 bundle, durable public
+lifecycle codec/store/typed-port composition,
 official and independent vectors, and self-hosted/exact-HTTPS Testnet4
 configuration contract are GREEN in pushed commits `0c78f3d` and `946208a`.
 The fresh native happy, refund, and overlap recordings plus their three
@@ -2767,9 +2775,11 @@ audit found that D1 requires three demo videos, not only replayable terminal
 captures. The RED-GREEN network-isolated renderer/verifier produced all three
 private MP4s from retained actual-node evidence at commit `846ba56`; regenerated
 source checks, full decode, sampled scenario/atomicity/tail frames, and sealed
-bundle `7697a27c...f101ba8` are GREEN. Synchronized evidence documentation,
-fresh exact repository gates, push, remote CI audit, and the annotated tag
-remain before the broader owner-selected hardening below.
+bundle `7697a27c...f101ba8` are GREEN. Synchronized evidence documentation and
+fresh exact repository gates passed; exact commit `f7fb250f...dcbb2` and
+annotated `m3-complete` are published. The private Actions API was unavailable
+and the tag makes no remote-green claim. Broader owner-selected hardening
+remains below.
 
 ### Later owner-selected hardening
 

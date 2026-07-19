@@ -1,10 +1,13 @@
 # Milestone 3 private-local functional review
 
-Status: closure candidate. All six issue-#112 outputs, including the literal
+Status: certified private-local functional PoC under `m3-complete`. All six
+issue-#112 outputs, including the literal
 RFP D1 three-video deliverable, and the underlying private actual-node evidence
 are GREEN.
-The fresh repository-wide local gates are GREEN. The closure-evidence push,
-remote CI, and the annotated tag remain pending.
+The fresh repository-wide local gates are GREEN. Exact closure commit
+`f7fb250f0491b9c33ed56f2ee02cdbc5ea5dcbb2` and the annotated tag are
+published. The private Actions API was unavailable; no remote-green claim is
+made.
 
 Review date: 2026-07-19
 
@@ -120,7 +123,7 @@ and not shipped as runtime images remain visible report-only scans under the
 documented owner policy; they are not silently waived or represented as
 production-clean.
 
-The tag is not authorized until all three private videos and their sealed
+The tag was not authorized until all three private videos and their sealed
 bundle pass, the fresh exact closure gates pass on the resulting tree, that
 commit is pushed, and remote CI is verified when observable. Current results:
 
@@ -133,7 +136,7 @@ commit is pushed, and remote CI is verified when observable. Current results:
 | npm vulnerability and license gates | GREEN on 2026-07-19: exact lock installed in the isolated browser cache, `npm audit --audit-level=moderate` found zero vulnerabilities, and the license allowlist passed |
 | Rust advisory, ban, license, and source policy | GREEN on 2026-07-19: all 11 `cargo-deny 0.19.9` graphs passed all four checks. Only policy-accepted duplicate/unused-policy and version-scoped upstream SPEL license-file warnings remain |
 | Static GitHub Mermaid compatibility and one exact final render pass | GREEN on 2026-07-19: all 150 diagrams passed the conservative GitHub contract and exact Chromium rendering |
-| Exact pushed-commit remote CI, or explicit API-unavailable record | pending |
+| Exact pushed-commit remote CI, or explicit API-unavailable record | API unavailable: the public repository endpoint was inaccessible and `gh` had no API identity. SSH verified `origin/main` and peeled remote `m3-complete` at exact commit `f7fb250f...dcbb2`; the tag annotation records the limitation and makes no remote-green claim |
 
 The first Node install attempt found a stale shared Puppeteer directory with no
 Chrome executable. It changed no tracked file and was not treated as a code
