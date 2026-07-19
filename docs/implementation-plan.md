@@ -2191,16 +2191,20 @@ Active M3 refund critical path:
   both-direction, scenario/atomicity, and stable-tail frames. Their mode-`0600`
   bundle is `7697a27c...f101ba8` and records no public RPC, faucet, public
   funds, or external-network success dependency;
-- [ ] synchronize retained secret-safe evidence, manual reproduction,
+- [x] synchronize retained secret-safe evidence, manual reproduction,
   architecture/atomicity diagrams, traceability, and the milestone packet,
   then run the exact lint, test, vulnerability, license, source, security, and
-  static Mermaid gates before any M3 completion tag;
+  Mermaid gates before any M3 completion tag. On 2026-07-19 the pinned quality
+  runner, Rust/Node/dependency/security/isolation/traceability gates, all 11
+  cargo-deny graphs, conservative GitHub parsing, and exact rendering of all
+  150 diagrams passed. The remote Trivy and actual-node jobs remain mandatory
+  on the pushed closure commit;
 - [ ] after the owner enters later hardening, add restart, reorg, fee, and chaos
   cases beyond the reproducible functional PoC boundary.
 
 Repository-controlled open work, not an external blocker, is now the
-synchronized milestone evidence/documentation pass and the final complete gate
-run. The D1 bundle, durable public lifecycle codec/store/typed-port composition,
+closure-evidence push, remote CI observation, and annotated tag. The D1 bundle,
+durable public lifecycle codec/store/typed-port composition,
 official and independent vectors, and self-hosted/exact-HTTPS Testnet4
 configuration contract are GREEN in pushed commits `0c78f3d` and `946208a`.
 The fresh native happy, refund, and overlap recordings plus their three

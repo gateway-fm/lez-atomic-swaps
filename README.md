@@ -71,8 +71,10 @@ evidence are implemented at the private functional-PoC boundary. The source
 recordings and their private MP4 projections are GREEN; the sealed video bundle
 has SHA-256
 `7697a27c80c8f90856d6592051805a8923fe564aa01b0dff4109bd5c5f101ba8`.
-Fresh exact-tree gates, push, remote CI observation, and the milestone tag
-remain. Pushed `0c78f3d`
+The 2026-07-19 local closure run passed the exact lint, test, vulnerability,
+license, source, isolation, traceability, and 150-diagram render gates. The
+closure-evidence push, remote CI observation, and milestone tag remain. Pushed
+`0c78f3d`
 adds the public canonical durable lifecycle codec,
 CAS store port, typed Bitcoin/LEZ runtime, restart/replay coverage, dedicated
 example, official BIP-340/BIP-327 corpora, and independently checked

@@ -3,8 +3,8 @@
 Status: closure candidate. All six issue-#112 outputs, including the literal
 RFP D1 three-video deliverable, and the underlying private actual-node evidence
 are GREEN.
-Fresh repository-wide gates, the exact push, remote CI, and the annotated tag
-remain pending.
+The fresh repository-wide local gates are GREEN. The closure-evidence push,
+remote CI, and the annotated tag remain pending.
 
 Review date: 2026-07-19
 
@@ -127,13 +127,20 @@ commit is pushed, and remote CI is verified when observable. Current results:
 | Gate | Closure result |
 | --- | --- |
 | Private D1 MP4s and three-video bundle | GREEN; 3 of 3 mode-`0600` MP4s pass regenerated source verification, complete decode, frame sampling, and sealed bundle verification at `7697a27c...f101ba8` |
-| Repository diff, traceability, isolation, action-pin, and CI-hardening policy | prior pass carried; fresh exact-tree pass pending after video-pipeline documentation |
-| Rust format, strict workspace Clippy, all-target tests, and warning-free docs | prior pass carried; fresh exact-tree pass pending |
-| Cryptographic-vector and Testnet4 focused gates | prior pass carried; fresh exact-tree pass pending |
-| npm vulnerability and license gates | prior pass carried; fresh exact-tree pass pending |
-| Rust advisory, ban, license, and source policy | prior pass carried; fresh exact-tree pass pending |
-| Static GitHub Mermaid compatibility and one exact final render pass | prior 148-diagram pass carried; fresh final pass pending after the evidence ADR is added |
+| Repository diff, traceability, isolation, action-pin, and CI-hardening policy | GREEN on 2026-07-19: clean diff, traceability, repository/Core/LEZ isolation, pinned Actions, spin remediation, and fail-hard CI security policy passed |
+| Rust format, strict workspace Clippy, all-target tests, and warning-free docs | GREEN on 2026-07-19. The root all-target matrix completed with zero failures; its declared Zebra Docker case remains ignored here and separately required by the remote actual-node job |
+| Cryptographic-vector and Testnet4 focused gates | GREEN on 2026-07-19: 9 of 9 BIP-340/BIP-327/adaptor groups plus 5 of 5 nonconnecting Testnet4 route/profile cases passed |
+| npm vulnerability and license gates | GREEN on 2026-07-19: exact lock installed in the isolated browser cache, `npm audit --audit-level=moderate` found zero vulnerabilities, and the license allowlist passed |
+| Rust advisory, ban, license, and source policy | GREEN on 2026-07-19: all 11 `cargo-deny 0.19.9` graphs passed all four checks. Only policy-accepted duplicate/unused-policy and version-scoped upstream SPEL license-file warnings remain |
+| Static GitHub Mermaid compatibility and one exact final render pass | GREEN on 2026-07-19: all 150 diagrams passed the conservative GitHub contract and exact Chromium rendering |
 | Exact pushed-commit remote CI, or explicit API-unavailable record | pending |
+
+The first Node install attempt found a stale shared Puppeteer directory with no
+Chrome executable. It changed no tracked file and was not treated as a code
+pass. The exact lock then installed successfully with
+`PUPPETEER_CACHE_DIR=/tmp/lez-mermaid-browser`; that isolated cache also
+rendered all 150 diagrams. The local closure run does not substitute for the
+remote CI's Trivy and actual-node jobs.
 
 ## External resources and deferred work
 
