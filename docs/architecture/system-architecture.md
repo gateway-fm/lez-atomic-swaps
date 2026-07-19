@@ -2125,6 +2125,13 @@ flowchart LR
     XmrActor["Fresh XMR role actors"] -.-> RoleRunner
     XmrActor -.-> XmrSdk
     XmrActor -.-> BridgeClient["Strict v3 bridge client<br/>eight methods green"]
+    XmrActor -.-> ClaimAuthorization["Taker Stage-B claim authorization<br/>typed adapter component green"]
+    XmrSdk --> ClaimAuthorization
+    ClaimAuthorization -->|exactly one authenticated success| BridgeClient
+    BridgeClient --> AuthMock["Authenticated literal-loopback mock<br/>component E2E only"]
+    BridgeClient -.-> ClaimBuilder["Official claim-authorization builder<br/>typed Unavailable"]
+    ClaimAuthorization --> ClaimEvidence["Private-field non-Clone authorization evidence"]
+    ClaimEvidence -.-> ReleaseStore
     BridgeClient --> BridgeRoutes["Authenticated sidecar v3 routes<br/>all eight registered"]
     BridgeRoutes --> NativePrepare["Taker native-XMR escrow preparation<br/>exact durable initialize and fund pair green"]
     NativePrepare --> Reservation[("Owner-only exact transaction reservation<br/>restart replay green; no submit authority")]
@@ -2151,6 +2158,38 @@ flowchart LR
     WalletRpc --> Monerod["Official monerod Regtest"]
     WalletRpc --> Topology
     Monerod --> Topology
+```
+
+The completed adapter capability has a narrower component sequence than the
+still-pending actor flow:
+
+```mermaid
+sequenceDiagram
+    actor Taker
+    participant Adapter as Typed Stage-B adapter
+    participant Client as Authenticated BridgeClient
+    participant Mock as Literal-loopback mock
+    participant Sidecar as Official sidecar builder
+
+    Taker->>Adapter: Agreement activation binding and committed partial
+    Adapter->>Adapter: Require Taker and re-derive exact Stage B
+    Adapter->>Adapter: Verify partial channel genesis run role and runtime
+    alt Any pre-wire binding differs
+        Adapter-->>Taker: Typed rejection
+        Note over Adapter,Client: Zero authenticated calls
+    else Every pre-wire gate passes
+        Adapter->>Client: Exact authorization request
+        Client->>Mock: One authenticated request
+        alt Exact context terms and strict transaction wire
+            Mock-->>Client: Prepared authorization
+            Client-->>Adapter: Validated result
+            Adapter-->>Taker: Private-field non-Clone evidence
+        else Context terms or empty bytes drift
+            Mock-->>Client: Invalid response
+            Client-->>Adapter: Fail closed after one call
+        end
+        Note over Mock,Sidecar: Mock is test evidence and official builder remains Unavailable
+    end
 ```
 
 <!-- atomic-sequence: lez-xmr/taker-sells-lez -->
@@ -2275,15 +2314,19 @@ chain, daemon/target/foreign-wallet origins, correct-target and foreign Digest
 authentication, exact cross-credential HTTP 401, bounded 64 KiB typed
 `get_info`/`get_connections`, offline fakechain, `untrusted == false`, zero
 peers, empty connections, and typed height-zero genesis. Output observations
-retain daemon/wallet origins for cross-binding. The main-process LEZ
-first-lock boundary is also
-component-green: its production constructor binds validated Stage A and Stage B,
-its pure Taker-only gate rejects the wrong role before transport, and only the
-concrete authenticated `BridgeClient` plus a fully revalidated exact finalized
-`Fund` response can mint its private-field, non-`Clone` capability. Its 6 of 6
-focused tests and all 89 adapter package tests pass with strict Clippy, strict
-Rustdoc, and the compile-fail non-`Clone` doctest. Those focused tests use the
-canonical protocol fixture and do not claim a full real Stage-B fixture. The
+retain daemon/wallet origins for cross-binding. The main-process LEZ adapter has two component-green Taker capabilities. The
+first-lock boundary binds validated Stage A and Stage B and mints private-field
+non-`Clone` finalized-`Fund` evidence only through the concrete authenticated
+client. The claim-authorization boundary can be minted only by
+`LezBridgeAdapter<BridgeClient>` after it re-derives and compares exact Stage B,
+verifies the committed partial before wire, and binds signed channel, genesis,
+and runtime plus the client run, role, and runtime. Success makes exactly one
+authenticated call; wrong partial, Stage B, binding, run, role, or runtime makes
+zero; wrong response context, terms, or empty bytes makes one then fails closed.
+The private-field result is non-`Clone`. All 93 adapter tests, 3 authenticated
+cases, 2 doctests including compile-fail proofs, and strict Clippy, Rustdoc,
+formatting, and diff checks pass. The test server is an authenticated literal-loopback mock. The official sidecar builder is still `Unavailable`, and valid
+prepared-transaction semantics are trusted to it rather than locally ABI-decoded. The
 authenticated eight-route sidecar server boundary now includes one real Taker
 preparation path. `prepare_native_xmr_escrow_v3` derives the exact generated-v0.2
 `InitializeNativeXmr` and `FundNative` messages, binds the derived PDAs, complete
@@ -2317,7 +2360,8 @@ one mode-`0700` directory and mode-`0600` canonical journal, no
 backup/restore or clone, and no hostile same-UID WAL/SHM race. AEAD and HMAC do
 not prevent rollback of an older valid journal.
 
-Submission authority, the remaining builders and scanners, actual-chain
+The typed main-process claim-authorization capability is not submission or
+journal authority. The official builder, remaining builders and scanners, actual-chain
 trusted finalized LEZ capability, typed Stage-B issuer, consuming
 publisher/outcome and definitive-absence handling, role actors, and composed
 E2E remain pending. The storage tests do not establish live replay prevention

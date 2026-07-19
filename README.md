@@ -75,6 +75,19 @@ is trait-backed with a synthetic finalized indexer, typed failure cases, and
 zero sequencer sends. The complete sidecar suite passes 137 of 137 with strict
 Clippy. This is preparation and synthetic classification evidence, not
 submission, actual local-devnet classification, or actual-chain mutation. The
+main-process adapter now also exposes a Taker-only typed Stage-B
+claim-authorization boundary. Only `LezBridgeAdapter<BridgeClient>` can mint the
+private-field, non-`Clone` `PreparedXmrClaimAuthorizationEvidenceV3`; it
+re-derives and compares exact Stage B, verifies the committed partial and signed
+channel/genesis/runtime before wire, and relies on the client run/role/runtime
+binding. Authenticated success makes exactly one call, every wrong pre-wire
+binding makes zero, and wrong response context, terms, or empty bytes fails
+closed after one. The adapter package passes 93 of 93 tests, its authenticated
+matrix 3 of 3, and its two doctests include the compile-fail non-`Clone` proof;
+strict Clippy, Rustdoc, formatting, and diff gates are green. The server in this
+test is an authenticated literal-loopback mock with zero external resources.
+The official sidecar builder remains typed `Unavailable`; valid transaction
+semantics are trusted to that authenticated builder rather than locally ABI-decoded, and no journal wiring, actual-node effect, or claim PoC is claimed. The
 observation
 is deliberately not claim-partial release authority. The one-command topology
 runner starts one offline
@@ -107,8 +120,9 @@ RUN_ID=m4-readme-monero-20260719a ./scripts/run-monero-e2e.sh
 Measured run `m4-monero-poc-20260719c` passed in 53 seconds before cleanup
 with no public RPC, peer, faucet, public funds, stagenet, or external finality
 service. This is infrastructure evidence, not an atomic swap: LEZ submission,
-the remaining sidecar builders, actual-local-indexer classification and finalized
-LEZ capability, Stage-B-bound durable one-shot XMR release, exact claim/refund
+the official claim-authorization builder and remaining sidecar builders,
+actual-local-indexer classification and finalized LEZ capability, journal-
+bound consuming one-shot XMR release, exact claim/refund
 adaptation, and fresh terminal role actors remain the next happy-path slice.
 The route-boundary checkpoint includes 20 of 20 scoped planner/route regressions
 plus the final three XMR tests, strict Clippy, formatting, and diff checks. The
@@ -1372,8 +1386,7 @@ owner-private because it also retains credentials, keys, signed transactions,
 and actor/signer state; publish only separately reviewed secret-safe summaries.
 
 Use a never-before-used 8–48 character lowercase run ID. The runner refuses
-pre-existing run roots or same-ID Docker resources, uses dynamic literal-
-loopback RPC ports, defaults to sequential directions, and uses the explicit
+pre-existing run roots or same-ID Docker resources, uses dynamic literal-loopback RPC ports, defaults to sequential directions, and uses the explicit
 `M3_ACTOR_POC_SCHEDULE=overlap` revision-two barrier only when selected. It
 cleans only captured exact IDs on success or failure. Its root and sidecar builds are
 offline by design; populate their pinned caches before starting. Core release

@@ -2329,7 +2329,13 @@ Taker-only exact-`Fund` classifier now validates the durable prepared target
 before indexer reads, gates `Found` on canonical finalized transaction plus
 metadata/custody and candidate/tip/window repins, preserves typed failures, and
 returns every missing case as `Uncertain`, never `Absent`. Its focused E2E is
-trait-backed with a synthetic finalized indexer and zero sends. Submission,
+trait-backed with a synthetic finalized indexer and zero sends. The concrete
+main-process adapter also has a Taker-only Stage-B claim-authorization
+capability. It re-derives exact Stage B, verifies the committed partial and
+signed runtime before wire, and mints private-field non-`Clone` evidence only
+after one authenticated success. Its literal-loopback server is a mock; the
+official sidecar builder remains `Unavailable`, and valid prepared-transaction
+semantics are trusted to that authenticated builder rather than locally ABI-decoded. Submission,
 actual-local-indexer evidence, Stage-B-bound durable
 one-shot claim-partial release, fresh role actors, and both terminal stores are
 still required before an atomic happy PoC.
@@ -2351,6 +2357,16 @@ LEZ_M4_TOOL_DIR=/tmp/lez-atomic-swaps-tools/risc0-3.0.5 \
 
 cargo test --locked -p lez-bridge-client -p lez-xmr-monero-adapter \
   --all-targets --all-features
+
+cargo test --locked -p lez-bridge-adapter \
+  --test xmr_claim_authorization_v3_authenticated --all-features
+cargo test --locked -p lez-bridge-adapter --all-targets --all-features
+cargo test --locked -p lez-bridge-adapter --doc --all-features
+cargo clippy --locked -p lez-bridge-adapter \
+  --all-targets --all-features -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --locked -p lez-bridge-adapter \
+  --no-deps --all-features
+cargo fmt --manifest-path crates/lez-bridge-adapter/Cargo.toml --all -- --check
 
 export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
 (
@@ -2383,6 +2399,20 @@ cargo clippy --locked \
 cargo fmt --manifest-path compat/lez-v0_2-sidecar/Cargo.toml -- --check
 git diff --check
 ```
+
+The focused authorization command must report 3 of 3 authenticated tests. A
+successful exact Stage-B request makes one authenticated route call and returns
+the exact private-field non-`Clone` evidence. Wrong partial, Stage B, binding,
+run, role, or runtime makes zero calls. Wrong response context, terms, or empty
+transaction bytes makes one call and then fails closed. The package command
+must report 93 of 93 tests, and the doctest command must report 2 of 2 including
+the compile-fail non-`Clone` contract; strict Clippy, Rustdoc, formatting, and
+diff hygiene must remain green. The server is an in-process authenticated
+literal-loopback mock. It uses no chain node, external RPC, peer, faucet, public
+fund, or finality service. The official sidecar builder remains typed
+`Unavailable`, the adapter does not independently ABI-decode valid transaction
+semantics, and these tests prove no journal wiring, actual-node effect, or claim
+PoC.
 
 The focused classifier command must report `running 1 test`,
 `authenticated_exact_persisted_fund_requires_stable_finalized_history ... ok`,

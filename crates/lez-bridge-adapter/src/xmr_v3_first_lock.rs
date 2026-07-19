@@ -29,6 +29,8 @@ use crate::LezBridgeAdapter;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 pub struct XmrLezBridgeBindingV3 {
+    channel_id: Hex32,
+    genesis_block_hash: Hex32,
     terms: XmrNativeEscrowTermsV3,
 }
 
@@ -82,12 +84,32 @@ impl XmrLezBridgeBindingV3 {
             punish_message_hash: Hex32::from_bytes(plan.punish_message_hash()),
         })
         .map_err(XmrLezBridgeBindingV3Error::Protocol)?;
-        Ok(Self { terms })
+        Ok(Self {
+            channel_id: Hex32::from_bytes(plan.channel_id()),
+            genesis_block_hash: Hex32::from_bytes(plan.genesis_hash()),
+            terms,
+        })
     }
 
     /// Complete standalone v3 terms sent to the dedicated sidecar.
     pub const fn terms(&self) -> XmrNativeEscrowTermsV3 {
         self.terms
+    }
+
+    pub(crate) fn validate_runtime_binding(
+        &self,
+        context: &MessageContext,
+        runtime: &RuntimeDescriptor,
+    ) -> Result<(), ProtocolValueError> {
+        self.terms.validate_runtime_binding(context, runtime)?;
+        if runtime.channel_id != self.channel_id
+            || runtime.genesis_block_hash != self.genesis_block_hash
+        {
+            return Err(ProtocolValueError::XmrFactsMismatch(
+                "Stage-B runtime identity",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -260,7 +282,6 @@ fn build_first_lock_request(
     }
     let context = MessageContext::new(run_id.clone(), request_id, bridge_participant(observer));
     binding
-        .terms
         .validate_runtime_binding(&context, runtime)
         .map_err(FinalizedXmrLezFirstLockError::Binding)?;
     Ok(ClassifyFinalizedNativeXmrEffectV3Request::new(
@@ -398,7 +419,11 @@ mod tests {
     }
 
     fn binding() -> XmrLezBridgeBindingV3 {
-        XmrLezBridgeBindingV3 { terms: terms(42) }
+        XmrLezBridgeBindingV3 {
+            channel_id: h(41),
+            genesis_block_hash: h(42),
+            terms: terms(42),
+        }
     }
 
     fn run_id() -> RunId {

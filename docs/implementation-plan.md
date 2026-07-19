@@ -2877,15 +2877,20 @@ prepared target before any indexer read, authenticates canonical finalized
 transaction plus metadata/custody facts, re-pins the candidate, tip, and window
 end, and returns missing as `Uncertain`, never `Absent`. Its focused E2E uses a
 synthetic trait-backed finalized indexer and zero sends; the complete sidecar
-suite passes 137 of 137 with strict Clippy. The main-process first-lock
-adapter is separately component-green:
-its only public binding constructor derives exact v3 terms from validated Stage A
-and Stage B, a pure Taker-only gate rejects the wrong observer before transport,
-and the concrete authenticated `BridgeClient` can mint a private-field,
-non-`Clone` capability only after revalidating one exact finalized `Fund`
-response. Six focused tests, all 89 adapter package tests, strict Clippy, strict
-Rustdoc, and the compile-fail non-`Clone` doctest pass. These tests use the
-canonical protocol fixture; they do not add a full real Stage-B fixture test.
+suite passes 137 of 137 with strict Clippy. The main-process adapter is separately component-green. Its first-lock boundary
+derives exact v3 terms from validated Stage A and Stage B, rejects a non-Taker
+before transport, and mints private-field non-`Clone` finalized-`Fund` evidence
+only through the concrete authenticated client. Its Taker-only claim-authorization method exists only on `LezBridgeAdapter<BridgeClient>` and mints
+private-field non-`Clone` `PreparedXmrClaimAuthorizationEvidenceV3`. It
+re-derives and compares exact Stage B, verifies the committed partial before
+wire, binds signed channel/genesis/runtime plus client run/role/runtime, and
+permits one authenticated call. Wrong partial, Stage B, binding, run, role, or
+runtime makes zero calls; wrong response context, terms, or empty bytes makes
+one then fails closed. The exact package passes 93 of 93 tests, the authenticated
+matrix 3 of 3, and 2 of 2 doctests include both non-`Clone` compile-fail proofs;
+strict Clippy, Rustdoc, formatting, and diff checks are green. The authenticated
+server is a literal-loopback mock, the official builder remains `Unavailable`,
+and valid transaction semantics are not locally ABI-decoded.
 The classifier can now return an exact synthetic `Found`, but no positive
 actual-local-indexer first-lock capability has been minted and no claim PoC
 exists. A sealed `lez-xmr-release-authority` storage foundation now passes 21
@@ -2954,10 +2959,16 @@ and 32-byte markers into chain authority.
   requests must succeed, foreign credential replay at the target must finish
   exact HTTP 401, and bounded 64 KiB typed daemon reads prove offline fakechain,
   `untrusted == false`, zero peers, empty connections, and height-zero genesis. The first-lock adapter now adds a
-  Taker-only zero-wire gate and a
-  concrete authenticated-client mint boundary, with 6 of 6 focused and 89 of
-  89 full adapter tests plus strict Clippy, Rustdoc, and the non-`Clone` doctest
-  green. Its canonical fixture and the sidecar synthetic finalized-indexer fixture
+  Taker-only zero-wire gate and a concrete authenticated-client first-lock
+  mint boundary. The same concrete adapter now exposes the Taker-only Stage-B
+  claim-authorization capability: it re-derives exact Stage B, verifies the
+  committed partial and signed runtime binding before wire, and mints a private-field
+   non-`Clone` result after exactly one authenticated success. All 93
+  adapter tests, 3 authenticated cases, 2 compile-fail-inclusive doctests, and
+  strict gates pass. Wrong pre-wire bindings make zero calls; wrong response
+  context, terms, or empty bytes makes one call and fails closed. Its literal-loopback
+   server is a mock and the sidecar builder remains `Unavailable`. The
+  first-lock canonical fixture and the sidecar synthetic finalized-indexer fixture
   prove fail-closed boundary behavior and exact `Found`, respectively, but not a
   real Stage-B/actual-local-indexer capability. Durable-target and Taker-role
   rejection happen before indexer reads; missing remains `Uncertain`. Neither
@@ -3079,9 +3090,10 @@ neither live replay-prevention evidence nor a claim PoC.
 The immediate critical path is now:
 
 1. connect the component-green exact-`Fund` classifier to the actual local
-   indexer and fresh checked artifact, then implement only the happy-path
-   claim-authorization, claim-prepare/complete, exact submission, and finalized
-   claim boundaries. Its synthetic fixture already proves Taker-only
+   indexer and fresh checked artifact, then implement the happy-path official
+   claim-authorization builder that consumes the completed typed adapter
+   capability, followed by claim preparation/completion, exact submission, and
+   finalized claim boundaries. Its synthetic fixture already proves Taker-only
    durable-target ownership before reads, canonical/final facts, stability
    repins, typed failures, `Uncertain` missing, and zero sends; the next evidence
    must be the first actual-chain `Found`, not a synthetic replacement. The
@@ -3115,8 +3127,8 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The expected remaining focused engineering time is 5 to 9 hours to the first
-reproducible independent-actor claim-path PoC and 11 to 19 hours to the local
+The expected remaining focused engineering time is 4 to 8 hours to the first
+reproducible independent-actor claim-path PoC and 10 to 18 hours to the local
 claim/refund/punishment PoC. This estimate starts after the verified two-stage
 SDK, fresh RISC Zero artifact, v3 client, and Monero observation checkpoints.
 It still includes actual-local-indexer integration, durable submission for the
