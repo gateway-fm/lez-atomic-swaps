@@ -12,6 +12,7 @@ members = [
     "crates/swap-core",
     "crates/swap-sdk-core",
     "crates/swap-store",
+    "crates/xmr-swap-sdk",
     "crates/zebra-node-adapter",
     "crates/zec-reference-actor",
     "crates/zec-swap-sdk",

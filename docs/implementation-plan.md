@@ -1,6 +1,6 @@
 # Living implementation plan
 
-Last updated: 2026-07-18
+Last updated: 2026-07-19
 
 This file is the delivery control document. It must change whenever scope,
 architecture, sequencing, risks, or acceptance evidence changes.
@@ -117,9 +117,10 @@ security databases, pins/checksums, availability risks, and fallback policy.
 The table below is accumulated implementation and test evidence, much of it
 created under the previous test-first strategy. ADR 0027 carries it forward for
 later revalidation; it does not imply that the M2 QA, chaos, information-
-security, or production-readiness phase has been entered or completed. M2 is
-certified at the reproducible local-functional PoC boundary; its QA and later
-hardening phases remain inactive, while the separately scoped M3 PoC is active.
+security, or production-readiness phase has been entered or completed. M2 and
+M3 are certified at their reproducible local-functional PoC boundaries; their
+QA and later hardening phases remain inactive. M4 is now the active progressive
+local-PoC slice.
 The final column is a post-M2 backlog, not
 an instruction to start every listed refactor now. Restart, refund, reorg,
 concurrency, broad negative testing, and new RED-GREEN-REFACTOR work wait for
@@ -2825,6 +2826,111 @@ must remain private-local and functional. GW-M3-001 and Logos production
 dependencies remain disclosed, while public execution and the later
 owner-selected hardening phases are explicitly deferred rather than represented
 as completed.
+
+## Milestone 4 entry plan: XMR spend-key-share end to end
+
+Active phase: **progressive local-functional PoC**. The authoritative deliverable
+set is the live RFP plus accepted replacement issue #112, rechecked on
+2026-07-19. The old ETH-scoped submission and issue #61 are not authorities.
+
+### Actual entry state
+
+M4 has not started as an executable chain integration. The repository carries a
+useful event-gated recovery model, SQLite phase replay, and LEZ-first CLI
+validation, but all current XMR chain proofs and claim evidence are synthetic.
+There is no XMR SDK, DLEQ/adaptor code, Monero adapter or actor, node topology,
+actual Monero transaction, M4 CI lane, setup guide, video, or retained evidence.
+
+The first implementation may reuse the existing LEZ v0.2 bridge, role stores,
+XChaCha20-Poly1305 secret envelope, one-attempt effect journals, and M3 BIP-340
+adaptor machinery only through explicit XMR types and transcript validation. It
+must not route Monero through the BTC or ZEC SDKs or promote arbitrary strings
+and 32-byte markers into chain authority.
+
+### Dependency and specification gate
+
+- [x] Reconcile the six issue-#112 outputs and actual RFP F3/U9/D1 language.
+- [x] Prove that `comit-network/cross-curve-dleq` is archived and unlicensed and
+  that `xmr-btc-swap` is GPL-3.0; neither is a runtime or vendored dependency.
+- [x] Identify maintained `sigma_fun` 0.9.0 (0BSD), `monero` 0.22.0 (MIT),
+  `monero-rpc` 0.5.1 (Apache-2.0), and official Monero 0.18.5.1 as candidates,
+  without accepting their production use before graph and behavior review.
+- [x] Record GW-M4-001 for the unlicensed literal conformance target and
+  GW-M4-002 for the underspecified Ed25519-adaptor/LEZ-witness mapping.
+- [x] Pin and execute the h4sh3d scalar width, endianness, public points,
+  subgroup/identity rejection, proof encoding, and transcript commitment behind
+  the pair-specific boundary in ADR 0054.
+- [ ] Pin and execute the exact adaptor pre-signature, adaptation, extraction,
+  retained-share addition, and reconstructed Monero spend equations.
+- [x] Lock the current crypto-slice graph and pass strict lint, Rustdoc,
+  advisories, bans, licenses, and source policy. The rejected unmaintained
+  bincode feature was replaced by pinned postcard rather than allowlisted.
+- [ ] Complete independent vector compatibility, focused negatives, unsafe and
+  cryptographic reachability review before any production-quality claim.
+
+### Progressive happy-path PoC
+
+- [ ] Complete the pair-specific `lez-xmr-swap-sdk`, Monero RPC adapter, and
+  public role-fixed XMR actor boundaries with typed secret-safe records. The
+  DLEQ scalar/point/proof boundary is green; lifecycle, RPC, and actor work is
+  still pending.
+- [ ] Build the official Monero 0.18.5.1 CLI artifact from its signed hash list
+  into a digest-pinned runtime and scan the final image fail-hard.
+- [ ] Start one offline `monerod` Regtest daemon plus distinct authenticated
+  funding, Maker, and Taker wallet RPCs on dynamic loopback ports under a unique
+  run/project ID; mine all funds locally and attest exact cleanup.
+- [ ] Extend the LEZ witnessed escrow metadata/terms with the immutable XMR
+  transcript commitment and bind the exact claim message before either lock.
+- [ ] Complete the sole reviewed positive direction with fresh actor processes:
+  Taker LEZ lock, finalized Maker observation, exact Maker XMR output, signed
+  Monero confirmation policy, revealing Maker LEZ claim, Taker extraction and
+  DLEQ recheck, reconstructed Taker XMR spend, both terminal stores.
+- [ ] Retain one secret-safe evidence packet with source/artifact identities,
+  endpoint inventory, roles, ordered effects, transaction/block identities,
+  balances, zero LEZ custody, zero replay, no public resources, timings, and
+  scoped cleanup.
+- [ ] Publish and execute the one-command runner plus a manual operator guide;
+  update global README, component/RPC architecture, happy sequence, atomicity
+  conditions, external-resource/flakiness inventory, and scorecard.
+
+The local-PoC gate is not met by a wallet-to-wallet transfer. The canonical LEZ
+claim must reveal the exact DLEQ-bound share which a fresh Taker process uses to
+spend the exact Maker-funded Monero output. Only then is the happy path a
+functional atomic-swap PoC.
+
+### Post-PoC RED-GREEN-REFACTOR hardening required for M4 closure
+
+- [ ] Cryptographic vectors and mutations: wrong message/key/point/share,
+  noncanonical scalar, identity/small-order/torsion encodings, endian/domain
+  substitutions, forged proof, adapt/extract mismatch, and no-panic fuzzing.
+- [ ] Agreement and capability gates: XMR-first zero-wire rejection at every
+  boundary, exact address/amount/output/profile binding, both role ownership
+  views, and no reveal before both locks plus durable recovery material.
+- [ ] Node/RPC evidence: exact network/genesis identity, authentication, finite
+  bounds, node-versus-wallet disagreement, scan lag, locked output, confirmation
+  regression/reorg, wrong output, ambiguous submission, and idempotent replay.
+- [ ] Restart/survivor and partial-loss lifecycle after every durable transition,
+  including post-reveal Taker continuation without Maker or Chat.
+- [ ] Both recovery cases: absent Maker XMR lock then Taker LEZ refund; funded XMR
+  without reveal then canonical LEZ refund event enables only Maker XMR recovery.
+- [ ] Same-direction concurrent swaps with disjoint addresses, transcripts,
+  wallets, stores, request IDs, key images, effects, and no nonce/share reuse.
+- [ ] Secret custody, encryption/AAD/schema/key failures, zeroization, owner-only
+  modes, SQLite/WAL/log/argv/evidence leak scans, and one-attempt outboxes.
+- [ ] Chaos and performance: process/node/wallet restarts, RPC outages, timeouts,
+  scan lag, LEZ/XMR reorgs, late-lock/refund race, fee/inclusion stress, phase
+  timings, repeat count, flake count, and instrumented E2E coverage.
+- [ ] Literal M4 outputs: U9 self-hosted/public stagenet guide and funding notes,
+  self-hosted stagenet `monerod` CI lane, happy/refund/concurrent D1 videos, full
+  SDK lifecycle docs/examples, traceability/review packet, and all closure gates.
+
+ADR 0053 is the component, RPC, flow, atomicity, isolation, dependency, and
+evidence entry decision; ADR 0054 pins the first executable cryptographic
+boundary and its nonclaims. The annotated `m4-complete` tag remains forbidden until
+all six accepted outputs are present, the exact clean pushed commit passes the
+full repository and M4 actual-node gates, and the tag states every deferred
+production/formal-review item without claiming literal resolution of open
+proposal errata.
 
 ## Docker isolation policy
 

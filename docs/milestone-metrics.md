@@ -22,10 +22,29 @@ Status vocabulary:
 | M1 | Historical completed milestone | Historical evidence predates ADR 0027; not retroactively reclassified | `m1-complete` and corrective tag `m1-complete.1` | No transition requested |
 | M2 | Certified local-functional PoC | Canonical Docker-built/deployed artifact, both local LEZ/ZEC directions, and the exact-tree repository gates are GREEN; later hardening is deferred | `m2-complete` | M2 completion/tag directed; no QA or M3 transition requested |
 | M3 | Certified local-functional PoC | All six issue-#112 outputs, including the literal RFP D1 three-video deliverable, and the underlying actual-node happy/refund/concurrent evidence are complete at the private functional boundary. The 2026-07-19 local lint/test/security/license/isolation/traceability and 150-diagram render closure gates are GREEN. No cross-system atomic commit, public live deployment, or production-hardening completion is claimed | `m3-complete` at `f7fb250` | Owner entered M3 on 2026-07-14 and directed completion. The exact commit and tag are pushed; the private Actions API was unavailable and no remote-green claim is made. Cutoff-race/process-kill/reorg/fee/chaos/formal review are later owner-selected phases |
-| M4 | Not active | Awaiting owner transition | None | Not requested |
+| M4 | Progressive local-functional PoC | In progress: authority/current-state audit and entry architecture complete; deterministic DLEQ scalar/point/proof slice is green; agreement/adaptor lifecycle and actual-node evidence remain | None | Repository-wide continuation entered M4 on 2026-07-19 after remote `m3-complete`; no QA/chaos/infosec/production phase implied |
 | M5 | Not active | Awaiting owner transition | None | Not requested |
 | M6 | Not active | Awaiting owner transition | None | Not requested |
 | M7 | Not active | Awaiting owner transition | None | Not requested |
+
+## M4 PoC scorecard
+
+Status: active progressive local-PoC entry. Counts below distinguish inherited
+generic scaffolding from XMR-specific implementation and actual-node evidence.
+
+| Metric | Current measurement | Evidence or next measurement point |
+|---|---|---|
+| Live authorities reconciled | 2 of 2 | The live RFP and accepted replacement issue #112 were re-read on 2026-07-19. The normalized issue body still hashes to `49356263a762307abc0f8dd2863ac5af8fe13d9b17b674f242d025de655f1c87`; issue #61 and the old ETH submission are excluded |
+| Literal M4 outputs complete | 0 of 6 | No XMR LEZ claim update, SDK, vector-conformance suite, U9 guide, D1 XMR video, or self-hosted stagenet CI lane exists yet |
+| XMR-specific executable crates/components | 1 crypto crate, 0 chain adapters/actors | `lez-xmr-swap-sdk` generates and verifies the bounded cross-curve proof and independently matches its secp point through MuSig2. Monero RPC and role processes are next |
+| Actual local LEZ/XMR happy swaps | 0 | First target is one `TakerSellsLez` run through independent Maker/Taker processes, actual LEZ v0.2 and Monero 0.18.5.1 Regtest effects, exact adaptor extraction, DLEQ verification, and reconstructed Monero spend |
+| Positive directions in reviewed scope | 0 of 1 executed | Only LEZ-first is supported. XMR-first must remain a zero-effect negative path unless a new construction and review supersede ADR 0008 |
+| M4 dependency groups accepted | 1 PoC crypto slice; node/RPC groups pending | Pinned `sigma_fun` 0.9.0 plus postcard 1.1.3 pass advisories, bans, licenses, and sources with exact 0BSD exceptions. The first bincode design failed the unmaintained-policy gate and was removed from the active graph. Official Monero 0.18.5.1 and the RPC/type graph remain pending |
+| Deterministic DLEQ spike | 1 successful proof and verification | Scalar-one expected basepoints; 56,611-byte proof; SHA-256 `0634e8a021bde0d9dd8461d0a8ccd1c56f85ec790b21ba78be27404d4121afe6`; transcript `b9169740ae7b7a91b5c2e7971896a86b64286dbda218d711587109d2941852c8`; full vector/negative corpus remains post-happy-path work |
+| Crypto specification discrepancies | 2 open proposal errata | GW-M4-001 records the unlicensed archived DLEQ target; GW-M4-002 records the underspecified Ed25519-adaptor versus actual LEZ BIP-340/h4sh3d mapping. Neither permits a missing adaptor/DLEQ link |
+| Public RPCs, peers, faucets, or funds used | 0 | The PoC target is offline Monero Regtest plus private LEZ v0.2 with locally mined/deterministic funds. Stagenet setup and self-hosted CI remain literal closure outputs, not PoC evidence |
+| QA / chaos / information security / production phases | Not active | Begin only after the reproducible happy PoC and owner phase transition; continuous repository lint, vulnerability, license, source, secret, and image gates remain mandatory |
+| M4 completion tag | None | `m4-complete` is forbidden until all six literal outputs and synchronized closure gates are proven on the exact clean pushed commit |
 
 ## M3 PoC scorecard
 
