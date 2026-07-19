@@ -42,7 +42,8 @@ order remains byte-identical.
 
 Append `ClaimAuthority::XmrDualAdaptor` as Borsh variant 2. It binds separate
 claim and refund aggregate x-only keys/accounts, both DLEQ transcript
-commitments, the exact Taker claim-partial commitment, and `punish_at`.
+commitments, an exact claim-session transcript binding, the Taker
+claim-partial commitment under that binding, and `punish_at`.
 Existing authority variants 0 and 1 and all top-level `EscrowMetadata` fields
 remain unchanged. XMR metadata uses version 3; existing M2/M3 metadata remains
 version 2.
@@ -54,7 +55,11 @@ Taker's DLEQ-bound `s_b` point. The generic unsigned refund must reject
 `XmrDualAdaptor`, preventing a bypass that returns LEZ without revealing
 `s_b`. `ClaimNativeXmr` additionally requires status `XmrClaimAuthorized`.
 Only the Taker depositor can publish the exact precommitted partial through tag
-14 after observing the XMR lock. This publication is an on-chain handoff, not a
+14 after observing the XMR lock. The guest checks
+`SHA256(domain || claim_partial_context_binding || partial)`, where Stage B
+derives the binding from Stage A, the claim context, both nonce transcripts,
+and the Maker claim partial. This avoids an activation-hash cycle and rejects
+cross-session transplantation. Publication is an on-chain handoff, not a
 post-first-lock off-chain dependency.
 
 ```mermaid

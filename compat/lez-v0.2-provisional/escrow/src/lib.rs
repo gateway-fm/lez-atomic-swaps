@@ -45,6 +45,7 @@ pub enum ClaimAuthority {
         refund_aggregate_account_id: AccountId,
         maker_dleq_transcript_commitment: [u8; 32],
         taker_dleq_transcript_commitment: [u8; 32],
+        claim_partial_context_binding: [u8; 32],
         claim_partial_commitment: [u8; 32],
         punish_at: u64,
     },
@@ -117,6 +118,7 @@ fn valid_claim_authority(authority: ClaimAuthority, claimant: AccountId) -> bool
             refund_aggregate_account_id,
             maker_dleq_transcript_commitment,
             taker_dleq_transcript_commitment,
+            claim_partial_context_binding,
             claim_partial_commitment,
             punish_at,
         } => {
@@ -133,15 +135,17 @@ fn valid_claim_authority(authority: ClaimAuthority, claimant: AccountId) -> bool
                 && maker_dleq_transcript_commitment != [0; 32]
                 && taker_dleq_transcript_commitment != [0; 32]
                 && maker_dleq_transcript_commitment != taker_dleq_transcript_commitment
+                && claim_partial_context_binding != [0; 32]
                 && claim_partial_commitment != [0; 32]
                 && punish_at != 0
         }
     }
 }
 
-fn xmr_claim_partial_commitment(claim_partial: [u8; 32]) -> [u8; 32] {
+fn xmr_claim_partial_commitment(context_binding: [u8; 32], claim_partial: [u8; 32]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(XMR_CLAIM_PARTIAL_DOMAIN);
+    hasher.update(context_binding);
     hasher.update(claim_partial);
     hasher.finalize().into()
 }
@@ -399,6 +403,7 @@ fn native_xmr_initial_state(
     refund_aggregate_x_only_public_key: [u8; 32],
     maker_dleq_transcript_commitment: [u8; 32],
     taker_dleq_transcript_commitment: [u8; 32],
+    claim_partial_context_binding: [u8; 32],
     claim_partial_commitment: [u8; 32],
     amount: u128,
     refund_at: u64,
@@ -422,6 +427,7 @@ fn native_xmr_initial_state(
         refund_aggregate_account_id: refund_aggregate_authority.account_id,
         maker_dleq_transcript_commitment,
         taker_dleq_transcript_commitment,
+        claim_partial_context_binding,
         claim_partial_commitment,
         punish_at,
     };
@@ -539,6 +545,7 @@ fn validated_xmr_claim_authorization_state(
     let mut state = read_metadata(metadata)?;
     require_funded(&state)?;
     let ClaimAuthority::XmrDualAdaptor {
+        claim_partial_context_binding,
         claim_partial_commitment,
         ..
     } = state.claim_authority
@@ -553,7 +560,8 @@ fn validated_xmr_claim_authorization_state(
         || state.depositor != depositor.account_id
         || depositor.account.program_owner != state.asset_program
         || claim_partial == [0; 32]
-        || xmr_claim_partial_commitment(claim_partial) != claim_partial_commitment
+        || xmr_claim_partial_commitment(claim_partial_context_binding, claim_partial)
+            != claim_partial_commitment
     {
         return Err(custom_error(
             ERROR_ACCOUNT_BINDING,
@@ -1337,6 +1345,7 @@ mod zec_escrow {
         refund_aggregate_x_only_public_key: [u8; 32],
         maker_dleq_transcript_commitment: [u8; 32],
         taker_dleq_transcript_commitment: [u8; 32],
+        claim_partial_context_binding: [u8; 32],
         claim_partial_commitment: [u8; 32],
         amount: u128,
         refund_at: u64,
@@ -1356,6 +1365,7 @@ mod zec_escrow {
             refund_aggregate_x_only_public_key,
             maker_dleq_transcript_commitment,
             taker_dleq_transcript_commitment,
+            claim_partial_context_binding,
             claim_partial_commitment,
             amount,
             refund_at,
@@ -1518,7 +1528,8 @@ mod tests {
     const XMR_REFUND_KEY: [u8; 32] = [45; 32];
     const MAKER_DLEQ_COMMITMENT: [u8; 32] = [46; 32];
     const TAKER_DLEQ_COMMITMENT: [u8; 32] = [47; 32];
-    const XMR_CLAIM_PARTIAL: [u8; 32] = [48; 32];
+    const XMR_CLAIM_CONTEXT_BINDING: [u8; 32] = [48; 32];
+    const XMR_CLAIM_PARTIAL: [u8; 32] = [49; 32];
 
     fn account(
         id: [u8; 32],
@@ -1671,7 +1682,8 @@ mod tests {
             XMR_REFUND_KEY,
             MAKER_DLEQ_COMMITMENT,
             TAKER_DLEQ_COMMITMENT,
-            xmr_claim_partial_commitment(XMR_CLAIM_PARTIAL),
+            XMR_CLAIM_CONTEXT_BINDING,
+            xmr_claim_partial_commitment(XMR_CLAIM_CONTEXT_BINDING, XMR_CLAIM_PARTIAL),
             AMOUNT,
             REFUND_AT,
             PUNISH_AT,
@@ -2086,7 +2098,11 @@ mod tests {
                 refund_aggregate_x_only_public_key: XMR_REFUND_KEY,
                 maker_dleq_transcript_commitment: MAKER_DLEQ_COMMITMENT,
                 taker_dleq_transcript_commitment: TAKER_DLEQ_COMMITMENT,
-                claim_partial_commitment: xmr_claim_partial_commitment(XMR_CLAIM_PARTIAL),
+                claim_partial_context_binding: XMR_CLAIM_CONTEXT_BINDING,
+                claim_partial_commitment: xmr_claim_partial_commitment(
+                    XMR_CLAIM_CONTEXT_BINDING,
+                    XMR_CLAIM_PARTIAL,
+                ),
                 amount: AMOUNT,
                 refund_at: REFUND_AT,
                 punish_at: PUNISH_AT,
@@ -2157,7 +2173,8 @@ mod tests {
                 XMR_REFUND_KEY,
                 MAKER_DLEQ_COMMITMENT,
                 TAKER_DLEQ_COMMITMENT,
-                xmr_claim_partial_commitment(XMR_CLAIM_PARTIAL),
+                XMR_CLAIM_CONTEXT_BINDING,
+                xmr_claim_partial_commitment(XMR_CLAIM_CONTEXT_BINDING, XMR_CLAIM_PARTIAL),
                 AMOUNT,
                 REFUND_AT,
                 punish_at,
@@ -2211,7 +2228,7 @@ mod tests {
                 committed_metadata(&funded),
                 account([1; 32], AUTHENTICATED_TRANSFER, 125, true),
                 SWAP_ID,
-                [49; 32],
+                [50; 32],
             )
             .is_err()
         );

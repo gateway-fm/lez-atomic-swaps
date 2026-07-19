@@ -2309,9 +2309,11 @@ It is deliberately **not** an atomic-swap demonstration. A separate development
 experiment has already funded the SDK-derived address, reconstructed the spend
 key through official wallet RPC `generate_from_keys`, and submitted a real
 spend after ten confirmations. That proves official-wallet behavior but is not
-yet exposed as a stable one-command user flow. The M4 atomic happy PoC still
-needs the DLEQ-bound revealing LEZ claim, canonical extraction, fresh role
-actors, and both terminal stores.
+yet exposed as a stable one-command user flow. Focused guest tests now cover
+on-chain claim-partial publication plus claim, signed-refund, and punishment
+source transitions, but the M4 atomic happy PoC still needs the checked guest
+artifact/bridge, canonical extraction, fresh role actors, and both terminal
+stores.
 
 The exact safety boundary matters when reviewing intermediate results. The
 Maker claim must reveal Maker share `s_a`, allowing the Taker to combine it with
@@ -2320,8 +2322,11 @@ allowing the Maker to combine it with retained `s_a`. The existing generic
 permissionless LEZ refund is unsigned and reveals neither share, so a refund
 event alone is not Monero recovery evidence. The Taker also withholds its claim
 partial until it independently observes the exact Maker-funded XMR output at
-the countersigned confirmation depth. ADR 0055 contains the component and
-sequence diagrams plus the conditional atomicity argument.
+the countersigned confirmation depth, then publishes the exact precommitted
+partial through signed LEZ instruction `AuthorizeNativeXmrClaim`. The Maker
+retrieves it from canonical LEZ evidence, so no post-first-lock off-chain
+channel is required. ADR 0055 contains the component and sequence diagrams plus
+the conditional atomicity argument.
 
 Prerequisites are Docker with Compose v2, Bash, Curl, jq, Git, GnuPG, OpenSSL,
 Perl, ripgrep, and standard archive/hash tools. Use a fresh lowercase run ID:

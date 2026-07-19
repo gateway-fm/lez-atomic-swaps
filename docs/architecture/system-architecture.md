@@ -2109,19 +2109,22 @@ after its canonical confirmation policy, the maker funds the agreed Monero
 output. XMR-first is rejected because the reviewed COMIT construction does not
 supply that direction's safe recovery path.
 
-The shared signing boundary is executable without routing XMR through the BTC
-SDK. Dashed edges remain M4 composition work:
+The shared signing and focused guest-source boundaries are executable without
+routing XMR through the BTC SDK. Dashed edges remain M4 composition work:
 
 ```mermaid
 flowchart LR
     BtcSdk["BTC pair SDK"] -->|compatibility re-export| Adaptor["Pair-neutral adaptor signatures"]
-    XmrSdk["XMR pair SDK"] -.->|claim and refund contexts pending| Adaptor
+    XmrSdk["XMR pair SDK"] -.->|two-stage activation pending| Adaptor
     RoleRunner["Durable role runner"] --> Adaptor
     Adaptor --> Musig["Pinned MuSig2"]
     XmrSdk --> Dleq["Two bounded DLEQ envelopes"]
     Dleq --> SharedKey["Shared Monero spend key"]
     XmrActor["Fresh XMR role actors"] -.-> RoleRunner
     XmrActor -.-> XmrSdk
+    XmrActor -.-> Bridge["Strict LEZ bridge v3"]
+    Bridge -.-> Guest["XMR guest tags 13 through 17"]
+    Guest --> Transfer["Authenticated native transfer"]
     XmrActor -.-> WalletRpc["Authenticated wallet RPCs"]
     WalletRpc --> Monerod["Official monerod Regtest"]
 ```
@@ -2136,7 +2139,8 @@ sequenceDiagram
     participant LezIdx as LEZ indexer
     participant Monero as monerod and wallet RPC
 
-    Note over Maker,Taker: Both DLEQ proofs and distinct claim refund sessions are durable
+    Note over Maker,Taker: Stage A base terms derive distinct claim refund sessions
+    Note over Maker,Taker: Stage B activation binds nonces partial commitments and exact LEZ initialization
     Note over Maker,Taker: Taker first lock starts the protocol
     Taker->>LezSeq: Fund taker LEZ leg
     LezIdx-->>Maker: Canonical LEZ confirmation policy reached
@@ -2152,7 +2156,8 @@ sequenceDiagram
     else Required M4 target maker XMR lock admission succeeds before the cutoff
         Maker->>Monero: Fund maker Monero output
         Monero-->>Taker: Canonical Monero confirmation policy reached
-        Taker->>Maker: Release Taker claim partial only after exact XMR confirmation
+        Taker->>LezSeq: Publish exact committed claim partial after XMR confirmation
+        LezIdx-->>Maker: Canonical finalized AuthorizeNativeXmrClaim bytes
         Note over Maker,Taker: Both locks are proven before Maker can aggregate and adapt the claim
         alt Canonical reveal path
             Maker->>LezSeq: Claim LEZ with adaptor witness
@@ -2174,12 +2179,12 @@ sequenceDiagram
                 Taker->>LezSeq: Signed XMR-specific refund adapted with s_b
                 LezIdx-->>Taker: Exact survivor refund finalized
                 Note over Maker,Taker: Canonical signature leaves Maker recovery available from s_a plus s_b
-                Note over Maker,Taker: Direct M4 signed refund surface pending
+                Note over Maker,Taker: Focused guest source green; checked bridge and actor execution pending
             else Taker abandons
                 Maker->>LezSeq: Execute Maker punishment after punish_at
                 LezIdx-->>Maker: Exact punishment finalized
                 Note over Maker,Taker: COMIT economic safety fallback, literal RFP both-refund disposition pending review
-                Note over Maker,Taker: Direct M4 punishment surface pending
+                Note over Maker,Taker: Focused guest source green; checked bridge and actor execution pending
             end
         end
     end
@@ -2187,18 +2192,23 @@ sequenceDiagram
 
 <!-- atomicity-argument: lez-xmr/taker-sells-lez -->
 
-For supported `TakerSellsLez`, the Maker can receive LEZ only by publishing
-the adaptor witness that reveals Maker share `s_a`, which the Taker adds to
-retained `s_b` to spend XMR. If there is no claim, the Taker's XMR-specific
-signed refund reveals `s_b`, which the Maker adds to retained `s_a` to recover
-XMR. An unsigned permissionless refund reveals neither share and is not an XMR
-recovery proof.
+For supported `TakerSellsLez`, the Maker can receive LEZ only after the Taker
+publishes the activation-bound partial on LEZ and the Maker publishes the final
+adaptor witness that reveals Maker share `s_a`, which the Taker adds to retained
+`s_b` to spend XMR. If there is no claim, the Taker's XMR-specific signed refund
+reveals `s_b`, which the Maker adds to retained `s_a` to recover XMR. An unsigned
+permissionless refund reveals neither share and is not an XMR recovery proof.
+The publication is retrieved from the canonical LEZ chain, so the flow needs no
+post-first-lock off-chain message channel.
 
 **Economic safety:** there is no invented Monero timeout. A canonical Maker LEZ
 claim reveals Maker share `s_a`; without that claim, a canonical signed Taker
 refund reveals Taker share `s_b`. If the Taker abandons the refund window, the
 cited construction needs a later Maker punishment branch. That fallback and its
-literal RFP F6 disposition remain pending and are not implemented atomicity.
+literal RFP F5/F6 disposition remain pending and are not literal refund
+atomicity. A hidden-partial commitment also proves later consistency, not
+pre-funding validity; invalid or withheld publication can force punishment and
+remains part of the disclosed production review.
 
 **Replay/idempotency:** durable shares, event projection, and one-attempt spend
 authority prevent duplicate effects and false terminal state. They do not
@@ -2209,10 +2219,10 @@ canonical LEZ events, usable Monero RPCs, and transaction inclusion. Lost
 authority may leave a safe nonterminal output indefinitely.
 
 **Implementation status:** both DLEQ/share-addition orders, one official Monero
-reconstructed spend, the pair-neutral adaptor leaf, BTC compatibility, and
-durable fresh-process signing are executable. M4 agreement-bound claim/refund
-sessions, the LEZ claim-partial gate, signed refund, punishment branch, role
-actors, and composed E2E remain pending.
+reconstructed spend, the pair-neutral adaptor leaf, BTC compatibility, durable
+fresh-process signing, and focused guest-source publication/claim/refund/punish
+branches are executable. The two-stage activation, checked artifact and bridge,
+trusted RPC observations, role actors, and composed E2E remain pending.
 
 The XMR construction’s atomicity argument differs from the deadline-bearing
 pairs:

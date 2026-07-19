@@ -100,13 +100,22 @@ and a supply-chain attacker.
 - View/spend key confusion and wallet scan lag: separate typed keys and require
   canonical wallet/node observations before transitions.
 - Counterparty disappears after witness exposure: recovery instructions must be
-  derivable from persisted state without Chat.
+  derivable from persisted state plus canonical chain nodes, without Chat or
+  any other post-first-lock off-chain channel.
 - The maker-funded Monero output has no script/timelock. If the maker does not
   claim LEZ, the taker uses the distinct `s_b`-adapted signed LEZ refund; the
   canonical refund signature lets the maker extract `s_b`, combine it with
   retained `s_a`, and spend XMR. The generic unsigned permissionless refund is
   not recovery evidence. The coordinator must retain the exact presignature
   and canonical refund witness across restart.
+- The Maker cannot use the successful claim partial before funding XMR. Stage A
+  derives the session; Stage B commits its exact transcript and the hidden
+  Taker partial; after the confirmed XMR lock the Taker publishes the matching
+  partial on LEZ. Claim is rejected before that canonical publication.
+- A hash commitment does not prove the hidden partial valid before Maker
+  funding. Invalid or withheld publication can force the later Maker
+  punishment branch. The local PoC must fail closed; production requires
+  reviewed validity evidence or explicit acceptance of this penalty model.
 - Unsupported XMR-first funding: the pinned COMIT construction requires the
   scriptable leg first, so core term validation and CLI/daemon reject XMR-first.
 

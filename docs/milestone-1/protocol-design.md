@@ -88,15 +88,21 @@ construction and third-party review demonstrate its recovery path.
 Participants form the Monero spend/view-key transcript and prove the required
 secp256k1/Ed25519 discrete-log relationship with the published cross-curve DLEQ
 construction. The taker locks longer LEZ escrow. After canonical confirmation,
-the maker funds the agreed Monero address. The maker claims LEZ using the
-adaptor-witness path; that canonical claim reveals the share/evidence from which
-the taker reconstructs authority to spend the Monero output.
+the maker funds the agreed Monero address. The Taker then publishes its exact
+activation-bound claim partial through LEZ, so no post-first-lock off-chain
+channel is required. The maker claims LEZ using the adaptor-witness path; that
+canonical claim reveals the share/evidence from which the taker reconstructs
+authority to spend the Monero output.
 
-If the maker never claims LEZ, the taker refunds LEZ and the maker recovers XMR
-using the pre-negotiated key-share recovery transcript. Every encrypted share,
-DLEQ proof, view material, refund/cancel artefact, and transcript step is persisted
-before the state that depends on it. Exact transaction/key-share encoding follows
-the h4sh3d/COMIT vectors and is not represented by the generic 32-byte skeleton.
+If the maker never claims LEZ, the taker uses a distinct `s_b`-adapted signed
+LEZ refund and the maker recovers XMR from the canonical signature plus retained
+`s_a`. If the Taker abandons that finite window, the cited construction uses a
+later Maker punishment branch. The punishment/hidden-partial grief model is
+tracked in GW-M4-003 and is not literal F5/F6 refund conformance. Every share,
+DLEQ proof, view material, nonce/partial, refund artefact, and transcript step is
+persisted before the state that depends on it. Exact transaction/key-share
+encoding follows the reviewed h4sh3d/COMIT mapping and is not represented by a
+generic 32-byte skeleton.
 
 ## Transparent ZEC–LEZ
 

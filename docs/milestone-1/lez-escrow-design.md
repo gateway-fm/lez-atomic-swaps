@@ -97,7 +97,7 @@ destination.
 |---|---|---|
 | BTC, taker sells BTC | `claim_witnessed`, authorized only by a distinct two-party aggregate key bound to the exact LEZ claim message and adaptor session | The taker adapts the aggregate LEZ pre-signature; its finalized BIP-340 signature lets the maker extract `t` and adapt the BTC key-path claim |
 | BTC, taker sells LEZ | `claim_witnessed`, authorized only by a second distinct two-party aggregate key bound to the exact LEZ claim message and adaptor session | The taker's canonical BTC key-path signature reveals `t`; the maker uses it to adapt the already verified aggregate LEZ pre-signature |
-| XMR, taker sells LEZ only | `claim_witnessed`, authorized by an isolated per-swap maker claim account bound to the reviewed DLEQ transcript | The accepted LEZ signature reveals the share bound to the Monero spend-key recovery path |
+| XMR, taker sells LEZ only | Version-3 `AuthorizeNativeXmrClaim` publishes the exact Taker partial after XMR confirmation, then `ClaimNativeXmr` requires the isolated claim aggregate account; `RefundNativeXmr` uses a distinct aggregate account and `PunishNativeXmr` is the later fallback | The accepted claim reveals Maker share `s_a`; the signed refund reveals Taker share `s_b`; publication is canonical LEZ data rather than a post-lock off-chain message |
 | ZEC, either direction | `claim_hashlock(preimage)` and `SHA256(preimage) == digest`; the fixed LEZ recipient is the revealing claimant | The canonical LEZ claim reveals the preimage used by the ZEC recipient |
 
 For BTC witnessed claims, setup freezes the exact public transaction message,
@@ -115,8 +115,11 @@ for extraction. The pinned v0.2 semantic reproducer is a release gate for that
 final property.
 
 The XMR cross-curve DLEQ is verified with the reference construction before
-funding and its transcript hash is stored in metadata. The guest does not
-reimplement DLEQ arithmetic. XMR-first remains unsupported.
+funding and both transcript hashes are stored in version-3 metadata. The same
+metadata commits the hidden Taker claim partial, separate claim/refund aggregate
+authorities, and `punish_at`. The guest rejects claim before exact Taker
+publication and rejects its generic unsigned refund for XMR. It does not
+reimplement DLEQ or adaptor arithmetic. XMR-first remains unsupported.
 
 ## Instruction and IDL sketch
 
