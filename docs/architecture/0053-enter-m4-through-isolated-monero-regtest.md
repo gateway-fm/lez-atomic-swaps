@@ -14,10 +14,12 @@ videos, and a self-hosted stagenet `monerod` CI lane.
 
 At M4 entry, the repository had only pair vocabulary, a generic LEZ-refund
 event gate, SQLite phase replay, and CLI direction validation. The first
-checkpoint now adds the bounded DLEQ scalar/point/proof boundary plus a
-reproducible official `monerod` and three-wallet topology. It still has no
-complete adaptor lifecycle, Monero node adapter, role actor, revealing LEZ
-claim, reconstructed Monero spend, or atomic-swap evidence. Synthetic
+checkpoints now add bounded canonical DLEQ proofs for both spend-key shares, a
+reproducible official `monerod` and three-wallet topology, symmetric shared-key
+reconstruction, and a development spend from the reconstructed key through the
+official wallet RPC. It still has no complete adaptor lifecycle, Monero node
+adapter, role actor, revealing LEZ claim, signed LEZ refund/punish branches, or
+atomic-swap evidence. Synthetic
 `ChainProof` strings, arbitrary 32-byte `ClaimEvidence` markers, and the
 bootstrap wallet transfer are not M4 swap evidence.
 
@@ -250,20 +252,23 @@ sequenceDiagram
 
 ## Atomicity boundary
 
-For the supported happy path, both public keys in the accepted DLEQ transcript
-must represent the same nonzero canonical scalar: the secp256k1 adaptor witness
-used by the LEZ aggregate signature and the Ed25519 Monero spend-key share. The
-Maker cannot receive the taker's LEZ without publishing the exact completed
-witnessed claim. Adaptation/extraction from that canonical claim gives the
-Taker the share needed to reconstruct the shared Monero spend authority. The
-Maker must not reveal until the exact Monero output and confirmation policy are
-canonical and all recovery material is durable.
+For the supported happy path, each role proves that its secp256k1 adaptor point
+and Ed25519 Monero public spend-key share represent the same nonzero canonical
+scalar. The Maker claim is adapted with Maker share `s_a`; its canonical final
+signature lets the Taker extract `s_a`, add retained `s_b`, and spend XMR. The
+Taker must keep its claim partial private until the exact Maker-funded Monero
+output reaches the signed confirmation policy, otherwise the Maker could claim
+LEZ before funding XMR.
 
-If no canonical LEZ claim appears, the Taker eventually refunds the LEZ lock.
-Only that canonical refund event at the signed depth enables the Maker's Monero
-recovery path; Monero has no invented script or timeout. Refund, partial-loss,
-survivor, restart, reorg, and concurrency execution are required for literal M4
-closure but follow the first working PoC under the progressive delivery policy.
+If no canonical Maker claim appears, the Taker's timeout refund must be a
+distinct signed branch adapted with Taker share `s_b`. Its canonical final
+signature lets the Maker extract `s_b`, add retained `s_a`, and recover XMR.
+The current generic permissionless refund is unsigned and reveals no share; it
+cannot prove this recovery path. A Maker punishment branch is also required if
+the Taker disappears through the signed refund window. ADR 0055 specifies these
+branches and their sequence. Refund, punishment, partial-loss, survivor,
+restart, reorg, and concurrency execution are required for literal M4 closure
+but follow the first linked happy path under the progressive delivery policy.
 
 This is not a cross-chain database transaction. The safety claim is conditional
 on adaptor extractability, DLEQ soundness, exact transcript binding, durable

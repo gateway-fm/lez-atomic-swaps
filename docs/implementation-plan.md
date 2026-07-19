@@ -2835,13 +2835,17 @@ set is the live RFP plus accepted replacement issue #112, rechecked on
 
 ### Actual entry state
 
-M4 now has two executable entry checkpoints: a bounded cross-curve DLEQ proof
-boundary and an official Monero 0.18.5.1 actual-node Regtest topology with one
-daemon, three independently authenticated wallets, locally mined funds, a real
-funding transaction, ten confirmations, secret-safe evidence, and exact
-cleanup. The repository still has no complete adaptor lifecycle, Monero adapter
-or role actor, XMR-bound LEZ claim, reconstructed Monero spend, full swap, U9
-guide, D1 videos, or stagenet CI evidence.
+M4 now has three executable entry checkpoints: a bounded canonical two-party
+cross-curve DLEQ wire and symmetric share-addition boundary; an official Monero
+0.18.5.1 actual-node Regtest topology with one daemon, three independently
+authenticated wallets, locally mined funds, a real funding transaction, ten
+confirmations, secret-safe evidence, and exact cleanup; and a development run
+which funded the derived shared address, rebuilt the Taker wallet from the
+reconstructed spend key with official `generate_from_keys`, and spent the
+output in a second real transaction. The repository still has no complete
+agreement-bound adaptor lifecycle, Monero adapter or role actor, XMR-bound LEZ
+claim, XMR-specific signed LEZ refund/punish branches, full swap, U9 guide, D1
+videos, or stagenet CI evidence.
 
 The first implementation may reuse the existing LEZ v0.2 bridge, role stores,
 XChaCha20-Poly1305 secret envelope, one-attempt effect journals, and M3 BIP-340
@@ -2863,7 +2867,10 @@ and 32-byte markers into chain authority.
   subgroup/identity rejection, proof encoding, and transcript commitment behind
   the pair-specific boundary in ADR 0054.
 - [ ] Pin and execute the exact adaptor pre-signature, adaptation, extraction,
-  retained-share addition, and reconstructed Monero spend equations.
+  retained-share addition, and reconstructed Monero spend equations. Both
+  DLEQ-bound shares, canonical proof wire, symmetric addition, shared address,
+  and official-wallet reconstructed spend are green; exact LEZ claim/refund
+  pre-signature, adaptation, and extraction remain.
 - [x] Lock the current crypto-slice graph and pass strict lint, Rustdoc,
   advisories, bans, licenses, and source policy. The rejected unmaintained
   bincode feature was replaced by pinned postcard rather than allowlisted.
@@ -2885,7 +2892,10 @@ and 32-byte markers into chain authority.
   cross-credential rejection, unlocked 10 XMR role outputs, no runtime external
   resources, and scoped cleanup.
 - [ ] Extend the LEZ witnessed escrow metadata/terms with the immutable XMR
-  transcript commitment and bind the exact claim message before either lock.
+  transcript commitments and bind distinct exact claim/refund messages plus
+  refund/punish windows before either lock. Per ADR 0055, the Taker claim
+  partial must remain owner-local until the exact Maker XMR lock reaches the
+  signed confirmation policy.
 - [ ] Complete the sole reviewed positive direction with fresh actor processes:
   Taker LEZ lock, finalized Maker observation, exact Maker XMR output, signed
   Monero confirmation policy, revealing Maker LEZ claim, Taker extraction and
@@ -2899,9 +2909,12 @@ and 32-byte markers into chain authority.
   conditions, external-resource/flakiness inventory, and scorecard.
 
 The local-PoC gate is not met by a wallet-to-wallet transfer. The canonical LEZ
-claim must reveal the exact DLEQ-bound share which a fresh Taker process uses to
-spend the exact Maker-funded Monero output. Only then is the happy path a
-functional atomic-swap PoC.
+claim must reveal Maker share `s_a`, which a fresh Taker process adds to
+retained `s_b` to spend the exact Maker-funded Monero output. The timeout branch
+must use a distinct signed LEZ refund that reveals `s_b` for Maker recovery;
+the current unsigned generic refund reveals no share. Until those branches and
+the punishment disposition in ADR 0055 are executable, a composed success is a
+linked happy transfer rather than certified atomicity.
 
 ### Actual-node checkpoint and next implementation slice
 
@@ -2914,24 +2927,37 @@ signer key are retained in the repository; a warm run still rechecks the live
 source tag identity. Runtime uses no peer, public RPC, faucet, public funds, or
 public finality service.
 
-The immediate happy-path critical path is now:
+The immediate critical path is now:
 
-1. pin and execute the exact pre-sign, adapt, extract, retained-share-addition,
-   shared Monero address, and reconstructed-spend equations;
-2. add typed Monero daemon/wallet RPC observations and builders to
+1. extract the proven M3 adaptor implementation behind a pair-neutral crate,
+   preserving BTC compatibility while giving XMR distinct claim/refund session
+   types and preventing BTC-SDK routing;
+2. add the countersigned two-proof XMR agreement, post-confirmation claim-partial
+   release gate, and additive XMR-specific signed refund/punishment LEZ paths;
+3. add typed Monero daemon/wallet RPC observations and builders to
    `lez-xmr-swap-sdk`;
-3. add fresh Maker/Taker role processes with durable share/effect records;
-4. bind the transcript commitment and revealing claim bytes into the real LEZ
-   v0.2 guest and bridge;
-5. compose the sole supported LEZ-first swap through both actual local chains,
+4. add fresh Maker/Taker role processes with durable share/effect records;
+5. compose the sole supported LEZ-first claim and recovery paths through both
+   actual local chains,
    then seal evidence and manual reproduction.
 
 The topology is infrastructure evidence, not one of the required happy swaps.
-The expected remaining focused engineering time to the first reproducible M4
-atomic happy PoC is 10 to 16 hours, subject chiefly to the exact adaptor/share
-mapping and official-wallet reconstructed-spend import behavior. No internal
-blocking dependency is known. GW-M4-001 and GW-M4-002 remain upstream
-production/review disclosures and do not block the owner-authorized local PoC.
+The official-wallet reconstruction uncertainty is closed by development run
+`m4-xmr-key-wallet-20260719f`: funding transaction
+`cb44955252c6136b7368628f1cb98a4550bede1bf4ab93dca4ceba6e7891d2ac`
+and reconstructed spend transaction
+`2bda3675fed4dd5d5428e889ab5794f5c9a91942bc99ad31aa600198653949e9`
+both executed on the isolated official fakechain, with the spend confirmed ten
+times and exact cleanup. That deterministic-key development run is not retained
+milestone evidence and is not an atomic swap.
+
+The expected remaining focused engineering time is 8 to 14 hours to the first
+reproducible linked claim-path PoC and 18 to 28 hours to an atomicity-capable
+local PoC with the signed refund and punishment design executed. The latter is
+longer than the prior estimate because source audit proved the existing generic
+permissionless LEZ refund is unsigned and cannot reveal `s_b`; this is concrete
+repository work, not an external blocker. GW-M4-001 and GW-M4-002 remain
+upstream production/review disclosures and do not block implementation.
 
 ### Post-PoC RED-GREEN-REFACTOR hardening required for M4 closure
 
@@ -2959,9 +2985,10 @@ production/review disclosures and do not block the owner-authorized local PoC.
   self-hosted stagenet `monerod` CI lane, happy/refund/concurrent D1 videos, full
   SDK lifecycle docs/examples, traceability/review packet, and all closure gates.
 
-ADR 0053 is the component, RPC, flow, atomicity, isolation, dependency, and
-evidence entry decision; ADR 0054 pins the first executable cryptographic
-boundary and its nonclaims. The annotated `m4-complete` tag remains forbidden until
+ADR 0053 is the component, RPC, flow, isolation, dependency, and evidence entry
+decision; ADR 0054 pins the executable two-proof/share boundary; ADR 0055
+corrects claim/refund share ownership, claim-partial sequencing, and the
+atomicity nonclaims. The annotated `m4-complete` tag remains forbidden until
 all six accepted outputs are present, the exact clean pushed commit passes the
 full repository and M4 actual-node gates, and the tag states every deferred
 production/formal-review item without claiming literal resolution of open

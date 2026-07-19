@@ -102,9 +102,11 @@ and a supply-chain attacker.
 - Counterparty disappears after witness exposure: recovery instructions must be
   derivable from persisted state without Chat.
 - The maker-funded Monero output has no script/timelock. If the maker does not
-  claim LEZ, the taker refunds LEZ and the resulting recovery-share path lets
-  the maker spend XMR. The coordinator must not expose maker recovery before
-  canonical LEZ refund evidence and must retain it after restart.
+  claim LEZ, the taker uses the distinct `s_b`-adapted signed LEZ refund; the
+  canonical refund signature lets the maker extract `s_b`, combine it with
+  retained `s_a`, and spend XMR. The generic unsigned permissionless refund is
+  not recovery evidence. The coordinator must retain the exact presignature
+  and canonical refund witness across restart.
 - Unsupported XMR-first funding: the pinned COMIT construction requires the
   scriptable leg first, so core term validation and CLI/daemon reject XMR-first.
 

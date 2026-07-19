@@ -1,15 +1,16 @@
-# ADR 0054: Bind the Monero share to the LEZ adaptor point
+# ADR 0054: Bind each Monero share to its LEZ adaptor point
 
 Status: Accepted for the M4 progressive local-PoC cryptographic boundary. This
 does not accept the selected proof library or composed protocol for production.
 
 ## Context
 
-The supported M4 direction needs one secret integer to serve two exact roles:
-an Ed25519 spend-key share on Monero and the secp256k1 adaptor witness revealed
-by the completed LEZ BIP-340 aggregate claim. Treating either public point as an
-arbitrary 32-byte marker would not establish that the claimant who receives LEZ
-necessarily reveals the share needed to spend the funded Monero output.
+The supported M4 direction needs each actor's secret integer to serve two exact
+roles: an Ed25519 spend-key share on Monero and a secp256k1 adaptor witness on
+LEZ. Maker share `s_a` is revealed by the completed Maker BIP-340 aggregate
+claim; Taker share `s_b` is revealed by the distinct signed timeout refund.
+Treating either public point as an arbitrary 32-byte marker would not establish
+the recovery relation for the funded Monero output.
 
 The issue names the archived, unlicensed `comit-network/cross-curve-dleq` PoC as
 its vector authority. GW-M4-001 records why that source cannot be copied. Its
@@ -25,8 +26,8 @@ though Cargo records optional upstream packages in the lock file.
 
 ## Decision
 
-Represent the shared integer as one nonzero canonical 252-bit little-endian
-value. Reject zero, any set upper nibble, and any noncanonical Ed25519 scalar.
+Represent each share as one nonzero canonical 252-bit little-endian value.
+Reject zero, any set upper nibble, and any noncanonical Ed25519 scalar.
 The same bytes are reversed into the big-endian scalar expected by the existing
 `musig2` adaptor API; no modular reduction or new curve arithmetic is allowed.
 
@@ -40,7 +41,7 @@ the commitment.
 
 ```mermaid
 flowchart LR
-    Scalar["Canonical nonzero scalar<br/>252-bit little endian"]
+    Scalar["Each actor share<br/>canonical nonzero 252-bit scalar"]
     Reverse["Reverse bytes only<br/>big-endian adaptor scalar"]
     Musig["musig2 base-point multiply"]
     Secp["Compressed secp256k1 point"]
@@ -48,8 +49,8 @@ flowchart LR
     EdPoint["Compressed prime-subgroup point"]
     Proof["sigma_fun cross-curve DLEQ proof"]
     Envelope["Versioned postcard envelope<br/>domain-separated commitment"]
-    Lez["LEZ agreement and witnessed claim"]
-    Monero["Monero shared spend authority"]
+    Lez["Distinct LEZ claim or refund session"]
+    Monero["One Monero public spend share"]
 
     Scalar --> Reverse
     Reverse --> Musig
@@ -88,7 +89,7 @@ sequenceDiagram
     participant Lez as LEZ MuSig2 path
     participant Taker as Taker role
 
-    Maker->>Wrapper: Canonical private spend-key share and CSPRNG
+    Maker->>Wrapper: Canonical Maker share s_a and CSPRNG
     Wrapper->>Dleq: Prove equal discrete log across both public points
     Wrapper->>Lez: Independently derive secp adaptor point with musig2
     Lez-->>Wrapper: Exact compressed point
@@ -96,17 +97,22 @@ sequenceDiagram
     Wrapper-->>Taker: Public proof, points, and commitment
     Taker->>Dleq: Parse subgroups and verify exact proof
     Dleq-->>Taker: Equal-scalar relation accepted
+    Taker->>Wrapper: Canonical Taker share s_b and CSPRNG
+    Wrapper-->>Maker: Separate public proof, points, and commitment
+    Maker->>Dleq: Verify Taker proof before deriving shared address
     Note over Maker,Taker: No private scalar is serialized, logged, or included in evidence
 ```
 
 ## Atomicity effect
 
 This decision establishes only the public hard relation needed by the later
-swap: a scalar extracted from the exact completed LEZ adaptor signature must
-map to the same Ed25519 public share admitted into the Monero shared address.
-It does not yet prove adaptor pre-signature validity, extraction, addition to
-the Taker's retained Monero share, or a real Monero spend. Those operations must
-be agreement-bound and executable before M4 may claim a happy atomic swap.
+swap: a scalar extracted from either exact completed LEZ adaptor signature must
+map to that revealing actor's Ed25519 public share admitted into the Monero
+shared address. The SDK now proves both DLEQ envelopes, canonical bounded wire
+round-trip, both share-addition orders, equality with the shared address, and a
+real official-wallet claim-path spend. It does not yet prove agreement-bound
+adaptor sessions, delayed claim-partial release, or the signed refund/punish
+branches; ADR 0055 makes those prerequisites explicit.
 
 Atomicity remains conditional on both locks being exact and canonical before
 reveal, the completed LEZ witness being extractable, the DLEQ proof being sound,
@@ -122,9 +128,9 @@ cross-chain commit.
   0BSD exceptions; broad 0BSD acceptance is intentionally not enabled.
 - GPL and unlicensed COMIT implementations remain external behavioral oracles
   only, subject to provenance approval; no source or fixture is incorporated.
-- The next vertical slice binds this envelope to exact agreement fields and the
-  LEZ adaptor lifecycle, then proves reconstruction through official Monero
-  Regtest wallet and daemon RPCs.
+- The next vertical slice binds both envelopes to exact agreement fields and
+  distinct LEZ claim/refund sessions, including the post-XMR-confirmation claim
+  partial gate required by ADR 0055.
 - Post-PoC RED-GREEN work must add immutable positive/negative vectors,
   mutations, subgroup/endian/domain substitutions, adapt/extract failures,
   fuzzing, timing/reachability review, and independent cryptographic review.

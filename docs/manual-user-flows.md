@@ -1,6 +1,6 @@
 # Manual reproduction guide
 
-Last verified: 2026-07-18
+Last verified: 2026-07-19
 
 This is the living operator guide for the user-visible flows that the repository
 currently proves. Update it in the same change whenever a runner, prerequisite,
@@ -2283,16 +2283,45 @@ test-only `--shutdown-on-stdin` flag so the process waits for Ctrl-C.
 
 ## Flow 0: M4 official Monero Regtest topology
 
-This flow reproduces the current M4 actual-node infrastructure checkpoint. It
+First reproduce the deterministic two-share cryptographic component. It uses
+no Docker, node, RPC, peer, faucet, funds, or external network:
+
+```sh
+cargo run --locked -p lez-xmr-swap-sdk --example dleq-spike
+```
+
+Expected output includes `dleq_verified=true`,
+`both_spend_shares_dleq_verified=true`,
+`reconstructed_spend_key_matches=true`, and
+`private_key_bytes_emitted=false`. The example verifies bounded canonical proof
+exchange for Maker share `s_a` and Taker share `s_b`, derives the same shared
+Monero address from both proofs, and proves both scalar-addition orders. It is a
+component checkpoint, not a node-backed swap.
+
+Then reproduce the current M4 actual-node infrastructure checkpoint. It
 starts one official Monero 0.18.5.1 `monerod`, plus independent funding,
 Maker, and Taker `monero-wallet-rpc` processes. It mines local Regtest funds,
 submits a real two-destination Monero transaction, requires ten confirmations
 and unlocked 10 XMR balances, seals evidence, and cleans only its run-owned
 resources.
 
-It is deliberately **not** an atomic-swap demonstration. The M4 happy PoC still
-needs the DLEQ-bound revealing LEZ claim, extracted share, reconstructed Monero
-spend, fresh role actors, and both terminal stores.
+It is deliberately **not** an atomic-swap demonstration. A separate development
+experiment has already funded the SDK-derived address, reconstructed the spend
+key through official wallet RPC `generate_from_keys`, and submitted a real
+spend after ten confirmations. That proves official-wallet behavior but is not
+yet exposed as a stable one-command user flow. The M4 atomic happy PoC still
+needs the DLEQ-bound revealing LEZ claim, canonical extraction, fresh role
+actors, and both terminal stores.
+
+The exact safety boundary matters when reviewing intermediate results. The
+Maker claim must reveal Maker share `s_a`, allowing the Taker to combine it with
+retained `s_b`. The timeout refund must be signed and reveal Taker share `s_b`,
+allowing the Maker to combine it with retained `s_a`. The existing generic
+permissionless LEZ refund is unsigned and reveals neither share, so a refund
+event alone is not Monero recovery evidence. The Taker also withholds its claim
+partial until it independently observes the exact Maker-funded XMR output at
+the countersigned confirmation depth. ADR 0055 contains the component and
+sequence diagrams plus the conditional atomicity argument.
 
 Prerequisites are Docker with Compose v2, Bash, Curl, jq, Git, GnuPG, OpenSSL,
 Perl, ripgrep, and standard archive/hash tools. Use a fresh lowercase run ID:

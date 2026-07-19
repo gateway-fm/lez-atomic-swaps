@@ -1,6 +1,9 @@
 //! Reproducible M4 `PoC` spike for the exact scalar and public-point mapping.
 
-use lez_xmr_swap_sdk::{CrossCurveDleqProofV1, CrossCurveScalar};
+use lez_xmr_swap_sdk::{
+    CrossCurveDleqProofV1, CrossCurveScalar, MoneroAddressNetworkV1, MoneroPrivateViewKey,
+    MoneroSharedAddressV1, ReconstructedMoneroSpendKey,
+};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng as _;
 use sha2::{Digest as _, Sha256};
@@ -12,6 +15,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut rng = ChaCha20Rng::from_seed([0x53; 32]);
     let proof = CrossCurveDleqProofV1::prove(&scalar, &mut rng)?;
     proof.verify()?;
+
+    let mut taker_scalar_bytes = [0_u8; 32];
+    taker_scalar_bytes[0] = 2;
+    let taker_scalar = CrossCurveScalar::from_monero_little_endian(taker_scalar_bytes)?;
+    let mut taker_rng = ChaCha20Rng::from_seed([0x54; 32]);
+    let taker_proof = CrossCurveDleqProofV1::prove(&taker_scalar, &mut taker_rng)?;
+    let mut view_key_bytes = [0_u8; 32];
+    view_key_bytes[0] = 3;
+    let view_key = MoneroPrivateViewKey::from_monero_little_endian(view_key_bytes)?;
+    let shared_address = MoneroSharedAddressV1::derive(
+        MoneroAddressNetworkV1::Regtest,
+        &proof,
+        &taker_proof,
+        &view_key,
+    )?;
+    let extracted = scalar.adaptor_scalar_big_endian();
+    let reconstructed =
+        ReconstructedMoneroSpendKey::reconstruct(&shared_address, &proof, taker_scalar, extracted)?;
 
     assert_eq!(
         hex::encode(proof.secp256k1_public_key()),
@@ -40,5 +61,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("dleq_verified=true");
     println!("musig2_adaptor_point_mapping=true");
+    println!("both_spend_shares_dleq_verified=true");
+    println!("shared_regtest_address={}", shared_address.address_string());
+    println!(
+        "shared_spend_public_key={}",
+        hex::encode(shared_address.public_spend_key())
+    );
+    println!(
+        "reconstructed_spend_public_key={}",
+        hex::encode(reconstructed.public_key())
+    );
+    println!("reconstructed_spend_key_matches=true");
+    println!("private_key_bytes_emitted=false");
     Ok(())
 }

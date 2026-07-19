@@ -48,6 +48,9 @@ exceptions = [
     { crate = "secp256kfun_arithmetic_macros@0.2.0", allow = ["0BSD"] },
     { crate = "secp256kfun@0.12.1", allow = ["0BSD"] },
     { crate = "sigma_fun@0.9.0", allow = ["0BSD"] },
+    # Monero address encoding uses this exact maintained Keccak implementation.
+    # CC0 is permissive and remains version-scoped rather than globally allowed.
+    { crate = "tiny-keccak@2.0.2", allow = ["CC0-1.0"] },
     # These exact rustls-platform-verifier dependencies contain Mozilla CA
     # certificate data under the permissive, non-copyleft CDLA-Permissive-2.0.
     { crate = "webpki-root-certs@0.26.11", allow = ["CDLA-Permissive-2.0"] },

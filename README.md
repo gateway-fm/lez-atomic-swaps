@@ -54,13 +54,30 @@ below; final repository-wide gates still precede any `m3-complete` tag.
 ## Current status
 
 M3 is complete, tagged `m3-complete`, and pushed. M4 is now the active
-progressive local-functional PoC. Its first two executable checkpoints are
-green: the bounded cross-curve DLEQ proof boundary and an official Monero
-0.18.5.1 actual-node topology. The one-command runner starts one offline
+progressive local-functional PoC. Its first three executable checkpoints are
+green: bounded canonical proofs for both cross-curve spend-key shares, an
+official Monero 0.18.5.1 actual-node topology, and an official-wallet spend
+from a reconstructed shared key. The one-command topology runner starts one offline
 `monerod` Regtest daemon plus independently authenticated funding, Maker, and
 Taker wallet RPCs; mines funds locally; submits a real two-destination
 transaction; requires ten confirmations, unlocked role balances, wallet/daemon
 height agreement, role isolation, secret-safe evidence, and exact cleanup.
+
+The deterministic SDK spike can be repeated without Docker or network access:
+
+```sh
+cargo run --locked -p lez-xmr-swap-sdk --example dleq-spike
+```
+
+It verifies Maker share `s_a` and Taker share `s_b`, derives their shared public
+spend key and address, and proves both reconstruction orders without printing
+private bytes. Development evidence also funds and spends that reconstructed
+key through the official wallet RPC. This is still not an atomic swap: the LEZ
+Maker-claim branch must reveal `s_a`, the Taker signed-refund branch must reveal
+`s_b`, the Maker punishment branch must be explicit, and the Taker's claim
+partial must remain private until the exact XMR lock reaches the signed
+confirmation policy. The design and atomicity argument are in
+[ADR 0055](docs/architecture/0055-preserve-xmr-atomicity-with-dual-reveal-branches.md).
 
 ```sh
 RUN_ID=m4-readme-monero-20260719a ./scripts/run-monero-e2e.sh
@@ -69,8 +86,8 @@ RUN_ID=m4-readme-monero-20260719a ./scripts/run-monero-e2e.sh
 Measured run `m4-monero-poc-20260719c` passed in 53 seconds before cleanup
 with no public RPC, peer, faucet, public funds, stagenet, or external finality
 service. This is infrastructure evidence, not an atomic swap: the revealing
-LEZ claim, adaptor extraction, reconstructed Monero spend, and fresh terminal
-role actors remain the next happy-path slice. The exact components/RPCs and
+LEZ claim, canonical adaptor extraction, signed refund/punish lifecycle, and
+fresh terminal role actors remain the next happy-path slice. The exact components/RPCs and
 both target and bootstrap sequences are in
 [ADR 0053](docs/architecture/0053-enter-m4-through-isolated-monero-regtest.md);
 manual run, live inspection, scoped cleanup, and cold-resource flakiness are in

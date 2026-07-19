@@ -1,0 +1,139 @@
+# ADR 0055: Preserve XMR atomicity with dual reveal branches
+
+Status: Accepted for the M4 local-PoC design. Both DLEQ-bound reconstruction
+equations and an official-wallet claim-path spend are executable; the
+XMR-specific signed LEZ refund and punishment branches remain implementation
+work. No complete atomic swap is claimed yet.
+
+## Context
+
+The h4sh3d/COMIT construction uses two private Monero spend-key shares, not one.
+The Maker/XMR seller retains `s_a`; the Taker/LEZ depositor retains `s_b`. Both
+roles prove that their standard-basepoint Ed25519 share and secp256k1 adaptor
+point have the same discrete logarithm. The funded Monero address uses
+`(s_a + s_b)G` as its public spend key.
+
+Two different LEZ signatures disclose the missing share to the surviving role:
+
+- the Maker claim is adapted with `s_a`; the Taker extracts `s_a`, adds retained
+  `s_b`, and spends the Maker-funded Monero output;
+- the Taker timeout refund is adapted with `s_b`; the Maker extracts `s_b`, adds
+  retained `s_a`, and recovers the Monero output.
+
+The existing generic LEZ v0.2 refund is fixed-destination and permissionless,
+but unsigned. It contains no `s_b`-bound witness and therefore cannot authorize
+Maker Monero recovery. Reusing that refund while claiming event-only share
+recovery would be synthetic atomicity.
+
+A second sequencing hazard exists on the happy path. The Maker already knows
+`s_a`. If it receives the complete aggregate claim presignature before its XMR
+lock is canonical, it can adapt the signature and receive LEZ without funding
+Monero. The Taker's claim partial must remain owner-local until the exact shared
+XMR output reaches the signed confirmation policy.
+
+## Decision
+
+M4 uses an additive XMR-specific LEZ lifecycle so M2/M3 instruction and metadata
+tags remain unchanged:
+
+1. both DLEQ envelopes, the shared address, view-key commitment, XMR amount and
+   confirmation policy, exact LEZ claim/refund messages, and refund/punish
+   windows are countersigned before the Taker's first lock;
+2. claim and refund use distinct adaptor session IDs and nonce material;
+3. before the first lock, the claim message and nonce commitments are durable,
+   but the Taker claim partial is not released to the Maker;
+4. after the Taker independently proves the exact Maker XMR lock at the signed
+   depth, it releases that partial; the Maker may then aggregate and adapt the
+   claim only with `s_a`;
+5. the `s_b`-bound refund presignature may be complete before funding because
+   the LEZ program rejects it before `refund_at`; during
+   `refund_at <= now < punish_at`, only the exact Taker refund signature is
+   valid; and
+6. after `punish_at`, a Maker punishment branch is required if the Taker
+   disappears without revealing `s_b`. That branch preserves Maker economic
+   safety in the cited construction, but its exact relationship to RFP F6's
+   literal “both complete or both refund” wording requires explicit review and
+   remains outside the current executable claim.
+
+```mermaid
+flowchart LR
+    MakerShare["Maker share s_a"] --> MakerProof["Maker DLEQ envelope"]
+    TakerShare["Taker share s_b"] --> TakerProof["Taker DLEQ envelope"]
+    MakerProof --> Shared["Shared XMR public spend key<br/>(s_a + s_b)G"]
+    TakerProof --> Shared
+    MakerProof --> ClaimPoint["LEZ claim adaptor point"]
+    TakerProof --> RefundPoint["LEZ refund adaptor point"]
+    ClaimPoint --> Claim["Maker signed claim branch"]
+    RefundPoint --> Refund["Taker signed refund branch"]
+    Shared --> XmrLock["Maker-funded XMR output"]
+    Claim --> TakerRecover["Taker extracts s_a<br/>adds s_b and spends XMR"]
+    Refund --> MakerRecover["Maker extracts s_b<br/>adds s_a and recovers XMR"]
+    Punish["Maker punishment after punish_at"] --> MakerSafety["Maker economic safety<br/>exact RFP disposition pending"]
+```
+
+```mermaid
+sequenceDiagram
+    participant Taker as Taker / LEZ depositor
+    participant Lez as LEZ v0.2 XMR escrow
+    participant Maker as Maker / XMR seller
+    participant Monero as monerod and wallet RPC
+
+    Taker->>Maker: Taker DLEQ proof for s_b
+    Maker->>Taker: Maker DLEQ proof for s_a
+    Note over Taker,Maker: Derive and countersign the same shared XMR address and both LEZ sessions
+    Note over Taker,Maker: Persist claim commitments but keep Taker claim partial owner-local
+    Taker->>Lez: Lock LEZ first
+    Lez-->>Maker: Exact finalized Taker lock
+    Maker->>Monero: Fund exact shared address
+    Monero-->>Taker: Exact output reaches signed confirmation policy
+    Taker->>Maker: Release exact claim partial after XMR confirmation
+    Maker->>Lez: Adapt Maker claim with s_a
+    Lez-->>Taker: Canonical final signature reveals s_a
+    Taker->>Taker: Extract s_a and verify Maker DLEQ proof
+    Taker->>Monero: Import s_a + retained s_b and sweep XMR
+
+    alt No Maker claim and Taker is live in refund window
+        Taker->>Lez: Adapt exact timeout refund with s_b
+        Lez-->>Maker: Canonical refund signature reveals s_b
+        Maker->>Maker: Extract s_b and verify Taker DLEQ proof
+        Maker->>Monero: Import retained s_a + s_b and recover XMR
+    else Taker disappears through punish_at
+        Maker->>Lez: Execute exact punishment branch
+        Note over Maker,Monero: Economic-safety fallback, literal both-refund disposition remains under review
+    end
+```
+
+## Atomicity and current evidence
+
+On the claim branch, the Maker cannot receive LEZ without putting `s_a` in the
+canonical signature, and the Taker cannot obtain the XMR spend key without that
+same scalar. Delaying the Taker partial until canonical XMR funding removes the
+interval in which the Maker could claim LEZ first.
+
+On the signed-refund branch, the Taker cannot reclaim LEZ without putting
+`s_b` in the canonical signature, and the Maker cannot recover XMR without that
+same scalar. Distinct session IDs prevent a valid nonce, partial, or final
+signature from crossing between claim and refund.
+
+The SDK currently proves both scalar/public-point relations, bounded canonical
+proof exchange, both addition orders, and equality with the shared public spend
+key. Development run `m4-xmr-key-wallet-20260719f` additionally funded the
+deterministic shared address through official Monero 0.18.5.1, rebuilt the
+Taker wallet using `generate_from_keys`, and spent transaction
+`2bda3675fed4dd5d5428e889ab5794f5c9a91942bc99ad31aa600198653949e9`
+after ten local confirmations. That proves the official-wallet reconstruction
+behavior, not the missing LEZ branches or an atomic swap.
+
+## Consequences
+
+- One Maker proof plus a raw Taker Ed25519 point is insufficient for atomic
+  setup; both public shares require DLEQ envelopes.
+- The generic permissionless LEZ refund remains valid for other pairs but is
+  not an XMR recovery proof.
+- The proven M3 adaptor implementation should move behind a pair-neutral shared
+  crate with compatibility re-exports instead of making the XMR SDK depend on
+  the BTC SDK.
+- Claim-partial release becomes a typed post-XMR-confirmation effect, not
+  pre-lock negotiation data.
+- A linked happy transfer may be demonstrated before refund/punish completion,
+  but documentation, evidence, metrics, and tags must call it non-atomic.

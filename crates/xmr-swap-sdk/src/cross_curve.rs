@@ -5,6 +5,7 @@ use core::fmt;
 use musig2::secp::{Point as MusigPoint, Scalar as MusigScalar};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{CryptoRng, RngCore};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use sigma_fun::{
     HashTranscript,
@@ -22,6 +23,7 @@ pub const CROSS_CURVE_DLEQ_SCHEMA_V1: u8 = 1;
 
 const TRANSCRIPT_COMMITMENT_DOMAIN: &[u8] = b"lez-atomic-swaps/xmr/cross-curve-dleq-transcript/v1";
 const MAX_PROOF_BYTES: usize = 128 * 1024;
+const MAX_WIRE_BYTES: usize = MAX_PROOF_BYTES + 256;
 
 // Public alternate generators used by the h4sh3d/COMIT construction. They are
 // mathematical protocol parameters, not imported source code. The archived
@@ -68,6 +70,20 @@ impl CrossCurveScalar {
         let mut bytes = Zeroizing::new(*self.0);
         bytes.reverse();
         bytes
+    }
+
+    /// Returns the standard-basepoint Ed25519 public key used as a Monero
+    /// spend-key share.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the retained scalar is no longer canonical.
+    pub fn monero_public_key(&self) -> Result<[u8; 32], CrossCurveDleqError> {
+        use sigma_fun::ed25519::curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
+
+        Ok((&self.ed_scalar()? * &ED25519_BASEPOINT_TABLE)
+            .compress()
+            .to_bytes())
     }
 
     /// Consumes this value and returns its Monero little-endian representation.
@@ -177,6 +193,92 @@ impl CrossCurveDleqProofV1 {
         Ok(())
     }
 
+    /// Encodes the complete public proof envelope for agreement exchange.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the envelope cannot be serialized within its fixed
+    /// wire bound.
+    pub fn to_wire_bytes(&self) -> Result<Vec<u8>, CrossCurveDleqError> {
+        let wire = CrossCurveDleqWireV1 {
+            schema_version: CROSS_CURVE_DLEQ_SCHEMA_V1,
+            secp256k1_public_key: self.secp256k1_public_key.to_vec(),
+            ed25519_public_key: self.ed25519_public_key.to_vec(),
+            proof_bytes: self.proof_bytes.clone(),
+            transcript_commitment: self.transcript_commitment,
+        };
+        let encoded =
+            postcard::to_allocvec(&wire).map_err(|_| CrossCurveDleqError::ProofWireEncoding)?;
+        if encoded.len() > MAX_WIRE_BYTES {
+            return Err(CrossCurveDleqError::ProofTooLarge);
+        }
+        Ok(encoded)
+    }
+
+    /// Parses and verifies one canonical bounded public proof envelope.
+    ///
+    /// # Errors
+    ///
+    /// Rejects empty/oversized input, unknown versions, malformed or
+    /// noncanonical encodings, incorrect fixed-width fields, and every proof
+    /// validation failure reported by [`Self::verify`].
+    pub fn from_wire_bytes(bytes: &[u8]) -> Result<Self, CrossCurveDleqError> {
+        if bytes.is_empty() || bytes.len() > MAX_WIRE_BYTES {
+            return Err(CrossCurveDleqError::ProofTooLarge);
+        }
+        let wire: CrossCurveDleqWireV1 =
+            postcard::from_bytes(bytes).map_err(|_| CrossCurveDleqError::ProofWireEncoding)?;
+        if wire.schema_version != CROSS_CURVE_DLEQ_SCHEMA_V1 {
+            return Err(CrossCurveDleqError::UnsupportedSchema);
+        }
+        let secp256k1_public_key = wire
+            .secp256k1_public_key
+            .try_into()
+            .map_err(|_| CrossCurveDleqError::ProofWireEncoding)?;
+        let ed25519_public_key = wire
+            .ed25519_public_key
+            .try_into()
+            .map_err(|_| CrossCurveDleqError::ProofWireEncoding)?;
+        let result = Self {
+            secp256k1_public_key,
+            ed25519_public_key,
+            proof_bytes: wire.proof_bytes,
+            transcript_commitment: wire.transcript_commitment,
+        };
+        result.verify()?;
+        if result.to_wire_bytes()?.as_slice() != bytes {
+            return Err(CrossCurveDleqError::NonCanonicalProofWire);
+        }
+        Ok(result)
+    }
+
+    /// Verifies that private scalar material opens both public points retained
+    /// by this proof.
+    ///
+    /// This is the bridge between adaptor extraction and Monero spend-key
+    /// reconstruction: the scalar must open both the secp256k1 adaptor point
+    /// and the Ed25519 spend-key share before it can be combined with the
+    /// Taker's retained share.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an invalid proof or a scalar that opens either a different
+    /// secp256k1 point or a different Ed25519 point.
+    pub fn verify_scalar(&self, scalar: &CrossCurveScalar) -> Result<(), CrossCurveDleqError> {
+        self.verify()?;
+        let adaptor_scalar = scalar.adaptor_scalar_big_endian();
+        let musig_scalar = MusigScalar::from_slice(adaptor_scalar.as_ref())
+            .map_err(|_| CrossCurveDleqError::InvalidScalar)?;
+        drop(adaptor_scalar);
+        if musig_scalar.base_point_mul().serialize() != self.secp256k1_public_key {
+            return Err(CrossCurveDleqError::AdaptorPointMismatch);
+        }
+        if scalar.monero_public_key()? != self.ed25519_public_key {
+            return Err(CrossCurveDleqError::MoneroPointMismatch);
+        }
+        Ok(())
+    }
+
     /// Compressed secp256k1 adaptor point accepted by the LEZ `MuSig2` path.
     #[must_use]
     pub const fn secp256k1_public_key(&self) -> [u8; 33] {
@@ -241,9 +343,30 @@ pub enum CrossCurveDleqError {
     /// DLEQ secp256k1 point does not match the `MuSig2` adaptor scalar mapping.
     #[error("cross-curve secp256k1 point does not match the adaptor scalar")]
     AdaptorPointMismatch,
+    /// Private scalar does not open the proof's Monero spend-key share.
+    #[error("cross-curve scalar does not match the Monero spend-key share")]
+    MoneroPointMismatch,
     /// Public proof bytes no longer match their agreement/metadata commitment.
     #[error("cross-curve transcript commitment mismatch")]
     TranscriptCommitmentMismatch,
+    /// Public proof envelope could not be decoded or encoded.
+    #[error("cross-curve proof wire encoding is invalid")]
+    ProofWireEncoding,
+    /// Public proof envelope uses an unsupported schema version.
+    #[error("cross-curve proof wire schema is unsupported")]
+    UnsupportedSchema,
+    /// Public proof envelope is valid but not canonically encoded.
+    #[error("cross-curve proof wire encoding is not canonical")]
+    NonCanonicalProofWire,
+}
+
+#[derive(Deserialize, Serialize)]
+struct CrossCurveDleqWireV1 {
+    schema_version: u8,
+    secp256k1_public_key: Vec<u8>,
+    ed25519_public_key: Vec<u8>,
+    proof_bytes: Vec<u8>,
+    transcript_commitment: [u8; 32],
 }
 
 fn proof_system() -> Result<CrossCurveDLEQ<DleqTranscript>, CrossCurveDleqError> {

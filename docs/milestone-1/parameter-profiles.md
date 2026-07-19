@@ -69,11 +69,13 @@ compared.
 | BTC, taker sells LEZ | BTC CSV at +36 blocks (~6 target hours) | LEZ refund at +12 hours | 6 hours |
 | ZEC, taker sells ZEC | LEZ refund at +2 hours | ZEC CLTV at +192 blocks (~4 target hours) | 2 hours |
 | ZEC, taker sells LEZ | LEZ refund at +2 hours | ZEC CLTV at +192 blocks (~4 target hours) | 2 hours |
-| XMR, taker sells LEZ | Taker LEZ refund at +12 hours | No Monero timelock: maker recovery follows the canonical refund event/share | Event-gated; 2 LEZ confirmations after refund before Monero recovery |
+| XMR, taker sells LEZ | Taker signed LEZ refund at +12 hours | No Monero timelock: maker extracts `s_b` from the canonical adapted refund signature | Witness-gated; 2 LEZ confirmations after refund before Monero recovery |
 
 The XMR row intentionally does not instantiate a fictional Monero deadline.
-Its state model is `LEZ lock -> XMR fund -> LEZ claim/XMR spend` or `LEZ refund
--> maker key-share recovery/XMR spend`, following the reviewed COMIT direction.
+Its state model is `LEZ lock -> XMR fund -> Maker signed LEZ claim/Taker XMR
+spend` or `Taker signed LEZ refund -> Maker key-share recovery/XMR spend`,
+following the reviewed COMIT direction. The unsigned generic refund cannot
+serve as the second branch.
 
 ## Margin budgets
 
