@@ -177,6 +177,7 @@ impl From<NativePrepareError> for VaultClaimPrepareError {
             NativePrepareError::WrongRuntime => Self::WrongRuntime,
             NativePrepareError::WrongSigner => Self::WrongSigner,
             NativePrepareError::ActivePrepare
+            | NativePrepareError::ActiveXmrClaimAuthorizationPrepare
             | NativePrepareError::ActiveWitnessedEscrowPrepare
             | NativePrepareError::ActiveClaimPrepare
             | NativePrepareError::ActiveWitnessedClaimPrepare
@@ -197,6 +198,7 @@ impl From<NativePrepareError> for VaultClaimPrepareError {
             | NativePrepareError::WrongAtaProgram
             | NativePrepareError::WrongTokenAccount
             | NativePrepareError::WrongPreimage
+            | NativePrepareError::WrongXmrClaimPartial
             | NativePrepareError::WrongEscrowProgram
             | NativePrepareError::WrongAuthenticatedTransferProgram
             | NativePrepareError::NonceOverflow

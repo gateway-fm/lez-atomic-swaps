@@ -17,9 +17,9 @@ use indexer_service_protocol::Block;
 use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, BridgeClientError, SidecarCapability};
 use lez_bridge_protocol::{
-    ErrorCode, Hex32, MessageContext, Participant, PrepareNativeXmrEscrowV3Request, RequestId,
-    RunId, RuntimeCompatibility, RuntimeDescriptor, XmrNativeEscrowTermsV3,
-    XmrNativeEscrowTermsV3Input,
+    ErrorCode, Hex32, MessageContext, Participant, PrepareNativeXmrClaimAuthorizationV3Request,
+    PrepareNativeXmrEscrowV3Request, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    XmrClaimPartialV3, XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
@@ -28,6 +28,7 @@ use lez_v0_2_sidecar::{
     start_bridge_server,
 };
 use nssa::{AccountId, PrivateKey, PublicKey};
+use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 
 const CAPABILITY: &str = "xmr-escrow-route-capability-000001";
@@ -35,6 +36,8 @@ const RUN_ID: &str = "xmr-escrow-route-run";
 const ESCROW_PROGRAM: [u32; 8] = [0x1020_3040; 8];
 const TRANSFER_PROGRAM: [u32; 8] = [0x5060_7080; 8];
 const SWAP_ID: [u8; 32] = [51; 32];
+const CLAIM_PARTIAL_COMMITMENT_DOMAIN: &[u8] =
+    b"logos.gateway.lez-xmr.claim-partial-commitment.v1\0";
 
 #[derive(Debug)]
 struct CountingNonce {
@@ -89,6 +92,14 @@ const fn h(byte: u8) -> Hex32 {
     Hex32::from_bytes([byte; 32])
 }
 
+fn claim_partial_commitment(context_binding: Hex32, claim_partial: [u8; 32]) -> Hex32 {
+    let mut hasher = Sha256::new();
+    hasher.update(CLAIM_PARTIAL_COMMITMENT_DOMAIN);
+    hasher.update(context_binding.as_bytes());
+    hasher.update(claim_partial);
+    Hex32::from_bytes(hasher.finalize().into())
+}
+
 fn runtime(signer: AccountId) -> RuntimeDescriptor {
     RuntimeDescriptor::new(
         Participant::Taker,
@@ -126,7 +137,7 @@ fn terms(depositor: AccountId, claimant: AccountId, amount: u128) -> XmrNativeEs
         maker_dleq_transcript_commitment: h(13),
         taker_dleq_transcript_commitment: h(14),
         claim_partial_context_binding: h(15),
-        claim_partial_commitment: h(16),
+        claim_partial_commitment: claim_partial_commitment(h(15), [77; 32]),
         amount,
         refund_at_ms: 10_000,
         punish_at_ms: 20_000,
@@ -150,6 +161,22 @@ fn request(
         ),
         descriptor,
         *terms,
+    )
+}
+
+fn authorization_request(
+    descriptor: RuntimeDescriptor,
+    terms: &XmrNativeEscrowTermsV3,
+) -> PrepareNativeXmrClaimAuthorizationV3Request {
+    PrepareNativeXmrClaimAuthorizationV3Request::new(
+        MessageContext::new(
+            RunId::new(RUN_ID).expect("run id"),
+            RequestId::new("xmr-claim-authorization").expect("request id"),
+            Participant::Taker,
+        ),
+        descriptor,
+        *terms,
+        XmrClaimPartialV3::new([77; 32]).expect("claim partial"),
     )
 }
 
@@ -237,6 +264,7 @@ async fn authenticated_route_recovers_after_fresh_server_and_never_submits() {
     let descriptor = runtime(depositor);
     let xmr_terms = terms(depositor, claimant, 75);
     let prepare = request(descriptor.clone(), &xmr_terms, "xmr-escrow-prepare");
+    let authorize = authorization_request(descriptor.clone(), &xmr_terms);
     let (node_endpoint, node, sends) = start_node().await;
     let first_nonce = Arc::new(CountingNonce {
         value: 41,
@@ -254,6 +282,10 @@ async fn authenticated_route_recovers_after_fresh_server_and_never_submits() {
         .prepare_native_xmr_escrow_v3(prepare.clone())
         .await
         .expect("first exact plan");
+    let first_authorization = client
+        .prepare_native_xmr_claim_authorization_v3(authorize.clone())
+        .await
+        .expect("first exact authorization");
     assert_eq!(first_nonce.calls.load(Ordering::SeqCst), 1);
     assert_eq!(sends.load(Ordering::SeqCst), 0);
     server.stop().await.expect("first server stops");
@@ -276,6 +308,11 @@ async fn authenticated_route_recovers_after_fresh_server_and_never_submits() {
         .await
         .expect("server replay");
     assert_eq!(recovered, first);
+    let recovered_authorization = restarted_client
+        .prepare_native_xmr_claim_authorization_v3(authorize)
+        .await
+        .expect("server restores escrow before exact authorization");
+    assert_eq!(recovered_authorization, first_authorization);
     assert_eq!(restart_nonce.calls.load(Ordering::SeqCst), 0);
     assert_eq!(sends.load(Ordering::SeqCst), 0);
 

@@ -278,6 +278,10 @@ type RestoredRequests = (
         lez_bridge_protocol::PrepareNativeXmrEscrowV3Request,
         lez_bridge_protocol::PrepareNativeXmrEscrowV3Result,
     )>,
+    Option<(
+        lez_bridge_protocol::PrepareNativeXmrClaimAuthorizationV3Request,
+        lez_bridge_protocol::PrepareNativeXmrClaimAuthorizationV3Result,
+    )>,
 );
 
 impl DurableStore {
@@ -338,6 +342,7 @@ impl DurableStore {
                                 | METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2
                                 | METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2
                                 | METHOD_PREPARE_NATIVE_XMR_ESCROW_V3
+                                | METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
                         )
                     })
             })
@@ -483,6 +488,7 @@ impl DurableStore {
         let mut completed_asset_claim_v2 = None;
         let mut asset_refund_v2 = None;
         let mut xmr_escrow_v3 = None;
+        let mut xmr_claim_authorization_v3 = None;
         for entry in self.persisted.entries.values() {
             let PersistedOutcome::Success(value) = &entry.outcome else {
                 continue;
@@ -585,6 +591,16 @@ impl DurableStore {
                             .map_err(|_| BridgeServerError::InvalidDurableState)?,
                     ));
                 }
+                METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
+                    if xmr_claim_authorization_v3.is_none() =>
+                {
+                    xmr_claim_authorization_v3 = Some((
+                        serde_json::from_value(request)
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                        serde_json::from_value(value.clone())
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                    ));
+                }
                 METHOD_PREPARE_NATIVE_ESCROW
                 | METHOD_PREPARE_WITNESSED_ESCROW
                 | METHOD_PREPARE_REVEALING_CLAIM
@@ -595,7 +611,8 @@ impl DurableStore {
                 | METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2
                 | METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2
                 | METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2
-                | METHOD_PREPARE_NATIVE_XMR_ESCROW_V3 => {
+                | METHOD_PREPARE_NATIVE_XMR_ESCROW_V3
+                | METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3 => {
                     return Err(BridgeServerError::InvalidDurableState);
                 }
                 _ => {}
@@ -613,6 +630,7 @@ impl DurableStore {
             completed_asset_claim_v2,
             asset_refund_v2,
             xmr_escrow_v3,
+            xmr_claim_authorization_v3,
         ))
     }
 }
@@ -783,6 +801,7 @@ async fn restore_runtime_requests(
         restored_asset_completion_v2,
         restored_asset_refund_v2,
         restored_xmr_escrow_v3,
+        restored_xmr_claim_authorization_v3,
     ) = restored;
     if let Some((request, expected)) = restored_prepare {
         let observed = runtime
@@ -877,6 +896,15 @@ async fn restore_runtime_requests(
     if let Some((request, expected)) = restored_xmr_escrow_v3 {
         let observed = runtime
             .prepare_native_xmr_escrow_v3(&request)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+        if observed != expected {
+            return Err(BridgeServerError::InvalidDurableState);
+        }
+    }
+    if let Some((request, expected)) = restored_xmr_claim_authorization_v3 {
+        let observed = runtime
+            .prepare_native_xmr_claim_authorization_v3(&request)
             .await
             .map_err(|_| BridgeServerError::InvalidDurableState)?;
         if observed != expected {
@@ -1480,11 +1508,35 @@ fn register_xmr_v3_methods(
                 .await
         },
     )?;
-    register_unavailable!(
+    module.register_async_method(
         METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
-        lez_bridge_protocol::PrepareNativeXmrClaimAuthorizationV3Request,
-        Participant::Taker
-    );
+        |params, state, _| async move {
+            let request: lez_bridge_protocol::PrepareNativeXmrClaimAuthorizationV3Request =
+                params.one()?;
+            state.validate_xmr_v3_request(
+                &request.context,
+                &request.runtime,
+                &request.terms,
+                Participant::Taker,
+            )?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+                    &request.context,
+                    &request,
+                    || async move {
+                        let result = runtime
+                            .prepare_native_xmr_claim_authorization_v3(&operation)
+                            .await
+                            .map_err(OperationFailure::from)?;
+                        to_value(result)
+                    },
+                )
+                .await
+        },
+    )?;
     module.register_async_method(
         METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
         |params, state, _| async move {
@@ -1599,6 +1651,8 @@ impl ServerState {
             if let Some(outcome) = store
                 .replay(context.request_id.as_str(), method, &request_sha256)
                 .map_err(|failure| protocol_error(context, failure))?
+                && (method != METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
+                    || !matches!(&outcome, PersistedOutcome::Success(_)))
             {
                 return outcome.into_rpc_result();
             }
@@ -1628,6 +1682,7 @@ impl ServerState {
                 | METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2
                 | METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2
                 | METHOD_PREPARE_NATIVE_XMR_ESCROW_V3
+                | METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
         );
         let repeatable = method != METHOD_SUBMIT_TRANSACTION
             && (!prepare || matches!(&outcome, PersistedOutcome::Error(_)));
@@ -1700,6 +1755,7 @@ fn encode_request<Request: Serialize>(
             | METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2
             | METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2
             | METHOD_PREPARE_NATIVE_XMR_ESCROW_V3
+            | METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
     )
     .then_some(request_value);
     Ok((request_sha256, replay_request))

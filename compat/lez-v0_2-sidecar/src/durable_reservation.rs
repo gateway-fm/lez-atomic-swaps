@@ -52,6 +52,7 @@ pub enum DurableReservationError {
 pub(crate) enum ReservationKind {
     NativeEscrow,
     XmrNativeEscrowV3,
+    XmrNativeClaimAuthorizationV3,
     WitnessedEscrow,
     NativeClaim,
     WitnessedClaim,
@@ -69,6 +70,9 @@ impl ReservationKind {
         match self {
             Self::NativeEscrow => "native-escrow-reservation.v1.json",
             Self::XmrNativeEscrowV3 => "xmr-native-escrow-reservation.v3.json",
+            Self::XmrNativeClaimAuthorizationV3 => {
+                "xmr-native-claim-authorization-reservation.v3.json"
+            }
             Self::WitnessedEscrow => "witnessed-escrow-reservation.v1.json",
             Self::NativeClaim => "native-claim-reservation.v1.json",
             Self::WitnessedClaim => "witnessed-claim-reservation.v1.json",

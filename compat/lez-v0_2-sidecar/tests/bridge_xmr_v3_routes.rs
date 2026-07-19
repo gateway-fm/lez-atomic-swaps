@@ -4,7 +4,10 @@ use std::{
     fs,
     net::{Ipv4Addr, SocketAddr},
     os::unix::fs::PermissionsExt as _,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -21,8 +24,8 @@ use lez_bridge_protocol::{
     PrepareNativeXmrClaimV3Request, PrepareNativeXmrEscrowV3Request,
     PrepareNativeXmrPunishV3Request, PrepareNativeXmrRefundV3Request, PreparedTransaction,
     PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
-    TransactionId, XmrClaimPartialV3, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
-    XmrNativeEscrowTermsV3Input,
+    SubmitTransactionRequest, TransactionId, XmrClaimPartialV3, XmrNativeEffectV3,
+    XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
@@ -37,6 +40,8 @@ const CAPABILITY: &str = "xmr-v3-sidecar-capability-00000001";
 const RUN_ID: &str = "xmr-v3-sidecar-routes";
 const ESCROW_PROGRAM: [u32; 8] = [0x1020_3040; 8];
 const TRANSFER_PROGRAM: [u32; 8] = [0x5060_7080; 8];
+const CLAIM_PARTIAL_COMMITMENT_DOMAIN: &[u8] =
+    b"logos.gateway.lez-xmr.claim-partial-commitment.v1\0";
 
 #[derive(Debug)]
 struct FixedNonce;
@@ -81,7 +86,7 @@ struct RunningSidecar {
     client: BridgeClient,
     server: lez_v0_2_sidecar::BridgeServerHandle,
     descriptor: RuntimeDescriptor,
-    _directory: TempDir,
+    directory: TempDir,
 }
 
 impl RunningSidecar {
@@ -99,6 +104,14 @@ impl RunningSidecar {
 
 const fn h(byte: u8) -> Hex32 {
     Hex32::from_bytes([byte; 32])
+}
+
+fn claim_partial_commitment(context_binding: Hex32, claim_partial: [u8; 32]) -> Hex32 {
+    let mut hasher = Sha256::new();
+    hasher.update(CLAIM_PARTIAL_COMMITMENT_DOMAIN);
+    hasher.update(context_binding.as_bytes());
+    hasher.update(claim_partial);
+    Hex32::from_bytes(hasher.finalize().into())
 }
 
 fn account(byte: u8) -> (AccountId, PrivateKey) {
@@ -135,7 +148,7 @@ fn terms(depositor: AccountId, claimant: AccountId, amount: u128) -> XmrNativeEs
         maker_dleq_transcript_commitment: h(13),
         taker_dleq_transcript_commitment: h(14),
         claim_partial_context_binding: h(15),
-        claim_partial_commitment: h(16),
+        claim_partial_commitment: claim_partial_commitment(h(15), [77; 32]),
         amount,
         refund_at_ms: 10_000,
         punish_at_ms: 20_000,
@@ -188,20 +201,26 @@ fn transaction(byte: u8) -> PreparedTransaction {
     )
 }
 
-async fn start_sequencer() -> (String, jsonrpsee::server::ServerHandle) {
+async fn start_sequencer() -> (String, jsonrpsee::server::ServerHandle, Arc<AtomicUsize>) {
+    let sends = Arc::new(AtomicUsize::new(0));
     let server = ServerBuilder::default()
         .build("127.0.0.1:0")
         .await
         .expect("sequencer binds");
     let address = server.local_addr().expect("sequencer address");
-    let mut rpc = RpcModule::new(());
-    rpc.register_method("checkHealth", |_, (), _| Ok::<_, ErrorObjectOwned>(()))
+    let mut rpc = RpcModule::new(Arc::clone(&sends));
+    rpc.register_method("checkHealth", |_, _, _| Ok::<_, ErrorObjectOwned>(()))
         .expect("health method");
-    rpc.register_method("getChannelId", |_, (), _| {
+    rpc.register_method("getChannelId", |_, _, _| {
         Ok::<_, ErrorObjectOwned>(hex::encode([41_u8; 32]))
     })
     .expect("channel method");
-    (format!("http://{address}"), server.start(rpc))
+    rpc.register_method("sendTransaction", |_, sends, _| {
+        sends.fetch_add(1, Ordering::SeqCst);
+        Ok::<_, ErrorObjectOwned>(hex::encode([42_u8; 32]))
+    })
+    .expect("send method");
+    (format!("http://{address}"), server.start(rpc), sends)
 }
 
 async fn start_sidecar(
@@ -259,7 +278,7 @@ async fn start_sidecar(
         client,
         server,
         descriptor,
-        _directory: directory,
+        directory,
     }
 }
 
@@ -278,13 +297,13 @@ fn assert_remote_code<T: std::fmt::Debug>(
     clippy::too_many_lines,
     reason = "one route contract covers all eight additive methods and replay semantics"
 )]
-async fn xmr_v3_routes_are_authenticated_bound_with_only_escrow_builder_enabled() {
+async fn xmr_v3_routes_are_authenticated_bound_with_two_official_builders_enabled() {
     let (depositor, depositor_key) = account(31);
     let (claimant, claimant_key) = account(32);
     let xmr_terms = terms(depositor, claimant, 42);
     let maker_runtime = runtime(Participant::Maker, claimant);
     let taker_runtime = runtime(Participant::Taker, depositor);
-    let (sequencer_endpoint, sequencer) = start_sequencer().await;
+    let (sequencer_endpoint, sequencer, sequencer_sends) = start_sequencer().await;
     let maker = start_sidecar(
         Participant::Maker,
         claimant,
@@ -380,20 +399,55 @@ async fn xmr_v3_routes_are_authenticated_bound_with_only_escrow_builder_enabled(
     );
     assert_eq!(prepared_escrow.terms, xmr_terms);
     assert_ne!(prepared_escrow.initialization, prepared_escrow.funding);
+    let authorization_request = PrepareNativeXmrClaimAuthorizationV3Request::new(
+        context(Participant::Taker, "prepare-authorization"),
+        taker_runtime.clone(),
+        xmr_terms,
+        XmrClaimPartialV3::new([77; 32]).expect("claim partial"),
+    );
+    let prepared_authorization = taker
+        .client
+        .prepare_native_xmr_claim_authorization_v3(authorization_request.clone())
+        .await
+        .expect("XMR claim authorization route uses the exact durable planner");
+    assert_eq!(
+        prepared_authorization.context.request_id.as_str(),
+        "prepare-authorization"
+    );
+    assert_eq!(prepared_authorization.terms, xmr_terms);
     assert_remote_code(
         taker
             .client
-            .prepare_native_xmr_claim_authorization_v3(
-                PrepareNativeXmrClaimAuthorizationV3Request::new(
-                    context(Participant::Taker, "prepare-authorization"),
-                    taker_runtime.clone(),
-                    xmr_terms,
-                    XmrClaimPartialV3::new([77; 32]).expect("claim partial"),
-                ),
-            )
+            .submit_transaction(SubmitTransactionRequest::new(
+                context(Participant::Taker, "submit-authorization"),
+                taker_runtime.clone(),
+                prepared_authorization.authorization.clone(),
+            ))
             .await,
-        ErrorCode::Unavailable,
+        ErrorCode::InvalidTransaction,
     );
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 0);
+    let replayed_authorization = taker
+        .fresh_client()
+        .prepare_native_xmr_claim_authorization_v3(authorization_request.clone())
+        .await
+        .expect("authorization replays byte-identically through a fresh client");
+    assert_eq!(replayed_authorization, prepared_authorization);
+    fs::remove_file(
+        taker
+            .directory
+            .path()
+            .join("planner/xmr-native-claim-authorization-reservation.v3.json"),
+    )
+    .expect("delete planner authorization reservation");
+    assert_remote_code(
+        taker
+            .fresh_client()
+            .prepare_native_xmr_claim_authorization_v3(authorization_request)
+            .await,
+        ErrorCode::InvalidTransaction,
+    );
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 0);
 
     let classification = maker
         .client

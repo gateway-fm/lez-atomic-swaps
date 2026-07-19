@@ -243,6 +243,23 @@ impl BridgeRuntime {
             .map_err(Into::into)
     }
 
+    /// Prepares one exact Taker claim-partial publication without submission.
+    ///
+    /// # Errors
+    ///
+    /// Preserves every strict v3 request, commitment, durable escrow, ABI,
+    /// signature, canonical-byte, and reservation failure from the planner.
+    pub async fn prepare_native_xmr_claim_authorization_v3(
+        &self,
+        request: &lez_bridge_protocol::PrepareNativeXmrClaimAuthorizationV3Request,
+    ) -> Result<lez_bridge_protocol::PrepareNativeXmrClaimAuthorizationV3Result, BridgeRuntimeError>
+    {
+        self.planner
+            .prepare_native_xmr_claim_authorization_v3(request)
+            .await
+            .map_err(Into::into)
+    }
+
     /// Classifies one exact persisted XMR-native Fund in stable finalized history.
     ///
     /// # Errors

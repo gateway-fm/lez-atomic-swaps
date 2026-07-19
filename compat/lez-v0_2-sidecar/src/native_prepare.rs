@@ -11,6 +11,7 @@ use lez_bridge_protocol::{
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, ExactMessageBytes,
     ExactTransactionBytes, Hex32, MessageContext, Participant, PrepareNativeEscrowRequest,
     PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
+    PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimAuthorizationV3Result,
     PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result, PrepareRevealingClaimRequest,
     PrepareRevealingClaimResult, PrepareWitnessedAssetClaimV2Request,
     PrepareWitnessedAssetClaimV2Result, PrepareWitnessedAssetEscrowV2Request,
@@ -28,6 +29,9 @@ use nssa::{
 use sha2::{Digest as _, Sha256};
 use tokio::sync::Mutex;
 use zeroize::{Zeroize as _, Zeroizing};
+
+const XMR_CLAIM_PARTIAL_COMMITMENT_DOMAIN: &[u8] =
+    b"logos.gateway.lez-xmr.claim-partial-commitment.v1\0";
 
 #[cfg(target_os = "linux")]
 use crate::durable_reservation::{
@@ -71,6 +75,9 @@ pub enum NativePrepareError {
     /// Another request already owns this signer's active nonce pair.
     #[error("a distinct native escrow preparation already owns the nonce reservation")]
     ActivePrepare,
+    /// Another XMR claim authorization already owns this signer's nonce.
+    #[error("a distinct XMR claim authorization already owns the nonce reservation")]
+    ActiveXmrClaimAuthorizationPrepare,
     /// Another request already owns this signer's witnessed escrow nonce pair.
     #[error("a distinct witnessed escrow preparation already owns the nonce reservation")]
     ActiveWitnessedEscrowPrepare,
@@ -119,6 +126,9 @@ pub enum NativePrepareError {
     /// The revealing preimage does not match the signed escrow digest.
     #[error("native revealing claim preimage does not match the signed digest")]
     WrongPreimage,
+    /// The supplied Taker claim partial differs from the activated commitment.
+    #[error("XMR claim partial does not match the activated commitment")]
+    WrongXmrClaimPartial,
     /// The official account nonce was unavailable.
     #[error("official signer nonce is unavailable")]
     NonceUnavailable,
@@ -170,6 +180,7 @@ struct ActivePrepare {
 struct PlannerState {
     active: Option<ActivePrepare>,
     active_xmr_escrow_v3: Option<ActiveXmrEscrowPrepareV3>,
+    active_xmr_claim_authorization_v3: Option<ActiveXmrClaimAuthorizationPrepareV3>,
     active_witnessed_escrow: Option<ActiveWitnessedEscrowPrepare>,
     active_claim: Option<ActiveClaimPrepare>,
     active_witnessed_claim: Option<ActiveWitnessedClaimPrepare>,
@@ -191,6 +202,12 @@ struct ActiveWitnessedEscrowPrepare {
 struct ActiveXmrEscrowPrepareV3 {
     request: PrepareNativeXmrEscrowV3Request,
     result: PrepareNativeXmrEscrowV3Result,
+}
+
+#[derive(Clone)]
+struct ActiveXmrClaimAuthorizationPrepareV3 {
+    request: PrepareNativeXmrClaimAuthorizationV3Request,
+    result: PrepareNativeXmrClaimAuthorizationV3Result,
 }
 
 #[derive(Clone)]
@@ -517,6 +534,83 @@ impl NativeEscrowPlanner {
             return Err(error.into());
         }
         state.active_xmr_escrow_v3 = Some(ActiveXmrEscrowPrepareV3 {
+            request: request.clone(),
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
+    /// Prepares and durably reserves the exact Taker claim-partial publication.
+    ///
+    /// The transaction is derived only from an exact durable XMR escrow
+    /// reservation. Its nonce is the reserved funding nonce plus one, so this
+    /// method performs no node read and no submission. Exact replay returns the
+    /// same signed bytes after restart.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role, runtime, terms, claim-partial commitment, durable escrow,
+    /// nonce, generated ABI, signature, canonical bytes, or reservation drift.
+    pub async fn prepare_native_xmr_claim_authorization_v3(
+        &self,
+        request: &PrepareNativeXmrClaimAuthorizationV3Request,
+    ) -> Result<PrepareNativeXmrClaimAuthorizationV3Result, NativePrepareError> {
+        self.validate_xmr_claim_authorization_v3_request(request)?;
+        let mut state = self.state.lock().await;
+        if let Some(active) = state.active_xmr_claim_authorization_v3.as_ref() {
+            return if &active.request == request {
+                self.validate_prepared_native_xmr_claim_authorization_v3(
+                    &active.request,
+                    &active.result,
+                )?;
+                #[cfg(target_os = "linux")]
+                if self.durable_store.is_some() {
+                    let recovered = self
+                        .recover_durable_xmr_claim_authorization_v3(request)?
+                        .ok_or(DurableReservationError::Filesystem)?;
+                    if recovered != active.result {
+                        return Err(NativePrepareError::InvalidTransactionBytes);
+                    }
+                }
+                Ok(active.result.clone())
+            } else {
+                Err(NativePrepareError::ActiveXmrClaimAuthorizationPrepare)
+            };
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(recovered) = self.recover_durable_xmr_claim_authorization_v3(request)? {
+            state.active_xmr_claim_authorization_v3 = Some(ActiveXmrClaimAuthorizationPrepareV3 {
+                request: request.clone(),
+                result: recovered.clone(),
+            });
+            return Ok(recovered);
+        }
+
+        let authorization_nonce = self.xmr_claim_authorization_nonce(request)?;
+        let result = self.plan_xmr_claim_authorization_v3(request, authorization_nonce)?;
+        #[cfg(target_os = "linux")]
+        if let Some(store) = self.durable_store.as_ref()
+            && let Err(error) = store.create(
+                ReservationKind::XmrNativeClaimAuthorizationV3,
+                request,
+                &result,
+            )
+        {
+            if error == DurableReservationError::AlreadyReserved {
+                let recovered = self
+                    .recover_durable_xmr_claim_authorization_v3(request)?
+                    .ok_or(DurableReservationError::Filesystem)?;
+                state.active_xmr_claim_authorization_v3 =
+                    Some(ActiveXmrClaimAuthorizationPrepareV3 {
+                        request: request.clone(),
+                        result: recovered.clone(),
+                    });
+                return Ok(recovered);
+            }
+            return Err(error.into());
+        }
+        state.active_xmr_claim_authorization_v3 = Some(ActiveXmrClaimAuthorizationPrepareV3 {
             request: request.clone(),
             result: result.clone(),
         });
@@ -1459,6 +1553,28 @@ impl NativeEscrowPlanner {
     }
 
     #[cfg(target_os = "linux")]
+    fn recover_durable_xmr_claim_authorization_v3(
+        &self,
+        request: &PrepareNativeXmrClaimAuthorizationV3Request,
+    ) -> Result<Option<PrepareNativeXmrClaimAuthorizationV3Result>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some((stored_request, stored_result)) = store.load::<
+            PrepareNativeXmrClaimAuthorizationV3Request,
+            PrepareNativeXmrClaimAuthorizationV3Result,
+        >(ReservationKind::XmrNativeClaimAuthorizationV3)?
+        else {
+            return Ok(None);
+        };
+        self.validate_prepared_native_xmr_claim_authorization_v3(&stored_request, &stored_result)?;
+        if &stored_request != request {
+            return Err(NativePrepareError::ActiveXmrClaimAuthorizationPrepare);
+        }
+        Ok(Some(stored_result))
+    }
+
+    #[cfg(target_os = "linux")]
     fn recover_durable_witnessed_escrow(
         &self,
         request: &PrepareWitnessedEscrowRequest,
@@ -1831,6 +1947,31 @@ impl NativeEscrowPlanner {
         Ok(())
     }
 
+    /// Validates one recovered XMR claim authorization against its request and ABI.
+    ///
+    /// # Errors
+    ///
+    /// Rejects request, partial, durable escrow, nonce, account order, signer,
+    /// instruction, transaction ID, signature, or canonical-byte drift.
+    pub fn validate_prepared_native_xmr_claim_authorization_v3(
+        &self,
+        request: &PrepareNativeXmrClaimAuthorizationV3Request,
+        result: &PrepareNativeXmrClaimAuthorizationV3Result,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_xmr_claim_authorization_v3_request(request)?;
+        if result.context != request.context || result.terms != request.terms {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let authorization =
+            decode_prepared_for_signer(&result.authorization, self.signer_account_id)?;
+        let authorization_nonce = self.xmr_claim_authorization_nonce(request)?;
+        let expected = self.xmr_claim_authorization_message(request, authorization_nonce)?;
+        if authorization.message() != &expected {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
+    }
+
     /// Validates one recovered witnessed pair against its complete request.
     ///
     /// # Errors
@@ -2176,6 +2317,72 @@ impl NativeEscrowPlanner {
             return Err(NativePrepareError::WrongDepositorRole);
         }
         self.validate_xmr_terms_v3_binding(&request.context, &request.runtime, &request.terms)
+    }
+
+    fn validate_xmr_claim_authorization_v3_request(
+        &self,
+        request: &PrepareNativeXmrClaimAuthorizationV3Request,
+    ) -> Result<(), NativePrepareError> {
+        if self.role != Participant::Taker
+            || request.context.sidecar_role != Participant::Taker
+            || request.runtime.sidecar_role != Participant::Taker
+        {
+            return Err(NativePrepareError::WrongRole);
+        }
+        let terms = request.terms.to_input();
+        if terms.depositor != Participant::Taker {
+            return Err(NativePrepareError::WrongDepositorRole);
+        }
+        self.validate_xmr_terms_v3_binding(&request.context, &request.runtime, &request.terms)?;
+        let mut hasher = Sha256::new();
+        hasher.update(XMR_CLAIM_PARTIAL_COMMITMENT_DOMAIN);
+        hasher.update(terms.claim_partial_context_binding.as_bytes());
+        hasher.update(request.claim_partial.expose_secret());
+        let commitment: [u8; 32] = hasher.finalize().into();
+        if commitment != *terms.claim_partial_commitment.as_bytes() {
+            return Err(NativePrepareError::WrongXmrClaimPartial);
+        }
+        Ok(())
+    }
+
+    fn xmr_claim_authorization_nonce(
+        &self,
+        request: &PrepareNativeXmrClaimAuthorizationV3Request,
+    ) -> Result<u128, NativePrepareError> {
+        #[cfg(target_os = "linux")]
+        {
+            let store = self
+                .durable_store
+                .as_ref()
+                .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+            let (stored_request, stored_result) = store
+                .load::<PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result>(
+                    ReservationKind::XmrNativeEscrowV3,
+                )?
+                .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+            self.validate_prepared_native_xmr_escrow_v3(&stored_request, &stored_result)?;
+            if stored_request.context.run_id != request.context.run_id
+                || stored_request.context.sidecar_role != request.context.sidecar_role
+                || stored_request.runtime != request.runtime
+                || stored_request.terms != request.terms
+            {
+                return Err(NativePrepareError::InvalidTransactionBytes);
+            }
+            let funding =
+                decode_prepared_for_signer(&stored_result.funding, self.signer_account_id)?;
+            let [funding_nonce] = funding.message().nonces.as_slice() else {
+                return Err(NativePrepareError::InvalidTransactionBytes);
+            };
+            u128::from(*funding_nonce)
+                .checked_add(1)
+                .ok_or(NativePrepareError::NonceOverflow)
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = request;
+            Err(NativePrepareError::InvalidTransactionBytes)
+        }
     }
 
     pub(crate) fn validate_xmr_terms_v3_binding(
@@ -2725,6 +2932,43 @@ impl NativeEscrowPlanner {
             vec![metadata, custody, claimant, aggregate_authority],
             vec![nonce.into()],
             ZecEscrowInstruction::ClaimNativeWitnessed { swap_id },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)
+    }
+
+    fn plan_xmr_claim_authorization_v3(
+        &self,
+        request: &PrepareNativeXmrClaimAuthorizationV3Request,
+        nonce: u128,
+    ) -> Result<PrepareNativeXmrClaimAuthorizationV3Result, NativePrepareError> {
+        let message = self.xmr_claim_authorization_message(request, nonce)?;
+        let result = PrepareNativeXmrClaimAuthorizationV3Result::new(
+            request.context.clone(),
+            request.terms,
+            self.prepare_message(message)?,
+        );
+        self.validate_prepared_native_xmr_claim_authorization_v3(request, &result)?;
+        Ok(result)
+    }
+
+    fn xmr_claim_authorization_message(
+        &self,
+        request: &PrepareNativeXmrClaimAuthorizationV3Request,
+        nonce: u128,
+    ) -> Result<Message, NativePrepareError> {
+        self.validate_xmr_claim_authorization_v3_request(request)?;
+        let terms = request.terms.to_input();
+        let swap_id = *terms.swap_id.as_bytes();
+        let metadata = compute_metadata_pda(&self.escrow_program_id, &swap_id);
+        let depositor = AccountId::new(*terms.depositor_account_id.as_bytes());
+        Message::try_new(
+            self.escrow_program_id,
+            vec![metadata, depositor],
+            vec![nonce.into()],
+            ZecEscrowInstruction::AuthorizeNativeXmrClaim {
+                swap_id,
+                claim_partial: *request.claim_partial.expose_secret(),
+            },
         )
         .map_err(|_| NativePrepareError::InstructionEncoding)
     }
