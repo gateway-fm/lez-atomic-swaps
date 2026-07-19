@@ -2126,15 +2126,21 @@ flowchart LR
     XmrActor -.-> XmrSdk
     XmrActor -.-> BridgeClient["Strict v3 bridge client<br/>eight methods green"]
     BridgeClient --> BridgeRoutes["Authenticated sidecar v3 routes<br/>all eight registered"]
-    BridgeRoutes -.-> BridgeRuntime["Seven builders and classifier<br/>fail closed and pending"]
+    BridgeRoutes --> NativePrepare["Taker native-XMR escrow preparation<br/>exact durable initialize and fund pair green"]
+    NativePrepare --> Reservation[("Owner-only exact transaction reservation<br/>restart replay green; no submit authority")]
+    BridgeRoutes -.-> BridgeRuntime["Six other builders and classifier<br/>fail closed and pending"]
+    NativePrepare --> BridgeProtocol
     BridgeRuntime --> BridgeProtocol["Strict additive v3 protocol<br/>eight methods green"]
     BridgeProtocol -->|binds exact tags and effects| Guest["XMR guest source tags 13 through 17"]
     Guest --> CheckedArtifact["Checked local M4 guest<br/>ELF dc370bc...b7292<br/>ImageID 4d6590...2c82"]
     CheckedArtifact -->|five recursive branch tests| Transfer["Authenticated native transfer"]
     XmrActor -.-> Release["Stage-B-bound one-shot release<br/>pending"]
-    Release -.-> XmrObservation["Non-cloneable exact XMR observation<br/>component green"]
+    XmrObservation["Origin-retaining non-cloneable XMR observation<br/>component green"] -.-> Release
+    Topology["Run/chain/origin-bound topology capability<br/>16 adapter tests green"] -.-> Release
     XmrObservation --> WalletRpc["Credential-configured wallet RPCs"]
     WalletRpc --> Monerod["Official monerod Regtest"]
+    WalletRpc --> Topology
+    Monerod --> Topology
 ```
 
 <!-- atomic-sequence: lez-xmr/taker-sells-lez -->
@@ -2240,8 +2246,15 @@ digest-pinned builds reproduce checked ELF
 and ImageID
 `4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`;
 all five recursive cases pass in both builds. The eight-method bridge client is
-green across 51 package targets, and the exact Monero receipt observation is
-green in seven focused tests. The main-process LEZ first-lock boundary is also
+green across 51 package targets, and the exact Monero receipt observation plus its local topology gate
+are green in all 16 adapter tests with strict Clippy, Rustdoc, formatting, and diff
+checks. The private-field, non-`Clone` topology capability binds run, Regtest
+chain, daemon/target/foreign-wallet origins, correct-target and foreign Digest
+authentication, exact cross-credential HTTP 401, bounded 64 KiB typed
+`get_info`/`get_connections`, offline fakechain, `untrusted == false`, zero
+peers, empty connections, and typed height-zero genesis. Output observations
+retain daemon/wallet origins for cross-binding. The main-process LEZ
+first-lock boundary is also
 component-green: its production constructor binds validated Stage A and Stage B,
 its pure Taker-only gate rejects the wrong role before transport, and only the
 concrete authenticated `BridgeClient` plus a fully revalidated exact finalized
@@ -2249,17 +2262,27 @@ concrete authenticated `BridgeClient` plus a fully revalidated exact finalized
 focused tests and all 89 adapter package tests pass with strict Clippy, strict
 Rustdoc, and the compile-fail non-`Clone` doctest. Those focused tests use the
 canonical protocol fixture and do not claim a full real Stage-B fixture. The
-authenticated eight-route sidecar server boundary is green across 134
-standalone tests and focused v2/v3 regressions. Its seven builders
-still return typed `Unavailable`, and its classifier returns only
-`HistoryUnavailable`; therefore the adapter cannot yet mint positive
-actual-chain evidence and no claim PoC exists. The functional LEZ runtime and
-classifier, actual-chain trusted finalized LEZ capability, Stage-B-bound durable
+authenticated eight-route sidecar server boundary now includes one real Taker
+preparation path. `prepare_native_xmr_escrow_v3` derives the exact generated-v0.2
+`InitializeNativeXmr` and `FundNative` messages, binds the derived PDAs, complete
+terms, ordered accounts, authorities, signer, and consecutive depositor nonces,
+then atomically owner-only persists both signed transaction byte strings before
+return. Same-request replay after a fresh planner/server returns byte-identically
+with zero nonce reads; the sequencer send count remains zero and any drift fails
+closed. The scoped checkpoint is green across 20 of 20 planner/route regressions
+and the final three XMR tests, plus strict Clippy, formatting, and diff checks.
+The other six builders still return typed `Unavailable`, and its classifier
+returns only `HistoryUnavailable`; therefore the adapter cannot yet mint
+positive actual-chain evidence and no claim PoC exists. The preparation route
+creates no chain state. Submission authority, the remaining builders, finalized
+scanner, actual-chain trusted finalized LEZ capability, Stage-B-bound durable
 one-shot release, role actors, and composed E2E remain pending. The Monero
-observation does not prove old-output
-unspent state from a view-only wallet or server authentication by credential
-configuration alone; the local run must bind its fresh output, peerless
-topology, and cross-credential rejection. The additive v3 protocol and all 44
+observation does not prove old-output unspent state from a view-only wallet.
+The separate topology capability closes credential-configuration and peerless
+origin binding only for the local Regtest PoC; it is not public/Stagenet trust,
+Stage-B release authority, or a claim PoC. Maintained `monero-rpc` lacks the two
+topology methods, so the project-owned bounded adapter remains a production and
+upstream-review item. The additive v3 protocol and all 44
 legacy bridge protocol cases are green. The checked artifact uses no runtime
 RPC or external resource and is not an on-chain or public deployment.
 

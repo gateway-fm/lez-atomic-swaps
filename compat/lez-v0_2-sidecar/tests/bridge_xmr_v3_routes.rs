@@ -108,21 +108,30 @@ fn account(byte: u8) -> (AccountId, PrivateKey) {
 }
 
 fn terms(depositor: AccountId, claimant: AccountId, amount: u128) -> XmrNativeEscrowTermsV3 {
+    let (claim_authority, claim_key) = account(33);
+    let claim_public = PublicKey::new_from_private_key(&claim_key);
+    let (refund_authority, refund_key) = account(34);
+    let refund_public = PublicKey::new_from_private_key(&refund_key);
+    let swap_id = [1; 32];
     XmrNativeEscrowTermsV3::new(XmrNativeEscrowTermsV3Input {
-        swap_id: h(1),
+        swap_id: Hex32::from_bytes(swap_id),
         activation_commitment: h(2),
         escrow_program_id: program_id_to_hex(ESCROW_PROGRAM),
         authenticated_transfer_program_id: program_id_to_hex(TRANSFER_PROGRAM),
-        metadata_account_id: h(5),
-        custody_account_id: h(6),
+        metadata_account_id: Hex32::from_bytes(
+            lez_v0_2_sidecar::compute_metadata_pda(&ESCROW_PROGRAM, &swap_id).into_value(),
+        ),
+        custody_account_id: Hex32::from_bytes(
+            lez_v0_2_sidecar::compute_custody_pda(&ESCROW_PROGRAM, &swap_id).into_value(),
+        ),
         depositor: Participant::Taker,
         depositor_account_id: Hex32::from_bytes(depositor.into_value()),
         claimant: Participant::Maker,
         claimant_account_id: Hex32::from_bytes(claimant.into_value()),
-        claim_aggregate_x_only_public_key: h(9),
-        claim_authority_account_id: h(10),
-        refund_aggregate_x_only_public_key: h(11),
-        refund_authority_account_id: h(12),
+        claim_aggregate_x_only_public_key: Hex32::from_bytes(*claim_public.value()),
+        claim_authority_account_id: Hex32::from_bytes(claim_authority.into_value()),
+        refund_aggregate_x_only_public_key: Hex32::from_bytes(*refund_public.value()),
+        refund_authority_account_id: Hex32::from_bytes(refund_authority.into_value()),
         maker_dleq_transcript_commitment: h(13),
         taker_dleq_transcript_commitment: h(14),
         claim_partial_context_binding: h(15),
@@ -269,7 +278,7 @@ fn assert_remote_code<T: std::fmt::Debug>(
     clippy::too_many_lines,
     reason = "one route contract covers all eight additive methods and replay semantics"
 )]
-async fn all_xmr_v3_routes_are_authenticated_bound_and_fail_closed_without_guest_support() {
+async fn xmr_v3_routes_are_authenticated_bound_with_only_escrow_builder_enabled() {
     let (depositor, depositor_key) = account(31);
     let (claimant, claimant_key) = account(32);
     let xmr_terms = terms(depositor, claimant, 42);
@@ -356,17 +365,21 @@ async fn all_xmr_v3_routes_are_authenticated_bound_and_fail_closed_without_guest
             .await,
         ErrorCode::Unavailable,
     );
-    assert_remote_code(
-        taker
-            .client
-            .prepare_native_xmr_escrow_v3(PrepareNativeXmrEscrowV3Request::new(
-                context(Participant::Taker, "prepare-escrow"),
-                taker_runtime.clone(),
-                xmr_terms,
-            ))
-            .await,
-        ErrorCode::Unavailable,
+    let prepared_escrow = taker
+        .client
+        .prepare_native_xmr_escrow_v3(PrepareNativeXmrEscrowV3Request::new(
+            context(Participant::Taker, "prepare-escrow"),
+            taker_runtime.clone(),
+            xmr_terms,
+        ))
+        .await
+        .expect("XMR escrow route uses the exact durable planner");
+    assert_eq!(
+        prepared_escrow.context.request_id.as_str(),
+        "prepare-escrow"
     );
+    assert_eq!(prepared_escrow.terms, xmr_terms);
+    assert_ne!(prepared_escrow.initialization, prepared_escrow.funding);
     assert_remote_code(
         taker
             .client

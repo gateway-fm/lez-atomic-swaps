@@ -51,6 +51,7 @@ pub enum DurableReservationError {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ReservationKind {
     NativeEscrow,
+    XmrNativeEscrowV3,
     WitnessedEscrow,
     NativeClaim,
     WitnessedClaim,
@@ -67,6 +68,7 @@ impl ReservationKind {
     const fn filename(self) -> &'static str {
         match self {
             Self::NativeEscrow => "native-escrow-reservation.v1.json",
+            Self::XmrNativeEscrowV3 => "xmr-native-escrow-reservation.v3.json",
             Self::WitnessedEscrow => "witnessed-escrow-reservation.v1.json",
             Self::NativeClaim => "native-claim-reservation.v1.json",
             Self::WitnessedClaim => "witnessed-claim-reservation.v1.json",

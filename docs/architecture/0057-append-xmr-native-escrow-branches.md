@@ -4,10 +4,11 @@ Status: Accepted and checked-artifact-executed for the M4 local PoC. Fourteen
 focused guest tests pin the legacy wire and the new state transitions. Two
 fresh digest-pinned builds additionally pass all five recursive branch tests
 against the exact checked ELF and ImageID. The authenticated sidecar server
-registers all eight additive v3 routes, while all seven transaction-building
-routes fail closed with typed `Unavailable` and the classifier returns only
-`HistoryUnavailable`. Functional builders, finalized classification, and
-actual-node branches remain pending.
+registers all eight additive v3 routes. Its Taker-only native-XMR escrow route
+now prepares and owner-only persists the exact checked initialize/fund pair;
+the other six transaction-building routes fail closed with typed `Unavailable`
+and the classifier returns only `HistoryUnavailable`. Submission, finalized
+classification, and actual-node branches remain pending.
 
 ## Context
 
@@ -173,13 +174,58 @@ native-XMR escrow preparation, claim-partial authorization preparation, claim
 prepare/complete, refund prepare/complete, punishment preparation, and
 finalized-effect classification. The focused v3 route test reaches the real
 loopback JSON-RPC server through the production bridge client and capability
-check. The entire standalone sidecar suite passes 134 of 134 tests, including
-focused v2/v3 route regressions, with strict Clippy, formatting, and diff checks
+check. The scoped planner/route checkpoint passes 20 of 20 regressions plus the
+final three XMR test binaries, with strict Clippy, formatting, and diff checks
 green.
 
-This is an interface and authentication checkpoint, not a functional claim
-PoC. The seven transaction-building methods intentionally return typed
-`Unavailable`; the classifier intentionally returns only
-`HistoryUnavailable`. No route yet prepares an XMR transaction or promotes a
-finalized chain effect. The functional planners, exact finalized-history scan,
-Stage-B release authority, and actor composition remain on the critical path.
+The Taker `prepare_native_xmr_escrow_v3` route is now a functional preparation
+checkpoint. It derives the metadata and custody PDAs and exact account,
+authority, term, signer, and instruction bindings from the checked generated
+v0.2 ABI. It signs `InitializeNativeXmr` at the observed depositor nonce and
+`FundNative` at the consecutive nonce, then atomically creates an owner-only
+reservation containing both exact signed transactions before either is
+returned. Same-request replay returns byte-identically in-process and after a
+fresh planner/server without another nonce read. Term, request, runtime, role,
+signer, PDA, aggregate-authority, nonce, instruction, transaction, or durable
+record drift fails closed.
+
+```mermaid
+flowchart LR
+    Client["Taker strict v3 client"] --> Route["Authenticated prepare_native_xmr_escrow_v3"]
+    Route --> Planner["Checked native-XMR planner"]
+    Abi["Generated LEZ v0.2 ABI<br/>InitializeNativeXmr and FundNative"] --> Planner
+    Nonce["Depositor nonce source<br/>one read on first preparation"] --> Planner
+    Planner --> Reservation[("Owner-only exact pair reservation")]
+    Reservation --> Replay["Byte-identical restart replay<br/>zero nonce reads"]
+    Planner -.-> NoSubmit["No submit authority<br/>zero sendTransaction calls"]
+```
+
+```mermaid
+sequenceDiagram
+    actor Taker
+    participant Sidecar as Authenticated sidecar
+    participant Nonce as LEZ nonce RPC
+    participant Store as Owner-only reservation
+    participant Sequencer as LEZ sequencer
+
+    Taker->>Sidecar: prepare_native_xmr_escrow_v3 exact request
+    Sidecar->>Nonce: Read depositor nonce once
+    Nonce-->>Sidecar: n
+    Sidecar->>Store: Atomically persist signed Initialize at n and Fund at n plus 1
+    Store-->>Sidecar: Durable exact pair
+    Sidecar-->>Taker: Both exact signed transaction bytes
+    Note over Sidecar,Sequencer: Preparation grants no submission authority; send count stays zero
+    Taker->>Sidecar: Same request after fresh planner and server
+    Sidecar->>Store: Revalidate exact request and durable bytes
+    Store-->>Sidecar: Same exact pair
+    Sidecar-->>Taker: Byte-identical replay with no nonce read
+```
+
+This is still not a functional claim PoC. The other six transaction-building
+methods intentionally return typed `Unavailable`; the classifier intentionally
+returns only `HistoryUnavailable`. The preparation route never calls
+`sendTransaction` and creates no chain state. Submission authority, the six
+remaining builders, exact finalized-history scan, Stage-B release authority,
+and actor composition remain on the critical path. The scoped checkpoint passes
+20 of 20 planner/route regressions and the final three XMR tests, with strict
+Clippy, formatting, and diff checks green.

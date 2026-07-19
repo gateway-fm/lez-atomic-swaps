@@ -1,8 +1,9 @@
 # ADR 0053: Enter M4 through isolated Monero Regtest
 
-Status: Accepted. The official-node Regtest topology and locally mined
-wallet-to-wallet funding checkpoint are executable and evidenced. No atomic
-LEZ/XMR swap is claimed yet.
+Status: Accepted. The official-node Regtest topology, its run/chain/origin-bound
+authentication capability, and locally mined wallet-to-wallet funding
+checkpoint are executable and evidenced. No atomic LEZ/XMR swap is claimed
+yet.
 
 ## Context
 
@@ -180,6 +181,24 @@ tmpfs stores, and distinct credentials. Maker credentials received HTTP 401
 from the Taker endpoint. Cleanup removed the exact four containers, four
 volumes, network, and image while a foreign sentinel survived.
 
+The reusable adapter boundary now proves these runtime assumptions instead of
+trusting configured credentials. A private-field, non-`Clone`
+`VerifiedMoneroTopologyAttestation` binds the exact run, Regtest identity, and
+three distinct origins. Its correct-target and foreign-origin requests use
+their respective Digest credentials; replaying the foreign credential against
+the target must finish with exact HTTP 401. Bounded 64 KiB typed `get_info` and
+`get_connections` reads require offline fakechain, `untrusted == false`, zero
+incoming/outgoing peers, and an empty connection list; typed height-zero lookup
+binds genesis. The output observation now retains its daemon and wallet origins
+for exact cross-binding. All 16 adapter tests plus strict Clippy, Rustdoc,
+formatting, and diff gates pass.
+
+This closes the earlier topology-auth residual only for the local Regtest PoC.
+Maintained `monero-rpc` 0.5.1 lacks `get_info` and `get_connections`, so the
+project-owned bounded adapter remains a production/upstream-review item. This
+checkpoint does not prove public or Stagenet trust, create Stage-B release
+authority, or complete a claim PoC.
+
 ```mermaid
 flowchart LR
     subgraph Host["Run-owned host boundary"]
@@ -233,6 +252,7 @@ sequenceDiagram
     participant Lez as LEZ sequencer and indexer
     participant MakerActor as Fresh Maker actor
     participant Monero as monerod and wallet RPC
+    participant Topology as Local topology verifier
 
     Maker->>MakerActor: Accept signed LEZ-first terms and durable transcript
     Taker->>TakerActor: Accept the same terms and durable transcript
@@ -241,6 +261,8 @@ sequenceDiagram
     Note over MakerActor,TakerActor: Delivery and Chat may now remain offline
     MakerActor->>Monero: Fund exact shared Monero address and amount
     Monero-->>TakerActor: Exact output reaches signed confirmation policy
+    TakerActor->>Topology: Bind run chain origins peerless facts and exact 401
+    Topology-->>TakerActor: Non-cloneable local Regtest attestation
     MakerActor->>Lez: Submit exact adaptor-completed witnessed claim
     Lez-->>TakerActor: Canonical claim bytes reveal the bound scalar share
     TakerActor->>TakerActor: Verify extraction and both DLEQ public points

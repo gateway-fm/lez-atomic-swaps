@@ -222,6 +222,22 @@ impl BridgeRuntime {
         self.planner.prepare(request).await.map_err(Into::into)
     }
 
+    /// Prepares one exact XMR-native initialization/funding pair without submission.
+    ///
+    /// # Errors
+    ///
+    /// Preserves every strict v3 request, checked-ABI, nonce, signature, and
+    /// durable-reservation validation failure from the isolated Taker planner.
+    pub async fn prepare_native_xmr_escrow_v3(
+        &self,
+        request: &lez_bridge_protocol::PrepareNativeXmrEscrowV3Request,
+    ) -> Result<lez_bridge_protocol::PrepareNativeXmrEscrowV3Result, BridgeRuntimeError> {
+        self.planner
+            .prepare_native_xmr_escrow_v3(request)
+            .await
+            .map_err(Into::into)
+    }
+
     /// Prepares one exact witnessed initialization/funding pair.
     ///
     /// # Errors

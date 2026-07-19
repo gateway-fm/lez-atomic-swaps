@@ -1,8 +1,9 @@
 # ADR 0059: Separate Monero observation from release authority
 
-Status: Accepted for M4; the Monero observation and LEZ first-lock mint
-boundaries are component-executed. Positive actual-chain LEZ evidence and the
-Stage-B-bound durable release component remain pending.
+Status: Accepted for M4; the Monero observation, local-Regtest topology
+attestation, and LEZ first-lock mint boundaries are component-executed.
+Positive actual-chain LEZ evidence and the Stage-B-bound durable release
+component remain pending.
 
 ## Context
 
@@ -33,7 +34,27 @@ durable actor boundary.
 
 The Monero adapter returns a private-field, non-cloneable
 VerifiedMoneroOutputObservation. It is observation data only. It exposes no
-claim-partial builder and no publication method.
+claim-partial builder and no publication method. The observation retains the
+exact daemon and wallet origins used to create it so a later authority boundary
+can reject a valid chain fact obtained through the wrong services.
+
+For the local Regtest PoC, `MoneroTopologyVerifier` separately mints a
+private-field, non-`Clone` `VerifiedMoneroTopologyAttestation`. It is bound to
+one exact run, Regtest chain identity, daemon origin, target-wallet origin, and
+foreign-wallet origin. Minting requires successful Digest authentication at
+the correct target and foreign origins, then replays the foreign credential
+against the target and requires the exchange to finish with exact HTTP 401. It
+also requires bounded 64 KiB typed `get_info` and `get_connections` responses,
+`fakechain`, `offline == true`, `untrusted == false`, zero reported peer counts,
+an empty connection list, and the typed height-zero genesis hash. Its binding
+method rejects run, chain, daemon-origin, or wallet-origin drift against the
+output observation.
+
+Maintained `monero-rpc` 0.5.1 does not expose `get_info` or
+`get_connections`. The project therefore owns this narrow bounded adapter while
+continuing to use `monero-rpc` for the typed height-zero hash. That adapter is a
+production and upstream-review item; this decision does not generalize the
+local attestation into public or Stagenet trust.
 
 The main-process LEZ adapter separately exposes
 `FinalizedXmrLezFirstLockEvidenceV3`, also with private fields, no public
@@ -68,7 +89,7 @@ permit the initial attempt.
 flowchart LR
     StageB["Exact Stage B activation"] --> Gate["Durable one-shot release gate"]
     LezLock["Finalized exact LEZ first lock"] --> Gate
-    Topology["Run-bound distinct RPC origins<br/>foreign credential rejected"] --> Gate
+    Topology["Non-cloneable local topology attestation<br/>run chain origins and exact 401"] --> Gate
     Observation["Non-cloneable exact Monero observation"] --> Gate
     Hidden["Committed hidden claim partial"] --> Gate
     Gate -.->|"pending implementation"| Authority["Claim publication authority"]
@@ -82,10 +103,13 @@ sequenceDiagram
     actor Taker
     participant Store as Role journal
     participant Xmr as Monero observation adapter
+    participant Topology as Local topology verifier
     participant Lez as LEZ bridge
 
     Taker->>Xmr: Consume expected transaction address amount and profile
     Xmr-->>Taker: Non-cloneable canonical receipt observation
+    Taker->>Topology: Prove exact run chain origins peers and foreign credential
+    Topology-->>Taker: Non-cloneable local Regtest attestation
     Taker->>Store: CAS Stage B plus LEZ lock plus RPC attestation plus observation
     alt First exact activation consumption
         Store-->>Taker: One-shot publication authority
@@ -114,8 +138,15 @@ branches.
 
 ## Consequences and remaining evidence
 
-- The seven Monero observation-adapter tests are a valid component checkpoint,
-  not a swap or release-authority checkpoint.
+- The Monero adapter passes 16 of 16 tests across output observation, topology,
+  authentication, body-bound, and binding cases, plus strict Clippy, strict
+  Rustdoc, formatting, and diff checks. This is a component checkpoint, not a
+  swap or release-authority checkpoint.
+- The earlier configured-credential topology residual is closed for the
+  isolated local Regtest PoC: authority now requires the exact 401 and peerless
+  daemon facts rather than configuration alone. Public and Stagenet trust,
+  malicious or compromised local processes, and upstream adapter review remain
+  open.
 - The LEZ first-lock boundary passes 6 of 6 focused tests and all 89 adapter
   package tests, strict Clippy, strict Rustdoc, and a compile-fail non-`Clone`
   doctest. The focused fixture is canonical protocol evidence, not a full real
@@ -123,8 +154,10 @@ branches.
 - The current sidecar classifier returns only `HistoryUnavailable`, so the new
   boundary cannot yet mint positive actual-chain evidence and does not establish
   a claim PoC.
-- The private Regtest PoC may use the attested peerless topology and fresh
-  output. Public RPC remains rejected.
+- The private Regtest PoC may bind the attested peerless topology to a fresh
+  origin-retaining output observation. Neither capability is Stage-B release
+  authority, and their existence does not establish a claim PoC. Public RPC
+  remains rejected.
 - The actor CAS, ambiguous-send reconciliation, activation-replay negative, and
   view-only already-spent regression remain RED work before claim-path PoC.
 - Stagenet/production must preserve daemon trust flags and contain or replace

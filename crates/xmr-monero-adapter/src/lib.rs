@@ -26,6 +26,8 @@
 
 #![forbid(unsafe_code)]
 
+mod topology;
+
 use std::fmt;
 use std::num::NonZeroU64;
 use std::time::Duration;
@@ -43,6 +45,11 @@ use monero_rpc::{
 };
 use thiserror::Error;
 use url::{Host, Url};
+
+pub use topology::{
+    MoneroTopologyBindingError, MoneroTopologyError, MoneroTopologyVerifier,
+    VerifiedMoneroTopologyAttestation,
+};
 
 /// Canonical Monero standard-address type used by exact output terms.
 pub use monero_rpc::monero::Address as MoneroAddress;
@@ -303,6 +310,8 @@ impl ExpectedMoneroOutput {
 pub struct VerifiedMoneroOutputObservation {
     network: MoneroNetwork,
     genesis_hash: [u8; 32],
+    daemon_origin: String,
+    wallet_origin: String,
     transaction_id: MoneroTransactionId,
     destination: MoneroAddress,
     amount_piconero: u64,
@@ -325,6 +334,18 @@ impl VerifiedMoneroOutputObservation {
     #[must_use]
     pub const fn genesis_hash(&self) -> [u8; 32] {
         self.genesis_hash
+    }
+
+    /// Exact daemon RPC origin used to create this observation.
+    #[must_use]
+    pub fn daemon_origin(&self) -> &str {
+        &self.daemon_origin
+    }
+
+    /// Exact shared-wallet RPC origin used to create this observation.
+    #[must_use]
+    pub fn wallet_origin(&self) -> &str {
+        &self.wallet_origin
     }
 
     /// Verified transaction ID.
@@ -692,6 +713,8 @@ struct BlockSnapshot {
 
 #[derive(Clone, Debug)]
 struct ObservationSnapshot {
+    daemon_origin: String,
+    wallet_origin: String,
     genesis_hash: [u8; 32],
     tip_before: HeaderSnapshot,
     wallet_transfer: Option<WalletTransferSnapshot>,
@@ -716,6 +739,8 @@ struct MoneroRpcPort {
     daemon: DaemonJsonRpcClient,
     daemon_rpc: DaemonRpcClient,
     wallet: WalletClient,
+    daemon_origin: String,
+    wallet_origin: String,
 }
 
 impl MoneroRpcPort {
@@ -748,6 +773,8 @@ impl MoneroRpcPort {
             daemon,
             daemon_rpc,
             wallet,
+            daemon_origin: daemon_endpoint.base_url.clone(),
+            wallet_origin: wallet_endpoint.base_url.clone(),
         })
     }
 
@@ -794,6 +821,35 @@ impl MoneroRpcPort {
         }
         Ok(())
     }
+
+    async fn available_outputs(
+        &self,
+        transfer: Option<&WalletTransferSnapshot>,
+    ) -> Result<Vec<AvailableOutputSnapshot>, MoneroEvidenceError> {
+        let Some(transfer) = transfer else {
+            return Ok(Vec::new());
+        };
+        let response = Self::rpc(
+            "incoming_transfers(available)",
+            self.wallet.incoming_transfers(
+                TransferType::Available,
+                Some(transfer.subaddress.major),
+                Some(vec![transfer.subaddress.minor]),
+            ),
+        )
+        .await?;
+        let outputs = response.transfers.unwrap_or_default();
+        if outputs.len() > MAX_AVAILABLE_OUTPUTS {
+            return Err(MoneroEvidenceError::SemanticResponseBound {
+                resource: "available outputs",
+                maximum: MAX_AVAILABLE_OUTPUTS,
+            });
+        }
+        Ok(outputs
+            .into_iter()
+            .map(AvailableOutputSnapshot::from)
+            .collect())
+    }
 }
 
 #[async_trait]
@@ -816,32 +872,7 @@ impl ObservationPort for MoneroRpcPort {
         )
         .await?
         .map(WalletTransferSnapshot::from);
-
-        let available_outputs = if let Some(transfer) = &wallet_transfer {
-            let response = Self::rpc(
-                "incoming_transfers(available)",
-                self.wallet.incoming_transfers(
-                    TransferType::Available,
-                    Some(transfer.subaddress.major),
-                    Some(vec![transfer.subaddress.minor]),
-                ),
-            )
-            .await?;
-            let outputs = response.transfers.unwrap_or_default();
-            if outputs.len() > MAX_AVAILABLE_OUTPUTS {
-                return Err(MoneroEvidenceError::SemanticResponseBound {
-                    resource: "available outputs",
-                    maximum: MAX_AVAILABLE_OUTPUTS,
-                });
-            }
-            outputs
-                .into_iter()
-                .map(AvailableOutputSnapshot::from)
-                .collect()
-        } else {
-            Vec::new()
-        };
-
+        let available_outputs = self.available_outputs(wallet_transfer.as_ref()).await?;
         let transaction_response = Self::rpc(
             "get_transactions(pruned)",
             self.daemon_rpc.get_transactions(
@@ -852,7 +883,6 @@ impl ObservationPort for MoneroRpcPort {
         )
         .await?;
         Self::bound_transactions(&transaction_response)?;
-
         let containing_height = transaction_response
             .txs
             .as_ref()
@@ -889,6 +919,8 @@ impl ObservationPort for MoneroRpcPort {
         .await?;
 
         Ok(ObservationSnapshot {
+            daemon_origin: self.daemon_origin.clone(),
+            wallet_origin: self.wallet_origin.clone(),
             genesis_hash: hash_bytes(genesis_hash.as_ref()),
             tip_before: tip_before.into(),
             wallet_transfer,
@@ -944,6 +976,8 @@ fn validate_snapshot(
     Ok(VerifiedMoneroOutputObservation {
         network: identity.network,
         genesis_hash: identity.genesis_hash,
+        daemon_origin: snapshot.daemon_origin.clone(),
+        wallet_origin: snapshot.wallet_origin.clone(),
         transaction_id: expected.transaction_id,
         destination: expected.destination,
         amount_piconero: expected.amount_piconero.get(),
@@ -1188,6 +1222,8 @@ mod tests {
         };
         let subaddress = SubaddressIndex { major: 0, minor: 0 };
         let snapshot = ObservationSnapshot {
+            daemon_origin: "http://127.0.0.1:18081".to_owned(),
+            wallet_origin: "http://127.0.0.1:18083".to_owned(),
             genesis_hash: [1; 32],
             tip_before: tip.clone(),
             wallet_transfer: Some(WalletTransferSnapshot {
@@ -1236,6 +1272,8 @@ mod tests {
 
         assert_eq!(evidence.network(), MoneroNetwork::Regtest);
         assert_eq!(evidence.genesis_hash(), [1; 32]);
+        assert_eq!(evidence.daemon_origin(), "http://127.0.0.1:18081");
+        assert_eq!(evidence.wallet_origin(), "http://127.0.0.1:18083");
         assert_eq!(evidence.transaction_id(), hash(2));
         assert_eq!(evidence.destination(), expected.destination());
         assert_eq!(evidence.amount_piconero(), 10_000_000_000_000);

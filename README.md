@@ -61,10 +61,16 @@ adaptor leaf, canonical two-stage XMR activation, guest tags 13 through 17, a
 twice-reproduced checked guest artifact, the strict protocol and eight-call
 bridge client, the authenticated eight-route sidecar boundary, and a
 non-cloneable exact Monero output observation. The seven transaction-building
-sidecar routes currently fail closed with typed `Unavailable`, and the
-classifier returns only `HistoryUnavailable`; this is not functional runtime
-execution. The observation is deliberately not claim-partial release
-authority. The one-command topology runner starts one offline
+sidecar routes now include one functional Taker-only preparation route:
+`prepare_native_xmr_escrow_v3` checks the generated v0.2
+`InitializeNativeXmr` plus `FundNative` pair and durably reserves both exact
+signed byte strings before returning them. Identical replay, including after a
+fresh planner and server, returns the same bytes without another nonce read or
+any `sendTransaction`. The other six builders still fail closed with typed
+`Unavailable`, and the classifier returns only `HistoryUnavailable`; this is
+preparation evidence, not submission or actual-chain mutation. The observation
+is deliberately not claim-partial release authority. The one-command topology
+runner starts one offline
 `monerod` Regtest daemon plus independently authenticated funding, Maker, and
 Taker wallet RPCs; mines funds locally; submits a real two-destination
 transaction; requires ten confirmations, unlocked role balances, wallet/daemon
@@ -93,13 +99,13 @@ RUN_ID=m4-readme-monero-20260719a ./scripts/run-monero-e2e.sh
 
 Measured run `m4-monero-poc-20260719c` passed in 53 seconds before cleanup
 with no public RPC, peer, faucet, public funds, stagenet, or external finality
-service. This is infrastructure evidence, not an atomic swap: functional LEZ
-sidecar builders and finalized classification, finalized LEZ capability,
-Stage-B-bound durable one-shot XMR release, exact claim/refund adaptation, and
-fresh terminal role actors remain the next happy-path slice. The route-boundary
-gate is 134 of 134 standalone sidecar tests plus focused v2/v3, strict Clippy,
-formatting, and diff checks. The exact components/RPCs and both target and
-bootstrap sequences are in
+service. This is infrastructure evidence, not an atomic swap: LEZ submission,
+the remaining sidecar builders, finalized classification, and finalized
+LEZ capability, Stage-B-bound durable one-shot XMR release, exact claim/refund
+adaptation, and fresh terminal role actors remain the next happy-path slice.
+The route-boundary checkpoint includes 20 of 20 scoped planner/route regressions
+plus the final three XMR tests, strict Clippy, formatting, and diff checks. The
+exact components/RPCs and both target and bootstrap sequences are in
 [ADR 0053](docs/architecture/0053-enter-m4-through-isolated-monero-regtest.md);
 manual run, live inspection, scoped cleanup, and cold-resource flakiness are in
 [Flow 0](docs/manual-user-flows.md#flow-0-m4-official-monero-regtest-topology).

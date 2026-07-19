@@ -11,7 +11,8 @@ use lez_bridge_protocol::{
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, ExactMessageBytes,
     ExactTransactionBytes, Hex32, Participant, PrepareNativeEscrowRequest,
     PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
-    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedAssetClaimV2Request,
+    PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result, PrepareRevealingClaimRequest,
+    PrepareRevealingClaimResult, PrepareWitnessedAssetClaimV2Request,
     PrepareWitnessedAssetClaimV2Result, PrepareWitnessedAssetEscrowV2Request,
     PrepareWitnessedAssetEscrowV2Result, PrepareWitnessedAssetRefundV2Request,
     PrepareWitnessedAssetRefundV2Result, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
@@ -167,6 +168,7 @@ struct ActivePrepare {
 #[derive(Default)]
 struct PlannerState {
     active: Option<ActivePrepare>,
+    active_xmr_escrow_v3: Option<ActiveXmrEscrowPrepareV3>,
     active_witnessed_escrow: Option<ActiveWitnessedEscrowPrepare>,
     active_claim: Option<ActiveClaimPrepare>,
     active_witnessed_claim: Option<ActiveWitnessedClaimPrepare>,
@@ -182,6 +184,12 @@ struct PlannerState {
 struct ActiveWitnessedEscrowPrepare {
     request: PrepareWitnessedEscrowRequest,
     result: PrepareWitnessedEscrowResult,
+}
+
+#[derive(Clone)]
+struct ActiveXmrEscrowPrepareV3 {
+    request: PrepareNativeXmrEscrowV3Request,
+    result: PrepareNativeXmrEscrowV3Result,
 }
 
 #[derive(Clone)]
@@ -395,7 +403,7 @@ impl NativeEscrowPlanner {
     ) -> Result<PrepareNativeEscrowResult, NativePrepareError> {
         self.validate_request(&request)?;
         let mut state = self.state.lock().await;
-        if state.active_witnessed_escrow.is_some() {
+        if state.active_witnessed_escrow.is_some() || state.active_xmr_escrow_v3.is_some() {
             return Err(NativePrepareError::ActivePrepare);
         }
         if let Some(active) = state.active.as_ref() {
@@ -446,6 +454,74 @@ impl NativeEscrowPlanner {
         Ok(result)
     }
 
+    /// Prepares and durably reserves the exact XMR-native initialization/funding pair.
+    ///
+    /// The Taker is the only accepted role and signer. Both signed transactions
+    /// are constructed from the checked generated v0.2 ABI, use consecutive
+    /// depositor nonces, and are persisted before either exact byte string is
+    /// returned. Preparation never submits either transaction.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role, runtime, signer, program, PDA, aggregate-authority,
+    /// instruction, nonce, signature, exact-byte, or durable reservation drift.
+    pub async fn prepare_native_xmr_escrow_v3(
+        &self,
+        request: &PrepareNativeXmrEscrowV3Request,
+    ) -> Result<PrepareNativeXmrEscrowV3Result, NativePrepareError> {
+        self.validate_xmr_escrow_v3_request(request)?;
+        let mut state = self.state.lock().await;
+        if state.active.is_some() || state.active_witnessed_escrow.is_some() {
+            return Err(NativePrepareError::ActivePrepare);
+        }
+        if let Some(active) = state.active_xmr_escrow_v3.as_ref() {
+            return if &active.request == request {
+                Ok(active.result.clone())
+            } else {
+                Err(NativePrepareError::ActivePrepare)
+            };
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(recovered) = self.recover_durable_xmr_escrow_v3(request)? {
+            state.active_xmr_escrow_v3 = Some(ActiveXmrEscrowPrepareV3 {
+                request: request.clone(),
+                result: recovered.clone(),
+            });
+            return Ok(recovered);
+        }
+
+        let initialization_nonce = self
+            .nonce_source
+            .account_nonce(self.signer_account_id)
+            .await?;
+        let funding_nonce = initialization_nonce
+            .checked_add(1)
+            .ok_or(NativePrepareError::NonceOverflow)?;
+        let result = self.plan_xmr_escrow_v3_pair(request, initialization_nonce, funding_nonce)?;
+        #[cfg(target_os = "linux")]
+        if let Some(store) = self.durable_store.as_ref()
+            && let Err(error) = store.create(ReservationKind::XmrNativeEscrowV3, request, &result)
+        {
+            if error == DurableReservationError::AlreadyReserved {
+                let recovered = self
+                    .recover_durable_xmr_escrow_v3(request)?
+                    .ok_or(DurableReservationError::Filesystem)?;
+                state.active_xmr_escrow_v3 = Some(ActiveXmrEscrowPrepareV3 {
+                    request: request.clone(),
+                    result: recovered.clone(),
+                });
+                return Ok(recovered);
+            }
+            return Err(error.into());
+        }
+        state.active_xmr_escrow_v3 = Some(ActiveXmrEscrowPrepareV3 {
+            request: request.clone(),
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
     /// Prepares and durably reserves one witnessed initialization/funding pair.
     ///
     /// The generated `InitializeNativeWitnessed` ABI fixes the ordered
@@ -464,7 +540,7 @@ impl NativeEscrowPlanner {
     ) -> Result<PrepareWitnessedEscrowResult, NativePrepareError> {
         self.validate_witnessed_escrow_request(request)?;
         let mut state = self.state.lock().await;
-        if state.active.is_some() {
+        if state.active.is_some() || state.active_xmr_escrow_v3.is_some() {
             return Err(NativePrepareError::ActiveWitnessedEscrowPrepare);
         }
         if let Some(active) = state.active_witnessed_escrow.as_ref() {
@@ -1316,6 +1392,14 @@ impl NativeEscrowPlanner {
             return Ok(None);
         };
         if store
+            .load::<PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result>(
+                ReservationKind::XmrNativeEscrowV3,
+            )?
+            .is_some()
+        {
+            return Err(NativePrepareError::ActivePrepare);
+        }
+        if store
             .load::<PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult>(
                 ReservationKind::WitnessedEscrow,
             )?
@@ -1339,6 +1423,41 @@ impl NativeEscrowPlanner {
     }
 
     #[cfg(target_os = "linux")]
+    fn recover_durable_xmr_escrow_v3(
+        &self,
+        request: &PrepareNativeXmrEscrowV3Request,
+    ) -> Result<Option<PrepareNativeXmrEscrowV3Result>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        if store
+            .load::<PrepareNativeEscrowRequest, PrepareNativeEscrowResult>(
+                ReservationKind::NativeEscrow,
+            )?
+            .is_some()
+            || store
+                .load::<PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult>(
+                    ReservationKind::WitnessedEscrow,
+                )?
+                .is_some()
+        {
+            return Err(NativePrepareError::ActivePrepare);
+        }
+        let Some((stored_request, stored_result)) = store
+            .load::<PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result>(
+                ReservationKind::XmrNativeEscrowV3,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_prepared_native_xmr_escrow_v3(&stored_request, &stored_result)?;
+        if &stored_request != request {
+            return Err(NativePrepareError::ActivePrepare);
+        }
+        Ok(Some(stored_result))
+    }
+
+    #[cfg(target_os = "linux")]
     fn recover_durable_witnessed_escrow(
         &self,
         request: &PrepareWitnessedEscrowRequest,
@@ -1346,6 +1465,14 @@ impl NativeEscrowPlanner {
         let Some(store) = self.durable_store.as_ref() else {
             return Ok(None);
         };
+        if store
+            .load::<PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result>(
+                ReservationKind::XmrNativeEscrowV3,
+            )?
+            .is_some()
+        {
+            return Err(NativePrepareError::ActiveWitnessedEscrowPrepare);
+        }
         if store
             .load::<PrepareNativeEscrowRequest, PrepareNativeEscrowResult>(
                 ReservationKind::NativeEscrow,
@@ -1650,6 +1777,51 @@ impl NativeEscrowPlanner {
         }
         let (expected_initialization, expected_funding) =
             self.plan_messages(request, initialization_nonce, expected_funding_nonce)?;
+        if initialization.message() != &expected_initialization
+            || funding.message() != &expected_funding
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
+    }
+
+    /// Validates a recovered XMR-native pair against every request and ABI fact.
+    ///
+    /// # Errors
+    ///
+    /// Rejects request, terms, role, runtime, account, instruction, nonce,
+    /// signature, transaction-ID, or canonical-byte drift.
+    pub fn validate_prepared_native_xmr_escrow_v3(
+        &self,
+        request: &PrepareNativeXmrEscrowV3Request,
+        result: &PrepareNativeXmrEscrowV3Result,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_xmr_escrow_v3_request(request)?;
+        if result.context != request.context
+            || result.terms != request.terms
+            || result.initialization == result.funding
+            || result.initialization.transaction_id == result.funding.transaction_id
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let initialization =
+            decode_prepared_for_signer(&result.initialization, self.signer_account_id)?;
+        let funding = decode_prepared_for_signer(&result.funding, self.signer_account_id)?;
+        let [initialization_nonce] = initialization.message().nonces.as_slice() else {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        };
+        let initialization_nonce = u128::from(*initialization_nonce);
+        let funding_nonce = initialization_nonce
+            .checked_add(1)
+            .ok_or(NativePrepareError::NonceOverflow)?;
+        let [observed_funding_nonce] = funding.message().nonces.as_slice() else {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        };
+        if u128::from(*observed_funding_nonce) != funding_nonce {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let (expected_initialization, expected_funding) =
+            self.xmr_escrow_v3_messages(request, initialization_nonce, funding_nonce)?;
         if initialization.message() != &expected_initialization
             || funding.message() != &expected_funding
         {
@@ -1985,6 +2157,65 @@ impl NativeEscrowPlanner {
                     .as_bytes()
         {
             return Err(NativePrepareError::InvalidSignature);
+        }
+        Ok(())
+    }
+
+    fn validate_xmr_escrow_v3_request(
+        &self,
+        request: &PrepareNativeXmrEscrowV3Request,
+    ) -> Result<(), NativePrepareError> {
+        if self.role != Participant::Taker
+            || request.context.sidecar_role != Participant::Taker
+            || request.runtime.sidecar_role != Participant::Taker
+        {
+            return Err(NativePrepareError::WrongRole);
+        }
+        if request.runtime != self.expected_runtime
+            || request.runtime.compatibility != RuntimeCompatibility::LeeV0_2_0
+        {
+            return Err(NativePrepareError::WrongRuntime);
+        }
+        let terms = request.terms.to_input();
+        if terms.depositor != Participant::Taker {
+            return Err(NativePrepareError::WrongDepositorRole);
+        }
+        let signer = Hex32::from_bytes(self.signer_account_id.into_value());
+        if request.runtime.signer_account_id != signer || terms.depositor_account_id != signer {
+            return Err(NativePrepareError::WrongSigner);
+        }
+        let escrow_program = program_id_to_hex(self.escrow_program_id);
+        if request.runtime.escrow_program_id != escrow_program
+            || terms.escrow_program_id != escrow_program
+        {
+            return Err(NativePrepareError::WrongEscrowProgram);
+        }
+        if terms.authenticated_transfer_program_id
+            != program_id_to_hex(self.authenticated_transfer_program_id)
+        {
+            return Err(NativePrepareError::WrongAuthenticatedTransferProgram);
+        }
+        let swap_id = *terms.swap_id.as_bytes();
+        if terms.metadata_account_id
+            != Hex32::from_bytes(
+                compute_metadata_pda(&self.escrow_program_id, &swap_id).into_value(),
+            )
+            || terms.custody_account_id
+                != Hex32::from_bytes(
+                    compute_custody_pda(&self.escrow_program_id, &swap_id).into_value(),
+                )
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let claim_key = PublicKey::try_new(*terms.claim_aggregate_x_only_public_key.as_bytes())
+            .map_err(|_| NativePrepareError::WrongAggregateAuthority)?;
+        let refund_key = PublicKey::try_new(*terms.refund_aggregate_x_only_public_key.as_bytes())
+            .map_err(|_| NativePrepareError::WrongAggregateAuthority)?;
+        if AccountId::from(&claim_key).into_value() != *terms.claim_authority_account_id.as_bytes()
+            || AccountId::from(&refund_key).into_value()
+                != *terms.refund_authority_account_id.as_bytes()
+        {
+            return Err(NativePrepareError::WrongAggregateAuthority);
         }
         Ok(())
     }
@@ -2421,6 +2652,91 @@ impl NativeEscrowPlanner {
             ZecEscrowInstruction::ClaimNativeWitnessed { swap_id },
         )
         .map_err(|_| NativePrepareError::InstructionEncoding)
+    }
+
+    fn plan_xmr_escrow_v3_pair(
+        &self,
+        request: &PrepareNativeXmrEscrowV3Request,
+        initialization_nonce: u128,
+        funding_nonce: u128,
+    ) -> Result<PrepareNativeXmrEscrowV3Result, NativePrepareError> {
+        let (initialization, funding) =
+            self.xmr_escrow_v3_messages(request, initialization_nonce, funding_nonce)?;
+        let result = PrepareNativeXmrEscrowV3Result::new(
+            request.context.clone(),
+            request.terms,
+            self.prepare_message(initialization)?,
+            self.prepare_message(funding)?,
+        );
+        self.validate_prepared_native_xmr_escrow_v3(request, &result)?;
+        Ok(result)
+    }
+
+    fn xmr_escrow_v3_messages(
+        &self,
+        request: &PrepareNativeXmrEscrowV3Request,
+        initialization_nonce: u128,
+        funding_nonce: u128,
+    ) -> Result<(Message, Message), NativePrepareError> {
+        self.validate_xmr_escrow_v3_request(request)?;
+        if funding_nonce
+            != initialization_nonce
+                .checked_add(1)
+                .ok_or(NativePrepareError::NonceOverflow)?
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let terms = request.terms.to_input();
+        let swap_id = *terms.swap_id.as_bytes();
+        let metadata = compute_metadata_pda(&self.escrow_program_id, &swap_id);
+        let custody = compute_custody_pda(&self.escrow_program_id, &swap_id);
+        let depositor = AccountId::new(*terms.depositor_account_id.as_bytes());
+        let claimant = AccountId::new(*terms.claimant_account_id.as_bytes());
+        let claim_authority = AccountId::new(*terms.claim_authority_account_id.as_bytes());
+        let refund_authority = AccountId::new(*terms.refund_authority_account_id.as_bytes());
+        let initialization = Message::try_new(
+            self.escrow_program_id,
+            vec![
+                metadata,
+                custody,
+                depositor,
+                claimant,
+                claim_authority,
+                refund_authority,
+            ],
+            vec![initialization_nonce.into()],
+            ZecEscrowInstruction::InitializeNativeXmr {
+                swap_id,
+                terms_hash: *terms.activation_commitment.as_bytes(),
+                claim_aggregate_x_only_public_key: *terms
+                    .claim_aggregate_x_only_public_key
+                    .as_bytes(),
+                refund_aggregate_x_only_public_key: *terms
+                    .refund_aggregate_x_only_public_key
+                    .as_bytes(),
+                maker_dleq_transcript_commitment: *terms
+                    .maker_dleq_transcript_commitment
+                    .as_bytes(),
+                taker_dleq_transcript_commitment: *terms
+                    .taker_dleq_transcript_commitment
+                    .as_bytes(),
+                claim_partial_context_binding: *terms.claim_partial_context_binding.as_bytes(),
+                claim_partial_commitment: *terms.claim_partial_commitment.as_bytes(),
+                amount: terms.amount,
+                refund_at: terms.refund_at_ms,
+                punish_at: terms.punish_at_ms,
+                authenticated_transfer_program: self.authenticated_transfer_program_id,
+            },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)?;
+        let funding = Message::try_new(
+            self.escrow_program_id,
+            vec![metadata, custody, depositor],
+            vec![funding_nonce.into()],
+            ZecEscrowInstruction::FundNative { swap_id },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)?;
+        Ok((initialization, funding))
     }
 
     fn plan_pair(

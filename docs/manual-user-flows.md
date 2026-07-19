@@ -2311,14 +2311,23 @@ key through official wallet RPC `generate_from_keys`, and submitted a real
 spend after ten confirmations. That proves official-wallet behavior but is not
 yet exposed as a stable one-command user flow. The current component checkpoint
 also has a twice-reproduced checked guest artifact, a strict eight-method bridge
-client, and exact non-cloneable Monero output observation. The authenticated
+client, an exact non-cloneable origin-retaining Monero output observation, and a
+private-field non-`Clone` local-Regtest topology capability. The topology gate
+binds exact run/chain/daemon/target-wallet/foreign-wallet origins, requires
+correct-origin Digest access and exact foreign-credential HTTP 401 at the
+target, and uses bounded 64 KiB typed reads to prove offline trusted fakechain,
+zero peers, empty connections, and typed height-zero genesis. All 16 adapter
+tests plus strict Clippy/Rustdoc/format/diff gates pass. The authenticated
 sidecar server now registers all eight v3 methods and preserves the legacy v2
-routes. This boundary still fails closed: all seven transaction-building
-methods return typed `Unavailable`
-and the classifier returns only `HistoryUnavailable`. It still needs functional
-LEZ builders/finalized evidence, a Stage-B-bound durable one-shot claim-partial
-release, fresh role actors, and both terminal stores before it is an atomic
-happy PoC.
+routes. Its Taker-only `prepare_native_xmr_escrow_v3` route now checks the
+generated v0.2 ABI, exact PDAs/accounts/terms/signers, and consecutive nonces,
+then atomically owner-only persists the exact signed `InitializeNativeXmr` and
+`FundNative` bytes before return. Identical replay after a fresh planner/server
+uses zero nonce reads, and the sequencer send count remains zero. The other six
+builders return typed `Unavailable`, and the classifier returns only
+`HistoryUnavailable`. Submission, finalized evidence, Stage-B-bound durable
+one-shot claim-partial release, fresh role actors, and both terminal stores are
+still required before an atomic happy PoC.
 
 Reproduce the checked LEZ artifact and focused host boundaries with a fresh run
 ID. The optional shared tool directory below is safe only when it already
@@ -2339,10 +2348,24 @@ cargo test --locked -p lez-bridge-client -p lez-xmr-monero-adapter \
   --all-targets --all-features
 
 export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+(
+  cd "$RAPIDSNARK_LIB_DIR"
+  printf "%s  %s\n" \
+    d4133227f845ff5bfa3672eb5b9c018a6a086bfa164b176bdaf76949c7d1f423 librapidsnark.a \
+    0a910b420c3ad603c83c9dc2818c7ae05394c231ca23135c7b873e8e680ea41b libgmp.a \
+    797b5d24bb8e8b088f811bddfff35f33973af9c797fb3812489cd42ba6a957d0 libfq.a \
+    40f809394904682cb5517845cd3c2f936a5eb4609712534b573f552f2811fb82 libfr.a \
+    | sha256sum --check --strict
+)
 
 cargo test --locked \
   --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-  --test bridge_asset_v2_routes --test bridge_xmr_v3_routes
+  --test xmr_native_escrow_prepare \
+  --test bridge_xmr_escrow_prepare \
+  --test bridge_xmr_v3_routes
+cargo test --locked \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --test bridge_asset_v2_routes
 cargo test --locked \
   --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
   --all-targets --all-features
@@ -2363,13 +2386,16 @@ need the pinned circuits release, crates.io and locked Git sources, the
 digest-pinned guest-builder image, and Risc0 tool releases; default run-owned
 cleanup reclaimed about 3.49 GiB in the certification runs. The Rust suites use
 no node, RPC, faucet, peer, or public endpoint after dependencies are present.
-They prove the exact host contracts only: 51 bridge-client tests, seven
-Monero-observation tests, and 134 of 134 standalone sidecar tests currently
-pass. The focused sidecar commands cover both the retained v2 route set and the
-new authenticated v3 route set. The v3 test expects seven typed `Unavailable`
-builder results and one `HistoryUnavailable` classifier result; it does not
-prepare an XMR transaction, publish a claim partial, or replace the role-correct
-swap journey.
+They prove the exact host contracts only: 51 bridge-client tests, 16 Monero
+observation/topology tests, 20 of 20 scoped planner/route regressions, and the
+final three XMR test binaries currently pass. The topology capability closes
+the configured-auth residual only for local Regtest; it is not public/Stagenet trust, Stage-B release authority, or a claim
+PoC. The focused sidecar commands cover the retained v2 route set and the three XMR
+preparation/route binaries. They require one exact Taker preparation result, six
+typed `Unavailable` builder results, and one `HistoryUnavailable` classifier
+result. The preparation result is checked and restart-replayed exact transaction
+bytes only; it does not submit or mutate LEZ, publish a claim partial, create
+actual-chain `Found`, or replace the role-correct swap journey.
 
 The exact safety boundary matters when reviewing intermediate results. The
 Maker claim must reveal Maker share `s_a`, allowing the Taker to combine it with
@@ -2467,6 +2493,17 @@ printf '%s' '{"jsonrpc":"2.0","id":"manual","method":"get_balance"}' |
     --data-binary @- "$MONERO_MAKER_WALLET_ENDPOINT/json_rpc" |
   jq '.result | {balance, unlocked_balance, blocks_to_unlock}'
 ```
+
+For the adapter-level topology proof, the typed verifier also calls
+`get_connections`, caps each topology response at 64 KiB while streaming, and
+requires an empty connection list in addition to the zero counters shown by
+`get_info`. It authenticates the target and foreign wallet `get_version` calls
+with their own Digest credentials, then requires replay of the foreign
+credential against the target to finish with exact HTTP 401. The output
+observation carries the same daemon and target-wallet origins so run, chain, and
+origin drift fails binding. Maintained `monero-rpc` 0.5.1 does not expose
+`get_info` or `get_connections`; the project-owned bounded adapter is therefore
+a production/upstream-review item.
 
 The future Maker and Taker processes receive only their role wallet credential;
 they never receive the daemon or funding credentials. When finished, remove

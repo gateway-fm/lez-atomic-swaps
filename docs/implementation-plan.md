@@ -2855,13 +2855,24 @@ two fresh executions each passed all five recursive guest tests: one preserved
 native aggregate-witness case and four XMR branch/rollback cases. This is a
 local checked artifact, not a public deployment. The eight-call loopback bridge
 client, the authenticated sidecar route boundary, and a non-cloneable exact
-Monero output observation adapter are also component-green.
-The sidecar registers all eight additive v3 methods, but it is
-deliberately fail-closed at this checkpoint: the seven transaction-building
-routes return typed `Unavailable`, and the classifier returns only
-`HistoryUnavailable`. The standalone sidecar gate passes 134 of 134 tests,
-including focused v2/v3 route regressions, plus strict Clippy, formatting, and
-diff checks. The main-process first-lock adapter is separately component-green:
+Monero output observation adapter are also component-green. The local Regtest
+topology gate is component-green as a private-field, non-`Clone` capability
+bound to the exact run, chain, daemon/wallet origins, peerless offline facts,
+and foreign-credential HTTP 401. The output observation retains its exact
+daemon/wallet origins; all 16 Monero-adapter tests plus strict Clippy, Rustdoc,
+formatting, and diff checks pass. This closes the topology-auth residual only
+for the local Regtest PoC, not for Stagenet/public trust, Stage-B release
+authority, or a claim PoC.
+The sidecar registers all eight additive v3 methods, and its Taker-only
+`prepare_native_xmr_escrow_v3` route is now functional at the preparation
+boundary. It derives checked generated-v0.2 `InitializeNativeXmr` plus
+`FundNative`, validates exact PDAs/accounts/terms/signers and consecutive
+nonces, and atomically owner-only persists both exact signed transaction bytes
+before return. Same-request replay after a fresh planner/server is byte-identical
+with zero nonce reads and zero sequencer sends; drift fails closed. Twenty of
+twenty scoped planner/route regressions and the final three XMR tests pass with
+strict Clippy, formatting, and diff checks. The other six builders return typed `Unavailable`, and the classifier returns
+only `HistoryUnavailable`. The main-process first-lock adapter is separately component-green:
 its only public binding constructor derives exact v3 terms from validated Stage A
 and Stage B, a pure Taker-only gate rejects the wrong observer before transport,
 and the concrete authenticated `BridgeClient` can mint a private-field,
@@ -2871,9 +2882,9 @@ Rustdoc, and the compile-fail non-`Clone` doctest pass. These tests use the
 canonical protocol fixture; they do not add a full real Stage-B fixture test.
 Because the current sidecar classifier can return only `HistoryUnavailable`, no
 positive actual-chain first-lock capability can yet be minted and no claim PoC
-exists. The repository still has no functional XMR sidecar builders or finalized
-classifier, actual-chain trusted finalized LEZ capability, Stage-B-bound
-at-most-once Monero release capability, role actor, full swap, U9 guide, D1
+exists. The repository still has no XMR submission authority, six remaining functional
+builders, finalized classifier, actual-chain trusted finalized LEZ capability,
+Stage-B-bound at-most-once Monero release capability, role actor, full swap, U9 guide, D1
 videos, or stagenet CI evidence.
 
 The standalone strict v3 bridge protocol binds eight additive methods and six
@@ -2924,9 +2935,14 @@ and 32-byte markers into chain authority.
   public role-fixed XMR actor boundaries with typed secret-safe records. The
   DLEQ scalar/point/proof boundary and canonical Stage-A/Stage-B lifecycle are
   green in six SDK tests with strict Clippy and Rustdoc; trusted chain
-  evidence and actors remain. The typed Monero RPC observation adapter is green
-  in seven focused tests and the v3 bridge client is green across all eight
-  calls. The first-lock adapter now adds a Taker-only zero-wire gate and a
+  evidence and actors remain. The typed Monero RPC observation and local-topology
+  adapter is green in all 16 tests and the v3 bridge client is green across all eight calls. Its
+  private-field, non-`Clone` topology capability binds run, Regtest chain, and
+  exact daemon/target/foreign wallet origins; correct-target and foreign Digest
+  requests must succeed, foreign credential replay at the target must finish
+  exact HTTP 401, and bounded 64 KiB typed daemon reads prove offline fakechain,
+  `untrusted == false`, zero peers, empty connections, and height-zero genesis. The first-lock adapter now adds a
+  Taker-only zero-wire gate and a
   concrete authenticated-client mint boundary, with 6 of 6 focused and 89 of
   89 full adapter tests plus strict Clippy, Rustdoc, and the non-`Clone` doctest
   green. Its canonical fixture proves fail-closed boundary behavior, not a real
@@ -2941,7 +2957,11 @@ and 32-byte markers into chain authority.
   run/project ID; mine all funds locally and attest exact cleanup. Run
   `m4-monero-poc-20260719c` passed at fakechain height 111 with a 401
   cross-credential rejection, unlocked 10 XMR role outputs, no runtime external
-  resources, and scoped cleanup.
+  resources, and scoped cleanup. The reusable topology verifier now turns those
+  assumptions into a run/chain/origin-bound non-cloneable capability and binds
+  it to origin-retaining output observations. This local-only gate passes all 16
+  adapter tests and strict Clippy/Rustdoc/format/diff; it does not establish
+  Stagenet/public trust, Stage-B release authority, or a claim PoC.
 - [x] Extend the LEZ witnessed escrow source/IDL with immutable XMR
   transcript commitments and bind distinct exact claim/refund messages plus
   refund/punish windows before either lock. Per ADR 0055, the Taker claim
@@ -2957,10 +2977,13 @@ and 32-byte markers into chain authority.
   `4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`;
   the five recursive initialize/fund/claim, signed-refund, punishment, and
   rollback cases pass on both executions. The authenticated sidecar server now
-  registers all eight additive v3 routes without widening legacy v2. Its seven
-  transaction-building routes still return typed `Unavailable`, and its sole
-  classifier result is `HistoryUnavailable`; functional runtime builders,
-  finalized effect classification, and actual-node branches remain.
+  registers all eight additive v3 routes without widening legacy v2. The Taker
+  escrow route durably prepares the exact checked initialize/fund pair before
+  return, replays byte-identically after planner/server restart with zero nonce
+  reads, and makes zero sequencer sends. The scoped 20 of 20 regressions plus
+  final three XMR tests pass. The other six builders still return typed
+  `Unavailable`, and its sole classifier result is `HistoryUnavailable`;
+  submission, finalized effect classification, and actual-node branches remain.
 - [ ] Complete the sole reviewed positive direction with fresh actor processes:
   Taker LEZ lock, finalized Maker observation, exact Maker XMR output, signed
   Monero confirmation policy, revealing Maker LEZ claim, Taker extraction and
@@ -3003,25 +3026,31 @@ failure can therefore block setup without making the recursive execution
 network-dependent. Default exact-run cleanup retained the small checked ELF
 and evidence while removing about 3.49 GiB of run-owned build/tool state.
 
-The Monero adapter checkpoint is deliberately observation-only after an
-independent review. Its exact chain, transaction, address, amount, membership,
-depth, and stable-tip checks are green, but the result is non-cloneable and
-cannot authorize claim-partial publication directly. A view-only wallet cannot
-prove old-output unspent state without composite key images; configured Digest
-credentials do not prove that the service enforces authentication; upstream
-single-header calls discard the daemon untrusted flag; and the upstream block
-decoder can panic on malformed local responses. The private Regtest PoC closes
-the relevant operational assumptions with a peerless daemon, distinct origins,
-run-bound wrong-credential rejection, fresh activation/output uniqueness, and
-a pending durable at-most-once release journal. Stagenet and production must
-add the preserved trust-flag check, bounded or isolated block decode, and a
-reviewed key-image or freshness/consumption argument.
+The Monero adapter checkpoint remains observation-only after independent
+review. Its exact chain, transaction, address, amount, membership, depth, and
+stable-tip checks are green, its result is non-cloneable, and it now retains the
+exact daemon/wallet origins; it still cannot authorize claim-partial
+publication directly. The separate private-field, non-`Clone` local topology
+capability closes the configured-credential residual for Regtest by binding the
+exact run, chain, origins, correct-target/foreign Digest success, foreign
+credential replay with exact HTTP 401, offline fakechain, trusted daemon data,
+zero peers, empty connections, and typed genesis. `monero-rpc` 0.5.1 does not
+expose `get_info` or `get_connections`, so a project-owned bounded 64 KiB typed
+adapter supplies those reads and remains a production/upstream-review item. A
+view-only wallet still cannot prove old-output unspent state without composite
+key images; upstream single-header calls discard the daemon untrusted flag; and
+the upstream block decoder can panic on malformed local responses. Stagenet and
+production must add preserved trust-flag checks, bounded or isolated block
+decode, a reviewed key-image or freshness/consumption argument, and a public
+trust model. The topology capability is neither Stage-B release authority nor a
+claim PoC.
 
 The immediate critical path is now:
 
-1. implement the adapter and sidecar runtime against the fresh checked
-   artifact for the now-green strict v3 protocol contract and its exact
-   version-3 initialize, publication, claim, signed-refund, punishment, and
+1. extend the now-green native-XMR preparation route with exact durable
+   submission authority, then implement the other six sidecar builders and the
+   finalized classifier against the fresh checked artifact and strict v3 contract
+   and its exact version-3 initialize, publication, claim, signed-refund, punishment, and
    finalized-effect contracts. The main-process exact-`Fund` capability mint
    boundary is component-green; the sidecar runtime must now produce the first
    validated actual-chain `Found` rather than `HistoryUnavailable`. The two-stage
@@ -3030,8 +3059,9 @@ The immediate critical path is now:
    promote canonical evidence rather than caller-supplied status. Pre-funding
    proof of hidden-partial validity remains a disclosed GW-M4-003
    production-review item;
-2. bind the now-green typed Monero daemon/wallet observation to Stage B and add
-   a durable one-shot release builder to the XMR SDK;
+2. consume the now-green origin-retaining Monero observation and local-Regtest
+   topology capability against exact Stage B, then add a durable one-shot
+   release builder to the XMR SDK;
 3. add fresh Maker/Taker role processes with durable share/effect records;
 4. compose the sole supported LEZ-first claim and recovery paths through both
    actual local chains,
