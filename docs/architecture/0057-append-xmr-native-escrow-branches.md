@@ -56,11 +56,12 @@ Taker's DLEQ-bound `s_b` point. The generic unsigned refund must reject
 `s_b`. `ClaimNativeXmr` additionally requires status `XmrClaimAuthorized`.
 Only the Taker depositor can publish the exact precommitted partial through tag
 14 after observing the XMR lock. The guest checks
-`SHA256(domain || claim_partial_context_binding || partial)`, where Stage B
-derives the binding from Stage A, the claim context, both nonce transcripts,
-and the Maker claim partial. This avoids an activation-hash cycle and rejects
-cross-session transplantation. Publication is an on-chain handoff, not a
-post-first-lock off-chain dependency.
+`SHA256("logos.gateway.lez-xmr.claim-partial-commitment.v1\0" ||
+claim_partial_context_binding || partial)`, where Stage B derives the binding
+from Stage A, the claim context, both nonce transcripts, and the Maker claim
+partial. This avoids an activation-hash cycle and rejects cross-session
+transplantation. Publication is an on-chain handoff, not a post-first-lock
+off-chain dependency.
 
 ```mermaid
 flowchart LR

@@ -2109,13 +2109,14 @@ after its canonical confirmation policy, the maker funds the agreed Monero
 output. XMR-first is rejected because the reviewed COMIT construction does not
 supply that direction's safe recovery path.
 
-The shared signing and focused guest-source boundaries are executable without
-routing XMR through the BTC SDK. Dashed edges remain M4 composition work:
+The shared signing, two-stage XMR SDK, and focused guest-source boundaries are
+executable without routing XMR through the BTC SDK. Dashed edges remain M4
+checked-artifact and actor composition work:
 
 ```mermaid
 flowchart LR
     BtcSdk["BTC pair SDK"] -->|compatibility re-export| Adaptor["Pair-neutral adaptor signatures"]
-    XmrSdk["XMR pair SDK"] -.->|two-stage activation pending| Adaptor
+    XmrSdk["XMR pair SDK<br/>Stage A and Stage B green"] -->|purpose-separated sessions| Adaptor
     RoleRunner["Durable role runner"] --> Adaptor
     Adaptor --> Musig["Pinned MuSig2"]
     XmrSdk --> Dleq["Two bounded DLEQ envelopes"]
@@ -2179,12 +2180,12 @@ sequenceDiagram
                 Taker->>LezSeq: Signed XMR-specific refund adapted with s_b
                 LezIdx-->>Taker: Exact survivor refund finalized
                 Note over Maker,Taker: Canonical signature leaves Maker recovery available from s_a plus s_b
-                Note over Maker,Taker: Focused guest source green; checked bridge and actor execution pending
+                Note over Maker,Taker: Focused guest source green and checked bridge and actor execution pending
             else Taker abandons
                 Maker->>LezSeq: Execute Maker punishment after punish_at
                 LezIdx-->>Maker: Exact punishment finalized
                 Note over Maker,Taker: COMIT economic safety fallback, literal RFP both-refund disposition pending review
-                Note over Maker,Taker: Focused guest source green; checked bridge and actor execution pending
+                Note over Maker,Taker: Focused guest source green and checked bridge and actor execution pending
             end
         end
     end
@@ -2220,9 +2221,11 @@ authority may leave a safe nonterminal output indefinitely.
 
 **Implementation status:** both DLEQ/share-addition orders, one official Monero
 reconstructed spend, the pair-neutral adaptor leaf, BTC compatibility, durable
-fresh-process signing, and focused guest-source publication/claim/refund/punish
-branches are executable. The two-stage activation, checked artifact and bridge,
-trusted RPC observations, role actors, and composed E2E remain pending.
+fresh-process signing, canonical Stage-A/Stage-B activation, structural
+LEZ-lock/cutoff validation, and focused guest-source
+publication/claim/refund/punish branches are executable. The fresh checked
+artifact and strict bridge, trusted LEZ/Monero observations and release
+capabilities, role actors, and composed E2E remain pending.
 
 The XMR construction’s atomicity argument differs from the deadline-bearing
 pairs:

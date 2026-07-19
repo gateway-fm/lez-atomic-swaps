@@ -80,7 +80,7 @@ const XMR_ESCROW_METADATA_VERSION: u8 = 3;
 const ERROR_WRONG_PREIMAGE: u32 = 4;
 const ERROR_UNSUPPORTED_VERSION: u32 = 5;
 const ERROR_WRONG_CLAIM_AUTHORITY: u32 = 6;
-const XMR_CLAIM_PARTIAL_DOMAIN: &[u8] = b"logos.gateway.lez-xmr.claim-partial.v1\0";
+const XMR_CLAIM_PARTIAL_DOMAIN: &[u8] = b"logos.gateway.lez-xmr.claim-partial-commitment.v1\0";
 // lee_core exposes AccountId but not the public signing-key type. Pulling the
 // full host-oriented lee state machine into the guest solely for this hash
 // would expand the on-chain graph. Keep the exact mapping pinned to LEZ v0.2.0

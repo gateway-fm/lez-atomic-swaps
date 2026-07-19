@@ -2835,7 +2835,7 @@ set is the live RFP plus accepted replacement issue #112, rechecked on
 
 ### Actual entry state
 
-M4 now has four executable entry checkpoints: a bounded canonical two-party
+M4 now has six executable entry checkpoints: a bounded canonical two-party
 cross-curve DLEQ wire and symmetric share-addition boundary; an official Monero
 0.18.5.1 actual-node Regtest topology with one daemon, three independently
 authenticated wallets, locally mined funds, a real funding transaction, ten
@@ -2844,10 +2844,12 @@ which funded the derived shared address, rebuilt the Taker wallet from the
 reconstructed spend key with official `generate_from_keys`, and spent the
 output in a second real transaction; and the proven M3 adaptor implementation
 extracted into pair-neutral `lez-adaptor-signature` with byte-exact BTC
-compatibility and direct durable role-runner use. The repository still has no complete
-agreement-bound adaptor lifecycle, Monero adapter or role actor, XMR-bound LEZ
-claim, XMR-specific signed LEZ refund/punish branches, full swap, U9 guide, D1
-videos, or stagenet CI evidence.
+compatibility and direct durable role-runner use; focused version-3 XMR guest
+source branches; and a canonical two-stage XMR agreement/activation SDK that
+binds both session transcripts and recovery material before deriving the first
+LEZ lock. The repository still has no fresh checked XMR guest artifact and
+bridge, trusted LEZ/Monero evidence adapter or role actor, full swap, U9 guide,
+D1 videos, or stagenet CI evidence.
 
 The first implementation may reuse the existing LEZ v0.2 bridge, role stores,
 XChaCha20-Poly1305 secret envelope, one-attempt effect journals, and M3 BIP-340
@@ -2892,8 +2894,10 @@ and 32-byte markers into chain authority.
 
 - [ ] Complete the pair-specific `lez-xmr-swap-sdk`, Monero RPC adapter, and
   public role-fixed XMR actor boundaries with typed secret-safe records. The
-  DLEQ scalar/point/proof boundary is green; lifecycle, RPC, and actor work is
-  still pending.
+  DLEQ scalar/point/proof boundary and canonical Stage-A/Stage-B lifecycle are
+  green in six SDK tests with strict Clippy and Rustdoc; trusted chain
+  evidence, Monero RPC builders and one-shot release authority, durable actor
+  records, and actor work remain.
 - [ ] Build the official Monero 0.18.5.1 CLI artifact from its signed hash list
   into a digest-pinned runtime and scan the final image fail-hard.
 - [x] Start one offline `monerod` Regtest daemon plus distinct authenticated
@@ -2945,12 +2949,15 @@ public finality service.
 
 The immediate critical path is now:
 
-1. finish the two-stage countersigned XMR agreement and activation transcript,
-   including profile/deployment bindings and a non-bypassable canonical
-   post-confirmation LEZ claim-partial publication gate. The PoC must reject a
-   committed invalid partial and route only to punishment; pre-funding proof of
-   hidden-partial validity remains a GW-M4-003 production-review item;
-2. add typed Monero daemon/wallet RPC observations and builders to
+1. build and embed a fresh checked M4 guest artifact, then expose only exact
+   version-3 initialize, publication, claim, signed-refund, punishment, and
+   finalized-effect contracts through a strict bridge. The two-stage
+   countersigned SDK, profile/deployment bindings, exact Stage-B first-lock
+   derivation, and structural LEZ-lock/cutoff checks are green; the bridge must
+   promote canonical evidence rather than caller-supplied status. Pre-funding
+   proof of hidden-partial validity remains a disclosed GW-M4-003
+   production-review item;
+2. add typed Monero daemon/wallet RPC observations and one-shot release builders to
    `lez-xmr-swap-sdk`;
 3. add fresh Maker/Taker role processes with durable share/effect records;
 4. compose the sole supported LEZ-first claim and recovery paths through both
@@ -2967,14 +2974,14 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The expected remaining focused engineering time is 7 to 13 hours to the first
-reproducible linked claim-path PoC and 17 to 27 hours to an atomicity-capable
-local PoC with the signed refund and punishment design executed. The latter is
-longer than the prior estimate because source audit proved the existing generic
-permissionless LEZ refund is unsigned and cannot reveal `s_b`; this is concrete
-repository work, not an external blocker. GW-M4-001, GW-M4-002, and GW-M4-003
-remain upstream production/review disclosures and do not block the private
-local implementation.
+The expected remaining focused engineering time is 8 to 15 hours to the first
+reproducible independent-actor claim-path PoC and 16 to 26 hours to the local
+claim/refund/punishment PoC. This estimate starts after the verified two-stage
+SDK checkpoint and includes the fresh RISC Zero artifact/bridge plus trusted
+chain-evidence adapters rather than counting caller-supplied snapshots or
+source-only recursive cases as runtime evidence. GW-M4-001, GW-M4-002, and
+GW-M4-003 remain upstream production/review disclosures and do not block the
+private local implementation.
 
 ### Post-PoC RED-GREEN-REFACTOR hardening required for M4 closure
 

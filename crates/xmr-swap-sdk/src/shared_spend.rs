@@ -106,6 +106,25 @@ impl MoneroSharedAddressV1 {
         taker_proof: &CrossCurveDleqProofV1,
         view_key: &MoneroPrivateViewKey,
     ) -> Result<Self, MoneroSharedSpendError> {
+        Self::derive_from_public_view_key(network, maker_proof, taker_proof, view_key.public_key())
+    }
+
+    /// Derives the shared address from both verified spend shares and an exact
+    /// public view key already exchanged in a countersigned agreement.
+    ///
+    /// This boundary deliberately needs no private view material, allowing an
+    /// untrusted agreement to be checked without exposing wallet authority.
+    ///
+    /// # Errors
+    ///
+    /// Rejects either invalid DLEQ proof, a malformed/non-prime-order public
+    /// view key, or an unsafe aggregate spend point.
+    pub fn derive_from_public_view_key(
+        network: MoneroAddressNetworkV1,
+        maker_proof: &CrossCurveDleqProofV1,
+        taker_proof: &CrossCurveDleqProofV1,
+        public_view_key: [u8; 32],
+    ) -> Result<Self, MoneroSharedSpendError> {
         maker_proof.verify()?;
         taker_proof.verify()?;
         let maker = validated_public_point(maker_proof.ed25519_public_key())?;
@@ -115,7 +134,7 @@ impl MoneroSharedAddressV1 {
             return Err(MoneroSharedSpendError::InvalidSharedSpendKey);
         }
         let public_spend_key = shared.compress().to_bytes();
-        let public_view_key = view_key.public_key();
+        validated_public_view_point(public_view_key)?;
         let public_spend = PublicKey::from_slice(&public_spend_key)
             .map_err(|_| MoneroSharedSpendError::AddressEncoding)?;
         let public_view = PublicKey::from_slice(&public_view_key)
@@ -253,6 +272,9 @@ pub enum MoneroSharedSpendError {
     /// Aggregate public spend key is the identity or otherwise unsafe.
     #[error("shared Monero public spend key is invalid")]
     InvalidSharedSpendKey,
+    /// Public view key is malformed, the identity, or outside the prime-order subgroup.
+    #[error("shared Monero public view key is invalid")]
+    InvalidPublicViewKey,
     /// Canonical public keys could not be encoded as a Monero address.
     #[error("shared Monero address encoding failed")]
     AddressEncoding,
@@ -270,6 +292,16 @@ fn validated_public_point(bytes: [u8; 32]) -> Result<EdwardsPoint, MoneroSharedS
         .ok_or(MoneroSharedSpendError::InvalidPublicSpendShare)?;
     if point == EdwardsPoint::identity() || !point.is_torsion_free() {
         return Err(MoneroSharedSpendError::InvalidPublicSpendShare);
+    }
+    Ok(point)
+}
+
+fn validated_public_view_point(bytes: [u8; 32]) -> Result<EdwardsPoint, MoneroSharedSpendError> {
+    let point = CompressedEdwardsY(bytes)
+        .decompress()
+        .ok_or(MoneroSharedSpendError::InvalidPublicViewKey)?;
+    if point == EdwardsPoint::identity() || !point.is_torsion_free() {
+        return Err(MoneroSharedSpendError::InvalidPublicViewKey);
     }
     Ok(point)
 }

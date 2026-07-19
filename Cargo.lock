@@ -1960,11 +1960,13 @@ name = "lez-xmr-swap-sdk"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "lez-adaptor-signature",
  "monero",
  "musig2",
  "postcard",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
+ "secp256k1 0.29.1",
  "serde",
  "sha2 0.10.9",
  "sigma_fun",
