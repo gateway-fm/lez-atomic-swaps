@@ -1870,6 +1870,7 @@ dependencies = [
  "lez-swap-core",
  "lez-swap-sdk-core",
  "lez-swap-store",
+ "lez-xmr-swap-sdk",
  "lez-zec-swap-sdk",
  "rusqlite",
  "secp256k1 0.29.1",

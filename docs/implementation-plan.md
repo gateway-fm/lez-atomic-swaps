@@ -2861,8 +2861,18 @@ deliberately fail-closed at this checkpoint: the seven transaction-building
 routes return typed `Unavailable`, and the classifier returns only
 `HistoryUnavailable`. The standalone sidecar gate passes 134 of 134 tests,
 including focused v2/v3 route regressions, plus strict Clippy, formatting, and
-diff checks. The repository still has no functional XMR sidecar builders or
-finalized classifier, trusted finalized LEZ capability, Stage-B-bound
+diff checks. The main-process first-lock adapter is separately component-green:
+its only public binding constructor derives exact v3 terms from validated Stage A
+and Stage B, a pure Taker-only gate rejects the wrong observer before transport,
+and the concrete authenticated `BridgeClient` can mint a private-field,
+non-`Clone` capability only after revalidating one exact finalized `Fund`
+response. Six focused tests, all 89 adapter package tests, strict Clippy, strict
+Rustdoc, and the compile-fail non-`Clone` doctest pass. These tests use the
+canonical protocol fixture; they do not add a full real Stage-B fixture test.
+Because the current sidecar classifier can return only `HistoryUnavailable`, no
+positive actual-chain first-lock capability can yet be minted and no claim PoC
+exists. The repository still has no functional XMR sidecar builders or finalized
+classifier, actual-chain trusted finalized LEZ capability, Stage-B-bound
 at-most-once Monero release capability, role actor, full swap, U9 guide, D1
 videos, or stagenet CI evidence.
 
@@ -2916,8 +2926,14 @@ and 32-byte markers into chain authority.
   green in six SDK tests with strict Clippy and Rustdoc; trusted chain
   evidence and actors remain. The typed Monero RPC observation adapter is green
   in seven focused tests and the v3 bridge client is green across all eight
-  calls, but neither result is release authority: the actor must consume the
-  non-cloneable observation into a Stage-B-bound durable one-shot capability.
+  calls. The first-lock adapter now adds a Taker-only zero-wire gate and a
+  concrete authenticated-client mint boundary, with 6 of 6 focused and 89 of
+  89 full adapter tests plus strict Clippy, Rustdoc, and the non-`Clone` doctest
+  green. Its canonical fixture proves fail-closed boundary behavior, not a real
+  Stage-B/actual-chain `Found`: the current sidecar returns only
+  `HistoryUnavailable`. Neither observation is release authority; the actor
+  must consume both non-cloneable observations into a Stage-B-bound durable
+  one-shot capability.
 - [ ] Build the official Monero 0.18.5.1 CLI artifact from its signed hash list
   into a digest-pinned runtime and scan the final image fail-hard.
 - [x] Start one offline `monerod` Regtest daemon plus distinct authenticated
@@ -3004,9 +3020,11 @@ reviewed key-image or freshness/consumption argument.
 The immediate critical path is now:
 
 1. implement the adapter and sidecar runtime against the fresh checked
-   artifact for the now-green strict v3 protocol's exact
+   artifact for the now-green strict v3 protocol contract and its exact
    version-3 initialize, publication, claim, signed-refund, punishment, and
-   finalized-effect contracts. The two-stage
+   finalized-effect contracts. The main-process exact-`Fund` capability mint
+   boundary is component-green; the sidecar runtime must now produce the first
+   validated actual-chain `Found` rather than `HistoryUnavailable`. The two-stage
    countersigned SDK, profile/deployment bindings, exact Stage-B first-lock
    derivation, and structural LEZ-lock/cutoff checks are green; the bridge must
    promote canonical evidence rather than caller-supplied status. Pre-funding

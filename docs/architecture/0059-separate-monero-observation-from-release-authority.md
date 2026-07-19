@@ -1,7 +1,8 @@
 # ADR 0059: Separate Monero observation from release authority
 
-Status: Accepted for M4; the observation component is executed and the
-Stage-B-bound release component remains pending.
+Status: Accepted for M4; the Monero observation and LEZ first-lock mint
+boundaries are component-executed. Positive actual-chain LEZ evidence and the
+Stage-B-bound durable release component remain pending.
 
 ## Context
 
@@ -33,6 +34,16 @@ durable actor boundary.
 The Monero adapter returns a private-field, non-cloneable
 VerifiedMoneroOutputObservation. It is observation data only. It exposes no
 claim-partial builder and no publication method.
+
+The main-process LEZ adapter separately exposes
+`FinalizedXmrLezFirstLockEvidenceV3`, also with private fields, no public
+constructor, and no `Clone`. Its production binding derives exact v3 terms from
+validated Stage A and Stage B. Only the Taker reaches the concrete authenticated
+`BridgeClient`; a pure role gate rejects Maker observation before any wire call.
+The private mint boundary then requires an exact finalized `Fund` target, exact
+context/runtime/terms/effect/transaction echo, and complete protocol-valid
+transaction, instruction, metadata, custody, window, and finality facts. This
+capability still does not authorize claim-partial publication by itself.
 
 The Taker actor will consume that value by ownership into a dedicated release
 capability. Creation must atomically bind:
@@ -103,8 +114,15 @@ branches.
 
 ## Consequences and remaining evidence
 
-- The seven adapter tests are a valid component checkpoint, not a swap or
-  release-authority checkpoint.
+- The seven Monero observation-adapter tests are a valid component checkpoint,
+  not a swap or release-authority checkpoint.
+- The LEZ first-lock boundary passes 6 of 6 focused tests and all 89 adapter
+  package tests, strict Clippy, strict Rustdoc, and a compile-fail non-`Clone`
+  doctest. The focused fixture is canonical protocol evidence, not a full real
+  Stage-B fixture or actual-chain observation.
+- The current sidecar classifier returns only `HistoryUnavailable`, so the new
+  boundary cannot yet mint positive actual-chain evidence and does not establish
+  a claim PoC.
 - The private Regtest PoC may use the attested peerless topology and fresh
   output. Public RPC remains rejected.
 - The actor CAS, ambiguous-send reconciliation, activation-replay negative, and

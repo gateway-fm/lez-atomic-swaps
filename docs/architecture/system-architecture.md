@@ -2241,13 +2241,22 @@ and ImageID
 `4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`;
 all five recursive cases pass in both builds. The eight-method bridge client is
 green across 51 package targets, and the exact Monero receipt observation is
-green in seven focused tests.
-The authenticated eight-route sidecar server boundary is green across 134
+green in seven focused tests. The main-process LEZ first-lock boundary is also
+component-green: its production constructor binds validated Stage A and Stage B,
+its pure Taker-only gate rejects the wrong role before transport, and only the
+concrete authenticated `BridgeClient` plus a fully revalidated exact finalized
+`Fund` response can mint its private-field, non-`Clone` capability. Its 6 of 6
+focused tests and all 89 adapter package tests pass with strict Clippy, strict
+Rustdoc, and the compile-fail non-`Clone` doctest. Those focused tests use the
+canonical protocol fixture and do not claim a full real Stage-B fixture. The
+authenticated eight-route sidecar server boundary is green across 134
 standalone tests and focused v2/v3 regressions. Its seven builders
 still return typed `Unavailable`, and its classifier returns only
-`HistoryUnavailable`; the functional LEZ adapter/runtime, trusted finalized LEZ
-capability, Stage-B-bound durable one-shot release, role actors, and composed
-E2E remain pending. The Monero observation does not prove old-output
+`HistoryUnavailable`; therefore the adapter cannot yet mint positive
+actual-chain evidence and no claim PoC exists. The functional LEZ runtime and
+classifier, actual-chain trusted finalized LEZ capability, Stage-B-bound durable
+one-shot release, role actors, and composed E2E remain pending. The Monero
+observation does not prove old-output
 unspent state from a view-only wallet or server authentication by credential
 configuration alone; the local run must bind its fresh output, peerless
 topology, and cross-credential rejection. The additive v3 protocol and all 44

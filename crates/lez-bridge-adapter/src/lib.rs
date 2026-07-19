@@ -10,6 +10,7 @@ mod canonical_funding;
 mod client_factory;
 mod request_context;
 mod sdk_ports;
+mod xmr_v3_first_lock;
 
 pub use btc_asset_first_lock_proof_v2::{
     BtcLezAssetFirstLockProofV2, BtcLezAssetFirstLockProofV2Error,
@@ -37,6 +38,10 @@ pub use request_context::{
 pub use sdk_ports::{
     BridgeRequestContextSource, CanonicalLezFundingSource, ContextOwningLezBridgePorts,
     ContextOwningLezPortError, FreshLezBridgeTransportFactory,
+};
+pub use xmr_v3_first_lock::{
+    FinalizedXmrLezFirstLockError, FinalizedXmrLezFirstLockEvidenceV3, XmrLezBridgeBindingV3,
+    XmrLezBridgeBindingV3Error,
 };
 
 use async_trait::async_trait;
