@@ -22,6 +22,8 @@ pub enum EscrowStatus {
     Funded,
     Claimed,
     Refunded,
+    /// M4: the Taker published the agreement-bound claim partial on LEZ.
+    XmrClaimAuthorized,
 }
 
 #[account_type]
@@ -34,6 +36,17 @@ pub enum ClaimAuthority {
     AggregateWitness {
         x_only_public_key: [u8; 32],
         account_id: AccountId,
+    },
+    /// M4 XMR path: distinct aggregate witnesses reveal opposite spend shares.
+    XmrDualAdaptor {
+        claim_aggregate_x_only_public_key: [u8; 32],
+        claim_aggregate_account_id: AccountId,
+        refund_aggregate_x_only_public_key: [u8; 32],
+        refund_aggregate_account_id: AccountId,
+        maker_dleq_transcript_commitment: [u8; 32],
+        taker_dleq_transcript_commitment: [u8; 32],
+        claim_partial_commitment: [u8; 32],
+        punish_at: u64,
     },
 }
 
@@ -62,9 +75,11 @@ const ERROR_INVALID_TERMS: u32 = 1;
 const ERROR_NOT_FUNDED: u32 = 2;
 const ERROR_ACCOUNT_BINDING: u32 = 3;
 const ESCROW_METADATA_VERSION: u8 = 2;
+const XMR_ESCROW_METADATA_VERSION: u8 = 3;
 const ERROR_WRONG_PREIMAGE: u32 = 4;
 const ERROR_UNSUPPORTED_VERSION: u32 = 5;
 const ERROR_WRONG_CLAIM_AUTHORITY: u32 = 6;
+const XMR_CLAIM_PARTIAL_DOMAIN: &[u8] = b"logos.gateway.lez-xmr.claim-partial.v1\0";
 // lee_core exposes AccountId but not the public signing-key type. Pulling the
 // full host-oriented lee state machine into the guest solely for this hash
 // would expand the on-chain graph. Keep the exact mapping pinned to LEZ v0.2.0
@@ -95,7 +110,40 @@ fn valid_claim_authority(authority: ClaimAuthority, claimant: AccountId) -> bool
                 && witnessed_account_id(&x_only_public_key) == account_id
                 && account_id != claimant
         }
+        ClaimAuthority::XmrDualAdaptor {
+            claim_aggregate_x_only_public_key,
+            claim_aggregate_account_id,
+            refund_aggregate_x_only_public_key,
+            refund_aggregate_account_id,
+            maker_dleq_transcript_commitment,
+            taker_dleq_transcript_commitment,
+            claim_partial_commitment,
+            punish_at,
+        } => {
+            claim_aggregate_x_only_public_key != [0; 32]
+                && refund_aggregate_x_only_public_key != [0; 32]
+                && claim_aggregate_x_only_public_key != refund_aggregate_x_only_public_key
+                && witnessed_account_id(&claim_aggregate_x_only_public_key)
+                    == claim_aggregate_account_id
+                && witnessed_account_id(&refund_aggregate_x_only_public_key)
+                    == refund_aggregate_account_id
+                && claim_aggregate_account_id != refund_aggregate_account_id
+                && claim_aggregate_account_id != claimant
+                && refund_aggregate_account_id != claimant
+                && maker_dleq_transcript_commitment != [0; 32]
+                && taker_dleq_transcript_commitment != [0; 32]
+                && maker_dleq_transcript_commitment != taker_dleq_transcript_commitment
+                && claim_partial_commitment != [0; 32]
+                && punish_at != 0
+        }
     }
+}
+
+fn xmr_claim_partial_commitment(claim_partial: [u8; 32]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(XMR_CLAIM_PARTIAL_DOMAIN);
+    hasher.update(claim_partial);
+    hasher.finalize().into()
 }
 
 fn require_preimage_authority(state: &EscrowMetadata, preimage: [u8; 32]) -> Result<(), SpelError> {
@@ -136,6 +184,54 @@ fn require_aggregate_witness_authority(
         ));
     }
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum XmrWitnessPurpose {
+    Claim,
+    Refund,
+}
+
+fn require_xmr_witness_authority(
+    state: &EscrowMetadata,
+    purpose: XmrWitnessPurpose,
+    aggregate_authority: AccountId,
+) -> Result<u64, SpelError> {
+    let ClaimAuthority::XmrDualAdaptor {
+        claim_aggregate_x_only_public_key,
+        claim_aggregate_account_id,
+        refund_aggregate_x_only_public_key,
+        refund_aggregate_account_id,
+        punish_at,
+        ..
+    } = state.claim_authority
+    else {
+        return Err(custom_error(
+            ERROR_WRONG_CLAIM_AUTHORITY,
+            "escrow is not an XMR dual-adaptor escrow",
+        ));
+    };
+    let (public_key, account_id) = match purpose {
+        XmrWitnessPurpose::Claim => (
+            claim_aggregate_x_only_public_key,
+            claim_aggregate_account_id,
+        ),
+        XmrWitnessPurpose::Refund => (
+            refund_aggregate_x_only_public_key,
+            refund_aggregate_account_id,
+        ),
+    };
+    if witnessed_account_id(&public_key) != account_id
+        || account_id != aggregate_authority
+        || account_id == state.depositor
+        || account_id == state.claimant
+    {
+        return Err(custom_error(
+            ERROR_ACCOUNT_BINDING,
+            "XMR aggregate witness account binding mismatch",
+        ));
+    }
+    Ok(punish_at)
 }
 
 fn write_metadata(
@@ -289,6 +385,62 @@ fn native_initial_state(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn native_xmr_initial_state(
+    ctx: &ProgramContext,
+    custody: &AccountWithMetadata,
+    depositor: &AccountWithMetadata,
+    claimant: &AccountWithMetadata,
+    claim_aggregate_authority: &AccountWithMetadata,
+    refund_aggregate_authority: &AccountWithMetadata,
+    swap_id: [u8; 32],
+    terms_hash: [u8; 32],
+    claim_aggregate_x_only_public_key: [u8; 32],
+    refund_aggregate_x_only_public_key: [u8; 32],
+    maker_dleq_transcript_commitment: [u8; 32],
+    taker_dleq_transcript_commitment: [u8; 32],
+    claim_partial_commitment: [u8; 32],
+    amount: u128,
+    refund_at: u64,
+    punish_at: u64,
+    authenticated_transfer_program: ProgramId,
+) -> Result<EscrowMetadata, SpelError> {
+    if punish_at <= refund_at
+        || depositor.account_id == claimant.account_id
+        || depositor.account_id == claim_aggregate_authority.account_id
+        || depositor.account_id == refund_aggregate_authority.account_id
+    {
+        return Err(custom_error(
+            ERROR_INVALID_TERMS,
+            "invalid XMR native terms",
+        ));
+    }
+    let authority = ClaimAuthority::XmrDualAdaptor {
+        claim_aggregate_x_only_public_key,
+        claim_aggregate_account_id: claim_aggregate_authority.account_id,
+        refund_aggregate_x_only_public_key,
+        refund_aggregate_account_id: refund_aggregate_authority.account_id,
+        maker_dleq_transcript_commitment,
+        taker_dleq_transcript_commitment,
+        claim_partial_commitment,
+        punish_at,
+    };
+    let mut state = native_initial_state(
+        ctx,
+        custody,
+        depositor,
+        claimant,
+        swap_id,
+        terms_hash,
+        authority,
+        amount,
+        refund_at,
+        authenticated_transfer_program,
+    )?;
+    state.version = XMR_ESCROW_METADATA_VERSION;
+    Ok(state)
+}
+
 enum ClaimProof {
     Sha256Preimage([u8; 32]),
     AggregateWitness(AccountId),
@@ -327,6 +479,127 @@ fn validated_native_claim_state(
     }
     state.status = EscrowStatus::Claimed;
     Ok(state)
+}
+
+fn validated_xmr_native_witness_state(
+    metadata: &AccountWithMetadata,
+    custody: &AccountWithMetadata,
+    recipient: &AccountWithMetadata,
+    aggregate_authority: &AccountWithMetadata,
+    swap_id: [u8; 32],
+    purpose: XmrWitnessPurpose,
+) -> Result<(EscrowMetadata, u64), SpelError> {
+    let mut state = read_metadata(metadata)?;
+    let status_allowed = match purpose {
+        XmrWitnessPurpose::Claim => state.status == EscrowStatus::XmrClaimAuthorized,
+        XmrWitnessPurpose::Refund => matches!(
+            state.status,
+            EscrowStatus::Funded | EscrowStatus::XmrClaimAuthorized
+        ),
+    };
+    if !status_allowed {
+        return Err(custom_error(
+            ERROR_NOT_FUNDED,
+            "XMR escrow is not in the required branch state",
+        ));
+    }
+    let expected_recipient = match purpose {
+        XmrWitnessPurpose::Claim => state.claimant,
+        XmrWitnessPurpose::Refund => state.depositor,
+    };
+    if state.swap_id != swap_id
+        || state.version != XMR_ESCROW_METADATA_VERSION
+        || state.asset_definition != [0; 32]
+        || state.asset_program != state.custody_program
+        || expected_recipient != recipient.account_id
+        || state.custody != custody.account_id
+        || recipient.account.program_owner != state.asset_program
+        || custody.account.program_owner != state.asset_program
+        || custody.account.balance != state.amount
+    {
+        return Err(custom_error(
+            ERROR_ACCOUNT_BINDING,
+            "XMR native witness account binding mismatch",
+        ));
+    }
+    let punish_at = require_xmr_witness_authority(&state, purpose, aggregate_authority.account_id)?;
+    state.status = match purpose {
+        XmrWitnessPurpose::Claim => EscrowStatus::Claimed,
+        XmrWitnessPurpose::Refund => EscrowStatus::Refunded,
+    };
+    Ok((state, punish_at))
+}
+
+fn validated_xmr_claim_authorization_state(
+    metadata: &AccountWithMetadata,
+    depositor: &AccountWithMetadata,
+    swap_id: [u8; 32],
+    claim_partial: [u8; 32],
+) -> Result<EscrowMetadata, SpelError> {
+    let mut state = read_metadata(metadata)?;
+    require_funded(&state)?;
+    let ClaimAuthority::XmrDualAdaptor {
+        claim_partial_commitment,
+        ..
+    } = state.claim_authority
+    else {
+        return Err(custom_error(
+            ERROR_WRONG_CLAIM_AUTHORITY,
+            "escrow is not an XMR dual-adaptor escrow",
+        ));
+    };
+    if state.swap_id != swap_id
+        || state.version != XMR_ESCROW_METADATA_VERSION
+        || state.depositor != depositor.account_id
+        || depositor.account.program_owner != state.asset_program
+        || claim_partial == [0; 32]
+        || xmr_claim_partial_commitment(claim_partial) != claim_partial_commitment
+    {
+        return Err(custom_error(
+            ERROR_ACCOUNT_BINDING,
+            "XMR on-chain claim-partial authorization mismatch",
+        ));
+    }
+    state.status = EscrowStatus::XmrClaimAuthorized;
+    Ok(state)
+}
+
+fn validated_xmr_native_punish_state(
+    metadata: &AccountWithMetadata,
+    custody: &AccountWithMetadata,
+    claimant: &AccountWithMetadata,
+    swap_id: [u8; 32],
+) -> Result<(EscrowMetadata, u64), SpelError> {
+    let mut state = read_metadata(metadata)?;
+    if !matches!(
+        state.status,
+        EscrowStatus::Funded | EscrowStatus::XmrClaimAuthorized
+    ) {
+        return Err(custom_error(ERROR_NOT_FUNDED, "escrow is not funded"));
+    }
+    if state.swap_id != swap_id
+        || state.version != XMR_ESCROW_METADATA_VERSION
+        || state.asset_definition != [0; 32]
+        || state.asset_program != state.custody_program
+        || state.claimant != claimant.account_id
+        || state.custody != custody.account_id
+        || claimant.account.program_owner != state.asset_program
+        || custody.account.program_owner != state.asset_program
+        || custody.account.balance != state.amount
+    {
+        return Err(custom_error(
+            ERROR_ACCOUNT_BINDING,
+            "XMR native punishment account binding mismatch",
+        ));
+    }
+    let ClaimAuthority::XmrDualAdaptor { punish_at, .. } = state.claim_authority else {
+        return Err(custom_error(
+            ERROR_WRONG_CLAIM_AUTHORITY,
+            "escrow is not an XMR dual-adaptor escrow",
+        ));
+    };
+    state.status = EscrowStatus::Claimed;
+    Ok((state, punish_at))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -472,7 +745,11 @@ fn ata_transfer_call(
 }
 
 fn require_supported(state: &EscrowMetadata) -> Result<(), SpelError> {
-    if state.version != ESCROW_METADATA_VERSION {
+    let supported = match state.claim_authority {
+        ClaimAuthority::XmrDualAdaptor { .. } => state.version == XMR_ESCROW_METADATA_VERSION,
+        _ => state.version == ESCROW_METADATA_VERSION,
+    };
+    if !supported {
         return Err(custom_error(
             ERROR_UNSUPPORTED_VERSION,
             "unsupported escrow metadata version",
@@ -700,6 +977,12 @@ mod zec_escrow {
         let mut metadata = metadata;
         let mut state = read_metadata(&metadata)?;
         require_funded(&state)?;
+        if matches!(state.claim_authority, ClaimAuthority::XmrDualAdaptor { .. }) {
+            return Err(custom_error(
+                ERROR_WRONG_CLAIM_AUTHORITY,
+                "XMR escrow requires the signed refund instruction",
+            ));
+        }
         if state.swap_id != swap_id
             || state.asset_definition != [0; 32]
             || state.asset_program != state.custody_program
@@ -1035,6 +1318,187 @@ mod zec_escrow {
         )
         .with_timestamp_validity_window(..state.refund_at))
     }
+
+    // XMR-native instructions are intentionally appended after tags 0 through
+    // 12 so every existing v0.2 instruction discriminant remains byte-identical.
+    #[instruction]
+    #[allow(clippy::too_many_arguments)]
+    pub fn initialize_native_xmr(
+        ctx: ProgramContext,
+        #[account(init, pda = arg("swap_id"))] metadata: AccountWithMetadata,
+        #[account(mut, pda = [literal("custody"), arg("swap_id")])] custody: AccountWithMetadata,
+        #[account(signer)] depositor: AccountWithMetadata,
+        claimant: AccountWithMetadata,
+        claim_aggregate_authority: AccountWithMetadata,
+        refund_aggregate_authority: AccountWithMetadata,
+        swap_id: [u8; 32],
+        terms_hash: [u8; 32],
+        claim_aggregate_x_only_public_key: [u8; 32],
+        refund_aggregate_x_only_public_key: [u8; 32],
+        maker_dleq_transcript_commitment: [u8; 32],
+        taker_dleq_transcript_commitment: [u8; 32],
+        claim_partial_commitment: [u8; 32],
+        amount: u128,
+        refund_at: u64,
+        punish_at: u64,
+        authenticated_transfer_program: [u32; 8],
+    ) -> SpelResult {
+        let state = native_xmr_initial_state(
+            &ctx,
+            &custody,
+            &depositor,
+            &claimant,
+            &claim_aggregate_authority,
+            &refund_aggregate_authority,
+            swap_id,
+            terms_hash,
+            claim_aggregate_x_only_public_key,
+            refund_aggregate_x_only_public_key,
+            maker_dleq_transcript_commitment,
+            taker_dleq_transcript_commitment,
+            claim_partial_commitment,
+            amount,
+            refund_at,
+            punish_at,
+            authenticated_transfer_program,
+        )?;
+        let mut metadata = metadata;
+        write_metadata(&mut metadata, &state)?;
+        let initialize =
+            native_initialize_call(authenticated_transfer_program, custody.clone(), &swap_id);
+        Ok(SpelOutput::execute(
+            vec![
+                metadata,
+                custody,
+                depositor,
+                claimant,
+                claim_aggregate_authority,
+                refund_aggregate_authority,
+            ],
+            vec![initialize],
+        )
+        .with_timestamp_validity_window(..refund_at))
+    }
+
+    #[instruction]
+    pub fn authorize_native_xmr_claim(
+        _ctx: ProgramContext,
+        #[account(mut, owner = self_program_id, pda = arg("swap_id"))]
+        metadata: AccountWithMetadata,
+        #[account(signer)] depositor: AccountWithMetadata,
+        swap_id: [u8; 32],
+        claim_partial: [u8; 32],
+    ) -> SpelResult {
+        let state =
+            validated_xmr_claim_authorization_state(&metadata, &depositor, swap_id, claim_partial)?;
+        let mut metadata = metadata;
+        write_metadata(&mut metadata, &state)?;
+        Ok(SpelOutput::execute(vec![metadata, depositor], vec![])
+            .with_timestamp_validity_window(..state.refund_at))
+    }
+
+    #[instruction]
+    pub fn claim_native_xmr(
+        _ctx: ProgramContext,
+        #[account(mut, owner = self_program_id, pda = arg("swap_id"))]
+        metadata: AccountWithMetadata,
+        #[account(mut, pda = [literal("custody"), arg("swap_id")])] custody: AccountWithMetadata,
+        #[account(mut)] claimant: AccountWithMetadata,
+        #[account(signer)] claim_aggregate_authority: AccountWithMetadata,
+        swap_id: [u8; 32],
+    ) -> SpelResult {
+        let (state, _) = validated_xmr_native_witness_state(
+            &metadata,
+            &custody,
+            &claimant,
+            &claim_aggregate_authority,
+            swap_id,
+            XmrWitnessPurpose::Claim,
+        )?;
+        let transfer = native_transfer_call(
+            state.asset_program,
+            custody.clone(),
+            claimant.clone(),
+            state.amount,
+            true,
+            &swap_id,
+        );
+        let mut metadata = metadata;
+        write_metadata(&mut metadata, &state)?;
+        Ok(SpelOutput::execute(
+            vec![metadata, custody, claimant, claim_aggregate_authority],
+            vec![transfer],
+        )
+        .with_timestamp_validity_window(..state.refund_at))
+    }
+
+    #[instruction]
+    pub fn refund_native_xmr(
+        _ctx: ProgramContext,
+        #[account(mut, owner = self_program_id, pda = arg("swap_id"))]
+        metadata: AccountWithMetadata,
+        #[account(mut, pda = [literal("custody"), arg("swap_id")])] custody: AccountWithMetadata,
+        #[account(mut)] depositor: AccountWithMetadata,
+        #[account(signer)] refund_aggregate_authority: AccountWithMetadata,
+        swap_id: [u8; 32],
+    ) -> SpelResult {
+        let (state, punish_at) = validated_xmr_native_witness_state(
+            &metadata,
+            &custody,
+            &depositor,
+            &refund_aggregate_authority,
+            swap_id,
+            XmrWitnessPurpose::Refund,
+        )?;
+        let transfer = native_transfer_call(
+            state.asset_program,
+            custody.clone(),
+            depositor.clone(),
+            state.amount,
+            true,
+            &swap_id,
+        );
+        let mut metadata = metadata;
+        write_metadata(&mut metadata, &state)?;
+        SpelOutput::execute(
+            vec![metadata, custody, depositor, refund_aggregate_authority],
+            vec![transfer],
+        )
+        .try_with_timestamp_validity_window(state.refund_at..punish_at)
+        .map_err(|_| {
+            custom_error(
+                ERROR_INVALID_TERMS,
+                "invalid XMR signed refund validity window",
+            )
+        })
+    }
+
+    #[instruction]
+    pub fn punish_native_xmr(
+        _ctx: ProgramContext,
+        #[account(mut, owner = self_program_id, pda = arg("swap_id"))]
+        metadata: AccountWithMetadata,
+        #[account(mut, pda = [literal("custody"), arg("swap_id")])] custody: AccountWithMetadata,
+        #[account(mut, signer)] claimant: AccountWithMetadata,
+        swap_id: [u8; 32],
+    ) -> SpelResult {
+        let (state, punish_at) =
+            validated_xmr_native_punish_state(&metadata, &custody, &claimant, swap_id)?;
+        let transfer = native_transfer_call(
+            state.asset_program,
+            custody.clone(),
+            claimant.clone(),
+            state.amount,
+            true,
+            &swap_id,
+        );
+        let mut metadata = metadata;
+        write_metadata(&mut metadata, &state)?;
+        Ok(
+            SpelOutput::execute(vec![metadata, custody, claimant], vec![transfer])
+                .with_timestamp_validity_window(punish_at..),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -1049,6 +1513,12 @@ mod tests {
     const PREIMAGE: [u8; 32] = [12; 32];
     const AMOUNT: u128 = 75;
     const REFUND_AT: u64 = 1_000;
+    const PUNISH_AT: u64 = 2_000;
+    const XMR_CLAIM_KEY: [u8; 32] = [44; 32];
+    const XMR_REFUND_KEY: [u8; 32] = [45; 32];
+    const MAKER_DLEQ_COMMITMENT: [u8; 32] = [46; 32];
+    const TAKER_DLEQ_COMMITMENT: [u8; 32] = [47; 32];
+    const XMR_CLAIM_PARTIAL: [u8; 32] = [48; 32];
 
     fn account(
         id: [u8; 32],
@@ -1182,6 +1652,63 @@ mod tests {
             AMOUNT,
             false,
         )
+    }
+
+    fn xmr_initialized() -> SpelOutput {
+        let claim_authority = witnessed_account_id(&XMR_CLAIM_KEY);
+        let refund_authority = witnessed_account_id(&XMR_REFUND_KEY);
+        zec_escrow::initialize_native_xmr(
+            context(),
+            empty_account(metadata_id()),
+            empty_account(custody_id()),
+            account([1; 32], AUTHENTICATED_TRANSFER, 200, true),
+            account([2; 32], AUTHENTICATED_TRANSFER, 10, false),
+            actor(claim_authority.into_value(), false),
+            actor(refund_authority.into_value(), false),
+            SWAP_ID,
+            [31; 32],
+            XMR_CLAIM_KEY,
+            XMR_REFUND_KEY,
+            MAKER_DLEQ_COMMITMENT,
+            TAKER_DLEQ_COMMITMENT,
+            xmr_claim_partial_commitment(XMR_CLAIM_PARTIAL),
+            AMOUNT,
+            REFUND_AT,
+            PUNISH_AT,
+            AUTHENTICATED_TRANSFER,
+        )
+        .expect("valid XMR native escrow initialize")
+    }
+
+    fn xmr_funded() -> SpelOutput {
+        let initialized = xmr_initialized();
+        zec_escrow::fund_native(
+            context(),
+            committed_metadata(&initialized),
+            account(custody_id().into_value(), AUTHENTICATED_TRANSFER, 0, false),
+            account([1; 32], AUTHENTICATED_TRANSFER, 200, true),
+            SWAP_ID,
+        )
+        .expect("valid exact XMR native escrow funding")
+    }
+
+    fn witnessed_initialized() -> SpelOutput {
+        let aggregate_authority = witnessed_account_id(&XMR_CLAIM_KEY);
+        zec_escrow::initialize_native_witnessed(
+            context(),
+            empty_account(metadata_id()),
+            empty_account(custody_id()),
+            account([1; 32], AUTHENTICATED_TRANSFER, 200, true),
+            account([2; 32], AUTHENTICATED_TRANSFER, 10, false),
+            actor(aggregate_authority.into_value(), false),
+            SWAP_ID,
+            [31; 32],
+            XMR_CLAIM_KEY,
+            AMOUNT,
+            REFUND_AT,
+            AUTHENTICATED_TRANSFER,
+        )
+        .expect("valid legacy witnessed native escrow initialize")
     }
 
     fn token_initialized(definition: AccountId) -> SpelOutput {
@@ -1428,6 +1955,11 @@ mod tests {
                 "refund_token",
                 "initialize_token_witnessed",
                 "claim_token_witnessed",
+                "initialize_native_xmr",
+                "authorize_native_xmr_claim",
+                "claim_native_xmr",
+                "refund_native_xmr",
+                "punish_native_xmr",
             ]
         );
         for instruction_name in ["refund_native", "create_token_custody", "refund_token"] {
@@ -1454,13 +1986,62 @@ mod tests {
                 .expect("aggregate-authorized token instruction in generated IDL");
             assert!(instruction.accounts.iter().any(|account| account.signer));
         }
+        for instruction_name in [
+            "initialize_native_xmr",
+            "authorize_native_xmr_claim",
+            "claim_native_xmr",
+            "refund_native_xmr",
+            "punish_native_xmr",
+        ] {
+            let instruction = idl
+                .instructions
+                .iter()
+                .find(|instruction| instruction.name == instruction_name)
+                .expect("authority-bearing XMR instruction in generated IDL");
+            assert!(instruction.accounts.iter().any(|account| account.signer));
+        }
     }
 
     #[test]
-    fn witnessed_token_variants_are_append_only_on_the_public_wire() {
+    fn every_legacy_and_xmr_variant_is_append_only_on_the_public_wire() {
         let tag = |instruction: Instruction| {
             ChainedCall::new(ESCROW_PROGRAM, vec![], &instruction).instruction_data[0]
         };
+        assert_eq!(
+            tag(Instruction::InitializeNative {
+                swap_id: SWAP_ID,
+                terms_hash: [31; 32],
+                secret_digest: Sha256::digest(PREIMAGE).into(),
+                amount: AMOUNT,
+                refund_at: REFUND_AT,
+                authenticated_transfer_program: AUTHENTICATED_TRANSFER,
+            }),
+            0,
+        );
+        assert_eq!(
+            tag(Instruction::InitializeNativeWitnessed {
+                swap_id: SWAP_ID,
+                terms_hash: [31; 32],
+                aggregate_x_only_public_key: [44; 32],
+                amount: AMOUNT,
+                refund_at: REFUND_AT,
+                authenticated_transfer_program: AUTHENTICATED_TRANSFER,
+            }),
+            1,
+        );
+        assert_eq!(tag(Instruction::FundNative { swap_id: SWAP_ID }), 2);
+        assert_eq!(
+            tag(Instruction::ClaimNative {
+                swap_id: SWAP_ID,
+                preimage: PREIMAGE,
+            }),
+            3,
+        );
+        assert_eq!(
+            tag(Instruction::ClaimNativeWitnessed { swap_id: SWAP_ID }),
+            4,
+        );
+        assert_eq!(tag(Instruction::RefundNative { swap_id: SWAP_ID }), 5);
         assert_eq!(
             tag(Instruction::InitializeToken {
                 swap_id: SWAP_ID,
@@ -1471,6 +2052,15 @@ mod tests {
                 ata_program: ATA_PROGRAM,
             }),
             6,
+        );
+        assert_eq!(tag(Instruction::CreateTokenCustody { swap_id: SWAP_ID }), 7,);
+        assert_eq!(tag(Instruction::FundToken { swap_id: SWAP_ID }), 8);
+        assert_eq!(
+            tag(Instruction::ClaimToken {
+                swap_id: SWAP_ID,
+                preimage: PREIMAGE,
+            }),
+            9,
         );
         assert_eq!(tag(Instruction::RefundToken { swap_id: SWAP_ID }), 10);
         assert_eq!(
@@ -1487,6 +2077,340 @@ mod tests {
         assert_eq!(
             tag(Instruction::ClaimTokenWitnessed { swap_id: SWAP_ID }),
             12,
+        );
+        assert_eq!(
+            tag(Instruction::InitializeNativeXmr {
+                swap_id: SWAP_ID,
+                terms_hash: [31; 32],
+                claim_aggregate_x_only_public_key: XMR_CLAIM_KEY,
+                refund_aggregate_x_only_public_key: XMR_REFUND_KEY,
+                maker_dleq_transcript_commitment: MAKER_DLEQ_COMMITMENT,
+                taker_dleq_transcript_commitment: TAKER_DLEQ_COMMITMENT,
+                claim_partial_commitment: xmr_claim_partial_commitment(XMR_CLAIM_PARTIAL),
+                amount: AMOUNT,
+                refund_at: REFUND_AT,
+                punish_at: PUNISH_AT,
+                authenticated_transfer_program: AUTHENTICATED_TRANSFER,
+            }),
+            13,
+        );
+        assert_eq!(
+            tag(Instruction::AuthorizeNativeXmrClaim {
+                swap_id: SWAP_ID,
+                claim_partial: XMR_CLAIM_PARTIAL,
+            }),
+            14,
+        );
+        assert_eq!(tag(Instruction::ClaimNativeXmr { swap_id: SWAP_ID }), 15,);
+        assert_eq!(tag(Instruction::RefundNativeXmr { swap_id: SWAP_ID }), 16,);
+        assert_eq!(tag(Instruction::PunishNativeXmr { swap_id: SWAP_ID }), 17,);
+    }
+
+    #[test]
+    fn legacy_metadata_encodings_remain_byte_exact() {
+        let preimage_metadata = metadata_from(&initialized());
+        let witnessed_metadata = metadata_from(&witnessed_initialized());
+        let preimage_digest: [u8; 32] = Sha256::digest(
+            borsh::to_vec(&preimage_metadata).expect("legacy preimage metadata serializes"),
+        )
+        .into();
+        let witnessed_digest: [u8; 32] = Sha256::digest(
+            borsh::to_vec(&witnessed_metadata).expect("legacy witnessed metadata serializes"),
+        )
+        .into();
+
+        assert_eq!(
+            preimage_digest,
+            [
+                219, 57, 173, 104, 233, 3, 91, 12, 195, 91, 238, 63, 134, 116, 221, 16, 253, 108,
+                92, 83, 141, 106, 103, 81, 208, 116, 168, 243, 93, 41, 76, 111,
+            ]
+        );
+        assert_eq!(
+            witnessed_digest,
+            [
+                87, 124, 100, 28, 61, 59, 141, 60, 96, 188, 109, 135, 135, 19, 193, 160, 231, 183,
+                153, 92, 53, 244, 186, 242, 107, 217, 40, 249, 48, 238, 153, 80,
+            ]
+        );
+    }
+
+    #[test]
+    fn xmr_initialization_rejects_aliased_authorities_and_invalid_windows() {
+        let claim_authority = witnessed_account_id(&XMR_CLAIM_KEY);
+        let refund_authority = witnessed_account_id(&XMR_REFUND_KEY);
+        let initialize = |depositor: AccountWithMetadata,
+                          claim: AccountWithMetadata,
+                          refund: AccountWithMetadata,
+                          punish_at| {
+            zec_escrow::initialize_native_xmr(
+                context(),
+                empty_account(metadata_id()),
+                empty_account(custody_id()),
+                depositor,
+                account([2; 32], AUTHENTICATED_TRANSFER, 10, false),
+                claim,
+                refund,
+                SWAP_ID,
+                [31; 32],
+                XMR_CLAIM_KEY,
+                XMR_REFUND_KEY,
+                MAKER_DLEQ_COMMITMENT,
+                TAKER_DLEQ_COMMITMENT,
+                xmr_claim_partial_commitment(XMR_CLAIM_PARTIAL),
+                AMOUNT,
+                REFUND_AT,
+                punish_at,
+                AUTHENTICATED_TRANSFER,
+            )
+        };
+
+        assert!(
+            initialize(
+                account([1; 32], AUTHENTICATED_TRANSFER, 200, true),
+                actor(claim_authority.into_value(), false),
+                actor(refund_authority.into_value(), false),
+                REFUND_AT,
+            )
+            .is_err()
+        );
+        assert!(
+            initialize(
+                account(
+                    claim_authority.into_value(),
+                    AUTHENTICATED_TRANSFER,
+                    200,
+                    true
+                ),
+                actor(claim_authority.into_value(), false),
+                actor(refund_authority.into_value(), false),
+                PUNISH_AT,
+            )
+            .is_err()
+        );
+        assert!(
+            initialize(
+                account([1; 32], AUTHENTICATED_TRANSFER, 200, true),
+                actor(refund_authority.into_value(), false),
+                actor(claim_authority.into_value(), false),
+                PUNISH_AT,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn xmr_escrow_rejects_legacy_claims_wrong_authorities_and_destinations() {
+        let funded = xmr_funded();
+        let claim_authority = witnessed_account_id(&XMR_CLAIM_KEY);
+        let refund_authority = witnessed_account_id(&XMR_REFUND_KEY);
+
+        assert!(
+            zec_escrow::authorize_native_xmr_claim(
+                context(),
+                committed_metadata(&funded),
+                account([1; 32], AUTHENTICATED_TRANSFER, 125, true),
+                SWAP_ID,
+                [49; 32],
+            )
+            .is_err()
+        );
+        assert!(
+            zec_escrow::authorize_native_xmr_claim(
+                context(),
+                committed_metadata(&funded),
+                account([3; 32], AUTHENTICATED_TRANSFER, 125, true),
+                SWAP_ID,
+                XMR_CLAIM_PARTIAL,
+            )
+            .is_err()
+        );
+        assert!(
+            zec_escrow::authorize_native_xmr_claim(
+                context(),
+                committed_metadata(&funded),
+                actor([1; 32], true),
+                SWAP_ID,
+                XMR_CLAIM_PARTIAL,
+            )
+            .is_err()
+        );
+        assert!(
+            zec_escrow::claim_native(
+                context(),
+                committed_metadata(&funded),
+                funded_custody(),
+                account([2; 32], AUTHENTICATED_TRANSFER, 10, true),
+                SWAP_ID,
+                PREIMAGE,
+            )
+            .is_err()
+        );
+        assert!(
+            zec_escrow::claim_native_witnessed(
+                context(),
+                committed_metadata(&funded),
+                funded_custody(),
+                account([2; 32], AUTHENTICATED_TRANSFER, 10, false),
+                actor(claim_authority.into_value(), true),
+                SWAP_ID,
+            )
+            .is_err()
+        );
+        assert!(
+            zec_escrow::claim_native_xmr(
+                context(),
+                committed_metadata(&funded),
+                funded_custody(),
+                account([2; 32], AUTHENTICATED_TRANSFER, 10, false),
+                actor(refund_authority.into_value(), true),
+                SWAP_ID,
+            )
+            .is_err()
+        );
+        assert!(
+            zec_escrow::refund_native_xmr(
+                context(),
+                committed_metadata(&funded),
+                funded_custody(),
+                account([1; 32], AUTHENTICATED_TRANSFER, 125, false),
+                actor(claim_authority.into_value(), true),
+                SWAP_ID,
+            )
+            .is_err()
+        );
+        assert!(
+            zec_escrow::claim_native_xmr(
+                context(),
+                committed_metadata(&funded),
+                funded_custody(),
+                account([3; 32], AUTHENTICATED_TRANSFER, 10, false),
+                actor(claim_authority.into_value(), true),
+                SWAP_ID,
+            )
+            .is_err()
+        );
+        assert!(
+            zec_escrow::refund_native_xmr(
+                context(),
+                committed_metadata(&funded),
+                funded_custody(),
+                account([3; 32], AUTHENTICATED_TRANSFER, 125, false),
+                actor(refund_authority.into_value(), true),
+                SWAP_ID,
+            )
+            .is_err()
+        );
+        assert!(
+            zec_escrow::punish_native_xmr(
+                context(),
+                committed_metadata(&funded),
+                funded_custody(),
+                account([3; 32], AUTHENTICATED_TRANSFER, 10, true),
+                SWAP_ID,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn xmr_native_claim_refund_and_punish_are_atomic_and_disjoint() {
+        let initialized = xmr_initialized();
+        let initialized_state = metadata_from(&initialized);
+        assert_eq!(initialized_state.version, XMR_ESCROW_METADATA_VERSION);
+        assert_timestamp_only_window(&initialized, None, Some(REFUND_AT));
+
+        let funded = xmr_funded();
+        let funded_state = metadata_from(&funded);
+        assert_eq!(funded_state.status, EscrowStatus::Funded);
+        assert_timestamp_only_window(&funded, None, Some(REFUND_AT));
+
+        assert!(
+            zec_escrow::refund_native(
+                context(),
+                committed_metadata(&funded),
+                funded_custody(),
+                account([1; 32], AUTHENTICATED_TRANSFER, 125, false),
+                SWAP_ID,
+            )
+            .is_err(),
+            "generic unsigned refund must never bypass the s_b reveal"
+        );
+
+        let claim_authority = witnessed_account_id(&XMR_CLAIM_KEY);
+        assert!(
+            zec_escrow::claim_native_xmr(
+                context(),
+                committed_metadata(&funded),
+                funded_custody(),
+                account([2; 32], AUTHENTICATED_TRANSFER, 10, false),
+                actor(claim_authority.into_value(), true),
+                SWAP_ID,
+            )
+            .is_err(),
+            "Maker cannot claim before the Taker publishes the bound partial on LEZ"
+        );
+        let authorization = zec_escrow::authorize_native_xmr_claim(
+            context(),
+            committed_metadata(&funded),
+            account([1; 32], AUTHENTICATED_TRANSFER, 125, true),
+            SWAP_ID,
+            XMR_CLAIM_PARTIAL,
+        )
+        .expect("Taker publishes the exact agreement-bound partial on LEZ");
+        assert_eq!(
+            metadata_from(&authorization).status,
+            EscrowStatus::XmrClaimAuthorized
+        );
+        assert!(authorization.chained_calls.is_empty());
+        assert_timestamp_only_window(&authorization, None, Some(REFUND_AT));
+
+        let claim = zec_escrow::claim_native_xmr(
+            context(),
+            committed_metadata(&authorization),
+            funded_custody(),
+            account([2; 32], AUTHENTICATED_TRANSFER, 10, false),
+            actor(claim_authority.into_value(), true),
+            SWAP_ID,
+        )
+        .expect("claim aggregate witness releases fixed custody to Maker");
+        assert_eq!(metadata_from(&claim).status, EscrowStatus::Claimed);
+        assert_timestamp_only_window(&claim, None, Some(REFUND_AT));
+        assert_eq!(
+            claim.chained_calls[0].pre_states[1].account_id,
+            AccountId::new([2; 32])
+        );
+
+        let refund_authority = witnessed_account_id(&XMR_REFUND_KEY);
+        let refund = zec_escrow::refund_native_xmr(
+            context(),
+            committed_metadata(&xmr_funded()),
+            funded_custody(),
+            account([1; 32], AUTHENTICATED_TRANSFER, 125, false),
+            actor(refund_authority.into_value(), true),
+            SWAP_ID,
+        )
+        .expect("refund aggregate witness releases fixed custody to Taker");
+        assert_eq!(metadata_from(&refund).status, EscrowStatus::Refunded);
+        assert_timestamp_only_window(&refund, Some(REFUND_AT), Some(PUNISH_AT));
+        assert_eq!(
+            refund.chained_calls[0].pre_states[1].account_id,
+            AccountId::new([1; 32])
+        );
+
+        let punish = zec_escrow::punish_native_xmr(
+            context(),
+            committed_metadata(&xmr_funded()),
+            funded_custody(),
+            account([2; 32], AUTHENTICATED_TRANSFER, 10, true),
+            SWAP_ID,
+        )
+        .expect("Maker claimant can punish after the Taker abandons its window");
+        assert_eq!(metadata_from(&punish).status, EscrowStatus::Claimed);
+        assert_timestamp_only_window(&punish, Some(PUNISH_AT), None);
+        assert_eq!(
+            punish.chained_calls[0].pre_states[1].account_id,
+            AccountId::new([2; 32])
         );
     }
 

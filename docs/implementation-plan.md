@@ -2865,6 +2865,10 @@ and 32-byte markers into chain authority.
   without accepting their production use before graph and behavior review.
 - [x] Record GW-M4-001 for the unlicensed literal conformance target and
   GW-M4-002 for the underspecified Ed25519-adaptor/LEZ-witness mapping.
+- [x] Record GW-M4-003 for the conflict between literal RFP F6 two-leg refunds
+  and the cited COMIT punishment branch when the Taker disappears after Maker
+  XMR funding. It is a production-conformance disposition, not permission to
+  skip local signed-refund or punishment execution.
 - [x] Pin and execute the h4sh3d scalar width, endianness, public points,
   subgroup/identity rejection, proof encoding, and transcript commitment behind
   the pair-specific boundary in ADR 0054.
@@ -2898,11 +2902,16 @@ and 32-byte markers into chain authority.
   `m4-monero-poc-20260719c` passed at fakechain height 111 with a 401
   cross-credential rejection, unlocked 10 XMR role outputs, no runtime external
   resources, and scoped cleanup.
-- [ ] Extend the LEZ witnessed escrow metadata/terms with the immutable XMR
+- [x] Extend the LEZ witnessed escrow source/IDL with immutable XMR
   transcript commitments and bind distinct exact claim/refund messages plus
   refund/punish windows before either lock. Per ADR 0055, the Taker claim
-  partial must remain owner-local until the exact Maker XMR lock reaches the
-  signed confirmation policy.
+  partial remains owner-local until the exact Maker XMR lock reaches the signed
+  confirmation policy, then is published canonically on LEZ rather than sent
+  over an off-chain channel. ADR 0057 now executes additive tags 13 through 17,
+  separate claim/refund aggregate authorities, version-3 XMR metadata, exact
+  partial-commitment publication, disjoint windows, legacy wire digests, and
+  explicit generic unsigned-refund rejection in 14 focused tests. Checked guest
+  artifact, strict bridge operations, and actual-node branches remain.
 - [ ] Complete the sole reviewed positive direction with fresh actor processes:
   Taker LEZ lock, finalized Maker observation, exact Maker XMR output, signed
   Monero confirmation policy, revealing Maker LEZ claim, Taker extraction and
@@ -2936,8 +2945,11 @@ public finality service.
 
 The immediate critical path is now:
 
-1. add the countersigned two-proof XMR agreement, post-confirmation claim-partial
-   release gate, and additive XMR-specific signed refund/punishment LEZ paths;
+1. finish the two-stage countersigned XMR agreement and activation transcript,
+   including profile/deployment bindings and a non-bypassable canonical
+   post-confirmation LEZ claim-partial publication gate. The PoC must reject a
+   committed invalid partial and route only to punishment; pre-funding proof of
+   hidden-partial validity remains a GW-M4-003 production-review item;
 2. add typed Monero daemon/wallet RPC observations and builders to
    `lez-xmr-swap-sdk`;
 3. add fresh Maker/Taker role processes with durable share/effect records;
@@ -2960,8 +2972,9 @@ reproducible linked claim-path PoC and 17 to 27 hours to an atomicity-capable
 local PoC with the signed refund and punishment design executed. The latter is
 longer than the prior estimate because source audit proved the existing generic
 permissionless LEZ refund is unsigned and cannot reveal `s_b`; this is concrete
-repository work, not an external blocker. GW-M4-001 and GW-M4-002 remain
-upstream production/review disclosures and do not block implementation.
+repository work, not an external blocker. GW-M4-001, GW-M4-002, and GW-M4-003
+remain upstream production/review disclosures and do not block the private
+local implementation.
 
 ### Post-PoC RED-GREEN-REFACTOR hardening required for M4 closure
 
