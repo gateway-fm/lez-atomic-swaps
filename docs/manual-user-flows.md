@@ -2323,19 +2323,26 @@ routes. Its Taker-only `prepare_native_xmr_escrow_v3` route now checks the
 generated v0.2 ABI, exact PDAs/accounts/terms/signers, and consecutive nonces,
 then atomically owner-only persists the exact signed `InitializeNativeXmr` and
 `FundNative` bytes before return. Identical replay after a fresh planner/server
-uses zero nonce reads, and the sequencer send count remains zero. The other six
-builders and non-Fund/discovery classification return typed `Unavailable`. The
-Taker-only exact-`Fund` classifier now validates the durable prepared target
-before indexer reads, gates `Found` on canonical finalized transaction plus
+uses zero nonce reads, and the sequencer send count remains zero. Its official
+`prepare_native_xmr_claim_authorization_v3` route then recomputes the exact
+NUL-terminated commitment, requires and revalidates the durable Fund, derives
+nonce `Fund + 1` without an RPC, checks generated tag 14 and the sole depositor
+signer, and owner-only persists exact authorization bytes before return.
+Fresh/cached replay revalidates durable state; deletion, corruption, drift,
+mutation, conflict, and overflow fail closed. Generic submission rejects this
+reservation, so preparation still makes zero sends. The other five builders and
+non-Fund/discovery classification return typed `Unavailable`.
+
+The Taker-only exact-`Fund` classifier validates the durable target before
+indexer reads, gates `Found` on canonical finalized transaction plus
 metadata/custody and candidate/tip/window repins, preserves typed failures, and
 returns every missing case as `Uncertain`, never `Absent`. Its focused E2E is
 trait-backed with a synthetic finalized indexer and zero sends. The concrete
-main-process adapter also has a Taker-only Stage-B claim-authorization
+main-process adapter separately has a Taker-only Stage-B claim-authorization
 capability. It re-derives exact Stage B, verifies the committed partial and
 signed runtime before wire, and mints private-field non-`Clone` evidence only
-after one authenticated success. Its literal-loopback server is a mock; the
-official sidecar builder remains `Unavailable`, and valid prepared-transaction
-semantics are trusted to that authenticated builder rather than locally ABI-decoded. Submission,
+after one authenticated success. Its literal-loopback server is a mock; ADR
+0063 separately proves the official ABI-validating builder. Submission,
 actual-local-indexer evidence, Stage-B-bound durable
 one-shot claim-partial release, fresh role actors, and both terminal stores are
 still required before an atomic happy PoC.
@@ -2369,6 +2376,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --locked -p lez-bridge-adapter \
 cargo fmt --manifest-path crates/lez-bridge-adapter/Cargo.toml --all -- --check
 
 export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
 (
   cd "$RAPIDSNARK_LIB_DIR"
   printf "%s  %s\n" \
@@ -2390,13 +2398,7 @@ cargo test --locked \
 cargo test --locked \
   --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
   --test bridge_asset_v2_routes
-cargo test --locked \
-  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-  --all-targets --all-features
-cargo clippy --locked \
-  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-  --all-targets --all-features -- -D warnings
-cargo fmt --manifest-path compat/lez-v0_2-sidecar/Cargo.toml -- --check
+./scripts/verify-lez-v02-sidecar.sh
 git diff --check
 ```
 
@@ -2409,10 +2411,13 @@ must report 93 of 93 tests, and the doctest command must report 2 of 2 including
 the compile-fail non-`Clone` contract; strict Clippy, Rustdoc, formatting, and
 diff hygiene must remain green. The server is an in-process authenticated
 literal-loopback mock. It uses no chain node, external RPC, peer, faucet, public
-fund, or finality service. The official sidecar builder remains typed
-`Unavailable`, the adapter does not independently ABI-decode valid transaction
-semantics, and these tests prove no journal wiring, actual-node effect, or claim
-PoC.
+fund, or finality service. The adapter test does not independently ABI-decode
+valid transaction semantics; the official sidecar tests immediately above do.
+They must prove exact tag 14, account order, sole depositor signer,
+Fund-plus-one nonce, commitment mismatch rejection, missing/corrupt durable
+state rejection, byte-identical restart/cache replay, generic submission
+rejection, and zero sequencer sends. Together these are still preparation
+evidence: they prove no journal authority, actual-node effect, or claim PoC.
 
 The focused classifier command must report `running 1 test`,
 `authenticated_exact_persisted_fund_requires_stable_finalized_history ... ok`,
@@ -2422,8 +2427,10 @@ metadata and custody, candidate/tip/window repins, typed finality, history, movi
 It starts only ephemeral literal-loopback in-process fixtures and a synthetic
 trait-backed `FinalizedIndexerApi`: no actual LEZ node, chain RPC, faucet, public
 fund, peer, or external finality resource participates. The full sidecar command
-must report 137 of 137 tests and strict Clippy must remain green. Neither result
-is an actual local-devnet classifier run or a claim PoC.
+must report 138 of 138 tests; strict Clippy, warning-free Rustdoc, and dependency
+policy must remain green. These commands use only ephemeral literal-loopback
+fixtures and owner-only temporary directories after dependencies are cached.
+Neither result is an actual local-devnet classifier run or a claim PoC.
 
 The artifact run must report ELF SHA-256
 `dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292`,

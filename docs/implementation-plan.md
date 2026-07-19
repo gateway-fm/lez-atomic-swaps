@@ -2871,13 +2871,21 @@ nonces, and atomically owner-only persists both exact signed transaction bytes
 before return. Same-request replay after a fresh planner/server is byte-identical
 with zero nonce reads and zero sequencer sends; drift fails closed. Twenty of
 twenty scoped planner/route regressions and the final three XMR tests pass with
-strict Clippy, formatting, and diff checks. The other six builders remain typed
-`Unavailable`. The Taker-only exact-`Fund` classifier now validates the durable
+strict Clippy, formatting, and diff checks. The official
+`prepare_native_xmr_claim_authorization_v3` builder is separately green: it
+recomputes the exact NUL-terminated partial commitment, revalidates the durable
+Fund, derives nonce `Fund + 1` without an RPC, checks generated tag 14 and the
+sole depositor signer, and owner-only persists exact authorization bytes before
+return. Fresh/cached replay revalidates durable state, while deletion, corruption,
+drift, mutation, conflict, and overflow fail closed. Generic submission rejects
+the reservation and tests prove zero sends. The other five builders remain
+typed `Unavailable`. The Taker-only exact-`Fund` classifier validates the durable
 prepared target before any indexer read, authenticates canonical finalized
 transaction plus metadata/custody facts, re-pins the candidate, tip, and window
 end, and returns missing as `Uncertain`, never `Absent`. Its focused E2E uses a
 synthetic trait-backed finalized indexer and zero sends; the complete sidecar
-suite passes 137 of 137 with strict Clippy. The main-process adapter is separately component-green. Its first-lock boundary
+suite passes 138 of 138 with strict Clippy, warning-free Rustdoc, and dependency
+policy. The main-process adapter is separately component-green. Its first-lock boundary
 derives exact v3 terms from validated Stage A and Stage B, rejects a non-Taker
 before transport, and mints private-field non-`Clone` finalized-`Fund` evidence
 only through the concrete authenticated client. Its Taker-only claim-authorization method exists only on `LezBridgeAdapter<BridgeClient>` and mints
@@ -2889,8 +2897,8 @@ runtime makes zero calls; wrong response context, terms, or empty bytes makes
 one then fails closed. The exact package passes 93 of 93 tests, the authenticated
 matrix 3 of 3, and 2 of 2 doctests include both non-`Clone` compile-fail proofs;
 strict Clippy, Rustdoc, formatting, and diff checks are green. The authenticated
-server is a literal-loopback mock, the official builder remains `Unavailable`,
-and valid transaction semantics are not locally ABI-decoded.
+server is a literal-loopback mock; ADR 0063 separately proves the official
+ABI-validating builder and its durable no-submit boundary.
 The classifier can now return an exact synthetic `Found`, but no positive
 actual-local-indexer first-lock capability has been minted and no claim PoC
 exists. A sealed `lez-xmr-release-authority` storage foundation now passes 21
@@ -2898,7 +2906,7 @@ tests for stable-resource, semantic-restart, local CAS, tamper, schema, and
 private-path invariants. Its stable-resource encoder, release plan, and
 prepare/publication transitions are internal and unwired, so it adds no usable
 external authority and does not prove live replay prevention. The repository
-still has no XMR submission authority, six remaining functional builders,
+still has no XMR submission authority, five remaining functional builders,
 actual-local-indexer classifier execution, actual-chain trusted finalized LEZ
 capability, typed
 Stage-B issuer/publisher/outcome integration, role actor, full swap, U9 guide,
@@ -2966,11 +2974,13 @@ and 32-byte markers into chain authority.
    non-`Clone` result after exactly one authenticated success. All 93
   adapter tests, 3 authenticated cases, 2 compile-fail-inclusive doctests, and
   strict gates pass. Wrong pre-wire bindings make zero calls; wrong response
-  context, terms, or empty bytes makes one call and fails closed. Its literal-loopback
-   server is a mock and the sidecar builder remains `Unavailable`. The
-  first-lock canonical fixture and the sidecar synthetic finalized-indexer fixture
-  prove fail-closed boundary behavior and exact `Found`, respectively, but not a
-  real Stage-B/actual-local-indexer capability. Durable-target and Taker-role
+  context, terms, or empty bytes makes one call and fails closed. Its
+  literal-loopback server is a mock. The official sidecar builder is separately
+  component-green with exact commitment, tag-14 ABI, Fund-plus-one nonce,
+  durable-before-return, restart/cache revalidation, and zero-submit proofs.
+  The first-lock canonical fixture and the sidecar synthetic finalized-indexer
+  fixture prove fail-closed boundary behavior and exact `Found`, respectively,
+  but not a real Stage-B/actual-local-indexer capability. Durable-target and Taker-role
   rejection happen before indexer reads; missing remains `Uncertain`. Neither
   observation is release authority. The sealed release journal adds
   21 green storage tests, but its stable-resource encoder and authority methods
@@ -3007,13 +3017,19 @@ and 32-byte markers into chain authority.
   registers all eight additive v3 routes without widening legacy v2. The Taker
   escrow route durably prepares the exact checked initialize/fund pair before
   return, replays byte-identically after planner/server restart with zero nonce
-  reads, and makes zero sequencer sends. The scoped 20 of 20 regressions plus
-  final three XMR tests pass. The exact durable-`Fund` classifier is also
+  reads, and makes zero sequencer sends. The official authorization route then
+  requires and revalidates that Fund, recomputes the exact committed partial,
+  derives `Fund + 1` without a nonce read, validates generated tag 14 and the
+  sole depositor signer, persists before exposure, and restart-replays
+  byte-identically. Missing/corrupt durable state and mutation fail closed;
+  generic submission rejects it and zero sequencer sends occur. The exact
+  durable-`Fund` classifier is also
   component-green: Taker-only ownership validates before indexer reads, canonical
   finalized transaction/metadata/custody facts and candidate/tip/window repins
   gate `Found`, missing stays `Uncertain`, typed failures are preserved, and zero
-  sends occur. The full sidecar suite passes 137 of 137 with strict Clippy. The
-  other six builders and non-Fund/discovery classification remain typed
+  sends occur. The full sidecar suite passes 138 of 138 with strict Clippy,
+  warning-free Rustdoc, and dependency policy. The other five builders and
+  non-Fund/discovery classification remain typed
   `Unavailable`; submission, actual-local-indexer evidence, and actual-node
   branches remain.
 - [ ] Complete the sole reviewed positive direction with fresh actor processes:
@@ -3090,12 +3106,12 @@ neither live replay-prevention evidence nor a claim PoC.
 The immediate critical path is now:
 
 1. connect the component-green exact-`Fund` classifier to the actual local
-   indexer and fresh checked artifact, then implement the happy-path official
-   claim-authorization builder that consumes the completed typed adapter
-   capability, followed by claim preparation/completion, exact submission, and
-   finalized claim boundaries. Its synthetic fixture already proves Taker-only
-   durable-target ownership before reads, canonical/final facts, stability
-   repins, typed failures, `Uncertain` missing, and zero sends; the next evidence
+   indexer and fresh checked artifact, then consume the completed adapter and
+   official authorization-builder checkpoints through claim preparation,
+   exact journal-bound submission, completion, and finalized-claim boundaries.
+   The synthetic fixture already proves Taker-only durable-target ownership
+   before reads, canonical/final facts, stability repins, typed failures,
+   `Uncertain` missing, and zero sends; the next evidence
    must be the first actual-chain `Found`, not a synthetic replacement. The
    signed-refund and punishment builders remain explicitly in the following
    recovery slice rather than preceding the progressive-JPEG happy path. The
@@ -3127,12 +3143,13 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The expected remaining focused engineering time is 4 to 8 hours to the first
-reproducible independent-actor claim-path PoC and 10 to 18 hours to the local
+The expected remaining focused engineering time is 3 to 6 hours to the first
+reproducible independent-actor claim-path PoC and 8 to 16 additional hours to the local
 claim/refund/punishment PoC. This estimate starts after the verified two-stage
-SDK, fresh RISC Zero artifact, v3 client, and Monero observation checkpoints.
-It still includes actual-local-indexer integration, durable submission for the
-remaining runtime, trusted finalized LEZ capability,
+SDK, fresh RISC Zero artifact, v3 client, Monero observation, adapter, and
+official authorization-builder checkpoints. It still includes
+actual-local-indexer integration, durable submission for the remaining runtime,
+trusted finalized LEZ capability,
 activation-bound one-shot release, and actual actors rather than counting
 caller-supplied snapshots or checked recursive cases as runtime evidence.
 GW-M4-001, GW-M4-002, and GW-M4-003 remain upstream production/review

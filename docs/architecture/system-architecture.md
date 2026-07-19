@@ -2129,7 +2129,9 @@ flowchart LR
     XmrSdk --> ClaimAuthorization
     ClaimAuthorization -->|exactly one authenticated success| BridgeClient
     BridgeClient --> AuthMock["Authenticated literal-loopback mock<br/>component E2E only"]
-    BridgeClient -.-> ClaimBuilder["Official claim-authorization builder<br/>typed Unavailable"]
+    BridgeClient --> ClaimBuilder["Official durable claim-authorization builder<br/>tag 14 component green"]
+    Reservation --> ClaimBuilder
+    ClaimBuilder --> ClaimReservation[("Owner-only exact authorization reservation<br/>Fund nonce plus one; restart replay green")]
     ClaimAuthorization --> ClaimEvidence["Private-field non-Clone authorization evidence"]
     ClaimEvidence -.-> ReleaseStore
     BridgeClient --> BridgeRoutes["Authenticated sidecar v3 routes<br/>all eight registered"]
@@ -2139,8 +2141,9 @@ flowchart LR
     Reservation --> FundClassifier
     SyntheticIndexer["Synthetic FinalizedIndexerApi<br/>component E2E only"] --> FundClassifier
     ActualIndexer["Actual local LEZ indexer<br/>composition pending"] -.-> FundClassifier
-    BridgeRoutes -.-> BridgeRuntime["Six other builders and non-Fund discovery<br/>fail closed and pending"]
+    BridgeRoutes -.-> BridgeRuntime["Five other builders and non-Fund discovery<br/>fail closed and pending"]
     NativePrepare --> BridgeProtocol
+    ClaimBuilder --> BridgeProtocol
     BridgeRuntime --> BridgeProtocol["Strict additive v3 protocol<br/>eight methods green"]
     BridgeProtocol -->|binds exact tags and effects| Guest["XMR guest source tags 13 through 17"]
     Guest --> CheckedArtifact["Checked local M4 guest<br/>ELF dc370bc...b7292<br/>ImageID 4d6590...2c82"]
@@ -2188,7 +2191,7 @@ sequenceDiagram
             Mock-->>Client: Invalid response
             Client-->>Adapter: Fail closed after one call
         end
-        Note over Mock,Sidecar: Mock is test evidence and official builder remains Unavailable
+        Note over Mock,Sidecar: Adapter mock evidence and ADR 0063 official-builder evidence are separately green
     end
 ```
 
@@ -2230,7 +2233,10 @@ sequenceDiagram
         Note over Taker,LezSidecar: Missing exact Fund is Uncertain never Absent
         Note over Maker,Taker: Taker must consume observation once against the exact Stage B activation
         Note over Maker,Taker: Sealed journal storage exists but typed live integration remains pending
-        Taker->>LezSeq: Publish exact committed claim partial after XMR confirmation
+        Taker->>LezSidecar: Prepare exact committed claim partial after XMR confirmation
+        LezSidecar->>LezSidecar: Revalidate durable Fund derive nonce plus one sign tag 14 and persist
+        LezSidecar-->>Taker: Exact durable authorization with zero submission
+        Taker->>LezSeq: Publish through pending consuming journal authority
         LezIdx-->>Maker: Canonical finalized AuthorizeNativeXmrClaim bytes
         Note over Maker,Taker: Both locks are proven before Maker can aggregate and adapt the claim
         alt Canonical reveal path
@@ -2325,8 +2331,8 @@ authenticated call; wrong partial, Stage B, binding, run, role, or runtime makes
 zero; wrong response context, terms, or empty bytes makes one then fails closed.
 The private-field result is non-`Clone`. All 93 adapter tests, 3 authenticated
 cases, 2 doctests including compile-fail proofs, and strict Clippy, Rustdoc,
-formatting, and diff checks pass. The test server is an authenticated literal-loopback mock. The official sidecar builder is still `Unavailable`, and valid
-prepared-transaction semantics are trusted to it rather than locally ABI-decoded. The
+formatting, and diff checks pass. The adapter test server is an authenticated
+literal-loopback mock; ADR 0063 separately proves the official sidecar builder. The
 authenticated eight-route sidecar server boundary now includes one real Taker
 preparation path. `prepare_native_xmr_escrow_v3` derives the exact generated-v0.2
 `InitializeNativeXmr` and `FundNative` messages, binds the derived PDAs, complete
@@ -2334,8 +2340,17 @@ terms, ordered accounts, authorities, signer, and consecutive depositor nonces,
 then atomically owner-only persists both signed transaction byte strings before
 return. Same-request replay after a fresh planner/server returns byte-identically
 with zero nonce reads; the sequencer send count remains zero and any drift fails
-closed. The scoped checkpoint is green across 20 of 20 planner/route regressions
-and the final three XMR tests, plus strict Clippy, formatting, and diff checks.
+closed. The official `prepare_native_xmr_claim_authorization_v3` path now
+recomputes the exact NUL-terminated Stage-B partial commitment, requires and
+revalidates that durable Fund reservation, derives nonce `Fund + 1` without a
+nonce RPC, constructs generated tag 14 over ordered metadata/depositor accounts
+with the sole depositor signer, and persists canonical signed bytes before
+return. Identical in-process, cached-server, and fresh-server replay revalidates
+both reservations and returns byte-identically; wrong partial, request drift,
+mutation, missing state, and nonce overflow fail closed. The generic submission
+route rejects these bytes and the node send counter remains zero. The complete
+sidecar suite is green across 138 of 138 tests with strict Clippy, warning-free
+Rustdoc, formatting, and advisory/ban/license/source policy.
 The exact `FundNative` classifier is now component-green behind the
 authenticated Taker-only route. It reloads and matches the durable reservation
 before any indexer read, accepts only one canonical finalized exact match,
@@ -2344,8 +2359,8 @@ metadata and custody, and re-pins the candidate, finalized tip, and requested
 end before returning `Found`. Missing is always `Uncertain`, never
 `Absent`; finality, history, moving-tip, and conflicting-match failures stay
 typed. The focused E2E uses a synthetic `FinalizedIndexerApi`, makes zero
-sends, and contributes to a full 137-of-137 sidecar pass with strict Clippy.
-The other six builders and non-Fund/discovery classification remain
+sends, and contributes to the full 138-of-138 sidecar pass with strict Clippy.
+The other five builders and non-Fund/discovery classification remain
 unavailable. No positive actual-local-indexer evidence or claim PoC exists, and
 the preparation route creates no chain state.
 
@@ -2360,9 +2375,9 @@ one mode-`0700` directory and mode-`0600` canonical journal, no
 backup/restore or clone, and no hostile same-UID WAL/SHM race. AEAD and HMAC do
 not prevent rollback of an older valid journal.
 
-The typed main-process claim-authorization capability is not submission or
-journal authority. The official builder, remaining builders and scanners, actual-chain
-trusted finalized LEZ capability, typed Stage-B issuer, consuming
+The typed main-process claim-authorization capability and official builder are
+not submission or journal authority. The remaining builders and scanners,
+actual-chain trusted finalized LEZ capability, typed Stage-B issuer, consuming
 publisher/outcome and definitive-absence handling, role actors, and composed
 E2E remain pending. The storage tests do not establish live replay prevention
 or a claim PoC. The Monero observation does not prove old-output unspent state

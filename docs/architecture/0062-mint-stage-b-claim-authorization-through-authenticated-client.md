@@ -2,8 +2,9 @@
 
 Status: Accepted as an M4 claim-authorization component checkpoint. The typed
 main-process capability is GREEN against an authenticated literal-loopback
-mock. The official sidecar builder, durable release integration, actual-node
-effect, and claim PoC remain unavailable.
+mock. ADR 0063 now supplies the official durable sidecar builder at
+`fda2bcf`; release integration, actual-node effect/finality, and the claim PoC
+remain unavailable.
 
 ## Context
 
@@ -48,7 +49,8 @@ flowchart LR
     PartialGate --> Prewire
     Prewire --> Client["Concrete authenticated BridgeClient"]
     Client --> Mock["Authenticated literal-loopback mock<br/>component E2E only"]
-    Client -.-> Sidecar["Official sidecar claim-authorization builder<br/>typed Unavailable"]
+    Client --> Sidecar["Official durable claim-authorization builder<br/>ADR 0063 component green"]
+    Sidecar --> Echo
     Mock --> Echo["Exact response context terms and strict transaction wire"]
     Echo --> Evidence["PreparedXmrClaimAuthorizationEvidenceV3<br/>private fields and non-Clone"]
     Evidence -.-> Journal["Sealed release journal integration<br/>pending"]
@@ -66,7 +68,7 @@ sequenceDiagram
     participant Adapter as LezBridgeAdapter BridgeClient
     participant Client as Authenticated BridgeClient
     participant Mock as Literal-loopback mock
-    participant Sidecar as Official sidecar builder pending
+    participant Sidecar as Official builder under ADR 0063
 
     Taker->>Adapter: Prepare authorization with agreement activation binding and partial
     Adapter->>Adapter: Require Taker and re-derive exact Stage B
@@ -77,7 +79,7 @@ sequenceDiagram
     else Every pre-wire gate passes
         Adapter->>Client: Exact run request role runtime terms and partial
         Client->>Mock: One authenticated request
-        Note over Client,Sidecar: Component test uses mock and real builder remains Unavailable
+        Note over Client,Sidecar: ADR 0062 evidence uses the mock while ADR 0063 separately proves the official builder
         alt Exact strict response
             Mock-->>Client: Exact context terms and prepared transaction
             Client-->>Adapter: Validated result
@@ -121,20 +123,19 @@ service.
 
 This checkpoint does not provide:
 
-- the official sidecar claim-authorization builder, which remains typed
-  `Unavailable`;
+- release authority merely because ADR 0063 later implemented the official
+  sidecar builder;
 - release-journal issuance, consuming publication, outcome reconciliation, or
   replay authority;
 - an actual LEZ transaction, node inclusion, or finalized claim-publication
   fact;
-- independent local ABI-semantic validation of an otherwise valid prepared
-  transaction;
+- independent ABI-semantic validation inside this adapter checkpoint's mock;
 - a Maker/Taker actor journey; or
 - an M4 claim PoC or production-readiness evidence.
 
-The next progressive happy-path gate is to implement the official sidecar
-claim-authorization builder, use this capability with the actual-local exact
-Fund and Monero observations, wire one consuming journal-backed publication
-attempt and outcome, then continue through claim preparation, completion,
-submission, and finalized evidence. Signed-refund and punishment builders
-remain the following recovery slice.
+ADR 0063 closes the next official-builder substep. The active progressive gate
+is to use this capability with actual-local exact Fund and Monero observations,
+wire one consuming journal-backed publication attempt and outcome, then
+continue through claim preparation, completion, submission, and finalized
+evidence. Signed-refund and punishment builders remain the following recovery
+slice.

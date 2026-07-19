@@ -61,21 +61,30 @@ adaptor leaf, canonical two-stage XMR activation, guest tags 13 through 17, a
 twice-reproduced checked guest artifact, the strict protocol and eight-call
 bridge client, the authenticated eight-route sidecar boundary, and a
 non-cloneable exact Monero output observation. The seven transaction-building
-sidecar routes now include one functional Taker-only preparation route:
+sidecar routes now include two functional Taker-only preparation routes.
 `prepare_native_xmr_escrow_v3` checks the generated v0.2
 `InitializeNativeXmr` plus `FundNative` pair and durably reserves both exact
 signed byte strings before returning them. Identical replay, including after a
 fresh planner and server, returns the same bytes without another nonce read or
-any `sendTransaction`. The other six builders still fail closed with typed
-`Unavailable`, while the Taker-only exact-`Fund` classifier now validates the
-durable prepared target before any indexer read, returns `Found` only after
-canonical/final metadata and custody checks plus candidate/tip/window repins,
-and keeps every missing case `Uncertain` rather than `Absent`. Its focused E2E
-is trait-backed with a synthetic finalized indexer, typed failure cases, and
-zero sequencer sends. The complete sidecar suite passes 137 of 137 with strict
-Clippy. This is preparation and synthetic classification evidence, not
-submission, actual local-devnet classification, or actual-chain mutation. The
-main-process adapter now also exposes a Taker-only typed Stage-B
+`prepare_native_xmr_claim_authorization_v3` separately recomputes the exact
+NUL-terminated partial commitment, requires and revalidates that durable Fund,
+derives nonce `Fund + 1` without an RPC, builds generated tag 14 with the sole
+depositor signer, and durably reserves the exact authorization before return.
+Fresh-server and cached-response replay revalidate the durable prerequisites and
+return byte-identical bytes; missing, corrupt, conflicting, mutated, or
+overflowing state fails closed. Generic submission rejects this reservation and
+all builder tests prove zero `sendTransaction` calls. The other five builders
+still fail closed with typed `Unavailable`.
+
+The Taker-only exact-`Fund` classifier validates the durable prepared target
+before any indexer read, returns `Found` only after canonical/final metadata and
+custody checks plus candidate/tip/window repins, and keeps every missing case
+`Uncertain` rather than `Absent`. Its focused E2E is trait-backed with a
+synthetic finalized indexer, typed failure cases, and zero sequencer sends. The
+complete sidecar suite passes 138 of 138 with strict Clippy, warning-free
+Rustdoc, and dependency policy. This is preparation and synthetic classification
+evidence, not submission, actual local-devnet classification, or actual-chain
+mutation. The main-process adapter separately exposes a Taker-only typed Stage-B
 claim-authorization boundary. Only `LezBridgeAdapter<BridgeClient>` can mint the
 private-field, non-`Clone` `PreparedXmrClaimAuthorizationEvidenceV3`; it
 re-derives and compares exact Stage B, verifies the committed partial and signed
@@ -86,9 +95,10 @@ closed after one. The adapter package passes 93 of 93 tests, its authenticated
 matrix 3 of 3, and its two doctests include the compile-fail non-`Clone` proof;
 strict Clippy, Rustdoc, formatting, and diff gates are green. The server in this
 test is an authenticated literal-loopback mock with zero external resources.
-The official sidecar builder remains typed `Unavailable`; valid transaction
-semantics are trusted to that authenticated builder rather than locally ABI-decoded, and no journal wiring, actual-node effect, or claim PoC is claimed. The
-observation
+The official sidecar builder independently validates the generated ABI,
+canonical transaction, signature, accounts, nonce, and durable replay. The
+adapter and builder are still preparation capabilities, not journal authority:
+no actual-node effect or claim PoC is claimed. The observation
 is deliberately not claim-partial release authority. The one-command topology
 runner starts one offline
 `monerod` Regtest daemon plus independently authenticated funding, Maker, and
@@ -120,8 +130,8 @@ RUN_ID=m4-readme-monero-20260719a ./scripts/run-monero-e2e.sh
 Measured run `m4-monero-poc-20260719c` passed in 53 seconds before cleanup
 with no public RPC, peer, faucet, public funds, stagenet, or external finality
 service. This is infrastructure evidence, not an atomic swap: LEZ submission,
-the official claim-authorization builder and remaining sidecar builders,
-actual-local-indexer classification and finalized LEZ capability, journal-
+the five remaining sidecar builders, actual-local-indexer classification and
+finalized LEZ capability, journal-
 bound consuming one-shot XMR release, exact claim/refund
 adaptation, and fresh terminal role actors remain the next happy-path slice.
 The route-boundary checkpoint includes 20 of 20 scoped planner/route regressions
