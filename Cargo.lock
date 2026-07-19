@@ -2051,6 +2051,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "lez-xmr-release-authority"
+version = "0.1.0"
+dependencies = [
+ "chacha20poly1305",
+ "getrandom 0.3.4",
+ "hkdf",
+ "hmac 0.12.1",
+ "lez-xmr-monero-adapter",
+ "rusqlite",
+ "rustix",
+ "sha2 0.10.9",
+ "static_assertions",
+ "tempfile",
+ "thiserror 2.0.18",
+ "zeroize",
+]
+
+[[package]]
 name = "lez-xmr-swap-sdk"
 version = "0.1.0"
 dependencies = [

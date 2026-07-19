@@ -138,6 +138,15 @@ flowchart TB
     FinalizedFunding -.-> Upstream
     V02Effects -.-> Upstream
     TokenWitness -.-> ClaimFacade
+    Progressive -.-> MoneroEntry["0053 Isolated M4 Monero entry"]
+    MoneroEntry --> XmrDleq["0054 Bound XMR DLEQ shares"]
+    XmrDleq --> XmrAtomicity["0055 Dual-reveal XMR atomicity"]
+    MoneroEntry --> PairNeutral["0056 Pair-neutral adaptor"]
+    PairNeutral --> XmrActivation["0058 Two-stage XMR activation"]
+    MoneroEntry --> XmrGuest["0057 XMR guest branches"]
+    XmrGuest --> XmrActivation
+    XmrActivation --> XmrObservation["0059 Separate observation and authority"]
+    XmrObservation --> XmrJournal["0060 Sealed release journal"]
 ```
 
 | ADR | Decision | Status |
@@ -201,3 +210,4 @@ flowchart TB
 | [0057](0057-append-xmr-native-escrow-branches.md) | Append an on-chain claim-partial publication plus branch-specific XMR claim, signed-refund, and punishment instructions while pinning every existing LEZ guest tag and metadata byte | Accepted and checked-artifact-executed: tags 0–17, legacy metadata digests, version-3 metadata, exact partial publication, distinct aggregate authorities, disjoint windows, and bypass rejection are source-green; two fresh builds reproduce ELF `dc370bc...b7292` / ImageID `4d6590...2c82` and pass all five recursive tests. The Taker escrow route now durably prepares the exact checked initialize/fund pair with byte-identical restart replay and no submission; six builders, finalized classification, and actual-node execution remain |
 | [0058](0058-activate-xmr-swap-in-two-stages.md) | Derive XMR adaptor sessions from a countersigned base agreement, then countersign the exact nonce/partial activation transcript before the first LEZ lock | Accepted and source-executed: canonical Stage A/Stage B, the strict v3 protocol and eight-call client, the twice-checked local guest, and non-cloneable exact Monero observation are green. Trusted finalized LEZ evidence, Stage-B one-shot release, bridge sidecar/runtime, and actors remain |
 | [0059](0059-separate-monero-observation-from-release-authority.md) | Keep exact Monero receipt observation non-authoritative until a durable Stage-B-bound actor gate consumes it once with LEZ-lock and RPC-topology evidence | Accepted for M4: the typed non-cloneable observation is component-GREEN; durable CAS release, ambiguous-send reconciliation, activation replay rejection, and actual-node actor evidence remain |
+| [0060](0060-seal-xmr-release-journal-until-typed-integration.md) | Keep the version-2 XMR release journal private until concrete evidence issuers and a consuming publisher/outcome boundary replace raw internal plans | Accepted as a sealed storage foundation: 21 tests cover local semantic restart, stable-resource, CAS, tamper, schema, and path invariants. The stable-resource encoder is internal/unwired; live replay prevention, typed issuer/publisher/outcome/definitive absence, sidecar/actor composition, and a claim PoC remain absent |

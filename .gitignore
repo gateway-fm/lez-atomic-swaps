@@ -1,6 +1,7 @@
 /target/
 /compat/*/target/
 /compat/**/target/
+/crates/**/target/
 /.env
 /.direnv/
 /.idea/

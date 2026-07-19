@@ -1,9 +1,10 @@
 # ADR 0059: Separate Monero observation from release authority
 
 Status: Accepted for M4; the Monero observation, local-Regtest topology
-attestation, and LEZ first-lock mint boundaries are component-executed.
-Positive actual-chain LEZ evidence and the Stage-B-bound durable release
-component remain pending.
+attestation, LEZ first-lock mint boundary, and sealed release-journal storage
+foundation are component-executed. Positive actual-chain LEZ evidence, typed
+Stage-B issuer/publisher/outcome integration, and live release authority remain
+pending.
 
 ## Context
 
@@ -79,11 +80,13 @@ capability. Creation must atomically bind:
 6. a durable compare-and-swap state proving the observation has never been
    consumed for this activation.
 
-The journal records the exact publication intent before the first send. A
-timeout or transport ambiguity creates no second-send authority: reopening
-observes the exact finalized LEZ effect. Only definitive finalized absence
-inside the retained window plus the existing unsent durable authority may
-permit the initial attempt.
+The completed authority must record the exact publication intent before the
+first send. A timeout or transport ambiguity must create no second-send
+authority: reopening must observe the exact finalized LEZ effect. Only
+definitive finalized absence inside the retained window plus the existing
+unsent durable authority may permit the initial attempt. The ADR 0060 sealed
+journal provides only the local storage state machine; it has no typed
+publisher, finalized observer, definitive-absence path, or live actor wiring.
 
 ```mermaid
 flowchart LR
@@ -92,7 +95,8 @@ flowchart LR
     Topology["Non-cloneable local topology attestation<br/>run chain origins and exact 401"] --> Gate
     Observation["Non-cloneable exact Monero observation"] --> Gate
     Hidden["Committed hidden claim partial"] --> Gate
-    Gate -.->|"pending implementation"| Authority["Claim publication authority"]
+    Gate -.-> Store["Sealed release journal<br/>21 storage tests; typed gate unwired"]
+    Store -.->|"pending integration"| Authority["Claim publication authority"]
     Authority --> Intent["Persist exact publication intent"]
     Intent --> Send["At most one LEZ send"]
     Send --> Finalized["Observe exact finalized authorization"]
@@ -158,8 +162,15 @@ branches.
   origin-retaining output observation. Neither capability is Stage-B release
   authority, and their existence does not establish a claim PoC. Public RPC
   remains rejected.
-- The actor CAS, ambiguous-send reconciliation, activation-replay negative, and
-  view-only already-spent regression remain RED work before claim-path PoC.
+- The ADR 0060 sealed journal passes 21 storage tests for stable-resource
+  identity, later-tip rescan, semantic restart, local CAS/ambiguity, tamper,
+  schema, and private paths. Its resource encoder, release plan, and
+  prepare/publication operations are internal and unwired. These tests do not
+  establish live replay prevention or a claim PoC.
+- Typed actor composition, publisher/outcome handling, finalized observation,
+  definitive absence, same-UID WAL/SHM defense, authenticated rollback
+  prevention, and the view-only already-spent regression remain work before the
+  claim-path PoC.
 - Stagenet/production must preserve daemon trust flags and contain or replace
   the upstream malformed-block panic path. A reviewed key-image/spent-status
   mechanism or a formal fresh-output/one-shot argument is required for the

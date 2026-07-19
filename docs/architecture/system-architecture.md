@@ -2134,9 +2134,14 @@ flowchart LR
     BridgeProtocol -->|binds exact tags and effects| Guest["XMR guest source tags 13 through 17"]
     Guest --> CheckedArtifact["Checked local M4 guest<br/>ELF dc370bc...b7292<br/>ImageID 4d6590...2c82"]
     CheckedArtifact -->|five recursive branch tests| Transfer["Authenticated native transfer"]
-    XmrActor -.-> Release["Stage-B-bound one-shot release<br/>pending"]
-    XmrObservation["Origin-retaining non-cloneable XMR observation<br/>component green"] -.-> Release
-    Topology["Run/chain/origin-bound topology capability<br/>16 adapter tests green"] -.-> Release
+    XmrActor -.-> Issuer["Typed Stage-B release issuer<br/>pending"]
+    XmrObservation["Origin-retaining non-cloneable XMR observation<br/>component green"] --> Resource["Internal stable-resource algorithm<br/>implemented but unwired"]
+    Resource -.-> Issuer
+    Topology["Run/chain/origin-bound topology capability<br/>16 adapter tests green"] -.-> Issuer
+    Issuer -.-> ReleaseStore["Sealed release journal<br/>21 storage tests green"]
+    ReleaseStore --> Journal[("Dedicated-UID private SQLite<br/>single canonical PoC journal")]
+    ReleaseStore -.-> Publisher["Typed consuming publisher and outcome<br/>pending"]
+    Publisher -.-> BridgeRuntime
     XmrObservation --> WalletRpc["Credential-configured wallet RPCs"]
     WalletRpc --> Monerod["Official monerod Regtest"]
     WalletRpc --> Topology
@@ -2171,6 +2176,7 @@ sequenceDiagram
         Maker->>Monero: Fund maker Monero output
         Monero-->>Taker: Exact output observation reaches canonical confirmation policy
         Note over Maker,Taker: Taker must consume observation once against the exact Stage B activation
+        Note over Maker,Taker: Sealed journal storage exists but typed live integration remains pending
         Taker->>LezSeq: Publish exact committed claim partial after XMR confirmation
         LezIdx-->>Maker: Canonical finalized AuthorizeNativeXmrClaim bytes
         Note over Maker,Taker: Both locks are proven before Maker can aggregate and adapt the claim
@@ -2225,12 +2231,14 @@ atomicity. A hidden-partial commitment also proves later consistency, not
 pre-funding validity; invalid or withheld publication can force punishment and
 remains part of the disclosed production review.
 
-**Replay/idempotency:** durable shares, event projection, and one-attempt spend
-authority prevent duplicate effects and false terminal state. The current
-Monero observation is deliberately non-cloneable but not activation authority;
-the pending actor journal must consume it once against exact Stage B before
-publication. These controls do not replace the DLEQ and event-gated economic
-construction.
+**Replay/idempotency:** the target construction requires durable shares, event
+projection, and one-attempt spend authority. The current Monero observation is
+deliberately non-cloneable but not activation authority. The sealed release
+journal proves only isolated same-journal semantic restart and compare-and-swap
+invariants; its stable-resource encoder and prepare/send operations are private
+and unwired. It does not prove live replay prevention. A future typed actor
+boundary must consume the observation against exact Stage B before publication.
+These controls do not replace the DLEQ and event-gated economic construction.
 
 **Conditional liveness:** the model assumes valid DLEQ proofs, retained shares,
 canonical LEZ events, usable Monero RPCs, and transaction inclusion. Lost
@@ -2274,10 +2282,25 @@ and the final three XMR tests, plus strict Clippy, formatting, and diff checks.
 The other six builders still return typed `Unavailable`, and its classifier
 returns only `HistoryUnavailable`; therefore the adapter cannot yet mint
 positive actual-chain evidence and no claim PoC exists. The preparation route
-creates no chain state. Submission authority, the remaining builders, finalized
-scanner, actual-chain trusted finalized LEZ capability, Stage-B-bound durable
-one-shot release, role actors, and composed E2E remain pending. The Monero
-observation does not prove old-output unspent state from a view-only wallet.
+creates no chain state.
+
+The workspace now also contains the sealed `lez-xmr-release-authority`
+storage foundation. Its 21 tests cover schema-v2 exact binary identities, an
+internal immutable-output resource ID, authenticated later-tip observation
+updates, semantic restart with unchanged randomized ciphertext, local
+compare-and-swap, ambiguity, tamper, and owner-private path invariants. Its
+release plan, stable-resource wiring, prepare/send attempt, plaintext opening,
+and ambiguous transition remain private. It assumes one host, dedicated UID,
+one mode-`0700` directory and mode-`0600` canonical journal, no
+backup/restore or clone, and no hostile same-UID WAL/SHM race. AEAD and HMAC do
+not prevent rollback of an older valid journal.
+
+Submission authority, the remaining builders, finalized scanner, actual-chain
+trusted finalized LEZ capability, typed Stage-B issuer, consuming
+publisher/outcome and definitive-absence handling, role actors, and composed
+E2E remain pending. The storage tests do not establish live replay prevention
+or a claim PoC. The Monero observation does not prove old-output unspent state
+from a view-only wallet.
 The separate topology capability closes credential-configuration and peerless
 origin binding only for the local Regtest PoC; it is not public/Stagenet trust,
 Stage-B release authority, or a claim PoC. Maintained `monero-rpc` lacks the two

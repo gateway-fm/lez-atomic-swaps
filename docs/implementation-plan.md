@@ -2835,7 +2835,7 @@ set is the live RFP plus accepted replacement issue #112, rechecked on
 
 ### Actual entry state
 
-M4 now has six executable entry checkpoints: a bounded canonical two-party
+M4 now has executable entry checkpoints: a bounded canonical two-party
 cross-curve DLEQ wire and symmetric share-addition boundary; an official Monero
 0.18.5.1 actual-node Regtest topology with one daemon, three independently
 authenticated wallets, locally mined funds, a real funding transaction, ten
@@ -2882,10 +2882,15 @@ Rustdoc, and the compile-fail non-`Clone` doctest pass. These tests use the
 canonical protocol fixture; they do not add a full real Stage-B fixture test.
 Because the current sidecar classifier can return only `HistoryUnavailable`, no
 positive actual-chain first-lock capability can yet be minted and no claim PoC
-exists. The repository still has no XMR submission authority, six remaining functional
-builders, finalized classifier, actual-chain trusted finalized LEZ capability,
-Stage-B-bound at-most-once Monero release capability, role actor, full swap, U9 guide, D1
-videos, or stagenet CI evidence.
+exists. A sealed `lez-xmr-release-authority` storage foundation now passes 21
+tests for stable-resource, semantic-restart, local CAS, tamper, schema, and
+private-path invariants. Its stable-resource encoder, release plan, and
+prepare/publication transitions are internal and unwired, so it adds no usable
+external authority and does not prove live replay prevention. The repository
+still has no XMR submission authority, six remaining functional builders,
+finalized classifier, actual-chain trusted finalized LEZ capability, typed
+Stage-B issuer/publisher/outcome integration, role actor, full swap, U9 guide,
+D1 videos, or stagenet CI evidence.
 
 The standalone strict v3 bridge protocol binds eight additive methods and six
 finalized effects; all 52 protocol tests preserve the 44 legacy v1/v2 cases.
@@ -2947,9 +2952,11 @@ and 32-byte markers into chain authority.
   89 full adapter tests plus strict Clippy, Rustdoc, and the non-`Clone` doctest
   green. Its canonical fixture proves fail-closed boundary behavior, not a real
   Stage-B/actual-chain `Found`: the current sidecar returns only
-  `HistoryUnavailable`. Neither observation is release authority; the actor
-  must consume both non-cloneable observations into a Stage-B-bound durable
-  one-shot capability.
+  `HistoryUnavailable`. Neither observation is release authority. The sealed release journal adds
+  21 green storage tests, but its stable-resource encoder and authority methods
+  are private and unwired. The actor must consume both non-cloneable
+  observations through concrete Stage-B and finalized-LEZ issuer types into the
+  journal, then use a consuming typed publisher/outcome boundary.
 - [ ] Build the official Monero 0.18.5.1 CLI artifact from its signed hash list
   into a digest-pinned runtime and scan the final image fail-hard.
 - [x] Start one offline `monerod` Regtest daemon plus distinct authenticated
@@ -3045,6 +3052,16 @@ decode, a reviewed key-image or freshness/consumption argument, and a public
 trust model. The topology capability is neither Stage-B release authority nor a
 claim PoC.
 
+The sealed release-journal foundation is now workspace-GREEN in 21 tests. It
+authenticates one stable immutable resource separately from later-tip
+observation facts, preserves randomized ciphertext across an exact semantic
+restart, and provides one local compare-and-swap winner. Its PoC assumptions
+are one host, dedicated UID, one mode-`0700` directory, one mode-`0600`
+canonical journal, no clone/backup/restore, and no hostile same-UID WAL/SHM
+race. AEAD/HMAC do not prevent rollback of an older valid journal. The internal
+encoder and private prepare/send surface are not wired to an actor, so this is
+neither live replay-prevention evidence nor a claim PoC.
+
 The immediate critical path is now:
 
 1. extend the now-green native-XMR preparation route with exact durable
@@ -3060,8 +3077,10 @@ The immediate critical path is now:
    proof of hidden-partial validity remains a disclosed GW-M4-003
    production-review item;
 2. consume the now-green origin-retaining Monero observation and local-Regtest
-   topology capability against exact Stage B, then add a durable one-shot
-   release builder to the XMR SDK;
+   topology capability against exact Stage B through concrete typed issuers,
+   wire the internal stable-resource algorithm into the sealed journal, and add
+   a consuming publisher/outcome plus definitive-absence boundary. The current
+   private storage API cannot be used as actor authority;
 3. add fresh Maker/Taker role processes with durable share/effect records;
 4. compose the sole supported LEZ-first claim and recovery paths through both
    actual local chains,
