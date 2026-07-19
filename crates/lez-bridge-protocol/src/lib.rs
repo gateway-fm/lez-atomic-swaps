@@ -7,6 +7,7 @@
 
 mod messages;
 mod primitives;
+mod xmr_v3;
 
 /// Stable JSON-RPC method for runtime and signer identity discovery.
 pub const METHOD_DESCRIBE_RUNTIME: &str = "lez_bridge.v1.describe_runtime";
@@ -90,6 +91,25 @@ pub const METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_FUNDING_V2: &str =
 pub const METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CLAIM_V2: &str =
     "lez_bridge.v2.classify_finalized_witnessed_asset_claim";
 
+/// Additive v3 method for reserving the XMR aggregate-witness claim message.
+pub const METHOD_PREPARE_NATIVE_XMR_CLAIM_V3: &str = "lez_bridge.v3.prepare_native_xmr_claim";
+/// Additive v3 method for completing an XMR claim with its aggregate signature.
+pub const METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3: &str = "lez_bridge.v3.complete_native_xmr_claim";
+/// Additive v3 method for reserving the XMR aggregate-witness refund message.
+pub const METHOD_PREPARE_NATIVE_XMR_REFUND_V3: &str = "lez_bridge.v3.prepare_native_xmr_refund";
+/// Additive v3 method for completing an XMR refund with its aggregate signature.
+pub const METHOD_COMPLETE_NATIVE_XMR_REFUND_V3: &str = "lez_bridge.v3.complete_native_xmr_refund";
+/// Additive v3 method for preparing the unilateral post-timeout XMR punish transaction.
+pub const METHOD_PREPARE_NATIVE_XMR_PUNISH_V3: &str = "lez_bridge.v3.prepare_native_xmr_punish";
+/// Additive v3 method for preparing XMR-native initialization and funding.
+pub const METHOD_PREPARE_NATIVE_XMR_ESCROW_V3: &str = "lez_bridge.v3.prepare_native_xmr_escrow";
+/// Additive v3 method for publishing the committed XMR claim partial.
+pub const METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3: &str =
+    "lez_bridge.v3.prepare_native_xmr_claim_authorization";
+/// Additive v3 method for conservatively classifying one finalized XMR effect.
+pub const METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3: &str =
+    "lez_bridge.v3.classify_finalized_native_xmr_effect";
+
 /// HTTP header binding a connection to one composed run.
 pub const RUN_ID_HEADER: &str = "x-lez-bridge-run-id";
 /// HTTP header binding a connection to one actor's dedicated sidecar.
@@ -158,4 +178,18 @@ pub use primitives::{
     WITNESSED_LEZ_ASSET_TERMS_VERSION, WitnessedLezAssetTermsV2, WitnessedLezAssetV2,
     WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput, WitnessedTokenEscrowTermsV2,
     WitnessedTokenEscrowTermsV2Input,
+};
+pub use xmr_v3::{
+    ClassifyFinalizedNativeXmrEffectV3Request, ClassifyFinalizedNativeXmrEffectV3Result,
+    CompleteNativeXmrClaimV3Request, CompleteNativeXmrClaimV3Result,
+    CompleteNativeXmrRefundV3Request, CompleteNativeXmrRefundV3Result,
+    FinalizedNativeXmrEffectFactsV3, FinalizedNativeXmrScanOutcomeV3,
+    FinalizedNativeXmrTransactionTargetV3, FinalizedNativeXmrUnavailableReasonV3,
+    PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimAuthorizationV3Result,
+    PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request,
+    PrepareNativeXmrEscrowV3Result, PrepareNativeXmrPunishV3Request,
+    PrepareNativeXmrPunishV3Result, PrepareNativeXmrRefundV3Request,
+    PrepareNativeXmrRefundV3Result, XMR_NATIVE_ESCROW_TERMS_VERSION, XmrClaimPartialV3,
+    XmrNativeEffectV3, XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3,
+    XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input, XmrNativeInstructionFactsV3,
 };

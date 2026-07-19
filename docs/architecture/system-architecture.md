@@ -2123,8 +2123,9 @@ flowchart LR
     Dleq --> SharedKey["Shared Monero spend key"]
     XmrActor["Fresh XMR role actors"] -.-> RoleRunner
     XmrActor -.-> XmrSdk
-    XmrActor -.-> Bridge["Strict LEZ bridge v3"]
-    Bridge -.-> Guest["XMR guest tags 13 through 17"]
+    XmrActor -.-> BridgeRuntime["LEZ bridge client adapter and sidecar"]
+    BridgeRuntime -.-> BridgeProtocol["Strict additive v3 protocol<br/>eight methods green"]
+    BridgeProtocol -->|binds exact tags and effects| Guest["XMR guest tags 13 through 17"]
     Guest --> Transfer["Authenticated native transfer"]
     XmrActor -.-> WalletRpc["Authenticated wallet RPCs"]
     WalletRpc --> Monerod["Official monerod Regtest"]
@@ -2224,8 +2225,10 @@ reconstructed spend, the pair-neutral adaptor leaf, BTC compatibility, durable
 fresh-process signing, canonical Stage-A/Stage-B activation, structural
 LEZ-lock/cutoff validation, and focused guest-source
 publication/claim/refund/punish branches are executable. The fresh checked
-artifact and strict bridge, trusted LEZ/Monero observations and release
-capabilities, role actors, and composed E2E remain pending.
+artifact and bridge client/adapter/sidecar runtime, trusted LEZ/Monero
+observations and release capabilities, role actors, and composed E2E remain
+pending. The additive eight-method v3 protocol and all 44 legacy bridge
+protocol cases are green.
 
 The XMR construction’s atomicity argument differs from the deadline-bearing
 pairs:

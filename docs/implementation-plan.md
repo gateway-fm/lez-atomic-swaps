@@ -2848,8 +2848,10 @@ compatibility and direct durable role-runner use; focused version-3 XMR guest
 source branches; and a canonical two-stage XMR agreement/activation SDK that
 binds both session transcripts and recovery material before deriving the first
 LEZ lock. The repository still has no fresh checked XMR guest artifact and
-bridge, trusted LEZ/Monero evidence adapter or role actor, full swap, U9 guide,
-D1 videos, or stagenet CI evidence.
+bridge runtime, trusted LEZ/Monero evidence adapter or role actor, full swap, U9
+guide, D1 videos, or stagenet CI evidence. The standalone strict v3 bridge
+protocol now binds eight additive methods and six finalized effects; all 52
+protocol tests preserve the 44 legacy v1/v2 cases.
 
 The first implementation may reuse the existing LEZ v0.2 bridge, role stores,
 XChaCha20-Poly1305 secret envelope, one-attempt effect journals, and M3 BIP-340
@@ -2949,9 +2951,10 @@ public finality service.
 
 The immediate critical path is now:
 
-1. build and embed a fresh checked M4 guest artifact, then expose only exact
+1. build and embed a fresh checked M4 guest artifact, then implement the client,
+   adapter, and sidecar runtime for the now-green strict v3 protocol's exact
    version-3 initialize, publication, claim, signed-refund, punishment, and
-   finalized-effect contracts through a strict bridge. The two-stage
+   finalized-effect contracts. The two-stage
    countersigned SDK, profile/deployment bindings, exact Stage-B first-lock
    derivation, and structural LEZ-lock/cutoff checks are green; the bridge must
    promote canonical evidence rather than caller-supplied status. Pre-funding
@@ -2974,8 +2977,8 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The expected remaining focused engineering time is 8 to 15 hours to the first
-reproducible independent-actor claim-path PoC and 16 to 26 hours to the local
+The expected remaining focused engineering time is 7 to 13 hours to the first
+reproducible independent-actor claim-path PoC and 15 to 24 hours to the local
 claim/refund/punishment PoC. This estimate starts after the verified two-stage
 SDK checkpoint and includes the fresh RISC Zero artifact/bridge plus trusted
 chain-evidence adapters rather than counting caller-supplied snapshots or

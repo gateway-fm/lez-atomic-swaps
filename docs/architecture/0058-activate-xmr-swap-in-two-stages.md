@@ -1,10 +1,10 @@
 # ADR 0058: Activate XMR swaps in two countersigned stages
 
 Status: Accepted and source-executed for M4. The canonical Stage-A agreement,
-Stage-B activation, structural LEZ-lock/cutoff validation, and LEZ guest
-publication gate pass focused source tests. Trusted LEZ and Monero evidence,
-the fresh checked artifact, strict bridge, and independent actors remain in
-progress.
+Stage-B activation, structural LEZ-lock/cutoff validation, LEZ guest publication
+gate, and strict additive v3 bridge protocol pass focused source tests. Trusted
+LEZ and Monero adapters, the fresh checked artifact, bridge runtime, and
+independent actors remain in progress.
 
 ## Context
 
@@ -119,7 +119,7 @@ sequenceDiagram
 ```
 
 The target chain-evidence boundary is capability-bearing, not a caller-set
-status enum. The next bridge/adapter slice must mint exact finalized version-3
+status enum. The next bridge runtime/adapter slice must mint exact finalized version-3
 LEZ metadata/custody evidence before Maker XMR funding, an exact Monero
 observation before the Taker's one-shot LEZ publication, and finalized matching
 publication evidence before Maker claim. The current SDK's structurally
@@ -153,7 +153,7 @@ view-key mismatch, agreement/activation field mutations, trailing wire
 rejection, and hidden-partial commitment consistency. Strict Clippy and
 Rustdoc pass. The lock candidate and its validated projection are explicitly
 unauthenticated caller data, not Monero-funding authority; the checked bridge
-must supply canonical evidence in the next slice. The recursive guest
+runtime/adapter must supply canonical evidence in the next slice. The recursive guest
 claim/refund/punishment cases compile against the methods crate, but they are
 not runtime evidence until the repository builds and embeds a fresh M4 ELF;
 the certified M2/M3 ELF predates tags 13 through 17 and is deliberately not

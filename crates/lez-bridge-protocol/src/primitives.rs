@@ -98,6 +98,24 @@ pub enum ProtocolValueError {
     /// A discovery window was empty, oversized, or overflowed its height range.
     #[error("discovery window must cover 1..={MAX_DISCOVERY_BLOCKS} non-overflowing blocks")]
     InvalidDiscoveryWindow,
+    /// The XMR-native agreement did not preserve the fixed Taker-to-Maker LEZ direction.
+    #[error("XMR native escrow requires Taker depositor and Maker claimant roles")]
+    InvalidXmrRoleMapping,
+    /// One agreement-bound XMR value used an invalid all-zero sentinel.
+    #[error("XMR native escrow {0} must be nonzero")]
+    ZeroXmrValue(&'static str),
+    /// Two semantically distinct XMR identities or commitments were aliased.
+    #[error("XMR native escrow {0} and {1} must be distinct")]
+    AliasedXmrValues(&'static str, &'static str),
+    /// The XMR refund and punish timestamps did not form two nonempty ordered windows.
+    #[error("XMR native escrow requires 0 < refund_at_ms < punish_at_ms")]
+    InvalidXmrWindows,
+    /// A standalone XMR terms envelope used an unsupported exact version.
+    #[error("unsupported XMR native escrow terms version {0}; expected 3")]
+    UnsupportedXmrNativeTermsVersion(u16),
+    /// An XMR instruction or finalized evidence bundle contradicted the exact terms.
+    #[error("XMR native escrow facts mismatch: {0}")]
+    XmrFactsMismatch(&'static str),
 }
 
 /// The only accepted protocol version.
