@@ -48,7 +48,7 @@ observation-only compatibility: it may project an already submitted Maker lock
 but cannot submit one. It is not evidence for schema-4 Maker-lock ownership.
 Run D closes that specific actual-node checkpoint; it does not complete all
 accepted M3 scope or production readiness by itself. The later public SDK,
-official-vector, Testnet4-route, and private-recording outputs are summarized
+official-vector, Testnet4-route, and private-recording/video outputs are summarized
 below; final repository-wide gates still precede any `m3-complete` tag.
 
 ## Current status
@@ -65,10 +65,14 @@ nonexistent DLC Schnorr-vector reference is separately tracked as
 [Gateway erratum GW-M3-001](docs/proposal-acceptance-errata.md), with no accepted
 replacement yet.
 
-Five issue-#112 M3 outputs and all underlying BTC happy/refund/concurrent
-actual-node evidence are implemented at the private functional-PoC boundary.
-The literal D1 three-video output is in closure: replayable source recordings
-are GREEN, while their private MP4 evidence set is pending. Pushed `0c78f3d`
+All six issue-#112 M3 outputs, including the literal RFP D1 three-video
+requirement, and their underlying BTC happy/refund/concurrent actual-node
+evidence are implemented at the private functional-PoC boundary. The source
+recordings and their private MP4 projections are GREEN; the sealed video bundle
+has SHA-256
+`7697a27c80c8f90856d6592051805a8923fe564aa01b0dff4109bd5c5f101ba8`.
+Fresh exact-tree gates, push, remote CI observation, and the milestone tag
+remain. Pushed `0c78f3d`
 adds the public canonical durable lifecycle codec,
 CAS store port, typed Bitcoin/LEZ runtime, restart/replay coverage, dedicated
 example, official BIP-340/BIP-327 corpora, and independently checked
@@ -1412,6 +1416,15 @@ terminal, role, effect, refund, and concurrency packets; re-hashes all inputs;
 and decode-probes every live MP4. Any source or video tamper fails. The image
 pull alone depends on registry/DNS/TLS availability; rendering and milestone
 evidence use no public RPC, faucet, public funds, or chain network.
+
+The retained reference render is private under
+`.e2e/m3-private-demo-videos-20260719c/`. It binds source commit `a6eb1ad` to
+renderer/verifier commit `846ba56`; its mode-`0600` bundle passed with SHA-256
+`7697a27c80c8f90856d6592051805a8923fe564aa01b0dff4109bd5c5f101ba8`.
+Happy, refund, and concurrent MP4s are respectively 21.64, 20.36, and 20.36
+seconds. Their intro, both-direction, scenario-specific, atomicity, and stable
+tail frames were sampled after complete stream decode. The surrounding
+`.e2e` evidence remains owner-private and must not be published.
 
 The bundle JSON is a verifier-produced index, not a recording. Live verification
 rejects fixture/test-contract manifests, a dirty or different current HEAD,

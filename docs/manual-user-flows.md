@@ -724,6 +724,15 @@ the digest-pinned VHS container with network disabled and emits one mode-
 `0600` MP4 per scenario plus a sealed three-video bundle; no chain rerun or
 public resource is involved.
 
+The retained reference render is private at
+`.e2e/m3-private-demo-videos-20260719c/`. Its happy, refund, and concurrent
+videos all passed regenerated source verification, complete stream decode, and
+sampled scenario/conditional-atomicity/tail frames. The mode-`0600` bundle
+binds source commit `a6eb1ad` to renderer/verifier commit `846ba56` and has
+SHA-256 `7697a27c80c8f90856d6592051805a8923fe564aa01b0dff4109bd5c5f101ba8`.
+Keep this reference local; it is reproducible using the commands above and is
+not a public deployment artifact.
+
 ## Can I run the complete M3 happy path myself?
 
 Yes. Follow the [M3 local PoC operator guide](m3-local-poc-operator-guide.md).

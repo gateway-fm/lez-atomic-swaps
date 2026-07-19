@@ -1,7 +1,8 @@
 # ADR 0052: Bind private demo videos to actual-node evidence
 
-Status: Accepted for the M3 D1 evidence pipeline. The source and contract gates
-are GREEN; the three live private MP4s and final bundle remain pending.
+Status: Accepted and executed for the M3 D1 evidence pipeline. The source and
+contract gates, three live private MP4s, complete decode, sampled frames, and
+final private bundle `7697a27c...f101ba8` are GREEN.
 
 ## Context
 
@@ -116,5 +117,10 @@ and deadlines.
   blockchain effect or public-network request.
 - Pulling the exact renderer image is an external setup dependency; registry,
   DNS, TLS, or rate-limit failure stops setup but cannot change evidence.
-- Visual frame sampling remains a closure QA action in addition to automated
-  stream decoding; video presentation is not inferred from an MP4 header.
+- Visual frame sampling is required in addition to automated stream decoding;
+  the retained three-video bundle completed that QA because presentation is
+  not inferred from an MP4 header.
+- The retained execution binds source commit `a6eb1ad` to renderer/verifier
+  commit `846ba56`. Happy, refund, and concurrent streams passed complete
+  decode and intro, both-direction, scenario/atomicity, and stable-tail frame
+  sampling before the mode-`0600` bundle was sealed.

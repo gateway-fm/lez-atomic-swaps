@@ -1050,10 +1050,11 @@ outputs above.
 Status: **progressive private local-devnet PoC complete 2 of 2 through the
 public actor and actual nodes at pushed `origin/main` commit `6ded2f9`; later
 QA, chaos, infosec, public-Testnet, and production-readiness hardening remain
-deferred until owner transition**. Five issue-#112 M3-specific outputs and the
-underlying actual-node evidence for D1 are implemented at the private
-functional-PoC boundary. The literal three-video D1 output, synchronized docs,
-and the final milestone-wide gate/tag remain active. The pushed claim packet
+deferred until owner transition**. All six issue-#112 M3-specific outputs,
+including the literal three-video D1 output, and the underlying actual-node
+evidence are implemented at the private functional-PoC boundary. The private
+video bundle is GREEN at `7697a27c...f101ba8`; synchronized docs and the final
+milestone-wide gate/tag remain active. The pushed claim packet
 certifies both happy directions. Fresh run
 `m3refund-20260716h` now also closes the separate actual-node two-lock
 timeout/refund demo in both directions. Run `m3firstlock-20260716h` closes both
@@ -2178,6 +2179,18 @@ Active M3 refund critical path:
   It binds all manifest/evidence/output/timing hashes, exact run IDs and
   isolated node profiles, and records no public RPC, faucet, funds, or
   external-network certification dependency;
+- [x] render the literal three-video D1 output from the retained actual-node
+  evidence without rerunning either chain. RED-GREEN contracts first failed on
+  source-manifest tamper, aggregate tamper, role-action mutation, out-of-order
+  refund confirmation, MP4 tamper, duplicate scenarios, and an unstable
+  presentation tail. The digest-pinned MIT VHS renderer and fail-closed bundle
+  verifier now regenerate the complete role/effect proof, run with no network
+  or Linux capabilities, decode-probe every H.264 1280x720 stream, and bind
+  exact source/video bytes. At renderer/verifier commit `846ba56`, happy,
+  refund, and concurrent MP4s passed complete decode plus sampled intro,
+  both-direction, scenario/atomicity, and stable-tail frames. Their mode-`0600`
+  bundle is `7697a27c...f101ba8` and records no public RPC, faucet, public
+  funds, or external-network success dependency;
 - [ ] synchronize retained secret-safe evidence, manual reproduction,
   architecture/atomicity diagrams, traceability, and the milestone packet,
   then run the exact lint, test, vulnerability, license, source, security, and
@@ -2190,7 +2203,8 @@ synchronized milestone evidence/documentation pass and the final complete gate
 run. The D1 bundle, durable public lifecycle codec/store/typed-port composition,
 official and independent vectors, and self-hosted/exact-HTTPS Testnet4
 configuration contract are GREEN in pushed commits `0c78f3d` and `946208a`.
-The fresh native happy, refund, and overlap recordings are complete. Runs X,
+The fresh native happy, refund, and overlap recordings plus their three
+verified private MP4 projections are complete. Runs X,
 Z, and AA close the requested three exact F7 terminal balance/finality pairs.
 The synchronized closure claim, six-output evidence inventory, external
 resource boundary, deferred hardening, and exact tag rule are maintained in
@@ -2247,8 +2261,9 @@ canonical secret-free codec, exact CAS store port, typed Bitcoin/LEZ runtime,
 restart/replay coverage, and a dedicated wiring example; immutable official
 BIP-340/BIP-327 plus project adaptor vectors pass an independent `k256`
 cross-check; Core 31.1 self-hosted loopback and exact HTTPS Testnet4 routes are
-profile-bound with wallet/funding/flakiness guidance; all three BTC recordings
-and their private bundle exist; and ADR 0050 maps the exact adaptor operations,
+profile-bound with wallet/funding/flakiness guidance; all three BTC recordings,
+private MP4s, and both sealed source/video bundles exist; and ADR 0050 maps the
+exact adaptor operations,
 assumptions, and atomicity conditions to the two primary papers without
 claiming a transferred two-party proof. Public live deployment remains
 deliberately deferred, not represented as missing local output evidence.
@@ -2745,10 +2760,12 @@ witnessed custom-token path, public lifecycle SDK boundary,
 official/independent vector gates, Testnet4 route contract, all three BTC
 source recordings, and the private source bundle are GREEN. A literal RFP
 audit found that D1 requires three demo videos, not only replayable terminal
-captures. The network-isolated private MP4 renderer and bundle verifier are
-RED-GREEN; live rendering from the retained evidence, synchronized evidence
-documentation, fresh exact repository gates, push, remote CI audit, and the
-annotated tag remain before the broader owner-selected hardening below.
+captures. The RED-GREEN network-isolated renderer/verifier produced all three
+private MP4s from retained actual-node evidence at commit `846ba56`; regenerated
+source checks, full decode, sampled scenario/atomicity/tail frames, and sealed
+bundle `7697a27c...f101ba8` are GREEN. Synchronized evidence documentation,
+fresh exact repository gates, push, remote CI audit, and the annotated tag
+remain before the broader owner-selected hardening below.
 
 ### Later owner-selected hardening
 

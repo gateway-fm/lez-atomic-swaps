@@ -1,11 +1,12 @@
 # Milestone 3 private-local functional review
 
-Status: closure candidate under correction. Five outputs and the underlying
-private actual-node evidence are GREEN; the literal D1 three-video deliverable
-is being rendered from that retained evidence. Fresh repository-wide gates,
-the exact push, remote CI, and the annotated tag remain pending.
+Status: closure candidate. All six issue-#112 outputs, including the literal
+RFP D1 three-video deliverable, and the underlying private actual-node evidence
+are GREEN.
+Fresh repository-wide gates, the exact push, remote CI, and the annotated tag
+remain pending.
 
-Review date: 2026-07-18
+Review date: 2026-07-19
 
 ## Authority and claim boundary
 
@@ -31,7 +32,7 @@ nonexistent DLC Schnorr vector file.
 | Full-lifecycle LEZ/BTC SDK | Pushed `0c78f3d` exposes the bounded canonical secret-free codec, exact create/CAS store port, role-fixed stored SDK, typed Bitcoin/LEZ ports, both claim/refund directions, restart/replay checks, and a wiring example | [SDK architecture](architecture/0013-sdk-layering.md), [deployment inventory](architecture/deployment-components-and-rpcs.md) |
 | Conformance and swap vectors | Nine focused groups bind official BIP-340/BIP-327 corpora and swap-specific positive/negative adaptor fixtures to immutable checksums and an independent `k256` verifier | [ADR 0050](architecture/0050-map-btc-adaptor-construction-to-security-properties.md), [metrics](milestone-metrics.md) |
 | Bitcoin testnet setup | Pushed `946208a` binds exact Core 31.1 Testnet4 chain/genesis/index readiness to literal-loopback self-hosting or one exact allowlisted HTTPS Basic origin without public I/O | [Testnet4 setup](bitcoin-testnet4-setup.md), [ADR 0051](architecture/0051-bind-bitcoin-testnet4-routes-to-chain-profile.md) |
-| Three BTC demo videos | Happy, both ordered refunds, and opposite-direction concurrency have hash-bound private actual-node source recordings at evidence commit `a6eb1ad`; the required private MP4 walkthroughs and three-video bundle are pending | [recording and video procedure](m3-local-poc-operator-guide.md#private-d1-btc-recording-bundle), [traceability D1](requirements-traceability.md) |
+| Three BTC demo videos | Happy, both ordered refunds, and opposite-direction concurrency have hash-bound private actual-node source recordings at evidence commit `a6eb1ad`; three decode-verified, sampled private MP4 walkthroughs are sealed at renderer/verifier commit `846ba56` in bundle `7697a27c...f101ba8` | [recording and video procedure](m3-local-poc-operator-guide.md#private-d1-btc-recording-bundle), [traceability D1](requirements-traceability.md) |
 | Aumayr/Fournier explanation | Pushed `a0f19ac` maps the implemented nonce, adaptor, tweak/parity, extraction, ordering, and recovery conditions to the two constructions without claiming their proofs transfer automatically | [ADR 0050](architecture/0050-map-btc-adaptor-construction-to-security-properties.md) |
 
 ## User flows and conditional atomicity
@@ -89,6 +90,24 @@ is:
 | Bundle SHA-256 | `3d7d7adc12571a610be21a18b746e68cb17311ea1224191fcdcdf1b39a86c7cc` |
 | Public dependencies | none; Core 31.1 Regtest and private LEZ v0.2 only |
 
+The derived private video bundle is retained separately under
+`.e2e/m3-private-demo-videos-20260719c/`:
+
+| Scenario | MP4 SHA-256 | Duration | Manifest SHA-256 |
+| --- | --- | --- | --- |
+| Happy | `4924404f03b944f108b02c07c6b0555e83c5fef5d18fd45accbe305aa1dcf6bd` | 21.640 s | `e2b353b7a98a1812aed490bcdad8f051c96209963ec042238d9175d400e6db16` |
+| Refund | `e9fd9fa305bd72bed890a9cccf560d5ae31b4c105844e102be0dd1998e07f4b6` | 20.360 s | `9a8c7d0586ff1b3d2d8906a08da31d820928160ad63b5f9ca12ef4468b638af8` |
+| Concurrent | `343a705aebc9270175128c63aa91d154ee9e7acc052fa8373bffd28d48da5c9b` | 20.360 s | `a5bc70a70fa6995ebd518658a33abf6cb7b7464401789d1de9b19f23fc1e4e56` |
+
+The mode-`0600` bundle was recorded at `2026-07-19T00:30:49Z`, binds source
+commit `a6eb1ad` to renderer/verifier commit `846ba56`, passed regenerated
+source verification and complete H.264/1280x720 stream decode, and has SHA-256
+`7697a27c80c8f90856d6592051805a8923fe564aa01b0dff4109bd5c5f101ba8`.
+Operator frame sampling covered each introduction, both directions, the
+refund/concurrency-specific panels, conditional-atomicity panel, and stable
+tail. No public RPC, faucet, public funds, or external-network success
+dependency participated.
+
 ## Quality, security, and supply-chain policy
 
 CI requires Rust formatting, strict Clippy, tests, and warning-free rustdoc;
@@ -107,7 +126,7 @@ commit is pushed, and remote CI is verified when observable. Current results:
 
 | Gate | Closure result |
 | --- | --- |
-| Private D1 MP4s and three-video bundle | pending; the renderer and verifier contract tests are GREEN, but live rendering is deliberately blocked until the implementation is committed on a clean tree |
+| Private D1 MP4s and three-video bundle | GREEN; 3 of 3 mode-`0600` MP4s pass regenerated source verification, complete decode, frame sampling, and sealed bundle verification at `7697a27c...f101ba8` |
 | Repository diff, traceability, isolation, action-pin, and CI-hardening policy | prior pass carried; fresh exact-tree pass pending after video-pipeline documentation |
 | Rust format, strict workspace Clippy, all-target tests, and warning-free docs | prior pass carried; fresh exact-tree pass pending |
 | Cryptographic-vector and Testnet4 focused gates | prior pass carried; fresh exact-tree pass pending |

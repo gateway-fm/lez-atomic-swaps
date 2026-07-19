@@ -1633,8 +1633,10 @@ GREEN at evidence commit `a6eb1ad`: happy
 `m3record-concurrent-20260718ag`. Clean verifier commit `946208a` sealed the
 mode-`0600`, result-`passed` private bundle with SHA-256
 `3d7d7adc12571a610be21a18b746e68cb17311ea1224191fcdcdf1b39a86c7cc`.
-These are replayable source captures, not the literal D1 demo videos. This
-section reproduces the captures with fresh IDs and then renders one private MP4
+These replayable source captures are not themselves the literal D1 demo videos.
+The three derived reference MP4s and video bundle are also GREEN at
+`7697a27c...f101ba8`. This section reproduces the captures with fresh IDs and
+then renders one private MP4
 per scenario from their hash-bound actual-node packets. It does not substitute
 a JSON packet for a video or claim the remaining ZEC/XMR videos.
 
@@ -1832,6 +1834,18 @@ evidence, dirty `HEAD`, and overwrite, then atomically emits one private mode-
 `0600` bundle. Keep the complete output private; the videos summarize role and
 effect evidence but their source `.e2e` trees can contain signer and actor
 state.
+
+The retained reference execution used
+`.e2e/m3-private-demo-videos-20260719c/` and produced a mode-`0600` passed
+bundle with SHA-256
+`7697a27c80c8f90856d6592051805a8923fe564aa01b0dff4109bd5c5f101ba8`.
+It binds source commit `a6eb1ad` to renderer/verifier commit `846ba56`.
+Happy (`4924404f...dcf6bd`, 21.640 s), refund
+(`e9fd9fa3...07f4b6`, 20.360 s), and concurrent
+(`343a705a...a5c9b`, 20.360 s) passed complete decode and sampled intro,
+both-direction, scenario-specific, conditional-atomicity, and stable-tail
+frames. This secret-safe identity may be compared during reproduction; never
+publish the retained `.e2e` tree itself.
 
 ### Runtime resources, duration, and failure diagnostics
 
