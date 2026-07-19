@@ -145,8 +145,10 @@ flowchart TB
     PairNeutral --> XmrActivation["0058 Two-stage XMR activation"]
     MoneroEntry --> XmrGuest["0057 XMR guest branches"]
     XmrGuest --> XmrActivation
+    XmrActivation --> XmrFundClassifier["0061 Exact durable Fund classifier"]
     XmrActivation --> XmrObservation["0059 Separate observation and authority"]
     XmrObservation --> XmrJournal["0060 Sealed release journal"]
+    XmrFundClassifier -.-> XmrJournal
 ```
 
 | ADR | Decision | Status |
@@ -211,3 +213,4 @@ flowchart TB
 | [0058](0058-activate-xmr-swap-in-two-stages.md) | Derive XMR adaptor sessions from a countersigned base agreement, then countersign the exact nonce/partial activation transcript before the first LEZ lock | Accepted and source-executed: canonical Stage A/Stage B, the strict v3 protocol and eight-call client, the twice-checked local guest, and non-cloneable exact Monero observation are green. Trusted finalized LEZ evidence, Stage-B one-shot release, bridge sidecar/runtime, and actors remain |
 | [0059](0059-separate-monero-observation-from-release-authority.md) | Keep exact Monero receipt observation non-authoritative until a durable Stage-B-bound actor gate consumes it once with LEZ-lock and RPC-topology evidence | Accepted for M4: the typed non-cloneable observation is component-GREEN; durable CAS release, ambiguous-send reconciliation, activation replay rejection, and actual-node actor evidence remain |
 | [0060](0060-seal-xmr-release-journal-until-typed-integration.md) | Keep the version-2 XMR release journal private until concrete evidence issuers and a consuming publisher/outcome boundary replace raw internal plans | Accepted as a sealed storage foundation: 21 tests cover local semantic restart, stable-resource, CAS, tamper, schema, and path invariants. The stable-resource encoder is internal/unwired; live replay prevention, typed issuer/publisher/outcome/definitive absence, sidecar/actor composition, and a claim PoC remain absent |
+| [0061](0061-classify-only-the-durable-xmr-fund-target.md) | Classify only the Taker-owned durable exact `FundNative` target and never turn a missing bounded scan into absence | Accepted as a component checkpoint: the authenticated exact-Fund route validates ownership before indexer reads, returns `Found` only after canonical finalized facts and final re-pinning, maps missing to `Uncertain`, retains typed unavailable reasons, and makes zero sends. The full sidecar suite is 137 of 137 GREEN, but its `FinalizedIndexerApi` E2E is synthetic; actual-local-indexer evidence, other effects/discovery, release integration, actors, and a claim PoC remain absent |

@@ -13,6 +13,7 @@ mod effect_submission;
 mod finalized_asset_observation;
 mod finalized_claim_observation;
 mod finalized_refund_observation;
+mod finalized_xmr_observation;
 mod native_prepare;
 mod runtime;
 mod server;

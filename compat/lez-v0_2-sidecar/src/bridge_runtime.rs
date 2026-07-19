@@ -33,7 +33,8 @@ use crate::{
     NativeEscrowPlanner, NativePrepareError, OfficialNativeEscrowFacts, OfficialNodeRpc,
     RuntimeBoundaryError, ZecEscrowInstruction, compute_custody_pda, compute_metadata_pda,
     decode_prepared_for_signer, finalized_asset_observation::FinalizedAssetObserver,
-    prepared_from_transaction, program_id_from_hex, program_id_to_hex,
+    finalized_xmr_observation::FinalizedNativeXmrEffectObserver, prepared_from_transaction,
+    program_id_from_hex, program_id_to_hex,
 };
 
 /// Fail-closed failures at the `PoC` bridge observation and submission boundary.
@@ -111,6 +112,7 @@ pub struct BridgeRuntime {
     planner: Arc<NativeEscrowPlanner>,
     node: Arc<OfficialNodeRpc>,
     finalized_asset_observer: FinalizedAssetObserver,
+    finalized_xmr_observer: FinalizedNativeXmrEffectObserver,
     finalized_claim_observer: FinalizedWitnessedClaimObserver,
     finalized_funding_observer: FinalizedWitnessedFundingObserver,
     finalized_initialization_observer: FinalizedWitnessedInitializationObserver,
@@ -137,6 +139,8 @@ impl BridgeRuntime {
     ) -> Self {
         let finalized_asset_observer =
             FinalizedAssetObserver::new(runtime.clone(), Arc::clone(&indexer));
+        let finalized_xmr_observer =
+            FinalizedNativeXmrEffectObserver::new(Arc::clone(&planner), Arc::clone(&indexer));
         let finalized_claim_observer =
             FinalizedWitnessedClaimObserver::new(runtime.clone(), Arc::clone(&indexer));
         let finalized_refund_observer = FinalizedWitnessedRefundObserver::new(
@@ -153,6 +157,7 @@ impl BridgeRuntime {
             planner,
             node,
             finalized_asset_observer,
+            finalized_xmr_observer,
             finalized_claim_observer,
             finalized_funding_observer,
             finalized_initialization_observer,
@@ -236,6 +241,20 @@ impl BridgeRuntime {
             .prepare_native_xmr_escrow_v3(request)
             .await
             .map_err(Into::into)
+    }
+
+    /// Classifies one exact persisted XMR-native Fund in stable finalized history.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on request, ABI, transaction, finality, history, metadata,
+    /// custody, canonicality, or post-read pinning drift. This performs no submission.
+    pub async fn classify_finalized_native_xmr_effect_v3(
+        &self,
+        request: &lez_bridge_protocol::ClassifyFinalizedNativeXmrEffectV3Request,
+    ) -> Result<lez_bridge_protocol::ClassifyFinalizedNativeXmrEffectV3Result, BridgeRuntimeError>
+    {
+        self.finalized_xmr_observer.classify(request).await
     }
 
     /// Prepares one exact witnessed initialization/funding pair.

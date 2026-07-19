@@ -2128,7 +2128,11 @@ flowchart LR
     BridgeClient --> BridgeRoutes["Authenticated sidecar v3 routes<br/>all eight registered"]
     BridgeRoutes --> NativePrepare["Taker native-XMR escrow preparation<br/>exact durable initialize and fund pair green"]
     NativePrepare --> Reservation[("Owner-only exact transaction reservation<br/>restart replay green; no submit authority")]
-    BridgeRoutes -.-> BridgeRuntime["Six other builders and classifier<br/>fail closed and pending"]
+    BridgeRoutes --> FundClassifier["Taker exact finalized Fund classifier<br/>synthetic component E2E green"]
+    Reservation --> FundClassifier
+    SyntheticIndexer["Synthetic FinalizedIndexerApi<br/>component E2E only"] --> FundClassifier
+    ActualIndexer["Actual local LEZ indexer<br/>composition pending"] -.-> FundClassifier
+    BridgeRoutes -.-> BridgeRuntime["Six other builders and non-Fund discovery<br/>fail closed and pending"]
     NativePrepare --> BridgeProtocol
     BridgeRuntime --> BridgeProtocol["Strict additive v3 protocol<br/>eight methods green"]
     BridgeProtocol -->|binds exact tags and effects| Guest["XMR guest source tags 13 through 17"]
@@ -2138,6 +2142,7 @@ flowchart LR
     XmrObservation["Origin-retaining non-cloneable XMR observation<br/>component green"] --> Resource["Internal stable-resource algorithm<br/>implemented but unwired"]
     Resource -.-> Issuer
     Topology["Run/chain/origin-bound topology capability<br/>16 adapter tests green"] -.-> Issuer
+    FundClassifier -.-> Issuer
     Issuer -.-> ReleaseStore["Sealed release journal<br/>21 storage tests green"]
     ReleaseStore --> Journal[("Dedicated-UID private SQLite<br/>single canonical PoC journal")]
     ReleaseStore -.-> Publisher["Typed consuming publisher and outcome<br/>pending"]
@@ -2156,6 +2161,7 @@ sequenceDiagram
     actor Taker
     participant LezSeq as LEZ sequencer
     participant LezIdx as LEZ indexer
+    participant LezSidecar as Taker LEZ sidecar
     participant Monero as monerod and wallet RPC
 
     Note over Maker,Taker: Stage A base terms derive distinct claim refund sessions
@@ -2175,6 +2181,14 @@ sequenceDiagram
     else Required M4 target maker XMR lock admission succeeds before the cutoff
         Maker->>Monero: Fund maker Monero output
         Monero-->>Taker: Exact output observation reaches canonical confirmation policy
+        Taker->>LezSidecar: Classify durably reserved exact Fund target
+        LezSidecar->>LezSidecar: Validate Taker reservation before indexer reads
+        LezSidecar->>LezIdx: Read bounded finalized window metadata and custody
+        LezIdx-->>LezSidecar: Canonical candidate state and finalized tip
+        LezSidecar->>LezIdx: Re-pin candidate final tip and requested end
+        LezSidecar-->>Taker: Found exact stable finalized Fund
+        Note over Taker,LezSidecar: Synthetic component E2E green actual local-indexer composition pending
+        Note over Taker,LezSidecar: Missing exact Fund is Uncertain never Absent
         Note over Maker,Taker: Taker must consume observation once against the exact Stage B activation
         Note over Maker,Taker: Sealed journal storage exists but typed live integration remains pending
         Taker->>LezSeq: Publish exact committed claim partial after XMR confirmation
@@ -2279,10 +2293,18 @@ return. Same-request replay after a fresh planner/server returns byte-identicall
 with zero nonce reads; the sequencer send count remains zero and any drift fails
 closed. The scoped checkpoint is green across 20 of 20 planner/route regressions
 and the final three XMR tests, plus strict Clippy, formatting, and diff checks.
-The other six builders still return typed `Unavailable`, and its classifier
-returns only `HistoryUnavailable`; therefore the adapter cannot yet mint
-positive actual-chain evidence and no claim PoC exists. The preparation route
-creates no chain state.
+The exact `FundNative` classifier is now component-green behind the
+authenticated Taker-only route. It reloads and matches the durable reservation
+before any indexer read, accepts only one canonical finalized exact match,
+checks the transaction hash/bytes/proof shape/ABI/accounts/signer plus funded
+metadata and custody, and re-pins the candidate, finalized tip, and requested
+end before returning `Found`. Missing is always `Uncertain`, never
+`Absent`; finality, history, moving-tip, and conflicting-match failures stay
+typed. The focused E2E uses a synthetic `FinalizedIndexerApi`, makes zero
+sends, and contributes to a full 137-of-137 sidecar pass with strict Clippy.
+The other six builders and non-Fund/discovery classification remain
+unavailable. No positive actual-local-indexer evidence or claim PoC exists, and
+the preparation route creates no chain state.
 
 The workspace now also contains the sealed `lez-xmr-release-authority`
 storage foundation. Its 21 tests cover schema-v2 exact binary identities, an
@@ -2295,7 +2317,7 @@ one mode-`0700` directory and mode-`0600` canonical journal, no
 backup/restore or clone, and no hostile same-UID WAL/SHM race. AEAD and HMAC do
 not prevent rollback of an older valid journal.
 
-Submission authority, the remaining builders, finalized scanner, actual-chain
+Submission authority, the remaining builders and scanners, actual-chain
 trusted finalized LEZ capability, typed Stage-B issuer, consuming
 publisher/outcome and definitive-absence handling, role actors, and composed
 E2E remain pending. The storage tests do not establish live replay prevention

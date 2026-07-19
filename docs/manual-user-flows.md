@@ -2324,8 +2324,13 @@ generated v0.2 ABI, exact PDAs/accounts/terms/signers, and consecutive nonces,
 then atomically owner-only persists the exact signed `InitializeNativeXmr` and
 `FundNative` bytes before return. Identical replay after a fresh planner/server
 uses zero nonce reads, and the sequencer send count remains zero. The other six
-builders return typed `Unavailable`, and the classifier returns only
-`HistoryUnavailable`. Submission, finalized evidence, Stage-B-bound durable
+builders and non-Fund/discovery classification return typed `Unavailable`. The
+Taker-only exact-`Fund` classifier now validates the durable prepared target
+before indexer reads, gates `Found` on canonical finalized transaction plus
+metadata/custody and candidate/tip/window repins, preserves typed failures, and
+returns every missing case as `Uncertain`, never `Absent`. Its focused E2E is
+trait-backed with a synthetic finalized indexer and zero sends. Submission,
+actual-local-indexer evidence, Stage-B-bound durable
 one-shot claim-partial release, fresh role actors, and both terminal stores are
 still required before an atomic happy PoC.
 
@@ -2365,6 +2370,9 @@ cargo test --locked \
   --test bridge_xmr_v3_routes
 cargo test --locked \
   --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --test bridge_xmr_fund_classification
+cargo test --locked \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
   --test bridge_asset_v2_routes
 cargo test --locked \
   --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
@@ -2375,6 +2383,17 @@ cargo clippy --locked \
 cargo fmt --manifest-path compat/lez-v0_2-sidecar/Cargo.toml -- --check
 git diff --check
 ```
+
+The focused classifier command must report `running 1 test`,
+`authenticated_exact_persisted_fund_requires_stable_finalized_history ... ok`,
+and `1 passed; 0 failed`. Its assertions cover exact durable-target rejection
+before any indexer read, Taker-only authority, canonical/final `Found` with
+metadata and custody, candidate/tip/window repins, typed finality, history, moving, conflicting, and malformed failures, missing as `Uncertain`, and zero sequencer sends.
+It starts only ephemeral literal-loopback in-process fixtures and a synthetic
+trait-backed `FinalizedIndexerApi`: no actual LEZ node, chain RPC, faucet, public
+fund, peer, or external finality resource participates. The full sidecar command
+must report 137 of 137 tests and strict Clippy must remain green. Neither result
+is an actual local-devnet classifier run or a claim PoC.
 
 The artifact run must report ELF SHA-256
 `dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292`,
@@ -2391,11 +2410,12 @@ observation/topology tests, 20 of 20 scoped planner/route regressions, and the
 final three XMR test binaries currently pass. The topology capability closes
 the configured-auth residual only for local Regtest; it is not public/Stagenet trust, Stage-B release authority, or a claim
 PoC. The focused sidecar commands cover the retained v2 route set and the three XMR
-preparation/route binaries. They require one exact Taker preparation result, six
-typed `Unavailable` builder results, and one `HistoryUnavailable` classifier
-result. The preparation result is checked and restart-replayed exact transaction
-bytes only; it does not submit or mutate LEZ, publish a claim partial, create
-actual-chain `Found`, or replace the role-correct swap journey.
+preparation/route binaries. They require one exact Taker preparation result, six typed `Unavailable`
+builder results outside the happy classifier route, and the focused synthetic
+exact-`Fund` classification matrix described above. The preparation result is
+checked and restart-replayed exact transaction bytes only; neither it nor the
+synthetic `Found` submits or mutates LEZ, publishes a claim partial, proves an
+actual-local-indexer `Found`, or replaces the role-correct swap journey.
 
 The exact safety boundary matters when reviewing intermediate results. The
 Maker claim must reveal Maker share `s_a`, allowing the Taker to combine it with

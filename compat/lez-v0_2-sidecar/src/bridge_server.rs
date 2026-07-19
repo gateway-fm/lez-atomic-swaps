@@ -11,13 +11,11 @@ use std::{
 
 use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_protocol::{
-    ClassifyFinalizedNativeXmrEffectV3Request, ClassifyFinalizedNativeXmrEffectV3Result,
-    FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrUnavailableReasonV3,
-    METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3, METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3,
-    METHOD_COMPLETE_NATIVE_XMR_REFUND_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
-    METHOD_PREPARE_NATIVE_XMR_CLAIM_V3, METHOD_PREPARE_NATIVE_XMR_ESCROW_V3,
-    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
-    XmrNativeEscrowTermsV3,
+    ClassifyFinalizedNativeXmrEffectV3Request, METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
+    METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3, METHOD_COMPLETE_NATIVE_XMR_REFUND_V3,
+    METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_V3,
+    METHOD_PREPARE_NATIVE_XMR_ESCROW_V3, METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
+    METHOD_PREPARE_NATIVE_XMR_REFUND_V3, XmrNativeEscrowTermsV3,
 };
 use lez_bridge_protocol::{
     ClassifyFinalizedWitnessedInitializationRequest, CompleteWitnessedClaimRequest,
@@ -1497,27 +1495,19 @@ fn register_xmr_v3_methods(
                 &request.terms,
                 request.context.sidecar_role,
             )?;
-            let context = request.context.clone();
-            let terms = request.terms;
-            let effect = request.effect;
-            let target = request.target.clone();
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
             state
                 .execute(
                     METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
                     &request.context,
                     &request,
                     || async move {
-                        let result = ClassifyFinalizedNativeXmrEffectV3Result::new(
-                            context,
-                            terms,
-                            effect,
-                            target,
-                            FinalizedNativeXmrScanOutcomeV3::unavailable(
-                                FinalizedNativeXmrUnavailableReasonV3::HistoryUnavailable,
-                            ),
-                        )
-                        .map_err(|_| OperationFailure::internal())?;
-                        to_value(result)
+                        runtime
+                            .classify_finalized_native_xmr_effect_v3(&operation)
+                            .await
+                            .map_err(OperationFailure::from)
+                            .and_then(to_value)
                     },
                 )
                 .await

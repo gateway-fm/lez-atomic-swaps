@@ -67,8 +67,15 @@ sidecar routes now include one functional Taker-only preparation route:
 signed byte strings before returning them. Identical replay, including after a
 fresh planner and server, returns the same bytes without another nonce read or
 any `sendTransaction`. The other six builders still fail closed with typed
-`Unavailable`, and the classifier returns only `HistoryUnavailable`; this is
-preparation evidence, not submission or actual-chain mutation. The observation
+`Unavailable`, while the Taker-only exact-`Fund` classifier now validates the
+durable prepared target before any indexer read, returns `Found` only after
+canonical/final metadata and custody checks plus candidate/tip/window repins,
+and keeps every missing case `Uncertain` rather than `Absent`. Its focused E2E
+is trait-backed with a synthetic finalized indexer, typed failure cases, and
+zero sequencer sends. The complete sidecar suite passes 137 of 137 with strict
+Clippy. This is preparation and synthetic classification evidence, not
+submission, actual local-devnet classification, or actual-chain mutation. The
+observation
 is deliberately not claim-partial release authority. The one-command topology
 runner starts one offline
 `monerod` Regtest daemon plus independently authenticated funding, Maker, and
@@ -100,7 +107,7 @@ RUN_ID=m4-readme-monero-20260719a ./scripts/run-monero-e2e.sh
 Measured run `m4-monero-poc-20260719c` passed in 53 seconds before cleanup
 with no public RPC, peer, faucet, public funds, stagenet, or external finality
 service. This is infrastructure evidence, not an atomic swap: LEZ submission,
-the remaining sidecar builders, finalized classification, and finalized
+the remaining sidecar builders, actual-local-indexer classification and finalized
 LEZ capability, Stage-B-bound durable one-shot XMR release, exact claim/refund
 adaptation, and fresh terminal role actors remain the next happy-path slice.
 The route-boundary checkpoint includes 20 of 20 scoped planner/route regressions

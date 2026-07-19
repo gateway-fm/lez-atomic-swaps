@@ -9,7 +9,7 @@ use common::transaction::LeeTransaction;
 use lez_bridge_protocol::{
     CompleteWitnessedAssetClaimV2Request, CompleteWitnessedAssetClaimV2Result,
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, ExactMessageBytes,
-    ExactTransactionBytes, Hex32, Participant, PrepareNativeEscrowRequest,
+    ExactTransactionBytes, Hex32, MessageContext, Participant, PrepareNativeEscrowRequest,
     PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
     PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result, PrepareRevealingClaimRequest,
     PrepareRevealingClaimResult, PrepareWitnessedAssetClaimV2Request,
@@ -19,6 +19,7 @@ use lez_bridge_protocol::{
     PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
     PreparedWitnessedClaim, ProtocolValueError, RuntimeCompatibility, RuntimeDescriptor,
     TransactionId, WitnessedAssetPrepareStepV2, WitnessedAssetPreparedEffectV2,
+    XmrNativeEscrowTermsV3,
 };
 use nssa::{
     AccountId, PrivateKey, PublicKey, PublicTransaction, Signature,
@@ -2171,22 +2172,38 @@ impl NativeEscrowPlanner {
         {
             return Err(NativePrepareError::WrongRole);
         }
-        if request.runtime != self.expected_runtime
-            || request.runtime.compatibility != RuntimeCompatibility::LeeV0_2_0
+        if request.terms.to_input().depositor != Participant::Taker {
+            return Err(NativePrepareError::WrongDepositorRole);
+        }
+        self.validate_xmr_terms_v3_binding(&request.context, &request.runtime, &request.terms)
+    }
+
+    pub(crate) fn validate_xmr_terms_v3_binding(
+        &self,
+        context: &MessageContext,
+        runtime: &RuntimeDescriptor,
+        terms: &XmrNativeEscrowTermsV3,
+    ) -> Result<(), NativePrepareError> {
+        if context.sidecar_role != self.role || runtime.sidecar_role != self.role {
+            return Err(NativePrepareError::WrongRole);
+        }
+        if runtime != &self.expected_runtime
+            || runtime.compatibility != RuntimeCompatibility::LeeV0_2_0
+            || (*terms).validate_runtime_binding(context, runtime).is_err()
         {
             return Err(NativePrepareError::WrongRuntime);
         }
-        let terms = request.terms.to_input();
-        if terms.depositor != Participant::Taker {
-            return Err(NativePrepareError::WrongDepositorRole);
-        }
+        let terms = terms.to_input();
         let signer = Hex32::from_bytes(self.signer_account_id.into_value());
-        if request.runtime.signer_account_id != signer || terms.depositor_account_id != signer {
+        let expected_terms_signer = match self.role {
+            Participant::Maker => terms.claimant_account_id,
+            Participant::Taker => terms.depositor_account_id,
+        };
+        if runtime.signer_account_id != signer || expected_terms_signer != signer {
             return Err(NativePrepareError::WrongSigner);
         }
         let escrow_program = program_id_to_hex(self.escrow_program_id);
-        if request.runtime.escrow_program_id != escrow_program
-            || terms.escrow_program_id != escrow_program
+        if runtime.escrow_program_id != escrow_program || terms.escrow_program_id != escrow_program
         {
             return Err(NativePrepareError::WrongEscrowProgram);
         }
@@ -2218,6 +2235,64 @@ impl NativeEscrowPlanner {
             return Err(NativePrepareError::WrongAggregateAuthority);
         }
         Ok(())
+    }
+
+    /// Proves that an exact XMR `FundNative` target is the funding transaction
+    /// retained by this Taker owner-only durable v3 escrow reservation.
+    ///
+    /// The classification request has its own request identifier, so ownership
+    /// is bound by run, role, runtime, terms, and exact prepared bytes rather
+    /// than by that route-local identifier. In-memory active state is
+    /// deliberately insufficient: the reservation must have been persisted
+    /// before any chain evidence is consulted.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a non-Taker planner, missing or invalid durable state, run,
+    /// runtime, terms, transaction-ID, or exact-byte drift.
+    pub(crate) fn validate_owned_xmr_fund_v3(
+        &self,
+        context: &MessageContext,
+        runtime: &RuntimeDescriptor,
+        terms: &XmrNativeEscrowTermsV3,
+        target: &PreparedTransaction,
+    ) -> Result<(), NativePrepareError> {
+        if self.role != Participant::Taker
+            || context.sidecar_role != Participant::Taker
+            || runtime.sidecar_role != Participant::Taker
+        {
+            return Err(NativePrepareError::WrongRole);
+        }
+        self.validate_xmr_terms_v3_binding(context, runtime, terms)?;
+
+        #[cfg(target_os = "linux")]
+        {
+            let store = self
+                .durable_store
+                .as_ref()
+                .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+            let (stored_request, stored_result) = store
+                .load::<PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result>(
+                    ReservationKind::XmrNativeEscrowV3,
+                )?
+                .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+            self.validate_prepared_native_xmr_escrow_v3(&stored_request, &stored_result)?;
+            if stored_request.context.run_id != context.run_id
+                || stored_request.context.sidecar_role != context.sidecar_role
+                || &stored_request.runtime != runtime
+                || &stored_request.terms != terms
+                || &stored_result.funding != target
+            {
+                return Err(NativePrepareError::InvalidTransactionBytes);
+            }
+            Ok(())
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = target;
+            Err(NativePrepareError::InvalidTransactionBytes)
+        }
     }
 
     fn validate_request(

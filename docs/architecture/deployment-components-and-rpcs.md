@@ -172,8 +172,10 @@ dynamic literal-loopback publication owned by one run.
 flowchart LR
     Protocol["Strict XMR v3 protocol<br/>52 tests green"] --> Client["Eight-call bridge client<br/>51 package targets green"]
     CheckedElf["Checked M4 ELF<br/>dc370bc...b7292"] -.-> MakerSidecar["Maker LEZ sidecar<br/>six builders and classifier pending"]
-    CheckedElf --> TakerSidecar["Taker LEZ sidecar<br/>native-XMR preparation green; rest pending"]
+    CheckedElf --> TakerSidecar["Taker LEZ sidecar<br/>preparation and exact Fund classifier green"]
     TakerSidecar --> XmrReservation[("Owner-only exact initialize and fund bytes<br/>restart replay; no submit authority")]
+    TakerSidecar --> FundClassifier["Exact finalized Fund classifier<br/>Taker-only and zero-send"]
+    XmrReservation --> FundClassifier
     MakerActor["Maker actor<br/>pending"] -.-> Client
     TakerActor["Taker actor<br/>pending"] -.-> Client
     Client --> MakerSidecar
@@ -182,6 +184,8 @@ flowchart LR
     TakerSidecar -.-> Sequencer
     MakerSidecar -.-> Indexer["Local LEZ v0.2 indexer<br/>dynamic loopback RPC"]
     TakerSidecar -.-> Indexer
+    Indexer -.-> FundClassifier
+    SyntheticIndexer["Synthetic FinalizedIndexerApi<br/>component E2E only"] --> FundClassifier
     Monerod["Official monerod 0.18.5.1<br/>peerless Regtest"] --> Observation["Origin-retaining output observation"]
     WalletRpc["Role wallet RPC<br/>credential-configured loopback"] --> Observation
     Monerod --> Topology["Run/chain/origin topology capability<br/>16 adapter tests green"]
@@ -189,6 +193,7 @@ flowchart LR
     Observation --> Resource["Internal stable-resource algorithm<br/>implemented but unwired"]
     Resource -.-> Issuer["Typed Stage-B issuer<br/>pending"]
     Topology -.-> Issuer
+    FundClassifier -.-> Issuer
     Issuer -.-> ReleaseStore["Sealed release journal<br/>21 storage tests green"]
     ReleaseStore --> Journal[("Dedicated-UID private SQLite<br/>0700 parent; one canonical journal")]
     ReleaseStore -.-> Publisher["Consuming typed publisher and outcome<br/>pending"]
@@ -221,12 +226,17 @@ Taker `prepare_native_xmr_escrow_v3` route checks the generated v0.2 ABI, exact
 PDAs/accounts/terms/signers, and consecutive nonces, then atomically owner-only
 persists both exact signed transaction byte strings before return. Same-request
 replay survives a fresh planner/server byte-identically with zero nonce reads;
-the sequencer send count remains zero. The other six builders return typed
-`Unavailable`, and the classifier returns only `HistoryUnavailable`. The
-checkpoint passes 20 of 20 scoped planner/route regressions and the final three
-XMR tests, strict Clippy, formatting, and diff gates. Submission, finalized
-metadata/custody/publication capabilities, and actor effects remain the current
-critical path; preparation is not a functional claim PoC or chain mutation.
+the sequencer send count remains zero. The other six builders and
+non-Fund/discovery classification return typed `Unavailable`. The exact-Fund
+route is now a Taker-only read boundary: it matches the durable reservation
+before indexer access, authenticates one canonical finalized transaction plus
+metadata/custody, re-pins the candidate, tip, and window end, returns missing
+as `Uncertain` rather than `Absent`, and preserves typed
+finality/history/moving/conflicting results. Its focused E2E uses a synthetic
+`FinalizedIndexerApi` and makes zero sends; the complete sidecar suite passes
+137 of 137 with strict Clippy. Actual-local-indexer execution, publication
+capabilities, and actor effects remain the current critical path; preparation
+and synthetic classification are not a functional claim PoC or chain mutation.
 
 ## M2 SDK/reference-demo target topology
 
@@ -536,7 +546,7 @@ revalidation, propagation, and finality evidence before release.
 |---|---|---|---|---|---|
 | M4 checked LEZ guest artifact | Local build/identity and recursive branch execution GREEN twice | Digest-pinned Docker guest builder during cold/fresh build; checked execution opens no socket or RPC | Manifest pins source files, historical M2/M3 boundaries, Risc0 3.0.5/Rust 1.94.1, builder digest, ELF SHA-256 `dc370bc...b7292`, and ImageID `4d6590...2c82` | Fresh methods embedding; exact ELF/ImageID verification; one native aggregate-witness compatibility test plus four XMR initialize/fund/claim, signed-refund, punishment, negative, and rollback tests | Both fresh runs passed 5 of 5. Runtime resources are `[]`; cold setup may use GitHub, Cargo/Git, Docker, and Risc0 endpoints. Default exact cleanup retained the small evidence ELF and removed about 3.49 GiB. No local/public deployment or actor execution is claimed |
 | M4 strict v3 bridge client | All eight XMR methods component-GREEN; 4 of 4 new contracts and 51 of 51 package targets pass | Capability-bearing literal-loopback HTTP, exact run and role headers, one attempt, finite timeout, bounded response body, no redirect/proxy/retry | Dedicated Maker/Taker runtime, signer, ProgramId, terms, request context, and role matrix are checked before transport. Invalid local bindings make zero calls | Prepare/complete claim and refund; prepare punishment, escrow, and claim authorization; classify finalized effect. Exact context/terms/effect/target/window echoes and coverage are required | Client only: no sidecar or actor completion is claimed. Timeout/oversize are single-attempt; distinct escrow transactions and exact prepared transcripts are enforced; strict Clippy/Rustdoc/formatting pass |
-| M4 native-XMR escrow preparation | Taker planner and authenticated route component-GREEN; 20 of 20 scoped regressions plus the final three XMR tests pass | Capability-authenticated literal-loopback v3 bridge route; one nonce read on first preparation; no submission call | Taker-only runtime, depositor signer, generated v0.2 ABI, derived metadata/custody PDAs, exact complete terms, claim/refund aggregate authorities, ordered accounts, request identity, and consecutive nonces are revalidated | Prepare checked signed `InitializeNativeXmr` and `FundNative`; atomically owner-only persist both exact byte strings before return; same-request planner/server restart replay is byte-identical with zero nonce reads | Sequencer `sendTransaction` count remains zero; drift fails closed. This is preparation only: no submission authority, chain mutation, finalized `Found`, claim PoC, or actor completion. Six builders and the classifier remain fail-closed |
+| M4 native-XMR escrow preparation and exact-Fund classifier | Taker planner, authenticated preparation route, and exact durable-Fund classifier component-GREEN; complete sidecar suite 137 of 137 plus strict Clippy | Capability-authenticated literal-loopback v3 route; one nonce read on first preparation; classifier reads a trait-backed finalized indexer only after durable-target validation; no submission call | Taker-only runtime, depositor signer, generated v0.2 ABI, derived accounts, exact terms, request identity, and consecutive nonces are revalidated. Classification accepts only the exact persisted `FundNative` target; foreign valid transactions and Maker role fail before indexer reads | Prepare and owner-only persist checked `InitializeNativeXmr` plus `FundNative`; classify canonical finalized exact `Fund` with metadata and custody; re-pin candidate, finalized tip, and window end. Missing remains `Uncertain`; finality, history, movement, conflicts, and malformed facts remain typed failures | The focused E2E uses a synthetic `FinalizedIndexerApi`, makes zero sequencer sends, and uses zero external-chain resources. Six other builders and non-Fund/discovery classification remain `Unavailable`. No actual local-devnet classifier run, chain mutation, claim PoC, or actor completion is claimed |
 | M4 Monero output observation adapter | Exact receipt observation component-GREEN in 7 of 7 focused tests; release authority intentionally absent | Typed `monero-rpc` 0.5.1 to distinct credential-configured literal-loopback daemon and wallet origins; fixed 30-second request timeout; public/DNS RPC rejected | Exact network/genesis, standard shared address, transaction, amount, wallet-reported availability, canonical decoded-block membership, at least ten confirmations, and stable tip. The result is private-field and non-cloneable, but is not Stage-B or durable-consumption authority | Typed height-zero hash, bracketed last headers, wallet transfer/available outputs, daemon transaction, containing header/block. Selected decoded collections are bounded | The observation retains daemon/wallet origins. The actor must cross-bind it to the run-bound topology capability, consume it once against Stage B, and journal it before publication. View-only spent status, upstream pre-decode bounds, discarded header trust flags, and malformed-block panic behavior remain explicit residuals. Peerless Regtest observation is supported; Stagenet/production hardening is pending |
 | M4 local Monero topology attestation | Run/chain/origin/auth capability component-GREEN; total adapter suite 16 of 16 plus strict Clippy/Rustdoc/format/diff | Three distinct credential-configured literal-loopback origins; fixed timeout; project-owned `get_info`/`get_connections` response bodies are streamed with a 64 KiB cap | Private-field and non-`Clone`; correct target and foreign origins authenticate with their own Digest credentials, while replaying the foreign credential against the target must finish exact HTTP 401. Capability cross-binds exact run, Regtest chain, daemon origin, and target wallet origin to the output observation | Typed `get_info`, `get_connections`, both wallets `get_version`, and height-zero genesis. Requires fakechain, offline, `untrusted == false`, zero incoming/outgoing counts, empty connections, and matching genesis | Closes the earlier topology-auth residual for the isolated local Regtest PoC only. `monero-rpc` 0.5.1 lacks the two topology calls, so the narrow bounded adapter is project-owned and needs production/upstream review. No public/Stagenet trust, Stage-B release authority, or claim PoC is claimed |
 | M4 sealed XMR release journal | Storage foundation component-GREEN in 21 of 21 tests; external release authority intentionally nonfunctional | No RPC, listener, chain call, or sidecar call. One local mode-`0600` SQLite file under one dedicated-UID mode-`0700` directory | Private release plan, stable-resource wiring, prepare/send attempt, plaintext opening, and ambiguity transition. Public callers cannot construct authority. XChaCha20-Poly1305, domain-separated HMACs, exact binary IDs, and schema-v2 constraints authenticate one local journal | Internal stable ID over network/genesis/transaction/destination/amount; separately authenticated later-tip observation; semantic restart returns existing ciphertext; one local prepared-to-started CAS; ambiguous state has no retry | Assumes one trusted host, one canonical journal, no clone/backup/restore/rollback, and no hostile same-UID WAL/SHM race. AEAD/HMAC do not prevent rollback of an older valid journal. The algorithm is unwired and tests prove neither live replay prevention nor a claim PoC. Typed issuer, consuming publisher/outcome, finalized classification, definitive absence, and an external rollback anchor remain |
