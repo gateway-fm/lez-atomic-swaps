@@ -33,8 +33,8 @@ const TAG_BYTES: usize = 16;
 const AAD_DOMAIN: &[u8] = b"lez-atomic-swaps/xmr-release/aad/v1";
 const KEY_DOMAIN: &[u8] = b"lez-atomic-swaps/xmr-release/key/v1";
 const FINGERPRINT_DOMAIN: &[u8] = b"lez-atomic-swaps/xmr-release/fingerprint/v1";
-const CONTEXT_DOMAIN: &[u8] = b"lez-atomic-swaps/xmr-release/context/v2";
-const EXACT_DOMAIN: &[u8] = b"lez-atomic-swaps/xmr-release/exact/v2";
+const CONTEXT_DOMAIN: &[u8] = b"lez-atomic-swaps/xmr-release/context/v3";
+const EXACT_DOMAIN: &[u8] = b"lez-atomic-swaps/xmr-release/exact/v3";
 const OBSERVATION_DOMAIN: &[u8] = b"lez-atomic-swaps/xmr-release/observation/v1";
 const RESOURCE_DOMAIN: &[u8] = b"lez-atomic-swaps/xmr-release/monero-resource/v1";
 const ACTIVATION_DOMAIN: &[u8] = b"lez-atomic-swaps/xmr-release/activation/v1";
@@ -236,6 +236,7 @@ struct ReleasePlan {
     observation: Vec<u8>,
     claim_partial_commitment: [u8; 32],
     target: Vec<u8>,
+    publication_id: [u8; 32],
     window_start: u64,
     window_end: u64,
     publication: Zeroizing<Vec<u8>>,
@@ -262,6 +263,7 @@ impl ReleasePlan {
             &self.resource_id,
             &self.claim_partial_commitment,
             &self.target,
+            &self.publication_id,
             self.window_start,
             self.window_end,
         )
@@ -378,6 +380,7 @@ fn immutable_release_context_bytes(
     resource_id: &[u8; 32],
     claim_partial_commitment: &[u8; 32],
     target: &[u8],
+    publication_id: &[u8; 32],
     window_start: u64,
     window_end: u64,
 ) -> Vec<u8> {
@@ -391,6 +394,7 @@ fn immutable_release_context_bytes(
         resource_id.as_slice(),
         claim_partial_commitment.as_slice(),
         target,
+        publication_id.as_slice(),
         &window_start.to_be_bytes(),
         &window_end.to_be_bytes(),
     ] {
@@ -800,6 +804,7 @@ mod tests {
             observation: b"observation-identifier-must-not-leak".to_vec(),
             claim_partial_commitment: [0x55; 32],
             target: b"target-identifier-must-not-leak".to_vec(),
+            publication_id: [0x56; 32],
             window_start: 100,
             window_end: 200,
             publication: Zeroizing::new(b"actual-hidden-partial-only-inside-publication".to_vec()),

@@ -2060,6 +2060,7 @@ dependencies = [
 name = "lez-xmr-release-authority"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chacha20poly1305",
  "getrandom 0.3.4",
  "hkdf",
@@ -2071,6 +2072,7 @@ dependencies = [
  "static_assertions",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
  "zeroize",
 ]
 

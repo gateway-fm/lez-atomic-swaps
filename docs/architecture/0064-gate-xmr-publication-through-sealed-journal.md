@@ -1,0 +1,155 @@
+# ADR 0064: Gate XMR publication through the sealed journal
+
+Status: Accepted as an internal M4 component checkpoint. It remains unwired
+until concrete authenticated LEZ evidence and transport capabilities replace
+the private test boundary.
+
+## Context
+
+ADR 0060 sealed exact XMR release intent before any send. ADRs 0061 through
+0063 then supplied component-green Fund classification, Stage-B evidence, and
+exact durable tag-14 authorization bytes. Enabling the generic sidecar submit
+route would bypass the Monero lock, topology, Stage-B, and release-journal
+gates. Retrying after an unknown node outcome could also reveal the claim
+partial twice or outside its signed window.
+
+The journal needs a consuming transaction-scoped publisher before actors can
+use it. This checkpoint proves that local state machine without treating
+synthetic transport facts as chain authority.
+
+## Decision
+
+The private release journal uses schema version 3 and authenticates the expected
+publication identifier in its immutable release context. Its internal publisher:
+
+1. authenticates the complete snapshot before any clock or node call;
+2. samples finalized LEZ consensus time and requires a non-empty half-open
+   release window;
+3. elects one process through a durable Prepared-to-Started compare-and-swap;
+4. samples finalized LEZ time again after that compare-and-swap;
+5. records `Suppressed` without opening or sending the intent if the clock is
+   unavailable, regresses, or falls outside the window;
+6. otherwise decrypts the exact transaction only for the winner and makes one
+   transport call;
+7. records `Admitted` only when the node returns the authenticated expected
+   transaction identifier with `Accepted` or `AlreadyKnown`; and
+8. records `Ambiguous` for an error or mismatched identifier and never rearms
+   any started record.
+
+`Admitted` means node admission, not chain inclusion or finality. The generic
+sidecar submit route remains closed.
+
+## Components and trust boundaries
+
+```mermaid
+flowchart LR
+    Observation["Origin-bound Monero observation"] -.-> Issuer["Concrete typed release issuer pending"]
+    Topology["Run-bound RPC topology capability"] -.-> Issuer
+    Fund["Actual finalized LEZ Fund evidence pending"] -.-> Issuer
+    StageB["Stage-B authorization evidence"] -.-> Issuer
+    Issuer -.-> Plan["Private exact release plan"]
+    Plan --> Store["Schema-v3 sealed release store"]
+    Store --> Journal["Owner-private canonical SQLite journal"]
+    Store --> Publisher["Internal transaction-scoped publisher"]
+    Publisher --> TestClock["In-process finalized clock seam"]
+    Publisher --> TestTransport["In-process submission seam"]
+    Publisher -.-> NodeTransport["Authenticated LEZ node transport pending"]
+    NodeTransport -.-> Guest["Checked-guest deadline binding pending"]
+    Generic["Generic sidecar submit"] -.-> Rejected["Authorization remains rejected"]
+```
+
+Solid edges are implemented and exercised in component tests. Dashed edges are
+required integration boundaries. The in-process transport is a test seam, not
+an RPC implementation or public authority.
+
+## Publication sequence
+
+```mermaid
+sequenceDiagram
+    participant TakerActor as Future Taker actor
+    participant Store as Sealed release store
+    participant Clock as Finalized LEZ clock
+    participant Node as Concrete LEZ transport
+
+    TakerActor->>Store: Publish authenticated snapshot
+    Store->>Store: Verify context state and protected intent
+    Store->>Clock: Read initial finalized timestamp
+    alt Initial clock unavailable or outside window
+        Store-->>TakerActor: Fail while record remains Prepared
+    else Initial clock is eligible
+        Store->>Store: Compare and swap Prepared to Started
+        alt Another process already won
+            Store-->>TakerActor: Observe only
+        else This process won
+            Store->>Clock: Read decisive finalized timestamp
+            alt Window no longer valid
+                Store->>Store: Record Suppressed
+                Store-->>TakerActor: Suppressed with zero node calls
+            else Decisive clock is eligible
+                Store->>Store: Open exact protected transaction
+                Store->>Node: Submit exact bytes once
+                alt Expected identifier returned
+                    Store->>Store: Record Admitted
+                    Store-->>TakerActor: Admitted but not finalized
+                else Error or different identifier
+                    Store->>Store: Record Ambiguous
+                    Store-->>TakerActor: Observe only after restart
+                end
+            end
+        end
+    end
+```
+
+## Atomicity argument and limits
+
+This checkpoint preserves the release side as far as one local journal can:
+
+- the state MAC binds state, revision, and the immutable release binding;
+- the observation, exact transaction, target, window, and expected transaction
+  identifier are authenticated before publication;
+- one SQLite compare-and-swap elects the only possible sender;
+- every state after Started is observe-only across restart;
+- a post-CAS finalized-time sample prevents a known stale winner from sending;
+  and
+- admission requires the returned identifier to match the one authenticated
+  before the attempt.
+
+These properties are necessary but insufficient for a complete atomic swap.
+The post-CAS sample narrows but cannot eliminate the final scheduling interval
+between clock read and node admission. The concrete issuer must prove that the
+exact checked-guest transaction enforces the identical exclusive deadline. The
+concrete transport must obtain the official transaction identifier from the
+actual authenticated node response. Finalized claim classification, definitive
+absence, actor restart, and the signed-refund and punishment branches remain
+outside this checkpoint.
+
+The PoC additionally assumes one trusted host, a dedicated UID, one canonical
+owner-private journal, no clone or rollback, and no hostile same-UID WAL or SHM
+race. AEAD and HMAC authenticate content but cannot detect restoration of an
+older valid database.
+
+## Evidence
+
+The component suite passes 29 of 29 tests. It covers:
+
+- accepted and already-known admission across reopen;
+- initial clock failure and exclusive-end rejection without a send;
+- post-CAS expiry suppression with zero node calls;
+- error and wrong-identifier ambiguity without retry;
+- two independent SQLite connections electing exactly one sender;
+- stable-resource, semantic-restart, tamper, schema, and owner-private path
+  invariants inherited from ADR 0060; and
+- strict formatting, Clippy, Rustdoc, advisory, ban, license, and source gates.
+
+Tests use owner-private temporary SQLite files and an in-process transport seam.
+They use no Docker, node, chain RPC, peer, faucet, public funds, or external
+finality service. They prove zero actual swaps.
+
+## Next gate
+
+Mint the private plan only from exact Stage B, the origin-bound Monero
+observation, the run-bound topology capability, and actual local finalized Fund
+evidence. Then implement the authenticated LEZ clock and submission transport,
+verify the checked-guest deadline against the same window, classify finality,
+and compose the independent Taker actor. Add a crash or cancellation after the
+CAS process test during post-PoC hardening.

@@ -214,7 +214,7 @@ sequenceDiagram
     Sidecar->>Store: Atomically persist signed Initialize at n and Fund at n plus 1
     Store-->>Sidecar: Durable exact pair
     Sidecar-->>Taker: Both exact signed transaction bytes
-    Note over Sidecar,Sequencer: Preparation grants no submission authority; send count stays zero
+    Note over Sidecar,Sequencer: Preparation grants no submission authority and send count stays zero
     Taker->>Sidecar: Same request after fresh planner and server
     Sidecar->>Store: Revalidate exact request and durable bytes
     Store-->>Sidecar: Same exact pair

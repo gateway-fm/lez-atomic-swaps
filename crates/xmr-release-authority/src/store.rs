@@ -2,6 +2,8 @@
 // production while tests exercise it until concrete capabilities replace ReleasePlan.
 #![cfg_attr(not(test), allow(dead_code))]
 
+mod publisher;
+
 use super::{
     ProtectedPublicationIntent, ProtectionError, PublicationProtectionKey, ReleasePlan,
     derive_activation_id, exact_binding_bytes, hash, immutable_release_context_bytes,
@@ -29,13 +31,15 @@ use std::{
 };
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 2;
+const DATABASE_SCHEMA_VERSION: i64 = 3;
 const DATABASE_APPLICATION_ID: i64 = 1_280_855_378;
 const MAX_OBSERVATION_BYTES: usize = 65_536;
 const MAX_TARGET_BYTES: usize = 65_536;
 const PREPARED: &str = "prepared";
 const STARTED: &str = "publication_started";
+const ADMITTED: &str = "admitted";
 const AMBIGUOUS: &str = "ambiguous";
+const SUPPRESSED: &str = "suppressed";
 
 const CREATE_TABLE_SQL: &str = "CREATE TABLE release (
     activation BLOB PRIMARY KEY NOT NULL
@@ -54,8 +58,11 @@ const CREATE_TABLE_SQL: &str = "CREATE TABLE release (
         CHECK(length(claim_partial_commitment) = 32
               AND claim_partial_commitment != zeroblob(32)),
     target BLOB NOT NULL CHECK(length(target) BETWEEN 1 AND 65536),
+    publication_id BLOB NOT NULL
+        CHECK(length(publication_id) = 32 AND publication_id != zeroblob(32)),
     window_start INTEGER NOT NULL CHECK(window_start BETWEEN 0 AND 9223372036854775807),
-    window_end INTEGER NOT NULL CHECK(window_end BETWEEN window_start AND 9223372036854775807),
+    window_end INTEGER NOT NULL
+        CHECK(window_end > window_start AND window_end <= 9223372036854775807),
     binding BLOB NOT NULL UNIQUE CHECK(length(binding) = 32),
     semantic_authenticator BLOB NOT NULL CHECK(length(semantic_authenticator) = 32),
     key_id TEXT NOT NULL CHECK(length(key_id) BETWEEN 1 AND 128),
@@ -63,16 +70,19 @@ const CREATE_TABLE_SQL: &str = "CREATE TABLE release (
     ciphertext BLOB NOT NULL CHECK(length(ciphertext) BETWEEN 17 AND 2000016),
     fingerprint BLOB NOT NULL CHECK(length(fingerprint) = 32),
     state_authenticator BLOB NOT NULL CHECK(length(state_authenticator) = 32),
-    state TEXT NOT NULL CHECK(state IN ('prepared', 'publication_started', 'ambiguous')),
+    state TEXT NOT NULL
+        CHECK(state IN ('prepared', 'publication_started', 'admitted', 'ambiguous', 'suppressed')),
     revision INTEGER NOT NULL CHECK(
         (state = 'prepared' AND revision = 0) OR
         (state = 'publication_started' AND revision = 1) OR
-        (state = 'ambiguous' AND revision = 2)
+        (state = 'admitted' AND revision = 2) OR
+        (state = 'ambiguous' AND revision = 2) OR
+        (state = 'suppressed' AND revision = 2)
     ),
     UNIQUE(swap_id, run_id)
 ) STRICT";
 
-/// Inclusive finalized-height/time window within which publication is allowed.
+/// Half-open finalized LEZ consensus-time window `[start, end)`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ReleaseWindow {
     pub(super) start: u64,
@@ -80,9 +90,9 @@ pub struct ReleaseWindow {
 }
 
 impl ReleaseWindow {
-    /// Creates a bounded ordered release window representable by `SQLite`.
+    /// Creates a non-empty half-open window representable by `SQLite`.
     pub fn new(start: u64, end: u64) -> Result<Self, ReleaseError> {
-        if start > end || end > i64::MAX as u64 {
+        if start >= end || end > i64::MAX as u64 {
             return Err(ReleaseError::InvalidBinding);
         }
         Ok(Self { start, end })
@@ -93,7 +103,7 @@ impl ReleaseWindow {
         self.start
     }
 
-    /// Returns the inclusive upper bound.
+    /// Returns the exclusive upper bound.
     pub const fn end(self) -> u64 {
         self.end
     }
@@ -106,8 +116,12 @@ pub enum ReleaseState {
     Prepared,
     /// One process won the send CAS; every restart must observe only.
     PublicationStarted,
+    /// The exact node accepted or already knew the transaction; not chain finality.
+    Admitted,
     /// Publication outcome is uncertain and must remain observe-only.
     Ambiguous,
+    /// The post-CAS clock gate proved that no node call was made.
+    Suppressed,
 }
 
 impl ReleaseState {
@@ -115,7 +129,9 @@ impl ReleaseState {
         match self {
             Self::Prepared => (PREPARED, 0),
             Self::PublicationStarted => (STARTED, 1),
+            Self::Admitted => (ADMITTED, 2),
             Self::Ambiguous => (AMBIGUOUS, 2),
+            Self::Suppressed => (SUPPRESSED, 2),
         }
     }
 
@@ -123,7 +139,9 @@ impl ReleaseState {
         match (state, revision) {
             (PREPARED, 0) => Ok(Self::Prepared),
             (STARTED, 1) => Ok(Self::PublicationStarted),
+            (ADMITTED, 2) => Ok(Self::Admitted),
             (AMBIGUOUS, 2) => Ok(Self::Ambiguous),
+            (SUPPRESSED, 2) => Ok(Self::Suppressed),
             _ => Err(ReleaseError::CorruptRecord),
         }
     }
@@ -141,6 +159,7 @@ pub struct ReleaseSnapshot {
     semantic_authenticator: [u8; 32],
     target: Vec<u8>,
     window: ReleaseWindow,
+    publication_id: [u8; 32],
     immutable_context: Vec<u8>,
     intent: ProtectedPublicationIntent,
     state_authenticator: [u8; 32],
@@ -198,11 +217,12 @@ impl ReleaseSnapshot {
 
 /// Unique crash-safe permission to submit one exact publication.
 #[derive(Eq, PartialEq)]
-pub(crate) struct PublicationAttempt {
+struct PublicationAttempt {
     activation: [u8; 32],
     run_id: [u8; 32],
     binding: [u8; 32],
     target: Vec<u8>,
+    publication_id: [u8; 32],
     window: ReleaseWindow,
     immutable_context: Vec<u8>,
     intent: ProtectedPublicationIntent,
@@ -220,13 +240,9 @@ impl fmt::Debug for PublicationAttempt {
 }
 
 impl PublicationAttempt {
-    /// Temporary internal byte escape hatch pending a typed consuming publisher.
-    ///
-    /// This consumes the unique attempt so plaintext cannot be opened repeatedly.
-    /// Production integration must replace the returned bytes with a typed
-    /// publisher that consumes this capability and retains outcome identity.
-    pub(crate) fn into_opened_intent(
-        self,
+    /// Authenticates and opens the exact intent while retaining the outcome token.
+    fn opened_intent(
+        &self,
         key: &PublicationProtectionKey,
     ) -> Result<zeroize::Zeroizing<Vec<u8>>, ProtectionError> {
         self.intent.decrypt(key, &self.immutable_context)
@@ -235,7 +251,7 @@ impl PublicationAttempt {
 
 /// Whether this process owns the unique send attempt.
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) enum PublicationDecision {
+enum PublicationDecision {
     /// This process won the prepared-to-started compare-and-swap.
     Send(Box<PublicationAttempt>),
     /// A send was already started or became ambiguous; observe only.
@@ -416,12 +432,12 @@ impl ReleaseStore {
                 "INSERT INTO release(
                      activation,swap_id,run_id,lez_commitment,topology_commitment,
                      resource_id,observation,observation_authenticator,
-                     claim_partial_commitment,target,window_start,window_end,
+                     claim_partial_commitment,target,publication_id,window_start,window_end,
                      binding,semantic_authenticator,key_id,nonce,ciphertext,
                      fingerprint,state_authenticator,state,revision
                  ) VALUES(
                      ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,
-                     ?16,?17,?18,?19,?20,0
+                     ?16,?17,?18,?19,?20,?21,0
                  )",
                 params![
                     plan.activation.as_slice(),
@@ -434,6 +450,7 @@ impl ReleaseStore {
                     new_observation_authenticator.as_slice(),
                     plan.claim_partial_commitment.as_slice(),
                     plan.target.as_slice(),
+                    plan.publication_id.as_slice(),
                     i64::try_from(plan.window_start).map_err(|_| ReleaseError::InvalidBinding)?,
                     i64::try_from(plan.window_end).map_err(|_| ReleaseError::InvalidBinding)?,
                     binding.as_slice(),
@@ -498,7 +515,7 @@ impl ReleaseStore {
     }
 
     /// Atomically grants one send attempt; every later caller observes only.
-    pub(crate) fn begin_publication(
+    fn begin_publication(
         &self,
         snapshot: ReleaseSnapshot,
         key: &PublicationProtectionKey,
@@ -556,10 +573,21 @@ impl ReleaseStore {
             run_id: snapshot.run_id,
             binding: snapshot.binding,
             target: snapshot.target,
+            publication_id: snapshot.publication_id,
             window: snapshot.window,
             immutable_context: snapshot.immutable_context,
             intent: snapshot.intent,
         })))
+    }
+
+    /// Persists exact node admission as terminal but not finalized-chain evidence.
+    #[allow(clippy::needless_pass_by_value)]
+    fn mark_admitted(
+        &self,
+        attempt: PublicationAttempt,
+        key: &PublicationProtectionKey,
+    ) -> Result<(), ReleaseError> {
+        self.finish_publication(attempt, key, ReleaseState::Admitted)
     }
 
     /// Persists an uncertain publication result as permanently observe-only.
@@ -568,11 +596,38 @@ impl ReleaseStore {
     /// must consume exact finalized-chain evidence; definitive absence/retry
     /// authority is likewise intentionally absent.
     #[allow(clippy::needless_pass_by_value)]
-    pub(crate) fn mark_ambiguous(
+    fn mark_ambiguous(
         &self,
         attempt: PublicationAttempt,
         key: &PublicationProtectionKey,
     ) -> Result<(), ReleaseError> {
+        self.finish_publication(attempt, key, ReleaseState::Ambiguous)
+    }
+
+    /// Persists a post-CAS known-no-send decision as terminal observe-only.
+    #[allow(clippy::needless_pass_by_value)]
+    fn mark_suppressed(
+        &self,
+        attempt: PublicationAttempt,
+        key: &PublicationProtectionKey,
+    ) -> Result<(), ReleaseError> {
+        self.finish_publication(attempt, key, ReleaseState::Suppressed)
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn finish_publication(
+        &self,
+        attempt: PublicationAttempt,
+        key: &PublicationProtectionKey,
+        terminal: ReleaseState,
+    ) -> Result<(), ReleaseError> {
+        if !matches!(
+            terminal,
+            ReleaseState::Admitted | ReleaseState::Ambiguous | ReleaseState::Suppressed
+        ) {
+            return Err(ReleaseError::InvalidBinding);
+        }
+        let (terminal_state, terminal_revision) = terminal.record();
         self.revalidate_storage()?;
         let mut connection = self.lock_connection()?;
         validate_connection(&connection)?;
@@ -591,22 +646,23 @@ impl ReleaseStore {
         {
             return Err(ReleaseError::BindingMismatch);
         }
-        let ambiguous_authenticator = release_state_authenticator(
+        let terminal_authenticator = release_state_authenticator(
             key,
             &current.immutable_context,
             &current.binding,
-            AMBIGUOUS,
-            2,
+            terminal_state,
+            terminal_revision,
         )
         .map_err(|_| ReleaseError::Authentication)?;
         let changed = transaction
             .execute(
-                "UPDATE release SET state=?1, revision=2, state_authenticator=?2
-                 WHERE activation=?3 AND run_id=?4 AND binding=?5
-                   AND state=?6 AND revision=1",
+                "UPDATE release SET state=?1, revision=?2, state_authenticator=?3
+                 WHERE activation=?4 AND run_id=?5 AND binding=?6
+                   AND state=?7 AND revision=1",
                 params![
-                    AMBIGUOUS,
-                    ambiguous_authenticator.as_slice(),
+                    terminal_state,
+                    i64::from(terminal_revision),
+                    terminal_authenticator.as_slice(),
                     attempt.activation.as_slice(),
                     attempt.run_id.as_slice(),
                     attempt.binding.as_slice(),
@@ -621,6 +677,17 @@ impl ReleaseStore {
         validate_connection(&connection)?;
         drop(connection);
         self.revalidate_storage()
+    }
+
+    fn validate_for_publication(
+        &self,
+        snapshot: &ReleaseSnapshot,
+        key: &PublicationProtectionKey,
+    ) -> Result<(), ReleaseError> {
+        self.revalidate_storage()?;
+        authenticate_snapshot(snapshot, key)?;
+        self.revalidate_storage()?;
+        Ok(())
     }
 
     fn lock_connection(&self) -> Result<MutexGuard<'_, Connection>, ReleaseError> {
@@ -643,6 +710,7 @@ struct StoredReleaseRecord {
     observation_authenticator: Vec<u8>,
     claim_partial_commitment: Vec<u8>,
     target: Vec<u8>,
+    publication_id: Vec<u8>,
     window_start: i64,
     window_end: i64,
     binding: Vec<u8>,
@@ -663,7 +731,7 @@ impl StoredReleaseRecord {
             || self.target.is_empty()
             || self.target.len() > MAX_TARGET_BYTES
             || self.window_start < 0
-            || self.window_end < self.window_start
+            || self.window_end <= self.window_start
         {
             return Err(ReleaseError::CorruptRecord);
         }
@@ -678,6 +746,7 @@ impl StoredReleaseRecord {
         let resource_id = array(self.resource_id)?;
         let observation_authenticator = array(self.observation_authenticator)?;
         let claim_partial_commitment = array(self.claim_partial_commitment)?;
+        let publication_id = array(self.publication_id)?;
         let binding = array(self.binding)?;
         let semantic_authenticator = array(self.semantic_authenticator)?;
         let nonce = array(self.nonce)?;
@@ -691,6 +760,7 @@ impl StoredReleaseRecord {
             || topology_commitment == [0; 32]
             || resource_id == [0; 32]
             || claim_partial_commitment == [0; 32]
+            || publication_id == [0; 32]
         {
             return Err(ReleaseError::CorruptRecord);
         }
@@ -706,6 +776,7 @@ impl StoredReleaseRecord {
             &resource_id,
             &claim_partial_commitment,
             &self.target,
+            &publication_id,
             window_start,
             window_end,
         );
@@ -730,6 +801,7 @@ impl StoredReleaseRecord {
             binding,
             semantic_authenticator,
             target: self.target,
+            publication_id,
             window: ReleaseWindow {
                 start: window_start,
                 end: window_end,
@@ -754,7 +826,7 @@ fn select_record(
         .query_row(
             "SELECT activation,swap_id,run_id,lez_commitment,topology_commitment,
                     resource_id,observation,observation_authenticator,
-                    claim_partial_commitment,target,window_start,window_end,
+                    claim_partial_commitment,target,publication_id,window_start,window_end,
                     binding,semantic_authenticator,key_id,nonce,ciphertext,
                     fingerprint,state_authenticator,state,revision
              FROM release WHERE activation=?1",
@@ -771,17 +843,18 @@ fn select_record(
                     observation_authenticator: row.get(7)?,
                     claim_partial_commitment: row.get(8)?,
                     target: row.get(9)?,
-                    window_start: row.get(10)?,
-                    window_end: row.get(11)?,
-                    binding: row.get(12)?,
-                    semantic_authenticator: row.get(13)?,
-                    key_id: row.get(14)?,
-                    nonce: row.get(15)?,
-                    ciphertext: row.get(16)?,
-                    fingerprint: row.get(17)?,
-                    state_authenticator: row.get(18)?,
-                    state: row.get(19)?,
-                    revision: row.get(20)?,
+                    publication_id: row.get(10)?,
+                    window_start: row.get(11)?,
+                    window_end: row.get(12)?,
+                    binding: row.get(13)?,
+                    semantic_authenticator: row.get(14)?,
+                    key_id: row.get(15)?,
+                    nonce: row.get(16)?,
+                    ciphertext: row.get(17)?,
+                    fingerprint: row.get(18)?,
+                    state_authenticator: row.get(19)?,
+                    state: row.get(20)?,
+                    revision: row.get(21)?,
                 })
             },
         )
@@ -834,6 +907,7 @@ fn snapshot_from_plan(
         binding,
         semantic_authenticator,
         target: plan.target,
+        publication_id: plan.publication_id,
         window: ReleaseWindow {
             start: plan.window_start,
             end: plan.window_end,
@@ -854,6 +928,7 @@ fn record_matches_plan(
         && snapshot.run_id == plan.run_id
         && snapshot.resource_id == plan.resource_id
         && snapshot.target == plan.target
+        && snapshot.publication_id == plan.publication_id
         && snapshot.window.start == plan.window_start
         && snapshot.window.end == plan.window_end
         && snapshot.immutable_context == immutable_context
@@ -866,6 +941,7 @@ fn same_snapshot_binding(left: &ReleaseSnapshot, right: &ReleaseSnapshot) -> boo
         && left.binding == right.binding
         && left.semantic_authenticator == right.semantic_authenticator
         && left.target == right.target
+        && left.publication_id == right.publication_id
         && left.window == right.window
         && left.immutable_context == right.immutable_context
         && left.intent == right.intent
@@ -874,7 +950,7 @@ fn same_snapshot_binding(left: &ReleaseSnapshot, right: &ReleaseSnapshot) -> boo
 fn authenticate_snapshot(
     snapshot: &ReleaseSnapshot,
     key: &PublicationProtectionKey,
-) -> Result<(), ReleaseError> {
+) -> Result<zeroize::Zeroizing<Vec<u8>>, ReleaseError> {
     let plaintext = snapshot
         .intent
         .decrypt(key, &snapshot.immutable_context)
@@ -909,7 +985,7 @@ fn authenticate_snapshot(
     {
         return Err(ReleaseError::Authentication);
     }
-    Ok(())
+    Ok(plaintext)
 }
 
 fn validate_plan(plan: &ReleasePlan) -> Result<(), ReleaseError> {
@@ -925,7 +1001,8 @@ fn validate_plan(plan: &ReleasePlan) -> Result<(), ReleaseError> {
         || plan.claim_partial_commitment == [0; 32]
         || plan.target.is_empty()
         || plan.target.len() > MAX_TARGET_BYTES
-        || plan.window_start > plan.window_end
+        || plan.publication_id == [0; 32]
+        || plan.window_start >= plan.window_end
         || plan.window_end > i64::MAX as u64
         || validate_plaintext_length(plan.publication.len()).is_err()
     {
@@ -1295,6 +1372,7 @@ mod tests {
             observation,
             claim_partial_commitment: [seed.wrapping_add(6); 32],
             target: format!("lez-target-{seed}").into_bytes(),
+            publication_id: [seed.wrapping_add(7); 32],
             window_start: 100,
             window_end: 200,
             publication: zeroize::Zeroizing::new(publication.to_vec()),
@@ -1312,6 +1390,7 @@ mod tests {
             observation: bindings.observation.clone(),
             claim_partial_commitment: bindings.claim_partial_commitment,
             target: bindings.target.clone(),
+            publication_id: bindings.publication_id,
             window_start: bindings.window_start,
             window_end: bindings.window_end,
             publication: zeroize::Zeroizing::new(bindings.publication.as_slice().to_vec()),
@@ -1397,7 +1476,24 @@ mod tests {
         assert!(sql.contains("activation != zeroblob(32)"));
         assert!(sql.contains("swap_id BLOB NOT NULL"));
         assert!(sql.contains("run_id BLOB NOT NULL"));
-        assert_eq!(DATABASE_SCHEMA_VERSION, 2);
+        assert!(sql.contains("'admitted'"));
+        assert!(sql.contains("'suppressed'"));
+        assert!(sql.contains("publication_id != zeroblob(32)"));
+        assert!(sql.contains("window_end > window_start"));
+        assert_eq!(DATABASE_SCHEMA_VERSION, 3);
+    }
+
+    #[test]
+    fn release_window_is_non_empty_and_half_open() {
+        assert_eq!(
+            ReleaseWindow::new(100, 100).unwrap_err(),
+            ReleaseError::InvalidBinding
+        );
+        assert_eq!(ReleaseWindow::new(100, 101).unwrap().end(), 101);
+        assert_eq!(
+            ReleaseWindow::new(i64::MAX as u64, i64::MAX as u64 + 1).unwrap_err(),
+            ReleaseError::InvalidBinding
+        );
     }
 
     #[test]
@@ -1706,7 +1802,7 @@ mod tests {
             panic!("reopened prepared record must own the one send");
         };
         assert_eq!(
-            (*attempt).into_opened_intent(&key).unwrap().as_slice(),
+            attempt.opened_intent(&key).unwrap().as_slice(),
             b"exact authorize claim transaction"
         );
         drop(store);
@@ -1971,6 +2067,38 @@ mod tests {
                 "attempt Debug leaked {forbidden}"
             );
         }
+    }
+
+    #[test]
+    fn admitted_restart_is_terminal_observe_only_after_opening_intent() {
+        let key = protection_key(0x3a);
+        let directory = directory();
+        let path = database_path(&directory);
+        let bindings = binding(29, &key, b"exact admitted publication");
+        let activation = bindings.activation;
+        let run = bindings.run_id;
+        let store = ReleaseStore::open(&path).unwrap();
+        let prepared = store.prepare(bindings, &key).unwrap();
+        let PublicationDecision::Send(attempt) = store.begin_publication(prepared, &key).unwrap()
+        else {
+            panic!("first process must win send");
+        };
+        assert_eq!(
+            attempt.opened_intent(&key).unwrap().as_slice(),
+            b"exact admitted publication"
+        );
+        store.mark_admitted(*attempt, &key).unwrap();
+        drop(store);
+
+        let reopened = ReleaseStore::open(path).unwrap();
+        let snapshot = reopened
+            .load_by_activation_run(activation, run, &key)
+            .unwrap();
+        assert_eq!(snapshot.state(), ReleaseState::Admitted);
+        assert_eq!(
+            reopened.begin_publication(snapshot, &key).unwrap(),
+            PublicationDecision::ObserveOnly
+        );
     }
 
     #[test]

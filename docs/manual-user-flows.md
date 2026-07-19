@@ -2342,10 +2342,15 @@ main-process adapter separately has a Taker-only Stage-B claim-authorization
 capability. It re-derives exact Stage B, verifies the committed partial and
 signed runtime before wire, and mints private-field non-`Clone` evidence only
 after one authenticated success. Its literal-loopback server is a mock; ADR
-0063 separately proves the official ABI-validating builder. Submission,
-actual-local-indexer evidence, Stage-B-bound durable
-one-shot claim-partial release, fresh role actors, and both terminal stores are
-still required before an atomic happy PoC.
+0063 separately proves the official ABI-validating builder. The private
+schema-v3 release-authority crate passes 29 tests. Its internal publisher binds
+the expected publication ID, elects one CAS winner, samples finalized time
+again after the CAS, and terminalizes admitted, ambiguous, or proven no-send
+outcomes without retry. Its issuer, clock, and transport remain in-process
+seams or unwired. Actual-local-indexer evidence, a concrete authenticated LEZ
+node transport, identical checked-guest deadline enforcement, finality,
+Stage-B-bound durable one-shot claim-partial release, fresh role actors, and
+both terminal stores are still required before an atomic happy PoC.
 
 Reproduce the checked LEZ artifact and focused host boundaries with a fresh run
 ID. The optional shared tool directory below is safe only when it already
@@ -2375,6 +2380,14 @@ RUSTDOCFLAGS="-D warnings" cargo doc --locked -p lez-bridge-adapter \
   --no-deps --all-features
 cargo fmt --manifest-path crates/lez-bridge-adapter/Cargo.toml --all -- --check
 
+CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=2 cargo test --locked \
+  -p lez-xmr-release-authority --all-targets --all-features
+CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=2 cargo clippy --locked \
+  -p lez-xmr-release-authority --all-targets --all-features -- -D warnings
+RUSTDOCFLAGS="-D warnings" CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=2 \
+  cargo doc --locked -p lez-xmr-release-authority --all-features --no-deps
+cargo deny --all-features check advisories bans licenses sources
+
 export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
 export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
 (
@@ -2402,6 +2415,12 @@ cargo test --locked \
 git diff --check
 ```
 
+The release-authority command must report 29 passed and zero failed. Its
+owner-private temporary SQLite files and finalized-clock/submission transports
+exist only inside the test process. It makes no Docker, node, chain RPC, peer,
+faucet, public-fund, or external-finality call. This verifies the internal
+state machine; it is not a manual transaction publication or swap.
+
 The focused authorization command must report 3 of 3 authenticated tests. A
 successful exact Stage-B request makes one authenticated route call and returns
 the exact private-field non-`Clone` evidence. Wrong partial, Stage B, binding,
@@ -2417,7 +2436,8 @@ They must prove exact tag 14, account order, sole depositor signer,
 Fund-plus-one nonce, commitment mismatch rejection, missing/corrupt durable
 state rejection, byte-identical restart/cache replay, generic submission
 rejection, and zero sequencer sends. Together these are still preparation
-evidence: they prove no journal authority, actual-node effect, or claim PoC.
+evidence: they prove no externally usable journal authority, actual-node
+effect, or claim PoC.
 
 The focused classifier command must report `running 1 test`,
 `authenticated_exact_persisted_fund_requires_stable_finalized_history ... ok`,

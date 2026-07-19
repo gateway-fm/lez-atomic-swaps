@@ -2901,16 +2901,19 @@ server is a literal-loopback mock; ADR 0063 separately proves the official
 ABI-validating builder and its durable no-submit boundary.
 The classifier can now return an exact synthetic `Found`, but no positive
 actual-local-indexer first-lock capability has been minted and no claim PoC
-exists. A sealed `lez-xmr-release-authority` storage foundation now passes 21
-tests for stable-resource, semantic-restart, local CAS, tamper, schema, and
-private-path invariants. Its stable-resource encoder, release plan, and
-prepare/publication transitions are internal and unwired, so it adds no usable
-external authority and does not prove live replay prevention. The repository
-still has no XMR submission authority, five remaining functional builders,
-actual-local-indexer classifier execution, actual-chain trusted finalized LEZ
-capability, typed
-Stage-B issuer/publisher/outcome integration, role actor, full swap, U9 guide,
-D1 videos, or stagenet CI evidence.
+exists. The sealed `lez-xmr-release-authority` crate now passes 29 tests under
+schema v3. Its internal publisher authenticates the expected publication ID,
+elects one Prepared-to-Started CAS winner, samples finalized LEZ time again
+after the CAS, records `Admitted` only for a matching returned ID, and
+terminalizes error, mismatch, or known no-send outcomes as `Ambiguous` or
+`Suppressed`. Terminal restart is observe-only. The release plan, issuer,
+finalized clock, and node transport remain internal, mocked, or unwired, so
+this adds no externally usable authority and does not prove live replay
+prevention. The repository still has no concrete XMR submission authority,
+five remaining functional builders, actual-local-indexer classifier execution,
+actual-chain trusted finalized LEZ capability, checked-guest deadline equality,
+finality observer, role actor, full swap, U9 guide, D1 videos, or stagenet CI
+evidence.
 
 The standalone strict v3 bridge protocol binds eight additive methods and six
 finalized effects; all 52 protocol tests preserve the 44 legacy v1/v2 cases.
@@ -2982,11 +2985,13 @@ and 32-byte markers into chain authority.
   fixture prove fail-closed boundary behavior and exact `Found`, respectively,
   but not a real Stage-B/actual-local-indexer capability. Durable-target and Taker-role
   rejection happen before indexer reads; missing remains `Uncertain`. Neither
-  observation is release authority. The sealed release journal adds
-  21 green storage tests, but its stable-resource encoder and authority methods
-  are private and unwired. The actor must consume both non-cloneable
-  observations through concrete Stage-B and finalized-LEZ issuer types into the
-  journal, then use a consuming typed publisher/outcome boundary.
+  observation is release authority. The sealed schema-v3 release journal and
+  internal publisher add 29 green tests for exact-ID authentication, one CAS
+  winner, a post-CAS finalized-time gate, terminal outcomes, and observe-only
+  restart. The actor must consume both non-cloneable observations through
+  concrete Stage-B and finalized-LEZ issuers, prove the checked-guest transaction
+  uses the identical exclusive deadline, and replace the test transport with an
+  authenticated LEZ node transport plus finality observer.
 - [ ] Build the official Monero 0.18.5.1 CLI artifact from its signed hash list
   into a digest-pinned runtime and scan the final image fail-hard.
 - [x] Start one offline `monerod` Regtest daemon plus distinct authenticated
@@ -3093,15 +3098,19 @@ decode, a reviewed key-image or freshness/consumption argument, and a public
 trust model. The topology capability is neither Stage-B release authority nor a
 claim PoC.
 
-The sealed release-journal foundation is now workspace-GREEN in 21 tests. It
+The sealed release-journal foundation is now workspace-GREEN in 29 tests. It
 authenticates one stable immutable resource separately from later-tip
 observation facts, preserves randomized ciphertext across an exact semantic
-restart, and provides one local compare-and-swap winner. Its PoC assumptions
-are one host, dedicated UID, one mode-`0700` directory, one mode-`0600`
-canonical journal, no clone/backup/restore, and no hostile same-UID WAL/SHM
-race. AEAD/HMAC do not prevent rollback of an older valid journal. The internal
-encoder and private prepare/send surface are not wired to an actor, so this is
-neither live replay-prevention evidence nor a claim PoC.
+restart, and provides one local compare-and-swap winner. It authenticates the
+expected publication ID, records `Admitted` only for a matching returned ID,
+records `Ambiguous` after an error or mismatch, and records `Suppressed` only
+when its post-CAS gate proves no send. Every started outcome is observe-only.
+Its PoC assumptions are one host, dedicated UID, one mode-`0700` directory,
+one mode-`0600` canonical journal, no clone/backup/restore, and no hostile
+same-UID WAL/SHM race. AEAD/HMAC do not prevent rollback of an older valid
+journal. The private issuer and in-process transport seams are not wired to an
+actor or node, so this is neither live replay-prevention evidence nor a claim
+PoC.
 
 The immediate critical path is now:
 
@@ -3121,10 +3130,13 @@ The immediate critical path is now:
    Pre-funding proof of hidden-partial validity remains a disclosed GW-M4-003
    production-review item;
 2. consume the now-green origin-retaining Monero observation and local-Regtest
-   topology capability against exact Stage B through concrete typed issuers,
-   wire the internal stable-resource algorithm into the sealed journal, and add
-   a consuming publisher/outcome plus definitive-absence boundary. The current
-   private storage API cannot be used as actor authority;
+   topology capability against exact Stage B and actual-local Fund evidence
+   through concrete typed issuers. Derive the authenticated publication ID from
+   the official exact bytes; prove the checked-guest transaction enforces the
+   identical exclusive window end; replace the in-process seams with an
+   authenticated LEZ clock and node transport that verifies the actual response
+   ID; then add finalized-claim and definitive-absence observation. Expose this
+   only through the owning actor and keep generic sidecar submission closed;
 3. add fresh Maker/Taker role processes with durable share/effect records;
 4. compose the sole supported LEZ-first claim path through both actual local
    chains, then seal the happy-PoC evidence and manual reproduction.
@@ -3143,15 +3155,15 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The expected remaining focused engineering time is 3 to 6 hours to the first
+The expected remaining focused engineering time is 3 to 5 hours to the first
 reproducible independent-actor claim-path PoC and 8 to 16 additional hours to the local
 claim/refund/punishment PoC. This estimate starts after the verified two-stage
 SDK, fresh RISC Zero artifact, v3 client, Monero observation, adapter, and
-official authorization-builder checkpoints. It still includes
-actual-local-indexer integration, durable submission for the remaining runtime,
-trusted finalized LEZ capability,
-activation-bound one-shot release, and actual actors rather than counting
-caller-supplied snapshots or checked recursive cases as runtime evidence.
+official authorization-builder and internal publisher checkpoints. It still
+includes actual-local-indexer integration, concrete evidence issuers,
+authenticated node submission and receipt verification, checked-guest deadline
+equality, finality, the remaining claim runtime, and actual actors rather than
+counting mocked transports or checked recursive cases as runtime evidence.
 GW-M4-001, GW-M4-002, and GW-M4-003 remain upstream production/review
 disclosures and do not block the private local implementation.
 

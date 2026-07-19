@@ -66,6 +66,7 @@ sidecar routes now include two functional Taker-only preparation routes.
 `InitializeNativeXmr` plus `FundNative` pair and durably reserves both exact
 signed byte strings before returning them. Identical replay, including after a
 fresh planner and server, returns the same bytes without another nonce read or
+sequencer send.
 `prepare_native_xmr_claim_authorization_v3` separately recomputes the exact
 NUL-terminated partial commitment, requires and revalidates that durable Fund,
 derives nonce `Fund + 1` without an RPC, builds generated tag 14 with the sole
@@ -97,8 +98,15 @@ strict Clippy, Rustdoc, formatting, and diff gates are green. The server in this
 test is an authenticated literal-loopback mock with zero external resources.
 The official sidecar builder independently validates the generated ABI,
 canonical transaction, signature, accounts, nonce, and durable replay. The
-adapter and builder are still preparation capabilities, not journal authority:
-no actual-node effect or claim PoC is claimed. The observation
+adapter and builder are still preparation capabilities: no actual-node effect
+or claim PoC is claimed. The private schema-v3 release-authority crate passes
+29 of 29 tests. Its internal publisher authenticates the expected publication
+ID, elects one Prepared-to-Started CAS winner, samples finalized LEZ time again
+after the CAS, and terminalizes admission, ambiguity, or a proven no-send
+without retry. This remains an unwired in-process transport scaffold: generic
+sidecar submission stays closed, and no concrete issuer, LEZ node RPC,
+checked-guest deadline binding, finality observer, actor, or actual swap is
+present. The observation
 is deliberately not claim-partial release authority. The one-command topology
 runner starts one offline
 `monerod` Regtest daemon plus independently authenticated funding, Maker, and
@@ -131,8 +139,8 @@ Measured run `m4-monero-poc-20260719c` passed in 53 seconds before cleanup
 with no public RPC, peer, faucet, public funds, stagenet, or external finality
 service. This is infrastructure evidence, not an atomic swap: LEZ submission,
 the five remaining sidecar builders, actual-local-indexer classification and
-finalized LEZ capability, journal-
-bound consuming one-shot XMR release, exact claim/refund
+finalized LEZ capability, concrete issuer/node/finality integration of the
+internal journal publisher, exact claim/refund
 adaptation, and fresh terminal role actors remain the next happy-path slice.
 The route-boundary checkpoint includes 20 of 20 scoped planner/route regressions
 plus the final three XMR tests, strict Clippy, formatting, and diff checks. The
@@ -151,6 +159,9 @@ LEZ_M4_TOOL_DIR=/tmp/lez-atomic-swaps-tools/risc0-3.0.5 \
 
 cargo test --locked -p lez-bridge-client -p lez-xmr-monero-adapter \
   --all-targets --all-features
+
+CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=2 cargo test --locked \
+  -p lez-xmr-release-authority --all-targets --all-features
 ```
 
 The artifact run opens no chain RPC, faucet, peer, or public endpoint after
