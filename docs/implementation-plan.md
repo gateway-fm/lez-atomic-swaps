@@ -2835,11 +2835,13 @@ set is the live RFP plus accepted replacement issue #112, rechecked on
 
 ### Actual entry state
 
-M4 has not started as an executable chain integration. The repository carries a
-useful event-gated recovery model, SQLite phase replay, and LEZ-first CLI
-validation, but all current XMR chain proofs and claim evidence are synthetic.
-There is no XMR SDK, DLEQ/adaptor code, Monero adapter or actor, node topology,
-actual Monero transaction, M4 CI lane, setup guide, video, or retained evidence.
+M4 now has two executable entry checkpoints: a bounded cross-curve DLEQ proof
+boundary and an official Monero 0.18.5.1 actual-node Regtest topology with one
+daemon, three independently authenticated wallets, locally mined funds, a real
+funding transaction, ten confirmations, secret-safe evidence, and exact
+cleanup. The repository still has no complete adaptor lifecycle, Monero adapter
+or role actor, XMR-bound LEZ claim, reconstructed Monero spend, full swap, U9
+guide, D1 videos, or stagenet CI evidence.
 
 The first implementation may reuse the existing LEZ v0.2 bridge, role stores,
 XChaCha20-Poly1305 secret envelope, one-attempt effect journals, and M3 BIP-340
@@ -2876,9 +2878,12 @@ and 32-byte markers into chain authority.
   still pending.
 - [ ] Build the official Monero 0.18.5.1 CLI artifact from its signed hash list
   into a digest-pinned runtime and scan the final image fail-hard.
-- [ ] Start one offline `monerod` Regtest daemon plus distinct authenticated
+- [x] Start one offline `monerod` Regtest daemon plus distinct authenticated
   funding, Maker, and Taker wallet RPCs on dynamic loopback ports under a unique
-  run/project ID; mine all funds locally and attest exact cleanup.
+  run/project ID; mine all funds locally and attest exact cleanup. Run
+  `m4-monero-poc-20260719c` passed at fakechain height 111 with a 401
+  cross-credential rejection, unlocked 10 XMR role outputs, no runtime external
+  resources, and scoped cleanup.
 - [ ] Extend the LEZ witnessed escrow metadata/terms with the immutable XMR
   transcript commitment and bind the exact claim message before either lock.
 - [ ] Complete the sole reviewed positive direction with fresh actor processes:
@@ -2897,6 +2902,36 @@ The local-PoC gate is not met by a wallet-to-wallet transfer. The canonical LEZ
 claim must reveal the exact DLEQ-bound share which a fresh Taker process uses to
 spend the exact Maker-funded Monero output. Only then is the happy path a
 functional atomic-swap PoC.
+
+### Actual-node checkpoint and next implementation slice
+
+The one-command Monero bootstrap currently measures 53 seconds before cleanup:
+30 seconds for signed-release/source verification, 3 seconds for the cached
+image and four-process topology, and 20 seconds for wallet creation, 100 local
+funding blocks, a real two-destination transaction, ten confirmations, height
+agreement, balance and container-security assertions. The signed hash list and
+signer key are retained in the repository; a warm run still rechecks the live
+source tag identity. Runtime uses no peer, public RPC, faucet, public funds, or
+public finality service.
+
+The immediate happy-path critical path is now:
+
+1. pin and execute the exact pre-sign, adapt, extract, retained-share-addition,
+   shared Monero address, and reconstructed-spend equations;
+2. add typed Monero daemon/wallet RPC observations and builders to
+   `lez-xmr-swap-sdk`;
+3. add fresh Maker/Taker role processes with durable share/effect records;
+4. bind the transcript commitment and revealing claim bytes into the real LEZ
+   v0.2 guest and bridge;
+5. compose the sole supported LEZ-first swap through both actual local chains,
+   then seal evidence and manual reproduction.
+
+The topology is infrastructure evidence, not one of the required happy swaps.
+The expected remaining focused engineering time to the first reproducible M4
+atomic happy PoC is 10 to 16 hours, subject chiefly to the exact adaptor/share
+mapping and official-wallet reconstructed-spend import behavior. No internal
+blocking dependency is known. GW-M4-001 and GW-M4-002 remain upstream
+production/review disclosures and do not block the owner-authorized local PoC.
 
 ### Post-PoC RED-GREEN-REFACTOR hardening required for M4 closure
 

@@ -53,8 +53,31 @@ below; final repository-wide gates still precede any `m3-complete` tag.
 
 ## Current status
 
+M3 is complete, tagged `m3-complete`, and pushed. M4 is now the active
+progressive local-functional PoC. Its first two executable checkpoints are
+green: the bounded cross-curve DLEQ proof boundary and an official Monero
+0.18.5.1 actual-node topology. The one-command runner starts one offline
+`monerod` Regtest daemon plus independently authenticated funding, Maker, and
+Taker wallet RPCs; mines funds locally; submits a real two-destination
+transaction; requires ten confirmations, unlocked role balances, wallet/daemon
+height agreement, role isolation, secret-safe evidence, and exact cleanup.
+
+```sh
+RUN_ID=m4-readme-monero-20260719a ./scripts/run-monero-e2e.sh
+```
+
+Measured run `m4-monero-poc-20260719c` passed in 53 seconds before cleanup
+with no public RPC, peer, faucet, public funds, stagenet, or external finality
+service. This is infrastructure evidence, not an atomic swap: the revealing
+LEZ claim, adaptor extraction, reconstructed Monero spend, and fresh terminal
+role actors remain the next happy-path slice. The exact components/RPCs and
+both target and bootstrap sequences are in
+[ADR 0053](docs/architecture/0053-enter-m4-through-isolated-monero-regtest.md);
+manual run, live inspection, scoped cleanup, and cold-resource flakiness are in
+[Flow 0](docs/manual-user-flows.md#flow-0-m4-official-monero-regtest-topology).
+
 M2 is certified at its private local-functional PoC boundary under
-`m2-complete`. M3 now has **2 of 2 schema-4 happy directions with actor-owned
+`m2-complete`. M3 completed with **2 of 2 schema-4 happy directions with actor-owned
 Maker second locks through actual local nodes**, including one clean
 opposite-direction overlapping execution at a shared revision-two barrier.
 Its authority, Bitcoin Core
@@ -457,7 +480,7 @@ through both directions. See the exact
 and [ADR 0037](docs/architecture/0037-finalize-exact-bitcoin-funding-before-first-effect.md).
 
 
-M3 now has an actual-Core, two-party MuSig2/adaptor P2TR vertical slice.
+M3 completed with an actual-Core, two-party MuSig2/adaptor P2TR vertical slice.
 Exact-pinned `bitcoin` 0.32.101 constructs the aggregate-internal-key plus
 CSV-refund commitment, while exact-pinned `musig2` 0.4.1 aggregates the ordered
 maker/taker public fixture keys, applies the Taproot tweak, and matches the
@@ -1547,6 +1570,18 @@ external egress attempt, not a public chain dependency. Public-route parsing,
 TLS client
 construction, credential loading/redaction, and strict LEZ profile selection
 are tested without connecting.
+
+The M4 Monero runner's **runtime** resource list is also empty: official
+`monerod` and three official wallet RPCs run on a non-masquerading project
+bridge, only authenticated RPC is bound to random literal-loopback ports, and
+P2P/ZMQ are not published. All 110 bootstrap/confirmation blocks and funds are
+local Regtest effects. **Cold setup** can require the exact official 0.18.5.1
+archive, the pinned distroless image digest, and a live Monero source-tag
+identity lookup. DNS, TLS, download host, registry, or Git host outages can
+therefore delay a cold run. The clearsigned hash manifest and signer key are
+retained locally; the 85 MB verified archive cache avoids repeated downloads
+without bypassing provenance checks. Public stagenet peers, sync, funding, and
+reorg behavior remain unmeasured and are not inferred from Regtest.
 
 Schema-4 run D used one run-owned Bitcoin Core 31.1 Regtest daemon and one
 run-owned LEZ v0.2 Bedrock/sequencer/indexer tuple, all on allocated literal

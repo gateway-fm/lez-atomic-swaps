@@ -1,0 +1,158 @@
+services:
+  monerod:
+    image: "${MONERO_IMAGE:?MONERO_IMAGE is required}"
+    entrypoint: ["/usr/local/bin/monerod"]
+    command: ["--config-file=/run-config/monerod.conf", "--non-interactive"]
+    environment:
+      HOME: /tmp
+    labels:
+      org.logos-co.atomic-swaps.run: "${RUN_ID:?RUN_ID is required}"
+      org.logos-co.atomic-swaps.scope: monero-regtest-e2e
+      org.logos-co.atomic-swaps.component: monerod
+    ports:
+      - "127.0.0.1:${MONERO_DAEMON_HOST_PORT:?MONERO_DAEMON_HOST_PORT is required}:18081"
+    volumes:
+      - "${MONERO_DAEMON_CONFIG:?MONERO_DAEMON_CONFIG is required}:/run-config/monerod.conf:ro"
+      - monerod_data:/var/lib/monero
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+    networks: [monero_private]
+    user: "65532:65532"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    cpus: 2.0
+    mem_limit: 2g
+    stop_grace_period: 30s
+
+  funding_wallet:
+    image: "${MONERO_IMAGE:?MONERO_IMAGE is required}"
+    entrypoint: ["/usr/local/bin/monero-wallet-rpc"]
+    command: ["--config-file=/run-config/wallet.conf"]
+    environment:
+      HOME: /tmp
+    labels:
+      org.logos-co.atomic-swaps.run: "${RUN_ID:?RUN_ID is required}"
+      org.logos-co.atomic-swaps.scope: monero-regtest-e2e
+      org.logos-co.atomic-swaps.component: funding-wallet-rpc
+    ports:
+      - "127.0.0.1:${MONERO_FUNDING_WALLET_HOST_PORT:?MONERO_FUNDING_WALLET_HOST_PORT is required}:18083"
+    volumes:
+      - "${MONERO_FUNDING_WALLET_CONFIG:?MONERO_FUNDING_WALLET_CONFIG is required}:/run-config/wallet.conf:ro"
+      - funding_wallet_data:/var/lib/monero-wallet
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+    networks: [monero_private]
+    depends_on: [monerod]
+    user: "65532:65532"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    cpus: 1.0
+    mem_limit: 1g
+    stop_grace_period: 30s
+
+  maker_wallet:
+    image: "${MONERO_IMAGE:?MONERO_IMAGE is required}"
+    entrypoint: ["/usr/local/bin/monero-wallet-rpc"]
+    command: ["--config-file=/run-config/wallet.conf"]
+    environment:
+      HOME: /tmp
+    labels:
+      org.logos-co.atomic-swaps.run: "${RUN_ID:?RUN_ID is required}"
+      org.logos-co.atomic-swaps.scope: monero-regtest-e2e
+      org.logos-co.atomic-swaps.component: maker-wallet-rpc
+    ports:
+      - "127.0.0.1:${MONERO_MAKER_WALLET_HOST_PORT:?MONERO_MAKER_WALLET_HOST_PORT is required}:18083"
+    volumes:
+      - "${MONERO_MAKER_WALLET_CONFIG:?MONERO_MAKER_WALLET_CONFIG is required}:/run-config/wallet.conf:ro"
+      - maker_wallet_data:/var/lib/monero-wallet
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+    networks: [monero_private]
+    depends_on: [monerod]
+    user: "65532:65532"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    cpus: 1.0
+    mem_limit: 1g
+    stop_grace_period: 30s
+
+  taker_wallet:
+    image: "${MONERO_IMAGE:?MONERO_IMAGE is required}"
+    entrypoint: ["/usr/local/bin/monero-wallet-rpc"]
+    command: ["--config-file=/run-config/wallet.conf"]
+    environment:
+      HOME: /tmp
+    labels:
+      org.logos-co.atomic-swaps.run: "${RUN_ID:?RUN_ID is required}"
+      org.logos-co.atomic-swaps.scope: monero-regtest-e2e
+      org.logos-co.atomic-swaps.component: taker-wallet-rpc
+    ports:
+      - "127.0.0.1:${MONERO_TAKER_WALLET_HOST_PORT:?MONERO_TAKER_WALLET_HOST_PORT is required}:18083"
+    volumes:
+      - "${MONERO_TAKER_WALLET_CONFIG:?MONERO_TAKER_WALLET_CONFIG is required}:/run-config/wallet.conf:ro"
+      - taker_wallet_data:/var/lib/monero-wallet
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+    networks: [monero_private]
+    depends_on: [monerod]
+    user: "65532:65532"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    cpus: 1.0
+    mem_limit: 1g
+    stop_grace_period: 30s
+
+networks:
+  monero_private:
+    name: "${MONERO_NETWORK:?MONERO_NETWORK is required}"
+    external: true
+
+volumes:
+  monerod_data:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=65532,gid=65532,mode=0700,noexec,nosuid,nodev,size=1073741824"
+    labels:
+      org.logos-co.atomic-swaps.run: "${RUN_ID:?RUN_ID is required}"
+      org.logos-co.atomic-swaps.scope: monero-regtest-e2e
+      org.logos-co.atomic-swaps.component: monerod-data
+  funding_wallet_data:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=65532,gid=65532,mode=0700,noexec,nosuid,nodev,size=268435456"
+    labels:
+      org.logos-co.atomic-swaps.run: "${RUN_ID:?RUN_ID is required}"
+      org.logos-co.atomic-swaps.scope: monero-regtest-e2e
+      org.logos-co.atomic-swaps.component: funding-wallet-data
+  maker_wallet_data:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=65532,gid=65532,mode=0700,noexec,nosuid,nodev,size=268435456"
+    labels:
+      org.logos-co.atomic-swaps.run: "${RUN_ID:?RUN_ID is required}"
+      org.logos-co.atomic-swaps.scope: monero-regtest-e2e
+      org.logos-co.atomic-swaps.component: maker-wallet-data
+  taker_wallet_data:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=65532,gid=65532,mode=0700,noexec,nosuid,nodev,size=268435456"
+    labels:
+      org.logos-co.atomic-swaps.run: "${RUN_ID:?RUN_ID is required}"
+      org.logos-co.atomic-swaps.scope: monero-regtest-e2e
+      org.logos-co.atomic-swaps.component: taker-wallet-data

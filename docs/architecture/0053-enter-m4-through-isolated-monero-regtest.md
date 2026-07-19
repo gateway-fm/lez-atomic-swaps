@@ -1,7 +1,8 @@
 # ADR 0053: Enter M4 through isolated Monero Regtest
 
-Status: Accepted as the M4 progressive local-PoC entry decision. No XMR
-functional evidence is claimed by this ADR.
+Status: Accepted. The official-node Regtest topology and locally mined
+wallet-to-wallet funding checkpoint are executable and evidenced. No atomic
+LEZ/XMR swap is claimed yet.
 
 ## Context
 
@@ -11,12 +12,14 @@ outputs: an XMR LEZ claim update, a full LEZ/XMR SDK including partial-loss
 recovery, DLEQ conformance evidence, the U9 stagenet node guide, three D1 XMR
 videos, and a self-hosted stagenet `monerod` CI lane.
 
-At M4 entry, the repository has only pair vocabulary, a generic LEZ-refund
-event gate, SQLite phase replay, and CLI direction validation. It has no XMR
-SDK, DLEQ or adaptor implementation, typed Monero evidence, node adapter,
-reference actor, `monerod` or wallet-RPC topology, actual Monero transaction,
-M4 CI lane, operator guide, or retained evidence. Synthetic `ChainProof`
-strings and arbitrary 32-byte `ClaimEvidence` markers are not M4 evidence.
+At M4 entry, the repository had only pair vocabulary, a generic LEZ-refund
+event gate, SQLite phase replay, and CLI direction validation. The first
+checkpoint now adds the bounded DLEQ scalar/point/proof boundary plus a
+reproducible official `monerod` and three-wallet topology. It still has no
+complete adaptor lifecycle, Monero node adapter, role actor, revealing LEZ
+claim, reconstructed Monero spend, or atomic-swap evidence. Synthetic
+`ChainProof` strings, arbitrary 32-byte `ClaimEvidence` markers, and the
+bootstrap wallet transfer are not M4 swap evidence.
 
 The named `comit-network/cross-curve-dleq` repository is archived, calls itself
 a proof of concept, carries no license declaration or license file, and points
@@ -60,12 +63,120 @@ status are closed. The existing `musig2` adaptor machinery may be reused only
 through an explicit XMR transcript mapping; no new curve arithmetic is written.
 
 Official Monero CLI 0.18.5.1 supplies `monerod` and `monero-wallet-rpc`. The
-runner verifies the canonical signed hash list and archive SHA-256, then runs
-one offline `monerod --regtest --fixed-difficulty 1` plus separate authenticated
+runner verifies a retained copy of the canonical clearsigned hash list, its
+pinned signer key and fingerprint, the archive SHA-256 and size, source tag
+object and commit, exact binary members, and version output, then runs one
+offline `monerod --regtest --fixed-difficulty 1` plus separate authenticated
 funding, Maker, and Taker wallet RPC processes. Every port is selected
 dynamically and published only on loopback. Wallet and chain directories are
 run-scoped and distinct. Test funds are mined locally, so the PoC uses no peer,
 public RPC, faucet, public funds, or external finality service.
+
+Monero's own v0.18.5.1 functional harness starts ordinary-network wallets
+against Regtest with `--allow-mismatched-daemon-version`. The runner uses the
+equivalent config option and asserts `fakechain`, not mainnet, testnet, or
+stagenet, before creating any wallet. The four loopback endpoints are
+transports to real official processes; they do not emulate consensus or wallet
+behavior. The daemon executes fakechain consensus rules and LMDB state, the
+official wallets scan blocks and construct a real ring transaction, and the
+runner requires daemon/wallet tip agreement, exact transaction confirmation,
+and unlocked balances.
+
+## Executable topology checkpoint
+
+Run `m4-monero-poc-20260719c` exercised this exact component and RPC topology.
+The bridge is non-masquerading so containers have no public egress, while only
+authenticated RPC ports are published on kernel-selected literal-loopback
+ports. P2P and ZMQ are not published.
+
+```mermaid
+flowchart LR
+    Operator["Operator or CI"]
+    Runner["M4 Monero runner"]
+    Verify["Release verifier"]
+    Archive["Official archive cache"]
+    GitTag["Monero source tag"]
+
+    subgraph Host["Literal loopback RPC boundary"]
+        DaemonRpc["Daemon RPC"]
+        FundingRpc["Funding wallet RPC"]
+        MakerRpc["Maker wallet RPC"]
+        TakerRpc["Taker wallet RPC"]
+    end
+
+    subgraph Bridge["Run-owned non-masquerading bridge"]
+        Monerod["Official monerod 0.18.5.1"]
+        FundingWallet["Official funding wallet RPC"]
+        MakerWallet["Official Maker wallet RPC"]
+        TakerWallet["Official Taker wallet RPC"]
+        ChainStore[("Monero fakechain tmpfs")]
+        FundingStore[("Funding wallet tmpfs")]
+        MakerStore[("Maker wallet tmpfs")]
+        TakerStore[("Taker wallet tmpfs")]
+    end
+
+    Operator --> Runner
+    Runner --> Verify
+    Archive --> Verify
+    GitTag --> Verify
+    Verify --> Runner
+    Runner --> DaemonRpc
+    Runner --> FundingRpc
+    Runner --> MakerRpc
+    Runner --> TakerRpc
+    DaemonRpc --> Monerod
+    FundingRpc --> FundingWallet
+    MakerRpc --> MakerWallet
+    TakerRpc --> TakerWallet
+    FundingWallet --> Monerod
+    MakerWallet --> Monerod
+    TakerWallet --> Monerod
+    Monerod --> ChainStore
+    FundingWallet --> FundingStore
+    MakerWallet --> MakerStore
+    TakerWallet --> TakerStore
+```
+
+The bootstrap flow is an infrastructure gate, not the swap flow:
+
+```mermaid
+sequenceDiagram
+    actor Operator
+    participant Runner
+    participant Verifier
+    participant Daemon as monerod Regtest
+    participant Funding as Funding wallet RPC
+    participant Maker as Maker wallet RPC
+    participant Taker as Taker wallet RPC
+
+    Operator->>Runner: Start with unique run ID
+    Runner->>Verifier: Verify signed release and source identity
+    Verifier-->>Runner: Verified binaries and provenance
+    Runner->>Daemon: Start offline fakechain
+    Runner->>Funding: Start with provisioner credential
+    Runner->>Maker: Start with Maker-only credential
+    Runner->>Taker: Start with Taker-only credential
+    Runner->>Taker: Try Maker credential
+    Taker-->>Runner: HTTP 401
+    Runner->>Funding: Create isolated funding wallet
+    Runner->>Maker: Create isolated Maker wallet
+    Runner->>Taker: Create isolated Taker wallet
+    Runner->>Daemon: Mine 100 blocks to funding wallet
+    Runner->>Funding: Transfer 10 XMR to Maker and Taker
+    Runner->>Daemon: Mine policy of 10 confirmations
+    Runner->>Funding: Refresh and require final height
+    Runner->>Maker: Refresh and require unlocked 10 XMR
+    Runner->>Taker: Refresh and require unlocked 10 XMR
+    Runner->>Runner: Seal evidence and exact cleanup
+```
+
+The measured clean run passed at height 111 in 53 seconds before cleanup:
+30 seconds release verification, 3 seconds image and topology readiness, and
+20 seconds wallet bootstrap and assertions. All four processes used read-only
+roots, UID/GID 65532, dropped capabilities, `no-new-privileges`, distinct
+tmpfs stores, and distinct credentials. Maker credentials received HTTP 401
+from the Taker endpoint. Cleanup removed the exact four containers, four
+volumes, network, and image while a foreign sentinel survived.
 
 ```mermaid
 flowchart LR
@@ -101,8 +212,6 @@ flowchart LR
     Bridge --> Sequencer
     Bridge --> Indexer
     Sequencer --> Bedrock
-    Maker --> Daemon
-    Taker --> Daemon
     Maker --> MakerWallet
     Taker --> TakerWallet
     Run --> FundingWallet

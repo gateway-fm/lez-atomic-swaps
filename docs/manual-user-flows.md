@@ -2281,6 +2281,143 @@ Secret files must be regular non-symlinks with no group/other permission bits;
 the signer file is exactly 64 lowercase hexadecimal characters. Omit the
 test-only `--shutdown-on-stdin` flag so the process waits for Ctrl-C.
 
+## Flow 0: M4 official Monero Regtest topology
+
+This flow reproduces the current M4 actual-node infrastructure checkpoint. It
+starts one official Monero 0.18.5.1 `monerod`, plus independent funding,
+Maker, and Taker `monero-wallet-rpc` processes. It mines local Regtest funds,
+submits a real two-destination Monero transaction, requires ten confirmations
+and unlocked 10 XMR balances, seals evidence, and cleans only its run-owned
+resources.
+
+It is deliberately **not** an atomic-swap demonstration. The M4 happy PoC still
+needs the DLEQ-bound revealing LEZ claim, extracted share, reconstructed Monero
+spend, fresh role actors, and both terminal stores.
+
+Prerequisites are Docker with Compose v2, Bash, Curl, jq, Git, GnuPG, OpenSSL,
+Perl, ripgrep, and standard archive/hash tools. Use a fresh lowercase run ID:
+
+```sh
+export RUN_ID=m4-manual-monero-20260719a
+./scripts/run-monero-e2e.sh
+```
+
+The first run downloads the 84,575,716-byte official archive if it is not
+already in `.e2e/cache/monero-0.18.5.1`. If the exact archive already exists
+elsewhere, avoid another download without bypassing any verification:
+
+```sh
+export RUN_ID=m4-manual-monero-20260719b
+export MONERO_ARCHIVE_PATH=/absolute/path/monero-linux-x64-v0.18.5.1.tar.bz2
+./scripts/run-monero-e2e.sh
+```
+
+The runner still verifies the retained clearsigned hash manifest, pinned signer
+fingerprint, archive SHA-256 and size, source tag object and peeled commit,
+exact binary members and both version strings. It refuses reused run state or
+Docker resources. A successful default run prints the runtime evidence path,
+then removes the exact containers, four tmpfs volumes, bridge, sentinel, build
+context, and image. Verify the packet with:
+
+```sh
+EVIDENCE=".e2e/${RUN_ID}/monero/evidence"
+jq '{
+  result,
+  chain,
+  isolation,
+  local_funding,
+  timings_seconds,
+  runtime_external_resources
+}' "$EVIDENCE/runtime.json"
+jq . "$EVIDENCE/cleanup.json"
+(
+  cd "$EVIDENCE"
+  sha256sum --check critical-evidence.sha256
+)
+```
+
+Expected facts are `result == "passed"`, `nettype == "fakechain"`,
+`offline == true`, zero peers, equal daemon/wallet heights, four
+literal-loopback authenticated RPC bindings, Maker-to-Taker credential status
+401, ten confirmations, unlocked 10 XMR Maker and Taker outputs,
+`runtime_external_resources == []`, exact resource absence, and foreign
+sentinel survival. Run `m4-monero-poc-20260719c` measured 53 seconds before
+cleanup: 30 seconds provenance verification, 3 seconds image/topology
+readiness, and 20 seconds wallet work. The 110 generated blocks use fixed local
+difficulty; tests do not wait for public Monero block time.
+
+To inspect the live official processes manually, opt in to keep-running mode:
+
+```sh
+export RUN_ID=m4-manual-monero-live-20260719a
+export MONERO_E2E_KEEP_RUNNING=1
+./scripts/run-monero-e2e.sh
+source ".e2e/${RUN_ID}/monero/run.env"
+```
+
+The manifest is mode 0600 and contains no password, only exact endpoints,
+credential-file paths, Compose values, and cleanup names. Query each role only
+with its own credential file:
+
+```sh
+printf '%s' '{"jsonrpc":"2.0","id":"manual","method":"get_info"}' |
+  curl --config "$MONERO_DAEMON_CREDENTIAL_FILE" \
+    --data-binary @- "$MONERO_DAEMON_ENDPOINT/json_rpc" |
+  jq '.result | {
+    version,
+    nettype,
+    offline,
+    height,
+    incoming_connections_count,
+    outgoing_connections_count
+  }'
+
+printf '%s' '{"jsonrpc":"2.0","id":"manual","method":"get_balance"}' |
+  curl --config "$MONERO_MAKER_CREDENTIAL_FILE" \
+    --data-binary @- "$MONERO_MAKER_WALLET_ENDPOINT/json_rpc" |
+  jq '.result | {balance, unlocked_balance, blocks_to_unlock}'
+```
+
+The future Maker and Taker processes receive only their role wallet credential;
+they never receive the daemon or funding credentials. When finished, remove
+only the names loaded from that owner-only manifest:
+
+```sh
+docker compose \
+  --project-name "$MONERO_COMPOSE_PROJECT" \
+  --file "$MONERO_COMPOSE_FILE" \
+  down --volumes --remove-orphans
+docker network rm "$MONERO_NETWORK"
+docker image rm "$MONERO_IMAGE"
+```
+
+Keep-running mode is exploratory and does not create a cleanup attestation.
+Run the default mode once for certification evidence.
+
+### Monero external resources and flakiness
+
+Runtime chain resources are empty: no public Monero RPC, P2P peer, faucet,
+public funds, stagenet, DNS checkpoint, bootstrap daemon, or external finality
+service participates. Loopback is only the authenticated transport to real
+official daemon and wallet processes; blocks, scans, transaction construction,
+inclusion, confirmations, and balances are executed by Monero itself.
+
+Cold setup can depend on three HTTPS resources:
+
+1. the exact official Monero archive when the local cache is empty;
+2. the pinned distroless runtime image digest when Docker has not cached it;
+3. the Monero Git repository for the live exact-tag identity recheck.
+
+The signed hash list and signer key are retained in the repository, so their
+mutable upstream URLs are not a run dependency. Cold setup can still fail on
+DNS, TLS, registry/download availability, or source-host availability. A
+verified archive cache removes the largest 85 MB transfer but does not bypass
+signature, hash, size, member, binary, or version checks. Host Docker startup,
+temporary loopback port races, and wallet scan readiness are bounded and fail
+closed; every new attempt requires a new run ID. Public stagenet latency,
+reorgs, funding services, quotas, and peer behavior are not measured by this
+local checkpoint and remain explicit M4 closure work.
+
 ## Flow 1: maker operator CLI and daemon restart
 
 The executable acceptance fixture is the quickest exact reproduction:

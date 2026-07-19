@@ -119,6 +119,16 @@ for compose_file in "${compose_files[@]}"; do
   BITCOIN_CORE_IMAGE=lez-atomic-swaps-bitcoin-core:ci-quality \
   BITCOIN_CORE_CONFIG=/tmp/lez-bitcoin-core-ci-quality.conf \
   BITCOIN_CORE_NETWORK=lez-atomic-swaps-bitcoin-core-ci-quality-network \
+  MONERO_IMAGE=lez-atomic-swaps-monero:ci-quality \
+  MONERO_NETWORK=lez-atomic-swaps-monero-ci-quality-network \
+  MONERO_DAEMON_CONFIG=/tmp/lez-monero-ci-quality-daemon.conf \
+  MONERO_FUNDING_WALLET_CONFIG=/tmp/lez-monero-ci-quality-funding.conf \
+  MONERO_MAKER_WALLET_CONFIG=/tmp/lez-monero-ci-quality-maker.conf \
+  MONERO_TAKER_WALLET_CONFIG=/tmp/lez-monero-ci-quality-taker.conf \
+  MONERO_DAEMON_HOST_PORT=39001 \
+  MONERO_FUNDING_WALLET_HOST_PORT=39002 \
+  MONERO_MAKER_WALLET_HOST_PORT=39003 \
+  MONERO_TAKER_WALLET_HOST_PORT=39004 \
     "$compose" --project-name "lez-ci-quality-${RANDOM}" \
       --file "$compose_file" config --quiet
 done
