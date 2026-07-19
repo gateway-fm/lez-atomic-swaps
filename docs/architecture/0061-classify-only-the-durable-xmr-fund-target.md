@@ -1,9 +1,11 @@
 # ADR 0061: Classify only the durable XMR Fund target
 
-Status: Accepted as an M4 finalized-evidence component checkpoint. The exact
-Taker `FundNative` classifier is component-GREEN against a synthetic
-`FinalizedIndexerApi`. It is not actual local-devnet evidence, a release
-authority, or a claim PoC.
+Status: Accepted as an M4 finalized-evidence component checkpoint and extended
+by ADR 0065. The exact Taker `FundNative` classifier is component-GREEN
+against a synthetic `FinalizedIndexerApi`; ADR 0065 consumes the resulting
+opaque capability into the public typed release issuer and exact signed
+deadline. This is not actual local-devnet evidence, node publication, finality,
+or a claim PoC.
 
 ## Context
 
@@ -64,11 +66,11 @@ flowchart LR
     State --> Repin
     Repin --> Found["Authenticated Found facts"]
     Repin --> Nonaffirmative["Uncertain or typed Unavailable"]
-    Found -.-> Issuer["Typed Stage-B release issuer<br/>pending"]
+    Found --> Issuer["Typed Stage-B release issuer<br/>ADR 0065 component green"]
 ```
 
-Only the synthetic trait-backed component edge is solid in current tests. The
-actual local indexer and typed release-issuer edges remain composition work.
+The synthetic trait-backed classifier and typed issuer edges are solid in
+component tests. The actual local-indexer edge remains composition work.
 
 ## Outcome semantics
 
@@ -99,7 +101,7 @@ sequenceDiagram
     participant Route as Authenticated sidecar route
     participant Store as Durable Taker reservation
     participant Indexer as FinalizedIndexerApi
-    participant Issuer as Stage-B issuer pending
+    participant Issuer as Typed release issuer
 
     Taker->>Route: Classify exact prepared Fund target
     Route->>Store: Reload and validate owner run runtime terms and bytes
@@ -112,7 +114,7 @@ sequenceDiagram
         Route->>Indexer: Re-read candidate final tip and requested end
         alt One stable exact match
             Route-->>Taker: Found with authenticated finalized facts
-            Route-->>Issuer: Future consumed capability edge only
+            Route->>Issuer: Move opaque Fund capability with Stage B and other evidence
         else Exact target missing
             Route-->>Taker: Uncertain never Absent
         else Evidence unavailable moving or conflicting
@@ -130,7 +132,7 @@ The focused authenticated component journey proves durable restart recovery,
 positive exact `Found`, missing-to-`Uncertain`, fully absent accounts remaining
 `Uncertain`, typed finality/history/moving/conflicting results, canonical-fact
 rejection, Taker-only ownership, and zero sends. The full official v0.2 sidecar
-suite passes 137 of 137 tests and strict Clippy passes.
+suite passes 138 of 138 tests and strict Clippy passes.
 
 The test indexer is a synthetic implementation of `FinalizedIndexerApi`. The
 checkpoint therefore does not prove:
@@ -138,7 +140,7 @@ checkpoint therefore does not prove:
 - a positive classification against the actual local LEZ v0.2 indexer;
 - a real finalized Taker Fund transaction on a local devnet;
 - discovery or classification for any other XMR effect;
-- a typed Stage-B issuer, consuming release publisher, or live replay
+- a dedicated tag-14 node route, returned-ID verification, or live replay
   prevention;
 - Monero-to-LEZ claim-partial publication, actor execution, or a completed
   swap; or
@@ -148,9 +150,10 @@ checkpoint therefore does not prove:
 
 The sidecar now has a fail-closed exact finalized-Fund evidence component, so
 later release integration does not need to trust a caller's transaction bytes
-or treat one missing scan as absence. The next happy-path gate must execute the
-same route against the actual isolated LEZ v0.2 indexer, consume its `Found`
-facts with exact Stage B and the independently verified Monero observation,
-and feed the sealed release journal through a typed issuer and consuming
-publisher/outcome boundary. Until that composition is actual-node tested, no
-M4 claim PoC or live one-shot authority is claimed.
+or treat one missing scan as absence. ADR 0065 now consumes synthetic `Found`
+evidence with exact Stage B, the independently verified Monero observation,
+topology, and prepared authorization into the sealed journal. The next
+happy-path gate must execute the classifier against the actual isolated LEZ
+v0.2 indexer, obtain a genesis-bound finalized clock, publish through the
+dedicated node route, verify the returned ID, and classify finality. Until that
+composition executes, no M4 claim PoC or live one-shot authority is claimed.

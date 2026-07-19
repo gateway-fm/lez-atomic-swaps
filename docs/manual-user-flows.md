@@ -2342,15 +2342,18 @@ main-process adapter separately has a Taker-only Stage-B claim-authorization
 capability. It re-derives exact Stage B, verifies the committed partial and
 signed runtime before wire, and mints private-field non-`Clone` evidence only
 after one authenticated success. Its literal-loopback server is a mock; ADR
-0063 separately proves the official ABI-validating builder. The private
-schema-v3 release-authority crate passes 29 tests. Its internal publisher binds
-the expected publication ID, elects one CAS winner, samples finalized time
+0063 separately proves the official ABI-validating builder. The public
+schema-v3 release-authority crate passes 32 tests. Its authenticated-loopback
+integration consumes the exact Fund, authorization, output, and topology
+capabilities, derives the `[finalized Fund time, signed refund time)` interval,
+persists the expected publication ID, and authenticates identical state after
+restart. Its internal publisher elects one CAS winner, samples finalized time
 again after the CAS, and terminalizes admitted, ambiguous, or proven no-send
-outcomes without retry. Its issuer, clock, and transport remain in-process
-seams or unwired. Actual-local-indexer evidence, a concrete authenticated LEZ
-node transport, identical checked-guest deadline enforcement, finality,
-Stage-B-bound durable one-shot claim-partial release, fresh role actors, and
-both terminal stores are still required before an atomic happy PoC.
+outcomes without retry. The finalized clock and submission transport remain
+in-process seams. Actual-local-indexer evidence, a genesis-bound finalized
+clock, a concrete authenticated LEZ node transport with returned-ID
+verification, finality, fresh role actors, and both terminal stores are still
+required before an atomic happy PoC.
 
 Reproduce the checked LEZ artifact and focused host boundaries with a fresh run
 ID. The optional shared tool directory below is safe only when it already
@@ -2380,6 +2383,8 @@ RUSTDOCFLAGS="-D warnings" cargo doc --locked -p lez-bridge-adapter \
   --no-deps --all-features
 cargo fmt --manifest-path crates/lez-bridge-adapter/Cargo.toml --all -- --check
 
+CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=2 cargo test --locked \
+  -p lez-xmr-release-authority --test xmr_claim_release_public --all-features
 CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=2 cargo test --locked \
   -p lez-xmr-release-authority --all-targets --all-features
 CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=2 cargo clippy --locked \
@@ -2415,11 +2420,21 @@ cargo test --locked \
 git diff --check
 ```
 
-The release-authority command must report 29 passed and zero failed. Its
-owner-private temporary SQLite files and finalized-clock/submission transports
-exist only inside the test process. It makes no Docker, node, chain RPC, peer,
-faucet, public-fund, or external-finality call. This verifies the internal
-state machine; it is not a manual transaction publication or swap.
+The focused public-boundary command must report `running 1 test` and one
+passed; the full release-authority command must report 32 passed and zero
+failed. The focused case mints finalized Fund and prepared authorization
+capabilities through authenticated bridge loopbacks, mints exact output and
+topology capabilities through typed authenticated Monero loopbacks, then calls
+the public issuer. It must assert Prepared state, publication ID `[70; 32]`,
+the exact `[12_500, 20_000)` finalized-Fund/signed-refund interval, and an
+identical authenticated restart load. Its temporary journal parent is
+mode-`0700` and SQLite is mode-`0600`.
+All transports and RPC services exist only inside the test process. It makes no
+Docker, actual node, chain RPC, peer, faucet, public-fund, or external-finality
+call. It proves typed preparation and exact upper-deadline derivation, not
+manual publication, authorization finality, an actor flow, or a swap. The
+consuming prepared-byte extraction assumes a trusted single-process PoC and
+must move into a dedicated release service before production.
 
 The focused authorization command must report 3 of 3 authenticated tests. A
 successful exact Stage-B request makes one authenticated route call and returns
@@ -2436,7 +2451,7 @@ They must prove exact tag 14, account order, sole depositor signer,
 Fund-plus-one nonce, commitment mismatch rejection, missing/corrupt durable
 state rejection, byte-identical restart/cache replay, generic submission
 rejection, and zero sequencer sends. Together these are still preparation
-evidence: they prove no externally usable journal authority, actual-node
+evidence: they prove no externally usable submission authority, actual-node
 effect, or claim PoC.
 
 The focused classifier command must report `running 1 test`,
@@ -2467,7 +2482,7 @@ observation/topology tests, 20 of 20 scoped planner/route regressions, and the
 final three XMR test binaries currently pass. The topology capability closes
 the configured-auth residual only for local Regtest; it is not public/Stagenet trust, Stage-B release authority, or a claim
 PoC. The focused sidecar commands cover the retained v2 route set and the three XMR
-preparation/route binaries. They require one exact Taker preparation result, six typed `Unavailable`
+preparation/route binaries. They require one exact Taker preparation result, five typed `Unavailable`
 builder results outside the happy classifier route, and the focused synthetic
 exact-`Fund` classification matrix described above. The preparation result is
 checked and restart-replayed exact transaction bytes only; neither it nor the

@@ -1,11 +1,17 @@
 //! Durable Stage-B-bound at-most-once release authority.
 //!
-//! Production Stage-B, finalized-LEZ, and topology evidence issuers remain
-//! intentionally opaque gaps. This crate supplies encrypted publication storage
-//! and the crash-safe compare-and-swap journal they will feed.
+//! A concrete issuer consumes validated Stage B, canonical finalized LEZ Fund
+//! evidence, an exact Monero output observation, and its authenticated topology
+//! attestation before it can feed encrypted publication storage and the
+//! crash-safe compare-and-swap journal. Live finalized-clock, node-submission,
+//! claim-finality, and actor integration remain pending.
 //!
 //! # `PoC` trust and rollback preconditions
 //!
+//! The cross-crate prepared-authorization extraction is accepted only for the
+//! trusted single-process `PoC`. The generic sidecar route rejects it and node
+//! access stays isolated; production moves extraction into a dedicated release
+//! service so the actor never receives signed authorization bytes.
 //! This journal is safe only on one trusted local filesystem under one service
 //! UID, with one canonical journal path and no concurrent clone, restore, or
 //! backup rollback. Owner-private modes and `NOFOLLOW` reject many accidental
@@ -665,8 +671,10 @@ fn validate_ciphertext_length(length: usize) -> Result<(), ProtectionError> {
     }
 }
 
+mod issuer;
 mod store;
 
+pub use issuer::XmrClaimReleasePreparationError;
 pub use store::{ReleaseError, ReleaseSnapshot, ReleaseState, ReleaseStore, ReleaseWindow};
 
 #[cfg(test)]

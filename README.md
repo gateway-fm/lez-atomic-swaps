@@ -99,14 +99,19 @@ test is an authenticated literal-loopback mock with zero external resources.
 The official sidecar builder independently validates the generated ABI,
 canonical transaction, signature, accounts, nonce, and durable replay. The
 adapter and builder are still preparation capabilities: no actual-node effect
-or claim PoC is claimed. The private schema-v3 release-authority crate passes
-29 of 29 tests. Its internal publisher authenticates the expected publication
-ID, elects one Prepared-to-Started CAS winner, samples finalized LEZ time again
-after the CAS, and terminalizes admission, ambiguity, or a proven no-send
-without retry. This remains an unwired in-process transport scaffold: generic
-sidecar submission stays closed, and no concrete issuer, LEZ node RPC,
-checked-guest deadline binding, finality observer, actor, or actual swap is
-present. The observation
+or claim PoC is claimed. The schema-v3 release-authority crate now passes 32 of
+32 tests. Its public preparation integration mints finalized Fund, prepared
+authorization, Monero output, and authenticated topology capabilities through
+their real loopback factories, consumes all four, proves the exact
+`[finalized Fund time, signed refund_at)` interval, and reloads the identical
+authenticated Prepared snapshot after restart. No caller supplies a deadline,
+publication ID, bytes, or status. The internal publisher separately proves one
+CAS winner, post-CAS finalized-time suppression, matching-ID admission,
+ambiguity, and observe-only restart against in-process seams. Generic sidecar
+tag-14 submission stays closed. Dedicated finalized-clock and node routes,
+authorization finality, actors, and an actual swap remain absent. The trusted
+single-process byte extraction is a PoC residual; production requires a
+dedicated release-service process. The observation
 is deliberately not claim-partial release authority. The one-command topology
 runner starts one offline
 `monerod` Regtest daemon plus independently authenticated funding, Maker, and
@@ -138,10 +143,10 @@ RUN_ID=m4-readme-monero-20260719a ./scripts/run-monero-e2e.sh
 Measured run `m4-monero-poc-20260719c` passed in 53 seconds before cleanup
 with no public RPC, peer, faucet, public funds, stagenet, or external finality
 service. This is infrastructure evidence, not an atomic swap: LEZ submission,
-the five remaining sidecar builders, actual-local-indexer classification and
-finalized LEZ capability, concrete issuer/node/finality integration of the
-internal journal publisher, exact claim/refund
-adaptation, and fresh terminal role actors remain the next happy-path slice.
+the five remaining sidecar builders, actual-local-indexer classification, a
+genesis-bound finalized clock, dedicated node publication with returned-ID
+verification, authorization finality, exact claim/refund adaptation, and fresh
+terminal role actors remain the next happy-path slice.
 The route-boundary checkpoint includes 20 of 20 scoped planner/route regressions
 plus the final three XMR tests, strict Clippy, formatting, and diff checks. The
 exact components/RPCs and both target and bootstrap sequences are in
@@ -164,7 +169,10 @@ CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=2 cargo test --locked \
   -p lez-xmr-release-authority --all-targets --all-features
 ```
 
-The artifact run opens no chain RPC, faucet, peer, or public endpoint after
+The release-authority suite uses authenticated literal-loopback HTTP fixtures
+and a temporary owner-private SQLite journal. It makes no chain, public RPC,
+faucet, peer, or external-network call. The checked-artifact run likewise opens
+no chain RPC, faucet, peer, or public endpoint after
 setup. A cold cache can still require pinned circuits, Cargo/Git sources, the
 digest-pinned Docker builder, and Risc0 release tools. The shared tool directory
 above must already contain the exact verified tools; omit it for an isolated

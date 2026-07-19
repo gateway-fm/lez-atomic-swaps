@@ -2148,28 +2148,30 @@ flowchart LR
     BridgeProtocol -->|binds exact tags and effects| Guest["XMR guest source tags 13 through 17"]
     Guest --> CheckedArtifact["Checked local M4 guest<br/>ELF dc370bc...b7292<br/>ImageID 4d6590...2c82"]
     CheckedArtifact -->|five recursive branch tests| Transfer["Authenticated native transfer"]
-    XmrActor -.-> Issuer["Typed Stage-B release issuer<br/>pending"]
-    XmrObservation["Origin-retaining non-cloneable XMR observation<br/>component green"] --> Resource["Internal stable-resource algorithm<br/>implemented but unwired"]
-    Resource -.-> Issuer
-    Topology["Run/chain/origin-bound topology capability<br/>16 adapter tests green"] -.-> Issuer
-    FundClassifier -.-> Issuer
-    Issuer -.-> ReleaseStore["Sealed release journal schema v3<br/>29 component tests green"]
+    XmrActor -.-> Issuer["Public typed Stage-B release issuer<br/>component green"]
+    XmrObservation["Origin-retaining non-cloneable XMR observation<br/>component green"] --> Resource["Internal stable-resource identity<br/>used by typed issuer"]
+    XmrObservation --> Issuer
+    ClaimEvidence --> Issuer
+    Topology["Run/chain/origin-bound topology capability<br/>16 adapter tests green"] --> Issuer
+    FundClassifier --> Issuer
+    SignedDeadline["Stage A signed refund time<br/>same exclusive guest deadline"] --> Issuer
+    Issuer --> ReleaseStore["Sealed release journal schema v3<br/>32 component tests green"]
     ReleaseStore --> Journal[("Dedicated-UID private SQLite<br/>single canonical PoC journal")]
     ReleaseStore --> Publisher["Internal transaction-scoped publisher<br/>mock transport only"]
     Publisher --> TestClock["In-process finalized clock seam"]
     Publisher --> TestSubmit["In-process submission seam"]
     Publisher -.-> NodeTransport["Authenticated LEZ node transport<br/>pending"]
     NodeTransport -.-> BridgeRuntime
-    CheckedDeadline["Checked-guest exclusive deadline<br/>binding pending"] -.-> NodeTransport
     XmrObservation --> WalletRpc["Credential-configured wallet RPCs"]
     WalletRpc --> Monerod["Official monerod Regtest"]
     WalletRpc --> Topology
     Monerod --> Topology
 ```
 
-The internal publisher is not exposed to actors. Its finalized-clock and
-submission capabilities are in-process test seams. Concrete actual-node
-capabilities and an issuer that binds all prerequisite evidence remain pending;
+The public issuer consumes all prerequisite opaque evidence and writes through
+the private raw plan into the internal publisher; the publisher itself is not
+exposed to actors. Its finalized-clock and submission capabilities remain
+in-process test seams. Concrete actual-node capabilities remain pending, and
 an admitted test outcome is not chain finality.
 
 The completed adapter capability has a narrower component sequence than the
@@ -2374,28 +2376,35 @@ unavailable. No positive actual-local-indexer evidence or claim PoC exists, and
 the preparation route creates no chain state.
 
 The workspace now also contains the sealed `lez-xmr-release-authority`
-foundation. Its 29 tests cover schema-v3 exact binary identities, authenticated
-publication ID, immutable-output resource ID, later-tip observation updates,
-semantic restart with unchanged randomized ciphertext, one local CAS winner,
-post-CAS time suppression, admitted or ambiguous terminal outcomes, tamper,
-and owner-private path invariants. Every started restart is observe-only. Its
-release plan and issuer remain private; finalized-clock and submission
-transports are in-process test seams. It assumes one host, dedicated UID, one
-mode-`0700` directory and mode-`0600` canonical journal, no backup/restore
-or clone, and no hostile same-UID WAL/SHM race. AEAD and HMAC do not prevent
-rollback of an older valid journal.
+foundation and its public opaque-evidence issuer. Its 32 tests cover schema-v3
+exact binary identities, authenticated publication ID, immutable-output
+resource ID, later-tip observation updates, semantic restart with unchanged
+randomized ciphertext, one local CAS winner, post-CAS time suppression,
+admitted or ambiguous terminal outcomes, tamper, and owner-private path
+invariants. The public integration test obtains Fund, authorization, Monero
+output, and topology capabilities through authenticated loopback factories,
+derives the exact `[finalized Fund time, signed refund time)` interval, and
+authenticates the same snapshot after reopening SQLite. Every started restart
+is observe-only. The raw release plan and publisher remain private;
+finalized-clock and submission transports are in-process test seams. It assumes
+one host, dedicated UID, one mode-`0700` directory and mode-`0600`
+canonical journal, no backup/restore or clone, and no hostile same-UID WAL/SHM
+race. AEAD and HMAC do not prevent rollback of an older valid journal.
 
-The typed main-process claim-authorization capability and official builder are
-not externally usable submission or journal authority. The remaining builders,
-actual-local-indexer evidence, concrete Stage-B issuer, authenticated LEZ node
-transport and returned-ID verification, identical checked-guest deadline,
-finality and definitive-absence handling, role actors, and composed E2E remain
-pending. The component tests do not establish live replay prevention or a claim
-PoC; admitted is not finalized. The Monero observation does not prove
-old-output unspent state from a view-only wallet.
+The typed main-process claim-authorization capability and official builder now
+feed the journal through the issuer, but are not node-submission authority.
+Because Rust has no cross-crate friend visibility, the consuming extraction is
+a trusted-single-process PoC seam; production requires a dedicated
+release-service process and UID so actors never receive authorization bytes.
+The remaining builders, actual-local-indexer evidence, authenticated LEZ node
+transport and returned-ID verification, finality and definitive-absence
+handling, role actors, and composed E2E remain pending. The component tests do
+not establish live replay prevention or a claim PoC; admitted is not finalized.
+The Monero observation does not prove old-output unspent state from a view-only
+wallet.
 The separate topology capability closes credential-configuration and peerless
 origin binding only for the local Regtest PoC; it is not public/Stagenet trust,
-Stage-B release authority, or a claim PoC. Maintained `monero-rpc` lacks the two
+node publication authority, or a claim PoC. Maintained `monero-rpc` lacks the two
 topology methods, so the project-owned bounded adapter remains a production and
 upstream-review item. The additive v3 protocol and all 44
 legacy bridge protocol cases are green. The checked artifact uses no runtime

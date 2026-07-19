@@ -85,10 +85,10 @@ impl ReleaseStore {
     ///
     /// Failures before the compare-and-swap leave the journal prepared. The
     /// winner samples finalized time again and suppresses without a node call on
-    /// regression, expiry, or clock failure. The future concrete issuer must
-    /// also prove that the exact transaction's checked-guest validity predicate
-    /// has the same exclusive end; the post-CAS sample narrows but cannot
-    /// eliminate the final clock-to-node scheduling interval.
+    /// regression, expiry, or clock failure. The concrete issuer derives this
+    /// window's exclusive end from the same signed refund timestamp enforced by
+    /// the checked guest; the post-CAS sample narrows but cannot eliminate the
+    /// final clock-to-node scheduling interval.
     pub(crate) async fn publish_or_observe<T: XmrAuthorizationPublicationTransport>(
         &self,
         snapshot: ReleaseSnapshot,

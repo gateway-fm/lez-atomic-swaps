@@ -1,10 +1,11 @@
 # ADR 0059: Separate Monero observation from release authority
 
-Status: Accepted for M4; the Monero observation, local-Regtest topology
-attestation, LEZ first-lock mint boundary, and sealed release-journal storage
-foundation are component-executed. Positive actual-chain LEZ evidence, typed
-Stage-B issuer/publisher/outcome integration, and live release authority remain
-pending.
+Status: Accepted for M4 and extended by ADRs 0064 and 0065. The Monero
+observation, local-Regtest topology attestation, LEZ first-lock mint boundary,
+public typed issuer, signed exclusive-deadline binding, and sealed
+release-journal publisher are component-executed. Positive actual-chain LEZ
+evidence, node submission, finality, actor integration, and live release
+authority remain pending.
 
 ## Context
 
@@ -67,8 +68,8 @@ context/runtime/terms/effect/transaction echo, and complete protocol-valid
 transaction, instruction, metadata, custody, window, and finality facts. This
 capability still does not authorize claim-partial publication by itself.
 
-The Taker actor will consume that value by ownership into a dedicated release
-capability. Creation must atomically bind:
+The public typed issuer now consumes that value by ownership with the other
+opaque capabilities. Creation atomically binds:
 
 1. the exact Stage B activation commitment and swap ID;
 2. named Monero network/genesis, transaction, standard address, amount,
@@ -80,53 +81,51 @@ capability. Creation must atomically bind:
 6. a durable compare-and-swap state proving the observation has never been
    consumed for this activation.
 
-The completed authority must record the exact publication intent before the
-first send. A timeout or transport ambiguity must create no second-send
-authority: reopening must observe the exact finalized LEZ effect. Only
-definitive finalized absence inside the retained window plus the existing
-unsent durable authority may permit the initial attempt. The ADR 0060 sealed
-journal provides only the local storage state machine; it has no typed
-publisher, finalized observer, definitive-absence path, or live actor wiring.
+The completed issuer records the exact publication intent before any future
+first send. Its internal transaction-scoped publisher elects one CAS winner and
+uses a second finalized-time sample before opening exact bytes. A timeout or
+transport ambiguity creates no second-send authority; reopening remains
+observe-only. Exact finalized effect observation and definitive absence are not
+yet implemented. ADRs 0060, 0064, and 0065 now supply the typed issuer, local
+journal, exact signed upper deadline, and mock-transport publisher boundary.
+Live node transport, returned-ID verification against the official node,
+finality, definitive absence, and actor wiring remain pending.
 
 ```mermaid
 flowchart LR
-    StageB["Exact Stage B activation"] --> Gate["Durable one-shot release gate"]
-    LezLock["Finalized exact LEZ first lock"] --> Gate
-    Topology["Non-cloneable local topology attestation<br/>run chain origins and exact 401"] --> Gate
-    Observation["Non-cloneable exact Monero observation"] --> Gate
-    Hidden["Committed hidden claim partial"] --> Gate
-    Gate -.-> Store["Sealed release journal<br/>21 storage tests; typed gate unwired"]
-    Store -.->|"pending integration"| Authority["Claim publication authority"]
-    Authority --> Intent["Persist exact publication intent"]
-    Intent --> Send["At most one LEZ send"]
-    Send --> Finalized["Observe exact finalized authorization"]
+    StageB["Exact Stage B activation"] --> Issuer["Typed one-shot release issuer"]
+    LezLock["Opaque finalized exact LEZ first lock"] --> Issuer
+    Topology["Non-cloneable local topology attestation<br/>run chain origins and exact 401"] --> Issuer
+    Observation["Non-cloneable exact Monero observation"] --> Issuer
+    Hidden["Prepared authorization with committed partial"] --> Issuer
+    Deadline["Signed refund time<br/>same exclusive guest deadline"] --> Issuer
+    Issuer --> Store["Sealed release journal<br/>32 tests green"]
+    Store --> Publisher["Internal transaction-scoped publisher"]
+    Publisher -.-> Send["Dedicated tag 14 node route pending"]
+    Send -.-> Finalized["Exact authorization finality pending"]
 ```
 
 ```mermaid
 sequenceDiagram
-    actor Taker
-    participant Store as Role journal
+    actor Taker as Future Taker actor
     participant Xmr as Monero observation adapter
     participant Topology as Local topology verifier
     participant Lez as LEZ bridge
+    participant Issuer as Typed release issuer
+    participant Store as Sealed release journal
 
     Taker->>Xmr: Consume expected transaction address amount and profile
     Xmr-->>Taker: Non-cloneable canonical receipt observation
     Taker->>Topology: Prove exact run chain origins peers and foreign credential
     Topology-->>Taker: Non-cloneable local Regtest attestation
-    Taker->>Store: CAS Stage B plus LEZ lock plus RPC attestation plus observation
-    alt First exact activation consumption
-        Store-->>Taker: One-shot publication authority
-        Taker->>Store: Persist exact authorization transaction intent
-        Taker->>Lez: Submit exact bytes once
-        Lez-->>Taker: Finalized exact AuthorizeNativeXmrClaim effect
-        Taker->>Store: Commit finalized publication evidence
-    else Replayed observation or activation
-        Store-->>Taker: Reject without LEZ transport
-    else Reopen after ambiguous send
-        Store-->>Taker: Observe only with retained exact bytes and window
-        Taker->>Lez: Classify exact finalized effect
-    end
+    Taker->>Lez: Classify exact finalized Fund and prepare authorization
+    Lez-->>Taker: Two opaque non-cloneable capabilities
+    Taker->>Issuer: Move Stage B Fund authorization observation and topology
+    Issuer->>Issuer: Derive exact ID bytes commitments and signed deadline
+    Issuer->>Store: Persist encrypted Prepared intent
+    Store-->>Taker: Authenticated Prepared snapshot
+    Note over Store,Lez: Actual submission and returned-ID verification pending
+    Note over Store,Lez: Exact authorization finality and actor composition pending
 ```
 
 ## Atomicity consequence
@@ -144,33 +143,35 @@ branches.
 
 - The Monero adapter passes 16 of 16 tests across output observation, topology,
   authentication, body-bound, and binding cases, plus strict Clippy, strict
-  Rustdoc, formatting, and diff checks. This is a component checkpoint, not a
-  swap or release-authority checkpoint.
+  Rustdoc, formatting, and diff checks. The 32-test release-authority suite now
+  consumes both opaque Monero capabilities through the public typed issuer.
+  This remains a component checkpoint, not a swap or node-publication checkpoint.
 - The earlier configured-credential topology residual is closed for the
   isolated local Regtest PoC: authority now requires the exact 401 and peerless
   daemon facts rather than configuration alone. Public and Stagenet trust,
   malicious or compromised local processes, and upstream adapter review remain
   open.
-- The LEZ first-lock boundary passes 6 of 6 focused tests and all 89 adapter
-  package tests, strict Clippy, strict Rustdoc, and a compile-fail non-`Clone`
-  doctest. The focused fixture is canonical protocol evidence, not a full real
-  Stage-B fixture or actual-chain observation.
-- The current sidecar classifier returns only `HistoryUnavailable`, so the new
-  boundary cannot yet mint positive actual-chain evidence and does not establish
-  a claim PoC.
-- The private Regtest PoC may bind the attested peerless topology to a fresh
-  origin-retaining output observation. Neither capability is Stage-B release
-  authority, and their existence does not establish a claim PoC. Public RPC
-  remains rejected.
-- The ADR 0060 sealed journal passes 21 storage tests for stable-resource
-  identity, later-tip rescan, semantic restart, local CAS/ambiguity, tamper,
-  schema, and private paths. Its resource encoder, release plan, and
-  prepare/publication operations are internal and unwired. These tests do not
-  establish live replay prevention or a claim PoC.
-- Typed actor composition, publisher/outcome handling, finalized observation,
-  definitive absence, same-UID WAL/SHM defense, authenticated rollback
-  prevention, and the view-only already-spent regression remain work before the
-  claim-path PoC.
+- The LEZ first-lock boundary passes 6 of 6 focused tests within all 93 adapter
+  package tests, strict Clippy, strict Rustdoc, and non-`Clone` compile-fail
+  doctests. The issuer integration consumes the capability, but its classifier
+  fixture remains synthetic rather than actual-chain observation.
+- The sidecar classifier now returns exact `Found` against a synthetic finalized
+  indexer in the 138-test suite. It still cannot mint positive actual-local-chain
+  evidence and does not establish a claim PoC.
+- The public issuer binds the attested peerless topology to a fresh
+  origin-retaining output observation, exact Stage B, Fund evidence, and prepared
+  authorization. No individual capability is release authority, and their
+  component composition does not establish a claim PoC. Public RPC remains rejected.
+- The ADR 0060 journal, ADR 0064 publisher, and ADR 0065 issuer pass 32 tests for
+  typed public preparation, stable-resource identity, signed deadline, later-tip
+  rescan, semantic restart, local CAS/ambiguity, tamper, schema, and private
+  paths. The raw plan and publisher remain internal; finalized-clock and
+  submission transports remain in-process seams. These tests do not establish
+  live replay prevention or a claim PoC.
+- Typed actor composition, actual node publication/outcome handling, finalized
+  observation, definitive absence, same-UID WAL/SHM defense, authenticated
+  rollback prevention, and the view-only already-spent regression remain work
+  before the claim-path PoC.
 - Stagenet/production must preserve daemon trust flags and contain or replace
   the upstream malformed-block panic path. A reviewed key-image/spent-status
   mechanism or a formal fresh-output/one-shot argument is required for the

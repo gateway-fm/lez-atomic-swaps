@@ -1,9 +1,10 @@
 # ADR 0060: Seal the XMR release journal until typed integration
 
-Status: Accepted as an M4 storage-foundation checkpoint. The journal is
-component-GREEN and intentionally nonfunctional as an external release
-authority. Typed evidence issuers, publisher/outcome handling, definitive
-absence, sidecar composition, and claim-path execution remain pending.
+Status: Accepted as an M4 storage-foundation checkpoint and extended by ADRs
+0064 and 0065. The public typed issuer and internal publisher are
+component-GREEN in the 32-test authority suite. Actual node transport, finality,
+definitive absence, actor/sidecar composition, and claim-path execution remain
+pending.
 
 ## Context
 
@@ -28,35 +29,40 @@ WAL or shared-memory files.
 ## Decision
 
 Add `lez-xmr-release-authority` to the main Rust workspace as a sealed storage
-foundation. The crate compiles under the root package, lint, test, rustdoc, and
-cargo-deny policy. Its external surface can open and authenticate the journal
-and inspect protected snapshots, but the release plan, prepare operation,
-publication decision, publication attempt, ambiguous-outcome transition, and
-plaintext opening are crate-private. There is no public constructor that turns
-raw identifiers or caller-supplied chain facts into release authority.
+foundation, now extended through ADRs 0064 and 0065 under the root package,
+lint, test, rustdoc, and cargo-deny policy. Its raw release plan, publication
+decision, publication attempt, ambiguous-outcome transition, and plaintext
+opening remain crate-private. There is no public constructor that turns raw
+identifiers or caller-supplied chain facts into release authority.
 
-The temporary internal opening operation consumes its non-cloneable publication
-attempt. It is not a production publisher. A typed publisher must eventually
-consume that capability, retain exact submission identity, and return an
-outcome capability that can be reconciled with finalized chain evidence.
+The public issuer instead consumes exact opaque Fund, prepared authorization,
+Monero-output, and topology evidence plus validated Stage A and Stage B. It
+derives the release identity, bytes, commitments, and signed exclusive
+deadline. The internal transaction-scoped publisher consumes the protected
+attempt, retains exact submission identity, and records a terminal outcome;
+finalized chain reconciliation remains pending.
 
 ```mermaid
 flowchart LR
-    StageB["Exact Stage B capability<br/>pending"] -.-> Plan["Private typed release plan<br/>pending integration"]
-    LezLock["Finalized LEZ first-lock capability<br/>positive actual-chain path pending"] -.-> Plan
-    Topology["Run and RPC topology capability"] -.-> Plan
-    Observation["Origin-retaining Monero observation"] -.-> Encoder["Internal stable-resource encoder<br/>implemented but unwired"]
-    Encoder -.-> Plan
-    Hidden["Committed claim partial and exact transaction<br/>typed builder pending"] -.-> Plan
-    Plan -.-> Store["Sealed SQLite release journal<br/>21 storage tests green"]
-    Store -.-> Attempt["Non-cloneable consuming attempt<br/>crate-private"]
-    Attempt -.-> Publisher["Typed publisher and outcome<br/>pending"]
-    Publisher -.-> Chain["LEZ submission and finalized classification<br/>pending"]
+    StageB["Exact Stage B capability"] --> Issuer["Public typed release issuer"]
+    LezLock["Opaque finalized LEZ first-lock capability"] --> Issuer
+    Topology["Run and RPC topology capability"] --> Issuer
+    Observation["Origin-retaining Monero observation"] --> Encoder["Stable-resource identity"]
+    Encoder --> Issuer
+    Hidden["Prepared authorization with committed partial"] --> Issuer
+    Deadline["Signed refund time<br/>same exclusive guest deadline"] --> Issuer
+    Issuer --> Plan["Private typed release plan"]
+    Plan --> Store["Sealed SQLite release journal<br/>32 tests green"]
+    Store --> Publisher["Internal transaction-scoped publisher"]
+    Publisher --> TestTransport["In-process clock and submission seams"]
+    Publisher -.-> Node["Dedicated tag 14 node route pending"]
+    Node -.-> Chain["Exact finalized classification pending"]
 ```
 
-Solid storage behavior is tested in isolation. Every dotted edge remains
-composition work. In particular, the diagram does not show a functional claim
-path and does not claim live replay prevention.
+Solid issuer, storage, and mock-publisher behavior is tested in component
+isolation. Dotted edges remain actual-node composition work. The diagram does
+not show a functional claim path and does not claim live replay prevention or
+authorization finality.
 
 ## Stable resource and observation records
 
@@ -74,18 +80,17 @@ Every field is length-delimited. Daemon and wallet origins, containing block,
 confirmation count, stable tip hash, and stable tip height are excluded from
 the resource identity and retained in a separately authenticated mutable
 observation record. A later-tip rescan can therefore update the observation
-under the same stable resource ID and persisted ciphertext. Schema version 2
-makes the stable resource ID unique and stores exact 32-byte binary swap and run
-IDs under a unique pair.
+under the same stable resource ID and persisted ciphertext. Schema version 3
+makes the stable resource ID unique and stores the exact swap ID plus the
+domain-separated digest of the validated run ID under a unique pair.
 
-This algorithm is currently internal and unwired. Only a future typed adapter
-composition may construct its private release plan from
-`VerifiedMoneroOutputObservation`; tests do not make raw byte construction a
-supported external authority surface.
+The public issuer now applies this internal algorithm directly to
+`VerifiedMoneroOutputObservation`. Tests still do not make raw byte
+construction a supported external authority surface.
 
-The activation ID is the versioned SHA-256 of length-delimited exact binary swap
-and run IDs. Validation rejects zero IDs, a zero activation, or any activation
-that differs from that deterministic derivation.
+The activation ID is the versioned SHA-256 of the length-delimited exact swap ID
+and derived run digest. Validation rejects zero IDs, a zero activation, or any
+activation that differs from that deterministic derivation.
 
 ## Restart idempotency and local state
 
@@ -105,32 +110,37 @@ retry or definitive-absence transition.
 
 ```mermaid
 sequenceDiagram
-    participant Internal as Future typed caller
+    participant Caller as Authenticated integration or future actor
+    participant Issuer as Public typed release issuer
     participant Store as Sealed release journal
     participant Sqlite as Private SQLite file
-    participant Publisher as Typed publisher pending
+    participant Publisher as Internal transaction-scoped publisher
+    participant Node as Dedicated node route pending
 
-    Internal->>Store: Prepare exact immutable context and plaintext
+    Caller->>Issuer: Move Stage B and four opaque capabilities
+    Issuer->>Issuer: Derive ID bytes commitments resource and signed deadline
+    Issuer->>Store: Prepare private exact plan
     Store->>Sqlite: Begin immediate transaction and check identities
     alt First semantic insert
         Store->>Store: Generate random nonce and encrypt inside transaction
         Store->>Sqlite: Insert envelope authenticators and prepared state
-        Store-->>Internal: Authenticated non-cloneable snapshot
+        Store-->>Caller: Authenticated Prepared snapshot
     else Exact semantic restart
         Store->>Sqlite: Load and authenticate existing row
-        Store-->>Internal: Same persisted nonce and ciphertext
+        Store-->>Caller: Same persisted nonce and ciphertext
     else Plaintext context or resource drift
-        Store-->>Internal: Reject
+        Store-->>Caller: Reject
     end
-    Internal->>Store: Consume snapshot for publication
+    Store->>Publisher: Consume snapshot for publication
     Store->>Sqlite: Compare and swap prepared to publication-started
-    Store-->>Publisher: Crate-private consuming attempt
-    Note over Publisher: No typed publisher or finalized outcome exists yet
+    Publisher->>Publisher: Recheck finalized time and terminalize one outcome
+    Note over Publisher,Node: Actual node call returned-ID check and finality remain pending
 ```
 
-The test-only caller in this sequence is not exposed to downstream crates.
-Consequently, the CAS evidence is local storage evidence, not a live actor,
-sidecar, or chain replay-prevention result.
+The public issuer is exposed; the raw plan and publisher are not. The current
+happy integration reaches Prepared, while publisher tests use in-process seams.
+Consequently, the CAS evidence remains local component evidence, not a live
+actor, sidecar, node, or chain replay-prevention result.
 
 ## PoC deployment assumptions
 
@@ -157,8 +167,10 @@ restore a live PoC journal after publication has started.
 
 ## Evidence and nonclaims
 
-The component has 21 passing storage tests covering:
+The combined issuer, journal, and publisher component has 32 passing tests covering:
 
+- public preparation from four factory-minted opaque capabilities and validated
+  Stage A and Stage B with exact publication identity, signed window, and reload;
 - stable immutable resource identity and later-tip restart rescan;
 - cross-activation resource rejection inside the isolated journal;
 - semantic restart replay with unchanged persisted ciphertext;
@@ -176,24 +188,22 @@ the checkpoint is integrated. Root CI already selects the crate through its
 
 This evidence does not prove:
 
-- that a live actor can mint a release plan;
-- that the internal stable-resource encoder is wired to the observed output;
+- actual actor composition or live authenticated node publication;
 - live replay prevention across sidecars, processes, hosts, restored journals,
   or chain reorganizations;
-- finalized LEZ submission, publication outcome reconciliation, or definitive
-  absence;
+- finalized LEZ submission, authorization finality, or definitive absence;
 - safe retry after an ambiguous send;
 - a working claim, refund, punishment, or composed atomic swap; or
 - production readiness.
 
 ## Consequences and next gate
 
-The storage invariants can be reviewed independently without exposing a raw
-placeholder authority. The next integration must replace the private plan with
-concrete consumed Stage-B, finalized-LEZ, topology, observation, release-window,
-and exact publication types. It must also replace the temporary plaintext
-escape hatch with a typed consuming publisher and finalized outcome.
+The storage invariants remain independently reviewable without exposing a raw
+placeholder authority. ADRs 0064 and 0065 now provide the concrete opaque
+evidence issuer, exact signed release window, and typed consuming publisher.
+The next integration must replace in-process clock/submission seams with the
+genesis-bound finalized clock, dedicated official node route, returned-ID
+verification, and finalized outcome classification.
 
 Only an actual actor/sidecar/local-chain test may establish live one-shot
-behavior. Until then, ADR 0059's observation remains non-authoritative, the
-stable-resource algorithm remains internal, and no M4 claim PoC exists.
+behavior. Until then, no M4 claim PoC exists.

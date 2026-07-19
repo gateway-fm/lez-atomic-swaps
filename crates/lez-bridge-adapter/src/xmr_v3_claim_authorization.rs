@@ -13,6 +13,7 @@ use lez_bridge_protocol::{
 };
 use lez_swap_core::Participant;
 use lez_xmr_swap_sdk::{XmrActivatedAgreementV1, XmrAgreementV1, XmrAgreementV1Error};
+use std::fmt;
 use thiserror::Error;
 
 use crate::{LezBridgeAdapter, XmrLezBridgeBindingV3, XmrLezBridgeBindingV3Error};
@@ -28,7 +29,7 @@ use crate::{LezBridgeAdapter, XmrLezBridgeBindingV3, XmrLezBridgeBindingV3Error}
 /// fn requires_clone<T: Clone>() {}
 /// requires_clone::<PreparedXmrClaimAuthorizationEvidenceV3>();
 /// ```
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Eq, PartialEq)]
 #[must_use]
 pub struct PreparedXmrClaimAuthorizationEvidenceV3 {
     context: MessageContext,
@@ -36,6 +37,15 @@ pub struct PreparedXmrClaimAuthorizationEvidenceV3 {
     runtime: RuntimeDescriptor,
     terms: XmrNativeEscrowTermsV3,
     authorization: PreparedTransaction,
+}
+
+impl fmt::Debug for PreparedXmrClaimAuthorizationEvidenceV3 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedXmrClaimAuthorizationEvidenceV3")
+            .field("authority", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
 }
 
 impl PreparedXmrClaimAuthorizationEvidenceV3 {
@@ -60,9 +70,15 @@ impl PreparedXmrClaimAuthorizationEvidenceV3 {
         self.terms
     }
 
-    /// Exact prepared authorization transaction returned by the sidecar.
-    pub const fn authorization(&self) -> &PreparedTransaction {
-        &self.authorization
+    /// Consumes the linear capability and returns its exact prepared transaction.
+    ///
+    /// This is a trusted-single-process `PoC` escape hatch between workspace
+    /// crates, not a hostile-caller or production non-bypassability guarantee.
+    /// The generic sidecar route still rejects this transaction and the local
+    /// node route must remain isolated from the actor. Production moves this
+    /// extraction behind a dedicated release-service process.
+    pub fn into_unsubmitted_authorization(self) -> PreparedTransaction {
+        self.authorization
     }
 }
 

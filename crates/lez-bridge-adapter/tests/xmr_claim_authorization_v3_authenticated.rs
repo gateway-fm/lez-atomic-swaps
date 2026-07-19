@@ -449,7 +449,10 @@ async fn valid_stage_b_partial_routes_once_and_mints_exact_linear_capability() {
     assert_eq!(evidence.preparer(), Participant::Taker);
     assert_eq!(evidence.runtime(), &stage.runtime);
     assert_eq!(evidence.terms(), stage.binding.terms());
-    assert_eq!(evidence.authorization(), &authorization_transaction());
+    assert_eq!(
+        evidence.into_unsubmitted_authorization(),
+        authorization_transaction()
+    );
 }
 
 #[tokio::test]

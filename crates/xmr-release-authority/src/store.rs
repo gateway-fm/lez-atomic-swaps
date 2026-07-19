@@ -184,7 +184,7 @@ impl ReleaseSnapshot {
         self.activation
     }
 
-    /// Returns the exact binary Stage-B run identifier.
+    /// Returns the domain-separated digest of the validated Stage-B run ID.
     pub const fn run_id(&self) -> [u8; 32] {
         self.run_id
     }
@@ -212,6 +212,11 @@ impl ReleaseSnapshot {
     /// Returns the protected publication envelope retained across restart.
     pub const fn protected_intent(&self) -> &ProtectedPublicationIntent {
         &self.intent
+    }
+
+    /// Returns the official-decoder identity of the exact authorization.
+    pub const fn publication_id(&self) -> [u8; 32] {
+        self.publication_id
     }
 }
 
@@ -347,8 +352,9 @@ impl ReleaseStore {
 
     /// Durably prepares one semantic release plan.
     ///
-    /// This remains crate-private until concrete Stage-B, finalized-LEZ, topology,
-    /// release-window, and typed-publisher capabilities replace the internal plan.
+    /// The concrete XMR issuer is the sole production-compiled caller. Keeping
+    /// this raw plan crate-private prevents public construction from bypassing
+    /// Stage-B, finalized-Fund, topology, output, and deadline checks.
     /// The first randomized encryption occurs only after an immediate transaction
     /// proves that no semantic record already exists.
     #[allow(clippy::needless_pass_by_value, clippy::too_many_lines)]

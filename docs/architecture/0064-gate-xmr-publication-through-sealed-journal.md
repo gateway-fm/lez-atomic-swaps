@@ -1,8 +1,10 @@
 # ADR 0064: Gate XMR publication through the sealed journal
 
-Status: Accepted as an internal M4 component checkpoint. It remains unwired
-until concrete authenticated LEZ evidence and transport capabilities replace
-the private test boundary.
+Status: Accepted as an M4 component checkpoint and extended by ADR 0065. The
+public typed issuer now consumes opaque evidence into the private plan and
+binds its exclusive end to the signed checked-guest deadline. Actual-local
+finalized evidence, authenticated node transport, finality, and actor execution
+remain unwired.
 
 ## Context
 
@@ -43,57 +45,59 @@ sidecar submit route remains closed.
 
 ```mermaid
 flowchart LR
-    Observation["Origin-bound Monero observation"] -.-> Issuer["Concrete typed release issuer pending"]
-    Topology["Run-bound RPC topology capability"] -.-> Issuer
-    Fund["Actual finalized LEZ Fund evidence pending"] -.-> Issuer
-    StageB["Stage-B authorization evidence"] -.-> Issuer
-    Issuer -.-> Plan["Private exact release plan"]
+    Observation["Origin-bound Monero observation"] --> Issuer["Typed release issuer<br/>ADR 0065 component green"]
+    Topology["Run-bound RPC topology capability"] --> Issuer
+    Fund["Opaque finalized Fund evidence<br/>synthetic classifier fixture"] --> Issuer
+    StageB["Stage-B authorization evidence"] --> Issuer
+    Deadline["Signed refund time<br/>same exclusive guest deadline"] --> Issuer
+    Issuer --> Plan["Private exact release plan"]
     Plan --> Store["Schema-v3 sealed release store"]
     Store --> Journal["Owner-private canonical SQLite journal"]
     Store --> Publisher["Internal transaction-scoped publisher"]
     Publisher --> TestClock["In-process finalized clock seam"]
     Publisher --> TestTransport["In-process submission seam"]
     Publisher -.-> NodeTransport["Authenticated LEZ node transport pending"]
-    NodeTransport -.-> Guest["Checked-guest deadline binding pending"]
+    NodeTransport -.-> Finality["Exact authorization finality pending"]
     Generic["Generic sidecar submit"] -.-> Rejected["Authorization remains rejected"]
 ```
 
-Solid edges are implemented and exercised in component tests. Dashed edges are
-required integration boundaries. The in-process transport is a test seam, not
-an RPC implementation or public authority.
+Solid edges are implemented and exercised in the 32-test issuer/journal suite.
+Dashed edges are required actual-node integration boundaries. The in-process
+transport is a test seam, not an RPC implementation or public node authority;
+the consuming extraction remains a trusted-single-process PoC boundary.
 
 ## Publication sequence
 
 ```mermaid
 sequenceDiagram
-    participant TakerActor as Future Taker actor
+    participant Release as Trusted release-service boundary
     participant Store as Sealed release store
     participant Clock as Finalized LEZ clock
     participant Node as Concrete LEZ transport
 
-    TakerActor->>Store: Publish authenticated snapshot
+    Release->>Store: Publish issuer-prepared authenticated snapshot
     Store->>Store: Verify context state and protected intent
     Store->>Clock: Read initial finalized timestamp
     alt Initial clock unavailable or outside window
-        Store-->>TakerActor: Fail while record remains Prepared
+        Store-->>Release: Fail while record remains Prepared
     else Initial clock is eligible
         Store->>Store: Compare and swap Prepared to Started
         alt Another process already won
-            Store-->>TakerActor: Observe only
+            Store-->>Release: Observe only
         else This process won
             Store->>Clock: Read decisive finalized timestamp
             alt Window no longer valid
                 Store->>Store: Record Suppressed
-                Store-->>TakerActor: Suppressed with zero node calls
+                Store-->>Release: Suppressed with zero node calls
             else Decisive clock is eligible
                 Store->>Store: Open exact protected transaction
                 Store->>Node: Submit exact bytes once
                 alt Expected identifier returned
                     Store->>Store: Record Admitted
-                    Store-->>TakerActor: Admitted but not finalized
+                    Store-->>Release: Admitted but not finalized
                 else Error or different identifier
                     Store->>Store: Record Ambiguous
-                    Store-->>TakerActor: Observe only after restart
+                    Store-->>Release: Observe only after restart
                 end
             end
         end
@@ -116,8 +120,8 @@ This checkpoint preserves the release side as far as one local journal can:
 
 These properties are necessary but insufficient for a complete atomic swap.
 The post-CAS sample narrows but cannot eliminate the final scheduling interval
-between clock read and node admission. The concrete issuer must prove that the
-exact checked-guest transaction enforces the identical exclusive deadline. The
+between clock read and node admission. ADR 0065 proves that the issuer uses the
+same signed exclusive deadline enforced by the exact checked guest. The
 concrete transport must obtain the official transaction identifier from the
 actual authenticated node response. Finalized claim classification, definitive
 absence, actor restart, and the signed-refund and punishment branches remain
@@ -130,8 +134,10 @@ older valid database.
 
 ## Evidence
 
-The component suite passes 29 of 29 tests. It covers:
+The combined typed-issuer and journal suite passes 32 of 32 tests. It covers:
 
+- public authenticated-loopback preparation from all four opaque capabilities,
+  exact publication identity and window, and authenticated restart reload;
 - accepted and already-known admission across reopen;
 - initial clock failure and exclusive-end rejection without a send;
 - post-CAS expiry suppression with zero node calls;
@@ -141,15 +147,17 @@ The component suite passes 29 of 29 tests. It covers:
   invariants inherited from ADR 0060; and
 - strict formatting, Clippy, Rustdoc, advisory, ban, license, and source gates.
 
-Tests use owner-private temporary SQLite files and an in-process transport seam.
-They use no Docker, node, chain RPC, peer, faucet, public funds, or external
-finality service. They prove zero actual swaps.
+Tests use owner-private temporary SQLite files, authenticated literal-loopback
+capability factories, and an in-process publication transport seam. They use no
+Docker, real node, public RPC, peer, faucet, public funds, or external finality
+service. They prove zero actual swaps.
 
 ## Next gate
 
-Mint the private plan only from exact Stage B, the origin-bound Monero
-observation, the run-bound topology capability, and actual local finalized Fund
-evidence. Then implement the authenticated LEZ clock and submission transport,
-verify the checked-guest deadline against the same window, classify finality,
-and compose the independent Taker actor. Add a crash or cancellation after the
-CAS process test during post-PoC hardening.
+ADR 0065 now mints the private plan only from exact Stage B, the origin-bound
+Monero observation, the run-bound topology capability, prepared authorization,
+and opaque finalized Fund evidence, with the exact signed exclusive deadline.
+The next gate is actual-local Fund evidence, a genesis-bound finalized clock,
+the dedicated tag-14 node route with returned-ID verification, exact
+authorization finality, and the independent Taker actor. Add a crash or
+cancellation after the CAS process test during post-PoC hardening.
