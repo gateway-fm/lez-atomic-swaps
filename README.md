@@ -82,7 +82,7 @@ before any indexer read, returns `Found` only after canonical/final metadata and
 custody checks plus candidate/tip/window repins, and keeps every missing case
 `Uncertain` rather than `Absent`. Its focused E2E is trait-backed with a
 synthetic finalized indexer, typed failure cases, and zero sequencer sends. The
-complete sidecar suite passes 138 of 138 with strict Clippy, warning-free
+complete sidecar suite passes 140 of 140 with strict Clippy, warning-free
 Rustdoc, and dependency policy. This is preparation and synthetic classification
 evidence, not submission, actual local-devnet classification, or actual-chain
 mutation. The main-process adapter separately exposes a Taker-only typed Stage-B
@@ -108,10 +108,13 @@ authenticated Prepared snapshot after restart. No caller supplies a deadline,
 publication ID, bytes, or status. The internal publisher separately proves one
 CAS winner, post-CAS finalized-time suppression, matching-ID admission,
 ambiguity, and observe-only restart against in-process seams. Generic sidecar
-tag-14 submission stays closed. Dedicated finalized-clock and node routes,
-authorization finality, actors, and an actual swap remain absent. The trusted
-single-process byte extraction is a PoC residual; production requires a
-dedicated release-service process. The observation
+tag-14 submission stays closed. The official sidecar now has a genesis-bound
+stable finalized-clock primitive, and bridge startup consumes it; exact-genesis
+success plus wrong-genesis and moving-tip rejection pass in the 140-test suite.
+Release-service clock wiring, the dedicated node route, authorization finality,
+actors, and an actual swap remain absent. The trusted single-process byte
+extraction is a PoC residual; production requires a dedicated release-service
+process. The observation
 is deliberately not claim-partial release authority. The one-command topology
 runner starts one offline
 `monerod` Regtest daemon plus independently authenticated funding, Maker, and
@@ -142,9 +145,11 @@ RUN_ID=m4-readme-monero-20260719a ./scripts/run-monero-e2e.sh
 
 Measured run `m4-monero-poc-20260719c` passed in 53 seconds before cleanup
 with no public RPC, peer, faucet, public funds, stagenet, or external finality
-service. This is infrastructure evidence, not an atomic swap: LEZ submission,
-the five remaining sidecar builders, actual-local-indexer classification, a
-genesis-bound finalized clock, dedicated node publication with returned-ID
+service. This is infrastructure evidence, not an atomic swap. The
+genesis-bound stable finalized-clock primitive is component-green and rejects
+a moving sample rather than returning stale deadline authority. LEZ submission,
+the five remaining sidecar builders, actual-local-indexer classification,
+release-service clock wiring, dedicated node publication with returned-ID
 verification, authorization finality, exact claim/refund adaptation, and fresh
 terminal role actors remain the next happy-path slice.
 The route-boundary checkpoint includes 20 of 20 scoped planner/route regressions

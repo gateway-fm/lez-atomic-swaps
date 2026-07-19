@@ -157,7 +157,8 @@ service. They prove zero actual swaps.
 ADR 0065 now mints the private plan only from exact Stage B, the origin-bound
 Monero observation, the run-bound topology capability, prepared authorization,
 and opaque finalized Fund evidence, with the exact signed exclusive deadline.
-The next gate is actual-local Fund evidence, a genesis-bound finalized clock,
-the dedicated tag-14 node route with returned-ID verification, exact
-authorization finality, and the independent Taker actor. Add a crash or
+ADR 0066 supplies the genesis-bound stable finalized-clock primitive and bridge
+readiness gate. The next gate is actual-local Fund evidence, release-service
+clock wiring, the dedicated tag-14 node route with returned-ID verification,
+exact authorization finality, and the independent Taker actor. Add a crash or
 cancellation after the CAS process test during post-PoC hardening.

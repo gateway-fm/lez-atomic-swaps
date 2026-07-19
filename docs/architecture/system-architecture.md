@@ -820,8 +820,8 @@ flowchart TB
     TLS2 -->|"official v0.2 JSON-RPC"| SQ
     MBR2 -->|"reveal forward; initialize and fund reverse"| SQ
     TBR2 -->|"initialize and fund forward; reveal reverse"| SQ
-    MBR2 -->|"non-genesis finalized-tip readiness"| IX
-    TBR2 -->|"non-genesis finalized-tip readiness"| IX
+    MBR2 -->|"stable finalized tip bound to runtime genesis"| IX
+    TBR2 -->|"stable finalized tip bound to runtime genesis"| IX
     M3FO -->|"bounded ID and hash blocks parent-linked through stable tip<br/>unique transcript + accounts at containing BlockId"| IX
     M3FF -->|"bounded ID and hash blocks parent-linked through stable tip<br/>canonical FundNative + historical Funded accounts"| IX
     M3F7R -->|"finalized candidate plus metadata, definition, and custody<br/>at one immutable containing BlockId"| IX
@@ -992,9 +992,12 @@ bound process boundary for prepare, observe, revealing claim, and submit. It
 requires an explicit nonzero loopback actor listener and private file inputs.
 Its outbound node profile accepts either explicit loopback HTTP sequencer and
 indexer URLs or the exact `https://testnet.lez.logos.co/` origin for both;
-mixed or generic remote routes fail before client construction. It gates
-startup on the official sequencer and indexer health calls, replays successful
-PREPARE results, re-executes observations and transient PREPARE failures, and
+mixed or generic remote routes fail before client construction. Startup binds
+the official finalized indexer to the configured runtime genesis through a
+stable exact sample; it does not contact or cross-bind the sequencer endpoint.
+Operation paths perform their own sequencer reads and bindings before relying
+on sequencer facts. The bridge replays successful PREPARE results, re-executes
+observations and transient PREPARE failures, and
 persists submit as unknown before node I/O. The authenticated bridge
 prepare-refund method reaches the internal durable planner, stores the canonical request/result, and reconstructs and compares it
 before a restarted server binds. The repeatable observe-refund method now uses
@@ -2159,6 +2162,10 @@ flowchart LR
     ReleaseStore --> Journal[("Dedicated-UID private SQLite<br/>single canonical PoC journal")]
     ReleaseStore --> Publisher["Internal transaction-scoped publisher<br/>mock transport only"]
     Publisher --> TestClock["In-process finalized clock seam"]
+    RuntimeGenesis["Immutable runtime genesis"] --> FinalizedClock["Stable finalized-clock primitive<br/>component green"]
+    ActualIndexer -->|"finalized ID and block by ID and hash"| FinalizedClock
+    FinalizedClock -.-> Publisher
+    NoteClock["Release-service connection pending"] -.-> FinalizedClock
     Publisher --> TestSubmit["In-process submission seam"]
     Publisher -.-> NodeTransport["Authenticated LEZ node transport<br/>pending"]
     NodeTransport -.-> BridgeRuntime
@@ -2170,9 +2177,10 @@ flowchart LR
 
 The public issuer consumes all prerequisite opaque evidence and writes through
 the private raw plan into the internal publisher; the publisher itself is not
-exposed to actors. Its finalized-clock and submission capabilities remain
-in-process test seams. Concrete actual-node capabilities remain pending, and
-an admitted test outcome is not chain finality.
+exposed to actors. Its clock and submission capabilities remain in-process
+test seams. The sidecar's separate official clock primitive is component-green
+but is not connected to the publisher until the release service owns that
+capability. An admitted test outcome is not chain finality.
 
 The completed adapter capability has a narrower component sequence than the
 still-pending actor flow:
@@ -2360,7 +2368,7 @@ return. Identical in-process, cached-server, and fresh-server replay revalidates
 both reservations and returns byte-identically; wrong partial, request drift,
 mutation, missing state, and nonce overflow fail closed. The generic submission
 route rejects these bytes and the node send counter remains zero. The complete
-sidecar suite is green across 138 of 138 tests with strict Clippy, warning-free
+sidecar suite is green across 140 of 140 tests with strict Clippy, warning-free
 Rustdoc, formatting, and advisory/ban/license/source policy.
 The exact `FundNative` classifier is now component-green behind the
 authenticated Taker-only route. It reloads and matches the durable reservation
@@ -2370,7 +2378,8 @@ metadata and custody, and re-pins the candidate, finalized tip, and requested
 end before returning `Found`. Missing is always `Uncertain`, never
 `Absent`; finality, history, moving-tip, and conflicting-match failures stay
 typed. The focused E2E uses a synthetic `FinalizedIndexerApi`, makes zero
-sends, and contributes to the full 138-of-138 sidecar pass with strict Clippy.
+sends. The separate exact-genesis stable-clock tests reject wrong genesis and
+tip movement, contributing to the full 140-of-140 sidecar pass with strict Clippy.
 The other five builders and non-Fund/discovery classification remain
 unavailable. No positive actual-local-indexer evidence or claim PoC exists, and
 the preparation route creates no chain state.
@@ -2385,21 +2394,25 @@ invariants. The public integration test obtains Fund, authorization, Monero
 output, and topology capabilities through authenticated loopback factories,
 derives the exact `[finalized Fund time, signed refund time)` interval, and
 authenticates the same snapshot after reopening SQLite. Every started restart
-is observe-only. The raw release plan and publisher remain private;
-finalized-clock and submission transports are in-process test seams. It assumes
-one host, dedicated UID, one mode-`0700` directory and mode-`0600`
-canonical journal, no backup/restore or clone, and no hostile same-UID WAL/SHM
-race. AEAD and HMAC do not prevent rollback of an older valid journal.
+is observe-only. The raw release plan and publisher remain private; its clock
+and submission transports are in-process test seams. The official sidecar
+clock separately binds finalized ID, genesis, and tip through exact ID/hash
+reads and rejects a moving sample; bridge readiness consumes it. The release
+publisher does not yet. The journal assumes one host, dedicated UID, one
+mode-`0700` directory and mode-`0600` canonical journal, no backup/restore or
+clone, and no hostile same-UID WAL/SHM race. AEAD and HMAC do not prevent
+rollback of an older valid journal.
 
 The typed main-process claim-authorization capability and official builder now
 feed the journal through the issuer, but are not node-submission authority.
 Because Rust has no cross-crate friend visibility, the consuming extraction is
 a trusted-single-process PoC seam; production requires a dedicated
 release-service process and UID so actors never receive authorization bytes.
-The remaining builders, actual-local-indexer evidence, authenticated LEZ node
-transport and returned-ID verification, finality and definitive-absence
-handling, role actors, and composed E2E remain pending. The component tests do
-not establish live replay prevention or a claim PoC; admitted is not finalized.
+The remaining builders, actual-local-indexer evidence, release-service clock
+wiring, authenticated LEZ node transport and returned-ID verification, finality
+and definitive-absence handling, role actors, and composed E2E remain pending.
+The component tests do not establish live replay prevention or a claim PoC;
+admitted is not finalized.
 The Monero observation does not prove old-output unspent state from a view-only
 wallet.
 The separate topology capability closes credential-configuration and peerless

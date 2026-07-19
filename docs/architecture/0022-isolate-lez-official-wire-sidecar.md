@@ -417,10 +417,11 @@ This dated reconciliation records the later implementation state. Canonical runs
 `5cf8c5...29c1`; both actor stores reached revision 4 `Completed`. Exact public
 chain/effect facts are retained in the
 [canonical certification packet](../evidence/m2-canonical-local-certification-20260714.json).
-The sidecars themselves use the indexer only for non-genesis finalized-tip
-health at startup and report that transaction finality is not observed by the
-PoC bridge. A separate run evidence auditor collected and bound the exact
-finalized transaction, block, and account facts after the effects.
+The sidecars now bind startup to an unchanged finalized indexer tip whose
+genesis equals the runtime descriptor, with exact block-by-ID/hash rereads and
+a final tip-ID equality check. This is chain identity/time evidence, not
+finality evidence for a submitted effect; a separate run evidence auditor
+still binds exact finalized transaction, block, and account facts.
 The v0.2 official-wire sidecars, authenticated
 role-isolated loopback bridges, independent schema-v3 actors, and both private
 local happy-path directions are GREEN. ADR 0028 records the added dormant

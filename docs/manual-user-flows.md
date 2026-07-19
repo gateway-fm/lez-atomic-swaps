@@ -836,7 +836,7 @@ local runner now reproduces either direction through `POC_DIRECTION`.
 | LEZ recursive execution costs | Exact checked guest replayed through production `V03State` transitions with nested authenticated-transfer and ATA/Token sessions | This measures deterministic local execution, not public-testnet fees or latency |
 | Provisional LEZ v0.2 executable lane | Exact SPEL PR #238 and LEZ v0.2.0 build a checked Risc0 escrow ELF in the digest-pinned Risc0 guest-builder, compile the generated typed client, and execute recursive native plus two-definition token claim/refund tests, including child-failure rollback. The fail-closed deployer submitted that exact artifact to the retained local v0.2 node | Canonical Docker ELF SHA-256 `c85055f6...c9d2e` and ImageID/ProgramId `5cf8c5a4...329c1` are GREEN and deployed in finalized local block 2582. Both independent corridor directions subsequently used only that ProgramId. No v0.2 public deployment, deployed-runtime CU evidence, cold clean-host replay, or maintainer approval is proved |
 | Full local LEZ v0.2 vertical slice | Clean exact source and artifacts run as digest-pinned Bedrock, non-standalone sequencer, and indexer on one unique no-masquerade bridge with dynamic loopback RPCs. Both actors claimed deterministic Vault allocations, the exact checked escrow deployed, maker initialized then funded 700 only after observing `Empty`, and taker claimed only after observing `Funded` | GREEN in retained run `m2poc-vertical-20260714a`: finalized Vault blocks 29/30, deployment block 51, native blocks 219/220/223, and terminal custody/maker/taker balances are recorded in `docs/evidence/m2-local-onboarding-20260714.json`. These PoC CLIs are not reference actors; no Zebra HTLC, cross-chain direction, restart proof, refund, or composed cleanup is claimed |
-| Official-wire LEZ v0.2 effect foundation | Exact upstream types and `lez-v02-bridge-poc` now serve live role-separated actor calls. Pushed `0861117` fixes exact claim absence; startup now uses bounded non-genesis finalized-tip readiness | 14o completed initialize/fund/revealing-claim and observation/submit. The bridge still asserts no finality itself; separate indexer evidence proves finalized blocks 264/265/266 |
+| Official-wire LEZ v0.2 effect foundation | Exact upstream types and `lez-v02-bridge-poc` now serve live role-separated actor calls. Pushed `0861117` fixes exact claim absence; startup now binds an unchanged finalized tip to runtime genesis through exact ID/hash reads | 14o completed initialize/fund/revealing-claim and observation/submit. Bridge startup now proves finalized-chain identity/time, while separate indexer evidence proves each effect in finalized blocks 264/265/266 |
 | Local reference-actor fixture readiness | `zec-local-poc-provision` queried retained Zebra, selected one stable mature maker output, built a dual-signed `TakerSellsLez` agreement, wrote separate `0700` maker/taker trees with `0600` files, reloaded both configs and activation material, and validated pair isolation | GREEN for fixture readiness only: `90819e4f...f76f:0`, 625000000 zatoshis, 104 confirmations at tip 104, agreement `b1291931...bb0ed`. The sidecars were not started or called; neither `activate` nor `drive` nor any HTLC/corridor effect ran. Its 1..256 LEZ discovery window is now stale and the retained files are not runnable corridor inputs |
 
 The following are **not complete yet**: Delivery/Chat-loss and process-kill
@@ -1666,13 +1666,16 @@ exec "$BRIDGE_BIN" \
   --authenticated-transfer-program-id "$AUTH_TRANSFER_PROGRAM_ID_HEX"
 ```
 
-Each process first verifies its runtime-derived signer and the official
-sequencer and indexer readiness gates. It then prints one readiness JSON line with
-the exact endpoint/run/runtime, sequencer observation contract
+Each process first verifies its runtime-derived signer/config and the official
+finalized-indexer readiness gate. Startup does not contact or cross-bind the
+configured sequencer; operation paths perform their own sequencer reads and
+bindings before relying on sequencer facts. Readiness JSON contains the exact
+endpoint/run/runtime, the operation-time sequencer observation contract
 `bounded_canonical_inclusion_and_same_tip_accounts`, indexer health
-`getLastFinalizedBlockId_non_genesis`, and finality
-`not_observed_by_this_poc_bridge`. The
-listener supports describe, prepare/observe native escrow, prepare/observe the
+`stable_finalized_tip_bound_to_runtime_genesis`, and finality
+`exact_genesis_bound_finalized_indexer_clock_available`. Genesis and tip are
+read by ID and hash, and a final tip-ID equality read rejects a moving sample.
+The listener supports describe, prepare/observe native escrow, prepare/observe the
 revealing claim, and exact submit. Successful PREPARE replies replay from the
 private request store; observations and transient PREPARE failures re-execute;
 submit persists unknown-before-I/O and never resends an ambiguous replay.
@@ -1682,10 +1685,11 @@ only its run-owned state during composed cleanup.
 Both role bridges completed both direction-derived sequences: `TakerSellsLez`
 in run 14o and `TakerSellsForeign` in reverse run 14c. In the former the taker
 deposits LEZ and the maker owns the revealing claim; in the latter the maker
-deposits LEZ and the taker owns the revealing claim. Bridge readiness remains
-deliberately not a finality proof. Manual completion must retain both readiness
-lines, accepted submissions, terminal actor state, Zcash effects, and separate
-indexer finality. The successful reverse initialize/fund/claim transactions are
+deposits LEZ and the taker owns the revealing claim. Bridge readiness is an
+exact finalized-chain identity/time proof, not finality evidence for any
+specific effect. Manual completion must retain both readiness lines, accepted
+submissions, terminal actor state, Zcash effects, and separate transaction
+finality from the indexer. The successful reverse initialize/fund/claim transactions are
 finalized in indexer blocks 641/642/643. M2 is certified at the
 local-functional PoC boundary. The owner has not entered M2 QA; M3 PoC work is
 active separately, and later M2 hardening remains outside this certification.

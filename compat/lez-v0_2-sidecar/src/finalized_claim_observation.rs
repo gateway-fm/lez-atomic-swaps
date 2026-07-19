@@ -218,6 +218,62 @@ pub(crate) async fn read_stable_finalized_window(
     })
 }
 
+/// Reads one fail-closed finalized clock whose indexer chain is bound to the
+/// runtime descriptor's exact genesis hash.
+///
+/// The finalized tip must remain unchanged for the complete sample. This
+/// avoids authorizing from an internally stale bracket; the checked guest
+/// remains the definitive deadline enforcement. The tip may advance after
+/// return, so callers must not claim an atomic clock-and-send snapshot.
+///
+/// # Errors
+///
+/// Returns a typed bridge error when the indexer is unavailable, the expected
+/// genesis or finalized block facts are invalid, or the finalized sample moves.
+pub async fn read_genesis_bound_finalized_clock(
+    indexer: &dyn FinalizedIndexerApi,
+    expected_genesis_hash: Hex32,
+) -> Result<ChainClock, BridgeRuntimeError> {
+    if expected_genesis_hash == Hex32::from_bytes([0; 32]) {
+        return Err(BridgeRuntimeError::InvalidObservation);
+    }
+    let finalized_before = indexer
+        .last_finalized_block_id()
+        .await?
+        .ok_or(BridgeRuntimeError::Unavailable)?;
+    if finalized_before < nssa::GENESIS_BLOCK_ID {
+        return Err(BridgeRuntimeError::InvalidObservation);
+    }
+
+    let genesis_before = read_finalized_block(indexer, nssa::GENESIS_BLOCK_ID).await?;
+    if genesis_before.header.hash.0 != *expected_genesis_hash.as_bytes() {
+        return Err(BridgeRuntimeError::InvalidObservation);
+    }
+    let tip_before = read_finalized_block(indexer, finalized_before).await?;
+    if tip_before.header.hash.0 == [0; 32] || tip_before.header.timestamp == 0 {
+        return Err(BridgeRuntimeError::InvalidObservation);
+    }
+
+    let genesis_after = read_finalized_block(indexer, nssa::GENESIS_BLOCK_ID).await?;
+    let tip_after = read_finalized_block(indexer, finalized_before).await?;
+    if genesis_after != genesis_before || tip_after != tip_before {
+        return Err(BridgeRuntimeError::MovingTip);
+    }
+    let finalized_after = indexer
+        .last_finalized_block_id()
+        .await?
+        .ok_or(BridgeRuntimeError::Unavailable)?;
+    if finalized_after != finalized_before {
+        return Err(BridgeRuntimeError::MovingTip);
+    }
+
+    Ok(ChainClock::new(
+        Hex32::from_bytes(tip_before.header.hash.0),
+        tip_before.header.block_id,
+        tip_before.header.timestamp,
+    ))
+}
+
 pub(crate) async fn read_fixed_finalized_window(
     indexer: &dyn FinalizedIndexerApi,
     window: lez_bridge_protocol::DiscoveryWindow,

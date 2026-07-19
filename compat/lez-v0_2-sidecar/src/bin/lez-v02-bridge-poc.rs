@@ -14,8 +14,8 @@ use anyhow::{Context as _, Result, bail, ensure};
 use clap::{Parser, ValueEnum};
 use lez_bridge_protocol::{Hex32, RunId, RuntimeDescriptor};
 use lez_v0_2_sidecar::{
-    BridgeRuntime, BridgeServerCapability, BridgeServerConfig, FinalizedIndexerApi,
-    NativeEscrowPlanner, OfficialIndexerRpc, OfficialNodeRpc, program_id_from_hex,
+    BridgeRuntime, BridgeServerCapability, BridgeServerConfig, NativeEscrowPlanner,
+    OfficialIndexerRpc, OfficialNodeRpc, program_id_from_hex, read_genesis_bound_finalized_clock,
     start_bridge_server, validate_loopback_http_endpoint,
 };
 use nssa::{AccountId, PrivateKey, PublicKey};
@@ -166,13 +166,12 @@ async fn execute(arguments: Arguments) -> Result<()> {
             .connect_indexer(&arguments.indexer_url)
             .context("connect official indexer")?,
     );
-    let finalized_block_id = indexer
-        .last_finalized_block_id()
-        .await
-        .context("official indexer finalized tip is unavailable")?
-        .context("official indexer has no finalized block")?;
+    let finalized_clock =
+        read_genesis_bound_finalized_clock(indexer.as_ref(), runtime.genesis_block_hash)
+            .await
+            .context("official indexer finalized clock is not bound to the runtime genesis")?;
     ensure!(
-        finalized_block_id >= 2,
+        finalized_clock.height >= 2,
         "official indexer has not finalized a non-genesis block"
     );
     let planner = Arc::new(NativeEscrowPlanner::new_durable(
@@ -204,8 +203,8 @@ async fn execute(arguments: Arguments) -> Result<()> {
             runtime: &runtime,
             node_profile: arguments.node_profile.as_str(),
             sequencer_observation: "bounded_canonical_inclusion_and_same_tip_accounts",
-            indexer_health: "getLastFinalizedBlockId_non_genesis",
-            finality: "exact_finalized_indexer_observation_available",
+            indexer_health: "stable_finalized_tip_bound_to_runtime_genesis",
+            finality: "exact_genesis_bound_finalized_indexer_clock_available",
         },
     )
     .context("encode readiness")?;

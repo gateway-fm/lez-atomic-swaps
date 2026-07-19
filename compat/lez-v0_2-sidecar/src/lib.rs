@@ -39,6 +39,7 @@ pub use bridge_server::{
 pub use finalized_claim_observation::{
     FinalizedIndexerApi, FinalizedWitnessedClaimObserver, FinalizedWitnessedFundingObserver,
     FinalizedWitnessedInitializationObserver, HistoricalAccount, OfficialIndexerRpc,
+    read_genesis_bound_finalized_clock,
 };
 pub use finalized_refund_observation::FinalizedWitnessedRefundObserver;
 pub use native_prepare::{

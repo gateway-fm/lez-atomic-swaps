@@ -2884,7 +2884,7 @@ prepared target before any indexer read, authenticates canonical finalized
 transaction plus metadata/custody facts, re-pins the candidate, tip, and window
 end, and returns missing as `Uncertain`, never `Absent`. Its focused E2E uses a
 synthetic trait-backed finalized indexer and zero sends; the complete sidecar
-suite passes 138 of 138 with strict Clippy, warning-free Rustdoc, and dependency
+suite passes 140 of 140 with strict Clippy, warning-free Rustdoc, and dependency
 policy. The main-process adapter is separately component-green. Its first-lock boundary
 derives exact v3 terms from validated Stage A and Stage B, rejects a non-Taker
 before transport, and mints private-field non-`Clone` finalized-`Fund` evidence
@@ -3040,7 +3040,7 @@ and 32-byte markers into chain authority.
   component-green: Taker-only ownership validates before indexer reads, canonical
   finalized transaction/metadata/custody facts and candidate/tip/window repins
   gate `Found`, missing stays `Uncertain`, typed failures are preserved, and zero
-  sends occur. The full sidecar suite passes 138 of 138 with strict Clippy,
+  sends occur. The full sidecar suite passes 140 of 140 with strict Clippy,
   warning-free Rustdoc, and dependency policy. The other five builders and
   non-Fund/discovery classification remain typed
   `Unavailable`; submission, actual-local-indexer evidence, and actual-node
@@ -3125,6 +3125,17 @@ of an older valid journal. The issuer is not wired to an actor or actual node,
 so this is neither live replay-prevention evidence nor a claim PoC. Production
 must move prepared-byte extraction into a dedicated release-service process.
 
+The pinned sidecar now exposes a reusable genesis-bound stable finalized-clock
+primitive. It reads the official indexer's finalized ID plus genesis and tip
+by both ID and hash, binds genesis to the immutable runtime, and rereads the
+complete sample. Wrong genesis, zero tip facts, or any tip movement fails
+closed; the bridge executable consumes it before readiness. Two focused tests
+and the complete 140-test sidecar suite pass. ADR 0066 records why strict
+movement rejection is required for deadline safety. The release-authority
+publisher still uses its in-process seam until the dedicated release service
+owns the sidecar capability and calls this boundary.
+
+
 The immediate critical path is now:
 
 1. connect the component-green exact-`Fund` classifier to the actual local
@@ -3143,12 +3154,13 @@ The immediate critical path is now:
    Pre-funding proof of hidden-partial validity remains a disclosed GW-M4-003
    production-review item;
 2. drive the now-green typed issuer with the first actual-local finalized Fund,
-   output observation, and topology capabilities. Replace the publisher's
-   in-process seams with a genesis-bound finalized-indexer clock and a dedicated
-   tag-14 node route that decodes official bytes and verifies the actual returned
-   ID; then classify the exact authorization as finalized and define
-   definitive-absence handling. Keep generic sidecar submission closed and move
-   prepared-byte ownership into a dedicated release service before production;
+   output observation, and topology capabilities. Connect the component-green
+   official finalized clock through the release-service boundary, then replace
+   the remaining submission seam with a dedicated tag-14 node route that decodes
+   official bytes and verifies the actual returned ID. Classify the exact
+   authorization as finalized and define definitive-absence handling. Keep
+   generic sidecar submission closed; the dedicated release service, not an
+   actor, owns the prepared bytes and sidecar capability;
 3. add fresh Maker/Taker role processes with durable share/effect records;
 4. compose the sole supported LEZ-first claim path through both actual local
    chains, then seal the happy-PoC evidence and manual reproduction.
@@ -3167,15 +3179,15 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The updated push ETA remains 3 to 5 focused engineering hours to the first
+The updated push ETA is 2.5 to 4.5 focused engineering hours to the first
 reproducible independent-actor claim-path PoC and 8 to 16 additional hours to
-the local claim/refund/punishment PoC. The concrete issuer and exact signed
-exclusive-deadline binding are now removed from the remaining list; the range
-does not shrink yet because actual-local indexer evidence, finalized-clock and
-dedicated node routes, official returned-ID verification, authorization
-finality, claim completion, and fresh actors dominate the next vertical slice.
-Mocked transports and checked recursive cases still do not count as runtime
-evidence.
+the local claim/refund/punishment PoC. The concrete issuer, exact signed
+exclusive-deadline binding, and genesis-bound finalized-clock primitive are
+now removed from the remaining list. Actual-local indexer evidence,
+release-service ownership, the dedicated node route, official returned-ID
+verification, authorization finality, claim completion, and fresh actors
+dominate the next vertical slice. Mocked transports and checked recursive
+cases still do not count as runtime evidence.
 GW-M4-001, GW-M4-002, and GW-M4-003 remain upstream production/review
 disclosures and do not block the private local implementation.
 

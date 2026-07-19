@@ -201,9 +201,10 @@ This evidence does not prove:
 The storage invariants remain independently reviewable without exposing a raw
 placeholder authority. ADRs 0064 and 0065 now provide the concrete opaque
 evidence issuer, exact signed release window, and typed consuming publisher.
-The next integration must replace in-process clock/submission seams with the
-genesis-bound finalized clock, dedicated official node route, returned-ID
-verification, and finalized outcome classification.
+ADR 0066 supplies the official genesis-bound stable finalized-clock primitive.
+The next integration must connect it through the release-service boundary and
+replace the remaining in-process submission seam with the dedicated official
+node route, returned-ID verification, and finalized outcome classification.
 
 Only an actual actor/sidecar/local-chain test may establish live one-shot
 behavior. Until then, no M4 claim PoC exists.
