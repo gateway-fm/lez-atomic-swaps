@@ -67,7 +67,7 @@ flowchart LR
     Generic["Generic sidecar submit"] -.-> Rejected["Authorization remains rejected"]
 ```
 
-Solid edges are implemented and exercised in the 32-test issuer/journal suite.
+Solid edges are implemented and exercised in the 35-test issuer/journal suite.
 Dashed edges are required actual-node integration boundaries. The in-process
 transport is a test seam, not an RPC implementation or public node authority;
 the consuming extraction remains a trusted-single-process PoC boundary.
@@ -140,7 +140,7 @@ older valid database.
 
 ## Evidence
 
-The combined typed-issuer and journal suite passes 32 of 32 tests. It covers:
+The combined typed-issuer and journal suite passes 35 of 35 tests. It covers:
 
 - public authenticated-loopback preparation from all four opaque capabilities,
   exact publication identity and window, and authenticated restart reload;

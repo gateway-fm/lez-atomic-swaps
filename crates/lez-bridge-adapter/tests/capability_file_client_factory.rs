@@ -12,9 +12,9 @@ use std::{
 
 use lez_bridge_adapter::{
     CapabilityFileBridgeClientFactory, CapabilityFileBridgeClientFactoryError,
-    FreshLezBridgeTransportFactory,
+    CapabilityFileXmrReleaseClientFactory, FreshLezBridgeTransportFactory,
 };
-use lez_bridge_client::BridgeClient;
+use lez_bridge_client::{BridgeClient, XmrReleaseClient};
 use lez_bridge_protocol::{Hex32, Participant, RunId, RuntimeCompatibility, RuntimeDescriptor};
 
 const CAPABILITY: &str = "factory-capability-0000000000000001";
@@ -39,6 +39,26 @@ fn every_transport_rereads_the_capability_and_builds_a_fresh_client() {
     let second: BridgeClient = factory.fresh_transport().expect("second fresh client");
 
     assert_eq!(format!("{first:?}"), format!("{second:?}"));
+}
+
+#[test]
+fn release_factory_constructs_only_the_narrow_taker_client_and_rereads_its_secret() {
+    let directory = TestDirectory::new("release-only");
+    let capability_file = directory.path().join("release-capability");
+    write_secret(&capability_file, CAPABILITY.as_bytes());
+    let factory = release_factory(&capability_file);
+
+    let first: XmrReleaseClient = factory.fresh_transport().expect("release client");
+    let rendered = format!("{factory:?} {first:?}");
+    assert!(!rendered.contains(CAPABILITY));
+    assert!(!rendered.contains(&capability_file.display().to_string()));
+
+    fs::write(&capability_file, b"invalid release capability")
+        .expect("rotate invalid release capability");
+    assert!(matches!(
+        factory.fresh_transport(),
+        Err(CapabilityFileBridgeClientFactoryError::InvalidCapability)
+    ));
 }
 
 #[test]
@@ -119,6 +139,17 @@ fn unix_capability_file_requires_exact_mode_0600_and_rejects_symlinks() {
 
     fs::set_permissions(&target, fs::Permissions::from_mode(0o600))
         .expect("restore exact private permissions");
+
+    let hard_link = directory.path().join("capability-hard-link");
+    fs::hard_link(&target, &hard_link).expect("create capability hard link");
+    for path in [&target, &hard_link] {
+        assert!(matches!(
+            factory(path).fresh_transport(),
+            Err(CapabilityFileBridgeClientFactoryError::UnsafeCapabilityFile)
+        ));
+    }
+    fs::remove_file(hard_link).expect("remove capability hard link");
+
     let link = directory.path().join("capability-link");
     symlink(&target, &link).expect("create capability symlink");
     assert!(matches!(
@@ -163,6 +194,24 @@ fn factory(path: &Path) -> CapabilityFileBridgeClientFactory {
             Hex32::from_bytes([0x13; 32]),
             Hex32::from_bytes([0x14; 32]),
             Hex32::from_bytes([0x15; 32]),
+        ),
+        Duration::from_secs(2),
+    )
+}
+
+fn release_factory(path: &Path) -> CapabilityFileXmrReleaseClientFactory {
+    CapabilityFileXmrReleaseClientFactory::new(
+        "http://127.0.0.1:31416",
+        path,
+        RunId::new("release-factory-test-run").expect("run id"),
+        RuntimeDescriptor::new(
+            Participant::Taker,
+            RuntimeCompatibility::LeeV0_2_0,
+            Hex32::from_bytes([0x21; 32]),
+            Hex32::from_bytes([0x22; 32]),
+            Hex32::from_bytes([0x23; 32]),
+            Hex32::from_bytes([0x24; 32]),
+            Hex32::from_bytes([0x25; 32]),
         ),
         Duration::from_secs(2),
     )

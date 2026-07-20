@@ -2,7 +2,7 @@
 
 Status: Accepted as an M4 storage-foundation checkpoint and extended by ADRs
 0064 and 0065. The public typed issuer and internal publisher are
-component-GREEN in the 32-test authority suite. Actual node transport, finality,
+component-GREEN in the 35-test authority suite. Actual node transport, finality,
 definitive absence, actor/sidecar composition, and claim-path execution remain
 pending.
 
@@ -52,7 +52,7 @@ flowchart LR
     Hidden["Prepared authorization with committed partial"] --> Issuer
     Deadline["Signed refund time<br/>same exclusive guest deadline"] --> Issuer
     Issuer --> Plan["Private typed release plan"]
-    Plan --> Store["Sealed SQLite release journal<br/>32 tests green"]
+    Plan --> Store["Sealed SQLite release journal<br/>35 tests green"]
     Store --> Publisher["Internal transaction-scoped publisher"]
     Publisher --> TestTransport["In-process clock and submission seams"]
     Publisher -.-> Node["Dedicated tag 14 node route pending"]

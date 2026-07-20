@@ -106,7 +106,7 @@ decoding, but this is not a claim of independent local semantic validation.
 
 The exact adapter package gates are:
 
-- 93 of 93 all-target, all-feature package tests;
+- 94 of 94 all-target, all-feature package tests;
 - 3 of 3 authenticated claim-authorization tests;
 - 2 of 2 doctests, including the compile-fail proof that the capability is not
   `Clone`;

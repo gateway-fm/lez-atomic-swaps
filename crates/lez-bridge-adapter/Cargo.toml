@@ -19,6 +19,7 @@ lez-swap-store = { version = "0.1.0", path = "../swap-store" }
 lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk" }
 lez-xmr-swap-sdk = { version = "0.1.0", path = "../xmr-swap-sdk" }
 thiserror = "2.0.18"
+rustix = { version = "1.1.4", features = ["process"] }
 
 [dev-dependencies]
 jsonrpsee = { version = "0.26.0", features = ["server"] }

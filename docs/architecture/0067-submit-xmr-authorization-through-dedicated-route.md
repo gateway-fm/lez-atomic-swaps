@@ -40,6 +40,13 @@ send CAS, it exact-compares the journal target and the client binding. The raw
 publisher transport, decrypted authorization, request construction, deadline,
 publication identity, and result mapping remain private to the authority crate.
 
+A release-service credential boundary now complements the wrapper.
+`CapabilityFileXmrReleaseClientFactory` can construct only the narrow client;
+fresh construction rereads the bearer through stable owner/mode/link/inode
+checks. The authority owns a matching zeroizing owner-private protection-key
+loader. These are process prerequisites, not proof that a dedicated process
+owns either secret.
+
 The sidecar keeps tag 14 outside `validate_owned_submission`. The dedicated
 route instead reloads and revalidates the exact durable authorization
 reservation, including run, Taker role, runtime, terms, Fund-plus-one nonce,
@@ -63,6 +70,10 @@ flowchart LR
     Authority --> ReleaseJournal[("Release CAS journal")]
     Authority --> Clock["Clock-only finalized indexer capability"]
     Authority --> Client["Release-intended XmrReleaseClient"]
+    BearerFile[("Owner-private bearer file<br/>stable loader green")] --> ReleaseFactory["Release-only client factory<br/>component green"]
+    ReleaseFactory --> Client
+    KeyFile[("Owner-private protection-key file<br/>stable loader green")] --> KeyLoader["Zeroizing key loader<br/>component green"]
+    KeyLoader --> Authority
     Clock -.->|"official actual-local wiring pending"| Indexer["LEZ finalized indexer"]
     Client -->|"dedicated v3 RPC"| Sidecar["Taker LEZ v0.2 sidecar"]
     Sidecar --> Planner["Durable authorization planner"]

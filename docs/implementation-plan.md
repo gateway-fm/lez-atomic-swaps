@@ -1,6 +1,6 @@
 # Living implementation plan
 
-Last updated: 2026-07-19
+Last updated: 2026-07-20
 
 This file is the delivery control document. It must change whenever scope,
 architecture, sequencing, risks, or acceptance evidence changes.
@@ -2906,14 +2906,14 @@ re-derives and compares exact Stage B, verifies the committed partial before
 wire, binds signed channel/genesis/runtime plus client run/role/runtime, and
 permits one authenticated call. Wrong partial, Stage B, binding, run, role, or
 runtime makes zero calls; wrong response context, terms, or empty bytes makes
-one then fails closed. The exact package passes 93 of 93 tests, the authenticated
+one then fails closed. The exact package passes 94 of 94 tests, the authenticated
 matrix 3 of 3, and 2 of 2 doctests include both non-`Clone` compile-fail proofs;
 strict Clippy, Rustdoc, formatting, and diff checks are green. The authenticated
 server is a literal-loopback mock; ADR 0063 separately proves the official
 ABI-validating builder and its durable no-submit boundary.
 The classifier can now return an exact synthetic `Found`, but no positive
 actual-local-indexer first-lock capability has been minted and no claim PoC
-exists. The `lez-xmr-release-authority` crate now passes 32 tests under schema
+exists. The `lez-xmr-release-authority` crate now passes 35 tests under schema
 v3, including one public-boundary integration that mints both bridge
 capabilities plus Monero observation and topology capabilities only through
 authenticated loopback factories. The concrete issuer consumes all four by
@@ -2939,6 +2939,14 @@ builders, actual-local-indexer classifier execution, actual-chain trusted
 finalized LEZ capability, actual-node submission, authorization finality
 observer, role actor, full swap, U9 guide, D1 videos, and stagenet CI evidence
 remain.
+
+The service credential prerequisite is now GREEN but is not a process claim.
+`CapabilityFileXmrReleaseClientFactory` constructs only the narrow client and
+rereads its bearer on every fresh attempt. The shared bearer loader and the
+release-authority protection-key loader both require the current UID, exact
+mode `0600`, one link, stable descriptor/path identity, bounded contents, and
+post-read metadata equality. Six factory tests plus three key-file tests cover
+bounds, rotation, hard links, symlinks, invalid material, and redaction.
 
 The standalone strict v3 bridge protocol binds nine additive methods and six
 finalized effects. The ordinary client exposes eight methods while the narrow
@@ -3003,7 +3011,7 @@ and 32-byte markers into chain authority.
   mint boundary. The same concrete adapter now exposes the Taker-only Stage-B
   claim-authorization capability: it re-derives exact Stage B, verifies the
   committed partial and signed runtime binding before wire, and mints a private-field
-   non-`Clone` result after exactly one authenticated success. All 93
+   non-`Clone` result after exactly one authenticated success. All 94
   adapter tests, 3 authenticated cases, 2 compile-fail-inclusive doctests, and
   strict gates pass. Wrong pre-wire bindings make zero calls; wrong response
   context, terms, or empty bytes makes one call and fails closed. Its
@@ -3017,7 +3025,7 @@ and 32-byte markers into chain authority.
   observation is release authority by itself. The public schema-v3 issuer and
   sealed publisher now consume finalized Fund, prepared authorization,
   Monero-output, topology, typed binding, finalized-clock, and narrow-client
-  capabilities in the 32-test release-authority suite. A client mismatch makes
+  capabilities in the 35-test release-authority suite. A client mismatch makes
   zero clock/RPC calls and preserves `Prepared`; the exact path samples twice,
   performs one dedicated submission, persists `Admitted`, and restart
   observes only with zero further calls. The generic byte-bearing publisher
@@ -3141,7 +3149,7 @@ trust model. The topology capability is neither Stage-B release authority nor a
 claim PoC.
 
 The release journal, issuer, and sealed publisher-to-client wrapper are
-workspace-GREEN in 32 tests. The public path mints finalized-Fund and
+workspace-GREEN in 35 tests. The public path mints finalized-Fund and
 prepared-authorization evidence through authenticated bridge calls, mints
 output and topology evidence through typed authenticated Monero loopbacks,
 consumes all four preparation capabilities, and persists the derived encrypted
@@ -3177,30 +3185,22 @@ publisher wrapper.
 
 The immediate critical path is now:
 
-1. connect the component-green exact-`Fund` classifier to the actual local
-   indexer and fresh checked artifact, then consume the completed adapter and
-   official authorization-builder checkpoints through claim preparation,
-   exact journal-bound submission, completion, and finalized-claim boundaries.
-   The synthetic fixture already proves Taker-only durable-target ownership
-   before reads, canonical/final facts, stability repins, typed failures,
-   `Uncertain` missing, and zero sends; the next evidence
-   must be the first actual-chain `Found`, not a synthetic replacement. The
-   signed-refund and punishment builders remain explicitly in the following
-   recovery slice rather than preceding the progressive-JPEG happy path. The
-   two-stage countersigned SDK, profile/deployment bindings, exact Stage-B
-   first-lock derivation, and structural LEZ-lock/cutoff checks are green; the
-   bridge must promote canonical evidence rather than caller-supplied status.
-   Pre-funding proof of hidden-partial validity remains a disclosed GW-M4-003
-   production-review item;
-2. drive the now-green typed issuer with the first actual-local finalized Fund,
-   output observation, and topology capabilities. Connect the component-green
-   official finalized clock and dedicated tag-14 route through the release-service
-   boundary. Give only that process the bearer and node network path, then prove
-   the same exact decode/send/returned-ID behavior against the actual local
-   sequencer. Classify the exact authorization as finalized and define
-   definitive-absence handling. Keep generic sidecar submission closed; the
-   dedicated release service, not an actor, owns the prepared bytes and
-   sidecar capability;
+1. finish the one-shot release-service process on the newly GREEN credential
+   boundary. The release-only factory can construct no ordinary bridge client;
+   both the bearer and protection-key loaders now require the current owner,
+   exact mode 0600, one link, stable descriptor/path identity, and post-read
+   metadata. Wire only the official genesis-bound finalized clock, emit a
+   payload-free outcome, and prove one admitted send plus zero-call
+   observe-only restart. Preparation remains a trusted fixture until the
+   following service-owned preparation slice;
+2. connect the component-green exact-Fund classifier to the actual local
+   indexer and fresh checked artifact, then drive the typed issuer with the
+   first actual-local Fund, Monero output, and topology capabilities. Route the
+   service-owned exact authorization to the actual local sequencer, classify it
+   as finalized, and define definitive-absence handling. Keep generic tag-14
+   submission closed and keep signed refund/punishment in the following
+   recovery slice. Pre-funding proof of hidden-partial validity remains the
+   disclosed GW-M4-003 production-review item;
 3. add fresh Maker/Taker role processes with durable share/effect records;
 4. compose the sole supported LEZ-first claim path through both actual local
    chains, then seal the happy-PoC evidence and manual reproduction.
@@ -3219,17 +3219,17 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by this push is 2 to 4 focused engineering hours to
-the first reproducible independent-actor claim-path PoC and 8 to 16 additional
-hours to the local claim/refund/punishment PoC. The concrete issuer, exact
-signed exclusive-deadline binding, sealed publisher-to-client composition,
-genesis-bound finalized-clock primitive, and dedicated route/returned-ID
-component are removed from the remaining list. Actual-local Fund evidence,
-release-service process ownership, actual official-clock/node wiring,
-authorization finality, claim completion, and fresh actors dominate the next
-vertical slice. Mocked transports and checked recursive cases still do not
-count as runtime evidence. The ETA must be refreshed again at the next verified
-push.
+The checkpoint ETA carried by this push is 2.5 to 4.5 focused engineering
+hours to the first reproducible independent-actor claim-path PoC and 8 to 16
+additional hours to the local claim/refund/punishment PoC. The concrete issuer,
+exact signed exclusive-deadline binding, sealed publisher-to-client composition,
+genesis-bound finalized-clock primitive, dedicated route/returned-ID component,
+release-only client factory, and owner-private key loaders are removed from the
+remaining list. The one-shot process proof, actual-local Fund evidence,
+actual official-clock/node wiring, authorization finality, claim completion,
+and fresh actors dominate the next vertical slice. Mocked transports and
+checked recursive cases still do not count as runtime evidence. The ETA must be
+refreshed again at the next verified push.
 GW-M4-001, GW-M4-002, and GW-M4-003 remain upstream production/review
 disclosures and do not block the private local implementation.
 

@@ -2158,11 +2158,15 @@ flowchart LR
     Topology["Run/chain/origin-bound topology capability<br/>16 adapter tests green"] --> Issuer
     FundClassifier --> Issuer
     SignedDeadline["Stage A signed refund time<br/>same exclusive guest deadline"] --> Issuer
-    Issuer --> ReleaseStore["Sealed release journal schema v3<br/>32 component tests green"]
+    Issuer --> ReleaseStore["Sealed release journal schema v3<br/>35 package tests green"]
     ReleaseStore --> ReleaseJournal[("Release-authority SQLite journal<br/>one semantic publisher")]
     ReleaseStore --> Publisher["Sealed transaction-scoped publisher<br/>narrow-client wrapper component green"]
     Publisher --> TestClock["Loopback finalized-clock fixture"]
     Publisher --> ReleaseClient["XmrReleaseClient<br/>release-intended type-narrowed component"]
+    BearerFile[("Owner-private release bearer<br/>stable loader green")] --> ReleaseFactory["Release-only client factory<br/>component green"]
+    ReleaseFactory --> ReleaseClient
+    ProtectionKeyFile[("Owner-private release key<br/>stable loader green")] --> KeyLoader["Zeroizing key loader<br/>component green"]
+    KeyLoader --> Publisher
     RuntimeGenesis["Immutable runtime genesis"] --> FinalizedClock["Stable finalized-clock primitive<br/>component green"]
     ActualIndexer -->|"finalized ID and block by ID and hash"| FinalizedClock
     ReleaseService["Dedicated release-service process<br/>ownership and actual wiring pending"] -.-> Publisher
@@ -2422,7 +2426,7 @@ verifies the committed partial before wire, and binds signed channel, genesis,
 and runtime plus the client run, role, and runtime. Success makes exactly one
 authenticated call; wrong partial, Stage B, binding, run, role, or runtime makes
 zero; wrong response context, terms, or empty bytes makes one then fails closed.
-The private-field result is non-`Clone`. All 93 adapter tests, 3 authenticated
+The private-field result is non-`Clone`. All 94 adapter tests, 3 authenticated
 cases, 2 doctests including compile-fail proofs, and strict Clippy, Rustdoc,
 formatting, and diff checks pass. The adapter test server is an authenticated
 literal-loopback mock; ADR 0063 separately proves the official sidecar builder.
@@ -2472,7 +2476,7 @@ unavailable. No positive actual-local-indexer evidence or claim PoC exists, and
 the preparation route creates no chain state.
 
 The workspace now also contains the sealed `lez-xmr-release-authority`
-foundation and its public opaque-evidence issuer. Its 32 tests cover schema-v3
+foundation and its public opaque-evidence issuer. Its 35 tests cover schema-v3
 exact binary identities, authenticated publication ID, immutable-output
 resource ID, later-tip observation updates, semantic restart with unchanged
 randomized ciphertext, one local CAS winner, post-CAS time suppression,

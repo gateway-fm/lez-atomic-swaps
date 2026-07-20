@@ -101,14 +101,14 @@ re-derives and compares exact Stage B, verifies the committed partial and signed
 channel/genesis/runtime before wire, and relies on the client run/role/runtime
 binding. Authenticated success makes exactly one call, every wrong pre-wire
 binding makes zero, and wrong response context, terms, or empty bytes fails
-closed after one. The adapter package passes 93 of 93 tests, its authenticated
+closed after one. The adapter package passes 94 of 94 tests, its authenticated
 matrix 3 of 3, and its two doctests include the compile-fail non-`Clone` proof;
 strict Clippy, Rustdoc, formatting, and diff gates are green. The server in this
 test is an authenticated literal-loopback mock with zero external resources.
 The official sidecar builder independently validates the generated ABI,
 canonical transaction, signature, accounts, nonce, and durable replay. The
 adapter and builder are still preparation capabilities: no actual-node effect
-or claim PoC is claimed. The schema-v3 release-authority crate passes 32 of 32
+or claim PoC is claimed. The schema-v3 release-authority crate passes 35 of 35
 tests. Its public integration mints finalized Fund, prepared authorization,
 Monero output, and authenticated topology capabilities through their loopback
 factories, consumes all four, proves the exact
@@ -120,6 +120,12 @@ calls. The raw publisher transport and decrypted bytes remain private.
 Generic sidecar tag-14 submission stays closed; ADR 0067 records the dedicated
 route, narrow client, release-journal wrapper, component and flow diagrams.
 The official sidecar has a genesis-bound stable finalized-clock primitive.
+The release-only client factory and protection-key loader now require the
+current owner, exact mode `0600`, one link, stable descriptor/path identity,
+bounded contents, and post-read metadata equality. Nine focused tests cover
+rotation, bounds, hard links, symlinks, invalid material, and redaction. This is
+the credential entry prerequisite for the pending release-service process, not
+process isolation or actual-node evidence.
 Release-service process ownership and actual official-clock/node wiring,
 authorization finality, actors, and an actual swap remain absent. Preparation
 still extracts bytes in the trusted test process; the dedicated service must

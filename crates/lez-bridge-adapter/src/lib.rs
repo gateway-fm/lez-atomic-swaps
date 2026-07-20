@@ -32,6 +32,7 @@ pub use canonical_funding::{
 };
 pub use client_factory::{
     CapabilityFileBridgeClientFactory, CapabilityFileBridgeClientFactoryError,
+    CapabilityFileXmrReleaseClientFactory,
 };
 pub use request_context::{
     ActorBridgeRequestContextError, ActorBridgeRequestContextSource, BridgeDiscoveryWindowSource,

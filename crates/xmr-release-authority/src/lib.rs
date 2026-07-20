@@ -30,11 +30,18 @@ use chacha20poly1305::{
 use hkdf::Hkdf;
 use lez_xmr_monero_adapter::{MoneroNetwork, VerifiedMoneroOutputObservation};
 use sha2::{Digest, Sha256};
-use std::fmt;
+use std::{
+    fmt,
+    fs::{self, File},
+    io::Read as _,
+    path::Path,
+};
 use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 const KEY_ID_MAX_BYTES: usize = 128;
+const MAX_PROTECTION_KEY_FILE_BYTES: usize = 66;
+const MAX_PROTECTION_KEY_FILE_BYTES_U64: u64 = 66;
 const TAG_BYTES: usize = 16;
 const AAD_DOMAIN: &[u8] = b"lez-atomic-swaps/xmr-release/aad/v1";
 const KEY_DOMAIN: &[u8] = b"lez-atomic-swaps/xmr-release/key/v1";
@@ -54,6 +61,19 @@ const STATE_MAC_DOMAIN: &[u8] = b"lez-atomic-swaps/xmr-release/state-mac/v1";
 /// Maximum accepted exact publication payload.
 pub const MAX_PUBLICATION_INTENT_BYTES: usize = 2_000_000;
 
+/// Failure to load one release-service-owned journal protection key.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum ProtectionKeyFileError {
+    /// The configured file could not be inspected, opened, or read.
+    #[error("release protection-key file is unavailable")]
+    Unavailable,
+    /// The path was not one stable owner-private regular file.
+    #[error("release protection-key file is unsafe")]
+    Unsafe,
+    /// Contents were not one nonzero lowercase-hex 32-byte key.
+    #[error("release protection-key contents are invalid")]
+    InvalidContents,
+}
 /// Caller-owned master key used only to derive intent-specific AEAD keys.
 ///
 /// The material is zeroized on drop and is neither cloneable nor serializable.
@@ -74,6 +94,37 @@ impl PublicationProtectionKey {
         Ok(Self { key_id, material })
     }
 
+    /// Loads one stable owner-private lowercase-hex key file.
+    ///
+    /// The path, contents, and raw material are never included in errors or debug output.
+    pub fn from_owner_private_file(
+        key_id: impl Into<Box<str>>,
+        path: impl AsRef<Path>,
+    ) -> Result<Self, ProtectionKeyFileError> {
+        let mut encoded = read_owner_private_key_file(path.as_ref())?;
+        let trimmed_length = if encoded.ends_with(b"\r\n") {
+            Some(encoded.len() - 2)
+        } else if encoded.ends_with(b"\n") {
+            Some(encoded.len() - 1)
+        } else {
+            None
+        };
+        if let Some(trimmed_length) = trimmed_length {
+            encoded.truncate(trimmed_length);
+        }
+        if encoded.len() != 64
+            || !encoded
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+        {
+            return Err(ProtectionKeyFileError::InvalidContents);
+        }
+        let mut material = Zeroizing::new([0_u8; 32]);
+        hex::decode_to_slice(encoded.as_slice(), material.as_mut())
+            .map_err(|_| ProtectionKeyFileError::InvalidContents)?;
+        Self::new(key_id, *material).map_err(|_| ProtectionKeyFileError::InvalidContents)
+    }
+
     /// Returns the non-secret rotation identifier.
     pub fn key_id(&self) -> &str {
         &self.key_id
@@ -86,6 +137,76 @@ impl fmt::Debug for PublicationProtectionKey {
             .field("material", &"[REDACTED]")
             .finish()
     }
+}
+
+fn read_owner_private_key_file(path: &Path) -> Result<Zeroizing<Vec<u8>>, ProtectionKeyFileError> {
+    let before = fs::symlink_metadata(path).map_err(|_| ProtectionKeyFileError::Unavailable)?;
+    validate_protection_key_metadata(&before)?;
+
+    let file = File::open(path).map_err(|_| ProtectionKeyFileError::Unavailable)?;
+    let opened = file
+        .metadata()
+        .map_err(|_| ProtectionKeyFileError::Unavailable)?;
+    validate_protection_key_metadata(&opened)?;
+    if !same_protection_key_file(&before, &opened) {
+        return Err(ProtectionKeyFileError::Unsafe);
+    }
+
+    let mut bytes = Zeroizing::new(Vec::with_capacity(MAX_PROTECTION_KEY_FILE_BYTES + 1));
+    (&file)
+        .take(MAX_PROTECTION_KEY_FILE_BYTES_U64 + 1)
+        .read_to_end(bytes.as_mut())
+        .map_err(|_| ProtectionKeyFileError::Unavailable)?;
+
+    let opened_after = file
+        .metadata()
+        .map_err(|_| ProtectionKeyFileError::Unavailable)?;
+    let path_after = fs::symlink_metadata(path).map_err(|_| ProtectionKeyFileError::Unavailable)?;
+    validate_protection_key_metadata(&opened_after)?;
+    validate_protection_key_metadata(&path_after)?;
+    if !stable_protection_key_file(&opened, &opened_after)
+        || !stable_protection_key_file(&opened, &path_after)
+        || bytes.is_empty()
+        || bytes.len() > MAX_PROTECTION_KEY_FILE_BYTES
+    {
+        return Err(ProtectionKeyFileError::Unsafe);
+    }
+    Ok(bytes)
+}
+
+fn validate_protection_key_metadata(metadata: &fs::Metadata) -> Result<(), ProtectionKeyFileError> {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+    if !metadata.file_type().is_file()
+        || metadata.len() == 0
+        || metadata.len() > MAX_PROTECTION_KEY_FILE_BYTES_U64
+        || metadata.permissions().mode() & 0o7777 != 0o600
+        || metadata.nlink() != 1
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+    {
+        return Err(ProtectionKeyFileError::Unsafe);
+    }
+    Ok(())
+}
+
+fn same_protection_key_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+fn stable_protection_key_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+
+    same_protection_key_file(left, right)
+        && left.len() == right.len()
+        && left.uid() == right.uid()
+        && left.mode() == right.mode()
+        && left.nlink() == right.nlink()
+        && left.mtime() == right.mtime()
+        && left.mtime_nsec() == right.mtime_nsec()
+        && left.ctime() == right.ctime()
+        && left.ctime_nsec() == right.ctime_nsec()
 }
 
 /// Record-safe XChaCha20-Poly1305 encrypted publication bytes.

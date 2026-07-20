@@ -2365,7 +2365,7 @@ capability. It re-derives exact Stage B, verifies the committed partial and
 signed runtime before wire, and mints private-field non-`Clone` evidence only
 after one authenticated success. Its literal-loopback server is a mock; ADR
 0063 separately proves the official ABI-validating builder. The public
-schema-v3 release-authority crate passes 32 tests. Its authenticated-loopback
+schema-v3 release-authority crate passes 35 tests. Its authenticated-loopback
 integration consumes exact Fund, authorization, output, and topology
 capabilities, derives the `[finalized Fund time, signed refund time)` interval,
 and drives the sealed release publisher. A client-runtime mismatch leaves
@@ -2448,7 +2448,8 @@ git diff --check
 ```
 
 The focused public-boundary command must report `running 1 test` and one
-passed; the full release-authority command must report 32 passed and zero
+passed; the full release-authority command must report 31 unit, 3 key-file, and
+1 public integration test passed (35 aggregate) and zero
 failed. The focused case mints finalized Fund and prepared authorization
 capabilities through authenticated bridge loopbacks, mints exact output and
 topology capabilities through typed authenticated Monero loopbacks, calls the
@@ -2470,7 +2471,7 @@ successful exact Stage-B request makes one authenticated route call and returns
 the exact private-field non-`Clone` evidence. Wrong partial, Stage B, binding,
 run, role, or runtime makes zero calls. Wrong response context, terms, or empty
 transaction bytes makes one call and then fails closed. The package command
-must report 93 of 93 tests, and the doctest command must report 2 of 2 including
+must report 94 of 94 tests, and the doctest command must report 2 of 2 including
 the compile-fail non-`Clone` contract; strict Clippy, Rustdoc, formatting, and
 diff hygiene must remain green. The server is an in-process authenticated
 literal-loopback mock. It uses no chain node, external RPC, peer, faucet, public

@@ -99,7 +99,7 @@ flowchart LR
     Observation["Non-cloneable exact Monero observation"] --> Issuer
     Hidden["Prepared authorization with committed partial"] --> Issuer
     Deadline["Signed refund time<br/>same exclusive guest deadline"] --> Issuer
-    Issuer --> Store["Sealed release journal<br/>32 tests green"]
+    Issuer --> Store["Sealed release journal<br/>35 tests green"]
     Store --> Publisher["Internal transaction-scoped publisher"]
     Publisher -.-> Send["Dedicated tag 14 node route pending"]
     Send -.-> Finalized["Exact authorization finality pending"]
@@ -143,7 +143,7 @@ branches.
 
 - The Monero adapter passes 16 of 16 tests across output observation, topology,
   authentication, body-bound, and binding cases, plus strict Clippy, strict
-  Rustdoc, formatting, and diff checks. The 32-test release-authority suite now
+  Rustdoc, formatting, and diff checks. The 35-test release-authority suite now
   consumes both opaque Monero capabilities through the public typed issuer.
   This remains a component checkpoint, not a swap or node-publication checkpoint.
 - The earlier configured-credential topology residual is closed for the
@@ -151,7 +151,7 @@ branches.
   daemon facts rather than configuration alone. Public and Stagenet trust,
   malicious or compromised local processes, and upstream adapter review remain
   open.
-- The LEZ first-lock boundary passes 6 of 6 focused tests within all 93 adapter
+- The LEZ first-lock boundary passes 6 of 6 focused tests within all 94 adapter
   package tests, strict Clippy, strict Rustdoc, and non-`Clone` compile-fail
   doctests. The issuer integration consumes the capability, but its classifier
   fixture remains synthetic rather than actual-chain observation.
@@ -162,7 +162,7 @@ branches.
   origin-retaining output observation, exact Stage B, Fund evidence, and prepared
   authorization. No individual capability is release authority, and their
   component composition does not establish a claim PoC. Public RPC remains rejected.
-- The ADR 0060 journal, ADR 0064 publisher, and ADR 0065 issuer pass 32 tests for
+- The ADR 0060 journal, ADR 0064 publisher, and ADR 0065 issuer pass 35 tests for
   typed public preparation, stable-resource identity, signed deadline, later-tip
   rescan, semantic restart, local CAS/ambiguity, tamper, schema, and private
   paths. The raw plan, byte-bearing transport, and decrypted authorization
