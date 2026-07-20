@@ -3188,8 +3188,9 @@ The immediate critical path is now:
 1. finish the subprocess proof for the source-GREEN one-shot release worker.
    ADR 0068 isolates its 432-package lock from the full LEZ wallet/program
    graph while retaining the exact official v0.2 indexer RPC. All worker
-   targets compile; three unit tests, strict Clippy/Rustdoc, and dependency
-   policy pass. The worker accepts only a public config, fixed 0700 state
+   targets compile; four unit tests, strict Clippy/Rustdoc, dependency policy,
+   and explicit standalone CI pass. Its route config is integrity-controlled.
+   The worker accepts only a public config, fixed 0700 state
    directory, bearer file, and protection-key file; it emits a payload-free
    authenticated durable outcome. Seed the journal through the public typed
    issuer, then prove one admitted send plus a fresh-process zero-call

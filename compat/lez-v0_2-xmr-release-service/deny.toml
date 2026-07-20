@@ -1,1 +1,73 @@
-../../deny.toml
+[advisories]
+unmaintained = "workspace"
+yanked = "deny"
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.93
+exceptions = [
+    # Exact rust-bitcoin graph adopted by the M3 P2TR transaction slice. These
+    # are permissive upstream licenses, kept version-scoped so graph drift
+    # cannot silently broaden the workspace policy.
+    { crate = "base58ck@0.1.101", allow = ["CC0-1.0"] },
+    { crate = "bitcoin@0.32.101", allow = ["CC0-1.0"] },
+    { crate = "bitcoin-consensus-encoding@1.0.0", allow = ["CC0-1.0"] },
+    { crate = "bitcoin-internals@0.5.0", allow = ["CC0-1.0"] },
+    { crate = "bitcoin-io@0.1.101", allow = ["CC0-1.0"] },
+    { crate = "bitcoin-units@0.1.101", allow = ["CC0-1.0"] },
+    { crate = "bitcoin_hashes@0.14.101", allow = ["CC0-1.0"] },
+    { crate = "bounded-vec@0.9.0", allow = ["CC0-1.0"] },
+    # Version-specific Bitcoin Core response types only; the production adapter
+    # intentionally does not depend on the upstream corepc-client transport.
+    { crate = "corepc-types@0.15.0", allow = ["CC0-1.0"] },
+    { crate = "hex-conservative@0.2.2", allow = ["CC0-1.0"] },
+    { crate = "hex-conservative@0.3.2", allow = ["CC0-1.0"] },
+    { crate = "hex_lit@0.1.1", allow = ["MITNFA"] },
+    { crate = "secp256k1@0.29.1", allow = ["CC0-1.0"] },
+    { crate = "secp256k1-sys@0.10.1", allow = ["CC0-1.0"] },
+    # Exact MuSig2 PoC graph. Unlicense and CC0 are permissive but remain
+    # package/version scoped; production acceptance still requires legal and
+    # cryptographic review recorded by ADR 0029.
+    { crate = "musig2@0.4.1", allow = ["Unlicense"] },
+    { crate = "secp@0.7.0", allow = ["Unlicense"] },
+    { crate = "secp256k1@0.31.1", allow = ["CC0-1.0"] },
+    { crate = "secp256k1-sys@0.11.0", allow = ["CC0-1.0"] },
+    # The archived, unlicensed COMIT DLEQ PoC explicitly redirects users to
+    # these maintained permissive crates. Keep the PoC-only exception exact
+    # and version-scoped; ADR 0053 forbids a production-acceptance inference.
+    { crate = "secp256kfun_arithmetic_macros@0.2.0", allow = ["0BSD"] },
+    { crate = "secp256kfun@0.12.1", allow = ["0BSD"] },
+    { crate = "sigma_fun@0.9.0", allow = ["0BSD"] },
+    # Monero address encoding uses this exact maintained Keccak implementation.
+    # CC0 is permissive and remains version-scoped rather than globally allowed.
+    { crate = "tiny-keccak@2.0.2", allow = ["CC0-1.0"] },
+    # These exact rustls-platform-verifier dependencies contain Mozilla CA
+    # certificate data under the permissive, non-copyleft CDLA-Permissive-2.0.
+    { crate = "webpki-root-certs@0.26.11", allow = ["CDLA-Permissive-2.0"] },
+    { crate = "webpki-root-certs@1.0.8", allow = ["CDLA-Permissive-2.0"] },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-git = "deny"
+unknown-registry = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Exact official LEZ v0.2 RPC types used by the separately locked M4 release
+# worker. The package pins tag v0.2.0 and keeps the larger wallet/program graph
+# out of the worker so this exception cannot silently select another source.
+allow-git = [
+    "https://github.com/logos-blockchain/logos-execution-zone.git",
+]

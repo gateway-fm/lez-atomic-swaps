@@ -415,6 +415,8 @@ pub fn read_xmr_release_service_config(
         .map_err(|_| XmrReleaseServiceError::InvalidPublicConfiguration)?;
     let path_after = fs::symlink_metadata(path)
         .map_err(|_| XmrReleaseServiceError::InvalidPublicConfiguration)?;
+    validate_public_metadata(&opened_after)?;
+    validate_public_metadata(&path_after)?;
     if !stable_public_file(&opened, &opened_after)
         || !stable_public_file(&opened, &path_after)
         || bytes.is_empty()
@@ -577,6 +579,9 @@ fn validate_private_paths(paths: &XmrReleaseServicePaths) -> Result<(), XmrRelea
 
 fn validate_public_metadata(metadata: &fs::Metadata) -> Result<(), XmrReleaseServiceError> {
     if !metadata.file_type().is_file()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.nlink() != 1
+        || metadata.permissions().mode() & 0o022 != 0
         || metadata.len() == 0
         || metadata.len() > MAX_PUBLIC_CONFIG_BYTES_U64
     {
@@ -592,6 +597,9 @@ fn same_public_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
 
 fn stable_public_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
     same_public_file(left, right)
+        && left.uid() == right.uid()
+        && left.gid() == right.gid()
+        && left.nlink() == right.nlink()
         && left.len() == right.len()
         && left.mode() == right.mode()
         && left.mtime() == right.mtime()
@@ -660,5 +668,26 @@ mod tests {
             assert!(!error.to_string().contains("/secret"));
             assert!(!format!("{error:?}").contains("/secret"));
         }
+    }
+
+    #[test]
+    fn public_config_requires_owner_control_and_one_link() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("release.json");
+        fs::write(&path, b"{}").unwrap();
+
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o664)).unwrap();
+        assert_eq!(
+            validate_public_metadata(&fs::metadata(&path).unwrap()),
+            Err(XmrReleaseServiceError::InvalidPublicConfiguration)
+        );
+
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(validate_public_metadata(&fs::metadata(&path).unwrap()).is_ok());
+        fs::hard_link(&path, directory.path().join("release-alias.json")).unwrap();
+        assert_eq!(
+            validate_public_metadata(&fs::metadata(&path).unwrap()),
+            Err(XmrReleaseServiceError::InvalidPublicConfiguration)
+        );
     }
 }

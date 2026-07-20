@@ -2537,12 +2537,12 @@ cd compat/lez-v0_2-xmr-release-service
 cargo test --locked --offline --all-targets
 cargo clippy --locked --offline --all-targets --all-features --no-deps -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --offline --no-deps --document-private-items
-cargo deny --all-features check advisories bans licenses sources
+cargo deny --locked --all-features check --config deny.toml advisories bans licenses sources
 cargo run --locked --offline -- --help
 cd ../..
 ```
 
-The test command must report three passing library tests. The help output
+The test command must report four passing library tests. The help output
 exposes only `--public-config-file`, `--state-directory`,
 `--sidecar-capability-file`, and `--protection-key-file`; it exposes no
 bearer, key, authorization, transaction ID, request ID, deadline, timeout, or
@@ -2550,6 +2550,13 @@ journal-name value. The fixed journal is
 `STATE_DIRECTORY/xmr-release.sqlite3`. Local endpoints must be literal
 loopback HTTP URLs with explicit nonzero ports; the dormant public profile
 accepts only `https://testnet.lez.logos.co/`.
+
+Although the JSON contains no secret, it selects the two network authorities:
+the worker therefore requires it to be a regular file owned by the worker UID,
+linked once, and not writable by group or others. Mode `0644` or stricter is
+accepted; `0664` and hard-linked config are rejected before credentials are
+read. CI runs these same locked compile, test, Clippy, Rustdoc, and dependency
+audit gates against the standalone lockfile.
 
 This is currently a build/configuration reproduction, not the manual swap
 flow. A successful worker invocation requires a sealed journal produced

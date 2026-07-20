@@ -128,9 +128,11 @@ the credential entry prerequisite for the release-service process.
 ADR 0068 now records a separately locked one-shot worker that owns the fixed
 journal location, loads only those two credentials, validates the signed
 run/runtime/terms binding, uses the exact official v0.2 finalized-indexer RPC,
-and emits only a payload-free durable outcome. Its three unit tests, all-target
-compile, strict Clippy/Rustdoc, and vulnerability/license/source gates are
-green. A typed-issuer-seeded subprocess admission/restart proof, different-UID
+and emits only a payload-free durable outcome. Its non-secret route config is
+integrity-controlled before credential reads. Its four unit tests, all-target
+compile, strict Clippy/Rustdoc, vulnerability/license/source gates, and
+explicit standalone CI contract are green. A typed-issuer-seeded
+subprocess admission/restart proof, different-UID
 and network isolation, actual-node execution, authorization finality, actors,
 and an actual swap remain absent. Preparation still extracts bytes in the
 trusted test process and must move behind the service boundary before an

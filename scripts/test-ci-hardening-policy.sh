@@ -104,7 +104,7 @@ require_fixed 'cargo doc --locked --workspace --all-features --no-deps' "$workfl
 
 readonly cargo_deny_action='uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe'
 readonly cargo_deny_policy='advisories bans licenses sources'
-readonly expected_cargo_deny_steps=11
+readonly expected_cargo_deny_steps=12
 cargo_deny_steps="$(rg -Fc -- "$cargo_deny_action" "$workflow")"
 cargo_deny_policy_steps="$(rg -Fc -- "$cargo_deny_policy" "$workflow")"
 [[ "$cargo_deny_steps" == "$expected_cargo_deny_steps" ]] \
@@ -119,6 +119,7 @@ cargo_deny_manifests=(
   compat/lez-standalone-e2e/Cargo.toml
   compat/lez-v0_1_2-sidecar/Cargo.toml
   compat/lez-v0_2-sidecar/Cargo.toml
+  compat/lez-v0_2-xmr-release-service/Cargo.toml
   compat/lez-v0.2-provisional/Cargo.toml
   compat/lez-v0.2-provisional/escrow/methods/Cargo.toml
   compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml

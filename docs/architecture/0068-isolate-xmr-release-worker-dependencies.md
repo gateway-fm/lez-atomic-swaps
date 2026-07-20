@@ -53,7 +53,9 @@ bearer, key material, authorization bytes or ID, request ID, deadline override,
 journal path, or timeout override.
 
 The process validates the complete public route and terms-to-runtime binding
-before private reads. It then loads both credentials through the hardened
+from a stable regular config file owned by the worker UID, linked once, and
+non-writable by group or others before private reads. The config is public in
+confidentiality, not mutable by an untrusted local principal. It then loads both credentials through the hardened
 owner, mode, link, descriptor/path, bounds, and post-read stability checks,
 authenticates the existing sealed journal, constructs only
 `XmrReleaseClient`, samples the official genesis-bound finalized clock, and
@@ -156,10 +158,16 @@ At this checkpoint:
 - all library and binary targets compile;
 - three focused tests prove closed endpoint profiles, exact payload-free report
   shape, and error/path redaction;
+- a fourth regression proves that group-writable or multiply linked public
+  config is rejected;
 - strict no-deps Clippy and warning-fatal Rustdoc pass;
-- advisories, bans, licenses, and sources pass under the shared policy;
+- advisories, bans, licenses, and sources pass under a real graph-local policy
+  that mirrors the root rules and adds only the official Logos repository;
+- CI independently runs locked test, Clippy, Rustdoc, and dependency-audit
+  gates for this separately locked graph;
 - the official source is allowlisted only at the exact Logos execution-zone
-  repository and remains pinned to tag v0.2.0.
+  repository in the worker policy and remains pinned by manifest and lockfile
+  to tag v0.2.0; the root graph has no Git-source exception.
 
 No Docker, public RPC, faucet, public funds, peer, or external finality service
 is used by these compile and unit gates. Cold cache setup can require crates.io
