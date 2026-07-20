@@ -4,6 +4,7 @@ use std::{
     fs,
     net::{Ipv4Addr, SocketAddr},
     os::unix::fs::PermissionsExt as _,
+    path::Path,
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -12,6 +13,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use borsh::BorshDeserialize as _;
 use common::{HashType, transaction::LeeTransaction};
 use indexer_service_protocol::Block;
 use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
@@ -33,10 +35,11 @@ use lez_bridge_protocol::{
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
-    FinalizedIndexerApi, HistoricalAccount, NativeEscrowPlanner, NativePrepareError, NonceSource,
-    OfficialNodeRpc, decode_official_public_transaction, program_id_to_hex, start_bridge_server,
+    BridgeServerError, FinalizedIndexerApi, HistoricalAccount, NativeEscrowPlanner,
+    NativePrepareError, NonceSource, OfficialNodeRpc, ZecEscrowInstruction,
+    decode_official_public_transaction, program_id_to_hex, start_bridge_server,
 };
-use nssa::{AccountId, PrivateKey, PublicKey};
+use nssa::{AccountId, PrivateKey, PublicKey, Signature, public_transaction::Message};
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 
@@ -54,6 +57,20 @@ struct FixedNonce;
 impl NonceSource for FixedNonce {
     async fn account_nonce(&self, _account_id: AccountId) -> Result<u128, NativePrepareError> {
         Ok(41)
+    }
+}
+
+#[derive(Debug)]
+struct CountingNonce {
+    value: u128,
+    calls: AtomicUsize,
+}
+
+#[async_trait]
+impl NonceSource for CountingNonce {
+    async fn account_nonce(&self, _account_id: AccountId) -> Result<u128, NativePrepareError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(self.value)
     }
 }
 
@@ -140,17 +157,22 @@ fn terms(depositor: AccountId, claimant: AccountId, amount: u128) -> XmrNativeEs
     let (refund_authority, refund_key) = account(34);
     let refund_public = PublicKey::new_from_private_key(&refund_key);
     let swap_id = [1; 32];
+    let metadata = lez_v0_2_sidecar::compute_metadata_pda(&ESCROW_PROGRAM, &swap_id);
+    let custody = lez_v0_2_sidecar::compute_custody_pda(&ESCROW_PROGRAM, &swap_id);
+    let claim_message = Message::try_new(
+        ESCROW_PROGRAM,
+        vec![metadata, custody, claimant, claim_authority],
+        vec![41_u128.into()],
+        ZecEscrowInstruction::ClaimNativeXmr { swap_id },
+    )
+    .expect("canonical tag-15 claim message");
     XmrNativeEscrowTermsV3::new(XmrNativeEscrowTermsV3Input {
         swap_id: Hex32::from_bytes(swap_id),
         activation_commitment: h(2),
         escrow_program_id: program_id_to_hex(ESCROW_PROGRAM),
         authenticated_transfer_program_id: program_id_to_hex(TRANSFER_PROGRAM),
-        metadata_account_id: Hex32::from_bytes(
-            lez_v0_2_sidecar::compute_metadata_pda(&ESCROW_PROGRAM, &swap_id).into_value(),
-        ),
-        custody_account_id: Hex32::from_bytes(
-            lez_v0_2_sidecar::compute_custody_pda(&ESCROW_PROGRAM, &swap_id).into_value(),
-        ),
+        metadata_account_id: Hex32::from_bytes(metadata.into_value()),
+        custody_account_id: Hex32::from_bytes(custody.into_value()),
         depositor: Participant::Taker,
         depositor_account_id: Hex32::from_bytes(depositor.into_value()),
         claimant: Participant::Maker,
@@ -166,7 +188,7 @@ fn terms(depositor: AccountId, claimant: AccountId, amount: u128) -> XmrNativeEs
         amount,
         refund_at_ms: 10_000,
         punish_at_ms: 20_000,
-        claim_message_hash: official_message_hash(&[0xc1; 128]),
+        claim_message_hash: Hex32::from_bytes(claim_message.hash()),
         refund_message_hash: official_message_hash(&[0xd1; 128]),
         punish_message_hash: h(19),
     })
@@ -400,6 +422,57 @@ async fn prepare_owned_claim_authorization(
         .authorization
 }
 
+async fn try_start_sidecar_at<N>(
+    role: Participant,
+    signer: AccountId,
+    signer_key: PrivateKey,
+    sequencer_endpoint: &str,
+    directory: &Path,
+    nonce_source: Arc<N>,
+) -> Result<(BridgeClient, lez_v0_2_sidecar::BridgeServerHandle), BridgeServerError>
+where
+    N: NonceSource + 'static,
+{
+    let descriptor = runtime(role, signer);
+    let planner = Arc::new(
+        NativeEscrowPlanner::new_durable(
+            role,
+            signer_key,
+            ESCROW_PROGRAM,
+            TRANSFER_PROGRAM,
+            descriptor.clone(),
+            nonce_source,
+            directory.join("planner"),
+        )
+        .expect("planner opens existing private directory"),
+    );
+    let runtime = Arc::new(BridgeRuntime::new(
+        descriptor.clone(),
+        planner,
+        Arc::new(OfficialNodeRpc::connect(sequencer_endpoint).expect("official node")),
+        Arc::new(UnavailableIndexer),
+    ));
+    let server = start_bridge_server(
+        BridgeServerConfig::new(
+            RunId::new(RUN_ID).expect("run id"),
+            BridgeServerCapability::new(CAPABILITY).expect("server capability"),
+            directory.join("bridge-idempotency.json"),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        ),
+        runtime,
+    )
+    .await?;
+    let client = BridgeClient::connect(BridgeClientConfig::new(
+        server.endpoint(),
+        SidecarCapability::new(CAPABILITY).expect("client capability"),
+        RunId::new(RUN_ID).expect("run id"),
+        descriptor,
+        Duration::from_secs(2),
+    ))
+    .expect("bridge client");
+    Ok((client, server))
+}
+
 fn assert_remote_code<T: std::fmt::Debug>(
     result: Result<T, BridgeClientError>,
     expected: ErrorCode,
@@ -408,6 +481,324 @@ fn assert_remote_code<T: std::fmt::Debug>(
         panic!("expected remote {expected:?}, got {result:?}");
     };
     assert_eq!(error.code(), expected);
+}
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one actor-realistic route test keeps authorization, tag-15 ABI, aggregate completion, and fail-closed bindings joined"
+)]
+async fn maker_prepares_and_completes_exact_tag_15_after_taker_authorization() {
+    let (depositor, depositor_key) = account(31);
+    let (claimant, claimant_key) = account(32);
+    let xmr_terms = terms(depositor, claimant, 42);
+    let maker_runtime = runtime(Participant::Maker, claimant);
+    let taker_runtime = runtime(Participant::Taker, depositor);
+    let (sequencer_endpoint, sequencer, sequencer_sends) = start_sequencer().await;
+    let maker = start_sidecar(
+        Participant::Maker,
+        claimant,
+        claimant_key.clone(),
+        &sequencer_endpoint,
+    )
+    .await;
+    let taker = start_sidecar(
+        Participant::Taker,
+        depositor,
+        depositor_key,
+        &sequencer_endpoint,
+    )
+    .await;
+
+    let authorization = prepare_owned_claim_authorization(
+        &taker,
+        taker_runtime.clone(),
+        &xmr_terms,
+        "tag15-authorization",
+    )
+    .await;
+    let authorization_result = taker
+        .fresh_release_client()
+        .submit_native_xmr_claim_authorization_v3(SubmitNativeXmrClaimAuthorizationV3Request::new(
+            context(Participant::Taker, "tag15-submit-authorization"),
+            taker_runtime.clone(),
+            xmr_terms,
+            authorization,
+        ))
+        .await
+        .expect("Taker publishes the exact durable tag-14 authorization first");
+    assert_eq!(authorization_result.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+
+    let prepare_request = PrepareNativeXmrClaimV3Request::new(
+        context(Participant::Maker, "tag15-prepare-claim"),
+        maker_runtime.clone(),
+        xmr_terms,
+    );
+    let prepared = maker
+        .fresh_client()
+        .prepare_native_xmr_claim_v3(prepare_request.clone())
+        .await
+        .expect("Maker reserves the exact unsigned tag-15 claim message");
+    assert_eq!(prepared.context, prepare_request.context);
+    assert_eq!(prepared.terms, xmr_terms);
+    assert_eq!(
+        prepared.claim.preparation_request_id,
+        prepare_request.context.request_id
+    );
+    let message = Message::try_from_slice(prepared.claim.exact_message_bytes.as_slice())
+        .expect("canonical unsigned claim message");
+    let terms_input = xmr_terms.to_input();
+    let (claim_authority, claim_authority_key) = account(33);
+    assert_eq!(message.hash(), *terms_input.claim_message_hash.as_bytes());
+    assert_eq!(message.program_id, ESCROW_PROGRAM);
+    assert_eq!(
+        message.account_ids,
+        vec![
+            AccountId::new(*terms_input.metadata_account_id.as_bytes()),
+            AccountId::new(*terms_input.custody_account_id.as_bytes()),
+            claimant,
+            claim_authority,
+        ]
+    );
+    assert_eq!(message.nonces, vec![41_u128.into()]);
+    let instruction =
+        risc0_zkvm::serde::from_slice::<ZecEscrowInstruction, u32>(&message.instruction_data)
+            .expect("generated tag-15 instruction");
+    assert!(matches!(
+        instruction,
+        ZecEscrowInstruction::ClaimNativeXmr { swap_id } if swap_id == [1; 32]
+    ));
+
+    let aggregate_signature = Signature::new(&claim_authority_key, &message.hash());
+    let aggregate_signature = AggregateBip340Signature::from_bytes(aggregate_signature.value);
+
+    let mut wrong_reservation = prepared.claim.clone();
+    wrong_reservation.preparation_request_id =
+        RequestId::new("tag15-wrong-reservation").expect("request id");
+    assert_remote_code(
+        maker
+            .fresh_client()
+            .complete_native_xmr_claim_v3(
+                CompleteNativeXmrClaimV3Request::new(
+                    context(Participant::Maker, "tag15-complete-wrong-reservation"),
+                    maker_runtime.clone(),
+                    xmr_terms,
+                    wrong_reservation,
+                    aggregate_signature,
+                )
+                .expect("well-formed wrong reservation"),
+            )
+            .await,
+        ErrorCode::InvalidTransaction,
+    );
+    let wrong_terms = terms(depositor, claimant, 43);
+    assert_remote_code(
+        maker
+            .fresh_client()
+            .complete_native_xmr_claim_v3(
+                CompleteNativeXmrClaimV3Request::new(
+                    context(Participant::Maker, "tag15-complete-wrong-terms"),
+                    maker_runtime.clone(),
+                    wrong_terms,
+                    prepared.claim.clone(),
+                    aggregate_signature,
+                )
+                .expect("claim hash is unchanged by amount drift"),
+            )
+            .await,
+        ErrorCode::InvalidTransaction,
+    );
+    assert_remote_code(
+        maker
+            .fresh_client()
+            .complete_native_xmr_claim_v3(
+                CompleteNativeXmrClaimV3Request::new(
+                    context(Participant::Maker, "tag15-complete-bad-signature"),
+                    maker_runtime.clone(),
+                    xmr_terms,
+                    prepared.claim.clone(),
+                    AggregateBip340Signature::from_bytes([41; 64]),
+                )
+                .expect("well-formed invalid signature"),
+            )
+            .await,
+        ErrorCode::InvalidTransaction,
+    );
+
+    let complete_request = CompleteNativeXmrClaimV3Request::new(
+        context(Participant::Maker, "tag15-complete-claim"),
+        maker_runtime.clone(),
+        xmr_terms,
+        prepared.claim.clone(),
+        aggregate_signature,
+    )
+    .expect("exact claim completion request");
+    let completed = maker
+        .fresh_client()
+        .complete_native_xmr_claim_v3(complete_request.clone())
+        .await
+        .expect("aggregate signature completes one exact tag-15 transaction");
+    assert_eq!(completed.context, complete_request.context);
+    assert_eq!(completed.terms, xmr_terms);
+    let transaction = decode_official_public_transaction(completed.claim.exact_bytes.as_slice())
+        .expect("canonical completed claim transaction");
+    assert_eq!(transaction.message(), &message);
+    let [(observed_signature, observed_key)] =
+        transaction.witness_set().signatures_and_public_keys()
+    else {
+        panic!("one aggregate claim witness")
+    };
+    assert_eq!(
+        observed_signature.value,
+        *complete_request.aggregate_signature.as_bytes()
+    );
+    assert_eq!(
+        observed_key.value(),
+        terms_input.claim_aggregate_x_only_public_key.as_bytes()
+    );
+    assert_eq!(
+        maker
+            .fresh_client()
+            .prepare_native_xmr_claim_v3(prepare_request.clone())
+            .await
+            .expect("exact preparation replay"),
+        prepared
+    );
+    assert_eq!(
+        maker
+            .fresh_client()
+            .complete_native_xmr_claim_v3(complete_request.clone())
+            .await
+            .expect("exact completion replay"),
+        completed
+    );
+    assert_eq!(
+        sequencer_sends.load(Ordering::SeqCst),
+        1,
+        "tag-15 prepare and complete never submit"
+    );
+    let mut wrong_runtime = maker_runtime;
+    wrong_runtime.signer_account_id = h(99);
+    assert!(matches!(
+        maker
+            .fresh_client()
+            .prepare_native_xmr_claim_v3(PrepareNativeXmrClaimV3Request::new(
+                context(Participant::Maker, "tag15-prepare-wrong-runtime"),
+                wrong_runtime,
+                xmr_terms,
+            ))
+            .await,
+        Err(BridgeClientError::RequestContextMismatch { .. })
+    ));
+    assert!(
+        taker
+            .fresh_client()
+            .prepare_native_xmr_claim_v3(PrepareNativeXmrClaimV3Request::new(
+                context(Participant::Taker, "tag15-prepare-wrong-role"),
+                taker_runtime,
+                xmr_terms,
+            ))
+            .await
+            .is_err(),
+        "the Taker sidecar must fail closed before preparing the Maker's claim"
+    );
+
+    let maker_directory = maker.directory.path().to_path_buf();
+    maker.server.stop().await.expect("maker stop");
+    let restart_nonces = Arc::new(CountingNonce {
+        value: 999,
+        calls: AtomicUsize::new(0),
+    });
+    let (restarted_client, restarted_server) = try_start_sidecar_at(
+        Participant::Maker,
+        claimant,
+        claimant_key.clone(),
+        &sequencer_endpoint,
+        &maker_directory,
+        Arc::clone(&restart_nonces),
+    )
+    .await
+    .expect("Maker server and planner restore exact tag-15 durable state");
+    assert_eq!(
+        restarted_client
+            .prepare_native_xmr_claim_v3(prepare_request.clone())
+            .await
+            .expect("restarted server replays exact preparation"),
+        prepared
+    );
+    assert_eq!(
+        restarted_client
+            .complete_native_xmr_claim_v3(complete_request.clone())
+            .await
+            .expect("restarted server replays exact completion"),
+        completed
+    );
+    assert_eq!(
+        restart_nonces.calls.load(Ordering::SeqCst),
+        0,
+        "startup recovery must not regenerate the aggregate-authority nonce"
+    );
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+    restarted_server
+        .stop()
+        .await
+        .expect("restarted Maker stops");
+
+    let completion_path = maker_directory
+        .join("planner")
+        .join("xmr-native-claim-completion.v3.json");
+    let completion_bytes = fs::read(&completion_path).expect("saved completion reservation");
+    fs::write(&completion_path, b"{").expect("corrupt completion reservation");
+    let corrupt_nonces = Arc::new(CountingNonce {
+        value: 999,
+        calls: AtomicUsize::new(0),
+    });
+    let corrupt_restart = try_start_sidecar_at(
+        Participant::Maker,
+        claimant,
+        claimant_key.clone(),
+        &sequencer_endpoint,
+        &maker_directory,
+        Arc::clone(&corrupt_nonces),
+    )
+    .await;
+    assert!(matches!(
+        corrupt_restart,
+        Err(BridgeServerError::InvalidDurableState)
+    ));
+    assert_eq!(corrupt_nonces.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+    fs::write(&completion_path, completion_bytes).expect("restore completion reservation");
+
+    fs::remove_file(
+        maker_directory
+            .join("planner")
+            .join("xmr-native-claim-reservation.v3.json"),
+    )
+    .expect("remove preparation reservation");
+    let missing_nonces = Arc::new(CountingNonce {
+        value: 41,
+        calls: AtomicUsize::new(0),
+    });
+    let missing_restart = try_start_sidecar_at(
+        Participant::Maker,
+        claimant,
+        claimant_key,
+        &sequencer_endpoint,
+        &maker_directory,
+        Arc::clone(&missing_nonces),
+    )
+    .await;
+    assert!(matches!(
+        missing_restart,
+        Err(BridgeServerError::InvalidDurableState)
+    ));
+    assert_eq!(missing_nonces.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+
+    taker.server.stop().await.expect("taker stop");
+    sequencer.stop().expect("sequencer stop");
+    sequencer.stopped().await;
 }
 
 #[tokio::test]
@@ -437,33 +828,6 @@ async fn xmr_v3_routes_are_authenticated_bound_with_two_official_builders_enable
     )
     .await;
 
-    assert_remote_code(
-        maker
-            .client
-            .prepare_native_xmr_claim_v3(PrepareNativeXmrClaimV3Request::new(
-                context(Participant::Maker, "prepare-claim"),
-                maker_runtime.clone(),
-                xmr_terms,
-            ))
-            .await,
-        ErrorCode::Unavailable,
-    );
-    assert_remote_code(
-        maker
-            .client
-            .complete_native_xmr_claim_v3(
-                CompleteNativeXmrClaimV3Request::new(
-                    context(Participant::Maker, "complete-claim"),
-                    maker_runtime.clone(),
-                    xmr_terms,
-                    transcript(vec![0xc1; 128], "claim-transcript"),
-                    AggregateBip340Signature::from_bytes([41; 64]),
-                )
-                .expect("claim completion request"),
-            )
-            .await,
-        ErrorCode::Unavailable,
-    );
     assert_remote_code(
         taker
             .client
@@ -624,38 +988,6 @@ async fn xmr_v3_routes_are_authenticated_bound_with_two_official_builders_enable
         FinalizedNativeXmrScanOutcomeV3::unavailable(
             FinalizedNativeXmrUnavailableReasonV3::HistoryUnavailable,
         )
-    );
-
-    let replay = PrepareNativeXmrClaimV3Request::new(
-        context(Participant::Maker, "replay-claim"),
-        maker_runtime.clone(),
-        xmr_terms,
-    );
-    assert_remote_code(
-        maker
-            .fresh_client()
-            .prepare_native_xmr_claim_v3(replay.clone())
-            .await,
-        ErrorCode::Unavailable,
-    );
-    assert_remote_code(
-        maker
-            .fresh_client()
-            .prepare_native_xmr_claim_v3(replay)
-            .await,
-        ErrorCode::Unavailable,
-    );
-    let changed = PrepareNativeXmrClaimV3Request::new(
-        context(Participant::Maker, "replay-claim"),
-        maker_runtime,
-        terms(depositor, claimant, 43),
-    );
-    assert_remote_code(
-        maker
-            .fresh_client()
-            .prepare_native_xmr_claim_v3(changed)
-            .await,
-        ErrorCode::InvalidRequest,
     );
 
     maker.server.stop().await.expect("maker stop");

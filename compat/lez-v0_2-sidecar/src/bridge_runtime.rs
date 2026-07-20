@@ -259,6 +259,71 @@ impl BridgeRuntime {
             .await
             .map_err(Into::into)
     }
+    /// Reserves one exact unsigned generated tag-15 XMR claim message.
+    ///
+    /// # Errors
+    ///
+    /// Preserves strict Maker role, runtime, terms, authority, nonce, ABI, and
+    /// durable-reservation failures from the planner.
+    pub async fn prepare_native_xmr_claim_v3(
+        &self,
+        request: &lez_bridge_protocol::PrepareNativeXmrClaimV3Request,
+    ) -> Result<lez_bridge_protocol::PrepareNativeXmrClaimV3Result, BridgeRuntimeError> {
+        self.planner
+            .prepare_native_xmr_claim_v3(request)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Completes one exact durable tag-15 reservation without submission.
+    ///
+    /// # Errors
+    ///
+    /// Preserves transcript, role/runtime/terms, aggregate signature, canonical
+    /// transaction, and durable-completion failures from the planner.
+    pub async fn complete_native_xmr_claim_v3(
+        &self,
+        request: &lez_bridge_protocol::CompleteNativeXmrClaimV3Request,
+    ) -> Result<lez_bridge_protocol::CompleteNativeXmrClaimV3Result, BridgeRuntimeError> {
+        self.planner
+            .complete_native_xmr_claim_v3(request)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Restores an exact tag-15 preparation without generating missing state.
+    ///
+    /// # Errors
+    ///
+    /// Preserves missing, corrupt, conflicting, and noncanonical durable-state
+    /// failures from the planner.
+    pub async fn restore_native_xmr_claim_v3(
+        &self,
+        request: &lez_bridge_protocol::PrepareNativeXmrClaimV3Request,
+        expected: &lez_bridge_protocol::PrepareNativeXmrClaimV3Result,
+    ) -> Result<(), BridgeRuntimeError> {
+        self.planner
+            .restore_native_xmr_claim_v3(request, expected)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Restores an exact tag-15 completion without recreating missing state.
+    ///
+    /// # Errors
+    ///
+    /// Preserves missing preparation/completion, signature, canonical-byte, and
+    /// conflicting durable-state failures from the planner.
+    pub async fn restore_completed_native_xmr_claim_v3(
+        &self,
+        request: &lez_bridge_protocol::CompleteNativeXmrClaimV3Request,
+        expected: &lez_bridge_protocol::CompleteNativeXmrClaimV3Result,
+    ) -> Result<(), BridgeRuntimeError> {
+        self.planner
+            .restore_completed_native_xmr_claim_v3(request, expected)
+            .await
+            .map_err(Into::into)
+    }
 
     /// Classifies one exact persisted XMR-native Fund in stable finalized history.
     ///
