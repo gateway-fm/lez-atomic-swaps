@@ -106,6 +106,9 @@ pub const METHOD_PREPARE_NATIVE_XMR_ESCROW_V3: &str = "lez_bridge.v3.prepare_nat
 /// Additive v3 method for publishing the committed XMR claim partial.
 pub const METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3: &str =
     "lez_bridge.v3.prepare_native_xmr_claim_authorization";
+/// Additive v3 method for submitting one exact, durably owned XMR claim authorization.
+pub const METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3: &str =
+    "lez_bridge.v3.submit_native_xmr_claim_authorization";
 /// Additive v3 method for conservatively classifying one finalized XMR effect.
 pub const METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3: &str =
     "lez_bridge.v3.classify_finalized_native_xmr_effect";
@@ -189,7 +192,8 @@ pub use xmr_v3::{
     PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request,
     PrepareNativeXmrEscrowV3Result, PrepareNativeXmrPunishV3Request,
     PrepareNativeXmrPunishV3Result, PrepareNativeXmrRefundV3Request,
-    PrepareNativeXmrRefundV3Result, XMR_NATIVE_ESCROW_TERMS_VERSION, XmrClaimPartialV3,
+    PrepareNativeXmrRefundV3Result, SubmitNativeXmrClaimAuthorizationV3Request,
+    SubmitNativeXmrClaimAuthorizationV3Result, XMR_NATIVE_ESCROW_TERMS_VERSION, XmrClaimPartialV3,
     XmrNativeEffectV3, XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3,
     XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input, XmrNativeInstructionFactsV3,
 };

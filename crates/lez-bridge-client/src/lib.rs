@@ -64,7 +64,8 @@ use lez_bridge_protocol::{
     PrepareWitnessedAssetRefundV2Request, PrepareWitnessedAssetRefundV2Result,
     PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
     PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
-    RequestId, RunId, RuntimeDescriptor, SubmitTransactionRequest, SubmitTransactionResult,
+    RequestId, RunId, RuntimeDescriptor, SubmitNativeXmrClaimAuthorizationV3Request,
+    SubmitNativeXmrClaimAuthorizationV3Result, SubmitTransactionRequest, SubmitTransactionResult,
     WitnessedAssetPreparedEffectV2, WitnessedAssetRefundObservationV2,
     WitnessedEscrowMetadataFacts, WitnessedLezAssetTermsV2, WitnessedLezAssetV2,
     WitnessedNativeEscrowTerms, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
@@ -89,7 +90,8 @@ pub use lez_bridge_protocol::{
     METHOD_PREPARE_NATIVE_XMR_REFUND_V3, METHOD_PREPARE_REVEALING_CLAIM,
     METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2, METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2,
     METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2, METHOD_PREPARE_WITNESSED_CLAIM,
-    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+    METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
 };
 use secp256k1::{
     Message as SecpMessage, Secp256k1, XOnlyPublicKey, schnorr::Signature as SchnorrSignature,
@@ -282,6 +284,8 @@ pub enum BridgeOperation {
     PrepareNativeXmrEscrowV3,
     /// Committed Taker claim-partial publication preparation.
     PrepareNativeXmrClaimAuthorizationV3,
+    /// Exact release-service-owned XMR claim-authorization submission.
+    SubmitNativeXmrClaimAuthorizationV3,
     /// Conservative finalized XMR-native effect classification.
     ClassifyFinalizedNativeXmrEffectV3,
 }
@@ -564,6 +568,9 @@ pub enum ConfigurationError {
     /// The bounded HTTP client could not be created.
     #[error("bounded HTTP transport could not be built")]
     TransportBuild,
+    /// The release-intended client must bind to a Taker runtime.
+    #[error("XMR release client requires a Taker runtime")]
+    ReleaseClientRequiresTaker,
 }
 
 /// Bounded client dedicated to one run, role, runtime, and bearer capability.
@@ -2183,6 +2190,94 @@ impl BridgeClient {
             .request(method, rpc_params![request])
             .await
             .map_err(|error| map_client_error(operation, context, error))
+    }
+}
+
+/// Narrow client intended for exclusive ownership by the XMR release service.
+///
+/// Unlike [`BridgeClient`], this surface exposes only the dedicated,
+/// durable-ownership-checked claim-authorization submission route. It
+/// encapsulates one sidecar bearer capability and does not expose the generic
+/// bridge API.
+///
+/// This Rust type is not an authorization boundary. Exclusive process
+/// ownership of the bearer and network path must be enforced separately; any
+/// bearer holder that can issue raw RPC can call the dedicated route.
+pub struct XmrReleaseClient {
+    inner: BridgeClient,
+}
+
+impl fmt::Debug for XmrReleaseClient {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("XmrReleaseClient")
+            .field("expected_run_id", &self.inner.expected_run_id)
+            .field("expected_runtime", &self.inner.expected_runtime)
+            .field("capability", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
+}
+
+impl XmrReleaseClient {
+    /// Builds a bounded, single-flight release client for one Taker runtime.
+    ///
+    /// # Errors
+    ///
+    /// Rejects every non-Taker runtime before building a transport, as well as
+    /// any configuration rejected by [`BridgeClient::connect`].
+    pub fn connect(config: BridgeClientConfig) -> Result<Self, BridgeClientError> {
+        if config.expected_runtime.sidecar_role != Participant::Taker {
+            return Err(configuration(
+                ConfigurationError::ReleaseClientRequiresTaker,
+            ));
+        }
+        Ok(Self {
+            inner: BridgeClient::connect(config)?,
+        })
+    }
+
+    /// Submits one exact, durably owned claim authorization without retrying.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed before transport on run, role, runtime, terms, or prepared
+    /// transaction drift. A response must exactly echo the context and terms
+    /// and return the authorization ID supplied by the caller. Transport
+    /// uncertainty is never retried.
+    pub async fn submit_native_xmr_claim_authorization_v3(
+        &self,
+        request: SubmitNativeXmrClaimAuthorizationV3Request,
+    ) -> Result<SubmitNativeXmrClaimAuthorizationV3Result, BridgeClientError> {
+        let operation = BridgeOperation::SubmitNativeXmrClaimAuthorizationV3;
+        let context = request.context.clone();
+        let expected_terms = request.terms;
+        let expected_transaction_id = request.authorization.transaction_id;
+        self.inner
+            .validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_xmr_request_binding(
+            operation,
+            &context,
+            &request.runtime,
+            &request.terms,
+            XmrOperationRole::Taker,
+        )?;
+        validate_prepared(operation, &request.authorization)?;
+        self.inner.reserve_context(operation, &context)?;
+        let result: SubmitNativeXmrClaimAuthorizationV3Result = self
+            .inner
+            .request(
+                operation,
+                METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+                request,
+                &context,
+            )
+            .await?;
+        BridgeClient::validate_response_context(operation, &context, &result.context)?;
+        validate_xmr_terms_echo(operation, &expected_terms, &result.terms)?;
+        if result.authorization_transaction_id != expected_transaction_id {
+            return Err(BridgeClientError::SubmitTransactionIdMismatch);
+        }
+        Ok(result)
     }
 }
 

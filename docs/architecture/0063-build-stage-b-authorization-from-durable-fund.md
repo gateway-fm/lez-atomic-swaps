@@ -152,7 +152,9 @@ external finality service, or Docker resource.
 
 Consume the component-green exact-Fund classification, Regtest topology,
 origin-retaining Monero observation, and ADR-0062 authorization capability
-through typed Stage-B issuers. The journal must persist one publication intent
-before at most one send, reconcile success or ambiguity without rearming, and
-mint finalized authorization evidence before claim preparation begins. The five
-remaining happy/recovery builders and independent actor processes follow.
+through typed Stage-B issuers. ADR 0067 separately supplies the
+release-intended, type-narrowed client and exact route, but a dedicated service
+must own the bearer, wire the release journal and clock to it, reconcile its
+separate sidecar journal, execute against the actual sequencer, and mint
+finalized authorization evidence before claim preparation. Five builders and
+independent actors remain.

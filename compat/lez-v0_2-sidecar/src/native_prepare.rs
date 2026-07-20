@@ -19,8 +19,8 @@ use lez_bridge_protocol::{
     PrepareWitnessedAssetRefundV2Result, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
     PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
     PreparedWitnessedClaim, ProtocolValueError, RuntimeCompatibility, RuntimeDescriptor,
-    TransactionId, WitnessedAssetPrepareStepV2, WitnessedAssetPreparedEffectV2,
-    XmrNativeEscrowTermsV3,
+    SubmitNativeXmrClaimAuthorizationV3Request, TransactionId, WitnessedAssetPrepareStepV2,
+    WitnessedAssetPreparedEffectV2, XmrNativeEscrowTermsV3,
 };
 use nssa::{
     AccountId, PrivateKey, PublicKey, PublicTransaction, Signature,
@@ -1394,6 +1394,68 @@ impl NativeEscrowPlanner {
         }
         self.validate_prepared_refund(&active.request, &active.result)?;
         Ok(active.result.refund.clone())
+    }
+
+    /// Checks that one dedicated XMR authorization submission is the exact
+    /// transaction owned by this actor's durable tag-14 reservation.
+    ///
+    /// The generic submission allowlist intentionally remains closed to tag 14.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role, run, runtime, terms, reservation, exact bytes, canonical
+    /// transaction ID, signature, nonce, instruction, or durable-state drift.
+    pub async fn validate_owned_xmr_claim_authorization_submission_v3(
+        &self,
+        request: &SubmitNativeXmrClaimAuthorizationV3Request,
+    ) -> Result<(), NativePrepareError> {
+        let active = self
+            .state
+            .lock()
+            .await
+            .active_xmr_claim_authorization_v3
+            .clone();
+
+        #[cfg(target_os = "linux")]
+        let active = {
+            let store = self
+                .durable_store
+                .as_ref()
+                .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+            let (stored_request, stored_result) = store
+                .load::<
+                    PrepareNativeXmrClaimAuthorizationV3Request,
+                    PrepareNativeXmrClaimAuthorizationV3Result,
+                >(ReservationKind::XmrNativeClaimAuthorizationV3)?
+                .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+            if active.as_ref().is_some_and(|active| {
+                active.request != stored_request || active.result != stored_result
+            }) {
+                return Err(NativePrepareError::InvalidTransactionBytes);
+            }
+            ActiveXmrClaimAuthorizationPrepareV3 {
+                request: stored_request,
+                result: stored_result,
+            }
+        };
+
+        #[cfg(not(target_os = "linux"))]
+        let Some(active) = active else {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        };
+
+        self.validate_prepared_native_xmr_claim_authorization_v3(&active.request, &active.result)?;
+        if request.context.run_id != active.request.context.run_id
+            || request.context.sidecar_role != Participant::Taker
+            || active.request.context.sidecar_role != request.context.sidecar_role
+            || request.runtime != self.expected_runtime
+            || active.request.runtime != request.runtime
+            || active.request.terms != request.terms
+            || active.result.authorization != request.authorization
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
     }
 
     /// Checks that a generic submission is one of this actor's exact active

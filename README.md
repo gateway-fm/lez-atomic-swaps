@@ -58,9 +58,10 @@ progressive local-functional PoC. Component-green checkpoints include bounded
 canonical proofs for both cross-curve spend-key shares, an official Monero
 0.18.5.1 actual-node topology and reconstructed-key spend, the pair-neutral
 adaptor leaf, canonical two-stage XMR activation, guest tags 13 through 17, a
-twice-reproduced checked guest artifact, the strict protocol and eight-call
-bridge client, the authenticated eight-route sidecar boundary, and a
-non-cloneable exact Monero output observation. The seven transaction-building
+twice-reproduced checked guest artifact, the strict nine-method protocol,
+ordinary eight-call `BridgeClient`, narrow release-intended `XmrReleaseClient`,
+authenticated nine-route sidecar boundary, and a non-cloneable exact Monero
+output observation. The seven transaction-building
 sidecar routes now include two functional Taker-only preparation routes.
 `prepare_native_xmr_escrow_v3` checks the generated v0.2
 `InitializeNativeXmr` plus `FundNative` pair and durably reserves both exact
@@ -73,19 +74,27 @@ derives nonce `Fund + 1` without an RPC, builds generated tag 14 with the sole
 depositor signer, and durably reserves the exact authorization before return.
 Fresh-server and cached-response replay revalidate the durable prerequisites and
 return byte-identical bytes; missing, corrupt, conflicting, mutated, or
-overflowing state fails closed. Generic submission rejects this reservation and
-all builder tests prove zero `sendTransaction` calls. The other five builders
-still fail closed with typed `Unavailable`.
+overflowing state fails closed. Generic submission rejects this reservation with
+zero `sendTransaction` calls. The dedicated Taker-bound route reloads and
+exact-compares the durable authorization, persists unknown before node I/O,
+performs an official exact lookup, permits one send per request ID, and requires
+the exact official returned ID. Its loopback fixture records byte-identical
+`already_known` with one lookup and zero sends, one accepted send after a miss,
+and a wrong returned ID retained as unknown. Same-request accepted and unknown
+replays perform no second node I/O, while deletion makes a fresh request ID fail
+closed without another send. The other five builders still fail closed with
+typed `Unavailable`.
 
 The Taker-only exact-`Fund` classifier validates the durable prepared target
 before any indexer read, returns `Found` only after canonical/final metadata and
 custody checks plus candidate/tip/window repins, and keeps every missing case
 `Uncertain` rather than `Absent`. Its focused E2E is trait-backed with a
 synthetic finalized indexer, typed failure cases, and zero sequencer sends. The
-complete sidecar suite passes 140 of 140 with strict Clippy, warning-free
-Rustdoc, and dependency policy. This is preparation and synthetic classification
-evidence, not submission, actual local-devnet classification, or actual-chain
-mutation. The main-process adapter separately exposes a Taker-only typed Stage-B
+complete sidecar suite passes 142 of 142 with strict Clippy, warning-free
+Rustdoc, and dependency policy. This is preparation, synthetic classification,
+and official-type loopback submission evidence, not actual local-devnet
+classification, release-service isolation, or actual-chain mutation. The
+main-process adapter separately exposes a Taker-only typed Stage-B
 claim-authorization boundary. Only `LezBridgeAdapter<BridgeClient>` can mint the
 private-field, non-`Clone` `PreparedXmrClaimAuthorizationEvidenceV3`; it
 re-derives and compares exact Stage B, verifies the committed partial and signed
@@ -108,11 +117,13 @@ authenticated Prepared snapshot after restart. No caller supplies a deadline,
 publication ID, bytes, or status. The internal publisher separately proves one
 CAS winner, post-CAS finalized-time suppression, matching-ID admission,
 ambiguity, and observe-only restart against in-process seams. Generic sidecar
-tag-14 submission stays closed. The official sidecar now has a genesis-bound
-stable finalized-clock primitive, and bridge startup consumes it; exact-genesis
-success plus wrong-genesis and moving-tip rejection pass in the 140-test suite.
-Release-service clock wiring, the dedicated node route, authorization finality,
-actors, and an actual swap remain absent. The trusted single-process byte
+tag-14 submission stays closed; ADR 0067 adds the dedicated route and narrow
+release-intended client without widening that API. The official sidecar now has a
+genesis-bound stable finalized-clock primitive, and bridge startup consumes it;
+exact-genesis success plus wrong-genesis and moving-tip rejection pass in the
+142-test suite. Release-service ownership and clock wiring, actual-local node
+submission, authorization finality, actors, and an actual swap remain absent.
+The trusted single-process byte
 extraction is a PoC residual; production requires a dedicated release-service
 process. The observation
 is deliberately not claim-partial release authority. The one-command topology
@@ -147,13 +158,14 @@ Measured run `m4-monero-poc-20260719c` passed in 53 seconds before cleanup
 with no public RPC, peer, faucet, public funds, stagenet, or external finality
 service. This is infrastructure evidence, not an atomic swap. The
 genesis-bound stable finalized-clock primitive is component-green and rejects
-a moving sample rather than returning stale deadline authority. LEZ submission,
-the five remaining sidecar builders, actual-local-indexer classification,
-release-service clock wiring, dedicated node publication with returned-ID
-verification, authorization finality, exact claim/refund adaptation, and fresh
-terminal role actors remain the next happy-path slice.
-The route-boundary checkpoint includes 20 of 20 scoped planner/route regressions
-plus the final three XMR tests, strict Clippy, formatting, and diff checks. The
+a moving sample rather than returning stale deadline authority. The dedicated
+route/returned-ID component is green only against an official-type loopback
+fixture. The five remaining sidecar builders, actual-local-indexer
+classification, release-service ownership and clock wiring, actual-node
+publication, authorization finality, exact claim/refund adaptation, and fresh
+terminal role actors remain the next happy-path slice. The route checkpoint,
+full sidecar suite, strict Clippy, formatting, and diff checks are the closure
+gate for this component. The
 exact components/RPCs and both target and bootstrap sequences are in
 [ADR 0053](docs/architecture/0053-enter-m4-through-isolated-monero-regtest.md);
 manual run, live inspection, scoped cleanup, and cold-resource flakiness are in

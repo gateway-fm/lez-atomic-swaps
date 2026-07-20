@@ -1,6 +1,6 @@
 # Manual reproduction guide
 
-Last verified: 2026-07-19
+Last verified: 2026-07-20
 
 This is the living operator guide for the user-visible flows that the repository
 currently proves. Update it in the same change whenever a runner, prerequisite,
@@ -2314,16 +2314,23 @@ experiment has already funded the SDK-derived address, reconstructed the spend
 key through official wallet RPC `generate_from_keys`, and submitted a real
 spend after ten confirmations. That proves official-wallet behavior but is not
 yet exposed as a stable one-command user flow. The current component checkpoint
-also has a twice-reproduced checked guest artifact, a strict eight-method bridge
-client, an exact non-cloneable origin-retaining Monero output observation, and a
-private-field non-`Clone` local-Regtest topology capability. The topology gate
+also has a twice-reproduced checked guest artifact, a strict nine-method
+protocol/server boundary split across the eight ordinary `BridgeClient`
+operations and one release-intended `XmrReleaseClient` operation, an exact
+non-cloneable origin-retaining Monero output observation, and a private-field
+non-`Clone` local-Regtest topology capability. The topology gate
 binds exact run/chain/daemon/target-wallet/foreign-wallet origins, requires
 correct-origin Digest access and exact foreign-credential HTTP 401 at the
 target, and uses bounded 64 KiB typed reads to prove offline trusted fakechain,
 zero peers, empty connections, and typed height-zero genesis. All 16 adapter
 tests plus strict Clippy/Rustdoc/format/diff gates pass. The authenticated
-sidecar server now registers all eight v3 methods and preserves the legacy v2
-routes. Its Taker-only `prepare_native_xmr_escrow_v3` route now checks the
+sidecar server now registers all nine v3 methods and preserves the legacy v2
+routes. The ordinary actor-facing Rust client remains limited to its original
+eight methods; the type-narrowed Taker-bound `XmrReleaseClient` exposes the
+ninth as release-intended. This is not method-level capability enforcement:
+any holder of the raw Taker sidecar bearer can invoke the authenticated RPC
+until the release-service process and network boundary own that capability.
+Its Taker-only `prepare_native_xmr_escrow_v3` route now checks the
 generated v0.2 ABI, exact PDAs/accounts/terms/signers, and consecutive nonces,
 then atomically owner-only persists the exact signed `InitializeNativeXmr` and
 `FundNative` bytes before return. Identical replay after a fresh planner/server
@@ -2334,7 +2341,18 @@ nonce `Fund + 1` without an RPC, checks generated tag 14 and the sole depositor
 signer, and owner-only persists exact authorization bytes before return.
 Fresh/cached replay revalidates durable state; deletion, corruption, drift,
 mutation, conflict, and overflow fail closed. Generic submission rejects this
-reservation, so preparation still makes zero sends. The other five builders and
+reservation, so preparation still makes zero sends. The dedicated
+`submit_native_xmr_claim_authorization_v3` route remains separate: the
+type-narrowed `XmrReleaseClient` presents the release-intended API, while the
+sidecar independently accepts only the exact durable tag-14 authorization and
+writes the request's unknown one-attempt state before node I/O. Raw bearer
+access remains a PoC residual until service and network isolation. Its focused
+matrix passes 3 of 3. Accepted uses one lookup and one send, then same-request
+replay leaves both counters unchanged. Exact byte-identical `AlreadyKnown`
+uses one lookup and zero sends. A wrong official returned ID becomes
+`UnknownSubmissionOutcome` after one lookup and one send; replay leaves both
+counts at one. After deleting the durable authorization reservation, a fresh request ID fails
+before node I/O and leaves the established send count unchanged. The other five builders and
 non-Fund/discovery classification return typed `Unavailable`.
 
 The Taker-only exact-`Fund` classifier validates the durable target before
@@ -2353,11 +2371,15 @@ capabilities, derives the `[finalized Fund time, signed refund time)` interval,
 persists the expected publication ID, and authenticates identical state after
 restart. Its internal publisher elects one CAS winner, samples finalized time
 again after the CAS, and terminalizes admitted, ambiguous, or proven no-send
-outcomes without retry. The finalized clock and submission transport remain
-in-process seams. Actual-local-indexer evidence, a genesis-bound finalized
-clock, a concrete authenticated LEZ node transport with returned-ID
-verification, finality, fresh role actors, and both terminal stores are still
-required before an atomic happy PoC.
+outcomes without retry. The release publisher's clock and submission transport
+remain in-process
+seams. The separate sidecar clock and dedicated submission route are
+component-GREEN, but neither is wired through a release-service process. The
+route test uses an official-type literal-loopback sequencer fixture rather than
+an actual local LEZ node. Actual-local-indexer evidence, release-service
+ownership and clock/client wiring, actual-node submission, restart
+reconciliation, authorization finality, fresh role actors, and both terminal
+stores are still required before an atomic happy PoC.
 
 Reproduce the checked LEZ artifact and focused host boundaries with a fresh run
 ID. The optional shared tool directory below is safe only when it already
@@ -2374,8 +2396,8 @@ RUN_ID=m4-manual-artifact-20260719a \
 LEZ_M4_TOOL_DIR=/tmp/lez-atomic-swaps-tools/risc0-3.0.5 \
   ./scripts/run-m4-lez-artifact-tests.sh
 
-cargo test --locked -p lez-bridge-client -p lez-xmr-monero-adapter \
-  --all-targets --all-features
+cargo test --locked -p lez-bridge-protocol -p lez-bridge-client \
+  -p lez-xmr-monero-adapter --all-targets --all-features
 
 cargo test --locked -p lez-bridge-adapter \
   --test xmr_claim_authorization_v3_authenticated --all-features
@@ -2453,10 +2475,14 @@ fund, or finality service. The adapter test does not independently ABI-decode
 valid transaction semantics; the official sidecar tests immediately above do.
 They must prove exact tag 14, account order, sole depositor signer,
 Fund-plus-one nonce, commitment mismatch rejection, missing/corrupt durable
-state rejection, byte-identical restart/cache replay, generic submission
-rejection, and zero sequencer sends. Together these are still preparation
-evidence: they prove no externally usable submission authority, actual-node
-effect, or claim PoC.
+state rejection, byte-identical restart/cache replay, and generic submission
+rejection with zero sequencer sends. The same route binary's release-intended submission matrix must report 3 of 3. It
+proves accepted with one lookup/one send and unchanged replay counters; exact
+byte-identical `AlreadyKnown` with one lookup/zero sends; and a wrong official
+returned ID as `UnknownSubmissionOutcome` after one lookup/one send, with
+same-request replay leaving both counts unchanged. After durable-reservation deletion, a fresh request ID fails before node I/O
+without increasing the established count. This is a typed submission component, not release-service,
+actual-node, server-restart, finality, actor-flow, or claim-PoC evidence.
 
 The focused classifier command must report `running 1 test`,
 `authenticated_exact_persisted_fund_requires_stable_finalized_history ... ok`,
@@ -2466,7 +2492,7 @@ metadata and custody, candidate/tip/window repins, typed finality, history, movi
 It starts only ephemeral literal-loopback in-process fixtures and a synthetic
 trait-backed `FinalizedIndexerApi`: no actual LEZ node, chain RPC, faucet, public
 fund, peer, or external finality resource participates. The full sidecar command
-must report 138 of 138 tests; strict Clippy, warning-free Rustdoc, and dependency
+must report 142 of 142 tests; strict Clippy, warning-free Rustdoc, and dependency
 policy must remain green. These commands use only ephemeral literal-loopback
 fixtures and owner-only temporary directories after dependencies are cached.
 Neither result is an actual local-devnet classifier run or a claim PoC.
@@ -2481,17 +2507,24 @@ need the pinned circuits release, crates.io and locked Git sources, the
 digest-pinned guest-builder image, and Risc0 tool releases; default run-owned
 cleanup reclaimed about 3.49 GiB in the certification runs. The Rust suites use
 no node, RPC, faucet, peer, or public endpoint after dependencies are present.
-They prove the exact host contracts only: 51 bridge-client tests, 16 Monero
-observation/topology tests, 20 of 20 scoped planner/route regressions, and the
-final three XMR test binaries currently pass. The topology capability closes
+They prove the exact host contracts only: 52 protocol tests, 53 bridge-client
+tests, 16 Monero observation/topology tests, the dedicated route matrix at 3 of
+3, and the complete sidecar gate at 142 of 142. The topology
+capability closes
 the configured-auth residual only for local Regtest; it is not public/Stagenet trust, Stage-B release authority, or a claim
 PoC. The focused sidecar commands cover the retained v2 route set and the three XMR
 preparation/route binaries. They require one exact Taker preparation result, five typed `Unavailable`
 builder results outside the happy classifier route, and the focused synthetic
 exact-`Fund` classification matrix described above. The preparation result is
-checked and restart-replayed exact transaction bytes only; neither it nor the
-synthetic `Found` submits or mutates LEZ, publishes a claim partial, proves an
-actual-local-indexer `Found`, or replaces the role-correct swap journey.
+checked and restart-replayed exact transaction bytes
+only, and the synthetic `Found` remains read-only. The dedicated route in the same fixture covers accepted with one lookup/one
+send, exact byte-identical `AlreadyKnown` with one lookup/zero sends, and wrong
+official returned ID as `UnknownSubmissionOutcome` after one lookup/one send
+with unchanged same-request replay counters; it does not mutate an actual LEZ
+devnet. None of these components publishes
+a finalized claim partial, proves an actual-local-indexer `Found`, supplies
+release-service isolation or restart reconciliation, or replaces the
+role-correct swap journey.
 
 The exact safety boundary matters when reviewing intermediate results. The
 Maker claim must reveal Maker share `s_a`, allowing the Taker to combine it with

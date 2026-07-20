@@ -56,8 +56,14 @@ flowchart LR
     Store --> Publisher["Internal transaction-scoped publisher"]
     Publisher --> TestClock["In-process finalized clock seam"]
     Publisher --> TestTransport["In-process submission seam"]
-    Publisher -.-> NodeTransport["Authenticated LEZ node transport pending"]
-    NodeTransport -.-> Finality["Exact authorization finality pending"]
+    Publisher -.-> ReleaseService["Dedicated release service pending"]
+    ReleaseService -.-> ReleaseClient["Release-intended type-narrowed client"]
+    ReleaseClient --> Route["ADR 0067 dedicated tag 14 route"]
+    Route --> SideJournal["Sidecar request journal"]
+    Route --> Fixture["Official-type loopback fixture"]
+    Route -.-> ActualNode["Actual LEZ sequencer pending"]
+    ActualNode -.-> Finality["Exact authorization finality pending"]
+    Journal -.-> SideJournalNote["No transaction spans journals"]
     Generic["Generic sidecar submit"] -.-> Rejected["Authorization remains rejected"]
 ```
 
@@ -158,7 +164,9 @@ ADR 0065 now mints the private plan only from exact Stage B, the origin-bound
 Monero observation, the run-bound topology capability, prepared authorization,
 and opaque finalized Fund evidence, with the exact signed exclusive deadline.
 ADR 0066 supplies the genesis-bound stable finalized-clock primitive and bridge
-readiness gate. The next gate is actual-local Fund evidence, release-service
-clock wiring, the dedicated tag-14 node route with returned-ID verification,
-exact authorization finality, and the independent Taker actor. Add a crash or
-cancellation after the CAS process test during post-PoC hardening.
+readiness gate. ADR 0067 supplies the type-narrowed release-intended client and
+returned-ID-checking route against an official-type loopback fixture. The next
+gate is actual-local Fund evidence, dedicated-service bearer ownership and
+clock/route wiring across two non-transactional journals, actual-sequencer
+execution, exact authorization finality, and independent actors. Add
+crash/cancellation after the CAS during post-PoC hardening.

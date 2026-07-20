@@ -6,12 +6,13 @@ use std::{
 
 use jsonrpsee::RpcModule;
 use lez_bridge_client::{
-    BridgeClient, BridgeClientConfig, BridgeClientError, BridgeOperation,
+    BridgeClient, BridgeClientConfig, BridgeClientError, BridgeOperation, ConfigurationError,
     METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3, METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3,
     METHOD_COMPLETE_NATIVE_XMR_REFUND_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
     METHOD_PREPARE_NATIVE_XMR_CLAIM_V3, METHOD_PREPARE_NATIVE_XMR_ESCROW_V3,
-    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_PREPARE_NATIVE_XMR_REFUND_V3, RUN_ID_HEADER,
-    SIDECAR_ROLE_HEADER, SidecarCapability,
+    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
+    METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+    SidecarCapability, XmrReleaseClient,
 };
 use lez_bridge_protocol::{
     AggregateBip340Signature, ClassifyFinalizedNativeXmrEffectV3Request,
@@ -25,8 +26,10 @@ use lez_bridge_protocol::{
     PrepareNativeXmrEscrowV3Result, PrepareNativeXmrPunishV3Request,
     PrepareNativeXmrPunishV3Result, PrepareNativeXmrRefundV3Request,
     PrepareNativeXmrRefundV3Result, PreparedTransaction, PreparedWitnessedClaim, RequestId, RunId,
-    RuntimeCompatibility, RuntimeDescriptor, TransactionId, XmrClaimPartialV3, XmrNativeEffectV3,
-    XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
+    RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
+    SubmitNativeXmrClaimAuthorizationV3Request, SubmitNativeXmrClaimAuthorizationV3Result,
+    TransactionId, XmrClaimPartialV3, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
+    XmrNativeEscrowTermsV3Input,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -56,6 +59,7 @@ enum Behavior {
     Slow,
     OversizedResponse,
     WrongContext,
+    WrongAuthorizationId,
     WrongTerms,
     WrongTarget,
     WrongEffect,
@@ -249,6 +253,27 @@ fn register_methods(module: &mut RpcModule<Fixture>) {
             },
         )
         .expect("register claim authorization");
+    module
+        .register_async_method(
+            METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+            |params, fixture, _| async move {
+                let request: SubmitNativeXmrClaimAuthorizationV3Request = params.one()?;
+                fixture.record(METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3);
+                let authorization_transaction_id =
+                    if matches!(fixture.behavior, Behavior::WrongAuthorizationId) {
+                        TransactionId::from_bytes([99; 32])
+                    } else {
+                        request.authorization.transaction_id
+                    };
+                json_value(SubmitNativeXmrClaimAuthorizationV3Result::new(
+                    response_context(&request.context, fixture.behavior),
+                    response_terms(&request.terms, fixture.behavior),
+                    authorization_transaction_id,
+                    SubmissionOutcome::Accepted,
+                ))
+            },
+        )
+        .expect("register claim-authorization submission");
     module
         .register_async_method(
             METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
@@ -638,6 +663,111 @@ async fn xmr_v3_timeout_and_oversized_body_are_not_retried() {
         assert_eq!(sidecar.fixture.calls(METHOD_PREPARE_NATIVE_XMR_CLAIM_V3), 1);
     }
 }
+#[tokio::test]
+async fn xmr_release_client_submits_one_exact_authorization() {
+    let sidecar = spawn_sidecar(Participant::Taker, Behavior::Happy).await;
+    let client = release_client(
+        &sidecar.endpoint,
+        runtime(Participant::Taker),
+        Duration::from_secs(1),
+    )
+    .expect("release client");
+    let authorization = tx(36);
+    let expected_id = authorization.transaction_id;
+    let result = client
+        .submit_native_xmr_claim_authorization_v3(SubmitNativeXmrClaimAuthorizationV3Request::new(
+            context(&run_id(), Participant::Taker, "release-submit"),
+            runtime(Participant::Taker),
+            terms(42),
+            authorization,
+        ))
+        .await
+        .expect("submit exact authorization");
+
+    assert_eq!(result.authorization_transaction_id, expected_id);
+    assert_eq!(result.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(
+        sidecar
+            .fixture
+            .calls(METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3),
+        1
+    );
+}
+
+#[tokio::test]
+async fn xmr_release_client_rejects_wrong_id_after_one_call_and_roles_before_transport() {
+    let wrong_id_sidecar = spawn_sidecar(Participant::Taker, Behavior::WrongAuthorizationId).await;
+    let client = release_client(
+        &wrong_id_sidecar.endpoint,
+        runtime(Participant::Taker),
+        Duration::from_secs(1),
+    )
+    .expect("release client");
+    let result = client
+        .submit_native_xmr_claim_authorization_v3(SubmitNativeXmrClaimAuthorizationV3Request::new(
+            context(&run_id(), Participant::Taker, "wrong-id"),
+            runtime(Participant::Taker),
+            terms(42),
+            tx(36),
+        ))
+        .await;
+    assert!(matches!(
+        result,
+        Err(BridgeClientError::SubmitTransactionIdMismatch)
+    ));
+    assert_eq!(
+        wrong_id_sidecar
+            .fixture
+            .calls(METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3),
+        1
+    );
+
+    let role_sidecar = spawn_sidecar(Participant::Taker, Behavior::Happy).await;
+    let client = release_client(
+        &role_sidecar.endpoint,
+        runtime(Participant::Taker),
+        Duration::from_secs(1),
+    )
+    .expect("release client");
+    let result = client
+        .submit_native_xmr_claim_authorization_v3(SubmitNativeXmrClaimAuthorizationV3Request::new(
+            context(&run_id(), Participant::Maker, "wrong-role"),
+            runtime(Participant::Maker),
+            terms(42),
+            tx(36),
+        ))
+        .await;
+    assert!(matches!(
+        result,
+        Err(BridgeClientError::RequestContextMismatch {
+            operation: BridgeOperation::SubmitNativeXmrClaimAuthorizationV3
+        })
+    ));
+    assert_eq!(
+        role_sidecar
+            .fixture
+            .calls(METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3),
+        0
+    );
+
+    let result = release_client(
+        &role_sidecar.endpoint,
+        runtime(Participant::Maker),
+        Duration::from_secs(1),
+    );
+    assert!(matches!(
+        result,
+        Err(BridgeClientError::InvalidConfiguration {
+            reason: ConfigurationError::ReleaseClientRequiresTaker
+        })
+    ));
+    assert_eq!(
+        role_sidecar
+            .fixture
+            .calls(METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3),
+        0
+    );
+}
 
 fn response_context(context: &MessageContext, behavior: Behavior) -> MessageContext {
     if matches!(behavior, Behavior::WrongContext) {
@@ -683,6 +813,19 @@ fn client(endpoint: &str, runtime: RuntimeDescriptor, timeout: Duration) -> Brid
         timeout,
     ))
     .expect("client configuration")
+}
+fn release_client(
+    endpoint: &str,
+    runtime: RuntimeDescriptor,
+    timeout: Duration,
+) -> Result<XmrReleaseClient, BridgeClientError> {
+    XmrReleaseClient::connect(BridgeClientConfig::new(
+        endpoint,
+        SidecarCapability::new(CAPABILITY).expect("capability"),
+        run_id(),
+        runtime,
+        timeout,
+    ))
 }
 
 fn runtime(role: Participant) -> RuntimeDescriptor {

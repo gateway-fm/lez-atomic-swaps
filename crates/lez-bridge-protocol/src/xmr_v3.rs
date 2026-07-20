@@ -12,6 +12,7 @@ use crate::{
     AccountIds, AggregateBip340Signature, ChainClock, DiscoveryWindow, FinalizedBlockIdentity,
     Hex32, MessageContext, NativeAmount, NativeCustodyFacts, ObservedTransactionFacts, Participant,
     PreparedTransaction, PreparedWitnessedClaim, ProtocolValueError, RuntimeDescriptor,
+    SubmissionOutcome, TransactionId,
 };
 
 /// Exact standalone wire version for XMR-native escrow terms.
@@ -702,6 +703,76 @@ transaction_result!(
     "Exact transaction publishing the committed Taker claim partial.",
     "Official claim authorization transaction."
 );
+/// Submits one exact, durably owned XMR claim authorization transaction.
+///
+/// This dedicated request deliberately does not widen generic transaction
+/// submission to tag 14. The release service must present the exact prepared
+/// authorization together with its complete runtime and agreement binding.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct SubmitNativeXmrClaimAuthorizationV3Request {
+    /// Version, run, request, and dedicated Taker sidecar-role binding.
+    pub context: MessageContext,
+    /// Exact expected runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// Complete standalone agreement and guest binding.
+    pub terms: XmrNativeEscrowTermsV3,
+    /// Exact authorization bytes previously reserved by the durable planner.
+    pub authorization: PreparedTransaction,
+}
+
+impl SubmitNativeXmrClaimAuthorizationV3Request {
+    /// Creates one exact release-authority-gated authorization submission.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: XmrNativeEscrowTermsV3,
+        authorization: PreparedTransaction,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+            authorization,
+        }
+    }
+}
+
+/// Reports the one-attempt admission result for an exact XMR authorization.
+///
+/// Admission is not finality. Callers must separately prove the exact
+/// authorization in stable finalized history before enabling the claim.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct SubmitNativeXmrClaimAuthorizationV3Result {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Echoed immutable standalone terms.
+    pub terms: XmrNativeEscrowTermsV3,
+    /// Exact canonical transaction ID derived from the submitted bytes.
+    pub authorization_transaction_id: TransactionId,
+    /// Whether the exact bytes were accepted or already canonical.
+    pub outcome: SubmissionOutcome,
+}
+
+impl SubmitNativeXmrClaimAuthorizationV3Result {
+    /// Creates one exact authorization admission result.
+    pub const fn new(
+        context: MessageContext,
+        terms: XmrNativeEscrowTermsV3,
+        authorization_transaction_id: TransactionId,
+        outcome: SubmissionOutcome,
+    ) -> Self {
+        Self {
+            context,
+            terms,
+            authorization_transaction_id,
+            outcome,
+        }
+    }
+}
 
 /// One guest-visible XMR-native escrow effect.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

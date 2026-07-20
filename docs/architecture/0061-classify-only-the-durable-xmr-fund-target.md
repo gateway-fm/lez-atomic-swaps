@@ -140,8 +140,9 @@ checkpoint therefore does not prove:
 - a positive classification against the actual local LEZ v0.2 indexer;
 - a real finalized Taker Fund transaction on a local devnet;
 - discovery or classification for any other XMR effect;
-- a dedicated tag-14 node route, returned-ID verification, or live replay
-  prevention;
+- release-service composition with ADR 0067's component-green dedicated
+  tag-14 route, actual-sequencer execution, cross-journal reconciliation, or
+  live replay prevention;
 - Monero-to-LEZ claim-partial publication, actor execution, or a completed
   swap; or
 - production readiness.
@@ -152,8 +153,11 @@ The sidecar now has a fail-closed exact finalized-Fund evidence component, so
 later release integration does not need to trust a caller's transaction bytes
 or treat one missing scan as absence. ADR 0065 now consumes synthetic `Found`
 evidence with exact Stage B, the independently verified Monero observation,
-topology, and prepared authorization into the sealed journal. The next
-happy-path gate must execute the classifier against the actual isolated LEZ
-v0.2 indexer, obtain a genesis-bound finalized clock, publish through the
-dedicated node route, verify the returned ID, and classify finality. Until that
-composition executes, no M4 claim PoC or live one-shot authority is claimed.
+topology, and prepared authorization into the sealed journal. ADR 0067
+separately proves durable route ownership, reserve-before-I/O, canonical
+returned-ID checking, and same-request no-resend against an official-type
+loopback fixture. The next happy-path gate must execute this classifier against
+the actual isolated indexer, wire the dedicated release service to the
+genesis-bound clock and route, use the actual sequencer, and classify
+authorization finality. Until that composition executes, no M4 claim PoC or
+live one-shot authority is claimed.

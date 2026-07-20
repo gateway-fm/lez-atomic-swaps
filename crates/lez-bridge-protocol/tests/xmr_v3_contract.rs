@@ -9,17 +9,18 @@ use lez_bridge_protocol::{
     METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3, METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3,
     METHOD_COMPLETE_NATIVE_XMR_REFUND_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
     METHOD_PREPARE_NATIVE_XMR_CLAIM_V3, METHOD_PREPARE_NATIVE_XMR_ESCROW_V3,
-    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_PREPARE_NATIVE_XMR_REFUND_V3, MessageContext,
-    NativeCustodyFacts, ObservedTransactionFacts, Participant,
-    PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimAuthorizationV3Result,
-    PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request,
-    PrepareNativeXmrEscrowV3Result, PrepareNativeXmrPunishV3Request,
-    PrepareNativeXmrPunishV3Result, PrepareNativeXmrRefundV3Request,
-    PrepareNativeXmrRefundV3Result, PreparedTransaction, PreparedWitnessedClaim,
-    ProtocolValueError, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor, TransactionId,
-    XMR_NATIVE_ESCROW_TERMS_VERSION, XmrClaimPartialV3, XmrNativeEffectV3,
-    XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3, XmrNativeEscrowTermsV3,
-    XmrNativeEscrowTermsV3Input, XmrNativeInstructionFactsV3,
+    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
+    METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, MessageContext, NativeCustodyFacts,
+    ObservedTransactionFacts, Participant, PrepareNativeXmrClaimAuthorizationV3Request,
+    PrepareNativeXmrClaimAuthorizationV3Result, PrepareNativeXmrClaimV3Request,
+    PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result,
+    PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result,
+    PrepareNativeXmrRefundV3Request, PrepareNativeXmrRefundV3Result, PreparedTransaction,
+    PreparedWitnessedClaim, ProtocolValueError, RequestId, RunId, RuntimeCompatibility,
+    RuntimeDescriptor, SubmissionOutcome, SubmitNativeXmrClaimAuthorizationV3Request,
+    SubmitNativeXmrClaimAuthorizationV3Result, TransactionId, XMR_NATIVE_ESCROW_TERMS_VERSION,
+    XmrClaimPartialV3, XmrNativeEffectV3, XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3,
+    XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input, XmrNativeInstructionFactsV3,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -140,6 +141,10 @@ fn xmr_v3_method_names_are_strictly_additive() {
         "lez_bridge.v3.prepare_native_xmr_claim_authorization"
     );
     assert_eq!(
+        METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+        "lez_bridge.v3.submit_native_xmr_claim_authorization"
+    );
+    assert_eq!(
         METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
         "lez_bridge.v3.classify_finalized_native_xmr_effect"
     );
@@ -244,9 +249,52 @@ fn xmr_v3_terms_reject_mixed_unknown_zero_and_aliased_values() {
         ))
     );
 }
+fn roundtrip_authorization_submission(
+    context: &MessageContext,
+    runtime: &RuntimeDescriptor,
+    terms: &XmrNativeEscrowTermsV3,
+) {
+    let authorization = prepared(57, 0xc8);
+    roundtrip(&SubmitNativeXmrClaimAuthorizationV3Request::new(
+        context.clone(),
+        runtime.clone(),
+        *terms,
+        authorization.clone(),
+    ));
+    roundtrip(&SubmitNativeXmrClaimAuthorizationV3Result::new(
+        context.clone(),
+        *terms,
+        authorization.transaction_id,
+        SubmissionOutcome::AlreadyKnown,
+    ));
+}
+
+fn roundtrip_claim_authorization_preparation(
+    context: &MessageContext,
+    runtime: &RuntimeDescriptor,
+    terms: &XmrNativeEscrowTermsV3,
+) {
+    let partial = XmrClaimPartialV3::new([0x77; 32]).expect("claim partial");
+    assert_eq!(format!("{partial:?}"), "XmrClaimPartialV3([REDACTED])");
+    assert_eq!(
+        serde_json::to_value(&partial).expect("serialize partial"),
+        Value::String("77".repeat(32))
+    );
+    roundtrip(&PrepareNativeXmrClaimAuthorizationV3Request::new(
+        context.clone(),
+        runtime.clone(),
+        *terms,
+        partial,
+    ));
+    roundtrip(&PrepareNativeXmrClaimAuthorizationV3Result::new(
+        context.clone(),
+        *terms,
+        prepared(55, 0xc6),
+    ));
+}
 
 #[test]
-fn all_eight_xmr_v3_method_families_roundtrip_strict_json() {
+fn all_nine_xmr_v3_method_families_roundtrip_strict_json() {
     let context = context();
     let runtime = runtime();
     let terms = terms();
@@ -326,23 +374,8 @@ fn all_eight_xmr_v3_method_families_roundtrip_strict_json() {
         prepared(54, 0xc5),
     ));
 
-    let partial = XmrClaimPartialV3::new([0x77; 32]).expect("claim partial");
-    assert_eq!(format!("{partial:?}"), "XmrClaimPartialV3([REDACTED])");
-    assert_eq!(
-        serde_json::to_value(&partial).expect("serialize partial"),
-        Value::String("77".repeat(32))
-    );
-    roundtrip(&PrepareNativeXmrClaimAuthorizationV3Request::new(
-        context.clone(),
-        runtime.clone(),
-        terms,
-        partial,
-    ));
-    roundtrip(&PrepareNativeXmrClaimAuthorizationV3Result::new(
-        context.clone(),
-        terms,
-        prepared(55, 0xc6),
-    ));
+    roundtrip_claim_authorization_preparation(&context, &runtime, &terms);
+    roundtrip_authorization_submission(&context, &runtime, &terms);
 
     roundtrip(&ClassifyFinalizedNativeXmrEffectV3Request::new(
         context,
@@ -363,6 +396,32 @@ fn xmr_v3_messages_reject_unknown_fields_and_wrong_agreement_hashes() {
         .expect("object")
         .insert("legacy_terms".into(), Value::Null);
     assert!(serde_json::from_value::<PrepareNativeXmrClaimV3Request>(encoded).is_err());
+
+    let mut encoded = serde_json::to_value(SubmitNativeXmrClaimAuthorizationV3Request::new(
+        context(),
+        runtime(),
+        terms(),
+        prepared(57, 0xc8),
+    ))
+    .expect("serialize authorization submission");
+    encoded
+        .as_object_mut()
+        .expect("object")
+        .insert("transaction".into(), Value::Null);
+    assert!(serde_json::from_value::<SubmitNativeXmrClaimAuthorizationV3Request>(encoded).is_err());
+
+    let mut encoded = serde_json::to_value(SubmitNativeXmrClaimAuthorizationV3Result::new(
+        context(),
+        terms(),
+        TransactionId::from_bytes([57; 32]),
+        SubmissionOutcome::Accepted,
+    ))
+    .expect("serialize authorization submission result");
+    encoded
+        .as_object_mut()
+        .expect("object")
+        .insert("accepted".into(), Value::Bool(true));
+    assert!(serde_json::from_value::<SubmitNativeXmrClaimAuthorizationV3Result>(encoded).is_err());
 
     let invalid = PrepareNativeXmrClaimV3Result {
         context: context(),

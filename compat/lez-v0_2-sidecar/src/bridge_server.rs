@@ -15,7 +15,8 @@ use lez_bridge_protocol::{
     METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3, METHOD_COMPLETE_NATIVE_XMR_REFUND_V3,
     METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_V3,
     METHOD_PREPARE_NATIVE_XMR_ESCROW_V3, METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
-    METHOD_PREPARE_NATIVE_XMR_REFUND_V3, XmrNativeEscrowTermsV3,
+    METHOD_PREPARE_NATIVE_XMR_REFUND_V3, METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+    XmrNativeEscrowTermsV3,
 };
 use lez_bridge_protocol::{
     ClassifyFinalizedWitnessedInitializationRequest, CompleteWitnessedClaimRequest,
@@ -415,6 +416,7 @@ impl DurableStore {
 
     fn reserve_submission(
         &mut self,
+        method: &'static str,
         context: &MessageContext,
         request_sha256: &str,
     ) -> Result<(), OperationFailure> {
@@ -422,7 +424,7 @@ impl DurableStore {
         self.persisted.entries.insert(
             context.request_id.as_str().to_owned(),
             PersistedEntry {
-                method: METHOD_SUBMIT_TRANSACTION.to_owned(),
+                method: method.to_owned(),
                 request_sha256: request_sha256.to_owned(),
                 replay_request: None,
                 outcome: PersistedOutcome::SubmissionInFlight(protocol_reply(
@@ -1431,7 +1433,7 @@ fn register_asset_v2_methods(
 
 #[allow(
     clippy::too_many_lines,
-    reason = "all eight additive v3 methods remain visibly registered at one authenticated boundary"
+    reason = "all nine additive v3 methods remain visibly registered at one authenticated boundary"
 )]
 fn register_xmr_v3_methods(
     module: &mut RpcModule<ServerState>,
@@ -1532,6 +1534,35 @@ fn register_xmr_v3_methods(
                             .await
                             .map_err(OperationFailure::from)?;
                         to_value(result)
+                    },
+                )
+                .await
+        },
+    )?;
+    module.register_async_method(
+        METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+        |params, state, _| async move {
+            let request: lez_bridge_protocol::SubmitNativeXmrClaimAuthorizationV3Request =
+                params.one()?;
+            state.validate_xmr_v3_request(
+                &request.context,
+                &request.runtime,
+                &request.terms,
+                Participant::Taker,
+            )?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+                    &request.context,
+                    &request,
+                    || async move {
+                        runtime
+                            .submit_native_xmr_claim_authorization_v3(&operation)
+                            .await
+                            .map_err(OperationFailure::from)
+                            .and_then(to_value)
                     },
                 )
                 .await
@@ -1656,9 +1687,9 @@ impl ServerState {
             {
                 return outcome.into_rpc_result();
             }
-            if method == METHOD_SUBMIT_TRANSACTION {
+            if is_submission_method(method) {
                 store
-                    .reserve_submission(context, &request_sha256)
+                    .reserve_submission(method, context, &request_sha256)
                     .map_err(|failure| protocol_error(context, failure))?;
             }
         }
@@ -1684,7 +1715,7 @@ impl ServerState {
                 | METHOD_PREPARE_NATIVE_XMR_ESCROW_V3
                 | METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
         );
-        let repeatable = method != METHOD_SUBMIT_TRANSACTION
+        let repeatable = !is_submission_method(method)
             && (!prepare || matches!(&outcome, PersistedOutcome::Error(_)));
         self.store
             .lock()
@@ -1703,6 +1734,12 @@ impl ServerState {
             .map_err(|failure| protocol_error(context, failure))?;
         outcome.into_rpc_result()
     }
+}
+fn is_submission_method(method: &str) -> bool {
+    matches!(
+        method,
+        METHOD_SUBMIT_TRANSACTION | METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
+    )
 }
 
 impl PersistedOutcome {
@@ -1815,6 +1852,7 @@ fn valid_method(method: &str) -> bool {
             | METHOD_COMPLETE_NATIVE_XMR_REFUND_V3
             | METHOD_PREPARE_NATIVE_XMR_PUNISH_V3
             | METHOD_PREPARE_NATIVE_XMR_ESCROW_V3
+            | METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
             | METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
             | METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3
     )

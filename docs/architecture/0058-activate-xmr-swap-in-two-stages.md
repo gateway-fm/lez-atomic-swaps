@@ -176,9 +176,11 @@ Default scoped cleanup removed about 3.49 GiB of run-owned build/tool state
 while retaining the small evidence ELF. This is checked recursive evidence,
 not a public deployment, trusted chain observation, bridge runtime, role actor,
 or swap. The certified M2/M3 ELF predates tags 13 through 17 and is deliberately
-not reused. The additive bridge client maps all eight v3 methods once and
-passes 51 package targets, including four new role/echo/coverage/timeout
-contracts. The Monero adapter passes seven focused tests over exact
+not reused. The ordinary `BridgeClient` retains eight v3 methods. ADR 0067
+adds a separate Taker-only `XmrReleaseClient` for the ninth dedicated
+submission method; the client package passes 53 targets. This is component
+evidence without release-service ownership, actual-node finality, or actors.
+The Monero adapter passes seven focused tests over exact
 network/genesis/transaction/address/amount, decoded canonical block membership,
 ten confirmations, and stable-tip bracketing. Its result is deliberately
 non-cloneable observation data, not hidden-partial release authority; upstream

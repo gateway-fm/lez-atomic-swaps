@@ -88,8 +88,12 @@ flowchart LR
     Issuer --> Journal["Private schema v3 release journal"]
     Journal --> Publisher["One attempt journal publisher"]
     Publisher -.-> FinalClock["Finalized indexer clock route pending"]
-    Publisher -.-> Node["Dedicated tag 14 node route pending"]
-    Node -.-> Finality["Exact authorization finality pending"]
+    Publisher -.-> ReleaseService["Dedicated release service pending"]
+    ReleaseService -.-> ReleaseClient["Release-intended type-narrowed client"]
+    ReleaseClient --> Route["ADR 0067 dedicated tag 14 route"]
+    Route --> Fixture["Official-type loopback fixture"]
+    Route -.-> ActualNode["Actual LEZ sequencer pending"]
+    ActualNode -.-> Finality["Exact authorization finality pending"]
 ```
 
 ## Issuance sequence
@@ -160,9 +164,11 @@ Residuals and production work:
 
 - The trusted actor can consume prepared bytes in the in-process PoC. A
   dedicated release-service process is required before hostile-caller claims.
-- The stored ID trusts the authenticated official sidecar preparation result;
-  the dedicated node route must decode official bytes and verify the real
-  node-returned ID.
+- ADR 0067's separate route now reloads the durable authorization, decodes
+  official bytes, and verifies canonical returned-ID behavior against an
+  official-type loopback fixture. Dedicated-service bearer ownership,
+  actual-sequencer evidence, and reconciliation between the release and sidecar
+  journals remain.
 - Finalized current time must come from a genesis-bound finalized indexer route,
   not the sequencer-current clock method.
 - Exact tag-14 finalized classification, definitive absence policy, actor

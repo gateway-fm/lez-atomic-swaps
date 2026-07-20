@@ -897,6 +897,52 @@ impl BridgeRuntime {
         self.finalized_funding_observer.observe(request).await
     }
 
+    /// Submits only the exact durable tag-14 authorization owned by the Taker planner.
+    ///
+    /// The exact canonical transaction is looked up first. A byte-identical
+    /// inclusion returns `already_known`; otherwise exactly one official send
+    /// is attempted. Admission does not prove finality.
+    ///
+    /// # Errors
+    ///
+    /// Rejects every generic, unowned, malformed, or drifted transaction and
+    /// reports an ambiguous one-attempt node result as unknown.
+    pub async fn submit_native_xmr_claim_authorization_v3(
+        &self,
+        request: &lez_bridge_protocol::SubmitNativeXmrClaimAuthorizationV3Request,
+    ) -> Result<lez_bridge_protocol::SubmitNativeXmrClaimAuthorizationV3Result, BridgeRuntimeError>
+    {
+        self.planner
+            .validate_owned_xmr_claim_authorization_submission_v3(request)
+            .await?;
+        if self
+            .node
+            .prepared_transaction_is_included(&request.authorization)
+            .await?
+        {
+            return Ok(
+                lez_bridge_protocol::SubmitNativeXmrClaimAuthorizationV3Result::new(
+                    request.context.clone(),
+                    request.terms,
+                    request.authorization.transaction_id,
+                    SubmissionOutcome::AlreadyKnown,
+                ),
+            );
+        }
+        self.node
+            .submit_prepared_transaction(&request.authorization)
+            .await
+            .map_err(|_| BridgeRuntimeError::UnknownSubmissionOutcome)?;
+        Ok(
+            lez_bridge_protocol::SubmitNativeXmrClaimAuthorizationV3Result::new(
+                request.context.clone(),
+                request.terms,
+                request.authorization.transaction_id,
+                SubmissionOutcome::Accepted,
+            ),
+        )
+    }
+
     /// Submits only exact bytes owned by this actor's active durable planner.
     ///
     /// An exact canonical lookup is performed before submission. A found byte-

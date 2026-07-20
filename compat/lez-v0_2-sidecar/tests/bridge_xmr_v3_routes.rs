@@ -5,16 +5,19 @@ use std::{
     net::{Ipv4Addr, SocketAddr},
     os::unix::fs::PermissionsExt as _,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
 };
 
 use async_trait::async_trait;
+use common::{HashType, transaction::LeeTransaction};
 use indexer_service_protocol::Block;
 use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
-use lez_bridge_client::{BridgeClient, BridgeClientConfig, BridgeClientError, SidecarCapability};
+use lez_bridge_client::{
+    BridgeClient, BridgeClientConfig, BridgeClientError, SidecarCapability, XmrReleaseClient,
+};
 use lez_bridge_protocol::{
     AggregateBip340Signature, ClassifyFinalizedNativeXmrEffectV3Request,
     CompleteNativeXmrClaimV3Request, CompleteNativeXmrRefundV3Request, DiscoveryWindow, ErrorCode,
@@ -24,13 +27,14 @@ use lez_bridge_protocol::{
     PrepareNativeXmrClaimV3Request, PrepareNativeXmrEscrowV3Request,
     PrepareNativeXmrPunishV3Request, PrepareNativeXmrRefundV3Request, PreparedTransaction,
     PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
-    SubmitTransactionRequest, TransactionId, XmrClaimPartialV3, XmrNativeEffectV3,
-    XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
+    SubmissionOutcome, SubmitNativeXmrClaimAuthorizationV3Request, SubmitTransactionRequest,
+    TransactionId, XmrClaimPartialV3, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
+    XmrNativeEscrowTermsV3Input,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
     FinalizedIndexerApi, HistoricalAccount, NativeEscrowPlanner, NativePrepareError, NonceSource,
-    OfficialNodeRpc, program_id_to_hex, start_bridge_server,
+    OfficialNodeRpc, decode_official_public_transaction, program_id_to_hex, start_bridge_server,
 };
 use nssa::{AccountId, PrivateKey, PublicKey};
 use sha2::{Digest as _, Sha256};
@@ -99,6 +103,16 @@ impl RunningSidecar {
             Duration::from_secs(2),
         ))
         .expect("bridge client")
+    }
+    fn fresh_release_client(&self) -> XmrReleaseClient {
+        XmrReleaseClient::connect(BridgeClientConfig::new(
+            self.server.endpoint(),
+            SidecarCapability::new(CAPABILITY).expect("release capability"),
+            RunId::new(RUN_ID).expect("run id"),
+            self.descriptor.clone(),
+            Duration::from_secs(2),
+        ))
+        .expect("XMR release client")
     }
 }
 
@@ -201,26 +215,90 @@ fn transaction(byte: u8) -> PreparedTransaction {
     )
 }
 
-async fn start_sequencer() -> (String, jsonrpsee::server::ServerHandle, Arc<AtomicUsize>) {
-    let sends = Arc::new(AtomicUsize::new(0));
+#[derive(Clone, Copy)]
+enum SequencerSubmissionReply {
+    Canonical,
+    WrongTransactionId,
+}
+
+#[derive(Clone)]
+struct SequencerFixture {
+    sends: Arc<AtomicUsize>,
+    lookups: Arc<AtomicUsize>,
+    included_transaction: Arc<Mutex<Option<LeeTransaction>>>,
+    submission_reply: SequencerSubmissionReply,
+}
+
+impl SequencerFixture {
+    fn include_exact(&self, prepared: &PreparedTransaction) {
+        let transaction = decode_official_public_transaction(prepared.exact_bytes.as_slice())
+            .expect("official prepared transaction");
+        *self
+            .included_transaction
+            .lock()
+            .expect("included transaction lock") = Some(LeeTransaction::Public(transaction));
+    }
+
+    fn send_count(&self) -> usize {
+        self.sends.load(Ordering::SeqCst)
+    }
+
+    fn lookup_count(&self) -> usize {
+        self.lookups.load(Ordering::SeqCst)
+    }
+}
+
+async fn start_configurable_sequencer(
+    submission_reply: SequencerSubmissionReply,
+) -> (String, jsonrpsee::server::ServerHandle, SequencerFixture) {
+    let fixture = SequencerFixture {
+        sends: Arc::new(AtomicUsize::new(0)),
+        included_transaction: Arc::new(Mutex::new(None)),
+        lookups: Arc::new(AtomicUsize::new(0)),
+        submission_reply,
+    };
     let server = ServerBuilder::default()
         .build("127.0.0.1:0")
         .await
         .expect("sequencer binds");
     let address = server.local_addr().expect("sequencer address");
-    let mut rpc = RpcModule::new(Arc::clone(&sends));
+    let mut rpc = RpcModule::new(fixture.clone());
     rpc.register_method("checkHealth", |_, _, _| Ok::<_, ErrorObjectOwned>(()))
         .expect("health method");
     rpc.register_method("getChannelId", |_, _, _| {
         Ok::<_, ErrorObjectOwned>(hex::encode([41_u8; 32]))
     })
     .expect("channel method");
-    rpc.register_method("sendTransaction", |_, sends, _| {
-        sends.fetch_add(1, Ordering::SeqCst);
-        Ok::<_, ErrorObjectOwned>(hex::encode([42_u8; 32]))
+    rpc.register_method("getTransaction", |params, fixture, _| {
+        let requested: HashType = params.one()?;
+        fixture.lookups.fetch_add(1, Ordering::SeqCst);
+        let observed = fixture
+            .included_transaction
+            .lock()
+            .expect("included transaction lock")
+            .as_ref()
+            .filter(|transaction| transaction.hash() == requested)
+            .cloned();
+        Ok::<_, ErrorObjectOwned>(observed)
+    })
+    .expect("transaction lookup method");
+    rpc.register_method("sendTransaction", |params, fixture, _| {
+        let transaction: LeeTransaction = params.one()?;
+        fixture.sends.fetch_add(1, Ordering::SeqCst);
+        let returned_id = match fixture.submission_reply {
+            SequencerSubmissionReply::Canonical => transaction.hash(),
+            SequencerSubmissionReply::WrongTransactionId => HashType([99; 32]),
+        };
+        Ok::<_, ErrorObjectOwned>(returned_id)
     })
     .expect("send method");
-    (format!("http://{address}"), server.start(rpc), sends)
+    (format!("http://{address}"), server.start(rpc), fixture)
+}
+
+async fn start_sequencer() -> (String, jsonrpsee::server::ServerHandle, Arc<AtomicUsize>) {
+    let (endpoint, server, fixture) =
+        start_configurable_sequencer(SequencerSubmissionReply::Canonical).await;
+    (endpoint, server, fixture.sends)
 }
 
 async fn start_sidecar(
@@ -282,6 +360,38 @@ async fn start_sidecar(
     }
 }
 
+async fn prepare_owned_claim_authorization(
+    sidecar: &RunningSidecar,
+    descriptor: RuntimeDescriptor,
+    xmr_terms: &XmrNativeEscrowTermsV3,
+    request_id: &str,
+) -> PreparedTransaction {
+    let escrow_request_id = format!("{request_id}-escrow");
+    let _ = sidecar
+        .fresh_client()
+        .prepare_native_xmr_escrow_v3(PrepareNativeXmrEscrowV3Request::new(
+            context(Participant::Taker, &escrow_request_id),
+            descriptor.clone(),
+            *xmr_terms,
+        ))
+        .await
+        .expect("prepare durable XMR escrow prerequisite");
+
+    sidecar
+        .fresh_client()
+        .prepare_native_xmr_claim_authorization_v3(
+            PrepareNativeXmrClaimAuthorizationV3Request::new(
+                context(Participant::Taker, request_id),
+                descriptor,
+                *xmr_terms,
+                XmrClaimPartialV3::new([77; 32]).expect("claim partial"),
+            ),
+        )
+        .await
+        .expect("prepare exact durable claim authorization")
+        .authorization
+}
+
 fn assert_remote_code<T: std::fmt::Debug>(
     result: Result<T, BridgeClientError>,
     expected: ErrorCode,
@@ -295,7 +405,7 @@ fn assert_remote_code<T: std::fmt::Debug>(
 #[tokio::test]
 #[allow(
     clippy::too_many_lines,
-    reason = "one route contract covers all eight additive methods and replay semantics"
+    reason = "one route contract covers all nine additive methods and replay semantics"
 )]
 async fn xmr_v3_routes_are_authenticated_bound_with_two_official_builders_enabled() {
     let (depositor, depositor_key) = account(31);
@@ -427,6 +537,31 @@ async fn xmr_v3_routes_are_authenticated_bound_with_two_official_builders_enable
         ErrorCode::InvalidTransaction,
     );
     assert_eq!(sequencer_sends.load(Ordering::SeqCst), 0);
+    let submission_request = SubmitNativeXmrClaimAuthorizationV3Request::new(
+        context(Participant::Taker, "release-authorization"),
+        taker_runtime.clone(),
+        xmr_terms,
+        prepared_authorization.authorization.clone(),
+    );
+    let submitted_authorization = taker
+        .fresh_release_client()
+        .submit_native_xmr_claim_authorization_v3(submission_request.clone())
+        .await
+        .expect("dedicated release route accepts exact durable tag 14 once");
+    assert_eq!(
+        submitted_authorization.authorization_transaction_id,
+        prepared_authorization.authorization.transaction_id
+    );
+    assert_eq!(submitted_authorization.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+    let replayed_submission = taker
+        .fresh_release_client()
+        .submit_native_xmr_claim_authorization_v3(submission_request)
+        .await
+        .expect("successful dedicated submission replays without node I/O");
+    assert_eq!(replayed_submission, submitted_authorization);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+
     let replayed_authorization = taker
         .fresh_client()
         .prepare_native_xmr_claim_authorization_v3(authorization_request.clone())
@@ -442,12 +577,27 @@ async fn xmr_v3_routes_are_authenticated_bound_with_two_official_builders_enable
     .expect("delete planner authorization reservation");
     assert_remote_code(
         taker
+            .fresh_release_client()
+            .submit_native_xmr_claim_authorization_v3(
+                SubmitNativeXmrClaimAuthorizationV3Request::new(
+                    context(Participant::Taker, "release-missing-durable"),
+                    taker_runtime.clone(),
+                    xmr_terms,
+                    prepared_authorization.authorization.clone(),
+                ),
+            )
+            .await,
+        ErrorCode::InvalidTransaction,
+    );
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+    assert_remote_code(
+        taker
             .fresh_client()
             .prepare_native_xmr_claim_authorization_v3(authorization_request)
             .await,
         ErrorCode::InvalidTransaction,
     );
-    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 0);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
 
     let classification = maker
         .client
@@ -501,6 +651,110 @@ async fn xmr_v3_routes_are_authenticated_bound_with_two_official_builders_enable
     );
 
     maker.server.stop().await.expect("maker stop");
+    taker.server.stop().await.expect("taker stop");
+    sequencer.stop().expect("sequencer stop");
+    sequencer.stopped().await;
+}
+
+#[tokio::test]
+async fn dedicated_xmr_authorization_already_known_uses_exact_lookup_without_send() {
+    let (depositor, depositor_key) = account(31);
+    let (claimant, _) = account(32);
+    let xmr_terms = terms(depositor, claimant, 42);
+    let taker_runtime = runtime(Participant::Taker, depositor);
+    let (sequencer_endpoint, sequencer, fixture) =
+        start_configurable_sequencer(SequencerSubmissionReply::Canonical).await;
+    let taker = start_sidecar(
+        Participant::Taker,
+        depositor,
+        depositor_key,
+        &sequencer_endpoint,
+    )
+    .await;
+    let authorization = prepare_owned_claim_authorization(
+        &taker,
+        taker_runtime.clone(),
+        &xmr_terms,
+        "prepare-already-known",
+    )
+    .await;
+    fixture.include_exact(&authorization);
+    let request = SubmitNativeXmrClaimAuthorizationV3Request::new(
+        context(Participant::Taker, "submit-already-known"),
+        taker_runtime,
+        xmr_terms,
+        authorization.clone(),
+    );
+
+    let result = taker
+        .fresh_release_client()
+        .submit_native_xmr_claim_authorization_v3(request.clone())
+        .await
+        .expect("exact canonical authorization is already known");
+    assert_eq!(result.context, request.context);
+    assert_eq!(result.terms, xmr_terms);
+    assert_eq!(
+        result.authorization_transaction_id,
+        authorization.transaction_id
+    );
+    assert_eq!(result.outcome, SubmissionOutcome::AlreadyKnown);
+    assert_eq!(fixture.lookup_count(), 1);
+    assert_eq!(fixture.send_count(), 0);
+
+    taker.server.stop().await.expect("taker stop");
+    sequencer.stop().expect("sequencer stop");
+    sequencer.stopped().await;
+}
+
+#[tokio::test]
+async fn dedicated_xmr_authorization_wrong_returned_id_is_unknown_and_replay_does_not_resend() {
+    let (depositor, depositor_key) = account(31);
+    let (claimant, _) = account(32);
+    let xmr_terms = terms(depositor, claimant, 42);
+    let taker_runtime = runtime(Participant::Taker, depositor);
+    let (sequencer_endpoint, sequencer, fixture) =
+        start_configurable_sequencer(SequencerSubmissionReply::WrongTransactionId).await;
+    let taker = start_sidecar(
+        Participant::Taker,
+        depositor,
+        depositor_key,
+        &sequencer_endpoint,
+    )
+    .await;
+    let authorization = prepare_owned_claim_authorization(
+        &taker,
+        taker_runtime.clone(),
+        &xmr_terms,
+        "prepare-wrong-returned-id",
+    )
+    .await;
+    let request = SubmitNativeXmrClaimAuthorizationV3Request::new(
+        context(Participant::Taker, "submit-wrong-returned-id"),
+        taker_runtime,
+        xmr_terms,
+        authorization,
+    );
+
+    assert_remote_code(
+        taker
+            .fresh_release_client()
+            .submit_native_xmr_claim_authorization_v3(request.clone())
+            .await,
+        ErrorCode::UnknownSubmissionOutcome,
+    );
+    assert_eq!(fixture.lookup_count(), 1);
+    assert_eq!(fixture.send_count(), 1);
+
+    assert_remote_code(
+        taker
+            .fresh_release_client()
+            .submit_native_xmr_claim_authorization_v3(request)
+            .await,
+        ErrorCode::UnknownSubmissionOutcome,
+    );
+    assert_eq!(fixture.lookup_count(), 1);
+    assert_eq!(fixture.send_count(), 1);
+
     taker.server.stop().await.expect("taker stop");
     sequencer.stop().expect("sequencer stop");
     sequencer.stopped().await;

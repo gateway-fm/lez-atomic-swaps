@@ -2831,7 +2831,7 @@ as completed.
 
 Active phase: **progressive local-functional PoC**. The authoritative deliverable
 set is the live RFP plus accepted replacement issue #112, rechecked on
-2026-07-19. The old ETH-scoped submission and issue #61 are not authorities.
+2026-07-20. The old ETH-scoped submission and issue #61 are not authorities.
 
 ### Actual entry state
 
@@ -2853,9 +2853,10 @@ and ImageID
 `4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`;
 two fresh executions each passed all five recursive guest tests: one preserved
 native aggregate-witness case and four XMR branch/rollback cases. This is a
-local checked artifact, not a public deployment. The eight-call loopback bridge
-client, the authenticated sidecar route boundary, and a non-cloneable exact
-Monero output observation adapter are also component-green. The local Regtest
+local checked artifact, not a public deployment. The ordinary eight-call
+`BridgeClient`, narrow one-call `XmrReleaseClient`, authenticated nine-route
+sidecar boundary, and non-cloneable exact Monero output observation adapter are
+also component-green. The local Regtest
 topology gate is component-green as a private-field, non-`Clone` capability
 bound to the exact run, chain, daemon/wallet origins, peerless offline facts,
 and foreign-credential HTTP 401. The output observation retains its exact
@@ -2863,28 +2864,39 @@ daemon/wallet origins; all 16 Monero-adapter tests plus strict Clippy, Rustdoc,
 formatting, and diff checks pass. This closes the topology-auth residual only
 for the local Regtest PoC, not for Stagenet/public trust, Stage-B release
 authority, or a claim PoC.
-The sidecar registers all eight additive v3 methods, and its Taker-only
+The sidecar registers all nine additive v3 methods. Eight remain on the
+ordinary actor-facing client; the release-intended client exposes only the ninth. Its
 `prepare_native_xmr_escrow_v3` route is now functional at the preparation
 boundary. It derives checked generated-v0.2 `InitializeNativeXmr` plus
 `FundNative`, validates exact PDAs/accounts/terms/signers and consecutive
 nonces, and atomically owner-only persists both exact signed transaction bytes
 before return. Same-request replay after a fresh planner/server is byte-identical
-with zero nonce reads and zero sequencer sends; drift fails closed. Twenty of
-twenty scoped planner/route regressions and the final three XMR tests pass with
-strict Clippy, formatting, and diff checks. The official
+with zero nonce reads and zero sequencer sends; drift fails closed. The focused
+planner/route regressions and complete sidecar suite pass with strict Clippy,
+formatting, and diff checks. The official
 `prepare_native_xmr_claim_authorization_v3` builder is separately green: it
 recomputes the exact NUL-terminated partial commitment, revalidates the durable
 Fund, derives nonce `Fund + 1` without an RPC, checks generated tag 14 and the
 sole depositor signer, and owner-only persists exact authorization bytes before
 return. Fresh/cached replay revalidates durable state, while deletion, corruption,
 drift, mutation, conflict, and overflow fail closed. Generic submission rejects
-the reservation and tests prove zero sends. The other five builders remain
-typed `Unavailable`. The Taker-only exact-`Fund` classifier validates the durable
+the reservation with zero sends. The dedicated Taker-bound route reloads and
+exact-compares the durable authorization on every Linux submission, journals an
+unknown result before node I/O, performs an official exact lookup, makes at most
+one send for that request ID, and requires the official returned ID. Its focused
+three-test loopback matrix records byte-identical `already_known` after one
+lookup and zero sends, accepted after one lookup and one send, and a wrong
+official returned ID as unknown after one lookup and one send. Same-request
+accepted and unknown replay performs no additional node I/O; deleting the
+durable file makes a fresh dedicated request ID fail closed.
+This is component transport evidence, not release-service or actual-node
+authority. The other five builders remain typed `Unavailable`. The Taker-only
+exact-`Fund` classifier validates the durable
 prepared target before any indexer read, authenticates canonical finalized
 transaction plus metadata/custody facts, re-pins the candidate, tip, and window
 end, and returns missing as `Uncertain`, never `Absent`. Its focused E2E uses a
 synthetic trait-backed finalized indexer and zero sends; the complete sidecar
-suite passes 140 of 140 with strict Clippy, warning-free Rustdoc, and dependency
+suite passes 142 of 142 with strict Clippy, warning-free Rustdoc, and dependency
 policy. The main-process adapter is separately component-green. Its first-lock boundary
 derives exact v3 terms from validated Stage A and Stage B, rejects a non-Taker
 before transport, and mints private-field non-`Clone` finalized-`Fund` evidence
@@ -2916,13 +2928,16 @@ suppression, matching-ID admission, ambiguity, and observe-only restart against
 in-process seams. The clone-enabling authorization borrow is removed; a
 consuming cross-crate extraction remains an explicit trusted-actor PoC residual
 until a dedicated production release service owns those bytes.
-The repository still has no concrete XMR submission authority, five remaining
-functional builders, actual-local-indexer classifier execution, actual-chain
-trusted finalized LEZ capability, authorization finality observer, role actor,
-full swap, U9 guide, D1 videos, or stagenet CI evidence.
+The repository now has a release-intended typed submission component but no
+release-service process or exclusive bearer/network ownership. Five functional
+builders, actual-local-indexer classifier execution, actual-chain trusted
+finalized LEZ capability, authorization finality observer, role actor, full
+swap, U9 guide, D1 videos, and stagenet CI evidence remain.
 
-The standalone strict v3 bridge protocol binds eight additive methods and six
-finalized effects; all 52 protocol tests preserve the 44 legacy v1/v2 cases.
+The standalone strict v3 bridge protocol binds nine additive methods and six
+finalized effects. The ordinary client exposes eight methods while the narrow
+release client exposes only the ninth; all 52 protocol tests preserve the 44
+legacy v1/v2 cases.
 
 The first implementation may reuse the existing LEZ v0.2 bridge, role stores,
 XChaCha20-Poly1305 secret envelope, one-attempt effect journals, and M3 BIP-340
@@ -2970,7 +2985,9 @@ and 32-byte markers into chain authority.
   DLEQ scalar/point/proof boundary and canonical Stage-A/Stage-B lifecycle are
   green in six SDK tests with strict Clippy and Rustdoc; trusted chain
   evidence and actors remain. The typed Monero RPC observation and local-topology
-  adapter is green in all 16 tests and the v3 bridge client is green across all eight calls. Its
+  adapter is green in all 16 tests. The ordinary v3 bridge client is green
+  across all eight actor calls, and the Taker-only release client is green for
+  the ninth dedicated call. Its
   private-field, non-`Clone` topology capability binds run, Regtest chain, and
   exact daemon/target/foreign wallet origins; correct-target and foreign Digest
   requests must succeed, foreign credential replay at the target must finish
@@ -2997,9 +3014,10 @@ and 32-byte markers into chain authority.
   publication and `[finalized Fund time, signed refund time)` interval, and
   authenticates identical state after restart. The internal publisher proves
   exact-ID admission, one CAS winner, a post-CAS finalized-time gate, terminal
-  outcomes, and observe-only restart. Actor composition, actual-local finalized
-  evidence, the genesis-bound finalized-clock route, authenticated node transport,
-  and finality observation remain.
+  outcomes, and observe-only restart. The dedicated node route and exact
+  returned-ID component are green against an official-type loopback fixture.
+  Actor composition, actual-local finalized evidence, release-service clock and
+  bearer ownership, actual-node submission, and finality observation remain.
 - [ ] Build the official Monero 0.18.5.1 CLI artifact from its signed hash list
   into a digest-pinned runtime and scan the final image fail-hard.
 - [x] Start one offline `monerod` Regtest daemon plus distinct authenticated
@@ -3027,7 +3045,8 @@ and 32-byte markers into chain authority.
   `4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`;
   the five recursive initialize/fund/claim, signed-refund, punishment, and
   rollback cases pass on both executions. The authenticated sidecar server now
-  registers all eight additive v3 routes without widening legacy v2. The Taker
+  registers all nine additive v3 routes without widening legacy v2. Eight are
+  ordinary actor operations; only the release-intended client exposes the ninth. The Taker
   escrow route durably prepares the exact checked initialize/fund pair before
   return, replays byte-identically after planner/server restart with zero nonce
   reads, and makes zero sequencer sends. The official authorization route then
@@ -3035,16 +3054,23 @@ and 32-byte markers into chain authority.
   derives `Fund + 1` without a nonce read, validates generated tag 14 and the
   sole depositor signer, persists before exposure, and restart-replays
   byte-identically. Missing/corrupt durable state and mutation fail closed;
-  generic submission rejects it and zero sequencer sends occur. The exact
+  generic submission rejects it with zero sequencer sends. The dedicated route
+  requires the exact durable reservation, persists unknown before node I/O,
+  and exact-looks up the canonical transaction. Byte-identical inclusion returns
+  `already_known` after one lookup and zero sends; a miss permits one send and
+  requires the canonical returned ID. A wrong returned ID remains unknown, and
+  same-request accepted or unknown replay performs no additional node I/O. The
+  exact
   durable-`Fund` classifier is also
   component-green: Taker-only ownership validates before indexer reads, canonical
   finalized transaction/metadata/custody facts and candidate/tip/window repins
   gate `Found`, missing stays `Uncertain`, typed failures are preserved, and zero
-  sends occur. The full sidecar suite passes 140 of 140 with strict Clippy,
+  sends occur. The full sidecar suite passes 142 of 142 with strict Clippy,
   warning-free Rustdoc, and dependency policy. The other five builders and
   non-Fund/discovery classification remain typed
-  `Unavailable`; submission, actual-local-indexer evidence, and actual-node
-  branches remain.
+  `Unavailable`; release-service ownership, actual-local-indexer evidence,
+  actual-node submission, authorization finality, and actual-chain branches
+  remain.
 - [ ] Complete the sole reviewed positive direction with fresh actor processes:
   Taker LEZ lock, finalized Maker observation, exact Maker XMR output, signed
   Monero confirmation policy, revealing Maker LEZ claim, Taker extraction and
@@ -3130,7 +3156,7 @@ primitive. It reads the official indexer's finalized ID plus genesis and tip
 by both ID and hash, binds genesis to the immutable runtime, and rereads the
 complete sample. Wrong genesis, zero tip facts, or any tip movement fails
 closed; the bridge executable consumes it before readiness. Two focused tests
-and the complete 140-test sidecar suite pass. ADR 0066 records why strict
+and the complete 142-test sidecar suite pass. ADR 0066 records why strict
 movement rejection is required for deadline safety. The release-authority
 publisher still uses its in-process seam until the dedicated release service
 owns the sidecar capability and calls this boundary.
@@ -3155,12 +3181,13 @@ The immediate critical path is now:
    production-review item;
 2. drive the now-green typed issuer with the first actual-local finalized Fund,
    output observation, and topology capabilities. Connect the component-green
-   official finalized clock through the release-service boundary, then replace
-   the remaining submission seam with a dedicated tag-14 node route that decodes
-   official bytes and verifies the actual returned ID. Classify the exact
-   authorization as finalized and define definitive-absence handling. Keep
-   generic sidecar submission closed; the dedicated release service, not an
-   actor, owns the prepared bytes and sidecar capability;
+   official finalized clock and dedicated tag-14 route through the release-service
+   boundary. Give only that process the bearer and node network path, then prove
+   the same exact decode/send/returned-ID behavior against the actual local
+   sequencer. Classify the exact authorization as finalized and define
+   definitive-absence handling. Keep generic sidecar submission closed; the
+   dedicated release service, not an actor, owns the prepared bytes and
+   sidecar capability;
 3. add fresh Maker/Taker role processes with durable share/effect records;
 4. compose the sole supported LEZ-first claim path through both actual local
    chains, then seal the happy-PoC evidence and manual reproduction.
@@ -3179,15 +3206,17 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The updated push ETA is 2.5 to 4.5 focused engineering hours to the first
-reproducible independent-actor claim-path PoC and 8 to 16 additional hours to
+The checkpoint ETA carried by this push is 2.5 to 4.5 focused engineering hours
+to the first reproducible independent-actor claim-path PoC and 8 to 16
+additional hours to
 the local claim/refund/punishment PoC. The concrete issuer, exact signed
-exclusive-deadline binding, and genesis-bound finalized-clock primitive are
-now removed from the remaining list. Actual-local indexer evidence,
-release-service ownership, the dedicated node route, official returned-ID
-verification, authorization finality, claim completion, and fresh actors
-dominate the next vertical slice. Mocked transports and checked recursive
-cases still do not count as runtime evidence.
+exclusive-deadline binding, genesis-bound finalized-clock primitive, and
+dedicated route/returned-ID component are removed from the remaining list.
+Actual-local Fund evidence, release-service ownership and wiring, actual-node
+submission, authorization finality, claim completion, and fresh actors dominate
+the next vertical slice. Mocked transports and checked recursive cases still do
+not count as runtime evidence. The ETA must be refreshed again at the next
+verified push.
 GW-M4-001, GW-M4-002, and GW-M4-003 remain upstream production/review
 disclosures and do not block the private local implementation.
 

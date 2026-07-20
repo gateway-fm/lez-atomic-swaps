@@ -1,14 +1,13 @@
 # ADR 0057: Append XMR-native escrow branches
 
 Status: Accepted and checked-artifact-executed for the M4 local PoC. Fourteen
-focused guest tests pin the legacy wire and the new state transitions. Two
-fresh digest-pinned builds additionally pass all five recursive branch tests
-against the exact checked ELF and ImageID. The authenticated sidecar server
-registers all eight additive v3 routes. Its Taker-only native-XMR escrow route
-now prepares and owner-only persists the exact checked initialize/fund pair;
-the other six transaction-building routes fail closed with typed `Unavailable`
-and the classifier returns only `HistoryUnavailable`. Submission, finalized
-classification, and actual-node branches remain pending.
+focused guest tests pin the legacy wire and new state transitions; two fresh
+digest-pinned builds pass all five recursive cases. The sidecar exposes eight
+ordinary v3 methods plus ADR 0067's separate release-intended ninth method. Two
+builders, the synthetic exact-Fund classifier, and the dedicated submission
+route against an official-type loopback fixture are component-green. Five
+builders, actual-local classification/submission, finality, and actor branches
+remain pending.
 
 ## Context
 
@@ -221,11 +220,11 @@ sequenceDiagram
     Sidecar-->>Taker: Byte-identical replay with no nonce read
 ```
 
-This is still not a functional claim PoC. The other six transaction-building
-methods intentionally return typed `Unavailable`; the classifier intentionally
-returns only `HistoryUnavailable`. The preparation route never calls
-`sendTransaction` and creates no chain state. Submission authority, the six
-remaining builders, exact finalized-history scan, Stage-B release authority,
-and actor composition remain on the critical path. The scoped checkpoint passes
-20 of 20 planner/route regressions and the final three XMR tests, with strict
-Clippy, formatting, and diff checks green.
+This is still not a functional claim PoC. Five builders and non-Fund discovery
+remain typed `Unavailable`; the exact-Fund classifier is synthetic. ADR 0067
+adds a separate release-intended type-narrowed ninth RPC while the ordinary client retains eight:
+it reloads the exact durable tag-14 reservation, journals unknown before node
+I/O, verifies the canonical returned ID against an official-type loopback
+fixture, and replays the same request without a second send. The generic route
+stays closed. No release-service wiring, actual sequencer/indexer execution,
+authorization finality, actor isolation, or completed swap is claimed.

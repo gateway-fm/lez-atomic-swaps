@@ -100,10 +100,12 @@ submission or finality. It closes one necessary release-admission premise:
   and
 - failure yields no clock authority and therefore no release send.
 
-The happy claim path still needs the actual-local finalized Fund, dedicated
-one-attempt tag-14 submission with exact returned-ID verification, finalized
-authorization classification, claim completion, and independent actors. The
-generic actor-facing submission method remains closed.
+ADR 0067 separately supplies the type-narrowed release-intended route and
+canonical returned-ID behavior against an official-type loopback fixture. The
+happy claim path still needs actual-local finalized Fund evidence,
+release-service bearer ownership and clock/route wiring, actual-sequencer
+execution, finalized authorization classification, claim completion, and
+independent actors. Generic actor-facing submission remains closed.
 
 This read is not atomic with a later sequencer send. The finalized tip can
 advance immediately after return. The checked guest's exact signed deadline
@@ -120,7 +122,7 @@ The focused integration gate proves:
 - a finalized-tip advance exposed only by the final RPC is rejected; and
 - exactly two finalized-tip ID reads occur, with the equality read last.
 
-The complete pinned sidecar suite passes 140 of 140 tests. Strict Clippy,
+The complete pinned sidecar suite passes 142 of 142 tests. Strict Clippy,
 warning-free Rustdoc, dependency policy, and repository gates remain required
 before the checkpoint is pushed.
 
