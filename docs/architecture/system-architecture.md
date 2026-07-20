@@ -2146,8 +2146,12 @@ flowchart LR
     AuthorizationFinality -.-> Tag15Prepare
     Tag15Prepare --> Tag15Reservation[("Owner-only unsigned tag-15 reservation<br/>restart replay green")]
     Tag15Reservation --> Tag15Complete["Aggregate BIP340 completion<br/>signature and canonical bytes green"]
-    Tag15Complete --> Tag15Transaction[("Owner-only completed tag-15 transaction<br/>zero submission")]
-    Tag15Transaction -.-> ActualSequencer
+    Tag15Complete --> Tag15Transaction[("Owner-only completed tag-15 transaction")]
+    Tag15Transaction --> Tag15OwnedGate["Exact active plus durable prepare and completion match<br/>component green"]
+    Tag15OwnedGate --> Tag15GenericSubmit["Authenticated generic tag-15 submission<br/>one fixture send green"]
+    Tag15GenericSubmit --> OfficialFixture
+    Tag15GenericSubmit -.-> Tag15ClaimFinality["Exact finalized tag-15 discovery<br/>pending"]
+    Tag15GenericSubmit -.-> ActualSequencer
     ClaimAuthorization --> ClaimEvidence["Private-field non-Clone authorization evidence"]
     ClaimEvidence -.-> ReleaseStore
     OrdinaryClient --> OrdinaryRoutes["Authenticated ordinary sidecar v3 routes<br/>eight methods"]
@@ -2196,8 +2200,10 @@ flowchart LR
     FinalizedClock --> ReleaseService
     ReleaseClient --> ReleaseRoute["Dedicated tag-14 submission route<br/>component green"]
     ClaimReservation --> ReleaseRoute
+    OrdinaryRoutes --> Tag14Closed["Generic tag-14 rejection<br/>zero send green"]
+    ClaimReservation --> Tag14Closed
     ReleaseRoute --> BridgeJournal[("Sidecar idempotency journal<br/>request-scoped durable outcome")]
-    ReleaseRoute --> OfficialFixture["Official-type sequencer loopback fixture<br/>exact get and send component E2E"]
+    ReleaseRoute --> OfficialFixture["Official-type sequencer loopback fixture<br/>tag-14 and tag-15 sends component E2E"]
     ReleaseRoute -.-> ActualSequencer
     ReleaseRoute -.-> AuthorizationFinality["Exact authorization finality<br/>pending"]
     ReleaseJournal -.-> JournalBoundary["No transaction spans the two journals"]
@@ -2316,6 +2322,7 @@ sequenceDiagram
     participant LezIdx as LEZ indexer
     participant LezSidecar as Taker LEZ sidecar
     participant MakerSidecar as Maker LEZ sidecar
+    participant Fixture as Official-type sequencer fixture
     participant Release as One-shot release worker process proof green
     participant Monero as monerod and wallet RPC
 
@@ -2360,12 +2367,13 @@ sequenceDiagram
         Taker->>LezSidecar: Prepare exact committed claim partial after XMR confirmation
         LezSidecar->>LezSidecar: Revalidate durable Fund derive nonce plus one sign tag 14 and persist
         LezSidecar-->>Taker: Opaque durable authorization evidence with zero submission
+        Note over LezSidecar,MakerSidecar: Tag 14 stays dedicated-release-only and generic submission rejects it
         Note over Taker,Release: Target composition keeps raw bytes and release bearer outside the actor
         Release->>LezSidecar: Target only journal-authorized dedicated submission
         LezSidecar->>LezSeq: Target only official tag 14 submission
         LezSeq-->>LezSidecar: Node admission identifier
         Note over Release,LezSeq: Admission is not chain inclusion or finality
-        LezIdx-->>Maker: Future exact finalized AuthorizeNativeXmrClaim bytes
+        LezIdx-->>Maker: Target exact finalized AuthorizeNativeXmrClaim discovery pending
         Note over Maker,Taker: Both locks are proven and tag 14 finality is required before Maker claim preparation
         Maker->>MakerSidecar: Prepare exact tag-15 claim
         MakerSidecar->>MakerSidecar: Bind aggregate-authority nonce generated ABI accounts and committed hash
@@ -2376,8 +2384,14 @@ sequenceDiagram
         MakerSidecar-->>Maker: Exact tag-15 transaction with zero submission
         Note over Maker,MakerSidecar: Prepare complete and restart replay are component green
         alt Canonical reveal path
-            Maker->>LezSeq: Submit exact tag-15 ClaimNativeXmr
-            LezIdx-->>Taker: Canonical finalized claim reveals recovery share
+            Maker->>MakerSidecar: Submit exact completed durable tag 15 through generic RPC
+            MakerSidecar->>MakerSidecar: Match active and durable prepare plus completion then revalidate
+            MakerSidecar->>Fixture: Exact lookup then one tag-15 send
+            Fixture-->>MakerSidecar: Accepted with canonical transaction ID
+            Note over Maker,Fixture: Authenticated component route is GREEN
+            MakerSidecar-->>LezSeq: Target actual-local tag-15 send pending
+            LezIdx-->>Taker: Target canonical finalized claim discovery pending
+            Note over Maker,Taker: Taker extraction stays blocked until finalized claim evidence
             alt Taker follows including after Maker disappears
                 Note over Maker,Taker: Revealer may disappear and follower uses canonical chain disclosure
                 Taker->>Monero: Spend maker Monero output
@@ -2517,11 +2531,19 @@ persistence. Completion reloads that reservation, validates role/runtime/terms
 and the aggregate BIP340 signature, and persists one canonical signed
 transaction without submitting it. Exact replay across a fresh server/planner
 revalidates the preparation and completion records. Missing, corrupt,
-conflicting, reservation, terms, signature, or hash drift fails closed. Tag-14
-finality gating, exact tag-15 submission/finality, and actor-owned adaptor
-extraction remain composition work; this builder is not an atomic swap.
+conflicting, reservation, terms, signature, or hash drift fails closed. The
+generic ownership validator now admits only that exact completed transaction
+when the active in-memory preparation/completion exactly equal both owner-only
+durable files. It reruns the role/runtime/terms, ABI, signer, aggregate-
+signature, canonical-byte, and transaction-ID checks before the authenticated
+generic route performs one accepted official-type fixture send. Generic tag-14
+submission remains zero-send rejected and dedicated-release-only. Actual-local
+tag-14 discovery/finality, tag-15 effect/finality, and actor-owned adaptor
+extraction remain composition work; component admission is not an atomic swap
+or finalized-chain evidence.
 
-ADR 0069 reuses that generic route for the exact durable tag-13 pair only. The
+ADR 0069 gives the exact durable tag-13 pair its request-aware generic branch;
+that transaction-ID rule remains separate from narrow tag-15 ownership. The
 protocol derives each request ID from the exact transaction ID, so a caller
 cannot rearm the same transaction with a fresh ID. Every call revalidates the
 owner-only pair before the existing journal persists unknown and performs an
@@ -2563,9 +2585,10 @@ focused E2E uses a synthetic `FinalizedIndexerApi` and makes zero sends. The
 separate exact-genesis stable-clock tests reject wrong genesis and tip movement.
 Exact tag-16 signed-refund and tag-17 punishment future messages/hashes are now
 planned, but the three refund/completion/punishment builders and
-non-Initialize/Fund discovery remain unavailable. No positive actual-local-indexer evidence,
-tag-15 chain submission, or claim PoC exists; preparation/completion create no
-chain state.
+non-Initialize/Fund discovery remain unavailable. No positive actual-local
+tag-14/tag-15 finalized discovery, tag-15 chain effect, or claim PoC exists;
+the preparation/completion records and official-type fixture admission are not
+actual-chain state.
 
 The workspace now also contains the sealed `lez-xmr-release-authority`
 foundation and its public opaque-evidence issuer. Its 35 tests cover schema-v3
@@ -2593,10 +2616,11 @@ journal publisher does not call it. Because Rust has no cross-crate friend
 visibility, the consuming extraction remains a trusted-single-process PoC seam;
 production requires a dedicated release-service process and UID so actors never
 receive authorization bytes or the release bearer. The release and sidecar
-journals have no shared transaction. The remaining builders, actual-local tag-13/indexer evidence, release-service
-clock/route ownership and wiring, tag-14/tag-15 sequencer execution,
-authorization finality and definitive-absence handling, lifecycle role actors,
-and composed E2E remain pending. The component tests do
+journals have no shared transaction. The remaining builders, actual-local
+tag-13/indexer evidence, release-service clock/route ownership and wiring,
+actual-local tag-14/tag-15 sequencer effects and finalized discovery,
+definitive-absence handling, lifecycle role actors, and composed E2E remain
+pending. The component tests do
 not establish live replay prevention or a claim PoC; admitted is not finalized.
 The Monero observation does not prove old-output unspent state from a view-only
 wallet.

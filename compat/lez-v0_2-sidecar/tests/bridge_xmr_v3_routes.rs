@@ -677,7 +677,7 @@ async fn maker_prepares_and_completes_exact_tag_15_after_taker_authorization() {
         1,
         "tag-15 prepare and complete never submit"
     );
-    let mut wrong_runtime = maker_runtime;
+    let mut wrong_runtime = maker_runtime.clone();
     wrong_runtime.signer_account_id = h(99);
     assert!(matches!(
         maker
@@ -738,7 +738,18 @@ async fn maker_prepares_and_completes_exact_tag_15_after_taker_authorization() {
         0,
         "startup recovery must not regenerate the aggregate-authority nonce"
     );
-    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+    let submission_request = SubmitTransactionRequest::new(
+        context(Participant::Maker, "tag15-submit-claim"),
+        maker_runtime,
+        completed.claim.clone(),
+    );
+    let submitted = restarted_client
+        .submit_transaction(submission_request)
+        .await
+        .expect("restored Maker submits the exact completed durable tag-15 claim");
+    assert_eq!(submitted.transaction_id, completed.claim.transaction_id);
+    assert_eq!(submitted.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 2);
     restarted_server
         .stop()
         .await
@@ -767,7 +778,7 @@ async fn maker_prepares_and_completes_exact_tag_15_after_taker_authorization() {
         Err(BridgeServerError::InvalidDurableState)
     ));
     assert_eq!(corrupt_nonces.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 2);
     fs::write(&completion_path, completion_bytes).expect("restore completion reservation");
 
     fs::remove_file(
@@ -794,7 +805,7 @@ async fn maker_prepares_and_completes_exact_tag_15_after_taker_authorization() {
         Err(BridgeServerError::InvalidDurableState)
     ));
     assert_eq!(missing_nonces.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 2);
 
     taker.server.stop().await.expect("taker stop");
     sequencer.stop().expect("sequencer stop");

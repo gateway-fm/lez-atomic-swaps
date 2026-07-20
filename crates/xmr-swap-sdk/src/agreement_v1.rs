@@ -1696,7 +1696,7 @@ impl XmrActivatedAgreementV1 {
                 required,
             });
         }
-        let cutoff_ms = agreement.body().windows.maker_xmr_funding_cutoff_ms;
+        let cutoff_ms = expected.maker_xmr_funding_cutoff_ms();
         if candidate.finalized_consensus_timestamp_ms > cutoff_ms {
             return Err(XmrAgreementV1Error::LezLockCandidateAfterFundingCutoff {
                 finalized_consensus_timestamp_ms: candidate.finalized_consensus_timestamp_ms,
@@ -1746,6 +1746,7 @@ pub struct XmrLezInitializePlanV1 {
     maker_dleq_transcript_commitment: [u8; 32],
     taker_dleq_transcript_commitment: [u8; 32],
     amount: u128,
+    maker_xmr_funding_cutoff_ms: u64,
     refund_at_ms: u64,
     punish_at_ms: u64,
     claim_message_hash: [u8; 32],
@@ -1779,6 +1780,7 @@ impl XmrLezInitializePlanV1 {
             maker_dleq_transcript_commitment: lez.maker_dleq_transcript_commitment,
             taker_dleq_transcript_commitment: lez.taker_dleq_transcript_commitment,
             amount: lez.amount,
+            maker_xmr_funding_cutoff_ms: body.windows.maker_xmr_funding_cutoff_ms,
             refund_at_ms: body.windows.refund_at_ms,
             punish_at_ms: body.windows.punish_at_ms,
             claim_message_hash: body.messages.claim,
@@ -1905,6 +1907,12 @@ impl XmrLezInitializePlanV1 {
     #[must_use]
     pub const fn amount(&self) -> u128 {
         self.amount
+    }
+
+    /// Latest finalized LEZ consensus time at which Maker XMR funding remains permitted.
+    #[must_use]
+    pub const fn maker_xmr_funding_cutoff_ms(&self) -> u64 {
+        self.maker_xmr_funding_cutoff_ms
     }
 
     /// Earliest signed-refund guest time in milliseconds.
@@ -3323,6 +3331,10 @@ mod tests {
         assert_eq!(
             plan.activation_commitment(),
             activation.activation_commitment()
+        );
+        assert_eq!(
+            plan.maker_xmr_funding_cutoff_ms(),
+            agreement.body().windows().maker_xmr_funding_cutoff_ms()
         );
         assert_eq!(
             plan.claim_partial_context_binding(),

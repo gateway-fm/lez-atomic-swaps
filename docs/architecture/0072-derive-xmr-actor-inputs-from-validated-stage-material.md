@@ -1,7 +1,8 @@
 # ADR 0072: Derive XMR actor inputs from validated stage material
 
-Status: Accepted as an M4 composition rule; public session descriptors are
-implemented and actual role-process execution remains pending.
+Status: Accepted as an M4 composition rule; SDK boundaries and the role-fixed
+tag-13 actor are implemented, while independent material exchange and actual
+role-process execution remain pending.
 
 Date: 2026-07-20
 
@@ -56,8 +57,11 @@ flowchart LR
     Claim --> ClaimActor["Role owned claim session"]
     Refund --> RefundActor["Role owned refund session"]
     Activation --> Plan["Validated LEZ initialize plan"]
-    Plan --> Taker["Taker tag 13 actor"]
-    Runtime["Loopback RPCs and deployment"] --> Taker
+    Plan --> Taker["Role fixed Taker tag 13 actor"]
+    Signer["Owner private Taker LEZ key"] --> Taker
+    Indexer["Official finalized indexer RPC"] --> Taker
+    Taker --> Sequencer["Official sequencer RPC"]
+    Deployment["Checked M4 ProgramID and local chain identity"] --> Taker
 ```
 
 ## Validation and execution flow
@@ -76,10 +80,12 @@ sequenceDiagram
     TakerProc->>Indexer: read stable finalized nonces
     Indexer-->>TakerProc: canonical accounts and clock
     TakerProc->>TakerProc: recompute messages and compare plan
+    TakerProc->>TakerProc: require finalized clock at or before signed funding cutoff
     TakerProc->>Sequencer: submit exact Initialize once
     TakerProc->>Indexer: require finalized Initialize
+    TakerProc->>TakerProc: recheck Initialize clock at or before cutoff
     TakerProc->>Sequencer: submit exact Fund once
-    TakerProc->>Indexer: require finalized Fund
+    TakerProc->>Indexer: require finalized Fund at or before cutoff
 ```
 
 Finality reads are observation, not submission retries. This sequence proves
@@ -96,15 +102,33 @@ attachment, wrong view-key/cross-agreement rejection, role-indexed signatures,
 and byte-identical canonical wires. All nine SDK tests, strict Clippy,
 warning-fatal Rustdoc, formatting, and diff checks pass.
 
+The tag-13 actor adds 13 GREEN unit tests for the checked deployment identity,
+role-restricted finalized nonce source, owner-only inputs/evidence, no-clobber
+before node access, strict CLI schema, stable-anchor policy, and effect-specific
+classification requests. It also rejects a stale finalized preflight before any
+submission, rechecks the signed Maker funding cutoff after finalized Initialize
+before Fund, and refuses success evidence when Fund finalizes after the cutoff.
+Only finalized LEZ consensus timestamps carry cutoff authority. Locked/offline actor tests and strict Clippy pass with
+the pinned local rapidsnark libraries. This is component evidence only; no node
+effect was executed by that test gate.
+
 ## Consequences and remaining work
 
 - Actors do not define a parallel agreement format or session-domain formula.
 - The private view key remains owner-only and is absent from public evidence.
 - Stable finalized nonces remain live inputs and must be checked before tag 13.
+- Fund cannot be submitted until exact Initialize bytes are classified `Found`
+  in stable finalized history; polling never grants another submission attempt.
+- The current PoC actor is deliberately one-shot after submission: crash restart
+  and ambiguous-outcome reconciliation remain post-PoC hardening. An operator
+  must never delete its empty evidence reservation without reconciling chain
+  state first.
+- The PoC must use dedicated per-swap owner accounts with no unrelated nonce
+  consumers; durable nonce leasing/exclusivity remains production hardening.
 - Descriptors are not signing/release authority or actual-swap evidence.
 
 Build independent role-process countersigning/material packets on the validated
-API, finish the canonical-wire tag-13 actor, then compose actual finalized tags
-13, 14, and 15, adaptor extraction, and the official-wallet Monero spend.
+API, execute the canonical-wire tag-13 actor, then compose actual finalized
+tags 14 and 15, adaptor extraction, and the official-wallet Monero spend.
 Recovery, chaos, and production/Stagenet hardening follow the happy PoC under
 ADR 0027.

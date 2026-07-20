@@ -1,11 +1,15 @@
 use std::sync::Arc;
 
+#[cfg(target_os = "linux")]
+use std::{fs, os::unix::fs::PermissionsExt as _};
+
 use async_trait::async_trait;
 use borsh::BorshDeserialize as _;
 use lez_bridge_protocol::{
-    AggregateBip340Signature, CompleteNativeXmrClaimV3Request, Hex32, MessageContext, Participant,
-    PrepareNativeXmrClaimV3Request, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
-    XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
+    AggregateBip340Signature, CompleteNativeXmrClaimV3Request, ExactTransactionBytes, Hex32,
+    MessageContext, Participant, PrepareNativeXmrClaimV3Request, PreparedTransaction, RequestId,
+    RunId, RuntimeCompatibility, RuntimeDescriptor, TransactionId, XmrNativeEscrowTermsV3,
+    XmrNativeEscrowTermsV3Input,
 };
 use lez_v0_2_sidecar::{
     M4StageAFinalizedNonces, M4StageAFutureMessageInput, M4StageAFutureMessagePlanError,
@@ -14,10 +18,20 @@ use lez_v0_2_sidecar::{
     plan_m4_stage_a_future_messages, program_id_to_hex,
 };
 use nssa::{AccountId, PrivateKey, PublicKey, Signature, program::Program};
+#[cfg(target_os = "linux")]
+use tempfile::TempDir;
 
 const PROGRAM: [u32; 8] = [0x1020_3040; 8];
 const TRANSFER_PROGRAM: [u32; 8] = [0x5060_7080; 8];
 const SWAP_ID: [u8; 32] = [0x51; 32];
+
+#[cfg(target_os = "linux")]
+fn private_directory() -> TempDir {
+    let directory = TempDir::new().expect("temporary directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("owner-only directory");
+    directory
+}
 
 fn identity(byte: u8) -> (AccountId, PublicKey) {
     let private = PrivateKey::try_new([byte; 32]).expect("valid fixture scalar");
@@ -133,6 +147,10 @@ impl NonceSource for ExactAuthorityNonce {
 }
 
 #[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one tag-15 journey binds planning, durable completion, and ownership drift to the same exact bytes"
+)]
 async fn existing_tag15_prepare_and_complete_accept_the_planned_claim_hash_and_message() {
     let (maker, maker_private, _) = full_identity(21);
     let (taker, _, _) = full_identity(22);
@@ -187,16 +205,31 @@ async fn existing_tag15_prepare_and_complete_accept_the_planned_claim_hash_and_m
         program_id_to_hex(PROGRAM),
         Hex32::from_bytes(maker.into_value()),
     );
+    let nonce_source = Arc::new(ExactAuthorityNonce {
+        authority: claim_authority,
+        nonce: plan.nonces().claim(),
+    });
+    #[cfg(target_os = "linux")]
+    let state_directory = private_directory();
+    #[cfg(target_os = "linux")]
+    let planner = NativeEscrowPlanner::new_durable(
+        Participant::Maker,
+        maker_private,
+        PROGRAM,
+        TRANSFER_PROGRAM,
+        runtime.clone(),
+        nonce_source,
+        state_directory.path(),
+    )
+    .expect("Maker planner");
+    #[cfg(not(target_os = "linux"))]
     let planner = NativeEscrowPlanner::new(
         Participant::Maker,
         maker_private,
         PROGRAM,
         TRANSFER_PROGRAM,
         runtime.clone(),
-        Arc::new(ExactAuthorityNonce {
-            authority: claim_authority,
-            nonce: plan.nonces().claim(),
-        }),
+        nonce_source,
     )
     .expect("Maker planner");
     let prepare_request = PrepareNativeXmrClaimV3Request::new(
@@ -243,6 +276,52 @@ async fn existing_tag15_prepare_and_complete_accept_the_planned_claim_hash_and_m
         .expect("canonical completed transaction");
     assert_eq!(transaction.message(), plan.claim_message());
     assert_eq!(transaction.message().hash(), plan.claim_hash());
+    #[cfg(target_os = "linux")]
+    {
+        planner
+            .validate_owned_submission(&completed.claim)
+            .await
+            .expect("exact completed durable tag-15 claim is generically submittable");
+
+        let mut transaction_id_drift = completed.claim.clone();
+        transaction_id_drift.transaction_id = TransactionId::from_bytes([0xa5; 32]);
+        assert_eq!(
+            planner
+                .validate_owned_submission(&transaction_id_drift)
+                .await
+                .expect_err("transaction-ID drift is not owned"),
+            NativePrepareError::InvalidTransactionBytes
+        );
+
+        let mut changed_bytes = completed.claim.exact_bytes.as_slice().to_vec();
+        let last = changed_bytes.len() - 1;
+        changed_bytes[last] ^= 1;
+        let bytes_drift = PreparedTransaction::new(
+            completed.claim.transaction_id,
+            ExactTransactionBytes::new(changed_bytes).expect("bounded drift fixture"),
+        );
+        assert_eq!(
+            planner
+                .validate_owned_submission(&bytes_drift)
+                .await
+                .expect_err("exact-byte drift is not owned"),
+            NativePrepareError::InvalidTransactionBytes
+        );
+
+        fs::remove_file(
+            state_directory
+                .path()
+                .join("xmr-native-claim-completion.v3.json"),
+        )
+        .expect("remove durable completion reservation");
+        assert_eq!(
+            planner
+                .validate_owned_submission(&completed.claim)
+                .await
+                .expect_err("in-memory completion without durable ownership is rejected"),
+            NativePrepareError::InvalidTransactionBytes
+        );
+    }
 }
 
 #[test]

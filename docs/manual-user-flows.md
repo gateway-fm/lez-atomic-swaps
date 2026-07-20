@@ -2359,12 +2359,15 @@ The Maker-only `prepare_native_xmr_claim_v3` and
 binds the aggregate-authority account/nonce, generated tag-15 ABI and ordered
 accounts, and the immutable claim-message hash before owner-only persistence.
 Completion reloads that exact record, verifies the aggregate BIP340 signature,
-and durably persists one canonical transaction without submitting it. A fresh
-server/planner rederives both successful results; missing or corrupt durable
-state cannot survive as cached success. Wrong reservation, terms, signature,
-role, runtime, nonce, or hash fails closed. The three refund/completion/punishment
-builders and non-Initialize/Fund discovery classification return typed
-`Unavailable`.
+and durably persists one canonical transaction; neither preparation operation
+submits. Generic submission now admits only this exact completed durable tag-15
+claim. The authenticated restart test makes one accepted sequencer send; byte
+or transaction-ID drift and missing/corrupt durable state fail before node I/O.
+Tag 14 remains rejected by generic submission and exclusive to the dedicated
+release route. A fresh server/planner rederives both successful preparation
+results. Wrong reservation, terms, signature, role, runtime, nonce, or hash
+fails closed. The three refund/completion/punishment builders and
+non-Initialize/Fund discovery classification return typed `Unavailable`.
 
 The same route binary also proves the tag-13 component. Initialize and Fund use
 request IDs derived from their exact transaction IDs. A fresh arbitrary ID for
@@ -2611,6 +2614,49 @@ and both Vault balances remained zero. The strict
 funded identity/nonce readiness only. Actual role-process lifecycle actors and
 M4 swaps remain 0 of 1.
 
+### Verify the M4 tag-13 Taker actor component
+
+The role-fixed executable now builds and passes its local component gate. Use
+the verified rapidsnark libraries explicitly: the upstream build script may
+otherwise attempt its own download even when Cargo is offline and then depend
+on host `unzip` availability.
+
+```sh
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+export CARGO_NET_OFFLINE=true
+
+cargo +1.96.0 test --locked --offline \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --bin lez-v02-xmr-stage-a-poc
+cargo +1.96.0 clippy --locked --offline \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --bin lez-v02-xmr-stage-a-poc -- -D warnings
+```
+
+Expected result is 13 passed tests and no Clippy findings. These tests use no
+Docker, node, RPC, peer, faucet, public endpoint, or funds. They prove input
+hardening, signed finalized-consensus funding-cutoff enforcement, and exact
+Initialize-finality-Fund ordering in code, not an executed chain effect. A stale
+cutoff fails before submission; a cutoff crossed while Initialize finalizes
+prevents Fund; and an after-cutoff finalized Fund cannot become success evidence.
+Host wall clock is never cutoff authority.
+
+This is still a one-shot PoC component after any submission. A failed run leaves
+a no-clobber evidence reservation; never delete it until exact chain state and
+submission outcome are reconciled. Use a fresh, dedicated per-swap Maker and
+Taker LEZ account and send no unrelated transactions from them, because future
+nonces are checked but not leased. Crash resume, ambiguous-outcome recovery, and
+durable nonce leasing are tracked for post-PoC hardening.
+
+Do not fabricate agreement/activation wires from unit-test constants to run the
+binary. A real user flow requires two independent role processes to validate
+and countersign fresh Stage-A/Stage-B material while withholding the Taker
+claim partial until finalized tag 14. That material command is the next M4
+slice; its arrival will add the actual actor invocation and evidence assertions
+here. Until then, the manually repeatable node-backed boundary stops at checked
+deployment and two-role Vault onboarding above.
+
 The focused public-boundary command must report `running 1 test` and one
 passed; the full release-authority command must report 31 unit, 3 key-file, and
 1 public integration test passed (35 aggregate) and zero
@@ -2654,9 +2700,10 @@ byte-identical `AlreadyKnown` with one lookup/zero sends; and a wrong official
 returned ID as `UnknownSubmissionOutcome` after one lookup/one send, with
 same-request replay leaving both counts unchanged. After durable-reservation deletion, a fresh request ID fails before node I/O
 without increasing the established count. The tag-15 case must prove exact
-generated accounts/nonce/hash, aggregate signature, zero tag-15 sends, and
-byte-identical prepare/complete replay after a fresh server/planner; durable
-deletion or corruption must fail closed rather than return cached success. These
+generated accounts/nonce/hash, aggregate signature, byte-identical
+prepare/complete replay after a fresh server/planner, and one accepted exact
+tag-15 submission. Durable deletion or corruption must fail before any
+additional sequencer send rather than return cached success. These
 are typed preparation/submission components, not actual-node, authorization or
 claim finality, actor-flow, or claim-PoC evidence.
 

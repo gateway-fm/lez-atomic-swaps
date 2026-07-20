@@ -111,10 +111,13 @@ The Maker-only tag-15 prepare/complete pair is also component-GREEN. It derives
 the exact aggregate-authority nonce, generated ABI/account order, and immutable
 claim-message hash, then accepts only the valid aggregate BIP340 signature into
 a separately durable canonical transaction. Exact restart replay revalidates
-both durable records and neither step submits. Tag-14 finality gating, exact
-tag-15 submission/finality, adaptor extraction, and actor ownership remain
-composition work. The three refund/completion/punishment builders still fail
-closed with typed `Unavailable`.
+both durable records and neither preparation step submits. The generic route
+now admits only that exact completed durable tag-15 claim; an authenticated
+fresh-sidecar test performs its one accepted send, while drift or missing
+durable state fails before node I/O. Tag 14 remains dedicated-release-only.
+Actual-local tag-14/tag-15 execution and finalized discovery, adaptor
+extraction, and actor ownership remain composition work. The three
+refund/completion/punishment builders still fail closed with typed `Unavailable`.
 
 The Taker classifier now admits only exact durable Initialize or Fund targets
 before any indexer read. Initialize requires canonical generated ABI, six
@@ -227,7 +230,7 @@ the [actor-onboarding packet](docs/evidence/m4-local-actor-onboarding-20260720.j
 contains no signing material. This closes funding/nonce prerequisites only;
 fresh role-process lifecycle execution and actual swaps remain 0 of 1.
 Actual-local tag-13 execution/classification, release-worker clock/route wiring,
-tag-14/tag-15 submission and finality, adaptor extraction, official-wallet
+tag-14 submission and tag-14/tag-15 finalized discovery, adaptor extraction, official-wallet
 claim, and fresh terminal roles remain before the happy PoC. Refund/punishment
 follow as the next progressive slice. Full sidecar, security, architecture, and
 diff gates remain mandatory before each pushed checkpoint. The
@@ -241,10 +244,17 @@ already validated Stage-A agreement. Each descriptor reconstructs the exact
 retained session inside the SDK and rejects purpose, session, message, adaptor,
 key-order, binding, or branch cross-wiring. ADR 0072 requires lifecycle actors
 to validate canonical Stage-A and Stage-B wires and derive tag-13 terms from
-the activation plan rather than accept independent protocol strings. This is a
-Unsigned Stage-A/Stage-B body validation and role-indexed signature attachment
-are also GREEN. An independent role countersigning/material process, an actual
-actor effect, and the swap remain pending.
+the activation plan rather than accept independent protocol strings. Unsigned
+Stage-A/Stage-B body validation and role-indexed signature attachment are also
+GREEN. The role-fixed Taker tag-13 executable is component-GREEN with 13 tests:
+it binds the checked deployment and actor identity, recomputes exact future
+messages from a stable finalized nonce snapshot, and rejects a stale signed
+Maker-funding cutoff before any submission. It submits Initialize once, requires
+exact finalized `Found`, rechecks that cutoff before Fund, then submits Fund
+once; an after-cutoff finalized Fund cannot become success evidence. It has not
+yet been
+run against the local node because independent Maker/Taker material generation
+remains pending; no actor effect or swap is claimed.
 
 The fresh checked guest and current host components can be repeated
 independently before the full actor exists; the exact deployer and tag-15

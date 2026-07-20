@@ -3142,12 +3142,14 @@ and 32-byte markers into chain authority.
   The Maker-only tag-15 prepare/complete route is also GREEN. It durably binds the
   exact aggregate-authority nonce and immutable claim-message hash, verifies the
   aggregate BIP340 signature, persists canonical bytes without submission, and
-  revalidates exact state across a fresh server/planner. The full pinned sidecar
-  package, strict Clippy, warning-free Rustdoc, and dependency policy pass. The
-  three refund/completion/punishment builders and non-Initialize/Fund discovery
-  remain typed `Unavailable`; release-service ownership, actual-local-indexer
-  evidence, tag-15 submission, authorization/claim finality, and actual-chain
-  branches remain.
+  revalidates exact state across a fresh server/planner. Generic submission now
+  admits only that exact completed durable tag-15 transaction; an authenticated
+  fresh-sidecar test makes one accepted send. Tag 14 remains dedicated-route-only.
+  The full pinned sidecar package, strict Clippy, warning-free Rustdoc, and
+  dependency policy pass. The three refund/completion/punishment builders and
+  non-Initialize/Fund discovery remain typed `Unavailable`; release-service
+  ownership, actual-local-indexer evidence, actual tag-15 execution,
+  authorization/claim finality, and actual-chain branches remain.
 - [ ] Complete the sole reviewed positive direction with fresh actor processes:
   Taker LEZ lock, finalized Maker observation, exact Maker XMR output, signed
   Monero confirmation policy, revealing Maker LEZ claim, Taker extraction and
@@ -3281,6 +3283,36 @@ These are composition prerequisites, not a signature-exchange process, actor,
 chain effect, or swap. An independent role-owned material/countersigning
 process remains before fresh Stage-A/Stage-B wires can be produced safely.
 
+The role-fixed Taker tag-13 executable is now component-GREEN. It accepts only
+canonical validated Stage-A/Stage-B wires plus owner-private role material,
+pins the checked M4 ProgramID, binds the exact depositor and local
+channel/genesis, reads a stable four-account finalized nonce snapshot,
+recomputes tags 15/16/17 and exact hashes, and submits Initialize once. Only an
+exact stable-finalized `Found` capability permits its single Fund submission.
+The signed Maker funding cutoff is checked against finalized consensus before
+Initialize, again after finalized Initialize before Fund, and on finalized Fund
+before success evidence; host wall clock has no authority. Its 13 tests and strict Clippy pass with the pinned local rapidsnark libraries.
+The sidecar dependency gate explicitly allows the permissive `0BSD` license
+used by three SDK transitive crates; advisories, bans, licenses, and sources
+remain enforced. No actual node submission has been made with the actor because
+the independent Maker/Taker material process is the next prerequisite; this is
+not swap evidence. The current executable is intentionally one-shot after a
+submission and its future nonces are not leased: the private PoC must use
+dedicated per-swap owner accounts with no unrelated transactions. Durable
+crash/ambiguous-outcome resume and nonce leasing remain post-PoC hardening.
+
+ADR 0073 fixes the next material route: one role-fixed binary in separate Maker
+and Taker processes, distinct `0700` roots and one SQLite adaptor journal per
+role. It reuses the existing role runner and journal transitions. Public packet
+rounds countersign Stage A, durably reserve/open claim and refund nonces, send
+Maker claim/refund partials and only the Taker refund partial, then countersign
+Stage B. The Taker claim partial stays in its journal until the tag-14 release
+boundary. The concrete implementation order is unsigned Stage-A/B codecs and
+transcript comparison APIs, a descriptor-derived runner session constructor,
+reusable finalized nonce/deployment facts, the role-fixed XMR reference actor,
+and a narrow journal-to-tag-14 loader. No external Logos dependency blocks this
+work.
+
 The immediate critical path is now:
 
 1. wire the pure future-message plan into fresh lifecycle activation using one
@@ -3292,9 +3324,9 @@ The immediate critical path is now:
    actual Monero output/topology capabilities;
 2. run the release worker against the actual local indexer and sidecar to submit
    exact tag 14, require its finality before the GREEN Maker tag-15
-   prepare/complete pair, then add exact tag-15 submission and finalized
-   tag-14/tag-15 classification. Keep generic tag-14 submission closed and
-   define definitive-absence handling;
+   prepare/complete/submission path, then execute tag 15 and add finalized
+   tag-14/tag-15 discovery. Keep generic tag-14 submission closed and define
+   definitive-absence handling;
 3. promote the two onboarded identities into fresh Maker/Taker lifecycle
    processes with durable share/effect records and
    integrate the existing pair-neutral adaptor primitives so the finalized
@@ -3319,21 +3351,21 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by this push is 5 to 9 focused engineering hours
+The checkpoint ETA carried by this push is 4 to 7 focused engineering hours
 to the first reproducible independent-actor claim-path PoC and 8 to 16
 additional hours to the local claim/refund/punishment PoC. A direct source audit
-found two previously untracked repository gaps: bounded finalized discovery
-for the non-owned tag-14/tag-15 effects and generic admission of the completed
-tag-15 claim. This estimate correction reflects actual composition work, not a
-regression. Exact checked local
+found two previously untracked repository gaps. Exact completed tag-15
+admission is now GREEN; bounded finalized discovery for the non-owned
+tag-14/tag-15 effects remains. This estimate reflects the measured remaining
+composition work, not a regression. Exact checked local
 deployment and funded two-identity Vault onboarding are now actual-local GREEN;
 the pure exact Stage-A future-message/hash planner, validated-session
-descriptors, canonical tag-13 component, exact finalized-Initialize/Fund
+descriptors, tested role-fixed tag-13 executable, exact finalized-Initialize/Fund
 classifier and consuming Fund barrier, and durable Maker tag-15
 prepare/complete path are component-GREEN. Independent role-process material
 exchange,
 Initialize/Fund execution, release-worker actual-local tag-14 submission,
-finalized tag-14/tag-15 classification, exact tag-15 submission, adaptor
+actual tag-15 execution, finalized tag-14/tag-15 discovery, adaptor
 extraction integration, official-wallet claim completion, and fresh lifecycle
 actors dominate the next vertical slice. Mocked transports and checked
 recursive cases still do not count as swap runtime evidence.

@@ -23,6 +23,7 @@ common = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-
 hex = "=0.4.3"
 indexer_service_rpc = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", default-features = false, features = ["client"] }
 indexer_service_protocol = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", default-features = false }
+lez-xmr-swap-sdk = { version = "=0.1.0", path = "../../crates/xmr-swap-sdk" }
 jsonrpsee = { version = "=0.26.0", features = ["client-core", "server"] }
 nssa = { package = "lee", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
 lez-bridge-protocol = { version = "=0.1.0", path = "../../crates/lez-bridge-protocol" }
