@@ -46,6 +46,32 @@ type DleqTranscript = HashTranscript<Sha256, ChaCha20Rng>;
 pub struct CrossCurveScalar(Zeroizing<[u8; 32]>);
 
 impl CrossCurveScalar {
+    /// Generates an unbiased canonical scalar from operating-system entropy.
+    ///
+    /// Invalid 256-bit candidates are rejected rather than reduced modulo a
+    /// curve order, preserving one common integer representation on both
+    /// curves.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the operating system cannot provide entropy.
+    pub fn generate() -> Result<Self, rand_core::Error> {
+        Self::generate_with_rng(&mut rand_core::OsRng)
+    }
+
+    fn generate_with_rng(rng: &mut (impl CryptoRng + RngCore)) -> Result<Self, rand_core::Error> {
+        loop {
+            let mut candidate = Zeroizing::new([0_u8; 32]);
+            rng.try_fill_bytes(&mut *candidate)?;
+            if *candidate == [0; 32] || candidate[31] & 0xf0 != 0 {
+                continue;
+            }
+            if EdScalar::from_canonical_bytes(*candidate).is_some() {
+                return Ok(Self(candidate));
+            }
+        }
+    }
+
     /// Parses the Monero/Ed25519 little-endian representation.
     ///
     /// # Errors
@@ -399,4 +425,60 @@ fn transcript_commitment(
         .chain_update(proof_bytes)
         .finalize()
         .into()
+}
+
+#[cfg(test)]
+mod scalar_generation_tests {
+    use std::collections::VecDeque;
+
+    use rand_core::{CryptoRng, Error, RngCore};
+
+    use super::*;
+
+    struct ScriptedRng(VecDeque<[u8; 32]>);
+
+    impl RngCore for ScriptedRng {
+        fn next_u32(&mut self) -> u32 {
+            panic!("scalar generation requests full candidates")
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            panic!("scalar generation requests full candidates")
+        }
+
+        fn fill_bytes(&mut self, destination: &mut [u8]) {
+            self.try_fill_bytes(destination).expect("scripted entropy");
+        }
+
+        fn try_fill_bytes(&mut self, destination: &mut [u8]) -> Result<(), Error> {
+            let candidate = self.0.pop_front().expect("scripted candidate");
+            destination.copy_from_slice(&candidate);
+            Ok(())
+        }
+    }
+
+    impl CryptoRng for ScriptedRng {}
+
+    #[test]
+    fn generated_cross_curve_scalar_rejection_samples_to_canonical_nonzero_bytes() {
+        let mut above_252_bits = [0_u8; 32];
+        above_252_bits[31] = 0x10;
+        let mut valid = [0_u8; 32];
+        valid[0] = 29;
+        let mut rng = ScriptedRng(VecDeque::from([[0; 32], above_252_bits, valid]));
+
+        let generated = CrossCurveScalar::generate_with_rng(&mut rng)
+            .expect("rejection-sampled cross-curve scalar");
+
+        assert_eq!(*generated.into_monero_little_endian(), valid);
+        assert!(rng.0.is_empty(), "both invalid candidates were rejected");
+    }
+
+    #[test]
+    fn os_generated_cross_curve_scalar_is_accepted_by_the_existing_parser() {
+        let generated = CrossCurveScalar::generate().expect("OS-generated scalar");
+        let bytes = generated.into_monero_little_endian();
+
+        assert!(CrossCurveScalar::from_monero_little_endian(*bytes).is_ok());
+    }
 }

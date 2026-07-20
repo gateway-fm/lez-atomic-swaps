@@ -29,6 +29,10 @@ pub const XMR_ACTIVATION_SCHEMA_V1: u16 = 1;
 pub const MAX_XMR_AGREEMENT_WIRE_BYTES: usize = 270 * 1024;
 /// Maximum canonical fixed-width activation record.
 pub const MAX_XMR_ACTIVATION_WIRE_BYTES: usize = 2 * 1024;
+/// Maximum canonical unsigned Stage-A prefix through its commitment.
+pub const MAX_XMR_UNSIGNED_STAGE_A_WIRE_BYTES: usize = MAX_XMR_AGREEMENT_WIRE_BYTES - 128;
+/// Maximum canonical unsigned Stage-B prefix through its commitment.
+pub const MAX_XMR_UNSIGNED_STAGE_B_WIRE_BYTES: usize = MAX_XMR_ACTIVATION_WIRE_BYTES - 128;
 
 const MAX_DLEQ_WIRE_BYTES: usize = 129 * 1024;
 const MAX_MONERO_ADDRESS_BYTES: usize = 128;
@@ -739,17 +743,13 @@ impl XmrAgreementRecordV1 {
     ///
     /// Rejects any variable field or complete record exceeding its bound.
     pub fn encode_wire(&self) -> Result<Vec<u8>, XmrAgreementV1Error> {
-        validate_wire_field_bounds(&self.body)?;
-        let body = self.body.encode_body();
-        let mut bytes = Vec::with_capacity(2 + body.len() + 160);
-        bytes.extend_from_slice(&self.schema_version.to_le_bytes());
-        bytes.extend_from_slice(&body);
-        bytes.extend_from_slice(&self.agreement_commitment);
+        let mut bytes = encode_unsigned_agreement_wire(
+            self.schema_version,
+            &self.body,
+            self.agreement_commitment,
+        )?;
         bytes.extend_from_slice(&self.maker_signature);
         bytes.extend_from_slice(&self.taker_signature);
-        if bytes.len() > MAX_XMR_AGREEMENT_WIRE_BYTES {
-            return Err(XmrAgreementV1Error::OversizedWire);
-        }
         Ok(bytes)
     }
 }
@@ -977,6 +977,43 @@ impl ValidatedXmrAgreementBodyV1 {
             claim_context,
             refund_context,
         })
+    }
+
+    /// Parses and semantically validates the canonical unsigned Stage-A wire.
+    ///
+    /// The accepted bytes are exactly the canonical signed agreement prefix:
+    /// schema, existing agreement body, and its domain-separated commitment.
+    ///
+    /// # Errors
+    ///
+    /// Rejects oversized, malformed, trailing, noncanonical, unsupported, or
+    /// semantically invalid bytes and a commitment that differs from the body.
+    pub fn from_unsigned_wire(bytes: &[u8]) -> Result<Self, XmrAgreementV1Error> {
+        if bytes.len() > MAX_XMR_UNSIGNED_STAGE_A_WIRE_BYTES {
+            return Err(XmrAgreementV1Error::OversizedWire);
+        }
+        let (schema_version, body, agreement_commitment) = decode_unsigned_agreement_wire(bytes)?;
+        if schema_version != XMR_AGREEMENT_SCHEMA_V1 {
+            return Err(XmrAgreementV1Error::UnsupportedSchema(schema_version));
+        }
+        let validated = Self::validate(body)?;
+        if agreement_commitment != validated.commitment {
+            return Err(XmrAgreementV1Error::CommitmentMismatch);
+        }
+        if validated.encode_unsigned_wire()?.as_slice() != bytes {
+            return Err(XmrAgreementV1Error::NonCanonicalWire);
+        }
+        Ok(validated)
+    }
+
+    /// Encodes the canonical signed Stage-A prefix without role signatures.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if retained variable fields or the complete unsigned
+    /// prefix exceed their fixed network bounds.
+    pub fn encode_unsigned_wire(&self) -> Result<Vec<u8>, XmrAgreementV1Error> {
+        encode_unsigned_agreement_wire(XMR_AGREEMENT_SCHEMA_V1, &self.body, self.commitment)
     }
 
     /// Exact semantically validated body that both roles must inspect and sign.
@@ -1239,6 +1276,26 @@ impl XmrSessionTranscriptV1 {
             taker_public_nonce,
         }
     }
+    /// Maker nonce commitment persisted before either nonce opening.
+    #[must_use]
+    pub const fn maker_nonce_commitment(&self) -> [u8; 32] {
+        self.maker_nonce_commitment
+    }
+    /// Taker nonce commitment persisted before either nonce opening.
+    #[must_use]
+    pub const fn taker_nonce_commitment(&self) -> [u8; 32] {
+        self.taker_nonce_commitment
+    }
+    /// Maker public nonce opening for this exact session.
+    #[must_use]
+    pub const fn maker_public_nonce(&self) -> [u8; 66] {
+        self.maker_public_nonce
+    }
+    /// Taker public nonce opening for this exact session.
+    #[must_use]
+    pub const fn taker_public_nonce(&self) -> [u8; 66] {
+        self.taker_public_nonce
+    }
 
     fn encode_into(&self, bytes: &mut Vec<u8>) {
         bytes.extend_from_slice(&self.maker_nonce_commitment);
@@ -1296,6 +1353,62 @@ impl XmrActivationBodyV1 {
         }
     }
 
+    /// Stage-A commitment to which this activation is bound.
+    #[must_use]
+    pub const fn base_agreement_commitment(&self) -> [u8; 32] {
+        self.base_agreement_commitment
+    }
+    /// Durable claim-session context binding.
+    #[must_use]
+    pub const fn claim_context_binding(&self) -> [u8; 32] {
+        self.claim_context_binding
+    }
+    /// Complete claim-session nonce commitment/opening transcript.
+    #[must_use]
+    pub const fn claim_transcript(&self) -> &XmrSessionTranscriptV1 {
+        &self.claim_transcript
+    }
+    /// Verified Maker claim partial committed before the first chain lock.
+    #[must_use]
+    pub const fn maker_claim_partial(&self) -> [u8; 32] {
+        self.maker_claim_partial
+    }
+    /// Context-bound commitment input for the private Taker claim partial.
+    #[must_use]
+    pub const fn claim_partial_context_binding(&self) -> [u8; 32] {
+        self.claim_partial_context_binding
+    }
+    /// Commitment to the owner-private Taker claim partial.
+    #[must_use]
+    pub const fn claim_partial_commitment(&self) -> [u8; 32] {
+        self.claim_partial_commitment
+    }
+    /// Durable refund-session context binding.
+    #[must_use]
+    pub const fn refund_context_binding(&self) -> [u8; 32] {
+        self.refund_context_binding
+    }
+    /// Complete refund-session nonce commitment/opening transcript.
+    #[must_use]
+    pub const fn refund_transcript(&self) -> &XmrSessionTranscriptV1 {
+        &self.refund_transcript
+    }
+    /// Verified Maker refund partial included in the presignature.
+    #[must_use]
+    pub const fn maker_refund_partial(&self) -> [u8; 32] {
+        self.maker_refund_partial
+    }
+    /// Verified Taker refund partial included in the presignature.
+    #[must_use]
+    pub const fn taker_refund_partial(&self) -> [u8; 32] {
+        self.taker_refund_partial
+    }
+    /// Aggregated signed-refund presignature available before the first lock.
+    #[must_use]
+    pub const fn refund_presignature(&self) -> [u8; 65] {
+        self.refund_presignature
+    }
+
     /// Domain-separated canonical activation commitment.
     #[must_use]
     pub fn commitment(&self) -> [u8; 32] {
@@ -1351,22 +1464,25 @@ impl XmrActivationRecordV1 {
         }
     }
 
+    /// Exact activation body purportedly signed by both actors.
+    #[must_use]
+    pub const fn body(&self) -> &XmrActivationBodyV1 {
+        &self.body
+    }
+
     /// Encodes the canonical fixed-width activation wire.
     ///
     /// # Errors
     ///
     /// Rejects an activation record larger than the fixed wire bound.
     pub fn encode_wire(&self) -> Result<Vec<u8>, XmrAgreementV1Error> {
-        let body = self.body.encode_body();
-        let mut bytes = Vec::with_capacity(2 + body.len() + 160);
-        bytes.extend_from_slice(&self.schema_version.to_le_bytes());
-        bytes.extend_from_slice(&body);
-        bytes.extend_from_slice(&self.activation_commitment);
+        let mut bytes = encode_unsigned_activation_wire(
+            self.schema_version,
+            &self.body,
+            self.activation_commitment,
+        )?;
         bytes.extend_from_slice(&self.maker_signature);
         bytes.extend_from_slice(&self.taker_signature);
-        if bytes.len() > MAX_XMR_ACTIVATION_WIRE_BYTES {
-            return Err(XmrAgreementV1Error::OversizedActivationWire);
-        }
         Ok(bytes)
     }
 }
@@ -1483,6 +1599,50 @@ impl ValidatedXmrActivationBodyV1 {
             maker_agreement_key,
             taker_agreement_key,
         })
+    }
+
+    /// Parses and validates a canonical unsigned Stage-B wire against Stage A.
+    ///
+    /// The accepted bytes are exactly the signed activation prefix: schema,
+    /// existing activation body, and its domain-separated commitment.
+    ///
+    /// # Errors
+    ///
+    /// Rejects oversized, malformed, trailing, noncanonical, unsupported, or
+    /// semantically invalid bytes, the wrong local view key, and commitment
+    /// drift from the decoded body.
+    pub fn from_unsigned_wire(
+        agreement: &XmrAgreementV1,
+        bytes: &[u8],
+        local_view_key: &MoneroPrivateViewKey,
+    ) -> Result<Self, XmrAgreementV1Error> {
+        if bytes.len() > MAX_XMR_UNSIGNED_STAGE_B_WIRE_BYTES {
+            return Err(XmrAgreementV1Error::OversizedActivationWire);
+        }
+        let (schema_version, body, activation_commitment) = decode_unsigned_activation_wire(bytes)?;
+        if schema_version != XMR_ACTIVATION_SCHEMA_V1 {
+            return Err(XmrAgreementV1Error::UnsupportedActivationSchema(
+                schema_version,
+            ));
+        }
+        let validated = Self::validate(agreement, body, local_view_key)?;
+        if activation_commitment != validated.commitment {
+            return Err(XmrAgreementV1Error::ActivationCommitmentMismatch);
+        }
+        if validated.encode_unsigned_wire()?.as_slice() != bytes {
+            return Err(XmrAgreementV1Error::NonCanonicalActivationWire);
+        }
+        Ok(validated)
+    }
+
+    /// Encodes the canonical signed Stage-B prefix without role signatures.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the complete unsigned prefix exceeds its fixed
+    /// network bound.
+    pub fn encode_unsigned_wire(&self) -> Result<Vec<u8>, XmrAgreementV1Error> {
+        encode_unsigned_activation_wire(XMR_ACTIVATION_SCHEMA_V1, &self.body, self.commitment)
     }
 
     /// Exact semantically validated activation body both roles must sign.
@@ -1615,6 +1775,12 @@ impl XmrActivatedAgreementV1 {
     #[must_use]
     pub const fn activation_commitment(&self) -> [u8; 32] {
         self.record.activation_commitment
+    }
+
+    /// Exact validated activation body countersigned by both roles.
+    #[must_use]
+    pub const fn body(&self) -> &XmrActivationBodyV1 {
+        &self.record.body
     }
 
     /// Verifies the Taker partial later retrieved from the LEZ publication.
@@ -2521,14 +2687,47 @@ fn all_distinct<T: Eq>(values: &[T]) -> bool {
         .all(|(index, value)| !values[index + 1..].contains(value))
 }
 
-fn decode_record(bytes: &[u8]) -> Result<XmrAgreementRecordV1, XmrAgreementV1Error> {
-    let mut reader = Reader::new(bytes);
+fn encode_unsigned_agreement_wire(
+    schema_version: u16,
+    body: &XmrAgreementBodyV1,
+    agreement_commitment: [u8; 32],
+) -> Result<Vec<u8>, XmrAgreementV1Error> {
+    validate_wire_field_bounds(body)?;
+    let body = body.encode_body();
+    let mut bytes = Vec::with_capacity(2 + body.len() + 32);
+    bytes.extend_from_slice(&schema_version.to_le_bytes());
+    bytes.extend_from_slice(&body);
+    bytes.extend_from_slice(&agreement_commitment);
+    if bytes.len() > MAX_XMR_UNSIGNED_STAGE_A_WIRE_BYTES {
+        return Err(XmrAgreementV1Error::OversizedWire);
+    }
+    Ok(bytes)
+}
+
+fn encode_unsigned_activation_wire(
+    schema_version: u16,
+    body: &XmrActivationBodyV1,
+    activation_commitment: [u8; 32],
+) -> Result<Vec<u8>, XmrAgreementV1Error> {
+    let body = body.encode_body();
+    let mut bytes = Vec::with_capacity(2 + body.len() + 32);
+    bytes.extend_from_slice(&schema_version.to_le_bytes());
+    bytes.extend_from_slice(&body);
+    bytes.extend_from_slice(&activation_commitment);
+    if bytes.len() > MAX_XMR_UNSIGNED_STAGE_B_WIRE_BYTES {
+        return Err(XmrAgreementV1Error::OversizedActivationWire);
+    }
+    Ok(bytes)
+}
+
+fn decode_agreement_prefix(
+    reader: &mut Reader<'_>,
+) -> Result<(u16, XmrAgreementBodyV1, [u8; 32]), XmrAgreementV1Error> {
     let schema = reader.u16()?;
     let direction = XmrSwapDirectionV1::from_tag(reader.u8()?)?;
     let profile = XmrNamedProfileV1::from_tag(reader.u8()?)?;
     let swap_id = reader.fixed()?;
-    let participants =
-        XmrParticipantsV1::new(decode_identity(&mut reader)?, decode_identity(&mut reader)?);
+    let participants = XmrParticipantsV1::new(decode_identity(reader)?, decode_identity(reader)?);
     let network = network_from_tag(reader.u8()?)?;
     let genesis_hash = reader.fixed()?;
     let amount_piconero = reader.u64()?;
@@ -2589,10 +2788,25 @@ fn decode_record(bytes: &[u8]) -> Result<XmrAgreementRecordV1, XmrAgreementV1Err
         messages,
         windows,
     );
+    Ok((schema, body, reader.fixed()?))
+}
+
+fn decode_unsigned_agreement_wire(
+    bytes: &[u8],
+) -> Result<(u16, XmrAgreementBodyV1, [u8; 32]), XmrAgreementV1Error> {
+    let mut reader = Reader::new(bytes);
+    let decoded = decode_agreement_prefix(&mut reader)?;
+    reader.finish()?;
+    Ok(decoded)
+}
+
+fn decode_record(bytes: &[u8]) -> Result<XmrAgreementRecordV1, XmrAgreementV1Error> {
+    let mut reader = Reader::new(bytes);
+    let (schema, body, agreement_commitment) = decode_agreement_prefix(&mut reader)?;
     let record = XmrAgreementRecordV1::from_parts(
         schema,
         body,
-        reader.fixed()?,
+        agreement_commitment,
         reader.fixed()?,
         reader.fixed()?,
     );
@@ -2600,26 +2814,42 @@ fn decode_record(bytes: &[u8]) -> Result<XmrAgreementRecordV1, XmrAgreementV1Err
     Ok(record)
 }
 
-fn decode_activation_record(bytes: &[u8]) -> Result<XmrActivationRecordV1, XmrAgreementV1Error> {
-    let mut reader = Reader::new(bytes);
+fn decode_activation_prefix(
+    reader: &mut Reader<'_>,
+) -> Result<(u16, XmrActivationBodyV1, [u8; 32]), XmrAgreementV1Error> {
     let schema = reader.u16()?;
     let body = XmrActivationBodyV1::new(
         reader.fixed()?,
         reader.fixed()?,
-        decode_session_transcript(&mut reader)?,
+        decode_session_transcript(reader)?,
         reader.fixed()?,
         reader.fixed()?,
         reader.fixed()?,
         reader.fixed()?,
-        decode_session_transcript(&mut reader)?,
+        decode_session_transcript(reader)?,
         reader.fixed()?,
         reader.fixed()?,
         reader.fixed()?,
     );
+    Ok((schema, body, reader.fixed()?))
+}
+
+fn decode_unsigned_activation_wire(
+    bytes: &[u8],
+) -> Result<(u16, XmrActivationBodyV1, [u8; 32]), XmrAgreementV1Error> {
+    let mut reader = Reader::new(bytes);
+    let decoded = decode_activation_prefix(&mut reader)?;
+    reader.finish()?;
+    Ok(decoded)
+}
+
+fn decode_activation_record(bytes: &[u8]) -> Result<XmrActivationRecordV1, XmrAgreementV1Error> {
+    let mut reader = Reader::new(bytes);
+    let (schema, body, activation_commitment) = decode_activation_prefix(&mut reader)?;
     let record = XmrActivationRecordV1::from_parts(
         schema,
         body,
-        reader.fixed()?,
+        activation_commitment,
         reader.fixed()?,
         reader.fixed()?,
     );
@@ -3006,6 +3236,226 @@ mod tests {
             sign(MAKER_AGREEMENT_SECRET, commitment),
             sign(TAKER_AGREEMENT_SECRET, commitment),
         )
+    }
+
+    #[test]
+    fn unsigned_stage_a_wire_is_the_checked_signed_prefix_and_fails_closed() {
+        let expected_record = signed_record(body());
+        let signed_wire = expected_record.encode_wire().expect("signed Stage-A wire");
+        let validated = ValidatedXmrAgreementBodyV1::validate(expected_record.body.clone())
+            .expect("validated unsigned Stage A");
+        let unsigned_wire = validated
+            .encode_unsigned_wire()
+            .expect("canonical unsigned Stage-A wire");
+
+        assert_eq!(
+            unsigned_wire,
+            signed_wire[..signed_wire.len() - 128],
+            "unsigned Stage A must reuse the signed record prefix exactly"
+        );
+        assert!(unsigned_wire.len() <= MAX_XMR_UNSIGNED_STAGE_A_WIRE_BYTES);
+        let decoded = ValidatedXmrAgreementBodyV1::from_unsigned_wire(&unsigned_wire)
+            .expect("checked unsigned Stage-A wire");
+        assert_eq!(decoded.body(), expected_record.body());
+        assert_eq!(decoded.commitment(), expected_record.body().commitment());
+        assert_eq!(
+            decoded
+                .encode_unsigned_wire()
+                .expect("canonical round trip"),
+            unsigned_wire
+        );
+
+        let mut wrong_schema = unsigned_wire.clone();
+        wrong_schema[..2].copy_from_slice(&2_u16.to_le_bytes());
+        assert_eq!(
+            ValidatedXmrAgreementBodyV1::from_unsigned_wire(&wrong_schema)
+                .expect_err("unknown unsigned Stage-A schema"),
+            XmrAgreementV1Error::UnsupportedSchema(2)
+        );
+
+        let mut wrong_commitment = unsigned_wire.clone();
+        *wrong_commitment.last_mut().expect("commitment byte") ^= 1;
+        assert_eq!(
+            ValidatedXmrAgreementBodyV1::from_unsigned_wire(&wrong_commitment)
+                .expect_err("changed unsigned Stage-A commitment"),
+            XmrAgreementV1Error::CommitmentMismatch
+        );
+
+        let mut trailing = unsigned_wire.clone();
+        trailing.push(0);
+        assert!(matches!(
+            ValidatedXmrAgreementBodyV1::from_unsigned_wire(&trailing),
+            Err(XmrAgreementV1Error::MalformedWire)
+        ));
+        assert!(matches!(
+            ValidatedXmrAgreementBodyV1::from_unsigned_wire(
+                &unsigned_wire[..unsigned_wire.len() - 1]
+            ),
+            Err(XmrAgreementV1Error::MalformedWire)
+        ));
+        assert!(matches!(
+            ValidatedXmrAgreementBodyV1::from_unsigned_wire(&signed_wire),
+            Err(XmrAgreementV1Error::MalformedWire)
+        ));
+        assert_eq!(
+            ValidatedXmrAgreementBodyV1::from_unsigned_wire(&vec![
+                0;
+                MAX_XMR_UNSIGNED_STAGE_A_WIRE_BYTES
+                    + 1
+            ])
+            .expect_err("oversized unsigned Stage-A wire"),
+            XmrAgreementV1Error::OversizedWire
+        );
+    }
+
+    #[test]
+    fn unsigned_stage_b_exposes_exact_role_comparison_fields() {
+        let agreement = XmrAgreementV1::validate(signed_record(body())).expect("agreement");
+        let (expected_record, _) = activation_record(&agreement);
+        let validated = ValidatedXmrActivationBodyV1::validate(
+            &agreement,
+            expected_record.body.clone(),
+            &view_key(),
+        )
+        .expect("validated unsigned Stage B");
+        let activation = validated.body();
+        assert_eq!(
+            activation.base_agreement_commitment(),
+            agreement.agreement_commitment()
+        );
+        assert_eq!(
+            activation.claim_context_binding(),
+            expected_record.body.claim_context_binding
+        );
+        assert_eq!(
+            activation.claim_transcript(),
+            &expected_record.body.claim_transcript
+        );
+        assert_eq!(
+            activation.claim_transcript().maker_nonce_commitment(),
+            expected_record.body.claim_transcript.maker_nonce_commitment
+        );
+        assert_eq!(
+            activation.claim_transcript().taker_nonce_commitment(),
+            expected_record.body.claim_transcript.taker_nonce_commitment
+        );
+        assert_eq!(
+            activation.claim_transcript().maker_public_nonce(),
+            expected_record.body.claim_transcript.maker_public_nonce
+        );
+        assert_eq!(
+            activation.claim_transcript().taker_public_nonce(),
+            expected_record.body.claim_transcript.taker_public_nonce
+        );
+        assert_eq!(
+            activation.maker_claim_partial(),
+            expected_record.body.maker_claim_partial
+        );
+        assert_eq!(
+            activation.claim_partial_context_binding(),
+            expected_record.body.claim_partial_context_binding
+        );
+        assert_eq!(
+            activation.claim_partial_commitment(),
+            expected_record.body.claim_partial_commitment
+        );
+        assert_eq!(
+            activation.refund_context_binding(),
+            expected_record.body.refund_context_binding
+        );
+        assert_eq!(
+            activation.refund_transcript(),
+            &expected_record.body.refund_transcript
+        );
+        assert_eq!(
+            activation.maker_refund_partial(),
+            expected_record.body.maker_refund_partial
+        );
+        assert_eq!(
+            activation.taker_refund_partial(),
+            expected_record.body.taker_refund_partial
+        );
+        assert_eq!(
+            activation.refund_presignature(),
+            expected_record.body.refund_presignature
+        );
+    }
+
+    #[test]
+    fn unsigned_stage_b_wire_is_the_checked_signed_prefix_and_fails_closed() {
+        let agreement = XmrAgreementV1::validate(signed_record(body())).expect("agreement");
+        let (expected_record, _) = activation_record(&agreement);
+        let signed_wire = expected_record.encode_wire().expect("signed Stage-B wire");
+        let validated = ValidatedXmrActivationBodyV1::validate(
+            &agreement,
+            expected_record.body.clone(),
+            &view_key(),
+        )
+        .expect("validated unsigned Stage B");
+        let unsigned_wire = validated
+            .encode_unsigned_wire()
+            .expect("canonical unsigned Stage-B wire");
+
+        assert_eq!(unsigned_wire, signed_wire[..signed_wire.len() - 128]);
+        assert!(unsigned_wire.len() <= MAX_XMR_UNSIGNED_STAGE_B_WIRE_BYTES);
+        let decoded = ValidatedXmrActivationBodyV1::from_unsigned_wire(
+            &agreement,
+            &unsigned_wire,
+            &view_key(),
+        )
+        .expect("checked unsigned Stage-B wire");
+        assert_eq!(decoded.body(), expected_record.body());
+        assert_eq!(decoded.commitment(), expected_record.body.commitment());
+
+        for invalid in [
+            unsigned_wire[..unsigned_wire.len() - 1].to_vec(),
+            signed_wire,
+        ] {
+            assert!(matches!(
+                ValidatedXmrActivationBodyV1::from_unsigned_wire(&agreement, &invalid, &view_key(),),
+                Err(XmrAgreementV1Error::MalformedWire)
+            ));
+        }
+        let mut wrong_commitment = unsigned_wire;
+        *wrong_commitment.last_mut().expect("commitment byte") ^= 1;
+        assert_eq!(
+            ValidatedXmrActivationBodyV1::from_unsigned_wire(
+                &agreement,
+                &wrong_commitment,
+                &view_key(),
+            )
+            .expect_err("changed unsigned Stage-B commitment"),
+            XmrAgreementV1Error::ActivationCommitmentMismatch
+        );
+
+        let mut wrong_schema = wrong_commitment;
+        wrong_schema[..2].copy_from_slice(&2_u16.to_le_bytes());
+        assert_eq!(
+            ValidatedXmrActivationBodyV1::from_unsigned_wire(
+                &agreement,
+                &wrong_schema,
+                &view_key(),
+            )
+            .expect_err("unknown unsigned Stage-B schema"),
+            XmrAgreementV1Error::UnsupportedActivationSchema(2)
+        );
+        let mut trailing = validated
+            .encode_unsigned_wire()
+            .expect("canonical unsigned Stage-B wire");
+        trailing.push(0);
+        assert!(matches!(
+            ValidatedXmrActivationBodyV1::from_unsigned_wire(&agreement, &trailing, &view_key(),),
+            Err(XmrAgreementV1Error::MalformedWire)
+        ));
+        assert_eq!(
+            ValidatedXmrActivationBodyV1::from_unsigned_wire(
+                &agreement,
+                &vec![0; MAX_XMR_UNSIGNED_STAGE_B_WIRE_BYTES + 1],
+                &view_key(),
+            )
+            .expect_err("oversized unsigned Stage-B wire"),
+            XmrAgreementV1Error::OversizedActivationWire
+        );
     }
 
     #[test]

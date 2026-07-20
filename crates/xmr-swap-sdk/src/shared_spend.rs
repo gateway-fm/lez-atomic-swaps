@@ -3,6 +3,7 @@
 use core::fmt;
 
 use monero::{Address, Network, util::key::PublicKey};
+use rand_core::{CryptoRng, RngCore};
 use sigma_fun::ed25519::curve25519_dalek::{
     constants::ED25519_BASEPOINT_TABLE,
     edwards::{CompressedEdwardsY, EdwardsPoint},
@@ -46,6 +47,34 @@ pub struct MoneroPrivateViewKey {
 }
 
 impl MoneroPrivateViewKey {
+    /// Generates an unbiased canonical private view key from OS entropy.
+    ///
+    /// Invalid 256-bit candidates are rejected rather than reduced modulo the
+    /// Ed25519 scalar order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the operating system cannot provide entropy.
+    pub fn generate() -> Result<Self, rand_core::Error> {
+        Self::generate_with_rng(&mut rand_core::OsRng)
+    }
+
+    fn generate_with_rng(rng: &mut (impl CryptoRng + RngCore)) -> Result<Self, rand_core::Error> {
+        loop {
+            let mut candidate = Zeroizing::new([0_u8; 32]);
+            rng.try_fill_bytes(&mut *candidate)?;
+            let scalar = match EdScalar::from_canonical_bytes(*candidate) {
+                Some(scalar) if *candidate != [0; 32] => scalar,
+                Some(_) | None => continue,
+            };
+            let public_key = (&scalar * &ED25519_BASEPOINT_TABLE).compress().to_bytes();
+            return Ok(Self {
+                bytes: candidate,
+                public_key,
+            });
+        }
+    }
+
     /// Parses a nonzero canonical Ed25519 scalar in Monero little-endian form.
     ///
     /// # Errors
@@ -410,5 +439,55 @@ mod tests {
             .expect_err("wrong Taker share"),
             MoneroSharedSpendError::ReconstructedSpendKeyMismatch
         );
+    }
+
+    struct ScriptedRng(std::collections::VecDeque<[u8; 32]>);
+
+    impl rand_core::RngCore for ScriptedRng {
+        fn next_u32(&mut self) -> u32 {
+            panic!("view-key generation requests full candidates")
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            panic!("view-key generation requests full candidates")
+        }
+
+        fn fill_bytes(&mut self, destination: &mut [u8]) {
+            self.try_fill_bytes(destination).expect("scripted entropy");
+        }
+
+        fn try_fill_bytes(&mut self, destination: &mut [u8]) -> Result<(), rand_core::Error> {
+            let candidate = self.0.pop_front().expect("scripted candidate");
+            destination.copy_from_slice(&candidate);
+            Ok(())
+        }
+    }
+
+    impl rand_core::CryptoRng for ScriptedRng {}
+
+    #[test]
+    fn generated_private_view_key_rejection_samples_to_canonical_nonzero_bytes() {
+        let noncanonical = [0xff; 32];
+        let mut valid = [0_u8; 32];
+        valid[0] = 31;
+        let mut rng = ScriptedRng(std::collections::VecDeque::from([
+            [0; 32],
+            noncanonical,
+            valid,
+        ]));
+
+        let generated = MoneroPrivateViewKey::generate_with_rng(&mut rng)
+            .expect("rejection-sampled private view key");
+
+        assert_eq!(*generated.into_monero_little_endian(), valid);
+        assert!(rng.0.is_empty(), "both invalid candidates were rejected");
+    }
+
+    #[test]
+    fn os_generated_private_view_key_is_accepted_by_the_existing_parser() {
+        let generated = MoneroPrivateViewKey::generate().expect("OS-generated view key");
+        let bytes = generated.into_monero_little_endian();
+
+        assert!(MoneroPrivateViewKey::from_monero_little_endian(*bytes).is_ok());
     }
 }
