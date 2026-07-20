@@ -2890,13 +2890,21 @@ official returned ID as unknown after one lookup and one send. Same-request
 accepted and unknown replay performs no additional node I/O; deleting the
 durable file makes a fresh dedicated request ID fail closed.
 This is component transport evidence, not release-service or actual-node
-authority. The other five builders remain typed `Unavailable`. The Taker-only
-exact-`Fund` classifier validates the durable
-prepared target before any indexer read, authenticates canonical finalized
-transaction plus metadata/custody facts, re-pins the candidate, tip, and window
-end, and returns missing as `Uncertain`, never `Absent`. Its focused E2E uses a
-synthetic trait-backed finalized indexer and zero sends; the complete sidecar
-suite passes 145 of 145 with strict Clippy, warning-free Rustdoc, and dependency
+authority. The Maker-only tag-15 prepare/complete pair is now separately
+component-green. It validates the exact aggregate authority, nonce, generated
+ABI/accounts, and immutable message hash before durably reserving one unsigned
+claim message. Completion reloads that reservation, verifies the aggregate
+BIP340 signature, and durably records the canonical signed transaction without
+submitting it. Fresh server/planner replay revalidates both records; missing,
+corrupt, conflicting, role/runtime/terms, reservation, or signature drift fails
+closed. The three refund/completion/punishment builders remain typed
+`Unavailable`.
+The Taker-only exact Initialize/Fund classifier validates the durable prepared
+target before any indexer read, authenticates the generated ABI/accounts/signer
+plus state-specific metadata/custody facts, re-pins the candidate, tip, and
+window end, and returns missing as `Uncertain`, never `Absent`. Its focused E2E
+uses a synthetic trait-backed finalized indexer and zero sends; the complete
+sidecar package passes with strict Clippy, warning-free Rustdoc, and dependency
 policy. The main-process adapter is separately component-green. Its first-lock boundary
 derives exact v3 terms from validated Stage A and Stage B, rejects a non-Taker
 before transport, and mints private-field non-`Clone` finalized-`Fund` evidence
@@ -2906,12 +2914,21 @@ re-derives and compares exact Stage B, verifies the committed partial before
 wire, binds signed channel/genesis/runtime plus client run/role/runtime, and
 permits one authenticated call. Wrong partial, Stage B, binding, run, role, or
 runtime makes zero calls; wrong response context, terms, or empty bytes makes
-one then fails closed. The exact package passes 94 of 94 tests, the authenticated
-matrix 3 of 3, and 2 of 2 doctests include both non-`Clone` compile-fail proofs;
+one then fails closed. The exact package passes 96 non-doc tests plus three
+doctests; its authenticated matrix remains 3 of 3 and non-`Clone` proofs remain;
 strict Clippy, Rustdoc, formatting, and diff checks are green. The authenticated
 server is a literal-loopback mock; ADR 0063 separately proves the official
 ABI-validating builder and its durable no-submit boundary.
-The classifier can now return an exact synthetic `Found`, but no positive
+The concrete adapter now also exposes the pre-Fund barrier from ADR 0070. It
+mints a private-field non-`Clone` finalized-Initialize capability only after an
+exact `Found`, then consumes that run-, role-, runtime-, terms-, facts-, and
+bytes-bound capability before authenticated Fund submission. A mismatch fails
+before transport. The adapter package passes 99 tests including three doctests,
+strict Clippy, and warning-fatal Rustdoc.
+The classifier now returns exact synthetic `Found` for both durable Initialize
+and Fund. Initialize requires the generated ABI, six ordered accounts, sole
+depositor signer, historical `Empty` metadata, zero custody, and stable
+candidate/tip/window re-pins; missing remains `Uncertain`. No positive
 actual-local-indexer first-lock capability has been minted and no claim PoC
 exists. The `lez-xmr-release-authority` crate now passes 35 tests under schema
 v3, including one public-boundary integration that mints both bridge
@@ -3082,19 +3099,21 @@ and 32-byte markers into chain authority.
   initialization presence as a defense-in-depth predecessor check. The happy
   component reaches cumulative lookup/send counters `3/2` and replay changes
   neither; deleting the durable pair before first submission yields `0/0`.
-  Finalized-Initialize actor gating and actual-local submission remain pending
-  under ADR 0069. The
-  exact
-  durable-`Fund` classifier is also
+  ADR 0070 makes finalized Initialize an implemented typed actor gate; actual-local
+  execution remains pending. The exact durable Initialize/Fund classifier is
   component-green: Taker-only ownership validates before indexer reads, canonical
-  finalized transaction/metadata/custody facts and candidate/tip/window repins
-  gate `Found`, missing stays `Uncertain`, typed failures are preserved, and zero
-  sends occur. The full sidecar suite passes 145 of 145 with strict Clippy,
-  warning-free Rustdoc, and dependency policy. The other five builders and
-  non-Fund/discovery classification remain typed
-  `Unavailable`; release-service ownership, actual-local-indexer evidence,
-  actual-node submission, authorization finality, and actual-chain branches
-  remain.
+  finalized ABI/account/signer facts plus state-specific metadata/custody and
+  candidate/tip/window repins gate `Found`, missing stays `Uncertain`, typed
+  failures are preserved, and zero sends occur.
+  The Maker-only tag-15 prepare/complete route is also GREEN. It durably binds the
+  exact aggregate-authority nonce and immutable claim-message hash, verifies the
+  aggregate BIP340 signature, persists canonical bytes without submission, and
+  revalidates exact state across a fresh server/planner. The full pinned sidecar
+  package, strict Clippy, warning-free Rustdoc, and dependency policy pass. The
+  three refund/completion/punishment builders and non-Initialize/Fund discovery
+  remain typed `Unavailable`; release-service ownership, actual-local-indexer
+  evidence, tag-15 submission, authorization/claim finality, and actual-chain
+  branches remain.
 - [ ] Complete the sole reviewed positive direction with fresh actor processes:
   Taker LEZ lock, finalized Maker observation, exact Maker XMR output, signed
   Monero confirmation policy, revealing Maker LEZ claim, Taker extraction and
@@ -3200,19 +3219,27 @@ with no additional RPC or submission. The checked runner is part of CI. This is
 process and restart evidence against authenticated loopbacks, not actual-node,
 different-UID, authorization-finality, or swap evidence.
 
+The exact M4 local deployer is now component-green. `deploy-m4-local` accepts
+only a literal-loopback HTTP sequencer URL, a nonzero channel ID, and a bounded
+timeout. Before its first RPC it validates the pinned M4 manifest, generated
+append-only IDL, ELF SHA, ImageID, runtime health/channel/genesis/built-ins, and
+tip. It then submits exactly one deployment and requires bounded canonical
+inclusion of the exact returned ID. Four focused tests include 19 manifest/runtime
+mutations and three non-loopback endpoint classes that make zero RPC calls.
+Actual isolated-stack deployment evidence remains pending.
+
 The immediate critical path is now:
 
-1. deploy the current checked M4 guest with the existing isolated LEZ v0.2
-   deployer, compose the now-GREEN canonical at-most-once tag-13 route with the
-   actual local sequencer, add finalized Initialize classification as the actor
-   Fund barrier, and feed the actual finalized Fund through the existing
-   classifier and typed issuer together with actual Monero output/topology
-   capabilities;
-2. run the existing release worker against the actual local indexer and sidecar
-   to submit exact tag 14, add finalized tag-14/tag-15 classification, and
-   implement the currently unavailable concrete tag-15 claim planner and
-   bridge route. Keep generic tag-14 submission closed and define
-   definitive-absence handling;
+1. execute the exact checked `deploy-m4-local` command against a fresh isolated
+   LEZ v0.2 stack, compose the GREEN canonical at-most-once tag-13 route with
+   that sequencer, exercise the finalized-Initialize Fund barrier, and feed the
+   actual finalized Fund through the classifier and typed issuer together with
+   actual Monero output/topology capabilities;
+2. run the release worker against the actual local indexer and sidecar to submit
+   exact tag 14, require its finality before the GREEN Maker tag-15
+   prepare/complete pair, then add exact tag-15 submission and finalized
+   tag-14/tag-15 classification. Keep generic tag-14 submission closed and
+   define definitive-absence handling;
 3. add fresh Maker/Taker role processes with durable share/effect records and
    integrate the existing pair-neutral adaptor primitives so the finalized
    tag-15 signature extracts the exact Maker scalar;
@@ -3236,20 +3263,15 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by this push is 4 to 8 focused engineering
+The checkpoint ETA carried by this push is 3 to 6 focused engineering
 hours to the first reproducible independent-actor claim-path PoC and 8 to 16
-additional hours to the local claim/refund/punishment PoC. The concrete issuer,
-exact signed exclusive-deadline binding, sealed publisher-to-client composition,
-genesis-bound finalized-clock primitive, dedicated route/returned-ID component,
-release-only client factory, owner-private key loaders, and compile-green
-isolated one-shot worker plus its typed-issuer process/restart proof are removed
-from the remaining list. The canonical tag-13 attempt executor is now also
-component-GREEN. Actual-local Initialize/Fund execution/evidence, finalized
-Initialize and tag-14/tag-15 classification, concrete tag-15 claim planning,
-adaptor extraction integration, official-wallet claim completion, and fresh
-actors dominate the next vertical slice. The earlier range increased after a
-read-only route audit
-distinguished these missing implementations from orchestration. Mocked
+additional hours to the local claim/refund/punishment PoC. The checked deployer,
+canonical tag-13 executor, exact finalized-Initialize/Fund classifier and
+consuming Fund barrier, and durable Maker tag-15 prepare/complete path are now
+component-GREEN. Actual deployment and Initialize/Fund execution, release-worker
+actual-local tag-14 submission, finalized tag-14/tag-15 classification, exact
+tag-15 submission, adaptor extraction integration, official-wallet claim
+completion, and fresh actors dominate the next vertical slice. Mocked
 transports and checked recursive cases still do not count as runtime evidence.
 The ETA must be refreshed again at the next verified push.
 GW-M4-001, GW-M4-002, and GW-M4-003 remain upstream production/review
@@ -3268,6 +3290,9 @@ disclosures and do not block the private local implementation.
   regression/reorg, wrong output, ambiguous submission, and idempotent replay.
 - [ ] Restart/survivor and partial-loss lifecycle after every durable transition,
   including post-reveal Taker continuation without Maker or Chat.
+- [ ] Serialize the bridge journal's request-ID check, execution ownership, and
+  final outcome so concurrent different bodies cannot both execute or let a
+  later error overwrite success; prove CAS behavior under adversarial races.
 - [ ] Both recovery cases: absent Maker XMR lock then Taker LEZ refund; funded XMR
   without reveal then canonical LEZ refund event enables only Maker XMR recovery.
 - [ ] RFP F7 native/custom-token parity: execute the complete XMR LEZ lifecycle

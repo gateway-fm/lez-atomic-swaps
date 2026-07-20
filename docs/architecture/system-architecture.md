@@ -2135,28 +2135,40 @@ flowchart LR
     OrdinaryClient --> ClaimBuilder["Official durable claim-authorization builder<br/>tag 14 component green"]
     Reservation --> ClaimBuilder
     ClaimBuilder --> ClaimReservation[("Owner-only exact authorization reservation<br/>Fund nonce plus one; restart replay green")]
+    OrdinaryRoutes --> Tag15Prepare["Maker tag-15 prepare<br/>exact nonce ABI accounts and message hash green"]
+    AuthorizationFinality -.-> Tag15Prepare
+    Tag15Prepare --> Tag15Reservation[("Owner-only unsigned tag-15 reservation<br/>restart replay green")]
+    Tag15Reservation --> Tag15Complete["Aggregate BIP340 completion<br/>signature and canonical bytes green"]
+    Tag15Complete --> Tag15Transaction[("Owner-only completed tag-15 transaction<br/>zero submission")]
+    Tag15Transaction -.-> ActualSequencer
     ClaimAuthorization --> ClaimEvidence["Private-field non-Clone authorization evidence"]
     ClaimEvidence -.-> ReleaseStore
     OrdinaryClient --> OrdinaryRoutes["Authenticated ordinary sidecar v3 routes<br/>eight methods"]
     OrdinaryRoutes --> NativePrepare["Taker native-XMR escrow preparation<br/>exact durable initialize and fund pair green"]
     NativePrepare --> Reservation[("Owner-only exact transaction reservation<br/>restart replay green")]
-    OrdinaryRoutes --> FundClassifier["Taker exact finalized Fund classifier<br/>synthetic component E2E green"]
-    Reservation --> FundClassifier
-    SyntheticIndexer["Synthetic FinalizedIndexerApi<br/>component E2E only"] --> FundClassifier
-    ActualIndexer["Actual local LEZ indexer<br/>composition pending"] -.-> FundClassifier
-    OrdinaryRoutes -.-> BridgeRuntime["Five other builders and non-Fund discovery<br/>fail closed and pending"]
+    OrdinaryRoutes --> FinalizedClassifier["Taker exact finalized Initialize and Fund classifier<br/>synthetic component E2E green"]
+    Reservation --> FinalizedClassifier
+    SyntheticIndexer["Synthetic FinalizedIndexerApi<br/>component E2E only"] --> FinalizedClassifier
+    ActualIndexer["Actual local LEZ indexer<br/>composition pending"] -.-> FinalizedClassifier
+    FinalizedClassifier --> InitCapability["Non-cloneable exact finalized Initialize evidence"]
+    InitCapability --> FundGate["Typed Fund submission gate"]
+    FundGate --> OrdinaryClient
+    OrdinaryRoutes -.-> BridgeRuntime["Three refund or punishment builders and non-Initialize or Fund discovery<br/>fail closed and pending"]
     NativePrepare --> BridgeProtocol
     ClaimBuilder --> BridgeProtocol
+    Tag15Complete --> BridgeProtocol
     BridgeRuntime --> BridgeProtocol["Strict additive v3 protocol<br/>nine method families green"]
     BridgeProtocol -->|binds exact tags and effects| Guest["XMR guest source tags 13 through 17"]
     Guest --> CheckedArtifact["Checked local M4 guest<br/>ELF dc370bc...b7292<br/>ImageID 4d6590...2c82"]
+    CheckedArtifact --> M4Deployer["Exact deploy-m4-local preflight and one-send deployer<br/>component green"]
+    M4Deployer -.-> ActualSequencer
     CheckedArtifact -->|five recursive branch tests| Transfer["Authenticated native transfer"]
     XmrActor -.-> Issuer["Public typed Stage-B release issuer<br/>component green"]
     XmrObservation["Origin-retaining non-cloneable XMR observation<br/>component green"] --> Resource["Internal stable-resource identity<br/>used by typed issuer"]
     XmrObservation --> Issuer
     ClaimEvidence --> Issuer
     Topology["Run/chain/origin-bound topology capability<br/>16 adapter tests green"] --> Issuer
-    FundClassifier --> Issuer
+    FinalizedClassifier --> Issuer
     SignedDeadline["Stage A signed refund time<br/>same exclusive guest deadline"] --> Issuer
     Issuer --> ReleaseStore["Sealed release journal schema v3<br/>35 package tests green"]
     ReleaseStore --> ReleaseJournal[("Release-authority SQLite journal<br/>one semantic publisher")]
@@ -2295,13 +2307,25 @@ sequenceDiagram
     participant LezSeq as LEZ sequencer
     participant LezIdx as LEZ indexer
     participant LezSidecar as Taker LEZ sidecar
+    participant MakerSidecar as Maker LEZ sidecar
     participant Release as One-shot release worker process proof green
     participant Monero as monerod and wallet RPC
 
     Note over Maker,Taker: Stage A base terms derive distinct claim refund sessions
     Note over Maker,Taker: Stage B activation binds nonces partial commitments and exact LEZ initialization
     Note over Maker,Taker: Taker first lock starts the protocol
-    Taker->>LezSeq: Fund taker LEZ leg
+    Taker->>LezSeq: Submit exact Initialize with transaction-ID request key
+    LezSeq-->>Taker: Admission only
+    Taker->>LezSidecar: Prove durably reserved exact Initialize finalized
+    LezSidecar->>LezSidecar: Reload exact owner-only reservation before reads
+    LezSidecar->>LezIdx: Read candidate historical empty state zero custody and finalized window
+    LezIdx-->>LezSidecar: Canonical finalized Initialize facts
+    LezSidecar->>LezIdx: Re-pin candidate tip and requested end
+    LezSidecar-->>Taker: Non-cloneable exact finalized Initialize capability
+    Note over Taker,LezSidecar: ADR 0070 component green actual local execution pending
+    Taker->>LezSidecar: Consume capability and submit exact Fund
+    LezSidecar->>LezSeq: Recheck exact Initialize then one Fund lookup or send
+    LezSeq-->>Taker: Fund admission only
     LezIdx-->>Maker: Canonical LEZ confirmation policy reached
     Note over Maker,Taker: Required invariant cutoff plus margin no later than earliest recovery
     alt Cutoff passes with maker XMR lock canonically absent
@@ -2334,10 +2358,18 @@ sequenceDiagram
         LezSeq-->>LezSidecar: Node admission identifier
         Note over Release,LezSeq: Admission is not chain inclusion or finality
         LezIdx-->>Maker: Future exact finalized AuthorizeNativeXmrClaim bytes
-        Note over Maker,Taker: Both locks are proven before Maker can aggregate and adapt the claim
+        Note over Maker,Taker: Both locks are proven and tag 14 finality is required before Maker claim preparation
+        Maker->>MakerSidecar: Prepare exact tag-15 claim
+        MakerSidecar->>MakerSidecar: Bind aggregate-authority nonce generated ABI accounts and committed hash
+        MakerSidecar-->>Maker: Durable unsigned canonical claim message
+        Note over Maker,Taker: Maker aggregates the activation-bound adaptor witness
+        Maker->>MakerSidecar: Complete exact reservation with aggregate BIP340 signature
+        MakerSidecar->>MakerSidecar: Verify signature and durably persist canonical transaction
+        MakerSidecar-->>Maker: Exact tag-15 transaction with zero submission
+        Note over Maker,MakerSidecar: Prepare complete and restart replay are component green
         alt Canonical reveal path
-            Maker->>LezSeq: Claim LEZ with adaptor witness
-            LezIdx-->>Taker: Canonical claim reveals recovery share
+            Maker->>LezSeq: Submit exact tag-15 ClaimNativeXmr
+            LezIdx-->>Taker: Canonical finalized claim reveals recovery share
             alt Taker follows including after Maker disappears
                 Note over Maker,Taker: Revealer may disappear and follower uses canonical chain disclosure
                 Taker->>Monero: Spend maker Monero output
@@ -2430,10 +2462,11 @@ verifies the committed partial before wire, and binds signed channel, genesis,
 and runtime plus the client run, role, and runtime. Success makes exactly one
 authenticated call; wrong partial, Stage B, binding, run, role, or runtime makes
 zero; wrong response context, terms, or empty bytes makes one then fails closed.
-The private-field result is non-`Clone`. All 94 adapter tests, 3 authenticated
-cases, 2 doctests including compile-fail proofs, and strict Clippy, Rustdoc,
-formatting, and diff checks pass. The adapter test server is an authenticated
-literal-loopback mock; ADR 0063 separately proves the official sidecar builder.
+The private-field result is non-`Clone`. The adapter passes 96 non-doc tests,
+3 authenticated cases, 3 doctests including compile-fail proofs, and strict
+Clippy, Rustdoc, formatting, and diff checks. The adapter test server is an
+authenticated literal-loopback mock; ADR 0063 separately proves the official
+sidecar builder.
 The authenticated sidecar now has eight ordinary v3 methods plus the separate
 release-intended ninth method. The ordinary boundary includes the real Taker
 preparation path. `prepare_native_xmr_escrow_v3` derives the exact generated-v0.2
@@ -2452,6 +2485,17 @@ both reservations and returns byte-identically; wrong partial, request drift,
 mutation, missing state, and nonce overflow fail closed. The generic submission
 route still rejects these bytes with zero sends.
 
+The Maker-only tag-15 prepare/complete pair is component-green. Preparation
+binds the aggregate-authority account and nonce, exact generated tag-15 ABI and
+account order, and the Stage-A immutable claim-message hash before owner-only
+persistence. Completion reloads that reservation, validates role/runtime/terms
+and the aggregate BIP340 signature, and persists one canonical signed
+transaction without submitting it. Exact replay across a fresh server/planner
+revalidates the preparation and completion records. Missing, corrupt,
+conflicting, reservation, terms, signature, or hash drift fails closed. Tag-14
+finality gating, exact tag-15 submission/finality, and actor-owned adaptor
+extraction remain composition work; this builder is not an atomic swap.
+
 ADR 0069 reuses that generic route for the exact durable tag-13 pair only. The
 protocol derives each request ID from the exact transaction ID, so a caller
 cannot rearm the same transaction with a fresh ID. Every call revalidates the
@@ -2460,9 +2504,13 @@ exact official lookup or at most one send. Fund also checks exact Initialize
 presence before its own lookup/send. The component sequence is therefore
 Initialize reservation, lookup/send, actor finality barrier, then an independent
 Fund reservation and lookup/send. The current official-type fixture proves
-cumulative lookup/send counters `3/2` and unchanged replay. The finalized
-Initialize classifier and actor barrier remain implementation work; accepted
-sequencer admission is not treated as finality.
+cumulative lookup/send counters `3/2` and unchanged replay. ADR 0070 completes
+the component classifier and typed actor gate. Exact Initialize classification
+now requires the durable target, generated ABI/accounts/signer, historical
+`Empty` metadata, zero custody, and stable finalized re-pins. The concrete
+adapter mints and consumes a non-`Clone` capability before Fund transport.
+These proofs use synthetic/literal-loopback fixtures; actual-local execution is
+pending, and accepted sequencer admission is not treated as finality.
 
 ADR 0067 adds a distinct Taker-only submission boundary. Every Linux call
 reloads the exact durable tag-14 reservation, exact-compares cached planner
@@ -2475,21 +2523,21 @@ route verifies that ID, records `Accepted`, and same-request replay performs no
 second send. Deleting the planner reservation makes a fresh request fail before
 node I/O. This is literal-loopback component evidence, not release-journal
 wiring, actual-sequencer execution, actor isolation, or finality. The complete
-sidecar suite remains green across 145 of 145 tests with strict Clippy,
-warning-free Rustdoc, formatting, and advisory/ban/license/source policy.
-The exact `FundNative` classifier is now component-green behind the
-authenticated Taker-only route. It reloads and matches the durable reservation
-before any indexer read, accepts only one canonical finalized exact match,
-checks the transaction hash/bytes/proof shape/ABI/accounts/signer plus funded
+pinned sidecar suite, strict Clippy, warning-free Rustdoc, formatting, and
+advisory/ban/license/source policy remain green.
+The exact Initialize/Fund classifier is component-green behind the authenticated
+Taker-only route. It reloads and matches the durable reservation before any
+indexer read, accepts only one canonical finalized exact match, checks the
+transaction hash/bytes/proof shape/ABI/accounts/signer plus state-specific
 metadata and custody, and re-pins the candidate, finalized tip, and requested
-end before returning `Found`. Missing is always `Uncertain`, never
-`Absent`; finality, history, moving-tip, and conflicting-match failures stay
-typed. The focused E2E uses a synthetic `FinalizedIndexerApi`, makes zero
-sends. The separate exact-genesis stable-clock tests reject wrong genesis and
-tip movement, contributing to the full 145-of-145 sidecar pass with strict Clippy.
-The other five builders and non-Fund/discovery classification remain
-unavailable. No positive actual-local-indexer evidence or claim PoC exists, and
-the preparation route creates no chain state.
+end before returning `Found`. Missing is always `Uncertain`, never `Absent`;
+finality, history, moving-tip, and conflicting-match failures stay typed. The
+focused E2E uses a synthetic `FinalizedIndexerApi` and makes zero sends. The
+separate exact-genesis stable-clock tests reject wrong genesis and tip movement.
+The three refund/completion/punishment builders and non-Initialize/Fund
+discovery remain unavailable. No positive actual-local-indexer evidence,
+tag-15 chain submission, or claim PoC exists; preparation/completion create no
+chain state.
 
 The workspace now also contains the sealed `lez-xmr-release-authority`
 foundation and its public opaque-evidence issuer. Its 35 tests cover schema-v3

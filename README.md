@@ -61,8 +61,8 @@ adaptor leaf, canonical two-stage XMR activation, guest tags 13 through 17, a
 twice-reproduced checked guest artifact, the strict nine-method protocol,
 ordinary eight-call `BridgeClient`, narrow release-intended `XmrReleaseClient`,
 authenticated nine-route sidecar boundary, and a non-cloneable exact Monero
-output observation. The seven transaction-building
-sidecar routes now include two functional Taker-only preparation routes.
+output observation. Four of the seven transaction-building sidecar routes are
+now functional across the Taker preparation and Maker claim-completion path.
 `prepare_native_xmr_escrow_v3` checks the generated v0.2
 `InitializeNativeXmr` plus `FundNative` pair and durably reserves both exact
 signed byte strings before returning them. Identical replay, including after a
@@ -75,9 +75,13 @@ rejects the same transaction under an arbitrary fresh ID, and requires exact
 initialization presence before a funding attempt. The focused official-type
 loopback admits Initialize then Fund with cumulative lookup/send counters
 `3/2`; identical request replay changes neither. Premature Fund becomes a terminal
-zero-send error at `1/0`, while missing durable state fails at `0/0`. This is at-most-once component evidence. The actual actor must
-still wait for finalized Initialize before Fund, and no actual-local effect or
-swap is claimed.
+zero-send error at `1/0`, while missing durable state fails at `0/0`. This is
+at-most-once component evidence. ADR 0070 now supplies the missing typed actor
+barrier: only an exact stable finalized Initialize `Found` mints a private-field
+non-`Clone` capability, and the Taker Fund method consumes it before transport.
+Missing, moving, unavailable, or mismatched evidence cannot attempt Fund. The
+focused proof is synthetic/literal-loopback component evidence; no actual-local
+effect or swap is claimed.
 `prepare_native_xmr_claim_authorization_v3` separately recomputes the exact
 NUL-terminated partial commitment, requires and revalidates that durable Fund,
 derives nonce `Fund + 1` without an RPC, builds generated tag 14 with the sole
@@ -92,29 +96,33 @@ the exact official returned ID. Its loopback fixture records byte-identical
 `already_known` with one lookup and zero sends, one accepted send after a miss,
 and a wrong returned ID retained as unknown. Same-request accepted and unknown
 replays perform no second node I/O, while deletion makes a fresh request ID fail
-closed without another send. The other five builders still fail closed with
-typed `Unavailable`.
+closed without another send.
+The Maker-only tag-15 prepare/complete pair is also component-GREEN. It derives
+the exact aggregate-authority nonce, generated ABI/account order, and immutable
+claim-message hash, then accepts only the valid aggregate BIP340 signature into
+a separately durable canonical transaction. Exact restart replay revalidates
+both durable records and neither step submits. Tag-14 finality gating, exact
+tag-15 submission/finality, adaptor extraction, and actor ownership remain
+composition work. The three refund/completion/punishment builders still fail
+closed with typed `Unavailable`.
 
-The Taker-only exact-`Fund` classifier validates the durable prepared target
-before any indexer read, returns `Found` only after canonical/final metadata and
-custody checks plus candidate/tip/window repins, and keeps every missing case
-`Uncertain` rather than `Absent`. Its focused E2E is trait-backed with a
-synthetic finalized indexer, typed failure cases, and zero sequencer sends. The
-complete sidecar suite passes 145 of 145 with strict Clippy, warning-free
-Rustdoc, and dependency policy. This is preparation, synthetic classification,
-and official-type loopback submission evidence, not actual local-devnet
-classification, release-service isolation, or actual-chain mutation. The
-main-process adapter separately exposes a Taker-only typed Stage-B
-claim-authorization boundary. Only `LezBridgeAdapter<BridgeClient>` can mint the
-private-field, non-`Clone` `PreparedXmrClaimAuthorizationEvidenceV3`; it
-re-derives and compares exact Stage B, verifies the committed partial and signed
-channel/genesis/runtime before wire, and relies on the client run/role/runtime
-binding. Authenticated success makes exactly one call, every wrong pre-wire
-binding makes zero, and wrong response context, terms, or empty bytes fails
-closed after one. The adapter package passes 94 of 94 tests, its authenticated
-matrix 3 of 3, and its two doctests include the compile-fail non-`Clone` proof;
-strict Clippy, Rustdoc, formatting, and diff gates are green. The server in this
-test is an authenticated literal-loopback mock with zero external resources.
+The Taker classifier now admits only exact durable Initialize or Fund targets
+before any indexer read. Initialize requires canonical generated ABI, six
+ordered accounts, the sole depositor signer, historical `Empty` metadata, and
+zero custody. Fund retains `Funded` metadata and exact custody amount checks.
+Both require candidate/tip/window re-pins, and every missing case remains
+`Uncertain`. The full pinned sidecar package, strict Clippy, warning-free
+Rustdoc, and dependency policy pass. This is synthetic classification, not an
+actual local-devnet read.
+
+The main-process adapter exposes two Taker-only non-cloneable authorities.
+Stage-B claim authorization re-derives the committed partial and signed
+runtime binding. The ADR-0070 pre-Fund boundary mints exact finalized-Initialize
+evidence only through `LezBridgeAdapter<BridgeClient>` and consumes it after
+run, role, runtime, terms, facts, ID, and bytes checks. A mismatch fails before
+transport. The package passes 96 non-doc tests plus three doctests, strict
+Clippy, Rustdoc, formatting, and diff gates. Its authenticated servers and
+indexer are literal-loopback/synthetic fixtures with zero external resources.
 The official sidecar builder independently validates the generated ABI,
 canonical transaction, signature, accounts, nonce, and durable replay. The
 adapter and builder are still preparation capabilities: no actual-node effect
@@ -185,19 +193,24 @@ service. This is infrastructure evidence, not an atomic swap. The
 genesis-bound stable finalized-clock primitive is component-green and rejects
 a moving sample rather than returning stale deadline authority. The dedicated
 route/returned-ID component is green only against an official-type loopback
-fixture. The five remaining sidecar builders, actual-local-indexer
-classification, release-service ownership and clock wiring, actual-node
-publication, authorization finality, exact claim/refund adaptation, and fresh
-terminal role actors remain the next happy-path slice. The route checkpoint,
-full sidecar suite, strict Clippy, formatting, and diff checks are the closure
-gate for this component. The
+fixture. The exact local-only `deploy-m4-local` route and tag-15
+prepare/complete builder are component-GREEN. The deployer permits only a
+literal-loopback sequencer URL, trusted channel ID, and timeout; it validates
+the pinned M4 manifest, ELF, ImageID, runtime, channel, genesis, built-ins, and
+tip before exactly one send and bounded canonical inclusion. Actual deployment,
+actual-local tag-13 execution/classification, release-worker clock/route wiring,
+tag-14/tag-15 submission and finality, adaptor extraction, official-wallet
+claim, and fresh terminal roles remain before the happy PoC. Refund/punishment
+follow as the next progressive slice. Full sidecar, security, architecture, and
+diff gates remain mandatory before each pushed checkpoint. The
 exact components/RPCs and both target and bootstrap sequences are in
 [ADR 0053](docs/architecture/0053-enter-m4-through-isolated-monero-regtest.md);
 manual run, live inspection, scoped cleanup, and cold-resource flakiness are in
 [Flow 0](docs/manual-user-flows.md#flow-0-m4-official-monero-regtest-topology).
 
-The fresh checked guest and the two new host components can be repeated
-independently before the full actor exists:
+The fresh checked guest and current host components can be repeated
+independently before the full actor exists; the exact deployer and tag-15
+commands and expected results are in the linked Flow 0:
 
 ```sh
 RUN_ID=m4-readme-artifact-20260719a \

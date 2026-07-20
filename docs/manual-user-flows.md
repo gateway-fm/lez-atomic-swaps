@@ -2352,8 +2352,19 @@ replay leaves both counters unchanged. Exact byte-identical `AlreadyKnown`
 uses one lookup and zero sends. A wrong official returned ID becomes
 `UnknownSubmissionOutcome` after one lookup and one send; replay leaves both
 counts at one. After deleting the durable authorization reservation, a fresh request ID fails
-before node I/O and leaves the established send count unchanged. The other five builders and
-non-Fund/discovery classification return typed `Unavailable`.
+before node I/O and leaves the established send count unchanged.
+
+The Maker-only `prepare_native_xmr_claim_v3` and
+`complete_native_xmr_claim_v3` routes are also component-GREEN. Preparation
+binds the aggregate-authority account/nonce, generated tag-15 ABI and ordered
+accounts, and the immutable claim-message hash before owner-only persistence.
+Completion reloads that exact record, verifies the aggregate BIP340 signature,
+and durably persists one canonical transaction without submitting it. A fresh
+server/planner rederives both successful results; missing or corrupt durable
+state cannot survive as cached success. Wrong reservation, terms, signature,
+role, runtime, nonce, or hash fails closed. The three refund/completion/punishment
+builders and non-Initialize/Fund discovery classification return typed
+`Unavailable`.
 
 The same route binary also proves the tag-13 component. Initialize and Fund use
 request IDs derived from their exact transaction IDs. A fresh arbitrary ID for
@@ -2363,14 +2374,21 @@ three lookups and two sends; identical request replay changes neither. A
 premature canonical Fund terminates after one predecessor lookup and zero sends,
 and its replay performs no I/O. A separate case deletes the owner-only pair before first submission and observes
 zero lookup and zero send. These are official-type loopback calls, not an actual
-LEZ node. The future role actor must classify Initialize as finalized before it
-calls Fund; accepted admission is insufficient.
+LEZ node. ADR 0070 now makes that ordering a concrete adapter barrier: an exact
+synthetic finalized-Initialize `Found` mints a private-field non-`Clone`
+capability, and the typed Taker Fund method consumes that capability before
+transport. Accepted admission is insufficient. An actual-local actor still has
+to exercise the same barrier against the official indexer before this counts as
+swap evidence.
 
-The Taker-only exact-`Fund` classifier validates the durable target before
-indexer reads, gates `Found` on canonical finalized transaction plus
-metadata/custody and candidate/tip/window repins, preserves typed failures, and
-returns every missing case as `Uncertain`, never `Absent`. Its focused E2E is
-trait-backed with a synthetic finalized indexer and zero sends. The concrete
+The Taker-only exact Initialize/Fund classifier validates the durable target
+before indexer reads. Initialize requires the generated ABI, six ordered
+accounts, the sole depositor signer, historical `Empty` metadata, zero custody,
+and stable candidate/tip/window repins. Fund requires `Funded` metadata and the
+exact amount under the same canonical-finalized and stable-history rules. The
+classifier preserves typed failures and returns every missing case as
+`Uncertain`, never `Absent`. Its focused E2E is trait-backed with a synthetic
+finalized indexer and zero sends. The concrete
 main-process adapter separately has a Taker-only Stage-B claim-authorization
 capability. It re-derives exact Stage B, verifies the committed partial and
 signed runtime before wire, and mints private-field non-`Clone` evidence only
@@ -2458,6 +2476,50 @@ cargo test --locked \
 git diff --check
 ```
 
+The checked M4 deployer has a deliberately narrow local-only command. First
+exercise its mutation and zero-RPC guards:
+
+```sh
+RISC0_SKIP_BUILD=1 CARGO_NET_OFFLINE=true cargo +1.96.0 test --locked \
+  --manifest-path compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml \
+  m4_ -- --nocapture
+RISC0_SKIP_BUILD=1 CARGO_NET_OFFLINE=true cargo +1.96.0 clippy --locked \
+  --manifest-path compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml \
+  --all-targets --all-features -- -D warnings
+RISC0_SKIP_BUILD=1 CARGO_NET_OFFLINE=true RUSTDOCFLAGS="-D warnings" \
+  cargo +1.96.0 doc --locked \
+  --manifest-path compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml \
+  --no-deps --document-private-items
+```
+
+With a uniquely named isolated LEZ v0.2 stack already running and its
+owner-only trusted manifest available, deploy only the repository-pinned M4
+artifact:
+
+```sh
+manifest=".e2e/${LEZ_RUN_ID}/lez-v02/run.env"
+rpc="$(sed -n 's/^LEZ_SEQUENCER_RPC_URL=//p' "$manifest")"
+channel="$(sed -n 's/^LEZ_V02_CHANNEL_PUBLIC_KEY=//p' "$manifest")"
+deployer="compat/lez-v0.2-provisional/escrow/deployer/target/debug/lez-zec-escrow-v02-deployer"
+umask 077
+"$deployer" deploy-m4-local \
+  --rpc-url "$rpc" \
+  --channel-id "$channel" \
+  --timeout-seconds 300 \
+  >".e2e/${LEZ_RUN_ID}/m4-deployment.json"
+```
+
+The command accepts no artifact path, digest, program-ID, or public-endpoint
+override. It verifies the exact checked M4 manifest and artifact before the
+first RPC, accepts only a literal loopback HTTP sequencer endpoint, submits
+exactly once, and requires bounded canonical inclusion of the returned ID.
+This checkpoint validates those command boundaries; an actual local deployment
+and its retained evidence are still pending. Runtime uses only the isolated
+local sequencer RPC and deterministic local genesis state: no public RPC,
+faucet, peer, public funds, or external finality service participates. A cold
+build can still need the pinned Cargo/Git and Risc0 resources listed above, so
+cache/network availability can affect setup but not runtime finality.
+
 The focused public-boundary command must report `running 1 test` and one
 passed; the full release-authority command must report 31 unit, 3 key-file, and
 1 public integration test passed (35 aggregate) and zero
@@ -2482,8 +2544,8 @@ successful exact Stage-B request makes one authenticated route call and returns
 the exact private-field non-`Clone` evidence. Wrong partial, Stage B, binding,
 run, role, or runtime makes zero calls. Wrong response context, terms, or empty
 transaction bytes makes one call and then fails closed. The package command
-must report 94 of 94 tests, and the doctest command must report 2 of 2 including
-the compile-fail non-`Clone` contract; strict Clippy, Rustdoc, formatting, and
+must report 96 non-doc tests, and the doctest command must report 3 of 3 including
+the compile-fail non-`Clone` contracts; strict Clippy, Rustdoc, formatting, and
 diff hygiene must remain green. The server is an in-process authenticated
 literal-loopback mock. It uses no chain node, external RPC, peer, faucet, public
 fund, or finality service. The adapter test does not independently ABI-decode
@@ -2491,27 +2553,34 @@ valid transaction semantics; the official sidecar tests immediately above do.
 They must prove exact tag 14, account order, sole depositor signer,
 Fund-plus-one nonce, commitment mismatch rejection, missing/corrupt durable
 state rejection, byte-identical restart/cache replay, and generic submission
-rejection with zero sequencer sends. The same route binary must report 6 of 6:
-three tag-13 cases plus the release-intended tag-14 matrix. The tag-13 cases prove
+rejection with zero sequencer sends. The same route binary must report 7 of 7:
+three tag-13 cases, the three-case release-intended tag-14 matrix, and one
+actor-realistic tag-15 prepare/complete regression. The tag-13 cases prove
 canonical request identity, ordered `3/2` lookup/send counters, premature-Fund
 terminal `1/0`, replay, and missing-durable `0/0`. The tag-14 matrix remains 3 of 3. It
 proves accepted with one lookup/one send and unchanged replay counters; exact
 byte-identical `AlreadyKnown` with one lookup/zero sends; and a wrong official
 returned ID as `UnknownSubmissionOutcome` after one lookup/one send, with
 same-request replay leaving both counts unchanged. After durable-reservation deletion, a fresh request ID fails before node I/O
-without increasing the established count. This is a typed submission component, not release-service,
-actual-node, server-restart, finality, actor-flow, or claim-PoC evidence.
+without increasing the established count. The tag-15 case must prove exact
+generated accounts/nonce/hash, aggregate signature, zero tag-15 sends, and
+byte-identical prepare/complete replay after a fresh server/planner; durable
+deletion or corruption must fail closed rather than return cached success. These
+are typed preparation/submission components, not actual-node, authorization or
+claim finality, actor-flow, or claim-PoC evidence.
 
 The focused classifier command must report `running 1 test`,
 `authenticated_exact_persisted_fund_requires_stable_finalized_history ... ok`,
 and `1 passed; 0 failed`. Its assertions cover exact durable-target rejection
-before any indexer read, Taker-only authority, canonical/final `Found` with
-metadata and custody, candidate/tip/window repins, typed finality, history, moving, conflicting, and malformed failures, missing as `Uncertain`, and zero sequencer sends.
+before any indexer read, Taker-only authority, exact Initialize and Fund
+`Found` results with the state-specific metadata/custody checks,
+candidate/tip/window repins, typed finality, history, moving, conflicting, and
+malformed failures, missing as `Uncertain`, and zero sequencer sends.
 It starts only ephemeral literal-loopback in-process fixtures and a synthetic
 trait-backed `FinalizedIndexerApi`: no actual LEZ node, chain RPC, faucet, public
-fund, peer, or external finality resource participates. The full sidecar command
-must report 145 of 145 tests; strict Clippy, warning-free Rustdoc, and dependency
-policy must remain green. These commands use only ephemeral literal-loopback
+fund, peer, or external finality resource participates. The full pinned sidecar
+package, strict Clippy, warning-free Rustdoc, and dependency policy must remain
+green. These commands use only ephemeral literal-loopback
 fixtures and owner-only temporary directories after dependencies are cached.
 Neither result is an actual local-devnet classifier run or a claim PoC.
 
@@ -2527,8 +2596,8 @@ cleanup reclaimed about 3.49 GiB in the certification runs. The Rust suites use
 no node, RPC, faucet, peer, or public endpoint after dependencies are present.
 They prove the exact host contracts only: 53 protocol tests, 53 bridge-client
 tests, 16 Monero observation/topology tests, the tag-13 matrix at 3 of 3,
-the dedicated tag-14 route matrix at 3 of 3, and the complete sidecar gate at
-145 of 145. The topology
+the dedicated tag-14 route matrix at 3 of 3, and the complete pinned sidecar
+gate at its independently reverified current count. The topology
 capability closes
 the configured-auth residual only for local Regtest; it is not public/Stagenet trust, Stage-B release authority, or a claim
 PoC. The focused sidecar commands cover the retained v2 route set and the three XMR

@@ -160,6 +160,11 @@ flowchart TB
     XmrReleaseWorker --> XmrFinalClock
     XmrReleaseWorker --> XmrReleaseRoute
     XmrPublisher -.-> XmrReleaseRoute
+    XmrActivation --> XmrInitializeBarrier["0070 Finalized Initialize before Fund"]
+    XmrInitializeBarrier --> XmrFundClassifier
+    XmrActivation --> XmrTag15["0071 Durable exact tag 15 completion"]
+    XmrOfficialBuilder --> XmrTag15
+    XmrReleaseRoute -.-> XmrTag15
 ```
 
 | ADR | Decision | Status |
@@ -233,3 +238,5 @@ flowchart TB
 | [0067](0067-submit-xmr-authorization-through-dedicated-route.md) | Submit only the exact durably owned tag-14 authorization through a separate release-intended type-narrowed client and one-attempt sidecar route | Accepted as an M4 component checkpoint: the ninth strict method is absent from the ordinary eight-method client, generic tag-14 submission remains closed, the sidecar persists an unknown outcome before exact lookup/send, and an official-type loopback fixture proves Accepted, AlreadyKnown, wrong-ID Unknown, and no resend for the same request. The checked process consumes the bearer and restarts observe-only against fixtures; actual server/planner restart, sequencer execution, authorization finality, actors, and a claim PoC remain absent |
 | [0068](0068-isolate-xmr-release-worker-dependencies.md) | Keep the one-shot XMR release worker on a separately locked official-indexer-only graph instead of merging the full LEZ wallet stack with the release-authority graph | Accepted as an M4 process checkpoint: the 432-package lock resolves; four unit tests, strict Clippy/Rustdoc, and dependency policy pass; and a typed-issuer-seeded real-worker proof admits once then observes only after a fresh-process restart. Actual nodes, different-UID/network isolation, finality, actors, and a claim PoC remain |
 | [0069](0069-bind-xmr-tag13-attempts-to-transaction-identity.md) | Bind each exact XMR tag-13 submission attempt to its canonical transaction ID and require initialization presence before funding | Accepted as an M4 component checkpoint: arbitrary fresh IDs and missing durable state fail before node I/O; exact Initialize then Fund uses cumulative lookup/send counters 3/2 and same-request replay changes neither. Finalized-Initialize actor gating, actual-local submission, remaining effects, actors, and a claim PoC remain |
+| [0070](0070-require-finalized-xmr-initialize-before-fund.md) | Mint a non-cloneable exact finalized-Initialize capability and consume it before the Taker may submit Fund | Accepted as an M4 pre-funding component checkpoint: the sidecar classifies only exact durable Initialize/Fund targets with effect-specific historical state, stable finalized re-pins, and missing-as-Uncertain; the concrete adapter binds and consumes exact Initialize evidence before authenticated Fund submission. Actual-local indexer/sequencer execution, tag-14/tag-15 finality, actors, and the claim PoC remain |
+| [0071](0071-durably-prepare-and-complete-xmr-tag15.md) | Durably prepare the exact nonce-bound tag-15 message and complete it only with the valid aggregate BIP340 witness before any submission authority exists | Accepted as an M4 component checkpoint: generated ABI/accounts/hash checks, separate owner-only prepare/complete records, fresh-server rederivation, exact replay, fail-closed mutation, and zero tag-15 sends are GREEN. Actual-local tag-14 finality, tag-15 submission/finality, adaptor extraction, actors, and the claim PoC remain |
