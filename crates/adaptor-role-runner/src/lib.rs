@@ -21,8 +21,8 @@ use thiserror::Error;
 mod files;
 mod protocol;
 
-pub use protocol::Role;
-use protocol::{PacketKind, Session};
+use protocol::PacketKind;
+pub use protocol::{Role, ValidatedSession};
 
 /// One phase performed by one fresh role process.
 #[derive(Clone, Debug, Subcommand)]
@@ -138,7 +138,7 @@ impl fmt::Debug for Cli {
 /// Returns a fail-closed error for unsafe files, malformed/cross-wired public
 /// packets, invalid cryptographic material, or a journal transition failure.
 pub fn execute(cli: &Cli) -> Result<(), RunnerError> {
-    let session = Session::load(&cli.session)?;
+    let session = ValidatedSession::load(&cli.session)?;
     let identity = session.identity(cli.role);
     let mut journal = SqliteAdaptorSessionJournal::open(&cli.journal)?;
     match &cli.action {
@@ -231,7 +231,7 @@ pub fn execute(cli: &Cli) -> Result<(), RunnerError> {
 fn reserve(
     journal: &mut SqliteAdaptorSessionJournal,
     identity: &AdaptorSessionIdentity,
-    session: &Session,
+    session: &ValidatedSession,
     role: Role,
     secret_key_file: &std::path::Path,
     output: &std::path::Path,
@@ -270,7 +270,7 @@ fn reserve(
 fn accept_nonce_and_sign(
     journal: &mut SqliteAdaptorSessionJournal,
     identity: &AdaptorSessionIdentity,
-    session: &Session,
+    session: &ValidatedSession,
     role: Role,
     input: &std::path::Path,
     secret_key_file: &std::path::Path,
@@ -323,7 +323,7 @@ fn accept_nonce_and_sign(
 fn accept_peer_partial(
     journal: &mut SqliteAdaptorSessionJournal,
     identity: &AdaptorSessionIdentity,
-    session: &Session,
+    session: &ValidatedSession,
     role: Role,
     input: &std::path::Path,
     output: &std::path::Path,
@@ -380,7 +380,7 @@ fn accept_peer_partial(
 fn adapt_durable_presignature(
     journal: &SqliteAdaptorSessionJournal,
     identity: &AdaptorSessionIdentity,
-    session: &Session,
+    session: &ValidatedSession,
     input: &std::path::Path,
     adaptor_secret_file: &std::path::Path,
     output: &std::path::Path,
@@ -395,7 +395,7 @@ fn adapt_durable_presignature(
 fn extract_durable_adaptor_secret(
     journal: &SqliteAdaptorSessionJournal,
     identity: &AdaptorSessionIdentity,
-    session: &Session,
+    session: &ValidatedSession,
     presignature_path: &std::path::Path,
     final_signature_path: &std::path::Path,
     output: &std::path::Path,
@@ -411,7 +411,7 @@ fn extract_durable_adaptor_secret(
 fn read_durable_presignature(
     journal: &SqliteAdaptorSessionJournal,
     identity: &AdaptorSessionIdentity,
-    session: &Session,
+    session: &ValidatedSession,
     input: &std::path::Path,
 ) -> Result<[u8; 65], RunnerError> {
     let supplied = protocol::read_aggregate_packet(input, PacketKind::Presignature, session)?;

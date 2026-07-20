@@ -59,7 +59,9 @@ enum ContextConfigV1 {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct Session {
+#[must_use]
+/// Opaque, validated public signing context accepted by the role runner.
+pub struct ValidatedSession {
     context: AdaptorSessionContext,
     id: [u8; 32],
     exact_message: [u8; 32],
@@ -68,7 +70,45 @@ pub(crate) struct Session {
     context_binding: [u8; 32],
 }
 
-impl Session {
+impl ValidatedSession {
+    /// Creates a runner session from an already validated untweaked context.
+    ///
+    /// This constructor rejects a Taproot-tweaked context even though both
+    /// context kinds share the same public Rust type. Session bytes remain an
+    /// implementation detail of this crate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RunnerError::InvalidSessionConfig`] when `context` is not the
+    /// exact untweaked context reconstructed from its public transcript.
+    pub fn from_untweaked_context(context: AdaptorSessionContext) -> Result<Self, RunnerError> {
+        let reconstructed = AdaptorSessionContext::untweaked(
+            context.ordered_public_keys(),
+            context.message(),
+            context.adaptor_point(),
+            context.session_id(),
+        )
+        .map_err(|_| RunnerError::InvalidSessionConfig)?;
+        if reconstructed.durable_context_binding() != context.durable_context_binding() {
+            return Err(RunnerError::InvalidSessionConfig);
+        }
+        Ok(Self::from_context(context))
+    }
+
+    /// Writes the runner's canonical owner-public session file exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fail-closed output or serialization error. An existing path
+    /// is never truncated or replaced.
+    pub fn write_new(&self, path: &Path) -> Result<(), RunnerError> {
+        let config = self.config(ContextConfigV1::LezUntweaked);
+        let mut bytes =
+            serde_json::to_vec(&config).map_err(|_| RunnerError::PublicPacketSerialization)?;
+        bytes.push(b'\n');
+        files::write_public_new(path, &bytes)
+    }
+
     pub(crate) fn load(path: &Path) -> Result<Self, RunnerError> {
         let bytes = files::read_public(path)?;
         let raw: SessionConfigV1 =
@@ -105,15 +145,30 @@ impl Session {
             ),
         }
         .map_err(|_| RunnerError::InvalidSessionConfig)?;
-        let context_binding = context.durable_context_binding();
-        Ok(Self {
+        Ok(Self::from_context(context))
+    }
+
+    fn from_context(context: AdaptorSessionContext) -> Self {
+        Self {
+            id: context.session_id(),
+            exact_message: context.message(),
+            adaptor_point: context.adaptor_point(),
+            ordered_public_keys: context.ordered_public_keys(),
+            context_binding: context.durable_context_binding(),
             context,
-            id: session_id,
-            exact_message,
-            adaptor_point,
-            ordered_public_keys,
-            context_binding,
-        })
+        }
+    }
+
+    fn config(&self, context: ContextConfigV1) -> SessionConfigV1 {
+        SessionConfigV1 {
+            schema_version: SCHEMA_VERSION,
+            context,
+            session_id: hex::encode(self.id),
+            exact_message: hex::encode(self.exact_message),
+            adaptor_point: hex::encode(self.adaptor_point),
+            maker_public_key: hex::encode(self.ordered_public_keys[0]),
+            taker_public_key: hex::encode(self.ordered_public_keys[1]),
+        }
     }
 
     pub(crate) const fn context(&self) -> &AdaptorSessionContext {
@@ -178,7 +233,7 @@ impl PublicPacketV1 {
     fn new<const N: usize>(
         kind: PacketKind,
         sender_role: Role,
-        session: &Session,
+        session: &ValidatedSession,
         payload: [u8; N],
     ) -> Self {
         Self {
@@ -212,7 +267,7 @@ impl PublicPacketV1 {
         &self,
         expected_kind: PacketKind,
         expected_sender: PacketSender,
-        session: &Session,
+        session: &ValidatedSession,
     ) -> Result<(), RunnerError> {
         if self.schema_version != SCHEMA_VERSION
             || self.kind != expected_kind
@@ -231,7 +286,7 @@ impl PublicPacketV1 {
 pub(crate) fn write_aggregate_packet<const N: usize>(
     path: &Path,
     kind: PacketKind,
-    session: &Session,
+    session: &ValidatedSession,
     payload: [u8; N],
 ) -> Result<(), RunnerError> {
     let packet = PublicPacketV1 {
@@ -249,7 +304,7 @@ pub(crate) fn write_packet<const N: usize>(
     path: &Path,
     kind: PacketKind,
     role: Role,
-    session: &Session,
+    session: &ValidatedSession,
     payload: [u8; N],
 ) -> Result<(), RunnerError> {
     let packet = PublicPacketV1::new(kind, role, session, payload);
@@ -260,7 +315,7 @@ pub(crate) fn read_peer_packet<const N: usize>(
     path: &Path,
     kind: PacketKind,
     local_role: Role,
-    session: &Session,
+    session: &ValidatedSession,
 ) -> Result<[u8; N], RunnerError> {
     let (packet, _) = PublicPacketV1::load(path)?;
     packet.validate_header(kind, local_role.opposite().into(), session)?;
@@ -270,7 +325,7 @@ pub(crate) fn read_peer_packet<const N: usize>(
 pub(crate) fn read_aggregate_packet<const N: usize>(
     path: &Path,
     kind: PacketKind,
-    session: &Session,
+    session: &ValidatedSession,
 ) -> Result<[u8; N], RunnerError> {
     let (packet, _) = PublicPacketV1::load(path)?;
     packet.validate_header(kind, PacketSender::Aggregate, session)?;
