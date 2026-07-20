@@ -45,8 +45,9 @@ pub use xmr_v3_claim_authorization::{
     PreparedXmrClaimAuthorizationErrorV3, PreparedXmrClaimAuthorizationEvidenceV3,
 };
 pub use xmr_v3_first_lock::{
-    FinalizedXmrLezFirstLockError, FinalizedXmrLezFirstLockEvidenceV3, XmrLezBridgeBindingV3,
-    XmrLezBridgeBindingV3Error,
+    FinalizedXmrLezFirstLockError, FinalizedXmrLezFirstLockEvidenceV3,
+    FinalizedXmrLezFundingSubmissionError, FinalizedXmrLezInitializationError,
+    FinalizedXmrLezInitializationEvidenceV3, XmrLezBridgeBindingV3, XmrLezBridgeBindingV3Error,
 };
 
 use async_trait::async_trait;

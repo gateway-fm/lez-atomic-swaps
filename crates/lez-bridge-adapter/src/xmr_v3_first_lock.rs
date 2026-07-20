@@ -13,7 +13,8 @@ use lez_bridge_protocol::{
     FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
     FinalizedNativeXmrUnavailableReasonV3, Hex32, MessageContext, Participant as BridgeParticipant,
     PreparedTransaction, ProtocolValueError, RequestId, RunId, RuntimeDescriptor,
-    XmrNativeEffectV3, XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
+    SubmitTransactionRequest, SubmitTransactionResult, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
+    XmrNativeEscrowTermsV3Input,
 };
 use lez_swap_core::Participant;
 use lez_xmr_swap_sdk::{XmrActivatedAgreementV1, XmrAgreementV1, XmrAgreementV1Error};
@@ -124,6 +125,116 @@ pub enum XmrLezBridgeBindingV3Error {
     Protocol(#[source] ProtocolValueError),
 }
 
+/// Canonical finalized initialization evidence for the pre-funding barrier.
+///
+/// This type is deliberately non-`Clone` and has no public constructor. A
+/// Taker actor must obtain it through its concrete authenticated bridge before
+/// it may advance to the separately journaled Fund attempt.
+/// ```compile_fail
+/// use lez_bridge_adapter::FinalizedXmrLezInitializationEvidenceV3;
+///
+/// fn requires_clone<T: Clone>() {}
+/// requires_clone::<FinalizedXmrLezInitializationEvidenceV3>();
+/// ```
+#[derive(Debug, Eq, PartialEq)]
+#[must_use]
+pub struct FinalizedXmrLezInitializationEvidenceV3 {
+    run_id: RunId,
+    observer: Participant,
+    runtime: RuntimeDescriptor,
+    terms: XmrNativeEscrowTermsV3,
+    exact_initialization: PreparedTransaction,
+    finalized_clock: ChainClock,
+    scanned_window: DiscoveryWindow,
+    facts: FinalizedNativeXmrEffectFactsV3,
+}
+
+impl FinalizedXmrLezInitializationEvidenceV3 {
+    /// Composed run whose authenticated sidecar produced the evidence.
+    pub const fn run_id(&self) -> &RunId {
+        &self.run_id
+    }
+
+    /// Role whose dedicated sidecar performed the finalized read.
+    #[must_use]
+    pub const fn observer(&self) -> Participant {
+        self.observer
+    }
+
+    /// Exact pinned runtime identity used for the read.
+    pub const fn runtime(&self) -> &RuntimeDescriptor {
+        &self.runtime
+    }
+
+    /// Exact Stage-B-derived guest terms.
+    pub const fn terms(&self) -> XmrNativeEscrowTermsV3 {
+        self.terms
+    }
+
+    /// Exact initialization bytes retained before the one send attempt.
+    pub const fn exact_initialization(&self) -> &PreparedTransaction {
+        &self.exact_initialization
+    }
+
+    /// Stable finalized clock covering the complete scan.
+    pub const fn finalized_clock(&self) -> ChainClock {
+        self.finalized_clock
+    }
+
+    /// Exact caller-owned finalized discovery window.
+    pub const fn scanned_window(&self) -> DiscoveryWindow {
+        self.scanned_window
+    }
+
+    /// Validated canonical transaction, metadata, and zero-custody facts.
+    pub const fn facts(&self) -> &FinalizedNativeXmrEffectFactsV3 {
+        &self.facts
+    }
+}
+
+/// Failure proving the exact initialization before funding.
+#[derive(Debug, Error)]
+pub enum FinalizedXmrLezInitializationError {
+    /// Only the Taker owns the initialization and funding sequence.
+    #[error("only the XMR Taker may prove the finalized initialization barrier")]
+    WrongObserver,
+    /// Role/runtime/Stage-B terms do not match the dedicated sidecar.
+    #[error("XMR LEZ initialization request is not bound to the selected runtime")]
+    Binding(#[source] ProtocolValueError),
+    /// The authenticated bridge call failed or returned invalid evidence.
+    #[error("XMR LEZ initialization bridge read failed")]
+    Bridge(#[source] BridgeClientError),
+    /// The strict bridge response contradicted the caller-owned request.
+    #[error("XMR LEZ initialization response changed its request binding")]
+    ResponseBinding,
+    /// A complete stable finalized scan proved the initialization absent.
+    #[error("XMR LEZ initialization is finalized absent")]
+    Absent,
+    /// A stable scan could not exclude pending or unknown initialization.
+    #[error("XMR LEZ initialization remains uncertain")]
+    Uncertain,
+    /// The finalized scan could not complete under the selected node profile.
+    #[error("XMR LEZ initialization scan is unavailable: {0:?}")]
+    Unavailable(FinalizedNativeXmrUnavailableReasonV3),
+}
+
+/// Failure submitting Fund through the finalized-initialization actor gate.
+#[derive(Debug, Error)]
+pub enum FinalizedXmrLezFundingSubmissionError {
+    /// Only the Taker owns the initialization and funding sequence.
+    #[error("only the XMR Taker may submit the LEZ funding effect")]
+    WrongActor,
+    /// Stage-B terms do not match the selected actor runtime.
+    #[error("XMR LEZ funding is not bound to the selected runtime")]
+    Binding(#[source] ProtocolValueError),
+    /// The consumed initialization capability belongs to another run or terms.
+    #[error("finalized XMR initialization evidence does not authorize this funding")]
+    InitializationBinding,
+    /// The authenticated one-attempt bridge submission failed.
+    #[error("XMR LEZ funding bridge submission failed")]
+    Bridge(#[source] BridgeClientError),
+}
+
 /// Canonical finalized first-lock evidence minted through the concrete bridge.
 ///
 /// This type is deliberately non-`Clone` and has no public constructor. The
@@ -231,6 +342,87 @@ pub enum FinalizedXmrLezFirstLockError {
 }
 
 impl LezBridgeAdapter<BridgeClient> {
+    /// Proves the exact Stage-B-bound initialization finalized before funding.
+    ///
+    /// # Errors
+    ///
+    /// Rejects runtime/role drift, request/response substitution, every
+    /// non-`Found` classification, or a bridge failure.
+    pub async fn prove_finalized_xmr_initialization_v3(
+        &self,
+        binding: &XmrLezBridgeBindingV3,
+        request_id: RequestId,
+        exact_initialization: PreparedTransaction,
+        window: DiscoveryWindow,
+    ) -> Result<FinalizedXmrLezInitializationEvidenceV3, FinalizedXmrLezInitializationError> {
+        let request = build_initialization_request(
+            &self.run_id,
+            self.local_participant,
+            &self.runtime,
+            binding,
+            request_id,
+            exact_initialization,
+            window,
+        )?;
+        let response = self
+            .transport
+            .classify_finalized_native_xmr_effect_v3(request.clone())
+            .await
+            .map_err(FinalizedXmrLezInitializationError::Bridge)?;
+        mint_initialization_evidence(request, response)
+    }
+
+    /// Submits Fund only after consuming exact finalized initialization evidence.
+    ///
+    /// The request identity is derived from the Fund transaction ID. The
+    /// sidecar independently reloads the durable Initialize/Fund pair and
+    /// requires exact Initialize presence before its one node attempt.
+    ///
+    /// # Errors
+    ///
+    /// Rejects actor, runtime, Stage-B, or finalized-initialization drift before
+    /// transport and preserves the authenticated client's one-attempt failure.
+    pub async fn submit_xmr_funding_after_finalized_initialization_v3(
+        &self,
+        binding: &XmrLezBridgeBindingV3,
+        initialization: FinalizedXmrLezInitializationEvidenceV3,
+        funding: PreparedTransaction,
+    ) -> Result<SubmitTransactionResult, FinalizedXmrLezFundingSubmissionError> {
+        if self.local_participant != Participant::Taker
+            || self.runtime.sidecar_role != BridgeParticipant::Taker
+        {
+            return Err(FinalizedXmrLezFundingSubmissionError::WrongActor);
+        }
+        let context = MessageContext::new(
+            self.run_id.clone(),
+            funding.transaction_id.submission_request_id(),
+            BridgeParticipant::Taker,
+        );
+        binding
+            .validate_runtime_binding(&context, &self.runtime)
+            .map_err(FinalizedXmrLezFundingSubmissionError::Binding)?;
+        if initialization.run_id != self.run_id
+            || initialization.observer != Participant::Taker
+            || initialization.runtime != self.runtime
+            || initialization.terms != binding.terms
+            || initialization.facts.instruction.effect != XmrNativeEffectV3::Initialize
+            || initialization.facts.transaction.transaction_id
+                != initialization.exact_initialization.transaction_id
+            || initialization.facts.transaction.exact_bytes
+                != initialization.exact_initialization.exact_bytes
+        {
+            return Err(FinalizedXmrLezFundingSubmissionError::InitializationBinding);
+        }
+        self.transport
+            .submit_transaction(SubmitTransactionRequest::new(
+                context,
+                self.runtime.clone(),
+                funding,
+            ))
+            .await
+            .map_err(FinalizedXmrLezFundingSubmissionError::Bridge)
+    }
+
     /// Proves one exact Stage-B-bound funding transaction finalized on LEZ.
     ///
     /// The call uses the concrete authenticated, run-bound bridge client and
@@ -265,6 +457,94 @@ impl LezBridgeAdapter<BridgeClient> {
             .await
             .map_err(FinalizedXmrLezFirstLockError::Bridge)?;
         mint_first_lock_evidence(request, response)
+    }
+}
+
+fn build_initialization_request(
+    run_id: &RunId,
+    observer: Participant,
+    runtime: &RuntimeDescriptor,
+    binding: &XmrLezBridgeBindingV3,
+    request_id: RequestId,
+    exact_initialization: PreparedTransaction,
+    window: DiscoveryWindow,
+) -> Result<ClassifyFinalizedNativeXmrEffectV3Request, FinalizedXmrLezInitializationError> {
+    if observer != Participant::Taker {
+        return Err(FinalizedXmrLezInitializationError::WrongObserver);
+    }
+    let context = MessageContext::new(run_id.clone(), request_id, bridge_participant(observer));
+    binding
+        .validate_runtime_binding(&context, runtime)
+        .map_err(FinalizedXmrLezInitializationError::Binding)?;
+    Ok(ClassifyFinalizedNativeXmrEffectV3Request::new(
+        context,
+        runtime.clone(),
+        binding.terms,
+        XmrNativeEffectV3::Initialize,
+        FinalizedNativeXmrTransactionTargetV3::exact(exact_initialization),
+        window,
+    ))
+}
+
+fn mint_initialization_evidence(
+    request: ClassifyFinalizedNativeXmrEffectV3Request,
+    response: ClassifyFinalizedNativeXmrEffectV3Result,
+) -> Result<FinalizedXmrLezInitializationEvidenceV3, FinalizedXmrLezInitializationError> {
+    if request.context.sidecar_role != BridgeParticipant::Taker
+        || request.runtime.sidecar_role != BridgeParticipant::Taker
+        || request.effect != XmrNativeEffectV3::Initialize
+    {
+        return Err(FinalizedXmrLezInitializationError::ResponseBinding);
+    }
+    request
+        .terms
+        .validate_runtime_binding(&request.context, &request.runtime)
+        .map_err(FinalizedXmrLezInitializationError::Binding)?;
+    let FinalizedNativeXmrTransactionTargetV3::Exact {
+        transaction: exact_initialization,
+    } = request.target.clone()
+    else {
+        return Err(FinalizedXmrLezInitializationError::ResponseBinding);
+    };
+    if response.context != request.context
+        || response.terms != request.terms
+        || response.effect != request.effect
+        || response.target != request.target
+    {
+        return Err(FinalizedXmrLezInitializationError::ResponseBinding);
+    }
+    let response = ClassifyFinalizedNativeXmrEffectV3Result::new(
+        response.context,
+        response.terms,
+        response.effect,
+        response.target,
+        response.outcome,
+    )
+    .map_err(FinalizedXmrLezInitializationError::Binding)?;
+    match response.outcome {
+        FinalizedNativeXmrScanOutcomeV3::Found {
+            finalized_clock,
+            scanned_window,
+            facts,
+        } => Ok(FinalizedXmrLezInitializationEvidenceV3 {
+            run_id: request.context.run_id,
+            observer: Participant::Taker,
+            runtime: request.runtime,
+            terms: request.terms,
+            exact_initialization,
+            finalized_clock,
+            scanned_window,
+            facts: *facts,
+        }),
+        FinalizedNativeXmrScanOutcomeV3::Absent { .. } => {
+            Err(FinalizedXmrLezInitializationError::Absent)
+        }
+        FinalizedNativeXmrScanOutcomeV3::Uncertain { .. } => {
+            Err(FinalizedXmrLezInitializationError::Uncertain)
+        }
+        FinalizedNativeXmrScanOutcomeV3::Unavailable { reason } => {
+            Err(FinalizedXmrLezInitializationError::Unavailable(reason))
+        }
     }
 }
 
@@ -452,6 +732,13 @@ mod tests {
         )
     }
 
+    fn exact_initialization() -> PreparedTransaction {
+        PreparedTransaction::new(
+            TransactionId::from_bytes([60; 32]),
+            ExactTransactionBytes::new(vec![60]).expect("transaction bytes"),
+        )
+    }
+
     fn window() -> DiscoveryWindow {
         DiscoveryWindow::new(90, 21).expect("canonical window")
     }
@@ -467,6 +754,19 @@ mod tests {
             window(),
         )
         .expect("valid release-side request")
+    }
+
+    fn initialization_request() -> ClassifyFinalizedNativeXmrEffectV3Request {
+        build_initialization_request(
+            &run_id(),
+            Participant::Taker,
+            &runtime(BridgeParticipant::Taker),
+            &binding(),
+            RequestId::new("xmr-v3-initialization").expect("request ID"),
+            exact_initialization(),
+            window(),
+        )
+        .expect("valid initialization request")
     }
 
     fn finalized_clock() -> ChainClock {
@@ -499,6 +799,32 @@ mod tests {
         )
     }
 
+    fn initialization_facts() -> FinalizedNativeXmrEffectFactsV3 {
+        let prepared = exact_initialization();
+        FinalizedNativeXmrEffectFactsV3::new(
+            ObservedTransactionFacts::new(
+                prepared.transaction_id,
+                prepared.exact_bytes,
+                ChainPosition::new(h(69), 99, 1),
+                AccountIds::new(vec![h(7)]).expect("signers"),
+                true,
+            ),
+            XmrNativeInstructionFactsV3::new(
+                XmrNativeEffectV3::Initialize,
+                h(3),
+                AccountIds::new(vec![h(5), h(6), h(7), h(8), h(10), h(12)]).expect("accounts"),
+                h(1),
+                h(60),
+                None,
+            )
+            .expect("initialize instruction"),
+            None,
+            FinalizedBlockIdentity::new(99, h(69), 24_000),
+            XmrNativeEscrowMetadataFactsV3::from_terms(terms(42), XmrNativeEscrowStateV3::Empty),
+            NativeCustodyFacts::new(h(6), h(4), 0),
+        )
+    }
+
     fn response_with(
         request: &ClassifyFinalizedNativeXmrEffectV3Request,
         outcome: FinalizedNativeXmrScanOutcomeV3,
@@ -522,6 +848,19 @@ mod tests {
         )
     }
 
+    fn initialization_evidence() -> FinalizedXmrLezInitializationEvidenceV3 {
+        let request = initialization_request();
+        let response = response_with(
+            &request,
+            FinalizedNativeXmrScanOutcomeV3::found(
+                finalized_clock(),
+                window(),
+                initialization_facts(),
+            ),
+        );
+        mint_initialization_evidence(request, response).expect("initialization evidence")
+    }
+
     #[test]
     fn validated_found_mints_exact_non_cloneable_capability() {
         let request = request();
@@ -539,6 +878,30 @@ mod tests {
         assert_eq!(evidence.facts(), &funding_facts());
         assert_eq!(evidence.activation_commitment(), [2; 32]);
         assert_eq!(evidence.swap_id(), [1; 32]);
+    }
+
+    #[test]
+    fn finalized_initialization_mints_the_exact_pre_fund_barrier() {
+        let request = initialization_request();
+        let response = response_with(
+            &request,
+            FinalizedNativeXmrScanOutcomeV3::found(
+                finalized_clock(),
+                window(),
+                initialization_facts(),
+            ),
+        );
+        let evidence = mint_initialization_evidence(request.clone(), response)
+            .expect("validated Initialize Found mints evidence");
+
+        assert_eq!(evidence.run_id(), &request.context.run_id);
+        assert_eq!(evidence.observer(), Participant::Taker);
+        assert_eq!(evidence.runtime(), &request.runtime);
+        assert_eq!(evidence.terms(), request.terms);
+        assert_eq!(evidence.exact_initialization(), &exact_initialization());
+        assert_eq!(evidence.finalized_clock(), finalized_clock());
+        assert_eq!(evidence.scanned_window(), window());
+        assert_eq!(evidence.facts(), &initialization_facts());
     }
 
     #[test]
@@ -664,6 +1027,44 @@ mod tests {
                 )
                 .await,
             Err(FinalizedXmrLezFirstLockError::WrongObserver)
+        ));
+    }
+
+    #[tokio::test]
+    async fn fund_submission_requires_matching_finalized_initialization_evidence() {
+        let runtime = runtime(BridgeParticipant::Taker);
+        let client = BridgeClient::connect(BridgeClientConfig::new(
+            "http://127.0.0.1:9",
+            SidecarCapability::new("xmr-v3-capability-000000000000000001").expect("capability"),
+            run_id(),
+            runtime.clone(),
+            Duration::from_millis(100),
+        ))
+        .expect("valid loopback client");
+        let adapter = LezBridgeAdapter::new(client, run_id(), runtime, Participant::Taker)
+            .expect("role-local adapter");
+
+        let mut mismatched = initialization_evidence();
+        mismatched.run_id = RunId::new("another-xmr-v3-run").expect("run ID");
+        assert!(matches!(
+            adapter
+                .submit_xmr_funding_after_finalized_initialization_v3(
+                    &binding(),
+                    mismatched,
+                    exact_funding(),
+                )
+                .await,
+            Err(FinalizedXmrLezFundingSubmissionError::InitializationBinding)
+        ));
+        assert!(matches!(
+            adapter
+                .submit_xmr_funding_after_finalized_initialization_v3(
+                    &binding(),
+                    initialization_evidence(),
+                    exact_funding(),
+                )
+                .await,
+            Err(FinalizedXmrLezFundingSubmissionError::Bridge(_))
         ));
     }
 }

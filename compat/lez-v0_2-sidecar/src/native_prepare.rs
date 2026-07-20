@@ -20,7 +20,8 @@ use lez_bridge_protocol::{
     PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
     PreparedWitnessedClaim, ProtocolValueError, RuntimeCompatibility, RuntimeDescriptor,
     SubmitNativeXmrClaimAuthorizationV3Request, SubmitTransactionRequest, TransactionId,
-    WitnessedAssetPrepareStepV2, WitnessedAssetPreparedEffectV2, XmrNativeEscrowTermsV3,
+    WitnessedAssetPrepareStepV2, WitnessedAssetPreparedEffectV2, XmrNativeEffectV3,
+    XmrNativeEscrowTermsV3,
 };
 use nssa::{
     AccountId, PrivateKey, PublicKey, PublicTransaction, Signature,
@@ -2586,24 +2587,25 @@ impl NativeEscrowPlanner {
         Ok(())
     }
 
-    /// Proves that an exact XMR `FundNative` target is the funding transaction
-    /// retained by this Taker owner-only durable v3 escrow reservation.
+    /// Proves that an exact XMR Initialize or Fund target is retained by this
+    /// Taker owner-only durable v3 escrow reservation.
     ///
     /// The classification request has its own request identifier, so ownership
-    /// is bound by run, role, runtime, terms, and exact prepared bytes rather
-    /// than by that route-local identifier. In-memory active state is
+    /// is bound by run, role, runtime, terms, effect, and exact prepared bytes
+    /// rather than by that route-local identifier. In-memory active state is
     /// deliberately insufficient: the reservation must have been persisted
     /// before any chain evidence is consulted.
     ///
     /// # Errors
     ///
-    /// Rejects a non-Taker planner, missing or invalid durable state, run,
-    /// runtime, terms, transaction-ID, or exact-byte drift.
-    pub(crate) fn validate_owned_xmr_fund_v3(
+    /// Rejects an unsupported effect, non-Taker planner, missing or invalid
+    /// durable state, run, runtime, terms, transaction-ID, or exact-byte drift.
+    pub(crate) fn validate_owned_xmr_effect_v3(
         &self,
         context: &MessageContext,
         runtime: &RuntimeDescriptor,
         terms: &XmrNativeEscrowTermsV3,
+        effect: XmrNativeEffectV3,
         target: &PreparedTransaction,
     ) -> Result<(), NativePrepareError> {
         if self.role != Participant::Taker
@@ -2613,6 +2615,12 @@ impl NativeEscrowPlanner {
             return Err(NativePrepareError::WrongRole);
         }
         self.validate_xmr_terms_v3_binding(context, runtime, terms)?;
+        if !matches!(
+            effect,
+            XmrNativeEffectV3::Initialize | XmrNativeEffectV3::Fund
+        ) {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
 
         #[cfg(target_os = "linux")]
         {
@@ -2626,11 +2634,16 @@ impl NativeEscrowPlanner {
                 )?
                 .ok_or(NativePrepareError::InvalidTransactionBytes)?;
             self.validate_prepared_native_xmr_escrow_v3(&stored_request, &stored_result)?;
+            let stored_target = match effect {
+                XmrNativeEffectV3::Initialize => &stored_result.initialization,
+                XmrNativeEffectV3::Fund => &stored_result.funding,
+                _ => return Err(NativePrepareError::InvalidTransactionBytes),
+            };
             if stored_request.context.run_id != context.run_id
                 || stored_request.context.sidecar_role != context.sidecar_role
                 || &stored_request.runtime != runtime
                 || &stored_request.terms != terms
-                || &stored_result.funding != target
+                || stored_target != target
             {
                 return Err(NativePrepareError::InvalidTransactionBytes);
             }

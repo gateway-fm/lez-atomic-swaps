@@ -317,6 +317,22 @@ fn classification_request(
     transaction: &lez_bridge_protocol::PreparedTransaction,
     request_id: &str,
 ) -> ClassifyFinalizedNativeXmrEffectV3Request {
+    classification_request_for_effect(
+        descriptor,
+        xmr_terms,
+        XmrNativeEffectV3::Fund,
+        transaction,
+        request_id,
+    )
+}
+
+fn classification_request_for_effect(
+    descriptor: &RuntimeDescriptor,
+    xmr_terms: &XmrNativeEscrowTermsV3,
+    effect: XmrNativeEffectV3,
+    transaction: &lez_bridge_protocol::PreparedTransaction,
+    request_id: &str,
+) -> ClassifyFinalizedNativeXmrEffectV3Request {
     ClassifyFinalizedNativeXmrEffectV3Request::new(
         MessageContext::new(
             RunId::new(RUN_ID).expect("run id"),
@@ -325,7 +341,7 @@ fn classification_request(
         ),
         descriptor.clone(),
         *xmr_terms,
-        XmrNativeEffectV3::Fund,
+        effect,
         FinalizedNativeXmrTransactionTargetV3::exact(transaction.clone()),
         DiscoveryWindow::new(FUNDING_BLOCK, 2).expect("window"),
     )
@@ -468,6 +484,133 @@ fn finalized_indexer(
         accounts,
         calls: Mutex::new(Vec::new()),
     })
+}
+
+fn finalized_initialization_indexer(
+    prepared: &lez_bridge_protocol::PrepareNativeXmrEscrowV3Result,
+    xmr_terms: &XmrNativeEscrowTermsV3,
+    depositor: AccountId,
+) -> Arc<FixtureIndexer> {
+    let initialization = decode_prepared_for_signer(&prepared.initialization, depositor)
+        .expect("exact initialization");
+    let initialization_block = finalized_block(
+        FUNDING_BLOCK,
+        vec![Transaction::Public(indexed_public(&initialization))],
+    );
+    let end_block = finalized_block(FINALIZED_END, Vec::new());
+    let input = xmr_terms.to_input();
+    let accounts = BTreeMap::from([
+        (
+            (*input.metadata_account_id.as_bytes(), FUNDING_BLOCK),
+            HistoricalAccount::Present(IndexedAccount {
+                program_owner: IndexedProgramId(ESCROW_PROGRAM),
+                balance: 0,
+                data: IndexedData(
+                    to_vec(&metadata(xmr_terms, EscrowStatus::Empty)).expect("metadata encoding"),
+                ),
+                nonce: 0,
+            }),
+        ),
+        (
+            (*input.custody_account_id.as_bytes(), FUNDING_BLOCK),
+            HistoricalAccount::Present(IndexedAccount {
+                program_owner: IndexedProgramId(TRANSFER_PROGRAM),
+                balance: 0,
+                data: IndexedData(Vec::new()),
+                nonce: 0,
+            }),
+        ),
+    ]);
+    Arc::new(FixtureIndexer {
+        blocks: BTreeMap::from([
+            (FUNDING_BLOCK, initialization_block.clone()),
+            (FINALIZED_END, end_block.clone()),
+        ]),
+        by_hash: BTreeMap::from([
+            (initialization_block.header.hash.0, initialization_block),
+            (end_block.header.hash.0, end_block),
+        ]),
+        accounts,
+        calls: Mutex::new(Vec::new()),
+    })
+}
+
+fn modified_initialization_indexer(
+    prepared: &lez_bridge_protocol::PrepareNativeXmrEscrowV3Result,
+    xmr_terms: &XmrNativeEscrowTermsV3,
+    depositor: AccountId,
+    mutate: impl FnOnce(&mut Block),
+) -> Arc<FixtureIndexer> {
+    let mut indexer = Arc::into_inner(finalized_initialization_indexer(
+        prepared, xmr_terms, depositor,
+    ))
+    .expect("fixture has one owner");
+    let block = indexer
+        .blocks
+        .get_mut(&FUNDING_BLOCK)
+        .expect("initialization block");
+    mutate(block);
+    indexer.by_hash.insert(block.header.hash.0, block.clone());
+    Arc::new(indexer)
+}
+
+fn malformed_initialization_indexer(
+    prepared: &lez_bridge_protocol::PrepareNativeXmrEscrowV3Result,
+    xmr_terms: &XmrNativeEscrowTermsV3,
+    depositor: AccountId,
+) -> Arc<FixtureIndexer> {
+    modified_initialization_indexer(prepared, xmr_terms, depositor, |block| {
+        let Some(Transaction::Public(indexed)) = block.body.transactions.first_mut() else {
+            panic!("public initialization transaction")
+        };
+        indexed.message.account_ids.swap(0, 1);
+    })
+}
+
+fn proof_bearing_initialization_indexer(
+    prepared: &lez_bridge_protocol::PrepareNativeXmrEscrowV3Result,
+    xmr_terms: &XmrNativeEscrowTermsV3,
+    depositor: AccountId,
+) -> Arc<FixtureIndexer> {
+    modified_initialization_indexer(prepared, xmr_terms, depositor, |block| {
+        let Some(Transaction::Public(indexed)) = block.body.transactions.first_mut() else {
+            panic!("public initialization transaction")
+        };
+        indexed.witness_set.proof = Some(IndexedProof(vec![13]));
+    })
+}
+
+fn initialization_state_indexer(
+    prepared: &lez_bridge_protocol::PrepareNativeXmrEscrowV3Result,
+    xmr_terms: &XmrNativeEscrowTermsV3,
+    depositor: AccountId,
+    status: EscrowStatus,
+    custody_balance: u128,
+) -> Arc<FixtureIndexer> {
+    let mut indexer = Arc::into_inner(finalized_initialization_indexer(
+        prepared, xmr_terms, depositor,
+    ))
+    .expect("fixture has one owner");
+    let input = xmr_terms.to_input();
+    indexer.accounts.insert(
+        (*input.metadata_account_id.as_bytes(), FUNDING_BLOCK),
+        HistoricalAccount::Present(IndexedAccount {
+            program_owner: IndexedProgramId(ESCROW_PROGRAM),
+            balance: 0,
+            data: IndexedData(to_vec(&metadata(xmr_terms, status)).expect("metadata encoding")),
+            nonce: 0,
+        }),
+    );
+    indexer.accounts.insert(
+        (*input.custody_account_id.as_bytes(), FUNDING_BLOCK),
+        HistoricalAccount::Present(IndexedAccount {
+            program_owner: IndexedProgramId(TRANSFER_PROGRAM),
+            balance: custody_balance,
+            data: IndexedData(Vec::new()),
+            nonce: 0,
+        }),
+    );
+    Arc::new(indexer)
 }
 
 fn missing_fund_indexer(
@@ -619,6 +762,22 @@ fn moving_end_indexer(xmr_terms: &XmrNativeEscrowTermsV3) -> Arc<MovingEndIndexe
     let mut changed_end = finalized_block(FINALIZED_END, Vec::new());
     changed_end.header.hash = HashType([99; 32]);
     changed_end.header.signature = IndexedSignature([99; 64]);
+    Arc::new(MovingEndIndexer {
+        base,
+        changed_end,
+        end_reads: AtomicUsize::new(0),
+    })
+}
+
+fn moving_initialization_end_indexer(
+    prepared: &lez_bridge_protocol::PrepareNativeXmrEscrowV3Result,
+    xmr_terms: &XmrNativeEscrowTermsV3,
+    depositor: AccountId,
+) -> Arc<MovingEndIndexer> {
+    let base = finalized_initialization_indexer(prepared, xmr_terms, depositor);
+    let mut changed_end = finalized_block(FINALIZED_END, Vec::new());
+    changed_end.header.hash = HashType([98; 32]);
+    changed_end.header.signature = IndexedSignature([98; 64]);
     Arc::new(MovingEndIndexer {
         base,
         changed_end,
@@ -841,6 +1000,249 @@ async fn authenticated_exact_persisted_fund_requires_stable_finalized_history() 
         assert_eq!(sends.load(Ordering::SeqCst), 0);
     }
     bridge.stop().await.expect("sidecar stops");
+
+    let initialization_indexer = finalized_initialization_indexer(&prepared, &xmr_terms, depositor);
+    let (initialization_client, initialization_bridge) = start_classifier_sidecar(
+        directory.path(),
+        "bridge-initialize-idempotency.json",
+        descriptor.clone(),
+        Arc::clone(&restarted_planner),
+        &node_endpoint,
+        initialization_indexer.clone(),
+    )
+    .await;
+    let initialized = initialization_client
+        .classify_finalized_native_xmr_effect_v3(ClassifyFinalizedNativeXmrEffectV3Request::new(
+            MessageContext::new(
+                RunId::new(RUN_ID).expect("run id"),
+                RequestId::new("xmr-initialize-classify").expect("request id"),
+                Participant::Taker,
+            ),
+            descriptor.clone(),
+            xmr_terms,
+            XmrNativeEffectV3::Initialize,
+            FinalizedNativeXmrTransactionTargetV3::exact(prepared.initialization.clone()),
+            DiscoveryWindow::new(FUNDING_BLOCK, 2).expect("window"),
+        ))
+        .await
+        .expect("authenticated Initialize classifier");
+    let FinalizedNativeXmrScanOutcomeV3::Found {
+        finalized_clock,
+        scanned_window,
+        facts,
+    } = initialized.outcome
+    else {
+        panic!("exact persisted Initialize must be found")
+    };
+    assert_eq!(finalized_clock.height, FINALIZED_END);
+    assert_eq!(
+        scanned_window,
+        DiscoveryWindow::new(FUNDING_BLOCK, 2).unwrap()
+    );
+    assert_eq!(
+        facts.transaction.transaction_id,
+        prepared.initialization.transaction_id
+    );
+    assert_eq!(
+        facts.transaction.exact_bytes,
+        prepared.initialization.exact_bytes
+    );
+    assert_eq!(facts.instruction.effect, XmrNativeEffectV3::Initialize);
+    let input = xmr_terms.to_input();
+    assert_eq!(
+        facts.instruction.ordered_account_ids.as_slice(),
+        [
+            input.metadata_account_id,
+            input.custody_account_id,
+            input.depositor_account_id,
+            input.claimant_account_id,
+            input.claim_authority_account_id,
+            input.refund_authority_account_id,
+        ]
+    );
+    assert_eq!(
+        facts.transaction.signer_account_ids.as_slice(),
+        [input.depositor_account_id]
+    );
+    assert_eq!(facts.containing_block.block_id, FUNDING_BLOCK);
+    assert_eq!(facts.aggregate_signature, None);
+    assert_eq!(
+        facts.metadata,
+        XmrNativeEscrowMetadataFactsV3::from_terms(xmr_terms, XmrNativeEscrowStateV3::Empty)
+    );
+    assert_eq!(facts.custody.balance.as_u128(), 0);
+    {
+        let calls = initialization_indexer.calls.lock().expect("calls lock");
+        assert!(calls.iter().filter(|call| *call == "id:10").count() >= 3);
+        assert!(calls.iter().filter(|call| *call == "id:11").count() >= 3);
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| call.starts_with("account:"))
+                .count(),
+            2
+        );
+    }
+    initialization_bridge
+        .stop()
+        .await
+        .expect("initialization sidecar stops");
+
+    let missing_initialization_indexer = missing_fund_indexer(&xmr_terms, EscrowStatus::Empty);
+    let (missing_initialization_client, missing_initialization_bridge) = start_classifier_sidecar(
+        directory.path(),
+        "bridge-initialize-missing-idempotency.json",
+        descriptor.clone(),
+        Arc::clone(&restarted_planner),
+        &node_endpoint,
+        missing_initialization_indexer,
+    )
+    .await;
+    let missing_initialization = missing_initialization_client
+        .classify_finalized_native_xmr_effect_v3(classification_request_for_effect(
+            &descriptor,
+            &xmr_terms,
+            XmrNativeEffectV3::Initialize,
+            &prepared.initialization,
+            "xmr-initialize-missing",
+        ))
+        .await
+        .expect("missing Initialize remains typed");
+    assert!(matches!(
+        missing_initialization.outcome,
+        FinalizedNativeXmrScanOutcomeV3::Uncertain {
+            finalized_clock,
+            scanned_window,
+        } if finalized_clock.height == FINALIZED_END
+            && scanned_window == DiscoveryWindow::new(FUNDING_BLOCK, 2).unwrap()
+    ));
+    missing_initialization_bridge
+        .stop()
+        .await
+        .expect("missing Initialize sidecar stops");
+
+    let moving_initialization_indexer =
+        moving_initialization_end_indexer(&prepared, &xmr_terms, depositor);
+    let (moving_initialization_client, moving_initialization_bridge) = start_classifier_sidecar(
+        directory.path(),
+        "bridge-initialize-moving-idempotency.json",
+        descriptor.clone(),
+        Arc::clone(&restarted_planner),
+        &node_endpoint,
+        moving_initialization_indexer,
+    )
+    .await;
+    let moving_initialization = moving_initialization_client
+        .classify_finalized_native_xmr_effect_v3(classification_request_for_effect(
+            &descriptor,
+            &xmr_terms,
+            XmrNativeEffectV3::Initialize,
+            &prepared.initialization,
+            "xmr-initialize-moving",
+        ))
+        .await
+        .expect("moving Initialize tip is typed");
+    assert_eq!(
+        moving_initialization.outcome,
+        FinalizedNativeXmrScanOutcomeV3::unavailable(
+            FinalizedNativeXmrUnavailableReasonV3::MovingTip,
+        )
+    );
+    moving_initialization_bridge
+        .stop()
+        .await
+        .expect("moving Initialize sidecar stops");
+
+    for (name, stage, reason) in [
+        (
+            "finality",
+            UnavailableStage::Finality,
+            FinalizedNativeXmrUnavailableReasonV3::FinalityUnavailable,
+        ),
+        (
+            "history",
+            UnavailableStage::History,
+            FinalizedNativeXmrUnavailableReasonV3::HistoryUnavailable,
+        ),
+    ] {
+        let (unavailable_client, unavailable_bridge) = start_classifier_sidecar(
+            directory.path(),
+            &format!("bridge-initialize-{name}-idempotency.json"),
+            descriptor.clone(),
+            Arc::clone(&restarted_planner),
+            &node_endpoint,
+            Arc::new(UnavailableEvidenceIndexer { stage }),
+        )
+        .await;
+        let unavailable = unavailable_client
+            .classify_finalized_native_xmr_effect_v3(classification_request_for_effect(
+                &descriptor,
+                &xmr_terms,
+                XmrNativeEffectV3::Initialize,
+                &prepared.initialization,
+                &format!("xmr-initialize-{name}"),
+            ))
+            .await
+            .expect("unavailable Initialize evidence is typed");
+        assert_eq!(
+            unavailable.outcome,
+            FinalizedNativeXmrScanOutcomeV3::unavailable(reason)
+        );
+        unavailable_bridge
+            .stop()
+            .await
+            .expect("unavailable Initialize sidecar stops");
+    }
+
+    for (name, invalid_indexer) in [
+        (
+            "accounts",
+            malformed_initialization_indexer(&prepared, &xmr_terms, depositor),
+        ),
+        (
+            "proof",
+            proof_bearing_initialization_indexer(&prepared, &xmr_terms, depositor),
+        ),
+        (
+            "metadata-state",
+            initialization_state_indexer(&prepared, &xmr_terms, depositor, EscrowStatus::Funded, 0),
+        ),
+        (
+            "custody-balance",
+            initialization_state_indexer(
+                &prepared,
+                &xmr_terms,
+                depositor,
+                EscrowStatus::Empty,
+                xmr_terms.to_input().amount,
+            ),
+        ),
+    ] {
+        let (invalid_client, invalid_bridge) = start_classifier_sidecar(
+            directory.path(),
+            &format!("bridge-invalid-initialize-{name}-idempotency.json"),
+            descriptor.clone(),
+            Arc::clone(&restarted_planner),
+            &node_endpoint,
+            invalid_indexer,
+        )
+        .await;
+        let error = invalid_client
+            .classify_finalized_native_xmr_effect_v3(classification_request_for_effect(
+                &descriptor,
+                &xmr_terms,
+                XmrNativeEffectV3::Initialize,
+                &prepared.initialization,
+                &format!("xmr-invalid-initialize-{name}"),
+            ))
+            .await
+            .expect_err("malformed Initialize facts fail closed");
+        assert_remote_code(error, ErrorCode::InvalidTransaction);
+        invalid_bridge
+            .stop()
+            .await
+            .expect("invalid Initialize sidecar stops");
+    }
 
     let absent_indexer = missing_fund_indexer(&xmr_terms, EscrowStatus::Empty);
     let (absent_client, absent_bridge) = start_classifier_sidecar(

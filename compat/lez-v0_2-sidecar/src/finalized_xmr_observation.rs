@@ -112,18 +112,18 @@ impl StableXmrWindow {
     }
 }
 
-struct FundCandidate {
+struct EffectCandidate {
     transaction: ObservedTransactionFacts,
     instruction: XmrNativeInstructionFactsV3,
     block: BlockHeader,
 }
 
 enum Scan {
-    Found(Box<FundCandidate>, Box<StableXmrWindow>),
+    Found(Box<EffectCandidate>, Box<StableXmrWindow>),
     Missing(Box<StableXmrWindow>),
 }
 
-/// Read-only finalized classifier for the exact persisted native-XMR Fund effect.
+/// Read-only finalized classifier for exact persisted native-XMR Initialize and Fund effects.
 pub(crate) struct FinalizedNativeXmrEffectObserver {
     planner: Arc<NativeEscrowPlanner>,
     indexer: Arc<dyn FinalizedIndexerApi>,
@@ -148,12 +148,13 @@ impl FinalizedNativeXmrEffectObserver {
         self.planner
             .validate_xmr_terms_v3_binding(&request.context, &request.runtime, &request.terms)
             .map_err(BridgeRuntimeError::from)?;
-        if request.effect != XmrNativeEffectV3::Fund
-            || !matches!(
-                request.target,
-                FinalizedNativeXmrTransactionTargetV3::Exact { .. }
-            )
-        {
+        if !matches!(
+            request.effect,
+            XmrNativeEffectV3::Initialize | XmrNativeEffectV3::Fund
+        ) || !matches!(
+            request.target,
+            FinalizedNativeXmrTransactionTargetV3::Exact { .. }
+        ) {
             return Self::result(
                 request,
                 FinalizedNativeXmrScanOutcomeV3::unavailable(
@@ -166,15 +167,16 @@ impl FinalizedNativeXmrEffectObserver {
             return Err(BridgeRuntimeError::Planner);
         };
         self.planner
-            .validate_owned_xmr_fund_v3(
+            .validate_owned_xmr_effect_v3(
                 &request.context,
                 &request.runtime,
                 &request.terms,
+                request.effect,
                 transaction,
             )
             .map_err(BridgeRuntimeError::from)?;
 
-        let scan = match self.scan_exact_fund(request).await {
+        let scan = match self.scan_exact_effect(request).await {
             Ok(scan) => scan,
             Err(ClassifiedFailure::Outcome(reason)) => {
                 return Self::result(
@@ -187,7 +189,7 @@ impl FinalizedNativeXmrEffectObserver {
         match scan {
             Scan::Found(candidate, stable) => {
                 let (metadata, custody) = match self
-                    .read_funded_state(&request.terms, candidate.block.block_id)
+                    .read_effect_state(&request.terms, request.effect, candidate.block.block_id)
                     .await
                 {
                     Ok(state) => state,
@@ -236,7 +238,7 @@ impl FinalizedNativeXmrEffectObserver {
             }
             Scan::Missing(stable) => {
                 if let Err(failure) = self
-                    .classify_missing_fund(&request.terms, stable.requested_end)
+                    .validate_missing_state(&request.terms, stable.requested_end)
                     .await
                 {
                     return match failure {
@@ -281,7 +283,7 @@ impl FinalizedNativeXmrEffectObserver {
         .map_err(|_| BridgeRuntimeError::InvalidObservation)
     }
 
-    async fn scan_exact_fund(
+    async fn scan_exact_effect(
         &self,
         request: &ClassifyFinalizedNativeXmrEffectV3Request,
     ) -> Classified<Scan> {
@@ -300,8 +302,9 @@ impl FinalizedNativeXmrEffectObserver {
                         BridgeRuntimeError::InvalidObservation,
                     ));
                 };
-                let candidate = Self::fund_candidate(
+                let candidate = Self::effect_candidate(
                     &request.terms,
+                    request.effect,
                     transaction,
                     public,
                     &block.header,
@@ -326,13 +329,14 @@ impl FinalizedNativeXmrEffectObserver {
         clippy::too_many_lines,
         reason = "one exact candidate check keeps canonical bytes, ABI, accounts, and signers joined"
     )]
-    fn fund_candidate(
+    fn effect_candidate(
         terms: &XmrNativeEscrowTermsV3,
+        effect: XmrNativeEffectV3,
         expected: &PreparedTransaction,
         indexed: &IndexedPublicTransaction,
         block: &BlockHeader,
         index: usize,
-    ) -> Classified<FundCandidate> {
+    ) -> Classified<EffectCandidate> {
         if indexed.witness_set.proof.is_some() {
             return Err(ClassifiedFailure::Runtime(
                 BridgeRuntimeError::InvalidObservation,
@@ -362,24 +366,47 @@ impl FinalizedNativeXmrEffectObserver {
                 BridgeRuntimeError::InvalidObservation,
             ));
         }
-        let instruction = risc0_zkvm::serde::from_slice::<ZecEscrowInstruction, u32>(
+        risc0_zkvm::serde::from_slice::<ZecEscrowInstruction, u32>(
             &public.message().instruction_data,
         )
         .map_err(|_| ClassifiedFailure::Runtime(BridgeRuntimeError::InvalidObservation))?;
-        let canonical_instruction = risc0_zkvm::serde::to_vec(&ZecEscrowInstruction::FundNative {
-            swap_id: *input.swap_id.as_bytes(),
-        })
-        .map_err(|_| ClassifiedFailure::Runtime(BridgeRuntimeError::InvalidObservation))?;
+        let canonical_instruction = match effect {
+            XmrNativeEffectV3::Initialize => ZecEscrowInstruction::InitializeNativeXmr {
+                swap_id: *input.swap_id.as_bytes(),
+                terms_hash: *input.activation_commitment.as_bytes(),
+                claim_aggregate_x_only_public_key: *input
+                    .claim_aggregate_x_only_public_key
+                    .as_bytes(),
+                refund_aggregate_x_only_public_key: *input
+                    .refund_aggregate_x_only_public_key
+                    .as_bytes(),
+                maker_dleq_transcript_commitment: *input
+                    .maker_dleq_transcript_commitment
+                    .as_bytes(),
+                taker_dleq_transcript_commitment: *input
+                    .taker_dleq_transcript_commitment
+                    .as_bytes(),
+                claim_partial_context_binding: *input.claim_partial_context_binding.as_bytes(),
+                claim_partial_commitment: *input.claim_partial_commitment.as_bytes(),
+                amount: input.amount,
+                refund_at: input.refund_at_ms,
+                punish_at: input.punish_at_ms,
+                authenticated_transfer_program: program_id_from_hex(
+                    input.authenticated_transfer_program_id,
+                ),
+            },
+            XmrNativeEffectV3::Fund => ZecEscrowInstruction::FundNative {
+                swap_id: *input.swap_id.as_bytes(),
+            },
+            _ => {
+                return Err(ClassifiedFailure::Runtime(
+                    BridgeRuntimeError::InvalidObservation,
+                ));
+            }
+        };
+        let canonical_instruction = risc0_zkvm::serde::to_vec(&canonical_instruction)
+            .map_err(|_| ClassifiedFailure::Runtime(BridgeRuntimeError::InvalidObservation))?;
         if public.message().instruction_data != canonical_instruction {
-            return Err(ClassifiedFailure::Runtime(
-                BridgeRuntimeError::InvalidObservation,
-            ));
-        }
-        if !matches!(
-            instruction,
-            ZecEscrowInstruction::FundNative { swap_id }
-                if swap_id == *input.swap_id.as_bytes()
-        ) {
             return Err(ClassifiedFailure::Runtime(
                 BridgeRuntimeError::InvalidObservation,
             ));
@@ -393,12 +420,28 @@ impl FinalizedNativeXmrEffectObserver {
                 .collect(),
         )
         .map_err(|_| ClassifiedFailure::Runtime(BridgeRuntimeError::InvalidObservation))?;
-        let expected_accounts = AccountIds::new(vec![
-            input.metadata_account_id,
-            input.custody_account_id,
-            input.depositor_account_id,
-        ])
-        .map_err(|_| ClassifiedFailure::Runtime(BridgeRuntimeError::InvalidObservation))?;
+        let expected_accounts = match effect {
+            XmrNativeEffectV3::Initialize => vec![
+                input.metadata_account_id,
+                input.custody_account_id,
+                input.depositor_account_id,
+                input.claimant_account_id,
+                input.claim_authority_account_id,
+                input.refund_authority_account_id,
+            ],
+            XmrNativeEffectV3::Fund => vec![
+                input.metadata_account_id,
+                input.custody_account_id,
+                input.depositor_account_id,
+            ],
+            _ => {
+                return Err(ClassifiedFailure::Runtime(
+                    BridgeRuntimeError::InvalidObservation,
+                ));
+            }
+        };
+        let expected_accounts = AccountIds::new(expected_accounts)
+            .map_err(|_| ClassifiedFailure::Runtime(BridgeRuntimeError::InvalidObservation))?;
         if accounts != expected_accounts {
             return Err(ClassifiedFailure::Runtime(
                 BridgeRuntimeError::InvalidObservation,
@@ -421,7 +464,7 @@ impl FinalizedNativeXmrEffectObserver {
             ));
         }
         let instruction = XmrNativeInstructionFactsV3::new(
-            XmrNativeEffectV3::Fund,
+            effect,
             input.escrow_program_id,
             accounts,
             input.swap_id,
@@ -429,7 +472,7 @@ impl FinalizedNativeXmrEffectObserver {
             None,
         )
         .map_err(|_| ClassifiedFailure::Runtime(BridgeRuntimeError::InvalidObservation))?;
-        Ok(FundCandidate {
+        Ok(EffectCandidate {
             transaction: ObservedTransactionFacts::new(
                 prepared.transaction_id,
                 prepared.exact_bytes,
@@ -536,9 +579,10 @@ impl FinalizedNativeXmrEffectObserver {
         Ok(by_id)
     }
 
-    async fn read_funded_state(
+    async fn read_effect_state(
         &self,
         terms: &XmrNativeEscrowTermsV3,
+        effect: XmrNativeEffectV3,
         block_id: u64,
     ) -> Classified<(XmrNativeEscrowMetadataFactsV3, NativeCustodyFacts)> {
         let input = terms.to_input();
@@ -560,24 +604,33 @@ impl FinalizedNativeXmrEffectObserver {
                 BridgeRuntimeError::InvalidObservation,
             ));
         };
+        let (expected_state, expected_balance) = match effect {
+            XmrNativeEffectV3::Initialize => (XmrNativeEscrowStateV3::Empty, 0),
+            XmrNativeEffectV3::Fund => (XmrNativeEscrowStateV3::Funded, input.amount),
+            _ => {
+                return Err(ClassifiedFailure::Runtime(
+                    BridgeRuntimeError::InvalidObservation,
+                ));
+            }
+        };
         let state = validate_metadata(terms, &metadata)?;
-        if state != XmrNativeEscrowStateV3::Funded {
+        if state != expected_state {
             return Err(ClassifiedFailure::Runtime(
                 BridgeRuntimeError::InvalidObservation,
             ));
         }
-        validate_custody(terms, &custody, input.amount)?;
+        validate_custody(terms, &custody, expected_balance)?;
         Ok((
             XmrNativeEscrowMetadataFactsV3::from_terms(*terms, state),
             NativeCustodyFacts::new(
                 input.custody_account_id,
                 input.authenticated_transfer_program_id,
-                input.amount,
+                expected_balance,
             ),
         ))
     }
 
-    async fn classify_missing_fund(
+    async fn validate_missing_state(
         &self,
         terms: &XmrNativeEscrowTermsV3,
         block_id: u64,
