@@ -2920,19 +2920,25 @@ authenticated loopback factories. The concrete issuer consumes all four by
 ownership, re-derives exact Stage B, cross-binds Taker role, run, runtime,
 topology, and signed output terms, and derives the journal's exclusive end from
 the same signed `refund_at_ms` used by the checked guest. It accepts no raw
-deadline, publication ID, bytes, or status. The test proves Prepared state,
-exact publication ID, the `[12_500, 20_000)` finalized-Fund/signed-refund
-window, and authenticated restart reload with zero external resources.
-The internal publisher still supplies one CAS winner, post-CAS finalized-time
-suppression, matching-ID admission, ambiguity, and observe-only restart against
-in-process seams. The clone-enabling authorization borrow is removed; a
-consuming cross-crate extraction remains an explicit trusted-actor PoC residual
-until a dedicated production release service owns those bytes.
-The repository now has a release-intended typed submission component but no
+deadline, publication ID, bytes, request ID, or status. The integration proves
+the exact `[12_500, 20_000)` interval and authenticated restart, then drives
+the sealed publisher. A misbound client leaves `Prepared` with zero clock and
+RPC calls; the exact binding takes two finalized samples, performs one
+dedicated submission, persists `Admitted`, and a fresh store/client restart
+returns `ObserveOnly` with zero further calls.
+The raw publisher transport and decrypted authorization remain crate-private.
+The concrete wrapper exact-checks snapshot, typed run/runtime/terms, and client
+binding before its clock or CAS, constructs a deterministic strict request only
+after the winning CAS, and maps every uncertain post-CAS result to a terminal
+non-retry state. The clone-enabling authorization borrow is removed; consuming
+cross-crate preparation remains an explicit trusted-process PoC residual until
+the dedicated service also owns preparation.
+The repository now has release-journal-to-client composition but no
 release-service process or exclusive bearer/network ownership. Five functional
 builders, actual-local-indexer classifier execution, actual-chain trusted
-finalized LEZ capability, authorization finality observer, role actor, full
-swap, U9 guide, D1 videos, and stagenet CI evidence remain.
+finalized LEZ capability, actual-node submission, authorization finality
+observer, role actor, full swap, U9 guide, D1 videos, and stagenet CI evidence
+remain.
 
 The standalone strict v3 bridge protocol binds nine additive methods and six
 finalized effects. The ordinary client exposes eight methods while the narrow
@@ -3008,16 +3014,18 @@ and 32-byte markers into chain authority.
   fixture prove fail-closed boundary behavior and exact `Found`, respectively,
   but not a real Stage-B/actual-local-indexer capability. Durable-target and Taker-role
   rejection happen before indexer reads; missing remains `Uncertain`. Neither
-  observation is release authority by itself. The public schema-v3 issuer now
-  consumes finalized Fund, prepared authorization, Monero-output, and topology
-  capabilities in the 32-test release-authority suite. It derives the exact
-  publication and `[finalized Fund time, signed refund time)` interval, and
-  authenticates identical state after restart. The internal publisher proves
-  exact-ID admission, one CAS winner, a post-CAS finalized-time gate, terminal
-  outcomes, and observe-only restart. The dedicated node route and exact
-  returned-ID component are green against an official-type loopback fixture.
-  Actor composition, actual-local finalized evidence, release-service clock and
-  bearer ownership, actual-node submission, and finality observation remain.
+  observation is release authority by itself. The public schema-v3 issuer and
+  sealed publisher now consume finalized Fund, prepared authorization,
+  Monero-output, topology, typed binding, finalized-clock, and narrow-client
+  capabilities in the 32-test release-authority suite. A client mismatch makes
+  zero clock/RPC calls and preserves `Prepared`; the exact path samples twice,
+  performs one dedicated submission, persists `Admitted`, and restart
+  observes only with zero further calls. The generic byte-bearing publisher
+  remains private. The dedicated node route and exact returned-ID component are
+  green against an official-type loopback fixture.
+  Actor composition, actual-local finalized evidence, a release-service process
+  owning preparation/key/journal/bearer/routes, actual-node submission, and
+  finality observation remain.
 - [ ] Build the official Monero 0.18.5.1 CLI artifact from its signed hash list
   into a digest-pinned runtime and scan the final image fail-hard.
 - [x] Start one offline `monerod` Regtest daemon plus distinct authenticated
@@ -3132,34 +3140,39 @@ decode, a reviewed key-image or freshness/consumption argument, and a public
 trust model. The topology capability is neither Stage-B release authority nor a
 claim PoC.
 
-The release journal plus concrete issuer are workspace-GREEN in 32 tests. The
-public happy path mints finalized-Fund and prepared-authorization evidence
-through authenticated bridge calls, mints output and topology evidence through
-typed authenticated Monero loopbacks, consumes all four capabilities, persists
-the derived encrypted intent, and reloads the identical authenticated snapshot
-after restart. The exact operational interval is
-`[finalized Fund time, signed refund_at)`; no caller supplies either
-publication bytes or its exclusive end. The publisher separately authenticates
-one stable resource, preserves randomized ciphertext across semantic restart,
-grants one local compare-and-swap winner, admits only a matching returned ID,
-and terminalizes ambiguous or proven-no-send results without retry.
+The release journal, issuer, and sealed publisher-to-client wrapper are
+workspace-GREEN in 32 tests. The public path mints finalized-Fund and
+prepared-authorization evidence through authenticated bridge calls, mints
+output and topology evidence through typed authenticated Monero loopbacks,
+consumes all four preparation capabilities, and persists the derived encrypted
+intent. Its operational interval is `[finalized Fund time, signed refund_at)`;
+no caller supplies publication bytes, request ID, or exclusive end.
+
+After restart, a misbound client is rejected before clock or CAS and leaves the
+journal `Prepared`. The exact typed binding takes two finalized clock samples,
+wins one local CAS, decrypts only after the decisive sample, performs one
+dedicated submission, persists `Admitted`, and a fresh store and client restart
+returns `ObserveOnly` without another clock read or RPC. The byte-bearing
+transport remains private. Ambiguous and proven-no-send results remain terminal
+and non-retryable.
+
 The trusted-process PoC assumptions remain one host, dedicated UID, one
 mode-`0700` directory, one mode-`0600` canonical journal, no
 clone/backup/restore, no hostile same-UID WAL/SHM race, isolated node access,
 and a closed generic tag-14 submission route. AEAD/HMAC do not prevent rollback
-of an older valid journal. The issuer is not wired to an actor or actual node,
-so this is neither live replay-prevention evidence nor a claim PoC. Production
-must move prepared-byte extraction into a dedicated release-service process.
+of an older valid journal. The fixture clock and sidecar are loopback mocks, and
+preparation still occurs in the test process, so this is neither actual-node
+replay-prevention evidence nor a claim PoC.
 
-The pinned sidecar now exposes a reusable genesis-bound stable finalized-clock
-primitive. It reads the official indexer's finalized ID plus genesis and tip
-by both ID and hash, binds genesis to the immutable runtime, and rereads the
-complete sample. Wrong genesis, zero tip facts, or any tip movement fails
-closed; the bridge executable consumes it before readiness. Two focused tests
-and the complete 142-test sidecar suite pass. ADR 0066 records why strict
-movement rejection is required for deadline safety. The release-authority
-publisher still uses its in-process seam until the dedicated release service
-owns the sidecar capability and calls this boundary.
+The pinned sidecar exposes the reusable genesis-bound stable finalized-clock
+primitive needed by the service. It reads the official indexer's finalized ID
+plus genesis and tip by both ID and hash, binds genesis to the immutable
+runtime, and rereads the complete sample. Wrong genesis, zero tip facts, or any
+tip movement fails closed; two focused tests and the complete 142-test sidecar
+suite pass. ADR 0066 records why movement rejection is required for deadline
+safety. The dedicated service process must now own preparation, key, journal,
+bearer and routes, then adapt this official clock to the already-green sealed
+publisher wrapper.
 
 
 The immediate critical path is now:
@@ -3206,17 +3219,17 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by this push is 2.5 to 4.5 focused engineering hours
-to the first reproducible independent-actor claim-path PoC and 8 to 16
-additional hours to
-the local claim/refund/punishment PoC. The concrete issuer, exact signed
-exclusive-deadline binding, genesis-bound finalized-clock primitive, and
-dedicated route/returned-ID component are removed from the remaining list.
-Actual-local Fund evidence, release-service ownership and wiring, actual-node
-submission, authorization finality, claim completion, and fresh actors dominate
-the next vertical slice. Mocked transports and checked recursive cases still do
-not count as runtime evidence. The ETA must be refreshed again at the next
-verified push.
+The checkpoint ETA carried by this push is 2 to 4 focused engineering hours to
+the first reproducible independent-actor claim-path PoC and 8 to 16 additional
+hours to the local claim/refund/punishment PoC. The concrete issuer, exact
+signed exclusive-deadline binding, sealed publisher-to-client composition,
+genesis-bound finalized-clock primitive, and dedicated route/returned-ID
+component are removed from the remaining list. Actual-local Fund evidence,
+release-service process ownership, actual official-clock/node wiring,
+authorization finality, claim completion, and fresh actors dominate the next
+vertical slice. Mocked transports and checked recursive cases still do not
+count as runtime evidence. The ETA must be refreshed again at the next verified
+push.
 GW-M4-001, GW-M4-002, and GW-M4-003 remain upstream production/review
 disclosures and do not block the private local implementation.
 

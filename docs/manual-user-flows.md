@@ -2366,20 +2366,21 @@ signed runtime before wire, and mints private-field non-`Clone` evidence only
 after one authenticated success. Its literal-loopback server is a mock; ADR
 0063 separately proves the official ABI-validating builder. The public
 schema-v3 release-authority crate passes 32 tests. Its authenticated-loopback
-integration consumes the exact Fund, authorization, output, and topology
+integration consumes exact Fund, authorization, output, and topology
 capabilities, derives the `[finalized Fund time, signed refund time)` interval,
-persists the expected publication ID, and authenticates identical state after
-restart. Its internal publisher elects one CAS winner, samples finalized time
-again after the CAS, and terminalizes admitted, ambiguous, or proven no-send
-outcomes without retry. The release publisher's clock and submission transport
-remain in-process
-seams. The separate sidecar clock and dedicated submission route are
-component-GREEN, but neither is wired through a release-service process. The
-route test uses an official-type literal-loopback sequencer fixture rather than
-an actual local LEZ node. Actual-local-indexer evidence, release-service
-ownership and clock/client wiring, actual-node submission, restart
-reconciliation, authorization finality, fresh role actors, and both terminal
-stores are still required before an atomic happy PoC.
+and drives the sealed release publisher. A client-runtime mismatch leaves
+`Prepared` with zero clock and RPC calls. The exact binding takes two finalized
+samples, makes one dedicated submission, persists `Admitted`, and a fresh
+store/client restart returns `ObserveOnly` with zero further calls. Raw
+authorization bytes and the generic publication transport never cross the
+public API.
+
+The clock and sidecar in this proof remain in-process literal-loopback fixtures.
+The separate official clock and dedicated submission route are
+component-GREEN, but a release-service process does not yet own preparation,
+key, journal, bearer, and the clock/sidecar paths. Actual-local Fund evidence,
+actual official-indexer and node calls, authorization finality, fresh role
+actors, and both terminal stores remain required before an atomic happy PoC.
 
 Reproduce the checked LEZ artifact and focused host boundaries with a fresh run
 ID. The optional shared tool directory below is safe only when it already
@@ -2450,17 +2451,19 @@ The focused public-boundary command must report `running 1 test` and one
 passed; the full release-authority command must report 32 passed and zero
 failed. The focused case mints finalized Fund and prepared authorization
 capabilities through authenticated bridge loopbacks, mints exact output and
-topology capabilities through typed authenticated Monero loopbacks, then calls
-the public issuer. It must assert Prepared state, publication ID `[70; 32]`,
-the exact `[12_500, 20_000)` finalized-Fund/signed-refund interval, and an
-identical authenticated restart load. Its temporary journal parent is
-mode-`0700` and SQLite is mode-`0600`.
+topology capabilities through typed authenticated Monero loopbacks, calls the
+public issuer, and publishes through the sealed wrapper. It asserts the exact
+`[12_500, 20_000)` interval, a zero-call pre-CAS client-mismatch rejection,
+two finalized samples, one dedicated submission, durable `Admitted`, and
+zero-call `ObserveOnly` after fresh store/client restart. Its temporary journal
+parent is mode-`0700` and SQLite is mode-`0600`.
+
 All transports and RPC services exist only inside the test process. It makes no
 Docker, actual node, chain RPC, peer, faucet, public-fund, or external-finality
-call. It proves typed preparation and exact upper-deadline derivation, not
-manual publication, authorization finality, an actor flow, or a swap. The
-consuming prepared-byte extraction assumes a trusted single-process PoC and
-must move into a dedicated release service before production.
+call. It proves typed preparation and sealed publication ordering, not actual
+authorization finality, actor isolation, or a swap. The consuming
+prepared-byte extraction still occurs in the trusted fixture and must move
+behind the dedicated service's redacted API.
 
 The focused authorization command must report 3 of 3 authenticated tests. A
 successful exact Stage-B request makes one authenticated route call and returns

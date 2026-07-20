@@ -10,12 +10,23 @@ use super::{
     ReleaseStore,
 };
 use async_trait::async_trait;
+use lez_bridge_client::XmrReleaseClient;
+use lez_bridge_protocol::{
+    ChainClock, ExactTransactionBytes, Hex32, MessageContext, Participant, PreparedTransaction,
+    RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
+    SubmitNativeXmrClaimAuthorizationV3Request, TransactionId, XmrNativeEscrowTermsV3,
+};
+
 use thiserror::Error;
+
+const RELEASE_REQUEST_DOMAIN: &[u8] = b"lez-atomic-swaps/xmr-release/request/v1";
 
 /// Exact node-mempool admission status; neither variant proves chain finality.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum PublicationAdmissionStatus {
+pub enum PublicationAdmissionStatus {
+    /// The node accepted the exact authorization.
     Accepted,
+    /// The node already knew the exact authorization bytes under this ID.
     AlreadyKnown,
 }
 
@@ -58,7 +69,7 @@ pub(crate) trait XmrAuthorizationPublicationTransport: Send {
 
 /// Durable publication result.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ReleasePublicationOutcome {
+pub enum ReleasePublicationOutcome {
     /// The node accepted or already knew the exact bytes; finality is pending.
     Admitted(PublicationAdmissionStatus),
     /// Submission may have reached the node; no retry is permitted.
@@ -71,13 +82,196 @@ pub(crate) enum ReleasePublicationOutcome {
 
 /// Failure before a publication attempt or while persisting its terminal state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
-pub(crate) enum ReleasePublicationError {
+pub enum ReleasePublicationError {
     #[error(transparent)]
     Journal(#[from] ReleaseError),
     #[error("finalized LEZ consensus time is unavailable")]
     FinalizedClockUnavailable,
     #[error("finalized LEZ consensus time is outside the release window")]
     OutsideWindow,
+}
+
+/// Redacted failure from the finalized LEZ indexer clock capability.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub enum FinalizedLezClockError {
+    /// The stable, genesis-bound finalized clock could not be established.
+    #[error("finalized LEZ indexer clock is unavailable")]
+    Unavailable,
+}
+
+/// Clock-only capability used by the dedicated XMR release service.
+///
+/// Implementations must read a stable finalized indexer tip, prove that its
+/// chain has the supplied genesis block, and return the exact finalized block
+/// identity. This is deliberately distinct from a sequencer-current clock.
+#[async_trait]
+pub trait FinalizedLezClockSource: Send {
+    /// Reads one stable finalized clock bound to `expected_genesis_block_hash`.
+    async fn read_genesis_bound_finalized_clock(
+        &mut self,
+        expected_genesis_block_hash: Hex32,
+    ) -> Result<ChainClock, FinalizedLezClockError>;
+}
+
+/// Non-secret typed binding for one exact XMR authorization release.
+///
+/// This is context, not publication authority: it carries no bearer, journal
+/// key, protected bytes, or node capability. The publisher compares it with the
+/// authenticated journal target before reading the clock or consuming its CAS.
+pub struct XmrReleaseSubmissionBindingV3 {
+    run_id: RunId,
+    runtime: RuntimeDescriptor,
+    terms: XmrNativeEscrowTermsV3,
+}
+
+impl std::fmt::Debug for XmrReleaseSubmissionBindingV3 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("XmrReleaseSubmissionBindingV3")
+            .field("run_id", &self.run_id)
+            .field("runtime", &self.runtime)
+            .field("terms", &"[BOUND]")
+            .finish()
+    }
+}
+
+impl XmrReleaseSubmissionBindingV3 {
+    /// Constructs a binding for the only supported Taker-owned LEZ v0.2 route.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a non-Taker or non-v0.2 runtime before any publication work.
+    pub fn new(
+        run_id: RunId,
+        runtime: RuntimeDescriptor,
+        terms: XmrNativeEscrowTermsV3,
+    ) -> Result<Self, ReleaseError> {
+        if runtime.sidecar_role != Participant::Taker
+            || runtime.compatibility != RuntimeCompatibility::LeeV0_2_0
+        {
+            return Err(ReleaseError::InvalidBinding);
+        }
+        Ok(Self {
+            run_id,
+            runtime,
+            terms,
+        })
+    }
+}
+
+struct BridgePublicationTransport<'a, C> {
+    binding: &'a XmrReleaseSubmissionBindingV3,
+    authenticated_target: &'a [u8],
+    publication_id: [u8; 32],
+    request_id: RequestId,
+    client: &'a XmrReleaseClient,
+    clock: &'a mut C,
+}
+
+#[async_trait]
+impl<C: FinalizedLezClockSource> XmrAuthorizationPublicationTransport
+    for BridgePublicationTransport<'_, C>
+{
+    async fn finalized_lez_timestamp(
+        &mut self,
+        authenticated_target: &[u8],
+    ) -> Result<u64, PublicationTransportError> {
+        if authenticated_target != self.authenticated_target {
+            return Err(PublicationTransportError::InvalidResponse);
+        }
+        let clock = self
+            .clock
+            .read_genesis_bound_finalized_clock(self.binding.runtime.genesis_block_hash)
+            .await
+            .map_err(|_| PublicationTransportError::Unavailable)?;
+        if clock.block_hash == Hex32::from_bytes([0; 32]) || clock.timestamp_ms == 0 {
+            return Err(PublicationTransportError::InvalidResponse);
+        }
+        Ok(clock.timestamp_ms)
+    }
+
+    async fn submit_exact_authorization(
+        &mut self,
+        authenticated_target: &[u8],
+        exact_publication: &[u8],
+    ) -> Result<PublicationAdmission, PublicationTransportError> {
+        if authenticated_target != self.authenticated_target {
+            return Err(PublicationTransportError::InvalidResponse);
+        }
+        let exact_bytes = ExactTransactionBytes::new(exact_publication.to_vec())
+            .map_err(|_| PublicationTransportError::InvalidResponse)?;
+        let authorization =
+            PreparedTransaction::new(TransactionId::from_bytes(self.publication_id), exact_bytes);
+        let request = SubmitNativeXmrClaimAuthorizationV3Request::new(
+            MessageContext::new(
+                self.binding.run_id.clone(),
+                self.request_id.clone(),
+                Participant::Taker,
+            ),
+            self.binding.runtime.clone(),
+            self.binding.terms,
+            authorization,
+        );
+        let result = self
+            .client
+            .submit_native_xmr_claim_authorization_v3(request)
+            .await
+            .map_err(|_| PublicationTransportError::Unavailable)?;
+        let status = match result.outcome {
+            SubmissionOutcome::Accepted => PublicationAdmissionStatus::Accepted,
+            SubmissionOutcome::AlreadyKnown => PublicationAdmissionStatus::AlreadyKnown,
+        };
+        Ok(PublicationAdmission {
+            status,
+            transaction_id: *result.authorization_transaction_id.as_bytes(),
+        })
+    }
+}
+
+impl ReleaseStore {
+    /// Publishes one prepared XMR claim authorization through sealed capabilities.
+    ///
+    /// The typed binding, client run, and client runtime are exact-checked before
+    /// the first clock read and before the durable send CAS. Only this crate can
+    /// decrypt and wrap the exact authorization. Admission remains distinct from
+    /// finalized authorization evidence.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on journal authentication, binding drift, unavailable
+    /// finalized time, or time outside the signed release interval.
+    pub async fn publish_xmr_claim_release<C: FinalizedLezClockSource>(
+        &self,
+        snapshot: ReleaseSnapshot,
+        key: &PublicationProtectionKey,
+        binding: &XmrReleaseSubmissionBindingV3,
+        client: &XmrReleaseClient,
+        clock: &mut C,
+    ) -> Result<ReleasePublicationOutcome, ReleasePublicationError> {
+        let authenticated_target =
+            crate::issuer::release_target_bytes(&binding.run_id, &binding.runtime, &binding.terms);
+        if snapshot.target() != authenticated_target.as_slice()
+            || client.expected_run_id() != &binding.run_id
+            || client.expected_runtime() != &binding.runtime
+        {
+            return Err(ReleaseError::BindingMismatch.into());
+        }
+        let publication_id = snapshot.publication_id();
+        let mut request_binding = RELEASE_REQUEST_DOMAIN.to_vec();
+        request_binding.extend_from_slice(&snapshot.activation());
+        request_binding.extend_from_slice(&publication_id);
+        let request_id = RequestId::new(hex::encode(crate::hash(&request_binding)))
+            .map_err(|_| ReleaseError::InvalidBinding)?;
+        let mut transport = BridgePublicationTransport {
+            binding,
+            authenticated_target: &authenticated_target,
+            publication_id,
+            request_id,
+            client,
+            clock,
+        };
+        self.publish_or_observe(snapshot, key, &mut transport).await
+    }
 }
 
 impl ReleaseStore {

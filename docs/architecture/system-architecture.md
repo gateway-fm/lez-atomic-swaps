@@ -2160,14 +2160,13 @@ flowchart LR
     SignedDeadline["Stage A signed refund time<br/>same exclusive guest deadline"] --> Issuer
     Issuer --> ReleaseStore["Sealed release journal schema v3<br/>32 component tests green"]
     ReleaseStore --> ReleaseJournal[("Release-authority SQLite journal<br/>one semantic publisher")]
-    ReleaseStore --> Publisher["Internal transaction-scoped publisher<br/>mock transport only"]
-    Publisher --> TestClock["In-process finalized clock seam"]
-    Publisher --> TestSubmit["In-process submission seam"]
+    ReleaseStore --> Publisher["Sealed transaction-scoped publisher<br/>narrow-client wrapper component green"]
+    Publisher --> TestClock["Loopback finalized-clock fixture"]
+    Publisher --> ReleaseClient["XmrReleaseClient<br/>release-intended type-narrowed component"]
     RuntimeGenesis["Immutable runtime genesis"] --> FinalizedClock["Stable finalized-clock primitive<br/>component green"]
     ActualIndexer -->|"finalized ID and block by ID and hash"| FinalizedClock
-    Publisher -.-> ReleaseService["Dedicated release-service process<br/>ownership and wiring pending"]
+    ReleaseService["Dedicated release-service process<br/>ownership and actual wiring pending"] -.-> Publisher
     FinalizedClock -.-> ReleaseService
-    ReleaseService -.-> ReleaseClient["XmrReleaseClient<br/>release-intended type-narrowed component"]
     ReleaseClient --> ReleaseRoute["Dedicated tag-14 submission route<br/>component green"]
     ClaimReservation --> ReleaseRoute
     ReleaseRoute --> BridgeJournal[("Sidecar idempotency journal<br/>request-scoped durable outcome")]
@@ -2183,13 +2182,18 @@ flowchart LR
 ```
 
 The public issuer consumes all prerequisite opaque evidence and writes through
-the private raw plan into the internal publisher; the publisher itself is not
-exposed to actors. Its clock and submission capabilities remain in-process test
-seams. Separately, the release-intended type-narrowed client and sidecar route are component-green
-against an official-type literal-loopback sequencer fixture. The route reloads
-the exact durable authorization and persists a request-scoped unknown outcome
-before lookup or send. It is not wired to the release publisher, an actor, or an
-actual sequencer.
+the private raw plan into the sealed publisher; neither raw plan, decrypted
+authorization, nor byte-bearing transport is exposed to actors. The concrete
+wrapper exact-checks the authenticated snapshot, typed run/runtime/terms, and
+client binding before clock or CAS. Its loopback proof takes two finalized
+samples, performs one dedicated RPC, persists `Admitted`, and restart observes
+only without another call.
+
+The release-intended client and sidecar route are component-green against an
+official-type literal-loopback sequencer fixture. The route reloads the exact
+durable authorization and persists a request-scoped unknown outcome before
+lookup or send. A dedicated process, official clock adapter, actual sequencer,
+actor API, and authorization-finality observer remain pending.
 
 The release-authority SQLite journal grants semantic publication across request
 IDs; the sidecar idempotency journal protects one RPC request ID. They are
@@ -2229,39 +2233,49 @@ sequenceDiagram
     end
 ```
 
-The dedicated route has a separate component journey. It deliberately has no
-actor participant because process ownership and the redacted actor API do not
-exist yet:
+The sealed publication path has a separate component journey. It deliberately
+has no actor participant because process ownership and the redacted actor API do
+not exist yet:
 
 ```mermaid
 sequenceDiagram
     participant Harness as Component test harness
+    participant Authority as Sealed release publisher
+    participant ReleaseJournal as Release CAS journal
+    participant Clock as Finalized clock fixture
     participant Client as XmrReleaseClient
     participant Sidecar as Taker sidecar release route
-    participant Journal as Sidecar idempotency journal
+    participant BridgeJournal as Sidecar idempotency journal
     participant Planner as Durable tag-14 planner
     participant Fixture as Official-type sequencer fixture
 
-    Harness->>Client: Exact prepared authorization with fresh request ID
-    Client->>Client: Require Taker run runtime terms and nonempty bytes
+    Harness->>Authority: Authenticated Prepared snapshot and typed binding
+    Authority->>Authority: Exact-check snapshot and client before clock
+    Authority->>Clock: Initial finalized sample
+    Clock-->>Authority: Inside signed half-open window
+    Authority->>ReleaseJournal: CAS Prepared to PublicationStarted
+    Authority->>Clock: Decisive finalized sample
+    Clock-->>Authority: Stable and inside window
+    Authority->>Authority: Decrypt only after CAS and decisive clock
+    Authority->>Client: Deterministic exact authorization request
     Client->>Sidecar: Dedicated submit RPC
-    Sidecar->>Journal: Persist unknown before node I O
+    Sidecar->>BridgeJournal: Persist unknown before node I O
     Sidecar->>Planner: Reload and revalidate exact durable authorization
     Planner-->>Sidecar: Exact owned tag 14
-    Sidecar->>Fixture: getTransaction exact canonical ID
+    Sidecar->>Fixture: Lookup exact canonical ID
     Fixture-->>Sidecar: Not found
-    Sidecar->>Fixture: One sendTransaction attempt
-    Fixture-->>Sidecar: Canonical ID derived from official transaction
-    Sidecar->>Sidecar: Require returned ID equals prepared ID
-    Sidecar->>Journal: Persist terminal accepted result
+    Sidecar->>Fixture: One send attempt
+    Fixture-->>Sidecar: Canonical ID
+    Sidecar->>BridgeJournal: Persist accepted
     Sidecar-->>Client: Exact context terms ID and admission
-    Client-->>Harness: Accepted
-    Harness->>Client: Replay same request through a fresh client
-    Client->>Sidecar: Same dedicated request
-    Sidecar->>Journal: Read terminal result
-    Journal-->>Sidecar: Accepted without node I O
-    Sidecar-->>Harness: Same result and no second send
-    Note over Harness,Fixture: No release service actor actual sequencer or finality is proved
+    Client-->>Authority: Accepted
+    Authority->>ReleaseJournal: Persist Admitted
+    Authority-->>Harness: Redacted admitted outcome
+    Harness->>Authority: Fresh store and client restart
+    Authority->>ReleaseJournal: Load terminal record
+    ReleaseJournal-->>Authority: Observe only
+    Authority-->>Harness: No clock read and no second RPC
+    Note over Harness,Fixture: No release process actor actual sequencer or finality is proved
 ```
 
 <!-- atomic-sequence: lez-xmr/taker-sells-lez -->
@@ -2367,11 +2381,12 @@ remains part of the disclosed production review.
 **Replay/idempotency:** the target construction requires durable shares, event
 projection, and one-attempt spend authority. The current Monero observation is
 deliberately non-cloneable but not activation authority. The sealed release
-journal proves one semantic publisher across its own request space. ADR 0067's
-sidecar journal separately persists an unknown result before exact lookup/send
-and gives the same RPC request ID no second attempt. No transaction spans those
-two journals, and the release publisher is not wired to the route. A dedicated
-service must reconcile them conservatively; current component tests do not
+journal proves one semantic publisher across its own request space. The sealed
+wrapper now calls the narrow client only after exact preflight, one CAS, and a
+decisive second clock sample. ADR 0067's sidecar journal separately persists an
+unknown result before exact lookup/send and gives the same RPC request ID no
+second attempt. No transaction spans those two journals. A dedicated service
+must own and reconcile them conservatively; loopback component tests do not
 prove live replay prevention. These controls do not replace the DLEQ and
 event-gated economic construction.
 

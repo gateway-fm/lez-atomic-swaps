@@ -134,6 +134,7 @@ before the checkpoint is pushed.
 - The local PoC trusts the official indexer's finalized classification once the
   ID/hash/genesis consistency checks pass. Production should independently
   review rollback anchoring, indexer compromise, and cross-source finality.
-- The current release-authority test clock remains an in-process seam until the
-  dedicated release service owns the sidecar capability and calls this official
-  boundary.
+- ADR 0067's sealed publisher now consumes a clock-only trait and narrow client
+  in its loopback integration. The official indexer implementation remains
+  unwired until the dedicated service process owns preparation, key, journal,
+  sidecar capability, and this official boundary.

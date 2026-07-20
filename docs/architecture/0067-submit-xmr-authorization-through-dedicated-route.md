@@ -32,6 +32,14 @@ release-service process. Do not add it to the ordinary `BridgeClient` API. The
 process boundary remains decisive: the actor must not receive the
 release-service bearer or direct access to the sidecar or sequencer namespace.
 
+Add a concrete `ReleaseStore::publish_xmr_claim_release` wrapper. It accepts
+only an authenticated snapshot, the protection key, a non-secret typed
+run/runtime/terms binding, a clock-only genesis-bound finalized-indexer
+capability, and `XmrReleaseClient`. Before the first clock sample or durable
+send CAS, it exact-compares the journal target and the client binding. The raw
+publisher transport, decrypted authorization, request construction, deadline,
+publication identity, and result mapping remain private to the authority crate.
+
 The sidecar keeps tag 14 outside `validate_owned_submission`. The dedicated
 route instead reloads and revalidates the exact durable authorization
 reservation, including run, Taker role, runtime, terms, Fund-plus-one nonce,
@@ -50,68 +58,96 @@ unknown and is never retried for that request ID.
 
 ```mermaid
 flowchart LR
-    Actor["Taker actor"] -.->|"pending redacted API"| Service["Release service pending"]
-    Service -.->|"pending exclusive bearer"| Client["Release-intended XmrReleaseClient"]
+    Actor["Taker actor"] -.->|"pending redacted API"| Service["Release service process pending"]
+    Service -.->|"pending process ownership"| Authority["Sealed release publisher"]
+    Authority --> ReleaseJournal[("Release CAS journal")]
+    Authority --> Clock["Clock-only finalized indexer capability"]
+    Authority --> Client["Release-intended XmrReleaseClient"]
+    Clock -.->|"official actual-local wiring pending"| Indexer["LEZ finalized indexer"]
     Client -->|"dedicated v3 RPC"| Sidecar["Taker LEZ v0.2 sidecar"]
     Sidecar --> Planner["Durable authorization planner"]
-    Sidecar --> Journal[("Bridge idempotency journal")]
+    Sidecar --> BridgeJournal[("Bridge idempotency journal")]
     Sidecar --> NodeRpc["OfficialNodeRpc"]
     NodeRpc -->|"proven official types"| Fixture["Ephemeral loopback sequencer fixture"]
     NodeRpc -.->|"actual local pending"| Sequencer["Actual local LEZ sequencer"]
-    Actor -.->|"must have no bearer"| Sidecar
-    Actor -.->|"must have no node route"| Sequencer
+    Actor -.->|"must have no bearer or route"| Sidecar
+    Actor -.->|"must have no route"| Indexer
+    Actor -.->|"must have no route"| Sequencer
 ```
 
-The pending service box is deliberate. This checkpoint supplies its typed
-client and sidecar transport, not the process, actor API, or network isolation.
+The pending service box is deliberate. This checkpoint supplies the sealed
+publisher-to-client composition and component proof, not the process, redacted
+actor API, official-indexer adapter, actual node, or network isolation.
 
-The route itself does not consume Fund, Monero output, topology, deadline, or
-release-journal evidence. The typed client is not a security boundary by
-itself; exclusive process ownership of its bearer and network path is required.
+The sidecar route itself does not consume Fund, Monero output, topology, or
+deadline evidence. The release wrapper consumes the authenticated journal
+snapshot and exact typed binding, but neither its Rust type nor the typed client
+is a security boundary. Exclusive process ownership of the key, journal,
+bearer, and network paths remains required.
 
 ## One-attempt flow
 
 ```mermaid
 sequenceDiagram
-    participant S as Release service
+    participant S as Prospective release service
+    participant A as Sealed release authority
+    participant R as Release CAS journal
+    participant F as Finalized indexer clock
     participant C as XmrReleaseClient
     participant B as Taker sidecar
     participant J as Bridge journal
     participant P as Durable planner
     participant N as LEZ sequencer
 
-    S->>C: Submit exact tag 14
-    C->>C: Check run runtime role terms and bytes
-    C->>B: Dedicated authorization RPC
-    B->>J: Persist unknown outcome before node I O
-    B->>P: Reload and revalidate owned reservation
-    P-->>B: Exact authorization accepted
-    B->>N: Lookup exact transaction ID
-    alt Exact bytes already canonical
-        N-->>B: Exact transaction
-        B->>J: Persist already_known result
-        J-->>B: Terminal result durable
-        B-->>C: already_known and exact ID
-    else Lookup unavailable
-        N-->>B: Lookup error
-        B->>J: Persist unavailable result
-        J-->>B: Terminal result durable
-        B-->>C: unavailable and no send
-    else Transaction missing
-        N-->>B: Not found
-        B->>N: One sendTransaction attempt
-        N-->>B: Returned transaction ID
-        alt Returned canonical ID
-            B->>J: Persist accepted result
-            J-->>B: Terminal result durable
-            B-->>C: accepted and exact ID
-        else Send ambiguous or wrong ID
-            B->>J: Retain unknown result
-            J-->>B: Unknown result durable
-            B-->>C: unknown and no retry
+    S->>A: Publish authenticated snapshot and typed binding
+    A->>A: Authenticate snapshot and exact-check client binding
+    A->>F: Read genesis-bound finalized clock
+    alt Clock unavailable or outside signed window
+        A-->>S: Fail before CAS and node I O
+    else Initial clock valid
+        A->>R: CAS Prepared to PublicationStarted
+        alt Another process already won
+            R-->>A: Observe only
+        else This process owns the attempt
+            A->>F: Read decisive finalized clock
+            alt Clock failed regressed or expired
+                A->>R: Persist Suppressed
+            else Decisive clock valid
+                A->>A: Decrypt exact authorization after CAS
+                A->>C: Submit deterministic strict request
+                C->>B: Dedicated authorization RPC
+                B->>J: Persist unknown before node I O
+                B->>P: Reload exact durable reservation
+                P-->>B: Exact authorization accepted
+                B->>N: Lookup exact transaction ID
+                alt Exact bytes already canonical
+                    N-->>B: Exact transaction
+                    B->>J: Persist already known
+                    B-->>C: Already known and exact ID
+                else Transaction missing
+                    N-->>B: Not found
+                    B->>N: One send attempt
+                    N-->>B: Returned transaction ID
+                    alt Returned canonical ID
+                        B->>J: Persist accepted
+                        B-->>C: Accepted and exact ID
+                    else Send uncertain or wrong ID
+                        B->>J: Retain unknown
+                        B-->>C: Unknown and no retry
+                    end
+                else Lookup unavailable
+                    B->>J: Persist unavailable
+                    B-->>C: Unavailable and no send
+                end
+                alt Exact admitted response
+                    A->>R: Persist Admitted
+                else Any uncertain response
+                    A->>R: Persist Ambiguous
+                end
+            end
         end
     end
-    C-->>S: Exact echoed result
+    A-->>S: Redacted durable outcome
 ```
 
 ## Safety and atomicity contribution
@@ -155,6 +191,14 @@ The protocol and client tests additionally prove strict JSON, unknown-field
 rejection, Taker-only construction, local drift rejection with zero calls, and
 wrong returned-ID rejection after one call.
 
+The public release-authority integration additionally proves the sealed
+composition. A client-runtime mismatch leaves the authenticated snapshot
+`Prepared` with zero clock and RPC calls. The exact binding takes two finalized
+clock samples, performs one dedicated RPC, persists `Admitted`, and a fresh
+store and client restart returns `ObserveOnly` with zero further clock or
+submission calls. Its clock and sidecar remain loopback fixtures, so it is not
+actual-indexer or actual-node evidence.
+
 These tests use ephemeral literal-loopback JSON-RPC fixtures and deterministic
 local keys. They use no Docker, public RPC, faucet, public funds, peer, or
 external finality service. They are component evidence, not actual-local-node
@@ -164,6 +208,9 @@ evidence.
 
 - The dedicated release-service process and low-privilege redacted actor API
   are not implemented yet.
+- The current preparation integration still mints opaque authorization evidence
+  in the test process. Full isolation requires the service to own preparation
+  and issuance behind its redacted API, not only publication.
 - The PoC must isolate the actor from the sidecar bearer and unauthenticated
   sequencer route with a private network namespace, not only a separate UID.
 - The sidecar route trusts bearer ownership; any holder with the exact durable
@@ -182,8 +229,9 @@ evidence.
 
 ## Consequences
 
-The release service can now use a small typed client rather than a generic
-transaction API. The actual-local M4 path can proceed to service ownership,
-authorization finality, and claim execution without relaxing the tag-14
-boundary. The `m4-complete` tag remains forbidden until the full milestone
-evidence and closure gates pass.
+The authority now offers a small sealed publisher over the typed client rather
+than exposing its byte-bearing transport. The next actual-local slice is the
+dedicated process owning preparation, key, journal, bearer, official finalized
+clock, and sidecar route. Authorization finality and claim execution remain
+separate subsequent effects. The `m4-complete` tag remains forbidden until the
+full milestone evidence and closure gates pass.

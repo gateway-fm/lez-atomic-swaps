@@ -165,9 +165,10 @@ branches.
 - The ADR 0060 journal, ADR 0064 publisher, and ADR 0065 issuer pass 32 tests for
   typed public preparation, stable-resource identity, signed deadline, later-tip
   rescan, semantic restart, local CAS/ambiguity, tamper, schema, and private
-  paths. The raw plan and publisher remain internal; finalized-clock and
-  submission transports remain in-process seams. These tests do not establish
-  live replay prevention or a claim PoC.
+  paths. The raw plan, byte-bearing transport, and decrypted authorization
+  remain internal. ADR 0067 now composes the sealed publisher with a loopback
+  clock and narrow client; official actual-local clock/node wiring and process
+  ownership remain absent. These tests do not establish a claim PoC.
 - Typed actor composition, actual node publication/outcome handling, finalized
   observation, definitive absence, same-UID WAL/SHM defense, authenticated
   rollback prevention, and the view-only already-spent regression remain work

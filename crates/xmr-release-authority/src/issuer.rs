@@ -194,7 +194,7 @@ fn run_id_digest(run_id: &RunId) -> [u8; 32] {
     hash(&encoded)
 }
 
-fn release_target_bytes(
+pub(crate) fn release_target_bytes(
     run_id: &RunId,
     runtime: &RuntimeDescriptor,
     terms: &XmrNativeEscrowTermsV3,

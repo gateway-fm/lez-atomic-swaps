@@ -137,10 +137,12 @@ sequenceDiagram
     Note over Publisher,Node: Actual node call returned-ID check and finality remain pending
 ```
 
-The public issuer is exposed; the raw plan and publisher are not. The current
-happy integration reaches Prepared, while publisher tests use in-process seams.
-Consequently, the CAS evidence remains local component evidence, not a live
-actor, sidecar, node, or chain replay-prevention result.
+The public issuer is exposed; the raw plan and byte-bearing publisher transport
+are not. ADR 0067's later integration now reaches `Admitted` through the sealed
+narrow-client wrapper and proves zero-call observe-only restart against
+loopback fixtures. Consequently, the CAS evidence remains local component
+evidence, not a dedicated process, live actor, actual indexer/node, or chain
+replay-prevention result.
 
 ## PoC deployment assumptions
 

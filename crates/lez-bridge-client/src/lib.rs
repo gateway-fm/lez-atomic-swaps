@@ -2236,6 +2236,19 @@ impl XmrReleaseClient {
         })
     }
 
+    /// Returns the non-secret run identity bound to this dedicated client.
+    pub const fn expected_run_id(&self) -> &RunId {
+        &self.inner.expected_run_id
+    }
+
+    /// Returns the non-secret runtime identity bound to this dedicated client.
+    ///
+    /// Release authorities use this before their durable send CAS so a
+    /// misconfigured client cannot consume the unique publication attempt.
+    pub const fn expected_runtime(&self) -> &RuntimeDescriptor {
+        &self.inner.expected_runtime
+    }
+
     /// Submits one exact, durably owned claim authorization without retrying.
     ///
     /// # Errors

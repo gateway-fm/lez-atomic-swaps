@@ -2,6 +2,11 @@
 // production while tests exercise it until concrete capabilities replace ReleasePlan.
 #![cfg_attr(not(test), allow(dead_code))]
 
+pub use publisher::{
+    FinalizedLezClockError, FinalizedLezClockSource, PublicationAdmissionStatus,
+    ReleasePublicationError, ReleasePublicationOutcome, XmrReleaseSubmissionBindingV3,
+};
+
 mod publisher;
 
 use super::{

@@ -108,25 +108,25 @@ test is an authenticated literal-loopback mock with zero external resources.
 The official sidecar builder independently validates the generated ABI,
 canonical transaction, signature, accounts, nonce, and durable replay. The
 adapter and builder are still preparation capabilities: no actual-node effect
-or claim PoC is claimed. The schema-v3 release-authority crate now passes 32 of
-32 tests. Its public preparation integration mints finalized Fund, prepared
-authorization, Monero output, and authenticated topology capabilities through
-their real loopback factories, consumes all four, proves the exact
-`[finalized Fund time, signed refund_at)` interval, and reloads the identical
-authenticated Prepared snapshot after restart. No caller supplies a deadline,
-publication ID, bytes, or status. The internal publisher separately proves one
-CAS winner, post-CAS finalized-time suppression, matching-ID admission,
-ambiguity, and observe-only restart against in-process seams. Generic sidecar
-tag-14 submission stays closed; ADR 0067 adds the dedicated route and narrow
-release-intended client without widening that API. The official sidecar now has a
-genesis-bound stable finalized-clock primitive, and bridge startup consumes it;
-exact-genesis success plus wrong-genesis and moving-tip rejection pass in the
-142-test suite. Release-service ownership and clock wiring, actual-local node
-submission, authorization finality, actors, and an actual swap remain absent.
-The trusted single-process byte
-extraction is a PoC residual; production requires a dedicated release-service
-process. The observation
-is deliberately not claim-partial release authority. The one-command topology
+or claim PoC is claimed. The schema-v3 release-authority crate passes 32 of 32
+tests. Its public integration mints finalized Fund, prepared authorization,
+Monero output, and authenticated topology capabilities through their loopback
+factories, consumes all four, proves the exact
+`[finalized Fund time, signed refund_at)` interval, and then drives the sealed
+publisher. A misbound client causes zero clock/RPC calls and preserves
+`Prepared`; the exact binding samples finalized time twice, makes one dedicated
+submission, persists `Admitted`, and restart observes only with zero further
+calls. The raw publisher transport and decrypted bytes remain private.
+Generic sidecar tag-14 submission stays closed; ADR 0067 records the dedicated
+route, narrow client, release-journal wrapper, component and flow diagrams.
+The official sidecar has a genesis-bound stable finalized-clock primitive.
+Release-service process ownership and actual official-clock/node wiring,
+authorization finality, actors, and an actual swap remain absent. Preparation
+still extracts bytes in the trusted test process; the dedicated service must
+own that step before an actor-isolation claim.
+
+The Monero output observation is deliberately not claim-partial release
+authority. The one-command topology
 runner starts one offline
 `monerod` Regtest daemon plus independently authenticated funding, Maker, and
 Taker wallet RPCs; mines funds locally; submits a real two-destination

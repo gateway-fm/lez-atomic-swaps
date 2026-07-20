@@ -1,6 +1,7 @@
 //! Public-boundary happy path for the M4 XMR claim-release issuer.
 use std::os::unix::fs::PermissionsExt as _;
 
+use async_trait::async_trait;
 use std::str::FromStr as _;
 use std::sync::{
     Arc, OnceLock,
@@ -14,7 +15,8 @@ use lez_adaptor_signature::{AdaptorSessionContext, AdaptorSigner, SigningRole};
 use lez_bridge_adapter::{LezBridgeAdapter, XmrLezBridgeBindingV3};
 use lez_bridge_client::{
     BridgeClient, BridgeClientConfig, METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
-    RUN_ID_HEADER, SIDECAR_ROLE_HEADER, SidecarCapability,
+    METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+    SidecarCapability, XmrReleaseClient,
 };
 use lez_bridge_protocol::{
     AccountIds, ChainClock, ChainPosition, ClassifyFinalizedNativeXmrEffectV3Request,
@@ -23,16 +25,21 @@ use lez_bridge_protocol::{
     FinalizedNativeXmrTransactionTargetV3, Hex32, METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
     NativeCustodyFacts, ObservedTransactionFacts, Participant as BridgeParticipant,
     PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimAuthorizationV3Result,
-    PreparedTransaction, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor, TransactionId,
-    XmrNativeEffectV3, XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3,
-    XmrNativeInstructionFactsV3,
+    PreparedTransaction, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    SubmissionOutcome, SubmitNativeXmrClaimAuthorizationV3Request,
+    SubmitNativeXmrClaimAuthorizationV3Result, TransactionId, XmrNativeEffectV3,
+    XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3, XmrNativeInstructionFactsV3,
 };
 use lez_swap_core::Participant;
 use lez_xmr_monero_adapter::{
     ExpectedMoneroOutput, LoopbackRpcEndpoint, MoneroAddress, MoneroChainIdentity, MoneroNetwork,
     MoneroOutputVerifier, MoneroTopologyVerifier, MoneroTransactionId,
 };
-use lez_xmr_release_authority::{PublicationProtectionKey, ReleaseState, ReleaseStore};
+use lez_xmr_release_authority::{
+    FinalizedLezClockError, FinalizedLezClockSource, PublicationAdmissionStatus,
+    PublicationProtectionKey, ReleaseError, ReleasePublicationError, ReleasePublicationOutcome,
+    ReleaseState, ReleaseStore, XmrReleaseSubmissionBindingV3,
+};
 use lez_xmr_swap_sdk::{
     CrossCurveDleqProofV1, CrossCurveScalar, MoneroAddressNetworkV1, MoneroPrivateViewKey,
     MoneroSharedAddressV1, XMR_ACTIVATION_SCHEMA_V1, XMR_AGREEMENT_SCHEMA_V1,
@@ -261,17 +268,20 @@ fn build_stage_b() -> StageBFixture {
 #[derive(Clone)]
 struct BridgeFixture {
     calls: Arc<AtomicUsize>,
+    submission_calls: Arc<AtomicUsize>,
 }
 
 struct BridgeSidecar {
     endpoint: String,
     calls: Arc<AtomicUsize>,
+    submission_calls: Arc<AtomicUsize>,
     _handle: jsonrpsee::server::ServerHandle,
 }
 
 async fn spawn_bridge_sidecar() -> BridgeSidecar {
     let fixture = BridgeFixture {
         calls: Arc::new(AtomicUsize::new(0)),
+        submission_calls: Arc::new(AtomicUsize::new(0)),
     };
     let middleware = ServiceBuilder::new()
         .layer(
@@ -313,6 +323,25 @@ async fn spawn_bridge_sidecar() -> BridgeSidecar {
         .expect("register claim authorization");
     module
         .register_async_method(
+            METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+            |params, fixture, _| async move {
+                let request: SubmitNativeXmrClaimAuthorizationV3Request = params.one()?;
+                fixture.calls.fetch_add(1, Ordering::SeqCst);
+                fixture.submission_calls.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(request.authorization, authorization_transaction());
+                Ok::<_, jsonrpsee::types::ErrorObjectOwned>(
+                    SubmitNativeXmrClaimAuthorizationV3Result::new(
+                        request.context,
+                        request.terms,
+                        request.authorization.transaction_id,
+                        SubmissionOutcome::Accepted,
+                    ),
+                )
+            },
+        )
+        .expect("register claim authorization submission");
+    module
+        .register_async_method(
             METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
             |params, fixture, _| async move {
                 let request: ClassifyFinalizedNativeXmrEffectV3Request = params.one()?;
@@ -339,6 +368,7 @@ async fn spawn_bridge_sidecar() -> BridgeSidecar {
     BridgeSidecar {
         endpoint: format!("http://{address}"),
         calls: fixture.calls,
+        submission_calls: fixture.submission_calls,
         _handle: handle,
     }
 }
@@ -392,6 +422,35 @@ fn bridge_client(endpoint: &str, runtime: RuntimeDescriptor) -> BridgeClient {
         Duration::from_secs(2),
     ))
     .expect("bridge client")
+}
+
+fn release_client(endpoint: &str, runtime: RuntimeDescriptor) -> XmrReleaseClient {
+    XmrReleaseClient::connect(BridgeClientConfig::new(
+        endpoint,
+        SidecarCapability::new(CAPABILITY).expect("capability"),
+        run_id(),
+        runtime,
+        Duration::from_secs(2),
+    ))
+    .expect("release client")
+}
+
+struct StableFinalizedClock {
+    expected_genesis: Hex32,
+    timestamp_ms: u64,
+    calls: usize,
+}
+
+#[async_trait]
+impl FinalizedLezClockSource for StableFinalizedClock {
+    async fn read_genesis_bound_finalized_clock(
+        &mut self,
+        expected_genesis_block_hash: Hex32,
+    ) -> Result<ChainClock, FinalizedLezClockError> {
+        assert_eq!(expected_genesis_block_hash, self.expected_genesis);
+        self.calls += 1;
+        Ok(ChainClock::new(h(73), 111, self.timestamp_ms))
+    }
 }
 
 fn authorization_transaction() -> PreparedTransaction {
@@ -964,4 +1023,69 @@ async fn authenticated_capabilities_prepare_and_restart_exact_release() {
         .load_xmr_claim_release(*terms.swap_id.as_bytes(), &run_id(), &key)
         .expect("authenticated restart load");
     assert_eq!(loaded, prepared);
+
+    let binding =
+        XmrReleaseSubmissionBindingV3::new(run_id(), stage.runtime.clone(), stage.binding.terms())
+            .expect("typed release binding");
+    let mut wrong_runtime = stage.runtime.clone();
+    wrong_runtime.chain_id = h(99);
+    let wrong_client = release_client(&bridge.endpoint, wrong_runtime);
+    let mut clock = StableFinalizedClock {
+        expected_genesis: stage.runtime.genesis_block_hash,
+        timestamp_ms: 13_000,
+        calls: 0,
+    };
+    assert_eq!(
+        restarted
+            .publish_xmr_claim_release(loaded, &key, &binding, &wrong_client, &mut clock)
+            .await
+            .expect_err("misbound client fails before the send CAS"),
+        ReleasePublicationError::Journal(ReleaseError::BindingMismatch)
+    );
+    assert_eq!(clock.calls, 0);
+    assert_eq!(bridge.submission_calls.load(Ordering::SeqCst), 0);
+
+    let loaded = restarted
+        .load_xmr_claim_release(*terms.swap_id.as_bytes(), &run_id(), &key)
+        .expect("prepared state survives pre-CAS mismatch");
+    assert_eq!(loaded.state(), ReleaseState::Prepared);
+    let client = release_client(&bridge.endpoint, stage.runtime.clone());
+    assert_eq!(
+        restarted
+            .publish_xmr_claim_release(loaded, &key, &binding, &client, &mut clock)
+            .await
+            .expect("one admitted exact authorization"),
+        ReleasePublicationOutcome::Admitted(PublicationAdmissionStatus::Accepted)
+    );
+    assert_eq!(clock.calls, 2);
+    assert_eq!(bridge.submission_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(bridge.calls.load(Ordering::SeqCst), 3);
+    drop(restarted);
+
+    let restarted = ReleaseStore::open(&path).expect("post-admission restart");
+    let admitted = restarted
+        .load_xmr_claim_release(*terms.swap_id.as_bytes(), &run_id(), &key)
+        .expect("admitted restart load");
+    assert_eq!(admitted.state(), ReleaseState::Admitted);
+    let restarted_client = release_client(&bridge.endpoint, stage.runtime.clone());
+    let mut restart_clock = StableFinalizedClock {
+        expected_genesis: stage.runtime.genesis_block_hash,
+        timestamp_ms: 13_000,
+        calls: 0,
+    };
+    assert_eq!(
+        restarted
+            .publish_xmr_claim_release(
+                admitted,
+                &key,
+                &binding,
+                &restarted_client,
+                &mut restart_clock,
+            )
+            .await
+            .expect("terminal restart observes only"),
+        ReleasePublicationOutcome::ObserveOnly
+    );
+    assert_eq!(restart_clock.calls, 0);
+    assert_eq!(bridge.submission_calls.load(Ordering::SeqCst), 1);
 }

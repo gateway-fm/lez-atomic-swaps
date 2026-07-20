@@ -675,7 +675,11 @@ mod issuer;
 mod store;
 
 pub use issuer::XmrClaimReleasePreparationError;
-pub use store::{ReleaseError, ReleaseSnapshot, ReleaseState, ReleaseStore, ReleaseWindow};
+pub use store::{
+    FinalizedLezClockError, FinalizedLezClockSource, PublicationAdmissionStatus, ReleaseError,
+    ReleasePublicationError, ReleasePublicationOutcome, ReleaseSnapshot, ReleaseState,
+    ReleaseStore, ReleaseWindow, XmrReleaseSubmissionBindingV3,
+};
 
 #[cfg(test)]
 mod tests {
