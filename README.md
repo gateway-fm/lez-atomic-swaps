@@ -246,7 +246,7 @@ key-order, binding, or branch cross-wiring. ADR 0072 requires lifecycle actors
 to validate canonical Stage-A and Stage-B wires and derive tag-13 terms from
 the activation plan rather than accept independent protocol strings. Unsigned
 Stage-A/Stage-B body validation and role-indexed signature attachment are also
-GREEN. The role-fixed Taker tag-13 executable is component-GREEN with 13 tests:
+GREEN. The role-fixed Taker tag-13 executable is component-GREEN with 12 actor tests plus 5 reusable finalized-facts tests:
 it binds the checked deployment and actor identity, recomputes exact future
 messages from a stable finalized nonce snapshot, and rejects a stale signed
 Maker-funding cutoff before any submission. It submits Initialize once, requires

@@ -14,6 +14,7 @@ mod finalized_asset_observation;
 mod finalized_claim_observation;
 mod finalized_refund_observation;
 mod finalized_xmr_observation;
+mod m4_finalized_facts;
 mod native_prepare;
 mod runtime;
 mod server;
@@ -43,6 +44,11 @@ pub use finalized_claim_observation::{
     read_genesis_bound_finalized_clock,
 };
 pub use finalized_refund_observation::FinalizedWitnessedRefundObserver;
+pub use m4_finalized_facts::{
+    CHECKED_M4_ESCROW_PROGRAM_ID, CHECKED_M4_ESCROW_PROGRAM_ID_HEX, M4FinalizedAccountIds,
+    M4FinalizedAccountNonce, M4FinalizedAccountPresence, StableM4FinalizedNonceSnapshot,
+    read_stable_m4_finalized_nonce_snapshot, validate_checked_m4_escrow_program_id,
+};
 pub use native_prepare::{
     NativeEscrowPlanner, NativePrepareError, NonceSource, ZecEscrowInstruction,
     compute_custody_pda, compute_metadata_pda, decode_prepared_for_signer,

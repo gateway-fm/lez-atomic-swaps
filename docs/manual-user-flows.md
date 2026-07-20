@@ -2629,13 +2629,17 @@ export CARGO_NET_OFFLINE=true
 cargo +1.96.0 test --locked --offline \
   --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
   --bin lez-v02-xmr-stage-a-poc
+cargo +1.96.0 test --locked --offline \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --test m4_finalized_facts
 cargo +1.96.0 clippy --locked --offline \
   --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
   --bin lez-v02-xmr-stage-a-poc -- -D warnings
 ```
 
-Expected result is 13 passed tests and no Clippy findings. These tests use no
-Docker, node, RPC, peer, faucet, public endpoint, or funds. They prove input
+Expected results are 12 actor tests and 5 reusable finalized-facts tests passed,
+with no Clippy findings. These tests use no Docker, node, RPC, peer, faucet,
+public endpoint, or funds. They prove input
 hardening, signed finalized-consensus funding-cutoff enforcement, and exact
 Initialize-finality-Fund ordering in code, not an executed chain effect. A stale
 cutoff fails before submission; a cutoff crossed while Initialize finalizes

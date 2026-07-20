@@ -13,7 +13,6 @@ use std::{
 use anyhow::{Context as _, Result, bail, ensure};
 use async_trait::async_trait;
 use clap::Parser;
-use indexer_service_protocol::{BedrockStatus, Block};
 use lez_bridge_protocol::{
     ChainClock, ClassifyFinalizedNativeXmrEffectV3Request, DiscoveryWindow,
     FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
@@ -23,10 +22,11 @@ use lez_bridge_protocol::{
     XmrNativeEffectV3, XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
 };
 use lez_v0_2_sidecar::{
-    BridgeRuntime, BridgeRuntimeError, FinalizedIndexerApi, HistoricalAccount,
-    M4StageAFinalizedNonces, M4StageAFutureMessageInput, M4StageAFutureMessagePlan,
-    NativeEscrowPlanner, NativePrepareError, NonceSource, OfficialIndexerRpc, OfficialNodeRpc,
+    BridgeRuntime, CHECKED_M4_ESCROW_PROGRAM_ID_HEX, M4FinalizedAccountIds,
+    M4StageAFutureMessageInput, M4StageAFutureMessagePlan, NativeEscrowPlanner, NativePrepareError,
+    NonceSource, OfficialIndexerRpc, OfficialNodeRpc, StableM4FinalizedNonceSnapshot,
     compute_custody_pda, compute_metadata_pda, plan_m4_stage_a_future_messages, program_id_to_hex,
+    read_stable_m4_finalized_nonce_snapshot, validate_checked_m4_escrow_program_id,
     validate_loopback_http_endpoint,
 };
 use lez_xmr_swap_sdk::{
@@ -38,18 +38,6 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
-const CHECKED_M4_ESCROW_PROGRAM_ID_HEX: &str =
-    "4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82";
-const CHECKED_M4_ESCROW_PROGRAM_ID: [u32; 8] = [
-    0x3390_654d,
-    0x3c74_4829,
-    0x188a_b82d,
-    0x5381_5537,
-    0x5692_ef54,
-    0x20cd_5005,
-    0xdd7b_c26a,
-    0x822c_a1ee,
-];
 const EVIDENCE_SCHEMA: &str = "lez_v02_m4_xmr_stage_a_tag13_poc_v1";
 const EVIDENCE_FILENAME: &str = "m4-xmr-stage-a-tag13-evidence.v1.json";
 const DEFAULT_MAX_FINALITY_SCANS: u32 = 512;
@@ -109,44 +97,6 @@ struct Arguments {
     finality_scan_interval_ms: u64,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum AccountPresence {
-    Present,
-    AbsentDefaultNonce,
-}
-
-#[derive(Clone, Copy, Debug, Serialize)]
-#[serde(deny_unknown_fields)]
-struct FinalizedNonceEvidence {
-    account_id: Hex32,
-    nonce: u128,
-    presence: AccountPresence,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(deny_unknown_fields)]
-struct StableFinalizedNonceEvidence {
-    finalized_clock: ChainClock,
-    genesis_block_hash: Hex32,
-    maker_owner: FinalizedNonceEvidence,
-    taker_owner: FinalizedNonceEvidence,
-    claim_authority: FinalizedNonceEvidence,
-    refund_authority: FinalizedNonceEvidence,
-    bracket: &'static str,
-}
-
-impl StableFinalizedNonceEvidence {
-    const fn planned_nonces(&self) -> M4StageAFinalizedNonces {
-        M4StageAFinalizedNonces::new(
-            self.maker_owner.nonce,
-            self.taker_owner.nonce,
-            self.claim_authority.nonce,
-            self.refund_authority.nonce,
-        )
-    }
-}
-
 #[derive(Debug)]
 struct ExactTakerFinalizedNonce {
     taker: AccountId,
@@ -191,7 +141,7 @@ struct StageAEvidence {
     terms: XmrNativeEscrowTermsV3,
     stage_a_agreement_wire_sha256: Hex32,
     stage_b_activation_wire_sha256: Hex32,
-    finalized_nonce_snapshot: StableFinalizedNonceEvidence,
+    finalized_nonce_snapshot: StableM4FinalizedNonceSnapshot,
     maker_xmr_funding_cutoff_ms: u64,
     cutoff_authority: &'static str,
     agreement_source: &'static str,
@@ -284,7 +234,11 @@ async fn execute(arguments: Arguments) -> Result<(StageAEvidence, PathBuf)> {
         "Stage-B plan is not native-XMR metadata v3"
     );
     let escrow_program_id = activated_plan.escrow_program_id();
-    validate_checked_m4_escrow_program_id(escrow_program_id)?;
+    validate_checked_m4_escrow_program_id(escrow_program_id).with_context(|| {
+        format!(
+            "Stage-B escrow program does not match checked M4 image {CHECKED_M4_ESCROW_PROGRAM_ID_HEX}"
+        )
+    })?;
     let transfer_program_id = activated_plan.authenticated_transfer_program_id();
     ensure!(
         transfer_program_id == programs::authenticated_transfer().id(),
@@ -366,22 +320,24 @@ async fn execute(arguments: Arguments) -> Result<(StageAEvidence, PathBuf)> {
         "refund boundary is not later than the current consensus clock"
     );
 
-    let finalized_nonces = read_stable_finalized_nonces(
+    let finalized_nonces = read_stable_m4_finalized_nonce_snapshot(
         indexer.as_ref(),
         expected_genesis,
-        maker_account_id,
-        taker_account_id,
-        claim_authority,
-        refund_authority,
+        M4FinalizedAccountIds::new(
+            maker_account_id,
+            taker_account_id,
+            claim_authority,
+            refund_authority,
+        ),
     )
     .await
     .context("stable four-account finalized nonce snapshot failed")?;
     ensure!(
-        finalized_nonces.finalized_clock.timestamp_ms < activated_plan.refund_at_ms(),
+        finalized_nonces.finalized_clock().timestamp_ms < activated_plan.refund_at_ms(),
         "refund boundary is not later than the finalized consensus clock"
     );
     ensure_maker_funding_cutoff_open(
-        finalized_nonces.finalized_clock.timestamp_ms,
+        finalized_nonces.finalized_clock().timestamp_ms,
         activated_plan.maker_xmr_funding_cutoff_ms(),
     )
     .context(
@@ -391,28 +347,28 @@ async fn execute(arguments: Arguments) -> Result<(StageAEvidence, PathBuf)> {
     verify_live_nonce(
         node.as_ref(),
         maker_account_id,
-        finalized_nonces.maker_owner.nonce,
+        finalized_nonces.maker_owner().nonce(),
     )
     .await
     .context("Maker live nonce moved ahead of the finalized Stage-A snapshot")?;
     verify_live_nonce(
         node.as_ref(),
         taker_account_id,
-        finalized_nonces.taker_owner.nonce,
+        finalized_nonces.taker_owner().nonce(),
     )
     .await
     .context("Taker live nonce moved ahead of the finalized Stage-A snapshot")?;
     verify_live_nonce(
         node.as_ref(),
         claim_authority,
-        finalized_nonces.claim_authority.nonce,
+        finalized_nonces.claim_authority().nonce(),
     )
     .await
     .context("claim-authority live nonce moved ahead of the finalized Stage-A snapshot")?;
     verify_live_nonce(
         node.as_ref(),
         refund_authority,
-        finalized_nonces.refund_authority.nonce,
+        finalized_nonces.refund_authority().nonce(),
     )
     .await
     .context("refund-authority live nonce moved ahead of the finalized Stage-A snapshot")?;
@@ -441,7 +397,7 @@ async fn execute(arguments: Arguments) -> Result<(StageAEvidence, PathBuf)> {
     );
     let nonce_source = Arc::new(ExactTakerFinalizedNonce {
         taker: taker_account_id,
-        nonce: finalized_nonces.taker_owner.nonce,
+        nonce: finalized_nonces.taker_owner().nonce(),
     });
     let planner = Arc::new(
         NativeEscrowPlanner::new_durable(
@@ -488,7 +444,7 @@ async fn execute(arguments: Arguments) -> Result<(StageAEvidence, PathBuf)> {
         XmrNativeEffectV3::Initialize,
         prepared.initialization,
         finalized_nonces
-            .finalized_clock
+            .finalized_clock()
             .height
             .checked_add(1)
             .context("Initialize scan cursor overflow")?,
@@ -592,7 +548,7 @@ fn ensure_maker_funding_cutoff_open(
 fn verify_future_plan_against_activated(
     activated: &XmrLezInitializePlanV1,
     future: &M4StageAFutureMessagePlan,
-    finalized: &StableFinalizedNonceEvidence,
+    finalized: &StableM4FinalizedNonceSnapshot,
 ) -> Result<()> {
     ensure!(
         future.claim_authority().into_value() == activated.claim_authority_account()
@@ -606,25 +562,25 @@ fn verify_future_plan_against_activated(
         "fresh official future-message hashes disagree with Stage-A commitments"
     );
     let expected_fund = finalized
-        .taker_owner
-        .nonce
+        .taker_owner()
+        .nonce()
         .checked_add(1)
         .context("Taker Fund nonce overflow")?;
     let expected_authorize = finalized
-        .taker_owner
-        .nonce
+        .taker_owner()
+        .nonce()
         .checked_add(2)
         .context("Taker Authorize nonce overflow")?;
     let nonces = future.nonces();
     ensure!(
-        nonces.maker_owner_finalized() == finalized.maker_owner.nonce
-            && nonces.taker_owner_finalized() == finalized.taker_owner.nonce
-            && nonces.initialize() == finalized.taker_owner.nonce
+        nonces.maker_owner_finalized() == finalized.maker_owner().nonce()
+            && nonces.taker_owner_finalized() == finalized.taker_owner().nonce()
+            && nonces.initialize() == finalized.taker_owner().nonce()
             && nonces.fund() == expected_fund
             && nonces.authorize() == expected_authorize
-            && nonces.claim() == finalized.claim_authority.nonce
-            && nonces.refund() == finalized.refund_authority.nonce
-            && nonces.punish() == finalized.maker_owner.nonce,
+            && nonces.claim() == finalized.claim_authority().nonce()
+            && nonces.refund() == finalized.refund_authority().nonce()
+            && nonces.punish() == finalized.maker_owner().nonce(),
         "fresh future-message nonce schedule disagrees with the stable finalized snapshot"
     );
     Ok(())
@@ -787,118 +743,6 @@ async fn verify_live_nonce(
     Ok(())
 }
 
-async fn read_stable_finalized_nonces(
-    indexer: &dyn FinalizedIndexerApi,
-    expected_genesis_hash: Hex32,
-    maker_owner: AccountId,
-    taker_owner: AccountId,
-    claim_authority: AccountId,
-    refund_authority: AccountId,
-) -> Result<StableFinalizedNonceEvidence, BridgeRuntimeError> {
-    let finalized_before = indexer
-        .last_finalized_block_id()
-        .await?
-        .ok_or(BridgeRuntimeError::Unavailable)?;
-    let genesis_before = read_finalized_block(indexer, nssa::GENESIS_BLOCK_ID).await?;
-    if genesis_before.header.hash.0 != *expected_genesis_hash.as_bytes() {
-        return Err(BridgeRuntimeError::InvalidObservation);
-    }
-    let tip_before = read_finalized_block(indexer, finalized_before).await?;
-    if tip_before.header.hash.0 == [0; 32] || tip_before.header.timestamp == 0 {
-        return Err(BridgeRuntimeError::InvalidObservation);
-    }
-    let maker = finalized_nonce(indexer, maker_owner, finalized_before, true).await?;
-    let taker = finalized_nonce(indexer, taker_owner, finalized_before, true).await?;
-    let claim = finalized_nonce(indexer, claim_authority, finalized_before, false).await?;
-    let refund = finalized_nonce(indexer, refund_authority, finalized_before, false).await?;
-    let genesis_after = read_finalized_block(indexer, nssa::GENESIS_BLOCK_ID).await?;
-    let tip_after = read_finalized_block(indexer, finalized_before).await?;
-    let finalized_after = indexer
-        .last_finalized_block_id()
-        .await?
-        .ok_or(BridgeRuntimeError::Unavailable)?;
-    if genesis_after != genesis_before || tip_after != tip_before {
-        return Err(BridgeRuntimeError::MovingTip);
-    }
-    ensure_finalized_height_is_monotonic(finalized_before, finalized_after)?;
-    Ok(StableFinalizedNonceEvidence {
-        finalized_clock: ChainClock::new(
-            Hex32::from_bytes(tip_before.header.hash.0),
-            tip_before.header.block_id,
-            tip_before.header.timestamp,
-        ),
-        genesis_block_hash: expected_genesis_hash,
-        maker_owner: maker,
-        taker_owner: taker,
-        claim_authority: claim,
-        refund_authority: refund,
-        bracket: "fixed_finalized_anchor_genesis_and_tip_reread_by_id_and_hash_latest_tip_monotonic",
-    })
-}
-
-fn ensure_finalized_height_is_monotonic(
-    finalized_before: u64,
-    finalized_after: u64,
-) -> Result<(), BridgeRuntimeError> {
-    if finalized_after < finalized_before {
-        return Err(BridgeRuntimeError::MovingTip);
-    }
-    Ok(())
-}
-async fn read_finalized_block(
-    indexer: &dyn FinalizedIndexerApi,
-    block_id: u64,
-) -> Result<Block, BridgeRuntimeError> {
-    let by_id = indexer
-        .block_by_id(block_id)
-        .await?
-        .ok_or(BridgeRuntimeError::Unavailable)?;
-    if by_id.header.block_id != block_id || by_id.bedrock_status != BedrockStatus::Finalized {
-        return Err(BridgeRuntimeError::InvalidObservation);
-    }
-    let by_hash = indexer
-        .block_by_hash(by_id.header.hash.0)
-        .await?
-        .ok_or(BridgeRuntimeError::Unavailable)?;
-    if by_hash != by_id {
-        return Err(BridgeRuntimeError::InvalidObservation);
-    }
-    Ok(by_id)
-}
-
-async fn finalized_nonce(
-    indexer: &dyn FinalizedIndexerApi,
-    account_id: AccountId,
-    block_id: u64,
-    require_present: bool,
-) -> Result<FinalizedNonceEvidence, BridgeRuntimeError> {
-    let account_id_hex = Hex32::from_bytes(account_id.into_value());
-    match indexer
-        .account_at_block(account_id.into_value(), block_id)
-        .await?
-    {
-        HistoricalAccount::Present(account) => Ok(FinalizedNonceEvidence {
-            account_id: account_id_hex,
-            nonce: account.nonce,
-            presence: AccountPresence::Present,
-        }),
-        HistoricalAccount::Absent if !require_present => Ok(FinalizedNonceEvidence {
-            account_id: account_id_hex,
-            nonce: 0,
-            presence: AccountPresence::AbsentDefaultNonce,
-        }),
-        HistoricalAccount::Absent => Err(BridgeRuntimeError::InvalidObservation),
-    }
-}
-
-fn validate_checked_m4_escrow_program_id(program_id: [u32; 8]) -> Result<()> {
-    ensure!(
-        program_id == CHECKED_M4_ESCROW_PROGRAM_ID,
-        "Stage-B escrow program does not match checked M4 image {CHECKED_M4_ESCROW_PROGRAM_ID_HEX}"
-    );
-    Ok(())
-}
-
 fn sha256_hex(bytes: &[u8]) -> Hex32 {
     Hex32::from_bytes(Sha256::digest(bytes).into())
 }
@@ -1051,6 +895,7 @@ fn validate_evidence_file(file: &File) -> Result<()> {
 mod tests {
     use std::{fs, os::unix::fs::PermissionsExt as _};
 
+    use lez_v0_2_sidecar::CHECKED_M4_ESCROW_PROGRAM_ID;
     use nssa::PrivateKey;
     use tempfile::TempDir;
 
@@ -1145,16 +990,6 @@ mod tests {
             NODE_BOUNDARY_ENTRIES.load(std::sync::atomic::Ordering::SeqCst),
             0,
             "no sequencer/indexer construction or send path may be entered"
-        );
-    }
-
-    #[test]
-    fn fixed_finalized_anchor_accepts_advance_and_rejects_regression() {
-        assert!(ensure_finalized_height_is_monotonic(40, 40).is_ok());
-        assert!(ensure_finalized_height_is_monotonic(40, 41).is_ok());
-        assert_eq!(
-            ensure_finalized_height_is_monotonic(40, 39).expect_err("regression"),
-            BridgeRuntimeError::MovingTip
         );
     }
 

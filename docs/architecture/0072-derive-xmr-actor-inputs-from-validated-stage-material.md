@@ -102,13 +102,13 @@ attachment, wrong view-key/cross-agreement rejection, role-indexed signatures,
 and byte-identical canonical wires. All nine SDK tests, strict Clippy,
 warning-fatal Rustdoc, formatting, and diff checks pass.
 
-The tag-13 actor adds 13 GREEN unit tests for the checked deployment identity,
+The tag-13 actor retains 12 GREEN unit tests for the checked deployment identity,
 role-restricted finalized nonce source, owner-only inputs/evidence, no-clobber
 before node access, strict CLI schema, stable-anchor policy, and effect-specific
 classification requests. It also rejects a stale finalized preflight before any
 submission, rechecks the signed Maker funding cutoff after finalized Initialize
 before Fund, and refuses success evidence when Fund finalizes after the cutoff.
-Only finalized LEZ consensus timestamps carry cutoff authority. Locked/offline actor tests and strict Clippy pass with
+Five additional focused reusable-finality tests cover stable advancement, pinned-view mutation, finalized-height regression, wrong genesis, and ProgramID mutation. Only finalized LEZ consensus timestamps carry cutoff authority. Locked/offline actor tests and strict Clippy pass with
 the pinned local rapidsnark libraries. This is component evidence only; no node
 effect was executed by that test gate.
 

@@ -46,11 +46,11 @@ derive protocol inputs from canonical validated Stage-A/Stage-B material. This
 is now nine-test SDK evidence, including unsigned semantic validation before
 role-indexed signature attachment. It is not an independent role-material
 process, chain execution, finality, or an end-to-end swap.
-The role-fixed Taker tag-13 executable adds 13 GREEN tests around canonical
+The role-fixed Taker tag-13 executable retains 12 GREEN local tests around canonical
 stage input, exact actor/deployment identity, stable finalized nonces,
 no-clobber owner-only evidence, the finalized Initialize-before-Fund barrier,
 and three finalized-consensus funding-cutoff checks. It has not executed a node effect and does not change the 0-of-1 M4
-happy-swap count.
+happy-swap count. Five focused reusable-finality tests separately prove stable advancement, moving/regressing finalized views, wrong genesis, and one-bit ProgramID rejection.
 The 2026-07-18 authority refresh pins the live RFP repository at master commit
 `121da225de1930c5ba693ebbef80ee788d55542a` and RFP-003 file blob `d0fa52b`.
 Replacement issue #112 is open, retains the `accepted` and `RFP-003` labels,

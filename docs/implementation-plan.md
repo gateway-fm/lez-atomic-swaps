@@ -3291,7 +3291,7 @@ recomputes tags 15/16/17 and exact hashes, and submits Initialize once. Only an
 exact stable-finalized `Found` capability permits its single Fund submission.
 The signed Maker funding cutoff is checked against finalized consensus before
 Initialize, again after finalized Initialize before Fund, and on finalized Fund
-before success evidence; host wall clock has no authority. Its 13 tests and strict Clippy pass with the pinned local rapidsnark libraries.
+before success evidence; host wall clock has no authority. Its 12 actor tests plus five reusable finalized-facts tests and strict Clippy pass with the pinned local rapidsnark libraries.
 The sidecar dependency gate explicitly allows the permissive `0BSD` license
 used by three SDK transitive crates; advisories, bans, licenses, and sources
 remain enforced. No actual node submission has been made with the actor because
