@@ -6,8 +6,9 @@ use std::{
     process::Command,
 };
 
-use lez_adaptor_role_runner::ValidatedSession;
+use lez_adaptor_role_runner::{Role, ValidatedSession};
 use lez_adaptor_signature::AdaptorSessionContext;
+use lez_swap_store::{AdaptorSessionIdentity, AdaptorSessionRole};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 
 const MAKER_SECRET: [u8; 32] = [0x31; 32];
@@ -38,6 +39,44 @@ fn write_private(path: &Path, bytes: &[u8]) {
     let mut file = options.open(path).expect("create owner-private file");
     file.write_all(bytes).expect("write owner-private file");
     file.sync_all().expect("sync owner-private file");
+}
+
+#[test]
+fn identities_exactly_bind_the_public_transcript_and_local_role() {
+    let context = untweaked_context();
+    let session = ValidatedSession::from_untweaked_context(context.clone())
+        .expect("validated untweaked session");
+    let identities = [
+        (Role::Maker, AdaptorSessionRole::Maker),
+        (Role::Taker, AdaptorSessionRole::Taker),
+    ]
+    .map(|(runner_role, store_role)| {
+        let actual = session.identity(runner_role);
+        let expected = AdaptorSessionIdentity::new(
+            context.session_id(),
+            store_role,
+            context.durable_context_binding(),
+            context.message(),
+            context.adaptor_point(),
+            context.ordered_public_keys(),
+        );
+        assert_eq!(actual, expected);
+        assert_eq!(actual.local_role(), store_role);
+        actual
+    });
+
+    assert_ne!(identities[0], identities[1]);
+    assert_eq!(identities[0].session_id(), identities[1].session_id());
+    assert_eq!(
+        identities[0].signing_domain(),
+        identities[1].signing_domain()
+    );
+    assert_eq!(identities[0].exact_message(), identities[1].exact_message());
+    assert_eq!(identities[0].adaptor_point(), identities[1].adaptor_point());
+    assert_eq!(
+        identities[0].ordered_public_keys(),
+        identities[1].ordered_public_keys()
+    );
 }
 
 #[test]

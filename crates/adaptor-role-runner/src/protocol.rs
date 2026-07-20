@@ -179,7 +179,10 @@ impl ValidatedSession {
         self.context_binding
     }
 
-    pub(crate) const fn identity(&self, role: Role) -> AdaptorSessionIdentity {
+    /// Derives the exact immutable identity for one role-local session journal.
+    ///
+    /// The returned value contains only the validated public transcript.
+    pub const fn identity(&self, role: Role) -> AdaptorSessionIdentity {
         AdaptorSessionIdentity::new(
             self.id,
             role.store(),
